@@ -779,8 +779,8 @@ const journalForm = new JournalForm({
 });
 
 /** Whether project memory is on for the account, as last read: the
- *  specimen's with `?memory`. */
-let memoryOn = !live && params.has("memory");
+ *  specimen's unless `?memory=off`. */
+let memoryOn = !live && params.get("memory") !== "off";
 if (live) void memorySeam.enabled(null, null).then((on) => (memoryOn = on), () => (memoryOn = false));
 const sentinelSeam = live ? liveSentinels : specimenSentinels(params.has("sentinels"));
 /** The machines the sentinels may live on, the ones online first; a

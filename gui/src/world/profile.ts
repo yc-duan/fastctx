@@ -28,6 +28,9 @@ export type Entry = ({ kind: "remote" } & RemoteMcp) | { kind: "command"; machin
 
 export interface Profile {
   version: number;
+  /** Whether project memory is on (`world-memory.md`); absent, it is. Its
+   *  own commands read and change it. */
+  memory?: boolean;
   prompt?: string;
   /** Claude Code settings, of `CLAUDE_SETTINGS` alone. */
   claude?: Record<string, unknown>;

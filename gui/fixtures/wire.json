@@ -1085,6 +1085,7 @@
         "account": "ada",
         "profile": {
           "version": 4,
+          "memory": false,
           "prompt": "Use concise answers.",
           "claude": {
             "language": "English"
@@ -1134,6 +1135,7 @@
         "account": "ada",
         "profile": {
           "version": 4,
+          "memory": false,
           "prompt": "Use concise answers.",
           "claude": {
             "language": "English"
