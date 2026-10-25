@@ -59,7 +59,15 @@ export type SentinelPhase = "starting" | "watching" | "satisfied" | "unable" | "
 
 /** One sentinel a conversation left, as its home answered. */
 export interface SentinelSummary {
-  definition: { id: string; home: string; condition: string; kind: "local" | "web" | "goal"; owner: { machine: string; resident: string } };
+  definition: {
+    id: string;
+    home: string;
+    condition: string;
+    kind: "local" | "web" | "goal";
+    owner: { machine: string; resident: string };
+    /** When it wakes its conversation, in milliseconds since the epoch. */
+    at?: number[];
+  };
   phase: SentinelPhase;
   /** How it watches, in its own words. */
   plan: string;

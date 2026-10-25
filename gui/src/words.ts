@@ -285,6 +285,9 @@ export interface Words {
   withdrawSentinel: string;
   withdrawSentinelAsk: string;
   sentinelPhase(phase: "starting" | "watching" | "satisfied" | "unable" | "withdrawn" | "unavailable"): string;
+  /** When a sentinel next wakes its conversation, and every time it will. */
+  sentinelWakeAt(at: number, now: number): string;
+  sentinelWakes(times: string[]): string;
   notStopped: string;
   cancel: string;
   /** A job's output opened under its row. */
@@ -656,6 +659,8 @@ export const zh: Words = {
   withdrawSentinelAsk: "撤掉这个哨兵？",
   sentinelPhase: (phase) =>
     ({ starting: "刚开始", watching: "盯着", satisfied: "已成立", unable: "盯不成", withdrawn: "已撤掉", unavailable: "暂时问不到" })[phase],
+  sentinelWakeAt: (at, now) => wakeTime(at, now, "zh-CN", "明天"),
+  sentinelWakes: (times) => `到点叫醒对话：${times.join("、")}`,
   notStopped: "没能停下",
   cancel: "取消",
   jobOutput: (command) => `${command} 的输出`,
@@ -990,6 +995,8 @@ export const en: Words = {
   withdrawSentinelAsk: "Withdraw this sentinel?",
   sentinelPhase: (phase) =>
     ({ starting: "starting", watching: "watching", satisfied: "found it", unable: "can't watch", withdrawn: "withdrawn", unavailable: "can't be asked now" })[phase],
+  sentinelWakeAt: (at, now) => wakeTime(at, now, "en-US", "tomorrow"),
+  sentinelWakes: (times) => `Wakes the conversation at ${times.join(", ")}`,
   notStopped: "Couldn't stop it",
   cancel: "Cancel",
   jobOutput: (command) => `Output of ${command}`,
@@ -1072,6 +1079,19 @@ function clock(ms: number): string {
   const minutes = Math.floor(seconds / 60);
   if (minutes < 60) return seconds % 60 ? `${minutes}m ${seconds % 60}s` : `${minutes}m`;
   return minutes % 60 ? `${Math.floor(minutes / 60)}h ${minutes % 60}m` : `${Math.floor(minutes / 60)}h`;
+}
+
+/** A time of day as a sentinel will wake at it: the day too where it is
+ *  not today. */
+function wakeTime(at: number, now: number, locale: string, tomorrow: string): string {
+  const day = new Date(at);
+  const time = day.toLocaleTimeString(locale, { hour: "2-digit", minute: "2-digit", hour12: false });
+  const start = new Date(now);
+  start.setHours(0, 0, 0, 0);
+  const days = Math.floor((at - start.getTime()) / 86_400_000);
+  if (days === 0) return time;
+  if (days === 1) return `${tomorrow} ${time}`;
+  return `${day.toLocaleDateString(locale, { month: "short", day: "numeric" })} ${time}`;
 }
 
 /** Tokens as the hosts count them in a line: 640 tokens, 1.2k tokens. */

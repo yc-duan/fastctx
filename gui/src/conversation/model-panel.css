@@ -432,6 +432,14 @@ button.job-what:hover .job-command {
   color: var(--text-3);
 }
 
+/* When a sentinel next wakes its conversation, after where it lives. */
+.job-wake {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  margin-left: var(--space-2);
+}
+
 .job-stop {
   color: var(--text-3);
 }

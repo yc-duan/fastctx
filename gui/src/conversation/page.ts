@@ -2030,6 +2030,8 @@ export class ConversationPage {
         withdrawAsk: words.withdrawSentinelAsk,
         notStopped: words.notStopped,
         cancel: this.options.controls?.words.never ?? words.cancel,
+        wakeAt: words.sentinelWakeAt,
+        wakes: words.sentinelWakes,
         output: words.jobOutput,
         loading: words.jobOutputLoading,
         failed: words.jobOutputFailed,

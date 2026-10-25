@@ -22,7 +22,7 @@ export interface Job {
   output: string;
   /** A sentinel the conversation left, in place of a command: how it stands
    *  in a word, how it watches, and what it saw last. */
-  sentinel?: { phase: string; plan: string; seen: string | null } | undefined;
+  sentinel?: { phase: string; plan: string; seen: string | null; wakes?: number[] } | undefined;
 }
 
 export interface JobsWords {
@@ -34,6 +34,10 @@ export interface JobsWords {
   withdrawAsk: string;
   notStopped: string;
   cancel: string;
+  /** When a sentinel next wakes the conversation, short; every time it
+   *  will, when pointed at. */
+  wakeAt(at: number, now: number): string;
+  wakes(times: string[]): string;
   output(command: string): string;
   loading: string;
   failed(why: string): string;
@@ -110,9 +114,12 @@ export class JobsPanel {
         this.list.append(row.element);
       }
       row.job = job;
-      const where = job.sentinel ? `${job.machine} ${job.sentinel.phase}` : `${job.machine} ${words.lasted(now.getTime() - Date.parse(job.started_at))}`;
+      const where = job.sentinel ? this.whereWatching(job, now.getTime()) : escape(`${job.machine} ${words.lasted(now.getTime() - Date.parse(job.started_at))}`);
       const shown = row.element.querySelector<HTMLElement>(".job-where")!;
-      if (shown.textContent !== where) shown.textContent = where;
+      if (shown.dataset.drawn !== where) {
+        shown.dataset.drawn = where;
+        shown.innerHTML = where;
+      }
       if (job.sentinel) this.watching(row.element, job);
     }
     const count = jobs.length;
@@ -122,6 +129,18 @@ export class JobsPanel {
     this.button.setAttribute("aria-label", `${words.title} ${count}`);
     const html = `${glyph("terminal", 16)}<span class="jobs-count">${count}</span>`;
     if (this.button.innerHTML !== html) this.button.innerHTML = html;
+  }
+
+  /** Where a sentinel lives and how it stands, with a clock and the next
+   *  time it wakes the conversation where it will. */
+  private whereWatching(job: Job, now: number): string {
+    const { words } = this.options;
+    const sentinel = job.sentinel!;
+    const coming = (sentinel.wakes ?? []).filter((at) => at > now).sort((a, b) => a - b);
+    const wake = coming.length
+      ? `<span class="job-wake" title="${escape(words.wakes(coming.map((at) => words.wakeAt(at, now))))}">${glyph("clock", 12)}${escape(words.wakeAt(coming[0]!, now))}</span>`
+      : "";
+    return `${escape(`${job.machine} ${sentinel.phase}`)}${wake}`;
   }
 
   /** A sentinel's sentence, how it watches beneath, and what it saw last

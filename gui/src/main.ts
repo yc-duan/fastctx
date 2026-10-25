@@ -1633,6 +1633,24 @@ function specimenTalk(address: Address): KeepablePage {
             seen: "step 4200  loss 0.412",
           },
         },
+        {
+          job: "s-d4e5f6",
+          machine: "server",
+          started_at: "",
+          command: english ? "Wake me at eight tomorrow to read the night's regression" : "明早八点叫醒我看夜里的回归",
+          output: "",
+          sentinel: {
+            phase: words.sentinelPhase("watching"),
+            plan: english ? "Waits for the time; looks at nothing before it" : "只等时刻，之前什么都不看",
+            seen: null,
+            wakes: [8, 20].map((hour) => {
+              const at = new Date(store.clock.peek());
+              at.setDate(at.getDate() + 1);
+              at.setHours(hour, 0, 0, 0);
+              return at.getTime();
+            }),
+          },
+        },
       ]
     : [];
   const runningJobs = effect(() => {
@@ -1937,7 +1955,7 @@ function liveTalk(address: Address, inPanel = false): KeepablePage {
     started_at: "",
     command: one.definition.condition || one.plan,
     output: "",
-    sentinel: { phase: words.sentinelPhase(one.phase), plan: one.plan, seen: one.latest?.text ?? one.reason },
+    sentinel: { phase: words.sentinelPhase(one.phase), plan: one.plan, seen: one.latest?.text ?? one.reason, wakes: one.definition.at ?? [] },
   });
   const readSentinels = (): Promise<void> =>
     sentinelList(address).then(
