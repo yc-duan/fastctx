@@ -15,6 +15,8 @@ export interface HomeWords {
   aPage(name: string): string;
   /** Conversations waiting for the reader. */
   waiting: string;
+  /** What an urgent one is called where its mark is not seen. */
+  urgent: string;
   /** What an agent asks, said whole to a screen reader. */
   asks: Record<Asked["what"], string>;
   /** A conversation the host says waits on the reader, saying nothing more. */
@@ -108,7 +110,8 @@ const pad = (n: number) => String(n).padStart(2, "0");
 export const zhHome: HomeWords = {
   world: "世界",
   aPage: (name) => `页面「${name}」`,
-  waiting: "等待回复",
+  waiting: "要紧的事",
+  urgent: "要紧",
   asks: { answer: "问你", command: "想运行命令", change: "想改文件", tool: "想用工具", plan: "等你批准计划", form: "请你填写", other: "等你回复" },
   waitsUnsaid: "等你回复",
   waitingFor: "等待回复",
@@ -155,7 +158,8 @@ const enMonths = ["January", "February", "March", "April", "May", "June", "July"
 export const enHome: HomeWords = {
   world: "Home",
   aPage: (name) => `the page “${name}”`,
-  waiting: "Waiting for you",
+  waiting: "Needs you",
+  urgent: "Urgent",
   asks: {
     answer: "asks you",
     command: "wants to run a command",

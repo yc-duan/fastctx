@@ -541,6 +541,7 @@ export function specimenWorld(): { world: WorldState; now: Date; lastVisit: Date
                 waiting_for_user: false,
                 title: "日志轮转",
                 last_said: "Rotation now keeps 14 days of logs and compresses anything older than a day; the cron entry is in /etc/cron.d/app-logs.",
+                told: { id: "told-41aa-1", at: at("05:49:40"), status: "info", text: "日志轮转改好了：留 14 天，超过一天的压缩，定时任务在 /etc/cron.d/app-logs。", turn: "t2" },
               },
             }),
           ],

@@ -1369,6 +1369,7 @@ function home(): Page {
     newTalk: () => beginTalk(),
     stopJob: live ? (job, machine) => stopJob(job, machine) : async () => {},
     updates: () => updateCard.open(),
+    seenTold: toldSeen,
     // An answer from here goes in once, however long the way is closed, as
     // one from a notification does (`world-network.md`, 断开不是结束).
     answer: (address, asked, choice) => {

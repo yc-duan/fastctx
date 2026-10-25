@@ -223,6 +223,7 @@
   flex: none;
   display: grid;
   place-items: center;
+  min-width: 16px;
   height: calc(var(--size-text) * var(--leading-ui));
   color: var(--accent);
 }
@@ -244,6 +245,15 @@
 
 .front-ask.quiet {
   color: var(--text-2);
+}
+
+/* What a conversation told the user: an urgent one under the clay ※, one
+   that can wait under a drop of ink. */
+.front-told-drop {
+  width: 7px;
+  height: 7px;
+  border-radius: var(--radius-full);
+  background: var(--text-2);
 }
 
 /* Its answers, where a question offers them: solid, side by side. */
