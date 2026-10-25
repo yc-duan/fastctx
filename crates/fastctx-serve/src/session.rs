@@ -409,6 +409,56 @@ impl Session {
         answer
     }
 
+    /// `message_user`: words of this session's resident for the user.
+    pub async fn say(self: &Arc<Self>, arguments: &Value, meta: Option<&Value>) -> Answer {
+        let failed = |error: String| Answer::error(format!("=== message_user (not sent: {error}) ==="));
+        let message = match text_argument(arguments, "message") {
+            Ok(message) => message,
+            Err(error) => return failed(error),
+        };
+        let status = match arguments.get("status").and_then(Value::as_str) {
+            Some("reply") => fastctx_types::residents::TellStatus::Reply,
+            Some("info") => fastctx_types::residents::TellStatus::Info,
+            Some("urgent") => fastctx_types::residents::TellStatus::Urgent,
+            _ => return failed("status is one of reply, info, urgent".to_string()),
+        };
+        let attachments: Vec<fastctx_types::voice::Attachment> = match arguments.get("attachments") {
+            None | Some(Value::Null) => Vec::new(),
+            Some(value) => match serde_json::from_value(value.clone()) {
+                Ok(attachments) => attachments,
+                Err(_) => return failed("each attachment names its machine and its path".to_string()),
+            },
+        };
+        if attachments.len() > fastctx_types::voice::ATTACHMENTS_MOST {
+            return failed(format!("at most {} attachments", fastctx_types::voice::ATTACHMENTS_MOST));
+        }
+        let whereabouts = match self.whereabouts(meta).await {
+            Ok(whereabouts) => whereabouts,
+            Err(error) => return failed(error),
+        };
+        let reply = async {
+            let mut client = self.client(meta).await?;
+            let call = Call::Say { resident: whereabouts.resident.clone(), message, status, attachments };
+            client.call(call).await.map_err(|error| error.to_string())
+        }
+        .await;
+        let mut answer = match reply {
+            Ok(Reply::Told) => Answer {
+                facts: None,
+                content: vec![Content::Text(fastctx_types::voice::TOLD.to_string())],
+                is_error: false,
+                receipt: None,
+                source: None,
+                shown: None,
+                completed: None,
+            },
+            Ok(other) => Answer::error(format!("=== message_user (the node answered something else: {other:?}) ===")),
+            Err(error) => failed(error),
+        };
+        self.add_waiting_words(&whereabouts, &mut answer, meta).await;
+        answer
+    }
+
     /// `message_colleague`: words from this session's resident to another.
     pub async fn message(self: &Arc<Self>, arguments: &Value, meta: Option<&Value>) -> Answer {
         let failed = |error: String| Answer::error(format!("=== message_colleague (not sent: {error}) ==="));
@@ -627,7 +677,7 @@ impl Session {
             })
             .await
         {
-            Ok(Reply::Machines { here, others, groups, collab, mut scratch }) => {
+            Ok(Reply::Machines { here, others, groups, collab, mut scratch, speaks }) => {
                 if !client.scratch_locations {
                     scratch = here
                         .iter()
@@ -636,7 +686,7 @@ impl Session {
                         .map(|name| (name, Err(fastctx_types::scratch::words::OLD_NODE.into())))
                         .collect();
                 }
-                Ok(Some(crate::tools::Machines { here, others, groups, collab, scratch }))
+                Ok(Some(crate::tools::Machines { here, others, groups, collab, scratch, speaks }))
             }
             Ok(other) => Err(format!("the node answered something else: {other:?}")),
             Err(error) => Err(error.to_string()),

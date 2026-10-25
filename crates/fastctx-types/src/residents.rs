@@ -338,6 +338,41 @@ pub struct Now {
     /// notification of it says.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub asked: Option<Asked>,
+    /// What the agent last told the user through `message_user`: what a
+    /// notification of it and the conversation's line on its project's page
+    /// say (`world-voice.md`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub told: Option<Told>,
+}
+
+/// How much of what the agent told the user `Told::text` keeps, in
+/// characters.
+pub const TOLD_CHARS: usize = 500;
+
+/// Something the agent told the user through `message_user`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Told {
+    /// New for each message: a new one is something new said.
+    pub id: String,
+    pub at: Timestamp,
+    pub status: TellStatus,
+    /// Its start, as the agent wrote it.
+    pub text: String,
+    /// The turn it was said in, as its host named it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub turn: Option<String>,
+}
+
+/// Why the agent speaks, which decides how its words reach the user.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TellStatus {
+    /// An answer to what the user just said.
+    Reply,
+    /// The agent's own, which can wait until the user looks.
+    Info,
+    /// The agent's own, which the user should know soon.
+    Urgent,
 }
 
 /// How much of the user's first words `Now::first_words` keeps, in

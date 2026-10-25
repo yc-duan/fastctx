@@ -132,6 +132,7 @@ mod unstarted;
 mod updates;
 mod usage;
 mod user_images;
+mod voice;
 mod waiting;
 mod watch;
 mod watchdog;

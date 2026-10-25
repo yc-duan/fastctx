@@ -14,14 +14,15 @@ type Named = Glyph | "thinking" | "chevron" | "copy" | "check" | "expand" | "sto
  *  provider's cache and how long it stays; saving a copy, and a file's
  *  path; the machines as a drawing and as a list; a new version; a
  *  conversation's goal, pausing and resuming it, and the panel beside it;
- *  a repair; a project's journal and decision; a sentinel. */
+ *  a repair; a project's journal and decision; a sentinel; a
+ *  conversation's every step. */
 type Frame =
   | "menu" | "plus" | "minus" | "settings" | "sidebar" | "machine" | "close" | "more" | "back" | "sleep" | "wake" | "move"
   | "archive" | "unarchive" | "trash" | "reread" | "scan" | "grip" | "page" | "versions" | "history" | "person" | "key" | "phone"
   | "logout" | "shield" | "lock" | "unlock" | "signup" | "relay" | "save" | "link"
   | "context" | "cache" | "clock" | "tree" | "rows" | "update"
   | "note" | "plug" | "tune"
-  | "goal" | "pause" | "resume" | "panel" | "repair" | "journal" | "spec" | "sentinel"
+  | "goal" | "pause" | "resume" | "panel" | "repair" | "journal" | "spec" | "sentinel" | "steps"
   | Marks;
 
 /** Which agent and which kind of device, drawn small beside a conversation's
@@ -138,6 +139,9 @@ const paths: Record<Named, string> = {
   // A cylinder: what the provider keeps of the prompt.
   cache: '<ellipse cx="10" cy="5.6" rx="5.4" ry="2.1"/><path d="M4.6 5.6v8.8c0 1.16 2.42 2.1 5.4 2.1s5.4-.94 5.4-2.1V5.6"/><path d="M4.6 10c0 1.16 2.42 2.1 5.4 2.1s5.4-.94 5.4-2.1"/>',
   tree: '<circle cx="10" cy="4.3" r="1.6"/><path d="M10 5.9v2.6M4.5 8.5h11M4.5 8.5v2.6M10 8.5v2.6M15.5 8.5v2.6"/><circle cx="4.5" cy="13.4" r="2.1"/><circle cx="10" cy="13.4" r="2.1"/><circle cx="15.5" cy="13.4" r="2.1"/>',
+  /* What was said, two lines, with the steps between them folded to
+     three dots: a conversation's view of every step (`world-voice.md`). */
+  steps: '<path d="M3.75 5h12.5M3.75 15h12.5"/><circle cx="7" cy="10" r="0.9" fill="currentColor"/><circle cx="10" cy="10" r="0.9" fill="currentColor"/><circle cx="13" cy="10" r="0.9" fill="currentColor"/>',
   rows: '<circle cx="5" cy="5.75" r="0.9" fill="currentColor"/><circle cx="5" cy="10" r="0.9" fill="currentColor"/><circle cx="5" cy="14.25" r="0.9" fill="currentColor"/><path d="M8.25 5.75h7.5M8.25 10h7.5M8.25 14.25h7.5"/>',
   clock: '<circle cx="10" cy="10" r="6.25"/><path d="M10 6.4V10l2.5 1.6"/>',
   relay: '<circle cx="4.5" cy="10" r="1.5"/><circle cx="15.5" cy="10" r="1.5"/><path d="M6 10h2.25M11.75 10H14"/><rect x="8.25" y="8" width="3.5" height="4" rx="0.75"/>',

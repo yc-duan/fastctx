@@ -45,7 +45,7 @@ import { glyph } from "./glyphs";
 import { controlName } from "./control-queue";
 import { saidHtml } from "./said";
 import { effortLabel } from "./effort-slider";
-import { isThinking, runsOf, startsAgent, type Activity, type Block, type Entry, type Gap, type SendState, type ShownAttachment } from "./model";
+import { isThinking, runsOf, startsAgent, type Activity, type Block, type Entry, type Gap, type Say, type SendState, type ShownAttachment } from "./model";
 import { AgentBox } from "./agent-box";
 import { toldSaid, type AgentRun } from "./agents";
 import type { Conversation } from "./conversation";
@@ -68,6 +68,7 @@ import { AnchorLayout, AnchoredHeight } from "../longview";
 import { FEW, LongText, type LongLines, type LongTextWords, type OtherSource } from "./long-text";
 import { Said, WholeOutput, outputPaint, type OpenedLines } from "./run-output";
 import { replyOf } from "./async-ask";
+import "./say.css";
 import { chosenIn, drawQuestions, type QuestionWords } from "./question-card";
 import { StreamedProse } from "./stream-prose";
 import { TurnLine, time, type LineSays } from "./turn-line";
@@ -271,6 +272,14 @@ export class ConversationView {
   private measured = new Map<string, number>();
   private guesses = new Map<string, { stamp: number; width: number; height: number }>();
   private shown: Slot[] = [];
+  /** Which view of the conversation is drawn (`world-voice.md`, 两种看法):
+   *  only what was said, or every step. */
+  private mode: "said" | "steps" = "steps";
+  /** The block kept where it is on the screen across a change of view,
+   *  once. */
+  private pin: { slot: Slot; top: number } | null = null;
+  /** Blocks a change of view brought in, which come in once. */
+  private unfolding = new Set<string>();
   /** The spaces that stand for the blocks above and below those drawn. */
   private readonly above: HTMLElement;
   private readonly below: HTMLElement;
@@ -376,13 +385,14 @@ export class ConversationView {
   /** Brings the page up to the conversation as it now stands; `read` when
    *  what is new came as history rather than as it happened. */
   update(read = false): void {
-    const blocks = this.conversation.blocks();
+    const blocks = this.mode === "said" ? this.conversation.chatBlocks() : this.conversation.blocks();
     this.reading = read;
     // Words already on their way when the page is first drawn (the first
     // words of a conversation just begun) rose where they were sent.
     if (!this.live) for (const block of blocks) if (block.kind === "heard" && block.sending) this.flown.add(block.key);
     this.adopt(blocks);
     const drawn = this.lay(read);
+    this.unfolding.clear();
     const says = this.context.nested ? null : this.lineSays(blocks);
     // Words rising this frame land before the line beneath them is drawn.
     const flying = this.flights(blocks);
@@ -443,8 +453,11 @@ export class ConversationView {
     const scroller = this.context.scroller;
     const n = this.blocks.length;
     const following = this.context.following?.() ?? true;
-    // Where the reader is, before anything moves.
-    const anchor = following || moved ? null : this.anchorNow();
+    // Where the reader is, before anything moves: across a change of
+    // view, the block both views show that the reader was at.
+    const pinned = this.pin;
+    this.pin = null;
+    const anchor = following || moved ? null : (pinned ?? this.anchorNow());
     // An agent's box grows with what it holds, up to a height: it is laid
     // out for the tallest it can be, not for how tall it is so far.
     const view = this.context.nested ? Math.max(scroller.clientHeight, innerHeight) : scroller.clientHeight || innerHeight;
@@ -546,6 +559,28 @@ export class ConversationView {
       if (box.bottom > view.top) return box.top < view.bottom ? { slot, top: box.top } : null;
     }
     return null;
+  }
+
+  /** Shows only what was said, or every step: what both show stays where
+   *  it is on the screen, and what comes in comes in once. */
+  showing(mode: "said" | "steps"): void {
+    if (mode === this.mode) return;
+    const next = mode === "said" ? this.conversation.chatBlocks() : this.conversation.blocks();
+    const kept = new Set(next.map((block) => block.key));
+    const view = this.context.scroller.getBoundingClientRect();
+    this.pin = null;
+    for (const slot of this.shown) {
+      if (!kept.has(slot.key) || slot.block.kind === "gap" || !slot.element.isConnected) continue;
+      const box = slot.element.getBoundingClientRect();
+      if (box.bottom > view.top && box.top < view.bottom) {
+        this.pin = { slot, top: box.top };
+        break;
+      }
+    }
+    const before = new Set(this.blocks.map((block) => block.key));
+    this.unfolding = new Set(this.live ? next.filter((block) => !before.has(block.key)).map((block) => block.key) : []);
+    this.mode = mode;
+    this.update();
   }
 
   /** Where the first block would begin, in the scroll region's terms. */
@@ -940,6 +975,10 @@ export class ConversationView {
         return `${block.stamp}|${block.members.length}|${this.openStretches.has(block.key) ? "o" : ""}${block.agents ? `|${conversation.agentStamp}` : ""}`;
       case "prose": {
         const last = block.prose === "message" && conversation.lastMessageOf(block.turn) === block.key;
+        return `${block.stamp}|${last ? `l${conversation.turnEnded(block.turn) ? "e" : ""}${conversation.latestEnded() === block.turn ? "n" : ""}` : ""}${conversation.spokeIn(block.turn) ? "|s" : ""}`;
+      }
+      case "say": {
+        const last = conversation.lastSayOf(block.turn) === block.key;
         return `${block.stamp}|${last ? `l${conversation.turnEnded(block.turn) ? "e" : ""}${conversation.latestEnded() === block.turn ? "n" : ""}` : ""}`;
       }
       case "heard":
@@ -973,6 +1012,15 @@ export class ConversationView {
     this.reading = read;
     try {
       slot.signature = this.signature(block);
+      if (this.unfolding.delete(block.key)) {
+        element.classList.add("say-unfold");
+        element.addEventListener("animationend", () => element.classList.remove("say-unfold"), { once: true });
+      }
+      if (block.kind === "say") {
+        this.letGo(block.key);
+        element.innerHTML = this.said(block);
+        return;
+      }
       if (block.kind === "gap") {
         element.innerHTML = this.gapRow(block);
         return;
@@ -1028,6 +1076,39 @@ export class ConversationView {
     }
     const acts = this.answerActs(entry);
     if (slot.acts!.innerHTML !== acts) slot.acts!.innerHTML = acts;
+    // In a turn that said something to the user, its other words are its
+    // working notes, in the quieter ink (`world-voice.md`).
+    slot.element.classList.toggle("say-notes", this.conversation.spokeIn(entry.turn));
+  }
+
+  /** Words the agent said to the user: its answer, set as its words are,
+   *  an urgent one marked in the margin, the files it showed with them
+   *  below; under the turn's last, what can be done to the turn. */
+  private said(say: Say): string {
+    const { words } = this.context;
+    const mark = say.status === "urgent" ? `<span class="say-mark" title="${escape(words.sayUrgent)}"><span aria-hidden="true">※</span><span class="spoken">${escape(words.sayUrgent)}</span></span>` : "";
+    const nameOf = (file: { path: string }) => file.path.split(/[\\/]/).pop() || file.path;
+    const picture = (file: { path: string }) => /\.(png|jpe?g|gif|webp|bmp)$/i.test(nameOf(file));
+    const pictures = say.attachments.filter(picture);
+    const others = say.attachments.filter((file) => !picture(file));
+    // Pictures are drawn from the machine holding them, as an answer's are
+    // (`pictures.ts`); other files open from there when pressed.
+    const files =
+      (pictures.length
+        ? `<div class="say-pictures">${pictures
+            .map((file) => `<span class="prose-picture"><img data-picture data-path="${escape(file.path)}" data-machine="${escape(file.machine)}" alt="${escape(nameOf(file))}" tabindex="0"></span>`)
+            .join("")}</div>`
+        : "") +
+      (others.length
+        ? `<ul class="say-files">${others
+            .map((file) => `<li><a class="say-file" href="#" data-file="${escape(file.path)}" data-file-machine="${escape(file.machine)}">${glyph("file", 16)}<span class="say-file-name">${escape(nameOf(file))}</span></a></li>`)
+            .join("")}</ul>`
+        : "");
+    const last = !this.context.nested && this.conversation.lastSayOf(say.turn) === say.key && this.conversation.turnEnded(say.turn);
+    // The mark opens the first line, where it is read first.
+    const body = render(say.text);
+    const marked = mark && body.startsWith("<p>") ? `<p>${mark}${body.slice(3)}` : `${mark}${body}`;
+    return `<div class="say say-${say.status}"><div class="prose">${marked}</div>${files}</div>${last ? this.turnActs(say.turn) : ""}`;
   }
 
   /** The session is no longer followed: whether its model still works is
@@ -1208,7 +1289,7 @@ export class ConversationView {
   /** Whether a message is the last its turn said, where what was done to
    *  the turn is offered. */
   private lastOfTurn(entry: ProseEntry): boolean {
-    return entry.prose === "message" && this.conversation.lastMessageOf(entry.turn) === entry.key;
+    return entry.prose === "message" && this.conversation.lastMessageOf(entry.turn) === entry.key && !this.conversation.spokeIn(entry.turn);
   }
 
   /** The turn whose actions stay shown: the last that ended. */
@@ -1221,6 +1302,12 @@ export class ConversationView {
    *  stay shown; earlier ones come with the pointer. */
   private answerActs(entry: ProseEntry): string {
     if (this.context.nested || entry.writing || !this.lastOfTurn(entry) || !this.conversation.turnEnded(entry.turn)) return "";
+    return this.turnActs(entry.turn);
+  }
+
+  /** What can be done to a turn that ended, under what it last said. */
+  private turnActs(turn: string): string {
+    const entry = { turn };
     const { words } = this.context;
     const ended = this.conversation.get(`e:${entry.turn}`);
     const info = ended?.kind === "ended" ? turnInfo(ended.end, words, this.context.english) : [];

@@ -366,6 +366,7 @@ impl Call {
             | Self::StopJob { .. }
             | Self::Ask { .. }
             | Self::Message { .. }
+            | Self::Say { .. }
             | Self::Saw { .. }
             | Self::Stepped { .. }
             | Self::ClaudeConsent { .. }

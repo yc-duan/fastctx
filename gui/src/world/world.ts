@@ -71,6 +71,23 @@ export interface Now {
   last_compacted?: boolean;
   /** What the agent asked the user and has not had answered. */
   asked?: Asked;
+  /** What the agent last told the user through `message_user`
+   *  (`world-voice.md`). */
+  told?: Told;
+}
+
+/** Something the agent told the user through `message_user`. */
+export interface Told {
+  /** A new one is something new said. */
+  id: string;
+  at: Timestamp;
+  /** An answer to the user's words, or the agent's own that can wait
+   *  until the user looks, or that they should know soon. */
+  status: "reply" | "info" | "urgent";
+  /** Its start, as the agent wrote it. */
+  text: string;
+  /** The turn it was said in. */
+  turn?: string;
 }
 
 /** Something the agent asked the user: a request its turn waits on, or a

@@ -311,6 +311,7 @@ async fn fork(
         last_said: None,
         last_compacted: false,
         asked: None,
+        told: None,
     };
     if let Some(town) = &town {
         crate::town::access::check(node, &about.acting, town)?;

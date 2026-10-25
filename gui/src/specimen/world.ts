@@ -154,6 +154,28 @@ function touring(): ResidentNow[] {
   ];
 }
 
+/** With `?s=voice`, the conversation that worked through the night
+ *  (`voice.ts`), the last it told the user an urgent one. */
+function voicing(): ResidentNow[] {
+  if (new URLSearchParams(location.search).get("s") !== "voice") return [];
+  return [
+    resident("claude-v01c", "laptop", claude(), "mark50", "claude-opus-5-5", "14:10:00", {
+      now: {
+        owed: {},
+        answering: [],
+        activity: "idle",
+        since: at("16:58:20"),
+        turn: null,
+        trouble: null,
+        desk: false,
+        waiting_for_user: false,
+        title: "夜里的回归与训练",
+        told: { id: "told-3", at: at("16:41:30"), status: "urgent", text: "训练在 11,200 步之后发散了，loss 从 0.31 升到 4.7。我停了它，从第 11k 步的检查点把学习率减半重跑（run3b），前一千步正常。要不要把这个学习率写进默认配置，等你定。", turn: "t3" },
+      },
+    }),
+  ];
+}
+
 function many(): Node[] {
   return manyOnes().map((one, index) => {
     const linux = index % 3 !== 0;
@@ -348,6 +370,7 @@ export function specimenWorld(): { world: WorldState; now: Date; lastVisit: Date
               last_action: action("13:33:40", "laptop", "run", "cargo test -p ctrl overflow_repro", "exit 101"),
             }),
             ...touring(),
+            ...voicing(),
             resident("codex-7f3a", "laptop", codex(), "ingest", "gpt-6.1-sol", "08:40:00", {
               focus: { machines: [{ machine: "lab", folders: ["/srv/ingest", "/srv/ingest/fixtures"] }, { machine: "laptop", folders: [] }] },
               now: {

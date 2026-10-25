@@ -144,8 +144,8 @@
 }
 
 /* On a phone the line keeps the seal, the title, the machines as a mark and
-   a count, and the "⋯"; where it lives, finding and the details are a
-   press of the seal or the "⋯" away. */
+   a count, and the "⋯"; where it lives, finding, the choice of view and the
+   details are a press of the seal or the "⋯" away. */
 @media (max-width: 760px) {
   .who {
     gap: 10px;
@@ -174,7 +174,7 @@
     font-variant-numeric: tabular-nums;
   }
 
-  .page-head-actions:has(.talk-menu-toggle) .find-toggle {
+  .page-head-actions:has(.talk-menu-toggle) :is(.find-toggle, .view-steps) {
     display: none;
   }
 }

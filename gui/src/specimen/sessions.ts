@@ -11,6 +11,7 @@ import type { SessionEvent, Speaker } from "../world/events";
 import type { JsonValue } from "../world/wire";
 import { cut, hunk, leftOut, noted, printed, put, ran, same, wrote } from "./run-facts";
 import { tour } from "./tour";
+import { voice } from "./voice";
 
 export interface Specimen {
   title: string;
@@ -990,4 +991,4 @@ function controls(): Specimen {
   return { title: "迁移说明", agent: "claude", resident: "claude-c0ntrols", machine: "laptop", model: "claude-opus-5-5", town: "ingest", here: "desktop", events: s.recent() };
 }
 
-export const specimens: Record<string, () => Specimen> = { claude, codex, asking, steps, trips, tour, deeds, controls };
+export const specimens: Record<string, () => Specimen> = { claude, codex, asking, steps, trips, tour, deeds, controls, voice };

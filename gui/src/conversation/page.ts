@@ -142,6 +142,9 @@ export interface PageOptions {
   };
   /** Where the words being written are kept between visits. */
   draftKey?: string;
+  /** Where this device keeps which view the conversation was last read
+   *  in (`world-voice.md`, 两种看法). */
+  viewKey?: string;
   /** The input shared by every device with this conversation open, its
    *  words and queue kept by the node of the agent's machine; where it
    *  cannot be opened (a node of an older version), the page keeps its own. */
@@ -300,7 +303,7 @@ export class ConversationPage {
         <span class="who-home">${glyph("machine", 14)}<span>${escape(someone.assistFrom ? words.assistFrom(someone.assistFrom) : someone.machine)}</span></span>
         <span class="who-state" hidden></span>
       </div>`,
-        `<button class="icon-button find-toggle" type="button" aria-label="${escape(words.find.find)}" title="${escape(words.find.find)}">${glyph("search", 18)}</button>${
+        `<button class="icon-button view-steps" type="button" aria-pressed="false" aria-label="${escape(words.viewSteps)}" title="${escape(words.viewSteps)}">${glyph("steps", 18)}</button><button class="icon-button find-toggle" type="button" aria-label="${escape(words.find.find)}" title="${escape(words.find.find)}">${glyph("search", 18)}</button>${
           options.manage
             ? `<button class="icon-button talk-menu-toggle" type="button" aria-haspopup="menu" aria-expanded="false" aria-label="${escape(options.manage.words.more)}">${glyph("more", 20)}</button>`
             : ""
@@ -367,6 +370,7 @@ export class ConversationPage {
       this.drawFocus();
     }
     this.element.querySelector(".find-toggle")!.addEventListener("click", () => (this.finder.open ? this.finder.close() : this.finder.show()));
+    this.element.querySelector(".view-steps")!.addEventListener("click", () => this.toggleSteps());
     document.addEventListener("keydown", this.findKey);
     this.name = this.element.querySelector<HTMLElement>(".who-name")!;
     // Cut or whole again as the head narrows or widens, its hint follows.
@@ -540,6 +544,8 @@ export class ConversationPage {
       });
     }
 
+    // It opens in the view it was last read in here (`world-voice.md`).
+    this.viewing(this.storedView());
     // What was read of the conversation from the shell is drawn as it comes.
     options.conversation.changed = () => this.update({ read: true });
     this.latest = this.element.querySelector<HTMLButtonElement>(".to-latest")!;
@@ -1328,6 +1334,36 @@ export class ConversationPage {
     pop.innerHTML = "";
   }
 
+  /** Which view this conversation was last read in on this device: only
+   *  what was said, unless every step was asked for. */
+  private storedView(): "said" | "steps" {
+    if (!this.options.viewKey) return "said";
+    try {
+      return localStorage.getItem(this.options.viewKey) === "steps" ? "steps" : "said";
+    } catch {
+      return "said";
+    }
+  }
+
+  /** Shows only what was said, or every step; `keep` remembers it here. */
+  private viewing(mode: "said" | "steps", keep = false): void {
+    const { words } = this.options;
+    const toggle = this.element.querySelector<HTMLButtonElement>(".view-steps")!;
+    const steps = mode === "steps";
+    const label = steps ? words.viewSaid : words.viewSteps;
+    toggle.setAttribute("aria-pressed", String(steps));
+    toggle.setAttribute("aria-label", label);
+    toggle.title = label;
+    this.view.showing(mode);
+    if (!keep || !this.options.viewKey) return;
+    try {
+      if (steps) localStorage.setItem(this.options.viewKey, "steps");
+      else localStorage.removeItem(this.options.viewKey);
+    } catch {
+      // Not kept: the conversation opens in its usual view next time.
+    }
+  }
+
   private draft(): string | null {
     if (!this.options.draftKey) return null;
     try {
@@ -1373,12 +1409,23 @@ export class ConversationPage {
 
   private renaming = false;
 
-  /** Renames the conversation in its title, as from its "⋯". */
   /** Finds in the conversation: from the head's "⋯" on a phone. */
   showFind(): void {
     this.finder.show();
   }
 
+  /** Whether every step is shown, not only what was said. */
+  stepsShown(): boolean {
+    return this.element.querySelector(".view-steps")!.getAttribute("aria-pressed") === "true";
+  }
+
+  /** Shows every step, or only what was said again: by the head's button,
+   *  or from its "⋯" on a phone. */
+  toggleSteps(): void {
+    this.viewing(this.stepsShown() ? "said" : "steps", true);
+  }
+
+  /** Renames the conversation in its title, as from its "⋯". */
   startRename(): void {
     this.rename();
   }

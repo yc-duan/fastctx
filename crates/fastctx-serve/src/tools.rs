@@ -20,6 +20,8 @@ pub struct Machines {
     pub groups: Vec<fastctx_types::world::MachineGroup>,
     pub collab: Option<fastctx_types::collab::Offered>,
     pub scratch: fastctx_types::scratch::Descriptions,
+    /// Whether the session speaks to the user through `message_user`.
+    pub speaks: bool,
 }
 
 impl Machines {
@@ -63,6 +65,9 @@ pub fn definitions(writes_off: bool, woken: bool, codex: bool, machines: Option<
     if let Some(collab) = machines.and_then(|machines| machines.collab.as_ref()) {
         tools.push(ask_colleague_definition(collab));
         tools.push(message_colleague_definition());
+    }
+    if machines.is_some_and(|machines| machines.speaks) {
+        tools.push(message_user_definition());
     }
     for tool in &mut tools {
         // Claude Code counts UTF-16 code units here. An answer of BUDGET
@@ -333,6 +338,48 @@ fn message_colleague_definition() -> Value {
             "destructiveHint": false,
             "idempotentHint": false,
             "openWorldHint": true
+        }
+    })
+}
+
+fn message_user_definition() -> Value {
+    json!({
+        "name": fastctx_types::voice::TOOL,
+        "description": fastctx_types::voice::DESCRIPTION,
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "message": {
+                    "type": "string",
+                    "description": "What the user reads, in Markdown."
+                },
+                "status": {
+                    "type": "string",
+                    "enum": ["reply", "info", "urgent"],
+                    "description": "reply answers what the user just said; info and urgent are yours to start, urgent when they should know soon."
+                },
+                "attachments": {
+                    "type": "array",
+                    "maxItems": fastctx_types::voice::ATTACHMENTS_MOST,
+                    "description": "Files shown with the message.",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "machine": { "type": "string", "description": "The machine the file is on, as `on` names it." },
+                            "path": { "type": "string", "description": "Its path there." }
+                        },
+                        "required": ["machine", "path"]
+                    }
+                }
+            },
+            "required": ["message", "status"]
+        },
+        "annotations": {
+            "title": "Message the user",
+            "readOnlyHint": false,
+            "destructiveHint": false,
+            "idempotentHint": false,
+            "openWorldHint": false
         }
     })
 }

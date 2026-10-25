@@ -350,6 +350,15 @@ pub enum Call {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         login: Option<crate::collab::Caller>,
     },
+    /// `message_user`: words of `resident` for the user (`world-voice.md`).
+    /// Older nodes do not list the tool, so no session calls it there.
+    Say {
+        resident: ResidentId,
+        message: String,
+        status: crate::residents::TellStatus,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        attachments: Vec<crate::voice::Attachment>,
+    },
     /// Tells what one of the World's own commands did, from inside the job
     /// whose script gave it (`run_facts::RunStep`); the node names the job's
     /// machine. Older nodes do not know it, and the command goes on.
@@ -888,6 +897,8 @@ pub enum Reply {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         delivery: Option<crate::NoticeId>,
     },
+    /// What `Say` asked to tell the user is kept for them.
+    Told,
     Opened {
         resident: Address,
         landed: Landed,
@@ -1020,6 +1031,10 @@ pub enum Reply {
         collab: Option<crate::collab::Offered>,
         #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
         scratch: crate::scratch::Descriptions,
+        /// Whether the session speaks to the user through `message_user`:
+        /// one the World started for them (`world-voice.md`).
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        speaks: bool,
     },
     /// A job stopped, or found already ended: on `machine`, as its record
     /// now stands.

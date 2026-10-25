@@ -12714,6 +12714,13 @@
                         "允许",
                         "不用"
                       ]
+                    },
+                    "told": {
+                      "id": "told-1",
+                      "at": "2026-10-04T12:06:07Z",
+                      "status": "urgent",
+                      "text": "训练在 11,200 步之后发散了。",
+                      "turn": "turn-3"
                     }
                   },
                   "last_action": null,
@@ -14248,6 +14255,13 @@
                         "允许",
                         "不用"
                       ]
+                    },
+                    "told": {
+                      "id": "told-1",
+                      "at": "2026-10-04T12:06:07Z",
+                      "status": "urgent",
+                      "text": "训练在 11,200 步之后发散了。",
+                      "turn": "turn-3"
                     }
                   },
                   "last_action": null,
@@ -14781,6 +14795,13 @@
                         "允许",
                         "不用"
                       ]
+                    },
+                    "told": {
+                      "id": "told-1",
+                      "at": "2026-10-04T12:06:07Z",
+                      "status": "urgent",
+                      "text": "训练在 11,200 步之后发散了。",
+                      "turn": "turn-3"
                     }
                   },
                   "last_action": null,

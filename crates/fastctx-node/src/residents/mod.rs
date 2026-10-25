@@ -1044,6 +1044,7 @@ pub fn idle(since: Timestamp) -> Now {
         last_said: None,
         last_compacted: false,
         asked: None,
+        told: None,
     }
 }
 

@@ -1499,6 +1499,7 @@ pub async fn open_here(
         last_said: None,
         last_compacted: false,
         asked: None,
+        told: None,
     };
     if let Some(town) = &town {
         crate::town::access::check(node, &about.acting, town)?;
@@ -1642,8 +1643,12 @@ pub(crate) fn settings_json(id: &ResidentId) -> String {
             "FASTCTX_CONVERSATION": id.as_str(),
         },
         "permissions": {
+            // The World's own tools take these places: its shell and files,
+            // the plan, the goal, `message_user` (`world-voice.md`), and a
+            // sentinel for any later wake-up (`world-senses.md`).
             "deny": ["Bash", "PowerShell", "Read", "Write", "Edit", "MultiEdit", "NotebookEdit", "Grep", "Glob",
-                "TodoWrite", "TaskCreate", "TaskUpdate", "TaskList", "TaskGet", "ProposeGoal"],
+                "TodoWrite", "TaskCreate", "TaskUpdate", "TaskList", "TaskGet", "ProposeGoal",
+                "SendUserMessage", "PushNotification", "CronCreate", "CronDelete", "CronList", "ScheduleWakeup"],
         },
         "worktree": { "bgIsolation": "none" },
     });

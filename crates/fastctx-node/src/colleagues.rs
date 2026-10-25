@@ -269,6 +269,7 @@ pub async fn ask_here(
         last_said: None,
         last_compacted: false,
         asked: None,
+        told: None,
     };
     if let Some(town) = &town {
         crate::town::access::check(node, &about.acting, town)?;
@@ -393,7 +394,7 @@ pub async fn thread_spec(
     let name = match origin {
         Origin::Colleague { label, .. } => Some(label.clone()).filter(|label| !label.trim().is_empty()),
         Origin::User => {
-            tools.extend(["ask_colleague", "message_colleague"]);
+            tools.extend(["ask_colleague", "message_colleague", fastctx_types::voice::TOOL]);
             None
         }
     };

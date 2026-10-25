@@ -1276,6 +1276,10 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
                 .await
                 .map(|(to, landed)| Reply::Spoken { to, landed, delivery: None })
         }
+        Call::Say { resident, message, status, attachments } => {
+            present(node, &resident)?;
+            crate::voice::say(node, &resident, &message, status, &attachments).map(|()| Reply::Told)
+        }
         Call::MemorySettings { hub, account, enabled } => {
             users_voice(node, peer)?;
             crate::memory::settings::call(node, hub, account, enabled).await.map(Reply::MemorySettings)
@@ -1543,6 +1547,7 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
                     groups: Vec::new(),
                     collab: None,
                     scratch: Default::default(),
+                    speaks: false,
                 });
             }
             machines(node, resident.as_ref(), login.as_ref(), scratch).await
@@ -1856,6 +1861,7 @@ async fn machines(
                     groups: Vec::new(),
                     collab: None,
                     scratch: Default::default(),
+                    speaks: false,
                 });
             }
         },
@@ -1880,7 +1886,8 @@ async fn machines(
         }
         None => Default::default(),
     };
-    Ok(Reply::Machines { here, others, groups, collab, scratch })
+    let speaks = resident.is_some_and(|id| crate::voice::speaks(node, id));
+    Ok(Reply::Machines { here, others, groups, collab, scratch, speaks })
 }
 
 /// `fastctx nodes`: this computer, and hub by hub the machines whoever asks

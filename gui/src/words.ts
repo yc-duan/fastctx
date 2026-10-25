@@ -143,6 +143,11 @@ export interface Words {
   forkPartial: string;
   /** Turns not held, before everything held and between two parts. */
   turnsEarlier(turns: number): string;
+  /** Said beside words the agent marked urgent for the user (`world-voice.md`). */
+  sayUrgent: string;
+  /** The two views of a conversation: only what was said, or every step. */
+  viewSaid: string;
+  viewSteps: string;
   turnsBetween(turns: number): string;
   /** Back to the newest, from far up a conversation. */
   toLatest: string;
@@ -436,6 +441,9 @@ export const zh: Words = {
   rewound: (files) => (files ? "已回到这一轮之前" : "已回到这一轮之前，改过的文件没有还原"),
   forkPartial: "已分叉，部分内容没带过去",
   turnsEarlier: (turns) => (turns > 0 ? `更早的 ${turns} 轮` : "更早的记录"),
+  sayUrgent: "要紧",
+  viewSaid: "只看对话",
+  viewSteps: "显示每一步",
   turnsBetween: (turns) => (turns > 0 ? `中间还有 ${turns} 轮` : "中间还有记录"),
   toLatest: "回到最新",
   stepsEarlier: (steps) => `更早的 ${steps} 步`,
@@ -763,6 +771,9 @@ export const en: Words = {
   rewound: (files) => (files ? "Back to before this turn" : "Back to before this turn; changed files were not restored"),
   forkPartial: "Forked; part of it did not come over",
   turnsEarlier: (turns) => (turns === 1 ? "1 earlier turn" : turns > 0 ? `${turns} earlier turns` : "Earlier turns"),
+  sayUrgent: "Urgent",
+  viewSaid: "Show only what was said",
+  viewSteps: "Show every step",
   turnsBetween: (turns) => (turns === 1 ? "1 more turn between" : turns > 0 ? `${turns} more turns between` : "More turns between"),
   toLatest: "Back to latest",
   stepsEarlier: (steps) => (steps === 1 ? "1 earlier step" : `${steps} earlier steps`),

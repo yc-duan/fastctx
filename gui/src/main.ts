@@ -914,6 +914,7 @@ function talkManage(address: Address, page: () => ConversationPage, markdown?: (
         anchor,
         rename: () => page().startRename(),
         find: () => page().showFind(),
+        steps: { shown: () => page().stepsShown(), toggle: () => page().toggleSteps() },
         deleted: () => replacePlace(link({ kind: "home" })),
         ...(markdown
           ? {
@@ -1456,7 +1457,7 @@ function specimenTalk(address: Address): KeepablePage {
   const name = address.resident;
   const sample: Specimen & { later?: SessionEvent[]; rate?: number; timed?: boolean } = name.startsWith("stream")
     ? streamSpecimen(params)
-    : (specimens[name === "codex-a51c" ? "asking" : name === "claude-5teps" ? "steps" : name === "trips-1" ? "trips" : name === "deeds-1" ? "deeds" : name === "claude-t0ur" ? "tour" : name === "claude-c0ntrols" ? "controls" : name.startsWith("codex") ? "codex" : "claude"] ?? specimens.claude!)();
+    : (specimens[name === "codex-a51c" ? "asking" : name === "claude-5teps" ? "steps" : name === "trips-1" ? "trips" : name === "deeds-1" ? "deeds" : name === "claude-t0ur" ? "tour" : name === "claude-c0ntrols" ? "controls" : name === "claude-v01c" ? "voice" : name.startsWith("codex") ? "codex" : "claude"] ?? specimens.claude!)();
   const conversation = new Conversation();
   conversation.thoughtWords = sample.agent !== "codex";
   // A specimen keeps its whole history as a shell would, and its page holds
@@ -1580,6 +1581,7 @@ function specimenTalk(address: Address): KeepablePage {
       },
     },
     draftKey: `draft:${address.resident}@${address.machine}`,
+    viewKey: `view:${address.resident}@${address.machine}`,
     composer: () => ComposerSession.open(address, { transport: sharedInput() }),
     files: { words: composerWords.files, find: specimenFiles },
     manage: talkManage(address, () => page, exported(conversation, { agent: sample.agent === "claude" ? "Claude" : "Codex", machine: sample.machine, model: sample.model, project: sample.town })),
@@ -1793,6 +1795,7 @@ function liveTalk(address: Address, inPanel = false): KeepablePage {
       open: openOutside,
     },
     draftKey: `draft:${address.resident}@${address.machine}`,
+    viewKey: `view:${address.resident}@${address.machine}`,
     composer: () => ComposerSession.open(address),
     focus: {
       words: focusWords,
@@ -2841,6 +2844,8 @@ function specimenPlace(): Place | null {
       return { kind: "talk", address: { resident: "deeds-1", machine: "laptop" } };
     case "tour":
       return { kind: "talk", address: { resident: "claude-t0ur", machine: "laptop" } };
+    case "voice":
+      return { kind: "talk", address: { resident: "claude-v01c", machine: "laptop" } };
     case "decision":
       return { kind: "file", machine: "desktop", path: "D:/work/mark50/specs/控制环.md", tail: false };
     case "log":

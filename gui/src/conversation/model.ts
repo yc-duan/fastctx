@@ -169,7 +169,43 @@ export interface Gap {
   loading: boolean;
 }
 
-export type Block = Entry | Activity | Gap;
+/** What the agent said to the user through the World's `message_user`
+ *  (`world-voice.md`): drawn as its answer, apart from the work around it. */
+export interface Say {
+  kind: "say";
+  key: string;
+  item: string;
+  turn: string;
+  stamp: number;
+  /** Where in its fold the call that said it was. */
+  at: number;
+  text: string;
+  status: "reply" | "info" | "urgent";
+  attachments: { machine: string; path: string }[];
+}
+
+export type Block = Entry | Activity | Gap | Say;
+
+/** Whether `server` names the World's own tools, as either host lists them:
+ *  Codex as they are served, Claude Code under its plugin. */
+function worldServer(server: string | null): boolean {
+  return server === "fastctx" || (server?.endsWith("_fastctx") ?? false);
+}
+
+/** The words for the user a `message_user` call carries; null for any other
+ *  tool, and for one that failed, which reached no one. */
+export function sayOf(entry: Extract<Entry, { kind: "tool" }>): Say | null {
+  const tool = entry.tool;
+  if (tool.name !== "message_user" || !worldServer(tool.server) || tool.status === "failed") return null;
+  const input = (tool.input && typeof tool.input === "object" && !Array.isArray(tool.input) ? tool.input : {}) as Record<string, JsonValue>;
+  const status = input.status === "info" || input.status === "urgent" ? input.status : "reply";
+  const attachments = Array.isArray(input.attachments)
+    ? input.attachments.flatMap((one) =>
+        one && typeof one === "object" && !Array.isArray(one) && typeof one.machine === "string" && typeof one.path === "string" ? [{ machine: one.machine, path: one.path }] : [],
+      )
+    : [];
+  return { kind: "say", key: entry.key, item: entry.item, turn: entry.turn, stamp: entry.stamp, at: entry.at, text: typeof input.message === "string" ? input.message : "", status, attachments };
+}
 
 type Keyed = Extract<Entry, { item: string; turn: string }>;
 type Heard = Extract<Entry, { kind: "heard" }>;
@@ -187,6 +223,9 @@ interface Derived {
   /** Whether anything of the agent's own has been shown: a turn's work or
    *  words, its end, a request. */
   heardFrom: boolean;
+  /** The turns in which it said something to the user through
+   *  `message_user`: the rest of their words are its working notes. */
+  spoke: Set<string>;
 }
 
 export class Fold {
@@ -1386,6 +1425,7 @@ export class Fold {
   private derived(): Derived {
     if (this.derivedCache?.clock === this.clock) return this.derivedCache;
     const lastMessage = new Map<string, string>();
+    const spoke = new Set<string>();
     let latest: string | null = null;
     let moving = false;
     let waiting = false;
@@ -1399,6 +1439,7 @@ export class Fold {
           break;
         case "tool":
           if (entry.ended === null) moving = true;
+          if (sayOf(entry)) spoke.add(entry.turn);
           heardFrom = true;
           break;
         case "heard":
@@ -1429,8 +1470,14 @@ export class Fold {
           break;
       }
     }
-    this.derivedCache = { clock: this.clock, lastMessage, latest, moving, waiting, heardFrom };
+    this.derivedCache = { clock: this.clock, lastMessage, latest, moving, waiting, heardFrom, spoke };
     return this.derivedCache;
+  }
+
+  /** Whether the agent said something to the user in `turn` through
+   *  `message_user`. */
+  spokeIn(turn: string): boolean {
+    return this.derived().spoke.has(turn);
   }
 
   /** The entries as they are laid out: what a turn did between the things
@@ -1472,6 +1519,14 @@ export class Fold {
       if (entry.kind === "heard" && entry.notice?.kind === "job_ended" && entry.from?.kind !== "user") continue;
       if (entry.kind === "heard" && entry.sending !== undefined && entry.intoTurn) {
         below.push(entry);
+        continue;
+      }
+      // Words the agent said to the user stand on their own, as its answer,
+      // and divide its work as any words said do (`world-voice.md`).
+      const said = entry.kind === "tool" ? sayOf(entry) : null;
+      if (said) {
+        group = null;
+        blocks.push(said);
         continue;
       }
       const activity = entry.kind === "tool" || entry.kind === "activity" || (entry.kind === "prose" && entry.prose === "thinking");

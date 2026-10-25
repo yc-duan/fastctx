@@ -1,0 +1,84 @@
+/* What the agent said to the user (`world-voice.md`): set as an answer is,
+   in the reading ink. An urgent one opens with a terracotta ※, the mark
+   the plan uses for what must not be missed. In a turn that said
+   something, the agent's other words are its working notes, in the
+   quieter ink: one face, one size, told apart by ink alone. */
+
+.say-mark {
+  margin-right: 0.3em;
+  color: var(--accent);
+}
+
+.say-notes .prose {
+  color: var(--text-2);
+}
+
+/* The pictures it showed, drawn from the machines holding them, and the
+   other files, each opened from its machine when pressed. */
+.say-pictures {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+}
+
+.say-pictures .prose-picture img {
+  max-width: min(100%, 420px);
+}
+
+.say-files {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin: var(--space-3) 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.say-file {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  max-width: 280px;
+  min-height: 32px;
+  padding: 4px 12px;
+  border-radius: var(--radius-m);
+  background: var(--fill);
+  color: var(--text);
+  font-size: var(--size-text);
+  text-decoration: none;
+}
+
+.say-file:hover {
+  background: color-mix(in srgb, var(--fill) 80%, var(--text-strong));
+}
+
+.say-file-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media (pointer: coarse) {
+  .say-file {
+    min-height: 44px;
+  }
+}
+
+/* The page's switch between what was said and every step: pressed, every
+   step is shown, and the button stands in the chosen wash. */
+.view-steps[aria-pressed="true"] {
+  background: var(--accent-wash);
+  color: var(--text-strong);
+}
+
+/* What a change of view brings in comes in once, around what stays. */
+.say-unfold {
+  opacity: var(--rise);
+  translate: 0 calc((1 - var(--rise)) * 4px);
+  animation: rise var(--enter) var(--fold-easing) both;
+}
+
+:root[data-reduced] .say-unfold {
+  animation: none;
+}

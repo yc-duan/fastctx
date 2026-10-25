@@ -74,6 +74,7 @@ pub mod uninstall;
 pub mod update;
 pub mod usage;
 pub mod usage_calls;
+pub mod voice;
 pub mod world;
 pub mod write;
 

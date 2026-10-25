@@ -149,6 +149,13 @@ fn residents() -> Vec<ResidentNow> {
                     }),
                     _ => None,
                 },
+                told: (i == 1).then(|| fastctx_types::residents::Told {
+                    id: "told-1".into(),
+                    at: at(),
+                    status: fastctx_types::residents::TellStatus::Urgent,
+                    text: "训练在 11,200 步之后发散了。".into(),
+                    turn: Some("turn-3".into()),
+                }),
             }),
             last_action: (i == 0).then(|| Action {
                 turn: None, at: at(),
