@@ -12704,6 +12704,7 @@
                     "last_tool_at": "2026-10-04T12:06:07Z",
                     "first_words": "把端口对拍一遍",
                     "last_said": "两边一致，共 12 个端口。",
+                    "last_heard_user": true,
                     "asked": {
                       "id": "msg-7",
                       "at": "2026-10-04T12:06:07Z",
@@ -14245,6 +14246,7 @@
                     "last_tool_at": "2026-10-04T12:06:07Z",
                     "first_words": "把端口对拍一遍",
                     "last_said": "两边一致，共 12 个端口。",
+                    "last_heard_user": true,
                     "asked": {
                       "id": "msg-7",
                       "at": "2026-10-04T12:06:07Z",
@@ -14785,6 +14787,7 @@
                     "last_tool_at": "2026-10-04T12:06:07Z",
                     "first_words": "把端口对拍一遍",
                     "last_said": "两边一致，共 12 个端口。",
+                    "last_heard_user": true,
                     "asked": {
                       "id": "msg-7",
                       "at": "2026-10-04T12:06:07Z",

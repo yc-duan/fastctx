@@ -1,8 +1,10 @@
 // When the World calls the user from outside the window: an agent asked
-// them something, a conversation they opened finished a turn, or a device
-// or a machine came into one of their accounts, while the window is not in
-// front of them. The title says who; the body is what the agent said, its
-// question or its reply, never a summary. A question asked without waiting
+// them something, told them something through `message_user` (a reply, or
+// something urgent; what can wait is not pushed), a turn the user's words
+// began ended without telling them anything, or a device or a machine came
+// into one of their accounts, while the window is not in front of them
+// (`world-voice.md`). The title says who; the body is what the agent said,
+// its question or its reply, never a summary. A question asked without waiting
 // with a few answers to choose from carries them as buttons, answered from
 // the notification without opening the window. A notification is taken
 // back once what it called for no longer holds, and a click on it opens
@@ -23,6 +25,8 @@ export interface PresenceWords {
    *  `waiting` when its host said no more than that it waits. */
   asked(who: string, what: Asked["what"] | "waiting"): string;
   finished(who: string): string;
+  /** The agent told the user something they should know soon. */
+  urgent(who: string): string;
   /** What a turn that compacted the conversation and said nothing else says. */
   compacted: string;
   open: string;
@@ -201,7 +205,7 @@ export function startPresence(options: PresenceOptions): void {
   });
 
   // What each conversation was last seen doing; the first look only learns.
-  let seen: Map<string, { asked: string | null; busy: boolean }> | null = null;
+  let seen: Map<string, { asked: string | null; busy: boolean; told: string | null }> | null = null;
   const shown = new Map<string, string>();
   const key = (r: ResidentNow) => `${r.about.id}@${r.about.machine}`;
 
@@ -210,7 +214,7 @@ export function startPresence(options: PresenceOptions): void {
     if (!world) return;
     const residents = residentsOf(world);
     const before = seen;
-    seen = new Map(residents.map((r) => [key(r), { asked: askedKey(r.now), busy: r.now?.activity === "busy" }]));
+    seen = new Map(residents.map((r) => [key(r), { asked: askedKey(r.now), busy: r.now?.activity === "busy", told: r.now?.told?.id ?? null }]));
     for (const r of residents) {
       const id = key(r);
       const now = seen.get(id)!;
@@ -231,7 +235,18 @@ export function startPresence(options: PresenceOptions): void {
           route: talkLink(address),
           actions: buttons.length ? buttons.map((option, index) => ({ id: `answer:${index}`, title: option, quiet: true })) : [{ id: "open", title: words.open }],
         });
-      } else if (was?.busy && !now.busy && !now.asked && r.about.origin.kind === "user" && r.about.world_started) {
+      } else if (was && now.told && now.told !== was.told && r.now?.told && r.now.told.status !== "info") {
+        // What can wait is not pushed: it waits on the home page. Only what
+        // is said while the conversation is in view of this window: one that
+        // first appears is learned, not called about.
+        const told = r.now.told;
+        void call(`${id}:told`, {
+          title: told.status === "urgent" ? words.urgent(options.someone(r)) : words.finished(options.someone(r)),
+          body: told.text,
+          route: talkLink(address),
+          actions: [{ id: "open", title: words.open }],
+        });
+      } else if (was?.busy && !now.busy && !now.asked && r.about.origin.kind === "user" && r.about.world_started && endedUntold(r.now)) {
         // Only conversations opened through the World: one the user opened
         // in an editor or an app is in front of them there.
         void call(`${id}:finished`, {
@@ -243,6 +258,14 @@ export function startPresence(options: PresenceOptions): void {
       }
     }
   });
+
+  /** Whether the turn that just ended stands for an answer: one the user's
+   *  words began that told them nothing through `message_user`. A node that
+   *  does not say whose words began it is taken as before. */
+  function endedUntold(now: ResidentNow["now"]): boolean {
+    if (!now || now.last_heard_user === false) return false;
+    return !now.told?.turn || now.told.turn !== now.last_turn;
+  }
 
   /** Calls the user, unless the window is in front of them already. */
   async function call(id: string, notice: { title: string; body: string; route: string; actions: { id: string; title: string; quiet?: boolean }[] }): Promise<void> {

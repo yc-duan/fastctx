@@ -20,7 +20,7 @@ use fastctx_types::layout::ConversationDir;
 use fastctx_types::residents::{
     Delivery, LAST_SAID_CHARS, MessageKind, MessageLine, Notice, Origin, Owing, Pending, Trouble,
 };
-use fastctx_types::session::{Happened, Health, SessionChange, SessionEvent, TurnEnd, TurnHow};
+use fastctx_types::session::{Happened, Health, SessionChange, SessionEvent, Speaker, TurnEnd, TurnHow};
 use fastctx_types::{Address, ResidentId};
 use jiff::Timestamp;
 
@@ -369,7 +369,12 @@ async fn finish_at(
         (how, Some(reason)) => Some(Trouble { at: finished.at, text: format!("turn {how}: {reason}") }),
         (how, None) => Some(Trouble { at: finished.at, text: format!("turn {how}") }),
     };
-    node.residents.take_owed(&node.world, id, turn, &node.machine(), trouble)?;
+    // Words the user sent that this turn took, at its start or beside a
+    // tool's result.
+    let heard_user = accepted.iter().flat_map(|handover| &handover.inputs).any(|input| {
+        matches!(input.delivery.notice, Notice::Words { from: Speaker::User { .. }, .. } | Notice::Attached { .. })
+    });
+    node.residents.take_owed(&node.world, id, turn, &node.machine(), trouble, heard_user)?;
     crate::turn_evidence::ended(node, id, turn);
     node.idle_probes.touched(id);
     node.watchers.changed.notify_one();

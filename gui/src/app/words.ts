@@ -356,6 +356,7 @@ export const zhPresence: PresenceWords = {
   asked: (who, what) =>
     `${who} ${{ answer: "问你", command: "想运行命令", change: "想改文件", tool: "想用工具", plan: "想按计划动手", form: "等你填写", other: "等你允许", waiting: "等你回复" }[what]}`,
   finished: (who) => `${who} 回复了`,
+  urgent: (who) => `${who} 有要紧的事`,
   compacted: "对话已压缩",
   open: "打开",
   stop: "停止",
@@ -386,6 +387,7 @@ export const enPresence: PresenceWords = {
   asked: (who, what) =>
     `${who} ${{ answer: "asks", command: "wants to run a command", change: "wants to change files", tool: "wants to use a tool", plan: "wants to start on its plan", form: "needs a form filled in", other: "needs your OK", waiting: "is waiting for your reply" }[what]}`,
   finished: (who) => `${who} replied`,
+  urgent: (who) => `${who} has something urgent`,
   compacted: "Conversation compacted",
   open: "Open",
   stop: "Stop",

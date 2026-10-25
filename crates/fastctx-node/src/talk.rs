@@ -935,6 +935,7 @@ pub async fn open_here(
         first_words: None,
         last_said: None,
         last_compacted: false,
+        last_heard_user: None,
         asked: None,
         told: None,
     };

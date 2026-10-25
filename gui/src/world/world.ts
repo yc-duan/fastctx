@@ -50,6 +50,8 @@ export interface Now {
   activity: Activity;
   since: Timestamp;
   turn: string | null;
+  /** The latest turn that ended. */
+  last_turn?: string;
   owed: Record<string, Address[]>;
   answering: Address[];
   trouble: Trouble | null;
@@ -69,6 +71,9 @@ export interface Now {
   /** The latest turn that ended compacted the context and said nothing
    *  after it: what a notification of that turn says. */
   last_compacted?: boolean;
+  /** Whether the latest turn that ended took words the user sent; absent
+   *  from a node that does not say (`world-voice.md`). */
+  last_heard_user?: boolean;
   /** What the agent asked the user and has not had answered. */
   asked?: Asked;
   /** What the agent last told the user through `message_user`

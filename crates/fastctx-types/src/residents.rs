@@ -334,6 +334,12 @@ pub struct Now {
     /// after it: what a notification of that turn says.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub last_compacted: bool,
+    /// Whether the latest turn that ended took words the user sent: its end
+    /// stands for an answer it gave without `message_user`, while a turn the
+    /// World started that said nothing tells the user nothing
+    /// (`world-voice.md`). None from a node that does not say.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_heard_user: Option<bool>,
     /// What the agent asked the user and has not had answered: what a
     /// notification of it says.
     #[serde(default, skip_serializing_if = "Option::is_none")]

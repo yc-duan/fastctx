@@ -878,6 +878,7 @@ impl Residents {
         turn: &str,
         here_machine: &MachineName,
         trouble: Option<Trouble>,
+        heard_user: bool,
     ) -> io::Result<Vec<Address>> {
         let mut state = self.lock();
         let Some(origin) = state.live.get(id).map(|live| live.about.origin.clone()) else {
@@ -904,6 +905,7 @@ impl Residents {
                 // stands.
                 if current {
                     now.last_turn = Some(turn.to_string());
+                    now.last_heard_user = Some(heard_user);
                     now.turn = None;
                     now.waiting_for_user = false;
                     now.waiting_since = None;
@@ -1052,6 +1054,7 @@ pub fn idle(since: Timestamp) -> Now {
         first_words: None,
         last_said: None,
         last_compacted: false,
+        last_heard_user: None,
         asked: None,
         told: None,
     }

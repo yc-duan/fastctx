@@ -19,9 +19,10 @@ export const onPhone = (): boolean => inShell() && /Android/i.test(navigator.use
 const call = <T>(command: string, args?: Record<string, unknown>) => invoke<T>(`plugin:android-world|${command}`, args);
 
 interface Rule {
-  when: "asked" | "finished";
+  when: "asked" | "told" | "finished";
   userStartedOnly: boolean;
-  /** One title, or one for each thing an agent may ask. */
+  /** One title, or one for each thing an agent may ask, or for each way
+   *  it tells the user something worth a call. */
   title: string | Record<string, string>;
   /** The body of a turn that compacted the conversation and said nothing else. */
   compacted?: string;
@@ -31,13 +32,16 @@ const ASKED_FOR = ["answer", "command", "change", "tool", "plan", "form", "other
 
 /** Gives the phone the rules it calls the user by, in the interface's
  *  words, or turns them off. The same rules as a computer's: an agent that
- *  asks the user something, and a conversation the user opened through the
- *  World that finishes. The phone writes the body from the agent's own
- *  words, as a computer does. */
+ *  asks the user something, one that tells them a reply or something
+ *  urgent (what can wait is not pushed), and a turn the user's words began
+ *  in a conversation opened through the World that ends without telling
+ *  them anything. The phone writes the body from the agent's own words, as
+ *  a computer does. */
 export function configurePhone(words: PresenceWords, enabled: boolean): Promise<void> {
   const who = "{who}";
   const rules: Rule[] = [
     { when: "asked", userStartedOnly: false, title: Object.fromEntries(ASKED_FOR.map((what) => [what, words.asked(who, what)])) },
+    { when: "told", userStartedOnly: true, title: { reply: words.finished(who), urgent: words.urgent(who) } },
     { when: "finished", userStartedOnly: true, title: words.finished(who), compacted: words.compacted },
   ];
   return call("configure", { configuration: { enabled, agentNames: { codex: "Codex", claude: "Claude" }, rules } });
