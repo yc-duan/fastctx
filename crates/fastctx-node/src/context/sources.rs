@@ -128,7 +128,8 @@ pub(crate) async fn map(
     };
     // A change with no one else's document in it is this conversation's own.
     let own = told.as_ref().is_some_and(Vec::is_empty);
-    let change = Change { by: own.then_some(&me), version: "", fact: &fact, full: told.is_none() };
+    let version = serde_json::to_string(&after).map_err(|error| Failure::new(error.to_string()))?;
+    let change = Change { by: own.then_some(&me), version: &version, fact: &fact, full: told.is_none() };
     let text = snapshot.as_ref().map(|(text, _)| text.as_str()).unwrap_or("");
     // Opening instructions are prepared before the conversation is born.
     if node.residents.about(id).is_some() {
@@ -136,8 +137,7 @@ pub(crate) async fn map(
     } else {
         storage::set(&node.world, id, "map", text, change)
     }
-    .map_err(|error| Failure::new(error.to_string()))?;
-    map_cursor::keep(&directory, &after).map_err(|error| Failure::new(error.to_string()))
+    .map_err(|error| Failure::new(error.to_string()))
 }
 
 /// Which version of each project document a conversation's map has shown it.
@@ -165,7 +165,7 @@ mod map_cursor {
     }
 
     fn path(directory: &ConversationDir) -> std::path::PathBuf {
-        directory.books().join("map-cursor.json")
+        directory.books().join("map-heard.json")
     }
     pub fn load(directory: &ConversationDir) -> io::Result<Option<Cursor>> {
         match std::fs::read(path(directory)) {
@@ -195,6 +195,10 @@ mod map_cursor {
 }
 
 pub(super) fn observed(node: &Node, id: &ResidentId, receipt: &Receipt) -> io::Result<()> {
+    if let Some(version) = receipt.versions.get("map").filter(|version| !version.is_empty()) {
+        let cursor = serde_json::from_str(version).map_err(io::Error::other)?;
+        map_cursor::keep(&node.world.conversation(id), &cursor)?;
+    }
     if let Some(version) = receipt.versions.get("plan").filter(|version| !version.is_empty()) {
         crate::plan::context_seen(node, id, version).map_err(|error| io::Error::other(error.message))?;
     }
