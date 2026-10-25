@@ -394,9 +394,21 @@ export class Conversation {
     if (this.chatCache?.version === version) return this.chatCache.blocks;
     const asked = new Set<string>();
     const spoke = new Set<string>();
+    // A command the user gave begins the next turn, unless words do: the
+    // host keeps its own line for the command out of the conversation.
+    let commanded = false;
     for (const block of blocks) {
+      if (block.kind === "command") {
+        commanded ||= block.row.control.do === "command";
+        continue;
+      }
       if (block.kind === "heard" && block.turn && !block.notice && (!block.from || block.from.kind === "user")) asked.add(block.turn);
       if (block.kind === "say") spoke.add(block.turn);
+      const turn = "turn" in block ? block.turn : null;
+      if (commanded && turn) {
+        if (block.kind !== "heard") asked.add(turn);
+        commanded = false;
+      }
     }
     const shown = blocks.filter((block) => {
       switch (block.kind) {

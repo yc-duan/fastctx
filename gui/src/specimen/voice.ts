@@ -3,11 +3,13 @@
 // sentinel wake it in the night; it works, and says to the user only what
 // they should know, once urgently with the picture that shows why. In the
 // morning the user asks one thing and it answers in plain words, as an
-// agent that forgets the tool does, which the view takes as its answer.
+// agent that forgets the tool does, which the view takes as its answer; so
+// it does for the turn a command the user gives begins.
 
 import { run, Script, text } from "./script";
 import type { Specimen } from "./sessions";
 import type { Speaker, Tool } from "../world/events";
+import type { JsonValue } from "../world/wire";
 
 const user: Speaker = { kind: "user", machine: "desktop" };
 
@@ -101,6 +103,42 @@ export function voice(): Specimen {
   s.say("t4", "message", "两个：`ctrl/src/fixed.rs` 把积分项放宽到 Q32，`ctrl/tests/vectors.rs` 是新录的 640 组阶跃响应向量。");
   s.push({ event: "context", used: 72_800, window: 200_000 });
   s.ended("t4", "completed", null, 1, {
+    ms: 9_000,
+    facts: {
+      models: ["claude-opus-5-5"],
+      efforts: [{ kind: "requested", value: "high" }],
+      tokens: { host: "claude", input_tokens: 1_204, cache_read_input_tokens: 68_310, cache_creation_input_tokens: 2_116, output_tokens: 182 },
+      cost: 96_402,
+    },
+  });
+
+  // A command the user gives from the input begins a turn of their own: the
+  // host keeps its line for the command out of the conversation, and the
+  // answer, given in plain words again, is still theirs.
+  s.push(
+    {
+      event: "changed",
+      turn: null,
+      change: {
+        kind: "metadata",
+        metadata: {
+          fastctx_control: {
+            id: "control-1791131040000-5-0",
+            control: { do: "command", name: "release-notes", args: "" },
+            at: "2026-10-04T17:02:00Z",
+            state: "completed",
+            result: { kind: "reported", said: null },
+            error: null,
+          },
+        } as unknown as JsonValue,
+      },
+    },
+    240,
+  );
+  s.started("t5");
+  s.tool("t5", run("cd /srv/mark50 && git log --oneline main..fix/q32-integral", "=== run on lab (exited 0) ===", "b81e3f2 Widen the integral to Q32\n2d90a1c Record step-response vectors", { duration_ms: 120 }, "lab"));
+  s.say("t5", "message", "**0.4.1**\n\n- 积分项放宽到 Q32，阶跃响应不再在 0.8 秒处饱和。\n- 新录 640 组阶跃响应向量，回归覆盖全部工况。");
+  s.ended("t5", "completed", null, 1, {
     ms: 9_000,
     facts: {
       models: ["claude-opus-5-5"],
