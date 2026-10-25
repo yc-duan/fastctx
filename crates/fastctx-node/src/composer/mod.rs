@@ -4,6 +4,8 @@ mod commands;
 mod idle;
 pub(crate) use idle::input_busy;
 mod receipts;
+mod rejected;
+pub(crate) use rejected::rejected;
 mod state;
 mod storage;
 mod submissions;
@@ -120,7 +122,11 @@ pub async fn here(node: &Arc<Node>, from: &MachineName, id: &ResidentId, request
         if let Some(error) = &receipt.failure {
             return Err(Failure::new(error.clone()));
         }
-        return Ok(Updated { composer: state.view(), landed: receipt.landed.clone(), delivery: receipt.delivery.clone() });
+        return Ok(Updated {
+            composer: state.view(),
+            landed: receipt.landed.clone(),
+            delivery: receipt.delivery.clone(),
+        });
     }
     if let Change::Attach { attachment, .. } = &mutation.change {
         crate::attachments::resolve(node, id, std::slice::from_ref(attachment)).await?;

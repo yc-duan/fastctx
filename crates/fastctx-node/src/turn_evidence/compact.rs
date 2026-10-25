@@ -12,8 +12,15 @@ pub(crate) async fn between_turns(node: &Arc<Node>, resident: &ResidentId) -> Co
     result.unwrap_or_else(|error| Compacted::Failed { reason: error.message })
 }
 
-pub(crate) async fn recorded(node: &Arc<Node>, resident: &ResidentId, key: &str) -> Compacted {
-    run(node, resident, Some(key)).await.unwrap_or_else(|error| Compacted::Failed { reason: error.message })
+pub(crate) async fn recorded(
+    node: &Arc<Node>,
+    resident: &ResidentId,
+    key: &str,
+) -> Result<Compacted, fastctx_types::ipc::Failure> {
+    match run(node, resident, Some(key)).await {
+        Err(error) if error.code == Some(fastctx_types::ipc::FailureCode::HostUnavailable) => Err(error),
+        result => Ok(result.unwrap_or_else(|error| Compacted::Failed { reason: error.message })),
+    }
 }
 
 async fn run(

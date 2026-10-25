@@ -3,7 +3,7 @@
 use crate::Node;
 use fastctx_hosts::claude::{background, lifecycle::IdleWorker};
 use fastctx_types::{ipc::Failure, residents::About};
-use std::{ffi::OsString, sync::Arc, time::Duration};
+use std::{collections::HashMap, ffi::OsString, path::PathBuf, sync::Arc, time::Duration};
 
 // The retirement gate must be released well before an external caller's
 // thirty-second admission deadline, even if Claude Code stops responding.
@@ -15,6 +15,12 @@ pub(crate) async fn idle(node: &Arc<Node>, about: &About) -> Result<Option<IdleW
         return Ok(None);
     }
     let Some(session) = &about.session else { return Ok(None) };
+    let (command, home) = command_home(node, about)?;
+    let listed = list(command, PROBE).await?;
+    fastctx_hosts::claude::lifecycle::idle_worker(&home, session, &listed).map_err(Failure::new)
+}
+
+fn command_home(node: &Node, about: &About) -> Result<(super::Command, PathBuf), Failure> {
     let command = super::command(node, about.home.as_deref())?;
     let home = command
         .env
@@ -24,21 +30,40 @@ pub(crate) async fn idle(node: &Arc<Node>, about: &About) -> Result<Option<IdleW
         .map(Ok)
         .unwrap_or_else(|| fastctx_platform::user_home().map(|home| home.join(".claude")))
         .map_err(|error| Failure::new(error.to_string()))?;
-    let session = session.clone();
+    Ok((command, home))
+}
+
+async fn list(command: super::Command, timeout: Duration) -> Result<String, Failure> {
     tokio::task::spawn_blocking(fastctx_platform::doing::carried(move || {
-        let listed = background::invoke(
+        background::invoke(
             &command.program,
             &["agents".into(), "--json".into(), "--all".into()],
             &command.cwd,
             &command.env,
-            PROBE,
+            timeout,
         )
-        .map_err(|error| error.message)?;
-        fastctx_hosts::claude::lifecycle::idle_worker(&home, &session, &listed)
+        .map_err(|error| error.message)
     }))
     .await
     .map_err(|error| Failure::new(error.to_string()))?
     .map_err(Failure::new)
+}
+
+/// A scan owns its listings; failed listings are shared too, never retried per session.
+#[derive(Default)]
+pub(crate) struct Scan(HashMap<PathBuf, Result<String, Failure>>);
+
+impl Scan {
+    pub(crate) async fn idle(&mut self, node: &Arc<Node>, about: &About) -> Result<Option<IdleWorker>, Failure> {
+        let Some(session) = &about.session else { return Ok(None) };
+        let (command, home) = command_home(node, about)?;
+        if !self.0.contains_key(&home) {
+            let listed = list(command, Duration::from_secs(30)).await;
+            self.0.insert(home.clone(), listed);
+        }
+        let listed = self.0.get(&home).expect("the login was listed").as_ref().map_err(Clone::clone)?;
+        fastctx_hosts::claude::lifecycle::idle_worker(&home, session, listed).map_err(Failure::new)
+    }
 }
 
 /// The caller has rechecked all World and host evidence under both gates.

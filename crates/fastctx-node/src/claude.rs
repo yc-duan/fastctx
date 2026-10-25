@@ -1156,10 +1156,8 @@ pub async fn deliver(
         Some((about, _)) => about,
         None => return Some(Err(crate::authorization::no_subject())),
     };
-    if let Err(failure) =
-        crate::homes::available(node, &current).and_then(|()| crate::assists::may_turn(node, to, &current))
-    {
-        return Some(crate::lifecycle::retry::defer(node, to, &pending.delivery.id, &failure.message));
+    if let Err(error) = crate::lifecycle::wake::check(node, to, &current) {
+        return Some(crate::lifecycle::retry::unavailable(node, to, &pending.delivery.id, error).await);
     }
     let user_action =
         matches!(pending.delivery.notice, Notice::Words { from: Speaker::User { .. }, .. } | Notice::Attached { .. });
@@ -1234,7 +1232,7 @@ pub async fn deliver(
                     {
                         Ok(_) => Ok(Landed::Handed { id: pending.delivery.id.clone() }),
                         Err(error) if !error.attempted => {
-                            crate::lifecycle::retry::defer(node, to, &pending.delivery.id, &error.failure.message)
+                            crate::lifecycle::retry::unavailable(node, to, &pending.delivery.id, error).await
                         }
                         Err(error) => {
                             startup::unknown(node, to, &pending.delivery.id, error.failure.message);
@@ -1425,16 +1423,18 @@ pub(crate) async fn wake(
         use crate::lifecycle::wake::WakeFailure;
         trust(&[cwd.as_path()], &env).map_err(Failure::new)?;
         crate::lifecycle::retry::attempting(&launch_node, &launch_resident, &launch_id)?;
-        background::invoke(&program, &args, &cwd, &env, std::time::Duration::from_secs(120))
-            .map_err(|error| WakeFailure { failure: Failure::new(error.message), attempted: error.started })?;
+        background::invoke(&program, &args, &cwd, &env, std::time::Duration::from_secs(120)).map_err(|error| {
+            WakeFailure { failure: Failure::new(error.message), attempted: error.started, permanent: false }
+        })?;
         crate::lifecycle::retry::accepted(&launch_node, &launch_resident, &launch_id)
-            .map_err(|failure| WakeFailure { failure, attempted: true })?;
+            .map_err(|failure| WakeFailure { failure, attempted: true, permanent: false })?;
         Ok::<(), WakeFailure>(())
     }))
     .await
     .map_err(|error| crate::lifecycle::wake::WakeFailure {
         failure: Failure::new(format!("waking the session: {error}")),
         attempted: true,
+        permanent: false,
     })??;
     // Claude Code took the words; the session that takes them may still end
     // before the World's plugin pairs, which only watching it tells.
@@ -1547,7 +1547,7 @@ pub async fn open_here(
         origin: Origin::User,
         session: None,
         world_started: true,
-            native_resumed: false,
+        native_resumed: false,
         model: None,
         acting: opened.acting,
         focus: opened.focus,

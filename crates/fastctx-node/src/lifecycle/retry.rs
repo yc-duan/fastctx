@@ -106,6 +106,38 @@ pub(crate) fn accepted(node: &Node, id: &ResidentId, input: &NoticeId) -> Result
     keep(node, id, input, &kept).map_err(failure)
 }
 
+pub(crate) async fn unavailable(
+    node: &Arc<Node>,
+    id: &ResidentId,
+    input: &NoticeId,
+    error: super::wake::WakeFailure,
+) -> Result<Landed, Failure> {
+    if error.permanent {
+        super::refused::reject(node, id, input, error.failure).await
+    } else {
+        defer(node, id, input, &error.failure.message)
+    }
+}
+
+/// The caller owns the action and management gates and retries its durable work.
+/// Its scheduler may check sooner, but only this progress permits another wake.
+pub(crate) async fn prepare_work(node: &Arc<Node>, id: &ResidentId, key: &NoticeId) -> Result<(), Failure> {
+    if progress(node, id, key).map_err(failure)?.is_some_and(|progress| progress.next > Timestamp::now()) {
+        return Err(Failure::host_unavailable("the host retry is waiting for its next attempt"));
+    }
+    match super::wake::wake(node, id, super::wake::Source::Control, None).await {
+        Ok(_) => clear(node, id, key).map_err(failure),
+        Err(error) => {
+            if !error.permanent {
+                failed(node, id, key, &error.failure.message)?;
+            } else {
+                clear(node, id, key).map_err(failure)?;
+            }
+            Err(error.control())
+        }
+    }
+}
+
 /// Call only with evidence that this input has not crossed the host boundary.
 pub(crate) fn defer(node: &Arc<Node>, id: &ResidentId, input: &NoticeId, reason: &str) -> Result<Landed, Failure> {
     failed(node, id, input, reason)?;

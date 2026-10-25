@@ -11,8 +11,6 @@
 
 mod account_records;
 pub mod activity;
-pub mod timers;
-mod turn_evidence;
 mod admission;
 mod admitted;
 mod afoot;
@@ -57,6 +55,7 @@ mod forks;
 mod gate_waits;
 mod gates;
 mod gather;
+mod goals;
 pub mod handoff;
 mod held_history;
 mod here;
@@ -89,6 +88,7 @@ mod mcp;
 mod memory;
 mod on;
 mod on_delivery;
+mod on_steps;
 mod on_stop;
 mod own_collab;
 mod pages;
@@ -107,10 +107,9 @@ mod resident_storage;
 mod residents;
 mod retention;
 mod run_facts;
-mod goals;
 mod scratch;
-mod server;
 mod sentinels;
+mod server;
 mod server_invitation;
 mod session_live;
 mod session_options;
@@ -120,12 +119,15 @@ mod signals;
 mod since;
 mod speech;
 mod stats;
+mod step_command;
 mod stop;
 mod stops;
 mod stuck;
 mod talk;
 pub mod thumbnail;
+pub mod timers;
 mod town;
+mod turn_evidence;
 mod turns;
 mod uninstall;
 mod unpublished;
@@ -140,8 +142,6 @@ mod who;
 mod world;
 mod world_program;
 mod write;
-mod on_steps;
-mod step_command;
 mod write_command;
 
 use std::path::{Path, PathBuf};
@@ -203,6 +203,7 @@ pub(crate) struct Node {
     desk: desk::Desk,
     watchers: watch::Watchers,
     attached: lifecycle::attached::Attached,
+    idle_probes: lifecycle::cooldown::Cooldowns,
     retrying: lifecycle::retry::Retrying,
     composers: composer::Composers,
     actions: control_queue::Actions,
@@ -601,6 +602,7 @@ pub async fn run_prepared(
         desk: desk::Desk::default(),
         watchers: watch::Watchers::default(),
         attached: Default::default(),
+        idle_probes: Default::default(),
         retrying: Default::default(),
         composers: composer::Composers::default(),
         actions: Default::default(),

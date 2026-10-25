@@ -140,7 +140,7 @@ async fn ready(node: &Arc<Node>, id: &ResidentId, row: &PendingControl) -> Resul
     let _reading = crate::gate_waits::shared(node, id, &gate).await?;
     crate::lifecycle::wake::wake(node, id, crate::lifecycle::wake::Source::Control, None)
         .await
-        .map_err(|error| Failure::host_unavailable(error.failure.message))?;
+        .map_err(crate::lifecycle::wake::WakeFailure::control)?;
     let _transaction = crate::resident_storage::lock();
     let mut rows = read(node, id)?;
     if let Some(saved) = rows.iter_mut().find(|saved| saved.id == row.id) {

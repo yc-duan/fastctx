@@ -12,7 +12,7 @@ use std::{
 const IDLE: Duration = Duration::from_secs(90 * 60);
 const SWEEP: Duration = Duration::from_secs(60);
 
-fn idle_delay() -> Duration {
+pub(super) fn idle_delay() -> Duration {
     if !fastctx_platform::home::RELEASED
         && let Ok(value) = std::env::var("FASTCTX_LIFECYCLE_IDLE_SECONDS")
         && let Ok(seconds) = value.parse::<u64>()
@@ -28,7 +28,7 @@ pub(crate) fn held(node: &Node, id: &ResidentId) -> Result<bool, Failure> {
     if now.activity == Activity::Busy
         || now.turn.is_some()
         || now.waiting_for_user
-        || now.asked.is_some()
+        || now.asked.as_ref().is_some_and(|asked| asked.waits)
         || now.desk
         || node.desk.held_by(id)
         || node.watchers.watched(id)
@@ -51,12 +51,12 @@ pub(crate) fn held(node: &Node, id: &ResidentId) -> Result<bool, Failure> {
         .any(|row| row.delivery.notice.along().is_none()))
 }
 
-async fn consider(node: &Arc<Node>, id: &ResidentId, periodic: bool) -> Result<(), Failure> {
+async fn consider(node: &Arc<Node>, id: &ResidentId) -> Result<(), Failure> {
     let Some((about, _)) = node.residents.about(id) else { return Ok(()) };
-    if !about.world_started || node.residents.removed(id).is_some() {
+    if !about.world_managed() || node.residents.removed(id).is_some() {
         return Ok(());
     }
-    let Some(adapter) = Adapter::for_conversation(&about) else { return Ok(()) };
+    let Some(adapter) = Adapter::for_conversation(&about).filter(|adapter| !adapter.delayed()) else { return Ok(()) };
     if node.watchers.watched(id) && adapter.needs_subscription(node, &about)? {
         let actions = crate::control_queue::gate(node, id);
         let _action = actions.lock().await;
@@ -70,24 +70,14 @@ async fn consider(node: &Arc<Node>, id: &ResidentId, periodic: bool) -> Result<(
     if held(node, id)? {
         return Ok(());
     }
-    if adapter.delayed() && !periodic {
-        return Ok(());
-    }
-    let old_enough = || {
-        !adapter.delayed()
-            || node.residents.now(id).is_some_and(|now| {
-                jiff::Timestamp::now().as_second().saturating_sub(now.since.as_second())
-                    >= idle_delay().as_secs() as i64
-            })
-    };
-    if !old_enough() || adapter.candidate(node, &about).await?.is_none() {
+    if adapter.candidate(node, &about).await?.is_none() {
         return Ok(());
     }
     let action = crate::control_queue::gate(node, id);
     let Ok(_action) = action.try_lock() else { return Ok(()) };
     let management = node.residents.management(id)?;
     let Ok(_exclusive) = management.try_write() else { return Ok(()) };
-    if node.residents.removed(id).is_some() || held(node, id)? || !old_enough() {
+    if node.residents.removed(id).is_some() || held(node, id)? {
         return Ok(());
     }
     let Some((current, _)) = node.residents.about(id) else { return Ok(()) };
@@ -95,7 +85,7 @@ async fn consider(node: &Arc<Node>, id: &ResidentId, periodic: bool) -> Result<(
         return Ok(());
     }
     let Some(candidate) = adapter.candidate(node, &current).await? else { return Ok(()) };
-    if held(node, id)? || !old_enough() {
+    if held(node, id)? {
         return Ok(());
     }
     super::release_locked(node, &current, ReleaseReason::Idle, Some(&candidate)).await?;
@@ -103,17 +93,17 @@ async fn consider(node: &Arc<Node>, id: &ResidentId, periodic: bool) -> Result<(
 }
 
 pub(crate) fn start(node: &Arc<Node>) {
+    super::sweep::start(node);
     let node = node.clone();
     tokio::spawn(async move {
         let running = Arc::new(Mutex::new(HashSet::new()));
 
         let mut timer = tokio::time::interval(SWEEP);
         loop {
-            let periodic = tokio::select! {
-                _ = timer.tick() => true,
-                () = node.watchers.changed.notified() => false,
-
-            };
+            tokio::select! {
+                _ = timer.tick() => {},
+                () = node.watchers.changed.notified() => {},
+            }
             // Coalesce reports before scanning. No gate or registry lock is held.
             tokio::time::sleep(Duration::from_millis(100)).await;
             for resident in node.residents.everyone() {
@@ -122,7 +112,7 @@ pub(crate) fn start(node: &Arc<Node>) {
                 }
                 let (node, running) = (node.clone(), running.clone());
                 tokio::spawn(async move {
-                    if let Err(error) = consider(&node, &resident.id, periodic).await {
+                    if let Err(error) = consider(&node, &resident.id).await {
                         node.log.line(format_args!("lifecycle {}: retaining host; {error}", resident.id));
                     }
                     running.lock().expect("never poisoned").remove(&resident.id);

@@ -150,6 +150,16 @@ pub(crate) async fn tell_here_locked(
         .residents
         .about(to)
         .ok_or_else(|| Failure::new(format!("no resident {to} lives on {}", node.machine())))?;
+    if let Some(error) =
+        crate::lifecycle::refused::get(node, to, &delivery.id).map_err(|error| Failure::new(error.to_string()))?
+    {
+        return crate::lifecycle::refused::reject(node, to, &delivery.id, error).await;
+    }
+    if let Err(error) = crate::assists::check_turn(node, to, &about)
+        && error.permanent
+    {
+        return Err(error.failure);
+    }
     let working = matches!(owed, Owed::Working);
     let readers = match owed {
         Owed::Speaker(address) => vec![address],
@@ -187,6 +197,7 @@ pub(crate) async fn tell_here_locked(
             .map_err(|error| Failure::new(format!("keeping it: {error}")))?
     };
     if kept {
+        node.idle_probes.touched(to);
         crate::goals::engine::input_changed(node, to);
     }
     if removed {
@@ -203,9 +214,12 @@ pub(crate) async fn tell_here_locked(
         {
             return Ok(Landed::Uncertain { why });
         }
-        if matches!(pending.delivery.notice,Notice::Sentinel {..}) && let Some(current)=crate::inbox::read(&directory,&pending.delivery.id).map_err(|e|Failure::new(e.to_string()))?
-            && current.state==PendingState::Waiting {
-            return hand_over_locked(node,to,&about,&directory,current).await;
+        if matches!(pending.delivery.notice, Notice::Sentinel { .. })
+            && let Some(current) =
+                crate::inbox::read(&directory, &pending.delivery.id).map_err(|e| Failure::new(e.to_string()))?
+            && current.state == PendingState::Waiting
+        {
+            return hand_over_locked(node, to, &about, &directory, current).await;
         }
         // The same thing told again: it is on its way or went in already.
         return Ok(Landed::Waiting { why: None, answered: answered(node, to, &about) });
@@ -272,7 +286,8 @@ pub async fn hand_over(
 /// Closed foreground sessions leave facts for the next visit. Those facts
 /// cannot stand in front of a user request that is allowed to resume it.
 pub(crate) fn ready_for_delivery(node: &Node, about: &About, pending: &Pending) -> bool {
-    about.world_started
+    about.world_managed()
+        || pending.delivery.notice.wakes_closed()
         || node.residents.host_present(&about.id)
         || matches!(pending.delivery.notice, Notice::Words { from: Speaker::User { .. }, .. } | Notice::Attached { .. })
         || crate::lifecycle::retry::progress(node, &about.id, &pending.delivery.id)
@@ -293,9 +308,12 @@ async fn hand_over_locked(
     };
     node.ready().await;
     node.residents.active(to)?;
-    if matches!(pending.delivery.notice,Notice::Sentinel {..}) && crate::inbox::read(directory,&pending.delivery.id)
-        .map_err(|e|Failure::new(e.to_string()))?.is_none_or(|current|current.state != PendingState::Waiting) {
-        return Ok(Landed::Waiting {why:None,answered:answered(node,to,about)});
+    if matches!(pending.delivery.notice, Notice::Sentinel { .. })
+        && crate::inbox::read(directory, &pending.delivery.id)
+            .map_err(|e| Failure::new(e.to_string()))?
+            .is_none_or(|current| current.state != PendingState::Waiting)
+    {
+        return Ok(Landed::Waiting { why: None, answered: answered(node, to, about) });
     }
     if pending.delivery.notice.along().is_some()
         && about.host.agent.as_str() != "claude"
@@ -303,11 +321,13 @@ async fn hand_over_locked(
     {
         return Ok(Landed::Waiting { why: None, answered: true });
     }
-    if let Err(error) = crate::homes::available(node, about)
-        .and_then(|()| crate::assists::may_turn(node, to, about))
-        .and_then(|()| crate::town::access::current(node, to))
+    if let Some(error) = crate::lifecycle::refused::get(node, to, &pending.delivery.id)
+        .map_err(|error| Failure::new(error.to_string()))?
     {
-        return crate::lifecycle::retry::defer(node, to, &pending.delivery.id, &error.message);
+        return crate::lifecycle::refused::reject(node, to, &pending.delivery.id, error).await;
+    }
+    if let Err(error) = crate::lifecycle::wake::check(node, to, about) {
+        return crate::lifecycle::retry::unavailable(node, to, &pending.delivery.id, error).await;
     }
     if pending.delivery.notice.along().is_none() {
         if node.residents.now(to).is_none_or(|now| now.turn.is_none())
@@ -472,7 +492,10 @@ async fn submit_thread(
             crate::inbox::withdraw(directory, &pending.delivery.id).map_err(|error| Failure::new(error.to_string()))?;
             return Ok(None);
         }
-        crate::inbox::keep(directory, &pending).map_err(|error| Failure::new(error.to_string()))?;
+        if crate::inbox::keep(directory, &pending).map_err(|error| Failure::new(error.to_string()))? {
+            node.idle_probes.touched(id);
+            crate::goals::engine::input_changed(node, id);
+        }
     }
     let missing = match crate::lifecycle::wake::wake(
         node,
@@ -484,7 +507,7 @@ async fn submit_thread(
     {
         Ok(missing) => missing,
         Err(error) => {
-            return crate::lifecycle::retry::defer(node, id, &pending.delivery.id, &error.failure.message).map(Some);
+            return crate::lifecycle::retry::unavailable(node, id, &pending.delivery.id, error).await.map(Some);
         }
     };
     let speaking = node.residents.speaking(id).ok_or_else(|| Failure::new(format!("{id} has no record here")))?;
@@ -708,7 +731,9 @@ pub async fn bind(
     }
     // A stop asked for while these words were on their way stops the turn
     // they started, now that it is known.
-    if let Some(source) = node.stops.started(node, id, handover.inputs.iter().map(|input| &input.delivery.id))
+    if let Some(source) = node
+        .stops
+        .started(node, id, handover.inputs.iter().map(|input| &input.delivery.id))
         .map_err(|error| Failure::new(error.to_string()))?
     {
         crate::turn_evidence::remember(node, id, turn, source).map_err(|error| Failure::new(error.to_string()))?;
@@ -736,7 +761,9 @@ pub fn heard(node: &Arc<Node>, id: &ResidentId, delivery: &Delivery, turn: &str)
         Notice::Answer { colleague, .. } | Notice::Question { colleague, .. } => {
             (Speaker::Resident { address: colleague.clone() }, told::told(&delivery.notice))
         }
-        Notice::JobEnded { .. } | Notice::Health { .. } | Notice::Sentinel { .. } => (Speaker::World, told::told(&delivery.notice)),
+        Notice::JobEnded { .. } | Notice::Health { .. } | Notice::Sentinel { .. } => {
+            (Speaker::World, told::told(&delivery.notice))
+        }
         Notice::World { text, .. } => (Speaker::World, text.clone()),
     };
     // What an interface shows of the World's telling and a colleague's
@@ -947,7 +974,7 @@ pub async fn recover(node: &Arc<Node>) {
             Ok(waiting) => {
                 let node = node.clone();
                 tokio::spawn(async move {
-                    if waiting.is_some() && resident.about.world_started {
+                    if waiting.is_some() && resident.about.world_managed() {
                         crate::lifecycle::retry::kick(&node, &resident.id);
                     }
                     crate::turns::pay(&node, &resident.id, &directory).await;
