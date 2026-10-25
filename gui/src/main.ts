@@ -1129,9 +1129,6 @@ const shell = new Shell({
   menuWords: talkMenuWords,
   projects: {
     newTalk: (town) => beginTalk(town),
-    overview: (town) => {
-      location.hash = link({ kind: "project", town });
-    },
     edit: (town) => {
       const record = store.world.peek()?.towns.find((one) => one.town === town)?.record;
       if (record) projectForm.open({ town, record });

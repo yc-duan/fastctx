@@ -114,10 +114,6 @@ export class Shell {
               this.closeDrawer();
               options.projects!.newTalk(town);
             },
-            overview: (town) => {
-              this.closeDrawer();
-              options.projects!.overview(town);
-            },
           }
         : undefined,
     });

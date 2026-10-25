@@ -79,7 +79,6 @@ export interface ShellWords {
   /** A project's "⋯" in the sidebar, and what is in it before its sharing. */
   projectMore: string;
   projectNewTalk: string;
-  projectOverview: string;
   projectEdit: string;
   /** A project opened with no conversation in it yet. */
   noTalks: string;
@@ -1746,7 +1745,6 @@ export const zhShell: ShellWords = {
   agentsIn: (project) => `${project} 中的对话`,
   projectMore: "项目操作",
   projectNewTalk: "新对话",
-  projectOverview: "概览",
   projectEdit: "编辑项目…",
   noTalks: "暂无对话",
   frame: { minimize: "最小化", maximize: "最大化", restore: "还原", close: "关闭" },
@@ -1799,7 +1797,6 @@ export const enShell: ShellWords = {
   agentsIn: (project) => `Conversations in ${project}`,
   projectMore: "Project actions",
   projectNewTalk: "New conversation",
-  projectOverview: "Overview",
   projectEdit: "Edit project…",
   noTalks: "No conversations yet",
   frame: { minimize: "Minimize", maximize: "Maximize", restore: "Restore", close: "Close" },
