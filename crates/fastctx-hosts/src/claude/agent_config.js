@@ -40,6 +40,28 @@ function offerAccountAgent(context, event) {
   return null
 }
 
+// What the model last heard of the account's subagents, kept beside the
+// session: a resumed process's first message still says what an earlier one
+// was told, and only a change since is told again.
+async function agentsHeard($, context) {
+  context.heardAccountAgents = context.accountAgentRevision
+  try {
+    await $.fs.write(context.dir + '/agents-heard.json', JSON.stringify({ revision: context.accountAgentRevision ?? null }))
+  } catch (error) {
+    worldFailure($, 'account subagents', error)
+  }
+}
+
+// At a process's start: what an earlier process of this session told the
+// model, or, for a new session, what its first message is about to carry.
+async function agentsHeardBefore($, context) {
+  try {
+    context.heardAccountAgents = JSON.parse(await $.fs.read(context.dir + '/agents-heard.json')).revision ?? undefined
+  } catch (error) {
+    context.heardAccountAgents = context.accountAgentRevision
+  }
+}
+
 // A plugin's own submit skips its prompt hooks, and Claude Code lists a type
 // again only when one comes or goes: a change since the model last heard is
 // told in a note ahead of the World's words.
@@ -53,7 +75,7 @@ async function accountAgentsBeforeSubmit($, context) {
   try {
     const result = await $.session.append({ message: { type: 'user', content: [{ type: 'text', text }] } })
     if (result.deny !== undefined) throw new Error(result.deny)
-    context.heardAccountAgents = context.accountAgentRevision
+    await agentsHeard($, context)
   } catch (error) {
     worldFailure($, 'account subagents', error)
   }

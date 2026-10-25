@@ -996,12 +996,17 @@ async function transcript($, context, path) {
   }
 }
 
-// Named context is read afresh on every prompt rebuild, including compaction.
+// Named context is read afresh on every prompt rebuild. Claude Code shows
+// what a read returns only in a first message it is starting: a new
+// conversation's, or the one after a compaction or /clear. A read on resume
+// or after an invalidation leaves the model with the first message it has,
+// so only a fresh read is reported as heard; the node tells the rest at a
+// tool boundary.
 const SUBAGENT_BLOCK = 'subagentInstructions'
 const CONTEXT_PREFIX = 'fastctx:'
 const OLD_CONTEXT_NAMES = ['machinesAndFolders', 'userInstructions', 'projectRecord', SUBAGENT_BLOCK]
 
-async function contextBlocks($, context) {
+async function contextBlocks($, context, fresh) {
   const pointer = JSON.parse(await $.fs.read(context.dir + '/context.json'))
   const state = JSON.parse(await $.fs.read(pointer.state))
   const entries = (await $.fs.list(pointer.directory)).filter((entry) => /^[a-z0-9-]{1,32}\.json$/.test(entry.name))
@@ -1017,7 +1022,7 @@ async function contextBlocks($, context) {
     receipt.versions[name] = block.version
     if (block.text !== '') blocks.push({ name: CONTEXT_PREFIX + name, text: block.text })
   }
-  await $.fs.write(context.dir + '/context-heard.json', JSON.stringify(receipt))
+  if (fresh) await $.fs.write(context.dir + '/context-heard.json', JSON.stringify(receipt))
   return blocks
 }
 
@@ -1088,7 +1093,7 @@ export function register(on) {
     // The session begins with the account's subagents as they are, listed
     // and in its context.
     await refreshAccountAgents($, context)
-    context.heardAccountAgents = context.accountAgentRevision
+    await agentsHeardBefore($, context)
     nativeGoalContexts.set(context.sessionId, context)
     await startControls($)
     scheduleNativeGoalClear($, context)
@@ -1201,8 +1206,10 @@ export function register(on) {
     if (await removed($)) return next(e)
     const result = await next(e)
     const context = await session($, registry, await $.session.id())
-    context.heardAccountAgents = context.accountAgentRevision
-    const added = await contextBlocks($, context)
+    const fresh = context.contextFresh === true
+    context.contextFresh = false
+    const added = await contextBlocks($, context, fresh)
+    if (fresh) await agentsHeard($, context)
     if (context.subagentInstructions) {
       const at = added.findIndex((block) => block.name === CONTEXT_PREFIX + 'user')
       added.splice(at < 0 ? 0 : at + 1, 0, { name: SUBAGENT_BLOCK, text: context.subagentInstructions })
@@ -1324,6 +1331,9 @@ export function register(on) {
     if (await removed($)) return next(e)
     await worldTools($, registry)
     const context = await session($, registry, await $.session.id(), e.source === 'clear' || e.source === 'resume')
+    // A start, a /clear and a compaction begin a first message; a resume
+    // keeps the one the conversation has.
+    context.contextFresh = e.source !== 'resume'
     await startControls($)
     await transcript($, context, e.transcript_path)
     await observeTitle($, context, e)
