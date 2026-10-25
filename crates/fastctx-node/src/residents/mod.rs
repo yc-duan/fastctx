@@ -411,6 +411,14 @@ impl Residents {
     pub fn compacted_at(&self, id: &ResidentId, at: Timestamp) {
         if let Some(live) = self.lock().live.get_mut(id) {
             live.compacted_at = Some(at);
+            live.heard = live.instructed.clone();
+        }
+    }
+
+    /// Compaction retains the opening instructions, not earlier tool-response notes.
+    pub(crate) fn restore_opening_heard(&self, id: &ResidentId) {
+        if let Some(live) = self.lock().live.get_mut(id) {
+            live.heard = live.instructed.clone();
         }
     }
 
