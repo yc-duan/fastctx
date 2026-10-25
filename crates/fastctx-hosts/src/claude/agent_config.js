@@ -42,11 +42,12 @@ function offerAccountAgent(context, event) {
 
 // What the model last heard of the account's subagents, kept beside the
 // session: a resumed process's first message still says what an earlier one
-// was told, and only a change since is told again.
-async function agentsHeard($, context) {
-  context.heardAccountAgents = context.accountAgentRevision
+// was told, and only a change since is told again. A compaction's first
+// message carries the revision of the read it was built from.
+async function agentsHeard($, context, revision = context.accountAgentRevision) {
+  context.heardAccountAgents = revision
   try {
-    await $.fs.write(context.dir + '/agents-heard.json', JSON.stringify({ revision: context.accountAgentRevision ?? null }))
+    await $.fs.write(context.dir + '/agents-heard.json', JSON.stringify({ revision: revision ?? null }))
   } catch (error) {
     worldFailure($, 'account subagents', error)
   }

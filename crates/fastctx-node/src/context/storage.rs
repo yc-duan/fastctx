@@ -195,6 +195,32 @@ pub(super) fn compacted(world: &WorldDir, id: &ResidentId, marker: &str) -> io::
     reset(world, id, marker, true)
 }
 
+/// The host compacted the conversation and began it again with `receipt`'s
+/// revisions, which is all it holds of its blocks now: what tool answers
+/// told it before is gone, and their late acknowledgements belong to the
+/// old epoch. Applied once for each `marker`.
+pub(super) fn reopened(
+    world: &WorldDir,
+    id: &ResidentId,
+    marker: &str,
+    receipt: &Receipt,
+) -> io::Result<Option<Receipt>> {
+    let _transaction = crate::resident_storage::lock();
+    exists(world, id)?;
+    let mut state: State = read(&state_path(world, id))?.unwrap_or_default();
+    if state.compacted.as_deref() == Some(marker) {
+        return Ok(None);
+    }
+    state.epoch = state.epoch.checked_add(1).ok_or_else(|| io::Error::other(words::EPOCH_EXHAUSTED))?;
+    state.opening = receipt.revisions.clone();
+    state.seen = receipt.revisions.clone();
+    state.restored.clear();
+    state.settled = false;
+    state.compacted = Some(marker.into());
+    write(&state_path(world, id), &state)?;
+    Ok(Some(receipt.clone()))
+}
+
 pub(super) fn forked(world: &WorldDir, id: &ResidentId) -> io::Result<()> {
     reset(world, id, "fork", false)
 }

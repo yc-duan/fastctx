@@ -103,6 +103,8 @@ async function controlCompact($, state, instructions, control) {
   if (state.busy === true) throw controlRefusal('Claude Code can compact only between turns')
   if (state.compacting) throw controlRefusal('another context operation is still running')
   state.compacting = true
+  const compactingSession = await $.session.id()
+  compactedByWorld.add(compactingSession)
   try {
     const until = Date.now() + 120000
     let result, parent
@@ -126,7 +128,10 @@ async function controlCompact($, state, instructions, control) {
     await compactedCheckpoint($, state, result.messages, parent)
     if (state.busy === null) { state.busy = false; state.turn = null }
     return { kind: 'done', said: null }
-  } finally { state.compacting = false }
+  } finally {
+    state.compacting = false
+    compactedByWorld.delete(compactingSession)
+  }
 }
 
 const sideAnswerInstruction = "The user asks a side question about the conversation below without adding it to that conversation. Answer it from the conversation. Do not continue the conversation's work and do not call tools."

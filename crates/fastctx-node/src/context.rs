@@ -138,6 +138,18 @@ pub(crate) fn hand_to_session(node: &Node, id: &ResidentId, session: &Path) -> i
     )
 }
 
+/// What the plugin reports a session's model holds: the block versions a
+/// fresh first message read, or, after Claude Code compacted the
+/// conversation, those of the read its new first message was built from,
+/// with `compacted` naming that compaction.
+#[derive(Deserialize)]
+struct PluginHeard {
+    #[serde(flatten)]
+    receipt: Receipt,
+    #[serde(default)]
+    compacted: Option<String>,
+}
+
 /// A prompt.context rebuild actually read these block versions. This is also
 /// consumed before a plan command so its compare-and-swap uses what was shown.
 pub(crate) fn plugin_heard(node: &Node, id: &ResidentId) -> io::Result<()> {
@@ -147,12 +159,16 @@ pub(crate) fn plugin_heard(node: &Node, id: &ResidentId) -> io::Result<()> {
     }
     let Some(session) = about.session else { return Ok(()) };
     let path = fastctx_hosts::claude::exchange::sessions(node.world.path()).join(session).join("context-heard.json");
-    let receipt: Receipt = match std::fs::read(path) {
+    let heard: PluginHeard = match std::fs::read(path) {
         Ok(bytes) => serde_json::from_slice(&bytes).map_err(io::Error::other)?,
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
         Err(error) => return Err(error),
     };
-    if let Some(accepted) = storage::acknowledge(&node.world, id, &receipt)? {
+    let accepted = match &heard.compacted {
+        Some(compaction) => storage::reopened(&node.world, id, compaction, &heard.receipt)?,
+        None => storage::acknowledge(&node.world, id, &heard.receipt)?,
+    };
+    if let Some(accepted) = accepted {
         sources::observed(node, id, &accepted)?;
     }
     Ok(())

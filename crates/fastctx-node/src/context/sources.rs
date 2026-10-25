@@ -122,8 +122,7 @@ pub(crate) async fn map(
         _ => None,
     };
     let fact = match &told {
-        Some(facts) if !facts.is_empty() => facts.join("
-"),
+        Some(facts) if !facts.is_empty() => facts.join("\n"),
         _ => words::changed("map", words::USER),
     };
     // A change with no one else's document in it is this conversation's own.

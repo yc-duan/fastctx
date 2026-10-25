@@ -909,6 +909,10 @@ async function boundary($, context, e, next) {
   if (e.agent_id !== undefined) return next(e)
   const result = await next(e)
   if (context.closed || (await $.session.id()) !== context.sessionId) return result
+  // A first message is read before the model's first request, so before any
+  // tool's end: no read after this one begins it.
+  context.contextFresh = false
+  await contextCurrent($, context)
   if (await stopping($, context)) return result
   await readGoal($, context)
   const acceptedTurn = context.turn
@@ -998,10 +1002,11 @@ async function transcript($, context, path) {
 
 // Named context is read afresh on every prompt rebuild. Claude Code shows
 // what a read returns only in a first message it is starting: a new
-// conversation's, or the one after a compaction or /clear. A read on resume
-// or after an invalidation leaves the model with the first message it has,
-// so only a fresh read is reported as heard; the node tells the rest at a
-// tool boundary.
+// conversation's, or the one after a /clear; after a compaction, the one it
+// builds from the last read (`contextCompacted`). A read on resume or after
+// an invalidation leaves the model with the first message it has, so only a
+// fresh read is reported as heard; the node tells the rest at a tool
+// boundary.
 const SUBAGENT_BLOCK = 'subagentInstructions'
 const CONTEXT_PREFIX = 'fastctx:'
 const OLD_CONTEXT_NAMES = ['machinesAndFolders', 'userInstructions', 'projectRecord', SUBAGENT_BLOCK]
@@ -1022,8 +1027,46 @@ async function contextBlocks($, context, fresh) {
     receipt.versions[name] = block.version
     if (block.text !== '') blocks.push({ name: CONTEXT_PREFIX + name, text: block.text })
   }
+  context.lastRead = { receipt, agents: context.accountAgentRevision }
   if (fresh) await $.fs.write(context.dir + '/context-heard.json', JSON.stringify(receipt))
   return blocks
+}
+
+// Sessions this plugin compacts itself (`controlCompact`): Claude Code reads
+// the named context again for the first request after such a compaction.
+const compactedByWorld = new Set()
+
+// When Claude Code compacts a conversation by itself, it builds the new first
+// message from the context it last read, without reading it again: the model
+// holds that read now, and nothing a tool answer told it before. A read that
+// failed left no blocks of the World's in it. After a compaction the World
+// asked for, the read that follows replaces this report.
+async function contextCompacted($, context) {
+  const read = context.lastRead ?? { receipt: { epoch: 0, revisions: {}, versions: {} }, agents: undefined }
+  const compacted = 'claude-compact-' + Date.now() + '-' + Math.random().toString(36).slice(2)
+  await $.fs.write(context.dir + '/context-heard.json', JSON.stringify({ ...read.receipt, compacted }))
+  await agentsHeard($, context, read.agents)
+}
+
+// Keeps that last read current: when a block changed since, Claude Code reads
+// them all again. The model sees the read only when a compaction begins a
+// first message with it; until then the node tells it at tool boundaries.
+async function contextCurrent($, context) {
+  const read = context.lastRead?.receipt
+  if (read === undefined) return
+  try {
+    const pointer = JSON.parse(await $.fs.read(context.dir + '/context.json'))
+    const entries = (await $.fs.list(pointer.directory)).filter((entry) => /^[a-z0-9-]{1,32}\.json$/.test(entry.name))
+    let same = entries.length === Object.keys(read.revisions).length
+    for (const entry of entries) {
+      if (!same) break
+      const block = JSON.parse(await $.fs.read(pointer.directory + '/' + entry.name))
+      same = read.revisions[entry.name.slice(0, -5)] === block.revision
+    }
+    if (!same) await $.ui.invalidate('prompt.context')
+  } catch (error) {
+    worldFailure($, 'named context', error)
+  }
 }
 
 async function session($, registry, id, renew = false) {
@@ -1208,6 +1251,7 @@ export function register(on) {
     const context = await session($, registry, await $.session.id())
     const fresh = context.contextFresh === true
     context.contextFresh = false
+    context.lastRead = undefined
     const added = await contextBlocks($, context, fresh)
     if (fresh) await agentsHeard($, context)
     if (context.subagentInstructions) {
@@ -1331,9 +1375,13 @@ export function register(on) {
     if (await removed($)) return next(e)
     await worldTools($, registry)
     const context = await session($, registry, await $.session.id(), e.source === 'clear' || e.source === 'resume')
-    // A start, a /clear and a compaction begin a first message; a resume
-    // keeps the one the conversation has.
-    context.contextFresh = e.source !== 'resume'
+    // A start and a /clear begin a first message read afresh, and so does a
+    // compaction the World asked for, at the request after it; one Claude
+    // Code makes by itself builds it from the last read, which a later read
+    // does not reach; a resume keeps the one the conversation has.
+    const ownCompaction = e.source === 'compact' && compactedByWorld.has(await $.session.id())
+    context.contextFresh = e.source !== 'resume' && (e.source !== 'compact' || ownCompaction)
+    if (e.source === 'compact') await contextCompacted($, context)
     await startControls($)
     await transcript($, context, e.transcript_path)
     await observeTitle($, context, e)
