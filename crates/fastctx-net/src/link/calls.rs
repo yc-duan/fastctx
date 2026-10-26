@@ -272,9 +272,10 @@ impl Inner {
     ) -> Result<RemoteResult, CallFailure> {
         let broken = |reason: String| CallFailure::Unknown { name: to.clone(), reason };
         match reply.kind {
+            // A machine refuses a call before taking it in: nothing ran.
             Kind::Refused => {
                 let reason: String = reply.body().unwrap_or_else(|_| "it gave no reason".to_string());
-                Ok(Err(fastctx_types::ipc::Failure::new(format!("{to} refused the call: {reason}"))))
+                Ok(Err(fastctx_types::ipc::Failure::not_run(format!("{to} refused the call: {reason}"))))
             }
             Kind::Answer => match reply.body::<Body>() {
                 Ok(Body::Answer { result }) => Ok(result),

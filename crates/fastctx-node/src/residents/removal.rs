@@ -21,7 +21,7 @@ pub fn removal(world: &WorldDir, id: &ResidentId) -> io::Result<Option<Timestamp
 }
 
 pub(super) fn refused(id: &ResidentId) -> Failure {
-    Failure::new(format!(
+    Failure::not_run(format!(
         "{id} was removed from the World; this session can no longer use World tools or be woken; open a new session to become a resident"
     ))
 }
@@ -46,11 +46,11 @@ impl Drop for Deleting<'_> {
 
 impl Residents {
     /// Whether the resident `id` takes something new: words, a turn, a
-    /// command, a call of its session.
+    /// command, a call of its session. What it refuses was not done.
     pub fn active(&self, id: &ResidentId) -> Result<(), Failure> {
         self.stoppable(id)?;
         if self.lock().deleting.contains_key(id) {
-            return Err(Failure::new(format!("{id} is being deleted")));
+            return Err(Failure::not_run(format!("{id} is being deleted")));
         }
         Ok(())
     }
@@ -60,7 +60,7 @@ impl Residents {
     pub fn stoppable(&self, id: &ResidentId) -> Result<(), Failure> {
         let mut state = self.lock();
         let Some(live) = state.live.get(id) else {
-            return Err(Failure::new(match state.tombstones.of(id) {
+            return Err(Failure::not_run(match state.tombstones.of(id) {
                 Some(_) => format!("{id} was deleted"),
                 None => format!("no resident {id} lives here"),
             }));
@@ -106,7 +106,7 @@ impl Residents {
             .live
             .contains_key(id)
             .then(|| self.management.get_or_insert_with(id, || crate::ranked::management(id)))
-            .ok_or_else(|| Failure::new(format!("no resident {id} lives here")))
+            .ok_or_else(|| Failure::not_run(format!("no resident {id} lives here")))
     }
 
     /// Records that the user removed `id`; a reconnect can never turn it

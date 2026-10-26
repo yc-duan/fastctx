@@ -101,9 +101,9 @@ impl Jobs {
         let registering = node.clone();
         let launched = tokio::task::spawn_blocking(move || -> Result<run::Launched, Failure> {
             let _collecting = registering.disk.lock();
-            let home = user_home().map_err(|error| failure("finding the home directory", error))?;
+            let home = user_home().map_err(|error| before_start("finding the home directory", error))?;
             let mut environment =
-                world_process_environment().map_err(|error| failure("reading the user's environment", error))?;
+                world_process_environment().map_err(|error| before_start("reading the user's environment", error))?;
             if on.as_ref().is_some_and(|(on, _)| on.sentinel.is_some()) && fastctx_hands::run::sentinel::unwalled() {
                 environment.push(("FASTCTX_LAB_UNSANDBOXED_SENTINEL".into(), "1".into()));
             }
@@ -732,6 +732,11 @@ fn read_dir(path: &Path) -> std::io::Result<Vec<PathBuf>> {
 
 fn failure(what: &str, error: std::io::Error) -> Failure {
     Failure::new(format!("{what}: {error}"))
+}
+
+/// What failed before the job's process was started: nothing ran.
+fn before_start(what: &str, error: std::io::Error) -> Failure {
+    Failure::not_run(format!("{what}: {error}"))
 }
 
 /// Stops the job at `record_path`: its supervisor ends everything it

@@ -896,7 +896,7 @@ fn active_caller(node: &Node, peer: &Peer) -> Result<(), Failure> {
 
 pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<Reply, Failure> {
     if node.root.join("uninstalled.json").exists() && !matches!(call, Call::UninstallPrepare | Call::HandOver) {
-        return Err(Failure::new("this World is being uninstalled"));
+        return Err(Failure::not_run("this World is being uninstalled"));
     }
     active_caller(node, peer)?;
     match call {
@@ -1652,7 +1652,7 @@ fn town_of(node: &Node, resident: &ResidentId) -> Result<Option<TownName>, Failu
     crate::town::access::current(node, resident)?;
     node.residents
         .town_of(resident)
-        .ok_or_else(|| Failure::new(format!("no resident {resident} lives on {}", node.machine())))
+        .ok_or_else(|| Failure::not_run(format!("no resident {resident} lives on {}", node.machine())))
 }
 
 /// Fails unless `resident` lives here and was not removed.
@@ -1677,14 +1677,15 @@ async fn run(
     let machine = goes_to.as_ref().map(|place| place.name.clone()).unwrap_or_else(|| node.machine());
     if let Some(id) = call_id {
         crate::run_facts::begin_for(node, &resident, id, machine, request.turn.clone(), &request.script)
-            .map_err(|error| Failure::new(format!("recording tool call facts: {error}")))?;
+            .map_err(|error| Failure::not_run(format!("recording tool call facts: {error}")))?;
     }
     let result = run_started(node, resident.clone(), town, request, goes_to, target, call_id).await;
+    // The session is told what became of the script, not of its record.
     if let Err(failure) = &result
         && let Some(id) = call_id
+        && let Err(error) = crate::run_facts::failed_for(node, &resident, id, &failure.message)
     {
-        crate::run_facts::failed_for(node, &resident, id, &failure.message)
-            .map_err(|error| Failure::new(format!("recording tool call facts: {error}")))?;
+        node.log.line(format_args!("recording that {resident}'s call {id} failed: {error}"));
     }
     result
 }

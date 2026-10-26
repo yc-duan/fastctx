@@ -676,7 +676,7 @@ impl fastctx_net::link::Node for Handler {
         account: &fastctx_types::AccountName,
         pool: fastctx_types::contract::Pool,
     ) -> Result<Box<dyn Send>, Failure> {
-        let node = self.node.upgrade().ok_or_else(|| Failure::new("the node is stopping"))?;
+        let node = self.node.upgrade().ok_or_else(|| Failure::not_run("the node is stopping"))?;
         crate::intake::take(&node.machine(), &self.hub, machine, account, pool)
             .map(|place| Box::new(place) as Box<dyn Send>)
     }
@@ -689,9 +689,9 @@ impl fastctx_net::link::Node for Handler {
         if !call.contract().held {
             return Ok(None);
         }
-        let node = self.node.upgrade().ok_or_else(|| Failure::new("the node is stopping"))?;
+        let node = self.node.upgrade().ok_or_else(|| Failure::not_run("the node is stopping"))?;
         node.handoff.call().map(|guard| Some(Box::new(guard) as Box<dyn Send>)).ok_or_else(|| {
-            Failure::new(format!(
+            Failure::not_run(format!(
                 "the node on {} is handing over to its successor; ask again in a moment",
                 node.machine()
             ))
@@ -709,14 +709,15 @@ impl fastctx_net::link::Node for Handler {
         let doing = format!("{} from {}", crate::labels::call_of(&call), caller.machine);
         Box::pin(async move {
             let _doing = fastctx_platform::doing::doing(doing);
+            // What turns a call away before it is admitted did nothing.
             let Some(node) = node else {
-                return Err(Failure::new("the node is stopping"));
+                return Err(Failure::not_run("the node is stopping"));
             };
-            let link = node.link_of(&hub).ok_or_else(|| Failure::new("the link that brought the call is gone"))?;
+            let link = node.link_of(&hub).ok_or_else(|| Failure::not_run("the link that brought the call is gone"))?;
             if let Some(town) = crate::admission::town_of(&call)
                 && link.view().project_named(&caller.account, town).is_none()
             {
-                link.refresh().await.map_err(Failure::new)?;
+                link.refresh().await.map_err(Failure::not_run)?;
             }
             let asker = match crate::admission::admit(&node, &link, &caller, &call) {
                 Ok(asker) => asker,
@@ -836,14 +837,18 @@ impl fastctx_net::link::Node for Handler {
                         .map_err(|error| Failure::new(format!("reading the on receipt: {error}")))
                 }
                 RemoteCall::Follow { mut origin, job, out_from, err_from } => {
-                    if origin.sentinel.is_some() { origin.account = Some(HubAccount {hub:hub.clone(),account:caller.account.clone()}); }
+                    if origin.sentinel.is_some() {
+                        origin.account = Some(HubAccount { hub: hub.clone(), account: caller.account.clone() });
+                    }
                     let stream = stream.ok_or_else(|| Failure::new("following an on needs a data connection"))?;
                     crate::on::serve_follow(&node, origin, job, out_from, err_from, stream).await
                 }
                 RemoteCall::StopOn { mut origin, job } => {
-                    if origin.sentinel.is_some() { origin.account = Some(HubAccount {hub:hub.clone(),account:caller.account.clone()}); }
+                    if origin.sentinel.is_some() {
+                        origin.account = Some(HubAccount { hub: hub.clone(), account: caller.account.clone() });
+                    }
                     crate::on_stop::serve(&node, origin, job).await
-                },
+                }
                 RemoteCall::StopJob { job, by } => {
                     // The user is the user on whichever of their machines they
                     // asked; an agent is named with where it lives.
@@ -1083,13 +1088,28 @@ impl fastctx_net::link::Node for Handler {
                     if matches!(request, fastctx_types::sentinel_control::Request::Create { .. }) {
                         return Err(Failure::refused("a conversation registers a sentinel through its own command"));
                     }
-                    crate::sentinels::control(&node, &crate::town::caller::Caller::User, &link, &caller.account, request).await.map(|reply| RemoteReply::SentinelControl(Box::new(reply)))
+                    crate::sentinels::control(
+                        &node,
+                        &crate::town::caller::Caller::User,
+                        &link,
+                        &caller.account,
+                        request,
+                    )
+                    .await
+                    .map(|reply| RemoteReply::SentinelControl(Box::new(reply)))
                 }
                 RemoteCall::SentinelHome { request } => {
                     let scope = fastctx_types::access::HubAccount { hub: hub.clone(), account: caller.account.clone() };
-                    crate::sentinels::home_call(&node, &scope, &request).await.map(|reply| RemoteReply::SentinelHome(Box::new(reply))).map_err(Failure::new)
+                    crate::sentinels::home_call(&node, &scope, &request)
+                        .await
+                        .map(|reply| RemoteReply::SentinelHome(Box::new(reply)))
+                        .map_err(Failure::new)
                 }
-                RemoteCall::SentinelSettings { change } => crate::sentinels::settings(&node, &link, &caller.account, change).await.map(|reply| RemoteReply::SentinelSettings(Box::new(reply))),
+                RemoteCall::SentinelSettings { change } => {
+                    crate::sentinels::settings(&node, &link, &caller.account, change)
+                        .await
+                        .map(|reply| RemoteReply::SentinelSettings(Box::new(reply)))
+                }
                 RemoteCall::SentinelKey { key, value } => {
                     let scope = fastctx_types::access::HubAccount { hub: hub.clone(), account: caller.account.clone() };
                     crate::sentinels::keys::keep_here(&node, &scope, key, value).await.map(RemoteReply::SentinelKeys)

@@ -179,7 +179,7 @@ impl Node {
     ) -> Result<Option<fastctx_types::TownName>, Failure> {
         let Some(town) = town else { return Ok(None) };
         let place = crate::ledger::names::place(&self.world, town)
-            .map_err(|error| Failure::new(format!("reading the project {town}'s hub: {error}")))?;
+            .map_err(|error| Failure::not_run(format!("reading the project {town}'s hub: {error}")))?;
         Ok(place.filter(|place| place.hub == link.membership().id).map(|_| town.clone()))
     }
 

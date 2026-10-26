@@ -197,7 +197,7 @@ async fn work(
 ) -> Option<RemoteResult> {
     let refused = |reason: String| {
         inner.node.log(format!("refused a call from {}: {reason}", caller.machine));
-        Err(Failure::new(format!("{} refused the call: {reason}", inner.me())))
+        Err(Failure::not_run(format!("{} refused the call: {reason}", inner.me())))
     };
     // A call this release does not know, as a newer one may make, is
     // refused saying so.
