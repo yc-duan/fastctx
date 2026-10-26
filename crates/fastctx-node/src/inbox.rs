@@ -244,7 +244,7 @@ fn settle_read(
 }
 
 /// Whether something with this id went into the resident's session.
-fn delivered_here(directory: &ConversationDir, id: &NoticeId) -> io::Result<bool> {
+pub(crate) fn delivered_here(directory: &ConversationDir, id: &NoticeId) -> io::Result<bool> {
     if directory.delivery_receipts().join(id.as_str()).try_exists()? {
         return Ok(true);
     }
@@ -473,6 +473,8 @@ pub async fn tell_if_ended(node: &Arc<Node>, record_path: &Path, record: &JobRec
             machine: record.machine.clone(),
             request: record.on.as_ref().and_then(|on| on.request.clone()),
             follower: record.on.as_ref().and_then(|on| on.follower.clone()),
+            consumed: crate::job_receipts::snapshot(node, record_path)?,
+            follower_unconfirmed: false,
             how,
             status: record.exit.map(|exit| exit.status),
             at: end.at,

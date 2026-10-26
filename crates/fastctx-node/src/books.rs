@@ -64,11 +64,12 @@ pub fn retire(node: &Node) -> io::Result<()> {
 fn owes(node: &Node, owner: &Address, directory: &ConversationDir) -> io::Result<bool> {
     // Goal bindings still identify records that deletion must collect (2026-10-23).
     if crate::goals::lifecycle::unfinished(directory)?
-        || crate::goals::lifecycle::keeps_books(node, &owner.resident).map_err(|error| io::Error::other(error.message))?
+        || crate::goals::lifecycle::keeps_books(node, &owner.resident)
+            .map_err(|error| io::Error::other(error.message))?
     {
         return Ok(true);
     }
-    for queue in ["job-deliveries", "on-deliveries", "on-stops"] {
+    for queue in ["job-deliveries", "on-deliveries", "on-stops", "received"] {
         if crate::retention::entries(&directory.book(queue))?
             .iter()
             .any(|path| path.extension().is_some_and(|extension| extension == "json"))

@@ -60,10 +60,11 @@ pub fn run(args: WaitArgs) -> anyhow::Result<ExitCode> {
 
 /// A job's end as the wait's step tells it.
 fn waited(record: &JobRecord) -> Option<WaitedJob> {
-    let tail = fastctx_hands::run::last::last_streams(Path::new(&record.output), record.stderr.as_deref().map(Path::new))
-        .ok()
-        .flatten()
-        .map(|last| tail_of(&last.text, 20));
+    let tail =
+        fastctx_hands::run::last::last_streams(Path::new(&record.output), record.stderr.as_deref().map(Path::new))
+            .ok()
+            .flatten()
+            .map(|last| tail_of(&last.text, 20));
     Some(WaitedJob {
         job: record.id.clone(),
         machine: record.machine.clone(),
@@ -79,6 +80,8 @@ fn ended(record: &JobRecord) -> Notice {
     let end = record.end.as_ref().expect("a wait answers with ended jobs");
     Notice::JobEnded {
         taken: false,
+        consumed: Vec::new(),
+        follower_unconfirmed: false,
         job: record.id.clone(),
         machine: record.machine.clone(),
         request: record.on.as_ref().and_then(|on| on.request.clone()),

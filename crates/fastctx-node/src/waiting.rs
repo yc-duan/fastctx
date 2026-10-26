@@ -53,7 +53,9 @@ pub async fn wait(
             held.jobs.push((job.clone(), path.clone()));
             let owner = caller.as_ref().expect("checked owner");
             let origin = fastctx_types::on::OnOrigin {
-                turn: record.turn.clone(), sentinel: None, call_id: record.call_id.clone(),
+                turn: record.turn.clone(),
+                sentinel: None,
+                call_id: record.call_id.clone(),
                 resident: owner.clone(),
                 town: record.town.clone(),
                 request: record.on.as_ref().and_then(|on| on.request.clone()),
@@ -200,6 +202,8 @@ impl Held {
                     let id = crate::speech::fixed_id("wait-taken", &[crate::inbox::job_notice_id(&record).as_str()]);
                     let notice = fastctx_types::residents::Notice::JobEnded {
                         taken: true,
+                        consumed: Vec::new(),
+                        follower_unconfirmed: false,
                         job: record.id.clone(),
                         machine: record.machine.clone(),
                         request: record.on.as_ref().and_then(|on| on.request.clone()),

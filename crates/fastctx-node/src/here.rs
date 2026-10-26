@@ -258,6 +258,7 @@ pub(crate) async fn run(
             return Err(if not_run { Failure::not_run(message) } else { Failure::unanswered(message) });
         }
     };
+    crate::run_receipts::remember(node, &here, &reply).map_err(|error| Failure::new(error.to_string()))?;
     if let Some(consumed) = &reply.consumed {
         crate::job_receipts::apply_consumed(&directory, consumed).map_err(|error| Failure::new(error.to_string()))?;
         if consumed.iter().any(|id| !id.as_str().starts_with("letter-")) {

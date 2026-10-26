@@ -1247,12 +1247,6 @@ impl fastctx_net::link::Node for Handler {
             if let Err(refused) = crate::admission::letters::admit(&node, &hub, &caller, purpose, &letter) {
                 return Ok(Err(refused));
             }
-            let _completion_handoff = if matches!(&letter, Letter::Notice { notice, .. } if matches!(**notice, Notice::JobEnded { .. }))
-            {
-                Some(node.on_deliveries.draining.lock().await)
-            } else {
-                None
-            };
             let delivery_id = match &letter {
                 Letter::Speak { to, .. } | Letter::Notice { to, .. } => {
                     identity.delivery(&node.world.conversation(to))?
@@ -1290,10 +1284,8 @@ impl fastctx_net::link::Node for Handler {
                         if crate::on_delivery::park_from(&node, &to, &delivery, Some(&identity))? {
                             return Ok(Ok(()));
                         }
-                        match crate::speech::tell_here(&node, &to, delivery, owed).await {
-                            Ok(_) => Ok(Ok(())),
-                            Err(failure) => Err(io::Error::other(failure.message)),
-                        }
+                        crate::received::keep(&node, &to, delivery, owed)?;
+                        Ok(Ok(()))
                     }
                     Letter::Speak { to, from: speaker, text, .. } => {
                         let address = Address { machine: from, resident: speaker };
@@ -1305,10 +1297,8 @@ impl fastctx_net::link::Node for Handler {
                             goal_question: None,
                         };
                         let delivery = Delivery { id: delivery_id, at: Timestamp::now(), notice };
-                        match crate::speech::tell_here(&node, &to, delivery, Owed::Speaker(address)).await {
-                            Ok(_) => Ok(Ok(())),
-                            Err(failure) => Err(io::Error::other(failure.message)),
-                        }
+                        crate::received::keep(&node, &to, delivery, Owed::Speaker(address))?;
+                        Ok(Ok(()))
                     }
                     Letter::Left { resident } => {
                         crate::colleagues::departed(

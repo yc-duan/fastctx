@@ -86,12 +86,19 @@ pub fn admit(node: &Node, hub: &HubId, caller: &Caller, purpose: Purpose, letter
             }
 
             Notice::JobEnded { machine, .. } if sender(machine) => (to, Purpose::Echo),
-            Notice::Sentinel {observation} if sender(&observation.machine) => (to, Purpose::Echo),
-            Notice::Answer { .. } | Notice::Health { .. } | Notice::Question { .. } | Notice::JobEnded { .. } | Notice::Sentinel { .. } => {
+            Notice::Sentinel { observation } if sender(&observation.machine) => (to, Purpose::Echo),
+            Notice::Answer { .. }
+            | Notice::Health { .. }
+            | Notice::Question { .. }
+            | Notice::JobEnded { .. }
+            | Notice::Sentinel { .. } => {
                 return Err(format!("{from} told of something that happened on another machine"));
             }
         },
     };
+    if carries == Purpose::Words && (node.residents.is_deleting(to) || node.residents.removed(to).is_some()) {
+        return Err(format!("{to} is being deleted or was removed"));
+    }
     expect(purpose, carries)?;
     serves(node, hub, caller, also, to)
 }

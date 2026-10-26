@@ -302,6 +302,10 @@ impl Jobs {
             }
             reply.run = Some(Box::new(facts));
         }
+        if let Some(owner) = record.owner.resident() {
+            crate::run_receipts::remember(node, owner, &reply)
+                .map_err(|error| failure("remembering the run answer", error))?;
+        }
         Ok((reply, record))
     }
 }

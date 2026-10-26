@@ -15,8 +15,23 @@ use crate::run::present::{display_path, status_text};
 /// A notice as one block of text.
 pub fn told(notice: &Notice) -> String {
     match notice {
-        Notice::Sentinel { observation } => fastctx_types::sentinel_words::notification(observation, jiff::Timestamp::now()),
-        Notice::JobEnded { job, machine, how, status, at, output, stderr, last, stop, .. } => {
+        Notice::Sentinel { observation } => {
+            fastctx_types::sentinel_words::notification(observation, jiff::Timestamp::now())
+        }
+        Notice::JobEnded {
+            job,
+            machine,
+            how,
+            status,
+            at,
+            output,
+            stderr,
+            last,
+            stop,
+            follower,
+            follower_unconfirmed,
+            ..
+        } => {
             let how = match (how, status) {
                 (EndedHow::Finished, Some(status)) => status_text(*status),
                 (EndedHow::Finished, None) => "finished".to_string(),
@@ -38,11 +53,15 @@ pub fn told(notice: &Notice) -> String {
                 "=== {job} on {machine} ended ({how}){ago}; its output is in {}{errors} ===",
                 display_path(output)
             );
-            match last {
+            let mut text = match last {
                 Some(last) if last.whole => format!("{head}\n{}", last.text),
                 Some(last) => format!("{head}\n=== its last lines ===\n{}", last.text),
                 None => head,
+            };
+            if *follower_unconfirmed && let Some(follower) = follower {
+                text.push_str(&format!("\nIts follower on {follower} could not be asked whether it took this end; the same end may also be in the output of the command that ran on {follower}."));
             }
+            text
         }
         Notice::Answer { colleague, end, .. } => {
             let how = turn_end(end);
