@@ -72,6 +72,9 @@ pub type EventBarrier = Arc<Mutex<Option<oneshot::Sender<Result<(), String>>>>>;
 /// How long Codex waits for a thread's tool server to start; the World
 /// gives Codex this, and waits as long for word of how it went.
 pub const STARTUP_TIMEOUT: Duration = Duration::from_secs(120);
+/// A runtime the app-server really starts reports its tools starting within
+/// this; one it kept running says nothing of them, as they did not restart.
+const RESTART_REPORTED_WITHIN: Duration = Duration::from_secs(10);
 /// How long Codex waits for one call of a World tool: a minute above the
 /// longest wait a `run` may ask for (`fastctx_hands::run::LONGEST_WAIT`),
 /// for the answer that follows the wait.
@@ -407,6 +410,11 @@ struct Thread {
     tools_revision: u64,
     /// Why the World's tools are not there in the thread's current load.
     tools_missing: Option<String>,
+    /// What was known of the World's tools when a resume was asked that may
+    /// load the thread again, and the report count it was known at: what
+    /// still holds when the app-server keeps the runtime it had.
+    #[serde(skip)]
+    tools_before: Option<(u64, Option<String>)>,
     #[serde(skip)]
     items: HashMap<(String, String), Value>,
     #[serde(skip)]
@@ -566,6 +574,33 @@ impl CodexHost {
     pub async fn prepare(self: &Arc<Self>, thread: &str) -> Result<Option<String>, String> {
         let server = self.server().await?;
         self.ensure_loaded(&server, thread).await?;
+        // Resume may hand back the runtime the app-server already had, as it
+        // does for one not idle: its tools did not restart, so no word of
+        // them comes, and what was known of them still holds.
+        let reported = async {
+            loop {
+                let notified = self.tools_changed.notified();
+                tokio::pin!(notified);
+                notified.as_mut().enable();
+                if self.lock().threads.get(thread).is_none_or(|entry| {
+                    entry.tools_settled || entry.tools_before.as_ref().is_none_or(|(at, _)| entry.tools_revision != *at)
+                }) {
+                    return;
+                }
+                notified.await;
+            }
+        };
+        if tokio::time::timeout(RESTART_REPORTED_WITHIN, reported).await.is_err() {
+            let mut state = self.lock();
+            if let Some(entry) = state.threads.get_mut(thread)
+                && !entry.tools_settled
+                && let Some((at, missing)) = entry.tools_before.take()
+                && entry.tools_revision == at
+            {
+                entry.tools_settled = true;
+                entry.tools_missing = missing;
+            }
+        }
         let settled = async {
             loop {
                 let notified = self.tools_changed.notified();
@@ -924,6 +959,10 @@ impl CodexHost {
             // servers. Their previous startup receipt remains authoritative.
             // thread/closed is broadcast even to unsubscribed connections.
             if !entry.loaded || entry.configuration_changed {
+                // A runtime known to have settled keeps what it had if it is
+                // kept; one never seen settling is taken to have its tools.
+                let known = if entry.tools_settled { entry.tools_missing.clone() } else { None };
+                entry.tools_before = Some((entry.tools_revision, known));
                 entry.tools_settled = false;
                 entry.tools_missing = None;
                 entry.accounting.reloaded();
@@ -1495,6 +1534,7 @@ impl CodexHost {
                         entry.tools_revision += 1;
                         entry.tools_settled = matches!(status.as_str(), "ready" | "failed" | "cancelled");
                         entry.tools_missing = missing;
+                        entry.tools_before = None;
                     }
                     self.tools_changed.notify_waiters();
                 }
