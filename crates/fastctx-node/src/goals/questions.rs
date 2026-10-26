@@ -15,26 +15,6 @@ pub(crate) fn key(turn: &str, item: &Item) -> Option<String> {
     crate::asked::of_item(item, Timestamp::UNIX_EPOCH).map(|_| format!("async-question:{turn}:{}", item.id))
 }
 
-/// Older recipients cannot preserve the non-waking delivery contract.
-pub(crate) async fn require_remote(
-    node: &Arc<Node>,
-    acting: &fastctx_types::access::Acting,
-    machine: &fastctx_types::access::Written,
-) -> Result<(), fastctx_types::ipc::Failure> {
-    use fastctx_types::access::Purpose;
-    use fastctx_types::ipc::Failure;
-    use fastctx_types::remote::{RemoteCall, RemoteReply};
-    let answer = node
-        .call(acting, machine, Purpose::Look, RemoteCall::Facts)
-        .await
-        .map_err(|error| Failure::new(error.to_string()))??;
-    if matches!(answer, RemoteReply::Facts(facts) if facts.goal_question_words) {
-        Ok(())
-    } else {
-        Err(Failure::not_run(super::words::QUESTION_OLDER_NODE))
-    }
-}
-
 /// Returns true when a requesting conversation owns this question instead of the user.
 /// Publication precedes delivery; the existing outbox recovers across restart and disconnection.
 pub(crate) fn route(node: &Arc<Node>, id: &ResidentId, item: &Item, at: Timestamp) -> io::Result<bool> {

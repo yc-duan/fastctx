@@ -74,6 +74,10 @@ impl Identity {
         Ok(Self::new(node, key, original, &names))
     }
 
+    pub(crate) fn original_id(&self) -> &str {
+        &self.original
+    }
+
     pub(super) fn source(&self) -> (&PublicKey, &str) {
         (&self.key, &self.original)
     }

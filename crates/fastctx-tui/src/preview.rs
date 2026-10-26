@@ -114,7 +114,8 @@ fn state(now: Timestamp, activity: Activity, since: i64) -> Now {
 
 fn action(now: Timestamp, minutes: i64, on: &str, hand: &str, what: &str, result: &str) -> Action {
     Action {
-        turn: None, at: ago(now, minutes),
+        turn: None,
+        at: ago(now, minutes),
         machine: machine(on),
         hand: hand.to_string(),
         what: what.to_string(),
@@ -390,6 +391,7 @@ fn nodes(now: Timestamp) -> NodesReply {
         memory_folders: false,
         collaboration_tree: false,
         completion_receipts: false,
+        control_letters: false,
         upload_resumes: false,
         attachment_references: false,
         shell: String::new(),
@@ -425,7 +427,10 @@ fn nodes(now: Timestamp) -> NodesReply {
             },
             logins: vec!["me".parse().expect("an account")],
             home: Some("me".parse().expect("an account")),
-            here: vec![("me".parse().expect("an account"), fastctx_types::access::Rights { hands: true, agents: true })],
+            here: vec![(
+                "me".parse().expect("an account"),
+                fastctx_types::access::Rights { hands: true, agents: true },
+            )],
             machines: vec![
                 node("desktop", true, 300, Ok(facts("desktop", "windows", "C:/Users/me"))),
                 node("laptop", true, 180, Ok(facts("laptop", "windows", "C:/Users/me"))),

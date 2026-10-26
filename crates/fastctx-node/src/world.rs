@@ -589,6 +589,7 @@ pub fn facts(node: &Node) -> MachineFacts {
         sentinels: true,
         sentinel_look: true,
         completion_receipts: true,
+        control_letters: true,
         upload_resumes: true,
         attachment_references: true,
         stats: true,
@@ -1244,6 +1245,20 @@ impl fastctx_net::link::Node for Handler {
                 return Ok(Ok(()));
             }
             if let Err(refused) = crate::admission::letters::admit(&node, &hub, &caller, purpose, &letter) {
+                if let Letter::Control { command } = &letter {
+                    let failure = crate::control_letters::admit(&node, &hub, &caller, command)
+                        .err()
+                        .unwrap_or_else(|| Failure::refused(refused.clone()));
+                    if !crate::obligations::permanent(&failure) {
+                        return Err(io::Error::other(failure.message));
+                    }
+                    crate::control_letters::keep(&node, &hub, &caller, &identity, *command.clone(), Some(failure))?;
+                    handoff.finish()?;
+                    if let Some(completion) = completion {
+                        completion.finish()?;
+                    }
+                    return Ok(Ok(()));
+                }
                 return Ok(Err(refused));
             }
             let delivery_id = match &letter {
@@ -1254,6 +1269,13 @@ impl fastctx_net::link::Node for Handler {
             };
             let result = async {
                 match letter {
+                    Letter::ControlResult { request, result } => {
+                        crate::control_posts::receive(&node, &hub, &caller, &request, result)
+                    }
+                    Letter::Control { command } => {
+                        crate::control_letters::keep(&node, &hub, &caller, &identity, *command, None)?;
+                        Ok(Ok(()))
+                    }
                     Letter::Fragment { .. } => unreachable!("nested fragments are rejected"),
                     Letter::JobFacts { to, update } => {
                         crate::run_facts::receive(&node, &to, &update)?;

@@ -62,6 +62,9 @@ pub struct MachineFacts {
     /// Accepts confirmed end delivery separately from CLI consumption.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub completion_receipts: bool,
+    /// Accepts durable completion receipts and intentional job stops as mail.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub control_letters: bool,
     /// Understands sentinel account settings and lifecycle calls.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub sentinels: bool,

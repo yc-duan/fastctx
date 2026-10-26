@@ -39,6 +39,8 @@ mod composer;
 mod consent;
 pub mod context;
 mod control;
+mod control_letters;
+mod control_posts;
 mod control_queue;
 mod copy;
 mod data;
@@ -88,10 +90,12 @@ mod managed;
 mod management;
 mod mcp;
 mod memory;
+mod obligations;
 mod on;
 mod on_delivery;
 mod on_steps;
 mod on_stop;
+mod outbox;
 mod own_collab;
 mod pages;
 mod plan;
@@ -269,6 +273,9 @@ pub(crate) struct Node {
     /// as a letter telling one's end finds them (`on`).
     on_deliveries: on_delivery::Deliveries,
     received: received::Received,
+    control_letters: control_letters::Receiving,
+    receipts_changed: tokio::sync::Notify,
+    outbox: outbox::Outbox,
     on_stopping: std::sync::Mutex<std::collections::HashSet<PathBuf>>,
     on_delivering: std::sync::Mutex<std::collections::HashSet<PathBuf>>,
     notifying_jobs: std::sync::Mutex<std::collections::HashSet<PathBuf>>,
@@ -638,6 +645,9 @@ pub async fn run_prepared(
         births: Default::default(),
         on_deliveries: Default::default(),
         received: Default::default(),
+        control_letters: Default::default(),
+        receipts_changed: Default::default(),
+        outbox: Default::default(),
         on_stopping: Default::default(),
         on_delivering: Default::default(),
         notifying_jobs: Default::default(),
@@ -707,6 +717,9 @@ pub async fn run_prepared(
     sentinels::start(&node);
     on_delivery::resume(&node);
     received::resume(&node);
+    control_letters::resume(&node);
+    job_receipts::start(&node);
+    obligations::start(&node);
     retention::start(&node).context("starting command artifact retention")?;
     profile::session::start(&node);
     context::start(&node);

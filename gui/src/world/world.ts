@@ -200,6 +200,7 @@ export interface WhoFor {
 }
 
 export interface MachineFacts {
+  control_letters?: boolean;
   node_lifetime?: {
     process: { pid: number; token: string };
     starter: { process: { pid: number; token: string }; session: Host | null } | null;

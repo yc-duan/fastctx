@@ -419,7 +419,8 @@ pub(crate) fn remove(path: &Path) -> std::io::Result<()> {
         files.extend(["on-taken", "on-piped", "on-stopped"].map(|extension| path.with_extension(extension)));
     }
     files.extend(
-        ["notice", "owed", "delivered", "posted", "answer-wait"].map(|extension| path.with_extension(extension)),
+        ["notice", "owed", "delivered", "posted", "answer-wait", "done", "retry"]
+            .map(|extension| path.with_extension(extension)),
     );
     files.extend(["copied", "wait-taken", "consumed", "exit-receipt"].map(|extension| path.with_extension(extension)));
     files.push(path.to_path_buf());

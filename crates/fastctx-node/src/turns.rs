@@ -25,7 +25,7 @@ use fastctx_types::{Address, ResidentId};
 use jiff::Timestamp;
 
 use crate::Node;
-use crate::speech::{self, Owed};
+use crate::speech;
 
 /// A turn whose end is told this long after it is not given the login's
 /// windows: those read since are not the ones it ended with.
@@ -483,121 +483,13 @@ async fn keep_answers(
     .map_err(std::io::Error::other)?
 }
 
-/// Tells each reader the answers kept for it in the resident's outbox; each
-/// leaves the outbox once its reader's machine has it, or telling it failed
-/// for good, which the colleague's records keep.
+/// Starts or resumes durable delivery of this conversation's answers.
 pub fn pay<'a>(
     node: &'a Arc<Node>,
     id: &'a ResidentId,
     directory: &'a ConversationDir,
 ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + 'a>> {
-    Box::pin(async move {
-        node.ready().await;
-        let Some(paying) = node.residents.paying(id) else { return };
-        // The lock is held only to take what is owed: telling another
-        // conversation takes its locks, never while this one's is held
-        // (`specs/world-concurrency.md`, 锁只管落账). What is being told
-        // is not taken again by a payment that comes meanwhile.
-        let owing = {
-            let _paying = paying.lock().await;
-            let directory = directory.clone();
-            let owing = tokio::task::spawn_blocking(move || crate::inbox::owing(&directory)).await;
-            match owing {
-                Ok(Ok(owing)) => {
-                    let mut telling = TELLING.lock().expect("never poisoned");
-                    owing.into_iter().filter(|answer| telling.insert(answer.delivery.id.clone())).collect::<Vec<_>>()
-                }
-                Ok(Err(error)) => {
-                    node.log.line(format_args!("reading the answers {id} owes: {error}"));
-                    return;
-                }
-                Err(error) => {
-                    node.log.line(format_args!("reading the answers {id} owes: {error}"));
-                    return;
-                }
-            }
-        };
-        let _told = Told(owing.iter().map(|answer| answer.delivery.id.clone()).collect());
-        let Some((about, _)) = node.residents.about(id) else {
-            node.log.line(format_args!("answers for {id} wait: its account identity is no longer known"));
-            return;
-        };
-        let colleague = matches!(about.origin, Origin::Colleague { .. });
-        let acting = about.acting;
-        for answer in owing {
-            let turn = match &answer.delivery.notice {
-                Notice::Answer { turn, .. } => Some(turn.clone()).filter(|turn| !turn.is_empty()),
-                _ => None,
-            };
-            // Telling can lead back here, as a reader's turn ends at once.
-            let owed = if answer.delivery.notice.is_question()
-                || matches!(&answer.delivery.notice, Notice::Words { goal_report: Some(_), .. })
-            {
-                Owed::Nobody
-            } else {
-                Owed::Working
-            };
-            let account = answer
-                .delivery
-                .notice
-                .goal_account()
-                .map(|account| fastctx_types::access::Acting::one(account.hub.clone(), account.account.clone()));
-            let landed = Box::pin(speech::tell(
-                node,
-                account.as_ref().unwrap_or(&acting),
-                &answer.to,
-                answer.delivery.id.clone(),
-                answer.delivery.notice.clone(),
-                owed,
-            ))
-            .await;
-            if let Err(failure) = &landed {
-                node.log.line(format_args!("telling {} how {id}'s turn ended: {failure}", answer.to));
-            }
-            if colleague {
-                let line = MessageLine {
-                    at: Timestamp::now(),
-                    what: MessageKind::Told { to: answer.to.clone(), turn, outcome: speech::outcome(&landed) },
-                };
-                if let Err(error) = crate::residents::append_message(directory, &line) {
-                    node.log.line(format_args!("recording that {} was told: {error}", answer.to));
-                }
-            }
-            if landed.is_err() || matches!(landed, Ok(fastctx_types::residents::Landed::Uncertain { .. })) {
-                if landed.is_err() && node.is_me(&answer.to.machine) && !node.residents.knows(&answer.to.resident) {
-                    match node.world.conversation(&answer.to.resident).about().try_exists() {
-                        Ok(false) => {
-                            if let Err(error) = crate::inbox::without_reader(directory, &answer) {
-                                node.log.line(format_args!("settling the answer without a local recipient: {error}"));
-                            }
-                        }
-                        Ok(true) => {}
-                        Err(error) => node.log.line(format_args!("checking the answer's local recipient: {error}")),
-                    }
-                }
-                continue;
-            }
-            if let Err(error) = crate::inbox::paid(directory, &answer.delivery.id) {
-                node.log.line(format_args!("settling the answer for {}: {error}", answer.to));
-            }
-        }
-    })
-}
-
-/// The answers a payment is telling now.
-static TELLING: std::sync::LazyLock<std::sync::Mutex<std::collections::HashSet<fastctx_types::NoticeId>>> =
-    std::sync::LazyLock::new(Default::default);
-
-/// Answers a payment took to tell: free to be taken again once it is done.
-struct Told(Vec<fastctx_types::NoticeId>);
-
-impl Drop for Told {
-    fn drop(&mut self) {
-        let mut telling = TELLING.lock().expect("never poisoned");
-        for id in &self.0 {
-            telling.remove(id);
-        }
-    }
+    crate::outbox::pay(node, id, directory)
 }
 
 /// Words kept for a resident whose fate will not be told by any turn's end:

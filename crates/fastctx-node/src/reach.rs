@@ -245,6 +245,32 @@ impl Node {
         Ok(self.speakers(acting, to, purpose)?.into_iter().next().expect("speakers names one at least"))
     }
 
+    /// A cached route is sufficient to queue mail. This grants no execution
+    /// permission: the hub checks the current account before accepting it,
+    /// and its recipient checks admission before taking custody.
+    pub(crate) fn mailbox(
+        &self,
+        acting: &Acting,
+        to: &Written,
+        purpose: Purpose,
+    ) -> Result<(Arc<Link>, AccountName), CallFailure> {
+        let links = self
+            .locate(to)
+            .map_err(|failure| CallFailure::Unreachable { name: to.name.clone(), reason: failure.message })?;
+        for link in links {
+            let view = link.view();
+            for account in self.accounts_on(&link, acting) {
+                if purpose == Purpose::Echo || view.admits(&view.me, &account, &to.name, purpose).is_ok() {
+                    return Ok((link.clone(), account));
+                }
+            }
+        }
+        Err(CallFailure::NotAllowed {
+            name: to.name.clone(),
+            reason: "no remembered account route can post this letter".into(),
+        })
+    }
+
     /// The hubs `to` is on, each with the accounts `acting` may say
     /// something for `purpose` to it for, at least one. News goes for the
     /// accounts it is about without a look at this machine's view, which

@@ -27,6 +27,8 @@ static SENDING: Mutex<()> = Mutex::new(());
 /// (`admission::letters`, which checks the same on the other side).
 fn purpose(letter: &Letter) -> Purpose {
     match letter {
+        Letter::Control { .. } => Purpose::Hands,
+        Letter::ControlResult { .. } => Purpose::Echo,
         Letter::Speak { .. } => Purpose::Words,
         Letter::Notice { notice, .. }
             if notice.is_question() || matches!(**notice, Notice::Words { goal_report: Some(_), .. }) =>
@@ -74,8 +76,7 @@ impl Posted {
 /// Returns a reference for checking when every fragment reached the hub.
 pub(crate) fn post(node: &Node, acting: &Acting, to: &Written, id: NoticeId, mut letter: Letter) -> io::Result<Posted> {
     let purpose = purpose(&letter);
-    let (link, account) =
-        node.speaking(acting, to, purpose).map_err(|failure| io::Error::other(failure.to_string()))?;
+    let (link, account) = node.mailbox(acting, to, purpose).map_err(|failure| io::Error::other(failure.to_string()))?;
     if let Letter::Speak { accounts, .. } = &mut letter {
         *accounts = node.accounts_on(&link, acting).into_iter().filter(|other| *other != account).collect();
     }

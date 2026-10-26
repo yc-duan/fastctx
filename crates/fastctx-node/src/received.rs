@@ -132,11 +132,21 @@ async fn drain(node: Arc<Node>, to: ResidentId, wake: Arc<Notify>) {
         let mut failed = false;
         for (path, mut entry) in waiting {
             match deliver(&node, &mut entry).await {
-                Ok(done) => {
-                    let result = if done {
-                        std::fs::remove_file(&path)
-                    } else {
-                        fastctx_install::renewal::write_json(&path, &entry)
+                Ok(outcome) => {
+                    let done = !matches!(outcome, Handover::Waiting);
+                    let result = match outcome {
+                        Handover::Done => std::fs::remove_file(&path),
+                        Handover::Waiting => fastctx_install::renewal::write_json(&path, &entry),
+                        Handover::Refused(reason) => std::fs::read(&path).and_then(|bytes| {
+                            crate::obligations::finish(
+                                &node,
+                                &path,
+                                &bytes,
+                                crate::obligations::Outcome::Impossible,
+                                &reason,
+                            )
+                            .map(|_| ())
+                        }),
                     };
                     if let Err(error) = result {
                         failed = true;
@@ -151,6 +161,9 @@ async fn drain(node: Arc<Node>, to: ResidentId, wake: Arc<Notify>) {
                 }
                 Err(error) => {
                     failed = true;
+                    if let Err(storing) = fastctx_install::renewal::write_json(&path, &entry) {
+                        report(&node, &mut errors, &path, &storing);
+                    }
                     report(&node, &mut errors, &path, &error);
                 }
             }
@@ -185,15 +198,22 @@ fn report(node: &Node, errors: &mut HashMap<PathBuf, String>, path: &Path, error
     }
 }
 
-async fn deliver(node: &Arc<Node>, entry: &mut Entry) -> io::Result<bool> {
-    if let Notice::JobEnded { consumed, .. } = &entry.delivery.notice {
-        // The enclosing output is durable here before any of its children
-        // become heard, including across a crash during this transaction.
+enum Handover {
+    Waiting,
+    Done,
+    Refused(String),
+}
+
+async fn deliver(node: &Arc<Node>, entry: &mut Entry) -> io::Result<Handover> {
+    if node.residents.deleted(&entry.to).is_some() {
+        return Ok(Handover::Refused("the receiving conversation was deleted".into()));
+    }
+    let result = if let Notice::JobEnded { consumed, .. } = &entry.delivery.notice {
         crate::job_receipts::apply_consumed(&node.world.conversation(&entry.to), consumed)?;
         if entry.released.is_none() {
             match crate::completion_delivery::decide(node, &entry.to, &entry.delivery, &mut entry.decision).await? {
-                crate::completion_delivery::Decision::Consumed => return Ok(true),
-                crate::completion_delivery::Decision::Held => return Ok(false),
+                crate::completion_delivery::Decision::Consumed => return Ok(Handover::Done),
+                crate::completion_delivery::Decision::Held => return Ok(Handover::Waiting),
                 crate::completion_delivery::Decision::Deliver { unconfirmed } => entry.released = Some(unconfirmed),
             }
         }
@@ -201,13 +221,22 @@ async fn deliver(node: &Arc<Node>, entry: &mut Entry) -> io::Result<bool> {
         if let Notice::JobEnded { follower_unconfirmed, .. } = &mut delivery.notice {
             *follower_unconfirmed = entry.released == Some(true);
         }
-        crate::speech::tell_completion(node, &entry.to, delivery)
-            .await
-            .map_err(|error| io::Error::other(error.message))?;
+        crate::speech::tell_completion(node, &entry.to, delivery).await
     } else {
-        crate::speech::tell_here(node, &entry.to, entry.delivery.clone(), entry.owed.clone())
-            .await
-            .map_err(|error| io::Error::other(error.message))?;
+        if matches!(
+            entry.delivery.notice,
+            Notice::Words { goal_report: None, goal_question: None, .. } | Notice::Attached { .. }
+        ) && (node.residents.is_deleting(&entry.to) || node.residents.removed(&entry.to).is_some())
+        {
+            return Ok(Handover::Refused("the receiving conversation no longer accepts words".into()));
+        }
+        crate::speech::tell_here(node, &entry.to, entry.delivery.clone(), entry.owed.clone()).await
+    };
+    match result {
+        Ok(_) => Ok(Handover::Done),
+        Err(error) if crate::obligations::permanent(&error) || crate::lifecycle::refused::reported(&error) => {
+            Ok(Handover::Refused(error.message))
+        }
+        Err(error) => Err(io::Error::other(error.message)),
     }
-    Ok(true)
 }
