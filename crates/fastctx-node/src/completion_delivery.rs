@@ -82,7 +82,7 @@ pub(crate) async fn decide(
         }
         Ok(Ok(Ok(RemoteReply::OnReceipt { .. }))) => "its CLI is still following the end".to_string(),
         Ok(Ok(Ok(_))) => return Ok(Decision::Deliver { unconfirmed: true }),
-        Ok(Ok(Err(error))) if error.not_run => return Ok(Decision::Deliver { unconfirmed: true }),
+        Ok(Ok(Err(error))) if refused_for_good(&error) => return Ok(Decision::Deliver { unconfirmed: true }),
         Ok(Ok(Err(error))) => error.message,
         Ok(Err(
             CallFailure::Offline { .. }
@@ -110,4 +110,11 @@ pub(crate) async fn decide(
     progress.due =
         Some(Timestamp::now().checked_add(fastctx_net::again::backoff(progress.failures)).map_err(io::Error::other)?);
     Ok(Decision::Held)
+}
+
+/// The follower refused the question for good: asking again is refused the
+/// same way. Nothing done is not enough, as a node handing over or too busy
+/// to answer now did nothing either, and answers once asked again.
+fn refused_for_good(error: &fastctx_types::ipc::Failure) -> bool {
+    error.is_refused() && error.denial != Some(fastctx_types::authorization::DenialReason::ViewUnavailable)
 }
