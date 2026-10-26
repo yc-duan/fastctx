@@ -91,7 +91,7 @@ fn residents() -> Vec<ResidentNow> {
                 },
                 session: (i != 0).then(|| "thread-1".into()),
                 world_started: i != 0,
-            native_resumed: false,
+                native_resumed: false,
                 model: (i != 0).then(|| "model-a".into()),
                 acting: if i == 0 {
                     fastctx_types::access::Acting::Here
@@ -159,7 +159,8 @@ fn residents() -> Vec<ResidentNow> {
                 }),
             }),
             last_action: (i == 0).then(|| Action {
-                turn: None, at: at(),
+                turn: None,
+                at: at(),
                 machine: machine(),
                 hand: "run".into(),
                 what: "pwd".into(),
@@ -324,6 +325,7 @@ fn nodes() -> Vec<NodesReply> {
         memory_folders: false,
         collaboration_tree: false,
         completion_receipts: false,
+        control_letters: lifetime,
         upload_resumes: false,
         attachment_references: false,
         stats: lifetime,

@@ -6,8 +6,7 @@ use fastctx_sentinel::{
 };
 use fastctx_types::{
     SentinelId,
-    access::{Acting, HubAccount, Purpose, Written},
-    remote::{RemoteCall, RemoteReply},
+    access::{Acting, HubAccount, Written},
     residents::Notice,
     sentinel_notice::{Event as NoticeEvent, SentinelNotice},
 };
@@ -49,21 +48,6 @@ async fn send(node: &Arc<Node>, notification: &Notification) -> Result<(), Strin
     let scope = &registration.scope;
     let link = node.link_of(&scope.hub).ok_or("the sentinel account's hub is not connected")?;
     let destination = Written { name: definition.owner.machine.clone(), hub: Some(link.hub_name()) };
-    if !node.is_here(&destination) {
-        let view = crate::authorization::current_view(&link).map_err(|e| e.message)?;
-        if !view.member(&destination.name).is_some_and(|m| m.online) {
-            return Err("the owner is offline; the sentinel's observation is kept for it".into());
-        }
-        match link
-            .call(&destination.name, &scope.account, Purpose::Look, RemoteCall::Facts)
-            .await
-            .map_err(|e| e.to_string())?
-            .map_err(|e| e.message)?
-        {
-            RemoteReply::Facts(facts) if facts.sentinels => {}
-            _ => return Err("upgrade the owner's machine to receive sentinel observations".into()),
-        }
-    }
     let event = match &notification.event {
         Event::Alarm { index } => NoticeEvent::Alarm { index: *index },
         Event::Satisfied { reason, evidence } => {

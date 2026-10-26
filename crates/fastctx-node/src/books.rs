@@ -69,7 +69,7 @@ fn owes(node: &Node, owner: &Address, directory: &ConversationDir) -> io::Result
     {
         return Ok(true);
     }
-    for queue in ["job-deliveries", "on-deliveries", "on-stops", "received"] {
+    for queue in ["job-deliveries", "on-deliveries", "on-stops", "received", "received-controls"] {
         if crate::retention::entries(&directory.book(queue))?
             .iter()
             .any(|path| path.extension().is_some_and(|extension| extension == "json"))
@@ -106,5 +106,7 @@ fn owes(node: &Node, owner: &Address, directory: &ConversationDir) -> io::Result
             }
         }
     }
-    Ok(!crate::retention::entries(&directory.elsewhere())?.is_empty())
+    Ok(crate::retention::entries(&directory.elsewhere())?
+        .iter()
+        .any(|path| path.extension().is_some_and(|ext| ext == "json")))
 }

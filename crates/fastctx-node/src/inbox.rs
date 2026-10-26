@@ -456,6 +456,14 @@ pub async fn tell_if_ended(node: &Arc<Node>, record_path: &Path, record: &JobRec
     if record_path.with_extension("delivered").try_exists()? {
         return crate::completion_debt::paid(record_path);
     }
+    let account = record.on.as_ref().and_then(|on| on.account.clone()).or_else(|| record.account.clone());
+    let acting =
+        account.map(|account| fastctx_types::access::Acting::one(account.hub, account.account)).unwrap_or_default();
+    if let Some(reason) = crate::obligations::impossible(node, &acting, &(&owner.machine).into())? {
+        let bytes = std::fs::read(&owed)?;
+        crate::obligations::finish(node, &owed, &bytes, crate::obligations::Outcome::Impossible, &reason)?;
+        return Ok(());
+    }
     if !crate::completion_debt::ready(node, record_path, owner)? {
         return Err(crate::completion_debt::pending("the host has not yet acknowledged the run answer"));
     }
@@ -518,8 +526,10 @@ pub async fn tell_if_ended(node: &Arc<Node>, record_path: &Path, record: &JobRec
         tell(node, &acting, owner, id, notice, Owed::Working)
             .await
             .map_err(|failure| io::Error::other(failure.message))?;
-    } else {
-        crate::completion_debt::post(node, record_path, owner, &acting, id, notice)?;
+    } else if let Err(reason) = crate::completion_debt::post(node, record_path, owner, &acting, id, notice)? {
+        let bytes = std::fs::read(&owed)?;
+        crate::obligations::finish(node, &owed, &bytes, crate::obligations::Outcome::Impossible, &reason)?;
+        return Ok(());
     }
     crate::completion_debt::paid(record_path)
 }
@@ -603,7 +613,6 @@ pub(crate) fn retry_job(node: &Arc<Node>, path: &Path) {
     let (node, path) = (node.clone(), path.to_path_buf());
     tokio::spawn(async move {
         let mut again = crate::again::Again::default();
-        let mut reason = None;
         let mut ways = node.ways.subscribe();
         loop {
             ways.borrow_and_update();
@@ -616,10 +625,10 @@ pub(crate) fn retry_job(node: &Arc<Node>, path: &Path) {
                 Ok(()) => break,
                 Err(error) if error.kind() == io::ErrorKind::WouldBlock => {}
                 Err(error) => {
-                    let message = error.to_string();
-                    if reason.as_ref() != Some(&message) {
-                        node.log.line(format_args!("{} still owes its completion: {error}", path.display()));
-                        reason = Some(message);
+                    if let Err(recording) =
+                        crate::obligations::retry(&node, &path.with_extension("owed"), &error.to_string())
+                    {
+                        node.log.line(format_args!("recording the completion retry reason: {recording}"));
                     }
                 }
             }

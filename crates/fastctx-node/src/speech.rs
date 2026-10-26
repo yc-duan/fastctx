@@ -75,12 +75,6 @@ pub(crate) async fn tell_at(
         }
         return tell_here(node, &to.resident, delivery, owed).await;
     }
-    if notice.is_question() {
-        crate::goals::questions::require_remote(node, acting, machine).await?;
-    }
-    if matches!(&notice, Notice::Words { goal_report: Some(_), .. }) {
-        crate::goals::reports::require_remote(node, acting, machine).await?;
-    }
     let letter = match notice {
         // Words a resident said make it owed the turn they go into, which
         // the receiving machine knows from who sent them.

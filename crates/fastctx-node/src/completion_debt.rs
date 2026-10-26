@@ -74,7 +74,7 @@ pub(crate) fn post(
     acting: &Acting,
     id: NoticeId,
     notice: Notice,
-) -> io::Result<()> {
+) -> io::Result<Result<(), String>> {
     let marker = path.with_extension("posted");
     let posted = match fastctx_install::renewal::read_json::<crate::letters::Posted>(&marker)? {
         Some(posted) => posted,
@@ -91,9 +91,9 @@ pub(crate) fn post(
         }
     };
     match posted.state(node)? {
-        Posting::Held => Ok(()),
+        Posting::Held => Ok(Ok(())),
         Posting::Pending => Err(pending("the hub has not yet acknowledged the completion letter")),
-        Posting::Refused(reason) => Err(io::Error::other(format!("the hub refused the completion letter: {reason}"))),
+        Posting::Refused(reason) => Ok(Err(reason)),
     }
 }
 

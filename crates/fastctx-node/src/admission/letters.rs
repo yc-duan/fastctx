@@ -20,7 +20,13 @@ use fastctx_types::{AccountName, MachineName, ResidentId};
 use crate::Node;
 
 /// Refuses a letter `caller` may not send, with why.
-pub fn admit(node: &Node, hub: &HubId, caller: &Caller, purpose: Purpose, letter: &Letter) -> Result<(), String> {
+pub fn admit(
+    node: &std::sync::Arc<Node>,
+    hub: &HubId,
+    caller: &Caller,
+    purpose: Purpose,
+    letter: &Letter,
+) -> Result<(), String> {
     let from = &caller.machine;
     // A letter written before its sender was renamed names it as it was.
     let view = node.link_of(hub).map(|link| link.view());
@@ -29,6 +35,11 @@ pub fn admit(node: &Node, hub: &HubId, caller: &Caller, purpose: Purpose, letter
     };
     let mut also: &[AccountName] = &[];
     let (to, carries) = match letter {
+        Letter::ControlResult { .. } => return expect(purpose, Purpose::Echo),
+        Letter::Control { command } => {
+            expect(purpose, Purpose::Hands)?;
+            return crate::control_letters::admit(node, hub, caller, command).map_err(|error| error.message);
+        }
         // A fragment is checked whole, once every part of it is here.
         Letter::Fragment { .. } => return Ok(()),
         // Whose resident left is the sender's own.

@@ -238,6 +238,8 @@ impl Notice {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "fact")]
 pub enum WorldFact {
+    /// A durable delivery reached a terminal failure, with its explanation in the notice.
+    DeliveryFailed { id: NoticeId },
     /// Another session holds this machine's Computer Use in its turn.
     DeskTaken { by: Address },
     /// A session the World does not know holds this machine's Computer Use.

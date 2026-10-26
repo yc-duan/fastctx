@@ -175,21 +175,6 @@ pub(crate) fn recent(conversation: &ConversationDir) -> io::Result<Vec<ReportSum
     Ok(reports)
 }
 
-pub(crate) async fn require_remote(
-    node: &Arc<Node>,
-    acting: &fastctx_types::access::Acting,
-    machine: &fastctx_types::access::Written,
-) -> Result<(), Failure> {
-    use fastctx_types::access::Purpose;
-    use fastctx_types::remote::{RemoteCall, RemoteReply};
-    let answer = node.call(acting, machine, Purpose::Look, RemoteCall::Facts).await.map_err(failure)??;
-    if matches!(answer, RemoteReply::Facts(facts) if facts.goal_reports) {
-        Ok(())
-    } else {
-        Err(Failure::not_run(super::words::REPORT_OLDER_NODE))
-    }
-}
-
 fn failure(error: impl std::fmt::Display) -> Failure {
     Failure::new(error.to_string())
 }

@@ -790,6 +790,15 @@ pub type RemoteResult = Result<RemoteReply, Failure>;
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "letter")]
 pub enum Letter {
+    /// Durable job controls, sent only to peers advertising control_letters.
+    Control {
+        command: Box<crate::delivery_control::ControlLetter>,
+    },
+    /// An authenticated result of a durable control request.
+    ControlResult {
+        request: crate::NoticeId,
+        result: Result<(), Failure>,
+    },
     JobFacts {
         to: ResidentId,
         update: Box<crate::run_facts::JobFacts>,

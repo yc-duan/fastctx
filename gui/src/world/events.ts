@@ -322,6 +322,7 @@ export interface GoalQuestion {
 }
 
 export type WorldFact =
+  | { fact: "delivery_failed"; id: string }
   | { fact: "desk_taken"; by: Address }
   | { fact: "desk_outside" }
   | { fact: "desk_free"; by: Address }

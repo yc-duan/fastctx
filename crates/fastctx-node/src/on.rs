@@ -1127,7 +1127,7 @@ pub(crate) fn on_job(node: &Arc<Node>, origin: &OnOrigin, job: &JobId) -> Result
                 .and_then(|on| on.request.as_ref())
                 .is_some_and(|request| origin.request.as_ref() != Some(request)) =>
         {
-            Err(Failure::new(format!("{job} belongs to a different on request")))
+            Err(Failure::refused(format!("{job} belongs to a different on request")))
         }
         Ok(record)
             if record.on.as_ref().is_some_and(|on| {
@@ -1137,9 +1137,14 @@ pub(crate) fn on_job(node: &Arc<Node>, origin: &OnOrigin, job: &JobId) -> Result
             Err(Failure::refused("the observation identity or account does not match"))
         }
         Ok(record) if record.on.is_some() => Ok(path),
-        Ok(_) => Err(Failure::new(format!("{job} on {} was not sent by an on", node.machine()))),
+        Ok(_) => Err(Failure::refused(format!("{job} on {} was not sent by an on", node.machine()))),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Err(Failure::output_not_retained(format!(
+            "on job {job} of {} is no longer retained on {}",
+            origin.resident,
+            node.machine()
+        ))),
         Err(error) => {
-            Err(Failure::new(format!("no on job {job} of {} on {}: {error}", origin.resident, node.machine())))
+            Err(Failure::new(format!("reading on job {job} of {} on {}: {error}", origin.resident, node.machine())))
         }
     }
 }
