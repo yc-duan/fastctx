@@ -16,7 +16,7 @@ import type { AskState } from "./ask-state";
 import { inOrder, type ModelRequest } from "./requests";
 import type { SessionEvent, TurnEnd } from "../world/events";
 import type { MachineName } from "../world/events";
-import { Fold, type Block, type Entry, type Gap, type KeptWords, type SendState, type ShownAttachment } from "./model";
+import { Fold, sayOf, type Block, type Entry, type Gap, type KeptWords, type SendState, type ShownAttachment } from "./model";
 import type { AgentRun } from "./agents";
 import type { PendingControl } from "../world/control";
 
@@ -103,6 +103,7 @@ export class Conversation {
   private structure = 0;
   private folds = 0;
   private cache: { version: string; blocks: Block[] } | null = null;
+  private chatCache: { version: string; blocks: Block[] } | null = null;
   /** Gaps being read, by key. */
   private reading = new Set<string>();
   /** Folds read aside, as finding reads what the page does not hold:
@@ -382,6 +383,74 @@ export class Conversation {
     return blocks;
   }
 
+  /** What the conversation's own view shows (`world-voice.md`, 两种看法):
+   *  the user's words, what the agent said to them, what waits on them,
+   *  and a failure of what they asked. A turn the user began that ended
+   *  with nothing said to them shows its last words instead, as the answer
+   *  they were. */
+  chatBlocks(): Block[] {
+    const blocks = this.blocks();
+    const version = this.cache!.version;
+    if (this.chatCache?.version === version) return this.chatCache.blocks;
+    const asked = new Set<string>();
+    const spoke = new Set<string>();
+    // A command the user gave begins the next turn, unless words do: the
+    // host keeps its own line for the command out of the conversation.
+    let commanded = false;
+    for (const block of blocks) {
+      if (block.kind === "command") {
+        commanded ||= block.row.control.do === "command";
+        continue;
+      }
+      if (block.kind === "heard" && block.turn && !block.notice && (!block.from || block.from.kind === "user")) asked.add(block.turn);
+      if (block.kind === "say") spoke.add(block.turn);
+      const turn = "turn" in block ? block.turn : null;
+      if (commanded && turn) {
+        if (block.kind !== "heard") asked.add(turn);
+        commanded = false;
+      }
+    }
+    const shown = blocks.filter((block) => {
+      switch (block.kind) {
+        case "say":
+        case "gap":
+        case "ask":
+        case "question":
+        case "command":
+        case "forked":
+        case "uncertain":
+          return true;
+        case "heard":
+          return !block.notice && (!block.from || block.from.kind === "user");
+        case "prose":
+          return block.prose === "message" && asked.has(block.turn) && !spoke.has(block.turn) && this.turnEnded(block.turn) && this.lastMessageOf(block.turn) === block.key;
+        case "ended":
+          return block.end.how === "failed" && asked.has(block.turn);
+        default:
+          return false;
+      }
+    });
+    this.chatCache = { version, blocks: shown };
+    return shown;
+  }
+
+  /** The key of the last thing the agent said to the user in `turn`. */
+  lastSayOf(turn: string): string | null {
+    const fold = this.foldOf(turn);
+    if (!fold?.spokeIn(turn)) return null;
+    for (let at = fold.entries.length - 1; at >= 0; at -= 1) {
+      const entry = fold.entries[at]!;
+      if (entry.kind === "tool" && entry.turn === turn && sayOf(entry)) return entry.key;
+    }
+    return null;
+  }
+
+  /** Whether the agent said something to the user in `turn` through
+   *  `message_user`: the rest of that turn's words are its working notes. */
+  spokeIn(turn: string): boolean {
+    return this.foldOf(turn)?.spokeIn(turn) ?? false;
+  }
+
   // What the page asks, as of one conversation.
 
   /** Every fold asked, the latest first, those read aside last. */
@@ -531,6 +600,13 @@ export class Conversation {
   /** All a turn said, as it was written. */
   turnAnswer(turn: string): string {
     const fold = this.foldOf(turn);
+    // A turn that said something to the user answered with that.
+    if (fold?.spokeIn(turn)) {
+      return fold.entries
+        .flatMap((entry) => (entry.kind === "tool" && entry.turn === turn ? [sayOf(entry)] : []))
+        .flatMap((say) => (say ? [say.text] : []))
+        .join("\n\n");
+    }
     return (fold?.entries ?? [])
       .filter((entry): entry is ProseEntry => entry.kind === "prose" && entry.prose === "message" && entry.turn === turn)
       .map((entry) => entry.text)

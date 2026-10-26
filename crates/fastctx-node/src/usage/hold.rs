@@ -75,7 +75,7 @@ pub(super) fn refresh(node: &Arc<Node>, login: Option<(&str, &Path)>) -> Option<
             // 2026-10-20: a report holds its session gate; stopping another session must
             // never wait beneath that gate (world-concurrency.md).
             if node.residents.now(&id).is_some_and(|now| now.turn.as_ref() == Some(&turn)) {
-                if let Err(failure) = crate::talk::stop_here(&node, &id).await {
+                if let Err(failure) = crate::talk::stop_here_as(&node, &id, fastctx_types::turn_evidence::StopSource::Allowance).await {
                     node.log.line(format_args!("stopping {id} at its allowance: {}", failure.message));
                 }
                 let health = Health { kind: HealthKind::Warning, text: used.said(&account) };

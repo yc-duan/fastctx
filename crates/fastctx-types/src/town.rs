@@ -420,6 +420,9 @@ pub struct ResidentDetail {
     /// For a colleague: what it was asked, and the ends of its latest turns.
     pub asked: Option<String>,
     pub answers: Vec<MessageLine>,
+    /// Settled goal reports are separate from actual conversation turns.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub goal_reports: Vec<crate::goals::ReportSummary>,
     /// What it started that still runs on its machine.
     pub jobs: Vec<RunningJob>,
 }

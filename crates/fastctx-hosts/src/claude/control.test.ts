@@ -63,12 +63,16 @@ test('uses the public controls and request return types through the official eng
   on('session.usage', () => ({ value: { startedAt: 1, context: { tokens: 123, window: 200000, breakdown: { mcpTools: [{ name: 'mcp__fixture_world__run', serverName: 'fixture_world', isLoaded: true, tokens: 1 }] } }, rateLimits: [{ kind: 'five_hour', percentUsed: 12.5, resetsAt: '2026-10-04T17:00:00Z' }], cost: { usd: 0.125 } } }))
   on('command.run', (_, e) => {
     expect(e.origin).toEqual(expect.objectContaining({ kind: 'plugin' }))
-    commands.push({ command: e.command, args: e.args })
+    if (e.command !== 'goal') commands.push({ command: e.command, args: e.args })
     if (e.command === 'model') model = e.args
     if (e.command === 'bad') throw new Error('unknown command')
     return { text: e.command === 'panel' ? 'This command requires the Claude Code terminal' : e.command + ':' + e.args }
   })
   on('process.spawn', async function* (_, e, next) {
+    if (e.argv[1] === 'claude-native-goal') {
+      yield { stream: 'stdout', text: JSON.stringify({ offset: 0 }) }
+      return { value: { code: 0, signal: null } }
+    }
     if (e.argv[1] === 'claude-session-policy') {
       yield { stream: 'stdout', text: JSON.stringify({ model: null, effort: null }) }
       return { value: { code: 0, signal: null } }

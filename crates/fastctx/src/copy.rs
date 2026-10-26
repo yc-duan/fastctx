@@ -5,7 +5,8 @@ use std::process::ExitCode;
 use clap::Args;
 use fastctx_types::access::Written;
 use fastctx_types::copy::{CopyReport, Place};
-use fastctx_types::{Call, Reply};
+use fastctx_types::run_facts::{STEP_ENTRIES, StepDid, StepPlace, clipped};
+use fastctx_types::{Call, MachineName, Reply};
 
 /// The ends of a copy; what a copy does is said on the `copy` command.
 #[derive(Args)]
@@ -24,6 +25,8 @@ pub fn run(args: CopyArgs) -> anyhow::Result<ExitCode> {
         anyhow::bail!("with several sources, end the destination with / to copy them into that directory");
     }
     let to = place(to)?;
+    let began = crate::steps::began();
+    let mut told = Told::default();
     let mut failed = false;
     for source in sources {
         let copied = place(source).and_then(|from| crate::ask::call(Call::Copy { from, to: to.clone() }));
@@ -31,22 +34,74 @@ pub fn run(args: CopyArgs) -> anyhow::Result<ExitCode> {
             Ok((Reply::Copied(report), _)) => {
                 print!("{}", render(&report));
                 failed |= !report.problems.is_empty();
+                told.copied(report);
             }
             Ok((other, _)) => anyhow::bail!("the node answered something else: {other:?}"),
             Err(error) if error.is::<crate::paths::Said>() => {
                 eprintln!("{error}");
+                told.problems.push(error.to_string());
                 failed = true;
             }
             Err(error) => {
                 // Most failures already name the path they were about.
                 let error = format!("{error:#}");
                 let named = if error.contains(source.trim_end_matches(['/', '\\'])) { "" } else { source };
-                eprintln!("fastctx copy: {named}{}{error}", if named.is_empty() { "" } else { ": " });
+                let said = format!("{named}{}{error}", if named.is_empty() { "" } else { ": " });
+                eprintln!("fastctx copy: {said}");
+                told.problems.push(said);
                 failed = true;
             }
         }
     }
+    if let Some(began) = began
+        && let Some(did) = told.did(&to)
+    {
+        began.tell(did);
+    }
     Ok(if failed { ExitCode::FAILURE } else { ExitCode::SUCCESS })
+}
+
+/// What the copy's sources brought, as its step tells it.
+#[derive(Default)]
+struct Told {
+    from: Vec<StepPlace>,
+    to: Option<MachineName>,
+    files: u64,
+    bytes: u64,
+    unchanged: u64,
+    problems: Vec<String>,
+}
+
+impl Told {
+    fn copied(&mut self, report: CopyReport) {
+        self.from.push(StepPlace { machine: report.from_machine, path: report.from });
+        self.to.get_or_insert(report.to_machine);
+        self.files += report.files;
+        self.bytes += report.bytes;
+        self.unchanged += report.unchanged;
+        self.problems.extend(report.problems);
+    }
+
+    fn did(self, to: &Place) -> Option<StepDid> {
+        let machine = self.to.or_else(|| to.machine.clone()).or_else(crate::steps::here)?;
+        let keep = |mut list: Vec<String>| {
+            list.truncate(STEP_ENTRIES);
+            list.iter().map(|text| clipped(text)).collect()
+        };
+        let mut from = self.from;
+        from.truncate(STEP_ENTRIES);
+        for place in &mut from {
+            place.path = clipped(&place.path);
+        }
+        Some(StepDid::Copy {
+            from,
+            to: StepPlace { machine, path: clipped(&to.path) },
+            files: self.files,
+            bytes: self.bytes,
+            unchanged: self.unchanged,
+            problems: keep(self.problems),
+        })
+    }
 }
 
 /// `MACHINE:PATH`, or a path on this machine, each absolute. A prefix of

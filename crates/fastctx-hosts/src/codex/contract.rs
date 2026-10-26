@@ -26,7 +26,7 @@ fn dormant_threads_and_completed_turns_release_runtime_state_without_losing_iden
         host.adopt(
             &thread,
             super::ThreadSpec {
-                user_mcp: Default::default(),
+            native_resume: false,                user_mcp: Default::default(),
                 owner: fastctx_types::Address {
                     machine: "desktop".parse().unwrap(),
                     resident: "codex-c0de".parse().unwrap(),
@@ -39,7 +39,7 @@ fn dormant_threads_and_completed_turns_release_runtime_state_without_losing_iden
             },
         );
         host.notified("turn/started", &json!({"threadId":thread,"turn":{"id":turn}}), at);
-        host.end(&thread, &turn, fastctx_types::session::TurnHow::Completed, None, None, at);
+        host.end_with(&thread, &turn, fastctx_types::session::TurnHow::Completed, None, None, at, None, None);
         while let Ok(event) = receiver.try_recv() {
             host.acknowledge(&event);
         }

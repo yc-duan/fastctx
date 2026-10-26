@@ -53,7 +53,8 @@ pub fn supervise(world: &Path, record_path: &Path, fastctx_dir: &Path) -> io::Re
 /// The room of the conversation a job is for: the one its record is kept
 /// in. Worked out again from the owner's name it could be another, as the
 /// room of a machine renamed since stays under the name it had.
-fn room(record_path: &Path) -> io::Result<ConversationDir> {
+/// The room whose scratch directory the supervisor gives this job.
+pub fn room(record_path: &Path) -> io::Result<ConversationDir> {
     record_path
         .parent()
         .and_then(Path::parent)
@@ -154,14 +155,11 @@ impl Job {
                 return self.publish().await;
             }
         }
-        let (tree, output) = ProcessTree::spawn_with_io(
-            &shell.program,
-            &args,
-            Path::new(&self.record.cwd),
-            &shell.environment,
-            mode,
-            self.record.stdin.as_deref().map(Path::new),
-        )?;
+        let (tree, output) = if self.record.is_sentinel() {
+            super::sentinel::spawn(&shell, &self.record, self.world.path())?
+        } else {
+            ProcessTree::spawn_with_io(&shell.program,&args,Path::new(&self.record.cwd),&shell.environment,mode,self.record.stdin.as_deref().map(Path::new))?
+        };
         let tree = Arc::new(tree);
         self.record.pid = Some(tree.main_pid());
         let (sender, mut events) = mpsc::unbounded_channel();
@@ -181,13 +179,14 @@ impl Job {
                 let _ = sender.send(Event::Empty(tree.wait_empty()));
             }));
         }
+        let output_limit = self.record.is_sentinel().then_some(65_536);
         let mut streams = 1;
         if let (Some(reader), Some(log)) = (output.stderr, stderr) {
             streams += 1;
             checkpoints.push(reader.checkpoint());
             let sender = sender.clone();
             workers.push(std::thread::spawn(move || {
-                let result = output::copy(reader, log, |bytes, lost| {
+                let result = output::copy(reader, log, output_limit, |bytes, lost| {
                     let _ = sender.send(Event::Drained { stderr: true, bytes, lost });
                 });
                 let _ = sender.send(Event::Output { stderr: true, result });
@@ -196,7 +195,7 @@ impl Job {
         {
             let sender = sender.clone();
             workers.push(std::thread::spawn(move || {
-                let result = output::copy(output.stdout, log, |bytes, lost| {
+                let result = output::copy(output.stdout, log, output_limit, |bytes, lost| {
                     let _ = sender.send(Event::Drained { stderr: false, bytes, lost });
                 });
                 let _ = sender.send(Event::Output { stderr: false, result });
@@ -235,8 +234,13 @@ impl Job {
         let mut empty = false;
         let mut drained_out = None;
         let mut drained_err = (streams == 1).then_some(0);
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(30);
         loop {
             tokio::select! {
+                () = tokio::time::sleep_until(deadline), if self.record.is_sentinel() && self.record.stop.is_none() => {
+                    resume.take();
+                    self.stop(tree, StopRequest {by:"sentinel".into(),reason:"observation exceeded 30 seconds".into()}).await?;
+                }
                 request = server.next() => {
                     let (connection, request) = request?;
                     self.waiting.push(connection);

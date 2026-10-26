@@ -73,6 +73,23 @@ pub async fn control(node: &Arc<Node>, resident: &ResidentId, control: Control) 
     }
 }
 
+/// Reads the running host's current local summary, without waking a closed session.
+pub(crate) async fn usage_now(node: &Arc<Node>, resident: &ResidentId) -> Result<Value, Failure> {
+    if !running(node, resident)? {
+        return Err(Failure::new("the Claude session is not running"));
+    }
+    tokio::time::timeout(std::time::Duration::from_secs(60), invoke(node, resident, json!({"do":"usage"})))
+        .await
+        .map_err(|_| Failure::new("Claude did not report current usage within 60 seconds"))?
+}
+
+/// The goal's compaction respects the host's automatic compaction setting.
+pub(crate) async fn goal_compact(node: &Arc<Node>, resident: &ResidentId) -> Result<Controlled, Failure> {
+    super::resume::ready(node, resident).await?;
+    let result = invoke_action(node, resident, json!({"do":"goal_compact"})).await?;
+    serde_json::from_value(result).map_err(|error| Failure::new(format!("Claude compaction reply: {error}")))
+}
+
 /// How long a running session's mod is given to say what it offers.
 const OFFERS_WITHIN: std::time::Duration = std::time::Duration::from_secs(5);
 
@@ -231,7 +248,7 @@ pub async fn offers(node: &Arc<Node>, resident: &ResidentId) -> Result<Offers, F
 /// assistant's retained messages. Rewind is offered once one keeps it whole.
 const REWIND_SUPPORTED: bool = false;
 
-fn live_host(node: &Node, resident: &ResidentId) -> Result<(PathBuf, Host), Failure> {
+pub(super) fn live_host(node: &Node, resident: &ResidentId) -> Result<(PathBuf, Host), Failure> {
     let (about, _) = node.residents.about(resident).ok_or_else(|| Failure::new("unknown resident"))?;
     let session = about.session.ok_or_else(|| Failure::new("Claude has not identified this conversation yet"))?;
     let directory = files::directory(node.world.path(), &session);
@@ -463,6 +480,7 @@ pub async fn look(node: &Arc<Node>, resident: &ResidentId, session_directory: &P
             && let Some(key) = path.file_stem().and_then(|key| key.to_str())
             && !node.claude.bridge.calls.lock().expect("never poisoned").contains(key)
         {
+            super::goal_compaction::capture(node, resident, &directory, key)?;
             collect_invocation(&directory, key)?;
         }
     }
@@ -524,7 +542,7 @@ pub async fn look(node: &Arc<Node>, resident: &ResidentId, session_directory: &P
 }
 
 pub(super) fn collect_invocation(directory: &Path, key: &str) -> std::io::Result<()> {
-    for side in ["inbox", "replies", "started"] {
+    for side in ["inbox", "replies", "retained", "started"] {
         for extension in ["json", "done", "parts"] {
             match fastctx_platform::owned_directory::delete(&directory.join(side).join(format!("{key}.{extension}"))) {
                 Err(error) if error.kind() != std::io::ErrorKind::NotFound => return Err(error),

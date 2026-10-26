@@ -50,8 +50,11 @@ pub async fn manage(
 pub async fn here(node: &Arc<Node>, id: &ResidentId, action: Management) -> Result<Managed, Failure> {
     let _doing = fastctx_platform::doing::doing(format!("{action:?} of {id}"));
     let actions = crate::control_queue::gate(node, id);
-    let _action =
-        if matches!(action, Management::Sleep | Management::Archive) { None } else { Some(actions.lock().await) };
+    let _action = if matches!(action, Management::Sleep | Management::Archive) {
+        None
+    } else {
+        Some(crate::gate_waits::action(node, id, &actions).await?)
+    };
     let gate = node.residents.management(id)?;
     if matches!(action, Management::Sleep) {
         node.residents.active(id)?;
@@ -418,10 +421,7 @@ pub async fn here(node: &Arc<Node>, id: &ResidentId, action: Management) -> Resu
             );
             if changed {
                 match crate::focus::changed(node, id, &about, &focus).await {
-                    Ok(delivery) => match speech::tell_here_locked(node, id, delivery, speech::Owed::Nobody).await {
-                        Ok(landed) => result.notification = Some(landed),
-                        Err(error) => step(&mut result, "notification", Outcome::Failed, error.message),
-                    },
+                    Ok(()) => {}
                     Err(error) => step(&mut result, "notification", Outcome::Failed, error.message),
                 }
             }

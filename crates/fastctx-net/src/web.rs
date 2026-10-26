@@ -4,6 +4,8 @@
 //! reached. Plain HTTP is spoken only to this computer itself.
 
 mod connect;
+pub mod post;
+pub mod public;
 
 use fastctx_types::update::ReachFailure;
 
@@ -135,6 +137,7 @@ pub async fn get_conditional(url: &str, accept: &str, from: u64, etag: Option<&s
     Err(format!("{url} redirected more than {REDIRECTS} times").into())
 }
 
+
 /// Where a redirect's `Location` points from `base`.
 fn resolve(base: &Uri, location: &str) -> Result<String, String> {
     if location.starts_with("https://") || location.starts_with("http://") {
@@ -205,7 +208,8 @@ where
     tokio::spawn(async move {
         let _ = connection.await;
     });
-    let authority = if port == 443 || port == 80 { host.to_string() } else { format!("{host}:{port}") };
+    let host = if host.contains(':') { format!("[{host}]") } else { host.to_string() };
+    let authority = if port == 443 || port == 80 { host.clone() } else { format!("{host}:{port}") };
     let mut builder = Request::get(path)
         .header(hyper::header::HOST, authority)
         .header(hyper::header::USER_AGENT, concat!("fastctx/", env!("CARGO_PKG_VERSION")))

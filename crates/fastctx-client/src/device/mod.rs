@@ -11,6 +11,7 @@ pub(crate) mod file_read;
 mod file_search;
 mod lines;
 mod mcp;
+mod project_memory;
 mod store;
 mod thumbnail;
 mod updates;
@@ -70,6 +71,17 @@ impl Drop for Session {
 }
 
 impl Device {
+    pub(crate) fn record_watch(
+        &self,
+        hub: Option<&HubName>,
+        account: Option<AccountName>,
+        kind: String,
+    ) -> Result<fastctx_net::link::account_records::RecordWatch, Error> {
+        let session = self.on_hub(hub)?;
+        let account = calls::profile_account(&session, account)?;
+        session.link.watch_account_records(account, kind).map_err(failed)
+    }
+
     /// Ends this application's connections while retaining every login.
     /// Uninstall uses this before a separate withdrawal connection or exit.
     pub fn disconnect(&self) {

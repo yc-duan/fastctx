@@ -52,6 +52,7 @@ use crate::again::Again;
 use crate::learned::Holding;
 
 mod accepting;
+pub(crate) mod update;
 
 /// A new caller's optional stream acknowledges business admission before filesystem work.
 pub(crate) async fn accept(stream: Option<Stream>) -> Result<Option<Stream>, Failure> {
@@ -186,10 +187,13 @@ async fn copy_once(
     if from_here && to_here {
         let root = fastctx_platform::local_path(&from.path).map_err(|error| Failure::new(error.to_string()))?;
         let target = to.path;
-        return tokio::task::spawn_blocking(move || fastctx_hands::copy::local::copy(&root, &target, &here))
-            .await
-            .map_err(|error| Failure::new(format!("copying {}: {error}", from.path)))?
-            .map_err(|error| Failure::new(format!("copying {}: {error}", from.path)));
+        let world = node.world.clone();
+        return tokio::task::spawn_blocking(move || {
+            fastctx_hands::copy::local::copy_protected(&root, &target, &here, world.path())
+        })
+        .await
+        .map_err(|error| Failure::new(format!("copying {}: {error}", from.path)))?
+        .map_err(|error| Failure::new(format!("copying {}: {error}", from.path)));
     }
     if !from_here && !to_here && same_machine(node, &from_machine, &to_machine)? {
         let to = Place { machine: Some(to_machine.name.clone()), hub: to_machine.hub.clone(), path: to.path };
@@ -292,7 +296,7 @@ async fn relay(
     let passing = Box::pin(async {
         let mut source = given.await.map_err(|_| Failure::new(format!("{from_machine} did not send the copy")))?;
         began.now();
-        let offer: Offer = source.hear().await.map_err(broke)?;
+        let offer: Offer = source.hear_step("offer").await.map_err(broke)?;
         let mut manifest = Vec::new();
         source
             .take(offer.manifest_bytes, |piece| {
@@ -320,7 +324,7 @@ async fn relay(
         let piping = async move {
             let mut destination = taken.await.map_err(|_| format!("{to_machine} did not take the copy"))?;
             destination.send(&manifest).await?;
-            let answer: Answer = destination.hear().await?;
+            let answer: Answer = destination.hear_step("requested files").await?;
             source.say(&answer).await?;
             let Answer::Want { files, from } = answer else { return Ok(()) };
             for (at, index) in files.into_iter().enumerate() {
@@ -459,7 +463,7 @@ async fn fetch(
         Box::new(move |mut stream| {
             Box::pin(async move {
                 began.now();
-                let offer: Offer = stream.hear().await?;
+                let offer: Offer = stream.hear_step("offer").await?;
                 let report = take_files(&here, to, offer.manifest_bytes, None, offer.resumes, &mut stream)
                     .await
                     .map_err(|failure| failure.message)?;
@@ -558,7 +562,7 @@ fn slashed(path: &Path) -> String {
 /// the destination wants.
 async fn feed(mut stream: Stream, manifest: Vec<u8>, files: Vec<(PathBuf, Option<u64>)>) -> Result<(), String> {
     stream.send(&manifest).await?;
-    let (wanted, from) = match stream.hear::<Answer>().await? {
+    let (wanted, from) = match stream.hear_step::<Answer>("requested files").await? {
         Answer::Want { files, from } => (files, from),
         Answer::Refused { reason } => return Err(reason),
     };
@@ -645,7 +649,7 @@ async fn take_files(
     }
     let manifest: Manifest =
         serde_json::from_slice(&json).map_err(|error| Failure::new(format!("the manifest cannot be read: {error}")))?;
-    let receiver = match Receiver::new(&to, manifest) {
+    let receiver = match Receiver::new(&to, manifest).and_then(|receiver| receiver.protect(node.world.path())) {
         Ok(receiver) => receiver,
         Err(reason) => {
             let _ = stream.say(&Answer::Refused { reason: reason.clone() }).await;

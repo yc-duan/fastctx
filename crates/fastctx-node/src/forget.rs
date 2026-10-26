@@ -217,15 +217,20 @@ pub(crate) fn start(node: &Arc<Node>) {
     let mut views = node.views.subscribe();
     let wake = node.forget_asks.wake.clone();
     tokio::spawn(async move {
+        let mut again = crate::again::Again::default();
         loop {
             let woken = wake.notified();
             tokio::pin!(woken);
             woken.as_mut().enable();
-            {
+            let done = {
                 let Some(node) = weak.upgrade() else { return };
-                send_kept(&node).await;
+                send_kept(&node).await
+            };
+            if done {
+                again.reset();
             }
             tokio::select! {
+                () = tokio::time::sleep(again.next()), if !done => {},
                 changed = views.changed() => if changed.is_err() { return },
                 () = woken => {},
             }
@@ -423,6 +428,7 @@ async fn send_kept(node: &Arc<Node>) -> bool {
             return false;
         }
     };
+    drop(_file);
     if kept.is_empty() {
         return true;
     }
@@ -432,35 +438,76 @@ async fn send_kept(node: &Arc<Node>) -> bool {
             left.push(ask.clone());
             continue;
         }
-        let Some(link) = node.link_of(&ask.hub) else {
-            node.log.line(format_args!(
-                "not asking that {} be deleted: this computer is no longer on that hub",
-                ask.conversation.key()
-            ));
+        let bytes = serde_json::to_vec(ask).expect("deletion request serializes");
+        let id = crate::speech::fixed_id("forget", &[&fastctx_hands::files::content_hash(&bytes)]);
+        let terminal = node.world.path().join("forget-outcomes").join(format!("{id}.json"));
+        if let Err(error) = fastctx_platform::ensure_private_dir(terminal.parent().expect("deletion outcomes")) {
+            node.log.line(format_args!("keeping deletion outcomes: {error}"));
+            left.push(ask.clone());
             continue;
+        }
+        match crate::obligations::finished(&terminal, &bytes) {
+            Ok(true) => continue,
+            Ok(false) => {}
+            Err(error) => {
+                let _ = crate::obligations::retry(node, &terminal, &error.to_string());
+                left.push(ask.clone());
+                continue;
+            }
+        }
+        let outcome = match node.link_of(&ask.hub) {
+            None => match crate::obligations::hub_left(node, &ask.hub) {
+                Ok(true) => {
+                    Ok(Some((crate::obligations::Outcome::Impossible, "the network was left or removed".to_string())))
+                }
+                Ok(false) => Err("the hub is not connected; the deletion remains pending".to_string()),
+                Err(error) => Err(error.to_string()),
+            },
+            Some(link) => match link.forget(&ask.account, &ask.conversation).await {
+                Ok(true) => {
+                    Ok(Some((crate::obligations::Outcome::Delivered, "the hub accepted the deletion".to_string())))
+                }
+                Ok(false) => Ok(None),
+                Err(reason) => Err(reason),
+            },
         };
-        match link.forget(&ask.account, &ask.conversation).await {
-            Ok(true) => {}
-            Ok(false) => left.push(ask.clone()),
+        match outcome {
+            Ok(Some((outcome, reason))) => {
+                if let Err(error) = crate::obligations::finish(node, &terminal, &bytes, outcome, &reason) {
+                    node.log.line(format_args!("settling a deletion request: {error}"));
+                    left.push(ask.clone());
+                }
+            }
+            Ok(None) => left.push(ask.clone()),
             Err(reason) => {
-                node.log.line(format_args!(
-                    "the hub did not take the deletion of {} for {}: {reason}",
-                    ask.conversation.key(),
-                    ask.account
-                ));
+                if let Err(error) = crate::obligations::retry(node, &terminal, &reason) {
+                    node.log.line(format_args!("recording a deletion retry: {error}"));
+                }
                 left.push(ask.clone());
             }
         }
     }
-    let done = left.is_empty();
-    if left != kept {
-        match tokio::task::spawn_blocking(move || write(&path, &left)).await {
-            Ok(Ok(())) => {}
-            Ok(Err(error)) => node.log.line(format_args!("keeping the deletions still to ask: {error}")),
-            Err(error) => node.log.line(format_args!("keeping the deletions still to ask: {error}")),
+    // New deletions may have arrived while the hubs were being asked.
+    let _file = node.forget_asks.file.lock().await;
+    match tokio::task::spawn_blocking(move || -> std::io::Result<bool> {
+        let mut current = read(&path)?;
+        current.retain(|ask| !kept.contains(ask) || left.contains(ask));
+        write(&path, &current)?;
+        Ok(current.is_empty())
+    })
+    .await
+    {
+        Ok(Ok(done)) => done,
+        result => {
+            let error = match result {
+                Ok(Err(error)) => error.to_string(),
+                Err(error) => error.to_string(),
+                Ok(Ok(_)) => unreachable!(),
+            };
+            node.log.line(format_args!("keeping the deletions still to ask: {error}"));
+            false
         }
     }
-    done
 }
 
 fn read(path: &std::path::Path) -> std::io::Result<Vec<Ask>> {

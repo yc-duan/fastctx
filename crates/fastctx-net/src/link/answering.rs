@@ -57,6 +57,18 @@ pub(super) async fn answer(inner: Arc<Inner>, replier: Replier, message: Envelop
         reply(&inner, &replier, &message, Kind::Refused, None, serde_json::Value::String(reason)).await;
         return;
     }
+    if matches!(replier, Replier::Peer(..)) && crate::message::plan_request(&message).is_some() {
+        reply(
+            &inner,
+            &replier,
+            &message,
+            Kind::Refused,
+            None,
+            serde_json::Value::String(fastctx_types::plan::words::CONTROL.into()),
+        )
+        .await;
+        return;
+    }
     if matches!(replier, Replier::Peer(..)) && crate::message::project_entry(&message).is_some() {
         let reason = "a project's entry from another machine must be authorized by its hub";
         reply(&inner, &replier, &message, Kind::Refused, None, serde_json::Value::String(reason.into())).await;
@@ -185,7 +197,7 @@ async fn work(
 ) -> Option<RemoteResult> {
     let refused = |reason: String| {
         inner.node.log(format!("refused a call from {}: {reason}", caller.machine));
-        Err(Failure::new(format!("{} refused the call: {reason}", inner.me())))
+        Err(Failure::not_run(format!("{} refused the call: {reason}", inner.me())))
     };
     // A call this release does not know, as a newer one may make, is
     // refused saying so.
@@ -229,6 +241,9 @@ async fn work(
     };
     if matches!(remote, RemoteCall::EnterProject { .. }) && crate::message::project_entry(message).is_none() {
         return Some(refused("a project entry must be a complete, unstreamed control request".into()));
+    }
+    if matches!(remote, RemoteCall::Plan { .. }) && crate::message::plan_request(message).is_none() {
+        return Some(refused(fastctx_types::plan::words::CONTROL.into()));
     }
     let contract = remote.contract();
     if contract.pool != pool {
