@@ -64,9 +64,6 @@ pub(super) async fn delete(node: &Arc<Node>, names: Vec<String>) -> Vec<Deletion
     deletions
 }
 
-/// How long a deletion waits for what changes the conversation's life to end.
-const GATE_WAITS: std::time::Duration = std::time::Duration::from_secs(30);
-
 /// The file that says a conversation is being deleted, written before
 /// anything outside is done for it.
 const INTENT: &str = "deleting";
@@ -113,11 +110,8 @@ async fn delete_inner(node: &Arc<Node>, name: &str) -> Result<u64, Stop> {
     };
     let _action = match &actions {
         Some(gate) => {
-            Some(tokio::time::timeout(std::time::Duration::from_secs(30), gate.lock()).await.map_err(|_| {
-                Stop::Refused(
-                    "a conversation control is still running; stop it before deleting the conversation".into(),
-                )
-            })?)
+            let Kind::Home(id) = &kind else { unreachable!() };
+            Some(crate::gate_waits::action(node, id, gate).await.map_err(|failure| Stop::Refused(failure.message))?)
         }
         None => None,
     };
@@ -179,9 +173,8 @@ async fn delete_inner(node: &Arc<Node>, name: &str) -> Result<u64, Stop> {
         return Ok(bytes.saturating_sub(retained + host_kept));
     };
     let gate = node.residents.management(id).map_err(|failure| Stop::Failed(failure.message))?;
-    let _exclusive = tokio::time::timeout(GATE_WAITS, gate.write())
-        .await
-        .map_err(|_| Stop::Refused("it is being woken, put to sleep or moved; try again in a moment".into()))?;
+    let _exclusive =
+        crate::gate_waits::alone(node, id, &gate).await.map_err(|failure| Stop::Refused(failure.message))?;
     let busy = node.residents.now(id).is_some_and(|now| now.activity == Activity::Busy || now.turn.is_some());
     if busy {
         return Err(Stop::Refused("it is working; stop it first".to_string()));

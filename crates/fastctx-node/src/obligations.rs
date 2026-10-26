@@ -194,7 +194,9 @@ pub(crate) fn impossible(node: &Node, acting: &Acting, destination: &Written) ->
 /// archived conversation alive. Transport receipt retention is separate.
 pub(crate) fn collect(node: &Node) -> io::Result<()> {
     let age = Duration::from_secs(30 * 24 * 60 * 60);
-    for book in ["on-stops", "job-deliveries", "received-controls", "received", "on-deliveries", "run-receipts"] {
+    for book in
+        ["on-stops", "run-stops", "job-deliveries", "received-controls", "received", "on-deliveries", "run-receipts"]
+    {
         for directory in node.world.book_directories(book)? {
             for path in crate::retention::entries(&directory)? {
                 let terminal =
@@ -224,6 +226,7 @@ pub(crate) fn collect(node: &Node) -> io::Result<()> {
         }
     }
     crate::control_posts::collect(node, age)?;
+    crate::run_stops::collect(node, age)?;
     Ok(())
 }
 

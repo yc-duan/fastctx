@@ -316,7 +316,7 @@ pub(crate) struct Inner {
     /// Woken when a letter is put in the outbox.
     outbox_changed: Notify,
     /// Held while one of the hub's letters is taken (`session::take_letters`).
-    taking: Arc<tokio::sync::Mutex<()>>,
+    taking: fastctx_platform::doing::Mutex<()>,
     /// What this session was last told of how each machine is connected,
     /// and when among the hub's changes (`presence`).
     presences: Mutex<HashMap<MachineName, (u64, crate::directory::Presence)>>,
@@ -463,6 +463,7 @@ impl Link {
         };
         let policy = update_policy::UpdatePolicy::read(dir.path())?;
         let (status, _) = watch::channel(Status::Connecting { since: Timestamp::now(), last_error: None });
+        let receiving = dir.path().display().to_string();
         let inner = Arc::new_cyclic(|this| Inner {
             this: this.clone(),
             dir,
@@ -488,7 +489,12 @@ impl Link {
             dissolved: std::sync::atomic::AtomicBool::new(false),
             then: Mutex::new(None),
             outbox_changed: Notify::new(),
-            taking: Arc::default(),
+            taking: fastctx_platform::doing::Mutex::new(
+                fastctx_platform::doing::Rank::RECEIVING,
+                "incoming letters",
+                receiving,
+                (),
+            ),
             presences: Mutex::new(HashMap::new()),
             clock: Mutex::default(),
             reconnect: Notify::new(),
@@ -717,11 +723,22 @@ impl Link {
         // A call's future is tens of kilobytes; on the heap it does not grow
         // every future that makes a call, which a build without
         // optimizations keeps whole on the stack, once for each.
-        let call = match self.login_call(to, account, call).await {
-            Ok(call) => call,
-            Err(reason) => return Ok(Err(fastctx_types::ipc::Failure::not_run(reason))),
-        };
-        Box::pin(self.inner.call(to, account, purpose, call, None)).await
+        let within = call.contract().within;
+        let calling = Box::pin(async {
+            let call = match Box::pin(self.login_call(to, account, call)).await {
+                Ok(call) => call,
+                Err(reason) => return Ok(Err(fastctx_types::ipc::Failure::not_run(reason))),
+            };
+            Box::pin(self.inner.call(to, account, purpose, call, None)).await
+        });
+        match within {
+            Some(within) => {
+                fastctx_platform::doing::outside(format!("{to}'s call including preparation"), within, calling)
+                    .await
+                    .map_err(|late| CallFailure::Unknown { name: to.clone(), reason: late.to_string() })?
+            }
+            None => calling.await,
+        }
     }
 
     /// Calls `to` with a data connection, whose source end `feed` is given
@@ -734,11 +751,22 @@ impl Link {
         call: RemoteCall,
         feed: Feed,
     ) -> Result<RemoteResult, CallFailure> {
-        let call = match self.login_call(to, account, call).await {
-            Ok(call) => call,
-            Err(reason) => return Ok(Err(fastctx_types::ipc::Failure::not_run(reason))),
-        };
-        Box::pin(self.inner.call(to, account, purpose, call, Some(feed))).await
+        let within = call.contract().within;
+        let calling = Box::pin(async {
+            let call = match Box::pin(self.login_call(to, account, call)).await {
+                Ok(call) => call,
+                Err(reason) => return Ok(Err(fastctx_types::ipc::Failure::not_run(reason))),
+            };
+            Box::pin(self.inner.call(to, account, purpose, call, Some(feed))).await
+        });
+        match within {
+            Some(within) => {
+                fastctx_platform::doing::outside(format!("{to}'s call including preparation"), within, calling)
+                    .await
+                    .map_err(|late| CallFailure::Unknown { name: to.clone(), reason: late.to_string() })?
+            }
+            None => calling.await,
+        }
     }
 
     /// Sends a letter to `to`, for `account`. It is on this machine's disk
@@ -961,6 +989,11 @@ impl Inner {
     /// still under way, as just after the node started, the outcome of that
     /// attempt.
     async fn connected(&self) -> Option<Connection> {
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(60);
+        let _wait = fastctx_platform::doing::waiting_outside(
+            "the first connection to the hub",
+            std::time::Duration::from_secs(60),
+        );
         let mut status = self.status.subscribe();
         loop {
             if let Some(connection) = self.connection() {
@@ -969,7 +1002,7 @@ impl Inner {
             if !matches!(*status.borrow_and_update(), Status::Connecting { last_error: None, .. }) {
                 return self.connection();
             }
-            if status.changed().await.is_err() {
+            if !matches!(tokio::time::timeout_at(deadline, status.changed()).await, Ok(Ok(()))) {
                 return None;
             }
         }
@@ -1110,11 +1143,15 @@ impl Inner {
     }
 
     async fn ask(&self, question: Question) -> Result<Told, String> {
-        let connection =
-            self.connected().await.ok_or_else(|| format!("not connected to the hub: {}", self.not_connected()))?;
-        self.ask_on(connection, question)
-            .await?
-            .ok_or_else(|| "the connection to the hub ended before it answered".to_string())
+        fastctx_platform::doing::outside("the hub's answer, including its first connection", within(&question), async {
+            let connection =
+                self.connected().await.ok_or_else(|| format!("not connected to the hub: {}", self.not_connected()))?;
+            self.ask_on(connection, question)
+                .await?
+                .ok_or_else(|| "the connection to the hub ended before it answered".to_string())
+        })
+        .await
+        .map_err(|late| late.to_string())?
     }
 
     /// None means that the connection ended, distinct from a hub refusal. A

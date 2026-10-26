@@ -1268,6 +1268,7 @@ async fn start(
             Some(registration.clone()),
             None,
             false,
+            None,
         )
         .await?;
     let follower = registration.lock().expect("never poisoned").take().expect("registered before spawn");

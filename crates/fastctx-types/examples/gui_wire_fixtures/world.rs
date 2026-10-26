@@ -326,6 +326,7 @@ fn nodes() -> Vec<NodesReply> {
         collaboration_tree: false,
         completion_receipts: false,
         control_letters: lifetime,
+        run_stops: lifetime,
         upload_resumes: false,
         attachment_references: false,
         stats: lifetime,

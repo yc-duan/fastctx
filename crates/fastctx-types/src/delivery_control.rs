@@ -16,6 +16,10 @@ pub enum ControlLetter {
         #[serde(default)]
         through_exit: bool,
     },
+    StopRun {
+        owner: Address,
+        dispatch: crate::NoticeId,
+    },
     StopOn {
         origin: crate::on::OnOrigin,
         job: Option<JobId>,
@@ -25,7 +29,7 @@ pub enum ControlLetter {
 impl ControlLetter {
     pub fn owner(&self) -> &Address {
         match self {
-            Self::CompletionReceipt { owner, .. } => owner,
+            Self::CompletionReceipt { owner, .. } | Self::StopRun { owner, .. } => owner,
             Self::StopOn { origin, .. } => &origin.resident,
         }
     }
@@ -41,6 +45,9 @@ impl ControlLetter {
                 origin: origin.clone(),
                 through_exit: *through_exit,
             },
+            Self::StopRun { owner, dispatch } => {
+                RemoteCall::TurnInterrupted { resident: owner.resident.clone(), dispatch: Some(dispatch.clone()) }
+            }
             Self::StopOn { origin, job } => RemoteCall::StopOn { origin: origin.clone(), job: job.clone() },
         }
     }

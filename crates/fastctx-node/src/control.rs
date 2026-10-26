@@ -94,7 +94,7 @@ pub async fn control_here(node: &Arc<Node>, resident: &ResidentId, control: Cont
         return execute(node, resident, control).await;
     }
     let gate = crate::control_queue::gate(node, resident);
-    let _action = gate.lock().await;
+    let _action = crate::gate_waits::action(node, resident, &gate).await?;
     node.residents.active(resident)?;
     crate::control_queue::drain(node, resident).await?;
     if let Some(queued) = crate::control_queue::enqueue_if_busy(node, resident, &control).await? {

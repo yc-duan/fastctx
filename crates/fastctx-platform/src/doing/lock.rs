@@ -45,6 +45,13 @@ impl<T: ?Sized> Mutex<T> {
         MutexGuard { guard, _hold: wait.held() }
     }
 
+    /// As `lock`, waiting at most `within`.
+    pub async fn lock_within(&self, within: Duration) -> Result<MutexGuard<'_, T>, Busy> {
+        tokio::time::timeout(within, self.lock())
+            .await
+            .map_err(|_| Busy { doing: registry::keeping(self.identity.id).filter(|label| super::said(label)) })
+    }
+
     pub fn try_lock(&self) -> Result<MutexGuard<'_, T>, tokio::sync::TryLockError> {
         let guard = self.inner.try_lock()?;
         Ok(MutexGuard { guard, _hold: registry::taken(self.identity.lock(), true) })
@@ -81,6 +88,14 @@ impl<T: ?Sized> DerefMut for MutexGuard<'_, T> {
 pub struct OwnedMutexGuard<T: ?Sized> {
     guard: tokio::sync::OwnedMutexGuard<T>,
     _hold: Hold,
+}
+
+impl<T: ?Sized> OwnedMutexGuard<T> {
+    /// Attributes this owned guard to the task it was moved into, so waits
+    /// and lock-order diagnostics follow the task doing the protected work.
+    pub fn adopt(&self) {
+        self._hold.adopt();
+    }
 }
 
 impl<T: ?Sized> Deref for OwnedMutexGuard<T> {

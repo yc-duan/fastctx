@@ -71,6 +71,7 @@ async fn converse(node: &Arc<Node>, connection: Connection) -> std::io::Result<(
         Arrived { node, residents: Vec::new(), collected: Vec::new(), notes: Vec::new(), completed: None };
     let caller = calling(&hello.peer);
     while let Some(frame) = reader.recv().await? {
+        let requested = tokio::time::Instant::now();
         let _doing = fastctx_platform::doing::doing(format!("{} from {caller}", crate::labels::call_in(&frame)));
         let ClientFrame::Call { id, call } = (match parse(&frame) {
             Ok(call) => call,
@@ -138,7 +139,9 @@ async fn converse(node: &Arc<Node>, connection: Connection) -> std::io::Result<(
         }
         if let Call::HoldHost { resident } = call {
             let lease = match users_voice(node, &hello.peer) {
-                Ok(()) => crate::lifecycle::attached::hold(node, &resident).await,
+                Ok(()) => {
+                    crate::gate_waits::asked_since(requested, crate::lifecycle::attached::hold(node, &resident)).await
+                }
                 Err(error) => Err(error),
             };
             match lease {
@@ -530,9 +533,12 @@ async fn converse(node: &Arc<Node>, connection: Connection) -> std::io::Result<(
         }
         if let Call::Upload { target, node: machine, file, composer } = call {
             let reply = match users_voice(node, &hello.peer) {
-                Ok(()) => crate::attachments::upload(node, target, machine, file, composer, reader)
-                    .await
-                    .map(crate::attachments::reply),
+                Ok(()) => crate::gate_waits::asked_since(
+                    requested,
+                    crate::attachments::upload(node, target, machine, file, composer, reader),
+                )
+                .await
+                .map(crate::attachments::reply),
                 Err(error) => Err(error),
             };
             writer.send(&json(&NodeFrame::Reply { id, reply })).await?;
@@ -567,7 +573,24 @@ async fn converse(node: &Arc<Node>, connection: Connection) -> std::io::Result<(
                     let completed = completed.or(pending);
                     taken(node, resident, ids, shown, completed, &mut arrived.collected, &mut arrived.notes).await
                 }
-                call => handle(node, &hello.peer, call).await,
+                call => {
+                    let internal = matches!(
+                        call,
+                        Call::Arrive { .. }
+                            | Call::ClaudeSessionDirectory { .. }
+                            | Call::JobChanged { .. }
+                            | Call::Stepped { .. }
+                            | Call::Saw { .. }
+                            | Call::TurnEvidence { .. }
+                            | Call::StoreRunFacts { .. }
+                            | Call::RecordRunFailure { .. }
+                    );
+                    if internal {
+                        handle(node, &hello.peer, call).await
+                    } else {
+                        crate::gate_waits::asked_since(requested, Box::pin(handle(node, &hello.peer, call))).await
+                    }
+                }
             }
         };
         let mut reply = if cancellable {
@@ -1717,7 +1740,7 @@ async fn run_started(
             let acting = crate::authorization::resident(node, &resident)?;
             node.authorize_here(&acting)?;
             let owner = Address { machine: here.clone(), resident: resident.clone() };
-            node.jobs.run(node, owner.into(), town.clone(), request, None, true).await?.0
+            node.jobs.run(node, owner.into(), town.clone(), request, None, true, None).await?.0
         }
     };
     if let Some(id) = call_id {

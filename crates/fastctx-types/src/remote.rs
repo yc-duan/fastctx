@@ -114,6 +114,9 @@ pub enum RemoteCall {
         /// The caller acknowledges host receipt and deduplicates completion mail.
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         answer_receipts: bool,
+        /// Unique to this dispatch, so a delayed stop cannot interrupt a later turn.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        dispatch: Option<crate::NoticeId>,
     },
     /// Words came for a resident of the calling machine: a `Run` of it
     /// waiting there answers now, as one here would.
@@ -124,6 +127,8 @@ pub enum RemoteCall {
     /// a `Run` of it waits for there stops, as one here would.
     TurnInterrupted {
         resident: ResidentId,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        dispatch: Option<crate::NoticeId>,
     },
     /// The answer to a `Run` of a resident of the calling machine showed its
     /// ended job whole, and its host has it: the job's files go.

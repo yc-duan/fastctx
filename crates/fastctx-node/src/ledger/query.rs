@@ -17,7 +17,6 @@ use crate::town::read;
 /// already here; `fastctx nodes` reports the disconnected state. Explicit
 /// refusals and corrupt data still fail.
 pub async fn query(node: &Arc<Node>, town: Option<&TownName>) -> Result<Vec<TownName>, String> {
-    let _syncing = node.syncing.lock().await;
     for link in node.links() {
         let Some(catalog) = link.try_ledger_catalog().await? else { continue };
         for (id, latest) in catalog {
@@ -28,12 +27,15 @@ pub async fn query(node: &Arc<Node>, town: Option<&TownName>) -> Result<Vec<Town
             if town.is_some_and(|town| *town != name) {
                 continue;
             }
-            let have =
-                crate::ledger::replica_seq(&node.world, &name).map_err(|error| format!("reading {name}: {error}"))?;
-            if have >= latest {
-                continue;
-            }
-            let name = super::local_name(node, &link, &id)?;
+            let name = {
+                let _syncing = node.syncing.lock().await;
+                let have = crate::ledger::replica_seq(&node.world, &name)
+                    .map_err(|error| format!("reading {name}: {error}"))?;
+                if have >= latest {
+                    continue;
+                }
+                super::local_name(node, &link, &id)?
+            };
             super::take(node, &link, &name, &id, latest).await?;
         }
         let wanted = town.and_then(|town| {

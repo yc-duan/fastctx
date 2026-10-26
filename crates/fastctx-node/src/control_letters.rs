@@ -49,6 +49,11 @@ pub(crate) fn admit(node: &Arc<Node>, hub: &HubId, caller: &Caller, command: &Co
             return Err(Failure::refused("the completion receipt names another owner"));
         }
     }
+    if let ControlLetter::StopRun { owner, .. } = command
+        && !link.view().same(&owner.machine, &caller.machine)
+    {
+        return Err(Failure::refused("only the run owner's machine can stop its dispatch"));
+    }
     crate::admission::admit(node, &link, caller, &command.call()).map(|_| ())
 }
 
@@ -224,6 +229,11 @@ async fn drain(node: Arc<Node>, owner: Address, wake: Arc<Notify>) {
                 }
                 let (outcome, reason) = match entry.posted.as_ref().expect("posted result").state(&node)? {
                     fastctx_net::link::Posting::Pending => continue,
+                    fastctx_net::link::Posting::Replaced => {
+                        entry.posted = None;
+                        fastctx_install::renewal::write_json(&path, &entry)?;
+                        continue;
+                    }
                     fastctx_net::link::Posting::Held => match result {
                         Ok(()) => (Outcome::Delivered, "control applied and its result is held by the hub".to_string()),
                         Err(error) => (Outcome::Impossible, error.message),
@@ -258,6 +268,9 @@ async fn apply(node: &Arc<Node>, entry: &Entry) -> Result<(), Failure> {
         ControlLetter::CompletionReceipt { owner, delivery, origin, through_exit } => {
             crate::retention::received_from(node, owner, delivery, origin.as_ref(), *through_exit, Some(&entry.scope))
                 .map_err(|error| Failure::new(error.to_string()))
+        }
+        ControlLetter::StopRun { owner, dispatch } => {
+            crate::run_stops::serve(node, owner, dispatch, &entry.scope).await
         }
         ControlLetter::StopOn { origin, job } => {
             crate::on_stop::serve(node, origin.clone(), job.clone()).await.map(|_| ())

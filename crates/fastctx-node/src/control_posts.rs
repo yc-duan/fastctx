@@ -83,6 +83,10 @@ pub(crate) fn send(
     };
     match posted.posted.state(node)? {
         Posting::Pending | Posting::Held => Ok(None),
+        Posting::Replaced => {
+            std::fs::remove_file(marker)?;
+            Ok(None)
+        }
         Posting::Refused(reason) => Ok(Some(Err(Failure::refused(reason)))),
     }
 }

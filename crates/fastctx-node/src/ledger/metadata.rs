@@ -20,7 +20,7 @@ pub(crate) fn read(world: &WorldDir, town: &TownName) -> io::Result<Option<Proje
     }
 }
 
-/// Called under the ledger synchronization gate, never while holding a record lock.
+/// Fetches without local gates, then applies under the synchronization gate.
 pub(crate) async fn refresh(node: &Arc<Node>, link: &Arc<Link>, wanted: Option<&TownId>) -> Result<(), String> {
     let view = link.view();
     let accounts = view.acts_for(&view.me);
@@ -39,6 +39,7 @@ pub(crate) async fn refresh(node: &Arc<Node>, link: &Arc<Link>, wanted: Option<&
     drop(view);
     for (id, account) in projects {
         let index = link.project_index(&account, &id).await?;
+        let _syncing = node.syncing.lock().await;
         let view = link.view();
         if !view.may_act_for(&account, &view.me) || !view.in_project(&account, &id) {
             return Err(fastctx_types::memory::words::INDEX_ACCESS_ENDED.into());
@@ -47,7 +48,11 @@ pub(crate) async fn refresh(node: &Arc<Node>, link: &Arc<Link>, wanted: Option<&
             continue;
         }
         let town = super::local_name(node, link, &id)?;
-        if read(&node.world, &town).map_err(|error| error.to_string())?.as_ref() == Some(&index) {
+        if read(&node.world, &town)
+            .map_err(|error| error.to_string())?
+            .as_ref()
+            .is_some_and(|kept| kept.seq >= index.seq)
+        {
             continue;
         }
         let (node, world) = (node.clone(), node.world.clone());

@@ -145,6 +145,13 @@ pub(crate) fn control_letters(node: &Node, destination: &fastctx_types::access::
     reported_at_least(node, destination, "1.0.1-beta.12")
 }
 
+pub(crate) fn run_stops(node: &Node, destination: &fastctx_types::access::Written) -> bool {
+    if let Some(facts) = cached(node, destination) {
+        return facts.run_stops;
+    }
+    reported_at_least(node, destination, "1.0.1-beta.12")
+}
+
 pub(crate) fn completion_receipts(node: &Node, destination: &fastctx_types::access::Written) -> bool {
     if let Some(facts) = cached(node, destination) {
         return facts.completion_receipts;

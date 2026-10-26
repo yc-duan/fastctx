@@ -17,6 +17,8 @@ pub struct Posted {
 pub enum Posting {
     Pending,
     Held,
+    /// The durable outbox was replaced; the business letter must be reposted.
+    Replaced,
     Refused(String),
 }
 
@@ -38,7 +40,7 @@ impl Link {
     pub fn posting(&self, posted: Posted) -> io::Result<Posting> {
         let file = self.inner.letters.lock().expect("never poisoned").file;
         if file.epoch != posted.epoch {
-            return Err(io::Error::other("the letter belongs to a previous membership's numbering"));
+            return Ok(Posting::Replaced);
         }
         let path = refused_path(&self.inner, posted);
         match std::fs::read(&path) {

@@ -63,7 +63,6 @@ async fn new(
     hub: Option<HubName>,
 ) -> Result<Reply, Failure> {
     let owner = owner(node, caller, account, hub)?;
-    let _writing = node.writing.lock().await;
     crate::ledger::query(node, Some(&town)).await.map_err(Failure::new)?;
     if blocking(node, &town, read::latest).await?.is_some() {
         return Err(Failure::new(format!(
@@ -99,7 +98,6 @@ async fn new(
 /// Writes the next version of a town's record: what `fields` gives
 /// replaces what the latest version says; the rest stays.
 async fn edit(node: &Arc<Node>, caller: &Caller, town: TownName, fields: RecordFields) -> Result<Reply, Failure> {
-    let _writing = node.writing.lock().await;
     if fields == RecordFields::default() {
         return Err(Failure::new("nothing to change: give what the next version says"));
     }

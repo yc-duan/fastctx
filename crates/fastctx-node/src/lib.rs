@@ -115,6 +115,7 @@ mod residents;
 mod retention;
 mod run_facts;
 mod run_receipts;
+mod run_stops;
 mod scratch;
 mod sentinels;
 mod server;
@@ -241,8 +242,8 @@ pub(crate) struct Node {
     usage: usage::Usage,
     /// Held while the projects' ledgers are taken or written, one at a time.
     syncing: ranked::Syncing,
-    /// Held while a town's record or journals are written from here, from
-    /// reading what is there to writing what comes next.
+    ledger_updates: ledger::syncing::Updates,
+    /// Held while standalone settings are read and replaced.
     writing: ranked::Writing,
     /// What went out with an answer of a World tool and is not yet known to
     /// have been taken: no other answer hands it over meanwhile.
@@ -632,6 +633,7 @@ pub async fn run_prepared(
         stuck: Default::default(),
         usage: usage::Usage::default(),
         syncing: Default::default(),
+        ledger_updates: Default::default(),
         writing: Default::default(),
         taking: Default::default(),
         stops: Default::default(),
@@ -684,6 +686,7 @@ pub async fn run_prepared(
         world::start(&node, membership).context("starting a link to a hub")?;
     }
     on_stop::resume(&node).await;
+    run_stops::resume(&node);
     codex::adopt(&node).await;
     codex::listen(node.clone(), codex_heard.events);
     logins::limits::listen(node.clone(), codex_heard.limits);

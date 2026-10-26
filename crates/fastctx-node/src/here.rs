@@ -202,7 +202,14 @@ pub(crate) async fn run(
         Err(_) => town,
     };
     let (script, started_at) = (request.script.clone(), jiff::Timestamp::now());
-    let call = RemoteCall::Run { resident: resident.clone(), town: town.clone(), request, answer_receipts: true };
+    let dispatch = crate::speech::new_id("run");
+    let call = RemoteCall::Run {
+        resident: resident.clone(),
+        town: town.clone(),
+        request,
+        answer_receipts: true,
+        dispatch: Some(dispatch.clone()),
+    };
     let source = crate::letters::Identity::at(node, to, "");
     let answer = node.call(&acting, to, Purpose::Hands, call);
     tokio::pin!(answer);
@@ -213,13 +220,8 @@ pub(crate) async fn run(
             // The job there stops with the turn; its answer comes as it ends.
             _ = interrupted.changed(), if !stopping => {
                 stopping = true;
-                let (node, acting, to, resident) = (node.clone(), acting.clone(), to.clone(), resident.clone());
-                tokio::spawn(async move {
-                    let stop = RemoteCall::TurnInterrupted { resident };
-                    if let Err(failure) = node.call(&acting, &to, Purpose::Hands, stop).await {
-                        node.log.line(format_args!("telling {} that the turn was interrupted: {failure}", to.name));
-                    }
-                });
+                crate::run_stops::keep(node, &here, &acting, to, &dispatch).await
+                    .map_err(|error| Failure::new(format!("keeping the turn's stop: {error}")))?;
             }
             // The node holds every sender, so the watch never closes.
             _ = words.changed(), if !told => {
@@ -236,6 +238,14 @@ pub(crate) async fn run(
             }
         }
     };
+    if stopping {
+        let job = match &answered {
+            Ok(Ok(RemoteReply::Run(reply))) => Some(reply.job.clone()),
+            _ => None,
+        };
+        crate::run_stops::answered(node, &here, &dispatch, job)
+            .map_err(|error| Failure::new(format!("keeping the stopped run's answer identity: {error}")))?;
+    }
     let reply = match answered {
         Ok(Ok(RemoteReply::Run(reply))) => *reply,
         Ok(Ok(_)) => return Err(Failure::new(format!("{} answered something other than a run", to.name))),
@@ -334,6 +344,7 @@ pub(crate) fn forget(node: &Arc<Node>, resident: &ResidentId, job: &JobId) -> bo
 }
 
 /// A run here for `resident` of `from`, handed here whole, for `account`.
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn serve(
     node: &Arc<Node>,
     from: MachineName,
@@ -342,9 +353,10 @@ pub(crate) async fn serve(
     town: Option<TownName>,
     request: RunRequest,
     answer_receipts: bool,
+    dispatch: Option<fastctx_types::NoticeId>,
 ) -> Result<RemoteReply, Failure> {
     let owner = Address { machine: from, resident };
-    let (reply, _) = node.jobs.run(node, owner.into(), town, request, Some(account), answer_receipts).await?;
+    let (reply, _) = node.jobs.run(node, owner.into(), town, request, Some(account), answer_receipts, dispatch).await?;
     Ok(RemoteReply::Run(Box::new(reply)))
 }
 
