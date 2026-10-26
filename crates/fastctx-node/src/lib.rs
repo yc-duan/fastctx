@@ -33,6 +33,7 @@ mod codex;
 mod codex_title;
 mod collab;
 mod colleagues;
+mod completion_delivery;
 mod composer;
 mod consent;
 pub mod context;
@@ -98,6 +99,7 @@ mod program_collection;
 mod proxy_setting;
 mod ranked;
 mod reach;
+mod received;
 mod recovery;
 mod removed;
 mod renewal;
@@ -107,6 +109,7 @@ mod resident_storage;
 mod residents;
 mod retention;
 mod run_facts;
+mod run_receipts;
 mod scratch;
 mod sentinels;
 mod server;
@@ -264,6 +267,7 @@ pub(crate) struct Node {
     /// The jobs `on` sent from here to other machines, by machine and id,
     /// as a letter telling one's end finds them (`on`).
     on_deliveries: on_delivery::Deliveries,
+    received: received::Received,
     on_stopping: std::sync::Mutex<std::collections::HashSet<PathBuf>>,
     on_delivering: std::sync::Mutex<std::collections::HashSet<PathBuf>>,
     notifying_jobs: std::sync::Mutex<std::collections::HashSet<PathBuf>>,
@@ -632,6 +636,7 @@ pub async fn run_prepared(
         dispatched: Default::default(),
         births: Default::default(),
         on_deliveries: Default::default(),
+        received: Default::default(),
         on_stopping: Default::default(),
         on_delivering: Default::default(),
         notifying_jobs: Default::default(),
@@ -700,6 +705,7 @@ pub async fn run_prepared(
     goals::start(&node);
     sentinels::start(&node);
     on_delivery::resume(&node);
+    received::resume(&node);
     retention::start(&node).context("starting command artifact retention")?;
     profile::session::start(&node);
     context::start(&node);

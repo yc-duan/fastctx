@@ -102,7 +102,9 @@ impl Identity {
     /// This also preserves references in already durable host handovers.
     pub fn delivery(&self, directory: &ConversationDir) -> io::Result<NoticeId> {
         for id in self.ids() {
-            if crate::inbox::knows(directory, id)? {
+            if crate::inbox::knows(directory, id)?
+                || directory.book("received").join(format!("{id}.json")).try_exists()?
+            {
                 return Ok(id.clone());
             }
         }

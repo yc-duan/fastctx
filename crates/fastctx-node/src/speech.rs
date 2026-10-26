@@ -33,7 +33,7 @@ use jiff::Timestamp;
 use crate::Node;
 
 /// Who is owed the end of the turn words go into.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum Owed {
     /// Whoever said them.
     Speaker(Address),

@@ -85,6 +85,7 @@ pub(crate) fn confirmed_under(
     delivery: JobDelivery,
     acting: Option<&Acting>,
 ) -> io::Result<()> {
+    crate::run_receipts::confirmed(node, &owner, &machine, &delivery)?;
     let dispatched = crate::here::get_dispatched(node, &owner.resident, &delivery.job);
     let destination = dispatched.map(|(destination, _)| destination).unwrap_or_else(|| machine.clone().into());
     if node.is_here(&destination) {
@@ -437,7 +438,14 @@ pub(crate) fn on_taken(
             return Err(io::Error::other("the on belongs to another enclosing job"));
         }
         bind(parent, child)?;
-        inherit_consumed(parent, completion.consumed)?;
+        let mut consumed = completion.consumed.to_vec();
+        if !completion.through_exit {
+            let id = crate::inbox::end_id(&origin.resident, &destination.name, completion.job, origin.request.as_ref());
+            let identity = crate::letters::Identity::at(node, destination, id.as_str())?;
+            consumed.extend(identity.ids().cloned());
+            consumed.push(id);
+        }
+        inherit_consumed(parent, &consumed)?;
     } else {
         let receipt = JobDelivery {
             job: completion.job.clone(),

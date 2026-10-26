@@ -836,14 +836,18 @@ impl fastctx_net::link::Node for Handler {
                         .map_err(|error| Failure::new(format!("reading the on receipt: {error}")))
                 }
                 RemoteCall::Follow { mut origin, job, out_from, err_from } => {
-                    if origin.sentinel.is_some() { origin.account = Some(HubAccount {hub:hub.clone(),account:caller.account.clone()}); }
+                    if origin.sentinel.is_some() {
+                        origin.account = Some(HubAccount { hub: hub.clone(), account: caller.account.clone() });
+                    }
                     let stream = stream.ok_or_else(|| Failure::new("following an on needs a data connection"))?;
                     crate::on::serve_follow(&node, origin, job, out_from, err_from, stream).await
                 }
                 RemoteCall::StopOn { mut origin, job } => {
-                    if origin.sentinel.is_some() { origin.account = Some(HubAccount {hub:hub.clone(),account:caller.account.clone()}); }
+                    if origin.sentinel.is_some() {
+                        origin.account = Some(HubAccount { hub: hub.clone(), account: caller.account.clone() });
+                    }
                     crate::on_stop::serve(&node, origin, job).await
-                },
+                }
                 RemoteCall::StopJob { job, by } => {
                     // The user is the user on whichever of their machines they
                     // asked; an agent is named with where it lives.
@@ -1083,13 +1087,28 @@ impl fastctx_net::link::Node for Handler {
                     if matches!(request, fastctx_types::sentinel_control::Request::Create { .. }) {
                         return Err(Failure::refused("a conversation registers a sentinel through its own command"));
                     }
-                    crate::sentinels::control(&node, &crate::town::caller::Caller::User, &link, &caller.account, request).await.map(|reply| RemoteReply::SentinelControl(Box::new(reply)))
+                    crate::sentinels::control(
+                        &node,
+                        &crate::town::caller::Caller::User,
+                        &link,
+                        &caller.account,
+                        request,
+                    )
+                    .await
+                    .map(|reply| RemoteReply::SentinelControl(Box::new(reply)))
                 }
                 RemoteCall::SentinelHome { request } => {
                     let scope = fastctx_types::access::HubAccount { hub: hub.clone(), account: caller.account.clone() };
-                    crate::sentinels::home_call(&node, &scope, &request).await.map(|reply| RemoteReply::SentinelHome(Box::new(reply))).map_err(Failure::new)
+                    crate::sentinels::home_call(&node, &scope, &request)
+                        .await
+                        .map(|reply| RemoteReply::SentinelHome(Box::new(reply)))
+                        .map_err(Failure::new)
                 }
-                RemoteCall::SentinelSettings { change } => crate::sentinels::settings(&node, &link, &caller.account, change).await.map(|reply| RemoteReply::SentinelSettings(Box::new(reply))),
+                RemoteCall::SentinelSettings { change } => {
+                    crate::sentinels::settings(&node, &link, &caller.account, change)
+                        .await
+                        .map(|reply| RemoteReply::SentinelSettings(Box::new(reply)))
+                }
                 RemoteCall::SentinelKey { key, value } => {
                     let scope = fastctx_types::access::HubAccount { hub: hub.clone(), account: caller.account.clone() };
                     crate::sentinels::keys::keep_here(&node, &scope, key, value).await.map(RemoteReply::SentinelKeys)
@@ -1227,12 +1246,6 @@ impl fastctx_net::link::Node for Handler {
             if let Err(refused) = crate::admission::letters::admit(&node, &hub, &caller, purpose, &letter) {
                 return Ok(Err(refused));
             }
-            let _completion_handoff = if matches!(&letter, Letter::Notice { notice, .. } if matches!(**notice, Notice::JobEnded { .. }))
-            {
-                Some(node.on_deliveries.draining.lock().await)
-            } else {
-                None
-            };
             let delivery_id = match &letter {
                 Letter::Speak { to, .. } | Letter::Notice { to, .. } => {
                     identity.delivery(&node.world.conversation(to))?
@@ -1270,10 +1283,8 @@ impl fastctx_net::link::Node for Handler {
                         if crate::on_delivery::park_from(&node, &to, &delivery, Some(&identity))? {
                             return Ok(Ok(()));
                         }
-                        match crate::speech::tell_here(&node, &to, delivery, owed).await {
-                            Ok(_) => Ok(Ok(())),
-                            Err(failure) => Err(io::Error::other(failure.message)),
-                        }
+                        crate::received::keep(&node, &to, delivery, owed)?;
+                        Ok(Ok(()))
                     }
                     Letter::Speak { to, from: speaker, text, .. } => {
                         let address = Address { machine: from, resident: speaker };
@@ -1285,10 +1296,8 @@ impl fastctx_net::link::Node for Handler {
                             goal_question: None,
                         };
                         let delivery = Delivery { id: delivery_id, at: Timestamp::now(), notice };
-                        match crate::speech::tell_here(&node, &to, delivery, Owed::Speaker(address)).await {
-                            Ok(_) => Ok(Ok(())),
-                            Err(failure) => Err(io::Error::other(failure.message)),
-                        }
+                        crate::received::keep(&node, &to, delivery, Owed::Speaker(address))?;
+                        Ok(Ok(()))
                     }
                     Letter::Left { resident } => {
                         crate::colleagues::departed(

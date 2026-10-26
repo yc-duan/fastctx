@@ -138,6 +138,12 @@ pub enum Notice {
         /// Where this hop's CLI took the end, for arbitration of nested calls.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         follower: Option<MachineName>,
+        /// Completion ids already included in this job's enclosing output.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        consumed: Vec<NoticeId>,
+        /// The receiver released this end without a conclusive follower answer.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        follower_unconfirmed: bool,
         how: EndedHow,
         /// How the shell itself exited, when it did.
         status: Option<ExitStatus>,
@@ -679,5 +685,7 @@ pub struct Whereabouts {
 
 impl About {
     /// Whether the World retains a restoration contract for this host session.
-    pub fn world_managed(&self) -> bool { self.world_started || self.native_resumed }
+    pub fn world_managed(&self) -> bool {
+        self.world_started || self.native_resumed
+    }
 }

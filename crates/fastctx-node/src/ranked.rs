@@ -79,10 +79,6 @@ machine_lock!(
     Births: RwLock = BIRTHS, "births"
 );
 machine_lock!(
-    /// One drain of the deliveries this machine owes other machines.
-    Draining: Mutex = DRAINING, "draining"
-);
-machine_lock!(
     /// The kept deletions to ask of hubs, read and written.
     Forgetting: Mutex = FORGETTING, "forgetting"
 );
