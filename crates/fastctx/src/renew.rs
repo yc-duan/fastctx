@@ -41,6 +41,13 @@ enum RenewalAction {
         #[arg(long, value_parser = crate::paths::parser(), conflicts_with = "source")]
         package: Option<PathBuf>,
     },
+    /// Check and repair this installation without changing user data.
+    Repair(crate::repair::RepairArgs),
+    /// Read the last repair, recognizing a repair process that has ended.
+    RepairState {
+        #[arg(long, value_parser = crate::paths::parser())]
+        dir: PathBuf,
+    },
     /// Inspect local versions and renewal progress, even across IPC versions.
     Status {
         #[arg(long, value_parser = crate::paths::parser())]
@@ -104,6 +111,8 @@ pub fn run(args: RenewalArgs) -> anyhow::Result<()> {
             }
         }
         RenewalAction::Status { dir } => println!("{}", serde_json::to_string(&runtime.block_on(status(&dir))?)?),
+        RenewalAction::Repair(args) => crate::repair::run(args)?,
+        RenewalAction::RepairState { dir } => println!("{}", serde_json::to_string(&fastctx_install::repair::inspect(&dir)?)?),
         RenewalAction::Now { dir } => store::request(&dir, true)?,
         RenewalAction::Run { dir, retry } => runtime.block_on(worker(&dir, retry))?,
         RenewalAction::Guardian { dir, graphical } => {
@@ -519,8 +528,10 @@ async fn recover(root: &Path, plan: &Plan, kept: bool) -> anyhow::Result<()> {
     }
 }
 
-async fn observing(world: &WorldDir) -> std::io::Result<Probe> {
-    match renewal::probe(world).await {
+pub(super) async fn observing(world: &WorldDir) -> std::io::Result<Probe> {
+    let result = tokio::time::timeout(std::time::Duration::from_secs(30), renewal::probe(world)).await
+        .map_err(|_| std::io::Error::new(std::io::ErrorKind::TimedOut, format!("checking node at {} exceeded 30 seconds", world.path().display())))?;
+    match result {
         Err(error) if transient(&error) => Ok(Probe::Absent),
         result => result,
     }
@@ -528,7 +539,7 @@ async fn observing(world: &WorldDir) -> std::io::Result<Probe> {
 
 /// A node going away as it is asked: gone, refusing, closing the
 /// connection, or, on macOS, closed before the connection was looked at.
-fn transient(error: &std::io::Error) -> bool {
+pub(super) fn transient(error: &std::io::Error) -> bool {
     matches!(
         error.kind(),
         std::io::ErrorKind::NotFound

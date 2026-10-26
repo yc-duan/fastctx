@@ -37,16 +37,27 @@ impl Device {
         composer: Option<String>,
         held: Option<fastctx_types::session::held::Held>,
         now: bool,
+        goal: Option<fastctx_types::access::HubAccount>,
     ) -> Result<Watching, Error> {
         let machine = self.find(&resident, machine).await?;
         let session = self.reaching(&machine)?;
         let machine = machine.name;
-        let account = session.account_for(&machine, fastctx_types::access::Purpose::Agents)?;
-        Watching::start(session, machine, account, resident, composer, held, now)
+        let scoped = goal.is_some();
+        let account = match goal {
+            Some(goal) => {
+                if goal.hub != session.link.membership().id { return Err(Error::Unexpected("the goal account belongs to another hub".into())); }
+                session.link.view().admits(&session.link.membership().name, &goal.account, &machine, fastctx_types::access::Purpose::Agents)
+                    .map_err(|error| Error::Unexpected(error.to_string()))?;
+                goal.account
+            }
+            None => session.account_for(&machine, fastctx_types::access::Purpose::Agents)?,
+        };
+        Watching::start(session, machine, account, resident, composer, held, now, scoped)
     }
 }
 
 impl Watching {
+    #[allow(clippy::too_many_arguments)]
     fn start(
         session: Arc<Session>,
         machine: MachineName,
@@ -55,6 +66,7 @@ impl Watching {
         composer: Option<String>,
         held: Option<fastctx_types::session::held::Held>,
         now: bool,
+        goal: bool,
     ) -> Result<Self, Error> {
         let watch = u64::from_le_bytes(fastctx_net::sign::random::<8>()?);
         let (sender, pieces) = mpsc::unbounded_channel();
@@ -63,7 +75,7 @@ impl Watching {
         let task = tokio::spawn(async move {
             let ended = tokio::select! {
                 () = sender.closed() => return,
-                result = session.link.call_with_stream(&machine, &account, fastctx_types::access::Purpose::Agents, RemoteCall::Watch { resident, watch, composer, held, now }, feed) => result,
+                result = session.link.call_with_stream(&machine, &account, fastctx_types::access::Purpose::Agents, RemoteCall::Watch { resident, watch, composer, held, now, goal }, feed) => result,
             };
             let failure = match ended {
                 Ok(Ok(RemoteReply::Watched)) => return,

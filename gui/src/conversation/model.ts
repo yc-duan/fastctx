@@ -18,7 +18,7 @@
 import type { Health, HostAgentEnd, MachineName, Notice, SessionChange, SessionEvent, Speaker, Step, Tool, TurnEnd } from "../world/events";
 import type { Attachment, AttachmentSource } from "../world/attachments";
 import type { JsonValue } from "../world/wire";
-import type { JobFacts, RunFacts } from "../world/run-facts";
+import { mergeSteps, type JobFacts, type RunFacts } from "../world/run-facts";
 import { askKey, forPeople, type AskState } from "./ask-state";
 import { userWords } from "./told";
 import { readReply, type AsyncQuestion } from "./async-ask";
@@ -111,6 +111,9 @@ export type Entry = {
       began?: number;
       /** Thinking: how long it took, where the host said. */
       took?: number;
+      /** Thinking whose words are not shown (GPT's): what it said, kept only
+       *  for the title of the section it is in while it thinks. */
+      heads?: string;
       /** Thinking: the model response it was part of, whose thinking
        *  tokens `Fold.thinkingTokens` knows where they were told. */
       response?: string;
@@ -171,7 +174,43 @@ export interface Gap {
   loading: boolean;
 }
 
-export type Block = Entry | Activity | Gap;
+/** What the agent said to the user through the World's `message_user`
+ *  (`world-voice.md`): drawn as its answer, apart from the work around it. */
+export interface Say {
+  kind: "say";
+  key: string;
+  item: string;
+  turn: string;
+  stamp: number;
+  /** Where in its fold the call that said it was. */
+  at: number;
+  text: string;
+  status: "reply" | "info" | "urgent";
+  attachments: { machine: string; path: string }[];
+}
+
+export type Block = Entry | Activity | Gap | Say;
+
+/** Whether `server` names the World's own tools, as either host lists them:
+ *  Codex as they are served, Claude Code under its plugin. */
+function worldServer(server: string | null): boolean {
+  return server === "fastctx" || (server?.endsWith("_fastctx") ?? false);
+}
+
+/** The words for the user a `message_user` call carries; null for any other
+ *  tool, and for one that failed, which reached no one. */
+export function sayOf(entry: Extract<Entry, { kind: "tool" }>): Say | null {
+  const tool = entry.tool;
+  if (tool.name !== "message_user" || !worldServer(tool.server) || tool.status === "failed") return null;
+  const input = (tool.input && typeof tool.input === "object" && !Array.isArray(tool.input) ? tool.input : {}) as Record<string, JsonValue>;
+  const status = input.status === "info" || input.status === "urgent" ? input.status : "reply";
+  const attachments = Array.isArray(input.attachments)
+    ? input.attachments.flatMap((one) =>
+        one && typeof one === "object" && !Array.isArray(one) && typeof one.machine === "string" && typeof one.path === "string" ? [{ machine: one.machine, path: one.path }] : [],
+      )
+    : [];
+  return { kind: "say", key: entry.key, item: entry.item, turn: entry.turn, stamp: entry.stamp, at: entry.at, text: typeof input.message === "string" ? input.message : "", status, attachments };
+}
 
 type Keyed = Extract<Entry, { item: string; turn: string }>;
 type Heard = Extract<Entry, { kind: "heard" }>;
@@ -189,6 +228,9 @@ interface Derived {
   /** Whether anything of the agent's own has been shown: a turn's work or
    *  words, its end, a request. */
   heardFrom: boolean;
+  /** The turns in which it said something to the user through
+   *  `message_user`: the rest of their words are its working notes. */
+  spoke: Set<string>;
 }
 
 export class Fold {
@@ -248,6 +290,9 @@ export class Fold {
   /** How many of the user's heard words each turn holds, for their keys. */
   private heardIn = new Map<string, number>();
   private endedTurns = new Set<string>();
+  /** Items their host has told whole as they ended: a snapshot of one told
+   *  after that, as it began or ran, is behind it and changes nothing. */
+  private over = new Set<string>();
   /** Turns begun and not yet ended, as the World tells them, with when
    * each began. */
   private running = new Set<string>();
@@ -327,6 +372,7 @@ export class Fold {
     this.byTurn.clear();
     this.heardIn.clear();
     this.endedTurns.clear();
+    this.over.clear();
     this.stretches.clear();
     this.sequences.clear();
     this.stale = false;
@@ -529,12 +575,18 @@ export class Fold {
         if (this.halted?.has(event.turn) && !this.replaying) return;
         const shown = this.find(event.turn, event.item);
         if (shown?.kind === "prose" && event.part === "text") {
-          if (shown.prose === "thinking" && !this.thoughtWords) return;
+          if (shown.prose === "thinking" && !this.thoughtWords) {
+            shown.heads = (shown.heads ?? "") + event.text;
+            shown.version += 1;
+            this.touch(shown);
+            return;
+          }
           shown.text += event.text;
           shown.version += 1;
           this.touch(shown);
         } else if (!shown && event.part === "text") {
           // A message's first words can come before any word of it.
+          this.overtaken(event.turn);
           this.add({
             kind: "prose",
             key: itemEntryKey(event.turn, event.item),
@@ -754,6 +806,10 @@ export class Fold {
     const id = native.id;
     if (id && native.draft) this.renamed(turn, native.draft, id);
     const key = id ? itemEntryKey(turn, id) : `n:${this.scope}@${this.current}`;
+    if (id && !finished && this.over.has(key)) return;
+    if (id && finished) this.over.add(key);
+    const said = native.kind === "message" || native.kind === "thinking" || native.kind === "plan" || native.kind === "tool" || native.kind === "compaction";
+    if (said && !(id && this.find(turn, id))) this.overtaken(turn);
     let fresh: Entry;
     const questions = native.kind === "message" ? questionsOf(native.detail) : null;
     if (questions) {
@@ -777,6 +833,7 @@ export class Fold {
           turn,
           prose: native.kind,
           text: native.kind === "thinking" && !this.thoughtWords ? "" : native.text,
+          ...(native.kind === "thinking" && !this.thoughtWords && native.text ? { heads: native.text } : {}),
           writing: !finished,
           version: 0,
           ...(native.kind === "thinking" ? { began: startedAt, ...(native.duration_ms !== undefined ? { took: native.duration_ms } : {}) } : {}),
@@ -833,12 +890,23 @@ export class Fold {
       return;
     }
     if (shown.kind === "prose" && fresh.kind === "prose") {
+      // Thinking whose words are not shown still says the section it is in.
+      const heads = fresh.heads;
+      const headed = heads !== undefined && heads !== shown.heads;
+      if (headed) {
+        shown.heads = heads;
+        shown.version += 1;
+      }
       // A message still being written keeps what it has until its whole
       // text comes.
-      if (shown.writing && !finished && fresh.text === "") return;
+      if (shown.writing && !finished && fresh.text === "") {
+        if (headed) this.touch(shown);
+        return;
+      }
       if (shown.text !== fresh.text) shown.version += 1;
       shown.text = fresh.text;
-      shown.writing = fresh.writing;
+      // What has stopped being written does not start again.
+      shown.writing = shown.writing && fresh.writing;
       if (fresh.took !== undefined) shown.took = fresh.took;
       if (shown.began === undefined && fresh.began !== undefined) shown.began = fresh.began;
       this.touch(shown);
@@ -847,11 +915,23 @@ export class Fold {
     if (shown.kind === "tool" && fresh.kind === "tool") {
       // Facts gathered while it ran stand until the item brings its own.
       shown.tool = fresh.tool.run || !shown.tool.run ? fresh.tool : { ...fresh.tool, run: shown.tool.run };
-      shown.ended = fresh.ended;
+      shown.ended = fresh.ended ?? shown.ended;
       this.touch(shown);
       return;
     }
     this.replace(shown, { ...fresh, key: shown.key } as Entry);
+  }
+
+  /** The model says one thing at a time: thinking still shown under way
+   *  when the next thing it says begins is over, whatever word of its end
+   *  is still to come. Agents' comings and goings are told beside the
+   *  model's words and end nothing of them. */
+  private overtaken(turn: string): void {
+    for (const entry of this.byTurn.get(turn) ?? []) {
+      if (entry.kind !== "prose" || entry.prose !== "thinking" || !entry.writing) continue;
+      entry.writing = false;
+      this.touch(entry);
+    }
   }
 
   /** Thinking tokens by model response, as the hosts told them. */
@@ -939,6 +1019,7 @@ export class Fold {
     }
     for (const visit of update.visited) if (!run.visited.some(([machine, job]) => machine === visit[0] && job === visit[1])) run.visited.push(visit);
     for (const write of update.writes) if (!run.writes.some((known) => known.id === write.id)) run.writes.push(write);
+    if (update.steps?.length) run.steps = mergeSteps(run.steps ?? [], update.steps);
     entry.tool = { ...entry.tool, run };
     this.touch(entry);
   }
@@ -1350,6 +1431,7 @@ export class Fold {
   private derived(): Derived {
     if (this.derivedCache?.clock === this.clock) return this.derivedCache;
     const lastMessage = new Map<string, string>();
+    const spoke = new Set<string>();
     let latest: string | null = null;
     let moving = false;
     let waiting = false;
@@ -1363,6 +1445,7 @@ export class Fold {
           break;
         case "tool":
           if (entry.ended === null) moving = true;
+          if (sayOf(entry)) spoke.add(entry.turn);
           heardFrom = true;
           break;
         case "heard":
@@ -1393,8 +1476,14 @@ export class Fold {
           break;
       }
     }
-    this.derivedCache = { clock: this.clock, lastMessage, latest, moving, waiting, heardFrom };
+    this.derivedCache = { clock: this.clock, lastMessage, latest, moving, waiting, heardFrom, spoke };
     return this.derivedCache;
+  }
+
+  /** Whether the agent said something to the user in `turn` through
+   *  `message_user`. */
+  spokeIn(turn: string): boolean {
+    return this.derived().spoke.has(turn);
   }
 
   /** The entries as they are laid out: what a turn did between the things
@@ -1436,6 +1525,14 @@ export class Fold {
       if (entry.kind === "heard" && entry.notice?.kind === "job_ended" && entry.from?.kind !== "user") continue;
       if (entry.kind === "heard" && entry.sending !== undefined && entry.intoTurn) {
         below.push(entry);
+        continue;
+      }
+      // Words the agent said to the user stand on their own, as its answer,
+      // and divide its work as any words said do (`world-voice.md`).
+      const said = entry.kind === "tool" ? sayOf(entry) : null;
+      if (said) {
+        group = null;
+        blocks.push(said);
         continue;
       }
       const activity = entry.kind === "tool" || entry.kind === "activity" || (entry.kind === "prose" && entry.prose === "thinking");
@@ -1577,16 +1674,29 @@ export function runsOf(members: readonly Entry[]): Entry[][] {
 }
 
 /** The questions of an agent's message asked without waiting, where it is
- *  one: Codex marks it with `questions` beside its words. */
+ *  one: Codex marks it with `questions` beside its words, and a goal's
+ *  Claude question keeps Claude's own questions too, with what each answer
+ *  means and whether several may be chosen. */
 function questionsOf(detail: JsonValue | undefined): AsyncQuestion[] | null {
   const raw = property(detail ?? null, "questions");
   if (!Array.isArray(raw) || !raw.length) return null;
+  const claude = property(property(detail ?? null, "fastctx_goal_question") ?? null, "questions");
   const questions: AsyncQuestion[] = [];
-  for (const one of raw) {
+  for (const [index, one] of raw.entries()) {
     const title = property(one, "title");
     if (typeof title !== "string" || !title.trim()) return null;
     const options = property(one, "options");
-    questions.push({ title, options: Array.isArray(options) ? options.filter((o): o is string => typeof o === "string") : null });
+    const question: AsyncQuestion = { title, options: Array.isArray(options) ? options.filter((o): o is string => typeof o === "string") : null };
+    if (property(one, "multiSelect") === true) question.multiple = true;
+    const offered = Array.isArray(claude) ? property(claude[index] ?? null, "options") : null;
+    if (Array.isArray(offered)) {
+      const notes = offered.map((option) => {
+        const note = property(option, "description");
+        return typeof note === "string" && note.trim() ? note : null;
+      });
+      if (notes.some((note) => note !== null)) question.notes = notes;
+    }
+    questions.push(question);
   }
   return questions;
 }

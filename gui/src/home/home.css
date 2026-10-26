@@ -89,7 +89,7 @@
   mask: var(--pen-rule-1) 0 50% / 100% 100% no-repeat;
 }
 
-:is(.project-page, .journal-page) :is(ul, ol):not(.prose *) {
+.project-page :is(ul, ol):not(.prose *) {
   list-style: none;
   margin: 0;
   padding: 0;

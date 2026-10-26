@@ -241,6 +241,10 @@ pub enum Action {
         agent: AgentName,
         home: Option<PathBuf>,
     },
+    /// Choosing a machine as the account's sentinel home allows it to act for the account.
+    AllowSentinelHome {
+        machine: MachineName,
+    },
     /// A permission removed implicitly by a share, an assistance, or an
     /// account change.
     ActingStopped {
@@ -345,6 +349,7 @@ impl Action {
             | Self::MoveProject { .. }
             | Self::Joined { .. }
             | Self::AllowActing { .. }
+            | Self::AllowSentinelHome { .. }
             | Self::ActingStopped { .. }
             | Self::Group { .. }
             | Self::RenameGroup { .. }

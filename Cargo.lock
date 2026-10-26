@@ -1245,7 +1245,7 @@ checksum = "c6e8948ce679d00a02a94739ea185595dca7118ed04feb991127e443bd3d761f"
 
 [[package]]
 name = "fastctx"
-version = "1.0.1-beta.11"
+version = "1.0.1-beta.12"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -1263,6 +1263,7 @@ dependencies = [
  "fastctx-tui",
  "fastctx-types",
  "fastctx-uninstall",
+ "fastctx-update",
  "getrandom 0.3.4",
  "jiff",
  "serde",
@@ -1272,8 +1273,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "fastctx-agent"
+version = "1.0.1-beta.12"
+dependencies = [
+ "fastctx-net",
+ "fastctx-platform",
+ "fastctx-types",
+ "httpdate",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "fastctx-client"
-version = "1.0.1-beta.11"
+version = "1.0.1-beta.12"
 dependencies = [
  "base64 0.22.1",
  "fastctx-net",
@@ -1291,7 +1305,7 @@ dependencies = [
 
 [[package]]
 name = "fastctx-file-search"
-version = "1.0.1-beta.11"
+version = "1.0.1-beta.12"
 dependencies = [
  "fastctx-platform",
  "fastctx-types",
@@ -1303,7 +1317,7 @@ dependencies = [
 
 [[package]]
 name = "fastctx-hands"
-version = "1.0.1-beta.11"
+version = "1.0.1-beta.12"
 dependencies = [
  "aho-corasick",
  "base64 0.22.1",
@@ -1332,7 +1346,7 @@ dependencies = [
 
 [[package]]
 name = "fastctx-hosts"
-version = "1.0.1-beta.11"
+version = "1.0.1-beta.12"
 dependencies = [
  "base64 0.22.1",
  "fastctx-platform",
@@ -1355,7 +1369,7 @@ dependencies = [
 
 [[package]]
 name = "fastctx-hub"
-version = "1.0.1-beta.11"
+version = "1.0.1-beta.12"
 dependencies = [
  "anyhow",
  "bytes",
@@ -1385,7 +1399,7 @@ dependencies = [
 
 [[package]]
 name = "fastctx-install"
-version = "1.0.1-beta.11"
+version = "1.0.1-beta.12"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -1421,7 +1435,7 @@ dependencies = [
 
 [[package]]
 name = "fastctx-net"
-version = "1.0.1-beta.11"
+version = "1.0.1-beta.12"
 dependencies = [
  "argon2",
  "base64 0.22.1",
@@ -1459,10 +1473,11 @@ dependencies = [
 
 [[package]]
 name = "fastctx-node"
-version = "1.0.1-beta.11"
+version = "1.0.1-beta.12"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
+ "fastctx-agent",
  "fastctx-client",
  "fastctx-file-search",
  "fastctx-hands",
@@ -1472,6 +1487,7 @@ dependencies = [
  "fastctx-net",
  "fastctx-platform",
  "fastctx-ripgrep",
+ "fastctx-sentinel",
  "fastctx-types",
  "fastctx-uninstall",
  "fastctx-update",
@@ -1489,7 +1505,7 @@ dependencies = [
 
 [[package]]
 name = "fastctx-office"
-version = "1.0.1-beta.11"
+version = "1.0.1-beta.12"
 dependencies = [
  "anyhow",
  "num-bigint",
@@ -1502,7 +1518,7 @@ dependencies = [
 
 [[package]]
 name = "fastctx-pdf"
-version = "1.0.1-beta.11"
+version = "1.0.1-beta.12"
 dependencies = [
  "fontdb",
  "hayro",
@@ -1519,7 +1535,7 @@ dependencies = [
 
 [[package]]
 name = "fastctx-platform"
-version = "1.0.1-beta.11"
+version = "1.0.1-beta.12"
 dependencies = [
  "async-io",
  "fastctx-types",
@@ -1532,7 +1548,7 @@ dependencies = [
 
 [[package]]
 name = "fastctx-ripgrep"
-version = "1.0.1-beta.11"
+version = "1.0.1-beta.12"
 dependencies = [
  "fastctx-platform",
  "flate2",
@@ -1542,8 +1558,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "fastctx-sentinel"
+version = "1.0.1-beta.12"
+dependencies = [
+ "fastctx-agent",
+ "fastctx-net",
+ "fastctx-platform",
+ "fastctx-types",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tokio",
+ "url",
+]
+
+[[package]]
 name = "fastctx-serve"
-version = "1.0.1-beta.11"
+version = "1.0.1-beta.12"
 dependencies = [
  "anyhow",
  "fastctx-client",
@@ -1557,7 +1588,7 @@ dependencies = [
 
 [[package]]
 name = "fastctx-tui"
-version = "1.0.1-beta.11"
+version = "1.0.1-beta.12"
 dependencies = [
  "anyhow",
  "crossterm",
@@ -1585,7 +1616,7 @@ dependencies = [
 
 [[package]]
 name = "fastctx-types"
-version = "1.0.1-beta.11"
+version = "1.0.1-beta.12"
 dependencies = [
  "icu_casemap",
  "icu_normalizer",
@@ -1599,7 +1630,7 @@ dependencies = [
 
 [[package]]
 name = "fastctx-uninstall"
-version = "1.0.1-beta.11"
+version = "1.0.1-beta.12"
 dependencies = [
  "anyhow",
  "fastctx-client",
@@ -1620,7 +1651,7 @@ dependencies = [
 
 [[package]]
 name = "fastctx-update"
-version = "1.0.1-beta.11"
+version = "1.0.1-beta.12"
 dependencies = [
  "base64 0.22.1",
  "fastctx-net",
@@ -1792,6 +1823,15 @@ dependencies = [
  "memmap2",
  "slotmap",
  "tinyvec",
+]
+
+[[package]]
+name = "form_urlencoded"
+version = "1.2.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cb4cb245038516f5f85277875cdaa4f7d2c9a0fa0468de06ed190163b1581fcf"
+dependencies = [
+ "percent-encoding",
 ]
 
 [[package]]
@@ -4722,6 +4762,18 @@ name = "untrusted"
 version = "0.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8ecb6da28b8a351d773b68d5825ac39017e680750f980f3a1a85cd8dd28a47c1"
+
+[[package]]
+name = "url"
+version = "2.5.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ff67a8a4397373c3ef660812acab3268222035010ab8680ec4215f38ba3d0eed"
+dependencies = [
+ "form_urlencoded",
+ "idna",
+ "percent-encoding",
+ "serde",
+]
 
 [[package]]
 name = "utf8_iter"

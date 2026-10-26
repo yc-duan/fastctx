@@ -13,7 +13,7 @@ use std::time::Duration;
 /// How long a Codex compaction may take before what came of it is not known.
 pub(crate) const COMPACTING: Duration = Duration::from_secs(30 * 60);
 /// How long the turn of a Codex compaction may take to begin.
-const COMPACTION_BEGINS: Duration = Duration::from_secs(2 * 60);
+pub(crate) const COMPACTION_BEGINS: Duration = Duration::from_secs(2 * 60);
 
 pub(crate) type Actions = crate::leases::Registry<ResidentId, Mutex<()>>;
 
@@ -140,7 +140,7 @@ async fn ready(node: &Arc<Node>, id: &ResidentId, row: &PendingControl) -> Resul
     let _reading = crate::gate_waits::shared(node, id, &gate).await?;
     crate::lifecycle::wake::wake(node, id, crate::lifecycle::wake::Source::Control, None)
         .await
-        .map_err(|error| Failure::host_unavailable(error.failure.message))?;
+        .map_err(crate::lifecycle::wake::WakeFailure::control)?;
     let _transaction = crate::resident_storage::lock();
     let mut rows = read(node, id)?;
     if let Some(saved) = rows.iter_mut().find(|saved| saved.id == row.id) {
@@ -263,7 +263,7 @@ pub(crate) fn between_turns(control: &Control) -> bool {
             if matches!(name.as_str(), "compact" | "review" | "code-review" | "fork"))
 }
 
-fn busy(node: &Node, id: &ResidentId) -> Result<bool, Failure> {
+pub(crate) fn busy(node: &Node, id: &ResidentId) -> Result<bool, Failure> {
     if node.residents.now(id).is_some_and(|now| now.turn.is_some()) {
         return Ok(true);
     }
@@ -271,7 +271,7 @@ fn busy(node: &Node, id: &ResidentId) -> Result<bool, Failure> {
     if about.host.agent.as_str() == "codex"
         && let Some(thread) = about.session.as_deref()
     {
-        return Ok(node.codex.of(node, &about)?.running_turn(thread).is_some());
+        return Ok(node.codex.of(node, &about)?.busy(thread));
     }
     Ok(false)
 }
@@ -347,7 +347,7 @@ pub(crate) fn drain<'a>(
     node: &'a Arc<Node>,
     id: &'a ResidentId,
 ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), Failure>> + Send + 'a>> {
-    Box::pin(async move {
+    Box::pin(crate::gate_waits::internal(Box::pin(async move {
         loop {
             node.residents.active(id)?;
             if busy(node, id)? {
@@ -401,7 +401,7 @@ pub(crate) fn drain<'a>(
                 return Ok(());
             }
         }
-    })
+    })))
 }
 
 pub(crate) fn schedule(node: &Arc<Node>, id: &ResidentId) {
