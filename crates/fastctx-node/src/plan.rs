@@ -204,20 +204,17 @@ pub(crate) async fn context(
         unavailable()?;
         return Err(Failure::new(words::ROUTE));
     };
-    if !link.view().account_records {
+    let view = link.view();
+    if !view.account_records || !view.conversation_plans {
         return unavailable();
     }
     let owner = match origin {
         Origin::User => id.clone(),
         Origin::Colleague { asked_by, .. } => asked_by.resident.clone(),
     };
-    let page = match link.plan_read(&scope.account, owner).await {
-        Ok(page) => page,
-        Err(error) => {
-            unavailable()?;
-            return Err(Failure::new(error));
-        }
-    };
+    // A hub that does not answer now changed nothing: the conversation keeps
+    // the plan it was told, and a later refresh reads it again.
+    let Ok(page) = link.plan_read(&scope.account, owner).await else { return Ok(()) };
     let version = serde_json::to_string(&Seen { account: scope, owner: page.owner.clone(), version: page.version() })
         .map_err(|error| Failure::new(error.to_string()))?;
     crate::context::plan(node, id, &page, &version).map_err(|error| Failure::new(error.to_string()))
