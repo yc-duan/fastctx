@@ -428,7 +428,11 @@ struct Offer {
 /// The source's side when it is fetched from: walks `from`, here, and sends
 /// it back over the caller's data connection.
 pub async fn give(node: &Arc<Node>, from: &str, mut stream: Stream) -> Result<CopyReport, Failure> {
+    // Reading every file for the manifest is work toward the offer the
+    // other end waits for.
+    let walking = stream.settling();
     let Walked { manifest, files, problems, holding: _held } = walked(node, from).await?;
+    drop(walking);
     stream.say(&Offer { manifest_bytes: manifest.len() as u64, resumes: true }).await.map_err(broke)?;
     feed(stream, manifest, files).await.map_err(broke)?;
     Ok(CopyReport {
@@ -667,7 +671,10 @@ async fn take_files(
     // Looking at what is there already reads every file it has, but those
     // an earlier try read and that are as they were then.
     let known = holding.known.clone();
+    // That reading is work toward the answer the other end waits for.
+    let looking = stream.settling();
     let (mut receiver, wanted) = blocking(move || {
+        let _looking = looking;
         let mut receiver = receiver;
         let wanted = receiver.wanted(resumes, &mut known.lock().expect("never poisoned"));
         (receiver, wanted)

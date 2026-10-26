@@ -268,11 +268,27 @@ impl Stream {
         self.line.send(message).await
     }
 
-    /// Waits for the next file protocol step. Transport heartbeats are not progress.
+    /// Waits for the next file protocol step. Transport heartbeats are not
+    /// progress; the other end's report of local work toward the step is, as
+    /// reading what it already holds can take longer than `DUE_WITHIN`.
     pub async fn hear_step<T: DeserializeOwned>(&mut self, step: &str) -> Result<T, String> {
-        fastctx_platform::doing::outside(format!("the file transfer's {step}"), DUE_WITHIN, self.hear())
-            .await
-            .map_err(|late| late.to_string())?
+        let mut progress = self.line.receipt.subscribe();
+        let began = tokio::time::Instant::now();
+        loop {
+            let worked = (*progress.borrow_and_update()).unwrap_or(began).max(began);
+            tokio::select! {
+                heard = self.hear() => return heard,
+                changed = progress.changed() => {
+                    changed.map_err(|_| "the other end's work notifications ended".to_string())?;
+                },
+                () = tokio::time::sleep_until(worked + DUE_WITHIN) => {
+                    return Err(format!(
+                        "the file transfer's {step} did not come, and the other end reported no work toward it, for {} s",
+                        DUE_WITHIN.as_secs()
+                    ));
+                },
+            }
+        }
     }
 
     /// What the other end says next.

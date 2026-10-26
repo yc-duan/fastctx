@@ -1154,7 +1154,14 @@ pub async fn take_placed(
     let wanted = Attachment { owner: Address { machine: node.machine(), resident }, ..attachment };
     let (directory, held) = {
         let wanted = wanted.clone();
-        tokio::task::spawn_blocking(move || slot(&base, &wanted)).await.map_err(failure)??
+        // Looking for the very file is work toward the answer the sender waits for.
+        let looking = stream.settling();
+        tokio::task::spawn_blocking(move || {
+            let _looking = looking;
+            slot(&base, &wanted)
+        })
+        .await
+        .map_err(failure)??
     };
     if let Some(held) = held {
         stream.say(&Need { bytes: false }).await.map_err(failure)?;
