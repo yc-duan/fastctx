@@ -8,6 +8,7 @@
 
 mod answer;
 mod protocol;
+mod run_failure;
 mod session;
 mod stdio;
 mod tools;

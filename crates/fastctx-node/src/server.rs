@@ -403,7 +403,9 @@ async fn converse(node: &Arc<Node>, connection: Connection) -> std::io::Result<(
                         .then(|| crate::on::sent_for(node, request.job.as_ref()))
                         .flatten();
                     let origin = fastctx_types::on::OnOrigin {
-                        turn: None, sentinel: None, call_id: None,
+                        turn: None,
+                        sentinel: None,
+                        call_id: None,
                         resident,
                         town,
                         request: None,
@@ -660,7 +662,9 @@ impl Drop for Arrived<'_> {
             crate::codex::native_context::forget(self.node, &resident);
             crate::colleagues::left(self.node, resident);
         }
-        for resident in &self.residents { crate::codex::native::left(self.node,resident); }
+        for resident in &self.residents {
+            crate::codex::native::left(self.node, resident);
+        }
     }
 }
 
@@ -738,9 +742,13 @@ fn native_delivery(node: &Node, resident: &ResidentId) -> bool {
     // response cannot deliver the parent's words to the intended thread;
     // sessions with a native channel exclusively use that channel.
     node.residents.about(resident).is_some_and(|(about, _)| {
-        (about.host.agent.as_str() == "codex" && (about.world_started || about.session.as_ref().is_some_and(|thread| {
-            node.codex.of(node,&about).is_ok_and(|host|host.loaded(thread))
-        }))) || crate::claude::paired(node, resident)
+        (about.host.agent.as_str() == "codex"
+            && (about.world_started
+                || about
+                    .session
+                    .as_ref()
+                    .is_some_and(|thread| node.codex.of(node, &about).is_ok_and(|host| host.loaded(thread)))))
+            || crate::claude::paired(node, resident)
     })
 }
 
@@ -894,17 +902,22 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
     match call {
         Call::Goal { resident, machine, account, request } => {
             users_voice(node, peer)?;
-            crate::goals::calls::user(node, resident, machine, account, request).await
+            crate::goals::calls::user(node, resident, machine, account, request)
+                .await
                 .map(|updated| Reply::Goal { updated: Box::new(updated) })
         }
         Call::GoalCommand { hub, account, job, request } => {
-            crate::goals::calls::command(node, peer, hub, account, job, request).await
+            crate::goals::calls::command(node, peer, hub, account, job, request)
+                .await
                 .map(|updated| Reply::Goal { updated: Box::new(updated) })
         }
         Call::TurnEvidence { resident, turn, refresh_limits } => {
             users_voice(node, peer)?;
             let evidence = crate::turn_evidence::snapshot(node, &resident, turn, refresh_limits).await?;
-            let text = crate::turn_evidence::words::render(&evidence, &node.world.conversation(&resident).actions().to_string_lossy());
+            let text = crate::turn_evidence::words::render(
+                &evidence,
+                &node.world.conversation(&resident).actions().to_string_lossy(),
+            );
             Ok(Reply::TurnEvidence { evidence: Box::new(evidence), text })
         }
         Call::CompactBetweenTurns { resident } => {
@@ -1414,20 +1427,33 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
         }
         Call::Sentinel { hub, account, request } => {
             let caller = caller::of(node, peer)?;
-            if hub.is_none() && account.is_none() && let fastctx_types::sentinel_control::Request::List { owner } = request {
-                return crate::sentinels::list_all(node, &caller, owner).await.map(|reply| Reply::Sentinel(Box::new(reply)));
+            if hub.is_none()
+                && account.is_none()
+                && let fastctx_types::sentinel_control::Request::List { owner } = request
+            {
+                return crate::sentinels::list_all(node, &caller, owner)
+                    .await
+                    .map(|reply| Reply::Sentinel(Box::new(reply)));
             }
             let (link, account) = crate::sentinels::scope(node, &caller, hub.as_ref(), account.as_ref())?;
-            crate::sentinels::control(node, &caller, &link, &account, request).await.map(|reply| Reply::Sentinel(Box::new(reply)))
+            crate::sentinels::control(node, &caller, &link, &account, request)
+                .await
+                .map(|reply| Reply::Sentinel(Box::new(reply)))
         }
         Call::SentinelSettings { hub, account, change } => {
-            if change.is_some() { users_voice(node, peer)?; }
-            let (link, account) = crate::profile::scope(node, &caller::of(node, peer)?, hub.as_ref(), account.as_ref())?;
-            crate::sentinels::settings(node, &link, &account, change).await.map(|reply| Reply::SentinelSettings(Box::new(reply)))
+            if change.is_some() {
+                users_voice(node, peer)?;
+            }
+            let (link, account) =
+                crate::profile::scope(node, &caller::of(node, peer)?, hub.as_ref(), account.as_ref())?;
+            crate::sentinels::settings(node, &link, &account, change)
+                .await
+                .map(|reply| Reply::SentinelSettings(Box::new(reply)))
         }
         Call::SentinelKey { hub, account, key, value } => {
             users_voice(node, peer)?;
-            let (link, account) = crate::profile::scope(node, &caller::of(node, peer)?, hub.as_ref(), account.as_ref())?;
+            let (link, account) =
+                crate::profile::scope(node, &caller::of(node, peer)?, hub.as_ref(), account.as_ref())?;
             crate::sentinels::keys::set(node, &link, &account, key, value).await.map(|_| Reply::Done)
         }
         Call::CollabRead { hub, account } => {
@@ -1673,7 +1699,7 @@ async fn run_started(
     call_id: Option<&str>,
 ) -> Result<RunReply, Failure> {
     if let Some(target) = target.filter(|target| !node.is_here(target)) {
-        return Err(Failure::new(format!(
+        return Err(Failure::not_run(format!(
             "run goes to another machine only through `on`: write `on {target}` in the script to run part of it there"
         )));
     }
@@ -1722,7 +1748,7 @@ fn unnamed(node: &Node, resident: &ResidentId, why: &str) -> Failure {
     let example = machines.first().map(String::as_str).unwrap_or("MACHINE");
     let names = if machines.is_empty() { "none yet".to_string() } else { machines.join(", ") };
     let why = why.trim_end_matches('.');
-    Failure::new(format!(
+    Failure::not_run(format!(
         "nothing was run: {why}. Write the script as one `on MACHINE`, as in `on {example} <<'RUN'` ... `RUN`; the machines you can use: {names}"
     ))
 }

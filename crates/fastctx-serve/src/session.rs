@@ -241,8 +241,9 @@ impl Session {
                 }
             },
         };
+        let machine = fastctx_hands::run::preread::on_only(&command).ok().map(|(machine, _)| machine);
         let reply = async {
-            let mut client = self.client(meta).await?;
+            let mut client = self.client(meta).await.map_err(crate::run_failure::Failure::before_dispatch)?;
             let call = Call::Run {
                 call_id: meta.and_then(|meta| {
                     meta.get("claudecode/toolUseId")
@@ -252,13 +253,20 @@ impl Session {
                         .map(str::to_string)
                 }),
                 resident: whereabouts.resident.clone(),
-                request: RunRequest { turn: None, call_id: None, script: command, cwd, writes_off: self.writes_off, wait },
+                request: RunRequest {
+                    turn: None,
+                    call_id: None,
+                    script: command,
+                    cwd,
+                    writes_off: self.writes_off,
+                    wait,
+                },
                 node: None,
             };
             // The node records failures after accepting Run; the one-use host
             // proof must never be consumed again to record the same call.
             *sent = true;
-            client.call(call).await.map_err(|error| error.to_string())
+            client.call(call).await.map_err(crate::run_failure::Failure::from)
         }
         .await;
         let answering = match &reply {
@@ -318,7 +326,7 @@ impl Session {
                 }
             }
             Ok(other) => Answer::error(format!("=== run (the node answered something else: {other:?}) ===")),
-            Err(error) => Answer::error(format!("=== run (not run) ===\n{error}")),
+            Err(error) => error.answer(machine.as_deref()),
         };
         self.add_waiting_words_about(whereabouts, answering, &mut answer, meta).await;
         answer
@@ -638,7 +646,14 @@ impl Session {
             .map(|address| address.resident)
             .or_else(|| self.conversation.clone());
         let home = self.login(&host).and_then(|login| login.home);
-        let hints = Hints { host_process: self.host_process.clone(), resident, thread: thread.clone(), was, tool_use_id: None, home };
+        let hints = Hints {
+            host_process: self.host_process.clone(),
+            resident,
+            thread: thread.clone(),
+            was,
+            tool_use_id: None,
+            home,
+        };
         let mut client = self.client_for(host.clone()).await?;
         match client.call(Call::Arrive { host, hints }).await {
             Ok(Reply::Arrived(whereabouts)) => {

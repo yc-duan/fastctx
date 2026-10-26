@@ -442,7 +442,7 @@ async fn drain_one(node: &Arc<Node>, path: &std::path::Path) -> Result<(), Held>
     }
     if !taken {
         // The inbox takes custody before the parked copy is removed.
-        crate::speech::tell_here(node, &parked.to, parked.delivery.clone(), crate::speech::Owed::Working)
+        crate::speech::tell_completion(node, &parked.to, parked.delivery.clone())
             .await
             .map_err(|failure| io::Error::other(failure.message))?;
     }

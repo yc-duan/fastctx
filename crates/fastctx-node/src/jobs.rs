@@ -104,7 +104,7 @@ impl Jobs {
             let home = user_home().map_err(|error| failure("finding the home directory", error))?;
             let mut environment =
                 world_process_environment().map_err(|error| failure("reading the user's environment", error))?;
-            if on.as_ref().is_some_and(|(on,_)|on.sentinel.is_some()) && fastctx_hands::run::sentinel::unwalled() {
+            if on.as_ref().is_some_and(|(on, _)| on.sentinel.is_some()) && fastctx_hands::run::sentinel::unwalled() {
                 environment.push(("FASTCTX_LAB_UNSANDBOXED_SENTINEL".into(), "1".into()));
             }
             // An `on` job hands its standard error back apart from its output,
@@ -127,8 +127,11 @@ impl Jobs {
             };
             let launched = run::launch::launch_with_io_registered(&launch, mode, input.as_deref(), |path| {
                 if let Some(registration) = registration {
-                    *registration.lock().expect("never poisoned") =
-                        Some(crate::on::Follower::reserved(&registering, path, on.as_ref().is_some_and(|on|on.sentinel.is_some())));
+                    *registration.lock().expect("never poisoned") = Some(crate::on::Follower::reserved(
+                        &registering,
+                        path,
+                        on.as_ref().is_some_and(|on| on.sentinel.is_some()),
+                    ));
                 }
             })?;
             crate::job_watch::start(&registering, &launched.record, launched.supervisor.clone());
@@ -157,7 +160,7 @@ impl Jobs {
             None => WAIT,
             Some(seconds) if u64::from(seconds) <= LONGEST_WAIT.as_secs() => Duration::from_secs(seconds.into()),
             Some(seconds) => {
-                return Err(Failure::new(format!(
+                return Err(Failure::not_run(format!(
                     "a call waits at most {} seconds, not {seconds}",
                     LONGEST_WAIT.as_secs()
                 )));
@@ -469,7 +472,8 @@ fn refused_something(output: &OutputWindow) -> bool {
 /// The action a `run` was, as its resident's `actions` record it.
 pub fn action(reply: &RunReply, script: &str, at: jiff::Timestamp) -> Action {
     Action {
-        turn: None, at,
+        turn: None,
+        at,
         machine: reply.machine.clone(),
         hand: "run".to_string(),
         what: first_line(script),

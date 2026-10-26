@@ -57,7 +57,12 @@ impl Drop for Birth {
 }
 
 /// `id` is being born here, working for `acting`.
-pub(crate) fn born(node: &Arc<Node>, id: &ResidentId, acting: Acting, origin: &fastctx_types::residents::Origin) -> Birth {
+pub(crate) fn born(
+    node: &Arc<Node>,
+    id: &ResidentId,
+    acting: Acting,
+    origin: &fastctx_types::residents::Origin,
+) -> Birth {
     let user_started = matches!(origin, fastctx_types::residents::Origin::User);
     node.births.0.lock().expect("never poisoned").insert(id.clone(), Born { acting, user_started });
     Birth { node: node.clone(), id: id.clone() }
@@ -239,7 +244,19 @@ pub(crate) async fn run(
         Ok(Err(failure)) => {
             return Err(Failure { message: format!("on {}: {}", to.name, failure.message), ..failure });
         }
-        Err(failure) => return Err(Failure::new(format!("the script starts on {}: {failure}", to.name))),
+        Err(failure) => {
+            let not_run = matches!(
+                &failure,
+                fastctx_net::link::CallFailure::NotConnected { .. }
+                    | fastctx_net::link::CallFailure::NotMember { .. }
+                    | fastctx_net::link::CallFailure::Offline { .. }
+                    | fastctx_net::link::CallFailure::Refused { .. }
+                    | fastctx_net::link::CallFailure::NotAllowed { .. }
+                    | fastctx_net::link::CallFailure::Unreachable { .. }
+            );
+            let message = format!("the script starts on {}: {failure}", to.name);
+            return Err(if not_run { Failure::not_run(message) } else { Failure::unanswered(message) });
+        }
     };
     if let Some(consumed) = &reply.consumed {
         crate::job_receipts::apply_consumed(&directory, consumed).map_err(|error| Failure::new(error.to_string()))?;

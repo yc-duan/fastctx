@@ -133,6 +133,29 @@ pub(crate) async fn tell_here_locked(
     {
         return Ok(Landed::Waiting { why: None, answered: false });
     }
+    receive_here_locked(node, to, delivery, owed).await
+}
+
+/// Delivers a completion whose follower decision is already settled. The
+/// caller retains its durable copy until this handover has taken custody.
+pub(crate) async fn tell_completion(node: &Arc<Node>, to: &ResidentId, delivery: Delivery) -> Result<Landed, Failure> {
+    let actions = crate::control_queue::gate(node, to);
+    let _action = actions.lock().await;
+    if node.residents.active(to).is_ok() {
+        crate::control_queue::drain(node, to).await?;
+    }
+    let gate = node.residents.management(to)?;
+    let _reading = gate.read().await;
+    receive_here_locked(node, to, delivery, Owed::Working).await
+}
+
+/// Takes custody after completion routing, with the conversation gates held.
+async fn receive_here_locked(
+    node: &Arc<Node>,
+    to: &ResidentId,
+    delivery: Delivery,
+    owed: Owed,
+) -> Result<Landed, Failure> {
     // What still comes for one removed or being deleted, as the end of a
     // command its deletion stopped, is kept with its records and wakes it
     // no more; words for it are refused.
