@@ -322,6 +322,16 @@ export interface Words {
   deskFree(who: string): string;
   deskTaken(who: string): string;
   deskOutside: string;
+  /** A background command whose end can no longer reach the conversation. */
+  endUndelivered(machine: string): string;
+  /** A stop that could not reach the machine of what it was to stop. */
+  stopUndelivered(machine: string): string;
+  /** Something the World gave up delivering, told in words not known. */
+  undelivered: string;
+  /** Why it could not be delivered: the machine left the account's network. */
+  goneFromNetwork(machine: string): string;
+  /** Why it could not be delivered: every network it belongs to was left. */
+  networksLeft: string;
   /** How a job or a colleague's turn ended, from the World's own wording
    *  (`exited 0`, `turn completed, 14m`); a wording not known is kept. */
   ended(how: string): string;
@@ -692,6 +702,11 @@ export const zh: Words = {
   deskFree: (who) => `${who} 这一轮结束，屏幕空出来了`,
   deskTaken: (who) => `${who} 正在操作屏幕，结束后会通知`,
   deskOutside: "屏幕被 Fastctx 之外的会话占着",
+  endUndelivered: (machine) => `${machine} 上那条后台命令的结果送不到了`,
+  stopUndelivered: (machine) => `停止没能送到 ${machine}`,
+  undelivered: "有一件事没能送到",
+  goneFromNetwork: (machine) => `${machine} 已不在这个账号的网络里`,
+  networksLeft: "它所属的网络都已退出",
   ended: (how) =>
     endedIn(how, {
       exited: (code) => `退出 ${code}`,
@@ -1027,6 +1042,11 @@ export const en: Words = {
   deskFree: (who) => `${who}'s turn ended; the screen is free`,
   deskTaken: (who) => `${who} is using the screen; you'll be told when it's free`,
   deskOutside: "Computer Use is held by a session outside Fastctx",
+  endUndelivered: (machine) => `The background command on ${machine} can't report back`,
+  stopUndelivered: (machine) => `The stop didn't reach ${machine}`,
+  undelivered: "Something couldn't be delivered",
+  goneFromNetwork: (machine) => `${machine} is no longer in this account's network`,
+  networksLeft: "Every network it belongs to was left",
   ended: (how) =>
     endedIn(how, {
       exited: (code) => `exit ${code}`,

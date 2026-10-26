@@ -299,11 +299,19 @@ let i = (self.ki.widen() * self.integral).narrow();
   );
   s.ended("t2", "completed");
 
+  // The bench machine was taken out of the network while a benchmark ran
+  // there: its end can no longer come, and the stop sent after it could not
+  // reach it either. The World says so, once each.
+  const gone = "The end of j-b7m2q5 on bench cannot be delivered: bench is no longer in this account's current network view.";
+  const unstopped = "The stop on bench could not be delivered: bench is no longer in this account's current network view.";
+  s.heard("t3", { kind: "world" }, gone, 600, { kind: "world", fact: { fact: "delivery_failed", id: "delivery-failed-6c1e0a93b2d4f5a7c8e9" }, text: gone });
+  s.heard("t3", { kind: "world" }, unstopped, 1, { kind: "world", fact: { fact: "delivery_failed", id: "delivery-failed-0b7d2e4f6a8c1e3d5f7a" }, text: unstopped });
+
   s.heard(
     "t3",
     { kind: "resident", address: { machine: "laptop", resident: "codex-91c0" } },
     "=== colleague codex-91c0 on laptop (turn completed, 14m) ===\nFound one. With `ki = 0x7FFF_0000` and a constant error of 32767 at `dt = 1`, the integral saturates after 65 538 steps as meant, but `narrow()` then **wraps** instead of saturating: the output jumps from 32767 to −32768.\n\nRepro: `cargo test -p ctrl overflow_repro` on branch `colleague/q16-edge` (laptop, `/home/me/wt/q16-edge`).\n=== what it did: fastctx w codex-91c0 ===",
-    840,
+    240,
     {
       kind: "answer",
       colleague: { machine: "laptop", resident: "codex-91c0" },

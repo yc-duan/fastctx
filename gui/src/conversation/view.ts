@@ -62,7 +62,7 @@ import { bunched, cardsIn, type Bunch } from "./cards/bunch";
 import { lineHtml, lineText } from "./cards/lines";
 import { headline, onlyWrites, tenseOf, writeHeadline } from "./tool";
 import { drawDiagrams } from "./diagrams";
-import { readTold, worldSaid, type WorldSaid } from "./told";
+import { readTold, undelivered, worldSaid, type UndeliveredWhy, type WorldSaid } from "./told";
 import { allowanceOf, detailOf, heldOf } from "../app/problem";
 import { AnchorLayout, AnchoredHeight } from "../longview";
 import { FEW, LongText, type LongLines, type LongTextWords, type OtherSource } from "./long-text";
@@ -214,6 +214,19 @@ function focusSaid(focus: Focus, words: Words): string {
     chosen.folders.length ? chosen.folders.map((folder) => `${chosen.machine}: ${folderName(folder)}`) : [chosen.machine],
   );
   return items.length ? words.focusChanged(items.join(words.listSeparator)) : words.focusCleared;
+}
+
+/** Why something could not be delivered, in the interface's words where the
+ *  World's are known; its own words otherwise. */
+function undeliveredWhy(why: UndeliveredWhy, words: Words): string {
+  switch (why.kind) {
+    case "gone":
+      return words.goneFromNetwork(why.machine);
+    case "left":
+      return words.networksLeft;
+    case "other":
+      return why.text;
+  }
 }
 
 /** The menu the user's words raise when held on a touch screen. */
@@ -1528,6 +1541,8 @@ export class ConversationView {
     let said: string;
     let ok = true;
     let more = "";
+    // Why, where the line itself cannot say it: under the pointer.
+    let why = "";
     switch (notice.kind) {
       case "answer": {
         const failed = notice.end.how === "failed";
@@ -1560,19 +1575,34 @@ export class ConversationView {
       }
       case "world": {
         const fact = notice.fact;
-        said =
-          fact.fact === "moved"
-            ? fact.to
-              ? words.movedTo(fact.to)
-              : words.movedOut
-            : fact.fact === "focus"
-              ? focusSaid(fact.focus, words)
-              : fact.fact === "desk_free"
-                ? words.deskFree(fact.by.resident)
-                : fact.fact === "desk_taken"
-                  ? words.deskTaken(fact.by.resident)
-                  : words.deskOutside;
-        more = fact.fact === "moved" || fact.fact === "focus" ? "text" : "";
+        switch (fact.fact) {
+          case "moved":
+            said = fact.to ? words.movedTo(fact.to) : words.movedOut;
+            more = "text";
+            break;
+          case "focus":
+            said = focusSaid(fact.focus, words);
+            more = "text";
+            break;
+          case "desk_free":
+            said = words.deskFree(fact.by.resident);
+            break;
+          case "desk_taken":
+            said = words.deskTaken(fact.by.resident);
+            break;
+          case "desk_outside":
+            said = words.deskOutside;
+            break;
+          case "delivery_failed": {
+            ok = false;
+            const gone = undelivered(notice.text);
+            said = !gone ? words.undelivered : gone.kind === "end" ? words.endUndelivered(gone.machine) : words.stopUndelivered(gone.machine);
+            why = gone ? undeliveredWhy(gone.why, words) : notice.text.trim();
+            break;
+          }
+          default:
+            said = "";
+        }
         break;
       }
       default:
@@ -1582,7 +1612,7 @@ export class ConversationView {
     const paused = notice.kind === "words" && notice.goal_report?.shown?.status === "paused";
     const mark = asks ? glyph("ask", 14) : paused ? glyph("pause", 14) : ok ? glyph("check", 14) : glyph("cross", 14);
     const line = `<span class="notice-mark${ok ? "" : " wrong"}">${mark}</span><span class="notice-said">${escape(said)}</span>`;
-    if (!more) return `<div class="notice-line${ok ? "" : " failed"}">${line}</div>`;
+    if (!more) return `<div class="notice-line${ok ? "" : " failed"}"${why ? ` title="${escape(why)}"` : ""}>${line}</div>`;
     const open = this.openRows.has(entry.key);
     return `<div class="notice-line${ok ? "" : " failed"}"><button class="notice-open" type="button" data-open="${escape(entry.key)}" aria-expanded="${open}">${line}${glyph("chevron", 14)}</button></div><div class="fold-box notice-box"${open ? "" : " style=\"height:0\" inert"}><div class="fold-content"></div></div>`;
   }
