@@ -1717,7 +1717,7 @@ async fn run_started(
             let acting = crate::authorization::resident(node, &resident)?;
             node.authorize_here(&acting)?;
             let owner = Address { machine: here.clone(), resident: resident.clone() };
-            node.jobs.run(node, owner.into(), town.clone(), request, None).await?.0
+            node.jobs.run(node, owner.into(), town.clone(), request, None, true).await?.0
         }
     };
     if let Some(id) = call_id {

@@ -33,6 +33,7 @@ mod codex;
 mod codex_title;
 mod collab;
 mod colleagues;
+mod completion_debt;
 mod completion_delivery;
 mod composer;
 mod consent;

@@ -777,9 +777,9 @@ impl fastctx_net::link::Node for Handler {
                 RemoteCall::Relay { made } => crate::devices::relay(&node, &asker, made).await,
                 // A resident of the calling machine works here (`world-run.md`,
                 // 这里).
-                RemoteCall::Run { resident, town, request } => {
+                RemoteCall::Run { resident, town, request, answer_receipts } => {
                     let account = HubAccount { hub: hub.clone(), account: caller.account.clone() };
-                    crate::here::serve(&node, from, account, resident, town, request).await
+                    crate::here::serve(&node, from, account, resident, town, request, answer_receipts).await
                 }
                 RemoteCall::WordsCame { resident } => Ok(crate::here::words_came(&node, from, resident)),
                 RemoteCall::TurnInterrupted { resident } => Ok(crate::here::turn_interrupted(&node, from, resident)),

@@ -303,6 +303,7 @@ fn received_here(
         } else {
             create(&marker, &confirmed)?;
         }
+        crate::completion_debt::paid(&path)?;
         if confirmed.shown_whole {
             node.disk_due.lock().expect("never poisoned").insert(path.clone());
         }

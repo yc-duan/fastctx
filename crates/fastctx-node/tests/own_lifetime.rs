@@ -135,13 +135,21 @@ fn exercise() -> anyhow::Result<()> {
     let launched = {
         let _lock = FileLock::acquire(&world.node_lock())?;
         run::launch(&run::Launch {
+            answer_receipts: false,
             on: None,
             account: None,
             world: &world,
             names: &Names { me: machine.clone(), was: Vec::new(), renamed: Vec::new() },
             owner: &owner.clone().into(),
             town: None,
-            request: &RunRequest { turn: None, call_id: None, script, cwd: Some(display(&root)), writes_off: false, wait: None },
+            request: &RunRequest {
+                turn: None,
+                call_id: None,
+                script,
+                cwd: Some(display(&root)),
+                writes_off: false,
+                wait: None,
+            },
             home: &root,
             executable: &old_program,
             environment: &environment,

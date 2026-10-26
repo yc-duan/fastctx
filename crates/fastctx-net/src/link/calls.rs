@@ -480,7 +480,7 @@ impl Inner {
         purpose: Purpose,
         id: LetterId,
         letter: Letter,
-    ) -> io::Result<()> {
+    ) -> io::Result<super::Posted> {
         let n = self.counter.next()?;
         let message = self.letter(to, account, purpose, n, id, letter);
         let frame = wire::encode(&Up::Send { seq: u64::MAX, message: message.clone() });
@@ -491,13 +491,15 @@ impl Inner {
                 wire::MAX_CONTROL_FRAME
             )));
         }
-        {
+        let posted = {
             let mut letters = self.letters();
             super::letters::Outbox::new(&self.dir).put(letters.next, &message)?;
+            let posted = super::Posted { epoch: letters.file.epoch, seq: letters.next };
             letters.next += 1;
-        }
+            posted
+        };
         self.outbox_changed.notify_one();
-        Ok(())
+        Ok(posted)
     }
 
     /// The most a letter to `to` takes as a control message, with the

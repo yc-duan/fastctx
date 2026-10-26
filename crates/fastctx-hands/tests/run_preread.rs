@@ -23,13 +23,15 @@ fn rejection_precedes_all_job_side_effects() {
         "cat <<'END'\nmissing delimiter\n",
     ] {
         let request = RunRequest {
-            turn: None, call_id: None,
+            turn: None,
+            call_id: None,
             script: format!("printf executed > '{path}'\n{tail}"),
             cwd: None,
             writes_off: false,
             wait: None,
         };
         let result = run::launch(&run::Launch {
+            answer_receipts: false,
             on: None,
             account: None,
             world: &world,

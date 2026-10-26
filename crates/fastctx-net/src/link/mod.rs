@@ -28,6 +28,8 @@ mod direct;
 mod kernel;
 mod ledger;
 mod letters;
+mod posting;
+pub use posting::{Posted, Posting};
 mod line;
 mod login_identity;
 mod machine_log;
@@ -749,6 +751,18 @@ impl Link {
         id: LetterId,
         letter: Letter,
     ) -> io::Result<()> {
+        self.post_letter(to, account, purpose, id, letter).map(|_| ())
+    }
+
+    /// Posts a letter and returns the durable reference used to observe hub custody.
+    pub fn post_letter(
+        &self,
+        to: &MachineName,
+        account: &AccountName,
+        purpose: Purpose,
+        id: LetterId,
+        letter: Letter,
+    ) -> io::Result<Posted> {
         self.inner.send_letter(to, account, purpose, id, letter)
     }
 
