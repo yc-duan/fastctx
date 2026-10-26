@@ -722,9 +722,12 @@ impl Link {
     ) -> Result<RemoteResult, CallFailure> {
         // A call's future is tens of kilobytes; on the heap it does not grow
         // every future that makes a call, which a build without
-        // optimizations keeps whole on the stack, once for each.
+        // optimizations keeps whole on the stack, once for each. Its type is
+        // erased too: proving a caller's future `Send` then stops here instead
+        // of descending through every layer to the TLS stream, which passes
+        // the compiler's recursion limit where a device calls a hub itself.
         let within = call.contract().within;
-        let calling = Box::pin(async {
+        let calling: Pin<Box<dyn Future<Output = Result<RemoteResult, CallFailure>> + Send + '_>> = Box::pin(async {
             let call = match Box::pin(self.login_call(to, account, call)).await {
                 Ok(call) => call,
                 Err(reason) => return Ok(Err(fastctx_types::ipc::Failure::not_run(reason))),
@@ -751,8 +754,9 @@ impl Link {
         call: RemoteCall,
         feed: Feed,
     ) -> Result<RemoteResult, CallFailure> {
+        // Boxed and erased as in `call`.
         let within = call.contract().within;
-        let calling = Box::pin(async {
+        let calling: Pin<Box<dyn Future<Output = Result<RemoteResult, CallFailure>> + Send + '_>> = Box::pin(async {
             let call = match Box::pin(self.login_call(to, account, call)).await {
                 Ok(call) => call,
                 Err(reason) => return Ok(Err(fastctx_types::ipc::Failure::not_run(reason))),
