@@ -40,7 +40,10 @@ pub enum RemoteCall {
     MemoryFolders {
         town: TownName,
     },
-    Goal { resident: ResidentId, request: crate::goals::Request },
+    Goal {
+        resident: ResidentId,
+        request: crate::goals::Request,
+    },
     /// A node forwards a resident command, including commands from its running jobs,
     /// to the home that owns the goal's durable effects.
     GoalCommand {
@@ -48,13 +51,27 @@ pub enum RemoteCall {
         turn: Option<String>,
         request: crate::goals::AgentRequest,
     },
-    ConversationDebt { resident: ResidentId, requester: crate::Address },
-    WaitingJobs { owner: crate::Address },
-    SentinelControl { request: crate::sentinel_control::Request },
-    SentinelHome { request: crate::sentinel_control::HomeRequest },
-    SentinelSettings { change: Option<crate::sentinel_settings::WriteSettings> },
+    ConversationDebt {
+        resident: ResidentId,
+        requester: crate::Address,
+    },
+    WaitingJobs {
+        owner: crate::Address,
+    },
+    SentinelControl {
+        request: crate::sentinel_control::Request,
+    },
+    SentinelHome {
+        request: crate::sentinel_control::HomeRequest,
+    },
+    SentinelSettings {
+        change: Option<crate::sentinel_settings::WriteSettings>,
+    },
     /// Keeps or removes one of the account's sentinel keys on its home.
-    SentinelKey { key: crate::sentinel_settings::KeyName, value: Option<crate::sentinel_settings::Secret> },
+    SentinelKey {
+        key: crate::sentinel_settings::KeyName,
+        value: Option<crate::sentinel_settings::Secret>,
+    },
     /// Which of the account's sentinel keys its home holds.
     SentinelKeys,
     /// A running job returns its resident's project selection to its home.
@@ -94,6 +111,9 @@ pub enum RemoteCall {
         resident: ResidentId,
         town: Option<TownName>,
         request: RunRequest,
+        /// The caller acknowledges host receipt and deduplicates completion mail.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        answer_receipts: bool,
     },
     /// Words came for a resident of the calling machine: a `Run` of it
     /// waiting there answers now, as one here would.
@@ -535,7 +555,9 @@ impl RemoteCall {
     /// check it.
     pub fn purpose(&self) -> Purpose {
         match self {
-            Self::Goal { request: crate::goals::Request::Read | crate::goals::Request::History { .. }, .. } => Purpose::Look,
+            Self::Goal { request: crate::goals::Request::Read | crate::goals::Request::History { .. }, .. } => {
+                Purpose::Look
+            }
             Self::GoalCommand { request: crate::goals::AgentRequest::Read, .. } => Purpose::Look,
             Self::Goal { .. } | Self::GoalCommand { .. } => Purpose::Agents,
             Self::EnterProject { .. } | Self::Plan { .. } => Purpose::Echo,
@@ -637,9 +659,15 @@ pub enum RemoteReply {
     },
     Collaboration(Box<crate::collaboration::Tree>),
     MemoryFolders(crate::memory::Folders),
-    Goal { updated: Box<crate::goals::Updated> },
-    ConversationDebt { debt: crate::turn_evidence::ConversationDebt },
-    WaitingJobs { jobs: Vec<crate::turn_evidence::WaitHandle> },
+    Goal {
+        updated: Box<crate::goals::Updated>,
+    },
+    ConversationDebt {
+        debt: crate::turn_evidence::ConversationDebt,
+    },
+    WaitingJobs {
+        jobs: Vec<crate::turn_evidence::WaitHandle>,
+    },
     SentinelControl(Box<crate::sentinel_control::Reply>),
     SentinelHome(Box<crate::sentinel_control::HomeReply>),
     SentinelSettings(Box<crate::sentinel_settings::SettingsReply>),

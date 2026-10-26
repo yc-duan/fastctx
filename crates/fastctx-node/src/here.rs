@@ -202,7 +202,7 @@ pub(crate) async fn run(
         Err(_) => town,
     };
     let (script, started_at) = (request.script.clone(), jiff::Timestamp::now());
-    let call = RemoteCall::Run { resident: resident.clone(), town: town.clone(), request };
+    let call = RemoteCall::Run { resident: resident.clone(), town: town.clone(), request, answer_receipts: true };
     let source = crate::letters::Identity::at(node, to, "");
     let answer = node.call(&acting, to, Purpose::Hands, call);
     tokio::pin!(answer);
@@ -341,9 +341,10 @@ pub(crate) async fn serve(
     resident: ResidentId,
     town: Option<TownName>,
     request: RunRequest,
+    answer_receipts: bool,
 ) -> Result<RemoteReply, Failure> {
     let owner = Address { machine: from, resident };
-    let (reply, _) = node.jobs.run(node, owner.into(), town, request, Some(account)).await?;
+    let (reply, _) = node.jobs.run(node, owner.into(), town, request, Some(account), answer_receipts).await?;
     Ok(RemoteReply::Run(Box::new(reply)))
 }
 

@@ -20,6 +20,8 @@ use super::record;
 
 /// Who asks, where, and with what.
 pub struct Launch<'a> {
+    /// The owner confirms the foreground answer after its host accepts it.
+    pub answer_receipts: bool,
     pub world: &'a WorldDir,
     /// The names machines answer to here: this machine's, and every name
     /// of a machine renamed since, whose residents' jobs go on in the rooms
@@ -174,9 +176,14 @@ fn prepare(launch: &Launch<'_>, mode: OutputMode, stdin: Option<&Path>) -> Resul
         account: launch.account.cloned(),
     };
     record::write(&record_path, &record).map_err(|error| failure("could not write the job's record", &error))?;
-    if launch.on.is_some_and(|on|on.sentinel.is_none()) {
+    if launch.owner.resident().is_some()
+        && launch.on.is_none_or(|on| on.sentinel.is_none())
+        && (launch.on.is_some() || launch.answer_receipts)
+    {
         // No supervisor can execute until its completion debt is durable.
-        publish_new(&resident.job_owed(&job), b"", Permissions::Private)
+        // Empty markers retain the pre-negotiation background/on behavior.
+        let debt: &[u8] = if launch.on.is_none() && launch.answer_receipts { b"answer" } else { b"" };
+        publish_new(&resident.job_owed(&job), debt, Permissions::Private)
             .map_err(|error| failure("could not keep the job's completion debt", &error))?;
     }
     Ok((job, output, stderr, record_path, resident))

@@ -180,7 +180,7 @@ async fn execute(node: &Arc<Node>, source: PageSource, action: PageInvocation) -
                 writes_off: false,
                 wait: None,
             };
-            let (reply, _) = node.jobs.run(node, owner, town, request, account).await?;
+            let (reply, _) = node.jobs.run(node, owner, town, request, account, false).await?;
             Ok(PageResult::Run(Box::new(reply)))
         }
         PageInvocation::Say { to, text } => {

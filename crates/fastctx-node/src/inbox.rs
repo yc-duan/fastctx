@@ -391,7 +391,11 @@ fn parse_pending(directory: &ConversationDir, path: &Path, bytes: &[u8]) -> io::
 pub fn owe_job(record_path: &Path) -> io::Result<JobRecord> {
     match publish_new(&record_path.with_extension("owed"), b"", Permissions::Private) {
         Ok(()) => {}
-        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
+        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
+            if std::fs::read(record_path.with_extension("owed"))? == b"answer" {
+                publish(&record_path.with_extension("owed"), b"", Permissions::Private)?;
+            }
+        }
         Err(error) => return Err(error),
     }
     record::read(record_path)
@@ -449,6 +453,12 @@ pub async fn tell_if_ended(node: &Arc<Node>, record_path: &Path, record: &JobRec
         }
         return Ok(());
     }
+    if record_path.with_extension("delivered").try_exists()? {
+        return crate::completion_debt::paid(record_path);
+    }
+    if !crate::completion_debt::ready(node, record_path, owner)? {
+        return Err(crate::completion_debt::pending("the host has not yet acknowledged the run answer"));
+    }
     let notice_path = record_path.with_extension("notice");
     let notice = if notice_path.try_exists()? {
         parse(&notice_path, &std::fs::read(&notice_path)?)?
@@ -504,11 +514,14 @@ pub async fn tell_if_ended(node: &Arc<Node>, record_path: &Path, record: &JobRec
         .or_else(|| record.account.clone())
         .map(|account| fastctx_types::access::Acting::one(account.hub, account.account))
         .unwrap_or_default();
-    tell(node, &acting, owner, id, notice, Owed::Working).await.map_err(|failure| io::Error::other(failure.message))?;
-    match std::fs::remove_file(&owed) {
-        Err(error) if error.kind() != io::ErrorKind::NotFound => Err(error),
-        _ => Ok(()),
+    if node.is_me(&owner.machine) {
+        tell(node, &acting, owner, id, notice, Owed::Working)
+            .await
+            .map_err(|failure| io::Error::other(failure.message))?;
+    } else {
+        crate::completion_debt::post(node, record_path, owner, &acting, id, notice)?;
     }
+    crate::completion_debt::paid(record_path)
 }
 
 pub(crate) fn job_notice_id(record: &JobRecord) -> NoticeId {
@@ -573,7 +586,9 @@ pub async fn settle_jobs(node: &Arc<Node>) -> io::Result<Vec<(std::path::PathBuf
         };
         if let Err(error) = told {
             retry_job(node, &path.with_extension("json"));
-            problems.push((path, error));
+            if error.kind() != io::ErrorKind::WouldBlock {
+                problems.push((path, error));
+            }
         }
     }
     Ok(problems)
@@ -588,16 +603,31 @@ pub(crate) fn retry_job(node: &Arc<Node>, path: &Path) {
     let (node, path) = (node.clone(), path.to_path_buf());
     tokio::spawn(async move {
         let mut again = crate::again::Again::default();
+        let mut reason = None;
+        let mut ways = node.ways.subscribe();
         loop {
+            ways.borrow_and_update();
             let result = match record::read(&path) {
                 Ok(record) => tell_if_ended(&node, &path, &record).await,
+                Err(error) if error.kind() == io::ErrorKind::NotFound => break,
                 Err(error) => Err(error),
             };
             match result {
                 Ok(()) => break,
-                Err(error) => node.log.line(format_args!("{} still owes its completion: {error}", path.display())),
+                Err(error) if error.kind() == io::ErrorKind::WouldBlock => {}
+                Err(error) => {
+                    let message = error.to_string();
+                    if reason.as_ref() != Some(&message) {
+                        node.log.line(format_args!("{} still owes its completion: {error}", path.display()));
+                        reason = Some(message);
+                    }
+                }
             }
-            tokio::time::sleep(again.next()).await;
+            let pause = crate::completion_debt::pause(&path).ok().flatten().unwrap_or_else(|| again.next());
+            tokio::select! {
+                () = tokio::time::sleep(pause.min(fastctx_net::again::LONGEST)) => {}
+                _ = ways.changed() => {}
+            }
         }
         node.notifying_jobs.lock().expect("never poisoned").remove(&path);
     });

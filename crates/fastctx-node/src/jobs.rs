@@ -61,10 +61,17 @@ impl Jobs {
         };
         crate::run_facts::update_job_with(node, &path, writes, steps)
             .map_err(|error| failure("updating call facts", error))?;
-        crate::inbox::tell_if_ended(node, &path, &record).await.map_err(|error| {
-            crate::inbox::retry_job(node, &path);
-            failure("telling the job's end", error)
-        })
+        match crate::inbox::tell_if_ended(node, &path, &record).await {
+            Ok(()) => Ok(()),
+            Err(error) => {
+                crate::inbox::retry_job(node, &path);
+                if error.kind() == std::io::ErrorKind::WouldBlock {
+                    Ok(())
+                } else {
+                    Err(failure("telling the job's end", error))
+                }
+            }
+        }
     }
 
     /// Listens for changes to jobs' records: each change names its job.
@@ -87,6 +94,7 @@ impl Jobs {
         on: Option<(fastctx_types::run::OnJob, Option<PathBuf>)>,
         registration: Option<crate::on::Registration>,
         account: Option<fastctx_types::access::HubAccount>,
+        answer_receipts: bool,
     ) -> Result<run::Launched, Failure> {
         let _place = match owner.resident().and_then(|address| crate::data::places::of_owner(node, address)) {
             Some(place) => Some(node.places.using(&place).await),
@@ -114,6 +122,7 @@ impl Jobs {
                 None => (None, fastctx_types::run::OutputMode::Merged, None),
             };
             let launch = Launch {
+                answer_receipts,
                 world: &world,
                 names: &names,
                 owner: &owner,
@@ -154,6 +163,7 @@ impl Jobs {
         town: Option<TownName>,
         request: RunRequest,
         account: Option<fastctx_types::access::HubAccount>,
+        answer_receipts: bool,
     ) -> Result<(RunReply, JobRecord), Failure> {
         let machine = &node.machine();
         let wait = match request.wait {
@@ -195,7 +205,7 @@ impl Jobs {
         // The job stops with the turn of the call that waits for it; one the
         // call left running goes on (`world-run.md`).
         let mut interrupted = owner.resident().map(|address| node.interrupts.watch(address));
-        let launched = self.launch(node, owner, town, request, None, None, account).await?;
+        let launched = self.launch(node, owner, town, request, None, None, account, answer_receipts).await?;
         let mut answered = None;
         loop {
             let record = read(&launched.record).await?;
@@ -251,9 +261,12 @@ impl Jobs {
                 .await
                 .map_err(|error| Failure::new(format!("noting that the job's end is owed: {error}")))?
                 .map_err(|error| failure("noting that the job's end is owed", error))?;
-            crate::inbox::tell_if_ended(node, &launched.record, &now)
-                .await
-                .map_err(|error| failure("telling the job's end", error))?;
+            if let Err(error) = crate::inbox::tell_if_ended(node, &launched.record, &now).await {
+                crate::inbox::retry_job(node, &launched.record);
+                if error.kind() != std::io::ErrorKind::WouldBlock {
+                    return Err(failure("telling the job's end", error));
+                }
+            }
         }
         // Beside its record, in whichever room the job went on (`run::launch`).
         let visited = launched.record.parent().map(|jobs| visited(jobs, &launched.job)).unwrap_or_default();
@@ -405,7 +418,9 @@ pub(crate) fn remove(path: &Path) -> std::io::Result<()> {
         files.extend(record.stdin.as_deref().map(PathBuf::from));
         files.extend(["on-taken", "on-piped", "on-stopped"].map(|extension| path.with_extension(extension)));
     }
-    files.extend(["notice", "owed", "delivered"].map(|extension| path.with_extension(extension)));
+    files.extend(
+        ["notice", "owed", "delivered", "posted", "answer-wait"].map(|extension| path.with_extension(extension)),
+    );
     files.extend(["copied", "wait-taken", "consumed", "exit-receipt"].map(|extension| path.with_extension(extension)));
     files.push(path.to_path_buf());
     for file in files {

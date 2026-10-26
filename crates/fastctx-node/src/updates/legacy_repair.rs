@@ -139,6 +139,7 @@ fn arranged(link: &Link, machine: &MachineName, id: &str) -> bool {
 
 async fn run(node: &Arc<Node>, acting: &Acting, machine: &Written, script: String) -> Result<Option<String>, String> {
     let call = RemoteCall::Run {
+        answer_receipts: false,
         resident: ResidentId::try_from("world-0000").expect("system job identity"),
         town: None,
         request: RunRequest { turn: None, call_id: None, script, cwd: None, writes_off: false, wait: Some(600) },

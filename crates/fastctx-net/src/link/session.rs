@@ -811,6 +811,7 @@ fn held(inner: &Inner, seq: u64) -> std::io::Result<()> {
 }
 
 fn refused_letter(inner: &Inner, seq: u64, reason: &str) -> std::io::Result<()> {
+    super::posting::refused(inner, seq, reason)?;
     let outbox = Outbox::new(&inner.dir);
     match outbox.get(seq)? {
         Some(message) => {
