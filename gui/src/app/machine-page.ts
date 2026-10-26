@@ -966,7 +966,7 @@ export class MachinePage implements Page {
       return rows ? words.ledgerRows(Number(rows[1])) : /cannot be read or written/.test(text) ? words.ledgerBroken : words.healthOther;
     };
     const warned = [
-      ...stuck.map((one) => `<li title="${escape(one.what)}">${escape(words.stuck(one.doing, one.what, words.span(one.seconds * 1000)))}</li>`),
+      ...stuck.map((one) => `<li title="${escape(`${one.doing}: ${one.what}`)}">${escape(words.stuck(words.span(one.seconds * 1000)))}</li>`),
       ...health.map((one) => `<li title="${escape(one.text)}">${escape(healthSaid(one.text))}</li>`),
     ];
     const stuckSaid = warned.length ? `<ul class="mp-stuck">${warned.join("")}</ul>` : "";

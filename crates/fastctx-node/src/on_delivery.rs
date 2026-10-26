@@ -5,6 +5,7 @@
 use std::collections::HashMap;
 use std::io;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use fastctx_platform::{Permissions, ensure_private_dir, publish, publish_new};
@@ -23,7 +24,14 @@ type Job = (Address, MachineName, JobId, Option<NoticeId>);
 #[derive(Default)]
 pub(crate) struct Deliveries {
     state: Mutex<State>,
+    /// Held for one pass over what is held, never across the wait between
+    /// passes: a completion arriving from another machine takes it too.
     pub(crate) draining: crate::ranked::Draining,
+    /// A drain goes on: a later call only hurries it.
+    drainer: AtomicBool,
+    /// A call came since the last pass began.
+    asked: AtomicBool,
+    hurry: tokio::sync::Notify,
 }
 
 #[derive(Default)]
@@ -46,12 +54,16 @@ impl Following {
         let source = (origin.resident.clone(), machine.clone());
         let request = origin.request.clone();
         let dispatch = (source.0.clone(), source.1.clone(), request.clone());
-        if origin.sentinel.is_none() { *node.on_deliveries.state.lock().expect("never poisoned").starting.entry(dispatch).or_default() += 1; }
+        if origin.sentinel.is_none() {
+            *node.on_deliveries.state.lock().expect("never poisoned").starting.entry(dispatch).or_default() += 1;
+        }
         Self { internal: origin.sentinel.is_some(), node: node.clone(), source, request, job: None }
     }
 
     pub(crate) fn started(&mut self, job: &JobId) {
-        if self.internal { return; }
+        if self.internal {
+            return;
+        }
         if self.job.as_ref() == Some(job) {
             return;
         }
@@ -64,7 +76,9 @@ impl Following {
     }
 
     pub(crate) fn taken(&self, job: &JobId) -> io::Result<()> {
-        if self.internal { return Ok(()); }
+        if self.internal {
+            return Ok(());
+        }
         let _state = self.node.on_deliveries.state.lock().expect("never poisoned");
         let path = receipt(
             &self.node,
@@ -81,7 +95,9 @@ impl Following {
 
 impl Drop for Following {
     fn drop(&mut self) {
-        if self.internal { return; }
+        if self.internal {
+            return;
+        }
         {
             let mut state = self.node.on_deliveries.state.lock().expect("never poisoned");
             match &self.job {
@@ -147,7 +163,9 @@ fn cancellation(
 }
 
 pub(crate) fn cancelled(node: &Node, origin: &OnOrigin, machine: &MachineName) -> io::Result<()> {
-    if origin.sentinel.is_some() { return Ok(()); }
+    if origin.sentinel.is_some() {
+        return Ok(());
+    }
     let Some(request) = &origin.request else { return Ok(()) };
     let _state = node.on_deliveries.state.lock().expect("never poisoned");
     let path = cancellation(node, &origin.resident.machine, &origin.resident.resident, machine, request);
@@ -284,19 +302,45 @@ fn local_owners(node: &Node, to: &ResidentId) -> Vec<Address> {
 
 /// Startup and follower departure both release durable, unclaimed letters.
 /// What is still held goes again as everything that reconnects does, and at
-/// once when a way opens to a follower that was not reached.
+/// once when a way opens to a follower that was not reached. One drain goes
+/// on at a time; a follower may stay away for days, so the drain lets go of
+/// `draining` while it waits.
 pub(crate) fn resume(node: &Arc<Node>) {
+    let deliveries = &node.on_deliveries;
+    deliveries.asked.store(true, Ordering::SeqCst);
+    deliveries.hurry.notify_one();
+    if deliveries.drainer.swap(true, Ordering::SeqCst) {
+        return;
+    }
     let node = node.clone();
     tokio::spawn(async move {
-        let _draining = node.on_deliveries.draining.lock().await;
+        let deliveries = &node.on_deliveries;
         let mut again = crate::again::Again::default();
         loop {
-            let unreached = match drain(&node).await {
-                Ok(()) => return,
-                Err(unreached) => unreached,
+            let drained = {
+                let _draining = deliveries.draining.lock().await;
+                // This pass reads everything held now, so what was asked
+                // before it is answered by it.
+                deliveries.asked.store(false, Ordering::SeqCst);
+                drain(&node).await
             };
-            node.log.line("delivering held on completions: some remain held; see the errors above");
-            again.pause(&node, &unreached).await;
+            match drained {
+                Ok(()) => {
+                    deliveries.drainer.store(false, Ordering::SeqCst);
+                    // A call during the pass left its work to this drain.
+                    if deliveries.asked.load(Ordering::SeqCst) && !deliveries.drainer.swap(true, Ordering::SeqCst) {
+                        continue;
+                    }
+                    return;
+                }
+                Err(unreached) => {
+                    node.log.line("delivering held on completions: some remain held; see the errors above");
+                    tokio::select! {
+                        () = again.pause(&node, &unreached) => {}
+                        () = deliveries.hurry.notified() => {}
+                    }
+                }
+            }
         }
     });
 }
