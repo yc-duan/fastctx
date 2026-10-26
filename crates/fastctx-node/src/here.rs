@@ -239,12 +239,17 @@ pub(crate) async fn run(
         }
     };
     if stopping {
-        let job = match &answered {
-            Ok(Ok(RemoteReply::Run(reply))) => Some(reply.job.clone()),
-            _ => None,
+        let outcome = match &answered {
+            Ok(Ok(RemoteReply::Run(reply))) => crate::run_stops::Answered::Job(reply.job.clone()),
+            Ok(Err(failure)) if failure.not_run => crate::run_stops::Answered::NotRun,
+            Err(failure) if never_started(failure) => crate::run_stops::Answered::NotRun,
+            _ => crate::run_stops::Answered::Unknown,
         };
-        crate::run_stops::answered(node, &here, &dispatch, job)
-            .map_err(|error| Failure::new(format!("keeping the stopped run's answer identity: {error}")))?;
+        // The answer still goes to the model; only an older receiver's stop
+        // is left without the job it names.
+        if let Err(error) = crate::run_stops::answered(node, &here, &dispatch, outcome) {
+            node.log.line(format_args!("keeping the stopped run's answer on {}: {error}", to.name));
+        }
     }
     let reply = match answered {
         Ok(Ok(RemoteReply::Run(reply))) => *reply,
@@ -255,17 +260,8 @@ pub(crate) async fn run(
             return Err(Failure { message: format!("on {}: {}", to.name, failure.message), ..failure });
         }
         Err(failure) => {
-            let not_run = matches!(
-                &failure,
-                fastctx_net::link::CallFailure::NotConnected { .. }
-                    | fastctx_net::link::CallFailure::NotMember { .. }
-                    | fastctx_net::link::CallFailure::Offline { .. }
-                    | fastctx_net::link::CallFailure::Refused { .. }
-                    | fastctx_net::link::CallFailure::NotAllowed { .. }
-                    | fastctx_net::link::CallFailure::Unreachable { .. }
-            );
             let message = format!("the script starts on {}: {failure}", to.name);
-            return Err(if not_run { Failure::not_run(message) } else { Failure::unanswered(message) });
+            return Err(if never_started(&failure) { Failure::not_run(message) } else { Failure::unanswered(message) });
         }
     };
     crate::run_receipts::remember(node, &here, &reply).map_err(|error| Failure::new(error.to_string()))?;
@@ -297,6 +293,19 @@ pub(crate) async fn run(
         left_running(node, resident, &Elsewhere { machine: to.clone(), job: reply.job.clone(), command, started_at });
     }
     Ok(reply)
+}
+
+/// Whether a run's call failed before it could reach the machine it names.
+fn never_started(failure: &fastctx_net::link::CallFailure) -> bool {
+    matches!(
+        failure,
+        fastctx_net::link::CallFailure::NotConnected { .. }
+            | fastctx_net::link::CallFailure::NotMember { .. }
+            | fastctx_net::link::CallFailure::Offline { .. }
+            | fastctx_net::link::CallFailure::Refused { .. }
+            | fastctx_net::link::CallFailure::NotAllowed { .. }
+            | fastctx_net::link::CallFailure::Unreachable { .. }
+    )
 }
 
 /// The answer that showed `job` whole reached its host: where it ran, if

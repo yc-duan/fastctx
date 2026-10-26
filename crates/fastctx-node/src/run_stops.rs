@@ -76,15 +76,42 @@ pub(crate) async fn keep(
         }
         tokio::time::sleep(again.next()).await;
     }
+    let addressed = pending.addressed;
     start(node, path, false);
+    if !addressed {
+        // An older receiver cannot address the dispatch. While the run still
+        // waits there, the conversation-wide interruption it knows stops it at
+        // once. It goes once and is never replayed, as a late one could stop a
+        // later turn; the job named in the run's answer completes the stop.
+        let (node, acting, destination) = (node.clone(), acting.clone(), destination.clone());
+        let stop = RemoteCall::TurnInterrupted { resident: owner.resident.clone(), dispatch: None };
+        tokio::spawn(async move {
+            if let Err(failure) = node.call(&acting, &destination, Purpose::Hands, stop).await {
+                node.log.line(format_args!("telling {} that the turn was interrupted: {failure}", destination.name));
+            }
+        });
+    }
     Ok(())
 }
 
+/// What the stopped run's own call answered, which an older receiver's stop
+/// goes by.
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum Answered {
+    /// The run started this job there.
+    Job(JobId),
+    /// The run never started there: nothing is left to stop.
+    NotRun,
+    /// Its answer was lost, or named no job.
+    Unknown,
+}
+
 /// Kept apart from the immutable stop body, whose digest binds its mailed reply.
-pub(crate) fn answered(node: &Node, owner: &Address, dispatch: &NoticeId, job: Option<JobId>) -> io::Result<()> {
+pub(crate) fn answered(node: &Node, owner: &Address, dispatch: &NoticeId, answered: Answered) -> io::Result<()> {
     let path = pending_path(node, owner, dispatch);
     if path.try_exists()? {
-        write(&path.with_extension("answer"), &job)?;
+        write(&path.with_extension("answer"), &answered)?;
         node.control_letters.changed.notify_waiters();
     }
     Ok(())
@@ -173,24 +200,29 @@ async fn attempt(node: &Arc<Node>, path: &Path, recovered: bool) -> io::Result<b
         // A legacy resident-wide interruption cannot be replayed safely: a
         // later turn might already be waiting there. Its concrete job is safe.
         let answer = path.with_extension("answer");
-        let job: Option<JobId> = match std::fs::read(&answer) {
+        let answered: Answered = match std::fs::read(&answer) {
             Ok(bytes) => serde_json::from_slice(&bytes).map_err(io::Error::other)?,
             Err(error) if error.kind() == io::ErrorKind::NotFound && !recovered => return Ok(false),
-            Err(error) if error.kind() == io::ErrorKind::NotFound => None,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => Answered::Unknown,
             Err(error) => return Err(error),
         };
-        if let Some(job) = job {
-            let call = RemoteCall::StopJob { job, by: fastctx_types::residents::STOPPED_BY_USER.into() };
-            match node.call(&pending.acting, &pending.destination, Purpose::Hands, call).await {
-                Ok(Ok(RemoteReply::JobStopped { .. })) => Ok(()),
-                Ok(Ok(_)) => Err(Failure::new("the stop received an unrelated reply")),
-                Ok(Err(error)) => Err(error),
-                Err(error) => Err(Failure::new(error.to_string())),
+        match answered {
+            Answered::Job(job) => {
+                let call = RemoteCall::StopJob { job, by: fastctx_types::residents::STOPPED_BY_USER.into() };
+                match node.call(&pending.acting, &pending.destination, Purpose::Hands, call).await {
+                    Ok(Ok(RemoteReply::JobStopped { .. })) => Ok(()),
+                    Ok(Ok(_)) => Err(Failure::new("the stop received an unrelated reply")),
+                    Ok(Err(error)) => Err(error),
+                    Err(error) => Err(Failure::new(error.to_string())),
+                }
             }
-        } else {
-            Err(Failure::refused(
+            Answered::NotRun => {
+                crate::obligations::finish(node, path, &bytes, Outcome::Superseded, "the run never started there")?;
+                return Ok(true);
+            }
+            Answered::Unknown => Err(Failure::refused(
                 "this receiver cannot address a turn stop and its job identity was not recovered; upgrade it to deliver stops after a lost answer",
-            ))
+            )),
         }
     };
     match result {
