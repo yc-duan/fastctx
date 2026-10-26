@@ -64,7 +64,7 @@ pub fn launch(launch: &Launch<'_>) -> Result<Launched, Failure> {
 /// `stdin` names an already complete, verified local file. The caller keeps
 /// it unchanged and present until the job ends. None connects null input.
 pub fn launch_with_io(launch: &Launch<'_>, mode: OutputMode, stdin: Option<&Path>) -> Result<Launched, Failure> {
-    launch_with_io_registered(launch, mode, stdin, |_| {})
+    launch_with_io_registered(launch, mode, stdin, |_| Ok(()))
 }
 
 /// Registers a consumer after preparation is durable and before a
@@ -73,11 +73,11 @@ pub fn launch_with_io_registered(
     launch: &Launch<'_>,
     mode: OutputMode,
     stdin: Option<&Path>,
-    register: impl FnOnce(&Path),
+    register: impl FnOnce(&Path) -> Result<(), Failure>,
 ) -> Result<Launched, Failure> {
     let (job, output, stderr, record_path, resident) =
         prepare(launch, mode, stdin).map_err(|failure| Failure::not_run(failure.message))?;
-    register(&record_path);
+    register(&record_path)?;
     if let Some(request) = launch.on.and_then(|on| on.request.as_ref()) {
         let stopped = resident.jobs().join(format!("request-{request}.stopped"));
         if stopped

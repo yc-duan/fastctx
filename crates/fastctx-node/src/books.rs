@@ -69,7 +69,7 @@ fn owes(node: &Node, owner: &Address, directory: &ConversationDir) -> io::Result
     {
         return Ok(true);
     }
-    for queue in ["job-deliveries", "on-deliveries", "on-stops", "received", "received-controls"] {
+    for queue in ["job-deliveries", "on-deliveries", "on-stops", "run-stops", "received", "received-controls"] {
         if crate::retention::entries(&directory.book(queue))?
             .iter()
             .any(|path| path.extension().is_some_and(|extension| extension == "json"))

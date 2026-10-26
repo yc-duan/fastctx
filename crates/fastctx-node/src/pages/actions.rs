@@ -71,8 +71,8 @@ async fn admitted(
     // Consent and publication changes affect subsequent admissions. A run
     // already admitted continues, and must not hold up revocation while
     // its normal fifteen-second wait is in progress.
-    let _writing = node.writing.lock().await;
     super::refresh(node, &town).await?;
+    let _syncing = node.syncing.lock().await;
     let stored = super::stored(node, &town, &page)?;
     super::check_base(&page, Some(version), stored.current().map(|v| v.version))?;
     let publication = stored.current().expect("checked current version");
@@ -180,7 +180,7 @@ async fn execute(node: &Arc<Node>, source: PageSource, action: PageInvocation) -
                 writes_off: false,
                 wait: None,
             };
-            let (reply, _) = node.jobs.run(node, owner, town, request, account, false).await?;
+            let (reply, _) = node.jobs.run(node, owner, town, request, account, false, None).await?;
             Ok(PageResult::Run(Box::new(reply)))
         }
         PageInvocation::Say { to, text } => {

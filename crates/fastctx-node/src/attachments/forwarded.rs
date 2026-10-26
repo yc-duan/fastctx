@@ -17,7 +17,7 @@ pub(super) enum Input {
 
 impl Input {
     async fn transfer(self, mut destination: Stream, size: u64) -> Result<(), String> {
-        let need: Need = destination.hear().await?;
+        let need: Need = destination.hear_step("needed bytes").await?;
         match self {
             Self::Remote(mut source, resumes) => {
                 if resumes {
@@ -28,7 +28,7 @@ impl Input {
                 } else {
                     source.take(size, |_| Ok(())).await?;
                 }
-                if source.hear::<String>().await? != "uploaded" {
+                if source.hear_step::<String>("uploaded").await? != "uploaded" {
                     return Err("the uploader did not end the file".into());
                 }
                 if need.bytes {

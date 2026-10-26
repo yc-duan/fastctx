@@ -590,6 +590,7 @@ pub fn facts(node: &Node) -> MachineFacts {
         sentinel_look: true,
         completion_receipts: true,
         control_letters: true,
+        run_stops: true,
         upload_resumes: true,
         attachment_references: true,
         stats: true,
@@ -708,7 +709,7 @@ impl fastctx_net::link::Node for Handler {
         let node = self.node.upgrade();
         let hub = self.hub.clone();
         let doing = format!("{} from {}", crate::labels::call_of(&call), caller.machine);
-        Box::pin(async move {
+        Box::pin(crate::gate_waits::asked(Box::pin(async move {
             let _doing = fastctx_platform::doing::doing(doing);
             let Some(node) = node else {
                 return Err(Failure::new("the node is stopping"));
@@ -777,12 +778,22 @@ impl fastctx_net::link::Node for Handler {
                 RemoteCall::Relay { made } => crate::devices::relay(&node, &asker, made).await,
                 // A resident of the calling machine works here (`world-run.md`,
                 // 这里).
-                RemoteCall::Run { resident, town, request, answer_receipts } => {
+                RemoteCall::Run { resident, town, request, answer_receipts, dispatch } => {
                     let account = HubAccount { hub: hub.clone(), account: caller.account.clone() };
-                    crate::here::serve(&node, from, account, resident, town, request, answer_receipts).await
+                    crate::here::serve(&node, from, account, resident, town, request, answer_receipts, dispatch).await
                 }
                 RemoteCall::WordsCame { resident } => Ok(crate::here::words_came(&node, from, resident)),
-                RemoteCall::TurnInterrupted { resident } => Ok(crate::here::turn_interrupted(&node, from, resident)),
+                RemoteCall::TurnInterrupted { resident, dispatch } => match dispatch {
+                    Some(dispatch) => crate::run_stops::serve(
+                        &node,
+                        &Address { machine: from, resident },
+                        &dispatch,
+                        &HubAccount { hub: hub.clone(), account: caller.account.clone() },
+                    )
+                    .await
+                    .map(|()| RemoteReply::Set),
+                    None => Ok(crate::here::turn_interrupted(&node, from, resident)),
+                },
                 RemoteCall::Forget { resident, town, job, delivery, mut origin, through_exit } => {
                     if let Some(delivery) = delivery {
                         if job != delivery.job {
@@ -1203,7 +1214,7 @@ impl fastctx_net::link::Node for Handler {
                         .map(crate::attachments::remote_reply)
                 }
             }
-        })
+        })))
     }
 
     fn letter(
@@ -1344,38 +1355,7 @@ impl fastctx_net::link::Node for Handler {
 
     fn ledger_changed(&self, town: Option<fastctx_types::access::TownId>) {
         let Some(node) = self.node.upgrade() else { return };
-        let hub = self.hub.clone();
-        tokio::spawn(async move {
-            // Connected again: the projects this computer kept on no hub go
-            // into its account first.
-            if town.is_none() {
-                for problem in crate::ledger::carry(&node, &hub).await {
-                    node.log.line(format_args!("carrying a project into the hub: {problem}"));
-                }
-                crate::own_collab::carry(&node, &hub).await;
-            }
-            // What could not be taken is taken again until it is, paced as
-            // everything that reconnects (`world-network.md`, 断开不是结束).
-            // With the line to the hub down, the link takes every project's
-            // ledger when it is up again; this one waits for nothing then.
-            let mut again = crate::again::Again::default();
-            loop {
-                let error = match crate::ledger::sync(&node, &hub, town.clone()).await {
-                    Ok(()) => break,
-                    Err(error) => error,
-                };
-                if !node.link_of(&hub).is_some_and(|link| matches!(link.status(), Status::Online { .. })) {
-                    node.log.line(format_args!(
-                        "taking the projects' ledgers: {error}; they are taken when the hub is reached again"
-                    ));
-                    return;
-                }
-                node.log.line(format_args!("taking the projects' ledgers: {error}; trying again"));
-                tokio::time::sleep(again.next()).await;
-            }
-
-            node.shown_changed();
-        });
+        crate::ledger::syncing::changed(&node, &self.hub, town);
     }
 
     fn renamed(&self, from: &MachineName, to: &MachineName) {

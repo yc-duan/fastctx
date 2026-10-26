@@ -347,7 +347,7 @@ pub(crate) fn drain<'a>(
     node: &'a Arc<Node>,
     id: &'a ResidentId,
 ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), Failure>> + Send + 'a>> {
-    Box::pin(async move {
+    Box::pin(crate::gate_waits::internal(Box::pin(async move {
         loop {
             node.residents.active(id)?;
             if busy(node, id)? {
@@ -401,7 +401,7 @@ pub(crate) fn drain<'a>(
                 return Ok(());
             }
         }
-    })
+    })))
 }
 
 pub(crate) fn schedule(node: &Arc<Node>, id: &ResidentId) {

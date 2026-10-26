@@ -428,6 +428,7 @@ async fn send_kept(node: &Arc<Node>) -> bool {
             return false;
         }
     };
+    drop(_file);
     if kept.is_empty() {
         return true;
     }
@@ -486,15 +487,27 @@ async fn send_kept(node: &Arc<Node>) -> bool {
             }
         }
     }
-    let done = left.is_empty();
-    if left != kept {
-        match tokio::task::spawn_blocking(move || write(&path, &left)).await {
-            Ok(Ok(())) => {}
-            Ok(Err(error)) => node.log.line(format_args!("keeping the deletions still to ask: {error}")),
-            Err(error) => node.log.line(format_args!("keeping the deletions still to ask: {error}")),
+    // New deletions may have arrived while the hubs were being asked.
+    let _file = node.forget_asks.file.lock().await;
+    match tokio::task::spawn_blocking(move || -> std::io::Result<bool> {
+        let mut current = read(&path)?;
+        current.retain(|ask| !kept.contains(ask) || left.contains(ask));
+        write(&path, &current)?;
+        Ok(current.is_empty())
+    })
+    .await
+    {
+        Ok(Ok(done)) => done,
+        result => {
+            let error = match result {
+                Ok(Err(error)) => error.to_string(),
+                Err(error) => error.to_string(),
+                Ok(Ok(_)) => unreachable!(),
+            };
+            node.log.line(format_args!("keeping the deletions still to ask: {error}"));
+            false
         }
     }
-    done
 }
 
 fn read(path: &std::path::Path) -> std::io::Result<Vec<Ask>> {

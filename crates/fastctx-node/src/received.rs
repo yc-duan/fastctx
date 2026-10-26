@@ -42,6 +42,12 @@ fn directory(node: &Node, to: &ResidentId) -> PathBuf {
 
 /// Returns only after this node can recover the accepted letter on restart.
 pub(crate) fn keep(node: &Arc<Node>, to: &ResidentId, delivery: Delivery, owed: Owed) -> io::Result<()> {
+    if !node.residents.knows(to) {
+        if node.residents.deleted(to).is_some() {
+            return Ok(());
+        }
+        return Err(io::Error::new(io::ErrorKind::NotFound, format!("no receiving conversation {to}")));
+    }
     let directory = directory(node, to);
     ensure_private_dir(&directory)?;
     let path = directory.join(format!("{}.json", delivery.id));

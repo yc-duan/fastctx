@@ -296,7 +296,7 @@ async fn relay(
     let passing = Box::pin(async {
         let mut source = given.await.map_err(|_| Failure::new(format!("{from_machine} did not send the copy")))?;
         began.now();
-        let offer: Offer = source.hear().await.map_err(broke)?;
+        let offer: Offer = source.hear_step("offer").await.map_err(broke)?;
         let mut manifest = Vec::new();
         source
             .take(offer.manifest_bytes, |piece| {
@@ -324,7 +324,7 @@ async fn relay(
         let piping = async move {
             let mut destination = taken.await.map_err(|_| format!("{to_machine} did not take the copy"))?;
             destination.send(&manifest).await?;
-            let answer: Answer = destination.hear().await?;
+            let answer: Answer = destination.hear_step("requested files").await?;
             source.say(&answer).await?;
             let Answer::Want { files, from } = answer else { return Ok(()) };
             for (at, index) in files.into_iter().enumerate() {
@@ -463,7 +463,7 @@ async fn fetch(
         Box::new(move |mut stream| {
             Box::pin(async move {
                 began.now();
-                let offer: Offer = stream.hear().await?;
+                let offer: Offer = stream.hear_step("offer").await?;
                 let report = take_files(&here, to, offer.manifest_bytes, None, offer.resumes, &mut stream)
                     .await
                     .map_err(|failure| failure.message)?;
@@ -562,7 +562,7 @@ fn slashed(path: &Path) -> String {
 /// the destination wants.
 async fn feed(mut stream: Stream, manifest: Vec<u8>, files: Vec<(PathBuf, Option<u64>)>) -> Result<(), String> {
     stream.send(&manifest).await?;
-    let (wanted, from) = match stream.hear::<Answer>().await? {
+    let (wanted, from) = match stream.hear_step::<Answer>("requested files").await? {
         Answer::Want { files, from } => (files, from),
         Answer::Refused { reason } => return Err(reason),
     };

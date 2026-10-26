@@ -40,6 +40,7 @@ pub(crate) mod letgo;
 pub(crate) mod metadata;
 pub(crate) mod names;
 pub(crate) mod query;
+pub(crate) mod syncing;
 pub(crate) mod third;
 
 pub use query::query;
@@ -69,6 +70,15 @@ pub async fn open(node: &Arc<Node>, town: &TownName, owner: Option<HubAccount>) 
             Place { hub: alone(&node.world).map_err(|error| Failure::new(error.to_string()))?, town: id }
         }
     };
+    let _syncing = node.syncing.lock().await;
+    if names::place(&node.world, town)
+        .map_err(|error| Failure::new(error.to_string()))?
+        .is_some_and(|current| current != place)
+    {
+        return Err(Failure::new(format!(
+            "the project {town} was assigned to another ledger while it was being opened"
+        )));
+    }
     names::set_place(&node.world, town, &place).map_err(|error| Failure::new(format!("recording {town}: {error}")))
 }
 
@@ -118,7 +128,6 @@ async fn write_for(
                 None => link.ledger_write(&place.town, signed).await,
             }
             .map_err(Failure::new)?;
-            let _syncing = node.syncing.lock().await;
             if link.view().member_keeps_project(&link.view().me, &place.town) {
                 take(node, &link, town, &place.town, accepted).await.map_err(Failure::new)
             } else {
@@ -128,6 +137,11 @@ async fn write_for(
         None if place.hub == alone(&node.world).map_err(|error| Failure::new(error.to_string()))? => {
             let (world, here, town) = (node.world.clone(), node.machine(), town.clone());
             let _writing = node.syncing.lock().await;
+            if names::place(&world, &town).map_err(|error| Failure::new(error.to_string()))?.as_ref() != Some(&place) {
+                return Err(Failure::new(
+                    "the project's ledger moved while the write was being prepared; read it again",
+                ));
+            }
             tokio::task::spawn_blocking(move || write_alone(&world, &here, &town, &place, files, machines))
                 .await
                 .map_err(|error| Failure::new(format!("writing the ledger: {error}")))?
@@ -218,7 +232,6 @@ pub async fn sync(node: &Arc<Node>, hub: &HubId, town: Option<TownId>) -> Result
     if link.view().me().is_some_and(|me| me.managed) {
         return Ok(());
     }
-    let _syncing = node.syncing.lock().await;
     let mut problems = Vec::new();
     for (id, latest) in link.ledger_catalog().await? {
         if !link.view().member_keeps_project(&link.view().me, &id) {
@@ -227,7 +240,11 @@ pub async fn sync(node: &Arc<Node>, hub: &HubId, town: Option<TownId>) -> Result
         if town.as_ref().is_some_and(|town| *town != id) {
             continue;
         }
-        match local_name(node, &link, &id) {
+        let name = {
+            let _syncing = node.syncing.lock().await;
+            local_name(node, &link, &id)
+        };
+        match name {
             Ok(name) => {
                 if let Err(error) = take(node, &link, &name, &id, latest).await {
                     problems.push(error);
@@ -276,18 +293,28 @@ pub(crate) async fn take(
         return Err("an assisting host keeps only the project index".into());
     }
     let directory = node.world.town(name);
-    let mut refused = refused(&directory).map_err(|error| format!("reading {name}'s ledger: {error}"))?;
-    let mut after = cursor(&directory, &refused).map_err(|error| format!("reading {name}'s ledger: {error}"))?;
+    let mut after = {
+        let _syncing = node.syncing.lock().await;
+        check_place(node, link, name, town)?;
+        cursor(&directory, &refused(&directory).map_err(|error| error.to_string())?)
+            .map_err(|error| format!("reading {name}'s ledger: {error}"))?
+    };
+    let mut last_page = None;
     while after < latest {
         let (items, more) = link.ledger_read(town, after).await?;
         if items.is_empty() {
             return Err(format!("the hub promised {latest} entries of {name}, but stopped after {after}"));
         }
-        if !link.view().member_keeps_project(&link.view().me, town) {
-            return Err("project replication permission ended during the read".into());
-        }
+        let _syncing = node.syncing.lock().await;
+        check_place(node, link, name, town)?;
+        let mut refused = refused(&directory).map_err(|error| error.to_string())?;
+        after = cursor(&directory, &refused).map_err(|error| error.to_string())?;
         for taken in items {
             let seq = taken.seq;
+            // Another reader may have committed this prefix while we fetched it.
+            if seq <= after {
+                continue;
+            }
             if seq != after + 1 {
                 return Err(format!("the hub gave entry {seq} of {name} after {after}"));
             }
@@ -306,7 +333,16 @@ pub(crate) async fn take(
         if !more && after < latest {
             return Err(format!("the hub ended {name}'s ledger at {after}, before its promised {latest}"));
         }
+        if after >= latest {
+            // A reader that sees the final cursor also sees its projection.
+            last_page = Some(_syncing);
+        }
     }
+    let _syncing = match last_page {
+        Some(guard) => guard,
+        None => node.syncing.lock().await,
+    };
+    check_place(node, link, name, town)?;
     let (world, town) = (node.world.clone(), name.clone());
     tokio::task::spawn_blocking(move || crate::memory::projection::restore(&world, &town))
         .await
@@ -316,19 +352,23 @@ pub(crate) async fn take(
     Ok(())
 }
 
+/// Rechecks local identity and current replication rights after every network wait.
+fn check_place(node: &Node, link: &Link, name: &TownName, town: &TownId) -> Result<(), String> {
+    let expected = Place { hub: link.membership().id.clone(), town: town.clone() };
+    if names::place(&node.world, name).map_err(|error| error.to_string())?.as_ref() != Some(&expected) {
+        return Err(format!("{name}'s ledger identity changed during synchronization"));
+    }
+    if !link.view().member_keeps_project(&link.view().me, town) {
+        return Err("project replication permission ended during the read".into());
+    }
+    Ok(())
+}
+
 /// After this computer logged in to the hub `hub`: the projects it kept
 /// while on no hub go into the account it is registered under there, and
 /// what the hub has for it is taken.
 pub fn joined(node: &Arc<Node>, hub: &HubId) {
-    let (node, hub) = (node.clone(), hub.clone());
-    tokio::spawn(async move {
-        for problem in carry(&node, &hub).await {
-            node.log.line(format_args!("carrying a project into the hub: {problem}"));
-        }
-        if let Err(error) = sync(&node, &hub, None).await {
-            node.log.line(format_args!("taking the projects' ledgers: {error}"));
-        }
-    });
+    syncing::changed(node, hub, None);
 }
 
 /// Carries the projects this computer kept on no hub into the account it is
@@ -353,9 +393,9 @@ pub(crate) async fn carry(node: &Arc<Node>, hub: &HubId) -> Vec<String> {
         Ok(key) => key,
         Err(error) => return vec![format!("this computer's key: {error}")],
     };
-    let _syncing = node.syncing.lock().await;
     let mut problems = Vec::new();
     for town in towns {
+        let snapshot = node.syncing.lock().await;
         let place = match names::place(&node.world, &town) {
             Ok(Some(place)) if place.hub == alone => place,
             Ok(_) => continue,
@@ -372,9 +412,34 @@ pub(crate) async fn carry(node: &Arc<Node>, hub: &HubId) -> Vec<String> {
                 continue;
             }
         };
+        drop(snapshot);
         if let Err(error) = carry_town(node, &link, &home, &town, &place.town, &entries, &key.public()).await {
             problems.push(error);
             continue;
+        }
+        let _syncing = node.syncing.lock().await;
+        let unchanged = (|| -> io::Result<bool> {
+            if names::place(&node.world, &town)?.as_ref() != Some(&place)
+                || link.view().me().and_then(|me| me.home.as_ref()) != Some(&home)
+            {
+                return Ok(false);
+            }
+            let current = read_all(&node.world, &directory)?;
+            Ok(current.len() == entries.len()
+                && current.iter().zip(&entries).all(|(a, b)| a.0 == b.0 && a.2.data == b.2.data && a.2.sig == b.2.sig))
+        })();
+        match unchanged {
+            Ok(true) => {}
+            Ok(false) => {
+                problems.push(format!(
+                    "{town} changed while it was carried; its local ledger was retained for another pass"
+                ));
+                continue;
+            }
+            Err(error) => {
+                problems.push(format!("rechecking {town} after carrying it: {error}"));
+                continue;
+            }
         }
         // The hub's copy is taken afresh: it may call this machine by
         // another name than the files here do.

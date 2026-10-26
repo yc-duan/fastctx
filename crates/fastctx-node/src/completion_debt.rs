@@ -94,6 +94,10 @@ pub(crate) fn post(
         Posting::Held => Ok(Ok(())),
         Posting::Pending => Err(pending("the hub has not yet acknowledged the completion letter")),
         Posting::Refused(reason) => Ok(Err(reason)),
+        Posting::Replaced => {
+            std::fs::remove_file(marker)?;
+            Err(pending("the membership's outbox changed; the completion will be posted again"))
+        }
     }
 }
 

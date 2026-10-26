@@ -95,6 +95,7 @@ impl Jobs {
         registration: Option<crate::on::Registration>,
         account: Option<fastctx_types::access::HubAccount>,
         answer_receipts: bool,
+        dispatch: Option<fastctx_types::NoticeId>,
     ) -> Result<run::Launched, Failure> {
         let _place = match owner.resident().and_then(|address| crate::data::places::of_owner(node, address)) {
             Some(place) => Some(node.places.using(&place).await),
@@ -135,6 +136,9 @@ impl Jobs {
                 account: account.as_ref(),
             };
             let launched = run::launch::launch_with_io_registered(&launch, mode, input.as_deref(), |path| {
+                if let Some(dispatch) = &dispatch {
+                    crate::run_stops::register(&registering, path, dispatch)?;
+                }
                 if let Some(registration) = registration {
                     *registration.lock().expect("never poisoned") = Some(crate::on::Follower::reserved(
                         &registering,
@@ -142,6 +146,7 @@ impl Jobs {
                         on.as_ref().is_some_and(|on| on.sentinel.is_some()),
                     ));
                 }
+                Ok(())
             })?;
             crate::job_watch::start(&registering, &launched.record, launched.supervisor.clone());
             crate::run_facts::update_job(&registering, &launched.record, Vec::new())
@@ -156,6 +161,7 @@ impl Jobs {
     /// Starts `request` for `owner` and waits until the job settles, the
     /// wait is over, or words come for the resident who asked. Returns the
     /// answer and the job's record as it stood.
+    #[allow(clippy::too_many_arguments)]
     pub async fn run(
         &self,
         node: &Arc<Node>,
@@ -164,6 +170,7 @@ impl Jobs {
         request: RunRequest,
         account: Option<fastctx_types::access::HubAccount>,
         answer_receipts: bool,
+        dispatch: Option<fastctx_types::NoticeId>,
     ) -> Result<(RunReply, JobRecord), Failure> {
         let machine = &node.machine();
         let wait = match request.wait {
@@ -205,7 +212,7 @@ impl Jobs {
         // The job stops with the turn of the call that waits for it; one the
         // call left running goes on (`world-run.md`).
         let mut interrupted = owner.resident().map(|address| node.interrupts.watch(address));
-        let launched = self.launch(node, owner, town, request, None, None, account, answer_receipts).await?;
+        let launched = self.launch(node, owner, town, request, None, None, account, answer_receipts, dispatch).await?;
         let mut answered = None;
         loop {
             let record = read(&launched.record).await?;
@@ -419,7 +426,7 @@ pub(crate) fn remove(path: &Path) -> std::io::Result<()> {
         files.extend(["on-taken", "on-piped", "on-stopped"].map(|extension| path.with_extension(extension)));
     }
     files.extend(
-        ["notice", "owed", "delivered", "posted", "answer-wait", "done", "retry"]
+        ["notice", "owed", "delivered", "posted", "answer-wait", "done", "retry", "run-request"]
             .map(|extension| path.with_extension(extension)),
     );
     files.extend(["copied", "wait-taken", "consumed", "exit-receipt"].map(|extension| path.with_extension(extension)));

@@ -65,6 +65,9 @@ pub struct MachineFacts {
     /// Accepts durable completion receipts and intentional job stops as mail.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub control_letters: bool,
+    /// Stops only the dispatch named by a durable StopRun control.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub run_stops: bool,
     /// Understands sentinel account settings and lifecycle calls.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub sentinels: bool,

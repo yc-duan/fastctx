@@ -369,7 +369,7 @@ pub(super) async fn receive(
         .map_err(broke)?;
     arriving = back;
     taken.map_err(broke)?;
-    let end: String = stream.hear().await.map_err(broke)?;
+    let end: String = stream.hear_step("uploaded").await.map_err(broke)?;
     if end != "uploaded" {
         return Err(failure("the uploader did not end the file"));
     }

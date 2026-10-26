@@ -899,6 +899,7 @@ async fn take_letters(
         }
         let mut last = None;
         for (seq, message) in run {
+            let _receiving = fastctx_platform::doing::doing(format!("receiving letter {seq} from {}", inner.hub));
             let already = inner
                 .letters
                 .lock()
@@ -911,9 +912,11 @@ async fn take_letters(
                 // of this session, and one at a time with the next session's:
                 // a letter sent again meanwhile waits for it, and finds its
                 // receipt.
-                let taking = inner.taking.clone().lock_owned().await;
+                let taking = inner.taking.lock_owned().await;
                 let taker = inner.clone();
                 let taken = tokio::spawn(async move {
+                    let _doing = fastctx_platform::doing::doing(format!("persisting letter {seq} from {}", taker.hub));
+                    taking.adopt();
                     let _taking = taking;
                     take_letter(&taker, &message).await
                 })

@@ -60,13 +60,19 @@ pub(crate) struct Posted {
 impl Posted {
     pub(crate) fn state(&self, node: &Node) -> io::Result<fastctx_net::link::Posting> {
         use fastctx_net::link::Posting;
-        let link = node.link_of(&self.hub).ok_or_else(|| io::Error::other("the posting's hub is not connected"))?;
+        let Some(link) = node.link_of(&self.hub) else {
+            return if crate::obligations::hub_left(node, &self.hub)? {
+                Ok(Posting::Refused("the posting's network was left or removed".into()))
+            } else {
+                Err(io::Error::other("the posting's hub is not connected"))
+            };
+        };
         let mut pending = false;
         for part in &self.parts {
             match link.posting(*part)? {
                 Posting::Pending => pending = true,
                 Posting::Held => {}
-                refused @ Posting::Refused(_) => return Ok(refused),
+                terminal @ (Posting::Refused(_) | Posting::Replaced) => return Ok(terminal),
             }
         }
         Ok(if pending { Posting::Pending } else { Posting::Held })

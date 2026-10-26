@@ -94,7 +94,11 @@ pub(crate) async fn tell_at(
 /// the way its host lets the World in.
 pub async fn tell_here(node: &Arc<Node>, to: &ResidentId, delivery: Delivery, owed: Owed) -> Result<Landed, Failure> {
     let actions = crate::control_queue::gate(node, to);
-    let _action = if delivery.notice.along().is_none() { Some(actions.lock().await) } else { None };
+    let _action = if delivery.notice.along().is_none() {
+        Some(crate::gate_waits::action(node, to, &actions).await?)
+    } else {
+        None
+    };
     if _action.is_some() && node.residents.active(to).is_ok() {
         crate::control_queue::drain(node, to).await?;
     }

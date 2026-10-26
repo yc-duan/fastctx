@@ -12,6 +12,16 @@ impl Link {
     /// Queries the hub at the time of this call. A disconnected or older hub
     /// returns an error; a compare-and-swap conflict is a structured response.
     pub async fn account_records(&self, account: &AccountName, request: Request) -> Result<Response, String> {
+        fastctx_platform::doing::outside(
+            "the hub's account records",
+            std::time::Duration::from_secs(60),
+            Box::pin(self.account_records_now(account, request)),
+        )
+        .await
+        .map_err(|late| late.to_string())?
+    }
+
+    async fn account_records_now(&self, account: &AccountName, request: Request) -> Result<Response, String> {
         request.validate()?;
         let connection = self.inner.connected().await.ok_or_else(|| words::disconnected(self.inner.not_connected()))?;
         if !self.view().account_records {
