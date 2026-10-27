@@ -2240,7 +2240,12 @@ export class ConversationPage {
     const summary = focusSummary(focus, words);
     // On a phone the chip is its machine and how many places it holds.
     const count = focus.machines.reduce((sum, chosen) => sum + Math.max(1, chosen.folders.length), 0);
-    const html = `${glyph("machine", 16)}${summary ? summary.html : `<span class="talk-chip-name">${escape(words.none)}</span>`}${count ? `<span class="focus-count">${count}</span>` : ""}${glyph("chevron", 12)}`;
+    // Pointed at the machine it lives on alone, it draws that machine and
+    // leaves its name to the head beside it.
+    const [only] = focus.machines;
+    const home = focus.machines.length === 1 && !only!.folders.length && only!.machine === this.options.someone.machine;
+    const named = summary ? (home ? "" : summary.html) : `<span class="talk-chip-name">${escape(words.none)}</span>`;
+    const html = `${glyph("machine", 16)}${named}${count ? `<span class="focus-count">${count}</span>` : ""}${glyph("chevron", 12)}`;
     if (chip.innerHTML !== html) chip.innerHTML = html;
     chip.classList.toggle("quiet", !summary);
     chip.title = summary ? `${words.title}\n${summary.said}` : words.title;
