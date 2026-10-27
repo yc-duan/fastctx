@@ -1,14 +1,15 @@
 //! Windows presence is a self-contained plugin. Notification policy and
 //! action semantics belong to the page; this module owns OS lifetimes.
 
+mod apartment;
 mod identity;
 mod instance;
 mod notifications;
 mod takeover;
 
 use std::collections::VecDeque;
-use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
 
 use serde::Serialize;
 use tauri::menu::{Menu, MenuItem};
@@ -57,7 +58,7 @@ struct WindowPresence {
 }
 
 struct Presence {
-    notifications: Option<Notifications>,
+    notifications: Option<Arc<Notifications>>,
     pending: Mutex<VecDeque<Delivery>>,
     next: AtomicU64,
 }
@@ -82,14 +83,20 @@ fn report(app: &tauri::AppHandle, error: String) {
     }
 }
 
+fn notifications(app: &tauri::AppHandle) -> Result<Arc<Notifications>, String> {
+    app.state::<Presence>().notifications.clone().ok_or_else(|| "notification storage is unavailable".into())
+}
+
+// Asynchronous, so that they do not run on the main thread: what they ask
+// Windows must not wait there (see `apartment`).
 #[tauri::command]
-fn notify(app: tauri::AppHandle, state: tauri::State<'_, Presence>, notice: Notice) -> Result<String, String> {
-    state.notifications.as_ref().ok_or("notification storage is unavailable")?.show(&app, notice)
+async fn notify(app: tauri::AppHandle, notice: Notice) -> Result<String, String> {
+    notifications(&app)?.show(&app, notice).await
 }
 
 #[tauri::command]
-fn dismiss(state: tauri::State<'_, Presence>, notification_id: String) -> Result<(), String> {
-    state.notifications.as_ref().ok_or("notification storage is unavailable")?.remove(&notification_id)
+async fn dismiss(app: tauri::AppHandle, notification_id: String) -> Result<(), String> {
+    notifications(&app)?.remove(notification_id).await
 }
 
 #[tauri::command]
@@ -146,28 +153,28 @@ fn reveal(app: &tauri::AppHandle) -> Result<(), String> {
 }
 
 async fn launch(app: &tauri::AppHandle, launch: Launch) -> Result<(), String> {
+    let activation = match launch {
+        Launch::Quit => None,
+        // A notification's record is read, and its toast taken from Windows,
+        // before the main thread is asked for anything.
+        Launch::Notification(uri) => Some(notifications(app)?.activate(uri).await?),
+        Launch::Open(route) => {
+            if let Some(route) = &route {
+                notifications::route(route)?;
+            }
+            Some(Activation { route, action: None, notification_id: None, quiet: false })
+        }
+    };
     let (send, receive) = tokio::sync::oneshot::channel();
     let handle = app.clone();
     app.run_on_main_thread(move || {
         let result = (|| {
-            let state = handle.state::<Presence>();
-            let activation = match launch {
-                Launch::Quit => {
-                    handle.exit(0);
-                    return Ok(());
-                }
-                Launch::Notification(uri) => {
-                    state.notifications.as_ref().ok_or("notification storage is unavailable")?.activate(&uri)?
-                }
-                Launch::Open(route) => {
-                    if let Some(route) = &route {
-                        notifications::route(route)?;
-                    }
-                    Activation { route, action: None, notification_id: None, quiet: false }
-                }
+            let Some(activation) = activation else {
+                handle.exit(0);
+                return Ok(());
             };
             let quiet = activation.quiet;
-            state.push(&handle, Event::Activation(activation));
+            handle.state::<Presence>().push(&handle, Event::Activation(activation));
             if quiet { Ok(()) } else { reveal(&handle) }
         })();
         let _ = send.send(result);
@@ -296,7 +303,13 @@ pub fn plugin(mut instance: Option<Instance>, initial_error: Option<String>) -> 
                     } else {
                         directory
                     };
-                    Some(Notifications::new(directory.join("notifications")))
+                    match Notifications::new(directory.join("notifications")) {
+                        Ok(notifications) => Some(Arc::new(notifications)),
+                        Err(error) => {
+                            crate::startup::warning(app, "notification_thread", error);
+                            None
+                        }
+                    }
                 }
                 Err(error) => {
                     crate::startup::warning(app, "notification_directory", error.to_string());
