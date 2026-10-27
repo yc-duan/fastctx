@@ -96,11 +96,24 @@ const MORE = 40;
  *  to its page is too small to read them all. */
 const FOLD_PAST = 24;
 
-/** The boxes folded: others', when the machines are many, unless the user
- *  opened or folded one, as `chosen` holds; a group's inside its owner's
- *  only as the user folds it. */
+/** Past this many machines in it, a group's band starts folded where the
+ *  machines are many, as the list opens a group only this small. */
+const OPEN_BAND = 12;
+
+/** The boxes folded: others', when the machines are many, and then a group
+ *  of more than a dozen inside its owner's box, unless the user opened or
+ *  folded one, as `chosen` holds. */
 export function foldedOf(nodes: readonly MapNode[], chosen: ReadonlyMap<string, boolean> = new Map()): Set<string> {
   const many = nodes.length > FOLD_PAST;
+  // How many machines each group's band holds, on each hub.
+  const held = new Map<string, number>();
+  if (many) {
+    for (const node of nodes) {
+      const group = node.group?.key;
+      if (!group || boxParts(group).group === null) continue;
+      for (const hub of node.hubs) held.set(`group:${hub}:${group}`, (held.get(`group:${hub}:${group}`) ?? 0) + 1);
+    }
+  }
   const folded = new Set<string>();
   for (const node of nodes) {
     const group = node.group?.key ?? "mine";
@@ -108,7 +121,8 @@ export function foldedOf(nodes: readonly MapNode[], chosen: ReadonlyMap<string, 
     for (const hub of node.hubs) {
       const key = `group:${hub}:${owner}`;
       if (chosen.get(key) ?? (many && owner !== "mine")) folded.add(key);
-      if (group !== owner && chosen.get(`group:${hub}:${group}`)) folded.add(`group:${hub}:${group}`);
+      const band = `group:${hub}:${group}`;
+      if (group !== owner && (chosen.get(band) ?? (held.get(band) ?? 0) > OPEN_BAND)) folded.add(band);
     }
   }
   return folded;
@@ -306,7 +320,7 @@ export class MachineMap {
       const shape = JSON.stringify([[...scene.folded ?? []].sort(), [...scene.adding ?? []].sort(), this.narrow]);
       const laid = this.laidFrom;
       if (!this.placement || !laid || laid.shape !== shape || laid.from.some((one, at) => one !== from[at])) {
-        this.placement = this.layout.update(scene.hubs, scene.nodes, { links: scene.links, folded: scene.folded, narrow: this.narrow, people: scene.people ?? [], adding: new Set(scene.adding ?? []) });
+        this.placement = this.layout.update(scene.hubs, scene.nodes, { links: scene.links, folded: scene.folded, narrow: this.narrow, people: scene.people ?? [], adding: new Set(scene.adding ?? []), label: (text) => this.labelWidth(text) });
         this.laidFrom = { from, shape };
       }
     }
