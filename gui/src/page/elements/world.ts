@@ -1,12 +1,11 @@
 // Things of the World, live in a page: a machine and who is on it, an
-// agent and what it is doing (pressing it opens its conversation), a
-// journal's latest entries, a file or its end, a job and its output. Each
+// agent and what it is doing (pressing it opens its conversation), a file
+// or its end, a job and its output. Each
 // reads its tool through the bridge, again every so often where `every`
 // says so.
 //
 //   <w-machine name="lab" every="30s"></w-machine>
 //   <w-agent resident="codex-7f3a" machine="lab" every="10s"></w-agent>
-//   <w-journal journal="tuning" limit="3"></w-journal>
 //   <w-file machine="lab" path="/runs/7/train.log" tail="4000" every="10s"></w-file>
 //   <w-job machine="lab" job="j-k3x9a2" every="10s"></w-job>
 
@@ -130,34 +129,6 @@ export class Agent extends LiveElement {
       <div class="row"><span class="mark ${agent.state}"></span><span class="name">${escape(agent.title ?? `${agent.agent} ${agent.machine}`)}</span><span class="sub state ${agent.state}">${escape(w.state[agent.state])}</span></div>
       ${agent.last ? `<div class="sub">${escape(agent.last)}</div>` : ""}
     </button>`;
-  }
-}
-
-export class Journal extends LiveElement {
-  static observedAttributes = ["journal", "limit", ...BOUND];
-
-  protected override binding() {
-    const journal = this.getAttribute("journal");
-    return journal ? { tool: "journal.read", args: { journal } } : null;
-  }
-
-  protected draw(): void {
-    const shown = standing(this.loading, this.data);
-    if (shown) {
-      this.shadow.innerHTML = shown;
-      return;
-    }
-    const read = this.data as Tools["journal.read"]["answer"] | undefined;
-    const limit = this.number("limit", 5);
-    const entries = (read?.entries ?? []).slice(0, limit);
-    this.shadow.innerHTML = entries.length
-      ? entries
-          .map(
-            (entry) =>
-              `<div class="entry"><div class="sub">${escape(new Date(entry.at).toLocaleString(world().context.locale, { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" }))} ${escape(entry.by)}</div><div class="entry-text">${escape(entry.text.slice(0, 600))}</div></div>`,
-          )
-          .join("")
-      : `<span class="faint">${escape(words().noEntries)}</span>`;
   }
 }
 

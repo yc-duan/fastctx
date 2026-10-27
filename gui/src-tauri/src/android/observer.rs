@@ -1,12 +1,14 @@
 //! Executes the page's explicit notification policy without a WebView,
 //! following the World as the hubs push what is afoot on each machine, so a
-//! turn that ends or a question asked is told the moment it reaches this
-//! phone (`world-gui.md`, 对话). State survives process death; unavailable
-//! machines retain their last facts.
+//! question asked, what an agent told the user, or a turn the user's words
+//! began that ended without telling them anything is told the moment it
+//! reaches this phone (`world-gui.md`, 对话; `world-voice.md`). State
+//! survives process death; unavailable machines retain their last facts.
 //! The page gives the titles, in its words; the body is the agent's own:
-//! what it asks, or the reply that ended its turn. A question asked without
-//! waiting with a few answers carries them as buttons, each with the words
-//! that answer it, sent from the notification without opening the app.
+//! what it asks, what it told, or the words that ended its turn. A question
+//! asked without waiting with a few answers carries them as buttons, each
+//! with the words that answer it, sent from the notification without
+//! opening the app.
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -14,10 +16,9 @@ use std::sync::Arc;
 
 use fastctx_client::World;
 use fastctx_platform::{Permissions, publish};
-use fastctx_types::residents::{Activity, Asked, AskedFor, Origin};
+use fastctx_types::residents::{Activity, Asked, AskedFor, Now, Origin};
 use fastctx_types::town::{MachineWho, ResidentNow, WorldWho};
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 
 use super::bridge::Bridge;
 
@@ -42,8 +43,9 @@ struct Rule {
     compacted: Option<String>,
 }
 
-/// A title, or one for each thing an agent may ask (`AskedFor`, and
-/// `waiting` for a host that only says it waits).
+/// A title, or one for each kind: each thing an agent may ask (`AskedFor`,
+/// and `waiting` for a host that only says it waits), or each way it tells
+/// the user something worth a call. A kind with no title is not called about.
 #[derive(Deserialize)]
 #[serde(untagged)]
 enum Title {
@@ -52,14 +54,10 @@ enum Title {
 }
 
 impl Title {
-    fn template(&self, asked: Option<&Asked>) -> Option<&str> {
+    fn template(&self, kind: Option<&str>) -> Option<&str> {
         match self {
             Self::Text(text) => Some(text),
-            Self::Kinds(kinds) => {
-                let kind = asked
-                    .map_or(Value::from("waiting"), |asked| serde_json::to_value(asked.what).expect("kinds serialize"));
-                kinds.get(kind.as_str()?).map(String::as_str)
-            }
+            Self::Kinds(kinds) => kinds.get(kind?).map(String::as_str),
         }
     }
 }
@@ -68,7 +66,22 @@ impl Title {
 #[serde(rename_all = "snake_case")]
 enum Transition {
     Asked,
+    Told,
     Finished,
+}
+
+/// A kind as a title is keyed by: what is serialized as a plain string.
+fn kind_of(value: impl Serialize) -> Option<String> {
+    serde_json::to_value(value).ok()?.as_str().map(String::from)
+}
+
+/// Whether the turn that just ended stands for an answer: one the user's
+/// words began that told them nothing through `message_user`. A node that
+/// does not say whose words began it is taken as before
+/// (`gui/src/app/presence.ts`, `endedUntold`).
+fn ended_untold(now: &Now) -> bool {
+    now.last_heard_user != Some(false)
+        && now.told.as_ref().and_then(|told| told.turn.as_ref()).is_none_or(|turn| now.last_turn.as_ref() != Some(turn))
 }
 
 /// The most answers a notification offers as buttons: what Android shows.
@@ -119,6 +132,8 @@ struct Seen {
     #[serde(default)]
     asked: Option<String>,
     busy: bool,
+    #[serde(default)]
+    told: Option<String>,
 }
 
 /// A resident as the observations know it: the same for every spelling of
@@ -162,6 +177,7 @@ fn observe(who: WorldWho, bridge: &Bridge, observed: &mut Observed) -> Result<()
                 machine: resident.about.machine.to_string(),
                 asked: asked_key(&resident),
                 busy: resident.now.as_ref().is_some_and(|now| now.activity == Activity::Busy),
+                told: resident.now.as_ref().and_then(|now| now.told.as_ref()).map(|told| told.id.clone()),
             };
             let before = observed.residents.get(&key);
             // What a notification called for no longer holds: it is taken back.
@@ -170,7 +186,13 @@ fn observe(who: WorldWho, bridge: &Bridge, observed: &mut Observed) -> Result<()
             }
             let transition = if now.asked.is_some() && before.is_none_or(|was| was.asked != now.asked) {
                 Some(Transition::Asked)
-            } else if before.is_some_and(|was| was.busy) && !now.busy && now.asked.is_none() {
+            } else if now.told.is_some() && before.is_some_and(|was| was.told != now.told) {
+                Some(Transition::Told)
+            } else if before.is_some_and(|was| was.busy)
+                && !now.busy
+                && now.asked.is_none()
+                && resident.now.as_ref().is_some_and(ended_untold)
+            {
                 Some(Transition::Finished)
             } else {
                 None
@@ -185,12 +207,19 @@ fn observe(who: WorldWho, bridge: &Bridge, observed: &mut Observed) -> Result<()
                 })
             {
                 let asked = resident.now.as_ref().and_then(|now| now.asked.as_ref());
+                let told = resident.now.as_ref().and_then(|now| now.told.as_ref());
                 let (id, body, version, answers) = match rule.when {
                     Transition::Asked => (
                         format!("{key}:asked"),
                         asked.map(|asked| asked.text.clone()).unwrap_or_default(),
                         now.asked.clone(),
                         asked.map(answers).unwrap_or_default(),
+                    ),
+                    Transition::Told => (
+                        format!("{key}:told"),
+                        told.map(|told| told.text.clone()).unwrap_or_default(),
+                        now.told.clone(),
+                        vec![],
                     ),
                     Transition::Finished => (
                         format!("{key}:finished"),
@@ -211,7 +240,12 @@ fn observe(who: WorldWho, bridge: &Bridge, observed: &mut Observed) -> Result<()
                     .into_iter()
                     .map(|(label, words)| serde_json::json!({"label": label, "words": words}))
                     .collect();
-                if let Some(title) = rule.title.template(asked) {
+                let kind = match rule.when {
+                    Transition::Asked => asked.map_or(Some("waiting".into()), |asked| kind_of(asked.what)),
+                    Transition::Told => told.and_then(|told| kind_of(told.status)),
+                    Transition::Finished => None,
+                };
+                if let Some(title) = rule.title.template(kind.as_deref()) {
                     bridge.string_arg(
                         "showNotice",
                         &serde_json::json!({
@@ -272,6 +306,7 @@ pub(super) async fn run(world: World, directory: PathBuf, bridge: Arc<Bridge>) {
                 if observed.world != hubs {
                     for key in observed.residents.keys() {
                         bridge.action("dismissNotice", &format!("{key}:asked"))?;
+                        bridge.action("dismissNotice", &format!("{key}:told"))?;
                         bridge.action("dismissNotice", &format!("{key}:finished"))?;
                     }
                     observed = Observed { world: hubs.clone(), ..Observed::default() };

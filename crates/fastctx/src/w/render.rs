@@ -1,7 +1,7 @@
 use super::*;
 use fastctx_types::town::CurrentTool;
 
-pub(super) fn overview(view: &TownView, you: Option<&Address>, all: bool, now: Timestamp, local_only: bool) -> String {
+pub(super) fn overview(view: &TownView, you: Option<&Address>, all: bool, now: Timestamp, local_only: bool, sentinels: &[fastctx_types::sentinel_control::Summary]) -> String {
     let mut machines = Vec::new();
     let online = view
         .machines
@@ -127,6 +127,10 @@ pub(super) fn overview(view: &TownView, you: Option<&Address>, all: bool, now: T
                 format!("  {}  desk  {time}  {}  Computer Use\n", resident.written(), resident.about.id),
             ));
         }
+    }
+    for sentinel in sentinels {
+        if matches!(view.scope, Scope::Town { .. }) && view.known(&sentinel.definition.owner).is_none() { continue; }
+        running.push((sentinel.definition.home.clone(), fastctx_types::sentinel_words::row(sentinel)));
     }
     running.sort_by(|a, b| a.0.cmp(&b.0));
     if !running.is_empty() {

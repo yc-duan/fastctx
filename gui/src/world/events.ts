@@ -8,6 +8,7 @@ import type { Focus } from "./focus";
 import type { RunFacts } from "./run-facts";
 import type { EndedHow, ExitStatus } from "./since";
 import type { AgentLimits } from "./agents";
+import type { HubAccount } from "./accounts";
 import type { Address, JsonValue, MachineName, NoticeId, Timestamp } from "./wire";
 export type { Address, MachineName, ResidentId } from "./wire";
 
@@ -282,11 +283,46 @@ export type Notice =
     }
   | { kind: "answer"; colleague: Address; label: string; turn: string; end: TurnEnd }
   | { kind: "health"; colleague: Address; label: string; health: Health }
-  | { kind: "words"; from: Speaker; text: string }
+  /** A question a colleague working toward a goal asked the conversation
+   *  that asked it; it waits for that one's next turn. */
+  | { kind: "question"; colleague: Address; id: string; text: string }
+  /** Words from another conversation. A colleague's goal report and its
+   *  questions carry what an interface draws of them beside the words its
+   *  requester's model reads. */
+  | { kind: "words"; from: Speaker; text: string; goal_report?: GoalReport; goal_question?: GoalQuestion }
   | { kind: "attached"; message: JsonValue; text: string }
   | { kind: "world"; fact: WorldFact; text: string };
 
+/** What a colleague handed back when its goal settled. */
+export interface GoalReport {
+  id: NoticeId;
+  /** The goal run it ends; a quota notice ends none. */
+  completion?: NoticeId;
+  colleague: Address;
+  account: HubAccount;
+  /** Older senders leave it out. */
+  shown?: {
+    label: string;
+    status: "active" | "complete" | "blocked" | "paused";
+    started_at: Timestamp;
+    ended_at: Timestamp;
+    resume_at?: Timestamp;
+    /** The colleague's conclusion, as it wrote it. */
+    text: string;
+  };
+}
+
+/** A question a colleague asked without stopping its work. */
+export interface GoalQuestion {
+  id: string;
+  colleague: Address;
+  account?: HubAccount;
+  /** The questions as its host asked them; older senders leave them out. */
+  questions?: JsonValue;
+}
+
 export type WorldFact =
+  | { fact: "delivery_failed"; id: string }
   | { fact: "desk_taken"; by: Address }
   | { fact: "desk_outside" }
   | { fact: "desk_free"; by: Address }

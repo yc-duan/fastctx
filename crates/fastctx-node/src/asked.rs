@@ -105,9 +105,22 @@ fn questions(questions: &Value, field: &str) -> (String, Vec<String>) {
 /// Whether the user's words answer a question asked without waiting: they
 /// carry Codex's reply envelope naming its item.
 pub fn answers(words: &str, asked: &Asked) -> bool {
-    !asked.waits
-        && words.lines().any(|line| line == ASYNC_REPLY_TAG)
-        && words.contains(&format!("\\\"{}\\\"", asked.id))
+    if asked.waits {
+        return false;
+    }
+    let close = ASYNC_REPLY_TAG.replacen('<', "</", 1);
+    let Some(body) = words.trim().strip_prefix(ASYNC_REPLY_TAG).and_then(|body| body.strip_suffix(&close)) else {
+        return false;
+    };
+    let Ok(answers) = serde_json::from_str::<Vec<Value>>(body) else { return false };
+    answers.iter().any(|answer| {
+        let Some(identity) = answer["questionItemId"].as_str() else { return false };
+        let Ok(identity) = serde_json::from_str::<Vec<Value>>(identity) else { return false };
+        matches!(identity.as_slice(), [kind, item, index]
+            if kind.as_str() == Some("request_user_input_async")
+                && item.as_str() == Some(asked.id.as_str()) && index.as_u64().is_some())
+            && answer["answer"].as_str().is_some_and(|answer| !answer.trim().is_empty())
+    })
 }
 
 /// Keeps `asked` as what the resident asks now, unless it is already.

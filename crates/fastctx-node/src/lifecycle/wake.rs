@@ -32,12 +32,32 @@ impl Source {
 pub(crate) struct WakeFailure {
     pub failure: Failure,
     pub attempted: bool,
+    pub permanent: bool,
 }
 
 impl From<Failure> for WakeFailure {
     fn from(failure: Failure) -> Self {
-        Self { failure, attempted: false }
+        Self { failure, attempted: false, permanent: false }
     }
+}
+
+impl From<crate::assists::TurnRefusal> for WakeFailure {
+    fn from(error: crate::assists::TurnRefusal) -> Self {
+        Self { failure: error.failure, attempted: false, permanent: error.permanent }
+    }
+}
+
+impl WakeFailure {
+    pub(crate) fn control(self) -> Failure {
+        if self.permanent { self.failure } else { Failure::host_unavailable(self.failure.message) }
+    }
+}
+
+pub(crate) fn check(node: &Node, id: &ResidentId, about: &fastctx_types::residents::About) -> Result<(), WakeFailure> {
+    crate::homes::available(node, about)?;
+    crate::assists::check_turn(node, id, about)?;
+    crate::town::access::current(node, id)?;
+    Ok(())
 }
 
 /// The caller owns the action gate and a shared management gate (or an
@@ -52,9 +72,7 @@ pub(crate) async fn wake(
 ) -> Result<Option<String>, WakeFailure> {
     node.residents.active(id)?;
     let (about, _) = node.residents.about(id).ok_or_else(crate::authorization::no_subject)?;
-    crate::homes::available(node, &about)?;
-    crate::assists::may_turn(node, id, &about)?;
-    crate::town::access::current(node, id)?;
+    check(node, id, &about)?;
     let adapter = super::adapters::Adapter::for_conversation(&about)
         .ok_or_else(|| Failure::new("this host has no supported lifecycle entrance"))?;
     node.log.line(format_args!("lifecycle {id}: host requested by {source:?}"));

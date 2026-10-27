@@ -429,7 +429,10 @@ pub(crate) async fn drop_for(hub: &Arc<Hub>, conversation: &Address) -> std::io:
             let Ok(body) = message.body::<fastctx_net::message::LetterBody>() else { continue };
             let to = match &body.letter {
                 Letter::JobFacts { to, .. } | Letter::Notice { to, .. } | Letter::Speak { to, .. } => to,
-                Letter::Fragment { .. } | Letter::Left { .. } => continue,
+                Letter::Fragment { .. }
+                | Letter::Left { .. }
+                | Letter::Control { .. }
+                | Letter::ControlResult { .. } => continue,
             };
             if *to == resident {
                 found.push((seq, dir.join(format!("{seq:020}"))));

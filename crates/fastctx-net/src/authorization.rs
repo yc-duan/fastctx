@@ -21,6 +21,8 @@ pub enum Action<'a> {
     Project(&'a TownId),
     Look(&'a MachineName),
     Manage(&'a MachineName),
+    /// Ownership or a whole-machine share, without the administrator's implicit reach.
+    Hold(&'a MachineName),
     ActFor(&'a MachineName),
     Call {
         from: &'a MachineName,
@@ -103,22 +105,20 @@ impl Directory {
                     }
                 }
             }
-            Action::Manage(machine) => {
+            Action::Hold(machine) => {
                 let member = self.machine(machine)?;
-                if member
-                    .home
-                    .as_ref()
-                    .is_some_and(|owner| owner == account || (self.is_super(account) && !self.is_visitor(owner)))
-                {
+                if member.home.as_ref().is_some_and(|owner| {
+                    owner == account || (!self.is_visitor(owner) && self.shared(account, &member.name))
+                }) {
                     Ok(())
                 } else {
-                    Err(Denial::new(Why::MachineNotOwned, format!("the account {account} may not manage {machine}")))
+                    Err(Denial::new(Why::MachineNotOwned, fastctx_types::sharing::HOLDER_REQUIRED))
                 }
             }
-            Action::Work(machine) | Action::Look(machine) => {
+            Action::Work(machine) | Action::Manage(machine) | Action::Look(machine) => {
                 self.machine(machine)?;
                 let rights = self.machine_rights(account, machine);
-                let work = matches!(action, Action::Work(_));
+                let work = matches!(action, Action::Work(_) | Action::Manage(_));
                 if if work { rights.hands } else { rights.any() } {
                     return Ok(());
                 }

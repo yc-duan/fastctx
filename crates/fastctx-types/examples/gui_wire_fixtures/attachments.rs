@@ -126,6 +126,7 @@ pub fn fixtures() -> Fixtures {
                     notice: Notice::Attached { message: envelope.clone(), text: text.clone() },
                 }],
                 notes: Vec::new(),
+                leading_notes: 0,
             }),
             Answer::Frame(fastctx_types::ipc::NodeFrame::Reply {
                 id: 17,

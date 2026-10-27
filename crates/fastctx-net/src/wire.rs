@@ -101,6 +101,10 @@ pub enum Up {
     Ack { seq: u64 },
     /// A question for the hub itself.
     Ask { id: u64, question: Question },
+    /// A ledger question in ordered JSON parts, only for hubs advertising ledger_parts.
+    QuestionPart { id: u64, index: u32, total: u32, text: String },
+    /// Abandons only an incomplete question; an accepted append still finishes.
+    CancelQuestion { id: u64 },
     /// How what is afoot on this machine changed since it last told this
     /// session (`world-network.md`, 近况); sent only to a hub whose view
     /// says it takes it.
@@ -198,6 +202,13 @@ pub enum Intent {
         /// page with one.
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         profiles: bool,
+        /// Reads account record invalidations independently of the directory.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        account_records: bool,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        conversation_plans: bool,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        scratch_locations: bool,
         /// A machine taken off the hub that was to uninstall Fastctx then,
         /// and could not do all of it: what was left, and why. The hub
         /// keeps it for its machine log, and refuses the session as before.
@@ -393,6 +404,7 @@ pub enum Down {
     Ready,
     /// A project this member may use has new entries in its ledger.
     LedgerChanged { town: TownId },
+    AccountRecordChanged { changed: fastctx_types::account_records::Changed },
     /// How what is afoot on `machine` changed as this member may see it,
     /// since this session was last told of it; and, to the machine's owner
     /// alone, how many agents are at work or waiting there now.
@@ -537,6 +549,10 @@ pub enum CallStatus {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "kind")]
 pub enum Question {
+    AccountRecords {
+        account: AccountName,
+        request: fastctx_types::account_records::Request,
+    },
     NetworkUpdates {
         account: AccountName,
         request: fastctx_types::update::ViewCall,
@@ -567,6 +583,24 @@ pub enum Question {
     Manage {
         account: AccountName,
         change: Change,
+    },
+    /// Metadata only, including for an account whose agent this member hosts.
+    ProjectIndex {
+        town: TownId,
+        account: AccountName,
+    },
+    /// Signed document bytes, only on a device logged into the account.
+    MemoryRead {
+        town: TownId,
+        account: AccountName,
+        name: String,
+        version: Option<u32>,
+    },
+    /// Append project memory explicitly for one account.
+    MemoryWrite {
+        town: TownId,
+        account: AccountName,
+        entry: Signed,
     },
     /// Keep this entry in the ledger of `town`.
     LedgerWrite {
@@ -663,6 +697,11 @@ pub enum Firewall {
 pub enum Change {
     Collab {
         collab: fastctx_types::collab::Collab,
+    },
+    /// Changes only the account's project-memory switch, preserving its other configuration.
+    MemorySettings {
+        version: u64,
+        enabled: bool,
     },
     /// Writes the account's profile over the version it was read at; a
     /// machine that works for the account may (`world-user-config.md`).
@@ -899,6 +938,17 @@ pub enum Change {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "kind")]
 pub enum Told {
+    AccountRecords {
+        response: fastctx_types::account_records::Response,
+    },
+    ProjectIndex {
+        index: Box<fastctx_types::memory::ProjectIndex>,
+    },
+    MemoryDocument {
+        entry: Signed,
+        versions: Vec<fastctx_types::memory::Revision>,
+        evidence: Vec<fastctx_types::memory::Evidence>,
+    },
     NetworkUpdates {
         reply: fastctx_types::update::ViewReply,
     },
