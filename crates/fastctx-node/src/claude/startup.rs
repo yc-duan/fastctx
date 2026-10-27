@@ -137,7 +137,7 @@ pub(super) fn recover(node: &Arc<Node>) {
         // A session that registered holds its whole id: its words wake it.
         let waking = about.session.as_ref().is_some_and(|session| session.len() != 8);
         if record.removed.is_some()
-            || !about.world_started
+            || (!about.world_started && !waking)
             || about.host.agent.as_str() != "claude"
             || (!waking && super::paired(node, &about.id))
         {

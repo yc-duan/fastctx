@@ -42,7 +42,7 @@ pub fn delivery(
         None => crate::speech::new_id("talk"),
     };
     let notice = if attachments.is_empty() {
-        Notice::Words { from: Speaker::User { machine: from.clone() }, text }
+        Notice::Words { from: Speaker::User { machine: from.clone() }, text, goal_report: None, goal_question: None }
     } else {
         Notice::Attached { message: AttachedMessage { delivery: id.clone(), from: from.clone(), attachments }, text }
     };
@@ -179,6 +179,7 @@ pub async fn upload(
                     return finish(arriving, guard.as_mut(), None).await;
                 }
                 arriving.write(held.past(&piece))?;
+                fastctx_platform::doing::progress();
             }
         }
         .await;
@@ -374,7 +375,7 @@ pub fn remote_reply(uploaded: Uploaded) -> RemoteReply {
 }
 
 async fn forward(mut source: FrameReader, mut stream: Stream, size: u64, resumes: bool) -> Result<(), String> {
-    let mut held = Skipping(if resumes { stream.hear::<UploadStart>().await?.from } else { 0 });
+    let mut held = Skipping(if resumes { stream.hear_step::<UploadStart>("upload offset").await?.from } else { 0 });
     let mut received = 0u64;
     loop {
         let piece = source
@@ -486,7 +487,7 @@ pub async fn receive(
         if let Err(why) = taken {
             return Err(refused.unwrap_or_else(|| broke(why)));
         }
-        let end: String = stream.hear().await.map_err(broke)?;
+        let end: String = stream.hear_step("uploaded").await.map_err(broke)?;
         if end != "uploaded" {
             return Err(failure("the uploader did not end the file"));
         }
@@ -1084,7 +1085,7 @@ async fn send_placed(
         let path = path.clone();
         Box::new(move |mut stream: Stream| {
             Box::pin(async move {
-                let need: Need = stream.hear().await?;
+                let need: Need = stream.hear_step("needed bytes").await?;
                 if need.bytes {
                     send_bytes(&mut stream, &path, size).await?;
                     stream.say(&"placed").await?;
@@ -1153,7 +1154,14 @@ pub async fn take_placed(
     let wanted = Attachment { owner: Address { machine: node.machine(), resident }, ..attachment };
     let (directory, held) = {
         let wanted = wanted.clone();
-        tokio::task::spawn_blocking(move || slot(&base, &wanted)).await.map_err(failure)??
+        // Looking for the very file is work toward the answer the sender waits for.
+        let looking = stream.settling();
+        tokio::task::spawn_blocking(move || {
+            let _looking = looking;
+            slot(&base, &wanted)
+        })
+        .await
+        .map_err(failure)??
     };
     if let Some(held) = held {
         stream.say(&Need { bytes: false }).await.map_err(failure)?;
@@ -1168,7 +1176,7 @@ pub async fn take_placed(
         .await
         .map_err(failure)?;
     taken.map_err(failure)?;
-    let end: String = stream.hear().await.map_err(failure)?;
+    let end: String = stream.hear_step("placed").await.map_err(failure)?;
     if end != "placed" {
         return Err(failure("the sender did not end the file"));
     }

@@ -23,6 +23,7 @@
 //! directory it runs from then stands by for the move, serves, or, at the
 //! old place, forwards to the new one, as its files say.
 
+mod account_records;
 mod afoot;
 mod assists;
 mod control;
@@ -31,6 +32,7 @@ mod direct;
 pub mod dissolve;
 mod forget;
 mod health;
+mod hub_machine;
 mod ledger;
 mod log;
 mod login;
@@ -39,10 +41,13 @@ mod mailbox;
 mod manage;
 mod moving;
 mod outq;
+mod plan_calls;
 mod project_deletions;
 mod project_entry;
+mod question_parts;
 mod records;
 mod releases;
+mod sentinel_home;
 mod renewal;
 mod store;
 pub mod third;
@@ -144,6 +149,7 @@ pub fn init(dir: &Path, new: New) -> anyhow::Result<CertPin> {
         dissolved: None,
         updates: Default::default(),
         due: Vec::new(),
+        repairs: Vec::new(),
         package_targets: Default::default(),
     };
     Store::create(dir, &hub, &certificate, &secrets.to_bytes(), &book)?;
@@ -253,10 +259,15 @@ pub(crate) struct Hub {
     presenting: Mutex<()>,
     /// What the hub counts for its health (`health`).
     health: health::Health,
+    account_records: account_records::Records,
 }
 
 /// A member's open control connection.
 pub(crate) struct Session {
+    key: PublicKey,
+    account_records: bool,
+    conversation_plans: bool,
+    scratch_locations: bool,
     call_details: bool,
     generation: u64,
     out: outq::Outq,
@@ -417,6 +428,7 @@ impl Hub {
     /// The directory changed, or who is online did: every member is told to
     /// look again, and what lost the standing it was allowed under ends.
     fn changed(&self) {
+        self.account_records.settle(&self.store().book.directory);
         self.machine_log_changed.notify_one();
         self.assists_changed.notify_one();
         self.directory_changed.notify_one();
@@ -530,7 +542,8 @@ async fn serving(dir: &Path, kept: Option<Kept>, log: Arc<log::Log>) -> anyhow::
     };
     let secrets = HubSecrets::from_bytes(&std::fs::read(Store::secrets_file(dir))?).map_err(anyhow::Error::msg)?;
     let tls = releases::http::Tls::of(&certificate).map_err(anyhow::Error::msg)?;
-    let mut ledgers = ledger::Ledgers::open(dir)?;
+    let account_records = account_records::Records::open(dir, &store.book.directory)?;
+    let mut ledgers = ledger::Ledgers::open(dir, &store.hub.id)?;
     let swept = ledgers.sweep(&store.book)?;
     let listen = store.hub.listen;
     let kept = bind(kept, listen).await?;
@@ -585,7 +598,11 @@ async fn serving(dir: &Path, kept: Option<Kept>, log: Arc<log::Log>) -> anyhow::
         presence: AtomicU64::new(0),
         presenting: Mutex::new(()),
         health: health::Health::default(),
+        account_records,
     });
+    if let Err(error) = hub_machine::settle(&hub) {
+        hub.log.line(format_args!("revoking shares of the hub machine: {error}"));
+    }
     tokio::spawn(health::keep(Arc::downgrade(&hub)));
     tokio::spawn(data::expire(Arc::downgrade(&hub)));
     tokio::spawn(updates::look_every(Arc::downgrade(&hub)));
@@ -769,6 +786,9 @@ async fn intended(
                 project_entry,
                 conversation_deletions,
                 profiles,
+                account_records,
+                conversation_plans,
+                scratch_locations,
                 left,
                 cancels,
                 presence,
@@ -792,6 +812,9 @@ async fn intended(
                 project_entry,
                 conversation_deletions,
                 profiles,
+                account_records,
+                conversation_plans,
+                scratch_locations,
                 left,
                 cancels,
                 presence,

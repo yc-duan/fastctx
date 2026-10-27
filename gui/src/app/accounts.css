@@ -195,6 +195,10 @@ a.text-button {
 }
 
 .give-rows {
+  max-height: min(36dvh, 300px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
   list-style: none;
   margin: 0;
   padding: 0;
@@ -203,6 +207,7 @@ a.text-button {
 }
 
 .give-row {
+  flex: none;
   position: relative;
   display: flex;
   align-items: center;

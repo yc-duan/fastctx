@@ -101,11 +101,10 @@ pub(crate) fn resume(node: &Arc<Node>) {
             let result = tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
                 if let Some(plan) = store::read(&root)? {
                     let failed = plan.phase == fastctx_types::renewal::Phase::Failed;
-                    if (failed && plan.retry.ready(jiff::Timestamp::now()))
-                        || (!failed
-                            && (matches!(
-                                plan.phase,
-                                fastctx_types::renewal::Phase::Staged
+                    if !failed
+                        && (matches!(
+                            plan.phase,
+                            fastctx_types::renewal::Phase::Staged
                                     | fastctx_types::renewal::Phase::Preparing
                                     | fastctx_types::renewal::Phase::WaitingForIdle
                                     | fastctx_types::renewal::Phase::UpdatingGuardian
@@ -113,9 +112,9 @@ pub(crate) fn resume(node: &Arc<Node>) {
                                     // Left by an earlier release; this one
                                     // waits for nobody and goes on.
                                     | fastctx_types::renewal::Phase::AwaitingAdministrator
-                            ) || (first
-                                && (plan.phase != fastctx_types::renewal::Phase::Complete
-                                    || plan.candidate.build != build))))
+                        ) || (first
+                            && (plan.phase != fastctx_types::renewal::Phase::Complete
+                                || plan.candidate.build != build)))
                     {
                         store::request(&root, false)?;
                     }

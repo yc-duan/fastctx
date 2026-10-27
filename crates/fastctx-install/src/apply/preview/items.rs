@@ -20,7 +20,9 @@ pub(super) type Shown = fn(&[String]) -> bool;
 pub(super) fn codex_keys(path: &[String]) -> bool {
     let path: Vec<&str> = path.iter().map(String::as_str).collect();
     match path.as_slice() {
-        ["tool_output_token_limit"] | ["features", "shell_tool" | "view_image"] => true,
+        ["tool_output_token_limit"]
+        | ["features", "shell_tool" | "view_image" | "goals"]
+        | ["tools", "update_plan", "enabled"] => true,
         ["mcp_servers", "fastctx", rest @ ..] => matches!(
             rest,
             ["command" | "args" | "env_vars" | "startup_timeout_sec" | "tool_timeout_sec" | "omit_tools_from"]

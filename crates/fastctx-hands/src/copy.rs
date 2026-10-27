@@ -260,6 +260,7 @@ pub struct Wanted {
 pub struct Receiver {
     destination: PathBuf,
     manifest: Manifest,
+    world: Option<PathBuf>,
     /// Whether files are staged to go on with after a break.
     resumes: bool,
     pub files: u64,
@@ -323,6 +324,7 @@ impl Receiver {
         Ok(Self {
             destination,
             manifest,
+            world: None,
             resumes: false,
             files: 0,
             bytes: 0,
@@ -331,6 +333,17 @@ impl Receiver {
             unchanged: 0,
             problems: Vec::new(),
         })
+    }
+
+    /// Checks every destination before making any directory or temporary file.
+    pub fn protect(mut self, world: &Path) -> Result<Self, String> {
+        self.world = Some(world.to_path_buf());
+        for entry in self.manifest.entries.clone() {
+            if self.target(&entry.path).is_none() {
+                return Err(self.problems.join("; "));
+            }
+        }
+        Ok(self)
     }
 
     pub fn destination(&self) -> &Path {
@@ -402,7 +415,16 @@ impl Receiver {
     pub fn arrive(&mut self, index: usize, from: u64, known: &mut Known) -> (u64, Arriving) {
         let entry = self.manifest.entries[index].clone();
         let EntryKind::File { size, sha256 } = entry.kind else { unreachable!("only files are wanted") };
-        let target = self.target(&entry.path).expect("checked when wanted");
+        let Some(target) = self.target(&entry.path) else {
+            return (
+                size.saturating_sub(from),
+                Arriving {
+                    staged: None,
+                    hasher: Sha256::new(),
+                    failure: Some("copy destination is now protected".into()),
+                },
+            );
+        };
         let mut hasher = Sha256::new();
         let staged = target.parent().map_or(Ok(()), std::fs::create_dir_all).and_then(|()| {
             if !self.resumes {
@@ -449,7 +471,12 @@ impl Receiver {
     pub fn arrived(&mut self, index: usize, arriving: Arriving, known: &mut Known) {
         let entry = self.manifest.entries[index].clone();
         let EntryKind::File { size, sha256 } = &entry.kind else { unreachable!("only files are wanted") };
-        let target = self.target(&entry.path).expect("checked when wanted");
+        let Some(target) = self.target(&entry.path) else {
+            if let Some(staged) = arriving.staged {
+                staged.discard();
+            }
+            return;
+        };
         if let Some(failure) = arriving.failure {
             if let Some(staged) = arriving.staged {
                 staged.discard();
@@ -490,7 +517,10 @@ impl Receiver {
         drop(staged);
         let entry = self.manifest.entries[index].clone();
         let EntryKind::File { sha256, .. } = &entry.kind else { unreachable!("only files are wanted") };
-        let at = partial(&self.target(&entry.path).expect("checked when wanted"), sha256);
+        let Some(target) = self.target(&entry.path) else {
+            return;
+        };
+        let at = partial(&target, sha256);
         if let Ok(now) = std::fs::metadata(&at)
             && let Ok(modified) = now.modified()
         {
@@ -519,16 +549,19 @@ impl Receiver {
     /// Where the entry at `relative` goes; `None`, with the reason noted,
     /// when the name cannot be one here.
     fn target(&mut self, relative: &str) -> Option<PathBuf> {
-        if relative.is_empty() {
-            return Some(self.destination.clone());
-        }
         let mut target = self.destination.clone();
-        for name in relative.split('/') {
+        for name in relative.split('/').filter(|_| !relative.is_empty()) {
             if !plain(name) {
                 self.problems.push(format!("{relative}: not a name this machine can give a file"));
                 return None;
             }
             target.push(name);
+        }
+        if let Some(world) = &self.world
+            && let Err(reason) = crate::write::check_path_policy(world, &target)
+        {
+            self.problems.push(reason);
+            return None;
         }
         Some(target)
     }

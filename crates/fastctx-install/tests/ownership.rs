@@ -217,7 +217,11 @@ fn native_tools_migrate_old_receipts_and_keep_user_changes() {
     let mut old = serde_json::to_value(&installed.receipt).unwrap();
     old.as_object_mut().unwrap().remove("tools");
     let old = serde_json::from_value(old).unwrap();
-    let old_config = String::from_utf8(installed.config).unwrap().replace("features.shell_tool = false\n", "");
+    let old_config = String::from_utf8(installed.config)
+        .unwrap()
+        .replace("features.shell_tool = false\n", "")
+        .replace("features.goals = false\n", "")
+        .replace("tools.update_plan.enabled = false\n", "");
     let installed = codex::apply(
         File { bytes: Some(old_config.as_bytes()), ..config },
         File { bytes: Some(&installed.agents), ..agents },
@@ -259,14 +263,28 @@ fn claude_native_deny_ownership_is_per_rule() {
     let applied = tools::apply(file, None, false).unwrap();
     let deleted = tools::apply(File { bytes: None, ..file }, Some(&applied.receipt), false).unwrap();
     assert!(deleted.bytes.is_none());
-    assert_eq!(deleted.notices.len(), 3);
+    assert_eq!(deleted.notices.len(), 9);
     let value: serde_json::Value = serde_json::from_slice(applied.bytes.as_ref().unwrap()).unwrap();
-    assert_eq!(value["permissions"]["deny"], serde_json::json!(["Bash", "Grep", "Glob"]));
+    assert_eq!(
+        value["permissions"]["deny"],
+        serde_json::json!([
+            "Bash",
+            "Grep",
+            "Glob",
+            "TodoWrite",
+            "TaskCreate",
+            "TaskUpdate",
+            "TaskList",
+            "TaskGet",
+            "ProposeGoal"
+        ])
+    );
     let restored = tools::unapply(File { bytes: applied.bytes.as_deref(), ..file }, &applied.receipt).unwrap();
     assert_eq!(restored.bytes.as_deref(), Some(original.as_slice()));
 
     let edited = String::from_utf8(applied.bytes.unwrap()).unwrap().replace("\"Grep\"", "\"Grep(project)\"");
-    let repeated = tools::apply(File { bytes: Some(edited.as_bytes()), ..file }, Some(&applied.receipt), false).unwrap();
+    let repeated =
+        tools::apply(File { bytes: Some(edited.as_bytes()), ..file }, Some(&applied.receipt), false).unwrap();
     assert_eq!(repeated.bytes.as_deref(), Some(edited.as_bytes()));
     assert_eq!(repeated.notices.len(), 1);
     let taken = tools::unapply(File { bytes: repeated.bytes.as_deref(), ..file }, &repeated.receipt).unwrap();

@@ -15,24 +15,15 @@
   height: 100%;
 }
 
-/* Here the head carries only the way back to the sidebar, over the
-   drawing. */
+/* Here the head carries the way back to the sidebar and the choice of
+   view, above the drawing. */
 .front-page > .page-head {
-  position: absolute;
-  top: 0;
-  left: 0;
+  position: relative;
   z-index: 1;
-}
-
-.front-page > .page-head .page-head-title {
-  display: none;
+  transition: background-color var(--hover) ease;
 }
 
 /* Scrolled on a phone, the head stands on the paper. */
-.front-page > .page-head {
-  right: 0;
-  transition: background-color var(--hover) ease;
-}
 
 .front-page.scrolled > .page-head {
   background: var(--bg);
@@ -43,6 +34,20 @@
   min-height: 0;
   display: flex;
   flex-direction: column;
+}
+
+/* The page's two views, chosen in its head: what needs the user now,
+   under the drawing; what came back lately and is at work. */
+.front-views {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+/* Nothing waits: one quiet line under the drawing. */
+.front-calm {
+  padding: var(--space-6) 0;
+  text-align: center;
 }
 
 .front-map {
@@ -223,6 +228,7 @@
   flex: none;
   display: grid;
   place-items: center;
+  min-width: 16px;
   height: calc(var(--size-text) * var(--leading-ui));
   color: var(--accent);
 }
@@ -244,6 +250,15 @@
 
 .front-ask.quiet {
   color: var(--text-2);
+}
+
+/* What a conversation told the user: an urgent one under the clay ※, one
+   that can wait under a drop of ink. */
+.front-told-drop {
+  width: 7px;
+  height: 7px;
+  border-radius: var(--radius-full);
+  background: var(--text-2);
 }
 
 /* Its answers, where a question offers them: solid, side by side. */

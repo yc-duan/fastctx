@@ -94,7 +94,7 @@ pub async fn control_here(node: &Arc<Node>, resident: &ResidentId, control: Cont
         return execute(node, resident, control).await;
     }
     let gate = crate::control_queue::gate(node, resident);
-    let _action = gate.lock().await;
+    let _action = crate::gate_waits::action(node, resident, &gate).await?;
     node.residents.active(resident)?;
     crate::control_queue::drain(node, resident).await?;
     if let Some(queued) = crate::control_queue::enqueue_if_busy(node, resident, &control).await? {
@@ -178,7 +178,7 @@ fn host_of(node: &Node, resident: &ResidentId) -> Result<&'static str, Failure> 
         .residents
         .about(resident)
         .ok_or_else(|| Failure::new(format!("no resident {resident} lives on {}", node.machine())))?;
-    match (about.host.agent.as_str(), about.world_started, &about.session) {
+    match (about.host.agent.as_str(), about.world_managed(), &about.session) {
         ("codex", true, Some(_)) => Ok("Codex"),
         ("claude", _, _) => Ok("Claude"),
         _ => Err(Failure::new(format!("{resident} is a session the World does not hold; do this where it is open"))),

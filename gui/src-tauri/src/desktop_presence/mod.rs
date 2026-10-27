@@ -4,6 +4,7 @@
 mod identity;
 mod instance;
 mod notifications;
+mod takeover;
 
 use std::collections::VecDeque;
 use std::sync::Mutex;
@@ -56,7 +57,7 @@ struct WindowPresence {
 }
 
 struct Presence {
-    notifications: Notifications,
+    notifications: Option<Notifications>,
     pending: Mutex<VecDeque<Delivery>>,
     next: AtomicU64,
 }
@@ -75,17 +76,20 @@ impl Presence {
 
 fn report(app: &tauri::AppHandle, error: String) {
     eprintln!("{error}");
-    app.state::<Presence>().push(app, Event::Error { error });
+    crate::startup::warning(app, "desktop_presence", error.clone());
+    if let Some(state) = app.try_state::<Presence>() {
+        state.push(app, Event::Error { error });
+    }
 }
 
 #[tauri::command]
 fn notify(app: tauri::AppHandle, state: tauri::State<'_, Presence>, notice: Notice) -> Result<String, String> {
-    state.notifications.show(&app, notice)
+    state.notifications.as_ref().ok_or("notification storage is unavailable")?.show(&app, notice)
 }
 
 #[tauri::command]
 fn dismiss(state: tauri::State<'_, Presence>, notification_id: String) -> Result<(), String> {
-    state.notifications.remove(&notification_id)
+    state.notifications.as_ref().ok_or("notification storage is unavailable")?.remove(&notification_id)
 }
 
 #[tauri::command]
@@ -152,7 +156,9 @@ async fn launch(app: &tauri::AppHandle, launch: Launch) -> Result<(), String> {
                     handle.exit(0);
                     return Ok(());
                 }
-                Launch::Notification(uri) => state.notifications.activate(&uri)?,
+                Launch::Notification(uri) => {
+                    state.notifications.as_ref().ok_or("notification storage is unavailable")?.activate(&uri)?
+                }
                 Launch::Open(route) => {
                     if let Some(route) = &route {
                         notifications::route(route)?;
@@ -247,8 +253,11 @@ fn tray(app: &tauri::AppHandle) -> tauri::Result<()> {
     let open = MenuItem::with_id(app, "desktop-presence-open", "打开 Fastctx", true, None::<&str>)?;
     let quit = MenuItem::with_id(app, "desktop-presence-quit", "退出 Fastctx", true, None::<&str>)?;
     let menu = Menu::with_items(app, &[&open, &quit])?;
+    let icon = app
+        .default_window_icon()
+        .ok_or_else(|| tauri::Error::Io(std::io::Error::other("bundled Fastctx icon is missing")))?;
     TrayIconBuilder::with_id("desktop-presence")
-        .icon(app.default_window_icon().expect("bundled Fastctx icon").clone())
+        .icon(icon.clone())
         .tooltip("Fastctx")
         .menu(&menu)
         .show_menu_on_left_click(false)
@@ -276,31 +285,39 @@ fn tray(app: &tauri::AppHandle) -> tauri::Result<()> {
     Ok(())
 }
 
-pub fn plugin(instance: Instance) -> TauriPlugin<tauri::Wry> {
-    let mut instance = Some(instance);
+pub fn plugin(mut instance: Option<Instance>, initial_error: Option<String>) -> TauriPlugin<tauri::Wry> {
     Builder::new("desktop-presence")
         .invoke_handler(tauri::generate_handler![notify, dismiss, pending, acknowledge, window_presence])
-        .setup(|app, _| {
-            unsafe {
-                SetCurrentProcessExplicitAppUserModelID(&HSTRING::from(identity::APP_ID))?;
+        .setup(move |app, _| {
+            let notifications = match app.path().app_local_data_dir() {
+                Ok(directory) => {
+                    let directory = if app.config().app.app_directories_override.is_none() {
+                        directory.with_file_name(identity::APP_ID)
+                    } else {
+                        directory
+                    };
+                    Some(Notifications::new(directory.join("notifications")))
+                }
+                Err(error) => {
+                    crate::startup::warning(app, "notification_directory", error.to_string());
+                    None
+                }
+            };
+            app.manage(Presence { notifications, pending: Mutex::new(VecDeque::new()), next: AtomicU64::new(1) });
+            if let Err(error) = unsafe { SetCurrentProcessExplicitAppUserModelID(&HSTRING::from(identity::APP_ID)) } {
+                report(app, format!("registering Fastctx window identity: {error}"));
             }
-            app.manage(Presence {
-                notifications: Notifications::new(
-                    app.path().local_data_dir()?.join(identity::APP_ID).join("notifications"),
-                ),
-                pending: Mutex::new(VecDeque::new()),
-                next: AtomicU64::new(1),
-            });
+            if let Some(error) = initial_error {
+                report(app, error);
+            }
             Ok(())
         })
         .on_event(move |app, event| match event {
             tauri::RunEvent::Ready => {
                 if let Err(error) = tray(app) {
                     report(app, format!("creating Fastctx's tray: {error}"));
-                    app.exit(1);
-                    return;
                 }
-                let instance = instance.take().expect("one application Ready event");
+                let Some(instance) = instance.take() else { return };
                 let initial = instance.launch.clone();
                 let handle = app.clone();
                 tauri::async_runtime::spawn(async move {
@@ -311,12 +328,13 @@ pub fn plugin(instance: Instance) -> TauriPlugin<tauri::Wry> {
                     }
                     if let Err(error) = instance.serve(handle.clone()).await {
                         report(&handle, format!("Fastctx instance listener stopped: {error}"));
-                        handle.exit(1);
                     }
                 });
             }
             tauri::RunEvent::WindowEvent { label, event, .. } if label == "main" => {
-                if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                if let tauri::WindowEvent::CloseRequested { api, .. } = event
+                    && app.tray_by_id("desktop-presence").is_some()
+                {
                     api.prevent_close();
                     // The app lives on in the tray, and may never see its exit
                     // (a shutdown ends it), so the window's place is kept now.

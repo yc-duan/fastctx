@@ -30,18 +30,18 @@ import { daysOf, heldOf, keptOf, seenOf, SPAN_MS, take, tripsHeld, type Sample }
 import type { MachinePageWords } from "./machine-page-words";
 import { FastctxBlock, type FastctxSubject } from "./machine-fastctx";
 import type { ReadLog } from "./machine-log";
-import { ownerLoginOf, removerLoginOf, updaterLoginOf } from "./machine-logins";
+import { holderLoginOf, removerLoginOf, updaterLoginOf } from "./machine-logins";
 import type { ManageWords } from "./machine-manage-words";
 import { RemoveMachineSheet } from "./machine-remove";
 import { removeMachines } from "./machine-removing";
 import { GiveSheet } from "./machine-sheets";
-import { linkSaid, linkWhy } from "./machines";
+import { linkSaid, linkWhy } from "./machine-spot";
 import { formerNames, mapOf } from "./map-of";
 import type { NameSaid } from "./name-words";
 import { isManaged } from "./machine-list";
 import { link, talkLink, type Place } from "./places";
 import { detailOf } from "./problem";
-import { assistantsOn, groupsOf, inNoNetwork, isSuper, isVisitor, machineActsFor, machinesOf, ownerOf, owns, residentIn, sameLogin, type Machine } from "./reach";
+import { runsHub, holds, assistantsOn, groupsOf, inNoNetwork, isSuper, isVisitor, machineActsFor, machinesOf, ownerOf, owns, residentIn, sameLogin, type Machine } from "./reach";
 import { RenameField, renamerOf, type Renamer } from "./rename";
 import type { Page } from "./shell";
 import { effect, type Signal } from "./signals";
@@ -510,15 +510,15 @@ export class MachinePage implements Page {
   }
 
   /** What is done to it from here: a conversation, its agents, sharing
-   *  it, and the drawing with it chosen. */
+   *  it on, and the drawing with it chosen. */
   private drawActs(machine: Machine | null, world: WorldNow): void {
     const { words, machines } = this.options;
     if (!machine) return this.put("acts", this.acts, "");
-    const owner = this.ownerLogin(machine, world);
+    const giver = this.giver(machine, world);
     const button = (act: string, icon: Parameters<typeof glyph>[0], label: string) =>
       `<button class="text-button quiet-button mp-act" type="button" data-act="${act}" title="${escape(label)}">${glyph(icon, 15)}<span>${escape(label)}</span></button>`;
     // No one's agents live on a managed machine (`world-network.md`, 受管
-    // 机器); a visitor shares none of its machines.
+    // 机器); a visitor shares nothing it holds, nor anyone the hub's machine.
     const managed = isManaged(world, machine.name);
     this.put(
       "acts",
@@ -526,7 +526,7 @@ export class MachinePage implements Page {
       [
         managed ? "" : button("talk", "plus", machines.talk),
         managed ? "" : `<a class="text-button quiet-button mp-act" href="${link({ kind: "agents", machine: machine.written })}" title="${escape(machines.hosts)}">${glyph("agents", 15)}<span>${escape(machines.hosts)}</span></a>`,
-        owner && !isVisitor(world, owner) ? button("share", "colleague", machines.share) : "",
+        giver ? button("share", "colleague", machines.share) : "",
         `<a class="icon-button mp-act-map" href="${link({ kind: "machines", focus: machine.written })}" aria-label="${escape(words.onMap)}" title="${escape(words.onMap)}">${glyph("machine", 17)}</a>`,
       ].join(""),
     );
@@ -966,7 +966,7 @@ export class MachinePage implements Page {
       return rows ? words.ledgerRows(Number(rows[1])) : /cannot be read or written/.test(text) ? words.ledgerBroken : words.healthOther;
     };
     const warned = [
-      ...stuck.map((one) => `<li title="${escape(one.what)}">${escape(words.stuck(one.doing, one.what, words.span(one.seconds * 1000)))}</li>`),
+      ...stuck.map((one) => `<li title="${escape(`${one.doing}: ${one.what}`)}">${escape(words.stuck(words.span(one.seconds * 1000)))}</li>`),
       ...health.map((one) => `<li title="${escape(one.text)}">${escape(healthSaid(one.text))}</li>`),
     ];
     const stuckSaid = warned.length ? `<ul class="mp-stuck">${warned.join("")}</ul>` : "";
@@ -1010,21 +1010,27 @@ export class MachinePage implements Page {
     if (direct) this.put("direct", this.directBox, `<h2 class="mp-sec-title">${escape(words.direct)}</h2>${direct}`);
   }
 
-  /** Whom it is shared with and whom its agents assist, for its owner,
-   *  each taken back with its cross. */
+  /** Whom it is shared with and whom its agents assist, for those who hold
+   *  it, each taken back with its cross; one's own share is given back. */
   private drawSharing(machine: Machine, world: WorldNow): void {
     const { words, machines, access } = this.options;
-    const owner = this.ownerLogin(machine, world);
+    const owner = this.holder(machine, world);
     this.sharingBox.hidden = !owner;
     if (!owner) return;
     const now = this.options.store.clock.peek();
-    const chip = (label: string, take: string) =>
-      `<span class="chip">${escape(label)}<button class="chip-x" type="button" ${take} aria-label="${escape(machines.takeBack(label))}" title="${escape(machines.takeBack(label))}">${glyph("close", 12)}</button></span>`;
-    const shared = owner && !isVisitor(world, owner)
-      ? `<div class="given-row"><span class="given-label">${escape(machines.sharedTo)}</span>${sharedWith(world, owner, machine.name)
-          .map((to) => chip(to, `data-act="unshare" data-to="${escape(to)}"`))
-          .join("")}<button class="text-button quiet-button" type="button" data-act="share">${glyph("plus", 13)}<span>${escape(machines.share)}</span></button></div>`
-      : "";
+    const chip = (label: string, take: string, said = machines.takeBack(label)) =>
+      `<span class="chip">${escape(label)}<button class="chip-x" type="button" ${take} aria-label="${escape(said)}" title="${escape(said)}">${glyph("close", 12)}</button></span>`;
+    // Its holders see every share, each taken back; a visitor's own share is
+    // the only one it gives back, as it gives none.
+    const giver = this.giver(machine, world);
+    const to = sharedWith(world, owner, machine.name);
+    const shared =
+      giver || to.includes(owner.account)
+        ? `<div class="given-row"><span class="given-label">${escape(machines.sharedTo)}</span>${to
+            .filter((one) => giver || one === owner.account)
+            .map((one) => (one === owner.account ? chip(one, `data-act="leave"`, machines.leave) : chip(one, `data-act="unshare" data-to="${escape(one)}"`)))
+            .join("")}${giver ? `<button class="text-button quiet-button" type="button" data-act="share">${glyph("plus", 13)}<span>${escape(machines.share)}</span></button>` : ""}</div>`
+        : "";
     const assists = owner ? (hubOf(world, owner)?.assists ?? []).filter((assist) => assist.machine === machine.name) : [];
     const assisting = assists.length
       ? `<div class="given-row"><span class="given-label">${escape(machines.assisting)}</span>${assists
@@ -1050,8 +1056,16 @@ export class MachinePage implements Page {
     return { kind: "unknown", said: machines.unknown };
   }
 
-  private ownerLogin(machine: Machine, world: WorldNow): Login | undefined {
-    return ownerLoginOf(machine, world);
+  /** The login it is in the hands of here: its owner's first. */
+  private holder(machine: Machine, world: WorldNow): Login | undefined {
+    return holderLoginOf(machine, world);
+  }
+
+  /** The login that shares it on: one holding it that is no visitor, where
+   *  it does not run the hub. */
+  private giver(machine: Machine, world: WorldNow): Login | undefined {
+    const logins = loginsOf(world.accounts).filter((login) => holds(machine, login, world));
+    return logins.find((login) => !isVisitor(world, login) && !runsHub(machine, login, world));
   }
 
   private renamer(machine: Machine, world: WorldNow): Renamer | null {
@@ -1109,15 +1123,20 @@ export class MachinePage implements Page {
     const world = this.options.store.world.peek();
     const machine = this.machine;
     if (!world || !machine) return;
-    const owner = this.ownerLogin(machine, world);
+    const owner = this.holder(machine, world);
     const button = target as HTMLButtonElement;
     switch (target.dataset.act) {
       case "rename":
         return this.startRename();
       case "talk":
         return this.options.talk(machine.written);
-      case "share":
-        if (owner) this.share(owner, machine);
+      case "share": {
+        const giver = this.giver(machine, world);
+        if (giver) this.share(giver, machine);
+        return;
+      }
+      case "leave":
+        if (owner) this.giveBack(owner, machine);
         return;
       case "unshare": {
         const to = target.dataset.to ?? "";
@@ -1213,6 +1232,24 @@ export class MachinePage implements Page {
 
   /** Takes back a share or ends an assistance at once; for a moment it
    *  can be given again from the foot of the page. */
+  /** Gives back the share of `machine` `login` holds, once asked: it is
+   *  another's to share again, so there is nothing to undo, and the page
+   *  goes back to the machines. */
+  private giveBack(login: Login, machine: Machine): void {
+    const { machines } = this.options;
+    const owner = ownerOf(machine, login) ?? "";
+    this.options.confirm.ask({
+      title: machines.leaveTitle(machine.written),
+      what: machines.leaveWhat(owner),
+      go: machines.leave,
+      act: () => this.options.change(login, { change: "share", machine: machine.name, to: login.account, shared: false }),
+      done: () => {
+        void this.options.store.refresh();
+        location.hash = link({ kind: "machines" });
+      },
+    });
+  }
+
   private async takeBack(button: HTMLButtonElement, login: Login, label: string, take: AccountChange, give: AccountChange): Promise<void> {
     button.disabled = true;
     try {

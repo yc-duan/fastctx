@@ -1,6 +1,6 @@
 // An assisting session may operate on this conversation, never on the
 // owner's login or its installation. Unknown commands stay unavailable.
-const assistedCommands = new Set(['rename', 'model', 'goal', 'compact', 'btw'])
+const assistedCommands = new Set(['rename', 'model', 'compact', 'btw'])
 const assistedCommandReason = 'This command is unavailable in an assisted conversation because it can access or change the host login or computer.'
 
 async function assistedSession($) {

@@ -4,7 +4,7 @@
 // present, failed is its own word. Only what the tool says is shown; a
 // count that cannot be read from it is not guessed.
 
-import { tripItems } from "./trip";
+import { scriptCommands, scriptSaid } from "./deeds/script";
 import type { Change, Tool } from "../world/events";
 import type { WriteFact } from "../world/run-facts";
 import type { Act, Tally, TallyPart, Tense, Words } from "../words";
@@ -47,7 +47,7 @@ function firstLine(text: string): string {
  *  `fastctx view` of named files: the World's own way to read, so it reads
  *  as reading. Anything more (a pipe, a substitution, a second command, a
  *  range, a pattern) is a command and shown as one. */
-function viewing(command: string): string[] | null {
+export function viewing(command: string): string[] | null {
   const words = simpleWords(command.trim());
   if (!words || words[0] !== "fastctx" || words[1] !== "view") return null;
   const rest = words.slice(2);
@@ -111,7 +111,9 @@ export function headline(tool: Tool, ended: { use: Use } | null, words: Words, n
       return {
         glyph: "command",
         action: say("command"),
-        object: input(tool, "description") ?? firstLine(tool.does.command),
+        // A script is named by its first command that does work, what an
+        // `on` to its own machine wraps read as its own.
+        object: input(tool, "description") ?? scriptSaid(tool.does.command, tool.machine ?? null) ?? firstLine(tool.does.command),
         added: null,
         removed: null,
       };
@@ -239,11 +241,15 @@ export function groupHeading(
         // file copied or looked at, and what it did on its own machine.
         const steps = tool.run?.steps ?? [];
         if (steps.length) {
-          for (const item of tripItems(tool.does.command, steps, tool.run?.writes ?? [])) {
-            if (item.kind === "own" || item.kind === "on") tally.ran += 1;
-            else if (item.kind === "fan") tally.ran += item.steps.length;
-            else if (item.kind === "copy") tally.copied += item.step.files;
-            else if (item.kind === "view") tally.read += item.step.paths.length;
+          // An `on` that only carried the World's own commands counts as
+          // what they did.
+          const carriers = new Set(steps.map((step) => step.job));
+          const own = scriptCommands(tool.does.command, tool.machine ?? null).some((command) => command.carrier === null && command.on === null && !command.world);
+          if (own) tally.ran += 1;
+          for (const step of steps) {
+            if (step.kind === "on" && !(step.sent && carriers.has(step.sent)) && !/^(?:fastctx\s+)?(?:edit|write|apply_patch)\b/.test(step.command)) tally.ran += 1;
+            else if (step.kind === "copy") tally.copied += step.files;
+            else if (step.kind === "view") tally.read += step.paths.length;
           }
           break;
         }

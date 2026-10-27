@@ -412,12 +412,17 @@
 }
 
 /* The tabs: a word each; the chosen one a block of the sheet's fill, its
-   top corners round, standing on the sheet. */
+   top corners round, standing on the sheet. They stay at the top while
+   what is under them scrolls: the page itself never does. */
 .mp-tabs {
+  position: sticky;
+  top: 0;
+  z-index: 2;
   display: flex;
   gap: 2px;
   margin-top: var(--space-2);
   margin-bottom: calc(-1 * var(--gap));
+  background: var(--bg);
 }
 
 .mp-tabs[hidden] {

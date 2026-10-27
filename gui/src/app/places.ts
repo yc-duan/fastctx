@@ -5,8 +5,8 @@ import type { Address } from "../world/events";
 import type { AgentSection, AgentTab } from "./profile-words";
 
 /** The features a World can turn on (`world-gui.md`, 功能). */
-export type Feature = "conversations" | "collaboration" | "memory";
-const features: Feature[] = ["conversations", "collaboration", "memory"];
+export type Feature = "conversations" | "collaboration" | "memory" | "sentinels";
+const features: Feature[] = ["conversations", "collaboration", "memory", "sentinels"];
 const sections: AgentSection[] = ["claude", "codex", "prompt", "mcp"];
 
 export type Place =
@@ -15,7 +15,8 @@ export type Place =
   /** Beginning a conversation, in a project or outside any. */
   | { kind: "new"; town: string | null }
   | { kind: "project"; town: string }
-  | { kind: "journal"; town: string; journal: string }
+  /** One of a project's journals or decisions. */
+  | { kind: "memory"; town: string; name: string }
   /** A page of a project: a version of it, or the current one. */
   | { kind: "page"; town: string; page: string; version: number | null }
   /** The drawing of the machines, with one chosen when `focus` names it;
@@ -64,8 +65,8 @@ export function link(place: Place): string {
       return place.town === null ? "#/new" : `#/new/${part(place.town)}`;
     case "project":
       return `#/project/${part(place.town)}`;
-    case "journal":
-      return `#/journal/${part(place.town)}/${part(place.journal)}`;
+    case "memory":
+      return `#/memory/${part(place.town)}/${part(place.name)}`;
     case "page":
       return `#/page/${part(place.town)}/${part(place.page)}${place.version === null ? "" : `/${place.version}`}`;
     case "machines":
@@ -117,8 +118,8 @@ export function placeOf(hash: string): Place {
     case "project":
       if (parts[1]) return { kind: "project", town: parts[1] };
       break;
-    case "journal":
-      if (parts[1] && parts[2]) return { kind: "journal", town: parts[1], journal: parts[2] };
+    case "memory":
+      if (parts[1] && parts[2]) return { kind: "memory", town: parts[1], name: parts[2] };
       break;
     case "page":
       if (parts[1] && parts[2]) {

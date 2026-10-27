@@ -1,12 +1,13 @@
 // The user's own things in the network shown (`world-gui.md`, 账号、机器、
-// 共享与协助: 「我」): who they are there, their password, and what of
-// theirs others may use — the machines shared and the logins assisting, each
-// taken back with its cross and for a moment given back; the machines of
-// others whose agents may reach theirs; the phones logged in to the account;
-// the codes that let managed machines in; and leaving the network. A device
-// that came into the account lately is said first, with "that wasn't me",
-// and managed machines that came in by one code are said together; a
-// visitor asked to become a member is asked first of all. Whatever has
+// 共享与协助: 「我」): who they are there and their password, at the top with
+// what waits for their word — a visitor asked to become a member, a device
+// that came into the account lately, with "that wasn't me", managed
+// machines that came in by one code said together. Under it three tabs that
+// stay at the top as what is under them scrolls: what of theirs
+// others may use (the machines shared and the logins assisting, each taken
+// back with its cross and for a moment given back, and the machines of
+// others whose agents may reach theirs); the devices logged in to the
+// account and leaving the network; the codes that let devices in. A tab with
 // nothing in it is not drawn. Other people are the boxes on the machines
 // page's drawing.
 
@@ -23,7 +24,7 @@ import { codeName, codeRow, codesOf } from "./code-rows";
 import { Confirm, Sheet } from "./confirm";
 import { redrawKeepingFocus } from "./focus";
 import { row } from "./rows";
-import { linkSaid } from "./machines";
+import { linkSaid } from "./machine-spot";
 import type { MeWords } from "./me-words";
 import { newPasswordFields, passwordReady, sayPassword } from "./new-password";
 import { link } from "./places";
@@ -51,12 +52,31 @@ export interface MeOptions {
 /** One thing taken back, until the server has done it. */
 type Taking = { hub: string; key: string };
 
+/** The page's tabs, in their order, and where this device keeps the one
+ *  last open. */
+const TABS = ["given", "devices", "codes"] as const;
+type Tab = (typeof TABS)[number];
+const TAB_KEY = "me.tab";
+
+function keptTab(): Tab {
+  try {
+    const kept = localStorage.getItem(TAB_KEY);
+    return TABS.find((tab) => tab === kept) ?? "given";
+  } catch {
+    return "given";
+  }
+}
+
 export class MePage implements Page {
   readonly element: HTMLElement;
   readonly title: string;
+  private readonly top: HTMLElement;
+  private readonly tabs: HTMLElement;
   private readonly body: HTMLElement;
+  private readonly sheet: HTMLElement;
   private readonly stop: () => void;
   private drawn = "";
+  private tab: Tab = keptTab();
   private readonly password = new Sheet("device-sheet password-sheet");
   /** Chips taken back here, gone from the page before the server answers. */
   private readonly taking: Taking[] = [];
@@ -66,9 +86,27 @@ export class MePage implements Page {
     this.title = words.title;
     this.element = document.createElement("div");
     this.element.className = "settings-page me-page";
-    this.element.innerHTML = `${options.head(`<h1 class="page-title">${escape(words.title)}</h1>`)}<div class="me scroller"></div>`;
+    this.element.innerHTML = `${options.head(`<h1 class="page-title">${escape(words.title)}</h1>`)}<div class="me scroller"><div class="me-top"></div><div class="st-tabs me-tabs" role="tablist" aria-label="${escape(words.title)}"></div><div class="st-sheet"></div></div>`;
+    this.top = this.element.querySelector<HTMLElement>(".me-top")!;
+    this.tabs = this.element.querySelector<HTMLElement>(".me-tabs")!;
     this.body = this.element.querySelector<HTMLElement>(".me")!;
-    this.body.addEventListener("click", (event) => this.click(event));
+    this.sheet = this.element.querySelector<HTMLElement>(".me .st-sheet")!;
+    for (const part of [this.top, this.sheet]) part.addEventListener("click", (event) => this.click(event));
+    this.tabs.addEventListener("click", (event) => {
+      const tab = (event.target as HTMLElement).closest<HTMLElement>("[data-tab]")?.dataset.tab as Tab | undefined;
+      if (tab) this.show(tab);
+    });
+    // The arrow keys go from tab to tab, as a row of tabs does.
+    this.tabs.addEventListener("keydown", (event) => {
+      if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+      const shown = [...this.tabs.querySelectorAll<HTMLElement>("[data-tab]")].map((button) => button.dataset.tab as Tab);
+      const at = shown.indexOf(this.tab);
+      const next = shown[(at + (event.key === "ArrowRight" ? 1 : shown.length - 1)) % shown.length];
+      if (!next) return;
+      event.preventDefault();
+      this.show(next);
+      this.tabs.querySelector<HTMLElement>(`[data-tab="${next}"]`)?.focus();
+    });
     this.stop = effect(() => this.draw(options.store.world.get(), options.store.clock.get()));
   }
 
@@ -319,24 +357,70 @@ export class MePage implements Page {
     this.draw(this.options.store.world.peek(), this.options.store.clock.peek());
   }
 
+  /** Shows `tab`'s sheet, kept on this device for the next time. */
+  private show(tab: Tab): void {
+    this.tab = tab;
+    try {
+      localStorage.setItem(TAB_KEY, tab);
+    } catch {
+      // Kept for this visit only.
+    }
+    this.redraw();
+    // Back to the top of the sheet, the tabs where they stand.
+    const tabs = this.tabs.offsetTop;
+    if (this.body.scrollTop > tabs) this.body.scrollTo({ top: tabs });
+  }
+
   private draw(world: WorldNow | null, now: Date): void {
     if (!world) return;
     const { words } = this.options;
     const logins = loginsOf(world.accounts);
-    const html = logins.length
-      ? logins.map((login) => this.section(login, world, now)).join("")
+    const hubOf = (login: Login) => world.accounts.hubs.find((one) => one.hub === login.hub);
+    const signed = logins.filter((login) => hubOf(login));
+    // Each tab's sheet, a part for each login of this device where it holds
+    // something, headed by the login's name where there are several.
+    const sheets = new Map<Tab, string>(
+      TABS.map((tab) => [
+        tab,
+        signed
+          .map((login) => {
+            const inside = this.pane(tab, login, hubOf(login)!, world, now);
+            if (!inside) return "";
+            const named = signed.length > 1 ? `<h3 class="me-login-name">${escape(login.account)}</h3>` : "";
+            return `<section class="me-login" data-hub="${escape(login.hub)}" data-account="${escape(login.account)}">${named}${inside}</section>`;
+          })
+          .join(""),
+      ]),
+    );
+    const shown = TABS.filter((tab) => sheets.get(tab));
+    const tab = shown.includes(this.tab) ? this.tab : (shown[0] ?? "devices");
+    const top = signed.length
+      ? signed.map((login) => this.head(login, hubOf(login)!, world, now)).join("")
       : `<p class="me-none">${escape(words.none)} <a class="text-link" href="${link({ kind: "login" })}">${escape(words.logIn)}</a></p>`;
+    // A row of tabs only where there is more than one.
+    const tabs =
+      shown.length > 1
+        ? shown.map((one) => `<button class="st-tab" type="button" role="tab" data-tab="${one}" aria-selected="${one === tab}" tabindex="${one === tab ? 0 : -1}">${escape(words.tabs[one])}</button>`).join("")
+        : "";
+    const sheet = sheets.get(tab) ?? "";
+    const html = `${top}\n${tabs}\n${sheet}`;
     if (html === this.drawn) return;
     this.drawn = html;
-    redrawKeepingFocus(this.body, () => {
-      this.body.innerHTML = html;
+    redrawKeepingFocus(this.top, () => {
+      this.top.innerHTML = top;
+    });
+    this.tabs.innerHTML = tabs;
+    this.tabs.hidden = !tabs;
+    this.sheet.hidden = !sheet;
+    this.sheet.classList.toggle("first", !!tabs && tab === shown[0]);
+    redrawKeepingFocus(this.sheet, () => {
+      this.sheet.innerHTML = sheet;
     });
   }
 
-  private section(login: Login, world: WorldNow, now: Date): string {
-    const hub = world.accounts.hubs.find((one) => one.hub === login.hub);
-    if (!hub) return "";
-    const computer = isComputer(world);
+  /** What stays at the top for a login: an ask to become a member, who the
+   *  user is, and the devices that came in lately. */
+  private head(login: Login, hub: HubAccounts, world: WorldNow, now: Date): string {
     const { words } = this.options;
     const me = hub.accounts.find((account) => account.name === login.account);
     return `<section class="me-login" data-hub="${escape(login.hub)}" data-account="${escape(login.account)}">
@@ -344,12 +428,17 @@ export class MePage implements Page {
       ${this.card(login, hub, world)}
       ${me?.level === "visitor" ? `<p class="me-note">${escape(words.visitorGives)}</p>` : ""}
       ${this.arrivals(hub.arrivals.filter((arrival) => arrival.account === login.account), hub, world, now)}
-      ${this.given(login, hub, now)}
-      ${this.reaching(login, hub, now)}
-      ${this.devices(login, hub, world, now)}
-      ${this.codes(login, hub, world, now)}
-      <div class="me-leave"><button class="text-button danger-text" type="button" data-act="leave">${glyph("logout", 16)}<span>${escape(computer ? words.leave : words.logout)}</span></button></div>
     </section>`;
+  }
+
+  /** A tab's part for a login, or nothing where it holds nothing; leaving
+   *  the network is always on the devices' sheet, last. */
+  private pane(tab: Tab, login: Login, hub: HubAccounts, world: WorldNow, now: Date): string {
+    const { words } = this.options;
+    if (tab === "given") return this.given(login, hub, now) + this.reaching(login, hub, now);
+    if (tab === "codes") return this.codes(login, hub, world, now);
+    const computer = isComputer(world);
+    return `${this.devices(login, hub, world, now)}<div class="me-leave"><button class="text-button danger-text" type="button" data-act="leave">${glyph("logout", 16)}<span>${escape(computer ? words.leave : words.logout)}</span></button></div>`;
   }
 
   /** Who the user is: a seal with their initial, their name, whether they
@@ -394,7 +483,7 @@ export class MePage implements Page {
     const codes = codesOf(hub, login, now);
     if (!codes.length) return "";
     const rows = codes.map((token) => codeRow(token, login, world.accounts.machine, words.codeRows, (at) => when(at, now)));
-    return part(words.codes, "", `<ul class="me-rows">${rows.join("")}</ul>`);
+    return `<ul class="me-rows">${rows.join("")}</ul>`;
   }
 
   private arrivals(all: Arrival[], hub: HubAccounts, world: WorldNow, now: Date): string {
@@ -432,8 +521,8 @@ export class MePage implements Page {
     const shares = hub.shares.filter((share) => mine.has(share.machine) && !taken(`share\n${share.machine}\n${share.account}`));
     const assists = hub.assists.filter((assist) => mine.has(assist.machine) && !taken(`assist\n${assistKey(assist)}`));
     if (!shares.length && !assists.length) return "";
-    const chip = (label: string, take: string, title: string, more = "", tip = "") =>
-      `<span class="chip"${tip ? ` title="${escape(tip)}"` : ""}><span class="me-chip-label">${escape(label)}</span>${more}<button class="chip-x" type="button" ${take} aria-label="${escape(title)}" title="${escape(title)}">${glyph("close", 12)}</button></span>`;
+    const chip = (label: string, take: string, title: string, more = "", tip = "", mark = "") =>
+      `<span class="chip"${tip ? ` title="${escape(tip)}"` : ""}>${mark}<span class="me-chip-label">${escape(label)}</span>${more}<button class="chip-x" type="button" ${take} aria-label="${escape(title)}" title="${escape(title)}">${glyph("close", 12)}</button></span>`;
     const accounts = [...new Set([...shares.map((share) => share.account), ...assists.map((assist) => assist.account)])].sort((a, b) => a.localeCompare(b));
     const rows = accounts.map((account) => {
       const machines = shares.filter((share) => share.account === account).map((share) => share.machine);
@@ -465,13 +554,22 @@ export class MePage implements Page {
         .filter((assist) => assist.account === account)
         .map((assist) => {
           const home = assist.home ? (assist.home.split(/[\\/]/).filter(Boolean).pop() ?? assist.home) : "";
-          const until = assist.until ? `<span class="chip-more">${glyph("history", 12)}${escape(short(new Date(assist.until), now))}</span>` : "";
-          const daily = assist.daily ? `<span class="chip-more">${escape(words.dailyShort(wholeDollars(assist.daily / 1_000_000)))}</span>` : "";
-          const weekly = assist.weekly ? `<span class="chip-more">${escape(words.weeklyShort(wholeDollars(assist.weekly / 1_000_000)))}</span>` : "";
-          const label = [agentName(assist.agent), assist.machine, home].filter(Boolean).join(" ");
-          return chip(label, `data-act="unassist" data-assist="${escape(assistKey(assist))}"`, words.takeBack(words.assistLabel(`${agentName(assist.agent)} ${assist.machine}`, account)), until + daily + weekly);
+          // Whose login it is, by its mark: the machine and the folder are
+          // what tell one from another. One that ends has a small clock;
+          // until when, and how much a day and a week, are said when it is
+          // pointed at.
+          const label = [assist.machine, home].filter(Boolean).join(" ");
+          const whose = agentName(assist.agent);
+          const ends = assist.until ? `<span class="chip-more">${glyph("history", 12)}</span>` : "";
+          const said = [
+            `${whose} ${label}`,
+            assist.until ? words.untilShort(short(new Date(assist.until), now)) : "",
+            assist.daily ? words.dailyShort(wholeDollars(assist.daily / 1_000_000)) : "",
+            assist.weekly ? words.weeklyShort(wholeDollars(assist.weekly / 1_000_000)) : "",
+          ].filter(Boolean);
+          return chip(label, `data-act="unassist" data-assist="${escape(assistKey(assist))}"`, words.takeBack(words.assistLabel(`${whose} ${assist.machine}`, account)), ends, said.join(" "), glyph(assist.agent === "codex" ? "codex" : "claude", 14));
         });
-      return row(glyph("person", 16), escape(account), escape(words.givenSub(machines.length, loginChips.length)), "", [...groupChips, ...machineChips, ...loginChips].join(""));
+      return row(glyph("person", 16), escape(account), "", "", [...groupChips, ...machineChips, ...loginChips].join(""));
     });
     return part(words.given, "", `<ul class="me-rows">${rows.join("")}</ul>`);
   }
@@ -485,9 +583,11 @@ export class MePage implements Page {
       return row(
         glyph("shield", 16),
         escape(words.reachingLine(acting.machine, owner)),
-        escape(words.reachingSince(when(new Date(acting.since), now))),
+        "",
         "",
         `<button class="text-button quiet-button" type="button" data-act="stop-reaching" data-name="${escape(acting.machine)}">${escape(words.stopReaching)}</button>`,
+        "",
+        words.reachingSince(when(new Date(acting.since), now)),
       );
     });
     return part(words.reaching, words.reachingWhat, `<ul class="me-rows">${rows.join("")}</ul>`);

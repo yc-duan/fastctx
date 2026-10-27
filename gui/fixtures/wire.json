@@ -43,7 +43,8 @@
               }
             }
           },
-          "updates_view": true
+          "updates_view": true,
+          "repair_supported": false
         },
         "available": {
           "version": "1.0.2",
@@ -66,7 +67,9 @@
           "kind": "idle"
         },
         "progress": true,
-        "preferences": true
+        "preferences": true,
+        "repair_supported": false,
+        "repair_routing": false
       },
       {
         "settings": {
@@ -110,7 +113,8 @@
               }
             }
           },
-          "updates_view": true
+          "updates_view": true,
+          "repair_supported": false
         },
         "available": {
           "version": "1.0.2",
@@ -133,7 +137,9 @@
           "kind": "unknown"
         },
         "progress": true,
-        "preferences": true
+        "preferences": true,
+        "repair_supported": false,
+        "repair_routing": false
       },
       {
         "settings": {
@@ -177,7 +183,8 @@
               }
             }
           },
-          "updates_view": true
+          "updates_view": true,
+          "repair_supported": false
         },
         "available": {
           "version": "1.0.2",
@@ -204,7 +211,9 @@
           "total": null
         },
         "progress": true,
-        "preferences": true
+        "preferences": true,
+        "repair_supported": false,
+        "repair_routing": false
       },
       {
         "settings": {
@@ -248,7 +257,8 @@
               }
             }
           },
-          "updates_view": true
+          "updates_view": true,
+          "repair_supported": false
         },
         "available": {
           "version": "1.0.2",
@@ -275,7 +285,9 @@
           "total": 1024
         },
         "progress": true,
-        "preferences": true
+        "preferences": true,
+        "repair_supported": false,
+        "repair_routing": false
       },
       {
         "settings": {
@@ -319,7 +331,8 @@
               }
             }
           },
-          "updates_view": true
+          "updates_view": true,
+          "repair_supported": false
         },
         "available": {
           "version": "1.0.2",
@@ -343,7 +356,9 @@
           "version": "1.0.2"
         },
         "progress": true,
-        "preferences": true
+        "preferences": true,
+        "repair_supported": false,
+        "repair_routing": false
       },
       {
         "settings": {
@@ -387,7 +402,8 @@
               }
             }
           },
-          "updates_view": true
+          "updates_view": true,
+          "repair_supported": false
         },
         "available": {
           "version": "1.0.2",
@@ -411,7 +427,9 @@
           "version": "1.0.2"
         },
         "progress": true,
-        "preferences": true
+        "preferences": true,
+        "repair_supported": false,
+        "repair_routing": false
       },
       {
         "settings": {
@@ -455,7 +473,8 @@
               }
             }
           },
-          "updates_view": true
+          "updates_view": true,
+          "repair_supported": false
         },
         "available": {
           "version": "1.0.2",
@@ -479,7 +498,9 @@
           "version": "1.0.2"
         },
         "progress": true,
-        "preferences": true
+        "preferences": true,
+        "repair_supported": false,
+        "repair_routing": false
       },
       {
         "settings": {
@@ -523,7 +544,8 @@
               }
             }
           },
-          "updates_view": true
+          "updates_view": true,
+          "repair_supported": false
         },
         "available": {
           "version": "1.0.2",
@@ -547,7 +569,9 @@
           "version": "1.0.2"
         },
         "progress": true,
-        "preferences": true
+        "preferences": true,
+        "repair_supported": false,
+        "repair_routing": false
       },
       {
         "settings": {
@@ -591,7 +615,8 @@
               }
             }
           },
-          "updates_view": true
+          "updates_view": true,
+          "repair_supported": false
         },
         "available": {
           "version": "1.0.2",
@@ -615,7 +640,9 @@
           "version": "1.0.2"
         },
         "progress": true,
-        "preferences": true
+        "preferences": true,
+        "repair_supported": false,
+        "repair_routing": false
       },
       {
         "settings": {
@@ -659,7 +686,8 @@
               }
             }
           },
-          "updates_view": true
+          "updates_view": true,
+          "repair_supported": false
         },
         "available": {
           "version": "1.0.2",
@@ -684,7 +712,9 @@
           "phase": "returning_to_service"
         },
         "progress": true,
-        "preferences": true
+        "preferences": true,
+        "repair_supported": false,
+        "repair_routing": false
       },
       {
         "settings": {
@@ -728,7 +758,8 @@
               }
             }
           },
-          "updates_view": true
+          "updates_view": true,
+          "repair_supported": false
         },
         "available": {
           "version": "1.0.2",
@@ -758,7 +789,9 @@
           }
         },
         "progress": true,
-        "preferences": true
+        "preferences": true,
+        "repair_supported": false,
+        "repair_routing": false
       }
     ],
     "checks": [
@@ -1002,10 +1035,12 @@
                   "allowed": true,
                   "reason": null
                 }
-              }
+              },
+              "repair_supported": true
             }
           ],
-          "available": 1
+          "available": 1,
+          "repair_supported": true
         }
       },
       {
@@ -1050,6 +1085,7 @@
         "account": "ada",
         "profile": {
           "version": 4,
+          "memory": false,
           "prompt": "Use concise answers.",
           "claude": {
             "language": "English"
@@ -1099,6 +1135,7 @@
         "account": "ada",
         "profile": {
           "version": 4,
+          "memory": false,
           "prompt": "Use concise answers.",
           "claude": {
             "language": "English"
@@ -2163,6 +2200,215 @@
             "from": 0,
             "to": 42
           }
+        ],
+        "steps": [
+          {
+            "id": "step-0",
+            "job": "j-abc123",
+            "machine": "laptop",
+            "began": "2026-10-14T17:46:40Z",
+            "ended": "2026-10-14T17:47:40Z",
+            "kind": "on",
+            "to": "gpu",
+            "command": "cat /data/fit.csv",
+            "sent": "j-def456",
+            "end": {
+              "kind": "exited",
+              "code": 0
+            },
+            "pipes_to": "lab"
+          },
+          {
+            "id": "step-1",
+            "job": "j-abc123",
+            "machine": "laptop",
+            "began": "2026-10-14T17:47:40Z",
+            "kind": "on",
+            "to": "lab",
+            "command": "wc -l",
+            "sent": "j-ghi789",
+            "fed_by": "j-def456",
+            "tail": "12040"
+          },
+          {
+            "id": "step-2",
+            "job": "j-def456",
+            "machine": "gpu",
+            "began": "2026-10-14T17:48:40Z",
+            "ended": "2026-10-14T17:49:40Z",
+            "kind": "copy",
+            "from": [
+              {
+                "machine": "gpu",
+                "path": "/data/fit.csv"
+              }
+            ],
+            "to": {
+              "machine": "lab",
+              "path": "/srv/in/"
+            },
+            "files": 1,
+            "bytes": 4200000,
+            "unchanged": 0,
+            "problems": [
+              "/data/locked.csv: permission denied"
+            ]
+          },
+          {
+            "id": "step-3",
+            "job": "j-abc123",
+            "machine": "laptop",
+            "began": "2026-10-14T17:49:40Z",
+            "ended": "2026-10-14T17:50:40Z",
+            "kind": "view",
+            "paths": [
+              "/work/plot.png",
+              "/work/paper.pdf"
+            ],
+            "pictures": [
+              {
+                "path": "/work/plot.png",
+                "width": 1200,
+                "height": 800,
+                "mime": "image/png"
+              },
+              {
+                "path": "/work/paper.pdf",
+                "page": 3,
+                "width": 1545,
+                "height": 2000,
+                "mime": "image/png"
+              }
+            ]
+          },
+          {
+            "id": "step-4",
+            "job": "j-abc123",
+            "machine": "laptop",
+            "began": "2026-10-14T17:50:40Z",
+            "ended": "2026-10-14T17:51:40Z",
+            "kind": "wait",
+            "jobs": [
+              {
+                "job": "j-k3x9a2",
+                "machine": "laptop",
+                "at": "2026-10-14T17:49:40Z",
+                "end": {
+                  "kind": "exited",
+                  "code": 1
+                },
+                "tail": "error: 2 tests failed",
+                "command": "cargo test --workspace"
+              },
+              {
+                "job": "j-q8w2e1",
+                "machine": "laptop",
+                "at": "2026-10-14T17:50:40Z",
+                "end": {
+                  "kind": "lost",
+                  "why": "the machine restarted"
+                }
+              }
+            ]
+          },
+          {
+            "id": "step-5",
+            "job": "j-abc123",
+            "machine": "laptop",
+            "began": "2026-10-14T17:51:40Z",
+            "ended": "2026-10-14T17:52:40Z",
+            "kind": "stop",
+            "what": "j-ghi789",
+            "on": "lab",
+            "how": "stopped"
+          },
+          {
+            "id": "step-6",
+            "job": "j-abc123",
+            "machine": "laptop",
+            "began": "2026-10-14T17:52:40Z",
+            "ended": "2026-10-14T17:53:40Z",
+            "kind": "stop",
+            "what": "s-9f2c",
+            "how": "already_stopped"
+          },
+          {
+            "id": "step-7",
+            "job": "j-abc123",
+            "machine": "laptop",
+            "began": "2026-10-14T17:53:40Z",
+            "ended": "2026-10-14T17:54:40Z",
+            "kind": "page",
+            "name": "fit",
+            "town": "ingest",
+            "title": "Fit",
+            "version": 4
+          },
+          {
+            "id": "step-8",
+            "job": "j-abc123",
+            "machine": "laptop",
+            "began": "2026-10-14T17:54:40Z",
+            "ended": "2026-10-14T17:55:40Z",
+            "kind": "project",
+            "town": "ingest"
+          },
+          {
+            "id": "step-9",
+            "job": "j-abc123",
+            "machine": "laptop",
+            "began": "2026-10-14T17:55:40Z",
+            "ended": "2026-10-14T17:56:40Z",
+            "kind": "plan",
+            "version": 7
+          },
+          {
+            "id": "step-10",
+            "job": "j-abc123",
+            "machine": "laptop",
+            "began": "2026-10-14T17:56:40Z",
+            "ended": "2026-10-14T17:57:40Z",
+            "kind": "goal",
+            "mark": "complete"
+          },
+          {
+            "id": "step-11",
+            "job": "j-abc123",
+            "machine": "laptop",
+            "began": "2026-10-14T17:57:40Z",
+            "ended": "2026-10-14T17:58:40Z",
+            "kind": "sense",
+            "sentinel": "s-9f2c",
+            "condition": "the training loss stops falling"
+          },
+          {
+            "id": "step-12",
+            "job": "j-abc123",
+            "machine": "laptop",
+            "began": "2026-10-14T17:58:40Z",
+            "ended": "2026-10-14T17:59:40Z",
+            "kind": "on",
+            "to": "server",
+            "command": "git --version",
+            "end": {
+              "kind": "not_run",
+              "why": "server is offline"
+            }
+          },
+          {
+            "id": "step-13",
+            "job": "j-abc123",
+            "machine": "laptop",
+            "began": "2026-10-14T17:59:40Z",
+            "ended": "2026-10-14T18:00:40Z",
+            "kind": "on",
+            "to": "lab",
+            "command": "sleep 600",
+            "sent": "j-z0z0z0",
+            "end": {
+              "kind": "stopped"
+            }
+          }
         ]
       },
       {
@@ -2290,6 +2536,215 @@
             },
             "from": 0,
             "to": 42
+          }
+        ],
+        "steps": [
+          {
+            "id": "step-0",
+            "job": "j-abc123",
+            "machine": "laptop",
+            "began": "2026-10-14T17:46:40Z",
+            "ended": "2026-10-14T17:47:40Z",
+            "kind": "on",
+            "to": "gpu",
+            "command": "cat /data/fit.csv",
+            "sent": "j-def456",
+            "end": {
+              "kind": "exited",
+              "code": 0
+            },
+            "pipes_to": "lab"
+          },
+          {
+            "id": "step-1",
+            "job": "j-abc123",
+            "machine": "laptop",
+            "began": "2026-10-14T17:47:40Z",
+            "kind": "on",
+            "to": "lab",
+            "command": "wc -l",
+            "sent": "j-ghi789",
+            "fed_by": "j-def456",
+            "tail": "12040"
+          },
+          {
+            "id": "step-2",
+            "job": "j-def456",
+            "machine": "gpu",
+            "began": "2026-10-14T17:48:40Z",
+            "ended": "2026-10-14T17:49:40Z",
+            "kind": "copy",
+            "from": [
+              {
+                "machine": "gpu",
+                "path": "/data/fit.csv"
+              }
+            ],
+            "to": {
+              "machine": "lab",
+              "path": "/srv/in/"
+            },
+            "files": 1,
+            "bytes": 4200000,
+            "unchanged": 0,
+            "problems": [
+              "/data/locked.csv: permission denied"
+            ]
+          },
+          {
+            "id": "step-3",
+            "job": "j-abc123",
+            "machine": "laptop",
+            "began": "2026-10-14T17:49:40Z",
+            "ended": "2026-10-14T17:50:40Z",
+            "kind": "view",
+            "paths": [
+              "/work/plot.png",
+              "/work/paper.pdf"
+            ],
+            "pictures": [
+              {
+                "path": "/work/plot.png",
+                "width": 1200,
+                "height": 800,
+                "mime": "image/png"
+              },
+              {
+                "path": "/work/paper.pdf",
+                "page": 3,
+                "width": 1545,
+                "height": 2000,
+                "mime": "image/png"
+              }
+            ]
+          },
+          {
+            "id": "step-4",
+            "job": "j-abc123",
+            "machine": "laptop",
+            "began": "2026-10-14T17:50:40Z",
+            "ended": "2026-10-14T17:51:40Z",
+            "kind": "wait",
+            "jobs": [
+              {
+                "job": "j-k3x9a2",
+                "machine": "laptop",
+                "at": "2026-10-14T17:49:40Z",
+                "end": {
+                  "kind": "exited",
+                  "code": 1
+                },
+                "tail": "error: 2 tests failed",
+                "command": "cargo test --workspace"
+              },
+              {
+                "job": "j-q8w2e1",
+                "machine": "laptop",
+                "at": "2026-10-14T17:50:40Z",
+                "end": {
+                  "kind": "lost",
+                  "why": "the machine restarted"
+                }
+              }
+            ]
+          },
+          {
+            "id": "step-5",
+            "job": "j-abc123",
+            "machine": "laptop",
+            "began": "2026-10-14T17:51:40Z",
+            "ended": "2026-10-14T17:52:40Z",
+            "kind": "stop",
+            "what": "j-ghi789",
+            "on": "lab",
+            "how": "stopped"
+          },
+          {
+            "id": "step-6",
+            "job": "j-abc123",
+            "machine": "laptop",
+            "began": "2026-10-14T17:52:40Z",
+            "ended": "2026-10-14T17:53:40Z",
+            "kind": "stop",
+            "what": "s-9f2c",
+            "how": "already_stopped"
+          },
+          {
+            "id": "step-7",
+            "job": "j-abc123",
+            "machine": "laptop",
+            "began": "2026-10-14T17:53:40Z",
+            "ended": "2026-10-14T17:54:40Z",
+            "kind": "page",
+            "name": "fit",
+            "town": "ingest",
+            "title": "Fit",
+            "version": 4
+          },
+          {
+            "id": "step-8",
+            "job": "j-abc123",
+            "machine": "laptop",
+            "began": "2026-10-14T17:54:40Z",
+            "ended": "2026-10-14T17:55:40Z",
+            "kind": "project",
+            "town": "ingest"
+          },
+          {
+            "id": "step-9",
+            "job": "j-abc123",
+            "machine": "laptop",
+            "began": "2026-10-14T17:55:40Z",
+            "ended": "2026-10-14T17:56:40Z",
+            "kind": "plan",
+            "version": 7
+          },
+          {
+            "id": "step-10",
+            "job": "j-abc123",
+            "machine": "laptop",
+            "began": "2026-10-14T17:56:40Z",
+            "ended": "2026-10-14T17:57:40Z",
+            "kind": "goal",
+            "mark": "complete"
+          },
+          {
+            "id": "step-11",
+            "job": "j-abc123",
+            "machine": "laptop",
+            "began": "2026-10-14T17:57:40Z",
+            "ended": "2026-10-14T17:58:40Z",
+            "kind": "sense",
+            "sentinel": "s-9f2c",
+            "condition": "the training loss stops falling"
+          },
+          {
+            "id": "step-12",
+            "job": "j-abc123",
+            "machine": "laptop",
+            "began": "2026-10-14T17:58:40Z",
+            "ended": "2026-10-14T17:59:40Z",
+            "kind": "on",
+            "to": "server",
+            "command": "git --version",
+            "end": {
+              "kind": "not_run",
+              "why": "server is offline"
+            }
+          },
+          {
+            "id": "step-13",
+            "job": "j-abc123",
+            "machine": "laptop",
+            "began": "2026-10-14T17:59:40Z",
+            "ended": "2026-10-14T18:00:40Z",
+            "kind": "on",
+            "to": "lab",
+            "command": "sleep 600",
+            "sent": "j-z0z0z0",
+            "end": {
+              "kind": "stopped"
+            }
           }
         ]
       },
@@ -2423,6 +2878,215 @@
             "from": 0,
             "to": 42
           }
+        ],
+        "steps": [
+          {
+            "id": "step-0",
+            "job": "j-abc123",
+            "machine": "laptop",
+            "began": "2026-10-14T17:46:40Z",
+            "ended": "2026-10-14T17:47:40Z",
+            "kind": "on",
+            "to": "gpu",
+            "command": "cat /data/fit.csv",
+            "sent": "j-def456",
+            "end": {
+              "kind": "exited",
+              "code": 0
+            },
+            "pipes_to": "lab"
+          },
+          {
+            "id": "step-1",
+            "job": "j-abc123",
+            "machine": "laptop",
+            "began": "2026-10-14T17:47:40Z",
+            "kind": "on",
+            "to": "lab",
+            "command": "wc -l",
+            "sent": "j-ghi789",
+            "fed_by": "j-def456",
+            "tail": "12040"
+          },
+          {
+            "id": "step-2",
+            "job": "j-def456",
+            "machine": "gpu",
+            "began": "2026-10-14T17:48:40Z",
+            "ended": "2026-10-14T17:49:40Z",
+            "kind": "copy",
+            "from": [
+              {
+                "machine": "gpu",
+                "path": "/data/fit.csv"
+              }
+            ],
+            "to": {
+              "machine": "lab",
+              "path": "/srv/in/"
+            },
+            "files": 1,
+            "bytes": 4200000,
+            "unchanged": 0,
+            "problems": [
+              "/data/locked.csv: permission denied"
+            ]
+          },
+          {
+            "id": "step-3",
+            "job": "j-abc123",
+            "machine": "laptop",
+            "began": "2026-10-14T17:49:40Z",
+            "ended": "2026-10-14T17:50:40Z",
+            "kind": "view",
+            "paths": [
+              "/work/plot.png",
+              "/work/paper.pdf"
+            ],
+            "pictures": [
+              {
+                "path": "/work/plot.png",
+                "width": 1200,
+                "height": 800,
+                "mime": "image/png"
+              },
+              {
+                "path": "/work/paper.pdf",
+                "page": 3,
+                "width": 1545,
+                "height": 2000,
+                "mime": "image/png"
+              }
+            ]
+          },
+          {
+            "id": "step-4",
+            "job": "j-abc123",
+            "machine": "laptop",
+            "began": "2026-10-14T17:50:40Z",
+            "ended": "2026-10-14T17:51:40Z",
+            "kind": "wait",
+            "jobs": [
+              {
+                "job": "j-k3x9a2",
+                "machine": "laptop",
+                "at": "2026-10-14T17:49:40Z",
+                "end": {
+                  "kind": "exited",
+                  "code": 1
+                },
+                "tail": "error: 2 tests failed",
+                "command": "cargo test --workspace"
+              },
+              {
+                "job": "j-q8w2e1",
+                "machine": "laptop",
+                "at": "2026-10-14T17:50:40Z",
+                "end": {
+                  "kind": "lost",
+                  "why": "the machine restarted"
+                }
+              }
+            ]
+          },
+          {
+            "id": "step-5",
+            "job": "j-abc123",
+            "machine": "laptop",
+            "began": "2026-10-14T17:51:40Z",
+            "ended": "2026-10-14T17:52:40Z",
+            "kind": "stop",
+            "what": "j-ghi789",
+            "on": "lab",
+            "how": "stopped"
+          },
+          {
+            "id": "step-6",
+            "job": "j-abc123",
+            "machine": "laptop",
+            "began": "2026-10-14T17:52:40Z",
+            "ended": "2026-10-14T17:53:40Z",
+            "kind": "stop",
+            "what": "s-9f2c",
+            "how": "already_stopped"
+          },
+          {
+            "id": "step-7",
+            "job": "j-abc123",
+            "machine": "laptop",
+            "began": "2026-10-14T17:53:40Z",
+            "ended": "2026-10-14T17:54:40Z",
+            "kind": "page",
+            "name": "fit",
+            "town": "ingest",
+            "title": "Fit",
+            "version": 4
+          },
+          {
+            "id": "step-8",
+            "job": "j-abc123",
+            "machine": "laptop",
+            "began": "2026-10-14T17:54:40Z",
+            "ended": "2026-10-14T17:55:40Z",
+            "kind": "project",
+            "town": "ingest"
+          },
+          {
+            "id": "step-9",
+            "job": "j-abc123",
+            "machine": "laptop",
+            "began": "2026-10-14T17:55:40Z",
+            "ended": "2026-10-14T17:56:40Z",
+            "kind": "plan",
+            "version": 7
+          },
+          {
+            "id": "step-10",
+            "job": "j-abc123",
+            "machine": "laptop",
+            "began": "2026-10-14T17:56:40Z",
+            "ended": "2026-10-14T17:57:40Z",
+            "kind": "goal",
+            "mark": "complete"
+          },
+          {
+            "id": "step-11",
+            "job": "j-abc123",
+            "machine": "laptop",
+            "began": "2026-10-14T17:57:40Z",
+            "ended": "2026-10-14T17:58:40Z",
+            "kind": "sense",
+            "sentinel": "s-9f2c",
+            "condition": "the training loss stops falling"
+          },
+          {
+            "id": "step-12",
+            "job": "j-abc123",
+            "machine": "laptop",
+            "began": "2026-10-14T17:58:40Z",
+            "ended": "2026-10-14T17:59:40Z",
+            "kind": "on",
+            "to": "server",
+            "command": "git --version",
+            "end": {
+              "kind": "not_run",
+              "why": "server is offline"
+            }
+          },
+          {
+            "id": "step-13",
+            "job": "j-abc123",
+            "machine": "laptop",
+            "began": "2026-10-14T17:59:40Z",
+            "ended": "2026-10-14T18:00:40Z",
+            "kind": "on",
+            "to": "lab",
+            "command": "sleep 600",
+            "sent": "j-z0z0z0",
+            "end": {
+              "kind": "stopped"
+            }
+          }
         ]
       },
       {
@@ -2550,6 +3214,215 @@
             },
             "from": 0,
             "to": 42
+          }
+        ],
+        "steps": [
+          {
+            "id": "step-0",
+            "job": "j-abc123",
+            "machine": "laptop",
+            "began": "2026-10-14T17:46:40Z",
+            "ended": "2026-10-14T17:47:40Z",
+            "kind": "on",
+            "to": "gpu",
+            "command": "cat /data/fit.csv",
+            "sent": "j-def456",
+            "end": {
+              "kind": "exited",
+              "code": 0
+            },
+            "pipes_to": "lab"
+          },
+          {
+            "id": "step-1",
+            "job": "j-abc123",
+            "machine": "laptop",
+            "began": "2026-10-14T17:47:40Z",
+            "kind": "on",
+            "to": "lab",
+            "command": "wc -l",
+            "sent": "j-ghi789",
+            "fed_by": "j-def456",
+            "tail": "12040"
+          },
+          {
+            "id": "step-2",
+            "job": "j-def456",
+            "machine": "gpu",
+            "began": "2026-10-14T17:48:40Z",
+            "ended": "2026-10-14T17:49:40Z",
+            "kind": "copy",
+            "from": [
+              {
+                "machine": "gpu",
+                "path": "/data/fit.csv"
+              }
+            ],
+            "to": {
+              "machine": "lab",
+              "path": "/srv/in/"
+            },
+            "files": 1,
+            "bytes": 4200000,
+            "unchanged": 0,
+            "problems": [
+              "/data/locked.csv: permission denied"
+            ]
+          },
+          {
+            "id": "step-3",
+            "job": "j-abc123",
+            "machine": "laptop",
+            "began": "2026-10-14T17:49:40Z",
+            "ended": "2026-10-14T17:50:40Z",
+            "kind": "view",
+            "paths": [
+              "/work/plot.png",
+              "/work/paper.pdf"
+            ],
+            "pictures": [
+              {
+                "path": "/work/plot.png",
+                "width": 1200,
+                "height": 800,
+                "mime": "image/png"
+              },
+              {
+                "path": "/work/paper.pdf",
+                "page": 3,
+                "width": 1545,
+                "height": 2000,
+                "mime": "image/png"
+              }
+            ]
+          },
+          {
+            "id": "step-4",
+            "job": "j-abc123",
+            "machine": "laptop",
+            "began": "2026-10-14T17:50:40Z",
+            "ended": "2026-10-14T17:51:40Z",
+            "kind": "wait",
+            "jobs": [
+              {
+                "job": "j-k3x9a2",
+                "machine": "laptop",
+                "at": "2026-10-14T17:49:40Z",
+                "end": {
+                  "kind": "exited",
+                  "code": 1
+                },
+                "tail": "error: 2 tests failed",
+                "command": "cargo test --workspace"
+              },
+              {
+                "job": "j-q8w2e1",
+                "machine": "laptop",
+                "at": "2026-10-14T17:50:40Z",
+                "end": {
+                  "kind": "lost",
+                  "why": "the machine restarted"
+                }
+              }
+            ]
+          },
+          {
+            "id": "step-5",
+            "job": "j-abc123",
+            "machine": "laptop",
+            "began": "2026-10-14T17:51:40Z",
+            "ended": "2026-10-14T17:52:40Z",
+            "kind": "stop",
+            "what": "j-ghi789",
+            "on": "lab",
+            "how": "stopped"
+          },
+          {
+            "id": "step-6",
+            "job": "j-abc123",
+            "machine": "laptop",
+            "began": "2026-10-14T17:52:40Z",
+            "ended": "2026-10-14T17:53:40Z",
+            "kind": "stop",
+            "what": "s-9f2c",
+            "how": "already_stopped"
+          },
+          {
+            "id": "step-7",
+            "job": "j-abc123",
+            "machine": "laptop",
+            "began": "2026-10-14T17:53:40Z",
+            "ended": "2026-10-14T17:54:40Z",
+            "kind": "page",
+            "name": "fit",
+            "town": "ingest",
+            "title": "Fit",
+            "version": 4
+          },
+          {
+            "id": "step-8",
+            "job": "j-abc123",
+            "machine": "laptop",
+            "began": "2026-10-14T17:54:40Z",
+            "ended": "2026-10-14T17:55:40Z",
+            "kind": "project",
+            "town": "ingest"
+          },
+          {
+            "id": "step-9",
+            "job": "j-abc123",
+            "machine": "laptop",
+            "began": "2026-10-14T17:55:40Z",
+            "ended": "2026-10-14T17:56:40Z",
+            "kind": "plan",
+            "version": 7
+          },
+          {
+            "id": "step-10",
+            "job": "j-abc123",
+            "machine": "laptop",
+            "began": "2026-10-14T17:56:40Z",
+            "ended": "2026-10-14T17:57:40Z",
+            "kind": "goal",
+            "mark": "complete"
+          },
+          {
+            "id": "step-11",
+            "job": "j-abc123",
+            "machine": "laptop",
+            "began": "2026-10-14T17:57:40Z",
+            "ended": "2026-10-14T17:58:40Z",
+            "kind": "sense",
+            "sentinel": "s-9f2c",
+            "condition": "the training loss stops falling"
+          },
+          {
+            "id": "step-12",
+            "job": "j-abc123",
+            "machine": "laptop",
+            "began": "2026-10-14T17:58:40Z",
+            "ended": "2026-10-14T17:59:40Z",
+            "kind": "on",
+            "to": "server",
+            "command": "git --version",
+            "end": {
+              "kind": "not_run",
+              "why": "server is offline"
+            }
+          },
+          {
+            "id": "step-13",
+            "job": "j-abc123",
+            "machine": "laptop",
+            "began": "2026-10-14T17:59:40Z",
+            "ended": "2026-10-14T18:00:40Z",
+            "kind": "on",
+            "to": "lab",
+            "command": "sleep 600",
+            "sent": "j-z0z0z0",
+            "end": {
+              "kind": "stopped"
+            }
           }
         ]
       },
@@ -2680,6 +3553,215 @@
             "from": 0,
             "to": 42
           }
+        ],
+        "steps": [
+          {
+            "id": "step-0",
+            "job": "j-abc123",
+            "machine": "laptop",
+            "began": "2026-10-14T17:46:40Z",
+            "ended": "2026-10-14T17:47:40Z",
+            "kind": "on",
+            "to": "gpu",
+            "command": "cat /data/fit.csv",
+            "sent": "j-def456",
+            "end": {
+              "kind": "exited",
+              "code": 0
+            },
+            "pipes_to": "lab"
+          },
+          {
+            "id": "step-1",
+            "job": "j-abc123",
+            "machine": "laptop",
+            "began": "2026-10-14T17:47:40Z",
+            "kind": "on",
+            "to": "lab",
+            "command": "wc -l",
+            "sent": "j-ghi789",
+            "fed_by": "j-def456",
+            "tail": "12040"
+          },
+          {
+            "id": "step-2",
+            "job": "j-def456",
+            "machine": "gpu",
+            "began": "2026-10-14T17:48:40Z",
+            "ended": "2026-10-14T17:49:40Z",
+            "kind": "copy",
+            "from": [
+              {
+                "machine": "gpu",
+                "path": "/data/fit.csv"
+              }
+            ],
+            "to": {
+              "machine": "lab",
+              "path": "/srv/in/"
+            },
+            "files": 1,
+            "bytes": 4200000,
+            "unchanged": 0,
+            "problems": [
+              "/data/locked.csv: permission denied"
+            ]
+          },
+          {
+            "id": "step-3",
+            "job": "j-abc123",
+            "machine": "laptop",
+            "began": "2026-10-14T17:49:40Z",
+            "ended": "2026-10-14T17:50:40Z",
+            "kind": "view",
+            "paths": [
+              "/work/plot.png",
+              "/work/paper.pdf"
+            ],
+            "pictures": [
+              {
+                "path": "/work/plot.png",
+                "width": 1200,
+                "height": 800,
+                "mime": "image/png"
+              },
+              {
+                "path": "/work/paper.pdf",
+                "page": 3,
+                "width": 1545,
+                "height": 2000,
+                "mime": "image/png"
+              }
+            ]
+          },
+          {
+            "id": "step-4",
+            "job": "j-abc123",
+            "machine": "laptop",
+            "began": "2026-10-14T17:50:40Z",
+            "ended": "2026-10-14T17:51:40Z",
+            "kind": "wait",
+            "jobs": [
+              {
+                "job": "j-k3x9a2",
+                "machine": "laptop",
+                "at": "2026-10-14T17:49:40Z",
+                "end": {
+                  "kind": "exited",
+                  "code": 1
+                },
+                "tail": "error: 2 tests failed",
+                "command": "cargo test --workspace"
+              },
+              {
+                "job": "j-q8w2e1",
+                "machine": "laptop",
+                "at": "2026-10-14T17:50:40Z",
+                "end": {
+                  "kind": "lost",
+                  "why": "the machine restarted"
+                }
+              }
+            ]
+          },
+          {
+            "id": "step-5",
+            "job": "j-abc123",
+            "machine": "laptop",
+            "began": "2026-10-14T17:51:40Z",
+            "ended": "2026-10-14T17:52:40Z",
+            "kind": "stop",
+            "what": "j-ghi789",
+            "on": "lab",
+            "how": "stopped"
+          },
+          {
+            "id": "step-6",
+            "job": "j-abc123",
+            "machine": "laptop",
+            "began": "2026-10-14T17:52:40Z",
+            "ended": "2026-10-14T17:53:40Z",
+            "kind": "stop",
+            "what": "s-9f2c",
+            "how": "already_stopped"
+          },
+          {
+            "id": "step-7",
+            "job": "j-abc123",
+            "machine": "laptop",
+            "began": "2026-10-14T17:53:40Z",
+            "ended": "2026-10-14T17:54:40Z",
+            "kind": "page",
+            "name": "fit",
+            "town": "ingest",
+            "title": "Fit",
+            "version": 4
+          },
+          {
+            "id": "step-8",
+            "job": "j-abc123",
+            "machine": "laptop",
+            "began": "2026-10-14T17:54:40Z",
+            "ended": "2026-10-14T17:55:40Z",
+            "kind": "project",
+            "town": "ingest"
+          },
+          {
+            "id": "step-9",
+            "job": "j-abc123",
+            "machine": "laptop",
+            "began": "2026-10-14T17:55:40Z",
+            "ended": "2026-10-14T17:56:40Z",
+            "kind": "plan",
+            "version": 7
+          },
+          {
+            "id": "step-10",
+            "job": "j-abc123",
+            "machine": "laptop",
+            "began": "2026-10-14T17:56:40Z",
+            "ended": "2026-10-14T17:57:40Z",
+            "kind": "goal",
+            "mark": "complete"
+          },
+          {
+            "id": "step-11",
+            "job": "j-abc123",
+            "machine": "laptop",
+            "began": "2026-10-14T17:57:40Z",
+            "ended": "2026-10-14T17:58:40Z",
+            "kind": "sense",
+            "sentinel": "s-9f2c",
+            "condition": "the training loss stops falling"
+          },
+          {
+            "id": "step-12",
+            "job": "j-abc123",
+            "machine": "laptop",
+            "began": "2026-10-14T17:58:40Z",
+            "ended": "2026-10-14T17:59:40Z",
+            "kind": "on",
+            "to": "server",
+            "command": "git --version",
+            "end": {
+              "kind": "not_run",
+              "why": "server is offline"
+            }
+          },
+          {
+            "id": "step-13",
+            "job": "j-abc123",
+            "machine": "laptop",
+            "began": "2026-10-14T17:59:40Z",
+            "ended": "2026-10-14T18:00:40Z",
+            "kind": "on",
+            "to": "lab",
+            "command": "sleep 600",
+            "sent": "j-z0z0z0",
+            "end": {
+              "kind": "stopped"
+            }
+          }
         ]
       },
       {
@@ -2809,6 +3891,215 @@
             "from": 0,
             "to": 42
           }
+        ],
+        "steps": [
+          {
+            "id": "step-0",
+            "job": "j-abc123",
+            "machine": "laptop",
+            "began": "2026-10-14T17:46:40Z",
+            "ended": "2026-10-14T17:47:40Z",
+            "kind": "on",
+            "to": "gpu",
+            "command": "cat /data/fit.csv",
+            "sent": "j-def456",
+            "end": {
+              "kind": "exited",
+              "code": 0
+            },
+            "pipes_to": "lab"
+          },
+          {
+            "id": "step-1",
+            "job": "j-abc123",
+            "machine": "laptop",
+            "began": "2026-10-14T17:47:40Z",
+            "kind": "on",
+            "to": "lab",
+            "command": "wc -l",
+            "sent": "j-ghi789",
+            "fed_by": "j-def456",
+            "tail": "12040"
+          },
+          {
+            "id": "step-2",
+            "job": "j-def456",
+            "machine": "gpu",
+            "began": "2026-10-14T17:48:40Z",
+            "ended": "2026-10-14T17:49:40Z",
+            "kind": "copy",
+            "from": [
+              {
+                "machine": "gpu",
+                "path": "/data/fit.csv"
+              }
+            ],
+            "to": {
+              "machine": "lab",
+              "path": "/srv/in/"
+            },
+            "files": 1,
+            "bytes": 4200000,
+            "unchanged": 0,
+            "problems": [
+              "/data/locked.csv: permission denied"
+            ]
+          },
+          {
+            "id": "step-3",
+            "job": "j-abc123",
+            "machine": "laptop",
+            "began": "2026-10-14T17:49:40Z",
+            "ended": "2026-10-14T17:50:40Z",
+            "kind": "view",
+            "paths": [
+              "/work/plot.png",
+              "/work/paper.pdf"
+            ],
+            "pictures": [
+              {
+                "path": "/work/plot.png",
+                "width": 1200,
+                "height": 800,
+                "mime": "image/png"
+              },
+              {
+                "path": "/work/paper.pdf",
+                "page": 3,
+                "width": 1545,
+                "height": 2000,
+                "mime": "image/png"
+              }
+            ]
+          },
+          {
+            "id": "step-4",
+            "job": "j-abc123",
+            "machine": "laptop",
+            "began": "2026-10-14T17:50:40Z",
+            "ended": "2026-10-14T17:51:40Z",
+            "kind": "wait",
+            "jobs": [
+              {
+                "job": "j-k3x9a2",
+                "machine": "laptop",
+                "at": "2026-10-14T17:49:40Z",
+                "end": {
+                  "kind": "exited",
+                  "code": 1
+                },
+                "tail": "error: 2 tests failed",
+                "command": "cargo test --workspace"
+              },
+              {
+                "job": "j-q8w2e1",
+                "machine": "laptop",
+                "at": "2026-10-14T17:50:40Z",
+                "end": {
+                  "kind": "lost",
+                  "why": "the machine restarted"
+                }
+              }
+            ]
+          },
+          {
+            "id": "step-5",
+            "job": "j-abc123",
+            "machine": "laptop",
+            "began": "2026-10-14T17:51:40Z",
+            "ended": "2026-10-14T17:52:40Z",
+            "kind": "stop",
+            "what": "j-ghi789",
+            "on": "lab",
+            "how": "stopped"
+          },
+          {
+            "id": "step-6",
+            "job": "j-abc123",
+            "machine": "laptop",
+            "began": "2026-10-14T17:52:40Z",
+            "ended": "2026-10-14T17:53:40Z",
+            "kind": "stop",
+            "what": "s-9f2c",
+            "how": "already_stopped"
+          },
+          {
+            "id": "step-7",
+            "job": "j-abc123",
+            "machine": "laptop",
+            "began": "2026-10-14T17:53:40Z",
+            "ended": "2026-10-14T17:54:40Z",
+            "kind": "page",
+            "name": "fit",
+            "town": "ingest",
+            "title": "Fit",
+            "version": 4
+          },
+          {
+            "id": "step-8",
+            "job": "j-abc123",
+            "machine": "laptop",
+            "began": "2026-10-14T17:54:40Z",
+            "ended": "2026-10-14T17:55:40Z",
+            "kind": "project",
+            "town": "ingest"
+          },
+          {
+            "id": "step-9",
+            "job": "j-abc123",
+            "machine": "laptop",
+            "began": "2026-10-14T17:55:40Z",
+            "ended": "2026-10-14T17:56:40Z",
+            "kind": "plan",
+            "version": 7
+          },
+          {
+            "id": "step-10",
+            "job": "j-abc123",
+            "machine": "laptop",
+            "began": "2026-10-14T17:56:40Z",
+            "ended": "2026-10-14T17:57:40Z",
+            "kind": "goal",
+            "mark": "complete"
+          },
+          {
+            "id": "step-11",
+            "job": "j-abc123",
+            "machine": "laptop",
+            "began": "2026-10-14T17:57:40Z",
+            "ended": "2026-10-14T17:58:40Z",
+            "kind": "sense",
+            "sentinel": "s-9f2c",
+            "condition": "the training loss stops falling"
+          },
+          {
+            "id": "step-12",
+            "job": "j-abc123",
+            "machine": "laptop",
+            "began": "2026-10-14T17:58:40Z",
+            "ended": "2026-10-14T17:59:40Z",
+            "kind": "on",
+            "to": "server",
+            "command": "git --version",
+            "end": {
+              "kind": "not_run",
+              "why": "server is offline"
+            }
+          },
+          {
+            "id": "step-13",
+            "job": "j-abc123",
+            "machine": "laptop",
+            "began": "2026-10-14T17:59:40Z",
+            "ended": "2026-10-14T18:00:40Z",
+            "kind": "on",
+            "to": "lab",
+            "command": "sleep 600",
+            "sent": "j-z0z0z0",
+            "end": {
+              "kind": "stopped"
+            }
+          }
         ]
       }
     ],
@@ -2934,6 +4225,36 @@
               "fact": "00112233445566778899aabbccddeeff-0"
             }
           }
+        ],
+        "steps": [
+          {
+            "id": "step-0",
+            "job": "j-abc123",
+            "machine": "laptop",
+            "began": "2026-10-14T17:46:40Z",
+            "ended": "2026-10-14T17:47:40Z",
+            "kind": "on",
+            "to": "gpu",
+            "command": "cat /data/fit.csv",
+            "sent": "j-def456",
+            "end": {
+              "kind": "exited",
+              "code": 0
+            },
+            "pipes_to": "lab"
+          },
+          {
+            "id": "step-1",
+            "job": "j-abc123",
+            "machine": "laptop",
+            "began": "2026-10-14T17:47:40Z",
+            "kind": "on",
+            "to": "lab",
+            "command": "wc -l",
+            "sent": "j-ghi789",
+            "fed_by": "j-def456",
+            "tail": "12040"
+          }
         ]
       }
     ],
@@ -3008,6 +4329,20 @@
               "ms": 38
             },
             "me": "desktop",
+            "hub_machine": "server",
+            "machine_notices": [
+              {
+                "id": 42,
+                "at": "2026-10-09T08:30:00Z",
+                "account": "ada",
+                "machine": "laptop",
+                "by": "bo",
+                "action": {
+                  "kind": "rename",
+                  "to": "workstation"
+                }
+              }
+            ],
             "renames": true,
             "managed": true,
             "roles": true,
@@ -4506,6 +5841,142 @@
       },
       {
         "at": "2026-10-04T12:06:07.123456789Z",
+        "event": "heard",
+        "delivery": "goal-question-1",
+        "turn": "turn-1",
+        "from": {
+          "kind": "resident",
+          "address": {
+            "machine": "desktop",
+            "resident": "codex-ab12"
+          }
+        },
+        "text": "Question from a colleague: which output format?",
+        "notice": {
+          "kind": "words",
+          "from": {
+            "kind": "resident",
+            "address": {
+              "machine": "desktop",
+              "resident": "codex-ab12"
+            }
+          },
+          "text": "Question from a colleague: which output format?",
+          "goal_question": {
+            "id": "goal-question-1",
+            "colleague": {
+              "machine": "desktop",
+              "resident": "codex-ab12"
+            },
+            "account": {
+              "hub": "w-0123456789abcdef",
+              "account": "ada"
+            },
+            "questions": [
+              {
+                "header": "Format",
+                "multiSelect": false,
+                "options": [
+                  {
+                    "description": "Plain lines",
+                    "label": "Text"
+                  },
+                  {
+                    "label": "Table"
+                  }
+                ],
+                "question": "Which output format?"
+              }
+            ]
+          }
+        }
+      },
+      {
+        "at": "2026-10-04T12:06:07.123456789Z",
+        "event": "heard",
+        "delivery": "goal-result-1",
+        "turn": "turn-1",
+        "from": {
+          "kind": "resident",
+          "address": {
+            "machine": "desktop",
+            "resident": "codex-ab12"
+          }
+        },
+        "text": "=== colleague codex-ab12 on desktop (goal complete, 2h14m) ===\nOriginal report.\n=== what it did: fastctx w codex-ab12 ===",
+        "notice": {
+          "kind": "words",
+          "from": {
+            "kind": "resident",
+            "address": {
+              "machine": "desktop",
+              "resident": "codex-ab12"
+            }
+          },
+          "text": "=== colleague codex-ab12 on desktop (goal complete, 2h14m) ===\nOriginal report.\n=== what it did: fastctx w codex-ab12 ===",
+          "goal_report": {
+            "id": "goal-result-1",
+            "completion": "goal-completion-1",
+            "colleague": {
+              "machine": "desktop",
+              "resident": "codex-ab12"
+            },
+            "account": {
+              "hub": "w-0123456789abcdef",
+              "account": "ada"
+            },
+            "shown": {
+              "label": "fit the model",
+              "status": "complete",
+              "started_at": "2026-10-23T08:00:00Z",
+              "ended_at": "2026-10-23T10:14:00Z",
+              "text": "Original report."
+            }
+          }
+        }
+      },
+      {
+        "at": "2026-10-04T12:06:07.123456789Z",
+        "event": "finished",
+        "turn": "turn-1",
+        "item": {
+          "id": "goal-question-card",
+          "detail": {
+            "delivery": "async",
+            "fastctx_goal_question": {
+              "agent_id": null,
+              "questions": [
+                {
+                  "options": [
+                    {
+                      "label": "Text"
+                    },
+                    {
+                      "label": "Table"
+                    }
+                  ],
+                  "question": "Which output format?"
+                }
+              ],
+              "tool_use_id": "question-tool"
+            },
+            "questions": [
+              {
+                "multiSelect": false,
+                "options": [
+                  "Text",
+                  "Table"
+                ],
+                "title": "Which output format?"
+              }
+            ]
+          },
+          "kind": "message",
+          "text": "Which output format?"
+        }
+      },
+      {
+        "at": "2026-10-04T12:06:07.123456789Z",
         "event": "began",
         "turn": "turn-1",
         "item": {
@@ -4995,6 +6466,215 @@
                 },
                 "from": 0,
                 "to": 42
+              }
+            ],
+            "steps": [
+              {
+                "id": "step-0",
+                "job": "j-abc123",
+                "machine": "laptop",
+                "began": "2026-10-14T17:46:40Z",
+                "ended": "2026-10-14T17:47:40Z",
+                "kind": "on",
+                "to": "gpu",
+                "command": "cat /data/fit.csv",
+                "sent": "j-def456",
+                "end": {
+                  "kind": "exited",
+                  "code": 0
+                },
+                "pipes_to": "lab"
+              },
+              {
+                "id": "step-1",
+                "job": "j-abc123",
+                "machine": "laptop",
+                "began": "2026-10-14T17:47:40Z",
+                "kind": "on",
+                "to": "lab",
+                "command": "wc -l",
+                "sent": "j-ghi789",
+                "fed_by": "j-def456",
+                "tail": "12040"
+              },
+              {
+                "id": "step-2",
+                "job": "j-def456",
+                "machine": "gpu",
+                "began": "2026-10-14T17:48:40Z",
+                "ended": "2026-10-14T17:49:40Z",
+                "kind": "copy",
+                "from": [
+                  {
+                    "machine": "gpu",
+                    "path": "/data/fit.csv"
+                  }
+                ],
+                "to": {
+                  "machine": "lab",
+                  "path": "/srv/in/"
+                },
+                "files": 1,
+                "bytes": 4200000,
+                "unchanged": 0,
+                "problems": [
+                  "/data/locked.csv: permission denied"
+                ]
+              },
+              {
+                "id": "step-3",
+                "job": "j-abc123",
+                "machine": "laptop",
+                "began": "2026-10-14T17:49:40Z",
+                "ended": "2026-10-14T17:50:40Z",
+                "kind": "view",
+                "paths": [
+                  "/work/plot.png",
+                  "/work/paper.pdf"
+                ],
+                "pictures": [
+                  {
+                    "path": "/work/plot.png",
+                    "width": 1200,
+                    "height": 800,
+                    "mime": "image/png"
+                  },
+                  {
+                    "path": "/work/paper.pdf",
+                    "page": 3,
+                    "width": 1545,
+                    "height": 2000,
+                    "mime": "image/png"
+                  }
+                ]
+              },
+              {
+                "id": "step-4",
+                "job": "j-abc123",
+                "machine": "laptop",
+                "began": "2026-10-14T17:50:40Z",
+                "ended": "2026-10-14T17:51:40Z",
+                "kind": "wait",
+                "jobs": [
+                  {
+                    "job": "j-k3x9a2",
+                    "machine": "laptop",
+                    "at": "2026-10-14T17:49:40Z",
+                    "end": {
+                      "kind": "exited",
+                      "code": 1
+                    },
+                    "tail": "error: 2 tests failed",
+                    "command": "cargo test --workspace"
+                  },
+                  {
+                    "job": "j-q8w2e1",
+                    "machine": "laptop",
+                    "at": "2026-10-14T17:50:40Z",
+                    "end": {
+                      "kind": "lost",
+                      "why": "the machine restarted"
+                    }
+                  }
+                ]
+              },
+              {
+                "id": "step-5",
+                "job": "j-abc123",
+                "machine": "laptop",
+                "began": "2026-10-14T17:51:40Z",
+                "ended": "2026-10-14T17:52:40Z",
+                "kind": "stop",
+                "what": "j-ghi789",
+                "on": "lab",
+                "how": "stopped"
+              },
+              {
+                "id": "step-6",
+                "job": "j-abc123",
+                "machine": "laptop",
+                "began": "2026-10-14T17:52:40Z",
+                "ended": "2026-10-14T17:53:40Z",
+                "kind": "stop",
+                "what": "s-9f2c",
+                "how": "already_stopped"
+              },
+              {
+                "id": "step-7",
+                "job": "j-abc123",
+                "machine": "laptop",
+                "began": "2026-10-14T17:53:40Z",
+                "ended": "2026-10-14T17:54:40Z",
+                "kind": "page",
+                "name": "fit",
+                "town": "ingest",
+                "title": "Fit",
+                "version": 4
+              },
+              {
+                "id": "step-8",
+                "job": "j-abc123",
+                "machine": "laptop",
+                "began": "2026-10-14T17:54:40Z",
+                "ended": "2026-10-14T17:55:40Z",
+                "kind": "project",
+                "town": "ingest"
+              },
+              {
+                "id": "step-9",
+                "job": "j-abc123",
+                "machine": "laptop",
+                "began": "2026-10-14T17:55:40Z",
+                "ended": "2026-10-14T17:56:40Z",
+                "kind": "plan",
+                "version": 7
+              },
+              {
+                "id": "step-10",
+                "job": "j-abc123",
+                "machine": "laptop",
+                "began": "2026-10-14T17:56:40Z",
+                "ended": "2026-10-14T17:57:40Z",
+                "kind": "goal",
+                "mark": "complete"
+              },
+              {
+                "id": "step-11",
+                "job": "j-abc123",
+                "machine": "laptop",
+                "began": "2026-10-14T17:57:40Z",
+                "ended": "2026-10-14T17:58:40Z",
+                "kind": "sense",
+                "sentinel": "s-9f2c",
+                "condition": "the training loss stops falling"
+              },
+              {
+                "id": "step-12",
+                "job": "j-abc123",
+                "machine": "laptop",
+                "began": "2026-10-14T17:58:40Z",
+                "ended": "2026-10-14T17:59:40Z",
+                "kind": "on",
+                "to": "server",
+                "command": "git --version",
+                "end": {
+                  "kind": "not_run",
+                  "why": "server is offline"
+                }
+              },
+              {
+                "id": "step-13",
+                "job": "j-abc123",
+                "machine": "laptop",
+                "began": "2026-10-14T17:59:40Z",
+                "ended": "2026-10-14T18:00:40Z",
+                "kind": "on",
+                "to": "lab",
+                "command": "sleep 600",
+                "sent": "j-z0z0z0",
+                "end": {
+                  "kind": "stopped"
+                }
               }
             ]
           },
@@ -5235,6 +6915,215 @@
                 "from": 0,
                 "to": 42
               }
+            ],
+            "steps": [
+              {
+                "id": "step-0",
+                "job": "j-abc123",
+                "machine": "laptop",
+                "began": "2026-10-14T17:46:40Z",
+                "ended": "2026-10-14T17:47:40Z",
+                "kind": "on",
+                "to": "gpu",
+                "command": "cat /data/fit.csv",
+                "sent": "j-def456",
+                "end": {
+                  "kind": "exited",
+                  "code": 0
+                },
+                "pipes_to": "lab"
+              },
+              {
+                "id": "step-1",
+                "job": "j-abc123",
+                "machine": "laptop",
+                "began": "2026-10-14T17:47:40Z",
+                "kind": "on",
+                "to": "lab",
+                "command": "wc -l",
+                "sent": "j-ghi789",
+                "fed_by": "j-def456",
+                "tail": "12040"
+              },
+              {
+                "id": "step-2",
+                "job": "j-def456",
+                "machine": "gpu",
+                "began": "2026-10-14T17:48:40Z",
+                "ended": "2026-10-14T17:49:40Z",
+                "kind": "copy",
+                "from": [
+                  {
+                    "machine": "gpu",
+                    "path": "/data/fit.csv"
+                  }
+                ],
+                "to": {
+                  "machine": "lab",
+                  "path": "/srv/in/"
+                },
+                "files": 1,
+                "bytes": 4200000,
+                "unchanged": 0,
+                "problems": [
+                  "/data/locked.csv: permission denied"
+                ]
+              },
+              {
+                "id": "step-3",
+                "job": "j-abc123",
+                "machine": "laptop",
+                "began": "2026-10-14T17:49:40Z",
+                "ended": "2026-10-14T17:50:40Z",
+                "kind": "view",
+                "paths": [
+                  "/work/plot.png",
+                  "/work/paper.pdf"
+                ],
+                "pictures": [
+                  {
+                    "path": "/work/plot.png",
+                    "width": 1200,
+                    "height": 800,
+                    "mime": "image/png"
+                  },
+                  {
+                    "path": "/work/paper.pdf",
+                    "page": 3,
+                    "width": 1545,
+                    "height": 2000,
+                    "mime": "image/png"
+                  }
+                ]
+              },
+              {
+                "id": "step-4",
+                "job": "j-abc123",
+                "machine": "laptop",
+                "began": "2026-10-14T17:50:40Z",
+                "ended": "2026-10-14T17:51:40Z",
+                "kind": "wait",
+                "jobs": [
+                  {
+                    "job": "j-k3x9a2",
+                    "machine": "laptop",
+                    "at": "2026-10-14T17:49:40Z",
+                    "end": {
+                      "kind": "exited",
+                      "code": 1
+                    },
+                    "tail": "error: 2 tests failed",
+                    "command": "cargo test --workspace"
+                  },
+                  {
+                    "job": "j-q8w2e1",
+                    "machine": "laptop",
+                    "at": "2026-10-14T17:50:40Z",
+                    "end": {
+                      "kind": "lost",
+                      "why": "the machine restarted"
+                    }
+                  }
+                ]
+              },
+              {
+                "id": "step-5",
+                "job": "j-abc123",
+                "machine": "laptop",
+                "began": "2026-10-14T17:51:40Z",
+                "ended": "2026-10-14T17:52:40Z",
+                "kind": "stop",
+                "what": "j-ghi789",
+                "on": "lab",
+                "how": "stopped"
+              },
+              {
+                "id": "step-6",
+                "job": "j-abc123",
+                "machine": "laptop",
+                "began": "2026-10-14T17:52:40Z",
+                "ended": "2026-10-14T17:53:40Z",
+                "kind": "stop",
+                "what": "s-9f2c",
+                "how": "already_stopped"
+              },
+              {
+                "id": "step-7",
+                "job": "j-abc123",
+                "machine": "laptop",
+                "began": "2026-10-14T17:53:40Z",
+                "ended": "2026-10-14T17:54:40Z",
+                "kind": "page",
+                "name": "fit",
+                "town": "ingest",
+                "title": "Fit",
+                "version": 4
+              },
+              {
+                "id": "step-8",
+                "job": "j-abc123",
+                "machine": "laptop",
+                "began": "2026-10-14T17:54:40Z",
+                "ended": "2026-10-14T17:55:40Z",
+                "kind": "project",
+                "town": "ingest"
+              },
+              {
+                "id": "step-9",
+                "job": "j-abc123",
+                "machine": "laptop",
+                "began": "2026-10-14T17:55:40Z",
+                "ended": "2026-10-14T17:56:40Z",
+                "kind": "plan",
+                "version": 7
+              },
+              {
+                "id": "step-10",
+                "job": "j-abc123",
+                "machine": "laptop",
+                "began": "2026-10-14T17:56:40Z",
+                "ended": "2026-10-14T17:57:40Z",
+                "kind": "goal",
+                "mark": "complete"
+              },
+              {
+                "id": "step-11",
+                "job": "j-abc123",
+                "machine": "laptop",
+                "began": "2026-10-14T17:57:40Z",
+                "ended": "2026-10-14T17:58:40Z",
+                "kind": "sense",
+                "sentinel": "s-9f2c",
+                "condition": "the training loss stops falling"
+              },
+              {
+                "id": "step-12",
+                "job": "j-abc123",
+                "machine": "laptop",
+                "began": "2026-10-14T17:58:40Z",
+                "ended": "2026-10-14T17:59:40Z",
+                "kind": "on",
+                "to": "server",
+                "command": "git --version",
+                "end": {
+                  "kind": "not_run",
+                  "why": "server is offline"
+                }
+              },
+              {
+                "id": "step-13",
+                "job": "j-abc123",
+                "machine": "laptop",
+                "began": "2026-10-14T17:59:40Z",
+                "ended": "2026-10-14T18:00:40Z",
+                "kind": "on",
+                "to": "lab",
+                "command": "sleep 600",
+                "sent": "j-z0z0z0",
+                "end": {
+                  "kind": "stopped"
+                }
+              }
             ]
           },
           "name": "tool-1",
@@ -5473,6 +7362,215 @@
                 },
                 "from": 0,
                 "to": 42
+              }
+            ],
+            "steps": [
+              {
+                "id": "step-0",
+                "job": "j-abc123",
+                "machine": "laptop",
+                "began": "2026-10-14T17:46:40Z",
+                "ended": "2026-10-14T17:47:40Z",
+                "kind": "on",
+                "to": "gpu",
+                "command": "cat /data/fit.csv",
+                "sent": "j-def456",
+                "end": {
+                  "kind": "exited",
+                  "code": 0
+                },
+                "pipes_to": "lab"
+              },
+              {
+                "id": "step-1",
+                "job": "j-abc123",
+                "machine": "laptop",
+                "began": "2026-10-14T17:47:40Z",
+                "kind": "on",
+                "to": "lab",
+                "command": "wc -l",
+                "sent": "j-ghi789",
+                "fed_by": "j-def456",
+                "tail": "12040"
+              },
+              {
+                "id": "step-2",
+                "job": "j-def456",
+                "machine": "gpu",
+                "began": "2026-10-14T17:48:40Z",
+                "ended": "2026-10-14T17:49:40Z",
+                "kind": "copy",
+                "from": [
+                  {
+                    "machine": "gpu",
+                    "path": "/data/fit.csv"
+                  }
+                ],
+                "to": {
+                  "machine": "lab",
+                  "path": "/srv/in/"
+                },
+                "files": 1,
+                "bytes": 4200000,
+                "unchanged": 0,
+                "problems": [
+                  "/data/locked.csv: permission denied"
+                ]
+              },
+              {
+                "id": "step-3",
+                "job": "j-abc123",
+                "machine": "laptop",
+                "began": "2026-10-14T17:49:40Z",
+                "ended": "2026-10-14T17:50:40Z",
+                "kind": "view",
+                "paths": [
+                  "/work/plot.png",
+                  "/work/paper.pdf"
+                ],
+                "pictures": [
+                  {
+                    "path": "/work/plot.png",
+                    "width": 1200,
+                    "height": 800,
+                    "mime": "image/png"
+                  },
+                  {
+                    "path": "/work/paper.pdf",
+                    "page": 3,
+                    "width": 1545,
+                    "height": 2000,
+                    "mime": "image/png"
+                  }
+                ]
+              },
+              {
+                "id": "step-4",
+                "job": "j-abc123",
+                "machine": "laptop",
+                "began": "2026-10-14T17:50:40Z",
+                "ended": "2026-10-14T17:51:40Z",
+                "kind": "wait",
+                "jobs": [
+                  {
+                    "job": "j-k3x9a2",
+                    "machine": "laptop",
+                    "at": "2026-10-14T17:49:40Z",
+                    "end": {
+                      "kind": "exited",
+                      "code": 1
+                    },
+                    "tail": "error: 2 tests failed",
+                    "command": "cargo test --workspace"
+                  },
+                  {
+                    "job": "j-q8w2e1",
+                    "machine": "laptop",
+                    "at": "2026-10-14T17:50:40Z",
+                    "end": {
+                      "kind": "lost",
+                      "why": "the machine restarted"
+                    }
+                  }
+                ]
+              },
+              {
+                "id": "step-5",
+                "job": "j-abc123",
+                "machine": "laptop",
+                "began": "2026-10-14T17:51:40Z",
+                "ended": "2026-10-14T17:52:40Z",
+                "kind": "stop",
+                "what": "j-ghi789",
+                "on": "lab",
+                "how": "stopped"
+              },
+              {
+                "id": "step-6",
+                "job": "j-abc123",
+                "machine": "laptop",
+                "began": "2026-10-14T17:52:40Z",
+                "ended": "2026-10-14T17:53:40Z",
+                "kind": "stop",
+                "what": "s-9f2c",
+                "how": "already_stopped"
+              },
+              {
+                "id": "step-7",
+                "job": "j-abc123",
+                "machine": "laptop",
+                "began": "2026-10-14T17:53:40Z",
+                "ended": "2026-10-14T17:54:40Z",
+                "kind": "page",
+                "name": "fit",
+                "town": "ingest",
+                "title": "Fit",
+                "version": 4
+              },
+              {
+                "id": "step-8",
+                "job": "j-abc123",
+                "machine": "laptop",
+                "began": "2026-10-14T17:54:40Z",
+                "ended": "2026-10-14T17:55:40Z",
+                "kind": "project",
+                "town": "ingest"
+              },
+              {
+                "id": "step-9",
+                "job": "j-abc123",
+                "machine": "laptop",
+                "began": "2026-10-14T17:55:40Z",
+                "ended": "2026-10-14T17:56:40Z",
+                "kind": "plan",
+                "version": 7
+              },
+              {
+                "id": "step-10",
+                "job": "j-abc123",
+                "machine": "laptop",
+                "began": "2026-10-14T17:56:40Z",
+                "ended": "2026-10-14T17:57:40Z",
+                "kind": "goal",
+                "mark": "complete"
+              },
+              {
+                "id": "step-11",
+                "job": "j-abc123",
+                "machine": "laptop",
+                "began": "2026-10-14T17:57:40Z",
+                "ended": "2026-10-14T17:58:40Z",
+                "kind": "sense",
+                "sentinel": "s-9f2c",
+                "condition": "the training loss stops falling"
+              },
+              {
+                "id": "step-12",
+                "job": "j-abc123",
+                "machine": "laptop",
+                "began": "2026-10-14T17:58:40Z",
+                "ended": "2026-10-14T17:59:40Z",
+                "kind": "on",
+                "to": "server",
+                "command": "git --version",
+                "end": {
+                  "kind": "not_run",
+                  "why": "server is offline"
+                }
+              },
+              {
+                "id": "step-13",
+                "job": "j-abc123",
+                "machine": "laptop",
+                "began": "2026-10-14T17:59:40Z",
+                "ended": "2026-10-14T18:00:40Z",
+                "kind": "on",
+                "to": "lab",
+                "command": "sleep 600",
+                "sent": "j-z0z0z0",
+                "end": {
+                  "kind": "stopped"
+                }
               }
             ]
           },
@@ -8869,6 +10967,36 @@
                   "fact": "00112233445566778899aabbccddeeff-0"
                 }
               }
+            ],
+            "steps": [
+              {
+                "id": "step-0",
+                "job": "j-abc123",
+                "machine": "laptop",
+                "began": "2026-10-14T17:46:40Z",
+                "ended": "2026-10-14T17:47:40Z",
+                "kind": "on",
+                "to": "gpu",
+                "command": "cat /data/fit.csv",
+                "sent": "j-def456",
+                "end": {
+                  "kind": "exited",
+                  "code": 0
+                },
+                "pipes_to": "lab"
+              },
+              {
+                "id": "step-1",
+                "job": "j-abc123",
+                "machine": "laptop",
+                "began": "2026-10-14T17:47:40Z",
+                "kind": "on",
+                "to": "lab",
+                "command": "wc -l",
+                "sent": "j-ghi789",
+                "fed_by": "j-def456",
+                "tail": "12040"
+              }
             ]
           }
         }
@@ -9819,6 +11947,36 @@
                   "fact": "00112233445566778899aabbccddeeff-0"
                 }
               }
+            ],
+            "steps": [
+              {
+                "id": "step-0",
+                "job": "j-abc123",
+                "machine": "laptop",
+                "began": "2026-10-14T17:46:40Z",
+                "ended": "2026-10-14T17:47:40Z",
+                "kind": "on",
+                "to": "gpu",
+                "command": "cat /data/fit.csv",
+                "sent": "j-def456",
+                "end": {
+                  "kind": "exited",
+                  "code": 0
+                },
+                "pipes_to": "lab"
+              },
+              {
+                "id": "step-1",
+                "job": "j-abc123",
+                "machine": "laptop",
+                "began": "2026-10-14T17:47:40Z",
+                "kind": "on",
+                "to": "lab",
+                "command": "wc -l",
+                "sent": "j-ghi789",
+                "fed_by": "j-def456",
+                "tail": "12040"
+              }
             ]
           }
         },
@@ -10546,6 +12704,7 @@
                     "last_tool_at": "2026-10-04T12:06:07Z",
                     "first_words": "把端口对拍一遍",
                     "last_said": "两边一致，共 12 个端口。",
+                    "last_heard_user": true,
                     "asked": {
                       "id": "msg-7",
                       "at": "2026-10-04T12:06:07Z",
@@ -10556,6 +12715,13 @@
                         "允许",
                         "不用"
                       ]
+                    },
+                    "told": {
+                      "id": "told-1",
+                      "at": "2026-10-04T12:06:07Z",
+                      "status": "urgent",
+                      "text": "训练在 11,200 步之后发散了。",
+                      "turn": "turn-3"
                     }
                   },
                   "last_action": null,
@@ -12080,6 +14246,7 @@
                     "last_tool_at": "2026-10-04T12:06:07Z",
                     "first_words": "把端口对拍一遍",
                     "last_said": "两边一致，共 12 个端口。",
+                    "last_heard_user": true,
                     "asked": {
                       "id": "msg-7",
                       "at": "2026-10-04T12:06:07Z",
@@ -12090,6 +14257,13 @@
                         "允许",
                         "不用"
                       ]
+                    },
+                    "told": {
+                      "id": "told-1",
+                      "at": "2026-10-04T12:06:07Z",
+                      "status": "urgent",
+                      "text": "训练在 11,200 步之后发散了。",
+                      "turn": "turn-3"
                     }
                   },
                   "last_action": null,
@@ -12613,6 +14787,7 @@
                     "last_tool_at": "2026-10-04T12:06:07Z",
                     "first_words": "把端口对拍一遍",
                     "last_said": "两边一致，共 12 个端口。",
+                    "last_heard_user": true,
                     "asked": {
                       "id": "msg-7",
                       "at": "2026-10-04T12:06:07Z",
@@ -12623,6 +14798,13 @@
                         "允许",
                         "不用"
                       ]
+                    },
+                    "told": {
+                      "id": "told-1",
+                      "at": "2026-10-04T12:06:07Z",
+                      "status": "urgent",
+                      "text": "训练在 11,200 步之后发散了。",
+                      "turn": "turn-3"
                     }
                   },
                   "last_action": null,
@@ -13000,6 +15182,12 @@
       {
         "machine": "desktop",
         "facts": {
+          "goal_colleagues": true,
+          "goal_waits": true,
+          "goal_questions": true,
+          "goal_question_words": true,
+          "goal_commands": true,
+          "goal_reports": true,
           "name": "desktop",
           "os": "windows",
           "arch": "x86_64",
@@ -13008,6 +15196,8 @@
           "path_separator": "\\",
           "case_sensitive": false,
           "version": "fixture-version",
+          "control_letters": true,
+          "run_stops": true,
           "stats": true,
           "mcp": true,
           "mcp_import": true,
@@ -13161,6 +15351,12 @@
       {
         "machine": "desktop",
         "facts": {
+          "goal_colleagues": true,
+          "goal_waits": true,
+          "goal_questions": true,
+          "goal_question_words": true,
+          "goal_commands": true,
+          "goal_reports": true,
           "name": "desktop",
           "os": "windows",
           "arch": "x86_64",
@@ -13169,6 +15365,8 @@
           "path_separator": "\\",
           "case_sensitive": false,
           "version": "fixture-version",
+          "control_letters": true,
+          "run_stops": true,
           "stats": true,
           "mcp": true,
           "mcp_import": true,
@@ -13324,6 +15522,12 @@
       {
         "machine": "desktop",
         "facts": {
+          "goal_colleagues": true,
+          "goal_waits": true,
+          "goal_questions": true,
+          "goal_question_words": true,
+          "goal_commands": true,
+          "goal_reports": true,
           "name": "desktop",
           "os": "windows",
           "arch": "x86_64",
@@ -13332,6 +15536,8 @@
           "path_separator": "\\",
           "case_sensitive": false,
           "version": "fixture-version",
+          "control_letters": true,
+          "run_stops": true,
           "stats": true,
           "mcp": true,
           "mcp_import": true,
@@ -13487,6 +15693,12 @@
       {
         "machine": "desktop",
         "facts": {
+          "goal_colleagues": true,
+          "goal_waits": true,
+          "goal_questions": true,
+          "goal_question_words": true,
+          "goal_commands": true,
+          "goal_reports": true,
           "name": "desktop",
           "os": "windows",
           "arch": "x86_64",
@@ -13495,6 +15707,8 @@
           "path_separator": "\\",
           "case_sensitive": false,
           "version": "fixture-version",
+          "control_letters": true,
+          "run_stops": true,
           "stats": true,
           "mcp": true,
           "mcp_import": true,
@@ -13649,6 +15863,12 @@
       {
         "machine": "desktop",
         "facts": {
+          "goal_colleagues": true,
+          "goal_waits": true,
+          "goal_questions": true,
+          "goal_question_words": true,
+          "goal_commands": true,
+          "goal_reports": true,
           "name": "desktop",
           "os": "windows",
           "arch": "x86_64",
@@ -13657,6 +15877,8 @@
           "path_separator": "\\",
           "case_sensitive": false,
           "version": "fixture-version",
+          "control_letters": true,
+          "run_stops": true,
           "stats": true,
           "mcp": true,
           "mcp_import": true,
@@ -13812,6 +16034,12 @@
       {
         "machine": "desktop",
         "facts": {
+          "goal_colleagues": true,
+          "goal_waits": true,
+          "goal_questions": true,
+          "goal_question_words": true,
+          "goal_commands": true,
+          "goal_reports": true,
           "name": "desktop",
           "os": "windows",
           "arch": "x86_64",
@@ -13820,6 +16048,8 @@
           "path_separator": "\\",
           "case_sensitive": false,
           "version": "fixture-version",
+          "control_letters": true,
+          "run_stops": true,
           "stats": true,
           "mcp": true,
           "mcp_import": true,
@@ -13978,6 +16208,12 @@
       {
         "machine": "desktop",
         "facts": {
+          "goal_colleagues": true,
+          "goal_waits": true,
+          "goal_questions": true,
+          "goal_question_words": true,
+          "goal_commands": true,
+          "goal_reports": true,
           "name": "desktop",
           "os": "windows",
           "arch": "x86_64",
@@ -13986,6 +16222,8 @@
           "path_separator": "\\",
           "case_sensitive": false,
           "version": "fixture-version",
+          "control_letters": true,
+          "run_stops": true,
           "stats": true,
           "mcp": true,
           "mcp_import": true,
@@ -14145,6 +16383,12 @@
       {
         "machine": "desktop",
         "facts": {
+          "goal_colleagues": true,
+          "goal_waits": true,
+          "goal_questions": true,
+          "goal_question_words": true,
+          "goal_commands": true,
+          "goal_reports": true,
           "name": "desktop",
           "os": "windows",
           "arch": "x86_64",
@@ -14153,6 +16397,8 @@
           "path_separator": "\\",
           "case_sensitive": false,
           "version": "fixture-version",
+          "control_letters": true,
+          "run_stops": true,
           "stats": true,
           "mcp": true,
           "mcp_import": true,
@@ -14312,6 +16558,12 @@
       {
         "machine": "desktop",
         "facts": {
+          "goal_colleagues": true,
+          "goal_waits": true,
+          "goal_questions": true,
+          "goal_question_words": true,
+          "goal_commands": true,
+          "goal_reports": true,
           "name": "desktop",
           "os": "windows",
           "arch": "x86_64",
@@ -14320,6 +16572,8 @@
           "path_separator": "\\",
           "case_sensitive": false,
           "version": "fixture-version",
+          "control_letters": true,
+          "run_stops": true,
           "stats": true,
           "mcp": true,
           "mcp_import": true,
@@ -14478,6 +16732,12 @@
       {
         "machine": "desktop",
         "facts": {
+          "goal_colleagues": true,
+          "goal_waits": true,
+          "goal_questions": true,
+          "goal_question_words": true,
+          "goal_commands": true,
+          "goal_reports": true,
           "name": "desktop",
           "os": "windows",
           "arch": "x86_64",
@@ -14486,6 +16746,8 @@
           "path_separator": "\\",
           "case_sensitive": false,
           "version": "fixture-version",
+          "control_letters": true,
+          "run_stops": true,
           "stats": true,
           "mcp": true,
           "mcp_import": true,
@@ -20395,7 +22657,8 @@
             }
           }
         ],
-        "notes": []
+        "notes": [],
+        "leading_notes": 0
       },
       {
         "kind": "reply",

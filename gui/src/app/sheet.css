@@ -148,6 +148,27 @@
   margin-top: var(--space-4);
 }
 
+/* A sheet whose body runs longer than the screen scrolls only between its
+   head and its foot: both stay where they are, over its own fill, reaching
+   into the padding round them so nothing shows past them. */
+.sheet-body > .sheet-head {
+  position: sticky;
+  top: calc(-1 * var(--sheet-pad-top, var(--space-5)));
+  z-index: 2;
+  margin-top: calc(-1 * var(--sheet-pad-top, var(--space-5)));
+  padding-top: var(--sheet-pad-top, var(--space-5));
+  background: var(--bg-elevated);
+}
+
+.sheet-body > .sheet-foot {
+  position: sticky;
+  bottom: calc(-1 * var(--sheet-pad-bottom, var(--space-5)));
+  z-index: 2;
+  margin-bottom: calc(-1 * var(--sheet-pad-bottom, var(--space-5)));
+  padding-bottom: var(--sheet-pad-bottom, var(--space-5));
+  background: var(--bg-elevated);
+}
+
 /* A small head over a group of choices, ruled across. */
 .picker-title {
   display: flex;
@@ -212,14 +233,17 @@
   }
 
   .sheet-body {
+    --sheet-pad-bottom: calc(var(--space-5) + var(--safe-bottom));
     width: 100%;
-    padding: var(--space-5) var(--space-5) calc(var(--space-5) + var(--safe-bottom));
+    padding: var(--space-5) var(--space-5) var(--sheet-pad-bottom);
     border-radius: var(--radius-l) var(--radius-l) 0 0;
   }
 
   /* It rises from the foot of the screen, as every sheet on a phone
-     (`turns.css`). */
+     (`turns.css`), edge to edge whatever width it takes on a wider
+     screen. */
   .sheet[open] .sheet-body {
+    width: 100%;
     translate: var(--slide) var(--lift);
     animation-name: sheet-rise;
   }
@@ -731,6 +755,24 @@
 
 .token-sheet .codes-rows {
   margin-top: var(--space-4);
+}
+
+/* However many codes there are, only their list scrolls, the ways of
+   adding a device staying over it. */
+.token-sheet .device-body.codes-face {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.token-sheet .codes-face > .codes-rows {
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+}
+
+.token-sheet .codes-face > .codes-rows > li {
+  flex: none;
 }
 
 .codes-none {

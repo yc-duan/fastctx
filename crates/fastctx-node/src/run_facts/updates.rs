@@ -17,6 +17,17 @@ struct Emitted {
 }
 
 pub(crate) fn job(node: &Node, record_path: &Path, writes: Vec<WriteFact>) -> io::Result<()> {
+    job_with(node, record_path, writes, Vec::new())
+}
+
+/// Tells the job's owner what changed of it, with the writes and steps
+/// just told.
+pub(crate) fn job_with(
+    node: &Node,
+    record_path: &Path,
+    writes: Vec<WriteFact>,
+    steps: Vec<fastctx_types::run_facts::RunStep>,
+) -> io::Result<()> {
     let _emitting = EMITTING.lock();
     let record = fastctx_hands::run::record::read(record_path)?;
     let Some(call_id) = record.call_id.clone() else {
@@ -44,7 +55,11 @@ pub(crate) fn job(node: &Node, record_path: &Path, writes: Vec<WriteFact>) -> io
     };
     let output_ended = record.output_ended_at.is_some();
     // A stopped capture can finish draining without changing its RunState.
-    if writes.is_empty() && emitted.state.as_ref() == Some(&state) && emitted.output_ended == output_ended {
+    if writes.is_empty()
+        && steps.is_empty()
+        && emitted.state.as_ref() == Some(&state)
+        && emitted.output_ended == output_ended
+    {
         return Ok(());
     }
     emitted.sequence =
@@ -83,6 +98,11 @@ pub(crate) fn job(node: &Node, record_path: &Path, writes: Vec<WriteFact>) -> io
         (None, None)
     };
     let update = JobFacts {
+        record: Some(record_path.to_string_lossy().into_owned()),
+        script: Some(record.script.clone()),
+        started_at: Some(record.started_at),
+        finished_at: record.end.as_ref().map(|end| end.at),
+        turn: record.turn.clone(),
         call_id,
         primary: record.on.is_none(),
         output,
@@ -93,6 +113,7 @@ pub(crate) fn job(node: &Node, record_path: &Path, writes: Vec<WriteFact>) -> io
         sequence: emitted.sequence,
         state: Some(state),
         writes,
+        steps,
     };
     let pending = record_path.with_extension("facts-pending");
     publish(&pending, &serde_json::to_vec(&update)?, Permissions::Private)?;

@@ -99,8 +99,9 @@ export interface MachinePageWords {
   fastctxRuns(version: string): string;
   fastctxLatest: string;
   fastctxBehind(newer: string): string;
-  /** Work of its own that is stuck, as it says, and for how long. */
-  stuck(doing: string, what: string, span: string): string;
+  /** Work of its own that is stuck, and for how long; what the node says of
+   *  it is a hover away. */
+  stuck(span: string): string;
   /** Its usage ledger keeps rows it could not read aside; its totals go
    *  without them. */
   ledgerRows(rows: number): string;
@@ -212,7 +213,7 @@ export const zhMachinePage: MachinePageWords = {
   fastctxRuns: (version) => `Fastctx ${version}`,
   fastctxLatest: "已是最新",
   fastctxBehind: (newer) => `可更新到 ${newer}`,
-  stuck: (doing, what, span) => `卡住 ${span}：${doing} 在等 ${what}`,
+  stuck: (span) => `有一件事卡了 ${span}`,
   ledgerRows: (rows) => `用量账本有 ${rows} 行读不了，已另存，统计不含它们`,
   ledgerBroken: "用量账本现在读写不了，受协助的用量暂停到它恢复",
   healthOther: "这台有一条提醒",
@@ -311,7 +312,7 @@ export const enMachinePage: MachinePageWords = {
   fastctxRuns: (version) => `Fastctx ${version}`,
   fastctxLatest: "Up to date",
   fastctxBehind: (newer) => `${newer} available`,
-  stuck: (doing, what, span) => `Stuck ${span}: ${doing} waits for ${what}`,
+  stuck: (span) => `Something has been stuck for ${span}`,
   ledgerRows: (rows) => `${rows} usage ledger row${rows === 1 ? "" : "s"} could not be read and were set aside; totals leave them out`,
   ledgerBroken: "Its usage ledger cannot be read or written now; assisted use waits until it can",
   healthOther: "This machine has a warning",

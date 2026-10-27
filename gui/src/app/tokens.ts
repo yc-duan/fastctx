@@ -367,7 +367,7 @@ export class Tokens {
     this.sheet.body.innerHTML = `
       <header class="sheet-head"><h2 class="sheet-title">${escape(words.title)}</h2><span class="sheet-head-end">${pill}<button class="icon-button sheet-close" type="button" aria-label="${escape(words.close)}">${glyph("close", 18)}</button></span></header>
       ${choices(words.title, "data-face", kinds, this.face, (kind) => words.kinds[kind as TokenKind], (kind) => (kind === "managed" && !manages ? words.managedOld : ""))}
-      <div class="device-body">${ways}${managed}${body}</div>`;
+      <div class="device-body${shown ? " codes-face" : ""}">${ways}${managed}${body}</div>`;
     this.nameLine();
     const place = this.sheet.body.querySelector<HTMLElement>(".device-remote");
     if (ssh && remote && place) {

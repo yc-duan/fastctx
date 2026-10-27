@@ -73,6 +73,20 @@
   opacity: 0.6;
 }
 
+/* A person's mark, where each other person is a row: the first letter of
+   their name in a small round fill. */
+.focus-face {
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  border-radius: var(--radius-full);
+  background: var(--fill-strong);
+  color: var(--text-2);
+  font-size: var(--size-fine);
+  line-height: 1;
+}
+
 .focus-name {
   min-width: 0;
   overflow: hidden;
@@ -353,8 +367,8 @@
   left: var(--gutter);
   display: flex;
   flex-direction: column;
-  width: min(460px, calc(100% - 2 * var(--gutter)));
-  max-height: min(64dvh, 540px);
+  width: min(440px, calc(100% - 2 * var(--gutter)));
+  max-height: min(64dvh, 520px);
   overflow-y: auto;
   overscroll-behavior: contain;
   scrollbar-width: thin;
@@ -438,24 +452,6 @@
 
 .focus-state.refused {
   color: var(--wrong);
-}
-
-.focus-pop {
-  position: absolute;
-  top: 100%;
-  left: var(--gutter);
-  width: min(440px, calc(100% - 2 * var(--gutter)));
-  max-height: min(64dvh, 520px);
-  overflow-y: auto;
-  overscroll-behavior: contain;
-  scrollbar-width: thin;
-  padding: var(--space-3) var(--space-4);
-  border-radius: var(--radius-l);
-  background: var(--bg-elevated);
-  box-shadow: var(--shadow-pop);
-  opacity: var(--shown);
-  translate: var(--slide) var(--lift);
-  animation: panel-rise var(--fold) var(--fold-easing) both;
 }
 
 @media (max-width: 760px) {

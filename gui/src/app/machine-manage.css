@@ -98,10 +98,8 @@
   color: var(--caution);
 }
 
-.mr-go {
-  display: flex;
+.sheet-body > .mr-go {
   justify-content: flex-end;
-  margin-top: var(--space-4);
 }
 
 /* Once taken off: each machine told to uninstall, and how that goes there. */

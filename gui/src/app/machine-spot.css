@@ -1,0 +1,459 @@
+/* The one chosen on the machines page (`machine-spot.ts`). Beside it on the
+   drawing, a small bar, solid and without lines: the one thing done to it
+   most written out, the next few as marks, "⋯" for the rest; its name first
+   only where the drawing writes none. On a phone it lies along the bottom,
+   the name over a row of marks, each with its word. The card of a hub, a
+   phone or an assisting agent: its name, a few facts in a column, and the
+   same acts at its foot. */
+
+.spot-bar {
+  position: absolute;
+  left: 0;
+  top: 0;
+  z-index: 8;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px;
+  max-width: min(440px, calc(100% - 16px));
+  padding: 4px;
+  border-radius: var(--radius-l);
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-pop);
+  opacity: var(--shown);
+  translate: 0 var(--lift);
+  animation: spot-in var(--enter) var(--ease-out) both;
+}
+
+.spot-bar[hidden] {
+  display: none;
+}
+
+@keyframes spot-in {
+  from {
+    --shown: 0;
+    --lift: 4px;
+  }
+}
+
+/* On a wide page the head is the name alone, in the row. */
+.spot-head {
+  display: contents;
+}
+
+.spot-close {
+  display: none;
+}
+
+.spot-name {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 14em;
+  padding: 0 var(--space-2) 0 var(--space-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-emphasis);
+  font-size: var(--size-text);
+  color: var(--text-strong);
+}
+
+.spot-name.away {
+  color: var(--text-3);
+}
+
+.spot-acts {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.spot-act {
+  display: inline-grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border: 0;
+  border-radius: calc(var(--radius-l) - 4px);
+  background: transparent;
+  color: var(--text-2);
+  font: inherit;
+  cursor: pointer;
+  transition: color var(--hover) ease, background-color var(--hover) ease;
+}
+
+.spot-act:hover,
+.spot-act:focus-visible,
+.spot-act[aria-expanded="true"] {
+  outline: 0;
+  color: var(--text-strong);
+  background: var(--fill-strong);
+}
+
+.spot-label {
+  display: none;
+}
+
+/* The one written out, a little apart from the marks after it. */
+.spot-act.lead {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  width: auto;
+  margin-right: 4px;
+  padding: 0 var(--space-3) 0 10px;
+  background: var(--fill);
+  color: var(--text);
+}
+
+.spot-act.lead .spot-label {
+  display: inline;
+  white-space: nowrap;
+  font-size: var(--size-text);
+}
+
+.spot-act.primary {
+  background: var(--accent);
+  color: var(--bg);
+}
+
+.spot-act.primary:hover,
+.spot-act.primary:focus-visible {
+  background: var(--accent-bright);
+  color: var(--bg);
+}
+
+/* What last went wrong with it, under the row. */
+.spot-note {
+  flex-basis: 100%;
+  margin: 2px var(--space-3) var(--space-1);
+  font-size: var(--size-text);
+  color: var(--wrong);
+}
+
+@media (pointer: coarse) {
+  .spot-act {
+    width: 44px;
+    height: 44px;
+  }
+}
+
+/* A narrow page: along the bottom, over the drawing, as what is done to
+   several chosen is (`machine-framed.css`). */
+.spot-bar.phone {
+  position: fixed;
+  left: 0;
+  right: 0;
+  top: auto;
+  bottom: 0;
+  z-index: 15;
+  display: block;
+  max-width: none;
+  padding: var(--space-1) var(--space-2) calc(var(--space-1) + var(--safe-bottom));
+  border-radius: var(--radius-l) var(--radius-l) 0 0;
+  translate: 0 var(--lift);
+  animation: spot-rise var(--enter) var(--ease-out) both;
+}
+
+@keyframes spot-rise {
+  from {
+    --lift: 100%;
+  }
+}
+
+.spot-bar.phone .spot-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 44px;
+  padding-left: var(--space-3);
+}
+
+.spot-bar.phone .spot-name {
+  flex: 1;
+  max-width: none;
+  padding: 0;
+}
+
+.spot-bar.phone .spot-close {
+  display: inline-grid;
+  width: 44px;
+  height: 44px;
+}
+
+.spot-bar.phone .spot-acts {
+  display: grid;
+  grid-template-columns: repeat(var(--acts), minmax(0, 1fr));
+  gap: 2px;
+}
+
+.spot-bar.phone .spot-act,
+.spot-bar.phone .spot-act.lead {
+  display: grid;
+  justify-items: center;
+  align-content: center;
+  gap: 4px;
+  width: auto;
+  height: 60px;
+  margin: 0;
+  padding: 0 2px;
+  border-radius: var(--radius-m);
+  background: none;
+  color: var(--text-2);
+}
+
+.spot-bar.phone .spot-act.primary {
+  color: var(--accent);
+}
+
+.spot-bar.phone .spot-act:active {
+  background: var(--fill-strong);
+}
+
+.spot-bar.phone .spot-label,
+.spot-bar.phone .spot-act.lead .spot-label {
+  display: block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--size-fine);
+}
+
+/* While the bar is up the zoom controls would sit under it; two fingers
+   zoom. */
+.machines-layout:has(> .spot-bar.phone:not([hidden])) .canvas-controls {
+  display: none;
+}
+
+:root[data-reduced] .spot-bar {
+  animation: none;
+}
+
+/* The card of a hub, a phone or an assisting agent. Keys go to it while
+   it is open; it is drawn no differently for that. */
+.machine-panel:focus {
+  outline: 0;
+}
+
+.spot-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.spot-card-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  padding-right: 36px;
+}
+
+.spot-card-head .glyph {
+  flex: none;
+  color: var(--text-2);
+}
+
+.spot-card-title {
+  margin: 0;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-emphasis);
+  font-weight: 400;
+  font-size: var(--size-h2);
+  line-height: var(--leading-heading);
+  color: var(--text-strong);
+}
+
+.spot-card-title.away {
+  color: var(--text-3);
+}
+
+.spot-card-head .tag {
+  flex: none;
+}
+
+/* A hub's knot, as on the drawing: a ring, a drop in it while connected. */
+.spot-knot {
+  flex: none;
+  width: 12px;
+  height: 12px;
+  border-radius: var(--radius-full);
+  box-shadow: inset 0 0 0 2px var(--text-3);
+}
+
+.spot-knot.online {
+  background: radial-gradient(circle, var(--text-2) 0 2px, transparent 2.5px);
+  box-shadow: inset 0 0 0 2px var(--text-2);
+}
+
+/* What a hub is: the network drawn small, and one line beside it. */
+.spot-what {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+}
+
+.spot-picture {
+  flex: none;
+  width: 72px;
+  height: 40px;
+  overflow: visible;
+}
+
+.spot-picture g {
+  mix-blend-mode: var(--pen-blend);
+}
+
+.spot-picture .graphite {
+  fill: var(--pen-graphite);
+}
+
+.spot-picture .clay {
+  fill: var(--pen-clay);
+}
+
+.spot-what p {
+  text-wrap: pretty;
+  margin: 0;
+  font-size: var(--size-text);
+  line-height: var(--leading-ui);
+  color: var(--text-3);
+}
+
+/* The facts: names in a column, values beside them. */
+.spot-facts {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  align-items: baseline;
+  gap: var(--space-2) var(--space-5);
+  margin: 0;
+  font-size: var(--size-text);
+}
+
+.spot-facts > div {
+  display: contents;
+}
+
+.spot-facts dt {
+  color: var(--text-3);
+}
+
+.spot-facts dd {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+  min-width: 0;
+  color: var(--text);
+  overflow-wrap: anywhere;
+  font-variant-numeric: tabular-nums;
+}
+
+.spot-copy {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.spot-copy .copy-button {
+  flex: none;
+  width: 28px;
+  height: 28px;
+  margin: -4px 0;
+}
+
+/* The agents of another's at work for the account, each until when. */
+.spot-agents {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: var(--size-text);
+}
+
+.spot-agents li {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--text);
+}
+
+.spot-agents .glyph {
+  color: var(--text-2);
+}
+
+.spot-until {
+  margin-left: auto;
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+
+.spot-card .spot-note {
+  margin: 0;
+}
+
+.spot-card-acts {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.spot-card-act {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 34px;
+  padding: 0 var(--space-3) 0 10px;
+  border: 0;
+  border-radius: var(--radius-m);
+  background: var(--fill);
+  color: var(--text);
+  font: inherit;
+  font-size: var(--size-text);
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color var(--hover) ease;
+}
+
+.spot-card-act:hover,
+.spot-card-act:focus-visible {
+  outline: 0;
+  background: var(--fill-strong);
+}
+
+.spot-card-act.primary {
+  background: var(--accent);
+  color: var(--bg);
+}
+
+.spot-card-act.primary:hover,
+.spot-card-act.primary:focus-visible {
+  background: var(--accent-bright);
+}
+
+/* The one act left past those the bar shows, at the far end; what cannot
+   be taken back reddens once pointed at, as in a menu. */
+.spot-card-more,
+.spot-card-act.last {
+  margin-left: auto;
+}
+
+.spot-card-act.danger:hover,
+.spot-card-act.danger:focus-visible {
+  color: var(--wrong);
+  background: color-mix(in srgb, var(--wrong) 14%, transparent);
+}
+
+@media (pointer: coarse) {
+  .spot-card-act {
+    height: 44px;
+  }
+}
