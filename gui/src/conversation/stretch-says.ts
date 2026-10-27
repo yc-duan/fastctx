@@ -12,6 +12,7 @@ import { counts } from "./diff";
 import { isThinking, runsOf, type Activity, type Entry } from "./model";
 import { groupHeading, headline } from "./tool";
 import { shortCommand } from "./deeds/rows";
+import type { Card } from "./cards/cards";
 
 type ToolEntry = Extract<Entry, { kind: "tool" }>;
 export type ProseEntry = Extract<Entry, { kind: "prose" }>;
@@ -45,6 +46,8 @@ export function stretchSays(
   attachment: (path: string) => string | null,
   tokens: (run: readonly ProseEntry[]) => number | null,
   agents: StretchAgents = { of: () => null, named: () => null },
+  /** The rows a call is drawn as, which the heading counts. */
+  cards?: (tool: ToolEntry) => Card[],
 ): StretchSaid {
   const tools = group.members.filter((member): member is ToolEntry => member.kind === "tool");
   const thinking = group.members.filter(isThinking);
@@ -78,7 +81,7 @@ export function stretchSays(
     if (counted !== null) figures = words.thinkingTokens(counted);
   } else {
     // Two kinds of thing at most, the weightiest; failures always.
-    const all = groupHeading(tools, thinking.length, words);
+    const all = groupHeading(tools, thinking.length, words, cards);
     parts = [...all.filter((part) => part.kind !== "failed").slice(0, KINDS), ...all.filter((part) => part.kind === "failed")];
     title = parts.map((part) => part.said).join(words.tallyGap);
     for (const tool of tools) {

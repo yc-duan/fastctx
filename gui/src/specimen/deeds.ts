@@ -10,6 +10,7 @@ import type { Speaker } from "../world/events";
 import type { Specimen } from "./sessions";
 import { longWork } from "./deeds-long";
 import { worldWork } from "./deeds-world";
+import { printoutWork } from "./deeds-printouts";
 
 const user: Speaker = { kind: "user", machine: "desktop" };
 
@@ -188,5 +189,6 @@ export function deeds(): Specimen {
   s.ended("t1", "completed", null, 1);
   worldWork(s, user);
   longWork(s, user);
+  printoutWork(s, user);
   return { title: "修重放", agent: "codex", resident: "deeds-1", machine: "laptop", model: "gpt-6.1-sol", town: "mark50", here: "desktop", events: s.recent() };
 }

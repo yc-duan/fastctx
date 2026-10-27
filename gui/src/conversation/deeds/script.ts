@@ -29,6 +29,8 @@ export interface ScriptCommand {
 
 const WORLD = /^(?:on|fastctx|edit|write|wait|view|copy)\b/;
 const SCENE = /^(?:cd|pushd|popd|set|export|unset|shopt|source|\.|trap|local|declare|true|false|:|exit|return|echo|printf|sleep|read|break|continue|shift)(?:\s|$)/;
+/** A name given a value and nothing run after it. */
+const ASSIGNED = /^[A-Za-z_][A-Za-z0-9_]*(?:\[[^\]]*\])?\+?=(?:'[^']*'|"(?:[^"\\]|\\.)*"|\S)*$/;
 const SHELL = /^(?:if|elif|then|else|while|until|do|done|fi|case|esac|in|function|\{|\}|\(|\)|;;)(?:\s|$)/;
 /** Words that open a loop's head; its body runs until `done`. */
 const LOOP = /^(?:for|while|until|select)\s/;
@@ -101,7 +103,7 @@ function read(lines: readonly string[], where: Where, into: ScriptCommand[], at:
       const went = /^cd\s+(?:'([^']*)'|"([^"]*)"|(\S+))\s*$/.exec(command);
       if (went) at.cwd = went[1] ?? went[2] ?? went[3] ?? null;
       // The shell's own `wait` for its background commands.
-      if (!command || SCENE.test(command) || SHELL.test(command) || /^wait\s*$/.test(command)) continue;
+      if (!command || SCENE.test(command) || SHELL.test(command) || ASSIGNED.test(command) || /^wait\s*$/.test(command)) continue;
       const stages = stagesOf(command);
       const piping = stages.length > 1 && stages.some((stage) => onOf(stage) !== null);
       (piping ? stages : [command]).forEach((stage, at_) => {
@@ -139,7 +141,7 @@ function give(text: string, piped: boolean, body: string[] | null, where: Where,
  *  `reads` where that command is a shell reading a script. Null where it
  *  is not one. */
 function onOf(command: string): { machine: string; rest: string; reads: boolean } | null {
-  const match = /^on\s+(?:'([^']*)'|"([^"]*)"|(\S+))(.*)$/.exec(command.trim());
+  const match = /^(?:fastctx\s+)?on\s+(?:'([^']*)'|"([^"]*)"|(\S+))(.*)$/.exec(command.trim());
   if (!match) return null;
   const rest = match[4]!.trim();
   return { machine: match[1] ?? match[2] ?? match[3] ?? "", rest, reads: /^(?:bash|sh|zsh)(?:\s+-\S+)*\s*(?:<<|$)/.test(rest) };

@@ -14,7 +14,7 @@ let told = 0;
 
 /** `tool`, a run of `on laptop <command>`, with what the World told of it:
  *  the `on`, and `did` in the job it sent. */
-function stepped<T extends Partial<Tool>>(tool: T, did: StepDid | null, end: RunStep["began"] = "2026-10-04T15:20:00Z"): T {
+export function stepped<T extends Partial<Tool>>(tool: T, did: StepDid | null, end: RunStep["began"] = "2026-10-04T15:20:00Z"): T {
   told += 1;
   const sent = `j-s${told.toString(16).padStart(4, "0")}`;
   const command = tool.does?.as === "command" ? tool.does.command.replace(/^on\s+\S+\s+/, "") : "";

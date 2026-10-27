@@ -201,6 +201,10 @@ export interface PlainDeed {
   /** Where it ran, where an `on` sent it. */
   machine?: string | null;
   on?: OnSaid;
+  /** Whose output its own is in: the run's ("top"), or that of the `on`
+   *  that carried it, by its place among the script's commands. Commands
+   *  of one scope print into one stream that cannot be parted. */
+  scope?: string;
 }
 
 /** Where among them the files the run wrote were written: their rows,
@@ -238,6 +242,12 @@ export interface DeedWords {
   pushedTo(branch: string): string;
   /** Commands run, gathered in one row. */
   commandsRun(count: number): string;
+  /** The commands of one run named on one row, those past the first few
+   *  counted: "等 6 条". */
+  moreCommands(count: number): string;
+  /** What the World's own commands that only show something show, as their
+   *  rows name it after the verb `world.look`. */
+  looks: { machines: string; working: string; projects: string; plan: string; goal: string; accounts: string; usage(of: string): string };
   /** The World's own doings, as their rows say them. */
   world: Record<"wait" | "stop" | "publish" | "enter" | "plan" | "sense" | "look", string>;
   /** What the plan is called on its row. */

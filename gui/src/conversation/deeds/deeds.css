@@ -426,13 +426,47 @@ button.dd-opener-line:hover {
   white-space: nowrap;
 }
 
-/* The run's own words, folded at the foot, opened on asking. */
+/* The run's own words, at the foot of what was drawn of it: the sheet of
+   the card above goes on, a stroke of the pen between; opened, the command
+   and what it printed come in below, on the same sheet. */
+.dd-foot {
+  border-radius: var(--radius-m);
+  background: var(--surface-code);
+}
+
+.dd-card:has(+ .dd-foot) {
+  border-bottom-left-radius: 0;
+  border-bottom-right-radius: 0;
+}
+
+.dd-card + .dd-foot {
+  margin-top: calc(-1 * var(--space-2));
+  border-top-left-radius: 0;
+  border-top-right-radius: 0;
+}
+
+.dd-card + .dd-foot::before {
+  content: "";
+  display: block;
+  height: 8px;
+  margin: 0 var(--space-3);
+  background: var(--pen-rule);
+  -webkit-mask: var(--pen-rule-2) 0 50% / 100% 100% no-repeat;
+  mask: var(--pen-rule-2) 0 50% / 100% 100% no-repeat;
+}
+
 .dd-foot-line {
   display: flex;
   align-items: center;
   gap: var(--space-3);
-  min-height: 28px;
+  min-height: 34px;
   padding: 0 var(--space-3);
+}
+
+.dd-foot .po {
+  padding: var(--space-1) var(--space-3) var(--space-3);
+  border-radius: 0;
+  background: none;
 }
 
 .dd-raw {

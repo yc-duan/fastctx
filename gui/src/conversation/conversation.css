@@ -881,7 +881,8 @@
   --turn: 0deg;
 }
 
-.row-failed .rail {
+/* A row that failed marks its own glyph; the rows it gathers keep theirs. */
+.row-failed > .rail {
   color: var(--wrong);
 }
 

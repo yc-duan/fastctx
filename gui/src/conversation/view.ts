@@ -56,7 +56,9 @@ import { DiffLines, RemoteDiff, diffPaint, encodeRow, keptDiff, memoryDiff } fro
 import { readRun } from "./deeds/read";
 import { scriptSaid } from "./deeds/script";
 import { drawDeeds, goingOn, type DeedTools } from "./deeds/draw";
-import type { Deed } from "./deeds/types";
+import type { Deed, PlainDeed } from "./deeds/types";
+import { troubled } from "./deeds/fan";
+import { shortCommand } from "./deeds/rows";
 import { cardsOf, type Card } from "./cards/cards";
 import { bunched, cardsIn, type Bunch } from "./cards/bunch";
 import { lineHtml, lineText } from "./cards/lines";
@@ -64,8 +66,9 @@ import { headline, onlyWrites, tenseOf, writeHeadline } from "./tool";
 import { drawDiagrams } from "./diagrams";
 import { readTold, undelivered, worldSaid, type UndeliveredWhy, type WorldSaid } from "./told";
 import { allowanceOf, detailOf, heldOf } from "../app/problem";
-import { AnchorLayout, AnchoredHeight } from "../longview";
-import { FEW, LongText, type LongLines, type LongTextWords, type OtherSource } from "./long-text";
+import { AnchorLayout, AnchoredHeight, MemoryLines, type LinePaint, type ViewerSource } from "../longview";
+import { FEW, LongText, type LongLines, type LongTextWords, type OpenedText, type OtherSource } from "./long-text";
+import { Printout, givenLines, type PrintoutEnd } from "./printout";
 import { Said, WholeOutput, outputPaint, type OpenedLines } from "./run-output";
 import { replyOf } from "./async-ask";
 import "./say.css";
@@ -243,7 +246,7 @@ export class ConversationView {
   private slots = new Map<string, Slot>();
   private byElement = new WeakMap<HTMLElement, Slot>();
   /** Long texts open under rows, by row, to be let go when the row is. */
-  private longs = new Map<string, LongText[]>();
+  private longs = new Map<string, OpenedText[]>();
   /** What each run did, as read from it (`deeds`), while it stays as it
    *  was read. */
   private deedsRead = new Map<string, { stamp: number; deeds: Deed[] | null }>();
@@ -340,6 +343,7 @@ export class ConversationView {
         return displayedTextHtml(this.entry(entry));
       },
       rows: (run) => this.rowsOf(run),
+      cards: (tool) => cardsOf(tool, (entry) => this.deedsOf(entry), (job) => this.jobCommand(job)),
       tokens: (run) => conversation.thinkingTokens(run),
       agents: {
         of: (tool) => conversation.agentOf(tool),
@@ -1820,6 +1824,7 @@ export class ConversationView {
         of: (tool) => this.conversation.agentOf(tool),
         named: (tool) => this.agentsObject(tool, null),
       },
+      (tool) => cardsOf(tool, (entry) => this.deedsOf(entry), (job) => this.jobCommand(job)),
     );
     const { parts, added, removed, running, only, bare, began } = said;
     const stats = added || removed ? `<span class="row-stats"><span class="add">+${added}</span><span class="del">−${removed}</span></span>` : "";
@@ -1864,7 +1869,7 @@ export class ConversationView {
    *  from a run as theirs above the run's own words, folded; anything else
    *  in its own words. */
   private fillCard(key: string, thing: Card, content: HTMLElement): void {
-    const longs: LongText[] = [];
+    const longs: OpenedText[] = [];
     const closers: (() => void)[] = [];
     this.longs.set(key, longs);
     this.closers.set(key, closers);
@@ -2353,7 +2358,7 @@ export class ConversationView {
   }
 
   /** A change as rows to read: its numbers, its sign, its text. */
-  private diffText(lines: readonly string[] | RemoteDiff, path: string, numberedRows: boolean, gap: (n: number) => string = this.context.words.unchangedLines): LongText {
+  private diffText(lines: readonly string[] | RemoteDiff, path: string, numberedRows: boolean, gap: (n: number) => string = this.context.words.unchangedLines, wrap = false): LongText {
     return new LongText(
       {
         lines,
@@ -2361,6 +2366,7 @@ export class ConversationView {
         paint: diffPaint(path, gap, numberedRows),
         kind: "diff",
         scroll: true,
+        wrap,
       },
       path,
       this.layoutAnchor,
@@ -2573,26 +2579,28 @@ export class ConversationView {
       this.longs.set(key, longs);
       return;
     }
-    const longs: LongText[] = [];
+    const longs: OpenedText[] = [];
     const closers: (() => void)[] = [];
     content.append(this.commandWords(entry, null, longs, closers));
     this.longs.set(key, longs);
     this.closers.set(key, closers);
   }
 
-  /** A call in its own words; a run that did things a person recognises,
-   *  those things drawn as cards (`deeds/draw.ts`) above its own words,
-   *  folded. `only` keeps to some of its deeds. */
-  private commandWords(entry: ToolEntry, only: readonly number[] | null, longs: LongText[], closers: (() => void)[]): HTMLElement {
+  /** A call as what it did: the things a run did that a person recognises
+   *  drawn as cards (`deeds/draw.ts`), what it printed folded at their
+   *  foot; a command nothing of which is recognised opens straight on what
+   *  it printed (`printout.ts`). Any other call in its own words. `only`
+   *  keeps to some of its deeds. */
+  private commandWords(entry: ToolEntry, only: readonly number[] | null, longs: OpenedText[], closers: (() => void)[]): HTMLElement {
     const { tool } = entry;
     const deeds = this.deedsOf(entry);
-    // A command an `on` carried elsewhere is drawn as what it did there; a
-    // command only named opens on the run's own words.
-    const drawn = (deeds ?? []).filter((deed, index) => (deed.kind !== "plain" || (only !== null && !!deed.on && deed.machine != null)) && deed.kind !== "writes" && (!only || only.includes(index)));
+    const kept = (deeds ?? []).filter((_, index) => !only || only.includes(index));
+    const drawn = kept.filter((deed) => deed.kind !== "plain" && deed.kind !== "writes");
+    const plains = kept.filter((deed): deed is PlainDeed & Deed => deed.kind === "plain");
     // A run that went on after the call came back says so above all it did.
     const job = tool.does.as === "command" && tool.does.job && (!only || drawn.length === 0) ? goingOn(tool.does.job, tool.machine, this.context.words.deeds) : null;
     if (!drawn.length) {
-      const words = this.runWords(tool, longs, closers);
+      const words = this.printoutOf(entry, only ? plains : null, deeds, longs, closers, true);
       if (!job) return words;
       const both = document.createElement("div");
       both.className = "dd-deeds";
@@ -2602,10 +2610,127 @@ export class ConversationView {
     const { words } = this.context;
     const failed = tool.does.as === "command" && !tool.does.job && tool.does.exit !== null && tool.does.exit !== 0;
     const ending = failed && tool.does.as === "command" ? `<span class="io-end nonzero">${escape(words.exited(tool.does.exit ?? 0))}</span>` : "";
-    const cards = drawDeeds(drawn, this.deedTools(tool), () => this.runWords(tool, longs, closers), ending);
-    longs.push(...cards.longs);
+    // The printout under the foot, which already says how the run ended,
+    // is drawn as the foot opens; finding opens it to reach its lines.
+    const later: OpenedText[] = [];
+    const printed = () => {
+      const sides: OpenedText[] = [];
+      const element = this.printoutOf(entry, only ? plains : null, deeds, sides, closers, false);
+      later.push(...sides);
+      return element;
+    };
+    const cards = drawDeeds(drawn, this.deedTools(tool), printed, ending);
+    const raw = cards.element.querySelector<HTMLButtonElement>(".dd-raw");
+    const opened = (side: number): OpenedText => ({
+      get element() {
+        return later[side]?.element ?? cards.element;
+      },
+      reveal: async (line) => {
+        if (raw && raw.getAttribute("aria-expanded") !== "true") raw.click();
+        await later[side]?.reveal(line);
+      },
+      settle: () => later[side]?.settle(),
+      destroy: () => later[side]?.destroy(),
+    });
+    longs.push(opened(0), opened(1), ...cards.longs);
     if (job) cards.element.prepend(job);
     return cards.element;
+  }
+
+  /** What a run printed, as its printout: its whole output; for commands
+   *  one `on` sent where the run sent more than one, the last lines that
+   *  `on` sent back. In the reader, beside them, the whole output on its
+   *  machine where the model got less, and the script as it was given.
+   *  Any other call in its own words. */
+  private printoutOf(entry: ToolEntry, scoped: readonly PlainDeed[] | null, deeds: readonly Deed[] | null, longs: OpenedText[], closers: (() => void)[], ending: boolean): HTMLElement {
+    const { tool } = entry;
+    if (tool.does.as !== "command") return this.runWords(tool, longs, closers);
+    const { words, english } = this.context;
+    const does = tool.does;
+    const { shown, output } = toolText(tool, words);
+    const others: ViewerSource[] = [];
+    const whole = this.wholeOf(tool, closers);
+    if (whole) others.push(whole);
+    others.push({ label: words.output.script, source: new MemoryLines(does.command.replace(/\n$/, "").split("\n"), true) });
+    // Commands of one `on`, where the run's output holds more than theirs:
+    // what that `on` sent back of its own.
+    const scopes = new Set((deeds ?? []).flatMap((deed) => (deed.kind === "plain" ? [deed.scope ?? ""] : [])));
+    const own = scoped?.[0];
+    const sent = own?.on && own.scope !== "top" && scopes.size > 1 && scoped!.every((deed) => deed.scope === own.scope) ? own.on : null;
+    const lines: string[] = [];
+    const notes = new Set<number>();
+    let paint: LinePaint | undefined;
+    let reading: LinePaint | undefined;
+    if (sent?.tail) lines.push(...sent.tail.replace(/\n$/, "").split("\n"));
+    else if (!sent && shown) {
+      lines.push(...shown.lines);
+      shown.numbers.forEach((number, at) => {
+        if (number === null) notes.add(at);
+      });
+      // Numbered in the reader by place in the whole output where that is
+      // not simply the line's place here; the World's notes said quietly.
+      const plainly = !shown.cut && shown.numbers.every((number, at) => number === at + 1);
+      if (!plainly) {
+        reading = outputPaint(shown);
+        paint = outputPaint(shown, false);
+      }
+    } else if (!sent && output) lines.push(...output.replace(/\n$/, "").split("\n"));
+    // How it ended, where it did not end well and nothing above says so.
+    let end: PrintoutEnd | null = null;
+    if (ending && sent?.end) {
+      if (sent.end.kind === "stopped") end = { kind: "stopped", said: words.deeds.ended(sent.end) };
+      else if (troubled(sent.end)) end = { kind: "failed", said: words.deeds.ended(sent.end) };
+    } else if (ending && !sent && !does.job && does.exit !== null && does.exit !== 0) end = { kind: "failed", said: words.exited(does.exit) };
+    const pictures = sent ? "" : imagesOf(tool.output);
+    // The commands of the row where it is one `on`'s or a few of the
+    // run's; else the script as given.
+    const command = scoped?.length ? scoped.map((deed) => deed.command) : givenLines(does.command);
+    const named = own ? own.command : (scriptSaid(does.command, tool.machine ?? null) ?? does.command.split("\n")[0] ?? "");
+    const printout = new Printout({
+      label: shortCommand(named) || words.output.printed,
+      command,
+      lines,
+      notes,
+      nothing: words.output.nothing,
+      end,
+      pictures,
+      others,
+      ...(paint ? { paint } : {}),
+      ...(reading ? { reading } : {}),
+      layout: this.layoutAnchor,
+      words: {
+        more: words.moreLines,
+        less: words.showLess,
+        copy: words.output.copyOutput,
+        copied: words.copied,
+        whole: words.fullScreen,
+        english,
+        failed: (error) => (error instanceof Said ? error.message : words.output.readFailed),
+      },
+    });
+    longs.push(...printout.sides);
+    return printout.element;
+  }
+
+  /** The whole output of a run on its machine, where the model got less
+   *  of it than the whole, or it went on after: read as the reader asks. */
+  private wholeOf(tool: Tool, closers: (() => void)[]): OtherSource | null {
+    const { words } = this.context;
+    const run = tool.does.as === "command" && tool.status !== "running" ? tool.run : undefined;
+    const kept = run?.output;
+    if (!run || !kept || !run.job || !this.context.lines) return null;
+    const going = stillGoing(run.state);
+    const wentOn = tool.does.as === "command" && tool.does.job !== null;
+    if (!(kept.cut || going || wentOn)) return null;
+    const open = this.context.lines;
+    const job = run.job;
+    const whole = new WholeOutput(
+      () => open(kept.machine, kept.path, { kind: "output", job }),
+      { length: kept.lines, complete: !going },
+      (error) => new Said(gone(error) ? words.output.wholeGone : words.output.readFailed, detailOf(error)),
+    );
+    closers.push(() => whole.close());
+    return { label: words.output.whole, source: whole, close: () => whole.close() };
   }
 
   /** What a run did, as read from its script and what it printed; null for
@@ -2636,7 +2761,8 @@ export class ConversationView {
         const text = deed.rows.flatMap((row) => ("text" in row ? [row.text] : [])).join("\n");
         const card = diffCard(deed.path, deed.machine, { copy: words.copy, copied: words.copied }, async () => text);
         // Lines passed over in a file read are left out, not unchanged.
-        const long = this.diffText(rows, deed.path, deed.rows.some((row) => "line" in row && row.line !== null), (n) => words.deeds.skipped(n));
+        // A file read is not a change: its lines wrap.
+        const long = this.diffText(rows, deed.path, deed.rows.some((row) => "line" in row && row.line !== null), (n) => words.deeds.skipped(n), true);
         card.body.append(long.element);
         const full = long.takeFull();
         if (full) card.act(full);
@@ -2646,7 +2772,7 @@ export class ConversationView {
   }
 
   /** A run in its own words: what it was given above what it wrote. */
-  private runWords(tool: Tool, longs: LongText[], closers: (() => void)[]): HTMLElement {
+  private runWords(tool: Tool, longs: OpenedText[], closers: (() => void)[]): HTMLElement {
     const { words } = this.context;
     // A World run says what the model got as facts: its own output, apart
     // from what its writes printed of themselves, which their rows show.
@@ -2707,7 +2833,7 @@ export class ConversationView {
       // Numbered by place in the whole output where that is not simply the
       // line's place here: something was left out, or a write's note was.
       const plain = !shown.cut && shown.numbers.every((kept, index) => kept === index + 1);
-      printed = { lines: shown.lines, ...(plain ? {} : { paint: outputPaint(shown), inline: outputPaint(shown, false) }), name: words.output.modelCopy, others };
+      printed = { lines: shown.lines, ...(plain ? {} : { paint: outputPaint(shown), inline: outputPaint(shown, false) }), name: words.output.modelCopy, others, wrap: true };
     }
     // How a command ended, under what it wrote.
     const ending = endText ? `<span class="io-end${tool.does.as === "command" && !tool.does.job && tool.does.exit !== null && tool.does.exit !== 0 ? " nonzero" : ""}">${escape(endText)}</span>` : "";
@@ -2789,8 +2915,8 @@ export class ConversationView {
     return !result.cancelled;
   }
 
-  private longsIn(box: HTMLElement): LongText[] {
-    const found: LongText[] = [];
+  private longsIn(box: HTMLElement): OpenedText[] {
+    const found: OpenedText[] = [];
     for (const longs of this.longs.values()) for (const long of longs) if (box.contains(long.element)) found.push(long);
     return found;
   }

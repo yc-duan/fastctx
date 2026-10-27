@@ -210,6 +210,12 @@ export interface Words {
     /** What a call was given, and what it gave back, as their boxes are named. */
     input: string;
     printed: string;
+    /** A copy of what a command printed, as its button says. */
+    copyOutput: string;
+    /** The script a run was given, as the reader names it. */
+    script: string;
+    /** A command that printed nothing, opened. */
+    nothing: string;
     modelCopy: string;
     whole: string;
     wholeGone: string;
@@ -513,6 +519,8 @@ export const zh: Words = {
     searches: (n) => `搜索 ${n} 次`,
     pushedTo: (branch) => `推到 ${branch}`,
     commandsRun: (n) => `${n} 条命令`,
+    moreCommands: (n) => `等 ${n} 条`,
+    looks: { machines: "机器", working: "在做的事", projects: "项目", plan: "计划", goal: "目标", accounts: "账号", usage: (of) => `${of} 的用法` },
     world: { wait: "等待", stop: "停止", publish: "发布", enter: "进入", plan: "更新", sense: "盯着", look: "查看" },
     thePlan: "计划",
     goal: {
@@ -563,6 +571,9 @@ export const zh: Words = {
   output: {
     input: "输入",
     printed: "输出",
+    copyOutput: "复制输出",
+    script: "脚本",
+    nothing: "没有输出",
     linesLeftOut: (n) => `⋯ 省略 ${n.toLocaleString("zh-CN")} 行`,
     charsLeftOut: (n) => `⋯ 省略 ${n.toLocaleString("zh-CN")} 个字符`,
     unreadable: "此行无法显示",
@@ -852,6 +863,8 @@ export const en: Words = {
     searches: (n) => `${n} search${n === 1 ? "" : "es"}`,
     pushedTo: (branch) => `pushed to ${branch}`,
     commandsRun: (n) => `${n} command${n === 1 ? "" : "s"}`,
+    moreCommands: (n) => `and ${n} more`,
+    looks: { machines: "the machines", working: "what is working", projects: "the projects", plan: "the plan", goal: "the goal", accounts: "the accounts", usage: (of) => `how to use ${of}` },
     world: { wait: "Waited for", stop: "Stopped", publish: "Published", enter: "Entered", plan: "Updated", sense: "Watching", look: "Looked at" },
     thePlan: "the plan",
     goal: {
@@ -904,6 +917,9 @@ export const en: Words = {
   output: {
     input: "Input",
     printed: "Output",
+    copyOutput: "Copy output",
+    script: "Script",
+    nothing: "Nothing printed",
     linesLeftOut: (n) => `⋯ ${n.toLocaleString("en")} line${n === 1 ? "" : "s"} left out`,
     charsLeftOut: (n) => `⋯ ${n.toLocaleString("en")} character${n === 1 ? "" : "s"} left out`,
     unreadable: "This line can't be shown",
