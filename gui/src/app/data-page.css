@@ -10,6 +10,21 @@
   --data-other: var(--pen-rose);
 }
 
+/* One column down the middle of the page, scrolling under its head. */
+.data-body > * {
+  width: var(--board);
+  margin-left: auto;
+  margin-right: auto;
+}
+
+.data-body > .home-section {
+  margin-top: var(--space-8);
+}
+
+.data-body > .home-section:last-child {
+  padding-bottom: var(--space-12);
+}
+
 .data-top {
   margin-top: var(--space-6);
 }
@@ -79,7 +94,8 @@
   order: 1;
 }
 
-.data-section .section-title .data-size {
+.data-section .section-title .data-size,
+.data-section .section-title .data-clear {
   order: 2;
   font-family: var(--font-reading);
   letter-spacing: 0;
