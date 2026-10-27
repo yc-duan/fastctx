@@ -324,10 +324,13 @@ export class HomePage {
     const told = r.now!.told!;
     const at = new Date(told.at);
     const urgent = told.status === "urgent";
+    // The card says the first paragraph; held or pointed at, the whole.
+    const shown = gist(told.text);
+    const whole = shown === told.text.trim() ? "" : ` title="${escape(told.text)}"`;
     return `<li class="front-card" data-machine="${escape(address.machine)}" data-resident="${escape(address.resident)}">
       <a class="front-card-link" href="${this.options.link(address)}">
         <span class="front-card-head">${this.agent(r)}<span class="front-name" title="${escape(this.about(r, name))}">${escape(name)}</span>${this.device(r.about.machine)}<span class="front-for" title="${escape(this.when(at))}">${escape(words.ago(Math.max(0, this.now.getTime() - at.getTime())))}</span></span>
-        <span class="front-ask front-told${urgent ? " urgent" : ""}">${urgent ? `<span class="front-ask-glyph" aria-hidden="true">※</span><span class="spoken">${escape(words.urgent)}</span>` : `<span class="front-ask-glyph" aria-hidden="true"><span class="front-told-drop"></span></span>`}<span class="front-ask-text">${escape(told.text)}</span></span>
+        <span class="front-ask front-told${urgent ? " urgent" : ""}">${urgent ? `<span class="front-ask-glyph" aria-hidden="true">※</span><span class="spoken">${escape(words.urgent)}</span>` : `<span class="front-ask-glyph" aria-hidden="true"><span class="front-told-drop"></span></span>`}<span class="front-ask-text"${whole}>${escape(shown)}</span></span>
       </a>
     </li>`;
   }
@@ -522,6 +525,18 @@ export class HomePage {
 }
 
 /** How long a conversation has waited, as when it began: the oldest first. */
+/** What a conversation told, as a card says it: its first paragraph,
+ *  without the marks of Markdown. */
+function gist(text: string): string {
+  const first = text.split(/\n\s*\n/).find((paragraph) => paragraph.trim()) ?? "";
+  return first
+    .split("\n")
+    .map((line) => line.replace(/^\s*(?:[-*+]\s+|\d+[.)]\s+|#{1,6}\s+|>\s?)/, ""))
+    .join(" ")
+    .replace(/(\*\*|__|`)/g, "")
+    .trim();
+}
+
 function waited(r: ResidentNow): number {
   return Date.parse(r.now?.waiting_since ?? r.now?.asked?.at ?? r.now?.since ?? r.about.born_at);
 }
