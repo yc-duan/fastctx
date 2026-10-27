@@ -1,7 +1,9 @@
 // The panel beside a conversation, set into its page (`world-gui.md`,
-// 对话右边的侧面板): the page's own column and the panel side by side, the
-// panel's switch in the page's head beside find, the goal's bar above the
-// input. Who works with the conversation is drawn from two places: the
+// 对话右边的侧面板): the page's head across the whole page, and under it the
+// conversation and the panel side by side; the panel's switch keeps one place
+// at the top right under the head, over the conversation while the panel is
+// shut and at the end of its pages' names while it is open; the goal's bar
+// above the input. Who works with the conversation is drawn from two places: the
 // colleagues it asked, from the World, and the host's own agents, from the
 // conversation itself as it goes.
 
@@ -67,6 +69,8 @@ export class SideMount {
   private colleagues: CollabNode[] = [];
   private runs: AgentRun[] = [];
   private drawnTeam = "";
+  /** Whether anyone works with the conversation, for the switch. */
+  private team = false;
   private planSeen: string | null = null;
   private goalSeen: string | null = null;
   /** The goal as last shown, whose version a change is made against. */
@@ -111,11 +115,16 @@ export class SideMount {
       return;
     }
 
-    // The page's own column and the panel side by side.
+    // The head across the page; under it the page's own column and the
+    // panel side by side, the switch over both.
+    const head = page.querySelector(":scope > .page-head");
     const main = document.createElement("div");
     main.className = "talk-main";
-    main.append(...Array.from(page.childNodes));
-    page.append(main, this.panel.element);
+    main.append(...Array.from(page.childNodes).filter((node) => node !== head));
+    const split = document.createElement("div");
+    split.className = "sp-split";
+    split.append(main, this.panel.element, this.toggle);
+    page.append(split);
     page.classList.add("sp-host");
 
     this.toggle.type = "button";
@@ -124,8 +133,6 @@ export class SideMount {
     this.toggle.title = words.panel;
     this.toggle.innerHTML = `${glyph("panel", 18)}<span class="sp-toggle-dot" aria-hidden="true"></span>`;
     this.toggle.addEventListener("click", () => this.panel.toggle());
-    const actions = page.querySelector(".page-head-actions");
-    actions?.insertBefore(this.toggle, actions.querySelector(".find-toggle"));
 
     this.place();
     OVER.addEventListener("change", this.place);
@@ -159,6 +166,12 @@ export class SideMount {
     return true;
   }
 
+  /** Whether the panel holds anything: its switch shows, and a phone's
+   *  "⋯" offers it. */
+  get shown(): boolean {
+    return !!this.planSeen || !!this.shownGoal || this.team;
+  }
+
   /** Whether a goal may be set here, from the input among others. */
   get goals(): boolean {
     return !this.context.seams.noGoal;
@@ -182,6 +195,7 @@ export class SideMount {
     if (this.planSeen !== null && seen !== this.planSeen && seen !== "") this.panel.news("plan");
     this.planSeen = seen;
     this.planPage.show(plan ?? { source: null, version: 0, when: "" });
+    this.drawToggle();
   }
 
   private goal(goal: GoalShown | null): void {
@@ -191,6 +205,7 @@ export class SideMount {
     this.goalSeen = seen;
     this.bar.show(goal);
     this.goalPage.show(goal);
+    this.drawToggle();
   }
 
   /** The tree drawn again when what it shows changed: who is in it, how
@@ -209,8 +224,10 @@ export class SideMount {
     if (key === this.drawnTeam) return;
     const fresh = this.drawnTeam !== "";
     this.drawnTeam = key;
+    this.team = nodes.length > 0;
     this.collab.show({ agent: this.context.host, name: "" }, nodes);
     if (fresh) this.panel.news("collab");
+    this.drawToggle();
   }
 
   private openNode(node: CollabNode): void {
@@ -234,10 +251,16 @@ export class SideMount {
     );
   }
 
+  /** The switch, and the page opening or shutting by the panel. Opening,
+   *  the page is laid out shut first, so it opens from nothing. A panel with
+   *  nothing in it has no switch. */
   private drawToggle(): void {
-    this.toggle.setAttribute("aria-pressed", String(this.panel.open));
+    const open = this.panel.open;
+    if (open && !this.page.classList.contains("sp-shown")) void this.page.offsetWidth;
+    this.page.classList.toggle("sp-shown", open);
+    this.toggle.setAttribute("aria-pressed", String(open));
     this.toggle.classList.toggle("news", this.panel.hasNews);
-    this.page.classList.toggle("sp-open", this.panel.open);
+    this.toggle.hidden = !open && !this.panel.leaving && !this.shown;
   }
 
   /** What the user did to the goal: said beside the input when it did not

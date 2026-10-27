@@ -1,12 +1,14 @@
 // The panel at the right of a conversation (`world-gui.md`, 对话右边的侧面板):
-// shut until asked for, then a sheet beside the conversation with a margin
-// ruled down its left edge, its pages named at its head, the one shown in
-// the semibold face on a field's shade. A page that has something new
-// while not shown carries a dot after its name, as the head's switch does
-// while the panel is shut. On a phone it lies over the conversation.
+// shut until asked for, then a sheet beside the conversation, under its head,
+// with a margin ruled down its left edge and its pages named at its top, the
+// one shown in the semibold face on a field's shade. A page that has something
+// new while not shown carries a dot after its name, as the switch does while
+// the panel is shut. It opens and shuts by the page's `--sp-open` (`side.css`):
+// shutting, it stays drawn until that has gone back to nothing. On a phone it
+// lies over the conversation.
 
-import { glyph } from "../conversation/glyphs";
 import { escape } from "../conversation/prose";
+import { reducedMotion } from "../motion";
 import { Sketch } from "../pen/sketch";
 import type { SideWords } from "./words";
 import "./side.css";
@@ -21,11 +23,14 @@ export interface SidePage {
 
 export class SidePanel {
   readonly element: HTMLElement;
+  private readonly sheet: HTMLElement;
   private readonly body: HTMLElement;
   private readonly margin: HTMLElement;
   private current: SidePageName;
   private readonly fresh = new Set<SidePageName>();
   private height = 0;
+  /** Shutting: still drawn while it goes. */
+  private shutting = 0;
 
   constructor(
     words: SideWords,
@@ -42,9 +47,10 @@ export class SidePanel {
     this.element.hidden = true;
     this.element.setAttribute("aria-label", words.panel);
     const names = (["plan", "goal", "collab"] as const).filter((name) => this.pages[name]);
-    this.element.innerHTML = `<div class="sp-margin" aria-hidden="true"></div><header class="sp-head"><nav class="sp-tabs" role="tablist">${names
+    this.element.innerHTML = `<div class="sp-sheet"><div class="sp-margin" aria-hidden="true"></div><header class="sp-head"><nav class="sp-tabs" role="tablist">${names
       .map((name) => `<button class="sp-tab" type="button" role="tab" data-page="${name}"><span data-label="${escape(words.pages[name])}">${escape(words.pages[name])}</span><span class="sp-dot" aria-hidden="true"></span></button>`)
-      .join("")}</nav><button class="icon-button sp-close" type="button" aria-label="${escape(words.close)}" title="${escape(words.close)}">${glyph("close", 18)}</button></header><div class="sp-body"></div>`;
+      .join("")}</nav></header><div class="sp-body"></div></div>`;
+    this.sheet = this.element.querySelector(".sp-sheet")!;
     this.body = this.element.querySelector(".sp-body")!;
     this.margin = this.element.querySelector(".sp-margin")!;
     for (const name of names) {
@@ -58,16 +64,21 @@ export class SidePanel {
       const tab = (event.target as HTMLElement).closest<HTMLButtonElement>(".sp-tab");
       if (tab?.dataset.page) this.select(tab.dataset.page as SidePageName);
     });
-    this.element.querySelector(".sp-close")!.addEventListener("click", () => this.close());
     this.element.addEventListener("keydown", (event) => {
       if (event.key === "Escape" && this.element.classList.contains("sp-over")) this.close();
     });
-    new ResizeObserver(() => this.rule()).observe(this.element);
+    new ResizeObserver(() => this.rule()).observe(this.sheet);
     this.drawTabs();
   }
 
+  /** Open, or opening: not while it shuts. */
   get open(): boolean {
-    return !this.element.hidden;
+    return !this.element.hidden && !this.shutting;
+  }
+
+  /** Still drawn as it shuts. */
+  get leaving(): boolean {
+    return this.shutting !== 0;
   }
 
   /** Whether something came while the panel was shut, for the switch's dot. */
@@ -78,17 +89,25 @@ export class SidePanel {
   /** Opens the panel, at `page` when one is named. */
   show(page?: SidePageName): void {
     if (page) this.current = page;
-    const opening = !this.open;
+    if (this.shutting) {
+      window.clearTimeout(this.shutting);
+      this.shutting = 0;
+    }
     this.element.hidden = false;
-    if (opening) this.element.classList.add("sp-arriving");
     this.select(this.current);
     this.seams.changed();
   }
 
+  /** Shuts it: it goes as `--sp-open` goes back, then is no longer drawn. */
   close(): void {
     if (!this.open) return;
-    this.element.hidden = true;
-    this.element.classList.remove("sp-arriving");
+    const settle = getComputedStyle(this.element).getPropertyValue("--settle").trim();
+    const ms = reducedMotion() ? 0 : parseFloat(settle) * (settle.endsWith("ms") ? 1 : 1000) || 0;
+    this.shutting = window.setTimeout(() => {
+      this.shutting = 0;
+      this.element.hidden = true;
+      this.seams.changed();
+    }, ms);
     this.seams.changed();
   }
 
@@ -130,9 +149,9 @@ export class SidePanel {
     }
   }
 
-  /** The margin is drawn again when the panel's height changes. */
+  /** The margin is drawn again when the sheet's height changes. */
   private rule(): void {
-    const height = this.element.clientHeight;
+    const height = this.sheet.clientHeight;
     if (height === 0 || height === this.height) return;
     this.height = height;
     this.margin.innerHTML = new Sketch("side-margin").rule([2, 6], [2, height - 6], 1.2, "graphite").svg(4, height, "sp-margin-svg");

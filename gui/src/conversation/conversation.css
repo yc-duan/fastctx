@@ -21,6 +21,15 @@
   padding: var(--space-6) var(--gutter) var(--space-12);
   display: flex;
   flex-direction: column;
+  opacity: var(--shown);
+  transition: --shown var(--enter) var(--ease-out);
+}
+
+/* Between what was said and every step, the conversation dips and comes
+   back up (`view.ts`, showing). */
+.transcript.view-dip {
+  --shown: 0;
+  transition-duration: var(--quick);
 }
 
 /* In whole pixels where the system can round. */
@@ -173,12 +182,13 @@
   margin: var(--space-1) 0 -2px auto;
   font-size: var(--size-text);
   color: var(--on-bubble);
-  opacity: 0.7;
-  transition: opacity var(--hover) ease;
+  --shown: 0.7;
+  opacity: var(--shown);
+  transition: --shown var(--hover) ease;
 }
 
 .bubble-more:hover {
-  opacity: 1;
+  --shown: 1;
 }
 
 .bubble p + p {
@@ -881,7 +891,8 @@
   --turn: 0deg;
 }
 
-.row-failed .rail {
+/* A row that failed marks its own glyph; the rows it gathers keep theirs. */
+.row-failed > .rail {
   color: var(--wrong);
 }
 

@@ -70,7 +70,7 @@ export class UsageBadge {
   ) {
     button.innerHTML = (["context", "hit", "warm"] as Figure[])
       .map((figure) => `<span class="talk-gauge" data-figure="${figure}" hidden>${glyph(figure === "context" ? "context" : figure === "hit" ? "cache" : "clock", 15)}<span class="talk-gauge-value"></span></span>`)
-      .join("") + `<span class="talk-gauge-dial" aria-hidden="true"></span><span class="talk-gauge-bare" hidden>${escape(words.title)}</span>`;
+      .join("") + `<span class="talk-gauge-dial" aria-hidden="true"></span><span class="talk-gauge-bare" hidden><span class="talk-gauge-word">${escape(words.title)}</span>${glyph("context", 17)}</span>`;
     for (const element of button.querySelectorAll<HTMLElement>("[data-figure]")) this.figures.set(element.dataset.figure as Figure, element);
   }
 

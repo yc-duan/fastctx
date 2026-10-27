@@ -579,8 +579,8 @@ function codex(): Specimen {
 
 /** A conversation that waits on the user: an approval answered elsewhere,
  *  then one request still waiting, of the kind `?ask=` names (Codex's
- *  command, question, form, link; Claude's claude-permission,
- *  claude-question, claude-plan, claude-form). */
+ *  command, form, link; Claude's claude-permission, claude-plan,
+ *  claude-form). */
 function asking(): Specimen {
   const s = new Script("2026-10-04T15:10:00Z");
   const kind = new URLSearchParams(location.search).get("ask") ?? "command";
@@ -661,120 +661,6 @@ function asking(): Specimen {
         true,
       );
       break;
-    case "goal-question": {
-      // A goal is on: Claude's question goes in without stopping its work.
-      const asked = [
-        {
-          question: "批量提交的大小定多少？",
-          header: "批量",
-          multiSelect: false,
-          options: [
-            { label: "1000", description: "回放快，提交多" },
-            { label: "5000", description: "现在的做法" },
-            { label: "20000", description: "提交少，出错时回放多" },
-          ],
-        },
-        {
-          question: "这次改动要在哪些机器上验证？",
-          header: "机器",
-          multiSelect: true,
-          options: [
-            { label: "laptop", description: "Windows，本地 Postgres" },
-            { label: "lab", description: "Linux，跑整套集成测试" },
-            { label: "server", description: "线上的副本" },
-          ],
-        },
-      ];
-      // A colleague working toward its own goal asked this conversation too,
-      // and another handed back what its goal came to.
-      const colleague = { machine: "lab", resident: "codex-77a1" };
-      const account = { hub: "w-0123456789abcdef", account: "ada" };
-      const sidelong = [
-        {
-          question: "迁移脚本里旧的 ingest_files 要不要顺手删掉？",
-          header: "旧表",
-          multiSelect: false,
-          options: [
-            { label: "删掉", description: "回滚要重新导入" },
-            { label: "留着", description: "下个版本再删" },
-          ],
-        },
-      ];
-      s.heard("t2", { kind: "resident", address: colleague }, "Question from codex-77a1 on lab", 2, {
-        kind: "words",
-        from: { kind: "resident", address: colleague },
-        text: "Question from codex-77a1 on lab",
-        goal_question: { id: "q-1", colleague, account, questions: sidelong },
-      });
-      const done = { machine: "gpu", resident: "codex-3f20" };
-      const report = "离线缓存的查询改好了：\n\n- 批次表加了 `replayed_at`，崩溃后从那里接着回放\n- 5000 一批，lab 上整套集成测试过了\n\n没动线上的副本。";
-      s.heard("t2", { kind: "resident", address: done }, report, 2, {
-        kind: "words",
-        from: { kind: "resident", address: done },
-        text: report,
-        goal_report: {
-          id: "r-1",
-          completion: "c-1",
-          colleague: done,
-          account,
-          shown: { label: "离线缓存", status: "complete", started_at: "2026-10-23T08:00:00Z", ended_at: "2026-10-23T09:42:00Z", text: report },
-        },
-      });
-      s.say("t2", "message", "我先按 5000 接着做，下面两件你有空再定。", 2);
-      s.push({
-        event: "finished",
-        turn: "t2",
-        item: {
-          id: JSON.stringify(["fastctx_goal_question", "session-9c1e", "toolu_02"]),
-          kind: "message",
-          text: asked.map((one) => one.question).join("\n"),
-          detail: {
-            delivery: "async",
-            questions: asked.map((one) => ({ title: one.question, options: one.options.map((option) => option.label), multiSelect: one.multiSelect })),
-            fastctx_goal_question: { tool_use_id: "toolu_02", agent_id: null, questions: asked },
-          },
-        },
-      });
-      break;
-    }
-    case "claude-question":
-      s.say("t2", "message", "提交之前有两件事想问你。", 2);
-      s.push({
-        event: "changed",
-        turn: "t2",
-        change: {
-          kind: "request",
-          id: claudeId("r-2"),
-          request: "AskUserQuestion",
-          params: {
-            tool: "AskUserQuestion",
-            tool_use_id: "toolu_01",
-            questions: [
-              {
-                question: "批量提交的大小定多少？",
-                header: "批量",
-                multiSelect: false,
-                options: [
-                  { label: "1000", description: "回放快，提交多" },
-                  { label: "5000", description: "现在的做法" },
-                  { label: "20000", description: "提交少，出错时回放多" },
-                ],
-              },
-              {
-                question: "这次改动要在哪些机器上验证？",
-                header: "机器",
-                multiSelect: true,
-                options: [
-                  { label: "laptop", description: "Windows，本地 Postgres" },
-                  { label: "lab", description: "Linux，跑整套集成测试" },
-                  { label: "server", description: "线上的副本" },
-                ],
-              },
-            ],
-          },
-        },
-      });
-      break;
     case "claude-plan":
       s.say("t2", "message", "我把迁移的步骤理了一遍，写成了计划。", 2);
       s.push({
@@ -822,39 +708,6 @@ function asking(): Specimen {
                 priority: { type: "string", title: "优先级", enum: ["urgent", "high", "normal", "low"], enumNames: ["紧急", "高", "普通", "低"], default: "normal" },
               },
             },
-          },
-        },
-      });
-      break;
-    case "question":
-      s.say("t2", "message", "生成缓存之前要连上测试库，有两件事得问你。", 2);
-      s.push({
-        event: "changed",
-        turn: "t2",
-        change: {
-          kind: "request",
-          id: { server, id: 1 },
-          request: "item/tool/requestUserInput",
-          params: {
-            threadId: "th-1",
-            turnId: "t2",
-            itemId: "item-ask-1",
-            isBlocking: true,
-            autoResolutionMs: null,
-            questions: [
-              {
-                id: "where",
-                header: "连接串",
-                question: "测试库的连接串放在哪里？",
-                isOther: true,
-                isSecret: false,
-                options: [
-                  { label: ".env", description: "仓库根目录下，已在 .gitignore 里" },
-                  { label: "环境变量", description: "DATABASE_URL，只在这台机器上" },
-                ],
-              },
-              { id: "password", header: "密码", question: "测试库 ingest_test 的密码是什么？", isOther: false, isSecret: true, options: null },
-            ],
           },
         },
       });

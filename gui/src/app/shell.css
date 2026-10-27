@@ -865,6 +865,17 @@ html.framed .page-head {
   }
 }
 
+/* The pointer gone from every mark, its hint fades where it stands. */
+.pointer-hint.leaving {
+  animation: hint-fall var(--quick) var(--ease-out) both;
+}
+
+@keyframes hint-fall {
+  to {
+    --shown: 0;
+  }
+}
+
 :root[data-reduced] .touch-hint,
 :root[data-reduced] .pointer-hint {
   animation: none;
@@ -908,6 +919,12 @@ html.framed .page-head {
   margin-top: var(--space-6);
   color: var(--text-3);
   font-size: var(--size-text);
+}
+
+/* The end of the rows of a long list drawn so far; more are drawn as it
+   comes near (`read-on.ts`). */
+.read-on {
+  height: 1px;
 }
 
 /* At the foot of every conversation, the way on to the archived ones. */

@@ -18,7 +18,7 @@ use std::sync::Arc;
 
 use fastctx_types::layout::ConversationDir;
 use fastctx_types::residents::{
-    Delivery, LAST_SAID_CHARS, MessageKind, MessageLine, Notice, Origin, Owing, Pending, Trouble,
+    Delivery, LAST_SAID_CHARS, MessageKind, MessageLine, Notice, Origin, Owing, Pending, TellStatus, Trouble,
 };
 use fastctx_types::session::{Happened, Health, SessionChange, SessionEvent, Speaker, TurnEnd, TurnHow};
 use fastctx_types::{Address, ResidentId};
@@ -130,10 +130,14 @@ pub async fn apply(node: &Arc<Node>, id: &ResidentId, mut event: SessionEvent) -
             crate::asked::settle(node, id, |asked| asked.waits && asked.id == request_id)?;
         }
         Happened::Finished { item, .. } => {
-            if let Some(asked) = crate::asked::of_item(item, event.at)
+            // What it asked without stopping goes where its words go: to the
+            // conversation it works for, or to the user, as `message_user`'s.
+            if let Some(said) = crate::asked::asked_without_stopping(item)
                 && !crate::goals::questions::route(node, id, item, event.at)?
+                && crate::voice::speaks(node, id)
+                && let Err(error) = crate::voice::say(node, id, &said, TellStatus::Info, &[])
             {
-                crate::asked::ask(node, id, asked)?;
+                node.log.line(format_args!("keeping what {id} asked without stopping: {}", error.message));
             }
             // A Codex thread keeps its first instructions through compacting
             // its conversation; a change they no longer say is told again,

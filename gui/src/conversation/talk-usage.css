@@ -19,6 +19,11 @@
   display: none;
 }
 
+/* With nothing to measure, its name; on a phone, its mark. */
+.talk-gauge-bare > .glyph {
+  display: none;
+}
+
 .talk-gauge > .glyph {
   flex: none;
   opacity: 0.85;
@@ -384,6 +389,14 @@
 
   .talk-gauge-dial:not(:empty) {
     display: inline-flex;
+  }
+
+  .talk-gauge-bare > .talk-gauge-word {
+    display: none;
+  }
+
+  .talk-gauge-bare > .glyph {
+    display: block;
   }
 
   /* Each figure as wide as it needs, so none of their words is cut. */

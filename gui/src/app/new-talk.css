@@ -422,13 +422,6 @@
   display: contents;
 }
 
-.agent-hold[hidden],
-.agent-host[hidden],
-.agent-people[hidden],
-.agent-row[hidden] {
-  display: none;
-}
-
 /* A machine, or a person: the icon, the name, what follows it, and at the
    end the arrow that says it opens. */
 .agent-machine,
@@ -535,10 +528,6 @@ button.agent-machine:hover,
 
 .agent-fold.shut {
   grid-template-rows: 0fr;
-}
-
-.agent-picker.narrowing .agent-fold.shut {
-  grid-template-rows: 1fr;
 }
 
 .agent-fold-inner {

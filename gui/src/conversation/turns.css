@@ -280,14 +280,16 @@
   display: none;
 }
 
-/* On a touch screen every answer keeps its actions under it; the user's
-   own words carry none, and held, theirs float up beside them. */
+/* On a touch screen the latest answer keeps its actions under it; an
+   earlier answer and the user's own words carry none, and held, theirs
+   float up beside them. */
 @media (hover: none) {
   .turn-acts {
     --shown: 1;
   }
 
-  .user-acts {
+  .user-acts,
+  .answer-acts:not(.latest) {
     display: none;
   }
 
@@ -485,120 +487,6 @@
 
 .notice-box .prose pre {
   font-style: normal;
-}
-
-/* Answers to questions asked without waiting: what was answered, on the
-   user's side, small. */
-.block-heard.from-reply {
-  display: flex;
-  justify-content: flex-end;
-}
-
-.reply-line {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  margin: 0;
-  font-size: var(--size-text);
-  color: var(--text-2);
-}
-
-.reply-line .glyph {
-  color: var(--alive);
-}
-
-/* Questions asked without waiting: a card in the conversation. */
-.question-card {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-3);
-  padding: var(--space-4) var(--space-5);
-  border-radius: var(--radius-m);
-  background: var(--bg-sunken);
-}
-
-.question-one {
-  margin: 0;
-  padding: 0;
-  border: 0;
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-}
-
-.question-title {
-  padding: 0;
-  font-size: var(--size-text);
-  line-height: var(--leading-prose);
-  color: var(--text);
-}
-
-.question-title p {
-  margin: 0;
-}
-
-/* Said after a question that takes several answers, on its last line. */
-.question-title p:has(+ .question-many) {
-  display: inline;
-}
-
-.question-many {
-  margin-left: var(--space-2);
-  font-size: var(--size-fine);
-  color: var(--text-3);
-}
-
-.question-card .ask-options {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-2);
-}
-
-.question-card .ask-option[aria-pressed="true"] {
-  background: var(--accent-wash);
-  color: var(--text-strong);
-}
-
-.question-foot {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: var(--space-2);
-}
-
-.question-state {
-  flex: 1;
-  font-size: var(--size-text);
-  color: var(--text-3);
-}
-
-.question-state.wrong {
-  color: var(--wrong);
-}
-
-.question-card.answered {
-  gap: var(--space-2);
-}
-
-.question-pair {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  margin: 0;
-}
-
-.question-pair .question-title {
-  font-size: var(--size-text);
-  color: var(--text-2);
-}
-
-.question-answer {
-  color: var(--text-strong);
-}
-
-.question-card.skipped .question-title {
-  font-size: var(--size-text);
-  color: var(--text-3);
 }
 
 :root[data-reduced] .turn-acts,

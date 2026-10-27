@@ -2,6 +2,7 @@
 // conversation itself in a region that scrolls on its own, and the words
 // the user is about to send, always at the foot.
 
+import { leave, leaving, stay } from "../app/leave";
 import { keepChoice } from "../app/model-memory";
 import { layerOpened } from "../app/back";
 import { FocusPanel, type FocusServers, focusSummary, type FocusPlace } from "../app/focus-panel";
@@ -463,15 +464,6 @@ export class ConversationPage {
       near: (gap, side) => void this.fillGap(gap, side),
       // Words being sent leave from where they were typed.
       departure: () => departureOf(this.input),
-      questions: {
-        words: words.questions,
-        // Answers go in at once, into the turn if one runs: they never wait
-        // in the queue.
-        answer: async (text) => {
-          const came = await this.options.send(text, { refs: [], shown: [] });
-          if (came === "failed") throw new Error(words.notSent(""));
-        },
-      },
       here: options.here,
       residentMachine: someone.machine,
       agent: someone.agent,
@@ -1427,6 +1419,13 @@ export class ConversationPage {
     return this.element.querySelector(".view-steps")!.getAttribute("aria-pressed") === "true";
   }
 
+  /** The panel beside the conversation, opened from the head's "⋯" on a
+   *  phone; none where it holds nothing. */
+  panel(): (() => void) | null {
+    const side = this.side;
+    return side?.shown ? () => side.panel.show() : null;
+  }
+
   /** Shows every step, or only what was said again: by the head's button,
    *  or from its "⋯" on a phone. */
   toggleSteps(): void {
@@ -2167,6 +2166,7 @@ export class ConversationPage {
     );
     this.focusPanel.set(current);
     pop.replaceChildren(this.focusPanel.element);
+    stay(pop);
     pop.hidden = false;
     strip.querySelector(".focus-chip")!.setAttribute("aria-expanded", "true");
     layerOpened({ isOpen: () => !pop.hidden && this.element.isConnected, close: () => this.closeFocus(focus) });
@@ -2175,8 +2175,8 @@ export class ConversationPage {
   private closeFocus(focus: NonNullable<PageOptions["focus"]>): void {
     const strip = this.element.querySelector<HTMLElement>(".focus-strip")!;
     const pop = strip.querySelector<HTMLElement>(".focus-pop")!;
-    if (pop.hidden) return;
-    pop.hidden = true;
+    if (pop.hidden || leaving(pop)) return;
+    leave(pop, () => (pop.hidden = true));
     strip.querySelector(".focus-chip")!.setAttribute("aria-expanded", "false");
     const before = this.options.someone.focus;
     const next = this.focusDraft;
@@ -2240,7 +2240,12 @@ export class ConversationPage {
     const summary = focusSummary(focus, words);
     // On a phone the chip is its machine and how many places it holds.
     const count = focus.machines.reduce((sum, chosen) => sum + Math.max(1, chosen.folders.length), 0);
-    const html = `${glyph("machine", 16)}${summary ? summary.html : `<span class="talk-chip-name">${escape(words.none)}</span>`}${count ? `<span class="focus-count">${count}</span>` : ""}${glyph("chevron", 12)}`;
+    // Pointed at the machine it lives on alone, it draws that machine and
+    // leaves its name to the head beside it.
+    const [only] = focus.machines;
+    const home = focus.machines.length === 1 && !only!.folders.length && only!.machine === this.options.someone.machine;
+    const named = summary ? (home ? "" : summary.html) : `<span class="talk-chip-name">${escape(words.none)}</span>`;
+    const html = `${glyph("machine", 16)}${named}${count ? `<span class="focus-count">${count}</span>` : ""}${glyph("chevron", 12)}`;
     if (chip.innerHTML !== html) chip.innerHTML = html;
     chip.classList.toggle("quiet", !summary);
     chip.title = summary ? `${words.title}\n${summary.said}` : words.title;

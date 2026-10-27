@@ -17,6 +17,8 @@
 // of its row, and a group, a person and the account's own section one for
 // all their machines, half filled when some are chosen: the boxes show where
 // pointed at, and on every row once any is chosen (`machine-picking.ts`).
+// A list of thousands is drawn as far as it is read, the rest coming as its
+// end comes near.
 //
 // The update view is this same tree, narrowed to the machines this device's
 // accounts may update, with what each runs, a mark of where its update
@@ -29,12 +31,14 @@ import type { WorldNow } from "../world/bridge";
 import { loginsOf } from "../world/accounts";
 import { agentName, osName } from "../world/names";
 import type { MachinesWords } from "./account-words";
-import { compareBoxes } from "./machine-groups";
+import { compareBoxes, nameInGroup, naturally } from "./machine-groups";
 import { mapOf } from "./map-of";
 import type { MapNode } from "./map-nodes";
 import { pickable, pickableIn } from "./machine-picking";
+import { readOn } from "./read-on";
 import { link } from "./places";
 import { assistantsOf, machinesOf, owns, type Machine } from "./reach";
+import { indexOf } from "./world-index";
 import { compareVersions, type MachineUpdate } from "../world/updates";
 import { groupMark, markOf, runningOf, shortVersion, type Mark } from "./update-marks";
 import type { UpdateViewWords } from "./update-view-words";
@@ -50,6 +54,9 @@ export interface ListNow {
   when(at: Date, now: Date): string;
   /** The machines chosen together, by their keys. */
   picked: ReadonlySet<string>;
+  /** While machines are looked for, those that match, by key: the list
+   *  holds them alone, every row that stands over them open. */
+  found?: ReadonlySet<string> | null | undefined;
   /** The names of a row's box and a heading's. */
   pick: { one(name: string): string; all(label: string): string };
   /** Whether a group's or a person's row is open: as the viewer last left
@@ -57,6 +64,20 @@ export interface ListNow {
   open(key: string, byDefault: boolean): boolean;
   /** The update view, when it is the one shown. */
   updates?: UpdatesNow | undefined;
+  /** At most how many rows are drawn, a fold's or a machine's alike; the
+   *  rest wait under a mark at the end, drawn as it comes near. Every row
+   *  when absent. */
+  reach?: number | undefined;
+}
+
+/** The list drawn, and where its machines stand in it. */
+export interface ListDrawn {
+  html: string;
+  /** Every machine's row under a fold that stands open, in order, drawn or
+   *  not yet, by key: the row it is, counting every row before it. */
+  rows: Map<string, number>;
+  /** Rows wait to be drawn. */
+  more: boolean;
 }
 
 /** The update view: the machines that may be updated, by name, and what
@@ -93,18 +114,22 @@ interface Holding {
   bands: { key: string; label: string; nodes: MapNode[] }[];
 }
 
-export function machineList(now: ListNow, words: MachinesWords): string {
+export function machineList(now: ListNow, words: MachinesWords): ListDrawn {
   const { world, updates } = now;
   const { hubs, nodes: all, hubLabels } = mapOf(world, words);
   const machines = new Map(machinesOf(world).map((machine) => [`m:${machine.written}`, machine]));
-  const nodes = updates ? all.filter((node) => updateOf(node, machines, updates)) : all;
+  const listed = updates ? all.filter((node) => updateOf(node, machines, updates)) : all;
+  const { found } = now;
+  const nodes = found ? listed.filter((node) => found.has(node.key)) : listed;
   const hubRows = hubs.map((hub) => {
     const seen = world.accounts.hubs.find((one) => one.hub === hub.id);
     const ms = seen?.link.kind === "online" ? seen.link.ms : null;
-    const count = nodes.filter((node) => node.hubs.includes(hub.id) && node.hold !== "assist" && !node.device).length;
-    const state = [hubLabels.get(hub.id) ?? "", ms ? words.listMs(ms) : ""].filter(Boolean).join("　");
+    const count = listed.filter((node) => node.hubs.includes(hub.id) && node.hold !== "assist" && !node.device).length;
+    const state = seen?.link.kind === "online" ? (ms ? words.listMs(ms) : words.hubOnline) : (hubLabels.get(hub.id) ?? "");
+    // Since when the line is down, and why, for a pointer resting on it.
+    const down = seen?.link.kind === "connecting" ? words.hubDownSince(now.when(new Date(seen.link.since), now.now), seen.link.last_error ?? null) : "";
     const key = `hub:${hub.id}`;
-    return `<button class="ml-row ml-hub${hub.online ? " online" : " offline"}${now.selected === key ? " chosen" : ""}" type="button" data-ml-open="${escape(key)}">
+    return `<button class="ml-row ml-hub${hub.online ? " online" : " offline"}${now.selected === key ? " chosen" : ""}" type="button" data-ml-open="${escape(key)}"${down ? ` title="${escape(down)}"` : ""}>
       <span class="ml-pick none" aria-hidden="true"></span>
       ${nameCell(knot(), `<span class="ml-name-text">${escape(hub.name)}</span><span class="tag">${escape(words.listHub)}</span>`, false)}
       <span class="ml-system">${escape(words.hubMachines(count))}</span>
@@ -117,15 +142,26 @@ export function machineList(now: ListNow, words: MachinesWords): string {
 
   // Each owner's machines, loose and in groups, in the drawing's order.
   const holdings: Holding[] = [];
+  const held = new Map<string, Holding>();
+  const banded = new Map<string, Holding["bands"][number]>();
   for (const node of nodes) {
     const group = node.group ?? { key: node.hold, label: node.hold };
     const owner = group.within ?? group;
-    let found = holdings.find((one) => one.key === owner.key);
-    if (!found) holdings.push((found = { key: owner.key, label: owner.label, loose: [], bands: [] }));
+    let found = held.get(owner.key);
+    if (!found) {
+      found = { key: owner.key, label: owner.label, loose: [], bands: [] };
+      holdings.push(found);
+      held.set(owner.key, found);
+    }
     if (!group.within) found.loose.push(node);
     else {
-      let band = found.bands.find((one) => one.key === group.key);
-      if (!band) found.bands.push((band = { key: group.key, label: group.label, nodes: [] }));
+      // A group's key holds its owner's (`boxOf`).
+      let band = banded.get(group.key);
+      if (!band) {
+        band = { key: group.key, label: group.label, nodes: [] };
+        found.bands.push(band);
+        banded.set(group.key, band);
+      }
       band.nodes.push(node);
     }
   }
@@ -133,35 +169,57 @@ export function machineList(now: ListNow, words: MachinesWords): string {
   holdings.sort((a, b) => compareBoxes(a.key, b.key, rank));
   for (const holding of holdings) holding.bands.sort((a, b) => compareBoxes(a.key, b.key, rank));
 
-  const draw = new Drawing(now, words, nodes, machines);
-  const mine = holdings.find((one) => one.key === "mine") ?? (now.adds.length ? { key: "mine", label: words.mineGroup, loose: [], bands: [] } : null);
+  const draw = new Drawing(now, words, machines);
+  const mine = holdings.find((one) => one.key === "mine") ?? (now.adds.length && !found ? { key: "mine", label: words.mineGroup, loose: [], bands: [] } : null);
   const people = holdings.filter((one) => one.key.startsWith("of:"));
-  const shared = people.filter((one) => sharedWith(world, machines, one));
-  const members = people.filter((one) => !shared.includes(one));
+  const shared = new Set(people.filter((one) => sharedWith(world, machines, one)));
+  const members = people.filter((one) => !shared.has(one));
   const assisting = holdings.filter((one) => one.key.startsWith("assist:")).flatMap((one) => one.loose);
 
+  // A section stands with its first row: one wholly beyond what is drawn
+  // waits with its rows.
+  const reach = now.reach ?? Infinity;
   const sections: string[] = [];
   if (mine) {
     const all = everyNode(mine);
-    const add = now.adds.length && !updates
+    const first = draw.count;
+    const body = draw.leaves(mine.loose, 0) + mine.bands.map((band) => draw.band(band, 0, band.nodes.length <= OPEN_GROUP)).join("");
+    const add = now.adds.length && !updates && !found && draw.row()
       ? `<button class="ml-row ml-add" type="button" data-ml-add="${escape(now.adds[0]!)}"><span class="ml-pick none" aria-hidden="true"></span>${nameCell(glyph("plus", 15), `<span class="ml-name-text">${escape(words.addMachine)}</span>`, false)}</button>`
       : "";
-    const body = draw.leaves(mine.loose, 0) + mine.bands.map((band) => draw.band(band, 0, band.nodes.length <= OPEN_GROUP)).join("") + add;
-    sections.push(section(words.mineGroup, words.groupSub(all.length, online(all)), box(`list:mine`, words.mineGroup, nodes, now), body));
+    if (first < reach) sections.push(section(words.mineGroup, words.groupSub(all.length, online(all)), box(`list:mine`, words.mineGroup, nodes, now), body + add));
   }
   for (const [label, holders, opens] of [
-    [words.sharedSection, shared, true],
+    [words.sharedSection, [...shared], true],
     [words.membersSection, members, false],
   ] as const) {
     if (!holders.length) continue;
-    const all = holders.flatMap(everyNode);
+    const first = draw.count;
     const body = holders.map((holder) => draw.person(holder, opens && everyNode(holder).length <= OPEN_PERSON)).join("");
+    if (first >= reach) continue;
+    const all = holders.flatMap(everyNode);
     sections.push(section(label, words.groupSub(all.length, online(all)), "", body));
   }
-  if (assisting.length && !updates) sections.push(section(words.assistSection, words.groupSub(assisting.length, online(assisting)), "", draw.leaves(assisting, 0)));
+  if (assisting.length && !updates) {
+    const first = draw.count;
+    const body = draw.leaves(assisting, 0);
+    if (first < reach) sections.push(section(words.assistSection, words.groupSub(assisting.length, online(assisting)), "", body));
+  }
+  if (found && !nodes.length) sections.push(`<p class="ml-none">${escape(words.noneFound)}</p>`);
+  const more = draw.count > reach;
+  const end = more ? readOn : "";
   // The ruler and the policy stay put; the machines under them scroll.
-  if (updates) return `<div class="uv-top">${updates.head}</div><div class="uv-rows scroller">${sections.join("")}</div>`;
-  return `<div class="ml-hubs">${hubRows.join("")}</div>${sections.join("")}`;
+  const html = updates
+    ? `<div class="uv-top">${updates.head}</div><div class="uv-rows scroller">${sections.join("")}${end}</div>`
+    : `<div class="ml-hubs">${hubRows.join("")}</div>${sections.join("")}${end}`;
+  return { html, rows: draw.rows, more };
+}
+
+/** The machines found, in the order the list sets them out, whichever view
+ *  is shown. */
+export function listOrder(world: WorldNow, found: ReadonlySet<string>, words: MachinesWords): string[] {
+  const walked = machineList({ world, now: new Date(0), selected: null, adds: [], when: () => "", picked: new Set(), pick: { one: () => "", all: () => "" }, open: () => true, found, reach: 0 }, words);
+  return [...walked.rows.keys()];
 }
 
 /** What the update view knows of the machine a node is: a phone by its
@@ -179,7 +237,10 @@ function markCell(mark: Mark): string {
 /** A section: its name, how many and how many online, a hand-drawn line;
  *  then its rows. */
 function section(label: string, sub: string, box: string, body: string): string {
-  return `<section class="ml-group"><h2 class="ml-group-head">${box}<span>${escape(label)}</span><span class="ml-group-sub">${escape(sub)}</span></h2>${body}</section>`;
+  // A heading none of whose machines can be chosen keeps the box's room, so
+  // every heading's name starts where the others' do.
+  const room = box || `<span class="ml-pick none" aria-hidden="true"></span>`;
+  return `<section class="ml-group"><h2 class="ml-group-head">${room}<span>${escape(label)}</span><span class="ml-group-sub">${escape(sub)}</span></h2>${body}</section>`;
 }
 
 /** The name cell of every row: the twisty, or its room on a leaf; the
@@ -213,20 +274,34 @@ function box(key: string, label: string, nodes: readonly MapNode[], now: ListNow
   return `<span class="ml-pick" role="checkbox" aria-checked="${state}" aria-label="${escape(now.pick.all(label))}" data-ml-pick-all="${escape(key)}"></span>`;
 }
 
-/** The rows of the tree, drawn with what every row needs to hand. */
+/** The rows of the tree, drawn with what every row needs to hand, as many as
+ *  the list draws; those after are only walked, for where they stand. */
 class Drawing {
+  /** Rows walked so far, a fold's or a machine's, drawn or not. */
+  count = 0;
+  /** Each machine's row walked, in order, by key. */
+  readonly rows = new Map<string, number>();
+  private readonly reach: number;
+
   constructor(
     private readonly now: ListNow,
     private readonly words: MachinesWords,
-    private readonly nodes: readonly MapNode[],
     private readonly machines: Map<string, Machine>,
-  ) {}
+  ) {
+    this.reach = now.reach ?? Infinity;
+  }
+
+  /** Takes the next row: whether it is drawn. */
+  row(): boolean {
+    this.count += 1;
+    return this.count <= this.reach;
+  }
 
   /** Machines, this computer first, then by name: the rows stay where they
    *  are as machines come and go. */
   leaves(nodes: MapNode[], depth: number): string {
     return [...nodes]
-      .sort((a, b) => Number(b.here) - Number(a.here) || a.name.localeCompare(b.name, undefined, { numeric: true }))
+      .sort((a, b) => Number(b.here) - Number(a.here) || naturally(a.name, b.name))
       .map((node) => this.leaf(node, depth))
       .join("");
   }
@@ -250,9 +325,15 @@ class Drawing {
     return this.fold(holding.key, face, owner, tags, all, 0, byDefault, () => this.leaves(holding.loose, 1) + holding.bands.map((band) => this.band(band, 1, band.nodes.length <= OPEN_GROUP)).join(""), visitor);
   }
 
+  /** A row that opens onto `nodes`, which are every machine its box holds:
+   *  its box ticks them all. */
   private fold(key: string, icon: string, label: string, tags: string, nodes: MapNode[], depth: number, byDefault: boolean, inside: () => string, faint = false): string {
     const { now, words } = this;
-    const open = now.open(key, byDefault);
+    const open = now.found ? true : now.open(key, byDefault);
+    if (!this.row()) {
+      if (open) inside();
+      return "";
+    }
     if (now.updates) {
       const updates = now.updates;
       const known = nodes.flatMap((node) => updateOf(node, this.machines, updates) ?? []);
@@ -260,7 +341,7 @@ class Drawing {
       const span = versions.length ? (versions.length === 1 ? versions[0]! : `${versions[0]}–${versions[versions.length - 1]}`) : "";
       const shown = versions.length ? (versions.length === 1 ? shortVersion(versions[0]!, updates.line) : `${shortVersion(versions[0]!, updates.line)}–${shortVersion(versions[versions.length - 1]!, updates.line)}`) : "";
       const row = `<button class="ml-row ml-fold${open ? " open" : ""}${faint ? " visitor" : ""}" type="button" data-ml-fold="${escape(key)}" aria-expanded="${open}"${indent(depth)}>
-      ${box(`list:${key}`, label, this.nodes, now) || `<span class="ml-pick none" aria-hidden="true"></span>`}
+      ${box(`list:${key}`, label, nodes, now) || `<span class="ml-pick none" aria-hidden="true"></span>`}
       ${nameCell(icon, `<span class="ml-name-text">${escape(label)}</span>${tags}<span class="ml-count">${escape(words.groupSub(nodes.length, online(nodes)))}</span>`, true)}
       <span class="ml-system uv-version"${span ? ` title="${escape(updates.words.runs(span))}"` : ""}>${escape(shown)}</span>
       ${markCell(groupMark(known, updates.line, updates.words))}
@@ -273,7 +354,7 @@ class Drawing {
     const busy = nodes.reduce((sum, node) => sum + node.busy, 0);
     const count = `<span class="ml-count">${escape(words.groupSub(nodes.length, online(nodes)))}</span>`;
     const row = `<button class="ml-row ml-fold${open ? " open" : ""}${faint ? " visitor" : ""}" type="button" data-ml-fold="${escape(key)}" aria-expanded="${open}"${indent(depth)}>
-      ${box(`list:${key}`, label, this.nodes, now) || `<span class="ml-pick none" aria-hidden="true"></span>`}
+      ${box(`list:${key}`, label, nodes, now) || `<span class="ml-pick none" aria-hidden="true"></span>`}
       ${nameCell(icon, `<span class="ml-name-text">${escape(label)}</span>${tags}`, true)}
       ${count}
       <span class="ml-given"></span>
@@ -284,6 +365,8 @@ class Drawing {
   }
 
   private leaf(node: MapNode, depth: number): string {
+    this.rows.set(node.key, this.count);
+    if (!this.row()) return "";
     const { now, words } = this;
     const { world } = now;
     const machine = this.machines.get(node.key) ?? null;
@@ -325,25 +408,28 @@ class Drawing {
       ? `<span class="ml-pick" role="checkbox" aria-checked="${chosen}" aria-label="${escape(now.pick.one(node.name))}" data-ml-pick="${escape(node.key)}"></span>`
       : `<span class="ml-pick none" aria-hidden="true"></span>`;
     const title = assist && agents.length ? `${node.title}　${agents.map(agentName).join("、")}` : node.title;
+    // In a group, what follows the group's name, as on the drawing.
+    const shown = nameInGroup(node.name, node.group?.within ? node.group.label : null);
     const go = visitor ? "" : glyph("chevron", 16);
     const update = now.updates && !assist ? updateOf(node, this.machines, now.updates) : undefined;
     const inner = now.updates && update
       ? `${node.device ? `<span class="ml-pick none" aria-hidden="true"></span>` : pick}
-      ${nameCell(glyph(icon, 15), `<span class="ml-name-text">${escape(node.name)}</span>${tags}`, false)}
+      ${nameCell(glyph(icon, 15), `<span class="ml-name-text">${escape(shown)}</span>${tags}`, false)}
       ${versionCell(update, now.updates)}
       ${markCell(now.updates.said.has(update.machine) ? { kind: "failed", html: glyph("cross", 16), said: now.updates.said.get(update.machine)! } : markOf(update, now.updates.line, now.updates.words))}
       <span class="ml-given"></span>
       <span class="ml-busy">${autoSwitch(update, now.updates)}</span>
       <span class="ml-go" aria-hidden="true">${go}</span>`
       : `${pick}
-      ${nameCell(glyph(icon, 15), `<span class="ml-name-text">${escape(node.name)}</span>${tags}`, false)}
+      ${nameCell(glyph(icon, 15), `<span class="ml-name-text">${escape(shown)}</span>${tags}`, false)}
       <span class="ml-system">${system}</span>
       <span class="ml-link">${linkSaid(node, machine, now, words)}</span>
       <span class="ml-given">${given}</span>
       <span class="ml-busy">${busy}</span>
       <span class="ml-go" aria-hidden="true">${go}</span>`;
     const kind = `ml-row ${state}${assist ? " assist" : ""}${visitor ? " visitor" : ""}${now.selected === node.key || chosen ? " chosen" : ""}`;
-    const at = indent(depth);
+    // Every machine's row is found by its key, as one looked for is gone to.
+    const at = `${indent(depth)} data-ml-row="${escape(node.key)}"`;
     const keyed = chooses ? ` data-ml-key="${escape(node.key)}"` : "";
     // A machine one may work on has its own page; an assisting agent's and a
     // phone open their details here; a visitor's is only seen.
@@ -386,6 +472,10 @@ function linkSaid(node: MapNode, machine: Machine | null, now: ListNow, words: M
     return escape(words.offline(since ? now.when(new Date(since), now.now) : null));
   }
   if (node.online === null) return escape(words.unknown);
+  // While no hub it is on is connected, how its line goes now is not known:
+  // this computer says it is reconnecting, the others stand as they were.
+  const heard = node.hubs.some((id) => now.world.accounts.hubs.find((hub) => hub.hub === id)?.link.kind === "online");
+  if (!heard) return node.here ? escape(words.hubConnecting) : "";
   if (node.through) return escape(words.viaShort(node.through));
   return node.hubMs !== undefined ? `<span class="ml-ms">${escape(words.listMs(node.hubMs))}</span>` : escape(words.onlineNow);
 }
@@ -414,7 +504,7 @@ function busyDots(count: number, words: MachinesWords): string {
 /** Whether a machine is a managed machine: registered under an account,
  *  logged in to none (`world-network.md`, 受管机器). */
 export function isManaged(world: WorldNow, name: string): boolean {
-  return world.accounts.hubs.some((hub) => hub.members.some((member) => member.name === name && !!member.managed));
+  return indexOf(world).managed.has(name);
 }
 
 /** The hub's small knot, as the drawing marks it. */

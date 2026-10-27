@@ -200,7 +200,7 @@ export class DataPage implements Page {
     const space = this.space;
     let html: string;
     if (this.problem) html = `<p class="feature-note" title="${escape(this.problem)}">${escape(words.failed)}</p>`;
-    else if (space) html = `${this.bar(space)}${this.conversations(space)}${this.output(space)}${this.cacheSection(space.kinds.cache)}`;
+    else if (space) html = `${this.bar(space)}${this.conversations(space)}${this.output(space)}${this.cacheSection(null)}`;
     else if (!this.options.data && this.deviceCache !== null) html = this.cacheSection(this.deviceCache);
     else html = `<p class="feature-note">${escape(words.reading)}</p>`;
     redrawKeepingFocus(this.body, () => {
@@ -291,7 +291,7 @@ export class DataPage implements Page {
         <input type="checkbox" data-choose="${escape(one.name)}"${this.chosen.has(one.name) ? " checked" : ""}${one.held ? ` disabled title="${escape(one.held)}"` : ""} aria-label="${escape(name)}">
         <button class="data-row-open" type="button" data-open="${escape(one.name)}" aria-expanded="${open}">
           <span class="data-agent">${glyph(one.agent === "claude" ? "claude" : "codex", 16)}</span>
-          <span class="data-name">${escape(name)}</span>
+          <span class="data-name"${narrow.matches && (one.town || one.last_activity) ? ` title="${escape([one.town ?? "", one.last_activity ? words.ago(new Date(one.last_activity), now) : ""].filter(Boolean).join("\n"))}"` : ""}>${escape(name)}</span>
           ${one.town ? `<span class="tag">${escape(one.town)}</span>` : ""}
           <span class="data-when">${one.last_activity ? escape(words.ago(new Date(one.last_activity), now)) : ""}</span>
           <span class="data-size">${escape(size(one.bytes))}</span>
@@ -303,17 +303,19 @@ export class DataPage implements Page {
 
   private output(space: Space): string {
     const { words } = this.options;
-    return `<section class="home-section data-section"><h2 class="section-title">${escape(words.output)}<span class="data-size">${escape(size(space.kinds.command_output))}</span></h2>
+    return `<section class="home-section data-section"><h2 class="section-title">${escape(words.output)}</h2>
       <p class="data-said">${escape(words.outputSaid)}</p>
       <div class="choice-options" role="radiogroup" aria-label="${escape(words.outputSaid)}">${OUTPUT_DAYS.map(
         (n) => `<button type="button" class="choice${n === space.output_days ? " chosen" : ""}" role="radio" aria-checked="${n === space.output_days}" data-days="${n}">${escape(words.days(n))}</button>`,
       ).join("")}</div></section>`;
   }
 
-  private cacheSection(bytes: number): string {
+  private cacheSection(bytes: number | null): string {
     const { words } = this.options;
-    return `<section class="home-section data-section"><h2 class="section-title">${escape(words.cache)}<span class="data-size">${escape(size(bytes))}</span></h2>
-      <p class="data-said">${escape(words.cacheSaid)}${this.options.data || this.options.cache ? `<button class="text-button quiet-button" type="button" data-act="clear">${escape(words.clear)}</button>` : ""}</p></section>`;
+    // Its size is said here only where no bar above says it.
+    const sized = bytes === null ? "" : `<span class="data-size">${escape(size(bytes))}</span>`;
+    const clear = this.options.data || this.options.cache ? `<button class="text-button quiet-button data-clear" type="button" data-act="clear">${escape(words.clear)}</button>` : "";
+    return `<section class="home-section data-section"><h2 class="section-title"><span title="${escape(words.cacheSaid)}">${escape(words.cache)}</span>${sized}${clear}</h2></section>`;
   }
 
   private async click(event: Event): Promise<void> {
@@ -389,5 +391,8 @@ export function totalOf(space: Space): number {
 }
 
 const size = (bytes: number) => bytesSaid(bytes);
+/** A phone's width (`data-page.css`): a row there says its project and
+ *  when it was last used when held. */
+const narrow = matchMedia("(max-width: 520px)");
 
 export { bytesSaid };

@@ -36,6 +36,7 @@ import type { Page } from "./shell";
 import { effect } from "./signals";
 import { residentsOf, type Store } from "./store";
 import { deviceFeatures } from "./device-features";
+import { leave } from "./leave";
 import { collaboration } from "../film/collaboration";
 import { memoryFilm } from "../film/memory";
 import { sentinelFilm } from "../film/sentinel";
@@ -128,10 +129,12 @@ export class FeaturesPage implements Page {
     this.undone?.();
   }
 
-  /** A film set into `holder`: playing, or `still` on its last frame. */
+  /** A film set into `holder`: playing, or `still` on its last frame. A
+   *  still is a band over the feature's settings, wide even on a phone,
+   *  so that they begin on the first screen. */
   private film(holder: Element | null, make: (shape: Shape) => Built, label: string, still = false): void {
     if (!holder) return;
-    const film = new Film(make, label, still);
+    const film = new Film(make, label, still, still ? "wide" : undefined);
     this.films.push(film);
     holder.replaceChildren(film.element);
   }
@@ -175,10 +178,12 @@ export class FeaturesPage implements Page {
     const takeAway = () => {
       if (!open) return;
       open = false;
-      film.destroy();
-      done.remove();
       removeEventListener("keydown", key);
       this.undone = null;
+      leave(done, () => {
+        film.destroy();
+        done.remove();
+      });
     };
     const close = () => {
       if (!open) return;
@@ -231,7 +236,7 @@ export class FeaturesPage implements Page {
   private cards(): void {
     const { words } = this.options;
     const tag = (on: boolean | null) =>
-      on === null ? "" : on ? `<span class="tag feature-tag-on">${glyph("check", 12)}<span>${escape(words.on)}</span></span>` : `<span class="tag">${escape(words.off)}</span>`;
+      on === null ? "" : on ? `<span class="tag feature-tag-on">${glyph("check", 12)}<span>${escape(words.on)}</span></span>` : `<span class="tag feature-tag-off">${escape(words.off)}</span>`;
     const coming = `<span class="tag">${escape(words.coming)}</span>`;
     const draw = (on: boolean | null) => {
       this.body.innerHTML = `<ul class="feature-cards">

@@ -9,7 +9,7 @@ import { escape } from "../prose";
 import { glyph, type GlyphName } from "../glyphs";
 import { cargoSubject, shortCommand, testSubject } from "../deeds/rows";
 import { troubled } from "../deeds/fan";
-import { scriptSaid } from "../deeds/script";
+import { scriptSaid, wordsOf } from "../deeds/script";
 import { cardsIn, type Bunch } from "./bunch";
 import type { Card } from "./cards";
 import type { Words } from "../../words";
@@ -27,6 +27,8 @@ interface Said {
   /** Markup before what it was done to: the hook of a command fed by the
    *  row above. */
   lead?: string;
+  /** What it was done to as markup, where it says more than its words. */
+  objectHtml?: string;
 }
 
 export interface LineLook {
@@ -45,7 +47,7 @@ export function lineHtml(part: Card | Bunch, look: LineLook): string {
   const tense = failed ? "failed" : running ? "running" : "done";
   const meta = `<span class="row-meta">${said.stats}${said.outcome}${said.where}<span class="row-chevron">${glyph("chevron", 16)}</span></span>`;
   const key = escape(part.key);
-  return `<div class="row row-tool row-${tense}${part.kind === "bunch" ? " row-bunch" : ""}${look.enter}" data-row="${key}"><span class="rail">${mark}</span><button class="row-line" type="button" data-open="${key}" aria-expanded="${look.open}"><span class="row-action">${escape(said.verb)}</span><span class="row-rest"><span class="row-object">${said.lead ?? ""}${escape(said.object)}</span>${meta}</span></button><div class="fold-box"${look.open ? "" : ' style="height:0" inert'}><div class="fold-content"></div></div></div>`;
+  return `<div class="row row-tool row-${tense}${part.kind === "bunch" ? " row-bunch" : ""}${look.enter}" data-row="${key}"><span class="rail">${mark}</span><button class="row-line" type="button" data-open="${key}" aria-expanded="${look.open}"><span class="row-action">${escape(said.verb)}</span><span class="row-rest"><span class="row-object">${said.lead ?? ""}${said.objectHtml ?? escape(said.object)}</span>${meta}</span></button><div class="fold-box"${look.open ? "" : ' style="height:0" inert'}><div class="fold-content"></div></div></div>`;
 }
 
 /** A row's words, as finding reads them. */
@@ -92,7 +94,17 @@ function cardSaid(card: Card, words: Words): Said {
       const end = card.on?.end;
       const ended = end?.kind === "stopped" ? `<span class="row-outcome">${escape(deeds.ended(end))}</span>` : end?.kind === "lost" || end?.kind === "not_run" ? outcome(deeds.ended(end)) : "";
       const lead = card.on?.piped ? `<span class="row-fed" title="${escape(deeds.fed)}">${glyph("fed", 12)}</span>` : "";
-      return plainSaid("command", card.running ? words.act("command", "running") : verbs.run, shortCommand(card.command), { outcome: ended, lead });
+      const verb = card.running ? words.act("command", "running") : verbs.run;
+      // Commands gathered: the first few, and how many more; all of them
+      // once the row is open.
+      if (card.commands && card.commands.length > 1) {
+        const all = named(card.commands);
+        const few = all.length > FEW ? `${all.slice(0, FEW).join(words.listSeparator)} ${deeds.moreCommands(all.length)}` : all.join(words.listSeparator);
+        return plainSaid("command", verb, all.join(words.listSeparator), { outcome: ended, lead, objectHtml: `<span class="row-few">${escape(few)}</span><span class="row-all">${escape(all.join(words.listSeparator))}</span>` });
+      }
+      const look = card.running ? null : lookOf(card.command, deeds);
+      if (look) return plainSaid(look.glyph, deeds.world.look, look.object, { outcome: ended, lead });
+      return plainSaid("command", verb, shortCommand(card.command), { outcome: ended, lead });
     }
     case "fan": {
       const bad = card.deed.steps.filter((step) => troubled(step.end)).length;
@@ -162,13 +174,54 @@ function bunchSaid(bunch: Bunch, words: Words): Said {
     const removed = cards.reduce((sum, card) => sum + (card.kind === "change" ? (card.removed ?? 0) : 0), 0);
     return { glyph: "edit", verb: words.act("edit", "done"), object: deeds.files(cards.length), stats: counted ? stats(added, removed) : "", outcome: failed, where };
   }
-  if (bunch.family === "commands") return { glyph: "command", verb: deeds.verbs.run, object: deeds.commandsRun(cards.length), stats: "", outcome: failed, where };
+  // Commands gathered on one card are each a command.
+  if (bunch.family === "commands") return { glyph: "command", verb: deeds.verbs.run, object: deeds.commandsRun(cards.reduce((sum, card) => sum + (card.kind === "command" ? (card.commands?.length ?? 1) : 1), 0)), stats: "", outcome: failed, where };
   // A file read again, a search made again, counted once.
   const read = new Set(cards.flatMap((card) => (card.kind === "read" ? [`${card.machine ?? ""}|${card.path}`] : []))).size;
   const searched = new Set(cards.flatMap((card) => (card.kind === "search" ? [card.pattern] : card.kind === "web" ? [card.label] : []))).size;
   const others = cards.filter((card) => card.kind === "tree" || card.kind === "history").length;
   const object = [read ? deeds.files(read) : "", searched ? deeds.searches(searched) : "", others ? deeds.looked(others) : ""].filter(Boolean).join(words.listSeparator);
   return { glyph: read ? "read" : "search", verb: read ? deeds.verbs.read : deeds.verbs.search, object, stats: "", outcome: failed, where };
+}
+
+/** How many commands gathered on a row it names before counting the rest. */
+const FEW = 3;
+
+/** Commands gathered, as a row names them: each without what only routes
+ *  its output, and the World's name said once, before the first of its
+ *  commands. */
+function named(commands: readonly string[]): string[] {
+  let world = false;
+  return commands.map((command) => {
+    const short = shortCommand(command);
+    const own = /^fastctx\s+(.+)$/.exec(short);
+    if (!own) return short;
+    if (world) return own[1]!;
+    world = true;
+    return short;
+  });
+}
+
+/** What one of the World's own commands that only shows something showed,
+ *  as its row says it after the verb of looking; null for any other. */
+function lookOf(command: string, deeds: Words["deeds"]): { glyph: GlyphName; object: string } | null {
+  const words = wordsOf(shortCommand(command));
+  if (words[0] !== "fastctx") return null;
+  const [first, second] = words.slice(1);
+  const asked = words.slice(1).filter((word) => word.startsWith("-"));
+  // Asked how it is used.
+  if (asked.includes("--help") || asked.includes("-h") || first === "help" || first === undefined && asked.length) {
+    const of = words.slice(0, 3).filter((word, index) => index === 0 || (!word.startsWith("-") && word !== "help")).join(" ");
+    return { glyph: "info", object: deeds.looks.usage(of) };
+  }
+  if (asked.length) return null;
+  if (first === "nodes" && !second) return { glyph: "machine", object: deeds.looks.machines };
+  if (first === "w" && !second) return { glyph: "steps", object: deeds.looks.working };
+  if (first === "project" && (second === "list" || second === undefined)) return { glyph: "folder", object: deeds.looks.projects };
+  if (first === "plan" && !second) return { glyph: "tasks", object: deeds.looks.plan };
+  if (first === "goal" && !second) return { glyph: "goal", object: deeds.looks.goal };
+  if (first === "accounts" && !second) return { glyph: "person", object: deeds.looks.accounts };
+  return null;
 }
 
 function place(machine: string | null, words: Words): string {

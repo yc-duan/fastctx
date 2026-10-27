@@ -25,25 +25,28 @@ pub(super) const PLAN_UNAVAILABLE: &str = "The plan is unavailable.";
 /// How a conversation keeps its plan (`world-plan.md`, 交给模型的那段说明).
 pub(super) const PLAN_GUIDE: &str = r#"YOUR PLAN
 
-Keep, beside this conversation, what has been decided and how far the work has
-come. The user sees your plan in a panel next to the conversation and can
+Plan your own work here: what the work is, its steps in the order you will
+take them, what has been decided, and where the work stands. Write it
+yourself, unasked, before you start anything that takes real effort, then
+work through it in that order, one step finished before the next is taken
+up. The user sees your plan in a panel next to the conversation and can
 change it; the colleagues you ask can read it. It is a canvas, not a form:
 what you put on it, and how, is yours to choose. `fastctx plan` shows it;
 write the whole new page to a draft file, then `fastctx plan --file <draft>`
 puts it up as the next version.
 
 ## When to write it
-- Once something is clearly decided to be done: the user agreed to a
-  direction, or you settled what the work is.
-- When the plan itself changes: a new decision, a step added or dropped.
-- When there is clear progress: a step is done and the work stands at the
-  next one.
+- Before work that is more than a quick answer or a small change: lay out
+  its steps in order.
+- When the plan itself changes: a new decision, a step added, dropped or
+  moved.
+- When a step is done and the work stands at the next one.
 
 ## When not to
-- Before anything is decided: while exploring, answering a question, or
-  weighing options.
-- In a turn that decides nothing and moves nothing, whatever else happened
-  in it.
+- For what you can finish at once: a question answered, a quick look, a
+  small fix.
+- Between steps. Change it only when the work has really moved, not after
+  each command or for what you are about to try.
 - For how a colleague, a sentinel or a job stands right now. Write its id
   (codex-7f3a, s-a1b2c3, j-k3x9a2, or a journal entry such as
   20261022T031205Z-desktop) and the page shows its state, live. A job going

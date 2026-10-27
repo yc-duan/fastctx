@@ -11,7 +11,6 @@
 // that conversation. A network this computer was on, dissolved, is called
 // about once too. The shell's own mechanics are in `world/desktop.ts`.
 
-import { replyOf } from "../conversation/async-ask";
 import { connectDesktop, desktopAvailable, dismissDesktopNotice, getWindowPresence, notifyDesktop } from "../world/desktop";
 import type { Address } from "../world/events";
 import type { Asked, ResidentNow } from "../world/world";
@@ -50,15 +49,9 @@ export interface PresenceOptions {
   someone(resident: ResidentNow): string;
   /** Stops the turn of the conversation a notification is about. */
   stop(address: Address): Promise<unknown>;
-  /** The user's words to the conversation, sent at once. */
-  say(address: Address, text: string): Promise<unknown>;
 }
 
 const KEY = "notify";
-
-/** The most answers a notification offers as buttons: what an Android
- *  notification shows, kept the same on a computer. */
-export const ANSWER_BUTTONS = 3;
 
 /** Whether the user wants to be called; on unless they turned it off. */
 export function notifying(): boolean {
@@ -85,30 +78,12 @@ export function askedKey(now: ResidentNow["now"]): string | null {
   return now?.asked?.id ?? (now?.waiting_for_user ? "waiting" : null);
 }
 
-/** The answers a question offers as buttons: one question asked without
- *  waiting, with a few options. */
-export function answerButtons(asked: Asked | undefined): string[] {
-  const options = asked?.options ?? [];
-  return asked && !asked.waits && asked.what === "answer" && options.length > 0 && options.length <= ANSWER_BUTTONS ? options : [];
-}
-
-/** The user's choice among a question's buttons, as the words that answer
- *  it: Codex's own envelope. */
-export function answerWith(asked: Asked, choice: number): string {
-  return replyOf(asked.id, [{ title: asked.text, options: asked.options ?? null }], [asked.options![choice]!]);
-}
-
 export function startPresence(options: PresenceOptions): void {
   if (!desktopAvailable()) return;
   const { store, words } = options;
   void connectDesktop({
     async onActivation({ route, action }) {
       const target = route ? placeOf(route) : null;
-      const answer = /^answer:(\d+)$/.exec(action ?? "");
-      if (answer && target?.kind === "talk") {
-        await answerFrom(target.address, Number(answer[1]));
-        return;
-      }
       if (route) location.hash = route;
       if (action === "stop" && target?.kind === "talk") await options.stop(target.address);
     },
@@ -116,22 +91,6 @@ export function startPresence(options: PresenceOptions): void {
       console.error("World desktop", notificationId, error);
     },
   }).catch((error: unknown) => console.error("Connecting World's desktop", error));
-
-  /** Answers the question a notification's button was about, once the
-   *  World is known: a cold start from the button may come before it. */
-  async function answerFrom(address: Address, choice: number): Promise<void> {
-    const asked = await new Promise<Asked | undefined>((resolve) => {
-      const stop = effect(() => {
-        const world = store.world.get();
-        if (!world) return;
-        const resident = residentsOf(world).find((r) => r.about.id === address.resident && r.about.machine === address.machine);
-        queueMicrotask(() => stop());
-        resolve(resident?.now?.asked);
-      });
-    });
-    if (!asked || !answerButtons(asked)[choice]) return;
-    await options.say(address, answerWith(asked, choice));
-  }
 
   // Who came into an account this computer or device is logged in to:
   // each called about once, the first look only learns. Managed machines
@@ -228,12 +187,11 @@ export function startPresence(options: PresenceOptions): void {
       const address = { resident: r.about.id, machine: r.about.machine };
       if (now.asked && now.asked !== was?.asked) {
         const asked = r.now?.asked;
-        const buttons = answerButtons(asked);
         void call(`${id}:asked`, {
           title: words.asked(options.someone(r), asked?.what ?? "waiting"),
           body: asked?.text ?? "",
           route: talkLink(address),
-          actions: buttons.length ? buttons.map((option, index) => ({ id: `answer:${index}`, title: option, quiet: true })) : [{ id: "open", title: words.open }],
+          actions: [{ id: "open", title: words.open }],
         });
       } else if (was && now.told && now.told !== was.told && r.now?.told && r.now.told.status !== "info") {
         // What can wait is not pushed: it waits on the home page. Only what

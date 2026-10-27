@@ -1,6 +1,7 @@
-// A short menu of what can be done to one thing, opened by its "⋯": beside
-// the button on a computer, rising from below on a narrow screen, drawn as
-// a conversation's "⋯" is (`talk-menu.css`). Its button pressed again, a
+// A short menu of what can be done to one thing, opened by its "⋯", or
+// where the right button was pressed: beside the button or at the pointer
+// on a computer, rising from below on a narrow screen, drawn as a
+// conversation's "⋯" is (`talk-menu.css`). Its button pressed again, a
 // press outside, Escape, the system back, the page scrolling or the window
 // resizing closes it.
 
@@ -32,6 +33,8 @@ export class ActsMenu {
   private readonly shade: HTMLElement;
   private anchor: HTMLElement | null = null;
   private chosen: ((act: string) => void) | null = null;
+  /** Told once it closes, however that comes. */
+  private closed: (() => void) | null = null;
   private shown = false;
   private readonly layer: Layer = { isOpen: () => this.shown, close: () => this.close() };
 
@@ -96,9 +99,26 @@ export class ActsMenu {
    *  short menu held up from what the finger rests on. */
   open(anchor: HTMLElement, title: string, entries: MenuEntry[], chosen: (act: string) => void, beside = false): void {
     if (this.shown && this.isAnchor(anchor)) return this.close();
+    this.close();
     this.anchor = anchor;
-    this.chosen = chosen;
     const sheet = narrow.matches && !beside;
+    this.show(title, entries, chosen, sheet);
+    anchor.setAttribute("aria-expanded", "true");
+    if (!sheet) this.place(anchor.getBoundingClientRect());
+  }
+
+  /** Opens at `at`, a point in the window, as the right button's menu
+   *  does: down and right of it where the window has room. */
+  openAt(at: readonly [number, number], title: string, entries: MenuEntry[], chosen: (act: string) => void, closed?: () => void): void {
+    this.close();
+    const sheet = narrow.matches;
+    this.show(title, entries, chosen, sheet);
+    this.closed = closed ?? null;
+    if (!sheet) this.place({ left: at[0], right: at[0], top: at[1], bottom: at[1] }, true);
+  }
+
+  private show(title: string, entries: MenuEntry[], chosen: (act: string) => void, sheet: boolean): void {
+    this.chosen = chosen;
     const head = sheet ? `<div class="talk-menu-head"><span class="talk-menu-name">${escape(title)}</span></div>` : "";
     this.element.innerHTML = head + entries.map(entry).join("");
     this.element.classList.remove("leaving");
@@ -107,8 +127,6 @@ export class ActsMenu {
     this.shade.hidden = !sheet;
     this.element.hidden = false;
     this.shown = true;
-    anchor.setAttribute("aria-expanded", "true");
-    if (!sheet) this.place(anchor);
     layerOpened(this.layer);
     this.element.querySelector<HTMLButtonElement>("button")?.focus({ preventScroll: true });
   }
@@ -120,6 +138,9 @@ export class ActsMenu {
     if (this.element.contains(document.activeElement)) this.anchor?.focus({ preventScroll: true });
     this.anchor = null;
     this.chosen = null;
+    const closed = this.closed;
+    this.closed = null;
+    closed?.();
     const before = getComputedStyle(this.element).animationName;
     this.element.classList.add("leaving");
     this.shade.classList.add("leaving");
@@ -143,13 +164,12 @@ export class ActsMenu {
     return !!key && node.dataset.menuKey === key;
   }
 
-  /** Under the button, its right edge on the button's, in the window;
-   *  above it where the window ends first. */
-  private place(anchor: HTMLElement): void {
-    const box = anchor.getBoundingClientRect();
+  /** Under the button, its right edge on the button's, or from a point,
+   *  rightward; above where the window ends first. */
+  private place(box: { left: number; right: number; top: number; bottom: number }, rightward = false): void {
     const width = this.element.offsetWidth;
     const height = this.element.offsetHeight;
-    const left = Math.min(Math.max(8, box.right - width), innerWidth - width - 8);
+    const left = Math.min(Math.max(8, rightward ? box.left : box.right - width), innerWidth - width - 8);
     let top = box.bottom + 4;
     if (top + height > innerHeight - 8) top = Math.max(8, box.top - 4 - height);
     this.element.style.left = `${Math.round(left)}px`;

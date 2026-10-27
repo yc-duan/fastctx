@@ -14,6 +14,7 @@ import type { WorldNow } from "../world/bridge";
 import { deviceKey, type MapHub, type MapLink, type MapNode, type MapPerson } from "./map-nodes";
 import { osName } from "../world/names";
 import { assistantsOf, isComputer, isSuper, machineActsFor, machinesOf, ownerOf, owns } from "./reach";
+import { indexOf } from "./world-index";
 
 export interface MapWords {
   ownedBy(account: string): string;
@@ -72,19 +73,24 @@ function mapMade(world: WorldNow, words: MapWords): MapNow {
   for (const machine of world.who.machines) if (machine.kind === "answered" && machine.reply.busy) busy.set(machine.reply.machine, machine.reply.busy);
   const logins = loginsOf(world.accounts);
   const hubs: MapHub[] = world.accounts.hubs.filter((hub) => hub.logins.length).map((hub) => ({ id: hub.hub, name: hub.name, online: hub.link.kind === "online" }));
-  const hubLabels = new Map(world.accounts.hubs.map((hub) => [hub.hub, hub.link.kind === "online" ? words.hubOnline : hub.link.kind === "connecting" ? words.hubConnecting : words.hubOff]));
+  // Nothing is said beside a hub that is reached: its knot's drop says it.
+  const hubLabels = new Map(world.accounts.hubs.map((hub) => [hub.hub, hub.link.kind === "online" ? "" : hub.link.kind === "connecting" ? words.hubConnecting : words.hubOff]));
   const nodes: MapNode[] = [];
+  const index = indexOf(world);
   for (const machine of machinesOf(world)) {
     const facts = "Ok" in machine.facts && machine.facts.Ok ? machine.facts.Ok : null;
     const mine = machine.here || logins.some((login) => owns(machine, login));
     const owner = mine ? null : (logins.map((login) => ownerOf(machine, login)).find(Boolean) ?? null);
     const reaching = !mine && logins.some((login) => machineActsFor(world, machine.name, login));
-    const member = world.accounts.hubs.flatMap((hub) => hub.members).find((one) => one.name === machine.name && one.kind === "computer");
+    const member = index.computer.get(machine.name);
     const direct = member?.direct ?? [];
     const was = formerNames(world, machine);
     // Written with its hub where another hub has a computer of its name.
     const suffix = machine.written.startsWith(machine.name) ? machine.written.slice(machine.name.length) : "";
     const hubLink = machine.here ? world.accounts.hubs.map((hub) => hub.link).find((link) => link.kind === "online") : undefined;
+    // How its line to the hub goes is known only while a hub it is on is
+    // connected: a round trip measured before stays unsaid.
+    const heard = world.accounts.hubs.some((hub) => hub.link.kind === "online" && machine.on.some((on) => on.hub === hub.hub));
     // A managed machine says so under its name.
     const said = owner ? words.ownedBy(owner) : facts ? osName(facts.os) : "";
     nodes.push({
@@ -101,7 +107,7 @@ function mapMade(world: WorldNow, words: MapWords): MapNow {
       ...(was.length ? { was: was.map((name) => `m:${name}${suffix}`) } : {}),
       directAt: direct,
       through: machine.through ?? null,
-      hubMs: (hubLink?.kind === "online" ? hubLink.ms : member?.paths?.hub_ms) ?? undefined,
+      hubMs: (machine.here ? (hubLink?.kind === "online" ? hubLink.ms : undefined) : heard ? member?.paths?.hub_ms : undefined) ?? undefined,
       group: boxOf(owner ? { key: `of:${owner}`, label: words.ownedBy(owner) } : { key: "mine", label: words.mineGroup }, member?.group),
     });
   }
@@ -178,17 +184,17 @@ type Phone = { hub: HubAccounts; member: MemberSeen; login: Login; owner: string
  *  out of the administrator's reach, as their machines' insides do. */
 export function phonesOf(world: WorldNow): Phone[] {
   const logins = loginsOf(world.accounts);
-  return world.accounts.hubs.flatMap((hub) =>
-    hub.members.flatMap((member): Phone[] => {
+  return world.accounts.hubs.flatMap((hub) => {
+    const admin = logins.find((one) => one.hub === hub.hub && isSuper(world, one));
+    const visitors = new Set(hub.accounts.filter((account) => account.level === "visitor").map((account) => account.name));
+    return hub.members.flatMap((member): Phone[] => {
       if (member.kind !== "phone") return [];
       const login = logins.find((one) => one.hub === hub.hub && member.logins.includes(one.account));
       if (login) return [{ hub, member, login, owner: null }];
-      const admin = logins.find((one) => one.hub === hub.hub && isSuper(world, one));
-      const visitors = new Set(hub.accounts.filter((account) => account.level === "visitor").map((account) => account.name));
       const owner = admin ? member.logins.find((account) => !visitors.has(account)) : undefined;
       return admin && owner ? [{ hub, member, login: admin, owner }] : [];
-    }),
-  );
+    });
+  });
 }
 
 /** The box a machine stands in: its owner's, or, put in one of the owner's
@@ -221,9 +227,10 @@ function peopleOf(world: WorldNow, words: MapWords): MapPerson[] {
  *  its node remember them. */
 export function formerNames(world: WorldNow, machine: { name: string; here: boolean; on: { hub: string }[] }): string[] {
   const was = new Set<string>(machine.here ? (world.accounts.was ?? []) : []);
+  const index = indexOf(world);
   for (const hub of world.accounts.hubs) {
     if (!machine.on.some((on) => on.hub === hub.hub)) continue;
-    for (const member of hub.members) if (member.name === machine.name) for (const name of member.was ?? []) was.add(name);
+    for (const member of index.hubs.get(hub.hub)?.named.get(machine.name) ?? []) for (const name of member.was ?? []) was.add(name);
   }
   was.delete(machine.name);
   return [...was];
@@ -235,11 +242,12 @@ export function formerNames(world: WorldNow, machine: { name: string; here: bool
 function linksOf(world: WorldNow, nodes: MapNode[]): MapLink[] {
   const keys = new Map<string, string>();
   for (const machine of machinesOf(world)) keys.set(machine.name, `m:${machine.written}`);
+  const drawn = new Set(nodes.map((node) => node.key));
   const pairs = new Map<string, MapLink>();
   const note = (from: string, seen: LinkSeen) => {
     const a = keys.get(from);
     const b = keys.get(seen.peer);
-    if (!a || !b || a === b || !nodes.some((node) => node.key === a) || !nodes.some((node) => node.key === b)) return;
+    if (!a || !b || a === b || !drawn.has(a) || !drawn.has(b)) return;
     const [first, second] = a < b ? [a, b] : [b, a];
     const key = `${first}|${second}`;
     const known = pairs.get(key);

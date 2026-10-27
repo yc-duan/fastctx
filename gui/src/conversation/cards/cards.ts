@@ -50,8 +50,10 @@ export type Card =
         | { kind: "check"; deed: ChecksDeed }
         | { kind: "commit"; deed: CommitDeed; push: PushDeed | null }
         | { kind: "push"; deed: PushDeed }
-        /** `on` is what the `on` that carried it told. */
-        | { kind: "command"; command: string; exit: number | null; on: OnSaid | null }
+        /** `on` is what the `on` that carried it told; `commands`, where
+         *  there are more than one, the commands of one scope whose output
+         *  cannot be told apart, gathered on one row. */
+        | { kind: "command"; command: string; commands?: string[]; exit: number | null; on: OnSaid | null }
         | { kind: "fan"; deed: FanDeed }
         | { kind: "copy"; from: Place[]; to: Place; deed: CopyDeed | null }
         | { kind: "job"; deed: JobDeed; of: string | null }
@@ -140,14 +142,21 @@ function commandCards(entry: ToolEntry, does: Extract<Tool["does"], { as: "comma
       cards.push({ ...next({ entry: entry.key, write: write.id }, write.machine), key: `${entry.key}${WRITE}${write.id}`, kind: "change", path: write.path, how, added: write.added, removed: write.removed });
     }
   };
-  const command = (said: string, source: Source, last: boolean, machine: string | null = null, sent: OnSaid | null = null) => {
+  /** What a command's text says of it: where an `on` sent it, the command
+   *  itself, and whether it is a write or a copy, which are cards of their
+   *  own. */
+  const read = (said: string, machine: string | null) => {
+    const on = ON.exec(said);
+    const where = on ? (on[1] ?? on[2] ?? on[3] ?? null) : (machine ?? entry.tool.machine);
+    const rest = on ? on[4]!.trim() : said;
+    const shown = rest.replace(/<<-?\s*(['"]?)[A-Za-z_][A-Za-z0-9_]*\1/, "").trim() || said;
+    return { where, rest, shown, own: !WRITES.test(rest) && !/^(?:fastctx\s+)?copy\s/.test(rest) };
+  };
+  const command = (said: string, source: Source, last: boolean, machine: string | null = null, sent: OnSaid | null = null, more: { sources: Source[]; commands: string[] } | null = null) => {
     // A command sent elsewhere says how it ended there; the run's own last
     // command says how the run did.
     const failed = sent?.end ? troubled(sent.end) && sent.end.kind !== "stopped" : last && exit !== null && exit !== 0;
-    // An `on` names the machine it sent its command to.
-    const on = /^on\s+(?:'([^']*)'|"([^"]*)"|(\S+))\s*(.*)$/s.exec(said);
-    const where = on ? (on[1] ?? on[2] ?? on[3] ?? null) : (machine ?? entry.tool.machine);
-    const rest = on ? on[4]!.trim() : said;
+    const { where, rest, shown } = read(said, machine);
     // The World's writes are cards of their own, as the files they wrote.
     if (WRITES.test(rest)) return writeAll();
     const copy = /^(?:fastctx\s+)?copy\s+(.*)$/s.exec(rest);
@@ -159,8 +168,12 @@ function commandCards(entry: ToolEntry, does: Extract<Tool["does"], { as: "comma
         return;
       }
     }
-    const shown = rest.replace(/<<-?\s*(['"]?)[A-Za-z_][A-Za-z0-9_]*\1/, "").trim() || said;
-    cards.push({ ...next(source, where), kind: "command", command: shown, exit: last ? exit : null, on: sent, failed });
+    const card: Card = { ...next(source, where), kind: "command", command: shown, exit: last ? exit : null, on: sent, failed };
+    if (more && card.kind === "command") {
+      card.sources = more.sources;
+      card.commands = more.commands;
+    }
+    cards.push(card);
   };
   if (!deeds) {
     const viewed = viewing(does.command);
@@ -169,9 +182,20 @@ function commandCards(entry: ToolEntry, does: Extract<Tool["does"], { as: "comma
       return;
     }
     // Each command the script gave, in order, where it ran; the last says
-    // how the run ended.
+    // how the run ended. What they printed is one stream that cannot be
+    // parted: commands of their own are one card, at the first of them.
     const commands = ownCommands(scriptCommands(does.command, entry.tool.machine));
-    commands.forEach((one, index) => command(one.text, whole, index === commands.length - 1, one.machine));
+    const own = commands.filter((one) => read(one.text, one.machine).own);
+    let gathered = false;
+    commands.forEach((one, index) => {
+      if (own.length > 1 && own.includes(one)) {
+        if (gathered) return;
+        gathered = true;
+        command(one.text, whole, own.includes(commands[commands.length - 1]!), one.machine, null, { sources: [whole], commands: own.map((each) => read(each.text, each.machine).shown) });
+        return;
+      }
+      command(one.text, whole, index === commands.length - 1, one.machine);
+    });
     writeAll();
     return;
   }
@@ -191,6 +215,14 @@ function commandCards(entry: ToolEntry, does: Extract<Tool["does"], { as: "comma
   /** Where the command that did it ran: where an `on` sent it, or the
    *  run's own machine. */
   const ran = (deed: Deed) => deed.where ?? entry.tool.machine;
+  // The commands named alone of one scope printed into one stream that
+  // cannot be parted: they are one card, at the first of them.
+  const scopes = new Map<string, number[]>();
+  deeds.forEach((deed, index) => {
+    if (deed.kind !== "plain" || !read(deed.command, deed.machine ?? deed.where ?? null).own) return;
+    const scope = deed.scope ?? `deed-${index}`;
+    scopes.set(scope, [...(scopes.get(scope) ?? []), index]);
+  });
   deeds.forEach((deed, index) => {
     const source: Source = { entry: entry.key, deed: index };
     switch (deed.kind) {
@@ -237,9 +269,21 @@ function commandCards(entry: ToolEntry, does: Extract<Tool["does"], { as: "comma
         cards.push({ ...next(source, ran(deed)), kind: "push", deed, failed: refused });
         break;
       }
-      case "plain":
+      case "plain": {
+        const together = deed.scope ? (scopes.get(deed.scope) ?? []) : [];
+        if (together.length > 1 && together.includes(index)) {
+          if (together[0] !== index) break;
+          const last = together.includes(lastPlain) && lastPlain === deeds.length - 1;
+          const named = together.map((at) => {
+            const one = deeds[at] as Extract<Deed, { kind: "plain" }>;
+            return read(one.command, one.machine ?? one.where ?? null).shown;
+          });
+          command(deed.command, source, last, deed.machine ?? deed.where ?? null, deed.on ?? null, { sources: together.map((at) => ({ entry: entry.key, deed: at })), commands: named });
+          break;
+        }
         command(deed.command, source, index === lastPlain && index === deeds.length - 1, deed.machine ?? deed.where ?? null, deed.on ?? null);
         break;
+      }
       case "fan":
         cards.push({ ...next(source, null), kind: "fan", deed, failed: deed.steps.some((step) => troubled(step.end)) });
         break;
@@ -302,6 +346,9 @@ function callCard(tool: Tool, base: Base): Card | null {
 
 /** The World's commands that write files. */
 const WRITES = /^(?:fastctx\s+)?(?:edit|write|apply_patch)\b/;
+
+/** An `on` and the machine it sends to. */
+const ON = /^(?:fastctx\s+)?on\s+(?:'([^']*)'|"([^"]*)"|(\S+))\s*(.*)$/s;
 
 /** A copy's word for a file: `machine:path`, or a path where the command
  *  ran. A drive letter is not a machine. */

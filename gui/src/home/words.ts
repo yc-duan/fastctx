@@ -25,7 +25,6 @@ export interface HomeWords {
    *  says it. */
   waitingFor: string;
   /** An answer given here, before its conversation takes it. */
-  answered(choice: string): string;
   /** Conversations at work, and the commands running. */
   now: string;
   jobs: string;
@@ -119,7 +118,6 @@ export const zhHome: HomeWords = {
   asks: { answer: "问你", command: "想运行命令", change: "想改文件", tool: "想用工具", plan: "等你批准计划", form: "请你填写", other: "等你回复" },
   waitsUnsaid: "等你回复",
   waitingFor: "等待回复",
-  answered: (choice) => `已回答：${choice}`,
   now: "工作中",
   jobs: "后台命令",
   stopJob: "停止",
@@ -178,7 +176,6 @@ export const enHome: HomeWords = {
   },
   waitsUnsaid: "Waiting for your reply",
   waitingFor: "Waiting for your reply",
-  answered: (choice) => `Answered: ${choice}`,
   now: "Working",
   jobs: "Background commands",
   stopJob: "Stop",

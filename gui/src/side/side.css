@@ -7,11 +7,9 @@
 
 .sp-panel {
   position: relative;
-  display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
-  grid-template-columns: minmax(0, 1fr);
+  display: flex;
+  justify-content: flex-end;
   min-width: 0;
-  height: 100%;
   background: var(--bg-elevated);
   color: var(--text);
   font-family: var(--font-reading);
@@ -20,6 +18,20 @@
 
 .sp-panel[hidden] {
   display: none;
+}
+
+/* The sheet keeps its width while the panel widens over it, so nothing in
+   it is set again as it comes: it slides in from the right, its words
+   coming up as it does. */
+.sp-sheet {
+  position: relative;
+  flex: none;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr);
+  width: var(--side-width);
+  min-height: 0;
+  opacity: var(--sp-open);
 }
 
 .sp-margin {
@@ -37,12 +49,13 @@
   height: 100%;
 }
 
+/* The pages' names; their row ends where the switch stands. */
 .sp-head {
   display: flex;
   align-items: center;
   gap: var(--space-1);
-  min-height: 52px;
-  padding: var(--safe-top) var(--space-3) 0 var(--space-5);
+  min-height: 48px;
+  padding: 0 calc(36px + var(--space-3) + var(--space-2)) 0 var(--space-5);
 }
 
 .sp-tabs {
@@ -123,11 +136,30 @@
   display: none;
 }
 
-/* Set into a conversation's page: its own column and the panel side by
-   side; the panel's switch in the page's head, with a dot while something
-   new waits in it. */
+/* Set into a conversation's page: the head across the page, and under it
+   the conversation and the panel side by side. --sp-open goes from nothing
+   to one as the panel opens: the panel widens by it from the right, the
+   conversation giving way beside it, and back as it shuts. */
+@property --sp-open {
+  syntax: "<number>";
+  inherits: true;
+  initial-value: 0;
+}
+
 .conversation-page.sp-host {
-  flex-direction: row;
+  --sp-open: 0;
+  transition: --sp-open var(--settle) var(--fold-easing);
+}
+
+.conversation-page.sp-host.sp-shown {
+  --sp-open: 1;
+}
+
+.sp-split {
+  position: relative;
+  display: flex;
+  flex: 1;
+  min-height: 0;
 }
 
 .talk-main {
@@ -136,16 +168,35 @@
   flex: 1;
   flex-direction: column;
   min-width: 0;
-  height: 100%;
 }
 
-.sp-host > .sp-panel:not(.sp-over) {
+.sp-split > .sp-panel:not(.sp-over) {
   flex: none;
-  width: var(--side-width);
+  width: calc(var(--side-width) * var(--sp-open));
+  overflow: hidden;
 }
 
+/* The switch, in one place at the top right under the head: over the
+   conversation while the panel is shut, at the end of its names while it
+   is open; a dot while something new waits in it. */
 .sp-toggle {
-  position: relative;
+  position: absolute;
+  z-index: 41;
+  top: 6px;
+  right: var(--space-3);
+  background: var(--bg);
+}
+
+.sp-toggle[hidden] {
+  display: none;
+}
+
+/* A phone has no room beside the words: shut, the panel is reached from the
+   head's "⋯", and its switch shows only to put it away. */
+@media (max-width: 760px) {
+  .sp-toggle[aria-pressed="false"] {
+    display: none;
+  }
 }
 
 .sp-toggle[aria-pressed="true"] {
@@ -168,23 +219,24 @@
   display: block;
 }
 
-/* On a phone it lies over the conversation, coming up once as it opens. */
+/* On a phone it lies over the conversation under the head, coming up as
+   it opens and going down as it shuts. */
 .sp-panel.sp-over {
-  position: fixed;
+  position: absolute;
   inset: 0;
   z-index: 40;
-  height: auto;
   padding-bottom: var(--safe-bottom);
+  opacity: var(--sp-open);
+  translate: 0 calc((1 - var(--sp-open)) * 24px);
 }
 
-.sp-panel.sp-over.sp-arriving {
-  opacity: var(--rise);
-  translate: 0 calc((1 - var(--rise)) * 16px);
-  animation: rise var(--enter) var(--fold-easing) both;
+.sp-panel.sp-over > .sp-sheet {
+  width: 100%;
+  opacity: 1;
 }
 
-:root[data-reduced] .sp-panel.sp-arriving {
-  animation: none;
+.sp-panel.sp-over .sp-margin {
+  display: none;
 }
 
 /* The goal's bar, among the words waiting above the input. */
@@ -275,10 +327,12 @@
   background: var(--hairline);
 }
 
-/* On a phone the bar is one press: it opens the goal, where its acts are. */
+/* On a phone the bar is one press: it opens the goal, where its acts are.
+   A goal going on is its mark and its words. */
 @media (max-width: 760px) {
   .gb-bar:not([data-status="paused"]) .gb-when,
-  .gb-bar .gb-act:not([data-act="expand"]) {
+  .gb-bar .gb-act:not([data-act="expand"]),
+  .gb-bar[data-status="active"] .gb-state {
     display: none;
   }
 }

@@ -5,10 +5,7 @@
 //! reaches this phone (`world-gui.md`, 对话; `world-voice.md`). State
 //! survives process death; unavailable machines retain their last facts.
 //! The page gives the titles, in its words; the body is the agent's own:
-//! what it asks, what it told, or the words that ended its turn. A question
-//! asked without waiting with a few answers carries them as buttons, each
-//! with the words that answer it, sent from the notification without
-//! opening the app.
+//! what it asks, what it told, or the words that ended its turn.
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -16,7 +13,7 @@ use std::sync::Arc;
 
 use fastctx_client::World;
 use fastctx_platform::{Permissions, publish};
-use fastctx_types::residents::{Activity, Asked, AskedFor, Now, Origin};
+use fastctx_types::residents::{Activity, Now, Origin};
 use fastctx_types::town::{MachineWho, ResidentNow, WorldWho};
 use serde::{Deserialize, Serialize};
 
@@ -82,17 +79,6 @@ fn kind_of(value: impl Serialize) -> Option<String> {
 fn ended_untold(now: &Now) -> bool {
     now.last_heard_user != Some(false)
         && now.told.as_ref().and_then(|told| told.turn.as_ref()).is_none_or(|turn| now.last_turn.as_ref() != Some(turn))
-}
-
-/// The most answers a notification offers as buttons: what Android shows.
-const ANSWER_BUTTONS: usize = 3;
-
-/// The answers a question offers as buttons, with the words that give each.
-fn answers(asked: &Asked) -> Vec<(String, String)> {
-    if asked.waits || asked.what != AskedFor::Answer || asked.options.len() > ANSWER_BUTTONS {
-        return vec![];
-    }
-    (0..asked.options.len()).filter_map(|choice| Some((asked.options[choice].clone(), asked.reply(choice)?))).collect()
 }
 
 /// What a notification about a resident's question is keyed by: a new
@@ -208,18 +194,16 @@ fn observe(who: WorldWho, bridge: &Bridge, observed: &mut Observed) -> Result<()
             {
                 let asked = resident.now.as_ref().and_then(|now| now.asked.as_ref());
                 let told = resident.now.as_ref().and_then(|now| now.told.as_ref());
-                let (id, body, version, answers) = match rule.when {
+                let (id, body, version) = match rule.when {
                     Transition::Asked => (
                         format!("{key}:asked"),
                         asked.map(|asked| asked.text.clone()).unwrap_or_default(),
                         now.asked.clone(),
-                        asked.map(answers).unwrap_or_default(),
                     ),
                     Transition::Told => (
                         format!("{key}:told"),
                         told.map(|told| told.text.clone()).unwrap_or_default(),
                         now.told.clone(),
-                        vec![],
                     ),
                     Transition::Finished => (
                         format!("{key}:finished"),
@@ -232,14 +216,9 @@ fn observe(who: WorldWho, bridge: &Bridge, observed: &mut Observed) -> Result<()
                             })
                             .unwrap_or_default(),
                         resident.now.as_ref().map(|now| now.since.to_string()),
-                        vec![],
                     ),
                 };
                 let route = format!("#/talk/{}%40{}", resident.about.id, resident.about.machine);
-                let answers: Vec<_> = answers
-                    .into_iter()
-                    .map(|(label, words)| serde_json::json!({"label": label, "words": words}))
-                    .collect();
                 let kind = match rule.when {
                     Transition::Asked => asked.map_or(Some("waiting".into()), |asked| kind_of(asked.what)),
                     Transition::Told => told.and_then(|told| kind_of(told.status)),
@@ -250,8 +229,7 @@ fn observe(who: WorldWho, bridge: &Bridge, observed: &mut Observed) -> Result<()
                         "showNotice",
                         &serde_json::json!({
                             "id": id, "title": format(title, &resident, &policy), "body": body, "route": route,
-                            "version": version, "answers": answers,
-                            "to": {"resident": resident.about.id, "machine": resident.about.machine},
+                            "version": version,
                         })
                         .to_string(),
                     )?;

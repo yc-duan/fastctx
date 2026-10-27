@@ -13,6 +13,8 @@ export interface TalkMenuWords {
    *  "⋯" on a phone. */
   viewSteps: string;
   viewSaid: string;
+  /** The panel beside it, from the same "⋯" on a phone. */
+  panel: string;
   /** The whole conversation onto the clipboard, and that it is there. */
   copyMarkdown: string;
   copied: string;
@@ -69,6 +71,7 @@ export const zhTalkMenu: TalkMenuWords = {
   find: "查找",
   viewSteps: "显示每一步",
   viewSaid: "只看对话",
+  panel: "侧面板",
   copyMarkdown: "复制为 Markdown",
   copied: "已复制",
   openOwn: (agent) => `在 ${agent} 中打开`,
@@ -112,6 +115,7 @@ export const enTalkMenu: TalkMenuWords = {
   find: "Find",
   viewSteps: "Show every step",
   viewSaid: "Show only what was said",
+  panel: "Side panel",
   copyMarkdown: "Copy as Markdown",
   copied: "Copied",
   openOwn: (agent) => `Open in ${agent}`,

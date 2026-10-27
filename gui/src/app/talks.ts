@@ -2,6 +2,7 @@
 // lists the sidebar opens when it has no room for them all. One line each, as
 // in the sidebar, the most recent first, with the same acts on each row; a
 // search narrows it by name, agent or machine (`world-gui.md`, 界面的结构).
+// Thousands of them are drawn as far as they are read.
 
 import { glyph } from "../conversation/glyphs";
 import { escape } from "../conversation/prose";
@@ -10,6 +11,7 @@ import type { ResidentNow } from "../world/world";
 import { redrawKeepingFocus } from "./focus";
 import { link, type Place } from "./places";
 import { assistingOwner } from "./reach";
+import { readOn, whenNear } from "./read-on";
 import type { Page } from "./shell";
 import { effect } from "./signals";
 import { isUnreached, type Store } from "./store";
@@ -61,6 +63,10 @@ export interface TalksOptions {
   menuWords: TalkMenuWords;
 }
 
+/** How many rows are drawn at first, and how many more each time the end of
+ *  those comes near: a list of thousands is drawn as far as it is read. */
+const ROWS = 120;
+
 export class TalksPage implements Page {
   readonly element: HTMLElement;
   readonly title: string;
@@ -70,6 +76,10 @@ export class TalksPage implements Page {
   private readonly talkList: TalkList;
   private query = "";
   private drawn = "";
+  /** How many rows are drawn now, and what stops watching the end of those
+   *  coming near. */
+  private reach = ROWS;
+  private unwatch = () => {};
 
   constructor(private readonly options: TalksOptions) {
     const { words } = options;
@@ -95,6 +105,7 @@ export class TalksPage implements Page {
     });
     this.element.querySelector<HTMLInputElement>(".talks-search")!.addEventListener("input", (event) => {
       this.query = (event.target as HTMLInputElement).value.trim().toLowerCase();
+      this.reach = ROWS;
       this.draw();
     });
     this.stop = effect(() => {
@@ -107,6 +118,7 @@ export class TalksPage implements Page {
 
   leave(): void {
     this.stop();
+    this.unwatch();
   }
 
   private matches(r: ResidentNow): boolean {
@@ -127,34 +139,50 @@ export class TalksPage implements Page {
     const talks = (archivedOnly ? archived : listed).filter((r) => (town === null || r.town === town) && this.matches(r));
     this.talkList.drawing(talks);
     const row = (r: ResidentNow) => talkRow(r, place, now, facts, shell, this.talkList.rowActs(r), assistingOwner(this.options.store.world.peek(), r.about.machine));
-    let html: string;
+    let html = "";
     if (!talks.length) html = `<p class="talks-none">${escape(archivedOnly ? words.noneArchived : words.none)}</p>`;
-    else if (town !== null) html = `<ul class="talks">${talks.map(row).join("")}</ul>`;
     else {
       // A project's conversations together, the project most recently
-      // stirred first; those in none last.
-      const known = world?.towns ?? [];
-      const groups = new Map<string, ResidentNow[]>();
-      for (const r of talks) groups.set(r.town ?? "", [...(groups.get(r.town ?? "") ?? []), r]);
-      const order = [...groups.keys()].sort((a, b) => (a === "" ? 1 : b === "" ? -1 : 0));
-      html = order
-        .map((key) => {
-          const name = key ? (known.find((t) => t.town === key)?.record.name ?? key) : words.outside;
-          return `<section class="talks-group"><h2 class="side-group-title">${escape(name)}</h2><ul class="talks${archivedOnly ? " archived-talks" : ""}">${groups
-            .get(key)!
-            .map(row)
-            .join("")}</ul></section>`;
-        })
-        .join("");
+      // stirred first; those in none last. One project's are one list.
+      const sections: { name: string | null; rows: ResidentNow[] }[] = [];
+      if (town !== null) sections.push({ name: null, rows: talks });
+      else {
+        const known = world?.towns ?? [];
+        const groups = new Map<string, ResidentNow[]>();
+        for (const r of talks) {
+          const group = groups.get(r.town ?? "");
+          if (group) group.push(r);
+          else groups.set(r.town ?? "", [r]);
+        }
+        for (const key of [...groups.keys()].sort((a, b) => (a === "" ? 1 : b === "" ? -1 : 0))) {
+          sections.push({ name: key ? (known.find((t) => t.town === key)?.record.name ?? key) : words.outside, rows: groups.get(key)! });
+        }
+      }
+      // Drawn as far as it is read.
+      let left = this.reach;
+      for (const section of sections) {
+        if (left <= 0) break;
+        const rows = section.rows.slice(0, left);
+        left -= rows.length;
+        const list = `<ul class="talks${archivedOnly ? " archived-talks" : ""}">${rows.map(row).join("")}</ul>`;
+        html += section.name === null ? list : `<section class="talks-group"><h2 class="side-group-title">${escape(section.name)}</h2>${list}</section>`;
+      }
     }
+    const more = talks.length > this.reach;
+    if (more) html += readOn;
     // Every conversation leads on to the archived ones, where there are any.
     const shelved = archivedOnly || town !== null ? 0 : archived.length;
-    if (shelved)
+    if (shelved && !more)
       html += `<a class="talks-archived" href="${link({ kind: "archived" })}">${glyph("archive", 16)}<span>${escape(words.archived)}</span><span class="count">${shelved}</span>${glyph("chevron", 14)}</a>`;
     if (html === this.drawn) return;
     this.drawn = html;
     redrawKeepingFocus(this.list, () => {
       this.list.innerHTML = html;
+    });
+    this.unwatch();
+    this.unwatch = whenNear(this.list, this.list.parentElement, () => {
+      this.reach += ROWS;
+      this.draw();
     });
   }
 }

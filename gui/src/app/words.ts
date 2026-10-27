@@ -99,9 +99,11 @@ export interface FocusWords {
   noMachine: string;
   /** Over the machines chosen. */
   chosen: string;
-  /** Over the user's own machines, and another person's. */
+  /** Over the user's own machines, another person's, and every other
+   *  person's where each is a row of their own. */
   mine: string;
   theirs(owner: string): string;
+  others: string;
   /** The field that narrows the machines, and when none is left. */
   search: string;
   noMatch: string;
@@ -157,6 +159,7 @@ export const zhFocus: FocusWords = {
   chosen: "已选",
   mine: "我的机器",
   theirs: (owner) => `${owner} 的机器`,
+  others: "其他人的机器",
   search: "搜索机器",
   noMatch: "没有对得上的机器",
   done: "完成",
@@ -179,6 +182,7 @@ export const enFocus: FocusWords = {
   chosen: "Chosen",
   mine: "My machines",
   theirs: (owner) => `${owner}'s machines`,
+  others: "Others' machines",
   search: "Search machines",
   noMatch: "No machine matches",
   done: "Done",
@@ -1257,14 +1261,7 @@ export const zhComposer: ComposerWords = {
     networkRule: (allow, host) => (allow ? `始终允许连接 ${host}` : `始终禁止连接 ${host}`),
     decline: "拒绝，继续",
     cancel: "拒绝并停止",
-    question: "提问",
-    questions: (count) => `${count} 个问题`,
-    several: "可多选",
-    otherAnswer: "其他回答",
-    secret: "输入内容不会显示",
-    submit: "回答",
     fill: "提交",
-    skip: "跳过",
     form: (server) => `${server} 请求填写表单`,
     link: (server) => `${server} 请求打开链接`,
     openLink: "打开链接",
@@ -1477,14 +1474,7 @@ export const enComposer: ComposerWords = {
     networkRule: (allow, host) => (allow ? `Always allow ${host}` : `Always block ${host}`),
     decline: "Deny and continue",
     cancel: "Deny and stop",
-    question: "Question",
-    questions: (count) => `${count} questions`,
-    several: "Select all that apply",
-    otherAnswer: "Other answer",
-    secret: "Input is hidden",
-    submit: "Answer",
     fill: "Submit",
-    skip: "Skip",
     form: (server) => `${server} requests a form`,
     link: (server) => `${server} requests to open a link`,
     openLink: "Open link",

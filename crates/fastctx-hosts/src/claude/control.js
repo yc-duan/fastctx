@@ -472,11 +472,11 @@ async function controlExecute($, state, control, handoff = false) {
   throw new Error('Claude Code has no mod control for ' + control.do)
 }
 
-async function controlQuestion($, state, name, params, call, nativeWait = false) {
+async function controlQuestion($, state, name, params, call) {
   const key = 'r-' + String(++state.sequence)
   const agent = params.agentId ?? params.agent_id ?? call?.agentId
   const request = { key, host: state.host, turn: agent === undefined && state.busy === true ? state.turn : null,
-    request: name, params, native_wait: nativeWait }
+    request: name, params }
   if (call !== undefined) call.requests.push(key)
   let child
   try {
@@ -592,16 +592,6 @@ async function controlCall($, e, next) {
     const call = { tool, agentId, requests: [] }
     state.calls.set(tool_use_id, call)
     try {
-      if (tool === 'AskUserQuestion') {
-        // Keep the native path running. Its immediate refusal needs no
-        // viewer; if it waits, someone opening World later can still answer.
-        // A tool.call hook settling first aborts its pending next() branch.
-        const native = next(e)
-        const world = controlQuestion($, state, 'AskUserQuestion', e, call, true)
-          .then((reply) => reply.kind === 'answer' ? reply.answer : native)
-          .catch((error) => { if (!call.finished) worldFailure($, 'AskUserQuestion', error); return native })
-        return await Promise.race([native, world])
-      }
       return await next(e)
     } finally {
       call.finished = true

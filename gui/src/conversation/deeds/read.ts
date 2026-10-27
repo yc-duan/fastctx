@@ -113,10 +113,10 @@ export function readRun(script: string, machine: string | null, lines: OutputLin
   const skip = new Set<number>();
   const scopeOf = (command: ScriptCommand): StepScope => (command.carrier === null ? top : (scopes.get(command.carrier) ?? top));
   /** What an `on` told, for a deed of what it carried. */
-  const carriedBy = (command: ScriptCommand): Pick<PlainDeed, "machine" | "on"> => {
-    if (command.carrier === null) return command.piped ? { on: onSaid(null, true) } : {};
+  const carriedBy = (command: ScriptCommand): Pick<PlainDeed, "machine" | "on" | "scope"> => {
+    if (command.carrier === null) return { scope: "top", ...(command.piped ? { on: onSaid(null, true) } : {}) };
     const carrier = commands[command.carrier]!;
-    return { machine: command.machine, on: onSaid(sent.get(command.carrier) ?? null, carrier.piped) };
+    return { machine: command.machine, on: onSaid(sent.get(command.carrier) ?? null, carrier.piped), scope: String(command.carrier) };
   };
   let wrote = false;
   commands.forEach((command, index) => {
@@ -136,14 +136,14 @@ export function readRun(script: string, machine: string | null, lines: OutputLin
         return;
       }
       if (steps.length > 1) {
-        for (const step of steps) deeds.push({ kind: "plain", command: said, machine: step.to, on: onSaid(step, command.piped) });
+        for (const step of steps) deeds.push({ kind: "plain", command: said, machine: step.to, on: onSaid(step, command.piped), scope: `on-${step.id}` });
         skip.add(index);
         return;
       }
       const step = steps[0] ?? null;
       sent.set(index, step);
       if (step?.sent) scopes.set(index, told.within(step.sent));
-      if (!carried(index)) deeds.push({ kind: "plain", command: command.text, machine: command.on, on: onSaid(step, command.piped) });
+      if (!carried(index)) deeds.push({ kind: "plain", command: command.text, machine: command.on, on: onSaid(step, command.piped), scope: String(index) });
       return;
     }
     // The World's own writes are rows of their own, drawn where the first

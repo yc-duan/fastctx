@@ -203,6 +203,16 @@ pub enum Call {
         /// settings it was started with name it.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         conversation: Option<String>,
+        /// The login the session runs with: its `CLAUDE_CONFIG_DIR`, or
+        /// `.claude` in its user's home, as its environment says. Absent
+        /// from a program older than the one that says it.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        home: Option<String>,
+        /// Whether Claude Code's daemon runs the session in the background,
+        /// as its environment says (`CLAUDE_JOB_DIR`), rather than the user's
+        /// own terminal, app or editor. Absent from older programs.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        background: Option<bool>,
     },
     /// Run a script for a resident of this machine, on this machine or on
     /// the machine `node` names.

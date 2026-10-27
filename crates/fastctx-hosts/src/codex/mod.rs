@@ -289,7 +289,6 @@ pub enum Desk {
 const COMPUTER_USE: &str = "node_repl";
 /// What the app's helper answers while another request is in flight.
 const HELPER_BUSY: &str = "Computer Use helper already has an active request";
-pub use fastctx_types::residents::ASYNC_REPLY_TAG;
 
 pub struct CodexHost {
     codex_home: PathBuf,
@@ -656,12 +655,6 @@ impl CodexHost {
         }
         match input {
             Input::Text(text) => {
-                // An answer to a question the model asked without waiting
-                // (`request_user_input_async`) goes in as the user's words in
-                // the envelope Codex's own clients write, marked as such.
-                if text.lines().any(|line| line == ASYNC_REPLY_TAG) {
-                    params["turnTrigger"] = json!("send_user_message_async_question");
-                }
                 params["input"] = json!([{ "type": "text", "text": text }]);
             }
             Input::Skill { name, path, text } => {
@@ -1725,7 +1718,6 @@ async fn pump(server: Arc<AppServer>, mut inbound: mpsc::UnboundedReceiver<Inbou
                     method.as_str(),
                     "item/commandExecution/requestApproval"
                         | "item/fileChange/requestApproval"
-                        | "item/tool/requestUserInput"
                         | "mcpServer/elicitation/request"
                         | "item/permissions/requestApproval"
                         | "applyPatchApproval"
@@ -1878,7 +1870,8 @@ pub fn world_tools(binary: &Path, env: &[(String, String)], tools: &[&str], budg
             "goals": false,
             "send_message_to_user_async": false,
         },
-        "tools": { "update_plan": { "enabled": false } },
+        // `message_user` speaks to the user, asking too, without stopping.
+        "tools": { "update_plan": { "enabled": false }, "experimental_request_user_input": { "enabled": false } },
         "tool_output_token_limit": limit,
         "mcp_servers": { SERVER_NAME: {
             "command": binary,

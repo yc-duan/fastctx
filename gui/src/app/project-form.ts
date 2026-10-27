@@ -11,6 +11,7 @@
 // project is opened in the one chosen, and spans only machines that account
 // may work on (`world-network.md`, 项目也照同一个规矩).
 
+import { leave } from "./leave";
 import { onShade, watchShade } from "./shade-press";
 import { glyph } from "../conversation/glyphs";
 import { escape } from "../conversation/prose";
@@ -22,10 +23,15 @@ import type { ProjectRecord } from "../world/world";
 import { FolderPicker } from "./folder-picker";
 import { focusPlace } from "./focus-places";
 import type { FocusPlace } from "./focus-panel";
-import { foldChoice, keptFolds, machineChoice } from "./machine-choice";
+import { foldChoice, keptFolds, machineChoice, type ChoiceDrawn } from "./machine-choice";
 import { groupsOf, loginLabel, machinesOf, rightsOn, sameLogin, type Machine } from "./reach";
+import { whenNear } from "./read-on";
 import type { Store } from "./store";
 import type { FocusWords, ProjectFormWords } from "./words";
+
+/** How many of the machines' rows are drawn at first, and how many more
+ *  each time the end of those comes near. */
+const CHOICE_ROWS = 120;
 
 export interface ProjectFormOptions {
   store: Store;
@@ -75,6 +81,12 @@ export class ProjectForm {
   /** What narrows the machines to choose among. */
   private query = "";
   private readonly folds = keptFolds();
+  /** How many of the machines' rows are drawn, how many each person's
+   *  opens onto as last drawn, and what stops watching the end of those
+   *  coming near. */
+  private reach = CHOICE_ROWS;
+  private inside = new Map<string, number>();
+  private unwatch = () => {};
 
   constructor(private readonly options: ProjectFormOptions) {
     this.picker = new FolderPicker(options.focusWords.picker);
@@ -86,6 +98,11 @@ export class ProjectForm {
     this.body = this.dialog.querySelector("form")!;
     watchShade(this.dialog);
     this.dialog.addEventListener("click", (event) => this.click(event));
+    // Escape closes it as the close button does, going as it came.
+    this.dialog.addEventListener("cancel", (event) => {
+      event.preventDefault();
+      this.close();
+    });
     this.body.addEventListener("input", (event) => {
       const target = event.target as HTMLInputElement;
       if (target.name === "slug") {
@@ -103,6 +120,7 @@ export class ProjectForm {
       }
       if (target.classList.contains("pf-filter")) {
         this.query = target.value.trim().toLowerCase();
+        this.reach = CHOICE_ROWS;
         this.drawChoice();
       }
     });
@@ -124,6 +142,7 @@ export class ProjectForm {
     this.login = (login && logins.find((known) => sameLogin(known, login))) ?? logins[0] ?? null;
     this.slugTouched = false;
     this.query = "";
+    this.reach = CHOICE_ROWS;
     const here = this.options.store.world.peek()?.here;
     this.machines = editing ? [...editing.record.machines] : here ? [here] : [];
     this.places = editing ? editing.record.places.map((place) => ({ ...place })) : [];
@@ -136,7 +155,7 @@ export class ProjectForm {
   }
 
   close(): void {
-    if (!this.busy) this.dialog.close();
+    if (!this.busy && this.dialog.open) leave(this.dialog, () => this.dialog.close(), { as: "sheet-leaving", moving: this.body });
   }
 
   private click(event: Event): void {
@@ -170,7 +189,9 @@ export class ProjectForm {
         this.drawMachines();
         break;
       case "fold":
-        foldChoice(this.body, act, this.folds);
+        // A person opened is drawn whole, the rows after it as they were.
+        if (act.getAttribute("aria-expanded") !== "true") this.reach += this.inside.get(act.dataset.key ?? "") ?? 0;
+        foldChoice(this.body, act, this.folds, () => this.choice().html);
         break;
       case "place":
         this.choosePlace(machine);
@@ -327,10 +348,22 @@ export class ProjectForm {
   private drawChoice(): void {
     const holder = this.body.querySelector<HTMLElement>(".pf-list");
     if (!holder) return;
-    const html = machineChoice(this.choices(), new Set(this.machines), this.query, this.folds, this.options.focusWords) || `<p class="focus-none">${escape(this.options.focusWords.noMatch)}</p>`;
+    const html = this.choice().html || `<p class="focus-none">${escape(this.options.focusWords.noMatch)}</p>`;
     redrawKeepingFocus(holder, () => {
       holder.innerHTML = html;
     });
+    this.unwatch();
+    this.unwatch = whenNear(holder, holder, () => {
+      this.reach += CHOICE_ROWS;
+      this.drawChoice();
+    });
+  }
+
+  /** The machines to choose among, as far as they are drawn. */
+  private choice(): ChoiceDrawn {
+    const drawn = machineChoice(this.choices(), new Set(this.machines), this.query, this.folds, this.options.focusWords, this.reach);
+    this.inside = drawn.inside;
+    return drawn;
   }
 
   /** Whether the short name is as it must be; said beside it only once it
@@ -388,7 +421,7 @@ export class ProjectForm {
     try {
       const written = this.editing ? await this.options.edit(town, fields) : await this.options.create(town, fields, this.login);
       this.busy = false;
-      this.dialog.close();
+      this.close();
       this.options.done(written.town);
     } catch (error) {
       this.busy = false;

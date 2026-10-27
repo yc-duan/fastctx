@@ -5,7 +5,7 @@
 
 import type { Address } from "../world/events";
 import { LASTING, type AccountChange, type HubAccounts, type MemberSeen, type Paths, type Reach } from "../world/accounts";
-import type { About, Action, HubNodes, LinkState, MachineFacts, Node, ProjectRecord, ResidentNow } from "../world/world";
+import type { About, Action, HubNodes, LinkState, MachineFacts, MachineWho, Node, ProjectRecord, ResidentNow } from "../world/world";
 import type { Away, WorldState } from "../home/model";
 import type { AgentFacts, WorldAgents } from "../world/agents";
 import type { WorldNow } from "../world/bridge";
@@ -108,9 +108,14 @@ interface ManyOne {
   group: string | null;
 }
 
+/** The machines `?many` and `?scale` add. */
+function manyOnes(): ManyOne[] {
+  return [...teamOnes(), ...scaleOnes()];
+}
+
 /** The machines `?many` adds: the user's own in the groups a school's would
  *  be in, most of them away at any hour, and the members' by team. */
-function manyOnes(): ManyOne[] {
+function teamOnes(): ManyOne[] {
   if (!new URLSearchParams(location.search).has("many")) return [];
   const ones: ManyOne[] = [];
   const floors: [string, string[]][] = [
@@ -133,6 +138,85 @@ function manyOnes(): ManyOne[] {
     }
   }
   return ones;
+}
+
+/** With `?scale=<n>`, a network of about n machines more, the size a
+ *  network of thousands reaches: a hundred of the account's own in a
+ *  school's rooms, the rest by members in teams of a few to a few dozen,
+ *  every tenth of them keeping a lab of a hundred; two in five out of reach.
+ *  The same every time it is opened. */
+function scaleOnes(): ManyOne[] {
+  const wanted = Number(new URLSearchParams(location.search).get("scale") ?? 0);
+  if (!(wanted > 0)) return [];
+  let seed = 20261027;
+  const next = () => {
+    seed = (seed * 1103515245 + 12345) % 2147483648;
+    return seed / 2147483648;
+  };
+  const ones: ManyOne[] = [];
+  const rooms = ["实验楼1层", "实验楼2层", "图书馆", "行政楼", "宿舍区"];
+  for (let n = 0; n < Math.min(100, wanted); n += 1) {
+    const room = rooms[n % rooms.length]!;
+    ones.push({ name: `${room}-${String(Math.floor(n / rooms.length) + 1).padStart(2, "0")}`, owner: "me", online: next() > 0.4, group: room });
+  }
+  const people = scalePeople();
+  let index = 0;
+  while (ones.length < wanted && index < people.length) {
+    const person = people[index]!;
+    index += 1;
+    const lab = index % 10 === 0;
+    const count = lab ? 100 : 1 + Math.floor(next() * 30);
+    for (let k = 1; k <= count && ones.length < wanted; k += 1) {
+      const group = lab ? "机房" : count > 12 && k > count / 2 ? "训练" : null;
+      ones.push({ name: `${person}-${lab ? "lab" : "pc"}${String(k).padStart(3, "0")}`, owner: person, online: next() > 0.4, group });
+    }
+  }
+  return ones;
+}
+
+/** The members `?scale` adds: enough of them for the machines it asks for. */
+function scalePeople(): string[] {
+  const wanted = Number(new URLSearchParams(location.search).get("scale") ?? 0);
+  if (!(wanted > 0)) return [];
+  const names = ["chen", "li", "wang", "zhang", "liu", "yang", "huang", "zhao", "wu", "zhou", "xu", "sun", "ma", "zhu", "hu", "guo", "he", "lin", "gao", "luo"];
+  return Array.from({ length: Math.ceil(wanted / 20) + 10 }, (_, n) => `${names[n % names.length]}${Math.floor(n / names.length) + 1}`);
+}
+
+/** What each machine `?scale` adds answers with: nothing at work on it,
+ *  or that it is away. */
+function scaleWho(): MachineWho[] {
+  return scaleOnes().map((one) =>
+    one.online
+      ? { kind: "answered" as const, reply: { machine: one.name, residents: [], jobs: [] } }
+      : { kind: "offline" as const, machine: one.name, since: at("01:00:00") },
+  );
+}
+
+/** With `?talks=<n>`, n conversations more of the account's, as many as a
+ *  heavy user keeps over months: in the two projects and outside them, each
+ *  idle since a little earlier than the last, now and then one waiting on
+ *  the reader. */
+function talking(): ResidentNow[] {
+  const wanted = Number(new URLSearchParams(location.search).get("talks") ?? 0);
+  if (!(wanted > 0)) return [];
+  const towns = ["mark50", "ingest", null];
+  const subjects = ["日志轮转", "批量提交", "图标导出", "PID 环改定点", "Fix the flaky upload test", "迁移到 SQLite", "Release notes", "缓存命中率", "Refactor the parser", "部署脚本"];
+  const start = Date.parse(at("13:00:00"));
+  return Array.from({ length: wanted }, (_, n) =>
+    resident(`codex-${(0x10000 + n).toString(16)}`, "laptop", codex(), towns[n % towns.length]!, "gpt-6.1-sol", "00:00:00", {
+      now: {
+        owed: {},
+        answering: [],
+        activity: "idle",
+        since: new Date(start - n * 7 * 60_000).toISOString(),
+        turn: null,
+        trouble: null,
+        desk: false,
+        waiting_for_user: n % 499 === 0,
+        title: `${subjects[n % subjects.length]} ${n + 1}`,
+      },
+    }),
+  );
 }
 
 /** With `?s=tour`, the Claude of that conversation (`tour.ts`), at work
@@ -226,7 +310,7 @@ function hubbing(machine: "laptop" | "desktop"): ResidentNow[] {
         desk: false,
         waiting_for_user: false,
         title: "真机验证",
-        asked: { id: "ask-a7e2-1", at: at("13:12:00"), waits: false, what: "answer", text: "周五借实验室的真机跑 50 次，还是先在台架上跑？", options: ["周五借真机", "先上台架"] },
+        told: { id: "told-a7e2-1", at: at("13:12:00"), status: "info", text: "周五借实验室的真机跑 50 次，还是先在台架上跑？\n\n- 周五借真机\n- 先上台架" },
       },
     }),
   ];
@@ -247,7 +331,12 @@ function many(): Node[] {
  *  and with `two`, a second one at work, where it is a member that ops
  *  shared build with and whom the Claude on render assists. */
 function hubs(two: boolean): { nodes: HubNodes[]; accounts: HubAccounts[] } {
-  const link = { kind: "online" as const, since: at("01:10:02"), hub: "203.0.113.10:7443", route: { kind: "card" as const, name: "Ethernet" } };
+  // With ?hub=down, the line to home is down and reconnecting: its view
+  // still has the machines, and the node leaves unsaid who is online now.
+  const down = new URLSearchParams(location.search).get("hub") === "down";
+  const link: LinkState = down
+    ? { kind: "connecting", since: at("13:41:20"), last_error: "its own line: 203.0.113.10:7443 card Ethernet: connection refused" }
+    : { kind: "online", since: at("01:10:02"), hub: "203.0.113.10:7443", route: { kind: "card", name: "Ethernet" } };
   const nodes: HubNodes[] = [
     {
       hub: HOME,
@@ -264,7 +353,7 @@ function hubs(two: boolean): { nodes: HubNodes[]; accounts: HubAccounts[] } {
         node("lab-a-01", true, "11:02:00", "me", "windows", "C:/Users/lab", ["me", true, false]),
         node("lab-a-02", false, "12:31:00", "me", "windows", "C:/Users/lab", ["me", true, false]),
         ...many(),
-      ],
+      ].map((machine) => (down ? { ...machine, online: null } : machine)),
     },
   ];
   // How the lines go: desktop and server take direct connections; laptop
@@ -310,6 +399,7 @@ function hubs(two: boolean): { nodes: HubNodes[]; accounts: HubAccounts[] } {
         { name: "ada", level: "member", locked: false, opened: at("00:05:00") },
         { name: "bo", level: "member", locked: false, opened: at("00:06:00") },
         { name: "cy", level: "visitor", locked: false, opened: at("09:12:00") },
+        ...scalePeople().map((name) => ({ name, level: "member" as const, locked: false, opened: at("00:07:00") })),
       ],
       members: [
         member("desktop", "computer", ["me"], "me", "00:10:00", true, "5be1fcee", ["192.168.1.20:7444"]),
@@ -334,6 +424,20 @@ function hubs(two: boolean): { nodes: HubNodes[]; accounts: HubAccounts[] } {
         { key: "specimen-gpu-line", account: "me", label: "GPU 集群", kind: "computer", uses: 0, used: 0, expires: LASTING, way: "line", made_by: "laptop", made_at: at("09:12:00") },
         { key: "specimen-phone-qr", account: "me", kind: "phone", uses: 1, used: 0, expires: daysAhead(1), way: "scan", made_by: "desktop", made_at: at("13:05:00") },
         { key: "specimen-bo-code", account: "bo", label: "实验室", kind: "computer", managed: true, uses: 10, used: 3, expires: daysAhead(20), way: "paste", made_by: "gpu", made_at: at("08:00:00") },
+        // With ?codes=N, as many more, to see a long list of them.
+        ...Array.from({ length: Number(new URLSearchParams(location.search).get("codes") ?? 0) }, (_, index) => ({
+          key: `specimen-code-${index}`,
+          account: "me",
+          label: `机房 ${index + 2}`,
+          kind: "computer" as const,
+          managed: true,
+          uses: 10,
+          used: index % 10,
+          expires: daysAhead(7),
+          way: "paste" as const,
+          made_by: "desktop",
+          made_at: at("10:40:00"),
+        })),
       ],
       // With ?many, a room of machines shared one by one, as a lab is.
       shares: [
@@ -428,6 +532,7 @@ export function specimenWorld(): { world: WorldState; now: Date; lastVisit: Date
             ...touring(),
             ...voicing(),
             ...hubbing("laptop"),
+            ...talking(),
             resident("codex-7f3a", "laptop", codex(), "ingest", "gpt-6.1-sol", "08:40:00", {
               focus: { machines: [{ machine: "lab", folders: ["/srv/ingest", "/srv/ingest/fixtures"] }, { machine: "laptop", folders: [] }] },
               now: {
@@ -441,7 +546,7 @@ export function specimenWorld(): { world: WorldState; now: Date; lastVisit: Date
                 waiting_for_user: false,
                 title: null,
                 last_said: "Done. The writer now commits every 5 000 rows and at end of file, and a retry replays only the rows since the last commit.",
-                asked: { id: "ask-7f3a-1", at: at("09:30:20"), waits: false, what: "answer", text: "重试时，失败的那一批也要补发告警吗？", options: ["补发", "不补发"] },
+                told: { id: "told-7f3a-1", at: at("09:30:20"), status: "info", text: "重试时，失败的那一批也要补发告警吗？\n\n- 补发\n- 不补发" },
               },
               last_action: action("09:30:50", "laptop", "run", "cd /srv/ingest && cargo test 2>&1 | tail -3", "exit 0"),
             }),
@@ -648,7 +753,7 @@ export function specimenNow(two = false): { world: WorldNow; now: Date; lastVisi
   return {
     world: {
       here: world.here,
-      who: { machine: world.here, scope: { kind: "world", towns: world.towns }, machines: world.machines, others: world.others ?? [] },
+      who: { machine: world.here, scope: { kind: "world", towns: world.towns }, machines: [...world.machines, ...scaleWho()], others: world.others ?? [] },
       nodes: { machine: world.here, facts: facts("desktop", "windows", "C:/Users/me"), hubs: nodes },
       towns: world.towns,
       accounts: { machine: world.here, hubs: accounts },

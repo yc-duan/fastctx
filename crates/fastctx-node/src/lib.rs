@@ -13,6 +13,7 @@ mod account_records;
 pub mod activity;
 mod admission;
 mod admitted;
+mod adoption;
 mod afoot;
 mod again;
 mod agent_activity;

@@ -27,13 +27,23 @@ export interface CanvasOptions extends CameraOptions {
   /** The smallest scale the drawing fits itself at, so its names can be
    *  read; asked for its whole (the fit control), it fits however small. */
   fitFloor?: number;
+  /** The largest scale the drawing fits itself at: a small one is not
+   *  blown up past its own size. */
+  fitMost?: number;
+  /** Whether the canvas writes the items' names itself, placed clear of
+   *  each other; a page that writes them on its drawing does without. */
+  names?: boolean;
 }
 
 /** A pointer down on the drawing. With a mouse the left button chooses
  *  or, dragged, draws a frame round several; the middle button moves the
  *  drawing. A finger or a pen moves it. */
 interface Pointer { point: Point; start: Point; item: string | null; moved: boolean; touch: boolean; middle?: boolean; frame?: boolean; add?: boolean }
-interface ButtonLabel { item: CanvasItem; button: HTMLButtonElement; label: HTMLElement; width: number; height: number }
+interface ButtonLabel { item: CanvasItem; button: HTMLButtonElement; label: HTMLElement | null; width: number; height: number }
+
+/** Items this far outside the view, in pixels, already have their hit areas,
+ *  so a drag reaches them before they come in. */
+const HIT_MARGIN = 240;
 
 /** The page owns ink and operations. This surface owns the camera, input, hit
  * objects and plain HTML names. Dispose it when its page leaves the screen. */
@@ -62,6 +72,7 @@ export class MapCanvas {
   private readonly buttons = new Map<string, ButtonLabel>();
   private readonly handles = new Map<string, { handle: CanvasHandle; button: HTMLButtonElement }>();
   private items: readonly CanvasItem[] = [];
+  private itemIndex = new Map<string, CanvasItem>();
   private bounds: Bounds = { x: 0, y: 0, width: 0, height: 0 };
   private pointers = new Map<number, Pointer>();
   private pointed: string | null = null;
@@ -82,6 +93,8 @@ export class MapCanvas {
   /** What a drawing too large to read whole shows first (`setScene`). */
   private focus: Bounds | null = null;
   private controlWidth = 0;
+  /** From the controls' top to the frame's foot, while they are shown. */
+  private controlRoom = 0;
   private labelObstacles: readonly Bounds[] = [];
   private frameState: CanvasFrame;
   private previousView = { x: NaN, y: NaN, scale: NaN };
@@ -143,7 +156,14 @@ export class MapCanvas {
     this.element.addEventListener("lostpointercapture", e => { if (this.pointers.has(e.pointerId)) this.cancelPointer(e.pointerId); }, { signal });
     this.element.addEventListener("pointerleave", () => { if (!this.pointers.size) this.point(null, [0, 0]); }, { signal });
     this.element.addEventListener("wheel", e => this.wheel(e), { passive: false, signal });
-    this.element.addEventListener("dblclick", e => { if (!options.still && !this.keyOf(e.target) && !(e.target as Element).closest("[data-handle]") && !this.isControl(e.target)) { e.preventDefault(); this.fit(); } }, { signal });
+    // Pressed twice, an item opens; the paper fits the drawing to the view.
+    this.element.addEventListener("dblclick", e => {
+      if (options.still || (e.target as Element).closest("[data-handle]") || this.isControl(e.target)) return;
+      const key = this.keyOf(e.target) ?? this.itemAt(this.local(e));
+      e.preventDefault();
+      if (key) this.options.event({ kind: "open", key });
+      else this.fit();
+    }, { signal });
     this.element.addEventListener("contextmenu", e => {
       if (this.isControl(e.target)) return;
       e.preventDefault();
@@ -178,8 +198,8 @@ export class MapCanvas {
     this.resize = new ResizeObserver(() => {
       this.rect = this.element.getBoundingClientRect();
       this.camera.resize(this.element.clientWidth, this.element.clientHeight);
-      if (this.fitOnResize) this.camera.fit(this.bounds, this.fitPadding(), this.floor(), this.focus);
       this.measure();
+      if (this.fitOnResize) this.camera.fit(this.bounds, this.fitPadding(), this.floor(), this.focus, this.most(), this.fitBelow());
       this.schedule();
     });
     this.resize.observe(this.element);
@@ -190,8 +210,16 @@ export class MapCanvas {
   get selection(): string | null { return this.selected; }
   /** Mirror the page's selection without emitting a user gesture. */
   setSelection(key: string | null): void {
-    if (key && !this.buttons.has(key)) throw new Error("Unknown canvas selection");
+    if (key && !this.itemIndex.has(key)) throw new Error("Unknown canvas selection");
     this.selected = key;
+    this.schedule();
+  }
+
+  /** Brings the drawing to `scale`, its origin at `x`, `y` on the screen, as
+   *  a page flying to a part of it does frame by frame. */
+  view(scale: number, x: number, y: number): void {
+    this.fitOnResize = false;
+    this.camera.set({ ...this.camera.view, scale, x, y });
     this.schedule();
   }
   /** Screen-space areas occupied by the page's floating cards or legends. */
@@ -226,37 +254,20 @@ export class MapCanvas {
    *  it, such as folding a part, must not move the rest under the pointer. */
   /** `focus` is what of a drawing too large to read whole is shown first. */
   setScene(items: readonly CanvasItem[], handles: readonly CanvasHandle[], bounds: Bounds, keepView = false, focus: Bounds | null = null): void {
-    if (new Set(items.map(i => i.key)).size !== items.length || new Set(handles.map(h => h.key)).size !== handles.length) throw new Error("Duplicate canvas identity");
+    const index = new Map(items.map(i => [i.key, i]));
+    if (index.size !== items.length || new Set(handles.map(h => h.key)).size !== handles.length) throw new Error("Duplicate canvas identity");
     this.items = items;
+    this.itemIndex = index;
     this.bounds = bounds;
     this.focus = focus;
-    const kept = new Set(items.map(i => i.key));
     for (const [key, entry] of this.buttons) {
-      if (!kept.has(key)) { entry.button.remove(); entry.label.remove(); this.buttons.delete(key); }
+      const item = index.get(key);
+      if (!item) { entry.button.remove(); entry.label?.remove(); this.buttons.delete(key); }
+      else this.dress(entry, item);
     }
-    for (const item of items) {
-      let entry = this.buttons.get(item.key);
-      if (!entry) {
-        const button = document.createElement("button");
-        button.type = "button";
-        button.dataset.item = item.key;
-        button.className = "canvas-object";
-        const label = document.createElement("span");
-        label.className = "canvas-name";
-        label.hidden = true;
-        label.dataset.label = item.key;
-        this.hits.append(button);
-        this.names.append(label);
-        entry = { item, button, label, width: 0, height: 0 };
-        this.buttons.set(item.key, entry);
-      }
-      entry.item = item;
-      entry.button.setAttribute("aria-label", [item.label, item.sub].filter(Boolean).join(" "));
-      entry.button.dataset.kind = item.kind;
-      entry.label.dataset.side = item.side ?? "";
-      const text = [item.label, item.sub].filter(Boolean).join("\n");
-      if (entry.label.textContent !== text) entry.label.textContent = text;
-    }
+    // A canvas that writes the names has a hit area for every item from the
+    // start; one that does not makes them as the items come into view.
+    if (this.options.names !== false) for (const item of items) this.entryOf(item);
     const handleKeys = new Set(handles.map(h => h.key));
     for (const [key, entry] of this.handles) { if (!handleKeys.has(key)) { entry.button.remove(); this.handles.delete(key); } }
     for (const handle of handles) {
@@ -275,11 +286,11 @@ export class MapCanvas {
       entry.button.setAttribute("aria-label", handle.label);
       entry.button.title = handle.label;
     }
-    if (this.selected && !kept.has(this.selected)) this.select(null, [0, 0]);
-    if (this.pointed && !kept.has(this.pointed)) this.point(null, [0, 0]);
+    if (this.selected && !index.has(this.selected)) this.select(null, [0, 0]);
+    if (this.pointed && !index.has(this.pointed)) this.point(null, [0, 0]);
     // Until the drawing is moved by hand it stays fitted to what it holds.
     if (keepView) this.fitOnResize = false;
-    else if (this.fitOnResize && this.camera.view.width > 0) this.camera.fit(this.bounds, this.fitPadding(), this.floor(), this.focus);
+    else if (this.fitOnResize && this.camera.view.width > 0) this.camera.fit(this.bounds, this.fitPadding(), this.floor(), this.focus, this.most(), this.fitBelow());
     if (this.draft) {
       const current = this.handles.get(this.draft.handle.key)?.handle;
       if (!current || current.source !== this.draft.handle.source || current.point.some((n, i) => n !== this.draft!.handle.point[i])) this.cancelDraft("changed");
@@ -288,14 +299,56 @@ export class MapCanvas {
     this.measure();
     this.schedule();
   }
+  /** The hit area of `item`, made when first wanted, with its name where
+   *  the canvas writes names. */
+  private entryOf(item: CanvasItem): ButtonLabel {
+    let entry = this.buttons.get(item.key);
+    if (!entry) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.dataset.item = item.key;
+      button.className = "canvas-object";
+      let label: HTMLElement | null = null;
+      if (this.options.names !== false) {
+        label = document.createElement("span");
+        label.className = "canvas-name";
+        label.hidden = true;
+        label.dataset.label = item.key;
+        this.names.append(label);
+      }
+      this.hits.append(button);
+      entry = { item, button, label, width: 0, height: 0 };
+      this.buttons.set(item.key, entry);
+      this.dress(entry, item);
+    }
+    return entry;
+  }
+
+  /** What a hit area says of its item, kept up as the item changes. */
+  private dress(entry: ButtonLabel, item: CanvasItem): void {
+    entry.item = item;
+    const said = [item.label, item.sub].filter(Boolean).join(" ");
+    if (entry.button.getAttribute("aria-label") !== said) entry.button.setAttribute("aria-label", said);
+    if (entry.button.dataset.kind !== item.kind) entry.button.dataset.kind = item.kind;
+    if (!entry.label) return;
+    entry.label.dataset.side = item.side ?? "";
+    const text = [item.label, item.sub].filter(Boolean).join("\n");
+    if (entry.label.textContent !== text) entry.label.textContent = text;
+  }
   pan(dx: number, dy: number): void { this.fitOnResize = false; this.camera.pan(dx, dy); this.schedule(); }
   zoom(factor: number, at?: Point): void { this.fitOnResize = false; this.camera.zoom(factor, at); this.schedule(); }
   /** The whole drawing in view, however small, kept so as it changes. */
-  fit(): void { this.fitOnResize = true; this.fitWhole = true; this.camera.fit(this.bounds, this.fitPadding()); this.schedule(); }
+  fit(): void { this.fitOnResize = true; this.fitWhole = true; this.camera.fit(this.bounds, this.fitPadding(), 0, this.focus, this.most(), this.fitBelow()); this.schedule(); }
+  /** The scale the drawing fits itself no larger than. */
+  private most(): number {
+    return this.options.fitMost ?? Infinity;
+  }
   /** The scale the drawing fits itself no smaller than. */
   private floor(): number {
     return this.fitWhole || this.options.still ? 0 : (this.options.fitFloor ?? 0);
   }
+  /** The zoom boundaries the page reads its levels by, from now on. */
+  levels(levels: readonly number[]): void { this.camera.setLevels(levels); this.schedule(); }
   /** Use after directly changing the camera, or changing CSS font metrics. */
   refresh(): void { this.measure(); this.schedule(); }
   dispose(): void {
@@ -313,12 +366,20 @@ export class MapCanvas {
     const { width, height } = this.camera.view;
     return width < 480 ? 16 : Math.max(24, Math.min(76, Math.min(width, height) * 0.1));
   }
+  /** Room left under the drawing when it is fitted: its padding, or what
+   *  the controls in its corner take, and a little air over them. */
+  fitBelow(): number {
+    return Math.max(this.fitPadding(), this.controlRoom);
+  }
   private measure(): void {
-    const visibility = new Map([...this.buttons.values()].map(e => [e.label, e.label.hidden]));
-    for (const { label } of this.buttons.values()) label.hidden = false;
-    for (const entry of this.buttons.values()) { entry.width = entry.label.offsetWidth; entry.height = entry.label.offsetHeight; }
-    for (const [label, hidden] of visibility) label.hidden = hidden;
     this.controlWidth = this.control.offsetWidth;
+    this.controlRoom = this.control.isConnected && this.control.offsetHeight ? this.element.clientHeight - this.control.offsetTop + 8 : 0;
+    if (this.options.names === false) return;
+    const labels = [...this.buttons.values()].flatMap(e => (e.label ? [e.label] : []));
+    const visibility = new Map(labels.map(label => [label, label.hidden]));
+    for (const label of labels) label.hidden = false;
+    for (const entry of this.buttons.values()) { entry.width = entry.label?.offsetWidth ?? 0; entry.height = entry.label?.offsetHeight ?? 0; }
+    for (const [label, hidden] of visibility) label.hidden = hidden;
   }
   private schedule(): void {
     if (this.animation || this.disposed) return;
@@ -332,6 +393,26 @@ export class MapCanvas {
     this.ink.style.transform = `translate(${view.x}px,${view.y}px) scale(${view.scale})`;
     for (const layer of [this.under, this.over]) layer.style.transform = `translate(${view.x}px,${view.y}px)`;
     const obstacles: Bounds[] = [...this.labelObstacles];
+    const writes = this.options.names !== false;
+    // Where a canvas does not write names it keeps hit areas only for what
+    // is in view or about to be, and the one chosen, pointed at or focused.
+    if (!writes) {
+      const [left, top] = this.camera.toWorld([-HIT_MARGIN, -HIT_MARGIN]);
+      const [right, bottom] = this.camera.toWorld([view.width + HIT_MARGIN, view.height + HIT_MARGIN]);
+      const kept = (key: string) => key === this.selected || key === this.pointed || key === this.focused;
+      for (const item of this.items) {
+        const box = item.box;
+        const reach = item.radius;
+        const seen = box
+          ? box.x + box.width >= left && box.x <= right && box.y + box.height >= top && box.y <= bottom
+          : item.point[0] + reach >= left && item.point[0] - reach <= right && item.point[1] + reach >= top && item.point[1] - reach <= bottom;
+        if ((seen && !item.quiet) || kept(item.key)) this.entryOf(item);
+        else {
+          const entry = this.buttons.get(item.key);
+          if (entry) { entry.button.remove(); this.buttons.delete(item.key); }
+        }
+      }
+    }
     for (const entry of this.buttons.values()) {
       const [x, y] = this.camera.toScreen(entry.item.point);
       const box = entry.item.box;
@@ -344,16 +425,18 @@ export class MapCanvas {
         entry.button.style.transform = `translate(${left}px,${top - shift}px)`;
         entry.button.style.width = `${width}px`;
         entry.button.style.height = `${height}px`;
-        entry.button.style.borderRadius = (box.corners ?? [0, 0, 0, 0]).map((corner) => `${corner * view.scale}px`).join(" ");
+        entry.button.style.borderRadius = box.corners ? box.corners.map((corner) => `${corner * view.scale}px`).join(" ") : "";
       } else {
         const size = Math.max(44, entry.item.radius * view.scale * 2);
         entry.button.style.transform = `translate(${x - size / 2}px,${y - size / 2}px)`;
         entry.button.style.width = entry.button.style.height = `${size}px`;
       }
-      entry.button.setAttribute("aria-pressed", String(entry.item.key === this.selected));
+      const pressed = String(entry.item.key === this.selected);
+      if (entry.button.getAttribute("aria-pressed") !== pressed) entry.button.setAttribute("aria-pressed", pressed);
       entry.button.dataset.valid = String(this.draft?.valid.includes(entry.item.key) ?? false);
       entry.button.dataset.target = String(this.draft?.target === entry.item.key);
       entry.button.dataset.pointed = String(this.pointed === entry.item.key);
+      if (!writes) continue;
       const r = (entry.item.labelRadius ?? entry.item.radius) * view.scale;
       obstacles.push({ x: x - r, y: y - r, width: 2 * r, height: 2 * r });
     }
@@ -361,18 +444,20 @@ export class MapCanvas {
       const [x, y] = this.handlePoint(handle.key)!;
       button.style.transform = `translate(${x - 22}px,${y - 22}px)`;
     }
-    // Reserve the corner control; CSS positions it without per-frame layout reads.
-    obstacles.push({ x: view.width - this.controlWidth - 12, y: view.height - 56, width: this.controlWidth + 12, height: 56 });
-    const placements = placeLabels([...this.buttons.values()].map(e => ({ key: e.item.key, point: this.camera.toScreen(e.item.point),
-      radius: (e.item.labelRadius ?? e.item.radius) * view.scale, width: e.width, height: e.height,
-      priority: e.item.key === this.focused || e.item.key === this.pointed ? 100 : e.item.key === this.selected ? 50 : e.item.priority ?? 0, side: e.item.side })),
-      { x: 8, y: 8, width: Math.max(0, view.width - 16), height: Math.max(0, view.height - 16) }, obstacles);
     const hiddenLabels: string[] = [];
-    for (const { key, box } of placements) {
-      const label = this.buttons.get(key)!.label;
-      label.hidden = !box;
-      if (box) label.style.transform = `translate(${box.x}px,${box.y}px)`;
-      else hiddenLabels.push(key);
+    if (writes) {
+      // Reserve the corner control; CSS positions it without per-frame layout reads.
+      obstacles.push({ x: view.width - this.controlWidth - 12, y: view.height - 56, width: this.controlWidth + 12, height: 56 });
+      const placements = placeLabels([...this.buttons.values()].map(e => ({ key: e.item.key, point: this.camera.toScreen(e.item.point),
+        radius: (e.item.labelRadius ?? e.item.radius) * view.scale, width: e.width, height: e.height,
+        priority: e.item.key === this.focused || e.item.key === this.pointed ? 100 : e.item.key === this.selected ? 50 : e.item.priority ?? 0, side: e.item.side })),
+        { x: 8, y: 8, width: Math.max(0, view.width - 16), height: Math.max(0, view.height - 16) }, obstacles);
+      for (const { key, box } of placements) {
+        const label = this.buttons.get(key)!.label!;
+        label.hidden = !box;
+        if (box) label.style.transform = `translate(${box.x}px,${box.y}px)`;
+        else hiddenLabels.push(key);
+      }
     }
     this.scaleText.textContent = `${Math.round(view.scale * 100)}%`;
     this.element.dataset.moving = String(moving);
@@ -492,7 +577,9 @@ export class MapCanvas {
         return sx >= x && sx <= x + width && sy >= y && sy <= y + height;
       })
       .map((item) => item.key);
-    this.options.event({ kind: "marquee", keys, done, add });
+    const [left, top] = this.camera.toWorld([x, y]);
+    const [right, bottom] = this.camera.toWorld([x + width, y + height]);
+    this.options.event({ kind: "marquee", keys, area: { x: left, y: top, width: right - left, height: bottom - top }, done, add });
   }
   private up(e: PointerEvent): void {
     const pointer = this.pointers.get(e.pointerId);

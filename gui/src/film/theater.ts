@@ -2,6 +2,7 @@
 // until the page behind is touched, Escape is pressed or its close is,
 // which sits under the film, away from the window's own buttons.
 
+import { leave } from "../app/leave";
 import { glyph } from "../conversation/glyphs";
 import { escape } from "../conversation/prose";
 import { Film } from "./film";
@@ -17,10 +18,15 @@ export function watchFilm(make: (shape: Shape) => Built, label: string, closeWor
   const key = (event: KeyboardEvent) => {
     if (event.key === "Escape") close();
   };
+  let open = true;
   const close = () => {
-    film.destroy();
-    theater.remove();
+    if (!open) return;
+    open = false;
     document.removeEventListener("keydown", key);
+    leave(theater, () => {
+      film.destroy();
+      theater.remove();
+    });
   };
   theater.addEventListener("click", (event) => {
     const target = event.target as HTMLElement;

@@ -34,6 +34,8 @@ import "./app/assist.css";
 import "./app/machines.css";
 import "./app/machine-framed.css";
 import "./app/machine-list.css";
+import "./app/machine-spot.css";
+import "./app/machine-find.css";
 import "./app/update-view.css";
 import "./app/machine-page.css";
 import "./app/machine-manage.css";
@@ -233,7 +235,7 @@ import { liveSide, specimenSide } from "./side/live";
 import { enSide, zhSide } from "./side/words";
 import { enPlan, zhPlan } from "./plan/words";
 import { samples as planSamples } from "./plan/specimen-samples";
-import { foldedOf, MachineMap, MAP_ORDER, type MachineMapScene } from "./app/machine-map";
+import { MachineMap, MAP_ORDER, type MachineMapScene } from "./app/machine-map";
 import { mapOf } from "./app/map-of";
 import {
   addAgentLogin,
@@ -316,7 +318,7 @@ import { networkUpdates } from "./world/update-view";
 import { enUpdateView, zhUpdateView } from "./app/update-view-words";
 import { getVersion } from "@tauri-apps/api/app";
 import { desktopAvailable } from "./world/desktop";
-import { answerWith, notifying, startPresence } from "./app/presence";
+import { notifying, startPresence } from "./app/presence";
 import { installAccess } from "./app/access";
 import { installBack, setPageBack } from "./app/back";
 import { installFrame } from "./app/frame";
@@ -378,6 +380,9 @@ if (params.has("quiet")) {
 }
 const store = createStore(() => ({ world: specimen.world, now: specimen.now }));
 const live = store.live;
+// A specimen in a development build lends its World and store to the page,
+// so a probe can change the World and time what the interface does with it.
+if (!live && import.meta.env.DEV) Object.assign(window, { __specimen: specimen, __store: store });
 /** Whether this interface reaches the World as a device (a phone, or a
  *  computer started with --device): it joins as one and sets nothing up.
  *  A specimen shows one when asked. The shell's own answer follows. */
@@ -919,6 +924,7 @@ function talkManage(address: Address, page: () => ConversationPage, markdown?: (
         rename: () => page().startRename(),
         find: () => page().showFind(),
         steps: { shown: () => page().stepsShown(), toggle: () => page().toggleSteps() },
+        panel: page().panel(),
         deleted: () => replacePlace(link({ kind: "home" })),
         ...(markdown
           ? {
@@ -994,17 +1000,6 @@ async function specimenManaged(address: Address, action: Management): Promise<Ma
 async function specimenRenamed(address: Address, name: string): Promise<Controlled> {
   await specimenActOn(address, (r) => (r.now ? { ...r, now: { ...r.now, title: name } } : r));
   return { kind: "done", said: null };
-}
-
-/** A specimen's agent takes an answer a while after it is given. */
-async function specimenAnswered(address: Address): Promise<void> {
-  await new Promise((resolve) => setTimeout(resolve, 1600));
-  await specimenActOn(address, (r) => {
-    if (!r.now) return r;
-    const { asked: _answered, ...now } = r.now;
-    return { ...r, now };
-  });
-  void store.refresh();
 }
 
 async function specimenForgot(address: Address): Promise<Forgetting> {
@@ -1334,7 +1329,7 @@ function townsFor(r: ResidentNow): { town: string; name: string }[] {
  *  nothing being added, framed or moved, `marked` circled. */
 function stillScene(world: WorldNow, marked: string | null = null): MachineMapScene {
   const map = mapOf(world, english ? enMachines : zhMachines);
-  return { ...map, adds: [], waiting: new Set(), selected: marked, fresh: new Set(), opening: new Set(), framed: [], folded: foldedOf(map.nodes) };
+  return { ...map, adds: [], waiting: new Set(), selected: marked, fresh: new Set(), opening: new Set(), framed: [] };
 }
 
 function home(): Page {
@@ -1367,13 +1362,6 @@ function home(): Page {
     stopJob: live ? (job, machine) => stopJob(job, machine) : async () => {},
     updates: () => updateCard.open(),
     seenTold: toldSeen,
-    // An answer from here goes in once, however long the way is closed, as
-    // one from a notification does (`world-network.md`, 断开不是结束).
-    answer: (address, asked, choice) => {
-      if (!live) return specimenAnswered(address);
-      const id = crypto.randomUUID();
-      return untilAnswered(() => talk(address, answerWith(asked, choice), [], null, id), () => {}, address.machine);
-    },
   });
   let away: Away | null = live ? null : specimen.away;
   // What happened while the reader was away is asked of every machine when
@@ -3138,12 +3126,6 @@ startPresence({
   words: presenceWords,
   someone: (r) => someoneSaid(r),
   stop: (address) => stop(address),
-  // An answer from a notification goes in once, however long the way is
-  // closed (`world-network.md`, 断开不是结束).
-  say: (address, text) => {
-    const id = crypto.randomUUID();
-    return untilAnswered(() => talk(address, text, [], null, id), () => {}, address.machine);
-  },
 });
 
 // A network this computer or phone was on, dissolved, is said once.

@@ -1,8 +1,10 @@
 //! Native toasts with protocol activation, including Action Center and
 //! cold starts. Only opaque record IDs leave the process in launch URLs.
+//! Everything that asks Windows is done on the notification thread
+//! (`apartment`), never on the caller's.
 
 use std::path::PathBuf;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use serde::{Deserialize, Serialize};
 use tauri::Manager;
@@ -13,6 +15,7 @@ use windows::UI::Notifications::{
 };
 use windows::core::HSTRING;
 
+use super::apartment::Apartment;
 use super::{Activation, Event, Presence, identity};
 
 #[derive(Clone, Deserialize, Serialize)]
@@ -38,6 +41,7 @@ pub struct Notice {
 pub struct Notifications {
     directory: PathBuf,
     records: Mutex<()>,
+    apartment: Apartment,
 }
 
 fn xml(value: &str) -> String {
@@ -56,11 +60,26 @@ pub fn route(value: &str) -> Result<(), String> {
 }
 
 impl Notifications {
-    pub fn new(directory: PathBuf) -> Self {
-        Self { directory, records: Mutex::new(()) }
+    pub fn new(directory: PathBuf) -> Result<Self, String> {
+        Ok(Self { directory, records: Mutex::new(()), apartment: Apartment::start()? })
     }
 
-    pub fn show(&self, app: &tauri::AppHandle, notice: Notice) -> Result<String, String> {
+    pub async fn show(self: &Arc<Self>, app: &tauri::AppHandle, notice: Notice) -> Result<String, String> {
+        let (this, app) = (Arc::clone(self), app.clone());
+        self.apartment.run(move || this.submit(&app, notice)).await
+    }
+
+    pub async fn activate(self: &Arc<Self>, value: String) -> Result<Activation, String> {
+        let this = Arc::clone(self);
+        self.apartment.run(move || this.take(&value)).await
+    }
+
+    pub async fn remove(self: &Arc<Self>, id: String) -> Result<(), String> {
+        let this = Arc::clone(self);
+        self.apartment.run(move || this.forget(&id)).await
+    }
+
+    fn submit(&self, app: &tauri::AppHandle, notice: Notice) -> Result<String, String> {
         route(&notice.route)?;
         if notice.actions.len() > 5 {
             return Err("Windows supports at most five toast buttons".into());
@@ -160,7 +179,7 @@ impl Notifications {
         Ok(id)
     }
 
-    pub fn activate(&self, value: &str) -> Result<Activation, String> {
+    fn take(&self, value: &str) -> Result<Activation, String> {
         let prefix = format!("{}://notification/", identity::SCHEME);
         let value = value.strip_prefix(&prefix).ok_or("unrecognized notification protocol")?;
         let (id, selected) = value.split_once('/').ok_or("missing notification action")?;
@@ -187,7 +206,7 @@ impl Notifications {
         })
     }
 
-    pub fn remove(&self, id: &str) -> Result<(), String> {
+    fn forget(&self, id: &str) -> Result<(), String> {
         validate_id(id)?;
         let _records = self.records.lock().expect("notification records");
         self.remove_history(id)?;

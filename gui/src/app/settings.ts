@@ -1,6 +1,7 @@
-// The settings: how the interface looks and reads on this device, and what
-// this device is in the World. Choices take effect at once and are kept on
-// this device; the language takes effect as the interface starts again.
+// The settings: how the interface looks and reads on this device, what this
+// device is in the World, and the keys, a tab each, the one last open kept
+// on this device. Choices take effect at once and are kept on this device;
+// the language takes effect as the interface starts again.
 
 import { ProxyRow, type ProxySeam } from "./proxy-row";
 import { glyph } from "../conversation/glyphs";
@@ -88,6 +89,24 @@ export function legacySaid(legacy: Legacy | null, words: SettingsWords): string 
   return words.legacyCleaned(legacy.tidied, legacy.archived, legacy.archives.at(-1) ?? legacy.record, legacy.waiting);
 }
 
+/** The settings' tabs, in their order. */
+const TABS = ["look", "device", "keys"] as const;
+type Tab = (typeof TABS)[number];
+
+/** Where this device keeps the tab last open. */
+const TAB_KEY = "settings.tab";
+
+function keptTab(): Tab {
+  try {
+    const kept = localStorage.getItem(TAB_KEY);
+    // Where there is no keyboard, its keys are not offered.
+    if (kept === "keys" && matchMedia("(hover: none) and (pointer: coarse)").matches) return "look";
+    return TABS.find((tab) => tab === kept) ?? "look";
+  } catch {
+    return "look";
+  }
+}
+
 export class SettingsPage implements Page {
   readonly element: HTMLElement;
   readonly title: string;
@@ -101,6 +120,26 @@ export class SettingsPage implements Page {
   private setup: Setup | null = null;
   private busy = false;
   private said = "";
+  private tab: Tab = "look";
+
+  /** Shows `tab`'s sheet, and keeps it for the next time where `kept`. */
+  private showTab(tab: Tab, kept = false): void {
+    this.tab = tab;
+    for (const button of this.element.querySelectorAll<HTMLElement>(".st-tab")) {
+      const chosen = button.dataset.tab === tab;
+      button.setAttribute("aria-selected", String(chosen));
+      button.tabIndex = chosen ? 0 : -1;
+    }
+    for (const pane of this.element.querySelectorAll<HTMLElement>(".st-pane")) pane.hidden = pane.dataset.pane !== tab;
+    this.element.querySelector<HTMLElement>(".st-sheet")?.classList.toggle("first", tab === TABS[0]);
+    this.element.querySelector<HTMLElement>(".st-sheet")?.scrollTo({ top: 0 });
+    if (!kept) return;
+    try {
+      localStorage.setItem(TAB_KEY, tab);
+    } catch {
+      // Kept for this visit only.
+    }
+  }
 
   constructor(private readonly options: SettingsOptions) {
     const { words } = options;
@@ -109,14 +148,29 @@ export class SettingsPage implements Page {
     this.element.className = "settings-page";
     this.element.innerHTML = `
       ${options.head(`<h1 class="page-title">${escape(words.title)}</h1>`)}
-      <div class="settings scroller">
-        <section class="home-section"><h2 class="section-title">${escape(words.look)}</h2><div class="look"></div></section>
-        <section class="home-section settings-device"><h2 class="section-title">${escape(words.device)}</h2><dl class="facts settings-name" hidden></dl><dl class="facts device"></dl><dl class="facts settings-app" hidden></dl><dl class="facts settings-service" hidden></dl>${options.computer ? `<dl class="facts settings-data"><dt>${escape(words.data)}</dt><dd><a class="settings-link" href="#/data"><span class="settings-data-size">${escape(words.dataOpen)}</span>${glyph("chevron", 14)}</a></dd></dl>` : ""}<dl class="facts settings-phone" hidden></dl></section>
-        <section class="home-section settings-keys"><h2 class="section-title">${escape(words.keys)}</h2><dl class="facts keys">${words.keyList
+      <div class="st-tabs" role="tablist" aria-label="${escape(words.title)}">${TABS.map((tab) => `<button class="st-tab" type="button" role="tab" id="st-tab-${tab}" aria-controls="st-pane-${tab}" data-tab="${tab}">${escape(words[tab])}</button>`).join("")}</div>
+      <div class="settings st-room"><div class="st-sheet scroller">
+        <section class="st-pane" id="st-pane-look" role="tabpanel" aria-labelledby="st-tab-look" data-pane="look"><div class="look"></div></section>
+        <section class="st-pane settings-device" id="st-pane-device" role="tabpanel" aria-labelledby="st-tab-device" data-pane="device"><dl class="facts settings-name" hidden></dl><dl class="facts device"></dl><dl class="facts settings-app" hidden></dl><dl class="facts settings-service" hidden></dl>${options.computer ? `<dl class="facts settings-data"><dt>${escape(words.data)}</dt><dd><a class="settings-link" href="#/data"><span class="settings-data-size">${escape(words.dataOpen)}</span>${glyph("chevron", 14)}</a></dd></dl>` : ""}<dl class="facts settings-phone" hidden></dl>${options.computer ? `<div class="st-removal"><button class="text-button danger-text settings-uninstall" type="button" data-uninstall>${glyph("logout", 16)}<span>${escape(options.removalWords.open)}</span></button></div>` : ""}</section>
+        <section class="st-pane settings-keys" id="st-pane-keys" role="tabpanel" aria-labelledby="st-tab-keys" data-pane="keys"><dl class="facts keys">${words.keyList
           .map(([keys, what]) => `<dt>${keys.split(" ").map((key) => `<kbd>${escape(key)}</kbd>`).join(" ")}</dt><dd>${escape(what)}</dd>`)
           .join("")}</dl></section>
-        ${options.computer ? `<section class="home-section"><h2 class="section-title">${escape(options.removalWords.title)}</h2><button class="text-button danger-text settings-uninstall" type="button" data-uninstall>${glyph("logout", 16)}<span>${escape(options.removalWords.open)}</span></button></section>` : ""}
-      </div>`;
+      </div></div>`;
+    this.showTab(keptTab());
+    const tabs = this.element.querySelector<HTMLElement>(".st-tabs")!;
+    tabs.addEventListener("click", (event) => {
+      const tab = (event.target as HTMLElement).closest<HTMLElement>("[data-tab]")?.dataset.tab as Tab | undefined;
+      if (tab) this.showTab(tab, true);
+    });
+    // The arrow keys go from tab to tab, as a row of tabs does.
+    tabs.addEventListener("keydown", (event) => {
+      if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+      const at = TABS.indexOf(this.tab);
+      const next = TABS[(at + (event.key === "ArrowRight" ? 1 : TABS.length - 1)) % TABS.length]!;
+      event.preventDefault();
+      this.showTab(next, true);
+      tabs.querySelector<HTMLElement>(`[data-tab="${next}"]`)?.focus();
+    });
     void options.computer?.dataSize?.().then(
       (bytes) => {
         const size = this.element.querySelector(".settings-data-size");

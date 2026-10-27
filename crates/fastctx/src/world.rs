@@ -1272,9 +1272,11 @@ fn hub_nodes(hub: &HubNodes, now: Timestamp) -> String {
                 _ => format!("{account}: agents"),
             })
             .collect();
+        // Missing facts are explained only for a machine known to be online:
+        // of the others, being offline or on a hub not reached now says why.
         let facts = match &node.facts {
             Ok(facts) => format!("  {}", facts_line(facts)),
-            Err(_) if node.online == Some(false) => String::new(),
+            Err(_) if node.online != Some(true) => String::new(),
             Err(error) => format!("  not known: {error}"),
         };
         let written = node.written.to_string();

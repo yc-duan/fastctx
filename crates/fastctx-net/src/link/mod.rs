@@ -620,6 +620,19 @@ impl Link {
         self.inner.view()
     }
 
+    /// The view as last given, while this machine is a member of the hub:
+    /// it stays while the line to the hub is down, and the machines in it
+    /// are then not gone, only not heard from (`world-network.md`, 断开不是
+    /// 结束). None once the hub removed this machine. What may be done on
+    /// them is decided apart, on the view as it stands then.
+    pub fn last_view(&self) -> Option<Arc<View>> {
+        if matches!(self.status(), Status::Stopped { .. }) {
+            return None;
+        }
+        let view = self.inner.view();
+        view.me().is_some().then_some(view)
+    }
+
     /// This machine's direct links with machines on this hub, as they stand.
     pub fn direct_links(&self) -> Vec<fastctx_types::accounts::LinkSeen> {
         self.inner.direct.seen()

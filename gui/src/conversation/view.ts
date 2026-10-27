@@ -31,6 +31,7 @@
 
 import { diffCard, unifiedDiff, type DiffCard, type DiffKind } from "./diff-card";
 import { handOnAtEdge } from "../scroll-handoff";
+import { reducedMotion } from "../motion";
 import { ActsMenu } from "../app/acts-menu";
 import { onHeld } from "../app/press";
 import type { AgentActivity, Content, Health, MachineName, Notice, Speaker, Tool, TurnEnd } from "../world/events";
@@ -41,7 +42,7 @@ import type { JsonValue } from "../world/wire";
 import { folderName, type Focus } from "../world/focus";
 import { answerOf, drawAsk, readAsk, type AskWords } from "./asks";
 import type { Words } from "../words";
-import { glyph } from "./glyphs";
+import { glyph, type GlyphName } from "./glyphs";
 import { controlName } from "./control-queue";
 import { saidHtml } from "./said";
 import { effortLabel } from "./effort-slider";
@@ -56,7 +57,9 @@ import { DiffLines, RemoteDiff, diffPaint, encodeRow, keptDiff, memoryDiff } fro
 import { readRun } from "./deeds/read";
 import { scriptSaid } from "./deeds/script";
 import { drawDeeds, goingOn, type DeedTools } from "./deeds/draw";
-import type { Deed } from "./deeds/types";
+import type { Deed, PlainDeed } from "./deeds/types";
+import { troubled } from "./deeds/fan";
+import { shortCommand } from "./deeds/rows";
 import { cardsOf, type Card } from "./cards/cards";
 import { bunched, cardsIn, type Bunch } from "./cards/bunch";
 import { lineHtml, lineText } from "./cards/lines";
@@ -64,12 +67,11 @@ import { headline, onlyWrites, tenseOf, writeHeadline } from "./tool";
 import { drawDiagrams } from "./diagrams";
 import { readTold, undelivered, worldSaid, type UndeliveredWhy, type WorldSaid } from "./told";
 import { allowanceOf, detailOf, heldOf } from "../app/problem";
-import { AnchorLayout, AnchoredHeight } from "../longview";
-import { FEW, LongText, type LongLines, type LongTextWords, type OtherSource } from "./long-text";
+import { AnchorLayout, AnchoredHeight, MemoryLines, type LinePaint, type ViewerSource } from "../longview";
+import { FEW, LongText, type LongLines, type LongTextWords, type OpenedText, type OtherSource } from "./long-text";
+import { Printout, givenLines, type PrintoutEnd } from "./printout";
 import { Said, WholeOutput, outputPaint, type OpenedLines } from "./run-output";
-import { replyOf } from "./async-ask";
 import "./say.css";
-import { chosenIn, drawQuestions, type QuestionWords } from "./question-card";
 import { StreamedProse } from "./stream-prose";
 import { TurnLine, time, type LineSays } from "./turn-line";
 import { fly, type Departure } from "./flight";
@@ -126,7 +128,6 @@ export interface Context {
     | undefined;
   /** Answering questions asked without waiting: the words go in at once,
    *  into the turn if one runs. */
-  questions?: { words: QuestionWords; answer(text: string): Promise<void> } | undefined;
   /** The user asked to start again from their words in `turn`, to ask the
    *  same again, or to fork from `turn`; offered only where the
    *  conversation takes it. */
@@ -176,7 +177,6 @@ const STRETCH_ROWS = 60;
 type ToolEntry = Extract<Entry, { kind: "tool" }>;
 type AskEntry = Extract<Entry, { kind: "ask" }>;
 type HeardEntry = Extract<Entry, { kind: "heard" }>;
-type QuestionEntry = Extract<Entry, { kind: "question" }>;
 type ProseEntry = Extract<Entry, { kind: "prose" }>;
 
 /** One stretch on the page: its heading, its box and the rows in it, made
@@ -232,6 +232,14 @@ function undeliveredWhy(why: UndeliveredWhy, words: Words): string {
 /** The menu the user's words raise when held on a touch screen. */
 const heldMenu = new ActsMenu();
 
+/** The mark an action of words held has in their menu, as it has under
+ *  them. */
+function heldIcon(button: HTMLElement): GlyphName {
+  if (button.dataset.copy !== undefined || button.dataset.copyTurn !== undefined) return "copy";
+  const act = button.dataset.turnAct;
+  return act === "regenerate" || act === "fork" ? act : "edit";
+}
+
 export class ConversationView {
   private openRows = new Set<string>();
   /** The user's long messages opened whole. */
@@ -243,7 +251,7 @@ export class ConversationView {
   private slots = new Map<string, Slot>();
   private byElement = new WeakMap<HTMLElement, Slot>();
   /** Long texts open under rows, by row, to be let go when the row is. */
-  private longs = new Map<string, LongText[]>();
+  private longs = new Map<string, OpenedText[]>();
   /** What each run did, as read from it (`deeds`), while it stays as it
    *  was read. */
   private deedsRead = new Map<string, { stamp: number; deeds: Deed[] | null }>();
@@ -261,9 +269,6 @@ export class ConversationView {
   private seen = new Set<string>();
   /** The page has been drawn once: what comes after is live. */
   private live = false;
-  /** Questions being answered again, and ones the user skipped. */
-  private editing = new Set<string>();
-  private skipped = new Set<string>();
   /** Words already sent up from the input, by key. */
   private flown = new Set<string>();
   /** What finding last read of each block, and blocks gone since. */
@@ -296,6 +301,10 @@ export class ConversationView {
   private pin: { slot: Slot; top: number } | null = null;
   /** Blocks a change of view brought in, which come in once. */
   private unfolding = new Set<string>();
+  /** A switch of what is shown under way: the conversation has dipped, and
+   *  changes to the view asked last when it is out of sight. */
+  private dip = 0;
+  private dipTo: "said" | "steps" | null = null;
   /** The spaces that stand for the blocks above and below those drawn. */
   private readonly above: HTMLElement;
   private readonly below: HTMLElement;
@@ -340,6 +349,7 @@ export class ConversationView {
         return displayedTextHtml(this.entry(entry));
       },
       rows: (run) => this.rowsOf(run),
+      cards: (tool) => cardsOf(tool, (entry) => this.deedsOf(entry), (job) => this.jobCommand(job)),
       tokens: (run) => conversation.thinkingTokens(run),
       agents: {
         of: (tool) => conversation.agentOf(tool),
@@ -360,29 +370,29 @@ export class ConversationView {
     root.addEventListener("click", (event) => {
       if (this.own(event)) this.click(event);
     });
-    root.addEventListener("input", (event) => {
-      if (!this.own(event)) return;
-      // Words of one's own answer a question instead of an option.
-      const free = (event.target as HTMLElement).closest<HTMLInputElement>("[data-question-free]");
-      // Where several may be chosen, they are kept beside the words.
-      if (!free?.value.trim() || free.closest("fieldset")?.hasAttribute("data-multiple")) return;
-      for (const option of free.closest("fieldset")?.querySelectorAll<HTMLElement>("[data-question-pick]") ?? []) option.setAttribute("aria-pressed", "false");
-    });
-    // On a touch screen every answer has its actions under it; the user's
-    // own words have none shown, and held, their two float up beside them.
+    // On a touch screen the latest answer has its actions under it; an
+    // earlier answer's, and the user's own words', are not shown, and held,
+    // they float up beside them.
     onHeld(root, ".bubble", (bubble, event, input) => {
       if (input !== "touch" || !this.own(event)) return false;
       const acts = bubble.closest<HTMLElement>(".block")?.querySelector<HTMLElement>(".user-acts");
       if (!acts || (event.target as HTMLElement).closest("a, button, pre")) return false;
       return this.heldMenu(bubble, acts);
     });
+    onHeld(root, ".block", (block, event, input) => {
+      if (input !== "touch" || !this.own(event)) return false;
+      const acts = block.querySelector<HTMLElement>(":scope > .answer-acts:not(.latest), :scope > .message-acts > .answer-acts:not(.latest)");
+      // Code, links and pictures keep the system's own long press.
+      if (!acts || (event.target as HTMLElement).closest("a, button, pre, code, img, .katex, .turn-acts")) return false;
+      return this.heldMenu(block, acts);
+    });
     // Enter in an answer's field answers, as the card's first button would.
     root.addEventListener("keydown", (event) => {
       if (!this.own(event)) return;
-      const field = (event.target as HTMLElement).closest(".ask-card .ask-input, .question-card .ask-input");
+      const field = (event.target as HTMLElement).closest(".ask-card .ask-input");
       if (!field || event.key !== "Enter" || composing(event)) return;
       event.preventDefault();
-      field.closest(".ask-card, .question-card")?.querySelector<HTMLButtonElement>(".ask-primary")?.click();
+      field.closest(".ask-card")?.querySelector<HTMLButtonElement>(".ask-primary")?.click();
     });
   }
 
@@ -580,7 +590,31 @@ export class ConversationView {
   /** Shows only what was said, or every step: what both show stays where
    *  it is on the screen, and what comes in comes in once. */
   showing(mode: "said" | "steps"): void {
+    if (this.dip) {
+      this.dipTo = mode;
+      return;
+    }
     if (mode === this.mode) return;
+    const quick = reducedMotion() || !this.root.isConnected ? 0 : msOf(getComputedStyle(this.root).getPropertyValue("--quick"));
+    if (!quick) {
+      this.switchTo(mode);
+      return;
+    }
+    // What moves while the view changes is not seen moving: the whole
+    // conversation dips, changes, and comes back up where it was read.
+    this.dipTo = mode;
+    this.root.classList.add("view-dip");
+    this.dip = window.setTimeout(() => {
+      this.dip = 0;
+      if (this.dipTo && this.dipTo !== this.mode) this.switchTo(this.dipTo);
+      this.dipTo = null;
+      requestAnimationFrame(() => this.root.classList.remove("view-dip"));
+    }, quick);
+  }
+
+  /** Shows `mode`'s blocks at once, the block read at the top kept where it
+   *  stands. */
+  private switchTo(mode: "said" | "steps"): void {
     const next = mode === "said" ? this.conversation.chatBlocks() : this.conversation.blocks();
     const kept = new Set(next.map((block) => block.key));
     const view = this.context.scroller.getBoundingClientRect();
@@ -593,8 +627,7 @@ export class ConversationView {
         break;
       }
     }
-    const before = new Set(this.blocks.map((block) => block.key));
-    this.unfolding = new Set(this.live ? next.filter((block) => !before.has(block.key)).map((block) => block.key) : []);
+    this.unfolding = new Set();
     this.mode = mode;
     this.update();
   }
@@ -624,7 +657,6 @@ export class ConversationView {
         const notice = this.noticeOf(block);
         // In an agent's box, words it heard are what it was asked.
         element.classList.add(notice ? "from-world" : this.context.nested ? "from-asked" : !block.from || block.from.kind === "user" ? "from-user" : "from-other");
-        if (block.reply) element.classList.add("from-reply");
       }
       slot = { key: block.key, element, block, signature: null };
       this.slots.set(block.key, slot);
@@ -999,8 +1031,6 @@ export class ConversationView {
       }
       case "heard":
         return `${block.stamp}|${block.turn && conversation.turnEnded(block.turn) ? "e" : ""}${block.turn && conversation.latestEnded() === block.turn ? "n" : ""}`;
-      case "question":
-        return `${block.stamp}|${this.editing.has(block.key) ? "e" : ""}${this.skipped.has(block.key) ? "s" : ""}`;
       case "uncertain":
         return `${block.stamp}|${this.conversation.hasTurns() ? "t" : ""}`;
       default:
@@ -1012,8 +1042,6 @@ export class ConversationView {
     switch (block.kind) {
       case "activity-group":
         return `${block.stamp}|${block.members.length}${block.agents ? `|${this.conversation.agentStamp}` : ""}`;
-      case "question":
-        return `${block.stamp}|${this.editing.has(block.key)}|${this.skipped.has(block.key)}`;
       case "uncertain":
         return `${block.stamp}|${this.conversation.hasTurns()}`;
       default:
@@ -1222,8 +1250,6 @@ export class ConversationView {
         return `<div class="note caution" title="${escape(entry.why)}">${escape(words.uncertain(entry.why))}</div>`;
       case "ask":
         return this.ask(entry);
-      case "question":
-        return this.question(entry);
       case "forked": {
         const from = `${entry.source.resident} ${entry.source.machine}`;
         const link = this.context.link ? `<a href="${escape(this.context.link(entry.source))}">${escape(from)}</a>` : escape(from);
@@ -1235,6 +1261,8 @@ export class ConversationView {
         return this.command(entry);
       case "tool":
       case "activity":
+      // Said as words to the user, among the blocks (`askedSay`).
+      case "question":
         return "";
     }
   }
@@ -1376,62 +1404,11 @@ export class ConversationView {
     return drawAsk(entry.key, ask, entry.state, this.context.residentMachine, asks.words);
   }
 
-  /** Questions asked without waiting: a card to answer, answered, or
-   *  skipped and a way back to it. */
-  private question(entry: QuestionEntry): string {
-    const questions = this.context.questions;
-    if (!questions) return `<div class="prose">${render(entry.questions.map((q) => q.title).join("\n\n"))}</div>`;
-    if (this.skipped.has(entry.key) && !this.editing.has(entry.key)) {
-      return `<div class="question-card skipped"><p class="question-title">${plain(entry.questions[0]!.title)}</p><div class="question-foot"><button class="text-button quiet-button" type="button" data-question-change="${escape(entry.key)}">${escape(questions.words.answer)}</button></div></div>`;
-    }
-    return drawQuestions(entry.key, entry.questions, entry.answers, questions.words, this.editing.has(entry.key));
-  }
-
-  private async answerQuestions(target: HTMLElement): Promise<void> {
-    const questions = this.context.questions;
-    const card = target.closest<HTMLElement>(".question-card");
-    const key = target.dataset.questionSend ?? target.dataset.questionSkip ?? target.dataset.questionChange ?? "";
-    const found = this.conversation.get(key);
-    const entry = found?.kind === "question" ? found : undefined;
-    if (!questions || !card || !entry) return;
-    if (target.dataset.questionChange !== undefined) {
-      this.editing.add(key);
-      this.skipped.delete(key);
-      this.update();
-      return;
-    }
-    if (target.dataset.questionSkip !== undefined) {
-      this.skipped.add(key);
-      this.editing.delete(key);
-      this.update();
-      return;
-    }
-    const answers = chosenIn(card, entry.questions.length);
-    if (answers.every((answer) => answer === null)) {
-      card.querySelector<HTMLInputElement>("[data-question-free]")?.focus();
-      return;
-    }
-    const state = card.querySelector<HTMLElement>(".question-state")!;
-    const controls = [...card.querySelectorAll<HTMLButtonElement | HTMLInputElement>("button, input")];
-    for (const control of controls) control.disabled = true;
-    state.textContent = questions.words.sending;
-    try {
-      await questions.answer(replyOf(entry.item, entry.questions, answers));
-      this.conversation.answering(entry.item, answers);
-      this.editing.delete(key);
-      this.update();
-    } catch (error) {
-      for (const control of controls) control.disabled = false;
-      state.textContent = questions.words.failed(detailOf(error));
-      state.title = detailOf(error);
-      state.classList.add("wrong");
-    }
-  }
-
   /** A turn's actions as a sheet risen from the bottom, each with its
    *  name: a press does what the mark beside the turn would. */
   /** The user's words held on a touch screen: their actions as a small
    *  menu beside them, each doing what its mark does. */
+  /** The actions of the words held, as a menu beside them. */
   private heldMenu(bubble: HTMLElement, acts: HTMLElement): boolean {
     const buttons = [...acts.querySelectorAll<HTMLButtonElement>("button.turn-icon")];
     const shown = buttons.filter((button) => !(button.dataset.needs && !this.root.classList.contains(`can-${button.dataset.needs}`)));
@@ -1439,7 +1416,7 @@ export class ConversationView {
     heldMenu.open(
       bubble,
       "",
-      shown.map((button, index) => ({ act: String(index), icon: button.dataset.copy !== undefined ? "copy" : "edit", label: button.getAttribute("aria-label") ?? "" })),
+      shown.map((button, index) => ({ act: String(index), icon: heldIcon(button), label: button.getAttribute("aria-label") ?? "" })),
       (act) => shown[Number(act)]?.click(),
       true,
     );
@@ -1454,7 +1431,7 @@ export class ConversationView {
     if (target.classList.contains("ask-option")) {
       const pressed = target.getAttribute("aria-pressed") !== "true";
       if (!target.dataset.many) {
-        const group = target.dataset.question !== undefined ? `[data-question="${target.dataset.question}"]` : `[data-field="${target.dataset.field}"]`;
+        const group = `[data-field="${target.dataset.field}"]`;
         for (const other of card.querySelectorAll<HTMLElement>(`.ask-option${group}`)) {
           other.setAttribute("aria-pressed", "false");
           other.classList.remove("chosen");
@@ -1518,7 +1495,6 @@ export class ConversationView {
     }
     const notice = this.noticeOf(entry);
     if (notice) return this.noticeLine(entry, notice);
-    if (entry.reply) return `<p class="reply-line">${glyph("check", 14)}<span>${escape(entry.reply.answers.join(this.context.words.listSeparator))}</span></p>`;
     const mine = !entry.from || entry.from.kind === "user";
     const acts = mine && entry.turn && !entry.sending && this.conversation.turnEnded(entry.turn) ? this.userActs(entry) : "";
     // Words sent into the turn under way are said: the turn takes them in
@@ -1820,6 +1796,7 @@ export class ConversationView {
         of: (tool) => this.conversation.agentOf(tool),
         named: (tool) => this.agentsObject(tool, null),
       },
+      (tool) => cardsOf(tool, (entry) => this.deedsOf(entry), (job) => this.jobCommand(job)),
     );
     const { parts, added, removed, running, only, bare, began } = said;
     const stats = added || removed ? `<span class="row-stats"><span class="add">+${added}</span><span class="del">−${removed}</span></span>` : "";
@@ -1864,7 +1841,7 @@ export class ConversationView {
    *  from a run as theirs above the run's own words, folded; anything else
    *  in its own words. */
   private fillCard(key: string, thing: Card, content: HTMLElement): void {
-    const longs: LongText[] = [];
+    const longs: OpenedText[] = [];
     const closers: (() => void)[] = [];
     this.longs.set(key, longs);
     this.closers.set(key, closers);
@@ -2353,7 +2330,7 @@ export class ConversationView {
   }
 
   /** A change as rows to read: its numbers, its sign, its text. */
-  private diffText(lines: readonly string[] | RemoteDiff, path: string, numberedRows: boolean, gap: (n: number) => string = this.context.words.unchangedLines): LongText {
+  private diffText(lines: readonly string[] | RemoteDiff, path: string, numberedRows: boolean, gap: (n: number) => string = this.context.words.unchangedLines, wrap = false): LongText {
     return new LongText(
       {
         lines,
@@ -2361,6 +2338,7 @@ export class ConversationView {
         paint: diffPaint(path, gap, numberedRows),
         kind: "diff",
         scroll: true,
+        wrap,
       },
       path,
       this.layoutAnchor,
@@ -2573,26 +2551,28 @@ export class ConversationView {
       this.longs.set(key, longs);
       return;
     }
-    const longs: LongText[] = [];
+    const longs: OpenedText[] = [];
     const closers: (() => void)[] = [];
     content.append(this.commandWords(entry, null, longs, closers));
     this.longs.set(key, longs);
     this.closers.set(key, closers);
   }
 
-  /** A call in its own words; a run that did things a person recognises,
-   *  those things drawn as cards (`deeds/draw.ts`) above its own words,
-   *  folded. `only` keeps to some of its deeds. */
-  private commandWords(entry: ToolEntry, only: readonly number[] | null, longs: LongText[], closers: (() => void)[]): HTMLElement {
+  /** A call as what it did: the things a run did that a person recognises
+   *  drawn as cards (`deeds/draw.ts`), what it printed folded at their
+   *  foot; a command nothing of which is recognised opens straight on what
+   *  it printed (`printout.ts`). Any other call in its own words. `only`
+   *  keeps to some of its deeds. */
+  private commandWords(entry: ToolEntry, only: readonly number[] | null, longs: OpenedText[], closers: (() => void)[]): HTMLElement {
     const { tool } = entry;
     const deeds = this.deedsOf(entry);
-    // A command an `on` carried elsewhere is drawn as what it did there; a
-    // command only named opens on the run's own words.
-    const drawn = (deeds ?? []).filter((deed, index) => (deed.kind !== "plain" || (only !== null && !!deed.on && deed.machine != null)) && deed.kind !== "writes" && (!only || only.includes(index)));
+    const kept = (deeds ?? []).filter((_, index) => !only || only.includes(index));
+    const drawn = kept.filter((deed) => deed.kind !== "plain" && deed.kind !== "writes");
+    const plains = kept.filter((deed): deed is PlainDeed & Deed => deed.kind === "plain");
     // A run that went on after the call came back says so above all it did.
     const job = tool.does.as === "command" && tool.does.job && (!only || drawn.length === 0) ? goingOn(tool.does.job, tool.machine, this.context.words.deeds) : null;
     if (!drawn.length) {
-      const words = this.runWords(tool, longs, closers);
+      const words = this.printoutOf(entry, only ? plains : null, deeds, longs, closers, true);
       if (!job) return words;
       const both = document.createElement("div");
       both.className = "dd-deeds";
@@ -2602,10 +2582,127 @@ export class ConversationView {
     const { words } = this.context;
     const failed = tool.does.as === "command" && !tool.does.job && tool.does.exit !== null && tool.does.exit !== 0;
     const ending = failed && tool.does.as === "command" ? `<span class="io-end nonzero">${escape(words.exited(tool.does.exit ?? 0))}</span>` : "";
-    const cards = drawDeeds(drawn, this.deedTools(tool), () => this.runWords(tool, longs, closers), ending);
-    longs.push(...cards.longs);
+    // The printout under the foot, which already says how the run ended,
+    // is drawn as the foot opens; finding opens it to reach its lines.
+    const later: OpenedText[] = [];
+    const printed = () => {
+      const sides: OpenedText[] = [];
+      const element = this.printoutOf(entry, only ? plains : null, deeds, sides, closers, false);
+      later.push(...sides);
+      return element;
+    };
+    const cards = drawDeeds(drawn, this.deedTools(tool), printed, ending);
+    const raw = cards.element.querySelector<HTMLButtonElement>(".dd-raw");
+    const opened = (side: number): OpenedText => ({
+      get element() {
+        return later[side]?.element ?? cards.element;
+      },
+      reveal: async (line) => {
+        if (raw && raw.getAttribute("aria-expanded") !== "true") raw.click();
+        await later[side]?.reveal(line);
+      },
+      settle: () => later[side]?.settle(),
+      destroy: () => later[side]?.destroy(),
+    });
+    longs.push(opened(0), opened(1), ...cards.longs);
     if (job) cards.element.prepend(job);
     return cards.element;
+  }
+
+  /** What a run printed, as its printout: its whole output; for commands
+   *  one `on` sent where the run sent more than one, the last lines that
+   *  `on` sent back. In the reader, beside them, the whole output on its
+   *  machine where the model got less, and the script as it was given.
+   *  Any other call in its own words. */
+  private printoutOf(entry: ToolEntry, scoped: readonly PlainDeed[] | null, deeds: readonly Deed[] | null, longs: OpenedText[], closers: (() => void)[], ending: boolean): HTMLElement {
+    const { tool } = entry;
+    if (tool.does.as !== "command") return this.runWords(tool, longs, closers);
+    const { words, english } = this.context;
+    const does = tool.does;
+    const { shown, output } = toolText(tool, words);
+    const others: ViewerSource[] = [];
+    const whole = this.wholeOf(tool, closers);
+    if (whole) others.push(whole);
+    others.push({ label: words.output.script, source: new MemoryLines(does.command.replace(/\n$/, "").split("\n"), true) });
+    // Commands of one `on`, where the run's output holds more than theirs:
+    // what that `on` sent back of its own.
+    const scopes = new Set((deeds ?? []).flatMap((deed) => (deed.kind === "plain" ? [deed.scope ?? ""] : [])));
+    const own = scoped?.[0];
+    const sent = own?.on && own.scope !== "top" && scopes.size > 1 && scoped!.every((deed) => deed.scope === own.scope) ? own.on : null;
+    const lines: string[] = [];
+    const notes = new Set<number>();
+    let paint: LinePaint | undefined;
+    let reading: LinePaint | undefined;
+    if (sent?.tail) lines.push(...sent.tail.replace(/\n$/, "").split("\n"));
+    else if (!sent && shown) {
+      lines.push(...shown.lines);
+      shown.numbers.forEach((number, at) => {
+        if (number === null) notes.add(at);
+      });
+      // Numbered in the reader by place in the whole output where that is
+      // not simply the line's place here; the World's notes said quietly.
+      const plainly = !shown.cut && shown.numbers.every((number, at) => number === at + 1);
+      if (!plainly) {
+        reading = outputPaint(shown);
+        paint = outputPaint(shown, false);
+      }
+    } else if (!sent && output) lines.push(...output.replace(/\n$/, "").split("\n"));
+    // How it ended, where it did not end well and nothing above says so.
+    let end: PrintoutEnd | null = null;
+    if (ending && sent?.end) {
+      if (sent.end.kind === "stopped") end = { kind: "stopped", said: words.deeds.ended(sent.end) };
+      else if (troubled(sent.end)) end = { kind: "failed", said: words.deeds.ended(sent.end) };
+    } else if (ending && !sent && !does.job && does.exit !== null && does.exit !== 0) end = { kind: "failed", said: words.exited(does.exit) };
+    const pictures = sent ? "" : imagesOf(tool.output);
+    // The commands of the row where it is one `on`'s or a few of the
+    // run's; else the script as given.
+    const command = scoped?.length ? scoped.map((deed) => deed.command) : givenLines(does.command);
+    const named = own ? own.command : (scriptSaid(does.command, tool.machine ?? null) ?? does.command.split("\n")[0] ?? "");
+    const printout = new Printout({
+      label: shortCommand(named) || words.output.printed,
+      command,
+      lines,
+      notes,
+      nothing: words.output.nothing,
+      end,
+      pictures,
+      others,
+      ...(paint ? { paint } : {}),
+      ...(reading ? { reading } : {}),
+      layout: this.layoutAnchor,
+      words: {
+        more: words.moreLines,
+        less: words.showLess,
+        copy: words.output.copyOutput,
+        copied: words.copied,
+        whole: words.fullScreen,
+        english,
+        failed: (error) => (error instanceof Said ? error.message : words.output.readFailed),
+      },
+    });
+    longs.push(...printout.sides);
+    return printout.element;
+  }
+
+  /** The whole output of a run on its machine, where the model got less
+   *  of it than the whole, or it went on after: read as the reader asks. */
+  private wholeOf(tool: Tool, closers: (() => void)[]): OtherSource | null {
+    const { words } = this.context;
+    const run = tool.does.as === "command" && tool.status !== "running" ? tool.run : undefined;
+    const kept = run?.output;
+    if (!run || !kept || !run.job || !this.context.lines) return null;
+    const going = stillGoing(run.state);
+    const wentOn = tool.does.as === "command" && tool.does.job !== null;
+    if (!(kept.cut || going || wentOn)) return null;
+    const open = this.context.lines;
+    const job = run.job;
+    const whole = new WholeOutput(
+      () => open(kept.machine, kept.path, { kind: "output", job }),
+      { length: kept.lines, complete: !going },
+      (error) => new Said(gone(error) ? words.output.wholeGone : words.output.readFailed, detailOf(error)),
+    );
+    closers.push(() => whole.close());
+    return { label: words.output.whole, source: whole, close: () => whole.close() };
   }
 
   /** What a run did, as read from its script and what it printed; null for
@@ -2636,7 +2733,8 @@ export class ConversationView {
         const text = deed.rows.flatMap((row) => ("text" in row ? [row.text] : [])).join("\n");
         const card = diffCard(deed.path, deed.machine, { copy: words.copy, copied: words.copied }, async () => text);
         // Lines passed over in a file read are left out, not unchanged.
-        const long = this.diffText(rows, deed.path, deed.rows.some((row) => "line" in row && row.line !== null), (n) => words.deeds.skipped(n));
+        // A file read is not a change: its lines wrap.
+        const long = this.diffText(rows, deed.path, deed.rows.some((row) => "line" in row && row.line !== null), (n) => words.deeds.skipped(n), true);
         card.body.append(long.element);
         const full = long.takeFull();
         if (full) card.act(full);
@@ -2646,7 +2744,7 @@ export class ConversationView {
   }
 
   /** A run in its own words: what it was given above what it wrote. */
-  private runWords(tool: Tool, longs: LongText[], closers: (() => void)[]): HTMLElement {
+  private runWords(tool: Tool, longs: OpenedText[], closers: (() => void)[]): HTMLElement {
     const { words } = this.context;
     // A World run says what the model got as facts: its own output, apart
     // from what its writes printed of themselves, which their rows show.
@@ -2707,7 +2805,7 @@ export class ConversationView {
       // Numbered by place in the whole output where that is not simply the
       // line's place here: something was left out, or a write's note was.
       const plain = !shown.cut && shown.numbers.every((kept, index) => kept === index + 1);
-      printed = { lines: shown.lines, ...(plain ? {} : { paint: outputPaint(shown), inline: outputPaint(shown, false) }), name: words.output.modelCopy, others };
+      printed = { lines: shown.lines, ...(plain ? {} : { paint: outputPaint(shown), inline: outputPaint(shown, false) }), name: words.output.modelCopy, others, wrap: true };
     }
     // How a command ended, under what it wrote.
     const ending = endText ? `<span class="io-end${tool.does.as === "command" && !tool.does.job && tool.does.exit !== null && tool.does.exit !== 0 ? " nonzero" : ""}">${escape(endText)}</span>` : "";
@@ -2789,8 +2887,8 @@ export class ConversationView {
     return !result.cancelled;
   }
 
-  private longsIn(box: HTMLElement): LongText[] {
-    const found: LongText[] = [];
+  private longsIn(box: HTMLElement): OpenedText[] {
+    const found: OpenedText[] = [];
     for (const longs of this.longs.values()) for (const long of longs) if (box.contains(long.element)) found.push(long);
     return found;
   }
@@ -2833,7 +2931,7 @@ export class ConversationView {
       return;
     }
     const target = (event.target as HTMLElement).closest<HTMLElement>(
-      "[data-open], [data-fold], [data-gap], [data-earlier], [data-asked], .code-copy, .ask-option, [data-ask], [data-copy], [data-copy-turn], [data-turn-act], [data-turn-calls], [data-question-pick], [data-question-send], [data-question-skip], [data-question-change]",
+      "[data-open], [data-fold], [data-gap], [data-earlier], [data-asked], .code-copy, .ask-option, [data-ask], [data-copy], [data-copy-turn], [data-turn-act], [data-turn-calls]",
     );
     if (!target) return;
     if (target.dataset.asked !== undefined) {
@@ -2867,24 +2965,6 @@ export class ConversationView {
       const index = this.heights.index(gap.key) ?? 0;
       const reader = this.heights.find(Math.max(0, this.context.scroller.scrollTop - this.origin()));
       this.context.near?.(gap, index <= reader ? "end" : "start");
-      return;
-    }
-    if (target.dataset.questionPick !== undefined) {
-      const fieldset = target.closest("fieldset");
-      const pressed = target.getAttribute("aria-pressed") !== "true";
-      // Several may be chosen together; otherwise one, in place of words.
-      if (fieldset?.hasAttribute("data-multiple")) {
-        target.setAttribute("aria-pressed", String(pressed));
-        return;
-      }
-      for (const other of fieldset?.querySelectorAll<HTMLElement>("[data-question-pick]") ?? []) other.setAttribute("aria-pressed", "false");
-      target.setAttribute("aria-pressed", String(pressed));
-      const free = fieldset?.querySelector<HTMLInputElement>("[data-question-free]");
-      if (free && pressed) free.value = "";
-      return;
-    }
-    if (target.dataset.questionSend !== undefined || target.dataset.questionSkip !== undefined || target.dataset.questionChange !== undefined) {
-      void this.answerQuestions(target);
       return;
     }
     if (target.dataset.turnCalls) {
@@ -3093,4 +3173,11 @@ export function modelName(id: string): string {
   if (!claude) return id;
   const [, family, major, minor] = claude;
   return `${family![0]!.toUpperCase()}${family!.slice(1)} ${major}${minor ? `.${minor}` : ""}`;
+}
+
+/** A CSS time, as a token holds it, in milliseconds. */
+function msOf(time: string): number {
+  const value = parseFloat(time);
+  if (!Number.isFinite(value)) return 0;
+  return time.trim().endsWith("ms") ? value : value * 1000;
 }

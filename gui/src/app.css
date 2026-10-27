@@ -37,6 +37,14 @@
   --edge: var(--space-6);
 }
 
+/* Beside an open panel the fade is the conversation's alone, its edge
+   following the panel's as it opens. */
+@media (min-width: 761px) {
+  .conversation-page.sp-host > .page-head::after {
+    right: calc(var(--side-width) * var(--sp-open));
+  }
+}
+
 .talk-scroller {
   flex: 1;
 }
@@ -976,16 +984,18 @@ button.composer-context[hidden] {
   box-shadow: 0 2px 0 -1px var(--rule);
 }
 
+/* Renamed in place: a solid field a shade deeper than the page, its words
+   where the title's were. */
 .who-rename {
   width: min(28em, 100%);
-  margin: 0;
-  padding: 0;
+  margin: 0 calc(-1 * var(--space-2));
+  padding: 0 var(--space-2);
   border: 0;
   outline: 0;
-  background: transparent;
+  border-radius: var(--radius-s);
+  background: var(--fill);
   color: var(--text-strong);
   font: inherit;
-  box-shadow: 0 2px 0 -1px var(--accent);
 }
 
 /* Words said while the agent works: a block of their own above the input,

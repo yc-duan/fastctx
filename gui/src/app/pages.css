@@ -10,22 +10,101 @@
   height: 100%;
 }
 
+/* The settings: a row of tabs that stays where it is, and under it the
+   sheet of the one chosen, the tab and the sheet one block of fill. */
+.st-tabs {
+  flex: none;
+  display: flex;
+  gap: 2px;
+  width: var(--board);
+  margin: var(--space-2) auto 0;
+}
+
+.st-tab {
+  min-height: 38px;
+  padding: 0 var(--space-5);
+  border-radius: var(--radius-m) var(--radius-m) 0 0;
+  color: var(--text-3);
+  font-size: var(--size-text);
+  transition: color var(--hover) ease;
+}
+
+.st-tab:hover {
+  color: var(--text);
+}
+
+.st-tab[aria-selected="true"] {
+  background: var(--fill);
+  color: var(--text-strong);
+}
+
+.st-tab:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: -2px;
+}
+
 .settings {
   flex: 1;
+  min-height: 0;
 }
 
-.settings > * {
+.st-sheet {
   width: var(--board);
-  margin-left: auto;
-  margin-right: auto;
+  margin: 0 auto var(--space-8);
+  padding: var(--space-5) var(--space-6) var(--space-6);
+  border-radius: var(--radius-l);
+  background: var(--fill);
 }
 
-.settings > .home-section {
+/* The room under the tabs: the sheet stands in it as tall as what it
+   holds, no taller than the room, and scrolls inside itself; the tabs and
+   what is above them stay where they are. */
+.st-room {
+  display: flex;
+  flex-direction: column;
+  padding-bottom: calc(var(--space-6) + var(--safe-bottom));
+}
+
+.st-room > .st-sheet {
+  flex: 0 1 auto;
+  margin-bottom: 0;
+}
+
+.settings.st-room::after {
+  content: none;
+}
+
+/* Where there is no keyboard, its keys are not offered. */
+@media (hover: none) and (pointer: coarse) {
+  .st-tab[data-tab="keys"] {
+    display: none;
+  }
+}
+
+.st-sheet.first {
+  border-top-left-radius: 0;
+}
+
+.st-pane[hidden] {
+  display: none;
+}
+
+/* Taking Fastctx off this computer: last, apart, a line of its own at the
+   start of the sheet's grid of rows. */
+.st-removal {
+  grid-column: 1 / -1;
+  display: flex;
   margin-top: var(--space-6);
 }
 
-.settings > .home-section:last-child {
-  padding-bottom: var(--space-12);
+@media (max-width: 600px) {
+  .st-tab {
+    padding: 0 var(--space-4);
+  }
+
+  .st-sheet {
+    padding: var(--space-4);
+  }
 }
 
 .facts {
@@ -1323,8 +1402,13 @@ a.details-job {
   }
 }
 
-/* A finger's action is at least its size. */
+/* A finger's action is at least its size, and its value as tall, so the
+   two stand level. */
 @media (hover: none) and (pointer: coarse) {
+  .settings-device .facts dd {
+    min-height: 44px;
+  }
+
   .settings-device .sd-act .text-button {
     height: 44px;
     padding: 0 var(--space-3);

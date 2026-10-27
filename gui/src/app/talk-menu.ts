@@ -6,6 +6,7 @@
 // away only deleting goes ahead, the rest grey until the machine is back.
 // Moving lists in place of the acts the projects spanning its machine.
 
+import { leave, leaving, stay } from "./leave";
 import { glyph } from "../conversation/glyphs";
 import { escape } from "../conversation/prose";
 import { titleOf } from "../world/names";
@@ -42,6 +43,8 @@ export interface MenuOpening {
   find?: () => void;
   /** Its page's choice between every step and only what was said. */
   steps?: { shown(): boolean; toggle(): void };
+  /** Opens the panel beside it, where it holds anything. */
+  panel?: (() => void) | null;
   /** Once its deletion is asked for: a page of it goes. */
   deleted?: () => void;
   /** Copies the whole conversation as Markdown, from its own page. */
@@ -101,6 +104,8 @@ export class TalkMenu {
       this.close();
       return;
     }
+    stay(this.element);
+    stay(this.shade);
     this.opened = { r, how };
     this.towns = false;
     this.draw();
@@ -137,10 +142,12 @@ export class TalkMenu {
   }
 
   close(): void {
-    if (this.element.hidden) return;
-    this.element.style.height = this.element.style.width = "";
-    this.element.hidden = true;
-    this.shade.hidden = true;
+    if (this.element.hidden || leaving(this.element)) return;
+    leave(this.element, () => {
+      this.element.hidden = true;
+      this.element.style.height = this.element.style.width = "";
+    });
+    if (!this.shade.hidden) leave(this.shade, () => (this.shade.hidden = true));
     const anchor = this.opened?.how.anchor;
     anchor?.setAttribute("aria-expanded", "false");
     anchor?.closest(".talk-item")?.classList.remove("menu-open");
@@ -178,8 +185,9 @@ export class TalkMenu {
       : [
           // On a phone the head has no room for finding or for the choice
           // of view: they are here.
-          ...(narrow.matches && (this.opened.how.find || this.opened.how.steps)
+          ...(narrow.matches && (this.opened.how.find || this.opened.how.steps || this.opened.how.panel)
             ? [
+                ...(this.opened.how.panel ? [item("panel", "panel", words.panel, false)] : []),
                 ...(this.opened.how.steps ? [item("steps", "steps", this.opened.how.steps.shown() ? words.viewSaid : words.viewSteps, false)] : []),
                 ...(this.opened.how.find ? [item("find", "search", words.find, false)] : []),
                 rule,
@@ -261,6 +269,12 @@ export class TalkMenu {
         const steps = opened.how.steps;
         this.close();
         steps?.toggle();
+        return;
+      }
+      case "panel": {
+        const panel = opened.how.panel;
+        this.close();
+        panel?.();
         return;
       }
       case "archive":

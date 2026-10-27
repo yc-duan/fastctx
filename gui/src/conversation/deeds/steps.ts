@@ -96,6 +96,8 @@ export class RunSteps {
 export function stepKind(text: string): Kind | null {
   let words = wordsOf(text);
   if (words[0] === "fastctx") words = words.slice(1);
+  // Asked for its help, a command only says how it is used.
+  if (words.includes("--help") || words.includes("-h") || words[0] === "help") return null;
   const [first, second] = words;
   switch (first) {
     case "copy":
@@ -114,7 +116,7 @@ export function stepKind(text: string): Kind | null {
     case "goal":
       return second === "complete" || second === "blocked" || (second === "pause" && words.length === 2) ? "goal" : null;
     case "sense":
-      return words.includes("--help") || words.includes("-h") ? null : "sense";
+      return "sense";
     default:
       return null;
   }
@@ -144,7 +146,7 @@ export function onSaid(step: OnStep | null, piped: boolean): OnSaid {
 export function deedsOfStep(step: RunStep, command: string | null, steps: RunSteps): Deed[] {
   switch (step.kind) {
     case "on": {
-      const plain: PlainDeed = { kind: "plain", command: command ?? step.command.split("\n")[0]!, machine: step.to, on: onSaid(step, false) };
+      const plain: PlainDeed = { kind: "plain", command: command ?? step.command.split("\n")[0]!, machine: step.to, on: onSaid(step, false), scope: `on-${step.id}` };
       return [plain];
     }
     case "copy": {

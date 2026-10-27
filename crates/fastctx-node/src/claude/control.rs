@@ -647,7 +647,7 @@ fn supervise(node: &Arc<Node>, key: String, request: Request) {
         tokio::select! {
             _ = async { let _ = completed.wait_for(Option::is_some).await; } => return,
             () = &mut exited => {}
-            () = node.watchers.unwatched(&request.resident), if !request.waiting.question.native_wait => {
+            () = node.watchers.unwatched(&request.resident) => {
                 let pass = Answer::Pass { reason: "no one is watching this conversation in the World".into() };
                 if let Err(error) = files::answer(&request.directory, &pass)
                     && error.kind() != std::io::ErrorKind::AlreadyExists {

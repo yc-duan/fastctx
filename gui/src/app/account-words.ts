@@ -7,6 +7,7 @@
 // (`world-gui.md`, 用词).
 
 import { wholeDollars } from "../world/money";
+import type { MachineFindWords } from "./machine-find";
 import type { GroupWords } from "./machine-groups";
 import type { PasswordProblem } from "./password";
 import { enProblems, failure, zhProblems, type ProblemWords } from "./problem";
@@ -482,6 +483,8 @@ export interface MachinesWords {
    *  title and how many machines are registered on it. */
   hubOnline: string;
   hubConnecting: string;
+  /** Since when the line to a hub is down, and why as the kernel said it. */
+  hubDownSince(at: string, why: string | null): string;
   hubOff: string;
   /** What the hub is, in one line in its details. */
   hubIs: string;
@@ -597,6 +600,11 @@ export interface MachinesWords {
   details: string;
   closeDetails: string;
   actions: string;
+  /** The bar beside the one chosen: its "⋯", letting it go on a phone,
+   *  and the names of the facts on the card of a hub or a phone. */
+  moreActs: string;
+  closeSpot: string;
+  spot: { copy: string; address: string; link: string; machines: string; admin: string; signedIn: string; state: string };
   /** A share or an assistance ended from the drawing, and giving it
    *  again. */
   tookBack(to: string): string;
@@ -615,6 +623,9 @@ export interface MachinesWords {
   groups: GroupWords;
   /** Under a group's name on the drawing: how many, how many online. */
   groupSub(count: number, online: number): string;
+  /** On a box seen from afar, after its name: how many; its bar says how
+   *  many are online. */
+  groupCount(count: number): string;
   /** The list's sections past the account's own: the machines shared with
    *  it, the members' its administrator sees, and those whose agents
    *  assist it. */
@@ -625,6 +636,10 @@ export interface MachinesWords {
   viewMap: string;
   viewList: string;
   views: string;
+  /** Finding machines by name, by whose they are or by group, and the list
+   *  when none matches. */
+  find: MachineFindWords;
+  noneFound: string;
   /** On the list: the hub's row, a line's round trip, how many agents are
    *  at work on a machine, and a read-only device with what it is. */
   listHub: string;
@@ -768,6 +783,7 @@ export const zhMachines: MachinesWords = {
   formerly: (names) => `曾用名 ${names.join("、")}`,
   hubOnline: "已连接",
   hubConnecting: "连接中",
+  hubDownSince: (at, why) => (why ? `${at} 起断开：${why}` : `${at} 起断开`),
   hubOff: "未连接",
   hubIs: "认出网络里的每台设备，管着谁能用哪台机器，机器之间的话经它转达",
   hubTitle: (name) => `中枢服务器 ${name}`,
@@ -862,6 +878,9 @@ export const zhMachines: MachinesWords = {
   details: "详情",
   closeDetails: "收起详情",
   actions: "操作",
+  moreActs: "更多",
+  closeSpot: "不选了",
+  spot: { copy: "复制地址", address: "地址", link: "连接", machines: "机器", admin: "管理员", signedIn: "登录", state: "状态" },
   tookBack: (to) => `已收回 ${to}`,
   undo: "撤回",
   confirm: "确定",
@@ -890,12 +909,24 @@ export const zhMachines: MachinesWords = {
     groupNameEmpty: "写一个组名",
   },
   groupSub: (count, online) => `${count} 台　${online} 在线`,
+  groupCount: (count) => `${count} 台`,
   sharedSection: "共享给我的",
   membersSection: "其他成员的",
   assistSection: "协助我的",
   viewMap: "图",
   viewList: "列表",
   views: "显示方式",
+  find: {
+    find: "查找机器",
+    placeholder: "机器、人或分组…",
+    found: (total) => `${total} 台`,
+    count: (current, total) => `${current} / ${total}`,
+    none: "无结果",
+    previous: "上一个",
+    next: "下一个",
+    close: "关闭查找",
+  },
+  noneFound: "没有匹配的机器",
   listHub: "中枢服务器",
   listMs: (ms) => `${ms} ms`,
   busy: (n) => `${n} 个智能体在进行`,
@@ -1089,6 +1120,7 @@ export const enMachines: MachinesWords = {
   formerly: (names) => `formerly ${names.join(", ")}`,
   hubOnline: "connected",
   hubConnecting: "connecting",
+  hubDownSince: (at, why) => (why ? `down since ${at}: ${why}` : `down since ${at}`),
   hubOff: "not connected",
   hubIs: "It knows every device in the network, keeps who may use which machine, and passes on what the machines say to each other",
   hubTitle: (name) => `Hub ${name}`,
@@ -1183,6 +1215,9 @@ export const enMachines: MachinesWords = {
   details: "Details",
   closeDetails: "Hide details",
   actions: "Actions",
+  moreActs: "More",
+  closeSpot: "Deselect",
+  spot: { copy: "Copy address", address: "Address", link: "Connection", machines: "Machines", admin: "Admin", signedIn: "Signed in", state: "Status" },
   tookBack: (to) => `Revoked ${to}`,
   undo: "Undo",
   confirm: "Confirm",
@@ -1211,12 +1246,24 @@ export const enMachines: MachinesWords = {
     groupNameEmpty: "Give the group a name",
   },
   groupSub: (count, online) => `${count}, ${online} online`,
+  groupCount: (count) => String(count),
   sharedSection: "Shared with me",
   membersSection: "Other members'",
   assistSection: "Assisting me",
   viewMap: "Map",
   viewList: "List",
   views: "Show as",
+  find: {
+    find: "Find machines",
+    placeholder: "Machine, person or group…",
+    found: (total) => `${total} machine${total === 1 ? "" : "s"}`,
+    count: (current, total) => `${current} of ${total}`,
+    none: "No matches",
+    previous: "Previous",
+    next: "Next",
+    close: "Close find",
+  },
+  noneFound: "No machine matches",
   listHub: "Hub",
   listMs: (ms) => `${ms} ms`,
   busy: (n) => `${n} agent${n === 1 ? "" : "s"} at work`,

@@ -1,27 +1,41 @@
 // The machines page's drawing as a canvas (`world-gui.md`, 账号、机器、共享与
-// 协助): the account's World drawn by hand on graph paper (`map-layout.ts`),
-// moved and zoomed (`../map-canvas`). The hub at the top, square lines down
+// 协助): the account's World drawn by hand on paper (`map-layout.ts`), moved
+// and zoomed (`../map-canvas`). The hub at the top left, square lines down
 // to a box for each group of machines by whose they are, its name on a title
 // strip, and the machines standing in a grid inside, names to the right.
-// The names are written on the paper and grow and shrink with it. Nearer,
-// the drawing shows what each machine is and the agents on it. The account's
-// own end with a dashed ring that adds a machine. For the network's
-// administrator every person has a box, a strip alone until a machine of
-// theirs comes, with a "⋯" at its end and a small lock while they are
-// locked, and a dashed box after them adds a person. A machine of another
-// whose agent alone assists is a broken ring of clay; one out of reach is
-// drawn with a dry pen. A machine others may connect to directly wears a
-// dashed halo, in pencil until the hub has checked it: every machine that
-// reaches it links with it, so the links are not drawn one by one; which
-// are up is said in its details. What floats beside a ring chosen is the
-// page's.
+//
+// How much of it is drawn is how near it is seen; the places never change
+// with the distance, only what is drawn there. Far, where a ring would be a
+// speck, each box is a block of its wash and each machine a drop of ink where
+// its ring stands: in ink while it is online, faint while it is away, in
+// clay while something works on it; the lines are the hub's alone. Nearer,
+// the drops open into the machines' rings, drawn along the very line the
+// pen draws them nearer still, with the lines down to them, but no names
+// yet: the box's and its groups' are on the blocks, and a machine's is said
+// over it when the pointer rests there. Near, it is the paper: the rings in
+// the pen's ink, the lines, the names and, nearer still, what each machine
+// is. The names are never written smaller than the page writes, and grow
+// with the paper only as it is brought nearer than its own size; one with
+// no room beside its ring is cut short.
+//
+// The account's own end with a dashed ring that adds a machine. For the
+// network's administrator every person has a box, a strip alone until a
+// machine of theirs comes, with a "⋯" at its end and a small lock while they
+// are locked, and a dashed box after them adds a person. A machine of
+// another whose agent alone assists is a broken ring of clay; one out of
+// reach is drawn with a dry pen. A machine others may connect to directly
+// wears a dashed halo, in pencil until the hub has checked it: every machine
+// that reaches it links with it, so the links are not drawn one by one;
+// which are up is said in its details. What floats beside a ring chosen is
+// the page's.
 
+import { glyph } from "../conversation/glyphs";
 import { reducedMotion } from "../motion";
-import { MapCanvas, PenLayer, type Bounds, type CanvasEvent, type CanvasFrame, type CanvasItem, type PenStroke, type Point } from "../map-canvas";
-import { blot, circle, outline, ruled, seeded, ticks } from "../pen/shapes";
+import { MapCanvas, PenLayer, type Bounds, type CanvasEvent, type CanvasFrame, type CanvasItem, type PenStroke, type Point, type View } from "../map-canvas";
+import { blot, circle, circlePoints, outline, ruled, seeded, ticks } from "../pen/shapes";
 import type { MachinesWords } from "./account-words";
-import { boxParts, groupMoreKey } from "./machine-groups";
-import { KNOT, MapLayout, RING, ROWS, TRUNK, type Placement } from "./map-layout";
+import { boxParts, groupMoreKey, nameInGroup } from "./machine-groups";
+import { BAND, KNOT, MapLayout, RING, ROW, ROWS, TITLE, TRUNK, type GroupNode, type Placement, type Prepared } from "./map-layout";
 import type { MapHub, MapLink, MapNode, MapPerson } from "./map-nodes";
 import type { PeopleWords } from "./people-words";
 
@@ -35,8 +49,7 @@ export interface MachineMapOptions {
   /** Each painted frame, for what the page floats over the drawing. */
   frame?(frame: CanvasFrame): void;
   /** A picture on another page: fitted to its frame and never moved, its
-   *  columns as tall as fill the frame best, its names kept readable however
-   *  small it is drawn. */
+   *  columns as tall as fill the frame best. */
   still?: boolean;
   /** What follows the hints under the drawing. */
   afterHints?: HTMLElement;
@@ -62,8 +75,6 @@ export interface MachineMapScene {
   opening: ReadonlySet<string>;
   /** Machines framed with the mouse, or inside the frame being drawn. */
   framed: readonly string[];
-  /** The boxes folded to their title strip, by key. */
-  folded: ReadonlySet<string>;
   /** While a new place for the server is chosen: the machines that can take
    *  it, by key, and whether each goes to sleep; the rest are faint. */
   lit?: ReadonlyMap<string, { sleeps: boolean }> | null;
@@ -74,6 +85,10 @@ export interface MachineMapScene {
   /** The boxes of groups the user may rename or end, by key: each has a
    *  "⋯" at the end of its strip, as a person's box has. */
   grouped?: ReadonlySet<string>;
+  /** While machines are looked for, those that match, by key: each ringed
+   *  in clay, the other names faint; seen from afar, the boxes and groups
+   *  holding none of them faint. */
+  found?: ReadonlySet<string> | null;
 }
 
 /** Where this device remembers the order of the machines on the drawing,
@@ -89,112 +104,146 @@ export const personKey = (hub: string, account: string) => `who:${hub}:${account
 /** How wide a person's "⋯" is pressed at the end of their box's strip. */
 const MORE = 40;
 
-/** Past this many machines, others' boxes start folded: the drawing fitted
- *  to its page is too small to read them all. */
-const FOLD_PAST = 24;
+/** Nearer than this the drawing is the paper, its rings and names; further
+ *  it is its boxes, each a block: a box's strip there would be lower than
+ *  its name, and a name would have room for a letter or two. */
+const PAPER = 0.55;
 
-/** The boxes folded: others', when the machines are many, unless the user
- *  opened or folded one, as `chosen` holds; a group's inside its owner's
- *  only as the user folds it. */
-export function foldedOf(nodes: readonly MapNode[], chosen: ReadonlyMap<string, boolean> = new Map()): Set<string> {
-  const many = nodes.length > FOLD_PAST;
-  const folded = new Set<string>();
-  for (const node of nodes) {
-    const group = node.group?.key ?? "mine";
-    const owner = boxParts(group).owner;
-    for (const hub of node.hubs) {
-      const key = `group:${hub}:${owner}`;
-      if (chosen.get(key) ?? (many && owner !== "mine")) folded.add(key);
-      if (group !== owner && chosen.get(`group:${hub}:${group}`)) folded.add(`group:${hub}:${group}`);
-    }
-  }
-  return folded;
-}
+/** On a phone the paper comes from a little further: its drawing is laid
+ *  so that each name has its room there, and its strips hold its words. */
+const PHONE_PAPER = 0.45;
 
-/** A still drawing's names are never drawn smaller than this share of their
- *  size, nor larger than twice it to get there, each box's title strip
- *  growing to hold its name; on a phone's narrow frame, where the drawing
- *  is smallest, they keep their whole size and grow as far as three times. */
-const LEGIBLE = 0.85;
-const MOST_GROWN = 2;
-const LEGIBLE_NARROW = 1;
-const MOST_GROWN_NARROW = 3;
-const NARROW_FRAME = 480;
+/** Nearer than this, and further than the paper, each machine is its ring
+ *  drawn small, about ten pixels across or more; further, a drop of ink. */
+const RINGED = 0.2;
 
-/** Names that would be drawn smaller than this share of their size, grown as
- *  far as they may, are not drawn at all: under ten pixels high. */
-const BARE = 0.75;
+/** Nearer than this, each machine says what it is under its name: its row
+ *  has room for two lines. */
+const DETAILED = 0.7;
 
-/** The scale the drawing fits itself no smaller than: its machines' names
- *  about twelve pixels high. */
-const READABLE = 0.8;
+/** The paper drawn round what is in view, this share of the view more on
+ *  each side, so it moves without being drawn again until it is left; and
+ *  the names on the blocks seen from afar. */
+const AHEAD = 0.6;
+const HEADS_AHEAD = 0.3;
 
-/** The side gutter a phone's drawing is fitted within, as the page's. */
+/** The drawing is never fitted larger than its own size. */
+const FIT_MOST = 1;
+
+/** The gutter a phone's drawing is fitted within, as the page's. */
 const NARROW_PAD = 16;
 
-/** Room round a hub's point for its name over it, in the drawing's units. */
-const HUB_ROOM = 64;
-
-/** The smallest box holding all of `boxes`. */
-function enclosing(boxes: readonly Bounds[]): Bounds {
-  const x = Math.min(...boxes.map((box) => box.x));
-  const y = Math.min(...boxes.map((box) => box.y));
-  const right = Math.max(...boxes.map((box) => box.x + box.width));
-  const bottom = Math.max(...boxes.map((box) => box.y + box.height));
-  return { x, y, width: right - x, height: bottom - y };
-}
-
-/** Zoom levels: below the first the drawing is far, above the second near. */
-const LEVELS: [number, number] = [0.55, 1.2];
 const SVG = "http://www.w3.org/2000/svg";
 
-/** How long the drawing takes to glide to where it is brought. */
+/** How long the drawing takes to glide, or fly, to where it is brought. */
 const GLIDE_MS = 240;
+const FLY_MS = 420;
 
-/** Room round the drawing in its layers, for what they draw beyond it: the
- *  names above a hub and those right of the rings. */
+/** Room round the drawing in its layers, for what they draw beyond it. */
 const LAYER_ROOM = 160;
+
+/** Seen from afar, a machine's dot is about a third of its ring across, in
+ *  pixels no less than the first nor more than the second. */
+const DOT_LEAST = 2.5;
+const DOT_MOST = 8;
+
+/** A name on a block seen from afar: its ground starts this far in from
+ *  the block's left and, at the block's top, this far down, and reaches
+ *  this far round its words; it keeps this far clear of another on its
+ *  line; none is written in less room than the last. In pixels, as the
+ *  styles have them (`machines.css`). */
+const HEAD_LEFT = 4;
+const HEAD_TOP = 6;
+const HEAD_PAD = 6;
+const HEAD_CLEAR = 8;
+const HEAD_LEAST = 56;
+
+/** A box with no machine yet is left out seen from afar while lower than
+ *  this, in pixels: a sliver. */
+const SLIVER = 12;
+
+/** The air a machine's name leaves before the next column's line. */
+const NAME_AIR = 12;
+
+/** At most this many machines and a still drawing tries each height of its
+ *  columns to fill its frame; more, and they stand ten to a column. */
+const STILL_SEARCH = 300;
 
 export class MachineMap {
   readonly element: HTMLElement;
   private readonly surface: MapCanvas;
   private readonly pens: PenLayer;
   private readonly layout: MapLayout;
-  /** Under the ink: the groups' boxes. Over it: the names, then what is
-   *  marked live. All in the drawing's units, so they zoom with it. */
+  /** Under the ink: the groups' boxes. Over it: what is marked live. Both
+   *  in the drawing's units, so they zoom with it. Over those, the boxes
+   *  seen from afar, then the names, placed at the drawing's scale but
+   *  written at the page's size. */
   private readonly boxes: SVGSVGElement;
-  private readonly names: SVGSVGElement;
   private readonly marks: SVGSVGElement;
+  private readonly blocks: HTMLElement;
+  private readonly words: HTMLElement;
+  /** Seen from afar: the machines' dots and the hub's lines, drawn under the
+   *  blocks; and what the pointer rests on, named over all. */
+  private readonly dots: HTMLCanvasElement;
+  private readonly tip: HTMLElement;
   private readonly themes: MutationObserver;
   private scene: MachineMapScene | null = null;
+  private prepared: Prepared | null = null;
   private placement: Placement | null = null;
-  /** What the placement was laid out from, to lay it again only when that changed. */
-  private laidFrom: { from: readonly unknown[]; shape: string } | null = null;
-  private level = -1;
+  /** What the boxes were prepared from, and the frame and width they were
+   *  placed for, to do each again only when that changed; what a phone's
+   *  drawing was filled from and for; and the frame the drawing was laid
+   *  for, its shape on a wide page, its size where it fills its frame. */
+  private preparedFrom: { from: readonly unknown[]; shape: string } | null = null;
+  private placedFor = "";
+  private filledFrom: { from: readonly unknown[]; frame: string } | null = null;
+  private laidFor = "";
+  /** How near the drawing is seen as of the last frame: 0, its machines
+   *  drops of ink; 1, their rings drawn small; 2, the paper. Seen from afar
+   *  is the first two, as its boxes. */
+  private band = 2;
+  private far = false;
+  /** The scale the paper is drawn from, a phone's or a computer's. */
+  private paper = PAPER;
   /** Whether the drawing is laid for a narrow screen, as of the last
-   *  update. */
+   *  update: filling its frame, as a still drawing does. */
   private narrow = false;
   private composed = "";
+  /** How many times the drawing has been composed, and what is marked on it
+   *  changed: what is drawn over it is drawn again after each. */
+  private compositions = 0;
+  private markings = 0;
   private marked = "";
-  /** A still drawing's frame, as of its last layout. */
-  private framed = "";
-  /** How many times their size a still drawing's names are drawn, as it
-   *  was laid for. */
-  private grow = 1;
-  /** Whether a still drawing is laid too small for its machines' names to
-   *  be read however they grow, and leaves them out. */
-  private bare = false;
-  /** Measures a still drawing's names for the room they take. */
+  /** What the names on the blocks were written for, and round which part
+   *  of the drawing. */
+  private blocksDrawn = "";
+  private blocksRegion: Bounds | null = null;
+  private blocksScale = 0;
+  /** The part of the drawing the paper is drawn for, in its units, and the
+   *  scale it was drawn at. */
+  private region: Bounds | null = null;
+  private regionScale = 1;
+  /** The pens' colours as the theme names them, the paper's and the
+   *  words', and how round a box's corners are, and a group's. */
+  private inks = { graphite: "", clay: "", paper: "", text: "", box: 10, group: 6 };
+  /** The machines' dots seen from afar, gathered by how they are inked, and
+   *  their rings seen nearer; what they were gathered for; whether the
+   *  canvas is bare. */
+  private farDots: FarDots[] = [];
+  private farRings: FarRing[] = [];
+  private dotsFor = "";
+  private dotsBare = true;
+  /** Measures names for the room they take. */
   private measuring: CanvasRenderingContext2D | null = null;
   /** The faces are loading, and the drawing is laid again when they are in. */
   private awaitingFaces = false;
-  /** The boxes folded as of the last placing: a fold the person made keeps
-   *  the drawing where it is. */
-  private placedFolds: string | null = null;
   /** The box of the drawing the layers over and under the ink are laid
    *  over, and the scale they are drawn at. */
   private layerBox: Bounds | null = null;
   private layerScale = NaN;
+  /** What the pointer rests on, shown on the boxes seen from afar. */
+  private pointed: string | null = null;
+  private flight = 0;
 
   constructor(private readonly options: MachineMapOptions) {
     const { words } = options;
@@ -204,12 +253,18 @@ export class MachineMap {
       controls: { minus: words.zoomOut, plus: words.zoomIn, fit: words.fit, scale: words.scale },
       hints: options.still ? undefined : { zoom: words.hintZoom, pan: words.hintPan, ...(options.afterHints ? { after: options.afterHints } : {}) },
       still: options.still ?? false,
-      minScale: 1 / 16,
+      minScale: 1 / 40,
       maxScale: 4,
-      fitFloor: READABLE,
-      levels: LEVELS,
+      fitMost: FIT_MOST,
+      names: false,
+      levels: [RINGED, PAPER],
       validTarget: () => false,
-      event: (event) => options.event(event),
+      event: (event) => {
+        if (event.kind === "point") this.point(event.key);
+        // Seen from afar a frame takes the machines whose dots are in it.
+        if (event.kind === "marquee" && this.far) event = { ...event, keys: this.machinesIn(event.area) };
+        options.event(event);
+      },
       frame: (frame) => this.onFrame(frame),
     });
     this.element = this.surface.element;
@@ -223,18 +278,38 @@ export class MachineMap {
       return svg;
     };
     // Only the pens' strokes are ink, blended with the paper; the boxes'
-    // washes lie under them, the names and the live marks over them.
+    // washes lie under them, the live marks over them, then the boxes seen
+    // from afar, and the names over all.
     this.boxes = layer("map-boxes");
     this.surface.under.append(this.boxes);
     this.pens = new PenLayer(this.surface.ink, "texture");
-    this.names = layer("map-names");
     this.marks = layer("map-live");
-    this.surface.over.append(this.names, this.marks);
+    const plain = (name: string) => {
+      const div = document.createElement("div");
+      div.className = name;
+      div.setAttribute("aria-hidden", "true");
+      return div;
+    };
+    this.blocks = plain("map-blocks");
+    this.words = plain("map-words");
+    this.surface.over.append(this.marks, this.blocks, this.words);
+    // Seen from afar the machines are dots and the lines plain, drawn on a
+    // canvas of the view's size between the ink and the blocks.
+    this.dots = document.createElement("canvas");
+    this.dots.className = "map-dots";
+    this.dots.setAttribute("aria-hidden", "true");
+    this.surface.over.before(this.dots);
+    this.tip = plain("map-tip");
+    this.tip.hidden = true;
+    this.element.append(this.tip);
     // The ink's colours are resolved for the textures: drawn again when the
     // theme changes.
     this.themes = new MutationObserver(() => {
       this.composed = "";
+      this.sizes.clear();
       this.compose();
+      this.place();
+      this.mark();
     });
     this.themes.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme", "class"] });
   }
@@ -246,15 +321,18 @@ export class MachineMap {
     return point ? this.surface.camera.toScreen(point) : null;
   }
 
-  /** How wide a machine's name is on the screen now. */
+  /** How wide the name written beside a machine or a hub is on the screen
+   *  now, or nothing where none is written. */
   nameWidth(key: string): number {
-    const text = [...this.names.querySelectorAll<SVGTextElement>("text[data-name]")].find((one) => one.dataset.name === key);
-    return text ? text.getBBox().width * this.surface.camera.view.scale : 0;
+    const named = this.words.querySelector<HTMLElement>(`[data-name="${CSS.escape(key)}"]`);
+    const name = named?.classList.contains("mw-hub") ? named : named?.firstElementChild;
+    return name ? name.getBoundingClientRect().width : 0;
   }
 
-  /** The screen box of a ring, for keeping names clear of what floats. */
-  reserve(boxes: readonly Bounds[]): void {
-    this.surface.reserveLabels(boxes);
+  /** Whether the drawing is seen from afar now: its boxes, not its
+   *  machines. */
+  get distant(): boolean {
+    return this.far;
   }
 
   fit(): void {
@@ -286,7 +364,50 @@ export class MachineMap {
     requestAnimationFrame(step);
   }
 
+  /** Brings the box, group or machine `key` to fill the view, as large as
+   *  it may be drawn up to its own size and near enough to read what each
+   *  machine is, flying there unless the interface moves less. */
+  flyTo(key: string): void {
+    const target = this.boundsOf(key);
+    if (!target) return;
+    const view = this.surface.camera.view;
+    if (!view.width || !view.height) return;
+    const pad = view.width < 480 ? NARROW_PAD : 48;
+    const scale = Math.max(DETAILED, Math.min(FIT_MOST, (view.width - 2 * pad) / target.width, (view.height - 2 * pad) / target.height));
+    const centre: Point = [target.x + target.width / 2, target.y + target.height / 2];
+    // A box taller than the view is shown from its top.
+    const y = target.height * scale > view.height - 2 * pad ? pad - target.y * scale : view.height / 2 - centre[1] * scale;
+    const x = target.width * scale > view.width - 2 * pad ? pad - target.x * scale : view.width / 2 - centre[0] * scale;
+    this.flyView(scale, x, y);
+  }
+
+  /** Brings the drawing to `scale` with its origin at `x`, `y` on the screen. */
+  private flyView(scale: number, x: number, y: number): void {
+    cancelAnimationFrame(this.flight);
+    const from = this.surface.camera.view;
+    if (reducedMotion()) {
+      this.surface.view(scale, x, y);
+      return;
+    }
+    // The point under the view's middle moves in a straight line while the
+    // scale changes evenly in its logarithm, as a flight in and out does.
+    const middle: Point = [from.width / 2, from.height / 2];
+    const start: Point = [(middle[0] - from.x) / from.scale, (middle[1] - from.y) / from.scale];
+    const end: Point = [(middle[0] - x) / scale, (middle[1] - y) / scale];
+    const began = performance.now();
+    const step = (now: number) => {
+      const t = Math.min(1, (now - began) / FLY_MS);
+      const eased = t < 0.5 ? 4 * t ** 3 : 1 - (-2 * t + 2) ** 3 / 2;
+      const at = from.scale * (scale / from.scale) ** eased;
+      const world: Point = [start[0] + (end[0] - start[0]) * eased, start[1] + (end[1] - start[1]) * eased];
+      this.surface.view(at, middle[0] - world[0] * at, middle[1] - world[1] * at);
+      if (t < 1) this.flight = requestAnimationFrame(step);
+    };
+    this.flight = requestAnimationFrame(step);
+  }
+
   dispose(): void {
+    cancelAnimationFrame(this.flight);
     this.themes.disconnect();
     this.pens.dispose();
     this.surface.dispose();
@@ -294,18 +415,52 @@ export class MachineMap {
 
   update(scene: MachineMapScene): void {
     this.scene = scene;
-    if (this.options.still) this.placement = this.fill(scene);
-    else {
-      this.narrow = this.isNarrow();
-      // Laid out again only when what it is laid from changed: the page
+    // The faces as the theme names them now, read once this drawing.
+    this.faces.clear();
+    this.narrow = !this.options.still && this.isNarrow();
+    const paper = this.isNarrow() ? PHONE_PAPER : PAPER;
+    if (paper !== this.paper) {
+      this.paper = paper;
+      this.surface.levels([RINGED, paper]);
+    }
+    const frame = { width: this.element.clientWidth, height: this.element.clientHeight };
+    if (this.options.still || this.narrow) {
+      // A still drawing, and a phone's, is laid to be drawn largest in its
+      // frame: the whole of it on one screen, read nearer by zooming. A
+      // phone's is laid again only when what it is laid from, or its
+      // frame, changed.
+      const from = [scene.hubs, scene.nodes, scene.links, scene.people ?? null, scene.adds, scene.adding ?? null] as const;
+      const sized = `${frame.width}x${frame.height}`;
+      const kept = this.filledFrom;
+      if (this.options.still || !this.placement || !kept || kept.frame !== sized || kept.from.some((one, at) => one !== from[at])) {
+        this.placement = this.fill(scene);
+        this.filledFrom = { from, frame: sized };
+        this.placedFor = "";
+        this.region = null;
+      }
+      this.laidFor = sized;
+    } else {
+      // Prepared again only when what it is laid from changed: the page
       // draws itself every couple of seconds with the same machines.
       const from = [scene.hubs, scene.nodes, scene.links, scene.people ?? null] as const;
-      const shape = JSON.stringify([[...scene.folded ?? []].sort(), [...scene.adding ?? []].sort(), this.narrow]);
-      const laid = this.laidFrom;
-      if (!this.placement || !laid || laid.shape !== shape || laid.from.some((one, at) => one !== from[at])) {
-        this.placement = this.layout.update(scene.hubs, scene.nodes, { links: scene.links, folded: scene.folded, narrow: this.narrow, people: scene.people ?? [], adding: new Set(scene.adding ?? []) });
-        this.laidFrom = { from, shape };
+      const shape = JSON.stringify([[...(scene.adding ?? [])].sort(), scene.adds.length > 0, document.fonts.status]);
+      const kept = this.preparedFrom;
+      if (!this.prepared || !kept || kept.shape !== shape || kept.from.some((one, at) => one !== from[at])) {
+        this.prepared = this.layout.prepare(scene.hubs, scene.nodes, { links: scene.links, vacant: scene.adds.length > 0, people: scene.people ?? [], adding: new Set(scene.adding ?? []), label: (text) => this.labelWidth(text) });
+        this.preparedFrom = { from, shape };
+        this.placedFor = "";
       }
+      // Its rows as wide as draw it largest in its frame, found again when
+      // the frame changes its shape.
+      const shapeOf = frame.width && frame.height ? (frame.width / frame.height).toFixed(1) : "none";
+      if (this.placedFor !== shapeOf || !this.placement || this.filledFrom) {
+        const width = this.layout.widthFor(this.prepared, frame, this.padding());
+        this.placement = this.layout.place(this.prepared, width);
+        this.placedFor = shapeOf;
+        this.filledFrom = null;
+        this.region = null;
+      }
+      this.laidFor = shapeOf;
     }
     this.compose();
     this.place();
@@ -322,130 +477,177 @@ export class MachineMap {
       return group ? [group.box.x + group.box.width - MORE / 2, group.box.y + group.strip / 2] : null;
     }
     // A hub's dashed ring waits where its next machine will stand.
-    if (key.startsWith("add:")) return this.layout.vacant(key.slice(4));
+    if (key.startsWith("add:")) return placement.vacant.get(key.slice(4)) ?? null;
     return placement.machines.get(key) ?? null;
   }
 
-  /** A still drawing laid with its columns as tall as let it be drawn
-   *  largest in its frame; ten to a column until the frame has a size. Its
-   *  names grow back to stay readable as it is drawn small, and take the
-   *  room they need: each way of laying it is laid again for the size its
-   *  names will be, a few times over, as the two settle. Too small for its
-   *  machines' names to be read even grown, as a phone's frame is for all
-   *  but the smallest network, it leaves them out and its machines stand
-   *  closer: the rings, the marks and the boxes' names alone. */
+  /** What `key` takes on the drawing: a box or a group whole, a machine
+   *  with its name. */
+  private boundsOf(key: string): Bounds | null {
+    const placement = this.placement;
+    if (!placement) return null;
+    const group = placement.groups.find((one) => one.key === key);
+    if (group) return group.box;
+    const point = this.pointOf(key);
+    return point ? { x: point[0] - RING - 120, y: point[1] - RING - 90, width: 2 * RING + 360, height: 2 * RING + 180 } : null;
+  }
+
+  /** The machines standing in `area`, a part of the drawing. */
+  private machinesIn(area: Bounds): string[] {
+    const keys: string[] = [];
+    for (const [key, [x, y]] of this.placement?.machines ?? []) if (x >= area.x && x <= area.x + area.width && y >= area.y && y <= area.y + area.height) keys.push(key);
+    return keys;
+  }
+
+  /** A still drawing, or a phone's, laid with its columns as tall, and its
+   *  rows as wide, as let it be drawn largest in its frame; ten to a column
+   *  until the frame has a size. A name is written no smaller than the page
+   *  writes, however small the drawing: drawn smaller than its own size, it
+   *  gives each name the room that takes, as near as it can be seen with
+   *  its names, or else as near as they come. */
   private fill(scene: MachineMapScene): Placement {
     const width = this.element.clientWidth;
     const height = this.element.clientHeight;
-    this.framed = `${width}x${height}`;
-    const named = this.nameRoom(scene);
-    const label = (text: string) => this.labelWidth(text);
-    const lay = (rows: number, grow: number, room: number | undefined) =>
-      this.layout.update(scene.hubs, scene.nodes, { links: scene.links, folded: scene.folded, rows, vacant: scene.adds.length > 0, grow, label, ...(room === undefined ? {} : { room }) });
-    if (!width || !height) {
-      this.grow = 1;
-      this.bare = false;
-      return lay(ROWS, 1, named);
-    }
-    // The canvas leaves a tenth of the shorter side round what it fits.
-    const pad = Math.max(24, Math.min(76, Math.min(width, height) * 0.1));
-    const scaleOf = ({ bounds }: Placement) => Math.min((width - 2 * pad) / bounds.width, (height - 2 * pad) / bounds.height);
-    const largest = (room: number | undefined) => {
-      let best: { placement: Placement; scale: number; grow: number } | null = null;
-      for (let rows = 1; rows <= ROWS; rows += 1) {
-        let grow = 1;
-        let placement = lay(rows, grow, room);
-        let scale = scaleOf(placement);
-        for (let round = 0; round < 4; round += 1) {
-          const next = Math.min(this.mostGrown(), Math.max(1, this.legible() / scale));
-          if (Math.abs(next - grow) < 0.02) break;
-          grow = next;
-          placement = lay(rows, grow, room);
-          scale = scaleOf(placement);
-        }
-        if (!best || scale > best.scale + 1e-6) best = { placement, scale, grow };
+    const { name: named, under } = this.nameRoom(scene) ?? {};
+    const people = scene.people ?? [];
+    const adding = new Set(scene.adding ?? []);
+    const prepareFor = (rows: number, room: number | undefined) =>
+      this.layout.prepare(scene.hubs, scene.nodes, { links: scene.links, rows, vacant: scene.adds.length > 0, people, adding, label: (text) => this.labelWidth(text), ...(room === undefined ? {} : { room }) });
+    if (!width || !height) return this.layout.place(prepareFor(ROWS, named));
+    // What it is laid out from, but who is online: a machine coming or
+    // going is laid out as the best size was last found for these, once.
+    const shape = JSON.stringify([width, height, named, document.fonts.status, scene.hubs.map((hub) => hub.id), scene.nodes.map((node) => [node.key, node.name, node.sub, node.group?.key ?? null, node.hubs]), scene.links.map((link) => [link.a, link.b]), scene.adds, people.map((person) => [person.hub, person.account, person.label]), [...adding]]);
+    const kept = this.found;
+    if (kept?.shape === shape) return this.layout.place(prepareFor(kept.rows, kept.room), kept.width);
+    // The frame the canvas fits it in: its padding round it, and the room
+    // its controls take under it.
+    const pad = this.padding();
+    const below = this.options.still ? pad : this.surface.fitBelow();
+    const frame = { width, height: height - Math.max(0, below - pad) };
+    type Laid = { rows: number; width: number; scale: number; placement: Placement; room: number | undefined };
+    // The best height of its columns for names given `room`.
+    const best = (room: number | undefined): Laid => {
+      let found: Laid | null = null;
+      for (const rows of scene.nodes.length > STILL_SEARCH ? [ROWS] : [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]) {
+        const prepared = prepareFor(rows, room);
+        const across = this.layout.widthFor(prepared, frame, pad);
+        const placement = this.layout.place(prepared, across);
+        const scale = Math.min((frame.width - 2 * pad) / placement.bounds.width, (frame.height - 2 * pad) / placement.bounds.height);
+        if (!found || scale > found.scale + 1e-6) found = { rows, width: across, scale, placement, room };
       }
-      return best!;
+      return found!;
     };
-    let best = largest(named);
-    this.bare = best.scale * best.grow < BARE;
-    if (this.bare) {
-      // Its machines stand as close as they may, or further apart as far as
-      // its frame has the room without drawing it smaller: the room its
-      // boxes' names then have.
-      const close = largest(0);
-      best = close;
-      for (const share of [0.5, 0.25]) {
-        const wider = largest((named ?? 0) * share);
-        if (wider.scale < close.scale * 0.98) continue;
-        best = wider;
-        break;
+    const tight = best(named === undefined ? undefined : Math.max(named, under ?? 0));
+    let laid = tight;
+    if (named !== undefined && tight.scale < 1) {
+      // Written at the page's size, a name seen at `scale` takes its width
+      // over that in the drawing's units. The nearest it can be seen with
+      // every name whole is found by halving; where it cannot be seen with
+      // its names at all, they come whole once it is brought near enough.
+      const at = (scale: number) => best((scale >= DETAILED ? Math.max(named, under ?? 0) : named) / scale);
+      const loose = at(this.paper);
+      laid = loose;
+      if (loose.scale >= this.paper) {
+        let low = this.paper;
+        let high = Math.min(1, tight.scale);
+        for (let step = 0; step < 5; step += 1) {
+          const middle = (low + high) / 2;
+          const tried = at(middle);
+          if (tried.scale >= middle) {
+            low = middle;
+            laid = tried;
+          } else high = middle;
+        }
       }
     }
-    this.grow = best.grow;
-    return best.placement;
+    this.found = { shape, rows: laid.rows, width: laid.width, room: laid.room };
+    return laid.placement;
   }
 
-  /** The least share of their size a still drawing's names are drawn at,
-   *  and the most they grow to get there. */
-  private legible(): number {
-    return this.element.clientWidth < NARROW_FRAME ? LEGIBLE_NARROW : LEGIBLE;
+  /** The best way last found to lay a still drawing, and what for. */
+  private found: { shape: string; rows: number; width: number; room: number | undefined } | null = null;
+
+  /** Room left round the drawing in its frame, as the canvas leaves it. */
+  private padding(): number {
+    const width = this.element.clientWidth;
+    const height = this.element.clientHeight;
+    return width < 480 ? NARROW_PAD : Math.max(24, Math.min(76, Math.min(width, height) * 0.1));
   }
 
-  private mostGrown(): number {
-    return this.element.clientWidth < NARROW_FRAME ? MOST_GROWN_NARROW : MOST_GROWN;
-  }
-
-  /** What a box's strip says of whose it is: its label, or drawn bare,
-   *  as much of it as its strip has the room for. */
-  private labelOf(group: Placement["groups"][number]): string {
-    if (!this.bare) return group.label;
-    const { x, width } = group.box;
-    return this.fitted(group.label, x + width - (this.moreOf(group) ? MORE : 10) - (x + TRUNK + 14));
-  }
-
-  /** A box's `label` if it fits `room` of the drawing's units at the size
-   *  its name is laid for, or as much as does cut short with an ellipsis
-   *  while three letters are left; otherwise nothing. */
-  private fitted(label: string, room: number): string {
-    const context = this.measuring;
-    if (!context) return label;
-    const family = getComputedStyle(document.documentElement).getPropertyValue("--font-emphasis").trim() || "serif";
-    context.font = `${(14 * this.grow).toFixed(1)}px ${family}`;
-    if (context.measureText(label).width <= room) return label;
-    const letters = [...label];
-    while (letters.length && context.measureText(`${letters.join("").trimEnd()}…`).width > room) letters.pop();
-    const kept = letters.join("").trimEnd();
-    return [...kept].length >= 3 ? `${kept}…` : "";
-  }
-
-  /** How wide the widest of the machines' names is, or the line under
-   *  one, at their size and with a little air: the room a name takes beside
-   *  its ring in a still drawing, which lays it no wider than its own names
-   *  need. */
   /** How wide a box's name is written on its strip, at its own size. */
   private labelWidth(text: string): number {
+    return this.measured("--font-emphasis", this.textSize("--size-text"), text);
+  }
+
+  /** The size in pixels the design gives `name`, read once for each
+   *  theme. */
+  private textSize(name: string): number {
+    let size = this.sizes.get(name);
+    if (size === undefined) {
+      const probe = document.createElement("span");
+      probe.style.cssText = `position:absolute;visibility:hidden;font-size:var(${name})`;
+      this.element.append(probe);
+      size = Number.parseFloat(getComputedStyle(probe).fontSize) || 15;
+      probe.remove();
+      this.sizes.set(name, size);
+    }
+    return size;
+  }
+
+  private readonly sizes = new Map<string, number>();
+
+  /** How wide `text` is at `size` pixels in the face `face` names, measured
+   *  once for each face, size and text: a still drawing is laid out a few
+   *  times over to find its best size, with every name. */
+  private measured(face: string, size: number, text: string): number {
     this.measuring ??= document.createElement("canvas").getContext("2d");
     const context = this.measuring;
     if (!context) return 0;
-    const family = getComputedStyle(document.documentElement).getPropertyValue("--font-emphasis").trim() || "serif";
-    context.font = `14px ${family}`;
-    return context.measureText(text).width;
+    const family = this.face(face);
+    // A face not yet loaded measures as another: its widths kept apart.
+    const id = `${family}:${document.fonts.status}`;
+    let widths = this.widths.get(id);
+    if (!widths) {
+      if (this.widths.size > 8) this.widths.clear();
+      widths = new Map();
+      this.widths.set(id, widths);
+    }
+    const key = `${size}\n${text}`;
+    let width = widths.get(key);
+    if (width === undefined) {
+      context.font = `${size}px ${family}`;
+      width = context.measureText(text).width;
+      widths.set(key, width);
+    }
+    return width;
   }
 
-  private nameRoom(scene: MachineMapScene): number | undefined {
-    this.measuring ??= document.createElement("canvas").getContext("2d");
-    const context = this.measuring;
-    if (!context || !scene.nodes.length) return undefined;
-    const family = getComputedStyle(document.documentElement).getPropertyValue("--font-reading").trim() || "serif";
-    let widest = 0;
+  private readonly widths = new Map<string, Map<string, number>>();
+
+  /** The family a face of the design names, read once a drawing. */
+  private face(name: string): string {
+    let family = this.faces.get(name);
+    if (family === undefined) {
+      family = getComputedStyle(document.documentElement).getPropertyValue(name).trim() || "serif";
+      this.faces.set(name, family);
+    }
+    return family;
+  }
+
+  private readonly faces = new Map<string, string>();
+
+  /** How wide the widest of the machines' names is as the paper writes
+   *  them, and of the lines under them, each with a little air: the room a
+   *  name takes beside its ring in a drawing that fills its frame, laid no
+   *  wider than its own names need. */
+  private nameRoom(scene: MachineMapScene): { name: number; under: number } | undefined {
+    if (!scene.nodes.length) return undefined;
+    let name = 0;
+    let under = 0;
+    const fine = this.textSize("--size-fine");
     for (const node of scene.nodes) {
-      context.font = `13px ${family}`;
-      widest = Math.max(widest, context.measureText(node.name).width);
-      if (node.sub) {
-        context.font = `10.5px ${family}`;
-        widest = Math.max(widest, context.measureText(node.sub).width);
-      }
+      name = Math.max(name, this.measured("--font-reading", fine, nameInGroup(node.name, node.group?.within ? node.group.label : null)));
+      if (node.sub) under = Math.max(under, this.measured("--font-reading", fine, node.sub));
     }
     // A face not yet loaded measures as another: laid again once the faces
     // are in, and a little over meanwhile.
@@ -453,12 +655,13 @@ export class MachineMap {
       this.awaitingFaces = true;
       void document.fonts.ready.then(() => {
         this.awaitingFaces = false;
-        // The names measure anew: laid out again whatever else stayed.
-        this.laidFrom = null;
+        this.preparedFrom = null;
+        this.found = null;
         if (this.scene) this.update(this.scene);
       });
     }
-    return Math.ceil(widest * 1.15) + 16;
+    const room = (width: number) => Math.ceil(width * 1.05) + NAME_AIR + 8;
+    return { name: room(name), under: under ? room(under) : 0 };
   }
 
   /** A phone's screen, or a page as narrow: under 600 pixels across. */
@@ -470,105 +673,144 @@ export class MachineMap {
   /** Draws the layers over and under the ink at `scale`. */
   private frameLayers(scale: number): void {
     this.layerScale = scale;
+    this.element.style.setProperty("--s", String(scale));
+    // Nearer, each machine says what it is under its name.
+    this.element.classList.toggle("map-detailed", scale >= DETAILED);
     if (!this.layerBox) return;
-    for (const layer of [this.boxes, this.names, this.marks]) frameLayer(layer, this.layerBox, scale);
+    for (const layer of [this.boxes, this.marks]) frameLayer(layer, this.layerBox, scale);
   }
 
   private onFrame(frame: CanvasFrame): void {
+    const { view } = frame;
     this.pens.view(frame);
-    if (frame.view.scale !== this.layerScale) this.frameLayers(frame.view.scale);
-    // Laid again when the page becomes narrow or wide, or a still drawing's
-    // frame changes shape.
-    if (this.options.still) {
-      if (this.scene && `${this.element.clientWidth}x${this.element.clientHeight}` !== this.framed) this.update(this.scene);
-      // Drawn small, its names grow back to stay readable, as large as it
-      // was laid for.
-      this.element.style.setProperty("--name-grow", Math.min(this.grow, Math.max(1, this.legible() / frame.view.scale)).toFixed(3));
-    } else if (this.scene && this.isNarrow() !== this.narrow) this.update(this.scene);
-    if (frame.view.level !== this.level) {
-      this.level = frame.view.level;
+    if (view.scale !== this.layerScale) this.frameLayers(view.scale);
+    const { turned, ringed } = this.settle();
+    const far = this.far;
+    // Laid again when the page becomes narrow or wide, or the frame changes
+    // its shape, or its size where the drawing fills it; drawn again as it
+    // turns far or near, or as the view leaves the part the paper was drawn
+    // for; its hit areas made again as the rings come and go.
+    let laid = false;
+    if (this.scene) {
+      const width = this.element.clientWidth;
+      const height = this.element.clientHeight;
+      const narrow = !this.options.still && this.isNarrow();
+      const laidFor = this.options.still || narrow ? `${width}x${height}` : width && height ? (width / height).toFixed(1) : "none";
+      if (narrow !== this.narrow || laidFor !== this.laidFor) {
+        this.update(this.scene);
+        laid = true;
+      }
+    }
+    // The paper's part is left as the view leaves it, or comes so much
+    // nearer that most of what was drawn round it is far out of view.
+    const away = !far && !!this.region && (!holds(this.region, this.inView()) || view.scale > this.regionScale * 2);
+    if (!laid && (turned || away || !this.composed)) {
+      if (away) this.region = null;
       this.compose();
       this.place();
       this.mark();
-    }
+    } else if (!laid && ringed) this.place();
+    // Seen from afar: the names that have room at this scale, the dots and
+    // lines where the view has them, and the name over what is pointed at.
+    this.drawBlocks();
+    this.drawFar(view);
+    this.showTip();
     this.options.frame?.(frame);
   }
 
-  /** The hit areas: every hub, box title, dashed ring and machine. Their
-   *  names are written on the paper; the canvas keeps them for those who
-   *  hear the drawing. */
+  /** How near the drawing is seen now, read from the camera before anything
+   *  is drawn for it: whether it turned far or near since it was last read,
+   *  and whether its rings came or went. */
+  private settle(): { turned: boolean; ringed: boolean } {
+    const band = Math.min(2, this.surface.camera.view.level);
+    const far = band < 2;
+    const turned = far !== this.far;
+    const ringed = band !== this.band;
+    this.far = far;
+    this.band = band;
+    if (turned) this.element.classList.toggle("map-far", far);
+    return { turned, ringed };
+  }
+
+  /** The part of the drawing in view now, in its units. */
+  private inView(): Bounds {
+    const view = this.surface.camera.view;
+    return { x: -view.x / view.scale, y: -view.y / view.scale, width: view.width / view.scale, height: view.height / view.scale };
+  }
+
+  /** The hit areas. Seen from afar: every hub, each group over its
+   *  machines, then the boxes; where the machines are rings and a pointer
+   *  presses them, each machine first, over the ring in its row. Nearer:
+   *  every hub, box title, dashed ring and machine. Their names are written
+   *  on the paper or the blocks; the canvas keeps them for those who hear the
+   *  drawing. */
   private place(): void {
     const { scene, placement } = this;
     if (!scene || !placement) return;
     const { words } = this.options;
-    const items: CanvasItem[] = [
-      ...scene.hubs.map((hub): CanvasItem => ({ key: `hub:${hub.id}`, kind: "hub", point: placement.hubs.get(hub.id)!, radius: KNOT + 6, label: hub.name, sub: scene.hubLabels.get(hub.id) ?? "" })),
-      // A person's or a group's "⋯", over the end of its box's strip:
-      // listed before the strips, since a press goes to the first that
-      // holds it.
-      ...placement.groups.flatMap((group): CanvasItem[] => {
-        const more = this.moreOf(group);
-        if (!more) return [];
-        const { x, y, width } = group.box;
-        const corners = cornersOf(group);
-        return [
-          {
-            key: more.key,
-            kind: "group",
-            point: [x + width - MORE / 2, y + group.strip / 2],
-            radius: group.strip / 2,
-            box: { x: x + width - MORE, y, width: MORE, height: group.strip, corners: [0, corners[1], corners[2], 0] },
-            label: more.label,
-          },
-        ];
-      }),
-      // A box is pressed anywhere else on its title strip, a group on its
-      // band, where it is drawn.
-      ...placement.groups.filter((group) => !(this.bare && group.within && !this.labelOf(group))).map((group): CanvasItem => ({
-        key: group.key,
-        kind: "group",
-        point: group.point,
-        radius: group.strip / 2 + 4,
-        box: { x: group.box.x, y: group.box.y, width: group.box.width, height: group.strip, corners: cornersOf(group) },
-        label: group.kind === "adding" ? (this.options.people?.addPerson ?? "") : group.label,
-        sub: group.kind === "adding" ? "" : this.countOf(group),
-      })),
-      ...scene.adds.flatMap((hub): CanvasItem[] => {
-        const point = this.pointOf(addKey(hub));
-        return point ? [{ key: addKey(hub), kind: "machine", point, radius: RING, label: scene.waiting.has(hub) ? words.waitingJoin : words.addMachine }] : [];
-      }),
-      // A visitor's machine is only seen: nothing to press.
-      ...scene.nodes.flatMap((node): CanvasItem[] => {
-        const point = placement.machines.get(node.key);
-        return point && node.hold !== "visitor" ? [{ key: node.key, kind: "machine", point, radius: RING, label: node.name, sub: node.sub }] : [];
-      }),
-    ];
-    // Narrow, the drawing is fitted to the width and read from the top,
-    // moving down for the rest; never drawn larger than its own size, its
-    // names as large as a phone writes them.
-    const view = this.surface.camera.view;
-    // The page's head lies over the top of a phone's drawing: room above.
-    const top = { ...placement.bounds, y: placement.bounds.y - 40, height: placement.bounds.height + 40 };
-    const wide = { ...top, width: Math.max(top.width, view.width - 2 * NARROW_PAD) };
-    const fitted = this.narrow && view.width > 0 ? { ...wide, height: Math.min(wide.height, (wide.width * view.height) / view.width) } : placement.bounds;
-    // Folding or opening a box moves nothing else on the screen.
-    const folds = [...scene.folded].sort().join("|");
-    const folding = this.placedFolds !== null && folds !== this.placedFolds;
-    this.placedFolds = folds;
-    // Too large to read whole, the drawing shows its hubs and the account's
-    // own machines first; the rest is a drag away.
-    const firsts = [
-      ...[...placement.hubs.values()].map(([x, y]): Bounds => ({ x: x - HUB_ROOM, y: y - HUB_ROOM, width: HUB_ROOM * 2, height: HUB_ROOM * 2 })),
-      ...placement.groups.filter((group) => group.kind === "mine").map((group) => group.box),
-    ];
-    const focus = this.narrow || !firsts.length ? null : enclosing(firsts);
-    this.surface.setScene(items, [], fitted, folding, focus);
+    const far = this.far;
+    const hubs = scene.hubs.map((hub): CanvasItem => ({ key: `hub:${hub.id}`, kind: "hub", point: placement.hubs.get(hub.id)!, radius: KNOT + 6, label: hub.name, sub: scene.hubLabels.get(hub.id) ?? "" }));
+    // A person's or a group's "⋯", over the end of its box's strip: listed
+    // before the strips, since a press goes to the first that holds it.
+    const mores = placement.groups.flatMap((group): CanvasItem[] => {
+      const more = this.moreOf(group);
+      if (!more || far) return [];
+      const { x, y, width } = group.box;
+      const corners = cornersOf(group);
+      return [{ key: more.key, kind: "group", point: [x + width - MORE / 2, y + group.strip / 2], radius: group.strip / 2, box: { x: x + width - MORE, y, width: MORE, height: group.strip, corners: [0, corners[1], corners[2], 0] }, label: more.label }];
+    });
+    const label = (group: Placement["groups"][number]) => (group.kind === "adding" ? (this.options.people?.addPerson ?? "") : group.label);
+    let items: CanvasItem[];
+    if (far) {
+      // Seen from afar a group is pressed anywhere over its machines, before
+      // the box it is in; the box anywhere else on its block. The dashed box
+      // that adds a person is not drawn so far away.
+      const pressed = (group: GroupNode): CanvasItem => ({ key: group.key, kind: "group", point: group.point, radius: 0, box: { ...group.box }, label: group.label, sub: this.countOf(group) });
+      const groups = placement.groups.filter((group) => group.within).map(pressed);
+      const boxes = placement.groups.filter((group) => !group.within && group.kind !== "adding").map(pressed);
+      // Under a finger the rings are too small to tell apart: they are
+      // pressed only nearer, the group or box flown to meanwhile.
+      const rings =
+        this.band === 1 && matchMedia("(pointer: fine)").matches
+          ? scene.nodes.flatMap((node): CanvasItem[] => {
+              const point = placement.machines.get(node.key);
+              if (!point || node.hold === "visitor") return [];
+              return [{ key: node.key, kind: "machine", point, radius: RING, box: { x: point[0] - RING - 10, y: point[1] - ROW / 2, width: 2 * RING + 20, height: ROW }, label: node.name, sub: node.sub, quiet: true }];
+            })
+          : [];
+      items = [...hubs, ...rings, ...groups, ...boxes];
+    } else {
+      items = [
+        ...hubs,
+        ...mores,
+        // A box is pressed anywhere else on its title strip, a group on its
+        // band, where it is drawn.
+        ...placement.groups.map((group): CanvasItem => ({
+          key: group.key,
+          kind: "group",
+          point: group.point,
+          radius: group.strip / 2 + 4,
+          box: { x: group.box.x, y: group.box.y, width: group.box.width, height: group.strip, corners: cornersOf(group) },
+          label: label(group),
+          sub: group.kind === "adding" ? "" : this.countOf(group),
+        })),
+        ...scene.adds.flatMap((hub): CanvasItem[] => {
+          const point = this.pointOf(addKey(hub));
+          return point ? [{ key: addKey(hub), kind: "machine", point, radius: RING, label: scene.waiting.has(hub) ? words.waitingJoin : words.addMachine }] : [];
+        }),
+        // A visitor's machine is only seen: nothing to press.
+        ...scene.nodes.flatMap((node): CanvasItem[] => {
+          const point = placement.machines.get(node.key);
+          return point && node.hold !== "visitor" ? [{ key: node.key, kind: "machine", point, radius: RING, label: node.name, sub: node.sub }] : [];
+        }),
+      ];
+    }
+    // The whole drawing is in view until it is moved, on a phone too.
+    this.surface.setScene(items, [], placement.bounds);
     const selected = scene.selected && items.some((item) => item.key === scene.selected) ? scene.selected : null;
     if (this.surface.selection !== selected) this.surface.setSelection(selected);
   }
 
-  /** What a box's strip says after its name: how many machines and how
-   *  many online, or that a person has none yet. */
   /** The "⋯" at the end of a box's strip: a person's, for the network's
    *  administrator, or a group's the user may rename or end. */
   private moreOf(group: Placement["groups"][number]): { key: string; label: string } | null {
@@ -578,6 +820,8 @@ export class MachineMap {
     return null;
   }
 
+  /** What a box's strip says after its name: how many machines and how
+   *  many online, or that a person has none yet. */
   private countOf(group: Placement["groups"][number]): string {
     if (!group.count && group.person && this.options.people) return this.options.people.noMachinesYet;
     return this.options.words.groupSub(group.count, group.online);
@@ -589,29 +833,51 @@ export class MachineMap {
     const { scene, placement } = this;
     if (!scene || !placement) return;
     const { words } = this.options;
-    // A still drawing is a picture of what is afoot: its marks are drawn
-    // however small it is, as large as its names.
-    const near = this.level >= 1 || !!this.options.still;
-    const marks = this.options.still ? Math.min(1.6, this.grow) : 1;
+    // Drawn for the distance it is seen at now, which may have changed
+    // since the last frame when it is laid between frames.
+    if (this.settle().turned) this.region = null;
+    const far = this.far;
+    const view = this.surface.camera.view;
+    // The paper is drawn round what is in view; all of it while it is
+    // small, or the view has no size yet.
+    if (!far && !this.region) {
+      // Until the view has its size nothing near is drawn: the first frame
+      // draws it, round what it shows.
+      if (!view.width) {
+        this.composed = "";
+        return;
+      }
+      const seen = this.inView();
+      this.region = { x: seen.x - seen.width * AHEAD, y: seen.y - seen.height * AHEAD, width: seen.width * (1 + 2 * AHEAD), height: seen.height * (1 + 2 * AHEAD) };
+      this.regionScale = view.scale;
+    }
+    const region = far ? placement.bounds : this.region!;
     const key = JSON.stringify([
-      near,
-      marks,
-      this.bare,
-      this.grow,
+      far,
+      far ? null : region,
       scene.hubs,
       [...scene.hubLabels],
       scene.adds,
       [...scene.waiting],
-      scene.nodes.map((node) => [node.key, node.name, node.sub, node.online, node.hold, node.reaching, node.here, near ? node.busy : null, node.directAt, node.through]),
+      scene.nodes.map((node) => [node.key, node.name, node.sub, node.online, node.hold, node.reaching, node.here, node.busy, node.directAt, node.through]),
       [...scene.opening],
       [...placement.machines],
-      placement.groups.map((group) => [group.key, group.label, group.folded, group.box, group.count, group.online, group.person?.locked, group.person?.visitor, group.person?.promotion, this.moreOf(group)?.key]),
+      placement.groups.map((group) => [group.key, group.label, group.box, group.count, group.online, group.busy, group.person?.locked, group.person?.visitor, group.person?.promotion, this.moreOf(group)?.key]),
     ]);
     if (key === this.composed) return;
     this.composed = key;
+    this.compositions += 1;
     const css = getComputedStyle(document.documentElement);
     const graphite = css.getPropertyValue("--pen-graphite").trim() || css.getPropertyValue("--text").trim();
     const clay = css.getPropertyValue("--pen-clay").trim() || css.getPropertyValue("--accent").trim();
+    this.inks = {
+      graphite,
+      clay,
+      paper: css.getPropertyValue("--bg").trim() || "transparent",
+      text: css.getPropertyValue("--text").trim() || graphite,
+      box: Number.parseFloat(css.getPropertyValue("--radius-m")) || 10,
+      group: Number.parseFloat(css.getPropertyValue("--radius-s")) || 6,
+    };
     const strokes: PenStroke[] = [];
     const add = (d: string, bounds: Bounds, pen: PenStroke["pen"], colour: string, opacity = 1) => strokes.push({ d, bounds, pen, colour, opacity });
     const around = (point: Point, reach: number): Bounds => ({ x: point[0] - reach, y: point[1] - reach, width: reach * 2, height: reach * 2 });
@@ -620,111 +886,107 @@ export class MachineMap {
       const ys = points.map((p) => p[1]);
       return { x: Math.min(...xs) - pad, y: Math.min(...ys) - pad, width: Math.max(...xs) - Math.min(...xs) + pad * 2, height: Math.max(...ys) - Math.min(...ys) + pad * 2 };
     };
+    const near = (point: Point, reach = RING * 2) => point[0] + reach >= region.x && point[0] - reach <= region.x + region.width && point[1] + reach >= region.y && point[1] - reach <= region.y + region.height;
 
-    // The lines: the hub's down to the boxes, each column's trunk and its
-    // twigs, ruled and square at the corners; a twig to a machine out of
-    // reach, broken.
-    for (const branch of placement.branches) {
-      const [from, to] = [branch.points[0]!, branch.points[branch.points.length - 1]!];
-      if (Math.hypot(to[0] - from[0], to[1] - from[1]) < 1) continue;
-      const random = seeded(`branch:${from.join(",")}:${to.join(",")}`);
-      if (branch.out) for (const d of ticks(branch.points, 5, 3.5, 1.1, random)) add(d, spanning(branch.points, 3), "dry", graphite, 0.45);
-      else add(ruled(from, to, 1.2, random), spanning(branch.points, 3), "marker", graphite, 0.6);
-    }
-
-    for (const hub of scene.hubs) {
-      const knot = placement.hubs.get(hub.id)!;
-      const random = seeded(`knot:${hub.id}`);
-      add(circle(knot, KNOT, 1.8, random), around(knot, KNOT + 4), hub.online ? "marker" : "dry", graphite, hub.online ? 0.9 : 0.5);
-      if (hub.online) add(blot(knot, 2.4, random), around(knot, 5), "marker", graphite, 0.9);
-    }
-
-    // A folded box: its line ends in a blot on the title strip, for the
-    // machines inside.
-    for (const group of placement.groups) {
-      if (!group.folded) continue;
-      const at: Point = [group.box.x + TRUNK, group.box.y + group.strip / 2];
-      add(blot(at, 4.2, seeded(`folded:${group.key}`)), around(at, 6), "marker", graphite, 0.85);
-    }
-
-    // The dashed box that adds a person, a small cross at its start.
-    for (const group of placement.groups) {
-      if (group.kind !== "adding") continue;
-      const { x, y, width } = group.box;
-      const random = seeded(`adding:${group.hub}`);
-      for (const d of ticks(stripPoints(x, y, width, group.strip, 7), 7, 4, 1.3, random)) add(d, { x: x - 4, y: y - 4, width: width + 8, height: group.strip + 8 }, "dry", graphite, 0.6);
-      const at: Point = [x + TRUNK + 14, y + group.strip / 2];
-      const arm = 5;
-      add(outline([[at[0] - arm, at[1]], [at[0] + arm, at[1]]], 1.5, random), around(at, arm + 3), "dry", graphite, 0.75);
-      add(outline([[at[0], at[1] - arm], [at[0], at[1] + arm]], 1.5, random), around(at, arm + 3), "dry", graphite, 0.75);
-    }
-
-    // The dashed ring that adds a machine, a small cross in it.
-    for (const hub of scene.adds) {
-      const at = this.pointOf(addKey(hub));
-      if (!at) continue;
-      const random = seeded(`add:${hub}`);
-      const waiting = scene.waiting.has(hub);
-      for (const d of ticks(ringPoints(at, RING, 56), 7, 4, 1.3, random)) add(d, around(at, RING + 4), "dry", waiting ? clay : graphite, waiting ? 0.9 : 0.6);
-      if (!waiting) {
-        const arm = RING * 0.32;
-        add(outline([[at[0] - arm, at[1]], [at[0] + arm, at[1]]], 1.6, random), around(at, arm + 3), "dry", graphite, 0.7);
-        add(outline([[at[0], at[1] - arm], [at[0], at[1] + arm]], 1.6, random), around(at, arm + 3), "dry", graphite, 0.7);
+    // Seen from afar nothing is inked: the dots and the hub's lines are
+    // drawn plain (`drawFar`).
+    if (!far) {
+      // The lines: the hub's down to the boxes, each column's trunk and its
+      // twigs, ruled and square at the corners; a twig to a machine out of
+      // reach, broken.
+      for (const branch of placement.branches) {
+        const [from, to] = [branch.points[0]!, branch.points[branch.points.length - 1]!];
+        if (Math.hypot(to[0] - from[0], to[1] - from[1]) < 1 || !crosses(region, from, to)) continue;
+        const random = seeded(`branch:${from.join(",")}:${to.join(",")}`);
+        if (branch.out) for (const d of ticks(branch.points, 5, 3.5, 1.1, random)) add(d, spanning(branch.points, 3), "dry", graphite, 0.45);
+        else add(ruled(from, to, 1.2, random), spanning(branch.points, 3), "marker", graphite, 0.6);
       }
-    }
 
-    for (const node of scene.nodes) {
-      const point = placement.machines.get(node.key);
-      if (!point) continue;
-      const [x, y] = point;
-      const online = node.online === true;
-      const random = seeded(`map:${node.key}`);
-      // The ring: graphite for the account's own and others' machines it
-      // works on, clay and broken where an agent alone assists.
-      if (node.hold === "assist") {
-        for (const d of ticks(ringPoints(point, RING, 64), 9, 5.5, 2, random)) add(d, around(point, RING + 4), online ? "marker" : "dry", online ? clay : graphite, online ? 1 : 0.5);
-      } else if (node.hold === "visitor") {
-        // A visitor's: a faint ring, only seen.
-        add(circle(point, RING, 1.8, random), around(point, RING + 4), "dry", graphite, online ? 0.38 : 0.22);
-      } else if (online) {
-        add(circle(point, RING, 2, random), around(point, RING + 4), "marker", graphite, 0.9);
-        add(circle(point, RING + 1.2, 1, random), around(point, RING + 4), "marker", graphite, 0.45);
-      } else {
-        add(circle(point, RING, 2.1, random), around(point, RING + 4), "dry", graphite, 0.5);
+      for (const hub of scene.hubs) {
+        const knot = placement.hubs.get(hub.id)!;
+        const random = seeded(`knot:${hub.id}`);
+        add(circle(knot, KNOT, 1.8, random), around(knot, KNOT + 4), hub.online ? "marker" : "dry", graphite, hub.online ? 0.9 : 0.5);
+        if (hub.online) add(blot(knot, 2.4, random), around(knot, 5), "marker", graphite, 0.9);
       }
-      // A phone: its outline in the ring, a short stroke at its foot.
-      if (node.device) {
-        const faint = online ? 0.85 : 0.45;
-        add(outline(phoneLoop(point, 13, 21, 3.5), 1.6, random, { pressure: 0.2, taper: 0 }), around(point, 13), "marker", graphite, faint);
-        const foot: Point[] = [
-          [x - 2.6, y + 7],
-          [x + 2.6, y + 7],
-        ];
-        add(outline(foot, 1.4, random, { pressure: 0.2, taper: 0.3 }), spanning(foot, 3), "marker", graphite, faint);
-      } else if (node.here) add(blot(point, 3, random), around(point, 5), "marker", graphite, 0.9);
-      // Others may connect to it directly: a dashed halo round its ring,
-      // in pencil while the hub checks it.
-      const opening = scene.opening.has(node.key);
-      if (node.directAt?.length || opening) {
-        for (const d of ticks(ringPoints(point, RING + 7, 72), 5, 3.4, 1.1, random)) add(d, around(point, RING + 11), opening ? "dry" : "marker", graphite, opening ? 0.5 : 0.7);
+
+      // The dashed box that adds a person, a small cross at its start.
+      for (const group of placement.groups) {
+        if (group.kind !== "adding") continue;
+        const { x, y, width } = group.box;
+        const random = seeded(`adding:${group.hub}`);
+        for (const d of ticks(stripPoints(x, y, width, group.strip, 7), 7, 4, 1.3, random)) add(d, { x: x - 4, y: y - 4, width: width + 8, height: group.strip + 8 }, "dry", graphite, 0.6);
+        const at: Point = [x + TRUNK + 14, y + group.strip / 2];
+        const arm = 5;
+        add(outline([[at[0] - arm, at[1]], [at[0] + arm, at[1]]], 1.5, random), around(at, arm + 3), "dry", graphite, 0.75);
+        add(outline([[at[0], at[1] - arm], [at[0], at[1] + arm]], 1.5, random), around(at, arm + 3), "dry", graphite, 0.75);
       }
-      if (!near) continue;
-      // Another's machine whose agents may reach the account's: a short
-      // clay tick across the top of its ring.
-      if (node.reaching) {
-        const tick: Point[] = [
-          [x - RING * 0.45, y - RING * 1.08],
-          [x - RING * 0.28, y - RING * 0.86],
-          [x + RING * 0.1, y - RING * 1.3],
-        ];
-        add(outline(tick, 2.2, random, { pressure: 0.25, taper: 0.2 }), spanning(tick, 4), "marker", clay);
+
+      // The dashed ring that adds a machine, a small cross in it.
+      for (const hub of scene.adds) {
+        const at = this.pointOf(addKey(hub));
+        if (!at || !near(at)) continue;
+        const random = seeded(`add:${hub}`);
+        const waiting = scene.waiting.has(hub);
+        for (const d of ticks(ringPoints(at, RING, 56), 7, 4, 1.3, random)) add(d, around(at, RING + 4), "dry", waiting ? clay : graphite, waiting ? 0.9 : 0.6);
+        if (!waiting) {
+          const arm = RING * 0.32;
+          add(outline([[at[0] - arm, at[1]], [at[0] + arm, at[1]]], 1.6, random), around(at, arm + 3), "dry", graphite, 0.7);
+          add(outline([[at[0], at[1] - arm], [at[0], at[1] + arm]], 1.6, random), around(at, arm + 3), "dry", graphite, 0.7);
+        }
       }
-      // The agents at work or waiting on it, round the upper right of its
-      // ring, clear of its name on its right: one dot each, no names.
-      for (let place = 0; place < node.busy; place++) {
-        const at = -1.15 + place * 0.36;
-        const spot: Point = [x + Math.cos(at) * (RING + 9 + 4 * marks), y + Math.sin(at) * (RING + 9 + 4 * marks)];
-        add(blot(spot, 4 * marks, seeded(`map-agent:${node.key}:${place}`)), around(spot, 3 + 4 * marks), "marker", clay);
+
+      for (const node of scene.nodes) {
+        const point = placement.machines.get(node.key);
+        if (!point || !near(point)) continue;
+        const [x, y] = point;
+        const online = node.online === true;
+        const random = seeded(`map:${node.key}`);
+        // The ring: graphite for the account's own and others' machines it
+        // works on, clay and broken where an agent alone assists.
+        if (node.hold === "assist") {
+          for (const d of ticks(ringPoints(point, RING, 64), 9, 5.5, 2, random)) add(d, around(point, RING + 4), online ? "marker" : "dry", online ? clay : graphite, online ? 1 : 0.5);
+        } else if (node.hold === "visitor") {
+          // A visitor's: a faint ring, only seen.
+          add(circle(point, RING, 1.8, random), around(point, RING + 4), "dry", graphite, online ? 0.38 : 0.22);
+        } else if (online) {
+          add(circle(point, RING, 2, random), around(point, RING + 4), "marker", graphite, 0.9);
+          add(circle(point, RING + 1.2, 1, random), around(point, RING + 4), "marker", graphite, 0.45);
+        } else {
+          add(circle(point, RING, 2.1, random), around(point, RING + 4), "dry", graphite, 0.5);
+        }
+        // A phone: its outline in the ring, a short stroke at its foot.
+        if (node.device) {
+          const faint = online ? 0.85 : 0.45;
+          add(outline(phoneLoop(point, 13, 21, 3.5), 1.6, random, { pressure: 0.2, taper: 0 }), around(point, 13), "marker", graphite, faint);
+          const foot: Point[] = [
+            [x - 2.6, y + 7],
+            [x + 2.6, y + 7],
+          ];
+          add(outline(foot, 1.4, random, { pressure: 0.2, taper: 0.3 }), spanning(foot, 3), "marker", graphite, faint);
+        } else if (node.here) add(blot(point, 3, random), around(point, 5), "marker", graphite, 0.9);
+        // Others may connect to it directly: a dashed halo round its ring,
+        // in pencil while the hub checks it.
+        const opening = scene.opening.has(node.key);
+        if (node.directAt?.length || opening) {
+          for (const d of ticks(ringPoints(point, RING + 7, 72), 5, 3.4, 1.1, random)) add(d, around(point, RING + 11), opening ? "dry" : "marker", graphite, opening ? 0.5 : 0.7);
+        }
+        // Another's machine whose agents may reach the account's: a short
+        // clay tick across the top of its ring.
+        if (node.reaching) {
+          const tick: Point[] = [
+            [x - RING * 0.45, y - RING * 1.08],
+            [x - RING * 0.28, y - RING * 0.86],
+            [x + RING * 0.1, y - RING * 1.3],
+          ];
+          add(outline(tick, 2.2, random, { pressure: 0.25, taper: 0.2 }), spanning(tick, 4), "marker", clay);
+        }
+        // The agents at work or waiting on it, round the upper right of its
+        // ring, clear of its name on its right: one dot each, no names.
+        for (let place = 0; place < node.busy; place++) {
+          const at = -1.15 + place * 0.36;
+          const spot: Point = [x + Math.cos(at) * (RING + 13), y + Math.sin(at) * (RING + 13)];
+          add(blot(spot, 4, seeded(`map-agent:${node.key}:${place}`)), around(spot, 7), "marker", clay);
+        }
       }
     }
     void this.pens.update(strokes).catch((error: unknown) => console.warn("the machines drawing could not be inked", error));
@@ -733,93 +995,562 @@ export class MachineMap {
     // the camera's scale by its own view box (`MapCanvas.over`).
     const { bounds } = placement;
     this.layerBox = { x: bounds.x - LAYER_ROOM, y: bounds.y - LAYER_ROOM, width: bounds.width + 2 * LAYER_ROOM, height: bounds.height + 2 * LAYER_ROOM };
-    this.frameLayers(this.surface.camera.view.scale);
+    this.frameLayers(view.scale || 1);
 
     // The boxes: a wash for the body and a deeper one for the title strip,
-    // no line round either; folded, the strip alone.
-    this.boxes.innerHTML = placement.groups
-      .map((group) => {
-        const { x, y, width, height } = group.box;
-        // The dashed box that adds a person is its pen strokes alone.
-        if (group.kind === "adding") return "";
-        const owner = boxParts(group.kind).owner;
-        const tone = owner === "mine" ? "mine" : owner.startsWith("assist:") ? "assist" : "others";
-        const locked = group.person?.locked ? " locked" : "";
-        const visitor = group.person?.visitor ? " visitor" : "";
-        // A group's band lies in its owner's box over the group's machines;
-        // drawn bare with no room for its name, not at all.
-        if (group.within) return this.bare && !this.labelOf(group) ? "" : `<g class="box ${tone}"><rect class="box-band" x="${x}" y="${y}" width="${width}" height="${group.strip}" rx="6"/></g>`;
-        const title = group.strip;
-        const strip = height <= title
-          ? `<rect class="box-title" x="${x}" y="${y}" width="${width}" height="${title}" rx="7"/>`
-          : `<rect class="box-body" x="${x}" y="${y}" width="${width}" height="${height}" rx="7"/><path class="box-title" d="M${x} ${y + title}V${y + 7}Q${x} ${y} ${x + 7} ${y}H${x + width - 7}Q${x + width} ${y} ${x + width} ${y + 7}V${y + title}Z"/>`;
-        return `<g class="box ${tone}${locked}${visitor}">${strip}</g>`;
-      })
-      .join("");
+    // no line round either. Seen from afar they are the blocks instead.
+    const inRegion = (box: Bounds) => box.x + box.width >= region.x && box.x <= region.x + region.width && box.y + box.height >= region.y && box.y <= region.y + region.height;
+    this.boxes.innerHTML = far
+      ? ""
+      : placement.groups
+          .filter((group) => inRegion(group.box))
+          .map((group) => {
+            const { x, y, width, height } = group.box;
+            // The dashed box that adds a person is its pen strokes alone.
+            if (group.kind === "adding") return "";
+            const tone = toneOf(group.kind);
+            const locked = group.person?.locked ? " locked" : "";
+            const visitor = group.person?.visitor ? " visitor" : "";
+            // A group's band lies in its owner's box over the group's machines.
+            if (group.within) return `<g class="box ${tone}"><rect class="box-band" x="${x}" y="${y}" width="${width}" height="${group.strip}" rx="6"/></g>`;
+            const title = group.strip;
+            const strip =
+              height <= title
+                ? `<rect class="box-title" x="${x}" y="${y}" width="${width}" height="${title}" rx="7"/>`
+                : `<rect class="box-body" x="${x}" y="${y}" width="${width}" height="${height}" rx="7"/><path class="box-title" d="M${x} ${y + title}V${y + 7}Q${x} ${y} ${x + 7} ${y}H${x + width - 7}Q${x + width} ${y} ${x + width} ${y + 7}V${y + title}Z"/>`;
+            return `<g class="box ${tone}${locked}${visitor}">${strip}</g>`;
+          })
+          .join("");
 
-    // The names, on the paper: the hub's above it, each box's on its strip,
-    // each machine's to the right of its ring with what it is under it.
+    // The names: the hub's above it; near, each box's on its strip, each
+    // machine's right of its ring with what it is under it. Each is placed
+    // by its point in the drawing's units, `--x` and `--y` (and a strip by
+    // its size, `--w` and `--h`), the scale applied by the styles.
     const text: string[] = [];
+    const spot = (x: number, y: number) => `--x:${x.toFixed(1)};--y:${y.toFixed(1)}`;
     for (const hub of scene.hubs) {
       const [x, y] = placement.hubs.get(hub.id)!;
       const said = scene.hubLabels.get(hub.id) ?? "";
-      text.push(`<text class="hub-name" x="${x}" y="${y - 22}"${said ? ` dy="-1.15em"` : ""} text-anchor="middle">${escapeText(hub.name)}</text>`);
-      if (said) text.push(`<text class="hub-sub" x="${x}" y="${y - 22}" text-anchor="middle">${escapeText(said)}</text>`);
+      text.push(`<div class="mw-hub" data-name="hub:${escapeText(hub.id)}" style="${spot(x, y)}"><span class="mw-hub-name">${escapeText(hub.name)}</span>${said ? `<span class="mw-hub-sub">${escapeText(said)}</span>` : ""}</div>`);
     }
-    // A box's strip: an arrow that says it opens or folds (a still picture
-    // only leads to the machines page), then its name and how many.
-    const still = this.options.still ?? false;
+    if (!far) {
+      const strip = (x: number, y: number, width: number, height: number) => `${spot(x, y)};--w:${width.toFixed(1)};--h:${height.toFixed(1)}`;
+      for (const group of placement.groups) {
+        if (!inRegion(group.box)) continue;
+        const { x, y, width } = group.box;
+        if (group.kind === "adding") {
+          text.push(`<div class="mw-strip adding" style="${strip(x + TRUNK + 26, y, width - TRUNK - 26, group.strip)}"><span class="mw-say"><span class="mw-title">${escapeText(this.options.people?.addPerson ?? "")}</span></span></div>`);
+          continue;
+        }
+        const locked = group.person?.locked ? " locked" : "";
+        // A visitor's box says so, and so does one asked to become a member.
+        const people = this.options.people;
+        const role = !people ? "" : group.person?.promotion ? people.waitingTag : group.person?.visitor ? people.visitorTag : "";
+        // A small lock while the person is locked, then the "⋯".
+        const end = this.moreOf(group) ? `<span class="mw-end">${group.person?.locked ? glyph("lock", 14) : ""}${glyph("more", 18)}</span>` : "";
+        const title = group.label ? `<span class="mw-title">${escapeText(group.label)}</span>` : "";
+        text.push(
+          `<div class="mw-strip${group.within ? " band" : ""}${locked}" style="${strip(x + TRUNK + 14, y, width - TRUNK - 14, group.strip)}"><span class="mw-say">${title}${role ? `<span class="mw-role">${escapeText(role)}</span>` : ""}<span class="mw-count">${escapeText(this.countOf(group))}</span></span>${end}</div>`,
+        );
+      }
+      const nameAt = (key: string, point: Point, name: string, sub: string, quiet = false) =>
+        text.push(`<div class="mw-machine${quiet ? " quiet" : ""}" data-name="${escapeText(key)}" style="${spot(point[0] + RING + 15, point[1])}"><span class="mw-name">${escapeText(name)}</span>${sub ? `<span class="mw-sub">${escapeText(sub)}</span>` : ""}</div>`);
+      for (const hub of scene.adds) {
+        const at = this.pointOf(addKey(hub));
+        if (at && near(at)) nameAt(addKey(hub), at, scene.waiting.has(hub) ? words.waitingJoin : words.addMachine, "", true);
+      }
+      for (const node of scene.nodes) {
+        const point = placement.machines.get(node.key);
+        if (!point || !near(point)) continue;
+        const through = node.through ? words.viaShort(node.through) : "";
+        nameAt(node.key, point, nameInGroup(node.name, node.group?.within ? node.group.label : null), [node.sub, through].filter(Boolean).join(" "), node.online === false || node.hold === "visitor");
+      }
+    }
+    // A name runs from its ring to a little short of the next column's line.
+    this.words.style.setProperty("--room", String(placement.room - 5 - NAME_AIR));
+    this.words.innerHTML = text.join("");
+    this.blocksDrawn = "";
+    this.drawBlocks();
+    this.drawFar(view);
+  }
+
+  /** Seen from afar, on each box's block (`drawFar`), the names of the box
+   *  and of each of its groups, with how many machines where there is room;
+   *  faint where nothing looked for is in it. The styles keep them in their
+   *  places as the drawing zooms; they are written only for the boxes round
+   *  what is in view, again as the view leaves them, as the distance turns,
+   *  as the scale moves by more than a quarter of a doubling, for what has
+   *  room then, and as the pointer comes to rest on another. */
+  private drawBlocks(): void {
+    const { scene, placement } = this;
+    if (!scene || !placement) return;
+    const view = this.surface.camera.view;
+    const scale = view.scale || 1;
+    if (!this.far || !view.width) {
+      if (this.blocks.firstChild) this.blocks.innerHTML = "";
+      this.blocksDrawn = "";
+      this.blocksRegion = null;
+      return;
+    }
+    const seen = this.inView();
+    const away = !this.blocksRegion || !holds(this.blocksRegion, seen);
+    const key = `${this.markings}:${this.compositions}:${this.band}:${this.pointed}`;
+    const rescaled = !this.blocksScale || Math.abs(Math.log2(scale / this.blocksScale)) > 0.25;
+    if (key === this.blocksDrawn && !away && !rescaled) return;
+    if (away || rescaled) this.blocksRegion = { x: seen.x - seen.width * HEADS_AHEAD, y: seen.y - seen.height * HEADS_AHEAD, width: seen.width * (1 + 2 * HEADS_AHEAD), height: seen.height * (1 + 2 * HEADS_AHEAD) };
+    this.blocksDrawn = key;
+    this.blocksScale = scale;
+    const region = this.blocksRegion!;
+    const { words } = this.options;
+    const people = this.options.people;
+    const found = scene.found ?? null;
+    // The boxes something looked for stands in.
+    const lit = found ? new Set([...found].map((machine) => placement.boxOf.get(machine))) : null;
+    const text = this.textSize("--size-text");
+    const fine = this.textSize("--size-fine");
+    const lineOf = (size: number) => Math.max(size, fine) * 1.3 + 2;
+    // Far, the names lie at the top of the blocks, over the drops; nearer,
+    // where rings would be under them, each sits on its own title strip or
+    // band and rises above it, into the room the drawing leaves there.
+    const ringed = this.band === 1;
+    const inside = new Map<string, GroupNode[]>();
     for (const group of placement.groups) {
-      const { x, y, width } = group.box;
-      const middle = y + group.strip / 2;
-      const arrowAt = x + TRUNK + 20;
-      const band = group.within ? " band" : "";
-      if (group.kind === "adding") {
-        text.push(`<text class="box-name adding" x="${x + TRUNK + 28}" y="${middle + 5}">${escapeText(this.options.people?.addPerson ?? "")}</text>`);
+      if (!group.within) continue;
+      const known = inside.get(group.within);
+      if (known) known.push(group);
+      else inside.set(group.within, [group]);
+    }
+    // Each from a point in the drawing's units, so many pixels below it:
+    // far, the box's top; nearer, the bottom of its strip or band.
+    const spot = (x: number, y: number, width: number, top: number) => `--x:${x.toFixed(1)};--y:${y.toFixed(1)};--w:${width.toFixed(1)};--top:${top.toFixed(1)}px`;
+    const html: string[] = [];
+    for (const box of placement.groups) {
+      if (box.within || box.kind === "adding") continue;
+      const { x, y, width, height } = box.box;
+      if (x > region.x + region.width || x + width < region.x || y > region.y + region.height || y + height < region.y) continue;
+      if (!ringed && !box.count && height * scale < SLIVER) continue;
+      const role = !people ? "" : box.person?.promotion ? people.waitingTag : box.person?.visitor ? people.visitorTag : "";
+      const count = box.count || !box.person ? words.groupCount(box.count) : this.countOf(box);
+      const boxLine = lineOf(text);
+      const boxTop = ringed ? TITLE * scale - boxLine : HEAD_TOP;
+      const tall = ringed || height * scale >= HEAD_TOP + boxLine + 4;
+      const head = tall ? this.headOf(box.label, "--font-emphasis", text, role, count, width * scale) : null;
+      const headRight = head ? HEAD_LEFT + head.width : -Infinity;
+      // Each name on the ground of its block, deeper while the pointer rests
+      // there; faint with its block.
+      const state = `${toneOf(box.kind)}${box.person?.locked ? " locked" : ""}${lit && !lit.has(box.key) ? " unlit" : ""}${this.pointed === box.key ? " pointed" : ""}`;
+      if (head) html.push(`<div class="mb-head ${state}" style="${ringed ? spot(x, y + TITLE, width, -boxLine) : spot(x, y, width, HEAD_TOP)}">${head.html}</div>`);
+      for (const group of inside.get(box.key) ?? []) {
+        const below = group.box.y - y;
+        const groupLine = lineOf(fine);
+        // Its name's top, from the group's own top, and from the box's.
+        const top = ringed ? BAND * scale - groupLine : HEAD_TOP - below * scale;
+        const atTop = below * scale + top;
+        const left = (group.box.x - x) * scale + HEAD_LEFT;
+        const clash = !!head && atTop < boxTop + boxLine && atTop + groupLine > boxTop && left < headRight + HEAD_CLEAR;
+        const said = tall && !clash ? this.headOf(group.label, "--font-reading", fine, "", words.groupCount(group.count), group.box.width * scale) : null;
+        if (said) html.push(`<div class="mb-head group ${state}${this.pointed === group.key ? " within" : ""}" style="${ringed ? spot(group.box.x, group.box.y + BAND, group.box.width, -groupLine) : spot(group.box.x, y, group.box.width, HEAD_TOP)}">${said.html}</div>`);
+      }
+    }
+    this.blocks.innerHTML = html.join("");
+  }
+
+  /** The name on a block seen from afar, `room` pixels across, and what
+   *  follows it where there is room: a tag, then how many machines; with
+   *  how wide its ground is. Nothing where the block has room for no more
+   *  than a few letters. */
+  private headOf(name: string, face: string, size: number, role: string, count: string, room: number): { html: string; width: number } | null {
+    const fine = this.textSize("--size-fine");
+    const across = room - 2 * (HEAD_LEFT + HEAD_PAD);
+    if (across < HEAD_LEAST) return null;
+    const gap = 8;
+    const parts = name ? [`<span class="mb-name">${escapeText(name)}</span>`] : [];
+    let used = name ? this.measured(face, size, name) : -gap;
+    if (role) {
+      const width = this.measured("--font-emphasis", fine, role);
+      if (used + gap + width <= across) {
+        parts.push(`<span class="mb-role">${escapeText(role)}</span>`);
+        used += gap + width;
+      }
+    }
+    const counted = this.measured("--font-reading", fine, count);
+    if (used + gap + counted <= across) {
+      parts.push(`<span class="mb-count">${escapeText(count)}</span>`);
+      used += gap + counted;
+    }
+    if (!parts.length) return null;
+    return { html: parts.join(""), width: Math.min(used, across) + 2 * HEAD_PAD };
+  }
+
+  /** What the pointer rests on: seen from afar its block deepens, names and
+   *  all, on the next frame, and it is named over it. */
+  private point(key: string | null): void {
+    if (key === this.pointed) return;
+    this.pointed = key;
+    if (!this.far) return;
+    this.drawBlocks();
+    this.showTip();
+  }
+
+  /** Seen from afar, what the pointer rests on, named in a small card over
+   *  it: a box or a group with how many of its machines are online, a ring
+   *  with what the machine is. */
+  private showTip(): void {
+    const { placement, scene } = this;
+    // The one chosen is named on its bar already.
+    const pointed = this.far && placement && scene && this.pointed !== scene.selected ? this.pointed : null;
+    const group = pointed ? placement!.groups.find((one) => one.key === pointed && one.kind !== "adding") : undefined;
+    const node = pointed && !group ? scene!.nodes.find((one) => one.key === pointed) : undefined;
+    const point = node ? placement!.machines.get(node.key) : undefined;
+    if (!group && !(node && point)) {
+      if (!this.tip.hidden) this.tip.hidden = true;
+      return;
+    }
+    const key = group?.key ?? node!.key;
+    if (this.tip.dataset.for !== key) {
+      this.tip.dataset.for = key;
+      const said = group ? this.countOf(group) : node!.sub;
+      this.tip.innerHTML = `<span class="map-tip-name">${escapeText(group?.label ?? node!.name)}</span>${said ? `<span class="map-tip-count">${escapeText(said)}</span>` : ""}`;
+    }
+    this.tip.hidden = false;
+    const view = this.surface.camera.view;
+    // Over the block's corner, or over the ring.
+    const [x, y] = group ? this.surface.camera.toScreen([group.box.x, group.box.y]) : this.surface.camera.toScreen([point![0] - RING, point![1] - RING]);
+    const width = this.tip.offsetWidth;
+    const height = this.tip.offsetHeight;
+    const left = Math.max(8, Math.min(view.width - width - 8, x));
+    // Over it, or inside its top where there is no room above it.
+    const top = y - height - 6 >= 8 ? y - height - 6 : Math.max(8, Math.min(view.height - height - 8, y + 6));
+    this.tip.style.transform = `translate(${left.toFixed(1)}px,${top.toFixed(1)}px)`;
+  }
+
+  /** Seen from afar, drawn on the canvas under the blocks, each frame and
+   *  only what the view holds: each hub's knot and its lines; further, its
+   *  trunk and the line over each row of its boxes, and a drop of ink for
+   *  each machine; nearer, every line down to the machines and each one's
+   *  ring, along the line the pen draws it on the paper, with the marks the
+   *  paper puts round it. The one chosen and those framed are circled in
+   *  clay. */
+  private drawFar(view: View): void {
+    const canvas = this.dots;
+    const ratio = window.devicePixelRatio || 1;
+    const width = Math.max(1, Math.round(view.width * ratio));
+    const height = Math.max(1, Math.round(view.height * ratio));
+    const sized = canvas.width === width && canvas.height === height;
+    if (!this.far && sized && this.dotsBare) return;
+    const context = canvas.getContext("2d");
+    if (!context) return;
+    if (!sized) {
+      canvas.width = width;
+      canvas.height = height;
+    }
+    context.setTransform(1, 0, 0, 1, 0, 0);
+    context.clearRect(0, 0, width, height);
+    const { scene, placement } = this;
+    this.dotsBare = true;
+    if (!this.far || !scene || !placement) return;
+    this.dotsBare = false;
+    const version = `${this.compositions}:${this.markings}`;
+    if (this.dotsFor !== version) {
+      this.dotsFor = version;
+      [this.farDots, this.farRings] = this.inkOf(scene, placement);
+    }
+    context.setTransform(ratio, 0, 0, ratio, 0, 0);
+    const { scale } = view;
+    const ringed = this.band === 1;
+    const at = (point: Point): Point => [view.x + point[0] * scale, view.y + point[1] * scale];
+    const seen = (x: number, y: number, reach: number) => x >= -reach && y >= -reach && x <= view.width + reach && y <= view.height + reach;
+    const { graphite, clay, paper } = this.inks;
+    this.drawWashes(context, view, scene, placement);
+    context.lineCap = "round";
+    context.lineJoin = "round";
+    // The lines: the hub's further; every one nearer, a twig to a machine
+    // out of reach broken.
+    for (const out of ringed ? [false, true] : [false]) {
+      context.lineWidth = ringed ? 1 : 1.25;
+      context.strokeStyle = graphite;
+      context.globalAlpha = out ? 0.3 : 0.45;
+      context.setLineDash(out ? [3, 3] : []);
+      context.beginPath();
+      for (const branch of placement.branches) {
+        if (!!branch.out !== out || (!ringed && !branch.trunk)) continue;
+        const [fromX, fromY] = at(branch.points[0]!);
+        const [toX, toY] = at(branch.points[branch.points.length - 1]!);
+        if (Math.max(fromX, toX) < 0 || Math.min(fromX, toX) > view.width || Math.max(fromY, toY) < 0 || Math.min(fromY, toY) > view.height) continue;
+        context.moveTo(fromX, fromY);
+        context.lineTo(toX, toY);
+      }
+      context.stroke();
+    }
+    context.setLineDash([]);
+    // Each knot over its trunk: a ring, a dot in it while the hub is online.
+    context.lineWidth = 1.5;
+    context.strokeStyle = graphite;
+    for (const hub of scene.hubs) {
+      const [x, y] = at(placement.hubs.get(hub.id)!);
+      context.beginPath();
+      context.arc(x, y, 6, 0, Math.PI * 2);
+      context.globalAlpha = 1;
+      context.fillStyle = paper;
+      context.fill();
+      context.globalAlpha = hub.online ? 0.9 : 0.5;
+      context.stroke();
+      if (!hub.online) continue;
+      context.beginPath();
+      context.arc(x, y, 2, 0, Math.PI * 2);
+      context.fillStyle = graphite;
+      context.fill();
+    }
+    const radius = ringed ? RING * scale : Math.max(DOT_LEAST, Math.min(DOT_MOST, RING * 2 * scale * 0.36)) / 2;
+    if (ringed) this.drawRings(context, view, at, seen);
+    else {
+      // The machines, each a drop.
+      for (const set of this.farDots) {
+        const r = set.large ? radius + 1.5 : radius;
+        context.globalAlpha = set.alpha;
+        context.fillStyle = set.colour;
+        context.beginPath();
+        for (const point of set.points) {
+          const [x, y] = at(point);
+          if (!seen(x, y, r)) continue;
+          context.moveTo(x + r, y);
+          context.arc(x, y, r, 0, Math.PI * 2);
+        }
+        context.fill();
+      }
+    }
+    // The one chosen, and those framed, circled.
+    const round = ringed ? (RING + 8) * scale : radius + 4;
+    context.globalAlpha = 1;
+    context.strokeStyle = clay;
+    context.lineWidth = ringed ? 2 : 1.6;
+    context.beginPath();
+    for (const key of [scene.selected, ...scene.framed]) {
+      const point = key ? placement.machines.get(key) : undefined;
+      if (!point) continue;
+      const [x, y] = at(point);
+      if (!seen(x, y, round + 2)) continue;
+      context.moveTo(x + round, y);
+      context.arc(x, y, round, 0, Math.PI * 2);
+    }
+    context.stroke();
+    context.globalAlpha = 1;
+  }
+
+  /** Each box seen from afar, a block of its wash: clay for the account's
+   *  own, paler for an assisting agent's, the words' ink for another's;
+   *  deeper under the pointer, and a group's place in it deeper still while
+   *  the pointer rests there; faint for a locked person, and where nothing
+   *  looked for stands in it. Only what the view holds. */
+  private drawWashes(context: CanvasRenderingContext2D, view: View, scene: MachineMapScene, placement: Placement): void {
+    const { scale } = view;
+    const { clay, text, box: round, group: groupRound } = this.inks;
+    const found = scene.found ?? null;
+    const lit = found ? new Set([...found].map((machine) => placement.boxOf.get(machine))) : null;
+    const ringed = this.band === 1;
+    const fill = (bounds: Bounds, radius: number, colour: string, alpha: number) => {
+      const x = view.x + bounds.x * scale;
+      const y = view.y + bounds.y * scale;
+      const width = bounds.width * scale;
+      const height = bounds.height * scale;
+      if (x > view.width || y > view.height || x + width < 0 || y + height < 0) return;
+      context.globalAlpha = alpha;
+      context.fillStyle = colour;
+      context.beginPath();
+      context.roundRect(x, y, width, height, Math.min(radius, width / 2, height / 2));
+      context.fill();
+    };
+    const boxes = new Map(placement.groups.map((group) => [group.key, group]));
+    for (const group of placement.groups) {
+      if (group.kind === "adding") continue;
+      const owner = group.within ? boxes.get(group.within) : group;
+      if (!owner) continue;
+      const tone = toneOf(owner.kind);
+      const faint = (owner.person?.locked ? 0.45 : 1) * (lit && !lit.has(owner.key) ? 0.4 : 1);
+      const colour = tone === "others" ? text : clay;
+      if (group.within) {
+        // A group has no wash of its own until the pointer rests on it.
+        if (this.pointed === group.key) fill(group.box, groupRound, colour, (tone === "mine" ? 0.09 : 0.07) * faint);
         continue;
       }
-      // Only a box with machines in it folds.
-      const folds = !still && group.count > 0;
-      if (folds) {
-        const d = group.folded ? `M${arrowAt - 2} ${middle - 4}L${arrowAt + 2} ${middle}L${arrowAt - 2} ${middle + 4}` : `M${arrowAt - 4} ${middle - 2}L${arrowAt} ${middle + 2}L${arrowAt + 4} ${middle - 2}`;
-        text.push(`<path class="box-arrow" d="${d}"/>`);
+      // A box with no machine yet is its name alone: nearer, the name's own
+      // tab; far, nothing where its strip would be a sliver.
+      if (!group.count && (ringed || group.box.height * scale < SLIVER)) continue;
+      const pointed = this.pointed === group.key;
+      const alpha = tone === "mine" ? (pointed ? 0.19 : 0.11) : tone === "assist" ? (pointed ? 0.12 : 0.06) : pointed ? 0.11 : 0.06;
+      fill(group.box, round, colour, alpha * faint);
+    }
+    context.globalAlpha = 1;
+  }
+
+  /** The machines' rings drawn small, between the drops and the paper:
+   *  each along the centre line the pen draws its ring on, in ink while it
+   *  is online, faint while away, broken clay where another's agent alone
+   *  assists; the marks round it as the paper has them, a dot at its middle
+   *  for this machine, a phone in it, a dashed halo where others connect
+   *  to it, a clay dot for each agent at work; those looked for ringed in
+   *  clay. */
+  private drawRings(context: CanvasRenderingContext2D, view: View, at: (point: Point) => Point, seen: (x: number, y: number, reach: number) => boolean): void {
+    const { scale } = view;
+    const { graphite, clay } = this.inks;
+    const r = RING * scale;
+    const reach = (RING + 20) * scale;
+    const shown = this.farRings.filter((ring) => {
+      const [x, y] = at(ring.point);
+      return seen(x, y, reach);
+    });
+    // The rings, those inked alike in one stroke.
+    const strokes = new Map<string, FarRing[]>();
+    for (const ring of shown) {
+      const id = `${ring.colour}:${ring.alpha}:${ring.broken}`;
+      const same = strokes.get(id);
+      if (same) same.push(ring);
+      else strokes.set(id, [ring]);
+    }
+    for (const rings of strokes.values()) {
+      const { colour, alpha, broken } = rings[0]!;
+      context.strokeStyle = colour;
+      context.globalAlpha = alpha;
+      context.lineWidth = Math.max(1.1, 2 * scale);
+      context.setLineDash(broken ? [Math.max(2, 9 * scale), Math.max(1.5, 5.5 * scale)] : []);
+      context.beginPath();
+      for (const ring of rings) {
+        const [x, y] = at(ring.point);
+        if (broken) {
+          context.moveTo(x + r, y);
+          context.arc(x, y, r, 0, Math.PI * 2);
+          continue;
+        }
+        const line = this.ringLine(ring.key);
+        context.moveTo(x + line[0]! * r, y + line[1]! * r);
+        for (let index = 2; index < line.length; index += 2) context.lineTo(x + line[index]! * r, y + line[index + 1]! * r);
       }
-      const locked = group.person?.locked ? " locked" : "";
-      // A visitor's box says so, and so does one asked to become a member.
-      const people = this.options.people;
-      const role = !people ? "" : group.person?.promotion ? people.waitingTag : group.person?.visitor ? people.visitorTag : "";
-      const nameX = folds ? arrowAt + 12 : x + TRUNK + 14;
-      // Drawn bare, a box says whose it is and no more, in the room it has;
-      // its rings say how many and which are online.
-      const label = this.labelOf(group);
-      const after = this.bare ? "" : `${role ? `<tspan class="box-role" dx="8">${escapeText(role)}</tspan>` : ""}<tspan class="box-count" dx="10">${escapeText(this.countOf(group))}</tspan>`;
-      if (label) text.push(`<text class="box-name${locked}${band}" x="${nameX}" y="${middle + 5}"><tspan>${escapeText(label)}</tspan>${after}</text>`);
-      if (this.moreOf(group)) {
-        // A small lock while the person is locked, then the "⋯".
-        const end = x + width - MORE / 2;
-        if (group.person?.locked) text.push(`<path class="box-lock" d="${lockPath(end - 26, middle)}"/>`);
-        text.push(`<g class="box-more">${[-6, 0, 6].map((dx) => `<circle cx="${end + dx}" cy="${middle}" r="1.6"/>`).join("")}</g>`);
+      context.stroke();
+    }
+    context.setLineDash([]);
+    // Others may connect to it directly: a dashed halo round its ring.
+    context.strokeStyle = graphite;
+    context.lineWidth = 1;
+    context.globalAlpha = 0.5;
+    context.setLineDash([Math.max(1.5, 5 * scale), Math.max(1.5, 3.4 * scale)]);
+    context.beginPath();
+    for (const ring of shown) {
+      if (!ring.halo) continue;
+      const [x, y] = at(ring.point);
+      context.moveTo(x + (RING + 7) * scale, y);
+      context.arc(x, y, (RING + 7) * scale, 0, Math.PI * 2);
+    }
+    context.stroke();
+    context.setLineDash([]);
+    // This machine's dot, and a phone's outline in its ring.
+    context.globalAlpha = 0.85;
+    context.fillStyle = graphite;
+    context.beginPath();
+    for (const ring of shown) {
+      if (!ring.here) continue;
+      const [x, y] = at(ring.point);
+      const dot = Math.max(1.2, 3 * scale);
+      context.moveTo(x + dot, y);
+      context.arc(x, y, dot, 0, Math.PI * 2);
+    }
+    context.fill();
+    context.lineWidth = 1;
+    context.globalAlpha = 0.6;
+    context.beginPath();
+    for (const ring of shown) {
+      if (!ring.device) continue;
+      const [x, y] = at(ring.point);
+      context.roundRect(x - 6.5 * scale, y - 10.5 * scale, 13 * scale, 21 * scale, 3.5 * scale);
+    }
+    context.stroke();
+    // The agents at work on it, round the upper right of its ring.
+    context.globalAlpha = 1;
+    context.fillStyle = clay;
+    context.beginPath();
+    const spot = Math.max(1.6, 4 * scale);
+    for (const ring of shown) {
+      const [x, y] = at(ring.point);
+      for (let place = 0; place < ring.busy; place += 1) {
+        const angle = -1.15 + place * 0.36;
+        const dotX = x + Math.cos(angle) * (RING + 13) * scale;
+        const dotY = y + Math.sin(angle) * (RING + 13) * scale;
+        context.moveTo(dotX + spot, dotY);
+        context.arc(dotX, dotY, spot, 0, Math.PI * 2);
       }
     }
-    const nameAt = (key: string, point: Point, name: string, sub: string, quiet = false) => {
-      const x = point[0] + RING + 15;
-      text.push(
-        sub
-          ? `<text class="machine-name${quiet ? " quiet" : ""}" data-name="${escapeText(key)}" x="${x}" y="${point[1] - 2}">${escapeText(name)}<tspan class="machine-sub" x="${x}" dy="1.43em">${escapeText(sub)}</tspan></text>`
-          : `<text class="machine-name${quiet ? " quiet" : ""}" data-name="${escapeText(key)}" x="${x}" y="${point[1] + 5}">${escapeText(name)}</text>`,
-      );
+    context.fill();
+    // What is looked for and found, ringed in clay.
+    context.strokeStyle = clay;
+    context.globalAlpha = 0.55;
+    context.lineWidth = 2;
+    context.beginPath();
+    for (const ring of shown) {
+      if (!ring.found) continue;
+      const [x, y] = at(ring.point);
+      context.moveTo(x + (RING + 8) * scale, y);
+      context.arc(x, y, (RING + 8) * scale, 0, Math.PI * 2);
+    }
+    context.stroke();
+  }
+
+  /** The centre line the pen draws `key`'s ring on, for a ring of radius 1
+   *  round the origin: the same line, so the ring drawn small is the very
+   *  ring the paper draws nearer. */
+  private ringLine(key: string): number[] {
+    let line = this.ringLines.get(key);
+    if (!line) {
+      if (this.ringLines.size > 20000) this.ringLines.clear();
+      const points = circlePoints([0, 0], RING, seeded(`map:${key}`));
+      // Every other point is enough at this size.
+      line = points.filter((_, index) => index % 2 === 0 || index === points.length - 1).flatMap(([x, y]) => [x / RING, y / RING]);
+      this.ringLines.set(key, line);
+    }
+    return line;
+  }
+
+  private readonly ringLines = new Map<string, number[]>();
+
+  /** The machines seen from afar: their drops gathered by how each is
+   *  inked, in ink while online, faint while away or only seen, in clay
+   *  while something works on it or another's agent alone assists there,
+   *  faint in a locked person's box, and, while machines are looked for,
+   *  those found larger and in clay, the rest fainter; and their rings as
+   *  they are drawn nearer. */
+  private inkOf(scene: MachineMapScene, placement: Placement): [FarDots[], FarRing[]] {
+    const { graphite, clay } = this.inks;
+    const found = scene.found ?? null;
+    const locked = new Set(placement.groups.filter((group) => group.person?.locked).map((group) => group.key));
+    const sets = new Map<string, FarDots>();
+    const put = (colour: string, alpha: number, large: boolean, point: Point) => {
+      const id = `${colour}:${alpha}:${large}`;
+      let set = sets.get(id);
+      if (!set) {
+        set = { colour, alpha, large, points: [] };
+        sets.set(id, set);
+      }
+      set.points.push(point);
     };
-    for (const hub of this.bare ? [] : scene.adds) {
-      const at = this.pointOf(addKey(hub));
-      if (at) nameAt(addKey(hub), at, scene.waiting.has(hub) ? words.waitingJoin : words.addMachine, "", true);
-    }
-    for (const node of this.bare ? [] : scene.nodes) {
+    const rings: FarRing[] = [];
+    for (const node of scene.nodes) {
       const point = placement.machines.get(node.key);
       if (!point) continue;
-      const through = node.through ? words.viaShort(node.through) : "";
-      nameAt(node.key, point, node.name, [node.sub, through].filter(Boolean).join(" "), node.online === false || node.hold === "visitor");
+      const online = node.online === true;
+      const working = online && node.busy > 0;
+      const assist = node.hold === "assist";
+      const dim = (locked.has(placement.boxOf.get(node.key) ?? "") ? 0.45 : 1) * (found && !found.has(node.key) ? 0.3 : 1);
+      const ink = (alpha: number) => Math.round(alpha * dim * 100) / 100;
+      // The ring as the paper inks it.
+      const ringAlpha = node.hold === "visitor" ? (online ? 0.38 : 0.22) : assist ? (online ? 1 : 0.5) : online ? 0.9 : 0.42;
+      rings.push({ key: node.key, point, colour: assist && online ? clay : graphite, alpha: ink(ringAlpha), broken: assist, here: node.here && !node.device, device: !!node.device, halo: !!node.directAt?.length || scene.opening.has(node.key), busy: online ? node.busy : 0, found: !!found?.has(node.key) });
+      if (found?.has(node.key)) {
+        put(clay, 1, true, point);
+        continue;
+      }
+      const alpha = node.hold === "visitor" ? 0.2 : working ? 1 : online ? (assist ? 0.6 : 0.78) : 0.26;
+      put(working || assist ? clay : graphite, ink(alpha), false, point);
     }
-    this.names.innerHTML = text.join("");
+    // The found over the rest.
+    return [[...sets.values()].sort((a, b) => Number(a.large) - Number(b.large)), rings];
   }
 
   /** Drawn live over the ink: the clay circle round the one chosen and the
@@ -828,46 +1559,57 @@ export class MachineMap {
   private mark(): void {
     const { scene, placement } = this;
     if (!scene || !placement) return;
-    const near = this.level >= 1 || !!this.options.still;
+    const far = this.far;
     const lit = scene.lit ?? null;
-    const key = JSON.stringify([scene.selected, scene.framed, [...scene.fresh], near, scene.nodes.map((node) => [node.key, node.online, node.busy > 0]), [...placement.machines], lit && [...lit]]);
+    const found = scene.found ?? null;
+    const key = JSON.stringify([scene.selected, scene.framed, [...scene.fresh], far, scene.nodes.map((node) => [node.key, node.online, node.busy > 0]), [...placement.machines], lit && [...lit], found && [...found], this.compositions]);
     if (key === this.marked) return;
     this.marked = key;
+    this.markings += 1;
+    this.drawBlocks();
+    this.drawFar(this.surface.camera.view);
     const circles: Ring[] = [];
-    const chosen = scene.selected && !scene.selected.startsWith("group:") ? this.pointOf(scene.selected) : null;
-    if (chosen) circles.push({ id: `chosen:${scene.selected}`, kind: "chosen", d: circle(chosen, scene.selected!.startsWith("hub:") ? KNOT + 9 : RING + 8, 3, seeded(`chosen:${scene.selected}`)) });
-    for (const framed of scene.framed) {
-      const point = this.pointOf(framed);
-      if (point && framed !== scene.selected) circles.push({ id: `chosen:${framed}`, kind: "chosen", d: circle(point, RING + 8, 3, seeded(`chosen:${framed}`)) });
-    }
-    for (const fresh of scene.fresh) {
-      const point = this.pointOf(fresh);
-      if (point && fresh !== scene.selected) circles.push({ id: `arrived:${fresh}`, kind: "arrived", d: circle(point, RING + 8, 3, seeded(`arrived:${fresh}`)) });
-    }
-    // The machines that can take the server glow with a broken clay ring,
-    // a small moon beside one that goes to sleep.
     const moons: string[] = [];
-    for (const [key, candidate] of lit ?? []) {
-      const point = this.pointOf(key);
-      if (!point) continue;
-      circles.push({ id: `lit:${key}`, kind: "lit", d: circle(point, RING + 8, 3, seeded(`lit:${key}`)) });
-      if (candidate.sleeps) moons.push(`<path class="moon" d="${crescent([point[0] - (RING + 18) * 0.72, point[1] - (RING + 18) * 0.72], 7)}"/>`);
-    }
-    for (const name of this.names.querySelectorAll<SVGTextElement>(".machine-name")) {
-      name.classList.toggle("unlit", !!lit && !lit.has(name.dataset.name ?? ""));
-    }
     const flows: string[] = [];
-    if (near) {
+    if (!far) {
+      const chosen = scene.selected && !scene.selected.startsWith("group:") ? this.pointOf(scene.selected) : null;
+      if (chosen) circles.push({ id: `chosen:${scene.selected}`, kind: "chosen", d: circle(chosen, scene.selected!.startsWith("hub:") ? KNOT + 9 : RING + 8, 3, seeded(`chosen:${scene.selected}`)) });
+      for (const framed of scene.framed) {
+        const point = this.pointOf(framed);
+        if (point && framed !== scene.selected) circles.push({ id: `chosen:${framed}`, kind: "chosen", d: circle(point, RING + 8, 3, seeded(`chosen:${framed}`)) });
+      }
+      for (const fresh of scene.fresh) {
+        const point = this.pointOf(fresh);
+        if (point && fresh !== scene.selected) circles.push({ id: `arrived:${fresh}`, kind: "arrived", d: circle(point, RING + 8, 3, seeded(`arrived:${fresh}`)) });
+      }
+      // The machines that can take the server glow with a broken clay ring,
+      // a small moon beside one that goes to sleep.
+      for (const [key, candidate] of lit ?? []) {
+        const point = this.pointOf(key);
+        if (!point) continue;
+        circles.push({ id: `lit:${key}`, kind: "lit", d: circle(point, RING + 8, 3, seeded(`lit:${key}`)) });
+        if (candidate.sleeps) moons.push(`<path class="moon" d="${crescent([point[0] - (RING + 18) * 0.72, point[1] - (RING + 18) * 0.72], 7)}"/>`);
+      }
+      // What is looked for and found is ringed and stays in ink, as still as
+      // the one chosen is.
+      for (const key of found ?? []) {
+        const point = this.pointOf(key);
+        if (point && key !== scene.selected) circles.push({ id: `found:${key}`, kind: "found", d: circle(point, RING + 8, 3, seeded(`found:${key}`)) });
+      }
+      for (const name of this.words.querySelectorAll<HTMLElement>(".mw-machine")) {
+        const named = name.dataset.name ?? "";
+        name.classList.toggle("unlit", (!!lit && !lit.has(named)) || (!!found && !found.has(named)));
+      }
+      const busy = new Set(scene.nodes.filter((node) => node.online === true && node.busy > 0).map((node) => node.key));
       for (const branch of placement.branches) {
-        const node = branch.machine ? scene.nodes.find((one) => one.key === branch.machine) : undefined;
-        if (!node || node.online !== true || node.busy === 0) continue;
+        if (!branch.machine || !busy.has(branch.machine)) continue;
         const [from, to] = [branch.points[0]!, branch.points[branch.points.length - 1]!];
         flows.push(`<path class="flow" d="M${from[0].toFixed(1)} ${from[1].toFixed(1)}L${to[0].toFixed(1)} ${to[1].toFixed(1)}"/>`);
       }
     }
     if (!this.marks.firstElementChild) this.marks.innerHTML = `<g class="clay" filter="url(#pen-marker)"></g><g class="moons"></g><g class="flows"></g>`;
-    const [clay, moon, flow] = [...this.marks.children] as SVGGElement[];
-    keepRings(clay!, circles);
+    const [clayLayer, moon, flow] = [...this.marks.children] as SVGGElement[];
+    keepRings(clayLayer!, circles);
     for (const [layer, html] of [
       [moon!, moons.join("")],
       [flow!, flows.join("")],
@@ -879,10 +1621,53 @@ export class MachineMap {
   }
 }
 
+/** Machines' dots seen from afar inked alike: their colour, how strongly,
+ *  whether larger, and where they stand. */
+interface FarDots {
+  colour: string;
+  alpha: number;
+  large: boolean;
+  points: Point[];
+}
+
+/** A machine's ring drawn small: where, its ink, whether broken, and the
+ *  marks round it. */
+interface FarRing {
+  key: string;
+  point: Point;
+  colour: string;
+  alpha: number;
+  broken: boolean;
+  here: boolean;
+  device: boolean;
+  halo: boolean;
+  busy: number;
+  found: boolean;
+}
+
+/** A box's wash by whose it is: the account's own, an assisting agent's,
+ *  or another person's. */
+function toneOf(kind: string): string {
+  const owner = boxParts(kind).owner;
+  return owner === "mine" ? "mine" : owner.startsWith("assist:") ? "assist" : "others";
+}
+
+/** Whether `outer` holds all of `inner`. */
+function holds(outer: Bounds, inner: Bounds): boolean {
+  return inner.x >= outer.x && inner.y >= outer.y && inner.x + inner.width <= outer.x + outer.width && inner.y + inner.height <= outer.y + outer.height;
+}
+
+/** Whether the line from `from` to `to` passes through `region`. */
+function crosses(region: Bounds, from: Point, to: Point): boolean {
+  const [left, right] = [Math.min(from[0], to[0]), Math.max(from[0], to[0])];
+  const [top, bottom] = [Math.min(from[1], to[1]), Math.max(from[1], to[1])];
+  return right >= region.x && left <= region.x + region.width && bottom >= region.y && top <= region.y + region.height;
+}
+
 /** A clay ring drawn live, by what it rings and why. */
 interface Ring {
   id: string;
-  kind: "chosen" | "arrived" | "lit";
+  kind: "chosen" | "arrived" | "lit" | "found";
   d: string;
 }
 
@@ -922,11 +1707,6 @@ function crescent(centre: Point, r: number): string {
   return `M${tip(-1)}A${r} ${r} 0 1 0 ${tip(1)}A${(r * 0.78).toFixed(1)} ${(r * 0.78).toFixed(1)} 0 1 1 ${tip(-1)}Z`;
 }
 
-/** A small padlock centred on `x`, `y`. */
-function lockPath(x: number, y: number): string {
-  return `M${x - 4.5} ${y - 0.5}h9v6.5h-9zM${x - 2.6} ${y - 0.5}v-2.4a2.6 2.6 0 0 1 5.2 0v2.4`;
-}
-
 /** The corners a box's strip is rounded at: all four for a strip alone or
  *  a group's band, the top two over a box's body. */
 function cornersOf(group: Placement["groups"][number]): [number, number, number, number] {
@@ -951,7 +1731,6 @@ function stripPoints(x: number, y: number, width: number, height: number, r: num
   return points;
 }
 
-/** Points round a circle, for a ring drawn as broken strokes. */
 /** The edge of a phone standing at `centre`, `width` by `height`, its
  *  corners rounded by `corner`: one loop from the middle of its top. */
 function phoneLoop(centre: Point, width: number, height: number, corner: number): Point[] {
@@ -975,6 +1754,7 @@ function phoneLoop(centre: Point, width: number, height: number, corner: number)
   return points;
 }
 
+/** Points round a circle, for a ring drawn as broken strokes. */
 function ringPoints(centre: Point, radius: number, count: number): Point[] {
   const points: Point[] = [];
   for (let index = 0; index <= count; index += 1) {
@@ -984,7 +1764,7 @@ function ringPoints(centre: Point, radius: number, count: number): Point[] {
   return points;
 }
 
-/** Text for SVG, its markup characters written as entities. */
+/** Text for SVG and HTML, its markup characters written as entities. */
 function escapeText(text: string): string {
   return text.replace(/[&<>"]/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[character]!);
 }

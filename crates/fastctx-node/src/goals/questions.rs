@@ -1,4 +1,5 @@
-//! Nonblocking questions retain their cards and route to the goal's actual owner.
+//! What a conversation asks without stopping, where it works for another:
+//! delivered to the goal's owner, or to the colleague's requester.
 
 use crate::Node;
 use fastctx_types::goals::Owner;
@@ -9,10 +10,10 @@ use jiff::Timestamp;
 use std::io;
 use std::sync::Arc;
 
-/// A durable question identity prevents replay from reviving an answered card.
-/// Claude's synthetic cards also need this record because its transcript has no such message.
+/// A durable identity for what was asked without stopping, so that a replay
+/// of the turn does not say or deliver it again.
 pub(crate) fn key(turn: &str, item: &Item) -> Option<String> {
-    crate::asked::of_item(item, Timestamp::UNIX_EPOCH).map(|_| format!("async-question:{turn}:{}", item.id))
+    crate::asked::asked_without_stopping(item).map(|_| format!("async-question:{turn}:{}", item.id))
 }
 
 /// Returns true when a requesting conversation owns this question instead of the user.

@@ -23207,83 +23207,6 @@
             "1791133200000",
             "r-1"
           ],
-          "request": "AskUserQuestion",
-          "params": {
-            "questions": [
-              {
-                "header": "Machines",
-                "multiSelect": true,
-                "options": [
-                  {
-                    "description": "Here",
-                    "label": "Desktop"
-                  },
-                  {
-                    "description": "There",
-                    "label": "Laptop"
-                  }
-                ],
-                "question": "Which machines?"
-              }
-            ],
-            "tool": "AskUserQuestion",
-            "tool_use_id": "tool-1"
-          }
-        }
-      },
-      {
-        "at": "2026-10-04T17:00:00Z",
-        "event": "changed",
-        "turn": "turn-1",
-        "change": {
-          "kind": "resolved",
-          "id": [
-            "claude",
-            "session-1",
-            "1791133200000",
-            "r-1"
-          ],
-          "resolution": {
-            "answer": {
-              "result": {
-                "answers": {
-                  "Which machines?": "Desktop, Laptop"
-                },
-                "questions": [
-                  {
-                    "header": "Machines",
-                    "multiSelect": true,
-                    "options": [
-                      {
-                        "description": "Here",
-                        "label": "Desktop"
-                      },
-                      {
-                        "description": "There",
-                        "label": "Laptop"
-                      }
-                    ],
-                    "question": "Which machines?"
-                  }
-                ]
-              }
-            },
-            "kind": "answer"
-          }
-        }
-      },
-      {
-        "at": "2026-10-04T17:00:00Z",
-        "event": "changed",
-        "turn": "turn-1",
-        "change": {
-          "kind": "request",
-          "id": [
-            "claude",
-            "session-1",
-            "1791133200000",
-            "r-2"
-          ],
           "request": "Elicitation",
           "params": {
             "hook_event_name": "Elicitation",
@@ -23315,7 +23238,7 @@
             "claude",
             "session-1",
             "1791133200000",
-            "r-2"
+            "r-1"
           ],
           "resolution": {
             "answer": {
@@ -23351,39 +23274,6 @@
           "session-1",
           "1791133200000",
           "r-1"
-        ],
-        "answer": {
-          "result": {
-            "answers": {
-              "Which machines?": "Desktop, Laptop"
-            },
-            "questions": [
-              {
-                "header": "Machines",
-                "multiSelect": true,
-                "options": [
-                  {
-                    "description": "Here",
-                    "label": "Desktop"
-                  },
-                  {
-                    "description": "There",
-                    "label": "Laptop"
-                  }
-                ],
-                "question": "Which machines?"
-              }
-            ]
-          }
-        }
-      },
-      {
-        "do": "answer",
-        "request": [
-          "claude",
-          "session-1",
-          "1791133200000",
-          "r-2"
         ],
         "answer": {
           "action": "accept",

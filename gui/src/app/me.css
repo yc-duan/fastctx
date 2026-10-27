@@ -1,26 +1,66 @@
-/* The user's own things (`me.ts`): one column, a card of who they are, then
-   a quiet part for each kind of thing with rows of solid ground under it. */
+/* The user's own things (`me.ts`): one column, a card of who they are and
+   what waits for their word; under them the tabs, and the sheet of the one
+   chosen scrolling inside itself, a quiet part for each kind of thing with
+   rows of solid ground. Where what waits is long, it takes no more than
+   half the room and scrolls on its own. */
+
+.me-top {
+  flex: none;
+  width: var(--board);
+  max-height: 50%;
+  margin: 0 auto;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+}
+
+.me-top:empty {
+  display: none;
+}
+
+.me-tabs {
+  margin-top: var(--space-6);
+  padding-top: var(--space-2);
+}
+
+.me-tabs[hidden] {
+  display: none;
+}
 
 .me {
   flex: 1;
-  padding-bottom: var(--space-12);
+  min-height: 0;
 }
 
-.me > * {
-  width: var(--board);
-  margin-left: auto;
-  margin-right: auto;
+.me > .st-sheet[hidden] {
+  display: none;
 }
 
 .me-login {
   display: flex;
   flex-direction: column;
   gap: var(--space-6);
+}
+
+.me-top > .me-login {
   padding-top: var(--space-6);
 }
 
 .me-login + .me-login {
   margin-top: var(--space-8);
+}
+
+.st-sheet > .me-login + .me-login {
+  margin-top: var(--space-6);
+}
+
+/* Whose part of a sheet it is, where this device has several logins. */
+.me-login-name {
+  margin: 0;
+  font-family: var(--font-emphasis);
+  font-weight: 400;
+  font-size: var(--size-text);
+  color: var(--text-strong);
 }
 
 /* Who the user is: a seal drawn round their initial, the name, the facts in
@@ -219,22 +259,21 @@
   color: var(--text-3);
 }
 
-/* A code says more of itself: its name, and under it how many came in by
-   it, until when and who made it; its revoking at the end. */
+/* A code's row: its name, whose it is where it is another's, and at its
+   end how full it is as a short bar, the bars of a list in one column,
+   then its revoking. */
 .me-row.code-row {
   grid-template-columns: 20px minmax(0, 1fr) auto;
 }
 
-.me-row.code-row .me-row-name {
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 2px;
+.code-meter {
+  display: inline-flex;
+  margin-right: var(--space-2);
 }
 
-/* Its line folds between what it says, not inside a date. */
-.me-row.code-row .me-row-sub {
-  word-break: keep-all;
-  overflow-wrap: anywhere;
+.code-meter .ledger-bar {
+  width: 64px;
+  height: 10px;
 }
 
 /* The people things are given to, in the hand of the page rather than the
@@ -296,15 +335,48 @@
 /* On a phone the facts and the password go under the name, and a row's
    things go under its name. */
 @media (max-width: 760px) {
+  .me-top > .me-login {
+    padding-top: var(--space-3);
+  }
+
+  .me-login {
+    gap: var(--space-4);
+  }
+
+  .me-tabs {
+    margin-top: var(--space-4);
+  }
+
+  /* Who the user is in two lines, the password their key alone at the
+     end. */
   .me-card {
-    grid-template-columns: auto minmax(0, 1fr);
-    row-gap: var(--space-3);
-    padding: var(--space-4);
+    column-gap: var(--space-3);
+    padding: var(--space-3) var(--space-2) var(--space-3) var(--space-4);
+  }
+
+  .me-seal {
+    width: 40px;
+    height: 40px;
+  }
+
+  .me-seal svg {
+    width: 100%;
+    height: 100%;
+  }
+
+  .me-name {
+    font-size: var(--size-h3);
   }
 
   .me-password {
-    grid-column: 1 / -1;
-    justify-self: start;
+    width: 44px;
+    height: 44px;
+    padding: 0;
+    justify-content: center;
+  }
+
+  .me-password span {
+    display: none;
   }
 
   .me-row:not(.act) {
@@ -329,4 +401,27 @@
   .me-arrival-acts {
     grid-column: 2;
   }
+}
+
+/* An assisting login's chip begins with its agent's mark. Its name is
+   never cut short: where the row is too narrow for what follows it, until
+   when and how much go on a second line inside the chip. */
+.me-row .chip > .glyph:first-child {
+  flex: none;
+  color: var(--text-3);
+}
+
+.me-row .chip {
+  flex-wrap: wrap;
+  height: auto;
+  min-height: 24px;
+  max-width: 100%;
+  padding-top: 2px;
+  padding-bottom: 2px;
+  border-radius: 12px;
+}
+
+.me-row .me-chip-label {
+  flex: none;
+  max-width: 100%;
 }

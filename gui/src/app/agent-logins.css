@@ -847,7 +847,9 @@
 }
 
 /* The details, once opened: the files a line each, scrolling here alone. */
-.agent-change > .agent-change-details {
+.agent-change > .agent-change-details,
+.agent-change > .agent-change-steps,
+.agent-change > .agent-change-kept {
   flex: 0 1 auto;
   min-height: 0;
   overflow-y: auto;
