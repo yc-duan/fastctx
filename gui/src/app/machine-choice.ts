@@ -19,10 +19,17 @@ export interface MachineChoiceWords {
   offline: string;
   mine: string;
   theirs(owner: string): string;
+  /** Over the other people's rows, where each is a row of their own. */
+  others: string;
 }
 
 /** A group opens by itself up to this many machines. */
 const OPEN_GROUP = 12;
+
+/** Past this many other people, each is a row that opens onto their
+ *  machines, drawn as it is opened: a network's administrator may hold
+ *  thousands. One holding a machine chosen stands open. */
+const PEOPLE_INLINE = 8;
 
 const FOLDS = "focusFolds";
 
@@ -58,17 +65,29 @@ const byName = (a: FocusPlace, b: FocusPlace) =>
  *  `data-act="fold"`; empty where nothing holds `query`. */
 export function machineChoice(places: FocusPlace[], chosen: ReadonlySet<string>, query: string, folds: ReadonlyMap<string, boolean>, words: MachineChoiceWords): string {
   const holdings: Holding[] = [];
+  const holder = new Map<string | null, Holding>();
+  const grouped = new Map<string, Holding["groups"][number]>();
   for (const place of places) {
     const owner = place.owner ?? null;
-    let holding = holdings.find((one) => one.owner === owner);
-    if (!holding) holdings.push((holding = { owner, loose: [], groups: [] }));
+    let holding = holder.get(owner);
+    if (!holding) {
+      holding = { owner, loose: [], groups: [] };
+      holdings.push(holding);
+      holder.set(owner, holding);
+    }
     if (!place.group) holding.loose.push(place);
     else {
-      let group = holding.groups.find((one) => one.label === place.group);
-      if (!group) holding.groups.push((group = { label: place.group, places: [] }));
+      const key = `${owner ?? ""}/${place.group}`;
+      let group = grouped.get(key);
+      if (!group) {
+        group = { label: place.group, places: [] };
+        holding.groups.push(group);
+        grouped.set(key, group);
+      }
       group.places.push(place);
     }
   }
+  const rowed = holdings.filter((holding) => holding.owner !== null).length > PEOPLE_INLINE;
   holdings.sort((a, b) => (a.owner === null ? -1 : b.owner === null ? 1 : a.owner.localeCompare(b.owner)));
   const matches = (place: FocusPlace, group: string | null) => !query || place.written.toLowerCase().includes(query) || (!!group && group.toLowerCase().includes(query));
   const row = (place: FocusPlace, depth: number, group: string | null) => {
@@ -79,30 +98,62 @@ export function machineChoice(places: FocusPlace[], chosen: ReadonlySet<string>,
     const title = [place.written, away ? words.offline : ""].filter(Boolean).join("　");
     return `<button type="button" class="focus-toggle${on ? " chosen" : ""}${away ? " offline" : ""}" data-act="toggle" data-machine="${escape(place.written)}" aria-pressed="${on}" style="--depth:${depth}" title="${escape(title)}"><span class="focus-mark">${glyph(place.form ?? "machine", 16)}</span><span class="focus-name">${escape(rest || place.written)}</span>${note ? `<span class="focus-note">${escape(note)}</span>` : ""}</button>`;
   };
-  return holdings
+  // One person's machines, `depth` steps in: those in no group, then
+  // each group's.
+  const inside = (holding: Holding, depth: number) => {
+    const loose = holding.loose.filter((place) => matches(place, null)).sort(byName);
+    const groups = holding.groups
+      .sort((a, b) => a.label.localeCompare(b.label, undefined, { numeric: true }))
+      .map((group) => {
+        const shown = group.places.filter((place) => matches(place, group.label)).sort(byName);
+        if (!shown.length) return "";
+        const key = `${holding.owner ?? ""}/${group.label}`;
+        const held = group.places.filter((place) => chosen.has(place.written)).length;
+        const open = !!query || (folds.get(key) ?? (group.places.length <= OPEN_GROUP || held > 0));
+        const head = `<span class="focus-mark">${glyph("group", 16)}</span><span class="focus-name">${escape(group.label)}</span><span class="focus-count-of">${shown.length}</span>${held ? `<span class="focus-held-count">${held}</span>` : ""}`;
+        return foldRow(key, open, head, shown.map((place) => row(place, depth + 1, group.label)).join(""), depth);
+      })
+      .join("");
+    return loose.length || groups ? `${loose.map((place) => row(place, depth, null)).join("")}${groups}` : "";
+  };
+  const mine = holdings.filter((holding) => holding.owner === null || !rowed);
+  const parts = mine
     .map((holding) => {
-      const loose = holding.loose.filter((place) => matches(place, null)).sort(byName);
-      const groups = holding.groups
-        .sort((a, b) => a.label.localeCompare(b.label, undefined, { numeric: true }))
-        .map((group) => {
-          const shown = group.places.filter((place) => matches(place, group.label)).sort(byName);
-          if (!shown.length) return "";
-          const key = `${holding.owner ?? ""}/${group.label}`;
-          const held = group.places.filter((place) => chosen.has(place.written)).length;
-          const open = !!query || (folds.get(key) ?? (group.places.length <= OPEN_GROUP || held > 0));
-          return `<button type="button" class="focus-group${open ? " open" : ""}" data-act="fold" data-key="${escape(key)}" aria-expanded="${open}"><span class="focus-mark">${glyph("group", 16)}</span><span class="focus-name">${escape(group.label)}</span><span class="focus-count-of">${shown.length}</span>${held ? `<span class="focus-held-count">${held}</span>` : ""}<span class="focus-arrow" aria-hidden="true">${glyph("chevron", 14)}</span></button><div class="focus-fold${open ? "" : " shut"}" data-fold="${escape(key)}"${open ? "" : " inert"}><div class="focus-fold-inner">${shown.map((place) => row(place, 1, group.label)).join("")}</div></div>`;
-        })
-        .join("");
-      if (!loose.length && !groups) return "";
+      const rows = inside(holding, 0);
+      if (!rows) return "";
       const title = holding.owner === null ? words.mine : words.theirs(holding.owner);
-      return `<section class="focus-part"><h3 class="picker-title">${escape(title)}</h3>${loose.map((place) => row(place, 0, null)).join("")}${groups}</section>`;
+      return `<section class="focus-part"><h3 class="picker-title">${escape(title)}</h3>${rows}</section>`;
     })
     .join("");
+  if (!rowed) return parts;
+  const people = holdings
+    .filter((holding) => holding.owner !== null)
+    .map((holding) => {
+      const all = [...holding.loose, ...holding.groups.flatMap((group) => group.places)];
+      const found = all.filter((place) => matches(place, place.group ?? null));
+      if (!found.length) return "";
+      const owner = holding.owner!;
+      const key = `person:${owner}`;
+      const held = all.filter((place) => chosen.has(place.written)).length;
+      const open = !!query || (folds.get(key) ?? held > 0);
+      const head = `<span class="focus-mark"><span class="focus-face">${escape([...owner][0]?.toUpperCase() ?? "")}</span></span><span class="focus-name">${escape(owner)}</span><span class="focus-count-of">${found.length}</span>${held ? `<span class="focus-held-count">${held}</span>` : ""}`;
+      return foldRow(key, open, head, open ? inside(holding, 1) : "", 0);
+    })
+    .join("");
+  return people ? `${parts}<section class="focus-part"><h3 class="picker-title">${escape(words.others)}</h3>${people}</section>` : parts;
 }
 
-/** Opens or closes the group whose row is `head`, where it is drawn: its
- *  machines slide in or out; kept for the next time. */
-export function foldChoice(root: HTMLElement, head: HTMLElement, folds: Map<string, boolean>): void {
+/** A row that opens and closes onto `inner`, `depth` steps in. */
+function foldRow(key: string, open: boolean, head: string, inner: string, depth: number): string {
+  const at = depth ? ` style="--depth:${depth}"` : "";
+  return `<button type="button" class="focus-group${open ? " open" : ""}" data-act="fold" data-key="${escape(key)}" aria-expanded="${open}"${at}>${head}<span class="focus-arrow" aria-hidden="true">${glyph("chevron", 14)}</span></button><div class="focus-fold${open ? "" : " shut"}" data-fold="${escape(key)}"${open ? "" : " inert"}><div class="focus-fold-inner">${inner}</div></div>`;
+}
+
+/** Opens or closes the group or person whose row is `head`, where it is
+ *  drawn: its machines slide in or out; kept for the next time. A person
+ *  folded has nothing drawn under it: what `drawn` then gives is put in
+ *  first. */
+export function foldChoice(root: HTMLElement, head: HTMLElement, folds: Map<string, boolean>, drawn?: () => string): void {
   const key = head.dataset.key ?? "";
   const open = head.getAttribute("aria-expanded") !== "true";
   folds.set(key, open);
@@ -110,6 +161,13 @@ export function foldChoice(root: HTMLElement, head: HTMLElement, folds: Map<stri
   head.setAttribute("aria-expanded", String(open));
   head.classList.toggle("open", open);
   const body = [...root.querySelectorAll<HTMLElement>(".focus-fold")].find((one) => one.dataset.fold === key);
+  const inner = body?.querySelector<HTMLElement>(":scope > .focus-fold-inner");
+  if (open && drawn && inner && !inner.childElementCount) {
+    const fresh = document.createElement("template");
+    fresh.innerHTML = drawn();
+    const filled = [...fresh.content.querySelectorAll<HTMLElement>(".focus-fold")].find((one) => one.dataset.fold === key)?.querySelector<HTMLElement>(":scope > .focus-fold-inner");
+    if (filled) inner.replaceChildren(...filled.childNodes);
+  }
   body?.classList.toggle("shut", !open);
   if (body) body.inert = !open;
 }

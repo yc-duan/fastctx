@@ -99,9 +99,11 @@ export interface FocusWords {
   noMachine: string;
   /** Over the machines chosen. */
   chosen: string;
-  /** Over the user's own machines, and another person's. */
+  /** Over the user's own machines, another person's, and every other
+   *  person's where each is a row of their own. */
   mine: string;
   theirs(owner: string): string;
+  others: string;
   /** The field that narrows the machines, and when none is left. */
   search: string;
   noMatch: string;
@@ -157,6 +159,7 @@ export const zhFocus: FocusWords = {
   chosen: "已选",
   mine: "我的机器",
   theirs: (owner) => `${owner} 的机器`,
+  others: "其他人的机器",
   search: "搜索机器",
   noMatch: "没有对得上的机器",
   done: "完成",
@@ -179,6 +182,7 @@ export const enFocus: FocusWords = {
   chosen: "Chosen",
   mine: "My machines",
   theirs: (owner) => `${owner}'s machines`,
+  others: "Others' machines",
   search: "Search machines",
   noMatch: "No machine matches",
   done: "Done",

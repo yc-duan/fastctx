@@ -181,7 +181,7 @@ export class FocusPanel {
       }
       case "fold":
         // Opened or closed where it is, what is under it sliding in or out.
-        foldChoice(this.body, target, this.folds);
+        foldChoice(this.body, target, this.folds, () => this.html());
         this.drawn = this.html();
         break;
       case "done":

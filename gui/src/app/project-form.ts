@@ -170,7 +170,7 @@ export class ProjectForm {
         this.drawMachines();
         break;
       case "fold":
-        foldChoice(this.body, act, this.folds);
+        foldChoice(this.body, act, this.folds, () => machineChoice(this.choices(), new Set(this.machines), this.query, this.folds, this.options.focusWords));
         break;
       case "place":
         this.choosePlace(machine);
