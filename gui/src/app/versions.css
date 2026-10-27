@@ -53,7 +53,9 @@
   list-style: none;
 }
 
+/* A row keeps its height however many there are: the list scrolls. */
 .vw-row {
+  flex: none;
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto auto;
   align-items: center;
