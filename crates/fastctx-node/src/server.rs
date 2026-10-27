@@ -951,11 +951,11 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
             users_voice(node, peer)?;
             crate::timers::call(node, timer).await
         }
-        Call::ClaudeSessionDirectory { session, previous, cwd, process, conversation } => {
+        Call::ClaudeSessionDirectory { session, previous, cwd, process, conversation, home, background } => {
             if !matches!(peer, Peer::Session { host } if host.agent.as_str() == "claude") {
                 users_voice(node, peer)?;
             }
-            crate::claude::pairing::directory(node, session, previous, cwd, conversation, process)
+            crate::claude::pairing::directory(node, session, previous, cwd, conversation, process, home, background)
                 .await
                 .map(|path| Reply::ClaudeSessionDirectory { path })
         }
@@ -981,6 +981,22 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
             }
             let codex = host.agent.as_str() == "codex";
             let process = hints.host_process.clone();
+            // A session the World does not know is the owner's own when the
+            // user's own program runs it; one the World's Codex host runs,
+            // under a login that assists other accounts, may be a thread one
+            // of their conversations spawned (`crate::adoption`).
+            let unknown = hints.resident.is_none()
+                && hints.was.is_none()
+                && hints.thread.as_deref().is_none_or(|thread| node.residents.resident_of_thread(thread).is_none());
+            let own = hints
+                .host_process
+                .as_ref()
+                .is_some_and(|started| !node.codex.all().iter().any(|world| world.process().as_ref() == Some(started)));
+            let arrival = crate::adoption::Arrival { login: crate::adoption::Login::Named(hints.home.clone()), own };
+            if unknown && let Err(error) = crate::adoption::owners_own(node, host.agent.as_str(), &arrival) {
+                node.log.line(format_args!("refused a {} session the World did not start: {error}", host.agent));
+                return Err(Failure::new(error.to_string()));
+            }
             let whereabouts = node.residents.arrive(&node.world, &node.machine(), host, hints)?;
             if let Err(error) = crate::codex::native_context::observe(node, &whereabouts.resident).await {
                 node.log.line(format_args!("initializing {}'s context observation: {error}", whereabouts.resident));

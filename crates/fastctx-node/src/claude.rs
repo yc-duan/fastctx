@@ -21,6 +21,7 @@ pub(crate) mod calls;
 mod catalog;
 pub(crate) mod control;
 pub(crate) mod control_outcome;
+mod copies;
 mod fork;
 mod fork_attachments;
 mod fork_history;
@@ -76,6 +77,8 @@ pub struct Claude {
     /// Held to read while the World starts a session and learns its id;
     /// to write, while a mod registration is assigned to a resident.
     pub births: crate::ranked::Births,
+    /// Wakes in flight, and the copies Claude Code started instead.
+    copies: copies::Copies,
     /// The user's words handed to each resident's session as the user's,
     /// until Claude Code reports keeping them (`said_by_world`).
     handed: Mutex<HashMap<ResidentId, Vec<String>>>,
@@ -114,6 +117,7 @@ impl Claude {
             }),
             bridge: Default::default(),
             births: Default::default(),
+            copies: Default::default(),
             delivering: Default::default(),
             reading: Default::default(),
             startup_listings: Default::default(),
@@ -983,7 +987,8 @@ async fn pair(node: &Arc<Node>, session: &str) {
             _ => return,
         }
     };
-    let resident = match pairing::resident(node, &registration) {
+    let unknown = crate::adoption::Arrival { login: crate::adoption::Login::Unknown, own: false };
+    let resident = match pairing::resident(node, &registration, &unknown) {
         Ok(resident) => resident,
         Err(error) => {
             node.log.line(format_args!("pairing Claude session {session}: {error}"));
@@ -1419,16 +1424,15 @@ pub(crate) async fn wake(
     }
     let args = background::wake_args(session, &words);
     let (launch_node, launch_resident, launch_id) = (node.clone(), resident.clone(), id.clone());
-    tokio::task::spawn_blocking(fastctx_platform::doing::carried(move || {
+    // A session that reports while this runs waits to learn whether it is a copy.
+    let waking = node.claude.copies.waking();
+    let printed = tokio::task::spawn_blocking(fastctx_platform::doing::carried(move || {
         use crate::lifecycle::wake::WakeFailure;
         trust(&[cwd.as_path()], &env).map_err(Failure::new)?;
         crate::lifecycle::retry::attempting(&launch_node, &launch_resident, &launch_id)?;
         background::invoke(&program, &args, &cwd, &env, std::time::Duration::from_secs(120)).map_err(|error| {
             WakeFailure { failure: Failure::new(error.message), attempted: error.started, permanent: false }
-        })?;
-        crate::lifecycle::retry::accepted(&launch_node, &launch_resident, &launch_id)
-            .map_err(|failure| WakeFailure { failure, attempted: true, permanent: false })?;
-        Ok::<(), WakeFailure>(())
+        })
     }))
     .await
     .map_err(|error| crate::lifecycle::wake::WakeFailure {
@@ -1436,6 +1440,25 @@ pub(crate) async fn wake(
         attempted: true,
         permanent: false,
     })??;
+    // The session was still running, so Claude Code copied it instead: the
+    // copy is stopped, and the words, which never reached the session they
+    // were for, wait to be handed to it again.
+    if let Some(copy) = copies::of(session, &printed) {
+        copies::discard(node, home, &copy).await;
+        return Err(crate::lifecycle::wake::WakeFailure {
+            failure: Failure::new(format!(
+                "{session} was still running; Claude Code started a copy of it instead, which was stopped"
+            )),
+            attempted: false,
+            permanent: false,
+        });
+    }
+    drop(waking);
+    crate::lifecycle::retry::accepted(node, resident, &id).map_err(|failure| crate::lifecycle::wake::WakeFailure {
+        failure,
+        attempted: true,
+        permanent: false,
+    })?;
     // Claude Code took the words; the session that takes them may still end
     // before the World's plugin pairs, which only watching it tells.
     startup::observe(node, resident, id.clone(), true);
