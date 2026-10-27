@@ -341,7 +341,8 @@
   flex: 1;
 }
 
-.callee-field {
+.callee-field,
+.feature-field {
   display: flex;
   flex-direction: column;
   gap: 4px;
@@ -351,6 +352,7 @@
 
 .callee-field input,
 .callee-field select,
+.feature-field input,
 .feature-text {
   width: 100%;
   min-height: 34px;
@@ -383,6 +385,11 @@
   gap: var(--space-2);
   font-size: var(--size-text);
   color: var(--text-2);
+}
+
+.callee-switch input {
+  margin: 0;
+  accent-color: var(--accent);
 }
 
 .callee-add {
@@ -668,4 +675,35 @@
   from {
     --shown: 0;
   }
+}
+
+/* The sentinels' settings (`sentinel-form.ts`): the fields of a part
+   stacked under its choices, a key's label saying whether it is set. */
+.sf-fields {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 300px), 1fr));
+  gap: var(--space-3);
+  margin-top: var(--space-4);
+}
+
+.sf-key-label {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.sf-key-said {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  color: var(--text-2);
+}
+
+.sf-key-said .glyph {
+  color: var(--accent);
+}
+
+.sf-home-said {
+  margin-top: var(--space-2);
+  color: var(--caution);
 }

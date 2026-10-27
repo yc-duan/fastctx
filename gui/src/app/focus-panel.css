@@ -73,6 +73,20 @@
   opacity: 0.6;
 }
 
+/* A person's mark, where each other person is a row: the first letter of
+   their name in a small round fill. */
+.focus-face {
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  border-radius: var(--radius-full);
+  background: var(--fill-strong);
+  color: var(--text-2);
+  font-size: var(--size-fine);
+  line-height: 1;
+}
+
 .focus-name {
   min-width: 0;
   overflow: hidden;

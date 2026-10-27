@@ -8,15 +8,26 @@ mod accounts;
 #[cfg(target_os = "android")]
 mod android;
 mod collab;
+mod collaboration;
 mod composer;
 mod connection;
 #[cfg(desktop)]
 mod data;
 mod features;
+mod goals;
 mod hub_moving;
 mod item_details;
 mod kept;
+#[cfg(desktop)]
+mod local_repair;
+mod memory;
+mod plan;
 mod profile;
+#[cfg(desktop)]
+mod repair_probe;
+mod startup;
+mod sentinels;
+mod sentinel_controls;
 mod transcript;
 mod updates;
 mod world_watch;
@@ -49,11 +60,11 @@ use fastctx_client::Conversation;
 use fastctx_client::World;
 use fastctx_types::file_search::{FileSearchReply, FileSearchRequest};
 use fastctx_types::management::{Managed, Management};
-use fastctx_types::project::{JournalSummary, JournalView, MapView, Record, RecordFields, Stamp};
+use fastctx_types::project::{MapView, Record, RecordFields, Stamp};
 use fastctx_types::residents::Landed;
 use fastctx_types::session::control::{Control, Controlled, Offers};
 use fastctx_types::town::{LookedUp, WorldWho};
-use fastctx_types::{Address, AgentName, EntryId, JournalName, ResidentId, TownName};
+use fastctx_types::{Address, AgentName, ResidentId, TownName};
 use serde::Serialize;
 use tauri::Manager as _;
 use tauri::async_runtime::JoinHandle;
@@ -533,20 +544,6 @@ async fn project(shell: tauri::State<'_, Shell>, town: String) -> Result<Project
     Ok(Project { map: map.map_err(|error| error.to_string())?, who: who.map_err(|error| error.to_string())? })
 }
 
-/// A journal's latest entries that fit, or those before `before`.
-#[fastctx_gui_command::command]
-async fn journal(
-    shell: tauri::State<'_, Shell>,
-    town: String,
-    journal: String,
-    before: Option<String>,
-) -> Result<JournalView, String> {
-    let town = TownName::try_from(town).map_err(|error| error.to_string())?;
-    let journal = JournalName::try_from(journal).map_err(|error| error.to_string())?;
-    let before = before.map(|id| EntryId::try_from(id).map_err(|error| error.to_string())).transpose()?;
-    shell.world().journal(Some(town), journal, before).await.map_err(|error| error.to_string())
-}
-
 /// Asks an agent into the World for the user: on a machine, in a town,
 /// with the user's words as the first it hears.
 // Each argument is a named field of the page's call; a struct would only
@@ -983,33 +980,6 @@ async fn project_edit(
     Ok(TownRecord { town: made.town, record: made.record, opened: made.opened })
 }
 
-#[fastctx_gui_command::command]
-async fn journals(shell: tauri::State<'_, Shell>, name: String) -> Result<Vec<JournalSummary>, String> {
-    Ok(shell.world().journals(Some(town(name)?)).await.map_err(|error| error.to_string())?.1)
-}
-
-/// An entry the user writes in a journal, starting the journal when it has
-/// no description yet and one is given.
-#[fastctx_gui_command::command]
-async fn journal_add(
-    shell: tauri::State<'_, Shell>,
-    name: String,
-    journal: String,
-    text: String,
-    description: Option<String>,
-) -> Result<String, String> {
-    let journal = JournalName::try_from(journal).map_err(|error| error.to_string())?;
-    let reply = shell
-        .world()
-        .add_entry(Some(town(name)?), journal, text, description, Vec::new(), Vec::new(), None)
-        .await
-        .map_err(|error| error.to_string())?;
-    match reply {
-        fastctx_types::Reply::EntryAdded { id, .. } => Ok(id.to_string()),
-        other => Err(format!("the node answered {other:?}")),
-    }
-}
-
 /// Opens a resident on this computer in its own official interface, in a
 /// terminal window of its own; resolves when that window's attach ends.
 #[cfg(desktop)]
@@ -1096,43 +1066,64 @@ pub(crate) const WINDOW_KEPT: tauri_plugin_window_state::StateFlags = tauri_plug
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    #[cfg(desktop)]
+    {
+        let args: Vec<_> = std::env::args_os().collect();
+        if args.get(1).is_some_and(|arg| arg == "--repair") {
+            if let Err(error) = local_repair::launch(None, true) {
+                startup::persist("launch_repair", &error);
+                std::process::exit(1);
+            }
+            return;
+        }
+        if args.get(1).is_some_and(|arg| arg == "--repair-probe") {
+            let result = match (args.get(2), args.get(3)) {
+                (Some(receipt), Some(profile)) => repair_probe::run(receipt.into(), profile.into()),
+                _ => Err("repair probe needs a receipt and an isolated profile".into()),
+            };
+            if let Err(error) = result {
+                eprintln!("{error}");
+                std::process::exit(1);
+            }
+            return;
+        }
+    }
     #[cfg(all(windows, not(feature = "page-sandbox-probe")))]
-    let Some(desktop) = desktop_presence::enter().expect("starting World's desktop presence") else {
-        return;
+    let (desktop, desktop_error) = match desktop_presence::enter() {
+        Ok(Some(instance)) => (Some(instance), None),
+        Ok(None) => return,
+        Err(error) => (None, Some(error)),
     };
     let builder = tauri::Builder::default()
+        .manage(startup::Startup::default())
         .plugin(tauri_plugin_world_pages::init())
         // Its script also sends every link that opens a new window to the
         // system's browser, where the webview alone would drop it.
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
-            let directory = app.path().app_data_dir()?;
-            let connection = tauri::async_runtime::block_on(async { connection::Connection::open(directory) })
-                .map_err(std::io::Error::other)?;
-            app.manage(Shell {
-                connection,
-                watches: Arc::default(),
-                transcripts: Arc::default(),
-                next: AtomicU64::new(0),
-                page: AtomicU64::new(0),
-                line_requests: Default::default(),
-                held_reads: Default::default(),
-            });
             #[cfg(desktop)]
             app.manage(removal::State::default());
             #[cfg(desktop)]
             app.manage(remote_world::Sessions::default());
-            #[cfg(desktop)]
-            updates::after_update(app.handle());
-            // The node or the device learns which application this is, for
-            // its updates and the network's.
-            let handle = app.handle().clone();
-            tauri::async_runtime::spawn(async move {
-                let carried = handle.path().resource_dir().ok().map(|dir| dir.join("linux"));
-                if let Err(error) = updates::introduce(&handle.state::<Shell>(), carried).await {
-                    eprintln!("World: telling the World which application this is: {error}");
+            if let Some(window) = app.get_webview_window("main") {
+                #[cfg(windows)]
+                if window.hwnd().is_ok_and(|handle| unsafe {
+                    !windows::Win32::UI::WindowsAndMessaging::IsWindowVisible(windows::Win32::Foundation::HWND(
+                        handle.0,
+                    ))
+                    .as_bool()
+                }) {
+                    // A hidden launcher can override the first ShowWindow call;
+                    // reset tao's visibility cache before asking it to show again.
+                    if let Err(error) = window.hide() {
+                        startup::warning(app.handle(), "show_window", error.to_string());
+                    }
                 }
-            });
+                if let Err(error) = window.show() {
+                    startup::warning(app.handle(), "show_window", error.to_string());
+                }
+            }
+            startup::open(app.handle().clone());
             Ok(())
         })
         .on_page_load(|webview, payload| {
@@ -1144,7 +1135,14 @@ pub fn run() {
             }
         })
         .invoke_handler(tauri::generate_handler![
+            startup::startup_state,
+            startup::startup_retry,
+            #[cfg(desktop)]
+            local_repair::repair_here,
+            #[cfg(desktop)]
+            local_repair::repair_state,
             updates::update_state,
+            updates::update_repair,
             updates::update_progress,
             updates::update_look,
             updates::update_set,
@@ -1192,12 +1190,28 @@ pub fn run() {
             accounts::accounts,
             accounts::seen_dissolved,
             accounts::machine_log,
+            plan::plan_read,
+            plan::plan_write,
+            plan::plan_watch,
+            sentinel_controls::sentinel_list,
+            sentinel_controls::sentinel_stop,
+            sentinels::sentinel_settings_read,
+            sentinels::sentinel_settings_write,
+            sentinels::sentinel_key_set,
             profile::profile_read,
             profile::profile_subagents,
             profile::profile_write,
             profile::mcp,
             collab::collab_read,
             collab::collab_write,
+            collaboration::collaboration_tree,
+            memory::memory_list,
+            memory::memory_read,
+            memory::memory_save_spec,
+            memory::memory_add_journal,
+            memory::memory_settings_read,
+            memory::memory_settings_set,
+            memory::memory_watch,
             features::features_read,
             features::features_set,
             features::features_language,
@@ -1225,9 +1239,6 @@ pub fn run() {
             since,
             agents,
             project,
-            journal,
-            journals,
-            journal_add,
             project_new,
             project_edit,
             watch,
@@ -1242,6 +1253,10 @@ pub fn run() {
             kept::kept_forget,
             item_details::item_detail,
             item_details::agent_activity,
+            goals::goal_read,
+            goals::goal_history,
+            goals::goal_update,
+            goals::goal_watch,
             composer::composer_read,
             composer::composer_watch,
             composer::composer_update,
@@ -1318,7 +1333,7 @@ pub fn run() {
         .plugin(tauri_plugin_window_state::Builder::default().with_state_flags(WINDOW_KEPT).build())
         .plugin(tauri_plugin_updater::Builder::new().build());
     #[cfg(all(windows, not(feature = "page-sandbox-probe")))]
-    let builder = builder.plugin(desktop_presence::plugin(desktop));
+    let builder = builder.plugin(desktop_presence::plugin(desktop, desktop_error));
     #[cfg(windows)]
     let builder = builder.plugin(titlebar::plugin());
     #[cfg(target_os = "android")]
@@ -1326,5 +1341,7 @@ pub fn run() {
     let context = tauri::generate_context!();
     #[cfg(windows)]
     let context = titlebar::configure(context);
-    builder.run(context).expect("running the World's window");
+    if let Err(error) = builder.run(context) {
+        startup::persist("open_window", &error.to_string());
+    }
 }

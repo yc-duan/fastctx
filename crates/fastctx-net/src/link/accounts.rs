@@ -302,6 +302,8 @@ impl Link {
             addresses: self.hub_addresses(),
             link: self.state(),
             me: Some(view.me.clone()),
+            hub_machine: view.hub_machine.clone(),
+            machine_notices: view.machine_notices.clone(),
             renames: view.renames,
             managed: view.managed,
             roles: view.roles,

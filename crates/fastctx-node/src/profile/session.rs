@@ -22,8 +22,6 @@ fn write_session_file(path: &std::path::Path, bytes: &[u8]) -> std::io::Result<(
 }
 
 pub(crate) const INTRO: &str = "The user's own instructions for all work for them; follow them:";
-pub(crate) const CHANGED: &str =
-    "=== the user's own instructions changed; they now read as follows, and replace those you were given ===";
 
 /// A first use can arrive before the hub's directory notification that
 /// grants this machine the account's full profile. Read that acknowledged view.
@@ -195,9 +193,8 @@ pub(crate) fn claude(node: &Node, id: &ResidentId, creating: bool) -> Result<std
 /// already: once its records are gathered into the conversation, that path
 /// is the room's alias, which is made private as the room is.
 pub(crate) fn hand_to_session(node: &Node, id: &ResidentId, session: &std::path::Path) -> std::io::Result<()> {
-    let prompt = node.residents.about(id).map(|(about, _)| prompt(node, &about.acting)).unwrap_or_default();
-    // An empty block also replaces an earlier prompt after account access is lost.
-    write_session_file(&session.join("user.md"), text(&prompt).as_bytes())
+    crate::context::refresh_local(node, id)?;
+    crate::context::hand_to_session(node, id, session)
 }
 
 pub(crate) async fn refresh(node: &Arc<Node>) {

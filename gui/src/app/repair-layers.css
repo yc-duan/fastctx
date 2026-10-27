@@ -1,0 +1,16 @@
+/* A repair's layers (`repair-layers.ts`), on the uninstall dialog's list:
+   the layer being checked breathes, a mended one is ticked in clay. */
+
+.rp-layers li[data-state="now"] .removal-mark svg {
+  transform: scale(var(--breath-scale));
+  opacity: var(--breath-alpha);
+  animation: pulse var(--breath) ease-in-out infinite;
+}
+
+.rp-layers li[data-repaired] .removal-mark svg {
+  color: var(--accent);
+}
+
+:root[data-reduced] .rp-layers li .removal-mark svg {
+  animation: none;
+}

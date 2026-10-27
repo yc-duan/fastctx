@@ -85,6 +85,10 @@ export class FindContent {
     const stamp = String(block.stamp);
     // Turns not held are found by the shell, not here.
     if (block.kind === "gap") return;
+    if (block.kind === "say") {
+      yield part("body", stamp, {}, () => htmlText(render(block.text)));
+      return;
+    }
     if (block.kind !== "activity-group") {
       yield part("body", stamp, {}, () => this.rendering.entry(block));
       if (block.kind === "heard" && this.rendering.notice(block)) {

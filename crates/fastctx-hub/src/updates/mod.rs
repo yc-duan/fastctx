@@ -10,6 +10,7 @@
 
 mod history;
 mod view;
+mod repair;
 pub(crate) use view::request as view_request;
 mod attempt;
 mod cleanup;
@@ -208,6 +209,8 @@ impl Updates {
             hub: Some(env!("CARGO_PKG_VERSION").to_string()),
             due,
             updates_view: true,
+            repair_supported: true,
+            repairs: BTreeMap::new(),
         }
     }
 
@@ -224,6 +227,7 @@ fn running(report: &Report) -> Running {
         github: report.github,
         away: false,
         hub_here: report.hub_here,
+        repair_supported: report.repair_supported,
     }
 }
 
@@ -270,11 +274,18 @@ pub(crate) fn network(hub: &Hub) -> Network {
         network
     };
     network.machines.retain(|name, _| directory.member(name).is_some());
+    network.repairs = hub.store().hub.repairs.iter().filter_map(|kept| directory.by_key(&kept.key).map(|member| {
+        let mut due = kept.due.clone();
+        due.manifest = None;
+        (member.name.clone(), due)
+    })).collect();
     inventory::ready_network(hub, network)
 }
 
 /// `name` told the hub its versions on its session `generation`.
-pub(crate) fn heard(hub: &Arc<Hub>, name: &MachineName, generation: u64, report: Report) {
+pub(crate) fn heard(hub: &Arc<Hub>, name: &MachineName, generation: u64, mut report: Report) {
+    repair::merge_legacy_report(hub, name, &mut report);
+    if let Some(result) = &report.repair { repair::settle(hub, name, result); }
     inventory::targets(hub, name, &report);
     let (kernel, app, asked) =
         (report.kernel.clone(), report.app.as_ref().map(|a| a.version.clone()), report.asked.clone());
@@ -299,7 +310,11 @@ pub(crate) fn heard(hub: &Arc<Hub>, name: &MachineName, generation: u64, report:
         updates.reports.insert(name.clone(), (generation, report));
         changed
     };
+    if let Err(error) = crate::hub_machine::settle(hub) {
+        hub.log.line(format_args!("revoking shares of the hub machine: {error}"));
+    }
     if planning_changed {
+        hub.directory_changed.notify_one();
         settle(hub, name, &kernel, app.as_deref(), asked);
     }
     let mut due_changed = false;
@@ -361,7 +376,10 @@ fn settle(hub: &Hub, name: &MachineName, kernel: &str, app: Option<&str>, asked:
     let actor = Actor { account: None, authenticated: true, member: Some(name.clone()), peer: None };
     let action = Action::Updated { machine: name.clone(), from: asked.from, to: kernel.to_string(), by: asked.by };
     match crate::machine_log::keep(&mut store, &directory, actor, action, Outcome::Done) {
-        Ok(()) => hub.machine_log_changed.notify_one(),
+        Ok(()) => {
+            hub.machine_log_changed.notify_one();
+            hub.directory_changed.notify_one();
+        }
         Err(error) => hub.log.line(format_args!("{error}")),
     }
 }
@@ -417,6 +435,11 @@ pub(crate) fn tell(hub: &Hub, only: Option<&MachineName>) {
         };
         cut.machines.retain(|machine, _| visible(machine));
         cut.due.retain(|machine, _| visible(machine));
+        cut.repairs.retain(|machine, _| visible(machine));
+        if let Some(due) = cut.repairs.get_mut(directory.canonical(name)) {
+            due.manifest = directory.member(name).and_then(|member| hub.store().hub.repairs.iter()
+                .find(|kept| kept.key == member.key && kept.due.id == due.id).and_then(|kept| kept.due.manifest.clone()));
+        }
         // Only the executor needs the full manifest. Repeating it for every
         // managed machine exceeds the control-frame limit (2026-10-20).
         if let Some(due) = cut.due.get_mut(directory.canonical(name)) {

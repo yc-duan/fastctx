@@ -59,6 +59,15 @@ const ADDING = 150;
 /** Room between boxes, and between the trees of two hubs. */
 const BOX_GAP = 36;
 const HUB_GAP = 160;
+/** Past this many people on a hub, their boxes stand in columns after the
+ *  rest, each column hanging from a spine as on a narrow screen: a row of
+ *  hundreds is a line too long to see. At least this many stand in a
+ *  column, with this much room between two, as many as keep the columns
+ *  about as wide as a screen is to its height. */
+const STACK_PAST = 8;
+const STACK_LEAST = 6;
+const STACK_GAP = 14;
+const STACK_ASPECT = 1.6;
 /** A group's band in its owner's box; on a wide screen, how far under the
  *  box's strip the bands hang and how far under them the first rings stand;
  *  the room left under a band with nothing under it. */
@@ -66,6 +75,9 @@ export const BAND = 28;
 const BAND_TOP = 18;
 const BAND_UNDER = 14;
 const BAND_EDGE = 8;
+/** The room on a group's band after its name: how many machines, how many
+ *  online, and its "⋯". */
+const COUNT_ROOM = 150;
 
 /** A group of machines under a hub, drawn as a box. */
 export interface GroupNode {
@@ -181,6 +193,9 @@ interface Band {
   fold: boolean;
   count: number;
   online: number;
+  /** How far it reaches across its owner's box: its columns, or, folded,
+   *  the room its strip's words take. */
+  span: number;
 }
 
 /** A box as it is sized before it is placed. */
@@ -201,15 +216,30 @@ interface Block {
   online: number;
 }
 
+/** Each machine's direct links, by the key of the machine at the other end. */
+function nearOf(links: readonly MapLink[]): Map<string, Set<string>> {
+  const near = new Map<string, Set<string>>();
+  const add = (from: string, to: string) => {
+    const known = near.get(from);
+    if (known) known.add(to);
+    else near.set(from, new Set([to]));
+  };
+  for (const link of links) {
+    add(link.a, link.b);
+    add(link.b, link.a);
+  }
+  return near;
+}
+
 /** Puts machines linked directly next to each other, keeping the order
  *  they came in otherwise. */
-function chained(ordered: MapNode[], links: readonly MapLink[]): MapNode[] {
-  const linked = (a: string, b: string) => links.some((link) => (link.a === a && link.b === b) || (link.a === b && link.b === a));
+function chained(ordered: MapNode[], near: Map<string, Set<string>>): MapNode[] {
+  if (!ordered.some((node) => near.has(node.key))) return [...ordered];
   const left = [...ordered];
   const chain: MapNode[] = [];
   while (left.length) {
     const last = chain[chain.length - 1];
-    const at = last ? left.findIndex((node) => linked(last.key, node.key)) : -1;
+    const at = last ? left.findIndex((node) => near.get(last.key)?.has(node.key)) : -1;
     chain.push(...left.splice(at >= 0 ? at : 0, 1));
   }
   return chain;
@@ -218,9 +248,12 @@ function chained(ordered: MapNode[], links: readonly MapLink[]): MapNode[] {
 export class MapLayout {
   /** Hub order, first seen first; a hub keeps its place on the line. */
   private readonly hubOrder: string[] = [];
-  /** Each machine's number in the order; lower stands earlier. */
+  /** Each machine's number in the order; lower stands earlier. Kept on
+   *  the device when it changed, or the machines there did. */
   private readonly order = new Map<string, number>();
   private next = 0;
+  private changed = true;
+  private kept = -1;
   /** As of the last update: where each hub's dashed ring waits. */
   private vacancies = new Map<string, Point>();
 
@@ -249,10 +282,11 @@ export class MapLayout {
     for (const hub of [...hubs].sort((a, b) => a.id.localeCompare(b.id))) if (!this.hubOrder.includes(hub.id)) this.hubOrder.push(hub.id);
     const live = new Set(hubs.map((hub) => hub.id));
     const order = this.hubOrder.filter((id) => live.has(id));
-    for (const node of [...nodes].sort(firstOrder)) {
-      if (this.order.has(node.key)) continue;
+    const present = new Set(nodes.map((node) => node.key));
+    for (const node of nodes.filter((one) => !this.order.has(one.key)).sort(firstOrder)) {
+      this.changed = true;
       // Renamed, it keeps the place it had under a name it had.
-      const was = node.was?.find((key) => this.order.has(key) && !nodes.some((other) => other.key === key));
+      const was = node.was?.find((key) => this.order.has(key) && !present.has(key));
       if (was !== undefined) {
         this.order.set(node.key, this.order.get(was)!);
         this.order.delete(was);
@@ -272,9 +306,26 @@ export class MapLayout {
     this.vacancies = new Map();
     let left = 0;
     let below = 0;
+    const near = nearOf(links);
     for (const id of order) {
       const own = nodes.filter((node) => hubOf(node) === id);
       const persons = people.filter((person) => person.hub === id);
+      // The machines of each box, sorted into once: those in no group by
+      // their box, those in a group by the box the group stands in.
+      const looseIn = new Map<string, MapNode[]>();
+      const groupedIn = new Map<string, MapNode[]>();
+      const put = (into: Map<string, MapNode[]>, key: string, node: MapNode) => {
+        const known = into.get(key);
+        if (known) known.push(node);
+        else into.set(key, [node]);
+      };
+      for (const node of own) {
+        put(looseIn, node.group?.key ?? "mine", node);
+        const within = node.group?.within?.key;
+        if (within !== undefined) put(groupedIn, within, node);
+      }
+      const personOf = new Map<string, MapPerson>();
+      for (const person of persons) if (!personOf.has(`of:${person.account}`)) personOf.set(`of:${person.account}`, person);
       // Each box by whose it is; a group stands inside its owner's.
       const ownerOf = (node: MapNode) => node.group?.within?.key ?? node.group?.key ?? "mine";
       const kinds = [
@@ -292,6 +343,9 @@ export class MapLayout {
       };
       const widthOf = (grid: Grid) => TRUNK + TWIG + PAD + (grid.columns - 1) * COLUMN_AT + RING * 2 + NAME_AT;
       const onlineOf = (nodes: MapNode[]) => nodes.filter((node) => node.online === true).length;
+      // A strip's name, from the trunk to a little air at its end, as large
+      // as it is drawn.
+      const named = (text: string) => (labelWidth && text ? TRUNK + 14 + labelWidth(text) * grow + 14 : 0);
       const blocks = kinds.map((kind): Block => {
         const key = `group:${id}:${kind}`;
         // The dashed box that adds a person is a title strip alone.
@@ -299,16 +353,19 @@ export class MapLayout {
           const grid = gridOf([]);
           return { kind, key: `adding:${id}`, label: "", grid, bands: [], fold: false, strip: true, width: TRUNK + 20 + ADDING * grow, height: TITLE_AT, count: 0, online: 0 };
         }
-        const loose = chained(own.filter((node) => (node.group?.key ?? "mine") === kind).sort(byOrder), links);
-        const person = persons.find((one) => kind === `of:${one.account}`);
-        const inside = own.filter((node) => node.group?.within?.key === kind);
+        const loose = chained([...(looseIn.get(kind) ?? [])].sort(byOrder), near);
+        const person = personOf.get(kind);
+        const inside = groupedIn.get(kind) ?? [];
         const bands = [...new Set(inside.map((node) => node.group!.key))]
           .sort((a, b) => compareBoxes(a, b, groupRank))
           .map((group): Band => {
-            const members = chained(inside.filter((node) => node.group!.key === group).sort(byOrder), links);
+            const members = chained(inside.filter((node) => node.group!.key === group).sort(byOrder), near);
             const key = `group:${id}:${group}`;
             const fold = folded.has(key);
-            return { kind: group, key, label: members[0]!.group!.label, grid: gridOf(fold ? [] : members), fold, count: members.length, online: onlineOf(members) };
+            const label = members[0]!.group!.label;
+            const grid = gridOf(fold ? [] : members);
+            const span = Math.max(grid.columns * COLUMN_AT, fold ? named(label) + COUNT_ROOM * grow : 0);
+            return { kind: group, key, label, grid, fold, count: members.length, online: onlineOf(members), span };
           });
         // The account's own in no group end with the dashed ring.
         const grid = gridOf([...loose, ...(ending(kind) ? [null] : [])]);
@@ -320,24 +377,24 @@ export class MapLayout {
           if (narrow) {
             // The groups under the rest, each under its band.
             const below = bands.reduce((sum, band) => sum + BAND_AT + band.grid.height, 0) + (bands.length && !grid.slots.length ? BAND_EDGE : 0) + (bands.length && !bands[bands.length - 1]!.grid.height ? BAND_EDGE : 0);
-            return { width: Math.max(widthOf(grid), ...bands.map((band) => widthOf(band.grid))), height: TITLE_AT + grid.height + below };
+            return { width: Math.max(widthOf(grid), ...bands.map((band) => Math.max(widthOf(band.grid), named(band.label) + COUNT_ROOM * grow))), height: TITLE_AT + grid.height + below };
           }
           // The groups to the right of the rest, the rows level.
           const columns = (grid.slots.length ? grid.columns : 0) + bands.reduce((sum, band) => sum + band.grid.columns, 0);
+          // What folded bands reach past their one column each.
+          const wider = bands.reduce((sum, band) => sum + band.span - band.grid.columns * COLUMN_AT, 0);
           const tallest = Math.max(0, ...[grid, ...bands.map((band) => band.grid)].map((one) => Math.min(one.slots.length, one.perColumn)));
           const head = bands.length ? BAND_TOP + BAND_AT + BAND_UNDER - PAD : 0;
-          return { width: TRUNK + TWIG + PAD + (Math.max(1, columns) - 1) * COLUMN_AT + RING * 2 + NAME_AT, height: TITLE_AT + head + (tallest ? PAD * 2 + (tallest - 1) * ROW_AT + RING * 2 : BAND_EDGE - head + BAND_TOP + BAND_AT) };
+          return { width: TRUNK + TWIG + PAD + (Math.max(1, columns) - 1) * COLUMN_AT + wider + RING * 2 + NAME_AT, height: TITLE_AT + head + (tallest ? PAD * 2 + (tallest - 1) * ROW_AT + RING * 2 : BAND_EDGE - head + BAND_TOP + BAND_AT) };
         };
         const label = loose[0]?.group?.label ?? inside[0]?.group?.within?.label ?? person?.label ?? "";
         const sized = strip ? { width: widthOf(grid), height: TITLE_AT } : size();
-        // Its name on its strip, from the trunk to a little air at its end;
-        // on a wide screen its last group's name on that group's band too,
-        // which runs to the box's end.
-        const named = (text: string) => (labelWidth && text ? TRUNK + 14 + labelWidth(text) * grow + 14 : 0);
+        // Its name on its strip; on a wide screen its last group's name on
+        // that group's band too, which runs to the box's end.
         const shown = fold ? [] : bands;
         const last = shown[shown.length - 1];
-        const before = (grid.slots.length ? grid.columns : 0) + shown.slice(0, -1).reduce((sum, band) => sum + band.grid.columns, 0);
-        const banded = !last ? 0 : narrow ? Math.max(...shown.map((band) => named(band.label))) : before * COLUMN_AT + named(last.label) + BAND_EDGE;
+        const before = (grid.slots.length ? grid.columns * COLUMN_AT : 0) + shown.slice(0, -1).reduce((sum, band) => sum + band.span, 0);
+        const banded = !last ? 0 : narrow ? Math.max(...shown.map((band) => named(band.label))) : before + named(last.label) + BAND_EDGE;
         const { width, height } = { width: Math.max(sized.width, named(label), strip ? 0 : banded), height: sized.height };
         return {
           kind,
@@ -374,10 +431,11 @@ export class MapLayout {
         const sections = [...(block.grid.slots.length ? [{ grid: block.grid, band: null }] : []), ...block.bands.map((band) => ({ grid: band.grid, band }))];
         const trunks: number[] = [];
         let column = 0;
+        let across = 0;
         for (const [at, { grid, band }] of sections.entries()) {
-          const left = x + column * COLUMN_AT;
+          const left = x + across;
           if (band) {
-            const width = at === sections.length - 1 ? x + block.width - BAND_EDGE - left : grid.columns * COLUMN_AT - 12;
+            const width = at === sections.length - 1 ? x + block.width - BAND_EDGE - left : band.span - 12;
             groups.push({ key: band.key, hub: id, kind: band.kind, label: band.label, count: band.count, online: band.online, folded: band.fold, box: { x: left, y: bandTop, width, height: y + block.height - bandTop - BAND_EDGE }, strip: BAND_AT, point: [left + TRUNK + 50, bandTop + BAND_AT / 2], within: block.key });
           }
           for (let one = 0; one < grid.columns; one += 1) {
@@ -388,6 +446,7 @@ export class MapLayout {
           }
           twigs(grid, left + TRUNK, ringAt);
           column += grid.columns;
+          across += band ? band.span : grid.columns * COLUMN_AT;
         }
         if (trunks.length > 1) branches.push({ points: [[trunks[0]!, fork], [trunks[trunks.length - 1]!, fork]], hub: id });
       };
@@ -441,18 +500,47 @@ export class MapLayout {
         below = y + HUB_GAP;
         continue;
       }
-      const width = blocks.reduce((sum, block) => sum + block.width, 0) + BOX_GAP * (blocks.length - 1);
+      // Many people: theirs, and the box that adds one, in columns after
+      // the rest; one opened stands open where it is, those under it moved
+      // down.
+      const peopled = blocks.filter((block) => block.kind.startsWith("of:")).length > STACK_PAST;
+      const stacked = peopled ? blocks.filter((block) => block.kind.startsWith("of:") || block.kind === "adding") : [];
+      const row = blocks.filter((block) => !stacked.includes(block));
+      const columns: Block[][] = [];
+      if (stacked.length) {
+        const wide = SIDE + Math.max(...stacked.map((block) => block.width));
+        const each = Math.max(STACK_LEAST, Math.ceil(Math.sqrt((stacked.length * wide) / (STACK_ASPECT * (TITLE_AT + STACK_GAP)))));
+        for (let at = 0; at < stacked.length; at += each) columns.push(stacked.slice(at, at + each));
+      }
+      const columnWidth = (column: Block[]) => SIDE + Math.max(...column.map((block) => block.width));
+      const widths = [...row.map((block) => block.width), ...columns.map(columnWidth)];
+      const width = widths.reduce((sum, one) => sum + one, 0) + BOX_GAP * (widths.length - 1);
       const knot: Point = [left + width / 2, 0];
       hubPoints.set(id, knot);
       const busY = BUS_DROP;
       const top = BUS_DROP + BOX_DROP;
       let x = left;
       const drops: number[] = [];
-      for (const block of blocks) {
+      for (const block of row) {
         // The line from the bus comes down at the first trunk.
         drops.push(x + TRUNK);
         place(block, x, top, busY);
         x += block.width + BOX_GAP;
+      }
+      for (const column of columns) {
+        // A spine down from the bus, each box to its right, joined at the
+        // middle of its strip.
+        drops.push(x);
+        let y = top;
+        let join = top;
+        for (const block of column) {
+          join = y + TITLE_AT / 2;
+          branches.push({ points: [[x, join], [x + SIDE + TRUNK, join]], hub: id, out: block.kind === "adding" });
+          place(block, x + SIDE, y, join);
+          y += block.height + STACK_GAP;
+        }
+        branches.push({ points: [[x, busY], [x, join]], hub: id });
+        x += columnWidth(column) + BOX_GAP;
       }
       // The hub down to the bus, and the bus across the drops to the boxes.
       branches.push({ points: [[knot[0], KNOT + 4], [knot[0], busY]], hub: id });
@@ -462,7 +550,11 @@ export class MapLayout {
     // No hub to hang on: a row, as before any network is joined.
     nodes.filter((node) => !hubOf(node)).sort(byOrder).forEach((node, index) => machines.set(node.key, [index * COLUMN_AT, TITLE_AT]));
 
-    this.write(new Set(nodes.map((node) => node.key)));
+    if (this.changed || present.size !== this.kept) {
+      this.write(present);
+      this.changed = false;
+      this.kept = present.size;
+    }
     // Room round everything: the hub's name above it, as large as it is
     // drawn, the boxes below.
     const above = 40 + 30 * grow;

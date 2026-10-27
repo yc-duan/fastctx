@@ -12,6 +12,8 @@ struct Request {
     host: control::Host,
     controller: ProcessIdentity,
     #[serde(default)]
+    refresh: bool,
+    #[serde(default)]
     release: bool,
 }
 
@@ -22,6 +24,10 @@ pub fn run(world: &Path) -> io::Result<()> {
     crate::claude::pairing::validate_session(&request.host.session)?;
     if request.key.is_empty() || !request.key.bytes().all(|byte| byte.is_ascii_alphanumeric() || byte == b'-') {
         return Err(io::Error::other("invalid Claude control key"));
+    }
+    // A refresh follows only a native precondition proving no compact began.
+    if request.refresh {
+        std::thread::sleep(std::time::Duration::from_millis(200));
     }
     let directory = control::directory(world, &request.host.session);
     let claims = directory.join("claims");
@@ -43,7 +49,11 @@ pub fn run(world: &Path) -> io::Result<()> {
     if !control::active(&directory, &request.host)? {
         return output(false);
     }
-    if prior.as_ref().is_some_and(|claim| !claim.released) {
+    if request.refresh {
+        if prior.as_ref().is_none_or(|claim| claim.host != request.host || claim.released) {
+            return output(false);
+        }
+    } else if prior.as_ref().is_some_and(|claim| !claim.released) {
         return output(false);
     }
     let process = exchange::registration(directory.parent().expect("control directory"))?.and_then(|host| host.process);

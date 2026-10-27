@@ -7,7 +7,7 @@ use std::ffi::OsString;
 use std::path::Path;
 use std::sync::Arc;
 
-async fn run(node: &Arc<Node>, home: Option<&Path>, args: Vec<OsString>) -> Result<String, Failure> {
+pub(super) async fn run(node: &Arc<Node>, home: Option<&Path>, args: Vec<OsString>) -> Result<String, Failure> {
     let command = super::command(node, home)?;
     if args.first().is_some_and(|arg| arg == "stop" || arg == "rm") {
         let node = node.clone();
@@ -159,15 +159,24 @@ pub async fn wake(node: &Arc<Node>, home: Option<&Path>, session: &str) -> Resul
     // it was opened (`resume_dir`).
     command.cwd = super::resume_dir(node, session);
     super::trust(&[command.cwd.as_path()], &command.env).map_err(Failure::new)?;
+    // A session that reports while this runs waits to learn whether it is a copy.
+    let waking = node.claude.copies.waking();
     let output = run_command(command, vec!["--resume".into(), session.into(), "--bg".into()]).await?;
     let started = background::started(&output).ok_or_else(|| {
         Failure::new(format!("Claude Code did not identify the resumed background session: {output}"))
     })?;
+    // Still running, it was copied instead: the copy goes at once, and the
+    // session it copied, running, takes what this wake was for.
     if !session.starts_with(&started) {
+        super::copies::discard(node, home, &started).await;
+        if super::running(node, home, session).await? {
+            return Ok(());
+        }
         return Err(Failure::new(format!(
-            "Claude Code started {started}, not the requested {session}; the resident was not rebound"
+            "{session} was still running; Claude Code started a copy of it instead, which was stopped"
         )));
     }
+    drop(waking);
     if !super::running(node, home, session).await? {
         return Err(Failure::new("Claude Code accepted resume but does not report the original session running"));
     }

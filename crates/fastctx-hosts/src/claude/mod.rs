@@ -190,6 +190,7 @@ pub fn write_plugin(world: &Path) -> io::Result<PathBuf> {
     let module = MOD
         .replace("__FASTCTX_CONTROLS__", include_str!("control.js"))
         .replace("__FASTCTX_COMMANDS__", include_str!("commands.js"))
+        .replace("__FASTCTX_NATIVE_GOAL__", include_str!("native_goal.js"))
         .replace("__FASTCTX_COMMAND_CATALOG__", include_str!("command_catalog.json"))
         .replace("__FASTCTX_ASSISTED__", include_str!("assisted.js"))
         .replace("__FASTCTX_ACCOUNT_AGENTS__", include_str!("agent_config.js"))
@@ -197,7 +198,10 @@ pub fn write_plugin(world: &Path) -> io::Result<PathBuf> {
         .replace("__FASTCTX_REWIND__", include_str!("rewind.js"))
         .replace("__FASTCTX_OBSERVATIONS__", include_str!("observations.js"))
         .replace("__FASTCTX_USAGE__", include_str!("accounting.js"))
-        .replace("__FASTCTX_FAILURES__", include_str!("failure.js"));
+        .replace("__FASTCTX_FAILURES__", include_str!("failure.js"))
+        .replace("__FASTCTX_TURN_FAILURES__", include_str!("turn_failures.js"))
+        .replace("__FASTCTX_GOAL__", include_str!("goal.js"))
+        .replace("__FASTCTX_GOAL_QUESTIONS__", include_str!("goal_questions.js"));
     let module = module.replace("__FASTCTX_WORLD__", &serde_json::to_string(&directory).expect("strings serialize"));
     let module = module.replace("__FASTCTX_COMMAND__", &serde_json::to_string(&command).expect("strings serialize"));
     let module = module.replace("__FASTCTX_LOOK_MS__", &MOD_LOOK.as_millis().to_string());

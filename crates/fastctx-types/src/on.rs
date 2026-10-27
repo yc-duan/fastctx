@@ -89,6 +89,8 @@ pub enum OnWord {
     /// The job started, as `job`.
     Started {
         job: JobId,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        scratch: Option<String>,
     },
     /// `bytes` bytes of standard output follow.
     Out {
@@ -100,13 +102,18 @@ pub enum OnWord {
     },
     /// Nothing new for a while: the connection still stands. Said every
     /// `STILL_EVERY` while the job is quiet.
-    Still,
+    Still {
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        scratch: Vec<crate::scratch::Location>,
+    },
     /// Everything it will write has been sent, and this is how it ended.
     /// `lettered` is the older protocol's debt-cleared hint. Completion
     /// receipts are now tracked independently of this hint: a lost TAKEN
     /// can produce a later letter even when this field was false.
     Ended {
         end: OnEnd,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        scratch: Vec<crate::scratch::Location>,
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         lettered: bool,
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -173,6 +180,12 @@ pub const SILENT_FOR: std::time::Duration = std::time::Duration::from_secs(30);
 /// Where an `on` was sent from, as the machine running it records it.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct OnOrigin {
+    /// The initiating conversation turn, captured before the work starts.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub turn: Option<String>,
+    /// Internal observations retain their identity through execution and recovery.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sentinel: Option<SentinelProbe>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub call_id: Option<String>,
     /// The resident that wrote the `on`, at the machine it lives on; the
@@ -259,4 +272,11 @@ pub enum OnPiece {
     Ended {
         end: OnEnd,
     },
+}
+
+/// An internal observation, distinct from the owner's ordinary shell work.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SentinelProbe {
+    pub id: crate::SentinelId,
+    pub generation: u64,
 }

@@ -179,7 +179,7 @@ impl Node {
     ) -> Result<Option<fastctx_types::TownName>, Failure> {
         let Some(town) = town else { return Ok(None) };
         let place = crate::ledger::names::place(&self.world, town)
-            .map_err(|error| Failure::new(format!("reading the project {town}'s hub: {error}")))?;
+            .map_err(|error| Failure::not_run(format!("reading the project {town}'s hub: {error}")))?;
         Ok(place.filter(|place| place.hub == link.membership().id).map(|_| town.clone()))
     }
 
@@ -243,6 +243,32 @@ impl Node {
         purpose: Purpose,
     ) -> Result<(Arc<Link>, AccountName), CallFailure> {
         Ok(self.speakers(acting, to, purpose)?.into_iter().next().expect("speakers names one at least"))
+    }
+
+    /// A cached route is sufficient to queue mail. This grants no execution
+    /// permission: the hub checks the current account before accepting it,
+    /// and its recipient checks admission before taking custody.
+    pub(crate) fn mailbox(
+        &self,
+        acting: &Acting,
+        to: &Written,
+        purpose: Purpose,
+    ) -> Result<(Arc<Link>, AccountName), CallFailure> {
+        let links = self
+            .locate(to)
+            .map_err(|failure| CallFailure::Unreachable { name: to.name.clone(), reason: failure.message })?;
+        for link in links {
+            let view = link.view();
+            for account in self.accounts_on(&link, acting) {
+                if purpose == Purpose::Echo || view.admits(&view.me, &account, &to.name, purpose).is_ok() {
+                    return Ok((link.clone(), account));
+                }
+            }
+        }
+        Err(CallFailure::NotAllowed {
+            name: to.name.clone(),
+            reason: "no remembered account route can post this letter".into(),
+        })
     }
 
     /// The hubs `to` is on, each with the accounts `acting` may say

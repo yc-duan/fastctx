@@ -13,7 +13,7 @@ pub(super) async fn ready(node: &Arc<Node>, id: &ResidentId) -> Result<(), Failu
     crate::lifecycle::wake::wake(node, id, crate::lifecycle::wake::Source::Control, None)
         .await
         .map(|_| ())
-        .map_err(|error| Failure::host_unavailable(error.failure.message))
+        .map_err(crate::lifecycle::wake::WakeFailure::control)
 }
 
 pub(crate) async fn connect(node: &Arc<Node>, id: &ResidentId) -> Result<(), Failure> {

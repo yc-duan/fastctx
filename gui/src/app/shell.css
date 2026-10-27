@@ -302,14 +302,42 @@ body {
   min-width: 0;
 }
 
-/* A project is a folder: pressed, it opens and closes on its conversations.
+/* A project's name leads to its overview; its folder, at the head of the
+   line where any place has its mark, opens and closes on its conversations.
    Shut, the end of its line says whether something in it waits or works
    and how many are in it; under a pointer those give way to its "⋯", as a
    conversation's marks give way to its buttons. */
-.project-fold {
-  width: 100%;
-  text-align: left;
+.project-link {
+  padding-left: calc(var(--space-3) + 18px + 10px);
   padding-right: var(--space-2);
+}
+
+.project-row:hover .project-link {
+  color: var(--text);
+  background: var(--hairline);
+}
+
+.project-fold {
+  position: absolute;
+  z-index: 1;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 44px;
+  padding-right: 2px;
+  display: grid;
+  place-items: center;
+  border-radius: var(--radius-s);
+  color: var(--text-3);
+  transition: color var(--hover) ease;
+}
+
+.project-row:has(.project-link.current) .project-fold {
+  color: var(--text-2);
+}
+
+.project-fold:hover {
+  color: var(--text);
 }
 
 .project-shut-marks {
@@ -360,7 +388,7 @@ body {
 /* Under a finger the "⋯" is always there, after the marks, a finger's
    width; a long press on the line opens it as well. */
 @media (hover: none) {
-  .project-fold {
+  .project-link {
     padding-right: 48px;
   }
 
@@ -433,7 +461,8 @@ body {
 
 @media (pointer: coarse) {
   .talk-row,
-  .talk-all {
+  .talk-all,
+  .project-link {
     min-height: 44px;
   }
 }
@@ -879,6 +908,12 @@ html.framed .page-head {
   margin-top: var(--space-6);
   color: var(--text-3);
   font-size: var(--size-text);
+}
+
+/* The end of the rows of a long list drawn so far; more are drawn as it
+   comes near (`read-on.ts`). */
+.read-on {
+  height: 1px;
 }
 
 /* At the foot of every conversation, the way on to the archived ones. */
