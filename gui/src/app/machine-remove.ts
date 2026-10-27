@@ -154,7 +154,7 @@ export class RemoveMachineSheet {
       sheet.body.innerHTML = `${sheet.head(words.removedTitle, words.close)}
         <div class="mr-follow">${this.following.machines.map((one) => this.row(one)).join("")}</div>
         ${failed}
-        <div class="mr-go"><button class="sheet-go" type="button" data-mr-done>${escape(words.done)}</button></div>`;
+        <div class="sheet-foot mr-go"><button class="sheet-go" type="button" data-mr-done>${escape(words.done)}</button></div>`;
       return;
     }
     const way = (kind: RemoveWay) => {
@@ -174,7 +174,7 @@ export class RemoveMachineSheet {
       <div class="mr-ways" role="radiogroup" aria-label="${escape(removing.title)}">${way("uninstall")}${way("everything")}${way("leave")}</div>
       ${note}
       <p class="sheet-note" role="alert"${this.said ? "" : " hidden"}>${escape(this.said)}</p>
-      <div class="mr-go"><button class="sheet-go danger" type="button" data-mr-go${sheet.busy ? " disabled" : ""}>${escape(words.removeGo)}</button></div>`;
+      <div class="sheet-foot mr-go"><button class="sheet-go danger" type="button" data-mr-go${sheet.busy ? " disabled" : ""}>${escape(words.removeGo)}</button></div>`;
   }
 
   /** One machine taken off to uninstall, and how that goes as it said. */

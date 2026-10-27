@@ -424,6 +424,20 @@ function hubs(two: boolean): { nodes: HubNodes[]; accounts: HubAccounts[] } {
         { key: "specimen-gpu-line", account: "me", label: "GPU 集群", kind: "computer", uses: 0, used: 0, expires: LASTING, way: "line", made_by: "laptop", made_at: at("09:12:00") },
         { key: "specimen-phone-qr", account: "me", kind: "phone", uses: 1, used: 0, expires: daysAhead(1), way: "scan", made_by: "desktop", made_at: at("13:05:00") },
         { key: "specimen-bo-code", account: "bo", label: "实验室", kind: "computer", managed: true, uses: 10, used: 3, expires: daysAhead(20), way: "paste", made_by: "gpu", made_at: at("08:00:00") },
+        // With ?codes=N, as many more, to see a long list of them.
+        ...Array.from({ length: Number(new URLSearchParams(location.search).get("codes") ?? 0) }, (_, index) => ({
+          key: `specimen-code-${index}`,
+          account: "me",
+          label: `机房 ${index + 2}`,
+          kind: "computer" as const,
+          managed: true,
+          uses: 10,
+          used: index % 10,
+          expires: daysAhead(7),
+          way: "paste" as const,
+          made_by: "desktop",
+          made_at: at("10:40:00"),
+        })),
       ],
       // With ?many, a room of machines shared one by one, as a lab is.
       shares: [

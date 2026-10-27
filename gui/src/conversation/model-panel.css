@@ -279,7 +279,12 @@
 }
 
 .jobs-title {
-  margin: 0 var(--space-1) var(--space-2);
+  position: sticky;
+  top: calc(-1 * var(--space-3));
+  z-index: 1;
+  margin: calc(-1 * var(--space-3)) var(--space-1) var(--space-2);
+  padding-top: var(--space-3);
+  background: var(--bg-elevated);
   font-size: var(--size-text);
   color: var(--text-3);
 }

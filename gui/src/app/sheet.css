@@ -757,6 +757,24 @@
   margin-top: var(--space-4);
 }
 
+/* However many codes there are, only their list scrolls, the ways of
+   adding a device staying over it. */
+.token-sheet .device-body.codes-face {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.token-sheet .codes-face > .codes-rows {
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+}
+
+.token-sheet .codes-face > .codes-rows > li {
+  flex: none;
+}
+
 .codes-none {
   margin: var(--space-6) 0 0;
   color: var(--text-3);
