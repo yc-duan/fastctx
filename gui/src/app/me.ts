@@ -554,14 +554,20 @@ export class MePage implements Page {
         .filter((assist) => assist.account === account)
         .map((assist) => {
           const home = assist.home ? (assist.home.split(/[\\/]/).filter(Boolean).pop() ?? assist.home) : "";
-          const until = assist.until ? `<span class="chip-more">${glyph("history", 12)}${escape(short(new Date(assist.until), now))}</span>` : "";
-          const daily = assist.daily ? `<span class="chip-more">${escape(words.dailyShort(wholeDollars(assist.daily / 1_000_000)))}</span>` : "";
-          const weekly = assist.weekly ? `<span class="chip-more">${escape(words.weeklyShort(wholeDollars(assist.weekly / 1_000_000)))}</span>` : "";
           // Whose login it is, by its mark: the machine and the folder are
-          // what tell one from another.
+          // what tell one from another. One that ends has a small clock;
+          // until when, and how much a day and a week, are said when it is
+          // pointed at.
           const label = [assist.machine, home].filter(Boolean).join(" ");
           const whose = agentName(assist.agent);
-          return chip(label, `data-act="unassist" data-assist="${escape(assistKey(assist))}"`, words.takeBack(words.assistLabel(`${whose} ${assist.machine}`, account)), until + daily + weekly, `${whose} ${label}`, glyph(assist.agent === "codex" ? "codex" : "claude", 14));
+          const ends = assist.until ? `<span class="chip-more">${glyph("history", 12)}</span>` : "";
+          const said = [
+            `${whose} ${label}`,
+            assist.until ? words.untilShort(short(new Date(assist.until), now)) : "",
+            assist.daily ? words.dailyShort(wholeDollars(assist.daily / 1_000_000)) : "",
+            assist.weekly ? words.weeklyShort(wholeDollars(assist.weekly / 1_000_000)) : "",
+          ].filter(Boolean);
+          return chip(label, `data-act="unassist" data-assist="${escape(assistKey(assist))}"`, words.takeBack(words.assistLabel(`${whose} ${assist.machine}`, account)), ends, said.join(" "), glyph(assist.agent === "codex" ? "codex" : "claude", 14));
         });
       return row(glyph("person", 16), escape(account), "", "", [...groupChips, ...machineChips, ...loginChips].join(""));
     });
@@ -577,9 +583,11 @@ export class MePage implements Page {
       return row(
         glyph("shield", 16),
         escape(words.reachingLine(acting.machine, owner)),
-        escape(words.reachingSince(when(new Date(acting.since), now))),
+        "",
         "",
         `<button class="text-button quiet-button" type="button" data-act="stop-reaching" data-name="${escape(acting.machine)}">${escape(words.stopReaching)}</button>`,
+        "",
+        words.reachingSince(when(new Date(acting.since), now)),
       );
     });
     return part(words.reaching, words.reachingWhat, `<ul class="me-rows">${rows.join("")}</ul>`);
