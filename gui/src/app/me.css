@@ -259,22 +259,21 @@
   color: var(--text-3);
 }
 
-/* A code says more of itself: its name, and under it how many came in by
-   it, until when and who made it; its revoking at the end. */
+/* A code's row: its name, whose it is where it is another's, and at its
+   end how full it is as a short bar, the bars of a list in one column,
+   then its revoking. */
 .me-row.code-row {
   grid-template-columns: 20px minmax(0, 1fr) auto;
 }
 
-.me-row.code-row .me-row-name {
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 2px;
+.code-meter {
+  display: inline-flex;
+  margin-right: var(--space-2);
 }
 
-/* Its line folds between what it says, not inside a date. */
-.me-row.code-row .me-row-sub {
-  word-break: keep-all;
-  overflow-wrap: anywhere;
+.code-meter .ledger-bar {
+  width: 64px;
+  height: 10px;
 }
 
 /* The people things are given to, in the hand of the page rather than the
