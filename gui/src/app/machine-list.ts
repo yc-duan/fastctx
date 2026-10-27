@@ -237,7 +237,10 @@ function markCell(mark: Mark): string {
 /** A section: its name, how many and how many online, a hand-drawn line;
  *  then its rows. */
 function section(label: string, sub: string, box: string, body: string): string {
-  return `<section class="ml-group"><h2 class="ml-group-head">${box}<span>${escape(label)}</span><span class="ml-group-sub">${escape(sub)}</span></h2>${body}</section>`;
+  // A heading none of whose machines can be chosen keeps the box's room, so
+  // every heading's name starts where the others' do.
+  const room = box || `<span class="ml-pick none" aria-hidden="true"></span>`;
+  return `<section class="ml-group"><h2 class="ml-group-head">${room}<span>${escape(label)}</span><span class="ml-group-sub">${escape(sub)}</span></h2>${body}</section>`;
 }
 
 /** The name cell of every row: the twisty, or its room on a leaf; the
