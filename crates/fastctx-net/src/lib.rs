@@ -22,6 +22,7 @@ pub mod cancellable;
 pub mod data;
 pub mod dial;
 pub mod directory;
+pub mod directory_index;
 pub mod envelope;
 pub mod file_read;
 pub mod file_search;

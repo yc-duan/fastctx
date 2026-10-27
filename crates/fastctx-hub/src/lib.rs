@@ -405,11 +405,13 @@ impl Hub {
                 .map(|(reader, session)| (reader.clone(), session.out.clone(), session.presence))
                 .collect();
             let store = self.store();
+            let index = fastctx_net::directory_index::Index::new(&store.book.directory);
+            let indexed = fastctx_net::directory_index::Indexed::new(&store.book.directory, &index);
             for (reader, out, reads) in readers {
                 if !reads {
                     older = true;
                 } else if reader != *name
-                    && let Some(presence) = views::presence_for(&store, &online, &reader, name)
+                    && let Some(presence) = views::presence_for(&store, &indexed, &online, &reader, name)
                 {
                     let _ = out.send(Out::Frame(Down::Presence { machine: name.clone(), presence, rev }));
                 }
