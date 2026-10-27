@@ -378,6 +378,9 @@ if (params.has("quiet")) {
 }
 const store = createStore(() => ({ world: specimen.world, now: specimen.now }));
 const live = store.live;
+// A specimen in a development build lends its World and store to the page,
+// so a probe can change the World and time what the interface does with it.
+if (!live && import.meta.env.DEV) Object.assign(window, { __specimen: specimen, __store: store });
 /** Whether this interface reaches the World as a device (a phone, or a
  *  computer started with --device): it joins as one and sets nothing up.
  *  A specimen shows one when asked. The shell's own answer follows. */

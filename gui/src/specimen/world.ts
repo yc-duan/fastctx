@@ -5,7 +5,7 @@
 
 import type { Address } from "../world/events";
 import { LASTING, type AccountChange, type HubAccounts, type MemberSeen, type Paths, type Reach } from "../world/accounts";
-import type { About, Action, HubNodes, LinkState, MachineFacts, Node, ProjectRecord, ResidentNow } from "../world/world";
+import type { About, Action, HubNodes, LinkState, MachineFacts, MachineWho, Node, ProjectRecord, ResidentNow } from "../world/world";
 import type { Away, WorldState } from "../home/model";
 import type { AgentFacts, WorldAgents } from "../world/agents";
 import type { WorldNow } from "../world/bridge";
@@ -108,9 +108,14 @@ interface ManyOne {
   group: string | null;
 }
 
+/** The machines `?many` and `?scale` add. */
+function manyOnes(): ManyOne[] {
+  return [...teamOnes(), ...scaleOnes()];
+}
+
 /** The machines `?many` adds: the user's own in the groups a school's would
  *  be in, most of them away at any hour, and the members' by team. */
-function manyOnes(): ManyOne[] {
+function teamOnes(): ManyOne[] {
   if (!new URLSearchParams(location.search).has("many")) return [];
   const ones: ManyOne[] = [];
   const floors: [string, string[]][] = [
@@ -133,6 +138,58 @@ function manyOnes(): ManyOne[] {
     }
   }
   return ones;
+}
+
+/** With `?scale=<n>`, a network of about n machines more, the size a
+ *  network of thousands reaches: a hundred of the account's own in a
+ *  school's rooms, the rest by members in teams of a few to a few dozen,
+ *  every tenth of them keeping a lab of a hundred; two in five out of reach.
+ *  The same every time it is opened. */
+function scaleOnes(): ManyOne[] {
+  const wanted = Number(new URLSearchParams(location.search).get("scale") ?? 0);
+  if (!(wanted > 0)) return [];
+  let seed = 20261027;
+  const next = () => {
+    seed = (seed * 1103515245 + 12345) % 2147483648;
+    return seed / 2147483648;
+  };
+  const ones: ManyOne[] = [];
+  const rooms = ["实验楼1层", "实验楼2层", "图书馆", "行政楼", "宿舍区"];
+  for (let n = 0; n < Math.min(100, wanted); n += 1) {
+    const room = rooms[n % rooms.length]!;
+    ones.push({ name: `${room}-${String(Math.floor(n / rooms.length) + 1).padStart(2, "0")}`, owner: "me", online: next() > 0.4, group: room });
+  }
+  const people = scalePeople();
+  let index = 0;
+  while (ones.length < wanted && index < people.length) {
+    const person = people[index]!;
+    index += 1;
+    const lab = index % 10 === 0;
+    const count = lab ? 100 : 1 + Math.floor(next() * 30);
+    for (let k = 1; k <= count && ones.length < wanted; k += 1) {
+      const group = lab ? "机房" : count > 12 && k > count / 2 ? "训练" : null;
+      ones.push({ name: `${person}-${lab ? "lab" : "pc"}${String(k).padStart(3, "0")}`, owner: person, online: next() > 0.4, group });
+    }
+  }
+  return ones;
+}
+
+/** The members `?scale` adds: enough of them for the machines it asks for. */
+function scalePeople(): string[] {
+  const wanted = Number(new URLSearchParams(location.search).get("scale") ?? 0);
+  if (!(wanted > 0)) return [];
+  const names = ["chen", "li", "wang", "zhang", "liu", "yang", "huang", "zhao", "wu", "zhou", "xu", "sun", "ma", "zhu", "hu", "guo", "he", "lin", "gao", "luo"];
+  return Array.from({ length: Math.ceil(wanted / 20) + 10 }, (_, n) => `${names[n % names.length]}${Math.floor(n / names.length) + 1}`);
+}
+
+/** What each machine `?scale` adds answers with: nothing at work on it,
+ *  or that it is away. */
+function scaleWho(): MachineWho[] {
+  return scaleOnes().map((one) =>
+    one.online
+      ? { kind: "answered" as const, reply: { machine: one.name, residents: [], jobs: [] } }
+      : { kind: "offline" as const, machine: one.name, since: at("01:00:00") },
+  );
 }
 
 /** With `?s=tour`, the Claude of that conversation (`tour.ts`), at work
@@ -315,6 +372,7 @@ function hubs(two: boolean): { nodes: HubNodes[]; accounts: HubAccounts[] } {
         { name: "ada", level: "member", locked: false, opened: at("00:05:00") },
         { name: "bo", level: "member", locked: false, opened: at("00:06:00") },
         { name: "cy", level: "visitor", locked: false, opened: at("09:12:00") },
+        ...scalePeople().map((name) => ({ name, level: "member" as const, locked: false, opened: at("00:07:00") })),
       ],
       members: [
         member("desktop", "computer", ["me"], "me", "00:10:00", true, "5be1fcee", ["192.168.1.20:7444"]),
@@ -653,7 +711,7 @@ export function specimenNow(two = false): { world: WorldNow; now: Date; lastVisi
   return {
     world: {
       here: world.here,
-      who: { machine: world.here, scope: { kind: "world", towns: world.towns }, machines: world.machines, others: world.others ?? [] },
+      who: { machine: world.here, scope: { kind: "world", towns: world.towns }, machines: [...world.machines, ...scaleWho()], others: world.others ?? [] },
       nodes: { machine: world.here, facts: facts("desktop", "windows", "C:/Users/me"), hubs: nodes },
       towns: world.towns,
       accounts: { machine: world.here, hubs: accounts },
