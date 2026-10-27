@@ -42,7 +42,7 @@ import type { JsonValue } from "../world/wire";
 import { folderName, type Focus } from "../world/focus";
 import { answerOf, drawAsk, readAsk, type AskWords } from "./asks";
 import type { Words } from "../words";
-import { glyph } from "./glyphs";
+import { glyph, type GlyphName } from "./glyphs";
 import { controlName } from "./control-queue";
 import { saidHtml } from "./said";
 import { effortLabel } from "./effort-slider";
@@ -232,6 +232,14 @@ function undeliveredWhy(why: UndeliveredWhy, words: Words): string {
 /** The menu the user's words raise when held on a touch screen. */
 const heldMenu = new ActsMenu();
 
+/** The mark an action of words held has in their menu, as it has under
+ *  them. */
+function heldIcon(button: HTMLElement): GlyphName {
+  if (button.dataset.copy !== undefined || button.dataset.copyTurn !== undefined) return "copy";
+  const act = button.dataset.turnAct;
+  return act === "regenerate" || act === "fork" ? act : "edit";
+}
+
 export class ConversationView {
   private openRows = new Set<string>();
   /** The user's long messages opened whole. */
@@ -362,13 +370,21 @@ export class ConversationView {
     root.addEventListener("click", (event) => {
       if (this.own(event)) this.click(event);
     });
-    // On a touch screen every answer has its actions under it; the user's
-    // own words have none shown, and held, their two float up beside them.
+    // On a touch screen the latest answer has its actions under it; an
+    // earlier answer's, and the user's own words', are not shown, and held,
+    // they float up beside them.
     onHeld(root, ".bubble", (bubble, event, input) => {
       if (input !== "touch" || !this.own(event)) return false;
       const acts = bubble.closest<HTMLElement>(".block")?.querySelector<HTMLElement>(".user-acts");
       if (!acts || (event.target as HTMLElement).closest("a, button, pre")) return false;
       return this.heldMenu(bubble, acts);
+    });
+    onHeld(root, ".block", (block, event, input) => {
+      if (input !== "touch" || !this.own(event)) return false;
+      const acts = block.querySelector<HTMLElement>(":scope > .answer-acts:not(.latest), :scope > .message-acts > .answer-acts:not(.latest)");
+      // Code, links and pictures keep the system's own long press.
+      if (!acts || (event.target as HTMLElement).closest("a, button, pre, code, img, .katex, .turn-acts")) return false;
+      return this.heldMenu(block, acts);
     });
     // Enter in an answer's field answers, as the card's first button would.
     root.addEventListener("keydown", (event) => {
@@ -1392,6 +1408,7 @@ export class ConversationView {
    *  name: a press does what the mark beside the turn would. */
   /** The user's words held on a touch screen: their actions as a small
    *  menu beside them, each doing what its mark does. */
+  /** The actions of the words held, as a menu beside them. */
   private heldMenu(bubble: HTMLElement, acts: HTMLElement): boolean {
     const buttons = [...acts.querySelectorAll<HTMLButtonElement>("button.turn-icon")];
     const shown = buttons.filter((button) => !(button.dataset.needs && !this.root.classList.contains(`can-${button.dataset.needs}`)));
@@ -1399,7 +1416,7 @@ export class ConversationView {
     heldMenu.open(
       bubble,
       "",
-      shown.map((button, index) => ({ act: String(index), icon: button.dataset.copy !== undefined ? "copy" : "edit", label: button.getAttribute("aria-label") ?? "" })),
+      shown.map((button, index) => ({ act: String(index), icon: heldIcon(button), label: button.getAttribute("aria-label") ?? "" })),
       (act) => shown[Number(act)]?.click(),
       true,
     );

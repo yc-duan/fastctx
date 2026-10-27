@@ -233,7 +233,7 @@ export class FeaturesPage implements Page {
   private cards(): void {
     const { words } = this.options;
     const tag = (on: boolean | null) =>
-      on === null ? "" : on ? `<span class="tag feature-tag-on">${glyph("check", 12)}<span>${escape(words.on)}</span></span>` : `<span class="tag">${escape(words.off)}</span>`;
+      on === null ? "" : on ? `<span class="tag feature-tag-on">${glyph("check", 12)}<span>${escape(words.on)}</span></span>` : `<span class="tag feature-tag-off">${escape(words.off)}</span>`;
     const coming = `<span class="tag">${escape(words.coming)}</span>`;
     const draw = (on: boolean | null) => {
       this.body.innerHTML = `<ul class="feature-cards">

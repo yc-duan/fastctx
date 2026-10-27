@@ -11,8 +11,7 @@
 }
 
 /* The settings: a row of tabs that stays where it is, and under it the
-   sheet of the one chosen, the tab and the sheet one block of fill; a sheet
-   taller than its room scrolls under the tabs. */
+   sheet of the one chosen, the tab and the sheet one block of fill. */
 .st-tabs {
   flex: none;
   display: flex;
@@ -55,6 +54,31 @@
   padding: var(--space-5) var(--space-6) var(--space-6);
   border-radius: var(--radius-l);
   background: var(--fill);
+}
+
+/* The room under the tabs: the sheet stands in it as tall as what it
+   holds, no taller than the room, and scrolls inside itself; the tabs and
+   what is above them stay where they are. */
+.st-room {
+  display: flex;
+  flex-direction: column;
+  padding-bottom: calc(var(--space-6) + var(--safe-bottom));
+}
+
+.st-room > .st-sheet {
+  flex: 0 1 auto;
+  margin-bottom: 0;
+}
+
+.settings.st-room::after {
+  content: none;
+}
+
+/* Where there is no keyboard, its keys are not offered. */
+@media (hover: none) and (pointer: coarse) {
+  .st-tab[data-tab="keys"] {
+    display: none;
+  }
 }
 
 .st-sheet.first {
@@ -1378,8 +1402,13 @@ a.details-job {
   }
 }
 
-/* A finger's action is at least its size. */
+/* A finger's action is at least its size, and its value as tall, so the
+   two stand level. */
 @media (hover: none) and (pointer: coarse) {
+  .settings-device .facts dd {
+    min-height: 44px;
+  }
+
   .settings-device .sd-act .text-button {
     height: 44px;
     padding: 0 var(--space-3);

@@ -117,6 +117,9 @@ const UNDO_MS = 6_000;
 /** A machine just renamed may not be on the hub's list under its new name
  *  yet: only past this is one not found said to be gone. */
 const SETTLE_MS = 4_000;
+/** As narrow as a phone (`machine-page.css`): what the identity and the
+ *  vitals leave out there is said on a long press. */
+const NARROW_PX = 560;
 
 interface Vital {
   kind: "cpu" | "memory" | "gpu";
@@ -194,6 +197,13 @@ export class MachinePage implements Page {
   private undoing: { timer: number; redo: (() => Promise<void>) | null } | null = null;
   /** Each part's markup as last drawn, so an unchanged one is left alone. */
   private readonly drawn = new Map<string, string>();
+  private narrow = false;
+  private readonly sized = new ResizeObserver(() => {
+    const narrow = this.element.clientWidth <= NARROW_PX;
+    if (narrow === this.narrow) return;
+    this.narrow = narrow;
+    this.render();
+  });
 
   constructor(private readonly options: MachinePageOptions) {
     this.title = options.name;
@@ -219,11 +229,11 @@ export class MachinePage implements Page {
     const tab = (one: Tab) =>
       `<button class="mp-tab" type="button" role="tab" id="mp-tab-${one}" aria-controls="mp-pane-${one}" aria-selected="false" tabindex="-1" data-tab="${one}">${escape(words.tabs[one])}</button>`;
     this.element.innerHTML = `${options.head(`<div class="mp-heading"></div>`, `<div class="mp-acts"></div>`)}
-      <div class="mp-body scroller"><div class="mp-board">
+      <div class="mp-body"><div class="mp-board">
         <section class="mp-id"></section>
         <p class="mp-note" hidden></p>
         <div class="mp-tabs" role="tablist" aria-label="${escape(words.tabsLabel)}" hidden>${TABS.map(tab).join("")}</div>
-        <div class="mp-sheet" hidden>
+        <div class="mp-sheet scroller" hidden>
           <div class="mp-pane" id="mp-pane-now" role="tabpanel" aria-labelledby="mp-tab-now" data-pane="now" hidden>
             <section class="mp-sec mp-privacy" hidden></section>
             <section class="mp-sec mp-vitals-sec" hidden><div class="mp-vitals"></div></section>
@@ -274,6 +284,7 @@ export class MachinePage implements Page {
     this.element.addEventListener("click", (event) => this.click(event));
     this.tabsBox.addEventListener("keydown", (event) => this.tabKey(event));
     document.addEventListener("visibilitychange", this.visible);
+    this.sized.observe(this.element);
     // What this device knows of releases and of the network's machines can
     // come after the World: the page is drawn again when it does.
     const stopWorld = effect(() => this.draw(options.store.world.get()));
@@ -300,6 +311,7 @@ export class MachinePage implements Page {
     clearInterval(this.moving);
     if (this.undoing) clearTimeout(this.undoing.timer);
     document.removeEventListener("visibilitychange", this.visible);
+    this.sized.disconnect();
     this.renaming?.dispose();
     this.fastctx?.leave();
     for (const vital of this.vitals) {
@@ -448,6 +460,7 @@ export class MachinePage implements Page {
     if (this.tab === tab) return;
     this.tab = tab;
     this.drawTabs();
+    this.sheet.scrollTop = 0;
     this.render();
     if (focus) this.tabsBox.querySelector<HTMLElement>(`[data-tab=${tab}]`)?.focus();
   }
@@ -539,15 +552,18 @@ export class MachinePage implements Page {
     const { words } = this.options;
     const facts = factsOf(machine);
     const form = facts?.form ?? (facts?.os === "linux" ? "server" : "desktop");
-    const system = stats?.system || (facts ? osName(facts.os) : "");
+    const whole = stats?.system || (facts ? osName(facts.os) : "");
+    const [system, build] = withBuild(whole);
     const version = stats?.node.version ?? facts?.version ?? this.options.updates?.state.peek()?.network?.machines?.[machine.name]?.kernel ?? null;
     const fastctx = version ? this.fastctxSaid(version) : [];
-    const hardware = stats
-      ? [stats.cpu.model, words.threads(stats.cpu.threads), stats.memory.total ? bytesSaid(stats.memory.total) : "", stats.arch, ...fastctx]
-      : [facts?.arch ?? "", ...fastctx];
+    const sizes = stats ? [words.threads(stats.cpu.threads), stats.memory.total ? bytesSaid(stats.memory.total) : "", stats.arch] : [facts?.arch ?? ""];
+    const hardware = [stats?.cpu.model ?? "", ...sizes, ...fastctx];
     // Each fact keeps to itself on a narrow screen: the line breaks between
     // them, the dot after the one before.
     const bits = hardware.filter(Boolean);
+    // A phone shows the system's name alone: held, it says the rest.
+    const held = [whole, stats?.cpu.model ?? "", sizes.filter(Boolean).join("  "), fastctx.join("  ")].filter(Boolean).join("\n");
+    const tip = this.narrow ? held : (stats?.kernel ?? "");
     let right: string;
     if (stats?.boot) {
       const at = Date.parse(stats.at);
@@ -560,7 +576,7 @@ export class MachinePage implements Page {
     this.put(
       "id",
       this.id,
-      `<span class="mp-id-mark" aria-hidden="true">${glyph(form, 28)}</span><div class="mp-id-text"><p class="mp-id-system"${stats?.kernel ? ` title="${escape(stats.kernel)}"` : ""}>${escape(system)}</p><p class="mp-id-hardware">${bits
+      `<span class="mp-id-mark" aria-hidden="true">${glyph(form, 28)}</span><div class="mp-id-text"><p class="mp-id-system"${tip ? ` title="${escape(tip)}"` : ""}>${escape(system)}${build ? `<span class="mp-id-build"> ${escape(build)}</span>` : ""}</p><p class="mp-id-hardware">${bits
         .map((bit, at) => `<span class="mp-id-bit">${escape(bit)}${at < bits.length - 1 ? `<span class="sep"></span>` : ""}</span>`)
         .join("")}</p></div>${right}`,
     );
@@ -644,12 +660,13 @@ export class MachinePage implements Page {
           const busy = one.busy ?? null;
           vital.ring.set(busy, percentHtml(busy));
           note(vital.note, one.name);
-          vital.note.title = one.name;
           set(vital.sub, one.memory_total ? words.vram(bytesSaid(one.memory_used), bytesSaid(one.memory_total)) : "");
           vital.spark.draw([{ points: series((sample) => sample.gpus[index] ?? null), max: 1, kind: "clay", area: true, gap: READ_GAP_MS }], from, at);
           break;
         }
       }
+      // A phone shows the ring alone: held, it says the rest.
+      tip(vital.element, this.narrow ? [vital.note.textContent, vital.sub.textContent].filter(Boolean).join("\n") : "");
     }
   }
 
@@ -678,7 +695,8 @@ export class MachinePage implements Page {
   private drawCards(stats: MachineStats, samples: Sample[]): void {
     const { words } = this.options;
     const cards = stats.cards;
-    this.cardsBox.hidden = !cards.length;
+    // A phone leaves out the cards not connected.
+    this.cardsBox.hidden = !(this.narrow ? cards.some((card) => card.up) : cards.length);
     if (!cards.length) return;
     const main = mainCard(cards);
     const shape = `${main?.name ?? ""};${cards.map((card) => [card.name, card.up, card.hardware, card.speed, (card.addresses ?? []).join(",")].join("|")).join(";")}`;
@@ -711,6 +729,9 @@ export class MachinePage implements Page {
       if (up) set(up, card.sending === undefined ? "—" : rate(card.sending));
       const moved = row.querySelector<HTMLElement>(".mp-net-moved");
       if (moved) set(moved, words.moved(bytesSaid(card.received), bytesSaid(card.sent)));
+      // A phone shows its name and rates: held, it says the rest.
+      const held = [card.name, card.speed ? bits(card.speed) : "", (card.addresses ?? []).join("  "), moved?.textContent ?? ""];
+      tip(row, this.narrow ? held.filter(Boolean).join("\n") : "");
     });
     if (!main || !this.flow) return;
     const at = Date.parse(stats.at);
@@ -738,7 +759,9 @@ export class MachinePage implements Page {
       .map((disk) => {
         // A disk's share moves by the byte; drawn to a five-hundredth.
         const used = disk.total ? Math.round((1 - disk.free / disk.total) * 500) / 500 : 0;
-        return `<li class="mp-disk"><div class="mp-disk-head"><span class="mp-disk-at">${escape(diskName(disk.at))}</span><span class="mp-disk-kind">${escape([disk.label, disk.fs].filter(Boolean).join(" "))}</span><span class="mp-disk-free">${escape(
+        // A phone leaves out what kind it is; held, the disk says it.
+        const kind = [disk.label, disk.fs].filter(Boolean).join(" ");
+        return `<li class="mp-disk"${this.narrow && kind ? ` title="${escape(kind)}"` : ""}><div class="mp-disk-head"><span class="mp-disk-at">${escape(diskName(disk.at))}</span><span class="mp-disk-kind">${escape(kind)}</span><span class="mp-disk-free">${escape(
           words.free(bytesSaid(disk.free), bytesSaid(disk.total)),
         )}</span></div>${diskBar(used, `${stats.machine}:${disk.at}`)}</li>`;
       })
@@ -1358,6 +1381,19 @@ function set(element: HTMLElement, text: string): void {
 function note(element: HTMLElement, text: string): void {
   set(element, text);
   if (element.title !== text) element.title = text;
+}
+
+/** Says `text` when `element` is held or rested on; nothing, where empty. */
+function tip(element: HTMLElement, text: string): void {
+  if (!text) element.removeAttribute("title");
+  else if (element.title !== text) element.title = text;
+}
+
+/** A system's name and the build it ends with in brackets, apart:
+ *  `Windows 11 Pro 24H2`, `(26200.6584)`. */
+function withBuild(system: string): [string, string] {
+  const found = /^(.+?)\s*(\([^()]*\))$/.exec(system);
+  return found ? [found[1]!, found[2]!] : [system, ""];
 }
 
 /** A share as a ring says it: a whole percent, its sign small. */

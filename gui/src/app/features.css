@@ -75,6 +75,70 @@
   margin-top: auto;
 }
 
+/* A phone: each feature a row, its first mark before its name and its
+   line, and of its state only "on", by its tick. */
+@media (max-width: 560px) {
+  .feature-cards {
+    gap: var(--space-2);
+  }
+
+  .feature-card {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    align-items: center;
+    column-gap: var(--space-4);
+    row-gap: 2px;
+    min-height: 0;
+    padding: var(--space-4);
+  }
+
+  .feature-card-art {
+    grid-row: 1 / span 2;
+    margin: 0;
+  }
+
+  .feature-card-art > .glyph + .glyph {
+    display: none;
+  }
+
+  .feature-card-name {
+    grid-column: 2;
+    grid-row: 1;
+  }
+
+  .feature-card-line {
+    grid-column: 2;
+    grid-row: 2;
+  }
+
+  .feature-card > .tag {
+    grid-column: 3;
+    grid-row: 1 / span 2;
+    margin: 0;
+  }
+
+  .feature-card > .tag.feature-tag-off {
+    display: none;
+  }
+
+  .feature-card > .tag.feature-tag-on {
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    padding: 0;
+    border-radius: var(--radius-full);
+  }
+
+  .feature-card > .tag.feature-tag-on > span {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+}
+
 .feature-coming {
   display: flex;
   align-items: center;

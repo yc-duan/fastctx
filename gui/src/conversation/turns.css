@@ -280,14 +280,16 @@
   display: none;
 }
 
-/* On a touch screen every answer keeps its actions under it; the user's
-   own words carry none, and held, theirs float up beside them. */
+/* On a touch screen the latest answer keeps its actions under it; an
+   earlier answer and the user's own words carry none, and held, theirs
+   float up beside them. */
 @media (hover: none) {
   .turn-acts {
     --shown: 1;
   }
 
-  .user-acts {
+  .user-acts,
+  .answer-acts:not(.latest) {
     display: none;
   }
 

@@ -57,6 +57,8 @@ type Taking = { hub: string; key: string };
 const TABS = ["given", "devices", "codes"] as const;
 type Tab = (typeof TABS)[number];
 const TAB_KEY = "me.tab";
+/** A phone's width: the password is its key alone there. */
+const narrow = matchMedia("(max-width: 760px)");
 
 function keptTab(): Tab {
   try {
@@ -72,7 +74,6 @@ export class MePage implements Page {
   readonly title: string;
   private readonly top: HTMLElement;
   private readonly tabs: HTMLElement;
-  private readonly body: HTMLElement;
   private readonly sheet: HTMLElement;
   private readonly stop: () => void;
   private drawn = "";
@@ -86,10 +87,9 @@ export class MePage implements Page {
     this.title = words.title;
     this.element = document.createElement("div");
     this.element.className = "settings-page me-page";
-    this.element.innerHTML = `${options.head(`<h1 class="page-title">${escape(words.title)}</h1>`)}<div class="me scroller"><div class="me-top"></div><div class="st-tabs me-tabs" role="tablist" aria-label="${escape(words.title)}"></div><div class="st-sheet"></div></div>`;
+    this.element.innerHTML = `${options.head(`<h1 class="page-title">${escape(words.title)}</h1>`)}<div class="me st-room"><div class="me-top"></div><div class="st-tabs me-tabs" role="tablist" aria-label="${escape(words.title)}"></div><div class="st-sheet scroller"></div></div>`;
     this.top = this.element.querySelector<HTMLElement>(".me-top")!;
     this.tabs = this.element.querySelector<HTMLElement>(".me-tabs")!;
-    this.body = this.element.querySelector<HTMLElement>(".me")!;
     this.sheet = this.element.querySelector<HTMLElement>(".me .st-sheet")!;
     for (const part of [this.top, this.sheet]) part.addEventListener("click", (event) => this.click(event));
     this.tabs.addEventListener("click", (event) => {
@@ -366,9 +366,7 @@ export class MePage implements Page {
       // Kept for this visit only.
     }
     this.redraw();
-    // Back to the top of the sheet, the tabs where they stand.
-    const tabs = this.tabs.offsetTop;
-    if (this.body.scrollTop > tabs) this.body.scrollTo({ top: tabs });
+    this.sheet.scrollTo({ top: 0 });
   }
 
   private draw(world: WorldNow | null, now: Date): void {
@@ -460,7 +458,7 @@ export class MePage implements Page {
     return `<header class="me-card">
       <span class="me-seal" aria-hidden="true">${seal(login.account)}</span>
       <div class="me-who"><h2 class="me-name">${escape(login.account)}</h2><p class="me-facts">${facts.join("")}</p></div>
-      <button class="text-button quiet-button me-password" type="button" data-act="password">${glyph("key", 16)}<span>${escape(words.changePassword)}</span></button>
+      <button class="text-button quiet-button me-password" type="button" data-act="password" aria-label="${escape(words.changePassword)}"${narrow.matches ? ` title="${escape(words.changePassword)}"` : ""}>${glyph("key", 16)}<span>${escape(words.changePassword)}</span></button>
     </header>`;
   }
 

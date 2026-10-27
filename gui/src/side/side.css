@@ -327,10 +327,12 @@
   background: var(--hairline);
 }
 
-/* On a phone the bar is one press: it opens the goal, where its acts are. */
+/* On a phone the bar is one press: it opens the goal, where its acts are.
+   A goal going on is its mark and its words. */
 @media (max-width: 760px) {
   .gb-bar:not([data-status="paused"]) .gb-when,
-  .gb-bar .gb-act:not([data-act="expand"]) {
+  .gb-bar .gb-act:not([data-act="expand"]),
+  .gb-bar[data-status="active"] .gb-state {
     display: none;
   }
 }

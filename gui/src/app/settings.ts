@@ -99,6 +99,8 @@ const TAB_KEY = "settings.tab";
 function keptTab(): Tab {
   try {
     const kept = localStorage.getItem(TAB_KEY);
+    // Where there is no keyboard, its keys are not offered.
+    if (kept === "keys" && matchMedia("(hover: none) and (pointer: coarse)").matches) return "look";
     return TABS.find((tab) => tab === kept) ?? "look";
   } catch {
     return "look";
@@ -130,7 +132,7 @@ export class SettingsPage implements Page {
     }
     for (const pane of this.element.querySelectorAll<HTMLElement>(".st-pane")) pane.hidden = pane.dataset.pane !== tab;
     this.element.querySelector<HTMLElement>(".st-sheet")?.classList.toggle("first", tab === TABS[0]);
-    this.element.querySelector<HTMLElement>(".settings")?.scrollTo({ top: 0 });
+    this.element.querySelector<HTMLElement>(".st-sheet")?.scrollTo({ top: 0 });
     if (!kept) return;
     try {
       localStorage.setItem(TAB_KEY, tab);
@@ -147,7 +149,7 @@ export class SettingsPage implements Page {
     this.element.innerHTML = `
       ${options.head(`<h1 class="page-title">${escape(words.title)}</h1>`)}
       <div class="st-tabs" role="tablist" aria-label="${escape(words.title)}">${TABS.map((tab) => `<button class="st-tab" type="button" role="tab" id="st-tab-${tab}" aria-controls="st-pane-${tab}" data-tab="${tab}">${escape(words[tab])}</button>`).join("")}</div>
-      <div class="settings scroller"><div class="st-sheet">
+      <div class="settings st-room"><div class="st-sheet scroller">
         <section class="st-pane" id="st-pane-look" role="tabpanel" aria-labelledby="st-tab-look" data-pane="look"><div class="look"></div></section>
         <section class="st-pane settings-device" id="st-pane-device" role="tabpanel" aria-labelledby="st-tab-device" data-pane="device"><dl class="facts settings-name" hidden></dl><dl class="facts device"></dl><dl class="facts settings-app" hidden></dl><dl class="facts settings-service" hidden></dl>${options.computer ? `<dl class="facts settings-data"><dt>${escape(words.data)}</dt><dd><a class="settings-link" href="#/data"><span class="settings-data-size">${escape(words.dataOpen)}</span>${glyph("chevron", 14)}</a></dd></dl>` : ""}<dl class="facts settings-phone" hidden></dl>${options.computer ? `<div class="st-removal"><button class="text-button danger-text settings-uninstall" type="button" data-uninstall>${glyph("logout", 16)}<span>${escape(options.removalWords.open)}</span></button></div>` : ""}</section>
         <section class="st-pane settings-keys" id="st-pane-keys" role="tabpanel" aria-labelledby="st-tab-keys" data-pane="keys"><dl class="facts keys">${words.keyList

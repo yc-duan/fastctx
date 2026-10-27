@@ -1,12 +1,17 @@
 /* The user's own things (`me.ts`): one column, a card of who they are and
-   what waits for their word; under them the tabs, which stay at the top as
-   the sheet of the one chosen scrolls under them, a quiet part for each
-   kind of thing with rows of solid ground. */
+   what waits for their word; under them the tabs, and the sheet of the one
+   chosen scrolling inside itself, a quiet part for each kind of thing with
+   rows of solid ground. Where what waits is long, it takes no more than
+   half the room and scrolls on its own. */
 
 .me-top {
   flex: none;
   width: var(--board);
+  max-height: 50%;
   margin: 0 auto;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
 }
 
 .me-top:empty {
@@ -14,12 +19,8 @@
 }
 
 .me-tabs {
-  position: sticky;
-  top: 0;
-  z-index: 2;
   margin-top: var(--space-6);
   padding-top: var(--space-2);
-  background: var(--bg);
 }
 
 .me-tabs[hidden] {
@@ -29,7 +30,6 @@
 .me {
   flex: 1;
   min-height: 0;
-  padding-bottom: var(--space-8);
 }
 
 .me > .st-sheet[hidden] {
@@ -335,15 +335,48 @@
 /* On a phone the facts and the password go under the name, and a row's
    things go under its name. */
 @media (max-width: 760px) {
+  .me-top > .me-login {
+    padding-top: var(--space-3);
+  }
+
+  .me-login {
+    gap: var(--space-4);
+  }
+
+  .me-tabs {
+    margin-top: var(--space-4);
+  }
+
+  /* Who the user is in two lines, the password their key alone at the
+     end. */
   .me-card {
-    grid-template-columns: auto minmax(0, 1fr);
-    row-gap: var(--space-3);
-    padding: var(--space-4);
+    column-gap: var(--space-3);
+    padding: var(--space-3) var(--space-2) var(--space-3) var(--space-4);
+  }
+
+  .me-seal {
+    width: 40px;
+    height: 40px;
+  }
+
+  .me-seal svg {
+    width: 100%;
+    height: 100%;
+  }
+
+  .me-name {
+    font-size: var(--size-h3);
   }
 
   .me-password {
-    grid-column: 1 / -1;
-    justify-self: start;
+    width: 44px;
+    height: 44px;
+    padding: 0;
+    justify-content: center;
+  }
+
+  .me-password span {
+    display: none;
   }
 
   .me-row:not(.act) {

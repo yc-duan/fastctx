@@ -291,7 +291,7 @@ export class DataPage implements Page {
         <input type="checkbox" data-choose="${escape(one.name)}"${this.chosen.has(one.name) ? " checked" : ""}${one.held ? ` disabled title="${escape(one.held)}"` : ""} aria-label="${escape(name)}">
         <button class="data-row-open" type="button" data-open="${escape(one.name)}" aria-expanded="${open}">
           <span class="data-agent">${glyph(one.agent === "claude" ? "claude" : "codex", 16)}</span>
-          <span class="data-name">${escape(name)}</span>
+          <span class="data-name"${narrow.matches && (one.town || one.last_activity) ? ` title="${escape([one.town ?? "", one.last_activity ? words.ago(new Date(one.last_activity), now) : ""].filter(Boolean).join("\n"))}"` : ""}>${escape(name)}</span>
           ${one.town ? `<span class="tag">${escape(one.town)}</span>` : ""}
           <span class="data-when">${one.last_activity ? escape(words.ago(new Date(one.last_activity), now)) : ""}</span>
           <span class="data-size">${escape(size(one.bytes))}</span>
@@ -391,5 +391,8 @@ export function totalOf(space: Space): number {
 }
 
 const size = (bytes: number) => bytesSaid(bytes);
+/** A phone's width (`data-page.css`): a row there says its project and
+ *  when it was last used when held. */
+const narrow = matchMedia("(max-width: 520px)");
 
 export { bytesSaid };
