@@ -31,6 +31,7 @@ pub(super) fn load(node: &Node, id: &ResidentId, cell: &mut Option<Stored>) -> R
     };
     let mut compacted = state.clone();
     receipts::compact(&directory, &state, &mut compacted)?;
+    cache(node, id, compacted.view());
     *cell = Some(compacted);
     Ok(())
 }
@@ -65,6 +66,9 @@ pub(super) fn publish(
         if let Some(state) = cell.as_mut() {
             state.held = Some(error.message.clone());
         }
+        if let Some(state) = cell.as_ref() {
+            cache(node, id, state.view());
+        }
         drop(_transition);
         // An uncommitted stop cannot be reconstructed from the checkpoint yet.
         if node.residents.active(id).is_ok()
@@ -85,6 +89,7 @@ pub(super) fn publish(
         return Err(error);
     }
     let view = next.view();
+    cache(node, id, view.clone());
     if super::idle::busy(&next) {
         crate::goals::engine::input_changed(node, id);
     }
@@ -92,6 +97,17 @@ pub(super) fn publish(
     node.composers.failed.lock().expect("failed composer checkpoints").remove(id);
     node.watchers.publish(id, &event(view));
     Ok(())
+}
+
+fn cache(node: &Node, id: &ResidentId, composer: fastctx_types::composer::Composer) {
+    let mut snapshots = node.composers.snapshots.lock().expect("composer snapshots");
+    if snapshots.len() >= 1024
+        && !snapshots.contains_key(id)
+        && let Some(oldest) = snapshots.keys().next().cloned()
+    {
+        snapshots.remove(&oldest);
+    }
+    snapshots.insert(id.clone(), composer);
 }
 
 pub(super) fn event(composer: fastctx_types::composer::Composer) -> SessionEvent {

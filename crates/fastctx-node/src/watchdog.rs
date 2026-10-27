@@ -68,7 +68,7 @@ impl Watchdog {
                     Ok(now) => now,
                     Err(error) => {
                         log.line(format_args!("watchdog cannot read the running-time clock: {error}"));
-                        std::process::exit(1);
+                        crate::ending::exit(1);
                     }
                 };
                 // 2026-10-03: this detects a failed responsiveness contract,
@@ -100,7 +100,7 @@ impl Watchdog {
                     log.line(format_args!("watchdog: the node control loop did not run for {missed} consecutive heartbeat observations; exiting for the service to restart it"));
                     // Runtime shutdown can wait forever for its stuck workers.
                     // Exit from this independent OS thread, without unwinding.
-                    std::process::exit(1);
+                    crate::ending::exit(1);
                 }
                 // The worker threads, by the same observations: every one of
                 // them blocked in a synchronous wait leaves the tasks that
@@ -113,7 +113,7 @@ impl Watchdog {
                 }
                 if HEARTBEAT * silent >= WORKERS_SILENT {
                     log.line(format_args!("watchdog: no task ran on the node's worker threads for {silent} consecutive heartbeat observations; exiting for the service to restart it"));
-                    std::process::exit(1);
+                    crate::ending::exit(1);
                 }
                 previous = now;
                 answered = current;

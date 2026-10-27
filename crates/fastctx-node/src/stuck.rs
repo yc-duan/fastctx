@@ -54,7 +54,8 @@ pub(crate) fn start(node: &Arc<Node>) {
             std::thread::sleep(LOOK);
             // The node is gone when its last holder let go: nothing to watch.
             let Some(node) = watched.upgrade() else { return };
-            let snapshot = doing::snapshot(WAITS, HOLDS);
+            let mut snapshot = doing::snapshot(WAITS, HOLDS);
+            snapshot.stuck.extend(crate::intake::stuck());
             let now = Instant::now();
             if !node.handoff.yielding() {
                 handoff_reported = None;
@@ -100,7 +101,7 @@ pub(crate) fn start(node: &Arc<Node>) {
                          ending this node for its service to start it again",
                         now.duration_since(*since).as_secs()
                     ));
-                    std::process::exit(1);
+                    crate::ending::exit(1);
                 }
                 Some((seen, _)) if *seen == key => {}
                 _ => {

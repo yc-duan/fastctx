@@ -57,6 +57,7 @@ pub mod repair;
 pub mod residents;
 pub mod run;
 pub mod run_facts;
+mod scheduling;
 pub mod scratch;
 pub mod sentinel;
 pub mod sentinel_control;

@@ -49,8 +49,14 @@ pub struct Contract {
 /// answers questions, and always takes a stop.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Pool {
-    /// Questions and changes, answered at once.
+    /// Read-only questions.
     Short,
+    /// Changes other than direct human input.
+    Change,
+    /// Typing and sending.
+    Input,
+    /// Stopping and answering questions, even while input is still finishing.
+    InputControl,
     /// Work that runs a while before it answers: a script, a colleague.
     Long,
     /// A stream that stays open: a watch, a job's output, a copy, a read.
@@ -72,7 +78,7 @@ impl Contract {
     const ASKS_AGENT: Self = Self { within: Some(Duration::from_secs(150)), ..Self::QUERY };
     /// A change, which may start or stop an agent's session first.
     const CHANGE: Self =
-        Self { within: Some(Duration::from_secs(300)), pool: Pool::Short, cancellable: false, held: true };
+        Self { within: Some(Duration::from_secs(300)), pool: Pool::Change, cancellable: false, held: true };
     /// Work that answers once it is done, however long that takes.
     const LONG: Self = Self { within: None, pool: Pool::Long, cancellable: false, held: true };
     /// Running a script there, which answers within the longest a run
@@ -102,16 +108,30 @@ impl RemoteCall {
     /// What this call is (`Contract`).
     pub fn contract(&self) -> Contract {
         match self {
+            Self::Composer { request: crate::composer::Request::Read, .. } => Contract::QUERY,
+            Self::Composer { .. } | Self::Talk { .. } => Contract { pool: Pool::Input, ..Contract::CHANGE },
+            Self::Control { control: crate::session::control::Control::Answer { .. }, .. } => {
+                Contract { pool: Pool::InputControl, ..Contract::CHANGE }
+            }
+            Self::Stop { .. } | Self::TurnInterrupted { .. } | Self::StopJob { .. } | Self::StopOn { .. } => {
+                Contract { pool: Pool::InputControl, ..Contract::CONTROL }
+            }
             Self::Goal { request: crate::goals::Request::Read | crate::goals::Request::History { .. }, .. } => {
                 Contract::QUERY
             }
             Self::GoalCommand { request: crate::goals::AgentRequest::Read, .. } => Contract::QUERY,
             Self::Goal { .. } | Self::GoalCommand { .. } => Contract::CHANGE,
-            Self::SentinelControl { request: crate::sentinel_control::Request::List { .. } | crate::sentinel_control::Request::Help }
-            | Self::SentinelHome { request: crate::sentinel_control::HomeRequest::Inspect { .. } } => Contract { within: Some(Duration::from_secs(90)), ..Contract::QUERY },
+            Self::SentinelControl {
+                request: crate::sentinel_control::Request::List { .. } | crate::sentinel_control::Request::Help,
+            }
+            | Self::SentinelHome { request: crate::sentinel_control::HomeRequest::Inspect { .. } } => {
+                Contract { within: Some(Duration::from_secs(90)), ..Contract::QUERY }
+            }
             Self::SentinelHome { request: crate::sentinel_control::HomeRequest::Withdraw { .. } } => Contract::CONTROL,
             Self::SentinelControl { .. } | Self::SentinelHome { .. } => Contract::START,
-            Self::SentinelSettings { change: None } => Contract { within: Some(Duration::from_secs(180)), ..Contract::QUERY },
+            Self::SentinelSettings { change: None } => {
+                Contract { within: Some(Duration::from_secs(180)), ..Contract::QUERY }
+            }
             Self::SentinelSettings { change: Some(_) } => Contract::CHANGE,
             Self::SentinelKeys => Contract { within: Some(Duration::from_secs(30)), ..Contract::QUERY },
             Self::SentinelKey { .. } => Contract::CHANGE,
@@ -166,7 +186,6 @@ impl RemoteCall {
             | Self::EnterProject { .. }
             | Self::ReserveAttachment { .. }
             | Self::CommitAttachment { .. }
-            | Self::Composer { .. }
             | Self::PageAction { .. }
             | Self::Relay { .. }
             | Self::Forget { .. }
@@ -178,7 +197,6 @@ impl RemoteCall {
             | Self::AgentFolder { .. }
             | Self::SetAgentTitle { .. }
             | Self::ChangeAgentLogin { .. }
-            | Self::Talk { .. }
             | Self::Open { .. }
             | Self::Control { .. }
             | Self::Manage { .. }
@@ -211,11 +229,7 @@ impl RemoteCall {
             | Self::CopyFetch { .. } => Contract::READ,
             Self::Place { .. } | Self::Upload { .. } | Self::CopyReceive { .. } => Contract::TRANSFER,
             Self::AttachmentReferences { .. } | Self::Facts => Contract { cancellable: true, ..Contract::CONTROL },
-            Self::StopJob { .. }
-            | Self::StopOn { .. }
-            | Self::Stop { .. }
-            | Self::WordsCame { .. }
-            | Self::TurnInterrupted { .. } => Contract::CONTROL,
+            Self::WordsCame { .. } => Contract::CONTROL,
         }
     }
 }
@@ -271,7 +285,8 @@ impl Call {
     /// (`Leaving`).
     pub fn on_leaving(&self) -> Leaving {
         match self {
-            Self::PlanRead { .. } => Leaving::Stop,
+            Self::Composer { request: crate::composer::Request::Read, .. } => Leaving::Stop,
+            Self::DoctorCalls | Self::PlanRead { .. } => Leaving::Stop,
             Self::Plan { .. } | Self::PlanWrite { .. } => Leaving::Finish,
             Self::AccountRecords {
                 request: crate::account_records::Request::Read { .. } | crate::account_records::Request::List { .. },
@@ -291,7 +306,10 @@ impl Call {
             Self::WatchMemory { .. } | Self::MemorySettings { enabled: None, .. } | Self::Collaboration { .. } => {
                 Leaving::Stop
             }
-            Self::Sentinel { request: crate::sentinel_control::Request::List { .. } | crate::sentinel_control::Request::Help, .. } => Leaving::Stop,
+            Self::Sentinel {
+                request: crate::sentinel_control::Request::List { .. } | crate::sentinel_control::Request::Help,
+                ..
+            } => Leaving::Stop,
             Self::Sentinel { .. } => Leaving::Finish,
             Self::SentinelSettings { change: None, .. } => Leaving::Stop,
             Self::SentinelSettings { change: Some(_), .. } => Leaving::Finish,

@@ -16,11 +16,13 @@ mod claude_subagents;
 mod command_guard;
 mod copy;
 mod data;
+mod doctor;
 mod first_program;
 mod host_change;
 mod hub_intake;
 mod hub_retire;
 
+mod goal;
 mod keep;
 mod mcp;
 mod mcp_child;
@@ -48,7 +50,6 @@ mod steps;
 mod stop;
 mod talk;
 mod timer;
-mod goal;
 mod turn_facts;
 mod uninstall;
 mod update;
@@ -79,6 +80,9 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Inspect this node's current work.
+    #[command(subcommand)]
+    Doctor(doctor::Doctor),
     /// The account's MCP servers: list, add, import, test and remove.
     Mcp(mcp::McpArgs),
     /// Read or change the account's instructions and host settings.
@@ -479,6 +483,7 @@ fn main() -> ExitCode {
     }
     let result = match command {
         Command::Ui => ui(),
+        Command::Doctor(command) => doctor::run(command),
         Command::Timer(args) => timer::run(args),
         Command::Goal(args) => goal::run(args),
         Command::TurnFacts(args) => turn_facts::run(args),

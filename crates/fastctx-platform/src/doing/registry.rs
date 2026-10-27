@@ -71,6 +71,7 @@ struct Entry {
 }
 
 struct Outside {
+    task: Option<tokio::task::Id>,
     what: String,
     within: Duration,
     label: Arc<str>,
@@ -282,7 +283,10 @@ pub struct OutsideWait {
 impl OutsideWait {
     pub(super) fn begin(what: String, within: Duration) -> Self {
         let token = next();
-        state().outside.insert(token, Outside { what, within, label: super::label(), since: Instant::now() });
+        state().outside.insert(
+            token,
+            Outside { task: tokio::task::try_id(), what, within, label: super::label(), since: Instant::now() },
+        );
         Self { token }
     }
 }
@@ -319,6 +323,26 @@ pub struct Snapshot {
     pub stuck: Vec<Stuck>,
     pub cycles: Vec<Cycle>,
     pub active: Vec<Active>,
+}
+
+/// Current task waits, including those that have not become late. A single
+/// pass lets a caller registry join diagnostics without scanning per call.
+pub fn task_waits() -> HashMap<tokio::task::Id, String> {
+    let state = state();
+    let mut waits: HashMap<_, _> = state
+        .waiting
+        .values()
+        .filter_map(|entry| {
+            let Some(Who::Task(task)) = entry.who else { return None };
+            Some((task, format!("waiting for {}({})", entry.name, entry.subject)))
+        })
+        .collect();
+    for outside in state.outside.values() {
+        if let Some(task) = outside.task {
+            waits.insert(task, format!("waiting for {}", outside.what));
+        }
+    }
+    waits
 }
 
 /// What has gone on too long and who waits on whom in a circle, now.

@@ -47,6 +47,7 @@ mod data;
 mod delivery;
 mod desk;
 mod devices;
+mod ending;
 mod facts;
 mod features;
 mod file_events;
@@ -779,6 +780,7 @@ pub async fn run_prepared(
 
     renewal::resume(&node);
 
+    ending::start(node.log.clone()).context("starting node stop diagnostics")?;
     stuck::start(&node);
     let watchdog = watchdog::Watchdog::start(node.log.clone()).context("starting the control-loop watchdog")?;
     loop {
@@ -789,7 +791,7 @@ pub async fn run_prepared(
             () = watchdog.requested() => {
                 if node.links().iter().any(|link| link.failed()) {
                     node.log.line("a link task ended unexpectedly; exiting for the service to restart it");
-                    std::process::exit(1);
+                    crate::ending::exit(1);
                 }
                 continue;
             },

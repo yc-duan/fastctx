@@ -61,11 +61,11 @@ impl Supervision {
                     }
                     Ok(None) => {
                         let _ = writeln!(std::io::stderr(), "the guardian is gone; a node nobody keeps stops");
-                        std::process::exit(0);
+                        crate::ending::exit(0);
                     }
                     Err(error) => {
                         let _ = writeln!(std::io::stderr(), "reading the guardian's channel: {error}; stopping");
-                        std::process::exit(1);
+                        crate::ending::exit(1);
                     }
                 }
             }
@@ -305,5 +305,5 @@ async fn yield_when_idle(node: Arc<Node>, say: impl Fn(ServiceEvent)) {
     }
     node.log.line("idle: handing the World on to the successor");
     say(ServiceEvent::Yielded);
-    std::process::exit(0);
+    crate::ending::exit(0);
 }

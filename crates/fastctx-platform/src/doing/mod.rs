@@ -28,7 +28,9 @@ pub use lock::{
     Busy, Mutex, MutexGuard, OwnedMutexGuard, OwnedRwLockReadGuard, OwnedRwLockWriteGuard, RwLock, RwLockReadGuard,
     RwLockWriteGuard,
 };
-pub use registry::{Active, Cycle, OutsideWait, Snapshot, Stuck, Work, progress, set_reporter, snapshot, violations};
+pub use registry::{
+    Active, Cycle, OutsideWait, Snapshot, Stuck, Work, progress, set_reporter, snapshot, task_waits, violations,
+};
 pub use sync::{SyncMutex, SyncMutexGuard};
 
 /// A lock's place in the order locks are taken in: a task holding a lock
