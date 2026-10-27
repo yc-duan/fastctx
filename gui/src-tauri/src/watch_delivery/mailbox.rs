@@ -132,7 +132,10 @@ impl Mailbox {
             let _ = self.notify(&mut state);
         }
     }
-    pub fn read(&self, through: u64) -> Result<Read, String> {
+    /// The next part for the page, once it has `through`; `resync`, where it
+    /// could not read the part it has, makes the next a gap, so the source
+    /// starts again from what is now.
+    pub fn read(&self, through: u64, resync: bool) -> Result<Read, String> {
         let mut state = self.state.lock().expect("WebView mailbox");
         if state.closed {
             return Ok(Read::Closed);
@@ -158,6 +161,13 @@ impl Mailbox {
             }
         } else if through != state.next {
             return Err("the page's observation cursor is no longer held".into());
+        }
+        if resync {
+            state.active = None;
+            state.next += 1;
+            let gap = Read::Gap { number: state.next };
+            state.last = Some(gap.clone());
+            return Ok(gap);
         }
         if state.active.as_ref().is_some_and(|active| active.offset == active.encoded.text.len()) {
             state.active = None;

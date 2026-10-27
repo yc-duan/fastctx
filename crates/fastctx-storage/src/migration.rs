@@ -20,9 +20,12 @@ pub fn receipts(database: &Database, batch: Vec<Receipt>) -> Result<usize> {
         return Err(Error::new("a migration batch exceeds 256 receipts"));
     }
     let bytes = batch.iter().map(|item| item.key.bytes() + item.value.len()).sum();
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |since| i64::try_from(since.as_millis()).unwrap_or(i64::MAX));
     let batch = database.write_now(bytes, move |connection| {
         for item in &batch {
-            receipts::import(connection, &item.key, &item.value, item.keep)?;
+            receipts::import(connection, &item.key, &item.value, item.keep, now)?;
         }
         Ok(batch)
     })?;

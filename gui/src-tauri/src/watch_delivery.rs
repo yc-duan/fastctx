@@ -37,12 +37,12 @@ impl Deliveries {
             mailbox.close();
         }
     }
-    fn read(&self, id: u64, through: u64) -> Result<Read, String> {
+    fn read(&self, id: u64, through: u64, resync: bool) -> Result<Read, String> {
         let mailbox = self.0.lock().expect("WebView deliveries").get(&id).cloned();
         let Some(mailbox) = mailbox else {
             return Ok(Read::Closed);
         };
-        let read = mailbox.read(through)?;
+        let read = mailbox.read(through, resync)?;
         if matches!(read, Read::Closed) {
             self.close(id);
         }
@@ -55,8 +55,9 @@ pub(crate) fn watch_delivery_read(
     shell: tauri::State<'_, crate::Shell>,
     id: u64,
     through: u64,
+    resync: Option<bool>,
 ) -> Result<Read, String> {
-    let read = shell.deliveries.read(id, through)?;
+    let read = shell.deliveries.read(id, through, resync.unwrap_or(false))?;
     if matches!(read, Read::Closed) {
         shell.transcripts.close(id);
     }
@@ -85,7 +86,9 @@ impl crate::Shell {
             let mut again = false;
             loop {
                 let generation = *restarts.borrow_and_update();
-                let Some(sender) = mailbox.sender(generation, key) else { return; };
+                let Some(sender) = mailbox.sender(generation, key) else {
+                    return;
+                };
                 let failed = sender.failed.clone();
                 tokio::select! {
                     () = work(sender, again) => {

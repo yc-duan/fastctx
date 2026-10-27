@@ -42,12 +42,27 @@ pub(super) fn load<'a>(node: &'a Node, id: &'a ResidentId, cell: &'a mut Option<
                 .await
                 .map_err(failure)?;
         }
+        // The draft file an older node kept goes once the database holds
+        // the draft; where removing it fails, the database is read first.
+        forget_file(node, id);
         watching::restore(node, id, &mut state);
         failures::apply(node, id, &mut state);
         cache(node, id, state.view());
         *cell = Some(state);
         Ok(())
     })
+}
+
+/// Takes away the draft file an older node kept, the database now holding
+/// the draft.
+fn forget_file(node: &Node, id: &ResidentId) {
+    let file = node.world.conversation(id).composer();
+    let _transition = crate::resident_storage::lock();
+    match std::fs::remove_file(&file) {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => node.log.line(format_args!("taking away {}: {error}", file.display())),
+    }
 }
 
 pub(super) fn publish<'a>(

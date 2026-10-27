@@ -48,7 +48,7 @@ impl Key {
 
 /// A transport sequence within one authority's epoch. Big-endian blobs retain
 /// the complete unsigned wire range and SQLite's byte ordering matches it.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Reference {
     pub authority: String,
     pub epoch: u64,
@@ -103,14 +103,17 @@ pub fn put(
 /// Imports without overwriting a live result. A repeated legacy import must
 /// match; a newer live result wins after runtime's normal identity checks.
 /// The source file may be removed only after this transaction is committed.
-pub fn import(connection: &Connection, key: &Key, value: &[u8], keep: Duration) -> Result<()> {
+/// An older node acknowledged its hub's place as soon as it kept a receipt,
+/// so one imported is settled from now and kept `keep` more.
+pub fn import(connection: &Connection, key: &Key, value: &[u8], keep: Duration, now: i64) -> Result<()> {
     let keep = i64::try_from(keep.as_millis()).map_err(|_| Error::new("receipt retention is too long"))?;
     connection
         .prepare_cached(
-            "INSERT INTO receipts(namespace,scope,id,value,keep_ms,legacy)
-        VALUES(?1,?2,?3,?4,?5,1) ON CONFLICT DO NOTHING",
+            "INSERT INTO receipts(namespace,scope,id,value,keep_ms,terminal,legacy)
+        VALUES(?1,?2,?3,?4,?5,1,1) ON CONFLICT DO NOTHING",
         )?
         .execute(params![key.namespace, key.scope, key.id, value, keep])?;
+    settle_if_proven(connection, key, now)?;
     let (legacy, stored): (bool, Vec<u8>) = connection
         .prepare_cached("SELECT legacy,value FROM receipts WHERE namespace=?1 AND scope=?2 AND id=?3")?
         .query_row(params![key.namespace, key.scope, key.id], |row| Ok((row.get(0)?, row.get(1)?)))?;
@@ -147,6 +150,22 @@ pub fn acknowledge(connection: &Connection, through: &Reference, now: i64) -> Re
         WHERE authority=?1 AND epoch=?2 AND sequence<=?3 AND acknowledged=0",
         )?
         .execute(params![through.authority, &epoch, &sequence])?;
+    // A hub numbering in a new epoch no longer holds the old one: what it
+    // numbered there is never sent again, so those places are retired with it.
+    let retired = connection
+        .prepare_cached(
+            "SELECT DISTINCT namespace,scope,id FROM receipt_references
+        WHERE authority=?1 AND epoch<>?2 AND acknowledged=0",
+        )?
+        .query_map(params![through.authority, &epoch], |row| {
+            Ok(Key { namespace: row.get(0)?, scope: row.get(1)?, id: row.get(2)? })
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    connection
+        .prepare_cached(
+            "UPDATE receipt_references SET acknowledged=1 WHERE authority=?1 AND epoch<>?2 AND acknowledged=0",
+        )?
+        .execute(params![through.authority, &epoch])?;
     // Acknowledged references carry their own proof. Old epoch watermarks are
     // no longer needed; a future copy in a retired epoch remains unproven until
     // that epoch is explicitly acknowledged again.
@@ -154,7 +173,7 @@ pub fn acknowledge(connection: &Connection, through: &Reference, now: i64) -> Re
         .prepare_cached("DELETE FROM receipt_watermarks WHERE authority=?1 AND epoch<>?2")?
         .execute(params![through.authority, &epoch])?;
     let mut settled = 0;
-    for key in keys {
+    for key in keys.into_iter().chain(retired) {
         settled += settle_if_proven(connection, &key, now)?;
     }
     Ok(settled)

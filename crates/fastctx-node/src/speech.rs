@@ -325,6 +325,14 @@ async fn hand_over_locked(
     };
     node.ready().await;
     node.residents.active(to)?;
+    // While a long control runs in the host, words wait in the inbox; they
+    // go in as it ends (`control_long`).
+    if node.long_controls.of(to) {
+        return Ok(Landed::Waiting {
+            why: Some(crate::control_long::WAITING.into()),
+            answered: answered(node, to, about),
+        });
+    }
     if matches!(pending.delivery.notice, Notice::Sentinel { .. })
         && crate::inbox::read(directory, &pending.delivery.id)
             .map_err(|e| Failure::new(e.to_string()))?

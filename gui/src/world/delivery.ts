@@ -41,6 +41,16 @@ export async function observe<T, R extends Opened>(
   let parts: string[] = [];
   let received = 0;
   let total = 0;
+  // A part that cannot be read is acknowledged and answered with a gap: the
+  // source starts again from what is now, not the same part again.
+  let resync = false;
+  const unreadable = (number: number, why: string) => {
+    console.error("an observation part could not be read:", why);
+    parts = [];
+    received = total = 0;
+    through = number;
+    resync = true;
+  };
   const deliver = (piece: T | Interrupted) => {
     try { onPiece(piece); }
     catch (error) { console.error("an observation could not be shown", error); }
@@ -71,16 +81,20 @@ export async function observe<T, R extends Opened>(
       do {
         requested = false;
         while (!closed) {
-          const read = await invoke<Read>("watch_delivery_read", { id, through });
+          const read = await invoke<Read>("watch_delivery_read", { id, through, resync });
           if (closed) return;
           failures = 0;
+          resync = false;
           if (read.kind === "idle") break;
           if (read.kind === "closed") {
             reader.close();
             if (id !== null) readers.delete(id);
             return;
           }
-          if (read.number !== through + 1) throw new Error("the observation chunk arrived out of order");
+          if (read.number !== through + 1) {
+            unreadable(read.number, "out of order");
+            continue;
+          }
           if (read.kind === "gap") {
             parts = [];
             received = total = 0;
@@ -89,13 +103,20 @@ export async function observe<T, R extends Opened>(
             const bytes = encoder.encode(read.text).byteLength;
             if (read.offset !== received || read.total < 1 || read.total > 64 * 1024 * 1024 || bytes < 1 || bytes > 64 * 1024
               || received + bytes > read.total || (received !== 0 && total !== read.total)) {
-              throw new Error("the observation chunk has invalid bounds");
+              unreadable(read.number, "out of bounds");
+              continue;
             }
             total = read.total;
             received += bytes;
             parts.push(read.text);
             if (received === total) {
-              const piece: T = JSON.parse(parts.join(""));
+              let piece: T;
+              try {
+                piece = JSON.parse(parts.join(""));
+              } catch {
+                unreadable(read.number, "not JSON");
+                continue;
+              }
               parts = [];
               received = total = 0;
               deliver(piece);

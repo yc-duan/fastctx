@@ -264,7 +264,7 @@ pub(crate) fn between_turns(control: &Control) -> bool {
 }
 
 pub(crate) fn busy(node: &Node, id: &ResidentId) -> Result<bool, Failure> {
-    if node.residents.now(id).is_some_and(|now| now.turn.is_some()) {
+    if node.residents.now(id).is_some_and(|now| now.turn.is_some()) || node.long_controls.of(id) {
         return Ok(true);
     }
     let (about, _) = node.residents.about(id).ok_or_else(|| Failure::new("unknown conversation"))?;
@@ -282,7 +282,9 @@ pub(crate) async fn enqueue_if_busy(
     id: &ResidentId,
     control: &Control,
 ) -> Result<Option<Controlled>, Failure> {
-    if !between_turns(control) {
+    // While a long control runs, every control told in the conversation
+    // waits for it, not only those that wait for a turn.
+    if !(between_turns(control) || (told(control) && node.long_controls.of(id))) {
         return Ok(None);
     }
     // Ones still waiting behind queued words keep their place ahead of it;

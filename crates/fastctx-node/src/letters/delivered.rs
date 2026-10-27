@@ -1,5 +1,6 @@
 //! One business handoff per immutable letter identity, shared by every hub.
-//! Legacy acceptances without evidence of closure remain unexpired in SQLite.
+//! Its receipt settles once the place its letter came at is acknowledged to
+//! that hub (`fastctx_storage::receipts`); an older node's counts as settled.
 
 use fastctx_storage::{
     Database,
@@ -76,7 +77,13 @@ impl Handoff {
         }
         match std::fs::read(&self.path) {
             Ok(bytes) if bytes == b"accepted" => {
-                self.finish().await?;
+                let key = self.key.clone();
+                self.database
+                    .write(key.bytes() + 8, move |connection| {
+                        receipts::import(connection, &key, b"accepted", KEEP, jiff::Timestamp::now().as_millisecond())
+                    })
+                    .await
+                    .map_err(io::Error::other)?;
                 Ok(true)
             }
             Ok(_) => Err(io::Error::new(
@@ -96,11 +103,22 @@ impl Handoff {
         }
     }
 
-    pub async fn finish(&self) -> io::Result<()> {
+    /// Keeps that the letter was handed over; `received`, where it came as
+    /// a letter, is what settles the receipt once acknowledged.
+    pub async fn finish(&self, received: Option<&receipts::Reference>) -> io::Result<()> {
         let key = self.key.clone();
+        let received = received.cloned();
         self.database
             .write(key.bytes() + 8, move |connection| {
-                receipts::put(connection, &key, b"accepted", KEEP, false, None, jiff::Timestamp::now().as_millisecond())
+                receipts::put(
+                    connection,
+                    &key,
+                    b"accepted",
+                    KEEP,
+                    false,
+                    received.as_ref(),
+                    jiff::Timestamp::now().as_millisecond(),
+                )
             })
             .await
             .map_err(io::Error::other)

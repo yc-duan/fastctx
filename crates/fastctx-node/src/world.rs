@@ -1231,6 +1231,7 @@ impl fastctx_net::link::Node for Handler {
         letter: Letter,
     ) -> BoxFuture<io::Result<Result<(), String>>> {
         let from = caller.machine.clone();
+        let received = caller.received.clone();
         let node = self.node.upgrade();
         let hub = self.hub.clone();
         Box::pin(async move {
@@ -1270,7 +1271,7 @@ impl fastctx_net::link::Node for Handler {
                         return Err(io::Error::other(failure.message));
                     }
                     crate::control_letters::keep(&node, &hub, &caller, &identity, *command.clone(), Some(failure))?;
-                    handoff.finish().await?;
+                    handoff.finish(received.as_ref()).await?;
                     if let Some(completion) = completion {
                         completion.finish()?;
                     }
@@ -1350,7 +1351,7 @@ impl fastctx_net::link::Node for Handler {
             }
             .await;
             if matches!(result, Ok(Ok(()))) {
-                handoff.finish().await?;
+                handoff.finish(received.as_ref()).await?;
                 if let Some(completion) = completion {
                     completion.finish()?;
                 }

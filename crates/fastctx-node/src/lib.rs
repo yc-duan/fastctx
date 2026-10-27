@@ -41,6 +41,7 @@ mod consent;
 pub mod context;
 mod control;
 mod control_letters;
+mod control_long;
 mod control_posts;
 mod control_queue;
 mod copy;
@@ -220,6 +221,9 @@ pub(crate) struct Node {
     retrying: lifecycle::retry::Retrying,
     composers: composer::Composers,
     actions: control_queue::Actions,
+    /// The controls running outside their conversation's action gate
+    /// (`control_long`).
+    long_controls: control_long::Running,
     file_searches: file_search::Searches,
     line_sources: lines::Sources,
     log: Arc<log::Log>,
@@ -626,6 +630,7 @@ pub async fn run_prepared(
         retrying: Default::default(),
         composers: composer::Composers::default(),
         actions: Default::default(),
+        long_controls: Default::default(),
         file_searches: file_search::Searches::default(),
         line_sources: lines::Sources::default(),
         log,
@@ -720,6 +725,7 @@ pub async fn run_prepared(
     node.effects_changed.notify_waiters();
     stops::recover(&node);
     composer::resume(&node);
+    composer::keep(&node);
     lifecycle::start(&node);
     recovery::start(&node, jobs_reconciled);
     timers::start(&node);

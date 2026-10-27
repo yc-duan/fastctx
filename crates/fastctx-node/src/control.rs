@@ -101,13 +101,21 @@ pub async fn control_here(node: &Arc<Node>, resident: &ResidentId, control: Cont
         return Ok(queued);
     }
     if !told {
+        // What is only read waits for no long control: its host answers
+        // nothing else until that is done.
+        if node.long_controls.of(resident) {
+            return Err(Failure::not_run(crate::control_long::WAITING));
+        }
         return execute(node, resident, control).await;
     }
     let row = crate::control_queue::begin(node, resident, &control)?;
-    let result = match crate::control_queue::prepare(node, resident, &row).await {
-        Ok(()) => execute(node, resident, control).await,
-        Err(error) => Err(error),
-    };
+    if let Err(error) = crate::control_queue::prepare(node, resident, &row).await {
+        return crate::control_queue::end(node, resident, row, Err(error)).await;
+    }
+    if crate::control_long::long(node, resident, &control) {
+        return Ok(crate::control_long::start(node, resident, row));
+    }
+    let result = execute(node, resident, control).await;
     crate::control_queue::end(node, resident, row, result).await
 }
 

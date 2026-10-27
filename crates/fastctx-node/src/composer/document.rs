@@ -164,6 +164,11 @@ impl Document {
         delete: &[CharacterId],
         insert: &str,
     ) -> Result<(), Failure> {
+        // An edit that inserted is known by its characters: sent again once
+        // its receipt has gone (`keeping`), it is not done twice.
+        if self.aliases.iter().any(|alias| alias.old.operation == operation) {
+            return Ok(());
+        }
         let after = after.as_ref().map(|id| self.identity(id)).transpose()?;
         let delete = delete.iter().map(|id| self.identity(id)).collect::<Result<Vec<_>, _>>()?;
         let edited = self.text_mut().edit(after, &delete, insert).map_err(failure)?;

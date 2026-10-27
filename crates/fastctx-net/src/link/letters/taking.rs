@@ -26,7 +26,7 @@ pub(in crate::link) async fn take(inner: Arc<Inner>, epoch: u64, run: Vec<(u64, 
         for (sequence, message) in run {
             if !taken.is_some_and(|(known, taken)| known == epoch && sequence <= taken) {
                 let reference = Reference { authority: inner.hub.as_str().to_owned(), epoch, sequence };
-                match one(&inner, &message, &mut recent).await {
+                match one(&inner, &message, &mut recent, &reference).await {
                     Ok(Some((from, id, receipt))) => pending.push((from, id, receipt, reference)),
                     Ok(None) => {}
                     Err(error) => {
@@ -60,6 +60,7 @@ async fn one(
     inner: &Inner,
     message: &Envelope,
     recent: &mut HashMap<(PublicKey, LetterId), Receipt>,
+    reference: &Reference,
 ) -> io::Result<Option<(PublicKey, LetterId, Receipt)>> {
     let set_aside = |reason: String| -> io::Result<()> {
         let path = super::record_failure(&inner.dir, "in", &reason, message, |line| inner.node.log(line))?;
@@ -70,7 +71,7 @@ async fn one(
         set_aside(format!("from {}: it is not a letter", message.from))?;
         return Ok(None);
     }
-    let caller = match inner.admit(message).await {
+    let mut caller = match inner.admit(message).await {
         Ok(caller) => caller,
         Err(reason) => {
             set_aside(format!("from {}: {reason}", message.from))?;
@@ -100,6 +101,7 @@ async fn one(
         None => {}
     }
     let from = caller.machine.clone();
+    caller.received = Some(reference.clone());
     if let Err(reason) = inner.node.letter(caller, purpose, id.clone(), letter).await? {
         set_aside(format!("from {from}: {reason}"))?;
     }

@@ -2,6 +2,7 @@
 
 use super::{Error, Result};
 use rusqlite::{Connection, TransactionBehavior};
+use std::panic::{AssertUnwindSafe, catch_unwind};
 use tokio::sync::{OwnedSemaphorePermit, mpsc};
 
 pub(super) type Job = Box<dyn Work>;
@@ -36,7 +37,11 @@ where
     R: FnOnce(Result<T>) + Send,
 {
     fn apply(&mut self, connection: &Connection) -> bool {
-        let result = self.write.take().expect("operation runs once")(connection);
+        let write = self.write.take().expect("operation runs once");
+        // One operation that panics fails alone: its savepoint is rolled back
+        // and the writer goes on with the others.
+        let result = catch_unwind(AssertUnwindSafe(|| write(connection)))
+            .unwrap_or_else(|_| Err(Error::new("the database operation failed unexpectedly")));
         let success = result.is_ok();
         self.result = Some(result);
         success
@@ -50,8 +55,12 @@ where
                 None => result.expect("a committed operation was executed"),
             },
         };
-        if let Ok(value) = &result {
-            committed(value);
+        if let Ok(value) = &result
+            && catch_unwind(AssertUnwindSafe(|| committed(value))).is_err()
+        {
+            // What a commit tells others is not the caller's to lose: the
+            // operation stands, committed.
+            eprintln!("a database commit's notification failed unexpectedly");
         }
         reply(result);
     }

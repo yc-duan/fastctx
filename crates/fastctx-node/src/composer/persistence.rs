@@ -1,5 +1,5 @@
 //! Composer metadata, text journals, and operation receipts commit together.
-//! Rows live with the conversation; only receipts proven unresendable may expire.
+//! Rows live with the conversation; its records expire as `keeping` says.
 
 mod text;
 use text::TextWrite;
@@ -93,6 +93,8 @@ struct Record {
     kind: &'static str,
     name: String,
     content: Vec<u8>,
+    /// When it may go, in milliseconds (`keeping`).
+    expires: i64,
 }
 pub(super) struct Prepared {
     owner: String,
@@ -126,10 +128,16 @@ pub(super) fn prepare(id: &ResidentId, state: &mut Stored) -> Result<Prepared, F
             kind: "receipts",
             name: receipts::name(&name),
             content: serde_json::to_vec(&receipt).map_err(failure)?,
+            expires: super::keeping::expires("receipts"),
         });
     }
     for name in std::mem::take(&mut state.ended) {
-        records.push(Record { kind: "ended", name: receipts::name(&name), content: b"true".to_vec() });
+        records.push(Record {
+            kind: "ended",
+            name: receipts::name(&name),
+            content: b"true".to_vec(),
+            expires: super::keeping::expires("ended"),
+        });
     }
     let finished: Vec<_> =
         state.uploads.iter().filter(|(_, record)| record.finished()).map(|(key, _)| key.clone()).collect();
@@ -139,6 +147,7 @@ pub(super) fn prepare(id: &ResidentId, state: &mut Stored) -> Result<Prepared, F
             kind: "uploads",
             name: receipts::name(&name),
             content: serde_json::to_vec(&record).map_err(failure)?,
+            expires: super::keeping::expires("uploads"),
         });
     }
     state.persisted = true;
@@ -179,8 +188,11 @@ impl Prepared {
             documents::delete(transaction, &key)?;
         }
         for record in self.records {
-            transaction.execute("INSERT INTO composer_records(owner,kind,name,content) VALUES(?1,?2,?3,?4) ON CONFLICT(owner,kind,name) DO UPDATE SET content=excluded.content",
-                params![self.owner, record.kind, record.name, record.content])?;
+            transaction.execute(
+                "INSERT INTO composer_records(owner,kind,name,content,expires) VALUES(?1,?2,?3,?4,?5) \
+                 ON CONFLICT(owner,kind,name) DO UPDATE SET content=excluded.content,expires=excluded.expires",
+                params![self.owner, record.kind, record.name, record.content, record.expires],
+            )?;
         }
         Ok(())
     }

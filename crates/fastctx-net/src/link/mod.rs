@@ -96,6 +96,9 @@ pub struct Caller {
     pub names: Vec<MachineName>,
     /// The original envelope name, used only to admit older message bodies.
     pub sent_as: MachineName,
+    /// Where a letter came in its hub's numbering: once that place is
+    /// acknowledged, what the letter did is settled. None for a call.
+    pub received: Option<fastctx_storage::receipts::Reference>,
 }
 
 /// What the link hands the node: calls to answer and letters to keep.
@@ -1173,7 +1176,14 @@ impl Inner {
         names.push(envelope.from.clone());
         names.sort();
         names.dedup();
-        Ok(Caller { machine, account: account.clone(), key: member.key, names, sent_as: envelope.from.clone() })
+        Ok(Caller {
+            machine,
+            account: account.clone(),
+            key: member.key,
+            names,
+            sent_as: envelope.from.clone(),
+            received: None,
+        })
     }
 
     async fn ask(&self, question: Question) -> Result<Told, String> {
