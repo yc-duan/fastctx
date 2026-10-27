@@ -36,6 +36,7 @@ import type { Page } from "./shell";
 import { effect } from "./signals";
 import { residentsOf, type Store } from "./store";
 import { deviceFeatures } from "./device-features";
+import { leave } from "./leave";
 import { collaboration } from "../film/collaboration";
 import { memoryFilm } from "../film/memory";
 import { sentinelFilm } from "../film/sentinel";
@@ -177,10 +178,12 @@ export class FeaturesPage implements Page {
     const takeAway = () => {
       if (!open) return;
       open = false;
-      film.destroy();
-      done.remove();
       removeEventListener("keydown", key);
       this.undone = null;
+      leave(done, () => {
+        film.destroy();
+        done.remove();
+      });
     };
     const close = () => {
       if (!open) return;

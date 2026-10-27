@@ -282,6 +282,12 @@
   animation: film-theater-in var(--fold) var(--fold-easing) both;
 }
 
+.feature-done.leaving,
+.film-theater.leaving {
+  pointer-events: none;
+  animation: film-theater-out var(--quick) var(--ease-out) both;
+}
+
 .feature-done-head {
   position: absolute;
   inset: 0 0 auto;
@@ -733,6 +739,12 @@
 /* Over the dimmed page the words are light in every theme. */
 .film-theater .film-caption {
   color: var(--on-scrim-strong);
+}
+
+@keyframes film-theater-out {
+  to {
+    --shown: 0;
+  }
 }
 
 @keyframes film-theater-in {
