@@ -311,6 +311,8 @@ export class MachineMap {
 
   update(scene: MachineMapScene): void {
     this.scene = scene;
+    // The faces as the theme names them now, read once this drawing.
+    this.faces.clear();
     if (this.options.still) this.placement = this.fill(scene);
     else {
       this.narrow = this.isNarrow();
@@ -364,11 +366,20 @@ export class MachineMap {
       this.bare = false;
       return lay(ROWS, 1, named);
     }
+    // What it is laid out from, but who is online: a machine coming or
+    // going is laid out as the best size was last found for these, once.
+    const shape = JSON.stringify([width, height, named, document.fonts.status, scene.hubs.map((hub) => hub.id), scene.nodes.map((node) => [node.key, node.name, node.sub, node.group?.key ?? null, node.hubs]), scene.links.map((link) => [link.a, link.b]), [...scene.folded], scene.adds]);
+    const found = this.found;
+    if (found?.shape === shape) {
+      this.grow = found.grow;
+      this.bare = found.bare;
+      return lay(found.rows, found.grow, found.room);
+    }
     // The canvas leaves a tenth of the shorter side round what it fits.
     const pad = Math.max(24, Math.min(76, Math.min(width, height) * 0.1));
     const scaleOf = ({ bounds }: Placement) => Math.min((width - 2 * pad) / bounds.width, (height - 2 * pad) / bounds.height);
     const largest = (room: number | undefined) => {
-      let best: { placement: Placement; scale: number; grow: number } | null = null;
+      let best: { placement: Placement; scale: number; grow: number; rows: number; room: number | undefined } | null = null;
       for (let rows = 1; rows <= ROWS; rows += 1) {
         let grow = 1;
         let placement = lay(rows, grow, room);
@@ -380,7 +391,7 @@ export class MachineMap {
           placement = lay(rows, grow, room);
           scale = scaleOf(placement);
         }
-        if (!best || scale > best.scale + 1e-6) best = { placement, scale, grow };
+        if (!best || scale > best.scale + 1e-6) best = { placement, scale, grow, rows, room };
       }
       return best!;
     };
@@ -400,8 +411,12 @@ export class MachineMap {
       }
     }
     this.grow = best.grow;
+    this.found = { shape, rows: best.rows, grow: best.grow, room: best.room, bare: this.bare };
     return best.placement;
   }
+
+  /** The best size last found for a still drawing, and what for. */
+  private found: { shape: string; rows: number; grow: number; room: number | undefined; bare: boolean } | null = null;
 
   /** The least share of their size a still drawing's names are drawn at,
    *  and the most they grow to get there. */
@@ -425,11 +440,10 @@ export class MachineMap {
    *  its name is laid for, or as much as does cut short with an ellipsis
    *  while three letters are left; otherwise nothing. */
   private fitted(label: string, room: number): string {
+    if (this.measured("--font-emphasis", 14 * this.grow, label) <= room) return label;
     const context = this.measuring;
     if (!context) return label;
-    const family = getComputedStyle(document.documentElement).getPropertyValue("--font-emphasis").trim() || "serif";
-    context.font = `${(14 * this.grow).toFixed(1)}px ${family}`;
-    if (context.measureText(label).width <= room) return label;
+    context.font = `${(14 * this.grow).toFixed(1)}px ${this.face("--font-emphasis")}`;
     const letters = [...label];
     while (letters.length && context.measureText(`${letters.join("").trimEnd()}…`).width > room) letters.pop();
     const kept = letters.join("").trimEnd();
@@ -442,27 +456,55 @@ export class MachineMap {
    *  need. */
   /** How wide a box's name is written on its strip, at its own size. */
   private labelWidth(text: string): number {
+    return this.measured("--font-emphasis", 14, text);
+  }
+
+  /** How wide `text` is at `size` pixels in the face `face` names, measured
+   *  once for each face, size and text: the drawing lays itself out a few
+   *  times over to find its best size, with every name. */
+  private measured(face: string, size: number, text: string): number {
     this.measuring ??= document.createElement("canvas").getContext("2d");
     const context = this.measuring;
     if (!context) return 0;
-    const family = getComputedStyle(document.documentElement).getPropertyValue("--font-emphasis").trim() || "serif";
-    context.font = `14px ${family}`;
-    return context.measureText(text).width;
+    const family = this.face(face);
+    // A face not yet loaded measures as another: its widths kept apart.
+    const id = `${family}:${document.fonts.status}`;
+    let widths = this.widths.get(id);
+    if (!widths) {
+      if (this.widths.size > 8) this.widths.clear();
+      widths = new Map();
+      this.widths.set(id, widths);
+    }
+    const key = `${size}\n${text}`;
+    let width = widths.get(key);
+    if (width === undefined) {
+      context.font = `${size}px ${family}`;
+      width = context.measureText(text).width;
+      widths.set(key, width);
+    }
+    return width;
   }
 
+  private readonly widths = new Map<string, Map<string, number>>();
+
+  /** The family a face of the design names, read once a drawing. */
+  private face(name: string): string {
+    let family = this.faces.get(name);
+    if (family === undefined) {
+      family = getComputedStyle(document.documentElement).getPropertyValue(name).trim() || "serif";
+      this.faces.set(name, family);
+    }
+    return family;
+  }
+
+  private readonly faces = new Map<string, string>();
+
   private nameRoom(scene: MachineMapScene): number | undefined {
-    this.measuring ??= document.createElement("canvas").getContext("2d");
-    const context = this.measuring;
-    if (!context || !scene.nodes.length) return undefined;
-    const family = getComputedStyle(document.documentElement).getPropertyValue("--font-reading").trim() || "serif";
+    if (!scene.nodes.length) return undefined;
     let widest = 0;
     for (const node of scene.nodes) {
-      context.font = `13px ${family}`;
-      widest = Math.max(widest, context.measureText(node.name).width);
-      if (node.sub) {
-        context.font = `10.5px ${family}`;
-        widest = Math.max(widest, context.measureText(node.sub).width);
-      }
+      widest = Math.max(widest, this.measured("--font-reading", 13, node.name));
+      if (node.sub) widest = Math.max(widest, this.measured("--font-reading", 10.5, node.sub));
     }
     // A face not yet loaded measures as another: laid again once the faces
     // are in, and a little over meanwhile.

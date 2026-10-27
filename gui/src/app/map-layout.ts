@@ -248,9 +248,12 @@ function chained(ordered: MapNode[], near: Map<string, Set<string>>): MapNode[] 
 export class MapLayout {
   /** Hub order, first seen first; a hub keeps its place on the line. */
   private readonly hubOrder: string[] = [];
-  /** Each machine's number in the order; lower stands earlier. */
+  /** Each machine's number in the order; lower stands earlier. Kept on
+   *  the device when it changed, or the machines there did. */
   private readonly order = new Map<string, number>();
   private next = 0;
+  private changed = true;
+  private kept = -1;
   /** As of the last update: where each hub's dashed ring waits. */
   private vacancies = new Map<string, Point>();
 
@@ -279,10 +282,11 @@ export class MapLayout {
     for (const hub of [...hubs].sort((a, b) => a.id.localeCompare(b.id))) if (!this.hubOrder.includes(hub.id)) this.hubOrder.push(hub.id);
     const live = new Set(hubs.map((hub) => hub.id));
     const order = this.hubOrder.filter((id) => live.has(id));
-    for (const node of [...nodes].sort(firstOrder)) {
-      if (this.order.has(node.key)) continue;
+    const present = new Set(nodes.map((node) => node.key));
+    for (const node of nodes.filter((one) => !this.order.has(one.key)).sort(firstOrder)) {
+      this.changed = true;
       // Renamed, it keeps the place it had under a name it had.
-      const was = node.was?.find((key) => this.order.has(key) && !nodes.some((other) => other.key === key));
+      const was = node.was?.find((key) => this.order.has(key) && !present.has(key));
       if (was !== undefined) {
         this.order.set(node.key, this.order.get(was)!);
         this.order.delete(was);
@@ -546,7 +550,11 @@ export class MapLayout {
     // No hub to hang on: a row, as before any network is joined.
     nodes.filter((node) => !hubOf(node)).sort(byOrder).forEach((node, index) => machines.set(node.key, [index * COLUMN_AT, TITLE_AT]));
 
-    this.write(new Set(nodes.map((node) => node.key)));
+    if (this.changed || present.size !== this.kept) {
+      this.write(present);
+      this.changed = false;
+      this.kept = present.size;
+    }
     // Room round everything: the hub's name above it, as large as it is
     // drawn, the boxes below.
     const above = 40 + 30 * grow;
