@@ -347,7 +347,7 @@ export class ProjectForm {
       holder.innerHTML = html;
     });
     this.unwatch();
-    this.unwatch = whenNear(holder, () => {
+    this.unwatch = whenNear(holder, holder, () => {
       this.reach += CHOICE_ROWS;
       this.drawChoice();
     });

@@ -1664,7 +1664,7 @@ export class MachinesPage implements Page {
           if (rows) rows.scrollTop = scrolled;
         });
         this.listUnwatch();
-        this.listUnwatch = whenNear(this.list, () => {
+        this.listUnwatch = whenNear(this.list, this.list.querySelector(".uv-rows") ?? this.list, () => {
           this.listReach += LIST_ROWS;
           this.redraw();
         });

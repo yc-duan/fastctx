@@ -1110,7 +1110,7 @@ ${words.assistantWorks(option.assistant.owner ?? "")}` : said,
       this.agentsDrawn = html;
       pop.scrollTop = scroll;
       this.pickerUnwatch();
-      this.pickerUnwatch = whenNear(list, () => {
+      this.pickerUnwatch = whenNear(list, pop, () => {
         this.pickerReach += PICKER_ROWS;
         this.keepSize = true;
         this.draw();

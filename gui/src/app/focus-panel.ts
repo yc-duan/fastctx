@@ -261,7 +261,9 @@ export class FocusPanel {
       this.body.innerHTML = html;
     });
     this.unwatch();
-    this.unwatch = whenNear(this.body, () => {
+    // The panel stands in the panel that scrolls it, risen over the input
+    // or opened down from the head.
+    this.unwatch = whenNear(this.body, this.element.parentElement, () => {
       this.reach += CHOICE_ROWS;
       this.draw();
     });

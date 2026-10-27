@@ -180,7 +180,7 @@ export class TalksPage implements Page {
       this.list.innerHTML = html;
     });
     this.unwatch();
-    this.unwatch = whenNear(this.list, () => {
+    this.unwatch = whenNear(this.list, this.list.parentElement, () => {
       this.reach += ROWS;
       this.draw();
     });
