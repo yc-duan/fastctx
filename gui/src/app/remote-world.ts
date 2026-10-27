@@ -274,8 +274,14 @@ export class RemoteWorld {
     // own would be dropped: there it is a block, and the sheet hands its
     // submission on (`submit`).
     const form = this.options.adding ? "div" : "form";
+    // The way back to the ways in, from the first step; in the sheet that
+    // adds a device its own switch over the form is that way.
     const back = (to: Stage | null, label = words.back) =>
-      to ? `<button class="text-button login-way" type="button" data-remote-to="${to}">${escape(label)}</button>` : `<button class="text-button login-way" type="button" data-way="choose">${escape(this.options.back)}</button>`;
+      to
+        ? `<button class="text-button login-way" type="button" data-remote-to="${to}">${escape(label)}</button>`
+        : this.options.adding
+          ? ""
+          : `<button class="text-button login-way" type="button" data-way="choose">${escape(this.options.back)}</button>`;
     const foot = (go: string, ways: string, kind = "") =>
       `<p class="sheet-note" role="alert" hidden></p><footer class="welcome-foot"><span class="login-ways">${ways}</span><button class="sheet-go${kind}" type="submit"${this.busy ? " disabled" : ""}>${escape(go)}</button></footer>`;
     const field = (name: string, label: string, attributes: string, value: string) =>
