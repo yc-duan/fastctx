@@ -1,6 +1,5 @@
-//! Bounded admission, with one unit of deficit per account and conversation.
-//! Calls have equal scheduling cost: hierarchical deficit round robin with a
-//! quantum of one is round robin. Running work is never preempted.
+//! Bounded admission with equal-cost, two-level deficit round robin.
+//! Execution limits and settlement counts are independent for each kind.
 
 mod diagnostics;
 mod queue;
@@ -12,7 +11,7 @@ use std::time::Duration;
 use fastctx_net::ids::HubId;
 use fastctx_net::link::admission::{Admitted, Permit, Request};
 use fastctx_types::contract::Pool;
-use fastctx_types::ipc::Failure;
+use fastctx_types::ipc::{CapacityReason, Failure};
 use fastctx_types::{AccountName, MachineName};
 use tokio::sync::oneshot;
 
@@ -21,6 +20,7 @@ pub(crate) use diagnostics::{dump, snapshot, stuck};
 type Account = (HubId, AccountName);
 type Machine = (Account, MachineName);
 type Subject = (Account, String);
+type Settlement = (Pool, Subject);
 
 #[derive(Clone, Copy)]
 struct Bounds {
@@ -37,11 +37,12 @@ fn bounds(pool: Pool) -> Bounds {
         cpu.min(memory as usize).clamp(1, 64)
     });
     let (all, conversation, seconds) = match pool {
-        Pool::Input => ((*UNITS * 16).max(32), 3, 2),
-        Pool::InputControl => ((*UNITS * 8).max(16), 1, 2),
+        Pool::Draft => ((*UNITS * 16).max(32), 8, 2),
+        Pool::Input => ((*UNITS * 16).max(32), 8, 2),
+        Pool::Stop => ((*UNITS * 8).max(32), 8, 2),
         Pool::Short => ((*UNITS * 32).max(64), 8, 5),
         Pool::Change => ((*UNITS * 16).max(32), 3, 10),
-        Pool::Long => ((*UNITS * 16).max(32), 16, 10),
+        Pool::Long => ((*UNITS * 16).max(64), 16, 10),
         Pool::Stream => ((*UNITS * 128).max(512), 32, 10),
         Pool::Control => ((*UNITS * 8).max(16), 4, 2),
         Pool::Receiving => ((*UNITS * 4).max(8), 2, 5),
@@ -60,20 +61,17 @@ struct State {
     machines: HashMap<(Pool, Machine), usize>,
     subjects: HashMap<(Pool, Subject), usize>,
     running_subjects: HashMap<(Pool, Subject), usize>,
-    /// Reservations survive the processing permit. A started change can
-    /// always finish without exceeding the per-conversation settlement bound.
-    finishing: HashMap<String, usize>,
-    settling: HashMap<String, usize>,
+    settling: HashMap<Settlement, usize>,
 }
 
 struct Entry {
+    me: MachineName,
     request: Request,
     account: Account,
     machine: Machine,
     subject: Subject,
-    final_subject: String,
     phase: Phase,
-    wake: Option<oneshot::Sender<()>>,
+    wake: Option<oneshot::Sender<Result<(), Failure>>>,
     task: Option<tokio::task::Id>,
 }
 
@@ -85,10 +83,6 @@ enum Phase {
 }
 
 static STATE: LazyLock<Mutex<State>> = LazyLock::new(Default::default);
-
-fn finishing_limit(pool: Pool) -> usize {
-    if pool == Pool::InputControl { 1 } else { 3 }
-}
 
 fn state() -> std::sync::MutexGuard<'static, State> {
     STATE.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
@@ -106,8 +100,14 @@ fn decrease<K: Eq + std::hash::Hash>(map: &mut HashMap<K, usize>, key: K) {
     }
 }
 
-/// The future owns its queue entry from the first poll; cancellation removes
-/// the entry even if it was admitted immediately before cancellation.
+fn settling_failure(me: &MachineName, request: &Request, n: usize) -> Failure {
+    let conversation = request.conversation.clone().unwrap_or_else(|| format!("calls from {}", request.machine));
+    Failure::not_run(format!("{me} is still finishing {n} earlier changes to {conversation}; this one was not started"))
+        .capacity(CapacityReason::Settling { unfinished: n })
+}
+
+/// Cancellation drops the same guard whether the call is queued or has just
+/// been admitted. Only work already settling can refuse another change.
 pub(crate) async fn take(me: MachineName, hub: HubId, request: Request) -> Result<Admitted, Failure> {
     let limits = bounds(request.pool);
     let deadline = request.received + limits.waiting;
@@ -115,18 +115,14 @@ pub(crate) async fn take(me: MachineName, hub: HubId, request: Request) -> Resul
     let machine = (account.clone(), request.machine.clone());
     let subject =
         (account.clone(), request.conversation.clone().unwrap_or_else(|| format!("machine:{}", request.machine)));
-    let final_subject = format!("{}:{}:{}:{}", account.0, account.1, subject.1, request.pool == Pool::InputControl);
-    let finishing_limit = finishing_limit(request.pool);
     let (send, receive) = oneshot::channel();
     let id = {
         let mut state = state();
-        if request.finish && count(&state.settling, &final_subject) >= finishing_limit {
-            return Err(Failure::not_run(format!(
-                "{} still has {finishing_limit} unfinished changes; no new change was started",
-                subject.1
-            )));
-        }
         let pool = request.pool;
+        let settling = count(&state.settling, &(pool, subject.clone()));
+        if request.finish && pool != Pool::Stop && settling >= limits.conversation {
+            return Err(settling_failure(&me, &request, settling));
+        }
         static BYTE_LIMIT: LazyLock<usize> = LazyLock::new(|| {
             (fastctx_platform::memory::physical().unwrap_or(256 << 20) / 32).clamp(4 << 20, 64 << 20) as usize
         });
@@ -137,9 +133,10 @@ pub(crate) async fn take(me: MachineName, hub: HubId, request: Request) -> Resul
             || count(&state.subjects, &(pool, subject.clone())) >= 64;
         if full {
             return Err(Failure::not_run(format!(
-                "{me} has reached the pending {pool:?} call limit for {} from {}; no work was started",
+                "{me} has too many calls waiting from {} on {}; this one was not started",
                 request.account, request.machine
-            )));
+            ))
+            .capacity(CapacityReason::Pending));
         }
         *state.bytes.entry(pool).or_default() += request.bytes;
         *state.totals.entry(pool).or_default() += 1;
@@ -152,11 +149,11 @@ pub(crate) async fn take(me: MachineName, hub: HubId, request: Request) -> Resul
         state.calls.insert(
             id,
             Entry {
+                me: me.clone(),
                 request,
                 account,
                 machine,
                 subject,
-                final_subject,
                 phase: Phase::Queued,
                 wake: Some(send),
                 task: None,
@@ -166,16 +163,19 @@ pub(crate) async fn take(me: MachineName, hub: HubId, request: Request) -> Resul
         id
     };
     let permit = Arc::new(Place { id });
-    if tokio::time::timeout_at(deadline, receive).await.is_err() {
-        let state = state();
-        let entry = &state.calls[&id];
-        return Err(Failure::not_run(format!(
-            "{me} could not start {} for {} within {} s: waiting for {:?} capacity; no work was started",
-            entry.request.kind,
-            entry.request.account,
-            limits.waiting.as_secs(),
-            entry.request.pool
-        )));
+    match tokio::time::timeout_at(deadline, receive).await {
+        Ok(Ok(result)) => result?,
+        Ok(Err(_)) => return Err(Failure::not_run(format!("{me} stopped admitting this call; it was not started"))),
+        Err(_) => {
+            let state = state();
+            let entry = &state.calls[&id];
+            return Err(Failure::not_run(format!(
+                "{me} was too busy to start {} within {} s; it was not started",
+                entry.request.kind,
+                limits.waiting.as_secs()
+            ))
+            .capacity(CapacityReason::Waiting { seconds: limits.waiting.as_secs() }));
+        }
     }
     Ok(permit)
 }
@@ -183,7 +183,6 @@ pub(crate) async fn take(me: MachineName, hub: HubId, request: Request) -> Resul
 struct Place {
     id: u64,
 }
-
 impl Permit for Place {
     fn started(&self) {
         if let Some(entry) = state().calls.get_mut(&self.id) {
@@ -193,15 +192,15 @@ impl Permit for Place {
     fn settling(&self) {
         let mut state = state();
         let Some(mut entry) = state.calls.remove(&self.id) else { return };
+        let pool = entry.request.pool;
         if entry.phase == Phase::Running {
-            state.pools.get_mut(&entry.request.pool).expect("pool").release(&entry.account);
-            decrease(&mut state.running_subjects, (entry.request.pool, entry.subject.clone()));
+            state.pools.get_mut(&pool).expect("pool").release(&entry.account);
+            decrease(&mut state.running_subjects, (pool, entry.subject.clone()));
             entry.phase = Phase::Settling;
             if entry.request.finish {
-                *state.settling.entry(entry.final_subject.clone()).or_default() += 1;
+                *state.settling.entry((pool, entry.subject.clone())).or_default() += 1;
             }
         }
-        let pool = entry.request.pool;
         state.calls.insert(self.id, entry);
         state.pump(pool);
     }
@@ -220,10 +219,7 @@ impl Drop for Place {
             state.pools.get_mut(&pool).expect("pool").remove(&entry.account, &entry.subject, self.id);
         }
         if entry.phase == Phase::Settling && entry.request.finish {
-            decrease(&mut state.settling, entry.final_subject.clone());
-        }
-        if entry.phase != Phase::Queued && entry.request.finish {
-            decrease(&mut state.finishing, entry.final_subject.clone());
+            decrease(&mut state.settling, (pool, entry.subject.clone()));
         }
         if let Some(bytes) = state.bytes.get_mut(&pool) {
             *bytes -= entry.request.bytes;
@@ -233,14 +229,6 @@ impl Drop for Place {
         decrease(&mut state.machines, (pool, entry.machine));
         decrease(&mut state.subjects, (pool, entry.subject));
         state.pump(pool);
-        // A reservation is shared across pools: releasing one can unblock input.
-        for other in
-            [Pool::InputControl, Pool::Input, Pool::Change, Pool::Long, Pool::Stream, Pool::Control, Pool::Short]
-        {
-            if other != pool {
-                state.pump(other);
-            }
-        }
     }
 }
 
@@ -249,26 +237,27 @@ impl State {
         let limits = bounds(pool);
         let Some(queue) = self.pools.get_mut(&pool) else { return };
         let calls = &mut self.calls;
-        let finishing = &mut self.finishing;
+        let settling = &self.settling;
         let running = &mut self.running_subjects;
         queue.pump(limits, |id| {
             let entry = calls.get_mut(&id).expect("queued call");
-            let subject_key = (pool, entry.subject.clone());
-            if count(running, &subject_key) >= limits.conversation {
-                return false;
+            let subject = (pool, entry.subject.clone());
+            let n = count(settling, &subject);
+            if entry.request.finish && pool != Pool::Stop && n >= limits.conversation {
+                if let Some(wake) = entry.wake.take() {
+                    let _ = wake.send(Err(settling_failure(&entry.me, &entry.request, n)));
+                }
+                return queue::Decision::Refuse;
             }
-            if entry.request.finish && count(finishing, &entry.final_subject) >= finishing_limit(pool) {
-                return false;
+            if count(running, &subject) >= limits.conversation {
+                return queue::Decision::Wait;
             }
-            *running.entry(subject_key).or_default() += 1;
-            if entry.request.finish {
-                *finishing.entry(entry.final_subject.clone()).or_default() += 1;
-            }
+            *running.entry(subject).or_default() += 1;
             entry.phase = Phase::Running;
             if let Some(wake) = entry.wake.take() {
-                let _ = wake.send(());
+                let _ = wake.send(Ok(()));
             }
-            true
+            queue::Decision::Run
         });
     }
 }

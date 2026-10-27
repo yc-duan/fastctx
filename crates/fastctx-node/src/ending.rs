@@ -49,7 +49,24 @@ pub(crate) fn start(log: Arc<crate::log::Log>) -> std::io::Result<()> {
 }
 
 pub(crate) fn exit(code: i32) -> ! {
+    with_reason(code, "the node is ending".into())
+}
+
+/// The final exit has no lock or I/O dependency. Diagnostics are attempted
+/// only after an independent thread is committed to ending the process.
+pub(crate) fn with_reason(code: i32, reason: String) -> ! {
+    if std::thread::Builder::new()
+        .name("node-final-exit".into())
+        .spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(250));
+            std::process::exit(code);
+        })
+        .is_err()
+    {
+        std::process::exit(code);
+    }
     if let Some(log) = LOG.get() {
+        log.line(reason);
         crate::intake::dump(log);
     }
     std::process::exit(code)

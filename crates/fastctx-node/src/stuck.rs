@@ -96,12 +96,14 @@ pub(crate) fn start(node: &Arc<Node>) {
             let key = links.join("; ");
             match &circle {
                 Some((seen, since)) if *seen == key && now.duration_since(*since) >= CIRCLE => {
-                    node.log.line(format_args!(
-                        "tasks have waited on each other in a circle for {} s, so none of them can go on: {key}; \
+                    crate::ending::with_reason(
+                        1,
+                        format!(
+                            "tasks have waited on each other in a circle for {} s, so none of them can go on: {key}; \
                          ending this node for its service to start it again",
-                        now.duration_since(*since).as_secs()
-                    ));
-                    crate::ending::exit(1);
+                            now.duration_since(*since).as_secs()
+                        ),
+                    );
                 }
                 Some((seen, _)) if *seen == key => {}
                 _ => {

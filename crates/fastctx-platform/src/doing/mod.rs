@@ -29,7 +29,8 @@ pub use lock::{
     RwLockWriteGuard,
 };
 pub use registry::{
-    Active, Cycle, OutsideWait, Snapshot, Stuck, Work, progress, set_reporter, snapshot, task_waits, violations,
+    Active, Cycle, OutsideWait, Snapshot, Stuck, Work, progress, set_reporter, snapshot, task_waits, try_task_waits,
+    violations,
 };
 pub use sync::{SyncMutex, SyncMutexGuard};
 

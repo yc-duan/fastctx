@@ -104,6 +104,9 @@ pub async fn here(node: &Arc<Node>, from: &MachineName, id: &ResidentId, request
         if let Some(composer) = node.composers.snapshots.lock().expect("composer snapshots").get(id).cloned() {
             return Ok(Updated { composer, landed: None, delivery: None });
         }
+        let gate = node.residents.management(id)?;
+        let _reading = crate::gate_waits::shared(node, id, &gate).await?;
+        node.residents.active(id)?;
         let cell = node.composers.cell(id);
         let mut cell = cell.lock().await;
         load(node, id, &mut cell)?;

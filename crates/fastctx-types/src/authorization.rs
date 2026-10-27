@@ -43,6 +43,7 @@ impl From<Denial> for crate::ipc::Failure {
             code: Some(crate::ipc::FailureCode::Refused),
             not_run: true,
             denial: Some(denial.reason),
+            capacity: None,
         }
     }
 }

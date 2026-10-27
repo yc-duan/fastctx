@@ -5,7 +5,10 @@ use fastctx_types::stats::CallWork;
 
 pub(crate) fn snapshot() -> Vec<CallWork> {
     let waiting = fastctx_platform::doing::task_waits();
-    let state = state();
+    rows(&state(), &waiting)
+}
+
+fn rows(state: &State, waiting: &HashMap<tokio::task::Id, String>) -> Vec<CallWork> {
     let mut rows: Vec<_> = state
         .calls
         .iter()
@@ -42,8 +45,17 @@ pub(crate) fn snapshot() -> Vec<CallWork> {
     rows
 }
 
+fn try_snapshot() -> Option<Vec<CallWork>> {
+    let waiting = fastctx_platform::doing::try_task_waits()?;
+    let state = STATE.try_lock().ok()?;
+    Some(rows(&state, &waiting))
+}
+
 pub(crate) fn dump(log: &crate::log::Log) {
-    let rows = snapshot();
+    let Some(rows) = try_snapshot() else {
+        log.line("the in-progress call registry is busy; exiting without a snapshot");
+        return;
+    };
     log.line(format_args!("node ending with {} calls in progress", rows.len()));
     for row in rows {
         log.line(format_args!("call in progress: {}", serde_json::to_string(&row).expect("call diagnostic")));
@@ -56,8 +68,8 @@ pub(crate) fn stuck() -> Vec<fastctx_platform::doing::Stuck> {
         .filter(|row| row.overdue)
         .map(|row| fastctx_platform::doing::Stuck {
             key: format!("call {}", row.id),
-            doing: format!("{} for {} from {} ({})", row.kind, row.account, row.machine, row.phase),
-            what: row.waiting,
+            doing: format!("{} ({})", row.kind, row.phase),
+            what: "past its contract".into(),
             since: Duration::from_secs(row.seconds),
         })
         .collect()

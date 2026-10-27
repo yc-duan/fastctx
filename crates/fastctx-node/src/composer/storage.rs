@@ -99,13 +99,13 @@ pub(super) fn publish(
     Ok(())
 }
 
-fn cache(node: &Node, id: &ResidentId, composer: fastctx_types::composer::Composer) {
+pub(super) fn cache(node: &Node, id: &ResidentId, composer: fastctx_types::composer::Composer) {
     let mut snapshots = node.composers.snapshots.lock().expect("composer snapshots");
     if snapshots.len() >= 1024
         && !snapshots.contains_key(id)
-        && let Some(oldest) = snapshots.keys().next().cloned()
+        && let Some(evicted) = snapshots.keys().next().cloned()
     {
-        snapshots.remove(&oldest);
+        snapshots.remove(&evicted);
     }
     snapshots.insert(id.clone(), composer);
 }

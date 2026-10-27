@@ -80,7 +80,7 @@ fn control_size(call: &RemoteCall) -> usize {
 }
 
 /// A reserved call, held through the answer. A change retains a bounded
-/// settlement reservation until its work finishes, even after its caller leaves.
+/// settlement record until its work finishes, even after its caller leaves.
 pub trait Permit: Send + Sync {
     fn started(&self) {}
     /// Returns processing capacity without abandoning work already begun.
@@ -88,11 +88,9 @@ pub trait Permit: Send + Sync {
 }
 
 /// Compatibility for handlers that do not schedule incoming work.
-pub(super) struct Held(pub std::sync::Mutex<Box<dyn Send>>);
-impl Permit for Held {
-    fn started(&self) {
-        drop(self.0.lock().expect("admission guard"));
-    }
+pub(super) struct Held {
+    pub _guard: std::sync::Mutex<Box<dyn Send>>,
 }
+impl Permit for Held {}
 
 pub type Admitted = Arc<dyn Permit>;

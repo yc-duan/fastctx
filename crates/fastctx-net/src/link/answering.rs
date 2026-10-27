@@ -304,7 +304,11 @@ async fn work(
         return None;
     }
     if contract.within.is_some_and(|within| tokio::time::Instant::now() >= came + within) {
-        return Some(Err(Failure::not_run("the call's deadline passed before its work began")));
+        return Some(Err(Failure::not_run(format!(
+            "the call's time ran out before {} could begin it; it was not started",
+            inner.me()
+        ))
+        .capacity(fastctx_types::ipc::CapacityReason::Expired)));
     }
     let kind = remote.kind();
     let doing = inner.node.call(caller.clone(), remote, stream);
@@ -331,7 +335,7 @@ async fn work(
                 });
             },
             _ = stop.stopping() => None,
-            () = past => Some(format!("{} did not answer its {kind} within {} s; the change is still finishing", inner.me(), contract.within.unwrap_or_default().as_secs())),
+            () = past => Some(format!("{} did not finish {kind} within {} s; it is still being done there, and whether it takes effect is not known yet", inner.me(), contract.within.unwrap_or_default().as_secs())),
         };
         place.settling();
         // The expired work owns its settlement guards. Its small failure

@@ -53,10 +53,12 @@ pub enum Pool {
     Short,
     /// Changes other than direct human input.
     Change,
-    /// Typing and sending.
+    /// Local draft edits, independent of submitting words or asking the host.
+    Draft,
+    /// Sending words and answering a host's question.
     Input,
-    /// Stopping and answering questions, even while input is still finishing.
-    InputControl,
+    /// Stopping and interrupting, independent of every other kind of work.
+    Stop,
     /// Work that runs a while before it answers: a script, a colleague.
     Long,
     /// A stream that stays open: a watch, a job's output, a copy, a read.
@@ -109,12 +111,21 @@ impl RemoteCall {
     pub fn contract(&self) -> Contract {
         match self {
             Self::Composer { request: crate::composer::Request::Read, .. } => Contract::QUERY,
-            Self::Composer { .. } | Self::Talk { .. } => Contract { pool: Pool::Input, ..Contract::CHANGE },
-            Self::Control { control: crate::session::control::Control::Answer { .. }, .. } => {
-                Contract { pool: Pool::InputControl, ..Contract::CHANGE }
+            Self::Composer { request: crate::composer::Request::Mutate { mutation }, .. }
+                if matches!(
+                    mutation.change,
+                    crate::composer::Change::Send { .. } | crate::composer::Change::SendQueued { .. }
+                ) =>
+            {
+                Contract { pool: Pool::Input, ..Contract::CHANGE }
             }
+            Self::Composer { .. } => Contract { pool: Pool::Draft, ..Contract::CHANGE },
+            Self::Talk { .. } | Self::Control { control: crate::session::control::Control::Answer { .. }, .. } => {
+                Contract { pool: Pool::Input, ..Contract::CHANGE }
+            }
+
             Self::Stop { .. } | Self::TurnInterrupted { .. } | Self::StopJob { .. } | Self::StopOn { .. } => {
-                Contract { pool: Pool::InputControl, ..Contract::CONTROL }
+                Contract { pool: Pool::Stop, ..Contract::CONTROL }
             }
             Self::Goal { request: crate::goals::Request::Read | crate::goals::Request::History { .. }, .. } => {
                 Contract::QUERY

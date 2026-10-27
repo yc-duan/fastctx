@@ -3,6 +3,12 @@
 use super::{Account, Bounds, Subject, count, decrease};
 use std::collections::{HashMap, VecDeque};
 
+pub(super) enum Decision {
+    Run,
+    Refuse,
+    Wait,
+}
+
 #[derive(Default)]
 pub(super) struct PoolQueue {
     order: VecDeque<Account>,
@@ -49,7 +55,7 @@ impl PoolQueue {
         decrease(&mut self.running, account.clone());
     }
 
-    pub fn pump(&mut self, limits: Bounds, mut admit: impl FnMut(u64) -> bool) {
+    pub fn pump(&mut self, limits: Bounds, mut admit: impl FnMut(u64) -> Decision) {
         let mut missed = 0;
         while self.all < limits.all && missed < self.order.len() {
             let Some(account) = self.order.pop_front() else { break };
@@ -59,8 +65,10 @@ impl PoolQueue {
                 for _ in 0..queue.order.len() {
                     let subject = queue.order.pop_front().expect("queued subject");
                     let pending = queue.subjects.get_mut(&subject).expect("subject");
-                    if admit(*pending.front().expect("pending call")) {
-                        chosen = pending.pop_front();
+                    let decision = admit(*pending.front().expect("pending call"));
+                    if !matches!(decision, Decision::Wait) {
+                        pending.pop_front();
+                        chosen = Some(decision);
                         if pending.is_empty() {
                             queue.subjects.remove(&subject);
                         } else {
@@ -76,9 +84,11 @@ impl PoolQueue {
             } else {
                 self.order.push_back(account.clone());
             }
-            if chosen.is_some() {
-                self.all += 1;
-                *self.running.entry(account).or_default() += 1;
+            if let Some(decision) = chosen {
+                if matches!(decision, Decision::Run) {
+                    self.all += 1;
+                    *self.running.entry(account).or_default() += 1;
+                }
                 missed = 0;
             } else {
                 missed += 1;

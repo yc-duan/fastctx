@@ -782,7 +782,7 @@ pub async fn run_prepared(
 
     ending::start(node.log.clone()).context("starting node stop diagnostics")?;
     stuck::start(&node);
-    let watchdog = watchdog::Watchdog::start(node.log.clone()).context("starting the control-loop watchdog")?;
+    let watchdog = watchdog::Watchdog::start().context("starting the control-loop watchdog")?;
     loop {
         let accepted = tokio::select! {
             // A ready watchdog request precedes a flood of new clients;
@@ -790,8 +790,7 @@ pub async fn run_prepared(
             biased;
             () = watchdog.requested() => {
                 if node.links().iter().any(|link| link.failed()) {
-                    node.log.line("a link task ended unexpectedly; exiting for the service to restart it");
-                    crate::ending::exit(1);
+                    crate::ending::with_reason(1, "a link task ended unexpectedly; exiting for the service to restart it".into());
                 }
                 continue;
             },

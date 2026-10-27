@@ -105,7 +105,7 @@ pub trait Node: Send + Sync + 'static {
     ) -> BoxFuture<Result<admission::Admitted, fastctx_types::ipc::Failure>> {
         let place = self.place(&request.machine, &request.account, request.pool);
         Box::pin(async move {
-            place.map(|guard| Arc::new(admission::Held(std::sync::Mutex::new(guard))) as admission::Admitted)
+            place.map(|guard| Arc::new(admission::Held { _guard: std::sync::Mutex::new(guard) }) as admission::Admitted)
         })
     }
     /// Known local login directories, without scanning or asking a host.

@@ -22,7 +22,6 @@ mod host_change;
 mod hub_intake;
 mod hub_retire;
 
-mod goal;
 mod keep;
 mod mcp;
 mod mcp_child;
@@ -50,6 +49,7 @@ mod steps;
 mod stop;
 mod talk;
 mod timer;
+mod goal;
 mod turn_facts;
 mod uninstall;
 mod update;

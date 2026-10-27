@@ -62,29 +62,11 @@ pub enum Call {
         account: Option<crate::AccountName>,
         enabled: Option<bool>,
     },
-    Goal {
-        resident: ResidentId,
-        machine: Option<crate::access::Written>,
-        account: Option<crate::access::HubAccount>,
-        request: crate::goals::Request,
-    },
-    GoalCommand {
-        hub: Option<crate::HubName>,
-        account: Option<crate::AccountName>,
-        job: Option<crate::JobId>,
-        request: crate::goals::AgentRequest,
-    },
-    Timer {
-        timer: crate::timers::TimerCall,
-    },
-    TurnEvidence {
-        resident: ResidentId,
-        turn: Option<String>,
-        refresh_limits: bool,
-    },
-    CompactBetweenTurns {
-        resident: ResidentId,
-    },
+    Goal { resident: ResidentId, machine: Option<crate::access::Written>, account: Option<crate::access::HubAccount>, request: crate::goals::Request },
+    GoalCommand { hub: Option<crate::HubName>, account: Option<crate::AccountName>, job: Option<crate::JobId>, request: crate::goals::AgentRequest },
+    Timer { timer: crate::timers::TimerCall },
+    TurnEvidence { resident: ResidentId, turn: Option<String>, refresh_limits: bool },
+    CompactBetweenTurns { resident: ResidentId },
     Sentinel {
         hub: Option<crate::HubName>,
         account: Option<crate::AccountName>,
@@ -842,19 +824,10 @@ pub enum Reply {
     Collaboration(Box<crate::collaboration::Tree>),
     Memory(crate::memory::MemoryReply),
     MemorySettings(crate::memory::Settings),
-    Goal {
-        updated: Box<crate::goals::Updated>,
-    },
-    Timers {
-        timers: Vec<crate::timers::Timer>,
-    },
-    TurnEvidence {
-        evidence: Box<crate::turn_evidence::TurnEvidence>,
-        text: String,
-    },
-    Compacted {
-        result: crate::turn_evidence::Compacted,
-    },
+    Goal { updated: Box<crate::goals::Updated> },
+    Timers { timers: Vec<crate::timers::Timer> },
+    TurnEvidence { evidence: Box<crate::turn_evidence::TurnEvidence>, text: String },
+    Compacted { result: crate::turn_evidence::Compacted },
     Sentinel(Box<crate::sentinel_control::Reply>),
     SentinelSettings(Box<crate::sentinel_settings::SettingsReply>),
     /// The HTTP proxy chosen in Fastctx, if one is (`Call::HubProxy`).

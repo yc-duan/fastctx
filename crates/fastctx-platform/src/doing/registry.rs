@@ -328,7 +328,15 @@ pub struct Snapshot {
 /// Current task waits, including those that have not become late. A single
 /// pass lets a caller registry join diagnostics without scanning per call.
 pub fn task_waits() -> HashMap<tokio::task::Id, String> {
-    let state = state();
+    waits_of(&state())
+}
+
+/// A final diagnostic never waits for a possibly stalled registry owner.
+pub fn try_task_waits() -> Option<HashMap<tokio::task::Id, String>> {
+    STATE.try_lock().ok().map(|state| waits_of(&state))
+}
+
+fn waits_of(state: &State) -> HashMap<tokio::task::Id, String> {
     let mut waits: HashMap<_, _> = state
         .waiting
         .values()
