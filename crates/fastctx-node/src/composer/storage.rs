@@ -85,6 +85,9 @@ pub(super) fn publish(
         return Err(error);
     }
     let view = next.view();
+    if super::idle::busy(&next) {
+        crate::goals::engine::input_changed(node, id);
+    }
     *cell = Some(next);
     node.composers.failed.lock().expect("failed composer checkpoints").remove(id);
     node.watchers.publish(id, &event(view));

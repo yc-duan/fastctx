@@ -1,10 +1,11 @@
 // The World's front page: what the reader finds on coming back
-// (`world-gui.md`, 回来时). Above, the drawing of the World as it is, each
-// machine on it a way to its page. Under it, side by side where there is
-// room: what waits for the reader, each conversation by what it asks,
-// answered here where it offers its answers, and what came back while the
-// reader was away, a line a conversation by what it last said, along a line
-// of the time away; then what is at work now, the conversations and the
+// (`world-gui.md`, 回来时), in two views. Now: the drawing of the World as
+// it is, each machine on it a way to its page, and under it what needs the
+// reader, each conversation by what it asks, answered here where it offers
+// its answers, or by what it told them that they have not seen
+// (`world-voice.md`, 送到哪里). Lately: what came back while the reader was
+// away, a line a conversation by what it last said, along a line of the
+// time away, and beside it what is at work now, the conversations and the
 // commands running. A part with nothing in it is not drawn. Every line is a
 // fact the World holds; nothing is summarised by a model.
 
@@ -43,6 +44,9 @@ export interface HomeOptions {
   /** Opens this device's updates, where the World's program here is put
    *  up to the interface's. */
   updates?(): void;
+  /** The last thing a conversation (`resident@machine`) told that this
+   *  device has shown the user. */
+  seenTold(key: string): string | null;
 }
 
 type Glyph = Parameters<typeof glyph>[0];
@@ -69,6 +73,29 @@ interface Came {
 }
 
 const keyOf = (address: Address) => `${address.machine}\n${address.resident}`;
+
+/** The page's two views: what needs the reader now, under the drawing; and
+ *  what came back lately and is at work. */
+type View = "now" | "lately";
+
+const VIEW_KEY = "front-view";
+
+function storedView(): View {
+  try {
+    return localStorage.getItem(VIEW_KEY) === "lately" ? "lately" : "now";
+  } catch {
+    return "now";
+  }
+}
+
+function keepView(view: View): void {
+  try {
+    if (view === "lately") localStorage.setItem(VIEW_KEY, view);
+    else localStorage.removeItem(VIEW_KEY);
+  } catch {
+    // Not kept: the page opens on now next time.
+  }
+}
 const addressOf = (r: ResidentNow): Address => ({ machine: r.about.machine, resident: r.about.id });
 
 export class HomePage {
@@ -85,17 +112,35 @@ export class HomePage {
   private confirming: string | null = null;
   private stopping = new Set<string>();
   private readonly notStopped = new Map<string, string>();
+  private view: View = storedView();
+  /** Whether there is a network to draw. */
+  private drawable = true;
 
   /** Shows the drawing of the World, or leaves the page to the board where
    *  there is no network to draw. */
   showDrawing(shown: boolean): void {
-    this.element.querySelector<HTMLElement>(".front-map")!.hidden = !shown;
+    this.drawable = shown;
+    this.element.querySelector<HTMLElement>(".front-map")!.hidden = !shown || this.view !== "now";
   }
 
   constructor(private readonly options: HomeOptions) {
     this.element = document.createElement("div");
     this.element.className = "front-page";
     this.element.innerHTML = `${options.head}<div class="front-body"><div class="front-map"></div><div class="front-board arriving"></div></div>`;
+    // The two views are chosen in the head, where the page has no title.
+    const views = document.createElement("div");
+    views.className = "front-views";
+    views.setAttribute("role", "tablist");
+    views.innerHTML = `<button class="tab" type="button" role="tab" data-view="now">${escape(options.words.nowView)}</button><button class="tab" type="button" role="tab" data-view="lately">${escape(options.words.latelyView)}</button>`;
+    this.element.querySelector(".page-head-title")!.append(views);
+    views.addEventListener("click", (event) => {
+      const button = (event.target as HTMLElement).closest<HTMLElement>("[data-view]");
+      if (!button) return;
+      this.view = button.dataset.view as View;
+      keepView(this.view);
+      this.choose();
+      this.redraw();
+    });
     this.element.querySelector<HTMLElement>(".front-map")!.append(options.drawing);
     this.board = this.element.querySelector<HTMLElement>(".front-board")!;
     // On a phone the page scrolls whole: once it has, its head stands on the
@@ -131,6 +176,16 @@ export class HomePage {
     // What is on the board rises into place when the page opens, and only
     // then: later changes appear where they are.
     setTimeout(() => this.board.classList.remove("arriving"), 1600);
+    this.choose();
+  }
+
+  private choose(): void {
+    for (const button of this.element.querySelectorAll<HTMLElement>(".front-views [data-view]")) {
+      const chosen = button.dataset.view === this.view;
+      button.classList.toggle("chosen", chosen);
+      button.setAttribute("aria-selected", String(chosen));
+    }
+    this.element.querySelector<HTMLElement>(".front-map")!.hidden = !this.drawable || this.view !== "now";
   }
 
   /** Shows the World as it now stands; when nothing shown has changed, the
@@ -140,7 +195,12 @@ export class HomePage {
     this.now = now;
     const residents = this.residents();
     const asking = residents.filter((r) => r.now?.waiting_for_user || r.now?.asked).sort((a, b) => waited(a) - waited(b));
-    const asks = new Set(asking.map((r) => keyOf(addressOf(r))));
+    // What the conversations the user began told them that they have not
+    // seen: the urgent first, then what can wait, the latest first.
+    const telling = residents
+      .filter((r) => r.about.origin.kind === "user" && this.unseen(r))
+      .sort((a, b) => Number(b.now!.told!.status === "urgent") - Number(a.now!.told!.status === "urgent") || Date.parse(b.now!.told!.at) - Date.parse(a.now!.told!.at));
+    const asks = new Set([...asking, ...telling].map((r) => keyOf(addressOf(r))));
     // Answers given here hold until their question goes.
     const open = new Set(asking.map((r) => r.now?.asked?.id).filter(Boolean));
     for (const id of this.answered.keys()) if (!open.has(id)) this.answered.delete(id);
@@ -152,7 +212,13 @@ export class HomePage {
       .sort((a, b) => Date.parse(a.started_at) - Date.parse(b.started_at));
     const came = this.came(asks);
 
-    const first = [asking.length ? this.asks(asking) : "", this.away(came)].join("");
+    if (this.view === "now") {
+      // Nothing waits: the drawing alone, and a line that says so.
+      const needs = asking.length || telling.length ? this.asks(asking, telling) : `<p class="front-quiet front-calm">${escape(this.options.words.nothingNeeds)}</p>`;
+      this.draw(`<div class="front-column">${needs}</div>`, false);
+      return;
+    }
+    const first = this.away(came);
     const second = this.working(busy, jobs);
     const html = first ? `<div class="front-column">${first}</div><div class="front-column">${second}</div>` : `<div class="front-column">${second}</div>`;
     this.draw(html, !!first);
@@ -246,9 +312,36 @@ export class HomePage {
 
   // What waits for the reader --------------------------------------------
 
-  private asks(asking: ResidentNow[]): string {
+  private asks(asking: ResidentNow[], telling: ResidentNow[]): string {
     const { words } = this.options;
-    return `<section class="front-part front-asks"><h2 class="front-title"><span>${escape(words.waiting)}</span><span class="front-count">${asking.length}</span></h2><ul class="front-cards">${asking.map((r) => this.ask(r)).join("")}</ul></section>`;
+    return `<section class="front-part front-asks"><h2 class="front-title"><span>${escape(words.waiting)}</span><span class="front-count">${asking.length + telling.length}</span></h2><ul class="front-cards">${[
+      ...asking.map((r) => this.ask(r)),
+      ...telling.map((r) => this.told(r)),
+    ].join("")}</ul></section>`;
+  }
+
+  /** What a conversation told the user that this device has not shown
+   *  them: something urgent, or something that can wait. */
+  private unseen(r: ResidentNow): boolean {
+    const told = r.now?.told;
+    return !!told && told.status !== "reply" && this.options.seenTold(`${r.about.id}@${r.about.machine}`) !== told.id;
+  }
+
+  /** A card of what it told: who, when, and its words, an urgent one under
+   *  a clay ※. */
+  private told(r: ResidentNow): string {
+    const { words } = this.options;
+    const address = addressOf(r);
+    const name = this.name(r);
+    const told = r.now!.told!;
+    const at = new Date(told.at);
+    const urgent = told.status === "urgent";
+    return `<li class="front-card" data-machine="${escape(address.machine)}" data-resident="${escape(address.resident)}">
+      <a class="front-card-link" href="${this.options.link(address)}">
+        <span class="front-card-head">${this.agent(r)}<span class="front-name" title="${escape(this.about(r, name))}">${escape(name)}</span>${this.device(r.about.machine)}<span class="front-for" title="${escape(this.when(at))}">${escape(words.ago(Math.max(0, this.now.getTime() - at.getTime())))}</span></span>
+        <span class="front-ask front-told${urgent ? " urgent" : ""}">${urgent ? `<span class="front-ask-glyph" aria-hidden="true">※</span><span class="spoken">${escape(words.urgent)}</span>` : `<span class="front-ask-glyph" aria-hidden="true"><span class="front-told-drop"></span></span>`}<span class="front-ask-text">${escape(told.text)}</span></span>
+      </a>
+    </li>`;
   }
 
   private ask(r: ResidentNow): string {

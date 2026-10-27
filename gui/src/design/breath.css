@@ -168,18 +168,6 @@
   }
 }
 
-@keyframes lane-breathe {
-  0%,
-  100% {
-    --breath-scale: 1;
-    --breath-alpha: 1;
-  }
-  50% {
-    --breath-scale: 0.7;
-    --breath-alpha: 0.55;
-  }
-}
-
 /* A line being drawn while what it stands for is read. */
 @keyframes gap-draw {
   from {

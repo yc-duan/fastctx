@@ -64,9 +64,6 @@ pub(super) async fn delete(node: &Arc<Node>, names: Vec<String>) -> Vec<Deletion
     deletions
 }
 
-/// How long a deletion waits for what changes the conversation's life to end.
-const GATE_WAITS: std::time::Duration = std::time::Duration::from_secs(30);
-
 /// The file that says a conversation is being deleted, written before
 /// anything outside is done for it.
 const INTENT: &str = "deleting";
@@ -113,11 +110,8 @@ async fn delete_inner(node: &Arc<Node>, name: &str) -> Result<u64, Stop> {
     };
     let _action = match &actions {
         Some(gate) => {
-            Some(tokio::time::timeout(std::time::Duration::from_secs(30), gate.lock()).await.map_err(|_| {
-                Stop::Refused(
-                    "a conversation control is still running; stop it before deleting the conversation".into(),
-                )
-            })?)
+            let Kind::Home(id) = &kind else { unreachable!() };
+            Some(crate::gate_waits::action(node, id, gate).await.map_err(|failure| Stop::Refused(failure.message))?)
         }
         None => None,
     };
@@ -155,6 +149,8 @@ async fn delete_inner(node: &Arc<Node>, name: &str) -> Result<u64, Stop> {
         None
     };
     let Some(resident) = node.residents.on_record(id) else {
+        crate::timers::delete_conversation(node, id).map_err(|error| Stop::Failed(error.to_string()))?;
+        crate::goals::lifecycle::delete(node, id).await.map_err(|error| Stop::Failed(error.message))?;
         let directory = node.world.conversation(id);
         if directory.about().try_exists().map_err(|error| Stop::Failed(error.to_string()))?
             && !directory.path().join("host-deleted").try_exists().map_err(|error| Stop::Failed(error.to_string()))?
@@ -177,19 +173,18 @@ async fn delete_inner(node: &Arc<Node>, name: &str) -> Result<u64, Stop> {
         return Ok(bytes.saturating_sub(retained + host_kept));
     };
     let gate = node.residents.management(id).map_err(|failure| Stop::Failed(failure.message))?;
-    let _exclusive = tokio::time::timeout(GATE_WAITS, gate.write())
-        .await
-        .map_err(|_| Stop::Refused("it is being woken, put to sleep or moved; try again in a moment".into()))?;
+    let _exclusive =
+        crate::gate_waits::alone(node, id, &gate).await.map_err(|failure| Stop::Refused(failure.message))?;
     let busy = node.residents.now(id).is_some_and(|now| now.activity == Activity::Busy || now.turn.is_some());
     if busy {
         return Err(Stop::Refused("it is working; stop it first".to_string()));
     }
-    if node.residents.host_open(id) && !resident.about.world_started {
+    if node.residents.host_open(id) && !resident.about.world_managed() {
         return Err(Stop::Refused(
             "it is open in its agent's window on this machine; close it there first".to_string(),
         ));
     }
-    if resident.about.host.agent.as_str() == "claude" && !resident.about.world_started {
+    if resident.about.host.agent.as_str() == "claude" && !resident.about.world_managed() {
         for exchange in super::space::entries(&node.world.conversation(id).path().join("claude"))
             .map_err(|error| Stop::Failed(error.to_string()))?
         {
@@ -222,6 +217,7 @@ async fn delete_inner(node: &Arc<Node>, name: &str) -> Result<u64, Stop> {
         fastctx_platform::Permissions::Private,
     )
     .map_err(|error| Stop::Failed(format!("recording that it is being deleted: {error}")))?;
+    crate::timers::delete_conversation(node, id).map_err(|error| Stop::Failed(error.to_string()))?;
     let completed = node.world.conversation(id).path().join("host-deleted");
     let mut host_kept = 0;
     if !completed.try_exists().map_err(|error| Stop::Failed(error.to_string()))? {
@@ -246,6 +242,8 @@ async fn delete_inner(node: &Arc<Node>, name: &str) -> Result<u64, Stop> {
     node.residents
         .remove(&node.world, id)
         .map_err(|error| Stop::Failed(format!("recording deletion in progress: {error}")))?;
+    crate::plan::delete(node, &resident.about).await.map_err(|failure| Stop::Failed(failure.message))?;
+    crate::goals::lifecycle::delete(node, id).await.map_err(|error| Stop::Failed(error.message))?;
     // Whatever its sessions reported and is being applied is applied to its
     // end first, in the order applying takes these locks: a Claude session's
     // reading, a Codex thread's worker, then speaking.
@@ -280,9 +278,11 @@ async fn delete_inner(node: &Arc<Node>, name: &str) -> Result<u64, Stop> {
             }
         }
     }
+    crate::sentinels::deletion::note_deleted(node, id).map_err(Stop::Failed)?;
     node.residents
         .forget(&node.world, id, measured.sessions.clone())
         .map_err(|error| Stop::Failed(format!("recording its deletion: {error}")))?;
+    crate::codex::native_context::forget(node, id);
     crate::desk::removed(node, id);
     crate::composer::deleted(node, id);
     crate::claude::removed(node, id);
@@ -441,7 +441,7 @@ async fn host(node: &Arc<Node>, about: &About, measured: &Measured) -> Result<()
             }
         }
         "claude" => {
-            if about.world_started && about.session.is_some() {
+            if about.world_managed() && about.session.is_some() {
                 crate::lifecycle::release_locked(node, about, crate::lifecycle::ReleaseReason::Delete, None)
                     .await
                     .map_err(|failure| {
@@ -461,7 +461,7 @@ async fn host(node: &Arc<Node>, about: &About, measured: &Measured) -> Result<()
             claude_temp(node, measured).await?;
             // Its sessions stood in its own directory before they stood in
             // their project's, and the World trusted that directory for it.
-            if about.world_started {
+            if about.world_managed() {
                 let directory = node.world.conversation(&about.id).path().to_path_buf();
                 let home = about.home.clone();
                 tokio::task::spawn_blocking(move || crate::claude::untrust(&directory, home.as_deref()))

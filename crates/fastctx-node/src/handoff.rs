@@ -117,6 +117,7 @@ struct State {
 pub(crate) struct Busy {
     handoff: Arc<Handoff>,
     kind: Kind,
+    _work: fastctx_platform::doing::Work,
 }
 
 enum Kind {
@@ -177,7 +178,11 @@ impl Handoff {
             return None;
         }
         state.starting += 1;
-        Some(Busy { handoff: self.clone(), kind: Kind::Starting })
+        Some(Busy {
+            handoff: self.clone(),
+            kind: Kind::Starting,
+            _work: fastctx_platform::doing::Work::begin("handoff: starting a turn"),
+        })
     }
 
     /// A call is being answered; `None` once the node is on its way out.
@@ -187,7 +192,11 @@ impl Handoff {
             return None;
         }
         state.calls += 1;
-        Some(Busy { handoff: self.clone(), kind: Kind::Call })
+        Some(Busy {
+            handoff: self.clone(),
+            kind: Kind::Call,
+            _work: fastctx_platform::doing::Work::begin("handoff: answering a call"),
+        })
     }
 
     /// Something the node waits on to yield may have changed, such as a

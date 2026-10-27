@@ -39,7 +39,7 @@ env:
   TAURI_CLI: '@tauri-apps/cli@2.12.1'
   # The release before this one: the network drill runs its hub with this one's machines, and its
   # node on this one's hub, from its Linux package.
-  EARLIER_RELEASE: 1.0.1-beta.10
+  EARLIER_RELEASE: 1.0.1-beta.11
   # The drills run on a ci/ branch, never for a version tag.
   DRILLS: ${{ github.ref_type == 'branch' }}
 
@@ -906,17 +906,41 @@ jobs:
           mkdir -p shots
           export APPIMAGE_EXTRACT_AND_RUN=1 WEBKIT_DISABLE_DMABUF_RENDERER=1
           # The application is found by its own process name, and by its window's title on the screen.
+          # Its window is looked for every two seconds for two minutes, and how long it took is said;
+          # when it never comes, what is on the screen and what runs are said too.
           status=0
           xvfb-run -a -s "-screen 0 1280x860x24" sh -c '
             "$1" > app.log 2>&1 &
-            sleep 30
+            waited=0
+            until xwininfo -root -tree | grep -qF "\"Fastctx\"" || [ $waited -ge 120 ]; do
+              sleep 2
+              waited=$((waited + 2))
+              # Still no window ten seconds in: where every thread of the application is, kept beside the shot.
+              if [ $waited -eq 10 ] && ! xwininfo -root -tree | grep -qF "\"Fastctx\""; then
+                sudo apt-get install -y gdb > /dev/null 2>&1
+                sudo gdb -p "$(pgrep -x fastctx-app | head -1)" -batch -ex "set pagination off" \
+                  -ex "thread apply all bt 25" > shots/stacks-at-10s.txt 2>&1
+              fi
+            done
             import -window root shots/linux-x64.png
-            xwininfo -root -tree | grep -F "\"Fastctx\""
-            shown=$?
-            pgrep -x fastctx-app > /dev/null || shown=1
+            if xwininfo -root -tree | grep -F "\"Fastctx\""; then
+              shown=0
+              echo "The window was there after about $waited s."
+            else
+              shown=1
+              echo "No window after $waited s; the screen holds:"
+              xwininfo -root -tree
+            fi
+            pgrep -x fastctx-app > /dev/null || { shown=1; echo "The application is not running."; }
+            ps -eo pid,ppid,etime,stat,args | grep -iE "fastctx|webkit|apprun" | grep -v grep
             pkill -x fastctx-app
             exit $shown' sh "$image" || status=$?
           cat app.log
+          if [ "$status" -ne 0 ]; then
+            for kept in ~/.fastctx/updates/startup-error.json ~/.fastctx/world/node.log; do
+              if [ -f "$kept" ]; then echo "--- $kept"; tail -n 60 "$kept"; fi
+            done
+          fi
           exit $status
       - uses: actions/upload-artifact@v4
         if: always()
@@ -925,6 +949,8 @@ jobs:
           path: shots
           if-no-files-found: ignore
       - name: Upload the packages
+        # Also when opening them failed, so the very package that failed can be opened elsewhere.
+        if: ${{ !cancelled() }}
         uses: actions/upload-artifact@v4
         with:
           name: gui-linux-x64
@@ -1093,9 +1119,10 @@ jobs:
 
   # The release a computer runs now, its node kept by its startup service, takes this run's kernel by
   # the renewal the application starts, with nothing failed and nobody asked (`world-upgrade.md`,
-  # 换版不要人确认): the way every user's machine goes from one release to the next.
+  # 换版不要人确认): the way every user's machine goes from one release to the next. A repair of the
+  # machine it leaves then finds everything right and changes nothing (修复).
   renewal-earlier:
-    needs: [kernel-windows, kernel-linux, kernel-macos]
+    needs: sign-kernels
     if: github.ref_type == 'branch'
     name: renewal from ${{ matrix.target }}'s earlier release
     strategy:
@@ -1130,32 +1157,33 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.13'
-      - if: runner.os == 'Windows'
-        uses: actions/setup-node@v4
-        with:
-          node-version: '22'
+      # This release's program as its signed package carries it, on Windows its own signature beside it
+      # as the installer carries it too: what a repair checks itself by.
       - uses: actions/download-artifact@v4
         with:
-          name: kernel-${{ matrix.target }}
-          path: kernel
-      - name: Take the earlier release's program
+          name: signed-kernels
+          path: signed
+      - name: Take the earlier release's program, and this one's
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           if [ "$RUNNER_OS" = Windows ]; then package="fastctx-${{ matrix.target }}.zip"; else package="fastctx-${{ matrix.target }}.tar.gz"; fi
           gh release download "v$EARLIER_RELEASE" --repo "${{ github.repository }}" -p "$package" -D earlier
-          if [ "$RUNNER_OS" = Windows ]; then unzip -q -o "earlier/$package" -d earlier; else tar xzf "earlier/$package" -C earlier; fi
+          mkdir -p kernel
+          if [ "$RUNNER_OS" = Windows ]; then
+            unzip -q -o "earlier/$package" -d earlier
+            unzip -q -o "signed/$package" -d kernel
+            test -f kernel/fastctx.exe.sig
+          else
+            tar xzf "earlier/$package" -C earlier
+            tar xzf "signed/$package" -C kernel
+          fi
           chmod +x "earlier/${{ matrix.program }}" "kernel/${{ matrix.program }}"
           "earlier/${{ matrix.program }}" --version
+          echo "PACKAGE=signed/$package" >> "$GITHUB_ENV"
           echo "VERSION=$(python -c 'import tomllib; print(tomllib.load(open("Cargo.toml", "rb"))["workspace"]["package"]["version"])')" >> "$GITHUB_ENV"
-      - if: runner.os == 'Windows'
-        name: Sign this release's program, as the installer carries it
-        env:
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-        run: npx --yes "$TAURI_CLI" signer sign --app-version "$VERSION" kernel/fastctx.exe
-      - name: Its startup service takes this release by itself
-        run: python scripts/renewal-drill.py earlier "earlier/${{ matrix.program }}" "kernel/${{ matrix.program }}" "$VERSION"
+      - name: Its startup service takes this release by itself, and a repair then changes nothing
+        run: python scripts/renewal-drill.py earlier "earlier/${{ matrix.program }}" "kernel/${{ matrix.program }}" "$VERSION" "$PACKAGE"
 
   manifest:
     needs: [notices, kernel-windows, windows-x64, kernel-linux, kernel-macos, macos-intel, sign-kernels, gui-windows, gui-macos, gui-linux, android, update-windows]

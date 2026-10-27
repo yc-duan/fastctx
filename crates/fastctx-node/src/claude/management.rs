@@ -7,7 +7,7 @@ use std::ffi::OsString;
 use std::path::Path;
 use std::sync::Arc;
 
-async fn run(node: &Arc<Node>, home: Option<&Path>, args: Vec<OsString>) -> Result<String, Failure> {
+pub(super) async fn run(node: &Arc<Node>, home: Option<&Path>, args: Vec<OsString>) -> Result<String, Failure> {
     let command = super::command(node, home)?;
     if args.first().is_some_and(|arg| arg == "stop" || arg == "rm") {
         let node = node.clone();
@@ -19,6 +19,7 @@ async fn run(node: &Arc<Node>, home: Option<&Path>, args: Vec<OsString>) -> Resu
         .map_err(Failure::new);
     }
     run_command(command, args).await
+
 }
 
 async fn run_command(command: super::Command, args: Vec<OsString>) -> Result<String, Failure> {

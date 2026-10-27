@@ -41,56 +41,98 @@ export interface WriteFact {
   diff: DiffRef | null;
   /** Exact UTF-8 stdout-note bytes; line ending is part of text. */
   note?: WriteNote;
-  /** The `on` it was written in (`RunStep`), where it was written elsewhere
-   *  than where the script ran. */
-  step?: string;
 }
 
-/** One thing a run did through the World, in the order it began: a command
- *  sent to a machine with `on`, files copied between machines, files looked
- *  at. Its writes are their own facts, each naming the step it came in. */
-export type RunStep = OnStep | CopyStep | ViewStep;
+/** What a run did through the World's own commands, step by step
+ *  (`fastctx_types::run_facts::RunStep`): told from inside the job whose
+ *  script gave each command, by the node carrying an `on` or by the
+ *  command itself. A step told again under its id replaces the earlier
+ *  telling; one that ended says more than one going on. */
+export type RunStep = StepBase & StepDid;
 
-interface StepFacts {
+interface StepBase {
   id: string;
-  /** The `on` it ran inside, where one `on` sent another; null at the top. */
-  within: string | null;
-  /** When it began, and ended; null while it goes on. */
-  began: string;
-  ended: string | null;
-}
-
-export interface OnStep extends StepFacts {
-  kind: "on";
-  machine: MachineName;
-  /** What was sent: the command as one line, or the script it was given. */
-  command: string;
+  /** The job whose script gave the command: the run's own, or that of an
+   *  `on` it sent elsewhere. */
   job: string;
-  /** How it ended, once it has. */
-  end: { kind: "exited"; code: number } | { kind: "stopped" } | { kind: "lost"; why: string } | null;
-  /** The step whose output flowed straight into this one's input, machine
-   *  to machine. */
-  fed: string | null;
-  /** Its last lines, as a job's end tells them: at most 20 lines, 2000
-   *  characters. */
-  tail: string | null;
-}
-
-export interface CopyStep extends StepFacts {
-  kind: "copy";
-  from: { machine: MachineName; path: string }[];
-  to: { machine: MachineName; path: string };
-  files: number;
-  bytes: number;
-  /** What could not be copied, each as the command said it. */
-  problems: string[];
-}
-
-export interface ViewStep extends StepFacts {
-  kind: "view";
+  /** The machine that job runs on. */
   machine: MachineName;
-  paths: string[];
+  began: string;
+  /** Unset while it goes on. */
+  ended?: string;
 }
+
+export type StepDid =
+  | {
+      kind: "on";
+      to: MachineName;
+      /** The command line as it was given, or the script it carried. */
+      command: string;
+      /** The job it ran as there. */
+      sent?: string;
+      end?: StepEnd;
+      /** The machine of the `on` its output is piped into. */
+      pipes_to?: MachineName;
+      /** The job whose output came straight in as its input. */
+      fed_by?: string;
+      /** Its last lines, at most twenty. */
+      tail?: string;
+    }
+  | {
+      kind: "copy";
+      from: StepPlace[];
+      to: StepPlace;
+      files: number;
+      bytes: number;
+      /** Files there already with the same contents. */
+      unchanged: number;
+      /** What was not copied, and why, as the copy said it. */
+      problems?: string[];
+    }
+  /** Files looked at on the step's machine; its pictures in the order of
+   *  the images in the call's output. */
+  | { kind: "view"; paths: string[]; pictures?: StepPicture[] }
+  | { kind: "wait"; jobs: WaitedJob[] }
+  /** A job, a colleague or a sentinel stopped. */
+  | { kind: "stop"; what: string; on?: MachineName; how: StopHow }
+  | { kind: "page"; name: string; town: string; title: string; version: number }
+  | { kind: "project"; town: string }
+  | { kind: "plan"; version: number }
+  | { kind: "goal"; mark: "complete" | "blocked" | "pause" }
+  | { kind: "sense"; sentinel: string; condition: string };
+
+export type OnStep = Extract<RunStep, { kind: "on" }>;
+
+export interface StepPlace {
+  machine: MachineName;
+  path: string;
+}
+
+export interface StepPicture {
+  path: string;
+  /** The page of a document drawn as a picture. */
+  page?: number;
+  width: number;
+  height: number;
+  mime: string;
+}
+
+export interface WaitedJob {
+  job: string;
+  machine: MachineName;
+  /** When it ended. */
+  at: string;
+  end: StepEnd;
+  tail?: string;
+  /** The script it ran, its beginning where it is long. */
+  command?: string;
+}
+
+/** How what a step started or waited for ended: an exit code, a signal as
+ *  128 and its number. */
+export type StepEnd = { kind: "exited"; code: number } | { kind: "stopped" } | { kind: "lost"; why: string } | { kind: "not_run"; why: string };
+
+export type StopHow = "stopped" | "already_stopped" | "had_ended" | "not_cleanly" | "still_running";
 
 /** A multi-file operation keeps its one exact note once, then references that fact. */
 export type WriteNote =
@@ -153,4 +195,17 @@ export interface JobFacts {
   sequence: number;
   state: RunState | null;
   writes: WriteFact[];
+  steps?: RunStep[];
+}
+
+/** `incoming` joined to `steps` by id: a step that ended is kept over the
+ *  same step going on, a new one goes after those known. */
+export function mergeSteps(steps: readonly RunStep[], incoming: readonly RunStep[]): RunStep[] {
+  const merged = [...steps];
+  for (const step of incoming) {
+    const at = merged.findIndex((known) => known.id === step.id);
+    if (at < 0) merged.push(step);
+    else if (step.ended !== undefined || merged[at]!.ended === undefined) merged[at] = step;
+  }
+  return merged;
 }

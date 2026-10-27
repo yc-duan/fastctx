@@ -6,10 +6,12 @@ import { requestEvents } from "./requests";
 import { run, Script, sent, text } from "./script";
 import { steps } from "./steps";
 import { trips } from "./trips";
+import { deeds } from "./deeds";
 import type { SessionEvent, Speaker } from "../world/events";
 import type { JsonValue } from "../world/wire";
 import { cut, hunk, leftOut, noted, printed, put, ran, same, wrote } from "./run-facts";
 import { tour } from "./tour";
+import { voice } from "./voice";
 
 export interface Specimen {
   title: string;
@@ -297,11 +299,19 @@ let i = (self.ki.widen() * self.integral).narrow();
   );
   s.ended("t2", "completed");
 
+  // The bench machine was taken out of the network while a benchmark ran
+  // there: its end can no longer come, and the stop sent after it could not
+  // reach it either. The World says so, once each.
+  const gone = "The end of j-b7m2q5 on bench cannot be delivered: bench is no longer in this account's current network view.";
+  const unstopped = "The stop on bench could not be delivered: bench is no longer in this account's current network view.";
+  s.heard("t3", { kind: "world" }, gone, 600, { kind: "world", fact: { fact: "delivery_failed", id: "delivery-failed-6c1e0a93b2d4f5a7c8e9" }, text: gone });
+  s.heard("t3", { kind: "world" }, unstopped, 1, { kind: "world", fact: { fact: "delivery_failed", id: "delivery-failed-0b7d2e4f6a8c1e3d5f7a" }, text: unstopped });
+
   s.heard(
     "t3",
     { kind: "resident", address: { machine: "laptop", resident: "codex-91c0" } },
     "=== colleague codex-91c0 on laptop (turn completed, 14m) ===\nFound one. With `ki = 0x7FFF_0000` and a constant error of 32767 at `dt = 1`, the integral saturates after 65 538 steps as meant, but `narrow()` then **wraps** instead of saturating: the output jumps from 32767 to −32768.\n\nRepro: `cargo test -p ctrl overflow_repro` on branch `colleague/q16-edge` (laptop, `/home/me/wt/q16-edge`).\n=== what it did: fastctx w codex-91c0 ===",
-    840,
+    240,
     {
       kind: "answer",
       colleague: { machine: "laptop", resident: "codex-91c0" },
@@ -641,6 +651,92 @@ function asking(): Specimen {
         },
       });
       break;
+    case "thinking":
+      // GPT thinking at length: the row says the section it is in.
+      s.say(
+        "t2",
+        "thinking",
+        "**Reading the migration**\n\nThe batches table is in; what remains is the offline query cache.\n\n**Checking whether the batch size survives a replay after a crash**\n\nA smaller batch replays faster after a crash but commits more often.",
+        2,
+        true,
+      );
+      break;
+    case "goal-question": {
+      // A goal is on: Claude's question goes in without stopping its work.
+      const asked = [
+        {
+          question: "批量提交的大小定多少？",
+          header: "批量",
+          multiSelect: false,
+          options: [
+            { label: "1000", description: "回放快，提交多" },
+            { label: "5000", description: "现在的做法" },
+            { label: "20000", description: "提交少，出错时回放多" },
+          ],
+        },
+        {
+          question: "这次改动要在哪些机器上验证？",
+          header: "机器",
+          multiSelect: true,
+          options: [
+            { label: "laptop", description: "Windows，本地 Postgres" },
+            { label: "lab", description: "Linux，跑整套集成测试" },
+            { label: "server", description: "线上的副本" },
+          ],
+        },
+      ];
+      // A colleague working toward its own goal asked this conversation too,
+      // and another handed back what its goal came to.
+      const colleague = { machine: "lab", resident: "codex-77a1" };
+      const account = { hub: "w-0123456789abcdef", account: "ada" };
+      const sidelong = [
+        {
+          question: "迁移脚本里旧的 ingest_files 要不要顺手删掉？",
+          header: "旧表",
+          multiSelect: false,
+          options: [
+            { label: "删掉", description: "回滚要重新导入" },
+            { label: "留着", description: "下个版本再删" },
+          ],
+        },
+      ];
+      s.heard("t2", { kind: "resident", address: colleague }, "Question from codex-77a1 on lab", 2, {
+        kind: "words",
+        from: { kind: "resident", address: colleague },
+        text: "Question from codex-77a1 on lab",
+        goal_question: { id: "q-1", colleague, account, questions: sidelong },
+      });
+      const done = { machine: "gpu", resident: "codex-3f20" };
+      const report = "离线缓存的查询改好了：\n\n- 批次表加了 `replayed_at`，崩溃后从那里接着回放\n- 5000 一批，lab 上整套集成测试过了\n\n没动线上的副本。";
+      s.heard("t2", { kind: "resident", address: done }, report, 2, {
+        kind: "words",
+        from: { kind: "resident", address: done },
+        text: report,
+        goal_report: {
+          id: "r-1",
+          completion: "c-1",
+          colleague: done,
+          account,
+          shown: { label: "离线缓存", status: "complete", started_at: "2026-10-23T08:00:00Z", ended_at: "2026-10-23T09:42:00Z", text: report },
+        },
+      });
+      s.say("t2", "message", "我先按 5000 接着做，下面两件你有空再定。", 2);
+      s.push({
+        event: "finished",
+        turn: "t2",
+        item: {
+          id: JSON.stringify(["fastctx_goal_question", "session-9c1e", "toolu_02"]),
+          kind: "message",
+          text: asked.map((one) => one.question).join("\n"),
+          detail: {
+            delivery: "async",
+            questions: asked.map((one) => ({ title: one.question, options: one.options.map((option) => option.label), multiSelect: one.multiSelect })),
+            fastctx_goal_question: { tool_use_id: "toolu_02", agent_id: null, questions: asked },
+          },
+        },
+      });
+      break;
+    }
     case "claude-question":
       s.say("t2", "message", "提交之前有两件事想问你。", 2);
       s.push({
@@ -903,4 +999,4 @@ function controls(): Specimen {
   return { title: "迁移说明", agent: "claude", resident: "claude-c0ntrols", machine: "laptop", model: "claude-opus-5-5", town: "ingest", here: "desktop", events: s.recent() };
 }
 
-export const specimens: Record<string, () => Specimen> = { claude, codex, asking, steps, trips, tour, controls };
+export const specimens: Record<string, () => Specimen> = { claude, codex, asking, steps, trips, tour, deeds, controls, voice };

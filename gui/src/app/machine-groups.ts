@@ -8,7 +8,7 @@
 import { escape } from "../conversation/prose";
 import { loginsOf, names, type AccountChange, type AccountName, type Login } from "../world/accounts";
 import type { WorldNow } from "../world/bridge";
-import { isSuper, owns, sameLogin, type Machine } from "./reach";
+import { holds, isSuper, sameLogin, type Machine } from "./reach";
 
 export interface GroupWords {
   /** The action beside a machine, and the title of its card. */
@@ -47,7 +47,7 @@ export interface Grouping {
 }
 
 /** How `machine` is grouped from this device, where it may be: by a login
- *  that owns it or administers its hub, on a hub that keeps groups, as the
+ *  that holds it or administers its hub, on a hub that keeps groups, as the
  *  hub refuses the administrator a visitor's machines. On `hub`, where one
  *  is named. */
 export function groupingOf(machine: Machine, world: WorldNow, hub?: string): Grouping | null {
@@ -58,7 +58,7 @@ export function groupingOf(machine: Machine, world: WorldNow, hub?: string): Gro
     const member = seen.members.find((one) => one.kind === "computer" && names(one, machine.name));
     const owner = member?.home;
     if (!member || !owner) continue;
-    const own = owner === login.account || owns(machine, login);
+    const own = owner === login.account || holds(machine, login, world);
     const visitor = seen.accounts.find((account) => account.name === owner)?.level === "visitor";
     if (!own && !(isSuper(world, login) && !visitor)) continue;
     return { login, owner, now: member.group ?? null, groups: groupsOf(world, login.hub, owner) };

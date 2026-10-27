@@ -13,6 +13,9 @@ use crate::{Address, JobId, MachineName, ProcessIdentity, TownName};
 /// A resident's request to run a bash script.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RunRequest {
+    /// The initiating conversation turn, captured before the work starts.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub turn: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub call_id: Option<String>,
     /// The script exactly as the resident wrote it.
@@ -71,6 +74,9 @@ pub struct StopRequested {
 /// and a window onto its output.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RunReply {
+    /// Actual scratch locations observed while this script ran.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub scratch: Vec<crate::scratch::Location>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub run: Option<Box<crate::run_facts::RunFacts>>,
     /// Completion notices taken by waits of this owner on the executing node.
@@ -217,6 +223,9 @@ impl RunHead {
 /// The record of one job, kept at `jobs/<id>.json`.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct JobRecord {
+    /// The initiating conversation turn, captured before the work starts.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub turn: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub call_id: Option<String>,
     pub id: JobId,
@@ -296,6 +305,8 @@ pub struct OutputDrained {
 /// standard input and standard error are the record's `stdin` and `stderr`.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct OnJob {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sentinel: Option<crate::on::SentinelProbe>,
     /// The sending script's own state, which the prelude restores first.
     pub state: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -423,4 +434,8 @@ pub enum EndedHow {
     Interrupted { reason: String },
     /// Starting or supervising failed; processes already started may remain.
     Failed { error: String },
+}
+
+impl JobRecord {
+    pub fn is_sentinel(&self) -> bool { self.on.as_ref().is_some_and(|on| on.sentinel.is_some()) }
 }

@@ -5,6 +5,10 @@
    beside their rules; this sheet holds what is common, and the few whose
    own rules were for a pointer's size. */
 @media (pointer: coarse) {
+  .fan-tile {
+    min-height: 44px;
+  }
+
   .icon-button {
     width: 44px;
     height: 44px;

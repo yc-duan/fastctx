@@ -46,8 +46,12 @@ pub fn start(node: &Arc<Node>) -> io::Result<()> {
                 // what it found are beside it.
                 let Ok(rest) = path.strip_prefix(&root) else { continue };
                 let mut names = rest.components().map(|name| name.as_os_str().to_string_lossy().into_owned());
-                let (Some(town), Some(part)) = (names.next(), names.next()) else { continue };
-                if part == "ledger"
+                let Some(town) = names.next() else {
+                    let _ = changed.send(None);
+                    continue;
+                };
+                let part = names.next();
+                if part.as_deref().is_none_or(|part| matches!(part, "ledger" | "journals" | "specs"))
                     && let Ok(town) = TownName::try_from(town)
                 {
                     let _ = changed.send(Some(town));
@@ -111,7 +115,18 @@ async fn check(node: &Arc<Node>, town: &TownName) {
 async fn set_town_right(node: &Arc<Node>, town: &TownName) {
     let _syncing = node.syncing.lock().await;
     let (world, name) = (node.world.clone(), town.clone());
-    match tokio::task::spawn_blocking(move || set_right(&world, &name)).await {
+    match tokio::task::spawn_blocking(move || {
+        let mut found = set_right(&world, &name)?;
+        found.extend(crate::memory::projection::restore(&world, &name)?.into_iter().map(|path| Tampered {
+            at: Timestamp::now(),
+            path,
+            what: "memory copy restored from the ledger",
+            found: None,
+        }));
+        io::Result::Ok(found)
+    })
+    .await
+    {
         Ok(Ok(found)) => {
             for tampered in found {
                 node.log.line(format_args!("{town}'s ledger: {} {}", tampered.path, tampered.what));

@@ -7,14 +7,19 @@
 // and a look for newer ones, its automatic updates and passing packages on,
 // and the World's program on this computer beside the interface's; and,
 // where other machines this device's accounts may update can take a newer
-// version too, a word on how many, opening their update view.
+// version too, a word on how many, opening their update view. Where the
+// update did not go through, or this device is stuck where nothing else
+// helps, it offers a repair, and follows it layer by layer in the card.
+// (`dev-notes/2026-10-22-更新的修复-设计.md`, 谁来按、在哪里按)
 
 import { Sheet } from "./confirm";
+import { glyph } from "../conversation/glyphs";
 import { escape } from "../conversation/prose";
+import { RepairLayers } from "./repair-layers";
 import { RenewalRow, type Renewing } from "./renewal";
 import { effect } from "./signals";
 import { UpdateRows } from "./update-rows";
-import type { Offered, Updates } from "./updates";
+import { troubled, type Offered, type Updates } from "./updates";
 import type { UpdateViewWords } from "./update-view-words";
 import type { UpdateWords } from "./update-words";
 import type { SettingsWords } from "./words";
@@ -48,6 +53,9 @@ export class UpdateCard {
   /** This device's rows while the card is open. */
   private rows: UpdateRows | null = null;
   private renewal: RenewalRow | null = null;
+  /** The repair's layers while the card follows one. */
+  private layers: RepairLayers | null = null;
+  private stopRepair: (() => void) | null = null;
 
   constructor(
     private readonly updates: Updates,
@@ -64,6 +72,7 @@ export class UpdateCard {
       sheet.body.addEventListener("click", (event) => {
         const target = event.target as HTMLElement;
         if (target.closest("[data-update-go]")) this.updates.go();
+        if (target.closest("[data-update-repair]")) this.updates.repair();
         if (target.closest("[data-update-others]")) {
           sheet.close();
           this.network.open();
@@ -72,6 +81,12 @@ export class UpdateCard {
       sheet.dialog.addEventListener("close", () => {
         this.stop?.();
         this.stop = null;
+        this.stopRepair?.();
+        this.stopRepair = null;
+        this.layers = null;
+        // A repair that ended is not shown again; one under way goes on.
+        const repairing = this.updates.repairing.peek();
+        if (repairing && (repairing.error || repairing.report?.finished)) this.updates.forgetRepair();
         this.rows?.leave();
         this.renewal?.leave();
         this.rows = null;
@@ -81,14 +96,17 @@ export class UpdateCard {
     }
     const sheet = this.sheet;
     this.stop?.();
+    this.stopRepair?.();
     this.rows?.leave();
     this.renewal?.leave();
     this.drawn = "";
-    sheet.body.innerHTML = `<div class="update-head"></div><div class="update-card"><div class="update-new" hidden></div><dl class="facts update-here"></dl><dl class="facts update-renewal" hidden></dl><div class="update-more"></div></div>`;
+    this.layers = null;
+    sheet.body.innerHTML = `<div class="update-head"></div><div class="update-card"><div class="update-new" hidden></div><dl class="facts update-here"></dl><dl class="facts update-renewal" hidden></dl><div class="update-repair" hidden></div><div class="update-more"></div></div>`;
     const { here, updates, words } = this;
     this.rows = new UpdateRows(sheet.body.querySelector<HTMLElement>(".update-here")!, updates, words, this.network.view, here.versions, here.relays);
     this.renewal = here.renewing ? new RenewalRow(sheet.body.querySelector<HTMLElement>(".update-renewal")!, here.settings, here.renewing) : null;
     this.stop = effect(() => this.draw(sheet, this.updates.offered.get()));
+    this.stopRepair = effect(() => this.drawRepair(sheet));
     sheet.show();
     // Asked as it opens: the hub knows which of them run what.
     void this.network.count().then(
@@ -142,7 +160,8 @@ export class UpdateCard {
         break;
       case "failed": {
         const failures = this.network.view.failures;
-        foot = `<span class="update-said update-failed" title="${escape(stage.why)}">${escape(words.failed(failures[stage.reason?.kind ?? "other"]))}</span>${go(words.retry)}`;
+        const repair = this.updates.state.peek()?.repair_supported ? this.repairButton(words.repair.repair, false) : "";
+        foot = `<span class="update-said update-failed" title="${escape(stage.why)}">${escape(words.failed(failures[stage.reason?.kind ?? "other"]))}</span>${repair}${go(words.retry)}`;
         break;
       }
     }
@@ -153,6 +172,50 @@ export class UpdateCard {
         <div class="update-foot">${foot}</div>`;
     this.place(sheet, head, fresh, more);
     sheet.busy = stage.kind === "installing";
+  }
+
+  private repairButton(label: string, main: boolean): string {
+    return `<button class="${main ? "sheet-go" : "text-button"} update-repair-go" type="button" data-update-repair>${glyph("repair", 16)}<span>${escape(label)}</span></button>`;
+  }
+
+  /** The repair: offered where this device is stuck and the update's own
+   *  line does not offer it already; once begun, its layers ticked in place
+   *  and how it ended, with another try where it stopped short. */
+  private drawRepair(sheet: Sheet): void {
+    const part = sheet.body.querySelector<HTMLElement>(".update-repair");
+    if (!part) return;
+    const words = this.words.repair;
+    const following = this.updates.repairing.get();
+    const state = this.updates.state.get();
+    const offered = this.updates.offered.get();
+    if (!following) {
+      this.layers = null;
+      const offer = state?.repair_supported && troubled(state, offered) && offered?.stage.kind !== "failed";
+      part.hidden = !offer;
+      part.innerHTML = offer ? `<div class="update-foot">${this.repairButton(words.repair, false)}</div>` : "";
+      return;
+    }
+    const report = following.report;
+    const ended = following.error !== null || (report?.finished ?? null) !== null;
+    const went = following.error !== null ? false : (report?.success ?? false);
+    const said = !ended ? words.repairing : went ? (report?.unchanged ? words.fine : words.repaired) : words.repairFailed;
+    const why = following.error ?? report?.error ?? "";
+    if (!this.layers) {
+      this.layers = new RepairLayers(words);
+      part.innerHTML = `<p class="update-repair-said"></p><div class="update-repair-layers"></div><div class="update-foot update-repair-acts"></div>`;
+      part.querySelector(".update-repair-layers")!.append(this.layers.element);
+    }
+    part.hidden = false;
+    const line = part.querySelector<HTMLElement>(".update-repair-said")!;
+    line.textContent = said;
+    line.classList.toggle("update-failed", ended && !went);
+    line.title = why;
+    this.layers.update(report?.steps ?? []);
+    const acts = part.querySelector<HTMLElement>(".update-repair-acts")!;
+    const again = ended && !went ? this.repairButton(words.repairAgain, false) : "";
+    if (acts.innerHTML !== again) acts.innerHTML = again;
+    acts.hidden = !again;
+    sheet.anew();
   }
 
   /** Puts in what changed of the card's own parts; this device's rows
