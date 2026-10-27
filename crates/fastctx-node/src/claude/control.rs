@@ -20,6 +20,28 @@ pub struct Bridge {
     calls: Mutex<HashSet<String>>,
     requests: Mutex<HashMap<String, Request>>,
     observed: Mutex<HashSet<(String, String, fastctx_types::ProcessIdentity)>>,
+    /// The conversations whose mod is being asked what it offers now.
+    offering: Mutex<HashSet<ResidentId>>,
+}
+
+/// The one asking out of what a conversation's mod offers, until it ends.
+struct Offering<'a> {
+    bridge: &'a Bridge,
+    resident: ResidentId,
+}
+
+impl Bridge {
+    /// Begins asking what `resident`'s mod offers, unless an asking is out already.
+    fn offering(&self, resident: &ResidentId) -> Option<Offering<'_>> {
+        let begun = self.offering.lock().expect("never poisoned").insert(resident.clone());
+        begun.then(|| Offering { bridge: self, resident: resident.clone() })
+    }
+}
+
+impl Drop for Offering<'_> {
+    fn drop(&mut self) {
+        self.bridge.offering.lock().expect("never poisoned").remove(&self.resident);
+    }
 }
 
 #[derive(Clone)]
@@ -121,13 +143,23 @@ pub async fn offers(node: &Arc<Node>, resident: &ResidentId) -> Result<Offers, F
     // mod adds its commands and checkpoints, and names the aliases its
     // login offers; when it does not answer, or not soon, as in the middle
     // of a turn, the conversation is offered as a sleeping one is. A reply
-    // that comes later is cleared away by `look`.
+    // that comes later is cleared away by `look`. The mod is asked once at a
+    // time: pages and machines asking together while one asking is out are
+    // answered at once the sleeping way, from what the World keeps, and take
+    // nothing from the session: an interface asking dozens of times in a few
+    // seconds would otherwise hold every place a busy machine gives it.
     let asked = if running {
-        match tokio::time::timeout(OFFERS_WITHIN, invoke(node, resident, json!({"do":"offers"}))).await {
-            Ok(answer) => answer.and_then(|value| {
-                serde_json::from_value::<Offers>(value).map_err(|error| Failure::new(format!("Claude offers: {error}")))
-            }),
-            Err(_) => Err(Failure::new("Claude did not say what it offers in time")),
+        match node.claude.bridge.offering(resident) {
+            Some(_offering) => {
+                match tokio::time::timeout(OFFERS_WITHIN, invoke(node, resident, json!({"do":"offers"}))).await {
+                    Ok(answer) => answer.and_then(|value| {
+                        serde_json::from_value::<Offers>(value)
+                            .map_err(|error| Failure::new(format!("Claude offers: {error}")))
+                    }),
+                    Err(_) => Err(Failure::new("Claude did not say what it offers in time")),
+                }
+            }
+            None => Err(Failure::new("what it offers is being asked already")),
         }
     } else {
         Err(Failure::new("not running"))

@@ -978,7 +978,10 @@ export class ConversationPage {
   private controlQueue: ControlQueue | null = null;
   /** The controls the node took to do once a turn ends, by their ids. */
   private readonly pendingControls = new Map<string, PendingControl>();
-  private offersAsked = 0;
+  /** The asking of what the conversation offers that is out, and the one
+   *  that follows it for every wish made meanwhile. */
+  private offersAsking: Promise<void> | null = null;
+  private offersWanted: Promise<void> | null = null;
   private nodeTray: NodeTray | null = null;
   /** This device's last send of the shared words, until the node answers. */
   private sendingShared: Promise<unknown> = Promise.resolve();
@@ -1612,20 +1615,37 @@ export class ConversationPage {
     this.say(waiting ? controls.words.afterTurn(name) : controls.words.unknown(name));
   }
 
-  private async askOffers(): Promise<void> {
+  /** Asks what the conversation offers, one asking at a time. Its commands
+   *  can change many times in a second (a host describing every command it
+   *  has), and each asking holds a place on its machine: wished for again
+   *  while one is out, it asks once more after that one, for every wish
+   *  made meanwhile, so whoever waits gets an answer begun after it asked. */
+  private askOffers(): Promise<void> {
+    if (!this.offersAsking) {
+      const asking = this.askOffersNow().finally(() => {
+        this.offersAsking = null;
+      });
+      this.offersAsking = asking;
+      return asking;
+    }
+    const next = () => {
+      this.offersWanted = null;
+      return this.askOffers();
+    };
+    this.offersWanted ??= this.offersAsking.then(next, next);
+    return this.offersWanted;
+  }
+
+  private async askOffersNow(): Promise<void> {
     const controls = this.options.controls;
     if (!controls || this.left) return;
     clearTimeout(this.offersAgain);
-    // An answer to an earlier asking that comes after a later one is set aside.
-    const asking = ++this.offersAsked;
     try {
       const offered = await controls.offers();
-      if (asking !== this.offersAsked) return;
       this.offered = offered;
       this.offersFailed = 0;
       this.syncControls(offered.pending_controls ?? []);
     } catch {
-      if (asking !== this.offersAsked) return;
       // The way to its machine broke for a moment: asked again a few times,
       // soon and then less often; after that, when a turn ends. Its machine
       // offers a model picker whatever its host answers, so only a machine
