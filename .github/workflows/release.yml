@@ -915,6 +915,13 @@ jobs:
             until xwininfo -root -tree | grep -qF "\"Fastctx\"" || [ $waited -ge 120 ]; do
               sleep 2
               waited=$((waited + 2))
+              # GTK registering the application waits out a 25 s D-Bus timeout on this runner before
+              # the window can come. Still none forty seconds in: where every thread is, beside the shot.
+              if [ $waited -eq 40 ] && ! xwininfo -root -tree | grep -qF "\"Fastctx\""; then
+                sudo apt-get install -y gdb > /dev/null 2>&1
+                sudo gdb -p "$(pgrep -x fastctx-app | head -1)" -batch -ex "set pagination off" \
+                  -ex "thread apply all bt 25" > shots/stacks-at-40s.txt 2>&1
+              fi
             done
             import -window root shots/linux-x64.png
             if xwininfo -root -tree | grep -F "\"Fastctx\""; then
