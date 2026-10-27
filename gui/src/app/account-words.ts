@@ -482,6 +482,8 @@ export interface MachinesWords {
    *  title and how many machines are registered on it. */
   hubOnline: string;
   hubConnecting: string;
+  /** Since when the line to a hub is down, and why as the kernel said it. */
+  hubDownSince(at: string, why: string | null): string;
   hubOff: string;
   /** What the hub is, in one line in its details. */
   hubIs: string;
@@ -768,6 +770,7 @@ export const zhMachines: MachinesWords = {
   formerly: (names) => `曾用名 ${names.join("、")}`,
   hubOnline: "已连接",
   hubConnecting: "连接中",
+  hubDownSince: (at, why) => (why ? `${at} 起断开：${why}` : `${at} 起断开`),
   hubOff: "未连接",
   hubIs: "认出网络里的每台设备，管着谁能用哪台机器，机器之间的话经它转达",
   hubTitle: (name) => `中枢服务器 ${name}`,
@@ -1089,6 +1092,7 @@ export const enMachines: MachinesWords = {
   formerly: (names) => `formerly ${names.join(", ")}`,
   hubOnline: "connected",
   hubConnecting: "connecting",
+  hubDownSince: (at, why) => (why ? `down since ${at}: ${why}` : `down since ${at}`),
   hubOff: "not connected",
   hubIs: "It knows every device in the network, keeps who may use which machine, and passes on what the machines say to each other",
   hubTitle: (name) => `Hub ${name}`,

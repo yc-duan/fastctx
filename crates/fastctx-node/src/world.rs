@@ -1523,7 +1523,7 @@ pub fn grouped_machines(
     let mut groups: Vec<fastctx_types::world::MachineGroup> = Vec::new();
     let mut keys = Vec::new();
     for link in node.links() {
-        let Ok(view) = crate::authorization::current_view(&link) else { continue };
+        let Some(view) = link.last_view() else { continue };
         let accounts = node.accounts_on(&link, acting);
         let mut put = |machine: &fastctx_net::directory::Member, written: &str| {
             if let (Some(group), Some(owner)) = (&machine.group, &machine.home) {

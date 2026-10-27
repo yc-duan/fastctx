@@ -109,37 +109,46 @@ export function machinesOf(world: WorldNow | null): Machine[] {
     machines.push(here);
     byWritten.set(here.written, here);
   }
+  // While the line to a hub is down, its view says who was online then,
+  // not now, and the node leaves that unsaid. Such a machine stands as it
+  // last was, under a hub that says it is reconnecting, unless another hub
+  // says how it is now (`world-network.md`, 隔着网络也要顺手).
+  const lastSeen = new Map<Machine, boolean>();
   for (const hub of nodes.hubs) {
+    const members = world.accounts.hubs.find((one) => one.hub === hub.hub)?.members ?? [];
     // A machine none of the logins may work on is not theirs to list,
     // whatever agents on it assist them.
     for (const node of hub.machines.filter((node) => node.rights.some(([, rights]) => rights.hands))) {
       const on: MachineOn = { hub: hub.hub, hubName: hub.name, owner: node.owner, rights: node.rights };
-      const known = byWritten.get(node.written);
+      let machine = byWritten.get(node.written);
       // One computer on two hubs: online when either hub says so.
-      if (known) {
-        known.on.push(on);
-        if (node.online === true && known.online !== true) {
-          known.online = true;
-          known.since = node.since;
-          known.through = node.through ?? null;
-        } else if (known.online === null) known.online = node.online;
-        if (!("Ok" in known.facts) && "Ok" in node.facts) known.facts = node.facts;
-        continue;
+      if (machine) {
+        machine.on.push(on);
+        if (node.online === true && machine.online !== true) {
+          machine.online = true;
+          machine.since = node.since;
+          machine.through = node.through ?? null;
+        } else if (machine.online === null) machine.online = node.online;
+        if (!("Ok" in machine.facts) && "Ok" in node.facts) machine.facts = node.facts;
+      } else {
+        machine = {
+          name: node.name,
+          written: node.written,
+          here: false,
+          online: node.online,
+          since: node.since,
+          through: node.through ?? null,
+          facts: node.facts,
+          on: [on],
+        };
+        machines.push(machine);
+        byWritten.set(machine.written, machine);
       }
-      const machine: Machine = {
-        name: node.name,
-        written: node.written,
-        here: false,
-        online: node.online,
-        since: node.since,
-        through: node.through ?? null,
-        facts: node.facts,
-        on: [on],
-      };
-      machines.push(machine);
-      byWritten.set(machine.written, machine);
+      const seen = node.online === null ? members.find((member) => member.name === node.name && member.kind === "computer") : undefined;
+      if (seen && !lastSeen.get(machine)) lastSeen.set(machine, seen.online);
     }
   }
+  for (const [machine, online] of lastSeen) if (machine.online === null) machine.online = online;
   return machines;
 }
 

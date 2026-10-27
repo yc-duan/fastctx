@@ -247,7 +247,12 @@ function many(): Node[] {
  *  and with `two`, a second one at work, where it is a member that ops
  *  shared build with and whom the Claude on render assists. */
 function hubs(two: boolean): { nodes: HubNodes[]; accounts: HubAccounts[] } {
-  const link = { kind: "online" as const, since: at("01:10:02"), hub: "203.0.113.10:7443", route: { kind: "card" as const, name: "Ethernet" } };
+  // With ?hub=down, the line to home is down and reconnecting: its view
+  // still has the machines, and the node leaves unsaid who is online now.
+  const down = new URLSearchParams(location.search).get("hub") === "down";
+  const link: LinkState = down
+    ? { kind: "connecting", since: at("13:41:20"), last_error: "its own line: 203.0.113.10:7443 card Ethernet: connection refused" }
+    : { kind: "online", since: at("01:10:02"), hub: "203.0.113.10:7443", route: { kind: "card", name: "Ethernet" } };
   const nodes: HubNodes[] = [
     {
       hub: HOME,
@@ -264,7 +269,7 @@ function hubs(two: boolean): { nodes: HubNodes[]; accounts: HubAccounts[] } {
         node("lab-a-01", true, "11:02:00", "me", "windows", "C:/Users/lab", ["me", true, false]),
         node("lab-a-02", false, "12:31:00", "me", "windows", "C:/Users/lab", ["me", true, false]),
         ...many(),
-      ],
+      ].map((machine) => (down ? { ...machine, online: null } : machine)),
     },
   ];
   // How the lines go: desktop and server take direct connections; laptop

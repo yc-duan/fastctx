@@ -2000,11 +2000,13 @@ async fn nodes(
     let hubs = around::on_hubs(links, |link, fresh| async move {
         let view = link.view();
         let logins = node.accounts_on(&link, acting);
+        // A hub that cannot be asked now still has its machines, as its
+        // view last had them (`Link::last_view`).
+        let listed = link.last_view().is_some();
         let reachable = view
             .machines()
-            .filter(|machine| !view.is_me(&machine.name))
+            .filter(|machine| listed && !view.is_me(&machine.name))
             .filter_map(|machine| {
-                crate::authorization::current_view(&link).ok()?;
                 view.account_for(&logins, &view.me, &machine.name, fastctx_types::access::Purpose::Hands).map(
                     |account| Reachable {
                         link: link.clone(),
@@ -2030,6 +2032,9 @@ async fn nodes(
                     Heard::Answered(RemoteReply::Facts(facts)) => Ok(facts),
                     Heard::Answered(_) => Err("it answered something else".to_string()),
                     Heard::Offline(_) => Err("it is offline".to_string()),
+                    // With the hub not asked, none of its machines was:
+                    // what each said of itself when it last connected.
+                    Heard::NoAnswer(_) if !online_known => crate::facts::of(node, &link, seen, None),
                     Heard::NoAnswer(reason) => Err(reason),
                 };
                 NodeView {

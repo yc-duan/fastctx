@@ -18,6 +18,9 @@ pub(super) fn overview(view: &TownView, you: Option<&Address>, all: bool, now: T
             if local_only { "local records; node not running" } else { "online" }
         ));
     }
+    // Machines that did not answer for one reason are said together: a hub
+    // this computer cannot reach leaves every machine on it unasked.
+    let mut silent: Vec<(&str, Vec<String>)> = Vec::new();
     for state in &view.machines {
         match state {
             MachineState::Answered(_) => {}
@@ -25,9 +28,16 @@ pub(super) fn overview(view: &TownView, you: Option<&Address>, all: bool, now: T
                 machines.push(format!("{machine} offline for {}", ago(*since, now)))
             }
             MachineState::Offline { machine, since: None } => machines.push(format!("{machine} offline")),
-            MachineState::NoAnswer { machine, reason } => machines.push(format!("{machine} did not answer ({reason})")),
+            MachineState::NoAnswer { machine, reason } => {
+                match silent.iter_mut().find(|(said, _)| *said == reason.as_str()) {
+                    Some((_, names)) => names.push(machine.to_string()),
+                    None => silent.push((reason, vec![machine.to_string()])),
+                }
+            }
         }
     }
+    machines
+        .extend(silent.into_iter().map(|(reason, names)| format!("{} did not answer ({reason})", names.join(", "))));
     machines.extend(view.unanswered.iter().map(|missing| format!("not answered: {missing}")));
     let place = match &view.scope {
         Scope::Town { town, .. } => town.as_str(),

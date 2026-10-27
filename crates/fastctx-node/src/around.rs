@@ -2,20 +2,26 @@
 //! the machines whoever asks may use, on every hub this computer is on,
 //! each asked for the accounts it works for, the online ones at once.
 
+use std::sync::Arc;
+
 pub(crate) use fastctx_net::around::{Heard, Reachable, ask_each};
+use fastctx_net::link::{Link, Status};
 use fastctx_types::access::{Acting, Purpose};
 
 use crate::Node;
 
 /// The other machines `acting` may ask `purpose` of, on every hub. A
 /// computer on several of them is asked once, through the first hub where
-/// `acting` may ask it.
+/// `acting` may ask it, one this computer is connected to before one it is
+/// not.
 pub(crate) fn reachable(node: &Node, acting: &Acting, purpose: Purpose) -> Vec<Reachable> {
     let mut reachable = Vec::new();
     let mut keys = Vec::new();
     let links = node.links();
-    for link in &links {
-        let Ok(view) = crate::authorization::current_view(link) else { continue };
+    let mut order: Vec<&Arc<Link>> = links.iter().collect();
+    order.sort_by_key(|link| !matches!(link.status(), Status::Online { .. }));
+    for link in order {
+        let Some(view) = link.last_view() else { continue };
         let accounts = node.accounts_on(link, acting);
         // This computer as its hub calls it, which a hub that has not
         // followed a rename yet calls it otherwise.
@@ -49,7 +55,7 @@ pub(crate) fn reachable_each(node: &Node, acting: &Acting, purpose: Purpose) -> 
     let mut reachable = Vec::new();
     let links = node.links();
     for link in &links {
-        let Ok(view) = crate::authorization::current_view(link) else { continue };
+        let Some(view) = link.last_view() else { continue };
         let accounts = node.accounts_on(link, acting);
         for machine in view.machines().filter(|machine| !view.is_me(&machine.name)) {
             for account in &accounts {
