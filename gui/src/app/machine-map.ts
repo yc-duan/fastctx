@@ -1373,7 +1373,9 @@ export class MachineMap {
         if (this.pointed === group.key) fill(group.box, groupRound, colour, (tone === "mine" ? 0.09 : 0.07) * faint);
         continue;
       }
-      if (!ringed && !group.count && group.box.height * scale < SLIVER) continue;
+      // A box with no machine yet is its name alone: nearer, the name's own
+      // tab; far, nothing where its strip would be a sliver.
+      if (!group.count && (ringed || group.box.height * scale < SLIVER)) continue;
       const pointed = this.pointed === group.key;
       const alpha = tone === "mine" ? (pointed ? 0.19 : 0.11) : tone === "assist" ? (pointed ? 0.12 : 0.06) : pointed ? 0.11 : 0.06;
       fill(group.box, round, colour, alpha * faint);
