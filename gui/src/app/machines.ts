@@ -890,9 +890,12 @@ export class MachinesPage implements Page {
     const bare = new Map<string, string>();
     // A machine is known by how it is written here: two hubs' machines of
     // one name stay two, and each is asked by its own.
-    const known = machinesOf(world);
-    const writtenOf = (login: Login, name: string) =>
-      known.find((one) => one.name === name && one.on.some((on) => on.hub === login.hub))?.written ?? name;
+    const written = new Map<string, string>();
+    const keyOf = (hub: string, name: string) => `${hub}\n${name}`;
+    for (const machine of machinesOf(world)) {
+      for (const on of machine.on) if (!written.has(keyOf(on.hub, machine.name))) written.set(keyOf(on.hub, machine.name), machine.written);
+    }
+    const writtenOf = (login: Login, name: string) => written.get(keyOf(login.hub, name)) ?? name;
     let old = false;
     let failed: string | null = null;
     answers.forEach((answer, index) => {
@@ -929,7 +932,9 @@ export class MachinesPage implements Page {
     this.updatesBare = bare;
     this.updatesOld = !views.size && old;
     this.updatesFailed = views.size || old ? null : failed;
-    this.redraw();
+    // Drawn again as any change is: what is the same as it was is left as
+    // it is, every few seconds while the view is open.
+    if (!this.left) this.draw(this.options.store.world.peek(), this.options.store.clock.peek());
   }
 
   /** What the list draws in the update view: the machines that may be
