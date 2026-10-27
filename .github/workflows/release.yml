@@ -906,17 +906,35 @@ jobs:
           mkdir -p shots
           export APPIMAGE_EXTRACT_AND_RUN=1 WEBKIT_DISABLE_DMABUF_RENDERER=1
           # The application is found by its own process name, and by its window's title on the screen.
+          # Its window is looked for every two seconds for two minutes, and how long it took is said;
+          # when it never comes, what is on the screen and what runs are said too.
           status=0
           xvfb-run -a -s "-screen 0 1280x860x24" sh -c '
             "$1" > app.log 2>&1 &
-            sleep 30
+            waited=0
+            until xwininfo -root -tree | grep -qF "\"Fastctx\"" || [ $waited -ge 120 ]; do
+              sleep 2
+              waited=$((waited + 2))
+            done
             import -window root shots/linux-x64.png
-            xwininfo -root -tree | grep -F "\"Fastctx\""
-            shown=$?
-            pgrep -x fastctx-app > /dev/null || shown=1
+            if xwininfo -root -tree | grep -F "\"Fastctx\""; then
+              shown=0
+              echo "The window was there after about $waited s."
+            else
+              shown=1
+              echo "No window after $waited s; the screen holds:"
+              xwininfo -root -tree
+            fi
+            pgrep -x fastctx-app > /dev/null || { shown=1; echo "The application is not running."; }
+            ps -eo pid,ppid,etime,stat,args | grep -iE "fastctx|webkit|apprun" | grep -v grep
             pkill -x fastctx-app
             exit $shown' sh "$image" || status=$?
           cat app.log
+          if [ "$status" -ne 0 ]; then
+            for kept in ~/.fastctx/updates/startup-error.json ~/.fastctx/world/node.log; do
+              if [ -f "$kept" ]; then echo "--- $kept"; tail -n 60 "$kept"; fi
+            done
+          fi
           exit $status
       - uses: actions/upload-artifact@v4
         if: always()
@@ -925,6 +943,8 @@ jobs:
           path: shots
           if-no-files-found: ignore
       - name: Upload the packages
+        # Also when opening them failed, so the very package that failed can be opened elsewhere.
+        if: ${{ !cancelled() }}
         uses: actions/upload-artifact@v4
         with:
           name: gui-linux-x64
