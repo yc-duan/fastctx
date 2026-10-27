@@ -9,6 +9,9 @@ import { enProblems, failure, zhProblems } from "./problem";
 
 export interface MeWords {
   title: string;
+  /** The page's tabs: what of the user's others use, their devices, and
+   *  the codes that let devices in. */
+  tabs: { given: string; devices: string; codes: string };
   level: Record<"super" | "member" | "visitor", string>;
   /** On a member's page: who the administrator is, and what they may do. */
   adminIs(admin: string): string;
@@ -108,6 +111,7 @@ export interface MeWords {
 
 export const zhMe: MeWords = {
   title: "我",
+  tabs: { given: "共享", devices: "设备", codes: "入网码" },
   level: { super: "管理员", member: "成员", visitor: "访客" },
   adminIs: (admin) => `管理员 ${admin}`,
   superNote: (admin) => `管理员 ${admin} 可以访问你的所有机器`,
@@ -193,6 +197,7 @@ export const zhMe: MeWords = {
 
 export const enMe: MeWords = {
   title: "Me",
+  tabs: { given: "Sharing", devices: "Devices", codes: "Codes" },
   level: { super: "administrator", member: "member", visitor: "visitor" },
   adminIs: (admin) => `administrator ${admin}`,
   superNote: (admin) => `Administrator ${admin} can access all your machines`,
