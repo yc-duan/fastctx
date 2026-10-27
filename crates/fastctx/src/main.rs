@@ -20,7 +20,7 @@ mod first_program;
 mod host_change;
 mod hub_intake;
 mod hub_retire;
-mod journal;
+
 mod keep;
 mod mcp;
 mod mcp_child;
@@ -29,19 +29,27 @@ mod on;
 mod output;
 mod page;
 mod paths;
+mod plan;
 mod profile;
 mod program;
 mod project;
 mod proxy;
+mod records;
 mod renew;
+mod repair;
 mod secret;
 mod self_update;
+mod sense;
 mod server_install;
 mod service;
 #[cfg(windows)]
 mod service_local_network;
+mod steps;
 mod stop;
 mod talk;
+mod timer;
+mod goal;
+mod turn_facts;
 mod uninstall;
 mod update;
 mod view;
@@ -75,6 +83,12 @@ enum Command {
     Mcp(mcp::McpArgs),
     /// Read or change the account's instructions and host settings.
     Profile(profile::ProfileArgs),
+    #[command(about = fastctx_types::plan::words::HELP)]
+    Plan(plan::PlanArgs),
+    #[command(hide = true)]
+    Records(records::RecordsArgs),
+    /// Leave a sentinel to wait for something.
+    Sense(sense::SenseArgs),
     #[command(hide = true)]
     McpRelay { name: String },
     #[command(hide = true)]
@@ -85,6 +99,12 @@ enum Command {
     /// Open the World in this terminal: projects, agents, machines, and a
     /// conversation with any agent on any machine.
     Ui,
+    #[command(hide = true)]
+    Timer(timer::TimerArgs),
+    /// Read or mark this conversation's goal.
+    Goal(goal::GoalArgs),
+    #[command(hide = true)]
+    TurnFacts(turn_facts::TurnFactsArgs),
     #[command(hide = true)]
     HostChange(host_change::HostChangeArgs),
     /// Identifies the process invoking the World mod helper.
@@ -127,6 +147,15 @@ enum Command {
     ClaudeControlClaim {
         #[arg(value_parser = paths::parser())]
         world: PathBuf,
+    },
+    /// Observes the native goal cleanup before controls consume its context.
+    #[command(hide = true)]
+    ClaudeNativeGoal {
+        #[arg(value_parser = paths::parser())]
+        world: PathBuf,
+        session: String,
+        #[arg(long)]
+        after: Option<u64>,
     },
     /// Identifies the node lifetime that may issue queued Claude controls.
     #[command(hide = true)]
@@ -257,12 +286,7 @@ enum Command {
     /// data are on each; its pages show live facts to the user.
     #[command(subcommand)]
     Project(project::ProjectCommand),
-    /// A project's journals: history, not verdicts. Add an entry, describe
-    /// a journal, read or list them.
-    ///
-    /// Hidden while project memory is not wired in (`world-journals.md`).
-    #[command(subcommand, hide = true, after_long_help = fastctx_hands::town::JOURNALS)]
-    Journal(journal::JournalCommand),
+
     /// A project's pages: HTML the user opens in the World app, showing
     /// live facts of the machines and sessions. Publish, read or list them.
     #[command(subcommand, after_long_help = page::PAGE_HELP)]
@@ -408,6 +432,8 @@ fn main() -> ExitCode {
             | Command::Hub(world::HubCommand::Serve { .. })
             | Command::Mcp(_)
             | Command::Profile(_)
+            | Command::Plan(_)
+            | Command::Records(_)
             | Command::McpRelay { .. }
             | Command::McpChild { .. }
             | Command::Serve { .. }
@@ -422,6 +448,7 @@ fn main() -> ExitCode {
             | Command::ClaudeElicitation { .. }
             | Command::ClaudeControlOwner { .. }
             | Command::ClaudeControlClaim { .. }
+            | Command::ClaudeNativeGoal { .. }
             | Command::ClaudeControlGuard { .. }
             | Command::ClaudeSessionPolicy { .. }
             | Command::Uninstall(_)
@@ -452,6 +479,9 @@ fn main() -> ExitCode {
     }
     let result = match command {
         Command::Ui => ui(),
+        Command::Timer(args) => timer::run(args),
+        Command::Goal(args) => goal::run(args),
+        Command::TurnFacts(args) => turn_facts::run(args),
         Command::HostChange(args) => host_change::run(args),
         Command::ParentProcess => parent_process(),
         Command::Guard(args) => command_guard::run(args),
@@ -465,6 +495,9 @@ fn main() -> ExitCode {
         Command::ClaudeElicitation { world } => fastctx_node::claude_request::run(&world, true).map_err(Into::into),
         Command::ClaudeControlOwner { world } => fastctx_node::claude_request::owner(&world).map_err(Into::into),
         Command::ClaudeControlClaim { world } => fastctx_node::claude_control_claim::run(&world).map_err(Into::into),
+        Command::ClaudeNativeGoal { world, session, after } => {
+            fastctx_node::claude_native_goal::run(&world, &session, after).map_err(Into::into)
+        }
         Command::ClaudeControlGuard { watch, root } => {
             fastctx_node::claude_request::guard(watch.as_deref().zip(root.as_deref())).map_err(Into::into)
         }
@@ -499,6 +532,9 @@ fn main() -> ExitCode {
         Command::ServiceCheck { name } => fastctx_install::service::check_guardian(&name),
         Command::Mcp(args) => mcp::run(args),
         Command::Profile(args) => profile::run(args),
+        Command::Plan(args) => plan::run(args),
+        Command::Records(args) => records::run(args),
+        Command::Sense(args) => sense::run(args),
         Command::McpRelay { name } => mcp_relay::run(name),
         Command::McpChild { args } => mcp_child::run(args),
         Command::Serve { writer: _, writes } => serve(writes == "off"),
@@ -515,7 +551,7 @@ fn main() -> ExitCode {
         Command::Talk(args) => talk::run(args),
         Command::Attach(args) => attach::run(args),
         Command::Project(command) => project::run(command),
-        Command::Journal(command) => journal::run(command),
+
         Command::Page(command) => page::run(command),
         Command::Login(args) => world::login(args),
         Command::Logout(args) => world::logout(args),

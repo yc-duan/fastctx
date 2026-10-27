@@ -626,10 +626,13 @@
   cursor: default;
 }
 
+/* The verb is quiet: the glyph before it says the same. What it was done
+   to is what the eye reads. */
 .row-action {
   grid-column: 1;
   padding-right: var(--space-2);
   white-space: nowrap;
+  color: var(--text-3);
 }
 
 .row-rest {
@@ -646,12 +649,12 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  color: var(--text-3);
+  color: var(--text-2);
   transition: color var(--hover) ease;
 }
 
 .row-line:not([aria-disabled]):hover .row-object {
-  color: var(--text-2);
+  color: var(--text);
 }
 
 .row-line.static .row-object {
@@ -762,11 +765,16 @@
   color: var(--text-3);
 }
 
+/* Machines of one place share a long name and differ at its end: a name
+   goes onto a second line before it is cut. */
 .fan-name {
+  display: -webkit-box;
   min-width: 0;
   overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
 }
 
 .fan-tile:hover {

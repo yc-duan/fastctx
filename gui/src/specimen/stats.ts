@@ -245,6 +245,10 @@ export async function specimenStats(machine: string | null, after: string | null
       ...(name === "desktop" && new URLSearchParams(location.search).has("ledger")
         ? { health: [{ kind: "warning", text: "usage ledger /home/me/.fastctx/world/usage/claude-1 has 3 unreadable rows preserved in quarantine; totals omit these rows" }] }
         : {}),
+      // `?stuck=1`: some of its own work has gone on too long.
+      ...(name === "desktop" && new URLSearchParams(location.search).has("stuck")
+        ? { stuck: [{ doing: "task 128037", what: "holds draining(this machine)", seconds: 4_740 }] }
+        : {}),
     },
   };
 }

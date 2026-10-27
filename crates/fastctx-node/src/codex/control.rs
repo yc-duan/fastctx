@@ -265,6 +265,7 @@ async fn fork(
     let (source, town) = node.residents.about(parent).ok_or_else(|| Failure::new("unknown source resident"))?;
 
     let id = node.residents.new_id(&source.host.agent)?;
+    let _birth = crate::here::born(node, &id, source.acting.clone(), &Origin::User);
     crate::assists::host::inherit(node, codex.assisted_cwd().is_some(), &id)?;
     crate::session_options::keep(node, &id, &crate::session_options::read(node, parent)?)?;
     crate::focus::open(node, &node.world.conversation(&id), &source.acting, &source.focus).await?;
@@ -285,6 +286,7 @@ async fn fork(
         origin: Origin::User,
         session: Some(fork.clone()),
         world_started: true,
+            native_resumed: false,
         model,
         acting: source.acting,
         focus: source.focus,
@@ -295,6 +297,7 @@ async fn fork(
         activity: Activity::Idle,
         since: at,
         turn: None,
+        last_turn: None,
         owed: Default::default(),
         answering: Vec::new(),
         trouble: None,
@@ -307,7 +310,9 @@ async fn fork(
         first_words: None,
         last_said: None,
         last_compacted: false,
+        last_heard_user: None,
         asked: None,
+        told: None,
     };
     if let Some(town) = &town {
         crate::town::access::check(node, &about.acting, town)?;
@@ -319,6 +324,7 @@ async fn fork(
         codex.history(&fork, &Address { machine: node.machine(), resident: id.clone() }).await.map_err(Failure::new)?;
     crate::attachments::inherit(node, parent, &id, &inherited)?;
     drop(source_guard);
+    crate::context::instructed(node, &id, &heard).map_err(|error| Failure::new(error.to_string()))?;
     node.residents.set_instructed(&id, heard);
     let event = SessionEvent {
         at,

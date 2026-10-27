@@ -201,6 +201,15 @@ impl Link {
         account: &fastctx_types::AccountName,
         request: fastctx_types::update::ViewCall,
     ) -> Result<fastctx_types::update::ViewReply, String> {
+        if matches!(
+            request,
+            fastctx_types::update::ViewCall::Repair { .. }
+                | fastctx_types::update::ViewCall::CancelRepair { .. }
+                | fastctx_types::update::ViewCall::RepairResult { .. }
+        ) && !self.versions().is_some_and(|network| network.repair_supported)
+        {
+            return Err("this hub is too old to arrange repairs; update the hub first".into());
+        }
         if !self.versions().is_some_and(|network| network.updates_view) {
             return Err("this hub does not support the updates view; update the hub first".into());
         }
@@ -264,6 +273,7 @@ impl Link {
         if !self.keeps_versions() {
             return Err("the network's hub does not hand out packages".to_string());
         }
+        let began = std::time::Instant::now();
         let connection = self.inner.connected().await.ok_or("not connected to the hub")?;
         let reports = self.inner.versions.synced.load(std::sync::atomic::Ordering::Acquire) == connection.generation
             && self.inner.view().package_progress;
@@ -274,11 +284,14 @@ impl Link {
         self.inner.asks.insert(id, connection.generation, answer, progress);
         let interest = PackageInterest { inner: self.inner.clone(), connection, id, reports };
         interest.connection.up.send(Up::Ask { id, question }).map_err(|_| "the connection to the hub ended")?;
-        let answer =
-            fastctx_platform::doing::outside("the hub's package", std::time::Duration::from_secs(45 * 60), answered)
-                .await
-                .map_err(|late| late.to_string())?
-                .map_err(|_| "the connection to the hub ended before it answered")??;
+        let answer = fastctx_platform::doing::outside(
+            "the hub's package",
+            std::time::Duration::from_secs(45 * 60).saturating_sub(began.elapsed()),
+            answered,
+        )
+        .await
+        .map_err(|late| late.to_string())?
+        .map_err(|_| "the connection to the hub ended before it answered")??;
         match answer {
             Told::Package { size } => Ok(PackageReady { size, _interest: interest }),
             _ => Err("the hub answered something other than a package".to_string()),

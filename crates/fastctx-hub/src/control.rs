@@ -55,6 +55,9 @@ pub(crate) struct Said {
     pub conversation_deletions: bool,
     /// Whether it reads the records of profiles written.
     pub profiles: bool,
+    pub account_records: bool,
+    pub conversation_plans: bool,
+    pub scratch_locations: bool,
     /// What a machine taken off could not do of the uninstall it was asked.
     pub left: Option<String>,
     /// Whether it reads that a call it answers is over for its caller.
@@ -74,6 +77,7 @@ pub(crate) struct Standing {
     pub to: MachineName,
     pub purpose: Purpose,
     pub project_entry: Option<(fastctx_types::ResidentId, fastctx_types::TownName)>,
+    pub plan: Option<fastctx_types::ResidentId>,
 }
 
 impl Standing {
@@ -88,6 +92,10 @@ impl Standing {
                 Some((resident, town)) => {
                     crate::project_entry::check(&store, &self.from, &self.account, &self.to, resident, town)
                 }
+                None => Ok(()),
+            })
+            .and_then(|()| match &self.plan {
+                Some(resident) => crate::plan_calls::check(hub, &store, &self.from, &self.account, &self.to, resident),
                 None => Ok(()),
             })
             .err()
@@ -139,7 +147,7 @@ pub(crate) async fn session(
     };
     let generation = hub.next();
     let out = Outq::new(said.parts);
-    if let Err(reason) = open(&hub, &name, generation, out.clone(), letters, peer, said) {
+    if let Err(reason) = open(&hub, &name, key, generation, out.clone(), letters, peer, said) {
         hub.log.line(format_args!("{peer}: the session of {name} could not open: {reason}"));
         refuse(&mut socket, reason).await;
         return;
@@ -195,6 +203,17 @@ pub(crate) async fn session(
                 }
             };
             for frame in frames {
+                if let Down::AccountRecordChanged { changed } = &frame {
+                    let store = telling.store();
+                    let directory = &store.book.directory;
+                    if directory.member(&member_name).is_none_or(|found| found.key != member)
+                        || directory
+                            .authorize(&changed.account, fastctx_net::authorization::Action::ActFor(&member_name))
+                            .is_err()
+                    {
+                        continue;
+                    }
+                }
                 let bytes = wire::encode(&frame);
                 if bytes.len() > wire::MAX_CONTROL_FRAME {
                     telling.log.line(format_args!(
@@ -252,9 +271,17 @@ pub(crate) async fn session(
 
     // Whether the writer still has a refusal to deliver before closing.
     let mut heard = tokio::time::Instant::now();
+    let mut uploads = crate::question_parts::Uploads::default();
+    let mut upload_clock = tokio::time::interval(HEARTBEAT);
     let (ended, refusing) = loop {
         let next = tokio::select! {
             next = stream.next() => next,
+            _ = upload_clock.tick() => {
+                for id in uploads.expired() {
+                    let _ = out.send(Out::Frame(Down::Told { id, answer: Err("the ledger upload exceeded 60 seconds".into()) }));
+                }
+                continue;
+            }
             // A frame still coming in shows it is there, as one come whole
             // does.
             () = tokio::time::sleep_until(heard + SILENCE) => {
@@ -304,7 +331,22 @@ pub(crate) async fn session(
         if let Up::Ping { took: Some(took), .. } = &frame {
             pulse.told(*took);
         }
-        if let Err(reason) = handle(&hub, &name, generation, &out, pulse.taken(), frame) {
+        let (frame, reservation) = match frame {
+            Up::QuestionPart { id, index, total, text } => match uploads.push(id, index, total, &text) {
+                Ok(Some(complete)) => (Up::Ask { id, question: complete.question }, Some(complete.reservation)),
+                Ok(None) => continue,
+                Err(why) => {
+                    let _ = out.send(Out::Frame(Down::Told { id, answer: Err(why) }));
+                    continue;
+                }
+            },
+            Up::CancelQuestion { id } => {
+                uploads.cancel(id);
+                continue;
+            }
+            frame => (frame, None),
+        };
+        if let Err(reason) = handle(&hub, &name, key, generation, &out, pulse.taken(), frame, reservation) {
             let _ = out.send(Out::End(reason.clone()));
             break (Some(reason.to_string()), true);
         }
@@ -480,6 +522,7 @@ fn unreadable(hub: &Hub, name: &MachineName, out: &Outq, bytes: &[u8], error: &s
 fn open(
     hub: &Arc<Hub>,
     name: &MachineName,
+    key: PublicKey,
     generation: u64,
     out: Outq,
     letters: Letters,
@@ -544,6 +587,10 @@ fn open(
     out.welcome(welcome);
     crate::mailbox::opened(hub, &mut store, name, numbering, generation, out.clone(), taken_by_member);
     let session = Session {
+        key,
+        account_records: said.account_records,
+        conversation_plans: said.conversation_plans,
+        scratch_locations: said.scratch_locations,
         call_details: said.call_details,
         generation,
         out,
@@ -653,19 +700,8 @@ pub(crate) fn cut_calls(hub: &Hub) {
         .iter()
         .map(|(key, pending)| (*key, pending.standing.clone()))
         .collect();
-    let keys: Vec<(u64, String)> = {
-        let store = hub.store();
-        standings
-            .into_iter()
-            .filter_map(|(key, standing)| {
-                let directory = &store.book.directory;
-                directory
-                    .admits(&standing.from, &standing.account, &standing.to, standing.purpose)
-                    .err()
-                    .map(|why| (key, why))
-            })
-            .collect()
-    };
+    let keys: Vec<(u64, String)> =
+        standings.into_iter().filter_map(|(key, standing)| standing.lapsed(hub).map(|why| (key, why))).collect();
     let lapsed: Vec<(u64, Pending, String)> = {
         let mut calls = hub.calls.lock().expect("never poisoned");
         keys.into_iter().filter_map(|(key, why)| calls.remove(&key).map(|pending| (key, pending, why))).collect()
@@ -680,13 +716,16 @@ pub(crate) fn cut_calls(hub: &Hub) {
 
 /// Does what the member's frame asks; `took`, how many bytes of this
 /// connection the hub took from it, goes back with its heartbeat.
+#[allow(clippy::too_many_arguments)]
 fn handle(
     hub: &Arc<Hub>,
     name: &MachineName,
+    key: PublicKey,
     generation: u64,
     out: &Outq,
     took: u64,
     frame: Up,
+    reservation: Option<fastctx_net::reassembly::Reservation>,
 ) -> Result<(), Refusal> {
     let reply = |frame: Down| {
         let _ = out.send(Out::Frame(frame));
@@ -739,6 +778,18 @@ fn handle(
                 let _ = out.send(Out::Frame(Down::Told { id, answer }));
             });
         }
+        Up::Ask { id, question: question @ (Question::ProjectIndex { .. } | Question::MemoryRead { .. }) } => {
+            crate::ledger::requests::ask(hub, name, out, id, question);
+        }
+        Up::Ask { id, question: Question::MemoryWrite { town, account, entry } } => {
+            let (hub, writer, out) = (hub.clone(), name.clone(), out.clone());
+            let held = crate::moving::Moving::hold(&hub);
+            tokio::spawn(async move {
+                let (_held, _reservation) = (held, reservation);
+                let answer = crate::ledger::write_as(&hub, &writer, town, entry, Some(account)).await;
+                let _ = out.send(Out::Frame(Down::Told { id, answer }));
+            });
+        }
         Up::Ask { id, question: Question::LedgerRead { town, after } } => {
             crate::ledger::ask(hub, name, out, id, town, after);
         }
@@ -748,6 +799,7 @@ fn handle(
             let held = crate::moving::Moving::hold(&hub);
             tokio::spawn(async move {
                 let _held = held;
+                let _reservation = reservation;
                 let answer = crate::ledger::write(&hub, &writer, town, entry).await;
                 let _ = out.send(Out::Frame(Down::Told { id, answer }));
             });
@@ -774,6 +826,22 @@ fn handle(
         // The answer goes out before any session the change ends, the
         // asker's own among them: a machine that renamed or removed itself
         // hears that it did.
+        Up::Ask { id, question: Question::AccountRecords { account, request } } => {
+            let opened = match crate::account_records::begin(hub, name, &key, &account, &request) {
+                Ok(opened) => opened,
+                Err(why) => {
+                    reply(Down::Told { id, answer: Err(why) });
+                    return Ok(());
+                }
+            };
+            let (hub, from, out) = (hub.clone(), name.clone(), out.clone());
+            let held = crate::moving::Moving::hold(&hub);
+            tokio::spawn(async move {
+                let _held = held;
+                let answer = crate::account_records::ask(&hub, from, key, account, opened, request).await;
+                let _ = out.send(Out::Frame(Down::Told { id, answer }));
+            });
+        }
         Up::Ask { id, question: Question::Manage { account, change } } => {
             let (answer, ended) = crate::manage::change(hub, name, &account, change);
             reply(Down::Told { id, answer });
@@ -817,6 +885,7 @@ fn handle(
             let answer = ask(hub, name, question);
             reply(Down::Told { id, answer });
         }
+        Up::QuestionPart { .. } | Up::CancelQuestion { .. } => unreachable!("assembled by the connection"),
         Up::Hello { .. } => {
             return Err(Refusal::Broken { reason: "a second hello on one connection".to_string() });
         }
@@ -864,7 +933,16 @@ fn standing(hub: &Hub, message: &Envelope) -> Result<Standing, String> {
     if project_entry.is_some() && purpose != Purpose::Echo {
         return Err("a project entry must return to its conversation as a job request".into());
     }
-    let standing = Standing { from, account: account.clone(), to, purpose, project_entry };
+    let plan = fastctx_net::message::plan_request(message);
+    if plan.is_some() && purpose != Purpose::Echo {
+        return Err(fastctx_types::plan::words::CONTROL.into());
+    }
+    if message.body.get("call").and_then(|call| call.get("call")).and_then(serde_json::Value::as_str) == Some("scratch")
+        && hub.sessions().get(&to).is_some_and(|session| !session.scratch_locations)
+    {
+        return Err(fastctx_types::scratch::words::OLD_NODE.into());
+    }
+    let standing = Standing { from, account: account.clone(), to, purpose, project_entry, plan };
     match standing.lapsed(hub) {
         Some(why) => Err(why),
         None => Ok(standing),
@@ -1293,6 +1371,7 @@ fn answer(hub: &Hub, name: &MachineName, generation: u64, call: u64, message: En
 
 fn ask(hub: &Arc<Hub>, name: &MachineName, question: Question) -> Result<Told, String> {
     match question {
+        Question::AccountRecords { .. } => Err("account records are dispatched asynchronously".into()),
         Question::NetworkUpdates { .. } => Err("update management is dispatched asynchronously".into()),
         Question::MachineLog { account, before } => {
             let store = hub.store();
@@ -1317,7 +1396,12 @@ fn ask(hub: &Arc<Hub>, name: &MachineName, question: Question) -> Result<Told, S
         Question::Directory => Ok(Told::Directory { view: Box::new(hub.view_for(name)) }),
         Question::ProjectDeleted { town } => crate::project_deletions::finished(hub, name, &town),
         Question::Manage { .. } => Err("changes are made as they come".into()),
-        Question::LedgerWrite { .. } => Err("ledger entries are written as they come".into()),
+        Question::LedgerWrite { .. } | Question::MemoryWrite { .. } => {
+            Err("ledger entries are written as they come".into())
+        }
+        Question::ProjectIndex { .. } | Question::MemoryRead { .. } => {
+            Err("project reads are dispatched asynchronously".into())
+        }
         Question::LedgerTowns => {
             let store = hub.store();
             let towns = hub.ledgers.lock().expect("never poisoned").towns_of(&store.book.directory, name);

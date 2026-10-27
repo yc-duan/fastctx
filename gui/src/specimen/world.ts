@@ -154,6 +154,84 @@ function touring(): ResidentNow[] {
   ];
 }
 
+/** With `?s=voice`, the conversation that worked through the night
+ *  (`voice.ts`), the last it told the user an urgent one. */
+function voicing(): ResidentNow[] {
+  if (new URLSearchParams(location.search).get("s") !== "voice") return [];
+  return [
+    resident("claude-v01c", "laptop", claude(), "mark50", "claude-opus-5-5", "14:10:00", {
+      now: {
+        owed: {},
+        answering: [],
+        activity: "idle",
+        since: at("16:58:20"),
+        turn: null,
+        trouble: null,
+        desk: false,
+        waiting_for_user: false,
+        title: "夜里的回归与训练",
+        told: { id: "told-3", at: at("16:41:30"), status: "urgent", text: "训练在 11,200 步之后发散了，loss 从 0.31 升到 4.7。我停了它，从第 11k 步的检查点把学习率减半重跑（run3b），前一千步正常。要不要把这个学习率写进默认配置，等你定。", turn: "t3" },
+      },
+    }),
+  ];
+}
+
+/** With `?s=project`, mark50's other conversations (`hub.ts`): one that
+ *  worked through the night and told the user something urgent, one that
+ *  asks the user, and one asleep on the desktop with something told that
+ *  can wait. */
+function hubbing(machine: "laptop" | "desktop"): ResidentNow[] {
+  if (new URLSearchParams(location.search).get("s") !== "project") return [];
+  if (machine === "desktop") {
+    return [
+      resident("codex-4c1e", "desktop", codex(), "mark50", "gpt-6.1-sol", "09:30:00", {
+        now: {
+          owed: {},
+          answering: [],
+          activity: "asleep",
+          since: at("12:40:00"),
+          turn: null,
+          trouble: null,
+          desk: false,
+          waiting_for_user: false,
+          title: "CAN 帧时间戳",
+          told: { id: "told-4c1e-2", at: at("12:38:00"), status: "info", text: "驱动层打戳改好了，应用层的去重删掉了；回放 42 帧，时间戳全部单调。", turn: "t6" },
+        },
+      }),
+    ];
+  }
+  return [
+    resident("claude-v01c", "laptop", claude(), "mark50", "claude-opus-5-5", "02:10:00", {
+      now: {
+        owed: {},
+        answering: [],
+        activity: "idle",
+        since: at("04:58:20"),
+        turn: null,
+        trouble: null,
+        desk: false,
+        waiting_for_user: false,
+        title: "夜里的回归与训练",
+        told: { id: "told-v01c-3", at: at("04:41:30"), status: "urgent", text: "训练在 11,200 步之后发散了，loss 从 0.31 升到 4.7。我停了它，从第 11k 步的检查点把学习率减半重跑（run3b），前一千步正常。要不要把这个学习率写进默认配置，等你定。", turn: "t3" },
+      },
+    }),
+    resident("claude-a7e2", "laptop", claude(), "mark50", "claude-opus-5-5", "10:05:00", {
+      now: {
+        owed: {},
+        answering: [],
+        activity: "idle",
+        since: at("13:12:00"),
+        turn: null,
+        trouble: null,
+        desk: false,
+        waiting_for_user: false,
+        title: "真机验证",
+        asked: { id: "ask-a7e2-1", at: at("13:12:00"), waits: false, what: "answer", text: "周五借实验室的真机跑 50 次，还是先在台架上跑？", options: ["周五借真机", "先上台架"] },
+      },
+    }),
+  ];
+}
+
 function many(): Node[] {
   return manyOnes().map((one, index) => {
     const linux = index % 3 !== 0;
@@ -348,6 +426,8 @@ export function specimenWorld(): { world: WorldState; now: Date; lastVisit: Date
               last_action: action("13:33:40", "laptop", "run", "cargo test -p ctrl overflow_repro", "exit 101"),
             }),
             ...touring(),
+            ...voicing(),
+            ...hubbing("laptop"),
             resident("codex-7f3a", "laptop", codex(), "ingest", "gpt-6.1-sol", "08:40:00", {
               focus: { machines: [{ machine: "lab", folders: ["/srv/ingest", "/srv/ingest/fixtures"] }, { machine: "laptop", folders: [] }] },
               now: {
@@ -395,6 +475,7 @@ export function specimenWorld(): { world: WorldState; now: Date; lastVisit: Date
               forked_from: { machine: "desktop", resident: "codex-5a11" },
               now: { owed: {}, answering: [], activity: "idle", since: at("11:20:00"), turn: null, trouble: null, desk: false, waiting_for_user: false, title: "图标导出" },
             }),
+            ...hubbing("desktop"),
           ],
           jobs: [],
         },
@@ -460,6 +541,7 @@ export function specimenWorld(): { world: WorldState; now: Date; lastVisit: Date
                 waiting_for_user: false,
                 title: "日志轮转",
                 last_said: "Rotation now keeps 14 days of logs and compresses anything older than a day; the cron entry is in /etc/cron.d/app-logs.",
+                told: { id: "told-41aa-1", at: at("05:49:40"), status: "info", text: "日志轮转改好了：留 14 天，超过一天的压缩，定时任务在 /etc/cron.d/app-logs。", turn: "t2" },
               },
             }),
           ],
@@ -479,14 +561,12 @@ export function specimenWorld(): { world: WorldState; now: Date; lastVisit: Date
       happenings: [
       { kind: "machine", at: at("12:52:00"), machine: "studio", online: false },
       { kind: "turn_ended", at: at("13:34:00"), who: address("laptop", "codex-91c0"), town: "mark50", how: "completed", reason: null, said: "Found one. With ki = 0x7FFF_0000 and a constant error of 32767 at dt = 1, narrow() wraps instead of saturating." },
-      { kind: "journal", at: at("13:10:00"), town: "mark50", journal: "q16-fixed-point", entry: "20261004T131000Z-laptop", by: { kind: "resident", address: address("laptop", "claude-2b1c") }, first: "To see why step_response settled at 0.9612 on lab, measured the integral's rounding at Ki = 0.8, dt = 1 ms." },
       { kind: "job_ended", at: at("13:09:12"), job: "j-k3x9a2", machine: "lab", owner: address("laptop", "claude-2b1c"), town: "mark50", how: "exited 0" },
       { kind: "asked", at: at("13:09:40"), who: address("laptop", "claude-2b1c"), colleague: address("laptop", "codex-91c0"), town: "mark50", label: "造出让 Q32 积分溢出的输入" },
       { kind: "turn_ended", at: at("09:31:00"), who: address("laptop", "codex-7f3a"), town: "ingest", how: "completed", reason: null, said: "Done. The writer now commits every 5 000 rows and at end of file, and a retry replays only the rows since the last commit." },
       { kind: "turn_ended", at: at("08:52:00"), who: address("laptop", "codex-7f3a"), town: "ingest", how: "failed", reason: "stream disconnected before completion", said: null },
       { kind: "turn_ended", at: at("11:20:00"), who: address("desktop", "codex-6b19"), town: null, how: "failed", reason: "usage limit reached; resets at 15:00", said: null },
       { kind: "turn_ended", at: at("05:50:00"), who: address("server", "claude-41aa"), town: null, how: "completed", reason: null, said: "Rotation now keeps 14 days of logs and compresses anything older than a day; the cron entry is in /etc/cron.d/app-logs." },
-      { kind: "journal", at: at("07:40:00"), town: "ingest", journal: "batch-commit", entry: "20261004T074000Z-laptop", by: { kind: "resident", address: address("laptop", "codex-7f3a") }, first: "Writer opened one transaction per file; a 2.1 GB file held it for 41 min on 2026-10-03 (log attached)." },
       { kind: "job_ended", at: at("06:05:00"), job: "j-m8v2t0", machine: "lab", owner: address("lab", "codex-0d1e"), town: "mark50", how: "exited 1" },
       ],
     },
@@ -497,6 +577,18 @@ export function specimenWorld(): { world: WorldState; now: Date; lastVisit: Date
 /** This desktop as a managed machine of me on home (`world-network.md`,
  *  受管机器): logged in to nothing, seeing only itself; taken off the
  *  network when `removed`. */
+/** The world with bo's gpu shared whole with this computer's account too,
+ *  as `?shared`: a machine of another's it manages with its owner. */
+export function specimenAsShared(world: WorldNow): WorldNow {
+  return {
+    ...world,
+    accounts: {
+      ...world.accounts,
+      hubs: world.accounts.hubs.map((hub) => (hub.hub === HOME ? { ...hub, shares: [...hub.shares, { machine: "gpu", account: "me" }, { machine: "gpu", account: "ada" }] } : hub)),
+    },
+  };
+}
+
 export function specimenAsManaged(world: WorldNow, removed = false): WorldNow {
   const home = world.accounts.hubs.find((hub) => hub.hub === HOME);
   if (!home) return world;

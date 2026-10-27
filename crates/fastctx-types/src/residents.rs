@@ -4,6 +4,7 @@
 use std::collections::BTreeMap;
 
 mod about;
+mod question;
 
 use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
@@ -25,6 +26,12 @@ pub struct Host {
 /// What a session knows about itself that lets the World recognise it.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Hints {
+    /// The native Codex login that owns the thread's persisted history.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub home: Option<std::path::PathBuf>,
+    /// OS lifetime of the native host that started this adapter, reported locally.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub host_process: Option<crate::ProcessIdentity>,
     /// Set by the World when it started the session itself.
     pub resident: Option<ResidentId>,
     /// The thread a Codex call belongs to; one thread is one resident,
@@ -61,6 +68,10 @@ pub struct About {
     /// through its calls of the World's tools.
     #[serde(default)]
     pub world_started: bool,
+    /// A native Codex thread the World resumed for a requested background event.
+    /// Birth provenance remains unchanged in world_started and origin.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub native_resumed: bool,
     /// The model, as the host told the World; `None` when it did not.
     #[serde(default)]
     pub model: Option<String>,
@@ -113,6 +124,8 @@ pub struct LastLines {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "kind")]
 pub enum Notice {
+    /// A requested observation, allowed to resume the owner's closed session.
+    Sentinel { observation: Box<crate::sentinel_notice::SentinelNotice> },
     /// A job the resident started, which went on in the background, ended.
     JobEnded {
         /// A wait took this end; this is a receipt, never a session notification.
@@ -125,6 +138,12 @@ pub enum Notice {
         /// Where this hop's CLI took the end, for arbitration of nested calls.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         follower: Option<MachineName>,
+        /// Completion ids already included in this job's enclosing output.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        consumed: Vec<NoticeId>,
+        /// The receiver released this end without a conclusive follower answer.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        follower_unconfirmed: bool,
         how: EndedHow,
         /// How the shell itself exited, when it did.
         status: Option<ExitStatus>,
@@ -140,6 +159,9 @@ pub enum Notice {
         /// Who stopped it and why, when someone did.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         stop: Option<Box<crate::run::StopRequest>>,
+        /// Coordinates learned after the initial run answer, including nested hops.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        scratch: Vec<crate::scratch::Location>,
     },
     /// A turn of a colleague ended, which the resident's words went into or
     /// which it asked for: its last message, verbatim.
@@ -147,8 +169,21 @@ pub enum Notice {
     /// A colleague's host reported something in a turn owed to the resident
     /// that it must hear at once.
     Health { colleague: Address, label: String, health: Health },
+    /// A stored question from before questions used ordinary resident messages.
+    /// Reading preserves its identity; writing emits the compatible Words shape.
+    #[serde(rename(serialize = "words", deserialize = "question"), serialize_with = "question::serialize")]
+    Question { colleague: Address, id: String, text: String },
     /// Words someone said to the resident.
-    Words { from: Speaker, text: String },
+    Words {
+        from: Speaker,
+        text: String,
+        /// A goal conclusion keeps its sender and full text for older readers.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        goal_report: Option<Box<crate::goals::ReportDelivery>>,
+        /// A nonblocking question retains its sender and full text for older readers.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        goal_question: Option<Box<crate::goals::QuestionDelivery>>,
+    },
     /// The user's words and files; the accompanying facts are the World's.
     Attached { message: crate::session::attachments::AttachedMessage, text: String },
     /// A fact of the World's own, with the words the resident reads for it.
@@ -156,15 +191,43 @@ pub enum Notice {
 }
 
 impl Notice {
+    /// Whether this notice carries a colleague's nonblocking question.
+    pub fn is_question(&self) -> bool {
+        matches!(self, Self::Question { .. } | Self::Words { goal_question: Some(_), .. })
+    }
+
+    /// The account frozen with goal-derived content, when its record retained one.
+    pub fn goal_account(&self) -> Option<&crate::access::HubAccount> {
+        match self {
+            Self::Words { goal_report: Some(report), .. } => Some(&report.account),
+            Self::Words { goal_question: Some(question), .. } => question.account.as_ref(),
+            _ => None,
+        }
+    }
+
+    /// Scheduled work and requested answers resume even a closed foreground conversation.
+    pub fn wakes_closed(&self) -> bool {
+        !self.is_question()
+            && matches!(
+                self,
+                Self::Words { from: Speaker::World, .. }
+                    | Self::Words { goal_report: Some(_), .. }
+                    | Self::Answer { .. }
+                    | Self::Sentinel { .. }
+            )
+    }
+
     /// What the World tells when the user changes a conversation's machines
     /// and folders, or its project: it starts no turn, but goes in with the
     /// next one, or into the one running where it next can; told again
     /// before it went in, only the latest goes (`world-colleagues.md`).
     /// Notices of one kind replace one another.
-    pub fn along(&self) -> Option<&'static str> {
+    pub fn along(&self) -> Option<&str> {
         match self {
             Notice::World { fact: WorldFact::Focus { .. }, .. } => Some("focus"),
             Notice::World { fact: WorldFact::Moved { .. }, .. } => Some("project"),
+            Notice::Question { id, .. } => Some(id),
+            Notice::Words { goal_question: Some(question), .. } => Some(&question.id),
             _ => None,
         }
     }
@@ -175,6 +238,8 @@ impl Notice {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "fact")]
 pub enum WorldFact {
+    /// A durable delivery reached a terminal failure, with its explanation in the notice.
+    DeliveryFailed { id: NoticeId },
     /// Another session holds this machine's Computer Use in its turn.
     DeskTaken { by: Address },
     /// A session the World does not know holds this machine's Computer Use.
@@ -233,6 +298,9 @@ pub struct Now {
     pub since: Timestamp,
     /// The turn running now, as its host named it.
     pub turn: Option<String>,
+    /// The latest settled turn; late settlement of an older turn cannot replace it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_turn: Option<String>,
     /// For each turn running, whose words went into it: each is owed its
     /// end. Once a turn ends, its answers wait in the `outbox` until each
     /// reader's machine has its own.
@@ -274,10 +342,51 @@ pub struct Now {
     /// after it: what a notification of that turn says.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub last_compacted: bool,
+    /// Whether the latest turn that ended took words the user sent: its end
+    /// stands for an answer it gave without `message_user`, while a turn the
+    /// World started that said nothing tells the user nothing
+    /// (`world-voice.md`). None from a node that does not say.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_heard_user: Option<bool>,
     /// What the agent asked the user and has not had answered: what a
     /// notification of it says.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub asked: Option<Asked>,
+    /// What the agent last told the user through `message_user`: what a
+    /// notification of it and the conversation's line on its project's page
+    /// say (`world-voice.md`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub told: Option<Told>,
+}
+
+/// How much of what the agent told the user `Told::text` keeps, in
+/// characters.
+pub const TOLD_CHARS: usize = 500;
+
+/// Something the agent told the user through `message_user`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Told {
+    /// New for each message: a new one is something new said.
+    pub id: String,
+    pub at: Timestamp,
+    pub status: TellStatus,
+    /// Its start, as the agent wrote it.
+    pub text: String,
+    /// The turn it was said in, as its host named it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub turn: Option<String>,
+}
+
+/// Why the agent speaks, which decides how its words reach the user.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TellStatus {
+    /// An answer to what the user just said.
+    Reply,
+    /// The agent's own, which can wait until the user looks.
+    Info,
+    /// The agent's own, which the user should know soon.
+    Urgent,
 }
 
 /// How much of the user's first words `Now::first_words` keeps, in
@@ -383,7 +492,13 @@ pub struct MessageLine {
 #[serde(rename_all = "snake_case", tag = "kind")]
 pub enum MessageKind {
     /// The request it was born with.
-    Asked { from: Address, text: String },
+    Asked {
+        from: Address,
+        text: String,
+        /// The requester's initiating turn, not the colleague's first turn.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        requester_turn: Option<String>,
+    },
     /// Words that went into one of its turns.
     Heard { from: Speaker, turn: Option<String>, text: String },
     /// A turn ended, owed to `owed`.
@@ -429,6 +544,9 @@ pub struct Seen {
 /// One thing the World saw a resident do: one line of its `actions`.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Action {
+    /// The initiating conversation turn, captured before the work starts.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub turn: Option<String>,
     pub at: Timestamp,
     /// Where it happened, which may be another machine than the resident's.
     pub machine: MachineName,
@@ -565,4 +683,11 @@ pub struct Owing {
 pub struct Whereabouts {
     pub resident: ResidentId,
     pub town: Option<TownName>,
+}
+
+impl About {
+    /// Whether the World retains a restoration contract for this host session.
+    pub fn world_managed(&self) -> bool {
+        self.world_started || self.native_resumed
+    }
 }

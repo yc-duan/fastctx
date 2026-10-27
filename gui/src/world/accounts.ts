@@ -174,6 +174,23 @@ export interface ProjectSeen {
 
 /** A device that logged in to an account, or a machine registered under
  *  it, not shown to the user yet. */
+/** What another did to a machine this account holds, told to its holders
+ *  once (`world-network.md`, 共享机器与智能体协助). `by` is none where the hub
+ *  itself took back a share of the machine it runs on. */
+export interface MachineNotice {
+  id: number;
+  at: Timestamp;
+  account: AccountName;
+  machine: MachineName;
+  by: AccountName | null;
+  action:
+    | { kind: "rename"; to: MachineName }
+    | { kind: "updated"; from: string; to: string }
+    | { kind: "remove"; then: "uninstall" | "everything" | null }
+    | { kind: "share"; to: AccountName; shared: boolean }
+    | { kind: "assist"; to: AccountName; agent: string; home: string | null; assisting: boolean; until: Timestamp | null };
+}
+
 export interface Arrival {
   hub: HubId;
   account: AccountName;
@@ -278,6 +295,11 @@ export interface HubAccounts {
   accounts: AccountSeen[];
   members: MemberSeen[];
   shares: ShareSeen[];
+  /** The machine this hub runs on, when it is known: it is shared with no
+   *  one (`world-network.md`, 共享机器与智能体协助). */
+  hub_machine?: MachineName;
+  /** What others did to machines this device's accounts hold. */
+  machine_notices?: MachineNotice[];
   assists: AssistSeen[];
   /** Plans the super administrator set on logins that name none. */
   plans: PlanSeen[];

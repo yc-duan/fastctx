@@ -51,16 +51,27 @@ impl Jobs {
         let record = read(&path).await.inspect_err(|_| {
             crate::inbox::retry_job(node, &path);
         })?;
-        let writes = if record.end.is_some() {
-            crate::run_facts::writes(&path).map_err(|error| failure("reading write facts", error))?
+        let (writes, steps) = if record.end.is_some() && !record.is_sentinel() {
+            (
+                crate::run_facts::writes(&path).map_err(|error| failure("reading write facts", error))?,
+                crate::run_facts::steps(&path).map_err(|error| failure("reading step facts", error))?,
+            )
         } else {
-            Vec::new()
+            (Vec::new(), Vec::new())
         };
-        crate::run_facts::update_job(node, &path, writes).map_err(|error| failure("updating call facts", error))?;
-        crate::inbox::tell_if_ended(node, &path, &record).await.map_err(|error| {
-            crate::inbox::retry_job(node, &path);
-            failure("telling the job's end", error)
-        })
+        crate::run_facts::update_job_with(node, &path, writes, steps)
+            .map_err(|error| failure("updating call facts", error))?;
+        match crate::inbox::tell_if_ended(node, &path, &record).await {
+            Ok(()) => Ok(()),
+            Err(error) => {
+                crate::inbox::retry_job(node, &path);
+                if error.kind() == std::io::ErrorKind::WouldBlock {
+                    Ok(())
+                } else {
+                    Err(failure("telling the job's end", error))
+                }
+            }
+        }
     }
 
     /// Listens for changes to jobs' records: each change names its job.
@@ -83,6 +94,8 @@ impl Jobs {
         on: Option<(fastctx_types::run::OnJob, Option<PathBuf>)>,
         registration: Option<crate::on::Registration>,
         account: Option<fastctx_types::access::HubAccount>,
+        answer_receipts: bool,
+        dispatch: Option<fastctx_types::NoticeId>,
     ) -> Result<run::Launched, Failure> {
         let _place = match owner.resident().and_then(|address| crate::data::places::of_owner(node, address)) {
             Some(place) => Some(node.places.using(&place).await),
@@ -97,9 +110,12 @@ impl Jobs {
         let registering = node.clone();
         let launched = tokio::task::spawn_blocking(move || -> Result<run::Launched, Failure> {
             let _collecting = registering.disk.lock();
-            let home = user_home().map_err(|error| failure("finding the home directory", error))?;
-            let environment =
-                world_process_environment().map_err(|error| failure("reading the user's environment", error))?;
+            let home = user_home().map_err(|error| before_start("finding the home directory", error))?;
+            let mut environment =
+                world_process_environment().map_err(|error| before_start("reading the user's environment", error))?;
+            if on.as_ref().is_some_and(|(on, _)| on.sentinel.is_some()) && fastctx_hands::run::sentinel::unwalled() {
+                environment.push(("FASTCTX_LAB_UNSANDBOXED_SENTINEL".into(), "1".into()));
+            }
             // An `on` job hands its standard error back apart from its output,
             // and reads the input that came with it (`world-run.md`).
             let (on, mode, input) = match on {
@@ -107,6 +123,7 @@ impl Jobs {
                 None => (None, fastctx_types::run::OutputMode::Merged, None),
             };
             let launch = Launch {
+                answer_receipts,
                 world: &world,
                 names: &names,
                 owner: &owner,
@@ -119,10 +136,17 @@ impl Jobs {
                 account: account.as_ref(),
             };
             let launched = run::launch::launch_with_io_registered(&launch, mode, input.as_deref(), |path| {
-                if let Some(registration) = registration {
-                    *registration.lock().expect("never poisoned") =
-                        Some(crate::on::Follower::reserved(&registering, path));
+                if let Some(dispatch) = &dispatch {
+                    crate::run_stops::register(&registering, path, dispatch)?;
                 }
+                if let Some(registration) = registration {
+                    *registration.lock().expect("never poisoned") = Some(crate::on::Follower::reserved(
+                        &registering,
+                        path,
+                        on.as_ref().is_some_and(|on| on.sentinel.is_some()),
+                    ));
+                }
+                Ok(())
             })?;
             crate::job_watch::start(&registering, &launched.record, launched.supervisor.clone());
             crate::run_facts::update_job(&registering, &launched.record, Vec::new())
@@ -137,6 +161,7 @@ impl Jobs {
     /// Starts `request` for `owner` and waits until the job settles, the
     /// wait is over, or words come for the resident who asked. Returns the
     /// answer and the job's record as it stood.
+    #[allow(clippy::too_many_arguments)]
     pub async fn run(
         &self,
         node: &Arc<Node>,
@@ -144,13 +169,15 @@ impl Jobs {
         town: Option<TownName>,
         request: RunRequest,
         account: Option<fastctx_types::access::HubAccount>,
+        answer_receipts: bool,
+        dispatch: Option<fastctx_types::NoticeId>,
     ) -> Result<(RunReply, JobRecord), Failure> {
         let machine = &node.machine();
         let wait = match request.wait {
             None => WAIT,
             Some(seconds) if u64::from(seconds) <= LONGEST_WAIT.as_secs() => Duration::from_secs(seconds.into()),
             Some(seconds) => {
-                return Err(Failure::new(format!(
+                return Err(Failure::not_run(format!(
                     "a call waits at most {} seconds, not {seconds}",
                     LONGEST_WAIT.as_secs()
                 )));
@@ -185,7 +212,7 @@ impl Jobs {
         // The job stops with the turn of the call that waits for it; one the
         // call left running goes on (`world-run.md`).
         let mut interrupted = owner.resident().map(|address| node.interrupts.watch(address));
-        let launched = self.launch(node, owner, town, request, None, None, account).await?;
+        let launched = self.launch(node, owner, town, request, None, None, account, answer_receipts, dispatch).await?;
         let mut answered = None;
         loop {
             let record = read(&launched.record).await?;
@@ -241,9 +268,12 @@ impl Jobs {
                 .await
                 .map_err(|error| Failure::new(format!("noting that the job's end is owed: {error}")))?
                 .map_err(|error| failure("noting that the job's end is owed", error))?;
-            crate::inbox::tell_if_ended(node, &launched.record, &now)
-                .await
-                .map_err(|error| failure("telling the job's end", error))?;
+            if let Err(error) = crate::inbox::tell_if_ended(node, &launched.record, &now).await {
+                crate::inbox::retry_job(node, &launched.record);
+                if error.kind() != std::io::ErrorKind::WouldBlock {
+                    return Err(failure("telling the job's end", error));
+                }
+            }
         }
         // Beside its record, in whichever room the job went on (`run::launch`).
         let visited = launched.record.parent().map(|jobs| visited(jobs, &launched.job)).unwrap_or_default();
@@ -269,7 +299,10 @@ impl Jobs {
         } else {
             Vec::new()
         };
+        let scratch = crate::scratch::jobs::locations(&launched.record, machine)
+            .map_err(|error| failure("reading scratch locations", error))?;
         let mut reply = RunReply {
+            scratch,
             run: None,
             machine: machine.clone(),
             job: launched.job,
@@ -288,6 +321,10 @@ impl Jobs {
                 facts.output = None;
             }
             reply.run = Some(Box::new(facts));
+        }
+        if let Some(owner) = record.owner.resident() {
+            crate::run_receipts::remember(node, owner, &reply)
+                .map_err(|error| failure("remembering the run answer", error))?;
         }
         Ok((reply, record))
     }
@@ -379,6 +416,7 @@ pub(crate) fn remove(path: &Path) -> std::io::Result<()> {
         path.with_extension("writes.jsonl"),
         record::lock_path(path),
         path.with_extension("on"),
+        path.with_extension("scratch"),
         path.with_extension("waited"),
     ];
     files.extend(record.stderr.as_deref().map(PathBuf::from));
@@ -387,7 +425,10 @@ pub(crate) fn remove(path: &Path) -> std::io::Result<()> {
         files.extend(record.stdin.as_deref().map(PathBuf::from));
         files.extend(["on-taken", "on-piped", "on-stopped"].map(|extension| path.with_extension(extension)));
     }
-    files.extend(["notice", "owed", "delivered"].map(|extension| path.with_extension(extension)));
+    files.extend(
+        ["notice", "owed", "delivered", "posted", "answer-wait", "done", "retry", "run-request"]
+            .map(|extension| path.with_extension(extension)),
+    );
     files.extend(["copied", "wait-taken", "consumed", "exit-receipt"].map(|extension| path.with_extension(extension)));
     files.push(path.to_path_buf());
     for file in files {
@@ -458,6 +499,7 @@ fn refused_something(output: &OutputWindow) -> bool {
 /// The action a `run` was, as its resident's `actions` record it.
 pub fn action(reply: &RunReply, script: &str, at: jiff::Timestamp) -> Action {
     Action {
+        turn: None,
         at,
         machine: reply.machine.clone(),
         hand: "run".to_string(),
@@ -717,6 +759,11 @@ fn read_dir(path: &Path) -> std::io::Result<Vec<PathBuf>> {
 
 fn failure(what: &str, error: std::io::Error) -> Failure {
     Failure::new(format!("{what}: {error}"))
+}
+
+/// What failed before the job's process was started: nothing ran.
+fn before_start(what: &str, error: std::io::Error) -> Failure {
+    Failure::not_run(format!("{what}: {error}"))
 }
 
 /// Stops the job at `record_path`: its supervisor ends everything it

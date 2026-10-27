@@ -681,9 +681,9 @@ impl World {
         now: bool,
     ) -> Result<Watching, Error> {
         if let Some(device) = &self.device {
-            return Ok(Watching::device(device.watch(resident, machine, composer, held, now).await?));
+            return Ok(Watching::device(device.watch(resident, machine, composer, held, now, None).await?));
         }
-        Ok(self.connect().await?.watch(Call::Watch { resident, machine, composer, held, now }).await?)
+        Ok(self.connect().await?.watch(Call::Watch { resident, machine, composer, held, now, goal: None }).await?)
     }
 
     pub async fn copy(&self, from: Place, to: Place) -> Result<CopyReport, Error> {

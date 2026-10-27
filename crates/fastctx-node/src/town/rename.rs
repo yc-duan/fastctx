@@ -64,6 +64,47 @@ pub fn file(path: &str, bytes: &[u8], old: &MachineName, new: &MachineName) -> R
     Ok(renamed)
 }
 
+/// Rewrites an unpublished memory bundle together, keeping its Markdown stamp consistent.
+pub fn memory(files: &mut [fastctx_net::ledger::File], old: &MachineName, new: &MachineName) -> Result<(), String> {
+    let rename = |author: &mut fastctx_types::memory::Author| {
+        if author.stamp.on == *old {
+            author.stamp.on = new.clone();
+        }
+        rename_writer(&mut author.stamp.by, old, new);
+    };
+    match fastctx_net::memory::decode(files)? {
+        Some(fastctx_net::memory::Mutation::Revision(mut revision)) => {
+            rename(&mut revision.author);
+            for file in files {
+                if file.path == revision.path("json") {
+                    file.bytes.0 = serde_json::to_vec(&revision).map_err(|error| error.to_string())?;
+                } else if file.path == revision.path("md") {
+                    let text = std::str::from_utf8(&file.bytes.0).map_err(|error| error.to_string())?;
+                    file.bytes.0 =
+                        fastctx_types::memory::markdown::render(&revision.name, revision.kind, text, &revision.author)?
+                            .1
+                            .into_bytes();
+                }
+            }
+        }
+        Some(fastctx_net::memory::Mutation::Evidence(mut evidence)) => {
+            rename(&mut evidence.author);
+            if let Some(location) = &mut evidence.location
+                && location.machine == *old
+            {
+                location.machine = new.clone();
+            }
+            for file in files {
+                if file.path == evidence.path() {
+                    file.bytes.0 = serde_json::to_vec(&evidence).map_err(|error| error.to_string())?;
+                }
+            }
+        }
+        None => {}
+    }
+    Ok(())
+}
+
 fn rename_writer(writer: &mut Writer, old: &MachineName, new: &MachineName) {
     match writer {
         Writer::Resident { address } if address.machine == *old => address.machine = new.clone(),

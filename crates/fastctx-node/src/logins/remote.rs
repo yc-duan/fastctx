@@ -1,7 +1,7 @@
 //! The logins of the user's other machines: their records read, and their
-//! scans, takings-up and changes asked of their own nodes. Only a machine's
-//! owner scans it or changes its logins (`world-agent-logins.md`: the list is
-//! the machine owner's to change); another account that may see the machine
+//! scans, takings-up and changes asked of their own nodes. A machine's
+//! holders scan it or change its logins (`world-network.md`, 共享机器与智能体协助);
+//! another account that may see the machine
 //! sees its listed logins, and one some of them assist sees those alone.
 
 use fastctx_types::access::Written;

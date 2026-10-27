@@ -20,6 +20,11 @@ pub(super) async fn start(node: &Arc<Node>, resident: &ResidentId, directory: &P
         return Ok(());
     }
     let folder = path.parent().ok_or_else(|| std::io::Error::other("Claude transcript has no parent"))?;
+    // Claude Code makes the transcript's folder with the first prompt's line: until then there is
+    // nothing to watch, and the session's next report starts this again.
+    if !folder.try_exists()? {
+        return Ok(());
+    }
     let (changed, mut changes) = tokio::sync::mpsc::channel(1);
     let watched = match path.file_name() {
         Some(name) => crate::file_events::named(folder)?.join(name),

@@ -402,6 +402,38 @@
   width: 14px;
 }
 
+/* A colleague's questions, opened: each, then its choices, what each
+   means in a quieter ink beneath it. */
+.gq-asked {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.gq-ask {
+  margin: 0;
+  color: var(--text);
+}
+
+.gq-options {
+  display: grid;
+  gap: var(--space-1);
+  margin: var(--space-1) 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.gq-options li {
+  display: grid;
+}
+
+.gq-label {
+  color: var(--text-2);
+}
+
+.gq-note {
+  color: var(--text-3);
+}
+
 /* A question asked on the side, answered: the answer, read as an answer. */
 .command-answer {
   margin: var(--space-1) 0;
@@ -503,6 +535,17 @@
 
 .question-title p {
   margin: 0;
+}
+
+/* Said after a question that takes several answers, on its last line. */
+.question-title p:has(+ .question-many) {
+  display: inline;
+}
+
+.question-many {
+  margin-left: var(--space-2);
+  font-size: var(--size-fine);
+  color: var(--text-3);
 }
 
 .question-card .ask-options {

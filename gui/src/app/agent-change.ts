@@ -23,7 +23,7 @@ import type { ChangePreview, ChangeStep, LoginChange, OutputLimit, Step } from "
 import { previewDiff, shortPath } from "./change-diff";
 import { Sheet } from "./confirm";
 import { detailOf, enProblems, known, zhProblems } from "./problem";
-import { mark } from "./removal";
+import { stepMark as mark } from "../pen/step-mark";
 
 export interface AgentChangeWords {
   applyTitle(who: string, machine: string): string;

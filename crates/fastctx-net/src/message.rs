@@ -85,9 +85,11 @@ pub fn worked_for(from: &fastctx_types::MachineName, call: &RemoteCall) -> Optio
         resident: resident.clone(),
     };
     match call {
-        RemoteCall::On { origin, .. } | RemoteCall::Follow { origin, .. } => Some(origin.resident.clone()),
+        RemoteCall::On { origin, .. } | RemoteCall::Follow { origin, .. } => origin.sentinel.is_none().then(||origin.resident.clone()),
         RemoteCall::Run { resident, .. } | RemoteCall::Place { resident, .. } => Some(address(resident)),
         RemoteCall::Ask { asker, .. } => Some(address(asker)),
+        RemoteCall::SentinelHome {request:fastctx_types::sentinel_control::HomeRequest::Begin {owner,..}} => Some(owner.clone()),
+        RemoteCall::SentinelHome {request:fastctx_types::sentinel_control::HomeRequest::Judge {request}} => Some(request.owner.clone()),
         _ => None,
     }
 }
@@ -106,6 +108,20 @@ pub fn project_entry(
     }
     match message.body::<Body>().ok()? {
         Body::Call { call: RemoteCall::EnterProject { resident, town } } => Some((resident, town)),
+        _ => None,
+    }
+}
+
+/// A complete plan operation returned by a remote job to its conversation.
+pub fn plan_request(message: &crate::envelope::Envelope) -> Option<fastctx_types::ResidentId> {
+    if message.kind != crate::envelope::Kind::Call || message.stream.is_some() {
+        return None;
+    }
+    if message.body.get("call").and_then(|call| call.get("call")).and_then(serde_json::Value::as_str) != Some("plan") {
+        return None;
+    }
+    match message.body::<Body>().ok()? {
+        Body::Call { call: RemoteCall::Plan { resident, .. } } => Some(resident),
         _ => None,
     }
 }

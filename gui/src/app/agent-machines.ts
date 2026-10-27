@@ -31,8 +31,9 @@ export interface Pickable {
   owner: string | null;
   /** The group its owner put it in. */
   group: string | null;
-  /** The login of this device that owns it, which lets its agents assist
-   *  others and sets their plans. */
+  /** The login of this device that holds it, its owner's or one it is
+   *  shared with whole, which lets its agents assist others and sets their
+   *  plans. */
   ownerLogin: AccountLogin | null;
   /** What kind of computer it is, for its icon. */
   form: "desktop" | "laptop" | "server";
@@ -59,8 +60,8 @@ export function pickables(world: WorldNow | null): Pickable[] {
     const ownerLogin = machine.here
       ? (logins.find((login) => world?.nodes.hubs.some((hub) => hub.hub === login.hub && hub.home === login.account)) ?? null)
       : (logins.find((login) => owns(machine, login)) ?? null);
-    const shared = logins.some((login) => world?.accounts.hubs.some((hub) => hub.hub === login.hub && hub.shares.some((share) => share.machine === machine.name && share.account === login.account)));
-    const hold: Hold = machine.here || ownerLogin ? "mine" : shared ? "shared" : "others";
+    const sharedLogin = logins.find((login) => world?.accounts.hubs.some((hub) => hub.hub === login.hub && hub.shares.some((share) => share.machine === machine.name && share.account === login.account))) ?? null;
+    const hold: Hold = machine.here || ownerLogin ? "mine" : sharedLogin ? "shared" : "others";
     const group = world?.accounts.hubs.flatMap((hub) => hub.members).find((member) => member.kind === "computer" && names(member, machine.name) && member.group)?.group ?? null;
     const facts = "Ok" in machine.facts && machine.facts.Ok ? machine.facts.Ok : null;
     picked.push({
@@ -72,7 +73,9 @@ export function pickables(world: WorldNow | null): Pickable[] {
       hold,
       owner: hold === "mine" ? null : (logins.map((login) => ownerOf(machine, login)).find(Boolean) ?? null),
       group,
-      ownerLogin,
+      // Shared whole, it is managed by the login it is shared with as by
+      // its owner (`world-network.md`, 共享机器与智能体协助).
+      ownerLogin: ownerLogin ?? sharedLogin,
       form: facts?.form === "laptop" ? "laptop" : facts?.form === "server" ? "server" : "desktop",
     });
   }

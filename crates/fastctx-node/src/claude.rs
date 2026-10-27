@@ -27,6 +27,7 @@ mod fork_history;
 mod fork_ready;
 mod fork_source;
 pub(crate) mod garbage;
+pub(crate) mod goal_compaction;
 pub(crate) mod history;
 mod image_records;
 pub(crate) mod resume;
@@ -309,6 +310,8 @@ fn policy(node: &Node, resident: &ResidentId, directory: &Path) -> std::io::Resu
             }
         }
     }
+    crate::goals::holding::registered(node, resident, directory)
+        .map_err(|error| std::io::Error::other(error.message))?;
     let value = serde_json::json!({"instance": registration.instance, "model": options.model,
         "effort": options.reasoning_effort, "last_uuid": last_uuid, "context_uuids":context_uuids, "context_tail":context_tail});
     let bytes = serde_json::to_vec(&value).map_err(std::io::Error::other)?;
@@ -712,12 +715,16 @@ async fn taken(
     if kept.is_empty() {
         return Ok(());
     }
-    let mut audience = node.residents.readers(resident, turn);
-    if audience.is_empty() {
-        if let Some(finished) = crate::delivery::terminal(&directory, turn)? {
-            audience = finished.readers;
-        } else if node.residents.about(resident).is_some_and(|(about, _)| about.session.as_deref() == Some(session)) {
-            audience = node.residents.working_for(resident);
+    let mut audience = Vec::new();
+    if kept.iter().any(|pending| pending.working) && crate::goals::replies::inherits(node, resident)? {
+        audience = node.residents.readers(resident, turn);
+        if audience.is_empty() {
+            if let Some(finished) = crate::delivery::terminal(&directory, turn)? {
+                audience = finished.readers;
+            } else if node.residents.about(resident).is_some_and(|(about, _)| about.session.as_deref() == Some(session))
+            {
+                audience = node.residents.working_for(resident);
+            }
         }
     }
     for pending in &mut kept {
@@ -788,6 +795,7 @@ async fn uncertain_inputs(
             &mut handover,
             fastctx_types::session::TurnHow::Interrupted,
             why,
+            ids.is_none().then(|| serde_json::json!({"world":"host_exited"})),
         )
         .await?;
     }
@@ -872,7 +880,7 @@ async fn ended_for_process(
         };
         let end = fastctx_types::session::TurnEnd {
             facts: None,
-            error: None,
+            error: Some(serde_json::json!({"world":"host_exited"})),
             how: fastctx_types::session::TurnHow::Interrupted,
             reason: Some(why),
             duration_ms: None,
@@ -905,14 +913,15 @@ async fn ended_for_process(
 }
 
 /// Asks the paired mod to stop this resident's current turn.
-pub fn stop(node: &Node, resident: &ResidentId) -> Result<bool, Failure> {
+pub fn stop(node: &Node, resident: &ResidentId, turn: &str) -> Result<bool, Failure> {
     let session: String = node.claude.state.lock().expect("never poisoned").paired.get(resident).ok_or_else(|| {
         Failure::new(format!("{resident}'s session has not been heard from the World's plugin, which is what stops it"))
     })?;
-    let Some(turn) = node.residents.now(resident).and_then(|now| now.turn) else { return Ok(false) };
-    crate::stops::mark_turn(node, resident, &turn).map_err(|error| Failure::new(error.to_string()))?;
+    if node.residents.now(resident).and_then(|now| now.turn).as_deref() != Some(turn) {
+        return Ok(false);
+    }
     let directory = exchange::sessions(node.world.path()).join(&session);
-    exchange::stop(&directory, &turn).map_err(|error| Failure::new(format!("asking its plugin to stop: {error}")))?;
+    exchange::stop(&directory, turn).map_err(|error| Failure::new(format!("asking its plugin to stop: {error}")))?;
     Ok(true)
 }
 
@@ -1147,15 +1156,13 @@ pub async fn deliver(
         Some((about, _)) => about,
         None => return Some(Err(crate::authorization::no_subject())),
     };
-    if let Err(failure) =
-        crate::homes::available(node, &current).and_then(|()| crate::assists::may_turn(node, to, &current))
-    {
-        return Some(crate::lifecycle::retry::defer(node, to, &pending.delivery.id, &failure.message));
+    if let Err(error) = crate::lifecycle::wake::check(node, to, &current) {
+        return Some(crate::lifecycle::retry::unavailable(node, to, &pending.delivery.id, error).await);
     }
     let user_action =
         matches!(pending.delivery.notice, Notice::Words { from: Speaker::User { .. }, .. } | Notice::Attached { .. });
-    if !about.world_started && !stopped_background && !user_action {
-        // Facts wait for a closed foreground session; only the user resumes it.
+    if !about.world_started && !stopped_background && !user_action && !pending.delivery.notice.wakes_closed() {
+        // Unscheduled facts wait until the foreground session is opened again.
         return Some(if alive {
             into_inbox(node, to, &session, directory, pending).await
         } else {
@@ -1225,7 +1232,7 @@ pub async fn deliver(
                     {
                         Ok(_) => Ok(Landed::Handed { id: pending.delivery.id.clone() }),
                         Err(error) if !error.attempted => {
-                            crate::lifecycle::retry::defer(node, to, &pending.delivery.id, &error.failure.message)
+                            crate::lifecycle::retry::unavailable(node, to, &pending.delivery.id, error).await
                         }
                         Err(error) => {
                             startup::unknown(node, to, &pending.delivery.id, error.failure.message);
@@ -1268,6 +1275,7 @@ async fn failed_wake(
             &mut handover,
             fastctx_types::session::TurnHow::Interrupted,
             why.clone(),
+            Some(serde_json::json!({"world":"host_exited"})),
         )
         .await
         .map_err(|error| Failure::new(format!("settling interrupted Claude startup: {error}")))?;
@@ -1354,7 +1362,7 @@ async fn into_inbox(
 /// own words, which go in as the user's.
 fn words(notice: &Notice) -> (String, bool) {
     match notice {
-        Notice::Words { from: Speaker::User { .. }, text } => (text.clone(), true),
+        Notice::Words { from: Speaker::User { .. }, text, .. } => (text.clone(), true),
         Notice::Attached { message, text } => (message.render(text), true),
         notice => (told::told(notice), false),
     }
@@ -1415,16 +1423,18 @@ pub(crate) async fn wake(
         use crate::lifecycle::wake::WakeFailure;
         trust(&[cwd.as_path()], &env).map_err(Failure::new)?;
         crate::lifecycle::retry::attempting(&launch_node, &launch_resident, &launch_id)?;
-        background::invoke(&program, &args, &cwd, &env, std::time::Duration::from_secs(120))
-            .map_err(|error| WakeFailure { failure: Failure::new(error.message), attempted: error.started })?;
+        background::invoke(&program, &args, &cwd, &env, std::time::Duration::from_secs(120)).map_err(|error| {
+            WakeFailure { failure: Failure::new(error.message), attempted: error.started, permanent: false }
+        })?;
         crate::lifecycle::retry::accepted(&launch_node, &launch_resident, &launch_id)
-            .map_err(|failure| WakeFailure { failure, attempted: true })?;
+            .map_err(|failure| WakeFailure { failure, attempted: true, permanent: false })?;
         Ok::<(), WakeFailure>(())
     }))
     .await
     .map_err(|error| crate::lifecycle::wake::WakeFailure {
         failure: Failure::new(format!("waking the session: {error}")),
         attempted: true,
+        permanent: false,
     })??;
     // Claude Code took the words; the session that takes them may still end
     // before the World's plugin pairs, which only watching it tells.
@@ -1515,7 +1525,7 @@ pub async fn open_here(
     oldest::check(node, &launching).await?;
     let agent = AgentName::try_from("claude").expect("a valid agent name");
     let (id, _opening) = crate::attachments::opening(node, &agent, &opened.acting, town.as_ref(), &attachments).await?;
-    let _birth = crate::here::born(node, &id, opened.acting.clone());
+    let _birth = crate::here::born(node, &id, opened.acting.clone(), &Origin::User);
     let Command { program, env, .. } = launching.clone();
     // A login assisting another account starts without the browser of this
     // machine (`background::Start::assisting`).
@@ -1537,6 +1547,7 @@ pub async fn open_here(
         origin: Origin::User,
         session: None,
         world_started: true,
+        native_resumed: false,
         model: None,
         acting: opened.acting,
         focus: opened.focus,
@@ -1547,6 +1558,7 @@ pub async fn open_here(
         activity: Activity::Busy,
         since: born_at,
         turn: None,
+        last_turn: None,
         owed: Default::default(),
         answering: Vec::new(),
         trouble: None,
@@ -1559,7 +1571,9 @@ pub async fn open_here(
         first_words: None,
         last_said: None,
         last_compacted: false,
+        last_heard_user: None,
         asked: None,
+        told: None,
     };
     if let Some(town) = &town {
         crate::town::access::check(node, &about.acting, town)?;
@@ -1567,6 +1581,7 @@ pub async fn open_here(
     node.residents
         .create(&node.world, about, town.clone(), now)
         .map_err(|error| Failure::new(format!("recording the session: {error}")))?;
+    crate::context::instructed(node, &id, &heard).map_err(|error| Failure::new(error.to_string()))?;
     node.residents.set_instructed(&id, heard);
     crate::session_options::keep(node, &id, &options)?;
     let directory = node.world.conversation(&id);
@@ -1702,7 +1717,12 @@ pub(crate) fn settings_json(id: &ResidentId) -> String {
             "FASTCTX_CONVERSATION": id.as_str(),
         },
         "permissions": {
-            "deny": ["Bash", "PowerShell", "Read", "Write", "Edit", "MultiEdit", "NotebookEdit", "Grep", "Glob"],
+            // The World's own tools take these places: its shell and files,
+            // the plan, the goal, `message_user` (`world-voice.md`), and a
+            // sentinel for any later wake-up (`world-senses.md`).
+            "deny": ["Bash", "PowerShell", "Read", "Write", "Edit", "MultiEdit", "NotebookEdit", "Grep", "Glob",
+                "TodoWrite", "TaskCreate", "TaskUpdate", "TaskList", "TaskGet", "ProposeGoal",
+                "SendUserMessage", "PushNotification", "CronCreate", "CronDelete", "CronList", "ScheduleWakeup"],
         },
         "worktree": { "bgIsolation": "none" },
     });

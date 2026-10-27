@@ -106,14 +106,8 @@ pub(crate) async fn directory(
             None => resident(node, &registration)?,
         };
         node.residents.active(&id).map_err(|failure| io::Error::other(failure.message))?;
-        // What it is told of its machines and folders, for its plugin to add
-        // to the first message's context.
-        if node.residents.about(&id).is_some_and(|(about, _)| about.world_started) {
-            crate::focus::hand_to_session(&node.world.conversation(&id), &source)?;
-        }
-        // Its project's record, with the user's instructions for it.
-        crate::profile::session::hand_to_session(node, &id, &source)?;
-        crate::town::instructions::hand_to_session(node, &id, &source)?;
+        crate::context::refresh_local(node, &id)?;
+        crate::context::hand_to_session(node, &id, &source)?;
         if registration.process.is_some() {
             fastctx_platform::publish(
                 &source.join("session.json"),
@@ -243,6 +237,7 @@ pub(super) fn resident(node: &Node, registration: &Registration) -> io::Result<R
                 origin: Origin::User,
                 session: Some(first.session.clone()),
                 world_started: false,
+            native_resumed: false,
                 model: first.model_name(),
                 acting: Default::default(),
                 focus: Default::default(),

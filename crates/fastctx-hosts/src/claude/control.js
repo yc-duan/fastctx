@@ -273,6 +273,12 @@ async function controlReply($, state, file, request) {
     const starting = new Promise(resolve => { finishStarting = resolve })
     state.starting.add(starting)
     try {
+      const nativeContext = nativeGoalContexts.get(state.host.session)
+      if (nativeContext && !nativeContext.busy) {
+        try { await clearNativeGoal($, nativeContext) }
+        catch (error) { throw controlRefusal(String(error)) }
+        if (!nativeContext.nativeGoalCleared) throw controlRefusal('Claude native goal cleanup did not finish; the control was not sent')
+      }
       const owner = await $.process.run([FASTCTX, 'claude-control-owner', WORLD])
       if (owner.exitCode !== 0) throw new Error('checking the World node: ' + owner.stderr)
       if (!controlSame(JSON.parse(owner.stdout), request.controller)) throw new Error('the World node that requested this control exited')
@@ -297,7 +303,7 @@ async function controlReply($, state, file, request) {
       }
       if (state.closed) return
       entered = true
-      const executing = controlExecute($, state, { ...request.control, receipt: request.handoff_contract === 1 ? file.slice(0, -5) : undefined }, request.handoff_contract === 1)
+      const executing = controlExecute($, state, { ...request.control, controller: request.controller, receipt: request.handoff_contract === 1 ? file.slice(0, -5) : undefined }, request.handoff_contract === 1)
       // These commands can enter session.end while their own call is pending.
       if (request.control.do === 'command' && ['exit', 'quit', 'reload-plugins'].includes(request.control.name)) finishStarting()
       reply = { ok: await executing }
@@ -331,6 +337,13 @@ async function controlReply($, state, file, request) {
 
 async function controlExecute($, state, control, handoff = false) {
   if (state.closed) throw new Error('this Claude conversation ended')
+  if (control.do === 'usage') return $.session.usage({ breakdown: 'summary' })
+  if (control.do === 'goal_compact') {
+    const automatic = (await $.config.list()).find((row) => row.key === 'autoCompact')
+    if (!automatic) return { kind: 'refused', said: 'Claude did not report its automatic compaction setting.' }
+    if (automatic.value === false) return { kind: 'refused', said: 'Automatic compaction is disabled.' }
+    return controlCompact($, state, undefined, control)
+  }
   if (control.do === 'offers') {
     const commands = await controlCatalog($, state)
     const rows = await $.config.list()
@@ -356,7 +369,7 @@ async function controlExecute($, state, control, handoff = false) {
     return offered
   }
   if (control.do === 'compact') {
-    return controlCompact($, state)
+    return controlCompact($, state, undefined, control)
   }
   if (control.do === 'command') {
     return controlCommand($, state, control)
@@ -556,6 +569,7 @@ async function completeControlTurn($, e) {
 }
 
 async function endControls($, e) {
+    nativeGoalContexts.delete(e.sessionId)
     const state = sessions.get(e.sessionId)
     if (state) {
       state.closed = true

@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 use fastctx_net::ledger::Entry;
 use fastctx_net::sign::Signed;
 use fastctx_types::layout::{ConversationDir, Kind, WorldDir};
-use fastctx_types::project::{Description, EntryStamp, Location, Record, version_of};
+use fastctx_types::project::{Location, Record, version_of};
 use fastctx_types::residents::{About, Action, Activity, MessageKind, MessageLine, Places};
 use fastctx_types::run::JobRecord;
 use fastctx_types::session::{Happened, SessionEvent, TurnEnd};
@@ -615,30 +615,6 @@ fn ledger_fact(_town: &TownName, path: &str, bytes: &[u8]) -> io::Result<Option<
                 record.at,
                 record.on,
                 SinceKind::ProjectVersion { version: record.version, name: record.name, by: record.by },
-            )
-        }
-        ["journals", journal, "entries", _, "entry.json"] => {
-            let stamp: EntryStamp = serde_json::from_slice(bytes).map_err(io::Error::other)?;
-            (
-                stamp.at,
-                stamp.machine,
-                SinceKind::JournalEntry {
-                    journal: journal.parse().map_err(io::Error::other)?,
-                    entry: stamp.id,
-                    by: stamp.by,
-                },
-            )
-        }
-        ["journals", journal, "description", version] if version_of(version).is_some() => {
-            let description: Description = serde_json::from_slice(bytes).map_err(io::Error::other)?;
-            (
-                description.at,
-                description.on,
-                SinceKind::JournalDescription {
-                    journal: journal.parse().map_err(io::Error::other)?,
-                    version: description.version,
-                    by: description.by,
-                },
             )
         }
         _ => return Ok(None),
