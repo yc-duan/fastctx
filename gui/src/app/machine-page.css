@@ -1042,16 +1042,19 @@
     gap: var(--space-4);
   }
 
+  /* Its note under its name, folding to a second line rather than cut,
+     every block's head as tall so the rings stay level. */
   .mp-vital-head {
     flex-direction: column;
     align-items: stretch;
     gap: 0;
-    min-height: calc(var(--size-text) * 1.5 + var(--size-fine) * 1.5);
+    min-height: calc(var(--size-text) * 1.5 + var(--size-fine) * 3);
   }
 
   .mp-vital-note {
     flex: none;
     text-align: left;
+    white-space: normal;
     font-size: var(--size-fine);
   }
 
