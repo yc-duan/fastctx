@@ -40,6 +40,30 @@ export interface GroupWords {
 
 /** What groups `machine` from this device: the login that may, the owner
  *  whose groups they are, the group it is in, and that owner's groups. */
+/** A group's box on the drawing: its name, its machines, and how each is
+ *  grouped from this device, in the same order. */
+export interface GroupBox {
+  group: string;
+  machines: Machine[];
+  groupings: Grouping[];
+}
+
+/** Renames a box's group for each owner it holds machines of, or ends it
+ *  where `to` is none. */
+export async function renameGroups(box: GroupBox, to: string | null, change: (login: Login, change: AccountChange) => Promise<void>): Promise<void> {
+  const done: Grouping[] = [];
+  for (const grouping of box.groupings) {
+    if (done.some((one) => sameLogin(one.login, grouping.login) && one.owner === grouping.owner)) continue;
+    done.push(grouping);
+    await change(grouping.login, { change: "rename_group", owner: grouping.owner, from: box.group, to });
+  }
+}
+
+/** Puts a box's machines back in its group, as they were before. */
+export async function regroup(box: GroupBox, change: (login: Login, change: AccountChange) => Promise<void>): Promise<void> {
+  for (const [at, machine] of box.machines.entries()) await change(box.groupings[at]!.login, groupChange(machine.name, box.group));
+}
+
 export interface Grouping {
   login: Login;
   owner: AccountName;

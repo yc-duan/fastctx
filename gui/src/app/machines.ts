@@ -9,8 +9,10 @@
 // card opened from the bar, or from a row of the list. Beside each hub a
 // dashed ring adds a machine: it says one is on its way once a way in was
 // given, and the machine is circled as it arrives. The network's
-// administrator manages its people here too (`map-people.ts`). Long sayings
-// stand behind a pointer's rest, not on the page.
+// administrator manages its people here too (`map-people.ts`). What asks
+// for one thing, a name, a group, a way to connect, is a small card beside
+// the ring (`machine-cards.ts`). Long sayings stand behind a pointer's rest,
+// not on the page.
 
 import { glyph } from "../conversation/glyphs";
 import { layerOpened, type Layer } from "./back";
@@ -20,17 +22,14 @@ import { Film } from "../film/film";
 import { network } from "../film/network";
 import { watchFilm } from "../film/theater";
 import type { Point } from "../map-canvas";
-import { blot, circle, outline, ruled, seeded } from "../pen/shapes";
 import type { AccountChange, HubAccounts, Login, MemberSeen } from "../world/accounts";
+import { MachineCards, type Renaming } from "./machine-cards";
 import { moreEntries, nameOf, spotActs, SpotViews, type Act, type Spot } from "./machine-spot";
 import { ActsMenu } from "./acts-menu";
 import { MachineUpdates, type UpdatesAccess } from "./machine-updates";
 import { copyFrom } from "./copy-button";
 import { loginsOf, names } from "../world/accounts";
-import type { NameProblem } from "../world/bridge";
-import type { MachinePageWords } from "./machine-page-words";
-import type { NameSaid } from "./name-words";
-import { RenameField, renamerOf } from "./rename";
+import { renamerOf } from "./rename";
 import type { WorldNow } from "../world/bridge";
 import { agentName } from "../world/names";
 import type { AccessWords, MachinesWords } from "./account-words";
@@ -41,7 +40,7 @@ import { HubMoving, type HubMovingOptions } from "./hub-moving";
 import { holdUntilNamed, typedName } from "./typed-name";
 import { GiveSheet } from "./machine-sheets";
 import { MachineLog, type ReadLog } from "./machine-log";
-import { boxParts, chosenGroup, groupChange, groupForm, groupingOf, groupMoreKey, groupMoreOf, groupNameOf, groupRenameForm, wireGroupForm, type Grouping } from "./machine-groups";
+import { boxParts, groupingOf, groupMoreKey, groupMoreOf, regroup, renameGroups, type GroupBox, type Grouping } from "./machine-groups";
 import { MachineMap, MAP_ORDER, personKey } from "./machine-map";
 import { isManaged, listOrder, machineList } from "./machine-list";
 import { whenNear } from "./read-on";
@@ -52,7 +51,7 @@ import { foundIn, MachineFind } from "./machine-find";
 import { mapOf, phonesOf } from "./map-of";
 import { deviceKey, type MapNode } from "./map-nodes";
 import { link } from "./places";
-import { runsHub, holds, assistantsOf, isComputer, isSuper, isVisitor, machinesOf, owns, sameLogin, type Machine } from "./reach";
+import { runsHub, holds, assistantsOf, isComputer, isSuper, isVisitor, machinesOf, owns, type Machine } from "./reach";
 import type { Page } from "./shell";
 import { effect } from "./signals";
 import type { BatchWords } from "./machine-batch-words";
@@ -90,27 +89,13 @@ export interface MachinesOptions {
   log: ReadLog;
   /** Moving the server to another machine. */
   moving: Pick<HubMovingOptions, "move" | "arrive" | "remote">;
-  /** Renaming a machine: the words of its field, the rule a name is
-   *  checked by, and renaming this computer. */
-  renaming: {
-    words: MachinePageWords;
-    nameSaid: NameSaid;
-    check(text: string): Promise<NameProblem | null>;
-    here(to: string): Promise<void>;
-  };
+  /** Renaming a machine. */
+  renaming: Renaming;
   /** The network's updates, for the update view (`machine-updates.ts`). */
   updates?: UpdatesAccess | undefined;
   /** The words of machines chosen together, and of taking machines off. */
   batch: BatchWords;
   manage: ManageWords;
-}
-
-/** A group's box on the drawing: its name, its machines, and how each is
- *  grouped from this device, in the same order. */
-interface GroupBox {
-  group: string;
-  machines: Machine[];
-  groupings: Grouping[];
 }
 
 const spotsMade = new WeakMap<WorldNow, Map<string, Spot>>();
@@ -126,10 +111,6 @@ const UNDO_MS = 6_000;
 /** How long a machine that just arrived stays circled: the drawing-in of
  *  the circle and a moment to see it. */
 const ARRIVED_MS = 6_000;
-
-/** The port offered first for direct connections: the one after the hub's
- *  own, 7443. */
-const DIRECT_PORT = 7444;
 
 /** Where this device keeps whether the machines show as a drawing or a list. */
 const VIEW_KEY = "machines.view";
@@ -181,10 +162,8 @@ export class MachinesPage implements Page {
   private spotNamed = false;
   private readonly undoBar: HTMLElement;
   private undoing: { timer: number; redo: () => Promise<void> } | null = null;
-  /** The card asking to confirm a change made on the drawing, or to fill
-   *  in what one needs. */
-  private readonly card: HTMLElement;
-  private cardFor: string | null = null;
+  /** The card asking for one thing about a machine, a group or a person. */
+  private readonly cards: MachineCards;
   private drawn = "";
   /** The list's groups and people the viewer opened or closed. */
   private readonly listFolds = keptFolds();
@@ -209,11 +188,6 @@ export class MachinesPage implements Page {
   private readonly barLayer: Layer = {
     isOpen: () => !!this.selected && !this.spotBar.hidden && this.narrow() && this.element.isConnected,
     close: () => this.choose(null),
-  };
-  private readonly cardLayer: Layer = {
-    isOpen: () => !!this.cardFor && this.element.isConnected,
-    close: () => this.closeCard(),
-    holds: (target) => this.card.contains(target),
   };
   /** Redraws when the page turns narrow or wide: the sheet and what floats
    *  beside the one chosen depend on it. */
@@ -341,10 +315,7 @@ export class MachinesPage implements Page {
       store: options.store,
       confirm: options.confirm,
       change: options.change,
-      card: (key, html, go) => {
-        this.openCard(key, this.anchorOf(key) ?? [0, 0], html, go);
-        return this.card;
-      },
+      card: (key, html, go) => this.cards.show(key, html, go),
       undo: (said, redo) => this.offerUndo(said, redo),
       failed: (said) => {
         this.note = { machine: "", text: said };
@@ -415,7 +386,44 @@ export class MachinesPage implements Page {
     this.canvas = this.element.querySelector<HTMLElement>(".machines-canvas")!;
     this.undoBar = this.element.querySelector<HTMLElement>(".map-undo")!;
     this.chooseBar = this.element.querySelector<HTMLElement>(".map-choose")!;
-    this.card = this.element.querySelector<HTMLElement>(".map-card")!;
+    this.cards = new MachineCards(this.element.querySelector<HTMLElement>(".map-card")!, {
+      words,
+      access: options.access,
+      renaming: options.renaming,
+      change: (login, change) => options.change(login, change),
+      refresh: () => options.store.refresh(),
+      world: () => options.store.world.peek(),
+      anchorOf: (key) => this.anchorOf(key),
+      room: () => {
+        const canvas = this.canvas.getBoundingClientRect();
+        const right = this.panel.hidden ? canvas.width : Math.min(canvas.width, this.panel.getBoundingClientRect().left - canvas.left);
+        return { right, bottom: this.canvas.clientHeight };
+      },
+      narrow: () => this.narrow(),
+      opened: () => {
+        this.closeMenu();
+        this.redraw();
+      },
+      closed: (held) => {
+        this.redraw();
+        if (held) this.refocus();
+      },
+      redraw: () => this.redraw(),
+      failed: (key, said) => {
+        this.note = { machine: key.replace(/^m:/, ""), text: options.access.failed(said) };
+        this.redraw();
+      },
+      undo: (said, redo) => this.offerUndo(said, redo),
+      arrived: (keys, chosen) => {
+        if (chosen) this.selected = chosen;
+        this.arrived(keys);
+      },
+      checking: (key, on) => {
+        if (on) this.opening.add(key);
+        else this.opening.delete(key);
+        this.redraw();
+      },
+    });
     this.list = this.element.querySelector<HTMLElement>(".ml-list")!;
     this.views = this.element.querySelector<HTMLElement>(".ml-views")!;
     this.finder = new MachineFind(words.find, {
@@ -544,9 +552,9 @@ export class MachinesPage implements Page {
       else if (target.closest("[data-choose=cancel]")) this.stopChoosing();
     });
     this.element.addEventListener("keydown", (event) => {
-      if (event.key === "Escape" && this.cardFor) {
+      if (event.key === "Escape" && this.cards.open) {
         event.stopPropagation();
-        this.closeCard();
+        this.cards.close();
       } else if (event.key === "Escape" && (this.moving.chosenHub || this.whyNot)) {
         event.stopPropagation();
         this.stopChoosing();
@@ -558,9 +566,6 @@ export class MachinesPage implements Page {
         if (this.detailsOpen) this.closeDetails();
         else this.choose(null);
       }
-    });
-    this.card.addEventListener("click", (event) => {
-      if ((event.target as HTMLElement).closest("[data-card=cancel]")) this.closeCard();
     });
     const stopWorld = effect(() => this.draw(options.store.world.get(), options.store.clock.get()));
     const updates = options.updates;
@@ -782,7 +787,7 @@ export class MachinesPage implements Page {
     }
     this.detailsOpen = false;
     this.closeMenu();
-    this.closeCard();
+    this.cards.close();
     this.redraw();
     if (view === "map") requestAnimationFrame(() => this.map.refresh());
   }
@@ -844,7 +849,7 @@ export class MachinesPage implements Page {
     }
     if (!this.framed.length) this.selecting = false;
     this.closeMenu();
-    this.closeCard();
+    this.cards.close();
     this.redraw();
   }
 
@@ -1230,7 +1235,7 @@ export class MachinesPage implements Page {
     // place, beside the list, or from below.
     const anchored = !narrow && this.view === "map";
     const open = !!spot && !together && this.detailsOpen;
-    const barred = !!spot && !together && !open && this.view === "map" && this.menuFor === null && !this.cardFor && !this.moving.chosenHub;
+    const barred = !!spot && !together && !open && this.view === "map" && this.menuFor === null && !this.cards.open && !this.moving.chosenHub;
     if (open && this.panel.hidden) layerOpened(this.detailsLayer);
     if (barred && narrow && this.spotBar.hidden) layerOpened(this.barLayer);
     this.panel.hidden = !open;
@@ -1575,7 +1580,7 @@ export class MachinesPage implements Page {
     const person = personOf(key);
     if (person) return this.people.run(act, person.hub, person.account, key);
     if (groupMoreOf(key)) {
-      if (act === "rename-group") this.renameGroupCard(key);
+      if (act === "rename-group") this.renameGroup(key);
       else if (act === "end-group") void this.endGroup(key);
       return;
     }
@@ -1632,27 +1637,27 @@ export class MachinesPage implements Page {
         this.removeNamed(machine.written);
         return;
       case "rename":
-        this.renameCard(key, machine);
+        this.cards.rename(key, machine);
         return;
       case "group": {
         const grouping = groupingOf(machine, world);
-        if (grouping) this.groupCard(key, [machine], [grouping]);
+        if (grouping) this.cards.group(key, [machine], [grouping]);
         return;
       }
       case "direct": {
         const admin = this.adminOf(machine, world);
         const member = admin ? this.memberOf(machine, admin, world) : undefined;
         if (!admin || !member) return;
-        if (member.direct?.length) this.stopDirect(admin, machine, key, member.direct);
-        else this.allowDirect(admin, machine, key, member);
+        if (member.direct?.length) this.cards.stopDirect(admin, machine, key, member.direct);
+        else this.cards.direct(admin, machine, key, member);
         return;
       }
       case "relay": {
         const own = this.holdersOf(machine, world)[0];
         const member = own ? this.memberOf(machine, own, world) : undefined;
         if (!own || !member) return;
-        if (member.relay?.length) void this.stopRelay(own, machine, member.relay);
-        else this.allowRelay(own, machine, key, member);
+        if (member.relay?.length) void this.cards.stopRelay(own, machine, member.relay);
+        else this.cards.relay(own, machine, key, member);
         return;
       }
     }
@@ -1664,50 +1669,14 @@ export class MachinesPage implements Page {
     const world = this.options.store.world.peek();
     const groupings = world ? machines.map((machine) => groupingOf(machine, world)) : [];
     if (!machines.length || groupings.some((one) => !one)) return;
-    this.groupCard(`m:${machines[0]!.written}`, machines, groupings as Grouping[]);
+    this.cards.group(`m:${machines[0]!.written}`, machines, groupings as Grouping[]);
   }
 
-  /** The card that puts machines in a group, beside the ring of the one, or
-   *  the first of those framed together: one of their owner's groups, a new
-   *  one, or none. Put there, each is circled in its new box, and for a
-   *  moment the change can be undone from the drawing's corner. */
-  private groupCard(key: string, machines: Machine[], groupings: Grouping[]): void {
-    const words = this.options.words.groups;
-    const first = groupings[0];
-    if (!first) return;
-    const now = groupings.every((one) => one.now === first.now) ? first.now : undefined;
-    const title = machines.length === 1 ? words.groupTitle(machines[0]!.written) : words.groupMany(machines.length);
-    this.openCard(key, this.anchorOf(key) ?? [0, 0], groupForm(words, title, first.groups, now), async () => {
-      const chosen = chosenGroup(this.card, words);
-      if ("wrong" in chosen) throw this.cardWrong(chosen.wrong);
-      const moving = machines.filter((_, at) => groupings[at]!.now !== chosen.group);
-      if (!moving.length) return;
-      const before = new Map(machines.map((machine, at) => [machine.name, groupings[at]!.now]));
-      for (const machine of moving) await this.options.change(first.login, groupChange(machine.name, chosen.group));
-      this.circle(moving);
-      this.offerUndo(machines.length === 1 ? words.movedOne(machines[0]!.written, chosen.group) : words.movedMany(moving.length, chosen.group), async () => {
-        for (const machine of moving) await this.options.change(first.login, groupChange(machine.name, before.get(machine.name) ?? null));
-      });
-    });
-    wireGroupForm(this.card);
-  }
-
-  /** The card that renames a group: its machines are in the group of the
-   *  new name, with any already in one of that name. */
-  private renameGroupCard(key: string): void {
+  /** The card that renames the group of the box `key` names. */
+  private renameGroup(key: string): void {
     const world = this.options.store.world.peek();
     const box = world ? this.groupBox(key, world) : null;
-    if (!box) return;
-    const words = this.options.words.groups;
-    this.openCard(key, this.anchorOf(key) ?? [0, 0], groupRenameForm(words, box.group), async () => {
-      const named = groupNameOf(this.card.querySelector<HTMLInputElement>("input[name=name]")?.value ?? "", words);
-      if ("wrong" in named) throw this.cardWrong(named.wrong);
-      if (named.name === box.group) return;
-      await this.renameGroups(box, named.name);
-      this.circle(box.machines);
-      this.offerUndo(words.renamedGroup(box.group, named.name), () => this.regroup(box));
-    });
-    this.card.querySelector<HTMLInputElement>("input[name=name]")?.select();
+    if (box) this.cards.renameGroup(key, box);
   }
 
   /** Ends a group at once: its machines stand in their owner's box again,
@@ -1718,7 +1687,7 @@ export class MachinesPage implements Page {
     const box = world ? this.groupBox(key, world) : null;
     if (!box) return;
     try {
-      await this.renameGroups(box, null);
+      await renameGroups(box, null, (login, change) => this.options.change(login, change));
       this.note = null;
     } catch (error) {
       this.note = { machine: "", text: this.options.access.failed(error instanceof Error ? error.message : String(error)) };
@@ -1726,25 +1695,9 @@ export class MachinesPage implements Page {
       return;
     }
     this.circle(box.machines);
-    this.offerUndo(this.options.words.groups.endedGroup(box.group), () => this.regroup(box));
+    this.offerUndo(this.options.words.groups.endedGroup(box.group), () => regroup(box, (login, change) => this.options.change(login, change)));
     await this.options.store.refresh();
     this.redraw();
-  }
-
-  /** Renames a box's group for each owner it holds machines of, or ends it
-   *  where `to` is none. */
-  private async renameGroups(box: GroupBox, to: string | null): Promise<void> {
-    const done: Grouping[] = [];
-    for (const grouping of box.groupings) {
-      if (done.some((one) => sameLogin(one.login, grouping.login) && one.owner === grouping.owner)) continue;
-      done.push(grouping);
-      await this.options.change(grouping.login, { change: "rename_group", owner: grouping.owner, from: box.group, to });
-    }
-  }
-
-  /** Puts a box's machines back in its group, as they were before. */
-  private async regroup(box: GroupBox): Promise<void> {
-    for (const [at, machine] of box.machines.entries()) await this.options.change(box.groupings[at]!.login, groupChange(machine.name, box.group));
   }
 
   /** A group's box on the drawing, by its "⋯": its name, its machines and
@@ -1792,24 +1745,18 @@ export class MachinesPage implements Page {
 
   /** Circles machines for a moment, as they stand somewhere new. */
   private circle(machines: Machine[]): void {
-    for (const machine of machines) {
-      const key = `m:${machine.written}`;
+    this.arrived(machines.map((machine) => `m:${machine.written}`));
+  }
+
+  /** Circles spots for a moment, by their keys. */
+  private arrived(keys: string[]): void {
+    for (const key of keys) {
       this.fresh.add(key);
       setTimeout(() => {
         this.fresh.delete(key);
         this.redraw();
       }, ARRIVED_MS);
     }
-  }
-
-  /** Says in the open card why it does not go, and keeps it open. */
-  private cardWrong(said: string): Error {
-    const wrong = this.card.querySelector<HTMLElement>(".map-card-wrong");
-    if (wrong) {
-      wrong.textContent = said;
-      wrong.hidden = false;
-    }
-    return new Error("kept open");
   }
 
   /** The login of the network's administrator among this device's, on a
@@ -1823,171 +1770,6 @@ export class MachinesPage implements Page {
     return world.accounts.hubs.find((hub) => hub.hub === login.hub)?.members.find((member) => names(member, machine.name));
   }
 
-  /** A card beside the ring with its name to change. Renamed, it is
-   *  circled under its new name, and for a moment the old name can be given
-   *  back from the drawing's corner: a name a machine had stays its own. */
-  private renameCard(key: string, machine: Machine): void {
-    const world = this.options.store.world.peek();
-    const rename = world ? renamerOf(machine, world, this.options.change, this.options.renaming.here) : null;
-    if (!rename) return;
-    const { words, nameSaid, check } = this.options.renaming;
-    const from = machine.name;
-    this.openCard(key, this.anchorOf(key) ?? [0, 0], `<p class="map-card-title">${escape(words.renameTitle(machine.written))}</p><div class="map-card-rename"></div>`, async () => {});
-    const field = new RenameField({
-      words,
-      nameSaid,
-      name: from,
-      note: !machine.here && machine.online === false ? words.renameOffline(machine.written) : undefined,
-      check,
-      rename: async (to) => {
-        await rename(to);
-        await this.options.store.refresh();
-      },
-      done: (to) => {
-        field.dispose();
-        this.closeCard();
-        const renamed = `m:${to}`;
-        this.selected = renamed;
-        this.fresh.add(renamed);
-        setTimeout(() => {
-          this.fresh.delete(renamed);
-          this.redraw();
-        }, ARRIVED_MS);
-        this.offerUndo(words.renamed(from, to), () => rename(from, to));
-        this.redraw();
-      },
-      cancel: () => {
-        field.dispose();
-        this.closeCard();
-      },
-    });
-    this.card.querySelector(".map-card-rename")!.append(field.element);
-    field.focus();
-  }
-
-  /** The card that lets other machines connect to one directly: a small
-   *  drawing of their lines meeting it, its addresses to choose from (its
-   *  network cards' and where the server sees it, never an example), and
-   *  the port. The server then tries it from outside; until it has, the
-   *  socket on its ring is pencil, and what kept the server out is said in
-   *  the card. */
-  private allowDirect(login: Login, machine: Machine, key: string, member: MemberSeen): void {
-    const { words } = this.options;
-    const seen = member.reach?.seen ? [hostOf(member.reach.seen)] : [];
-    const cards = (member.reach?.interfaces ?? []).map(hostOf).filter((host) => !seen.includes(host));
-    const choice = (host: string, note: string, checked: boolean) =>
-      `<label class="choice map-card-choice"><input type="checkbox" name="host" value="${escape(host)}"${checked ? " checked" : ""}><span class="mono">${escape(host)}</span><span class="choice-note">${escape(note)}</span></label>`;
-    const at = this.anchorOf(key) ?? [0, 0];
-    this.openCard(
-      key,
-      at,
-      `<p class="map-card-title">${escape(words.directTitle(machine.written))}</p>
-       <div class="map-card-pictures">${directPicture(true)}</div>
-       <fieldset class="map-card-field"><legend>${escape(words.directAddresses)}</legend><div class="choice-options">${[
-         ...seen.map((host) => choice(host, words.directSeen, true)),
-         ...cards.map((host) => choice(host, words.directCard, !seen.length)),
-       ].join("")}</div></fieldset>
-       <label class="field map-card-port"><span class="field-label">${escape(words.directPort)}</span><input class="mono" name="port" inputmode="numeric" value="${DIRECT_PORT}" autocomplete="off" spellcheck="false" required></label>
-       <p class="map-card-wrong" role="alert" hidden></p>
-       <details class="map-card-more"><summary>${escape(words.more)}</summary><p>${escape(words.directWhat)}</p></details>
-       <footer class="map-card-acts"><button class="text-button" type="button" data-card="cancel">${escape(words.cancel)}</button><button class="text-button map-card-go" type="submit">${escape(words.directGo)}</button></footer>`,
-      async () => {
-        const wrong = this.card.querySelector<HTMLElement>(".map-card-wrong")!;
-        const hosts = [...this.card.querySelectorAll<HTMLInputElement>("input[name=host]:checked")].map((input) => input.value);
-        const port = Number(this.card.querySelector<HTMLInputElement>("input[name=port]")!.value.trim());
-        const refuse = (said: string) => {
-          wrong.textContent = said;
-          wrong.hidden = false;
-          return new Error("kept open");
-        };
-        if (!hosts.length) throw refuse(words.directPickOne);
-        if (!Number.isInteger(port) || port < 1 || port > 65535) throw refuse(words.directPortWrong);
-        wrong.textContent = words.directChecking;
-        wrong.hidden = false;
-        wrong.classList.add("quiet");
-        this.opening.add(key);
-        this.redraw();
-        try {
-          await this.options.change(login, { change: "direct", machine: machine.name, at: hosts.map((host) => (host.includes(":") ? `[${host}]:${port}` : `${host}:${port}`)) });
-        } catch (error) {
-          wrong.classList.remove("quiet");
-          throw refuse(error instanceof Error ? error.message : String(error));
-        } finally {
-          this.opening.delete(key);
-          this.redraw();
-        }
-      },
-    );
-  }
-
-  /** The card that lets one's own computer relay for one's other machines
-   *  on its network: its network cards' addresses to choose from, and the
-   *  port. Nothing checks it from outside: only its own network reaches it. */
-  private allowRelay(login: Login, machine: Machine, key: string, member: MemberSeen): void {
-    const { words } = this.options;
-    // An IPv6 link-local address is named by each machine's own card, so no
-    // other machine reaches the relay at it.
-    const cards = (member.reach?.interfaces ?? []).map(hostOf).filter((host) => !/^fe[89ab][0-9a-f]:/i.test(host));
-    const at = this.anchorOf(key) ?? [0, 0];
-    this.openCard(
-      key,
-      at,
-      `<p class="map-card-title">${escape(words.relayTitle(machine.written))}</p>
-       <fieldset class="map-card-field"><legend>${escape(words.relayAddresses)}</legend><div class="choice-options">${cards
-         .map((host, index) => `<label class="choice map-card-choice"><input type="checkbox" name="host" value="${escape(host)}"${index === 0 ? " checked" : ""}><span class="mono">${escape(host)}</span><span class="choice-note">${escape(words.directCard)}</span></label>`)
-         .join("")}</div></fieldset>
-       <label class="field map-card-port"><span class="field-label">${escape(words.directPort)}</span><input class="mono" name="port" inputmode="numeric" value="${DIRECT_PORT}" autocomplete="off" spellcheck="false" required></label>
-       <p class="map-card-wrong" role="alert" hidden></p>
-       <details class="map-card-more"><summary>${escape(words.more)}</summary><p>${escape(words.relayWhat)}</p></details>
-       <footer class="map-card-acts"><button class="text-button" type="button" data-card="cancel">${escape(words.cancel)}</button><button class="text-button map-card-go" type="submit">${escape(words.relayGo)}</button></footer>`,
-      async () => {
-        const wrong = this.card.querySelector<HTMLElement>(".map-card-wrong")!;
-        const hosts = [...this.card.querySelectorAll<HTMLInputElement>("input[name=host]:checked")].map((input) => input.value);
-        const port = Number(this.card.querySelector<HTMLInputElement>("input[name=port]")!.value.trim());
-        const refuse = (said: string) => {
-          wrong.textContent = said;
-          wrong.hidden = false;
-          return new Error("kept open");
-        };
-        if (!hosts.length) throw refuse(words.directPickOne);
-        if (!Number.isInteger(port) || port < 1 || port > 65535) throw refuse(words.directPortWrong);
-        try {
-          await this.options.change(login, { change: "relay", machine: machine.name, at: hosts.map((host) => (host.includes(":") ? `[${host}]:${port}` : `${host}:${port}`)) });
-        } catch (error) {
-          throw refuse(error instanceof Error ? error.message : String(error));
-        }
-      },
-    );
-  }
-
-  /** Stops one's own computer relaying at once; for a moment it can be
-   *  turned on again where it was. */
-  private async stopRelay(login: Login, machine: Machine, before: string[]): Promise<void> {
-    const { words } = this.options;
-    await this.options.change(login, { change: "relay", machine: machine.name, at: [] });
-    this.offerUndo(words.relayStopped(machine.written), () => this.options.change(login, { change: "relay", machine: machine.name, at: before }));
-  }
-
-  /** Takes direct connections to a machine away at once, after a small
-   *  card of before and after; for a moment they can be given back. */
-  private stopDirect(login: Login, machine: Machine, key: string, before: string[]): void {
-    const { words } = this.options;
-    const at = this.anchorOf(key) ?? [0, 0];
-    this.openCard(
-      key,
-      at,
-      `<p class="map-card-title">${escape(words.stopDirectTitle(machine.written))}</p>
-       <div class="map-card-pictures">${directPicture(true)}<span aria-hidden="true">→</span>${directPicture(false)}</div>
-       <p class="map-card-said">${escape(words.stopDirectSaid)}</p>
-       <p class="map-card-wrong" role="alert" hidden></p>
-       <footer class="map-card-acts"><button class="text-button" type="button" data-card="cancel">${escape(words.cancel)}</button><button class="text-button map-card-go" type="submit">${escape(words.confirm)}</button></footer>`,
-      async () => {
-        await this.options.change(login, { change: "direct", machine: machine.name, at: [] });
-        this.offerUndo(words.directStopped(machine.written), () => this.options.change(login, { change: "direct", machine: machine.name, at: before }));
-      },
-    );
-  }
-
   /** Where a card about `key` stands beside: its ring on the drawing, or
    *  its row in the list, which the drawing is not laid out under. */
   private anchorOf(key: string): Point | null {
@@ -1997,69 +1779,6 @@ export class MachinesPage implements Page {
     const canvas = this.canvas.getBoundingClientRect();
     const name = (row.querySelector<HTMLElement>(".ml-name") ?? row).getBoundingClientRect();
     return [name.right - canvas.left, name.top - canvas.top + name.height / 2];
-  }
-
-  /** A card beside a ring, or rising from below on a narrow page; `go`
-   *  runs when it is confirmed, and an error it throws stays in the card. */
-  private openCard(key: string, at: Point, html: string, go: () => Promise<void | "keep">): void {
-    this.closeMenu();
-    this.cardFor = key;
-    this.redraw();
-    this.card.innerHTML = html;
-    const sheet = this.narrow();
-    this.card.classList.toggle("as-sheet", sheet);
-    this.card.hidden = false;
-    layerOpened(this.cardLayer);
-    if (!sheet) {
-      // Beside the ring, on its right unless what is open on the right, the
-      // panel or the canvas's edge, leaves no room there.
-      const canvas = this.canvas.getBoundingClientRect();
-      const right = this.panel.hidden ? canvas.width : Math.min(canvas.width, this.panel.getBoundingClientRect().left - canvas.left);
-      const width = this.card.offsetWidth;
-      const x = at[0] + 16 + width + 8 <= right ? at[0] + 16 : at[0] - 16 - width;
-      const y = Math.min(this.canvas.clientHeight - this.card.offsetHeight - 8, at[1] - 24);
-      this.card.style.transform = `translate(${Math.max(8, Math.min(x, right - width - 8))}px, ${Math.max(8, y)}px)`;
-    } else this.card.style.transform = "";
-    this.card.onsubmit = (event) => {
-      event.preventDefault();
-      const button = this.card.querySelector<HTMLButtonElement>(".map-card-go");
-      if (button) button.disabled = true;
-      go().then(
-        (kept) => {
-          if (kept === "keep") {
-            if (button) button.disabled = false;
-            return;
-          }
-          this.closeCard();
-          void this.options.store.refresh().then(() => this.redraw());
-        },
-        (error: unknown) => {
-          if (button) button.disabled = false;
-          if (error instanceof Error && error.message === "kept open") return;
-          const wrong = this.card.querySelector<HTMLElement>(".map-card-wrong");
-          const said = error instanceof Error ? error.message : String(error);
-          if (wrong) {
-            wrong.textContent = said;
-            wrong.hidden = false;
-          } else {
-            this.note = { machine: key.replace(/^m:/, ""), text: this.options.access.failed(said) };
-            this.redraw();
-          }
-        },
-      );
-    };
-    this.card.focus({ preventScroll: true });
-  }
-
-  private closeCard(): void {
-    if (!this.cardFor) return;
-    const held = this.card.contains(document.activeElement);
-    this.cardFor = null;
-    this.card.hidden = true;
-    this.card.innerHTML = "";
-    this.card.onsubmit = null;
-    this.redraw();
-    if (held) this.refocus();
   }
 
   /** Back on the drawing, or the list, once a card or a menu over it is
@@ -2203,37 +1922,4 @@ export class MachinesPage implements Page {
 function personOf(key: string): { hub: string; account: string } | null {
   const found = key.match(/^who:([^:]+):(.+)$/);
   return found ? { hub: found[1]!, account: found[2]! } : null;
-}
-
-/** An address as the hub or a network card gives it, without a port. */
-function hostOf(address: string): string {
-  const bracketed = /^\[([^\]]+)\](?::\d+)?$/.exec(address);
-  if (bracketed) return bracketed[1]!;
-  return /^[^:]+:\d+$/.test(address) ? address.slice(0, address.lastIndexOf(":")) : address;
-}
-
-/** A machine others connect to directly, drawn small for a card: its ring
- *  in the middle with its line to the hub's knot above, and two machines
- *  beside it with theirs; with direct connections, straight clay lines from
- *  the two to it. */
-function directPicture(direct: boolean): string {
-  const random = seeded(`direct-picture:${direct}`);
-  const knot: [number, number] = [66, 7];
-  const middle: [number, number] = [66, 30];
-  const sides: [number, number][] = [
-    [18, 26],
-    [114, 26],
-  ];
-  const rings = [circle(middle, 8, 1.5, random), ...sides.map((side) => circle(side, 6, 1.3, random))];
-  const bowed = (from: [number, number], reach: number) => {
-    const dx = knot[0] - from[0];
-    const dy = knot[1] - from[1];
-    const length = Math.hypot(dx, dy);
-    const start: [number, number] = [from[0] + (dx / length) * (reach + 2), from[1] + (dy / length) * (reach + 2)];
-    const end: [number, number] = [knot[0] - (dx / length) * 5, knot[1] - (dy / length) * 5];
-    return outline([start, [(start[0] + end[0]) / 2 + 2, (start[1] + end[1]) / 2 - 2], end], 1.1, random, { pressure: 0.3, taper: 0.1 });
-  };
-  const lines = [bowed(middle, 8), ...sides.map((side) => bowed(side, 6))];
-  const straight = direct ? sides.map((side) => ruled([side[0] + (side[0] < 66 ? 8 : -8), side[1] + 1], [middle[0] + (side[0] < 66 ? -10 : 10), middle[1]], 1.1, random)) : [];
-  return `<svg class="map-card-picture" viewBox="0 0 132 40" aria-hidden="true"><g class="ink graphite" filter="url(#pen-marker)"><path d="${circle(knot, 3.5, 1.2, random)}"/><path d="${blot(knot, 1.5, random)}"/>${[...rings, ...lines].map((d) => `<path d="${d}"/>`).join("")}</g><g class="ink clay" filter="url(#pen-marker)">${straight.map((d) => `<path d="${d}"/>`).join("")}</g></svg>`;
 }
