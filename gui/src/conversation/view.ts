@@ -31,6 +31,7 @@
 
 import { diffCard, unifiedDiff, type DiffCard, type DiffKind } from "./diff-card";
 import { handOnAtEdge } from "../scroll-handoff";
+import { reducedMotion } from "../motion";
 import { ActsMenu } from "../app/acts-menu";
 import { onHeld } from "../app/press";
 import type { AgentActivity, Content, Health, MachineName, Notice, Speaker, Tool, TurnEnd } from "../world/events";
@@ -299,6 +300,10 @@ export class ConversationView {
   private pin: { slot: Slot; top: number } | null = null;
   /** Blocks a change of view brought in, which come in once. */
   private unfolding = new Set<string>();
+  /** A switch of what is shown under way: the conversation has dipped, and
+   *  changes to the view asked last when it is out of sight. */
+  private dip = 0;
+  private dipTo: "said" | "steps" | null = null;
   /** The spaces that stand for the blocks above and below those drawn. */
   private readonly above: HTMLElement;
   private readonly below: HTMLElement;
@@ -584,7 +589,31 @@ export class ConversationView {
   /** Shows only what was said, or every step: what both show stays where
    *  it is on the screen, and what comes in comes in once. */
   showing(mode: "said" | "steps"): void {
+    if (this.dip) {
+      this.dipTo = mode;
+      return;
+    }
     if (mode === this.mode) return;
+    const quick = reducedMotion() || !this.root.isConnected ? 0 : msOf(getComputedStyle(this.root).getPropertyValue("--quick"));
+    if (!quick) {
+      this.switchTo(mode);
+      return;
+    }
+    // What moves while the view changes is not seen moving: the whole
+    // conversation dips, changes, and comes back up where it was read.
+    this.dipTo = mode;
+    this.root.classList.add("view-dip");
+    this.dip = window.setTimeout(() => {
+      this.dip = 0;
+      if (this.dipTo && this.dipTo !== this.mode) this.switchTo(this.dipTo);
+      this.dipTo = null;
+      requestAnimationFrame(() => this.root.classList.remove("view-dip"));
+    }, quick);
+  }
+
+  /** Shows `mode`'s blocks at once, the block read at the top kept where it
+   *  stands. */
+  private switchTo(mode: "said" | "steps"): void {
     const next = mode === "said" ? this.conversation.chatBlocks() : this.conversation.blocks();
     const kept = new Set(next.map((block) => block.key));
     const view = this.context.scroller.getBoundingClientRect();
@@ -597,8 +626,7 @@ export class ConversationView {
         break;
       }
     }
-    const before = new Set(this.blocks.map((block) => block.key));
-    this.unfolding = new Set(this.live ? next.filter((block) => !before.has(block.key)).map((block) => block.key) : []);
+    this.unfolding = new Set();
     this.mode = mode;
     this.update();
   }
@@ -3219,4 +3247,11 @@ export function modelName(id: string): string {
   if (!claude) return id;
   const [, family, major, minor] = claude;
   return `${family![0]!.toUpperCase()}${family!.slice(1)} ${major}${minor ? `.${minor}` : ""}`;
+}
+
+/** A CSS time, as a token holds it, in milliseconds. */
+function msOf(time: string): number {
+  const value = parseFloat(time);
+  if (!Number.isFinite(value)) return 0;
+  return time.trim().endsWith("ms") ? value : value * 1000;
 }

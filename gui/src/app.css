@@ -37,6 +37,14 @@
   --edge: var(--space-6);
 }
 
+/* Beside an open panel the fade is the conversation's alone, its edge
+   following the panel's as it opens. */
+@media (min-width: 761px) {
+  .conversation-page.sp-host > .page-head::after {
+    right: calc(var(--side-width) * var(--sp-open));
+  }
+}
+
 .talk-scroller {
   flex: 1;
 }

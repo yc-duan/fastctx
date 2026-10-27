@@ -21,6 +21,15 @@
   padding: var(--space-6) var(--gutter) var(--space-12);
   display: flex;
   flex-direction: column;
+  opacity: var(--shown);
+  transition: --shown var(--enter) var(--ease-out);
+}
+
+/* Between what was said and every step, the conversation dips and comes
+   back up (`view.ts`, showing). */
+.transcript.view-dip {
+  --shown: 0;
+  transition-duration: var(--quick);
 }
 
 /* In whole pixels where the system can round. */
