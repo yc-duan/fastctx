@@ -33,6 +33,9 @@ export interface WorldIndex {
   computer: Map<string, MemberSeen>;
   /** The names of the managed machines, on any hub. */
   managed: Set<string>;
+  /** The group of the first computer in a group by each name it goes by
+   *  or had, on any hub, in the hubs' order. */
+  grouped: Map<string, string>;
 }
 
 const made = new WeakMap<WorldNow, WorldIndex>();
@@ -52,6 +55,7 @@ function indexMade(world: WorldNow): WorldIndex {
   const hubs = new Map<string, HubIndex>();
   const computer = new Map<string, MemberSeen>();
   const managed = new Set<string>();
+  const grouped = new Map<string, string>();
   for (const hub of world.accounts.hubs) {
     const named = new Map<string, MemberSeen[]>();
     const computers = new Map<string, MemberSeen>();
@@ -68,7 +72,10 @@ function indexMade(world: WorldNow): WorldIndex {
       }
       if (member.kind !== "computer") continue;
       if (!computer.has(member.name)) computer.set(member.name, member);
-      for (const name of [member.name, ...(member.was ?? [])]) if (!computers.has(name)) computers.set(name, member);
+      for (const name of [member.name, ...(member.was ?? [])]) {
+        if (!computers.has(name)) computers.set(name, member);
+        if (member.group && !grouped.has(name)) grouped.set(name, member.group);
+      }
     }
     hubs.set(hub.hub, {
       hub,
@@ -80,5 +87,5 @@ function indexMade(world: WorldNow): WorldIndex {
       groups: new Map([...groups].map(([owner, names]) => [owner, [...names].sort((a, b) => a.localeCompare(b))])),
     });
   }
-  return { hubs, computer, managed };
+  return { hubs, computer, managed, grouped };
 }
