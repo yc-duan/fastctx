@@ -46,6 +46,7 @@ import type { AccountChange, AccountsReply, TokenPeek } from "../src/world/accou
 import type { ConnectionState } from "../src/world/device";
 import type { Choices } from "../src/world/bridge";
 import type { ComposerSnapshot, ComposerMutation, ComposerUpdated } from "../src/world/composer";
+import type { DocumentSubscription, DocumentInput, DocumentFrame, DocumentSend } from "../src/world/composer-sync";
 import type { MachineLogPage } from "../src/world/machine-log";
 import type { MachineStats } from "../src/world/stats";
 import type { UsageCallsPage, UsageCallsQuery } from "../src/world/usage-calls";
@@ -58,6 +59,7 @@ export const fixture = ${json.trimEnd()} satisfies {
   profile: { calls: unknown; replies: (({ reply: "profile" } & ProfileView) | { reply: "profile_written"; version: number } | { reply: "mcp"; result: McpReply })[] };
   machine_log: MachineLogPage[];
   composer: { snapshots: ComposerSnapshot[]; mutations: ComposerMutation[]; updated: ComposerUpdated };
+  composer_sync: { subscription: DocumentSubscription; inputs: DocumentInput[]; frames: DocumentFrame[]; sends: DocumentSend[] };
   // Accounts as the interface reads and changes them, the device's
   // standing, and what the user chose for a new conversation.
   run_facts: { calls: RunFacts[]; diff: DiffLine[]; updates: JobFacts[]; projected_reads: ProjectedLines[]; parts: LinePart[]; open_errors: LineOpenError[] };

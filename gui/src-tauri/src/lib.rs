@@ -92,11 +92,15 @@ mod uploading;
 #[cfg(windows)]
 mod titlebar;
 
+mod watch_delivery;
+mod conversation_watch;
+
 struct Shell {
     connection: connection::Connection,
     watches: Arc<Mutex<HashMap<u64, JoinHandle<()>>>>,
     /// What each watched conversation holds for its page.
     transcripts: Arc<transcript::Transcripts>,
+    deliveries: watch_delivery::Deliveries,
     next: AtomicU64,
     page: AtomicU64,
     line_requests: line_reading::Requests,
@@ -119,6 +123,7 @@ impl Shell {
             watch.abort();
         }
         self.transcripts.close_all();
+        self.deliveries.close_all();
     }
 
     fn follow(
@@ -377,7 +382,7 @@ async fn watch(
     shell: tauri::State<'_, Shell>,
     resident_id: String,
     machine_name: Option<String>,
-    pieces: Channel<Piece>,
+    pieces: Channel<watch_delivery::Wake>,
 ) -> Result<Watch, NotWatched> {
     let page = shell.page.load(Ordering::Relaxed);
     let world = shell.world();
@@ -394,35 +399,16 @@ async fn watch(
     let (transcript, window) = transcript::Transcript::new(&history)?;
     drop(history);
     let transcript = shell.transcripts.open(id, transcript);
-    #[cfg(target_os = "android")]
-    let work = android::watching::stream(world, resident, machine, conversation, transcript, pieces);
-    #[cfg(not(target_os = "android"))]
-    let work = async move {
-        let mut conversation = conversation;
-        loop {
-            let update = match conversation.update().await {
-                Ok(update) => update,
-                Err(error) => {
-                    let _ = pieces.send(Piece::failed(&error));
-                    return;
-                }
-            };
-            let piece = match transcript.lock().expect("transcript").take(update) {
-                Ok(Some(piece)) => piece,
-                Ok(None) => continue,
-                Err(error) => Piece::Ended { error: Some(error) },
-            };
-            let ended = piece.last();
-            if pieces.send(piece).is_err() || ended {
-                return;
-            }
-        }
-    };
-    let transcripts = shell.transcripts.clone();
-    shell.follow(page, id, async move {
-        work.await;
-        transcripts.close(id);
-    })?;
+    let mut initial = Some(conversation);
+    if let Err(error) = shell.follow_delivery(page, id, pieces, |piece| match piece {
+        Piece::Now { .. } => Some("now".into()),
+        _ => None,
+    }, move |pieces, _| {
+        conversation_watch::stream(initial.take(), world.clone(), resident.clone(), machine.clone(), transcript.clone(), pieces)
+    }) {
+        shell.transcripts.close(id);
+        return Err(error.into());
+    }
     Ok(Watch { id, window })
 }
 
@@ -432,6 +418,7 @@ fn unwatch(shell: tauri::State<'_, Shell>, id: u64) {
         task.abort();
     }
     shell.transcripts.close(id);
+    shell.deliveries.close(id);
 }
 
 /// The user's words to a resident, with the files uploaded for them; those
@@ -1243,6 +1230,7 @@ pub fn run() {
             project_edit,
             watch,
             unwatch,
+            watch_delivery::watch_delivery_read,
             transcript::conversation_part,
             transcript::conversation_cut,
             transcript::conversation_locate,

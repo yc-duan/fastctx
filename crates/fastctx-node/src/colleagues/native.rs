@@ -172,8 +172,15 @@ pub(super) async fn read(node: &Arc<Node>, id: &ResidentId, deadline: Instant) -
     match tokio::time::timeout_at(deadline, crate::talk::history_here(node, id)).await {
         Ok(Ok(mut history)) => {
             fold.events(&history.history, None);
-            while let Ok(event) = history.events.try_recv() {
-                fold.event(&event.happened, event.at, None, true);
+            loop {
+                match history.events.try_recv() {
+                    Ok(event) => fold.event(&event.happened, event.at, None, true),
+                    Err(fastctx_net::watch_queue::TryRecvError::Lagged) => {
+                        unavailable.push(fastctx_net::watch_queue::Lagged.to_string());
+                        break;
+                    }
+                    Err(_) => break,
+                }
             }
         }
         Ok(Err(error)) => return (Vec::new(), vec![error.message]),

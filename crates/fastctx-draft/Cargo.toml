@@ -1,0 +1,13 @@
+[package]
+name = "fastctx-draft"
+description = "Yjs-compatible shared text for conversation drafts"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+# Upstream 0.26.0 with the pending-delete range correction from 0.28.0.
+yrs = { path = "../../vendor/yrs", features = ["sync"] }

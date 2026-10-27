@@ -20,6 +20,7 @@ pub mod disks;
 pub mod doing;
 pub mod elevation;
 pub mod environment;
+pub mod event_queue;
 pub mod file_read;
 pub mod file_version;
 pub mod form;

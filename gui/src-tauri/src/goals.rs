@@ -69,7 +69,7 @@ pub async fn goal_watch(
     resident_id: String,
     machine_name: Option<String>,
     account: Option<HubAccount>,
-    pieces: Channel<Piece>,
+    pieces: Channel<crate::watch_delivery::Wake>,
 ) -> Result<Watching, String> {
     let page = shell.page.load(std::sync::atomic::Ordering::Relaxed);
     let world = shell.world();
@@ -80,7 +80,52 @@ pub async fn goal_watch(
     let (watch, view) =
         world.watch_goal(resident.clone(), machine.clone(), account).await.map_err(|error| error.to_string())?;
     let id = shell.next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    shell.follow(page, id, follow(world, resident, machine, view.account.clone(), watch, pieces))?;
+    let account = view.account.clone();
+    let mut initial = Some(watch);
+    shell.follow_delivery(
+        page,
+        id,
+        pieces,
+        |_: &Piece| Some("goal".into()),
+        move |pieces, _| {
+            let (world, resident, machine, account) =
+                (world.clone(), resident.clone(), machine.clone(), account.clone());
+            let initial = initial.take();
+            async move {
+                let watch = if let Some(initial) = initial {
+                    initial
+                } else {
+                    let mut again = fastctx_client::Again::default();
+                    loop {
+                        match world.watch_goal(resident.clone(), machine.clone(), Some(account.clone())).await {
+                            Ok((watch, view)) => {
+                                if pieces.send(Piece::Snapshot { view: Box::new(view) }).is_err() {
+                                    return;
+                                }
+                                break watch;
+                            }
+                            Err(error) => {
+                                let deleted = error.is_deleted() || error.is_refused();
+                                let interruption = again.broke(error.to_string());
+                                if pieces
+                                    .send(Piece::Interrupted {
+                                        error: interruption.why,
+                                        since: crate::epoch_ms(interruption.since),
+                                    })
+                                    .is_err()
+                                    || deleted
+                                {
+                                    return;
+                                }
+                                again.pause(&world, machine.as_ref()).await;
+                            }
+                        }
+                    }
+                };
+                follow(world, resident, machine, account, watch, pieces).await;
+            }
+        },
+    )?;
     Ok(Watching { id, view })
 }
 
@@ -90,7 +135,7 @@ async fn follow(
     machine: Option<Written>,
     account: HubAccount,
     mut watch: GoalWatch,
-    pieces: Channel<Piece>,
+    pieces: crate::watch_delivery::Sender<Piece>,
 ) {
     let mut again = fastctx_client::Again::default();
     again.came();

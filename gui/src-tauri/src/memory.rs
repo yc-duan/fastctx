@@ -117,59 +117,91 @@ pub enum Piece {
 pub(crate) async fn memory_watch(
     shell: tauri::State<'_, Shell>,
     project: String,
-    pieces: Channel<Piece>,
+    pieces: Channel<crate::watch_delivery::Wake>,
 ) -> Result<u64, String> {
     let town = town(project)?;
     let page = shell.page.load(Ordering::Relaxed);
     let world = shell.world();
-    let mut watch = world.watch_memory(town.clone()).await.map_err(|error| error.to_string())?;
+    let mut initial = Some(world.watch_memory(town.clone()).await.map_err(|error| error.to_string())?);
     let id = shell.next.fetch_add(1, Ordering::Relaxed);
-    shell.follow(page, id, async move {
-        let mut again = fastctx_client::Again::default();
-        loop {
-            match watch.next().await {
-                Ok(catalog) => {
-                    again.came();
-                    if pieces.send(Piece::Catalog { catalog }).is_err() {
-                        return;
+    shell.follow_delivery(
+        page,
+        id,
+        pieces,
+        |_: &Piece| Some("catalog".into()),
+        move |pieces, _| {
+            let (world, town) = (world.clone(), town.clone());
+            let initial = initial.take();
+            async move {
+                let mut again = fastctx_client::Again::default();
+                let mut watch = if let Some(initial) = initial {
+                    initial
+                } else {
+                    loop {
+                        match world.watch_memory(town.clone()).await {
+                            Ok(watch) => break watch,
+                            Err(error) => {
+                                let interruption = again.broke(error.to_string());
+                                if pieces
+                                    .send(Piece::Interrupted {
+                                        error: interruption.why,
+                                        since: crate::epoch_ms(interruption.since),
+                                    })
+                                    .is_err()
+                                {
+                                    return;
+                                }
+                                again.pause(&world, None).await;
+                            }
+                        }
                     }
-                    continue;
-                }
-                Err(error) => {
-                    let interruption = again.broke(error.to_string());
-                    if pieces
-                        .send(Piece::Interrupted {
-                            error: interruption.why,
-                            since: crate::epoch_ms(interruption.since),
-                        })
-                        .is_err()
-                    {
-                        return;
+                };
+                loop {
+                    match watch.next().await {
+                        Ok(catalog) => {
+                            again.came();
+                            if pieces.send(Piece::Catalog { catalog }).is_err() {
+                                return;
+                            }
+                            continue;
+                        }
+                        Err(error) => {
+                            let interruption = again.broke(error.to_string());
+                            if pieces
+                                .send(Piece::Interrupted {
+                                    error: interruption.why,
+                                    since: crate::epoch_ms(interruption.since),
+                                })
+                                .is_err()
+                            {
+                                return;
+                            }
+                        }
                     }
-                }
-            }
-            loop {
-                again.pause(&world, None).await;
-                match world.watch_memory(town.clone()).await {
-                    Ok(opened) => {
-                        watch = opened;
-                        break;
-                    }
-                    Err(error) => {
-                        let interruption = again.broke(error.to_string());
-                        if pieces
-                            .send(Piece::Interrupted {
-                                error: interruption.why,
-                                since: crate::epoch_ms(interruption.since),
-                            })
-                            .is_err()
-                        {
-                            return;
+                    loop {
+                        again.pause(&world, None).await;
+                        match world.watch_memory(town.clone()).await {
+                            Ok(opened) => {
+                                watch = opened;
+                                break;
+                            }
+                            Err(error) => {
+                                let interruption = again.broke(error.to_string());
+                                if pieces
+                                    .send(Piece::Interrupted {
+                                        error: interruption.why,
+                                        since: crate::epoch_ms(interruption.since),
+                                    })
+                                    .is_err()
+                                {
+                                    return;
+                                }
+                            }
                         }
                     }
                 }
             }
-        }
-    })?;
+        },
+    )?;
     Ok(id)
 }

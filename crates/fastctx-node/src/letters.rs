@@ -3,6 +3,8 @@
 
 mod delivered;
 mod identity;
+mod migrate;
+pub(crate) use migrate::start as migrate;
 mod receiving;
 pub(crate) use delivered::Handoff;
 pub(crate) use identity::Identity;

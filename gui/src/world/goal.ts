@@ -2,7 +2,8 @@
 // (`world-goal.md`). The goal is one account record; only its live view is
 // pushed, the goal's sentinel's last reading of a stop with it.
 
-import { Channel, invoke } from "@tauri-apps/api/core";
+import { invoke } from "@tauri-apps/api/core";
+import { observe } from "./delivery";
 import type { GoalShown, GoalStatus, PausedBy, SentinelLook } from "../side/types";
 import type { ResidentId, Timestamp } from "./wire";
 
@@ -66,15 +67,7 @@ export function goalUpdate(
 
 /** Follows the goal: its view now (resolved here), then after each change. */
 export function watchGoal(owner: ResidentId, onPiece: (piece: GoalPiece) => void): Promise<{ id: number; view: GoalView }> {
-  const pieces = new Channel<GoalPiece>();
-  pieces.onmessage = (piece) => {
-    try {
-      onPiece(piece);
-    } catch (error) {
-      console.error("a goal change could not be shown", piece, error);
-    }
-  };
-  return invoke<{ id: number; view: GoalView }>("goal_watch", { residentId: owner, pieces });
+  return observe<GoalPiece, { id: number; view: GoalView }>("goal_watch", { residentId: owner }, onPiece);
 }
 
 /** Which stop paused the goal, in the interface's terms: the agent pauses

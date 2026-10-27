@@ -4,7 +4,8 @@
 // a version, when and where, is the World's stamp beside it, never the
 // text's own word.
 
-import { Channel, invoke } from "@tauri-apps/api/core";
+import { invoke } from "@tauri-apps/api/core";
+import { observe } from "./delivery";
 import type { Writer } from "./world";
 
 export type MemoryKind = "journal" | "spec";
@@ -84,8 +85,7 @@ export const memory: MemorySeam = {
       ? invoke<MemoryRevision>("memory_save_spec", { project, name, text, expected })
       : invoke<MemoryRevision>("memory_add_journal", { project, name, text }),
   watch: (project, onCatalog) => {
-    const pieces = new Channel<{ kind: "catalog"; catalog: MemoryCatalog } | { kind: "interrupted"; error: string; since: number }>();
-    pieces.onmessage = (piece) => {
+    return observe<{ kind: "catalog"; catalog: MemoryCatalog }, number>("memory_watch", { project }, (piece) => {
       // A broken watch keeps the catalog last seen until it comes back.
       if (piece.kind !== "catalog") return;
       try {
@@ -93,8 +93,7 @@ export const memory: MemorySeam = {
       } catch (error) {
         console.error("a memory catalog could not be shown", error);
       }
-    };
-    return invoke<number>("memory_watch", { project, pieces });
+    });
   },
   enabled: (hub, account) => invoke<{ enabled: boolean }>("memory_settings_read", { hub, account }).then((settings) => settings.enabled),
   setEnabled: (on, hub, account) => invoke<{ enabled: boolean }>("memory_settings_set", { hub, account, enabled: on }).then(() => undefined),

@@ -15,6 +15,7 @@ base64 = "0.22"
 bytes = "1"
 ed25519-dalek = "3.0.0"
 fastctx-platform = { path = "../fastctx-platform" }
+fastctx-storage = { path = "../fastctx-storage" }
 fastctx-types = { path = "../fastctx-types" }
 futures-util = { version = "0.3", default-features = false, features = ["sink", "std"] }
 getrandom = { version = "0.3", features = ["std"] }

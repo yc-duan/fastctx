@@ -1,80 +1,93 @@
-//! Watching residents live: every event of a session the World hears from,
-//! handed to each watcher as it happens. Closing a receiver releases its
-//! registration even when the session produces no further events.
+//! Watch publication locks only this conversation's state. Small registry shards
+//! locate the conversation and are released before observing or fanning out an
+//! event. A slow consumer loses its bounded queue and resumes from history.
 
-use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
-
+use fastctx_net::watch_queue::{self, Events, Sender};
 use fastctx_types::ResidentId;
 use fastctx_types::session::SessionEvent;
-use tokio::sync::mpsc;
+use std::collections::HashMap;
+use std::hash::{Hash, Hasher};
+use std::sync::{Arc, Mutex, RwLock};
 
-#[derive(Default)]
+const SHARDS: usize = 64;
+type Sessions = HashMap<ResidentId, Arc<Mutex<Watching>>>;
+
 pub struct Watchers {
-    watching: Arc<Mutex<HashMap<ResidentId, Watching>>>,
+    watching: Arc<[RwLock<Sessions>; SHARDS]>,
     pub(crate) changed: Arc<tokio::sync::Notify>,
 }
-
+impl Default for Watchers {
+    fn default() -> Self {
+        Self { watching: Arc::new(std::array::from_fn(|_| RwLock::default())), changed: Arc::default() }
+    }
+}
 #[derive(Default)]
 struct Watching {
-    senders: Vec<mpsc::UnboundedSender<SessionEvent>>,
+    senders: Vec<Sender<Arc<SessionEvent>>>,
     live: crate::session_live::Live,
+}
+fn shard(id: &ResidentId) -> usize {
+    let mut hash = std::collections::hash_map::DefaultHasher::new();
+    id.hash(&mut hash);
+    hash.finish() as usize % SHARDS
 }
 
 impl Watchers {
-    pub(crate) fn watched(&self, id: &ResidentId) -> bool {
-        self.watching
-            .lock()
-            .expect("never poisoned")
-            .get(id)
-            .is_some_and(|session| session.senders.iter().any(|sender| !sender.is_closed()))
+    fn get(&self, id: &ResidentId) -> Option<Arc<Mutex<Watching>>> {
+        self.watching[shard(id)].read().expect("never poisoned").get(id).cloned()
     }
-
-    /// A projection of the same in-flight items delivered to a joining watcher.
+    fn session(&self, id: &ResidentId) -> Arc<Mutex<Watching>> {
+        self.get(id).unwrap_or_else(|| {
+            self.watching[shard(id)].write().expect("never poisoned").entry(id.clone()).or_default().clone()
+        })
+    }
+    pub(crate) fn watched(&self, id: &ResidentId) -> bool {
+        let watched = self.get(id).is_some_and(|session| {
+            session.lock().expect("never poisoned").senders.iter().any(|sender| !sender.is_closed())
+        });
+        retire(&self.watching, id);
+        watched
+    }
     pub fn tools(&self, id: &ResidentId) -> Vec<fastctx_types::town::CurrentTool> {
         use fastctx_types::session::Happened;
-        let watching = self.watching.lock().expect("never poisoned");
-        watching
-            .get(id)
-            .into_iter()
-            .flat_map(|session| session.live.snapshots())
+        let Some(session) = self.get(id) else { return Vec::new() };
+        let tools = session
+            .lock()
+            .expect("never poisoned")
+            .live
+            .snapshots()
             .filter_map(|event| {
                 let Happened::Began { turn, item } = &event.happened else { return None };
                 fastctx_types::town::CurrentTool::from_item(turn, item)
             })
-            .collect()
+            .collect();
+        drop(session);
+        retire(&self.watching, id);
+        tools
     }
-
-    /// Ends as soon as no current watcher remains. Newly opened watches
-    /// participate on the next check; no polling lease can keep one alive.
     pub async fn unwatched(&self, id: &ResidentId) {
         loop {
-            let sender = self
-                .watching
-                .lock()
-                .expect("never poisoned")
-                .get(id)
-                .and_then(|watching| watching.senders.iter().find(|sender| !sender.is_closed()).cloned());
+            let sender = self.get(id).and_then(|session| {
+                session.lock().expect("never poisoned").senders.iter().find(|sender| !sender.is_closed()).cloned()
+            });
+            retire(&self.watching, id);
             match sender {
                 Some(sender) => sender.closed().await,
                 None => return,
             }
         }
     }
-
-    /// Everything that happens in the resident's session from now on.
-    pub fn watch(&self, id: &ResidentId) -> mpsc::UnboundedReceiver<SessionEvent> {
+    pub fn watch(&self, id: &ResidentId) -> Events {
         self.subscribe(id, false)
     }
-
-    pub fn watch_composer(&self, id: &ResidentId) -> mpsc::UnboundedReceiver<SessionEvent> {
+    pub fn watch_composer(&self, id: &ResidentId) -> Events {
         self.subscribe(id, true)
     }
 
-    fn subscribe(&self, id: &ResidentId, composer: bool) -> mpsc::UnboundedReceiver<SessionEvent> {
-        let (sender, receiver) = mpsc::unbounded_channel();
-        let mut watching = self.watching.lock().expect("never poisoned");
-        let session = watching.entry(id.clone()).or_default();
+    fn subscribe(&self, id: &ResidentId, composer: bool) -> Events {
+        let (sender, receiver) = watch_queue::events();
+        let cell = self.session(id);
+        let mut session = cell.lock().expect("never poisoned");
         for snapshot in session.live.snapshots() {
             if composer
                 && matches!(
@@ -87,45 +100,69 @@ impl Watchers {
             {
                 continue;
             }
-            sender.send(snapshot.clone()).expect("receiver is still here");
+            if sender.send(Arc::new(snapshot.clone())).is_err() {
+                break;
+            }
         }
         session.senders.push(sender.clone());
+        drop(session);
         self.changed.notify_one();
         let changed = self.changed.clone();
         let (registry, id) = (Arc::downgrade(&self.watching), id.clone());
         tokio::spawn(async move {
             sender.closed().await;
             changed.notify_one();
+            {
+                let mut session = cell.lock().expect("never poisoned");
+                session.senders.retain(|held| !held.same_channel(&sender));
+                if session.senders.is_empty() {
+                    session.live.unwatched();
+                }
+            }
+            drop(cell);
             if let Some(registry) = registry.upgrade() {
-                let mut watching = registry.lock().expect("never poisoned");
-                if let Some(session) = watching.get_mut(&id) {
-                    session.senders.retain(|held| !held.same_channel(&sender));
-                    if session.senders.is_empty() {
-                        session.live.unwatched();
-                        if session.live.snapshots().next().is_none() {
-                            watching.remove(&id);
-                        }
-                    }
-                }
-                if watching.is_empty() {
-                    *watching = HashMap::new();
-                }
+                retire(&registry, &id);
             }
         });
         receiver
     }
 
     pub fn publish(&self, id: &ResidentId, event: &SessionEvent) {
-        let mut watching = self.watching.lock().expect("never poisoned");
-        let session = watching.entry(id.clone()).or_default();
-        if session.live.observe(event) {
-            session.senders.retain(|watcher| watcher.send(event.clone()).is_ok());
+        let cell = self.session(id);
+        let measured = watch_queue::event_size(event);
+        let empty = {
+            let mut session = cell.lock().expect("never poisoned");
+            if session.live.observe(event) && !session.senders.is_empty() {
+                let event = Arc::new(event.clone());
+                session
+                    .senders
+                    .retain(|sender| sender.send_measured(event.clone(), measured.0, measured.1.clone()).is_ok());
+            }
+            if session.senders.is_empty() {
+                session.live.unwatched();
+            }
+            session.senders.is_empty() && session.live.snapshots().next().is_none()
+        };
+        drop(cell);
+        if empty {
+            retire(&self.watching, id);
         }
-        if session.senders.is_empty() {
-            session.live.unwatched();
+    }
+}
+
+fn retire(registry: &[RwLock<Sessions>; SHARDS], id: &ResidentId) {
+    // Callers release their cell before checking. The last concurrent user
+    // therefore sees the registry's sole reference, even when several close
+    // together. Holding the shard's write lock prevents a new lookup racing it.
+    let mut shard = registry[shard(id)].write().expect("never poisoned");
+    let empty = shard.get(id).is_some_and(|cell| {
+        if Arc::strong_count(cell) != 1 {
+            return false;
         }
-        if session.senders.is_empty() && session.live.snapshots().next().is_none() {
-            watching.remove(id);
-        }
+        let session = cell.lock().expect("never poisoned");
+        session.senders.is_empty() && session.live.snapshots().next().is_none()
+    });
+    if empty {
+        shard.remove(id);
     }
 }

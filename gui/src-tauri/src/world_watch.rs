@@ -31,42 +31,54 @@ pub enum Piece {
 /// on, is opened again as `Again` paces it; the World as it is then comes
 /// first.
 #[fastctx_gui_command::command]
-pub(crate) async fn world_watch(shell: tauri::State<'_, Shell>, pieces: Channel<Piece>) -> Result<u64, String> {
+pub(crate) async fn world_watch(
+    shell: tauri::State<'_, Shell>,
+    pieces: Channel<crate::watch_delivery::Wake>,
+) -> Result<u64, String> {
     let page = shell.page.load(Ordering::Relaxed);
     let world = shell.world();
     let id = shell.next.fetch_add(1, Ordering::Relaxed);
-    shell.follow(page, id, async move {
-        let mut again = fastctx_client::Again::default();
-        loop {
-            match world.watch_world().await {
-                Ok(mut watch) => loop {
-                    match watch.next().await {
-                        Ok(now) => {
-                            again.came();
-                            if pieces.send(Piece::World { world: Box::new(now) }).is_err() {
-                                return;
+    shell.follow_delivery(
+        page,
+        id,
+        pieces,
+        |_: &Piece| Some("world".into()),
+        move |pieces, _| {
+            let world = world.clone();
+            async move {
+                let mut again = fastctx_client::Again::default();
+                loop {
+                    match world.watch_world().await {
+                        Ok(mut watch) => loop {
+                            match watch.next().await {
+                                Ok(now) => {
+                                    again.came();
+                                    if pieces.send(Piece::World { world: Box::new(now) }).is_err() {
+                                        return;
+                                    }
+                                }
+                                Err(error) => {
+                                    let interruption = again.broke(error.to_string());
+                                    let since = crate::epoch_ms(interruption.since);
+                                    if pieces.send(Piece::Interrupted { error: interruption.why, since }).is_err() {
+                                        return;
+                                    }
+                                    break;
+                                }
                             }
-                        }
+                        },
                         Err(error) => {
                             let interruption = again.broke(error.to_string());
                             let since = crate::epoch_ms(interruption.since);
                             if pieces.send(Piece::Interrupted { error: interruption.why, since }).is_err() {
                                 return;
                             }
-                            break;
                         }
                     }
-                },
-                Err(error) => {
-                    let interruption = again.broke(error.to_string());
-                    let since = crate::epoch_ms(interruption.since);
-                    if pieces.send(Piece::Interrupted { error: interruption.why, since }).is_err() {
-                        return;
-                    }
+                    again.pause(&world, None).await;
                 }
             }
-            again.pause(&world, None).await;
-        }
-    })?;
+        },
+    )?;
     Ok(id)
 }

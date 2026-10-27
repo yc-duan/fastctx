@@ -173,6 +173,7 @@ pub(crate) struct Node {
     /// the programs the node starts.
     root: PathBuf,
     world: WorldDir,
+    database: fastctx_storage::Database,
     /// This program's own copy under the World, which everything the node
     /// starts from itself runs from (`own.rs`).
     fastctx: PathBuf,
@@ -584,11 +585,14 @@ pub async fn run_prepared(
         Arc::new(move |line| codex_log.line(line)),
     );
     let claude = claude::Claude::new(&world)?;
+    let database = fastctx_storage::Database::open(&world.path().join("node.sqlite3"), composer::SCHEMA)
+        .context("opening the node database")?;
     // Built cyclically so the goal services can hold a weak handle back to the
     // node they reach account records and context through.
     let node = Arc::new_cyclic(|weak: &std::sync::Weak<Node>| Node {
         root: fastctx_root.to_path_buf(),
         world,
+        database,
         fastctx,
         machine: RwLock::new(machine),
         jobs: jobs::Jobs::new(),
@@ -668,6 +672,7 @@ pub async fn run_prepared(
         lifetime,
         started: jiff::Timestamp::now(),
     });
+    letters::migrate(&node);
     // The third version's projects are kept as this computer's own, to be
     // carried into its account at its hub.
     let (kept, problems) =

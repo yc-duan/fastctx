@@ -13,7 +13,7 @@
 use std::sync::Arc;
 
 use fastctx_net::data::Stream;
-use fastctx_net::link::{Feed, Link};
+use fastctx_net::link::Link;
 use fastctx_net::sign::Domain;
 use fastctx_types::access::{Acting, Purpose, Written};
 use fastctx_types::agents::Choices;
@@ -27,7 +27,8 @@ use fastctx_types::session::{SessionEvent, Watched};
 use fastctx_types::{Address, AgentName, MachineName, ResidentId, TownName};
 use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
-use tokio::sync::mpsc;
+use fastctx_net::watch_queue::{self, Events};
+pub(crate) mod multiplex;
 
 use crate::Node;
 use crate::speech::{self, Owed};
@@ -97,13 +98,16 @@ pub async fn watch(
     held: Option<Held>,
     now: bool,
     goal: Option<fastctx_types::access::HubAccount>,
-) -> Result<mpsc::UnboundedReceiver<Result<Watched, Failure>>, Failure> {
+) -> Result<watch_queue::Receiver<Result<Watched, Failure>>, Failure> {
     let local = machine.is_none() && node.residents.about(&resident).is_some();
     let machine = match machine {
         Some(machine) => machine,
         None => locate(node, &resident).await?,
     };
-    let (sender, receiver) = mpsc::unbounded_channel();
+    let (sender, receiver) = watch_queue::channel(|piece: &Result<Watched, Failure>| match piece {
+        Ok(piece) => watch_queue::watched_size(piece),
+        Err(error) => (error.message.len(), None),
+    });
     if local || node.is_here(&machine) {
         let mut told = Told::new(node, &resident, now && composer.is_none());
         let (lease, opened) = if let Some(account) = &goal {
@@ -115,22 +119,23 @@ pub async fn watch(
             opening(node, &resident, composer, held.as_ref()).await?
         };
         let Opening { pieces, mut events, slim } = opened;
-        for piece in pieces.into_iter().chain(told.first()) {
-            let _ = sender.send(Ok(piece));
-        }
         let node = node.clone();
         tokio::spawn(async move {
             let _lease = lease;
+            for piece in pieces.into_iter().chain(told.first()) {
+                if sender.send_wait(Ok(piece), std::time::Duration::from_secs(30)).await.is_err() { return; }
+            }
             loop {
                 tokio::select! {
                     event = events.recv() => match event {
-                        Some(event) => {
+                        Ok(Some(event)) => {
                             if goal.is_some() && !crate::goals::watch::is_goal(&event) { continue; }
                             if !crate::goals::visible(&node, crate::admission::seen::Looker::Here(&Acting::Here), &event) { continue; }
-                            let Some(event) = live(event, slim.as_ref()) else { continue };
+                            let Some(event) = live(Arc::unwrap_or_clone(event), slim.as_ref()) else { continue };
                             if sender.send(Ok(Watched::Live { event })).is_err() { return }
                         }
-                        None => return,
+                        Ok(None) => return,
+                        Err(_) => { sender.lag(); return; },
                     },
                     now = told.changed(&node) => {
                         if let Some(now) = now && sender.send(Ok(now)).is_err() { return }
@@ -141,71 +146,35 @@ pub async fn watch(
         });
         return Ok(receiver);
     }
-    let watch = u64::from_le_bytes(
-        fastctx_net::sign::random::<8>().map_err(|error| Failure::new(format!("naming the watch: {error}")))?,
-    );
-    let written = machine;
-    let machine = written.name.clone();
-    let links = node.locate(&written)?;
-    let feed = {
-        let (sender, from) = (sender.clone(), machine.clone());
-        move || -> Feed {
-            let (feeding, links, from) = (sender.clone(), links.clone(), from.clone());
-            Box::new(move |mut stream: Stream| {
-                Box::pin(async move {
-                    let mut n = 0;
-                    loop {
-                        let signed = tokio::select! {
-                            signed = fastctx_net::watch_stream::receive(&mut stream) => signed?,
-                            () = feeding.closed() => return Ok(()),
-                        };
-                        // Closed by the watched machine: its answer to the watch says why.
-                        let Some(signed) = signed else { return Ok(()) };
-                        let piece: Piece = unseal(&links, &from, &signed).await?;
-                        if piece.watch != watch || piece.n != n {
-                            return Err(format!(
-                                "{from} sent a piece out of place (watch {:x}, number {}; expected {watch:x}, {n})",
-                                piece.watch, piece.n
-                            ));
-                        }
-                        n += 1;
-                        if feeding.send(Ok(piece.watched)).is_err() {
-                            return Ok(());
-                        }
-                    }
-                })
-            })
-        }
-    };
-    let what = match &composer {
-        Some(_) => format!("the watch of {resident}'s shared input on {machine}"),
-        None => format!("the watch of {resident} on {machine}"),
-    };
-    let acting =
-        goal.as_ref().map(|account| Acting::one(account.hub.clone(), account.account.clone())).unwrap_or(Acting::Here);
-    if let Some(account) = &goal
-        && !node.serves(&Acting::Here, &account.hub, &account.account)
-    {
+    let acting = goal.as_ref().map(|account| Acting::one(account.hub.clone(), account.account.clone())).unwrap_or(Acting::Here);
+    if let Some(account) = &goal && !node.serves(&Acting::Here, &account.hub, &account.account) {
         return Err(Failure::refused(fastctx_types::goals::words::WATCH_ACCOUNT));
     }
-    let call = RemoteCall::Watch { resident, watch, composer, held, now, goal: goal.is_some() };
-    let node = node.clone();
+    let request = fastctx_types::watching::Subscription { resident, composer, documents: None, held, now, goal: goal.is_some() };
+    let mut watching = None;
+    let mut refused = None;
+    for (link, account) in node.speakers(&acting, &machine, Purpose::Agents).map_err(|e| Failure::new(e.to_string()))? {
+        match link.watch_shared(&machine.name, &account, request.clone()).await {
+            Ok(opened) => { watching = Some(opened); break; }
+            Err(failure) if failure.not_run => refused = Some(failure),
+            Err(failure) => return Err(failure),
+        }
+    }
+    let Some(mut watching) = watching else { return Err(refused.expect("a speaker was tried")); };
     tokio::spawn(async move {
-        let started = std::time::Instant::now();
-        let result = tokio::select! {
-            result = node.call_with_stream(&acting, &written, Purpose::Agents, call, feed) => result,
-            () = sender.closed() => return,
-        };
-        let ended = match result {
-            Ok(Ok(_)) => {
-                node.log.line(format_args!("{what} ended after {}: {machine} ended it", lasted(started)));
-                return;
+        loop {
+            let piece = tokio::select! { piece = watching.next() => piece, () = sender.closed() => return };
+            match piece {
+                Ok(Some(piece)) => {
+                    let history = !matches!(piece, Watched::Live { .. } | Watched::Now { .. });
+                    let sent = if history { sender.send_wait(Ok(piece), std::time::Duration::from_secs(30)).await }
+                        else { sender.send(Ok(piece)) };
+                    if sent.is_err() { return; }
+                }
+                Ok(None) => return,
+                Err(failure) => { let _ = sender.send(Err(failure)); return; }
             }
-            Ok(Err(failure)) => failure,
-            Err(failure) => Failure::new(failure.to_string()),
-        };
-        node.log.line(format_args!("{what} ended after {}: {}", lasted(started), ended.message));
-        let _ = sender.send(Err(ended));
+        }
     });
     Ok(receiver)
 }
@@ -214,7 +183,7 @@ pub async fn watch(
 /// the events after it, and whose they are when they go slimmed.
 pub(crate) struct Opening {
     pub pieces: Vec<Watched>,
-    pub events: mpsc::UnboundedReceiver<SessionEvent>,
+    pub events: Events,
     /// The session, when what follows goes slimmed, its images referred to
     /// where it keeps them.
     pub slim: Option<Address>,
@@ -259,7 +228,7 @@ pub(crate) fn live(mut event: SessionEvent, slim: Option<&Address>) -> Option<Se
 pub async fn watch_here(
     node: &Arc<Node>,
     resident: &ResidentId,
-) -> Result<(Vec<SessionEvent>, mpsc::UnboundedReceiver<SessionEvent>), Failure> {
+) -> Result<(Vec<SessionEvent>, Events), Failure> {
     let read = history_here(node, resident).await?;
     let mut history = read.history;
     history.extend(read.pending);
@@ -272,7 +241,7 @@ pub(crate) struct HistoryRead {
     /// The requests its host waits on someone to answer now: not part of
     /// the history, and gone once answered.
     pub pending: Vec<SessionEvent>,
-    pub events: mpsc::UnboundedReceiver<SessionEvent>,
+    pub events: Events,
 }
 
 /// Starts watching a resident of this machine, without reading its history:
@@ -281,7 +250,7 @@ pub(crate) struct HistoryRead {
 pub(crate) fn subscribe(
     node: &Arc<Node>,
     resident: &ResidentId,
-) -> Result<(mpsc::UnboundedReceiver<SessionEvent>, Vec<SessionEvent>), Failure> {
+) -> Result<(Events, Vec<SessionEvent>), Failure> {
     let (about, _) = node
         .residents
         .about(resident)
@@ -556,18 +525,6 @@ pub(crate) fn turn_of(happened: &fastctx_types::session::Happened) -> Option<&st
     }
 }
 
-/// A piece of a watch, as the machine it came from signed it: its key is
-/// the same on every hub it is on, so any of them can tell.
-async fn unseal(links: &[Arc<Link>], from: &MachineName, signed: &fastctx_net::sign::Signed) -> Result<Piece, String> {
-    let mut why = Vec::new();
-    for link in links {
-        match link.unseal_packed(from, Domain::Event, signed).await {
-            Ok(piece) => return Ok(piece),
-            Err(error) => why.push(error),
-        }
-    }
-    Err(why.join("; "))
-}
 
 /// Hands a watch of a resident of this machine to whoever asked through
 /// `link`, over `stream`, until they close it; each piece is signed here,
@@ -648,12 +605,13 @@ pub async fn serve_watch(
         }
         tokio::select! {
             event = events.recv() => match event {
-                Some(event) => {
+                Ok(Some(event)) => {
                     if (!goal || crate::goals::watch::is_goal(&event)) && crate::goals::visible(node, crate::admission::seen::Looker::Asker(asker), &event) {
-                        next.extend(live(event, slim.as_ref()).map(|event| Watched::Live { event }));
+                        next.extend(live(Arc::unwrap_or_clone(event), slim.as_ref()).map(|event| Watched::Live { event }));
                     }
                 },
-                None => return ended("this machine stopped telling its events"),
+                Ok(None) => return ended("this machine stopped telling its events"),
+                Err(error) => { stream.close().await; return Err(Failure::new(error.to_string())); },
             },
             now = told.changed(node) => next.extend(now),
             why = stream.ended() => return ended(why.as_deref().unwrap_or("it closed the watch")),

@@ -7,7 +7,8 @@
 //! counter.json      how far the numbers this machine sends with are reserved
 //! letters.json      where this machine's letters stand with the hub
 //! outbox/<seq>      letters not yet held by the hub
-//! received/<from>/<id>   letters taken, by sender and id, for good
+//! received/<from>/<id>   legacy receipts, removed after database migration
+//! node.sqlite3      standalone device receipts; nodes share world/node.sqlite3
 //! failures/         letters that could not be delivered or opened, and why
 //! ended.json        that the hub ended this machine's place, and why
 //! ```
@@ -58,11 +59,38 @@ pub struct LettersFile {
 #[derive(Clone, Debug)]
 pub struct NetDir {
     root: PathBuf,
+    database: Option<fastctx_storage::Database>,
+    authority: String,
 }
 
 impl NetDir {
     pub fn new(root: PathBuf) -> Self {
-        Self { root }
+        Self { root, database: None, authority: String::new() }
+    }
+
+    /// Shares the application's single database with this membership. Standalone
+    /// device links otherwise keep a private database beside their membership.
+    pub fn with_database(mut self, database: fastctx_storage::Database) -> Self {
+        self.database = Some(database);
+        self
+    }
+
+    pub(super) fn open_database(&mut self, hub: &HubId) -> io::Result<()> {
+        self.authority = hub.as_str().to_owned();
+        if self.database.is_none() {
+            self.database = Some(
+                fastctx_storage::Database::open(&self.root.join("node.sqlite3"), "").map_err(io::Error::other)?,
+            );
+        }
+        Ok(())
+    }
+
+    pub(super) fn database(&self) -> &fastctx_storage::Database {
+        self.database.as_ref().expect("link opens its database before receiving")
+    }
+
+    pub(super) fn authority(&self) -> &str {
+        &self.authority
     }
 
     pub fn path(&self) -> &Path {

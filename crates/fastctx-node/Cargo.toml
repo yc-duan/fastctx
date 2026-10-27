@@ -26,6 +26,8 @@ fastctx-net = { path = "../fastctx-net" }
 fastctx-agent = { path = "../fastctx-agent" }
 fastctx-sentinel = { path = "../fastctx-sentinel" }
 fastctx-platform = { path = "../fastctx-platform" }
+fastctx-storage = { path = "../fastctx-storage" }
+fastctx-draft = { path = "../fastctx-draft" }
 fastctx-ripgrep = { path = "../fastctx-ripgrep" }
 fastctx-types = { path = "../fastctx-types" }
 fastctx-uninstall = { path = "../fastctx-uninstall" }

@@ -149,7 +149,7 @@ pub fn key(world: &WorldDir) -> io::Result<SecretKey> {
 pub fn start(node: &Arc<Node>, membership: Membership) -> io::Result<Arc<Link>> {
     let key = key(&node.world)?;
     let hub = membership.id.clone();
-    let net = net_dir(&node.world, &hub);
+    let net = net_dir(&node.world, &hub).with_database(node.database.clone());
     // A network dissolved as this computer last ran, before it was left, is
     // left now: its hub may have retired since.
     let dissolved = fastctx_net::link::state::read_or::<Option<fastctx_net::link::state::Ended>>(&net.ended(), None)
@@ -894,13 +894,17 @@ impl fastctx_net::link::Node for Handler {
                         .await
                         .map(|landed| RemoteReply::Said { landed })
                 }
-                RemoteCall::Watch { resident, watch, composer, held, now, goal } => {
+                RemoteCall::Watch { resident, watch, composer, documents, held, now, goal, multiplex } => {
                     let stream = stream
                         .ok_or_else(|| Failure::new("a watch comes with a data connection, and this one had none"))?;
-                    crate::talk::serve_watch(
-                        &node, &asker, &link, &from, resident, watch, composer, held, now, goal, stream,
-                    )
-                    .await
+                    if multiplex {
+                        crate::talk::multiplex::serve(node.clone(), link.clone(), caller.clone(),
+                            fastctx_types::watching::Subscription { resident, composer, documents, held, now, goal }, watch, stream).await
+                    } else {
+                        crate::talk::serve_watch(
+                            &node, &asker, &link, &from, resident, watch, composer, held, now, goal, stream,
+                        ).await
+                    }
                 }
                 RemoteCall::Agents => crate::agents::here(&node)
                     .await
@@ -1240,7 +1244,7 @@ impl fastctx_net::link::Node for Handler {
             };
             let identity = crate::letters::Identity::new(&node, caller.key, original, &caller.names);
             let handoff = crate::letters::Handoff::begin(&node, &identity).await;
-            let finished = handoff.finished()?;
+            let finished = handoff.finished().await?;
             let (letter, completion) = match letter {
                 Letter::Fragment { index, total, text, .. } => {
                     match crate::letters::receive(&node, &identity, index, total, &text)? {
@@ -1266,7 +1270,7 @@ impl fastctx_net::link::Node for Handler {
                         return Err(io::Error::other(failure.message));
                     }
                     crate::control_letters::keep(&node, &hub, &caller, &identity, *command.clone(), Some(failure))?;
-                    handoff.finish()?;
+                    handoff.finish().await?;
                     if let Some(completion) = completion {
                         completion.finish()?;
                     }
@@ -1346,7 +1350,7 @@ impl fastctx_net::link::Node for Handler {
             }
             .await;
             if matches!(result, Ok(Ok(()))) {
-                handoff.finish()?;
+                handoff.finish().await?;
                 if let Some(completion) = completion {
                     completion.finish()?;
                 }

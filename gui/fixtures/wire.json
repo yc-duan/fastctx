@@ -23052,6 +23052,100 @@
       "delivery": "queued-cd34"
     }
   },
+  "composer_sync": {
+    "subscription": {
+      "version": 1,
+      "known": [
+        {
+          "document": "document-a",
+          "vector": "AA=="
+        }
+      ]
+    },
+    "inputs": [
+      {
+        "kind": "update",
+        "number": 1,
+        "document": "document-a",
+        "update": "AAA="
+      }
+    ],
+    "frames": [
+      {
+        "kind": "state",
+        "version": 1,
+        "state": {
+          "revision": 7,
+          "draft": {
+            "id": "document-a",
+            "revision": 3,
+            "epoch": 0,
+            "attachments": [],
+            "uploads": [],
+            "files_on": null
+          },
+          "queue": [],
+          "commands": [],
+          "unobserved": [],
+          "held": null,
+          "awaiting_turn": null
+        },
+        "documents": [
+          {
+            "document": "document-a",
+            "revision": 3,
+            "update": "AAA="
+          }
+        ]
+      },
+      {
+        "kind": "update",
+        "revision": 8,
+        "document": {
+          "document": "document-a",
+          "revision": 3,
+          "update": "AAA="
+        }
+      },
+      {
+        "kind": "saved",
+        "number": 1,
+        "document": "document-a",
+        "revision": 8,
+        "document_revision": 3
+      },
+      {
+        "kind": "refused",
+        "number": 2,
+        "failure": {
+          "message": "the update was not started",
+          "not_run": true,
+          "capacity": {
+            "reason": "waiting",
+            "seconds": 2
+          }
+        }
+      },
+      {
+        "kind": "refused",
+        "number": 3,
+        "failure": {
+          "message": "the conversation is no longer shared",
+          "code": "refused",
+          "not_run": true
+        }
+      }
+    ],
+    "sends": [
+      {
+        "operation": "send-a",
+        "do": "send_document",
+        "document": "document-a",
+        "snapshot": "AAA=",
+        "attachments": []
+      }
+    ]
+  },
   "claude": {
     "events": [
       {

@@ -114,7 +114,9 @@ impl RemoteCall {
             Self::Composer { request: crate::composer::Request::Mutate { mutation }, .. }
                 if matches!(
                     mutation.change,
-                    crate::composer::Change::Send { .. } | crate::composer::Change::SendQueued { .. }
+                    crate::composer::Change::Send { .. }
+                        | crate::composer::Change::SendDocument { .. }
+                        | crate::composer::Change::SendQueued { .. }
                 ) =>
             {
                 Contract { pool: Pool::Input, ..Contract::CHANGE }
@@ -361,6 +363,7 @@ impl Call {
             | Self::AgentUsage { .. }
             | Self::AgentCalls { .. }
             | Self::Look { .. }
+            | Self::WatchMany
             | Self::Watch { .. }
             | Self::Offers { .. }
             | Self::ItemDetail { .. }

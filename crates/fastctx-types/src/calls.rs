@@ -538,6 +538,9 @@ pub enum Call {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         composer: Option<crate::composer::UploadScope>,
     },
+    /// Negotiated by Welcome.watch_many. The connection then carries
+    /// watching::local commands and bounded, interleaved watch packets.
+    WatchMany,
     /// Watches a resident on any machine: the node answers with its history
     /// and then each event as it happens, for as long as the connection
     /// stays open.

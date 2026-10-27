@@ -94,6 +94,7 @@ pub fn open(app: tauri::AppHandle) {
                     connection,
                     watches: Default::default(),
                     transcripts: Default::default(),
+                    deliveries: Default::default(),
                     next: AtomicU64::new(0),
                     page: AtomicU64::new(0),
                     line_requests: Default::default(),

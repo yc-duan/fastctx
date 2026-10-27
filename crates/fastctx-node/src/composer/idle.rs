@@ -10,8 +10,10 @@ pub(super) fn busy(state: &Stored) -> bool {
 }
 
 pub(crate) async fn input_busy(node: &Node, id: &ResidentId) -> Result<bool, Failure> {
-    let Some(cell) = storage::existing(node, id)? else { return Ok(false) };
+    let Some(cell) = storage::existing(node, id).await? else {
+        return Ok(false);
+    };
     let mut cell = cell.lock().await;
-    load(node, id, &mut cell)?;
+    load(node, id, &mut cell).await?;
     Ok(busy(cell.as_ref().expect("loaded composer")))
 }

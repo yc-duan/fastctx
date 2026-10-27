@@ -3,7 +3,8 @@
 // agent's own machine is offline; only metadata is pushed, and the page reads
 // the Markdown when it changes.
 
-import { Channel, invoke } from "@tauri-apps/api/core";
+import { invoke } from "@tauri-apps/api/core";
+import { observe } from "./delivery";
 import type { Address, MachineName, ResidentId, Timestamp } from "./wire";
 
 /** Who last wrote the plan: the person here, or the conversation itself. */
@@ -57,13 +58,5 @@ export function planWrite(owner: ResidentId, expected: number | null, markdown: 
 /** Follows the plan: its metadata now, then after each change. The id resolves
  *  for `unwatch`; the body is read with `planRead` when a change says so. */
 export function watchPlan(owner: ResidentId, onPiece: (piece: PlanPiece) => void, at: PlanAccount | null = null): Promise<number> {
-  const pieces = new Channel<PlanPiece>();
-  pieces.onmessage = (piece) => {
-    try {
-      onPiece(piece);
-    } catch (error) {
-      console.error("a plan change could not be shown", piece, error);
-    }
-  };
-  return invoke<number>("plan_watch", { owner, pieces, hub: at?.hub ?? null, account: at?.account ?? null });
+  return observe<PlanPiece, number>("plan_watch", { owner, hub: at?.hub ?? null, account: at?.account ?? null }, onPiece);
 }

@@ -45,7 +45,9 @@ mod session;
 pub mod state;
 mod update_policy;
 pub mod versions;
+mod watching;
 mod ways;
+pub use watching::{Input as WatchInput, Watching};
 
 use std::collections::{BTreeSet, HashMap};
 use std::future::Future;
@@ -320,6 +322,7 @@ pub(crate) struct Inner {
     record_changes: tokio::sync::broadcast::Sender<Option<fastctx_types::account_records::Changed>>,
     connection: Mutex<Option<Connection>>,
     calls: Mutex<HashMap<u64, Waiter>>,
+    watching: watching::Pools,
     /// The calls of other machines this one is answering (`answers`).
     answers: answers::Answers,
     asks: questions::Questions,
@@ -431,13 +434,14 @@ impl Link {
     }
 
     fn start_with_changes(
-        dir: NetDir,
+        mut dir: NetDir,
         membership: Membership,
         key: SecretKey,
         node: Arc<dyn Node>,
         changes: Option<changes::Changes>,
     ) -> io::Result<Self> {
         dir.prepare()?;
+        dir.open_database(&membership.id)?;
         let counter = Counter::open(dir.counter())?;
         let letters_file = match state::read::<LettersFile>(&dir.letters()) {
             Ok(file) => file,
@@ -494,6 +498,7 @@ impl Link {
             record_changes: tokio::sync::broadcast::channel(1024).0,
             connection: Mutex::new(None),
             calls: Mutex::new(HashMap::new()),
+            watching: Mutex::new(HashMap::new()),
             answers: answers::Answers::default(),
             asks: questions::Questions::default(),
             next_id: AtomicU64::new(0),
@@ -521,6 +526,7 @@ impl Link {
             versions: versions::Versions::with_policy(policy),
             task: Mutex::new(None),
         });
+        letters::start(&inner);
         inner.line_started();
         // A machine that allows direct connections takes them from the
         // roster it last had, before it reaches the hub, and whether or not

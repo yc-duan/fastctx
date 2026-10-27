@@ -5,6 +5,7 @@ import type { UsageCallsQuery, UsageCallsPage } from "./usage-calls";
 // `inShell` says so.
 
 import { Channel, invoke } from "@tauri-apps/api/core";
+import { closeDelivery, observe, retryDeliveries } from "./delivery";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import type { HomeChange, WorldAgents } from "./agents";
 import type { ChangePreview, FolderChange, LoginChange, MachineLogins, WorldLogins } from "./logins";
@@ -102,16 +103,7 @@ export type WorldPiece =
  *  asked of any machine meanwhile (`world-network.md`, 近况). Resolves to
  *  the id `unwatch` takes. */
 export function watchWorld(onPiece: (piece: WorldPiece) => void): Promise<number> {
-  const pieces = new Channel<WorldPiece>();
-  // A channel whose handler throws once never delivers again.
-  pieces.onmessage = (piece) => {
-    try {
-      onPiece(piece);
-    } catch (error) {
-      console.error(error);
-    }
-  };
-  return invoke("world_watch", { pieces });
+  return observe<WorldPiece, number>("world_watch", {}, onPiece);
 }
 
 /** Watches a resident: the part it opens on, then each piece as it
@@ -120,21 +112,11 @@ export async function watch(
   who: Address,
   onPiece: (piece: Piece) => void,
 ): Promise<{ id: number; window: Window }> {
-  const pieces = new Channel<Piece>();
-  // A handler that throws stops the channel for good: Tauri delivers
-  // pieces in order and never moves past one that failed. A piece the page
-  // cannot show is reported and passed over, so the conversation goes on.
-  pieces.onmessage = (piece) => {
-    try {
-      onPiece(piece);
-    } catch (error) {
-      console.error("a piece of the conversation could not be shown", piece, error);
-    }
-  };
-  return invoke("watch", { residentId: who.resident, machineName: who.machine, pieces });
+  return observe<Piece, { id: number; window: Window }>("watch", { residentId: who.resident, machineName: who.machine }, onPiece);
 }
 
 export function unwatch(id: number): Promise<void> {
+  closeDelivery(id);
   return invoke("unwatch", { id });
 }
 
@@ -215,6 +197,7 @@ export function pause(tries: number, machine: MachineName | null, done: () => vo
 /** Everything that broke is tried again now: the window came to the front,
  *  or the system says the network is back. */
 export function retryNow(): Promise<void> {
+  retryDeliveries();
   return invoke("reconnect");
 }
 

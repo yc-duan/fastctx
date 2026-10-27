@@ -264,6 +264,15 @@ impl Transcript {
         Piece::Extended { start, events: self.events[start..].to_vec() }
     }
 
+    /// Replaces the page after a delivery gap even if the stored history matches:
+    /// it may have missed a piece already admitted to this transcript.
+    pub(crate) fn recovered(&mut self, history: &[SessionEvent]) -> Result<Piece, String> {
+        self.history(history)?;
+        self.generation += 1;
+        self.texts.clear();
+        Ok(Piece::Window { window: self.window() })
+    }
+
     fn window(&self) -> Window {
         let start = self.latest(PART_EVENTS, PART_BYTES);
         let carry = [self.titled, self.context, self.answered, self.agents]

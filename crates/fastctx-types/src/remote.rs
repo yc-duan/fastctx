@@ -419,12 +419,19 @@ pub enum RemoteCall {
     /// connection until the caller closes it, each piece signed by the
     /// machine that holds the session, naming `watch` and numbered from 0.
     Watch {
+        /// Requests the multiplexed watch protocol. A peer that supports it
+        /// answers with a signed Ready packet; an older peer sends its ordinary
+        /// watch, which remains the first subscription's complete transport.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        multiplex: bool,
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         goal: bool,
         resident: ResidentId,
         watch: u64,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         composer: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        documents: Option<crate::composer::sync::Subscription>,
         /// What the viewer keeps of the history (`session::held`). Said, the
         /// pieces are signed as zstd-compressed JSON (`fastctx-net`'s
         /// `history::pack`) and the history comes as segments.

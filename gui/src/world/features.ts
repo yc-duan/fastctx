@@ -2,7 +2,8 @@
 // 功能), remembered by the device: on a computer its node keeps them, so the
 // TUI shows the same; a phone keeps its own.
 
-import { Channel, invoke } from "@tauri-apps/api/core";
+import { invoke } from "@tauri-apps/api/core";
+import { observe } from "./delivery";
 
 export interface Features {
   /** Talking to agents here: home, new conversations, projects and
@@ -36,7 +37,5 @@ export function setLanguage(language: string): Promise<Features> {
 /** Follows the switches: first as they are, then after each change, from
  *  whichever interface changed them. Resolves to the id `unwatch` takes. */
 export function watchFeatures(onPiece: (piece: FeaturesPiece) => void): Promise<number> {
-  const pieces = new Channel<FeaturesPiece>();
-  pieces.onmessage = onPiece;
-  return invoke("features_watch", { pieces });
+  return observe<FeaturesPiece, number>("features_watch", {}, onPiece);
 }

@@ -57,24 +57,46 @@ pub(crate) async fn plan_watch(
     hub: Option<String>,
     account: Option<String>,
     owner: String,
-    pieces: Channel<Piece>,
+    pieces: Channel<crate::watch_delivery::Wake>,
 ) -> Result<u64, String> {
     let (hub, account, owner) = named(hub, account, owner)?;
     let page = shell.page.load(Ordering::Relaxed);
     let world = shell.world();
     let id = shell.next.fetch_add(1, Ordering::Relaxed);
-    shell.follow(page, id, async move {
-        let mut again = fastctx_client::Again::default();
-        loop {
-            match world.watch_plan(hub.clone(), account.clone(), owner.clone()).await {
-                Ok(mut watch) => loop {
-                    match watch.next().await {
-                        Ok(metadata) => {
-                            again.came();
-                            if pieces.send(Piece::Changed { metadata }).is_err() {
-                                return;
+    shell.follow_delivery(
+        page,
+        id,
+        pieces,
+        |_: &Piece| Some("plan".into()),
+        move |pieces, _| {
+            let (world, hub, account, owner) = (world.clone(), hub.clone(), account.clone(), owner.clone());
+            async move {
+                let mut again = fastctx_client::Again::default();
+                loop {
+                    match world.watch_plan(hub.clone(), account.clone(), owner.clone()).await {
+                        Ok(mut watch) => loop {
+                            match watch.next().await {
+                                Ok(metadata) => {
+                                    again.came();
+                                    if pieces.send(Piece::Changed { metadata }).is_err() {
+                                        return;
+                                    }
+                                }
+                                Err(error) => {
+                                    let interruption = again.broke(error.to_string());
+                                    if pieces
+                                        .send(Piece::Interrupted {
+                                            error: interruption.why,
+                                            since: crate::epoch_ms(interruption.since),
+                                        })
+                                        .is_err()
+                                    {
+                                        return;
+                                    }
+                                    break;
+                                }
                             }
-                        }
+                        },
                         Err(error) => {
                             let interruption = again.broke(error.to_string());
                             if pieces
@@ -86,25 +108,12 @@ pub(crate) async fn plan_watch(
                             {
                                 return;
                             }
-                            break;
                         }
                     }
-                },
-                Err(error) => {
-                    let interruption = again.broke(error.to_string());
-                    if pieces
-                        .send(Piece::Interrupted {
-                            error: interruption.why,
-                            since: crate::epoch_ms(interruption.since),
-                        })
-                        .is_err()
-                    {
-                        return;
-                    }
+                    again.pause(&world, None).await;
                 }
             }
-            again.pause(&world, None).await;
-        }
-    })?;
+        },
+    )?;
     Ok(id)
 }

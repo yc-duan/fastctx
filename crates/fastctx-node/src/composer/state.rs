@@ -2,105 +2,15 @@
 
 use std::collections::{HashMap, HashSet};
 
-use fastctx_types::composer::{Change, Character, CharacterId, Composer, Draft, Mutation, Queued, QueuedCommand, Target};
+use fastctx_types::composer::{Change, Composer, Mutation, Queued, QueuedCommand, Target};
 use fastctx_types::ipc::Failure;
 use fastctx_types::residents::{Delivery, Landed};
 use fastctx_types::{MachineName, NoticeId};
 use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
-pub struct Document {
-    pub epoch: u64,
-    atoms: Vec<Atom>,
-    pub attachments: Vec<fastctx_types::attachments::Attachment>,
-    pub uploads: Vec<fastctx_types::composer::Uploading>,
-    #[serde(default)]
-    pub files_on: Option<fastctx_types::access::Written>,
-}
+pub(super) use super::document::Document;
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
-struct Atom {
-    character: Character,
-    deleted: bool,
-}
-
-impl Document {
-    pub fn view(&self) -> Draft {
-        let characters: Vec<_> = self.atoms.iter().filter(|a| !a.deleted).map(|a| a.character.clone()).collect();
-        Draft {
-            epoch: self.epoch,
-            text: characters.iter().map(|c| c.text.as_str()).collect(),
-            characters,
-            attachments: self.attachments.clone(),
-            uploads: self.uploads.clone(),
-            files_on: self.files_on.clone(),
-        }
-    }
-
-    pub fn edit(
-        &mut self,
-        operation: &str,
-        after: &Option<CharacterId>,
-        delete: &[CharacterId],
-        insert: &str,
-    ) -> Result<(), Failure> {
-        let position = match after {
-            None => 0,
-            Some(id) => {
-                self.atoms
-                    .iter()
-                    .position(|a| &a.character.id == id)
-                    .ok_or_else(|| Failure::new("the insertion anchor is not in this draft"))?
-                    + 1
-            }
-        };
-        if !delete.is_empty() {
-            let known: HashSet<_> = self.atoms.iter().map(|atom| &atom.character.id).collect();
-            if delete.iter().any(|id| !known.contains(id)) {
-                return Err(Failure::new("a deleted character is not in this draft"));
-            }
-            let deleted: HashSet<_> = delete.iter().collect();
-            for atom in &mut self.atoms {
-                if deleted.contains(&atom.character.id) {
-                    atom.deleted = true;
-                }
-            }
-        }
-        self.atoms.splice(
-            position..position,
-            insert.chars().enumerate().map(|(index, c)| Atom {
-                character: Character { id: CharacterId { operation: operation.into(), index }, text: c.to_string() },
-                deleted: false,
-            }),
-        );
-        Ok(())
-    }
-
-    /// Takes back words that could not go: they come before whatever was
-    /// typed since, on a line of their own, with their files. `line` names
-    /// the line break put between them, a fresh operation of the node's.
-    pub fn take_back(&mut self, words: Document, line: &str) {
-        let mut back: Vec<Atom> = words.atoms.into_iter().filter(|atom| !atom.deleted).collect();
-        let typed = self.atoms.iter().any(|atom| !atom.deleted);
-        if typed && back.last().is_some_and(|atom| atom.character.text != "\n") {
-            back.push(Atom {
-                character: Character { id: CharacterId { operation: line.into(), index: 0 }, text: "\n".into() },
-                deleted: false,
-            });
-        }
-        self.atoms.splice(0..0, back);
-        for attachment in words.attachments {
-            if !self.attachments.iter().any(|kept| kept.id == attachment.id) {
-                self.attachments.push(attachment);
-            }
-        }
-        if self.files_on.is_none() {
-            self.files_on = words.files_on;
-        }
-    }
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct Entry {
     pub id: NoticeId,
     pub from: MachineName,
@@ -137,6 +47,8 @@ pub struct Flight {
     pub automatic: bool,
     pub idle_only: bool,
     #[serde(default)]
+    pub operation: Option<String>,
+    #[serde(default)]
     pub files_on: Option<fastctx_types::access::Written>,
 }
 
@@ -160,9 +72,19 @@ pub struct Receipt {
     pub failure: Option<String>,
 }
 
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[derive(Debug, Default, Serialize, Deserialize)]
 pub struct Stored {
     pub revision: u64,
+    #[serde(skip)]
+    pub persisted: bool,
+    #[serde(skip)]
+    pub document_names: HashSet<String>,
+    #[serde(skip)]
+    pub observed_documents: HashSet<String>,
+    #[serde(skip)]
+    queued_documents: HashMap<String, usize>,
+    #[serde(skip)]
+    pending_entries: HashSet<NoticeId>,
     pub draft: Document,
     pub queue: Vec<Entry>,
     pub unobserved: Vec<Entry>,
@@ -179,6 +101,54 @@ pub struct Stored {
 }
 
 impl Stored {
+    pub fn reindex(&mut self) {
+        self.queued_documents = self
+            .queue
+            .iter()
+            .enumerate()
+            .filter(|(_, entry)| !entry.command)
+            .map(|(index, entry)| (entry.document.id.clone(), index))
+            .collect();
+        self.pending_entries = self.pending.iter().map(|flight| flight.entry.clone()).collect();
+    }
+    pub fn editable_document(&mut self, document: &str) -> Result<&mut Document, Failure> {
+        if self.draft.id == document {
+            return Ok(&mut self.draft);
+        }
+        let index = self
+            .queued_documents
+            .get(document)
+            .copied()
+            .ok_or_else(|| Failure::new("that shared document no longer exists"))?;
+        let entry = &mut self.queue[index];
+        if self.pending_entries.contains(&entry.id)
+            || self.sending.as_ref().is_some_and(|flight| flight.entry == entry.id)
+        {
+            return Err(Failure::new("that queued message is being delivered"));
+        }
+        Ok(&mut entry.document)
+    }
+
+    pub fn visible_document_ids(&self) -> HashSet<String> {
+        std::iter::once(self.draft.id.clone())
+            .chain(
+                self.queue
+                    .iter()
+                    .filter(|entry| !entry.command && !self.going_straight(&entry.id))
+                    .map(|entry| entry.document.id.clone()),
+            )
+            .chain(self.unobserved.iter().map(|entry| entry.document.id.clone()))
+            .collect()
+    }
+
+    pub fn documents(&self) -> impl Iterator<Item = &Document> {
+        std::iter::once(&self.draft).chain(self.queue.iter().chain(&self.unobserved).map(|entry| &entry.document))
+    }
+    pub fn documents_mut(&mut self) -> impl Iterator<Item = &mut Document> {
+        std::iter::once(&mut self.draft)
+            .chain(self.queue.iter_mut().chain(&mut self.unobserved).map(|entry| &mut entry.document))
+    }
+
     pub fn retire_unobserved(&mut self, id: &NoticeId) {
         if let Some(position) = self.queue.iter().position(|entry| &entry.id == id) {
             self.unobserved.push(self.queue.remove(position));
@@ -224,6 +194,32 @@ impl Stored {
                     error: entry.error.clone(),
                 })
                 .collect(),
+            held: self.held.clone(),
+            awaiting_turn: self.awaiting_turn.clone(),
+        }
+    }
+
+    pub fn metadata(&self) -> fastctx_types::composer::sync::State {
+        use fastctx_types::composer::sync::{Queued, State};
+        let queued = |entry: &Entry, observed| Queued {
+            id: entry.id.clone(),
+            from: entry.from.clone(),
+            document: entry.document.metadata(),
+            editing: observed && !entry.editors.is_empty(),
+            sending: observed && self.sending.iter().chain(&self.pending).any(|flight| flight.entry == entry.id),
+            error: entry.error.clone(),
+        };
+        State {
+            revision: self.revision,
+            draft: self.draft.metadata(),
+            queue: self
+                .queue
+                .iter()
+                .filter(|entry| !entry.command && !self.going_straight(&entry.id))
+                .map(|entry| queued(entry, true))
+                .collect(),
+            commands: self.commands(),
+            unobserved: self.unobserved.iter().map(|entry| queued(entry, false)).collect(),
             held: self.held.clone(),
             awaiting_turn: self.awaiting_turn.clone(),
         }
@@ -340,7 +336,8 @@ impl Stored {
         }
         let draft = entry.document.view();
         let delivery = crate::attachments::delivery(&entry.from, draft.text, draft.attachments, None);
-        let flight = Flight { entry: id.clone(), delivery, automatic, idle_only, files_on: draft.files_on };
+        let flight =
+            Flight { entry: id.clone(), delivery, automatic, idle_only, files_on: draft.files_on, operation: None };
         self.sending = Some(flight.clone());
         if automatic {
             self.opportunity = None;

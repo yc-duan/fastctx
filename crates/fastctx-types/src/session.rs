@@ -183,6 +183,10 @@ impl Happened {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "kind")]
 pub enum Watched {
+    /// Negotiated document packets are never part of conversation history.
+    Documents {
+        frame: Box<crate::composer::sync::Frame>,
+    },
     History {
         events: Vec<SessionEvent>,
     },

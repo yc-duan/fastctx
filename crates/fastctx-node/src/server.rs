@@ -1,5 +1,7 @@
 //! One client's connection: the welcome, then its calls one at a time.
 
+mod watching;
+
 use std::sync::Arc;
 
 use fastctx_platform::ipc::Connection;
@@ -53,6 +55,7 @@ async fn converse(node: &Arc<Node>, connection: Connection) -> std::io::Result<(
     }
     let welcome = Welcome::Accepted {
         goal_runtime: node.goals.available(),
+        watch_many: true,
         sentinels: true,
         goal_commands: true,
         profiles: true,
@@ -107,6 +110,13 @@ async fn converse(node: &Arc<Node>, connection: Connection) -> std::io::Result<(
         if let Call::McpRelay { name } = call {
             return crate::mcp::local::serve(node, &hello.peer, name, id, reader, writer).await;
         }
+        if let Call::WatchMany = call {
+            if let Err(failure) = users_voice(node, &hello.peer) {
+                writer.send(&json(&NodeFrame::Reply { id, reply: Err(failure) })).await?;
+                return Ok(());
+            }
+            return watching::serve(node.clone(), hello.peer, reader, writer).await;
+        }
         if let Call::Watch { resident, machine, composer, held, now, goal } = call {
             // Watching a conversation anywhere is the user's, with this
             // computer's logins.
@@ -124,9 +134,10 @@ async fn converse(node: &Arc<Node>, connection: Connection) -> std::io::Result<(
                 Ok(mut watched) => loop {
                     tokio::select! {
                         piece = watched.recv() => match piece {
-                            Some(Ok(piece)) => writer.send(&json(&NodeFrame::Watched { id, watched: piece })).await?,
-                            Some(Err(failure)) => break Err(failure),
-                            None => break Ok(Reply::Done),
+                            Ok(Some(Ok(piece))) => writer.send(&json(&NodeFrame::Watched { id, watched: piece })).await?,
+                            Ok(Some(Err(failure))) => break Err(failure),
+                            Err(error) => break Err(Failure::new(error.to_string())),
+                            Ok(None) => break Ok(Reply::Done),
                         },
                         // The client says nothing more on a watch; whatever
                         // comes, or the end, is it leaving.
@@ -1296,7 +1307,7 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
             crate::attach::command(node, &resident).await.map(Reply::Attachable)
         }
         Call::HoldHost { .. } => Err(Failure::new("a host lease uses its own connection")),
-        Call::Watch { .. } => Err(Failure::new("a watch is answered as it goes, not at once")),
+        Call::WatchMany | Call::Watch { .. } => Err(Failure::new("a watch is answered as it goes, not at once")),
         Call::On { .. } => Err(Failure::new("an on is answered as it goes, not at once")),
         Call::ReadFile { .. } => Err(Failure::new("a file read is answered as a byte stream")),
         Call::ReadAttachment { .. } => Err(Failure::new("an attachment read is answered as a byte stream")),

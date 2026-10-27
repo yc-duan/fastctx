@@ -3,7 +3,7 @@ import type { Landed } from "./bridge";
 import type { MachineName, NoticeId } from "./wire";
 import type { Result } from "./wire";
 
-/** Wire contract of fastctx-types/src/composer.rs. Indices count Unicode scalars. */
+/** Legacy identity-edit contract. Indices count Unicode scalars. */
 export interface CharacterId {
   readonly operation: string;
   readonly index: number;
@@ -78,6 +78,7 @@ export type ComposerChange =
   | { readonly do: "detach"; readonly target: ComposerTarget; readonly epoch: number; readonly attachment: NoticeId }
   | { readonly do: "files_on"; readonly target: ComposerTarget; readonly epoch: number; readonly files_on: string | null }
   | { readonly do: "send"; readonly epoch: number }
+
   | { readonly do: "editing"; readonly id: NoticeId; readonly watch: string; readonly editing: boolean }
   | { readonly do: "delete"; readonly id: NoticeId }
   | { readonly do: "move"; readonly id: NoticeId; readonly before: NoticeId | null }

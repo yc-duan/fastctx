@@ -3,7 +3,8 @@
 //! A client connects to the node's endpoint, says who it is, and is welcomed
 //! or refused. After that it sends calls, one at a time, each with an id it
 //! chose, and the node answers each call once. A client with several calls
-//! to make at once opens several connections. Control frames are these
+//! to make at once opens several connections; negotiated WatchMany subscriptions
+//! share one dedicated observation connection. Control frames are these
 //! types in their JSON form. A file-read chunk header is followed by one
 //! binary payload frame, as described by `file_read::FileReadPart`; an
 //! Upload's dedicated connection carries raw byte frames through an empty
@@ -75,6 +76,9 @@ pub enum Welcome {
     Accepted {
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         goal_runtime: bool,
+        /// Several conversation subscriptions share a dedicated IPC connection.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        watch_many: bool,
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         goal_commands: bool,
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]

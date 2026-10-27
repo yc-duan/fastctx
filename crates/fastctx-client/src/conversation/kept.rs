@@ -32,6 +32,7 @@ pub(super) struct Keeping {
     /// Segments of a history sent with its latest part first, kept until
     /// the rest comes.
     partial: HashMap<SegmentId, Vec<SessionEvent>>,
+    partial_layout: Option<Vec<SegmentId>>,
     /// The layout of the history the interface was last given.
     shown: Vec<SegmentId>,
     /// Whether it was given all of it, not only its latest part.
@@ -118,6 +119,7 @@ impl Keeping {
             entry,
             index: None,
             partial: HashMap::new(),
+            partial_layout: None,
             shown: Vec::new(),
             whole: false,
             rest: false,
@@ -197,6 +199,7 @@ impl Keeping {
         self.extended = false;
         self.current = !matches!(watched, Watched::Segments { complete: false, .. });
         match watched {
+            Watched::Documents { .. } => Err(Error::Unexpected("document packets are not conversation history".into())),
             // Nothing held and nothing changed: the history is empty.
             Watched::Unchanged { version } if self.index.is_none() => {
                 self.keep(Some(version), Vec::new(), HashMap::new()).await
@@ -242,8 +245,19 @@ impl Keeping {
                 Ok(None)
             }
             Watched::Segments { layout, segments, complete: false, .. } => {
+                if self.partial_layout.as_ref() != Some(&layout) {
+                    let keep: std::collections::HashSet<_> = layout.iter().collect();
+                    self.partial.retain(|id, _| keep.contains(id));
+                    self.partial_layout = Some(layout.clone());
+                }
                 for Segment { id, events } in segments {
                     self.partial.insert(id, events);
+                }
+                // The first tail gives an uncached viewer something to show.
+                // Further transfer batches do not repeatedly copy and redraw
+                // the growing history, or replace a viewer's existing history.
+                if self.given {
+                    return Ok(None);
                 }
                 let latest: Vec<SessionEvent> = layout
                     .iter()
@@ -258,6 +272,7 @@ impl Keeping {
                 Ok(Some(latest))
             }
             Watched::Segments { version, layout, segments, complete: true } => {
+                self.partial_layout = None;
                 let mut fresh = std::mem::take(&mut self.partial);
                 for Segment { id, events } in segments {
                     fresh.insert(id, events);
@@ -393,6 +408,7 @@ impl Keeping {
         if lost {
             self.index = None;
             self.partial.clear();
+            self.partial_layout = None;
             self.whole = false;
             self.rest = false;
         }

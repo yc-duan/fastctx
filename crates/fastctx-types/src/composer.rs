@@ -1,5 +1,7 @@
 //! The resident machine's shared input and deferred messages.
 
+pub mod sync;
+
 use serde::{Deserialize, Serialize};
 
 use crate::attachments::Attachment;
@@ -136,6 +138,13 @@ pub enum Change {
     Send {
         epoch: u64,
     },
+    /// Sends exactly the frozen replica's visible text. Its deletion leaves
+    /// concurrent text on the authoritative document, whose identity stays stable.
+    SendDocument {
+        document: String,
+        snapshot: sync::Bytes,
+        attachments: Vec<NoticeId>,
+    },
     /// Pauses a queued item while this watch is editing it. Closing the watch ends it.
     Editing {
         id: NoticeId,
@@ -160,6 +169,7 @@ pub enum Change {
 #[serde(tag = "do", rename_all = "snake_case")]
 pub enum Request {
     Read,
+    Sync { input: Box<sync::Input> },
     Mutate { mutation: Box<Mutation> },
 }
 

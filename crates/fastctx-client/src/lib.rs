@@ -34,6 +34,7 @@ pub mod host;
 mod line_rows;
 mod lines;
 mod lines_read;
+mod local_watch;
 mod management;
 pub mod mcp_relay;
 pub mod memory;
@@ -123,6 +124,7 @@ pub struct Client {
     pub account_records: bool,
     pub conversation_plans: bool,
     pub goal_runtime: bool,
+    pub watch_many: bool,
     pub scratch_locations: bool,
     pub sentinels: bool,
     pub goal_commands: bool,
@@ -168,6 +170,7 @@ impl Client {
                 account_records,
                 conversation_plans,
                 goal_runtime,
+                watch_many,
                 scratch_locations,
                 sentinels,
                 goal_commands,
@@ -181,6 +184,7 @@ impl Client {
                 account_records,
                 conversation_plans,
                 goal_runtime,
+                watch_many,
                 scratch_locations,
                 sentinels,
                 goal_commands,
@@ -528,6 +532,7 @@ pub struct Watching {
 
 enum WatchingTransport {
     Local { client: Client, id: u64 },
+    LocalMany(local_watch::Watching),
     Device(device::watch::Watching),
 }
 
@@ -541,6 +546,7 @@ impl Watching {
         let (client, expected) = match &mut self.transport {
             WatchingTransport::Local { client, id } => (client, id),
             WatchingTransport::Device(watching) => return watching.next().await,
+            WatchingTransport::LocalMany(watching) => return watching.next().await,
         };
         let frame = client
             .connection

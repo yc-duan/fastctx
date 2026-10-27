@@ -33,16 +33,13 @@ impl World {
         let watching = if let Some(device) = self.device() {
             Watching::device(device.watch(resident, machine, None, None, false, Some(account.clone())).await?)
         } else {
-            self.connect()
-                .await?
-                .watch(Call::Watch {
-                    resident,
-                    machine,
-                    composer: None,
-                    held: None,
-                    now: false,
-                    goal: Some(account.clone()),
-                })
+            self.local_watches
+                .watch(
+                    self,
+                    fastctx_types::watching::local::Subscription {
+                        resident, machine, composer: None, held: None, now: false, goal: Some(account.clone()),
+                    },
+                )
                 .await?
         };
         let mut watching = GoalWatch { watching, account, last: None };
