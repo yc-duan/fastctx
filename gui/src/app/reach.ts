@@ -93,6 +93,30 @@ export function machinesOf(world: WorldNow | null): Machine[] {
 
 const machinesMade = new WeakMap<WorldNow, Machine[]>();
 
+/** The machine written `written`, or the first named `name`, looked up
+ *  once for each World. */
+export function machineWritten(world: WorldNow | null, written: string): Machine | null {
+  return world ? (lookedUp(world).written.get(written) ?? null) : null;
+}
+
+export function machineNamed(world: WorldNow | null, name: MachineName): Machine | null {
+  return world ? (lookedUp(world).named.get(name) ?? null) : null;
+}
+
+const lookUps = new WeakMap<WorldNow, { written: Map<string, Machine>; named: Map<string, Machine> }>();
+
+function lookedUp(world: WorldNow): { written: Map<string, Machine>; named: Map<string, Machine> } {
+  return once(lookUps, world, () => {
+    const written = new Map<string, Machine>();
+    const named = new Map<string, Machine>();
+    for (const machine of machinesOf(world)) {
+      if (!written.has(machine.written)) written.set(machine.written, machine);
+      if (!named.has(machine.name)) named.set(machine.name, machine);
+    }
+    return { written, named };
+  });
+}
+
 /** What `make` makes of `world`, made once for each World. */
 function once<T>(made: WeakMap<WorldNow, T>, world: WorldNow, make: () => T): T {
   if (made.has(world)) return made.get(world)!;

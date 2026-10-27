@@ -6,13 +6,14 @@ import { loginsOf } from "../world/accounts";
 import type { WorldNow } from "../world/bridge";
 import type { FocusPlace } from "./focus-panel";
 import { ownerOf, owns, type Machine } from "./reach";
+import { indexOf } from "./world-index";
 
 export function focusPlace(world: WorldNow | null, machine: Machine): FocusPlace {
   const facts = "Ok" in machine.facts && machine.facts.Ok ? machine.facts.Ok : null;
   const logins = world ? loginsOf(world.accounts) : [];
   const mine = machine.here || logins.some((login) => owns(machine, login));
   const owner = mine ? null : (logins.map((login) => ownerOf(machine, login)).find(Boolean) ?? null);
-  const member = world?.accounts.hubs.flatMap((hub) => hub.members).find((one) => one.name === machine.name && one.kind === "computer");
+  const member = world ? indexOf(world).computer.get(machine.name) : undefined;
   return {
     written: machine.written,
     name: machine.name,

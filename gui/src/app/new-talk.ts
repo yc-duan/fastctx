@@ -47,7 +47,7 @@ import type { WorldNow } from "../world/bridge";
 import type { Offers } from "../world/control";
 import type { Address } from "../world/events";
 import { accountOf, homeChoice, homeLabel, homesOf, installed, listed, loggedOut, type HomeWords } from "./agent-homes";
-import { agentKinds, agentPicker, foldInPicker, narrowPicker, type PickerKind, type PickerMachine, type PickerRow } from "./agent-picker";
+import { agentKinds, agentPicker, foldInPicker, type PickerKind, type PickerMachine, type PickerRow } from "./agent-picker";
 import { resizeUpward } from "./resize-upward";
 import { keepChoice, keptEffort, keptModel } from "./model-memory";
 import type { ProfileDefaults } from "./profile-defaults";
@@ -60,7 +60,9 @@ import {
   groupsOf,
   loginKey,
   loginLabel,
+  machineNamed,
   machinesOf,
+  machineWritten,
   openersOn,
   ownerOf,
   owns,
@@ -677,7 +679,7 @@ export class NewTalk {
    *  it. */
   private lives(world: WorldNow | null, option: Option | null): Machine | null {
     if (!option || option.assistant) return null;
-    return machinesOf(world).find((machine) => machine.name === option.machine) ?? null;
+    return machineNamed(world, option.machine);
   }
 
   /** The logins of `agent` on `machine` as choices: who is logged in to
@@ -762,7 +764,7 @@ export class NewTalk {
         rows: line.options.map((option) => this.row(option, line)),
       };
     });
-    return { machines, html: agentPicker(machines, this.pickerWords(), { kind: this.kind, open: (key, byDefault) => this.pickerFolds.get(key) ?? byDefault }) };
+    return { machines, html: agentPicker(machines, this.pickerWords(), { kind: this.kind, open: (key, byDefault) => this.pickerFolds.get(key) ?? byDefault, query: this.narrowed.trim().toLowerCase() }) };
   }
 
   private pickerWords() {
@@ -781,7 +783,7 @@ export class NewTalk {
 
   /** What is known of a line's computer: its kind, for its icon. */
   private machineOf(line: Line) {
-    const machine = machinesOf(this.options.store.world.peek()).find((one) => one.written === line.written);
+    const machine = machineWritten(this.options.store.world.peek(), line.written);
     return machine && "Ok" in machine.facts && machine.facts.Ok ? machine.facts.Ok : null;
   }
 
@@ -867,8 +869,12 @@ export class NewTalk {
         const open = target.getAttribute("aria-expanded") !== "true";
         this.pickerFolds.set(value, open);
         remember("pickerFolds", JSON.stringify([...this.pickerFolds]));
+        const html = this.agentsHtml(this.lines(this.options.store.world.peek()));
+        // A person folded has nothing drawn under it: what opens is put in
+        // first, then slides in.
+        if (open) fillFold(this.pop, value, html);
         foldInPicker(this.pop, value, open);
-        this.agentsDrawn = this.agentsHtml(this.lines(this.options.store.world.peek()));
+        this.agentsDrawn = html;
         return;
       }
       case "town":
@@ -1067,7 +1073,7 @@ ${words.assistantWorks(option.assistant.owner ?? "")}` : said,
       field.spellcheck = false;
       field.addEventListener("input", () => {
         this.narrowed = field.value;
-        resizeUpward(pop, this.popSteady, () => narrowPicker(list!, this.narrowed));
+        resizeUpward(pop, this.popSteady, () => this.draw());
       });
       search.append(field);
       foot.append(search);
@@ -1085,7 +1091,6 @@ ${words.assistantWorks(option.assistant.owner ?? "")}` : said,
       this.agentsDrawn = html;
       pop.scrollTop = scroll;
     }
-    narrowPicker(list, this.narrowed);
   }
 
   /** The machines its account may use: where it lives and those the
@@ -1329,3 +1334,14 @@ ${words.assistantWorks(option.assistant.owner ?? "")}` : said,
 /** A file attached to the first words did not reach the machine; the tray
  *  says which, and why. */
 class NotSent extends Error {}
+
+/** Puts what is under the fold `key` in `html` under that fold as drawn in
+ *  `root`, where nothing was drawn while it was folded. */
+function fillFold(root: HTMLElement, key: string, html: string): void {
+  const inner = [...root.querySelectorAll<HTMLElement>(".agent-fold")].find((one) => one.dataset.fold === key)?.querySelector<HTMLElement>(":scope > .agent-fold-inner");
+  if (!inner || inner.childElementCount) return;
+  const drawn = document.createElement("template");
+  drawn.innerHTML = html;
+  const fresh = [...drawn.content.querySelectorAll<HTMLElement>(".agent-fold")].find((one) => one.dataset.fold === key)?.querySelector<HTMLElement>(":scope > .agent-fold-inner");
+  if (fresh) inner.replaceChildren(...fresh.childNodes);
+}

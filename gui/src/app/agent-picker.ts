@@ -65,11 +65,12 @@ export interface PickerWords {
   personSub(machines: number, logins: number): string;
 }
 
-/** What the viewer set: which agent, and which machines and people are
- *  open. */
+/** What the viewer set: which agent, which machines and people are open,
+ *  and what is typed to narrow the table to, lower-cased. */
 export interface PickerView {
   kind: PickerKind;
   open(key: string, byDefault: boolean): boolean;
+  query?: string;
 }
 
 const HOLDS: PickerHold[] = ["mine", "shared", "others", "assist"];
@@ -86,9 +87,21 @@ export const machineKey = (written: string) => `machine:${written}`;
 
 export function agentPicker(machines: PickerMachine[], words: PickerWords, view: PickerView): string {
   // Only this agent's logins; a machine with none of them is not listed.
-  const shown = machines
+  const kept = machines
     .map((machine) => ({ ...machine, rows: machine.rows.filter((row) => row.agent === view.kind) }))
     .filter((machine) => machine.rows.length);
+  // Narrowed, a machine whose name or owner holds what is typed keeps all
+  // its logins, any other the logins whose account or plan holds it; all
+  // of it open.
+  const query = view.query ?? "";
+  const shown = query
+    ? kept.flatMap((machine) => {
+        const named = machine.written.toLowerCase().includes(query) || (machine.owner ?? "").toLowerCase().includes(query);
+        const rows = named ? machine.rows : machine.rows.filter((row) => rowFind(row, words).includes(query));
+        return rows.length ? [{ ...machine, rows }] : [];
+      })
+    : kept;
+  if (query) view = { ...view, open: () => true };
   const body = HOLDS.map((hold) => {
     const held = shown.filter((machine) => machine.hold === hold);
     if (!held.length) return "";
@@ -125,8 +138,10 @@ function persons(held: PickerMachine[], shared: boolean, words: PickerWords, vie
       const key = `person:${owner}`;
       const open = view.open(key, chosen || (shared && logins <= OPEN_PERSON));
       const head = `<span class="agent-icon" aria-hidden="true"><span class="agent-face">${escape([...owner][0]?.toUpperCase() ?? "")}</span></span><span class="agent-machine-name">${escape(owner)}</span><span class="agent-machine-note">${escape(words.personSub(theirs.length, logins))}</span>`;
-      const inside = theirs.map((machine) => machineRows(machine, 1, words, view)).join("");
-      return `<div class="agent-people" data-find="${escape(owner.toLowerCase())}">${fold(key, open, head, inside, 0, "agent-person")}</div>`;
+      // Folded, a person's machines are drawn as they are opened: a network's
+      // administrator may hold thousands.
+      const inside = open ? theirs.map((machine) => machineRows(machine, 1, words, view)).join("") : "";
+      return `<div class="agent-people">${fold(key, open, head, inside, 0, "agent-person")}</div>`;
     })
     .join("");
 }
@@ -135,7 +150,7 @@ function machineRows(machine: PickerMachine, depth: number, words: PickerWords, 
   const state = machine.online === false ? " offline" : machine.online === true ? " online" : "";
   const notes = machine.notes.map((note) => `<span class="agent-machine-note">${escape(note)}</span>`).join("");
   const head = `<span class="agent-icon" aria-hidden="true">${glyph(machine.form, 15)}</span><span class="agent-machine-name">${escape(machine.written)}</span>${notes}`;
-  const host = (inner: string) => `<div class="agent-host" data-find="${escape(machine.written.toLowerCase())}">${inner}</div>`;
+  const host = (inner: string) => `<div class="agent-host">${inner}</div>`;
   // Away, it is its name alone: nothing under it can begin.
   if (machine.online === false) {
     const at = depth ? ` style="--depth:${depth}"` : "";
@@ -148,12 +163,23 @@ function machineRows(machine: PickerMachine, depth: number, words: PickerWords, 
   return host(fold(key, open, head, rows, depth, `agent-machine${state}`));
 }
 
-function rowHtml(row: PickerRow, depth: number, words: PickerWords): string {
-  const name = programName(row.agent);
+/** A login's plan, as its row says it. */
+function planOf(row: PickerRow, words: PickerWords): string | null {
   const facts = row.facts;
   const account = facts ? accountOf(facts) : { email: null, plan: null };
   const token = facts?.login.kind === "known" && facts.login.value.kind === "logged_in" && facts.login.value.method === "oauth_token";
-  const plan = account.plan ?? (token ? words.token : null);
+  return account.plan ?? (token ? words.token : null);
+}
+
+/** What a login is found by: who is logged in, and the plan. */
+function rowFind(row: PickerRow, words: PickerWords): string {
+  return [row.who, planOf(row, words)].filter(Boolean).join(" ").toLowerCase();
+}
+
+function rowHtml(row: PickerRow, depth: number, words: PickerWords): string {
+  const name = programName(row.agent);
+  const facts = row.facts;
+  const plan = planOf(row, words);
   const now = Date.now();
   const limits = row.note ? "" : limitsHtml(facts, words, now);
   const credits = !row.note && onCredits(facts, now) ? words.onCredits : null;
@@ -162,43 +188,12 @@ function rowHtml(row: PickerRow, depth: number, words: PickerWords): string {
   const who = row.who ?? name;
   const said = [name, who === name ? null : who, plan, windows.join("　"), note].filter(Boolean).join("　");
   const kind = row.note ? "" : row.caution ? " caution" : credits ? " credits" : "";
-  const find = [row.who, plan].filter(Boolean).join(" ").toLowerCase();
-  return `<button type="button" class="agent-row${row.chosen ? " chosen" : ""}" role="radio" aria-checked="${row.chosen}" aria-label="${escape(said)}" title="${escape(said)}" data-choice="pick" data-value="${escape(row.key)}" data-find="${escape(find)}" style="--depth:${depth}"${row.startable ? "" : " disabled"}>
+  return `<button type="button" class="agent-row${row.chosen ? " chosen" : ""}" role="radio" aria-checked="${row.chosen}" aria-label="${escape(said)}" title="${escape(said)}" data-choice="pick" data-value="${escape(row.key)}" style="--depth:${depth}"${row.startable ? "" : " disabled"}>
     <span class="agent-row-lead"><span class="agent-row-mark">${glyph(markOf(row.agent), 15)}</span><span class="agent-row-who">${escape(who)}</span></span>
     <span class="agent-row-plan">${plan ? escape(plan) : ""}</span>
     <span class="agent-row-limits">${limits}</span>
     <span class="agent-row-note${kind}">${note ? escape(note) : ""}</span>
   </button>`;
-}
-
-/** Narrows the table drawn in `root` to what holds `typed`: a machine whose
- *  name holds it keeps all its logins; otherwise the logins whose account or
- *  plan holds it, under their machines. A person whose name holds it keeps
- *  all theirs. A machine, a person or a group with nothing left goes. While
- *  something is typed, whatever is closed opens onto what matches. */
-export function narrowPicker(root: HTMLElement, typed: string): void {
-  const query = typed.trim().toLowerCase();
-  root.querySelector(".agent-picker")?.classList.toggle("narrowing", !!query);
-  for (const shut of root.querySelectorAll<HTMLElement>(".agent-fold.shut")) shut.inert = !query;
-  for (const hold of root.querySelectorAll<HTMLElement>(".agent-hold")) {
-    let any = false;
-    for (const host of hold.querySelectorAll<HTMLElement>(".agent-host")) {
-      const person = host.closest<HTMLElement>(".agent-people");
-      const named = !query || (host.dataset.find ?? "").includes(query) || (!!person && (person.dataset.find ?? "").includes(query));
-      let rows = false;
-      for (const row of host.querySelectorAll<HTMLElement>(".agent-row")) {
-        const shown = named || (row.dataset.find ?? "").includes(query);
-        row.hidden = !shown;
-        rows ||= shown;
-      }
-      host.hidden = !!query && !rows && !named;
-      any ||= !host.hidden;
-    }
-    for (const people of hold.querySelectorAll<HTMLElement>(".agent-people")) {
-      people.hidden = !!query && !people.querySelector(".agent-host:not([hidden])");
-    }
-    hold.hidden = !any;
-  }
 }
 
 /** Opens or closes one row's machines or logins where it is drawn: what is
