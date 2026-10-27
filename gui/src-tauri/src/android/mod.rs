@@ -49,20 +49,6 @@ pub fn world() -> Result<World, String> {
     WORLD.get().cloned().ok_or_else(|| "Android has not started the device connection".into())
 }
 
-/// The user's words to a conversation, from a notification's button; the
-/// caller's thread, not the runtime's, waits for how it went. Said again under
-/// the same `id`, they go in once.
-fn say(resident: String, machine: String, text: String, id: String) -> Result<(), String> {
-    let world = world()?;
-    let runtime = RUNTIME.get().ok_or("Android has not started the device connection")?;
-    let resident = resident.parse().map_err(|error| format!("{error}"))?;
-    let machine = machine.parse().map_err(|error| format!("{error}"))?;
-    runtime
-        .block_on(world.talk_with_attachments(resident, Some(machine), text, vec![], None, Some(id)))
-        .map(drop)
-        .map_err(|error| error.to_string())
-}
-
 fn reconnect() {
     if let Some(world) = WORLD.get()
         && let Some(device) = world.device()

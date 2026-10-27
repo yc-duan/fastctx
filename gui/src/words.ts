@@ -11,7 +11,6 @@ import type { QueueWords } from "./conversation/queue";
 import type { FindWords } from "./conversation/find";
 import type { OutputWords } from "./conversation/run-output";
 import type { DeedWords } from "./conversation/deeds/types";
-import { enQuestions, zhQuestions, type QuestionWords } from "./conversation/question-card";
 
 export type Tense = "running" | "done" | "failed";
 
@@ -93,7 +92,6 @@ export interface Words {
   english: boolean;
   queue: QueueWords;
   /** A card of questions asked without waiting. */
-  questions: QuestionWords;
   act(act: Act, tense: Tense): string;
   failedTool(name: string): string;
   /** What a finished stretch did, by kind: its heading's parts in the order
@@ -393,7 +391,6 @@ const index = (tense: Tense) => (tense === "done" ? 0 : tense === "running" ? 1 
 
 export const zh: Words = {
   english: false,
-  questions: zhQuestions,
   queue: {
     waiting: (count) => `排队 ${count} 条`,
     held: "已暂停，本轮停止",
@@ -735,7 +732,6 @@ export const zh: Words = {
 
 export const en: Words = {
   english: true,
-  questions: enQuestions,
   queue: {
     waiting: (count) => `${count} queued`,
     held: "Paused, turn stopped",

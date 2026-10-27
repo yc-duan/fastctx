@@ -318,7 +318,7 @@ import { networkUpdates } from "./world/update-view";
 import { enUpdateView, zhUpdateView } from "./app/update-view-words";
 import { getVersion } from "@tauri-apps/api/app";
 import { desktopAvailable } from "./world/desktop";
-import { answerWith, notifying, startPresence } from "./app/presence";
+import { notifying, startPresence } from "./app/presence";
 import { installAccess } from "./app/access";
 import { installBack, setPageBack } from "./app/back";
 import { installFrame } from "./app/frame";
@@ -1001,17 +1001,6 @@ async function specimenRenamed(address: Address, name: string): Promise<Controll
   return { kind: "done", said: null };
 }
 
-/** A specimen's agent takes an answer a while after it is given. */
-async function specimenAnswered(address: Address): Promise<void> {
-  await new Promise((resolve) => setTimeout(resolve, 1600));
-  await specimenActOn(address, (r) => {
-    if (!r.now) return r;
-    const { asked: _answered, ...now } = r.now;
-    return { ...r, now };
-  });
-  void store.refresh();
-}
-
 async function specimenForgot(address: Address): Promise<Forgetting> {
   await specimenActOn(address, () => null);
   return "asked";
@@ -1372,13 +1361,6 @@ function home(): Page {
     stopJob: live ? (job, machine) => stopJob(job, machine) : async () => {},
     updates: () => updateCard.open(),
     seenTold: toldSeen,
-    // An answer from here goes in once, however long the way is closed, as
-    // one from a notification does (`world-network.md`, 断开不是结束).
-    answer: (address, asked, choice) => {
-      if (!live) return specimenAnswered(address);
-      const id = crypto.randomUUID();
-      return untilAnswered(() => talk(address, answerWith(asked, choice), [], null, id), () => {}, address.machine);
-    },
   });
   let away: Away | null = live ? null : specimen.away;
   // What happened while the reader was away is asked of every machine when
@@ -3143,12 +3125,6 @@ startPresence({
   words: presenceWords,
   someone: (r) => someoneSaid(r),
   stop: (address) => stop(address),
-  // An answer from a notification goes in once, however long the way is
-  // closed (`world-network.md`, 断开不是结束).
-  say: (address, text) => {
-    const id = crypto.randomUUID();
-    return untilAnswered(() => talk(address, text, [], null, id), () => {}, address.machine);
-  },
 });
 
 // A network this computer or phone was on, dissolved, is said once.

@@ -463,15 +463,6 @@ export class ConversationPage {
       near: (gap, side) => void this.fillGap(gap, side),
       // Words being sent leave from where they were typed.
       departure: () => departureOf(this.input),
-      questions: {
-        words: words.questions,
-        // Answers go in at once, into the turn if one runs: they never wait
-        // in the queue.
-        answer: async (text) => {
-          const came = await this.options.send(text, { refs: [], shown: [] });
-          if (came === "failed") throw new Error(words.notSent(""));
-        },
-      },
       here: options.here,
       residentMachine: someone.machine,
       agent: someone.agent,

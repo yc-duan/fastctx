@@ -21,7 +21,6 @@ import type { JsonValue } from "../world/wire";
 import { mergeSteps, type JobFacts, type RunFacts } from "../world/run-facts";
 import { askKey, forPeople, type AskState } from "./ask-state";
 import { userWords } from "./told";
-import { readReply, type AsyncQuestion } from "./async-ask";
 import { Agents, type AgentRun } from "./agents";
 import { Requests } from "./requests";
 import type { PendingControl } from "../world/control";
@@ -92,10 +91,6 @@ export type Entry = {
       /** What the World told the session, as facts, when it was the World
        *  or another agent that spoke. */
       notice?: Notice;
-      /** The user's answers to a question the agent asked without waiting,
-       *  sent as the official client writes them: shown as answers, never
-       *  as the envelope. */
-      reply?: { item: string; answers: string[] };
     }
   | {
       kind: "prose";
@@ -130,10 +125,12 @@ export type Entry = {
   | { kind: "forked"; key: string; source: import("../world/wire").Address }
   /** A request the session waits on the user for, as its host made it. */
   | { kind: "ask"; key: string; id: JsonValue; turn: string | null; request: string; params: JsonValue; state: AskState; version: number }
-  /** Questions the agent asked without stopping its work (Codex's
-   *  `request_user_input_async`): answered whenever the user likes, or not
-   *  at all. `answers` holds what was answered, by question. */
-  | { kind: "question"; key: string; item: string; turn: string; questions: AsyncQuestion[]; answers: (string | null)[]; version: number }
+  /** What the agent asked the user without stopping its work, with Codex's
+   *  `request_user_input_async`, which a World thread cannot be without:
+   *  words to the user, as `message_user`'s are, the questions and the
+   *  answers they offer written out; the user answers in words of their
+   *  own, whenever they like. */
+  | { kind: "question"; key: string; stamp: number; at: number; item: string; turn: string; text: string }
   /** One of the host's own agents that went on in the background ended,
    *  and the conversation was told of it here: by the host's notice, or,
    *  in Codex, by an item of the turn. */
@@ -519,8 +516,6 @@ export class Fold {
         const known =
           heard.turn !== null &&
           (this.byTurn.get(heard.turn) ?? []).some((entry) => entry.kind === "heard" && entry.text.trim() === heard.text.trim());
-        const reply = heard.from?.kind === "user" ? readReply(heard.text) : null;
-        if (reply) this.answered(reply.item, reply.answers);
         if (!known) {
           const attached = this.attachedOf(heard);
           const ordinal = this.heardIn.get(turnKey) ?? 0;
@@ -545,7 +540,6 @@ export class Fold {
             turn: heard.turn,
             ...(attached.length ? { attached, kept: heard.message?.attachments ?? [] } : {}),
             ...(event.event === "heard" && event.notice ? { notice: event.notice } : {}),
-            ...(reply ? { reply: { item: reply.item, answers: reply.answers.map((one) => one.answer) } } : {}),
           });
           if (!this.replaying && heard.from?.kind === "user") {
             this.unclaimed.push({ key: shown, text: heard.text.trim(), seq: ++this.heardSeq });
@@ -812,10 +806,10 @@ export class Fold {
     if (said && !(id && this.find(turn, id))) this.overtaken(turn);
     let fresh: Entry;
     const questions = native.kind === "message" ? questionsOf(native.detail) : null;
-    if (questions) {
+    if (questions && native.kind === "message") {
       const shown = id ? this.find(turn, id) : undefined;
       if (shown?.kind === "question") return;
-      const asked: Entry = { kind: "question", key, stamp: 0, at: 0, item: id, turn, questions, answers: questions.map(() => null), version: 0 };
+      const asked: Entry = { kind: "question", key, stamp: 0, at: 0, item: id, turn, text: askedText(native.text, questions) };
       if (shown) this.replace(shown, asked);
       else this.add(asked);
       return;
@@ -1024,23 +1018,6 @@ export class Fold {
     this.touch(entry);
   }
 
-  /** Answers the user sent to the questions of `item`, by question. */
-  private answered(item: string, answers: { index: number; answer: string }[]): void {
-    const question = this.entries.find((entry): entry is Extract<Entry, { kind: "question" }> => entry.kind === "question" && entry.item === item);
-    if (!question) return;
-    for (const { index, answer } of answers) if (index >= 0 && index < question.answers.length) question.answers[index] = answer;
-    question.version += 1;
-    this.touch(question);
-  }
-
-  /** Answers about to be sent: shown answered at once. */
-  answering(item: string, answers: (string | null)[]): void {
-    this.answered(
-      item,
-      answers.flatMap((answer, index) => (answer === null ? [] : [{ index, answer }])),
-    );
-  }
-
   /** Whether a turn has ended, as far as is shown. */
   turnEnded(turn: string): boolean {
     return this.endedTurns.has(turn);
@@ -1179,7 +1156,6 @@ export class Fold {
       sending: { state: "going" },
       ...(this.running.size > 0 ? { intoTurn: true } : {}),
       ...(attached.length ? { attached } : {}),
-      ...replyOf(text),
     });
     return key;
   }
@@ -1509,17 +1485,8 @@ export class Fold {
       this.stretches.set(turn, known);
       return `group-${turn}-${known[at]}`;
     };
-    // Questions asked without waiting show their answers in their own card.
-    const asked = new Set<string>();
-    for (const entry of this.entries) if (entry.kind === "question") asked.add(entry.item);
     for (const entry of this.entries) {
       if (entry.kind === "prose" && entry.prose === "message" && entry.writing && !entry.text.trim()) continue;
-      // The words that carry an answer are said by its card, not again
-      // below it; they still end the stretch before them, as words do.
-      if (entry.kind === "heard" && entry.reply && asked.has(entry.reply.item)) {
-        group = null;
-        continue;
-      }
       // A job's end is the World's word to the model alone; the jobs still
       // running are in the composer's panel (`world-gui.md`, 对话).
       if (entry.kind === "heard" && entry.notice?.kind === "job_ended" && entry.from?.kind !== "user") continue;
@@ -1528,8 +1495,9 @@ export class Fold {
         continue;
       }
       // Words the agent said to the user stand on their own, as its answer,
-      // and divide its work as any words said do (`world-voice.md`).
-      const said = entry.kind === "tool" ? sayOf(entry) : null;
+      // and divide its work as any words said do (`world-voice.md`); what it
+      // asked without stopping is said the same way.
+      const said = entry.kind === "tool" ? sayOf(entry) : entry.kind === "question" ? askedSay(entry) : null;
       if (said) {
         group = null;
         blocks.push(said);
@@ -1615,13 +1583,6 @@ function property(value: JsonValue, key: string): JsonValue | undefined {
   return value !== null && typeof value === "object" && !Array.isArray(value) ? value[key] : undefined;
 }
 
-/** Answers to questions asked without waiting, as the words that carry
- *  them are shown. */
-function replyOf(text: string): { reply?: { item: string; answers: string[] } } {
-  const reply = readReply(text);
-  return reply ? { reply: { item: reply.item, answers: reply.answers.map((one) => one.answer) } } : {};
-}
-
 /** The call an agent Codex tells of by an item started with: it names the
  *  agent, and the task its path names. */
 function startedTool(agent: string, path: string): Tool {
@@ -1673,30 +1634,36 @@ export function runsOf(members: readonly Entry[]): Entry[][] {
   return runs;
 }
 
-/** The questions of an agent's message asked without waiting, where it is
- *  one: Codex marks it with `questions` beside its words, and a goal's
- *  Claude question keeps Claude's own questions too, with what each answer
- *  means and whether several may be chosen. */
-function questionsOf(detail: JsonValue | undefined): AsyncQuestion[] | null {
+/** A question of an agent's message asked without stopping: its words and
+ *  the answers it offers. */
+interface Asked {
+  title: string;
+  options: string[];
+}
+
+/** The questions of an agent's message asked without stopping, where it is
+ *  one: Codex marks it with `questions` beside its words. */
+function questionsOf(detail: JsonValue | undefined): Asked[] | null {
   const raw = property(detail ?? null, "questions");
   if (!Array.isArray(raw) || !raw.length) return null;
-  const claude = property(property(detail ?? null, "fastctx_goal_question") ?? null, "questions");
-  const questions: AsyncQuestion[] = [];
-  for (const [index, one] of raw.entries()) {
+  const questions: Asked[] = [];
+  for (const one of raw) {
     const title = property(one, "title");
     if (typeof title !== "string" || !title.trim()) return null;
     const options = property(one, "options");
-    const question: AsyncQuestion = { title, options: Array.isArray(options) ? options.filter((o): o is string => typeof o === "string") : null };
-    if (property(one, "multiSelect") === true) question.multiple = true;
-    const offered = Array.isArray(claude) ? property(claude[index] ?? null, "options") : null;
-    if (Array.isArray(offered)) {
-      const notes = offered.map((option) => {
-        const note = property(option, "description");
-        return typeof note === "string" && note.trim() ? note : null;
-      });
-      if (notes.some((note) => note !== null)) question.notes = notes;
-    }
-    questions.push(question);
+    questions.push({ title, options: Array.isArray(options) ? options.filter((o): o is string => typeof o === "string") : [] });
   }
   return questions;
+}
+
+/** What was asked without stopping, written as words to the user: the
+ *  message's own words, then each question with the answers it offers. */
+function askedText(words: string, questions: Asked[]): string {
+  const asked = questions.map((question) => [`**${question.title.trim()}**`, ...question.options.map((option) => `- ${option}`)].join("\n"));
+  return [words.trim(), ...asked].filter(Boolean).join("\n\n");
+}
+
+/** What was asked without stopping, as words said to the user. */
+function askedSay(entry: Extract<Entry, { kind: "question" }>): Say {
+  return { kind: "say", key: entry.key, item: entry.item, turn: entry.turn, stamp: entry.stamp, at: entry.at, text: entry.text, status: "info", attachments: [] };
 }

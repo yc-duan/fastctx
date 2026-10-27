@@ -4,7 +4,6 @@ import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
-import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
@@ -21,8 +20,6 @@ class WorldNotices(private val context: Context) {
         const val CONNECTION = "world_connection"
         const val ALERTS = "world_conversations"
         const val NOTICE = "world_notice"
-        const val ANSWER_NOTICE = "world_answer_notice"
-        const val ANSWER_CHOICE = "world_answer_choice"
     }
     private val manager = context.getSystemService(NotificationManager::class.java)
     private val saved = context.getSharedPreferences("world-notices", Context.MODE_PRIVATE)
@@ -41,16 +38,6 @@ class WorldNotices(private val context: Context) {
             if (id != null) putExtra(NOTICE, id)
         }
         return PendingIntent.getActivity(context, 0, intent, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
-    }
-
-    /** A button giving one of a question's answers, sent from the notification without opening the app. */
-    private fun answerIntent(tag: String, choice: Int): PendingIntent {
-        val intent = Intent(context, WorldAnswer::class.java).apply {
-            data = Uri.Builder().scheme("world-answer").authority(context.packageName).appendPath(tag).appendPath(choice.toString()).build()
-            putExtra(ANSWER_NOTICE, tag)
-            putExtra(ANSWER_CHOICE, choice)
-        }
-        return PendingIntent.getBroadcast(context, 0, intent, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
     }
 
     fun connectionNotification(state: JSONObject?): Notification {
@@ -83,8 +70,6 @@ class WorldNotices(private val context: Context) {
             .setContentIntent(launch(activation)).setAutoCancel(true)
             .setOnlyAlertOnce(previous != null && previous.optString("version") == notice.optString("version"))
             .setPriority(NotificationCompat.PRIORITY_HIGH).setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
-        val answers = notice.optJSONArray("answers") ?: JSONArray()
-        for (choice in 0 until answers.length()) builder.addAction(0, answers.getJSONObject(choice).getString("label"), answerIntent(tag, choice))
         manager.notify(tag, 0, builder.build())
         return tag
     }
@@ -109,18 +94,6 @@ class WorldNotices(private val context: Context) {
         WorldRuntime.wakePageNative()
     }
 
-    /** Sends the answer a notification's button gives, as the user's words to its conversation; the
-     *  notification goes once they are sent, and stays, with the failure reported, when they could not be. */
-    fun answer(tag: String, choice: Int) {
-        val notice = synchronized(this) { saved.getString("notice:$tag", null)?.let(::JSONObject) } ?: return
-        val words = notice.getJSONArray("answers").getJSONObject(choice).getString("words")
-        val to = notice.getJSONObject("to")
-        // The same button pressed again after a failure that did send is the same words.
-        val error = WorldRuntime.sayNative(to.getString("resident"), to.getString("machine"), words, "notice:$tag:$choice")
-        check(error == null) { error!! }
-        dismiss(tag)
-    }
-
     @Synchronized fun pending() = JSONObject().put("deliveries", JSONArray(saved.getString("pending", "[]")))
 
     @Synchronized fun acknowledge(id: String) {
@@ -128,24 +101,5 @@ class WorldNotices(private val context: Context) {
         check(pending.length() > 0 && pending.getJSONObject(0).getString("id") == id) { "Notification activations must be acknowledged in order" }
         pending.remove(0)
         check(saved.edit().putString("pending", pending.toString()).commit()) { "Could not acknowledge notification activation" }
-    }
-}
-
-/** A notification's answer button: the answer goes out in the background, the app stays closed. */
-class WorldAnswer : BroadcastReceiver() {
-    override fun onReceive(context: Context, intent: Intent) {
-        val tag = intent.getStringExtra(WorldNotices.ANSWER_NOTICE) ?: return
-        val choice = intent.getIntExtra(WorldNotices.ANSWER_CHOICE, -1)
-        WorldRuntime.ensure(context)
-        val pending = goAsync()
-        Thread {
-            try {
-                WorldRuntime.notices.answer(tag, choice)
-            } catch (error: Exception) {
-                WorldRuntime.reportError("answering from a notification: $error")
-            } finally {
-                pending.finish()
-            }
-        }.start()
     }
 }

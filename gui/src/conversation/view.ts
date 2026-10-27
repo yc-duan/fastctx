@@ -71,9 +71,7 @@ import { AnchorLayout, AnchoredHeight, MemoryLines, type LinePaint, type ViewerS
 import { FEW, LongText, type LongLines, type LongTextWords, type OpenedText, type OtherSource } from "./long-text";
 import { Printout, givenLines, type PrintoutEnd } from "./printout";
 import { Said, WholeOutput, outputPaint, type OpenedLines } from "./run-output";
-import { replyOf } from "./async-ask";
 import "./say.css";
-import { chosenIn, drawQuestions, type QuestionWords } from "./question-card";
 import { StreamedProse } from "./stream-prose";
 import { TurnLine, time, type LineSays } from "./turn-line";
 import { fly, type Departure } from "./flight";
@@ -130,7 +128,6 @@ export interface Context {
     | undefined;
   /** Answering questions asked without waiting: the words go in at once,
    *  into the turn if one runs. */
-  questions?: { words: QuestionWords; answer(text: string): Promise<void> } | undefined;
   /** The user asked to start again from their words in `turn`, to ask the
    *  same again, or to fork from `turn`; offered only where the
    *  conversation takes it. */
@@ -180,7 +177,6 @@ const STRETCH_ROWS = 60;
 type ToolEntry = Extract<Entry, { kind: "tool" }>;
 type AskEntry = Extract<Entry, { kind: "ask" }>;
 type HeardEntry = Extract<Entry, { kind: "heard" }>;
-type QuestionEntry = Extract<Entry, { kind: "question" }>;
 type ProseEntry = Extract<Entry, { kind: "prose" }>;
 
 /** One stretch on the page: its heading, its box and the rows in it, made
@@ -265,9 +261,6 @@ export class ConversationView {
   private seen = new Set<string>();
   /** The page has been drawn once: what comes after is live. */
   private live = false;
-  /** Questions being answered again, and ones the user skipped. */
-  private editing = new Set<string>();
-  private skipped = new Set<string>();
   /** Words already sent up from the input, by key. */
   private flown = new Set<string>();
   /** What finding last read of each block, and blocks gone since. */
@@ -369,14 +362,6 @@ export class ConversationView {
     root.addEventListener("click", (event) => {
       if (this.own(event)) this.click(event);
     });
-    root.addEventListener("input", (event) => {
-      if (!this.own(event)) return;
-      // Words of one's own answer a question instead of an option.
-      const free = (event.target as HTMLElement).closest<HTMLInputElement>("[data-question-free]");
-      // Where several may be chosen, they are kept beside the words.
-      if (!free?.value.trim() || free.closest("fieldset")?.hasAttribute("data-multiple")) return;
-      for (const option of free.closest("fieldset")?.querySelectorAll<HTMLElement>("[data-question-pick]") ?? []) option.setAttribute("aria-pressed", "false");
-    });
     // On a touch screen every answer has its actions under it; the user's
     // own words have none shown, and held, their two float up beside them.
     onHeld(root, ".bubble", (bubble, event, input) => {
@@ -388,10 +373,10 @@ export class ConversationView {
     // Enter in an answer's field answers, as the card's first button would.
     root.addEventListener("keydown", (event) => {
       if (!this.own(event)) return;
-      const field = (event.target as HTMLElement).closest(".ask-card .ask-input, .question-card .ask-input");
+      const field = (event.target as HTMLElement).closest(".ask-card .ask-input");
       if (!field || event.key !== "Enter" || composing(event)) return;
       event.preventDefault();
-      field.closest(".ask-card, .question-card")?.querySelector<HTMLButtonElement>(".ask-primary")?.click();
+      field.closest(".ask-card")?.querySelector<HTMLButtonElement>(".ask-primary")?.click();
     });
   }
 
@@ -656,7 +641,6 @@ export class ConversationView {
         const notice = this.noticeOf(block);
         // In an agent's box, words it heard are what it was asked.
         element.classList.add(notice ? "from-world" : this.context.nested ? "from-asked" : !block.from || block.from.kind === "user" ? "from-user" : "from-other");
-        if (block.reply) element.classList.add("from-reply");
       }
       slot = { key: block.key, element, block, signature: null };
       this.slots.set(block.key, slot);
@@ -1031,8 +1015,6 @@ export class ConversationView {
       }
       case "heard":
         return `${block.stamp}|${block.turn && conversation.turnEnded(block.turn) ? "e" : ""}${block.turn && conversation.latestEnded() === block.turn ? "n" : ""}`;
-      case "question":
-        return `${block.stamp}|${this.editing.has(block.key) ? "e" : ""}${this.skipped.has(block.key) ? "s" : ""}`;
       case "uncertain":
         return `${block.stamp}|${this.conversation.hasTurns() ? "t" : ""}`;
       default:
@@ -1044,8 +1026,6 @@ export class ConversationView {
     switch (block.kind) {
       case "activity-group":
         return `${block.stamp}|${block.members.length}${block.agents ? `|${this.conversation.agentStamp}` : ""}`;
-      case "question":
-        return `${block.stamp}|${this.editing.has(block.key)}|${this.skipped.has(block.key)}`;
       case "uncertain":
         return `${block.stamp}|${this.conversation.hasTurns()}`;
       default:
@@ -1254,8 +1234,6 @@ export class ConversationView {
         return `<div class="note caution" title="${escape(entry.why)}">${escape(words.uncertain(entry.why))}</div>`;
       case "ask":
         return this.ask(entry);
-      case "question":
-        return this.question(entry);
       case "forked": {
         const from = `${entry.source.resident} ${entry.source.machine}`;
         const link = this.context.link ? `<a href="${escape(this.context.link(entry.source))}">${escape(from)}</a>` : escape(from);
@@ -1267,6 +1245,8 @@ export class ConversationView {
         return this.command(entry);
       case "tool":
       case "activity":
+      // Said as words to the user, among the blocks (`askedSay`).
+      case "question":
         return "";
     }
   }
@@ -1408,58 +1388,6 @@ export class ConversationView {
     return drawAsk(entry.key, ask, entry.state, this.context.residentMachine, asks.words);
   }
 
-  /** Questions asked without waiting: a card to answer, answered, or
-   *  skipped and a way back to it. */
-  private question(entry: QuestionEntry): string {
-    const questions = this.context.questions;
-    if (!questions) return `<div class="prose">${render(entry.questions.map((q) => q.title).join("\n\n"))}</div>`;
-    if (this.skipped.has(entry.key) && !this.editing.has(entry.key)) {
-      return `<div class="question-card skipped"><p class="question-title">${plain(entry.questions[0]!.title)}</p><div class="question-foot"><button class="text-button quiet-button" type="button" data-question-change="${escape(entry.key)}">${escape(questions.words.answer)}</button></div></div>`;
-    }
-    return drawQuestions(entry.key, entry.questions, entry.answers, questions.words, this.editing.has(entry.key));
-  }
-
-  private async answerQuestions(target: HTMLElement): Promise<void> {
-    const questions = this.context.questions;
-    const card = target.closest<HTMLElement>(".question-card");
-    const key = target.dataset.questionSend ?? target.dataset.questionSkip ?? target.dataset.questionChange ?? "";
-    const found = this.conversation.get(key);
-    const entry = found?.kind === "question" ? found : undefined;
-    if (!questions || !card || !entry) return;
-    if (target.dataset.questionChange !== undefined) {
-      this.editing.add(key);
-      this.skipped.delete(key);
-      this.update();
-      return;
-    }
-    if (target.dataset.questionSkip !== undefined) {
-      this.skipped.add(key);
-      this.editing.delete(key);
-      this.update();
-      return;
-    }
-    const answers = chosenIn(card, entry.questions.length);
-    if (answers.every((answer) => answer === null)) {
-      card.querySelector<HTMLInputElement>("[data-question-free]")?.focus();
-      return;
-    }
-    const state = card.querySelector<HTMLElement>(".question-state")!;
-    const controls = [...card.querySelectorAll<HTMLButtonElement | HTMLInputElement>("button, input")];
-    for (const control of controls) control.disabled = true;
-    state.textContent = questions.words.sending;
-    try {
-      await questions.answer(replyOf(entry.item, entry.questions, answers));
-      this.conversation.answering(entry.item, answers);
-      this.editing.delete(key);
-      this.update();
-    } catch (error) {
-      for (const control of controls) control.disabled = false;
-      state.textContent = questions.words.failed(detailOf(error));
-      state.title = detailOf(error);
-      state.classList.add("wrong");
-    }
-  }
-
   /** A turn's actions as a sheet risen from the bottom, each with its
    *  name: a press does what the mark beside the turn would. */
   /** The user's words held on a touch screen: their actions as a small
@@ -1486,7 +1414,7 @@ export class ConversationView {
     if (target.classList.contains("ask-option")) {
       const pressed = target.getAttribute("aria-pressed") !== "true";
       if (!target.dataset.many) {
-        const group = target.dataset.question !== undefined ? `[data-question="${target.dataset.question}"]` : `[data-field="${target.dataset.field}"]`;
+        const group = `[data-field="${target.dataset.field}"]`;
         for (const other of card.querySelectorAll<HTMLElement>(`.ask-option${group}`)) {
           other.setAttribute("aria-pressed", "false");
           other.classList.remove("chosen");
@@ -1550,7 +1478,6 @@ export class ConversationView {
     }
     const notice = this.noticeOf(entry);
     if (notice) return this.noticeLine(entry, notice);
-    if (entry.reply) return `<p class="reply-line">${glyph("check", 14)}<span>${escape(entry.reply.answers.join(this.context.words.listSeparator))}</span></p>`;
     const mine = !entry.from || entry.from.kind === "user";
     const acts = mine && entry.turn && !entry.sending && this.conversation.turnEnded(entry.turn) ? this.userActs(entry) : "";
     // Words sent into the turn under way are said: the turn takes them in
@@ -2987,7 +2914,7 @@ export class ConversationView {
       return;
     }
     const target = (event.target as HTMLElement).closest<HTMLElement>(
-      "[data-open], [data-fold], [data-gap], [data-earlier], [data-asked], .code-copy, .ask-option, [data-ask], [data-copy], [data-copy-turn], [data-turn-act], [data-turn-calls], [data-question-pick], [data-question-send], [data-question-skip], [data-question-change]",
+      "[data-open], [data-fold], [data-gap], [data-earlier], [data-asked], .code-copy, .ask-option, [data-ask], [data-copy], [data-copy-turn], [data-turn-act], [data-turn-calls]",
     );
     if (!target) return;
     if (target.dataset.asked !== undefined) {
@@ -3021,24 +2948,6 @@ export class ConversationView {
       const index = this.heights.index(gap.key) ?? 0;
       const reader = this.heights.find(Math.max(0, this.context.scroller.scrollTop - this.origin()));
       this.context.near?.(gap, index <= reader ? "end" : "start");
-      return;
-    }
-    if (target.dataset.questionPick !== undefined) {
-      const fieldset = target.closest("fieldset");
-      const pressed = target.getAttribute("aria-pressed") !== "true";
-      // Several may be chosen together; otherwise one, in place of words.
-      if (fieldset?.hasAttribute("data-multiple")) {
-        target.setAttribute("aria-pressed", String(pressed));
-        return;
-      }
-      for (const other of fieldset?.querySelectorAll<HTMLElement>("[data-question-pick]") ?? []) other.setAttribute("aria-pressed", "false");
-      target.setAttribute("aria-pressed", String(pressed));
-      const free = fieldset?.querySelector<HTMLInputElement>("[data-question-free]");
-      if (free && pressed) free.value = "";
-      return;
-    }
-    if (target.dataset.questionSend !== undefined || target.dataset.questionSkip !== undefined || target.dataset.questionChange !== undefined) {
-      void this.answerQuestions(target);
       return;
     }
     if (target.dataset.turnCalls) {

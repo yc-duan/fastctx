@@ -289,7 +289,6 @@ pub enum Desk {
 const COMPUTER_USE: &str = "node_repl";
 /// What the app's helper answers while another request is in flight.
 const HELPER_BUSY: &str = "Computer Use helper already has an active request";
-pub use fastctx_types::residents::ASYNC_REPLY_TAG;
 
 pub struct CodexHost {
     codex_home: PathBuf,
@@ -656,12 +655,6 @@ impl CodexHost {
         }
         match input {
             Input::Text(text) => {
-                // An answer to a question the model asked without waiting
-                // (`request_user_input_async`) goes in as the user's words in
-                // the envelope Codex's own clients write, marked as such.
-                if text.lines().any(|line| line == ASYNC_REPLY_TAG) {
-                    params["turnTrigger"] = json!("send_user_message_async_question");
-                }
                 params["input"] = json!([{ "type": "text", "text": text }]);
             }
             Input::Skill { name, path, text } => {

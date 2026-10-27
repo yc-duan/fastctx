@@ -310,7 +310,7 @@ function hubbing(machine: "laptop" | "desktop"): ResidentNow[] {
         desk: false,
         waiting_for_user: false,
         title: "真机验证",
-        asked: { id: "ask-a7e2-1", at: at("13:12:00"), waits: false, what: "answer", text: "周五借实验室的真机跑 50 次，还是先在台架上跑？", options: ["周五借真机", "先上台架"] },
+        told: { id: "told-a7e2-1", at: at("13:12:00"), status: "info", text: "周五借实验室的真机跑 50 次，还是先在台架上跑？\n\n- 周五借真机\n- 先上台架" },
       },
     }),
   ];
@@ -546,7 +546,7 @@ export function specimenWorld(): { world: WorldState; now: Date; lastVisit: Date
                 waiting_for_user: false,
                 title: null,
                 last_said: "Done. The writer now commits every 5 000 rows and at end of file, and a retry replays only the rows since the last commit.",
-                asked: { id: "ask-7f3a-1", at: at("09:30:20"), waits: false, what: "answer", text: "重试时，失败的那一批也要补发告警吗？", options: ["补发", "不补发"] },
+                told: { id: "told-7f3a-1", at: at("09:30:20"), status: "info", text: "重试时，失败的那一批也要补发告警吗？\n\n- 补发\n- 不补发" },
               },
               last_action: action("09:30:50", "laptop", "run", "cd /srv/ingest && cargo test 2>&1 | tail -3", "exit 0"),
             }),

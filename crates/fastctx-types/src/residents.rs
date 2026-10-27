@@ -395,12 +395,9 @@ pub const FIRST_WORDS_CHARS: usize = 80;
 /// How much of a turn's last message `Now::last_said` keeps, in characters:
 /// a notification's body shows a few lines of it.
 pub const LAST_SAID_CHARS: usize = 500;
-/// How much of each question `Asked::text` keeps, in characters.
-pub const ASKED_CHARS: usize = 300;
 
-/// Something the agent asked the user: a request its turn waits on, or a
-/// question it asked without waiting, which the user may answer whenever
-/// they like or never.
+/// Something the agent asked the user: a request its turn waits on. What it
+/// asks without stopping is words to the user, kept as `Told`.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Asked {
     /// The request's reply address or the question's item, as a string: a
@@ -418,36 +415,12 @@ pub struct Asked {
     pub options: Vec<String>,
 }
 
-/// The line that opens the user's answers to a question Codex asked without
-/// waiting, as Codex's own clients write them.
-pub const ASYNC_REPLY_TAG: &str = "<send_user_message_question_reply>";
-
-impl Asked {
-    /// The user's words choosing option `choice` of a question asked without
-    /// waiting, in Codex's envelope (`gui/src/conversation/async-ask.ts`):
-    /// its id names the question's item and the question's place among its
-    /// questions. None when it offers no such option.
-    pub fn reply(&self, choice: usize) -> Option<String> {
-        #[derive(Serialize)]
-        #[serde(rename_all = "camelCase")]
-        struct Answered<'a> {
-            question_item_id: String,
-            question: &'a str,
-            answer: &'a str,
-        }
-        let answer = self.options.get(choice).filter(|_| !self.waits && self.what == AskedFor::Answer)?;
-        let id = serde_json::to_string(&("request_user_input_async", &self.id, 0)).expect("strings serialize");
-        let answered = [Answered { question_item_id: id, question: &self.text, answer }];
-        let close = ASYNC_REPLY_TAG.replacen('<', "</", 1);
-        Some(format!("{ASYNC_REPLY_TAG}\n{}\n{close}", serde_json::to_string(&answered).expect("strings serialize")))
-    }
-}
-
 /// What an `Asked` wants of the user.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AskedFor {
-    /// Answers to its questions.
+    /// Answers to its questions: what a node kept before the hosts' own
+    /// asking tools were off in the World's sessions, read as it was.
     Answer,
     /// Leave to run a command.
     Command,

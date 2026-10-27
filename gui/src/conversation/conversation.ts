@@ -698,9 +698,6 @@ export class Conversation {
   settle(ask: Extract<Entry, { kind: "ask" }>, state: AskState): void {
     (this.parts.find((part) => part.fold.get(ask.key) === ask)?.fold ?? this.live).settle(ask, state);
   }
-  answering(item: string, answers: (string | null)[]): void {
-    for (const part of this.parts) part.fold.answering(item, answers);
-  }
 
   // Read whole, where nothing else holds it (a specimen, a conversation
   // being begun).

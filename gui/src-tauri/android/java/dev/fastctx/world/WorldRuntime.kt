@@ -39,9 +39,6 @@ object WorldRuntime {
     external fun visibleNative(visible: Boolean)
     external fun wakePageNative()
     external fun validateConfigurationNative(json: String): String?
-    /** The user's words to a conversation, sent before it returns; the failure, or null. Said again
-     *  under the same `id`, they go in once. */
-    external fun sayNative(resident: String, machine: String, text: String, id: String): String?
 
     @Synchronized fun ensure(context: Context) {
         if (started) return
