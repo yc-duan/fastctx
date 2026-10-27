@@ -24,6 +24,7 @@ import { blot, circle, outline, ruled, seeded } from "../pen/shapes";
 import type { AccountChange, HubAccounts, Login, MemberSeen } from "../world/accounts";
 import { moreEntries, nameOf, spotActs, SpotViews, type Act, type Spot } from "./machine-spot";
 import { ActsMenu } from "./acts-menu";
+import { MachineUpdates, type UpdatesAccess } from "./machine-updates";
 import { copyFrom } from "./copy-button";
 import { loginsOf, names } from "../world/accounts";
 import type { NameProblem } from "../world/bridge";
@@ -54,24 +55,15 @@ import { link } from "./places";
 import { runsHub, holds, assistantsOf, isComputer, isSuper, isVisitor, machinesOf, owns, sameLogin, type Machine } from "./reach";
 import type { Page } from "./shell";
 import { effect } from "./signals";
-import type { UpdateWords } from "./update-words";
-import { compareVersions, type MachineUpdate, type UpdateCall, type UpdateState, type UpdatesView, type UpdatesViewCall, type UpdatesViewReply } from "../world/updates";
 import type { BatchWords } from "./machine-batch-words";
 import { ChosenBar } from "./machine-framed";
-import { rulerOf } from "./update-ruler";
-import { lineOf } from "./update-marks";
-import type { UpdateViewWords } from "./update-view-words";
-import type { UpdatesNow } from "./machine-list";
 import { removerLoginOf } from "./machine-logins";
 import type { ManageWords } from "./machine-manage-words";
 import { added, between, pickable, pickableIn, toggled } from "./machine-picking";
 import { RemoveMachineSheet } from "./machine-remove";
 import { removeMachines } from "./machine-removing";
 import { WaysSheet } from "./machine-ways";
-import type { Signal } from "./signals";
-import type { VersionWindow } from "./version-window";
 import type { Store } from "./store";
-import { detailOf } from "./problem";
 
 export interface MachinesOptions {
   store: Store;
@@ -106,25 +98,8 @@ export interface MachinesOptions {
     check(text: string): Promise<NameProblem | null>;
     here(to: string): Promise<void>;
   };
-  /** The network's update policy, as this device last heard it, and the
-   *  words of setting it; what this device knows of releases and of the
-   *  network's machines, and asking other machines about their updates. */
-  updates?:
-    | {
-        words: UpdateWords;
-        /** The update view's words. */
-        view: UpdateViewWords;
-        /** Asks `account`'s hub for its update view, or to schedule or set. */
-        ask(hub: string, account: string, call: UpdatesViewCall): Promise<UpdatesViewReply>;
-        /** The window of versions, picking the network's lowest one, or none. */
-        minimum(current: string | null, pick: (version: string | null) => void): void;
-        state: Signal<UpdateState | null>;
-        remote(machine: string, call: UpdateCall): Promise<UpdateState>;
-        /** Has a machine of an earlier release update to the newest on its line. */
-        older(machine: string): Promise<unknown>;
-        versions: VersionWindow;
-      }
-    | undefined;
+  /** The network's updates, for the update view (`machine-updates.ts`). */
+  updates?: UpdatesAccess | undefined;
   /** The words of machines chosen together, and of taking machines off. */
   batch: BatchWords;
   manage: ManageWords;
@@ -170,23 +145,6 @@ function keptView(): View {
   }
 }
 
-/** The first release that sets a machine's choices one by one
- *  (`UpdateCall::Preferences`); earlier ones take the whole of them. */
-const PREFERENCES_SINCE = "1.0.1-beta.8";
-
-/** The first release whose node takes an update kept for it past a change
- *  of World program of its own stuck on the way; an earlier one online is
- *  also asked at once, which it takes regardless. */
-const ARRANGED_PAST_STUCK_SINCE = "1.0.1-beta.10";
-
-/** How often the update view asks while it is shown, and while the page
- *  is out of sight. */
-const UPDATES_EVERY_MS = 2500;
-const UPDATES_HIDDEN_MS = 15000;
-
-/** How long what scheduling a machine said stays on its row. */
-const SAID_MS = 15000;
-
 /** Where this device keeps which of the list's groups and people the viewer
  *  opened or closed, by their keys. */
 const FOLDS_KEY = "machines.folds";
@@ -205,26 +163,10 @@ function keptFolds(): Map<string, boolean> {
 }
 
 export class MachinesPage implements Page {
-  /** The update view as each login of this device was last told it, the
-   *  machines in it as one, and which login's view each came from. */
-  private updateViews = new Map<string, UpdatesView>();
-  private updatesByName = new Map<string, MachineUpdate>();
-  private updatesLogin = new Map<string, Login>();
-  /** Each machine's name on its own hub, by how it is written here. */
-  private updatesBare = new Map<string, string>();
-  /** The hub answers no update view: it runs an older release. */
-  private updatesOld = false;
   /** The page was left: nothing more is drawn. */
   private left = false;
-  /** Why the update view could not be read, while none was; and which ask
-   *  was the latest, so an earlier answer coming later is dropped. */
-  private updatesFailed: string | null = null;
-  private updatesAsked = 0;
-  private updatesTimer = 0;
-  /** What scheduling or setting a machine just said, by its name. */
-  private readonly updatesSaid = new Map<string, string>();
-  /** Whether the network's policy is unfolded on a phone. */
-  private policyOpen = false;
+  /** The update view, where this device updates machines. */
+  private readonly updateView: MachineUpdates | null;
   readonly element: HTMLElement;
   readonly title: string;
   private readonly panel: HTMLElement;
@@ -361,15 +303,32 @@ export class MachinesPage implements Page {
       updates: updating
         ? {
             words: updating.view,
-            of: (machine) => this.updatesByName.get(machine.written),
-            schedule: (machines, version) => this.schedule(machines, version),
-            repair: (machines, cancel) => this.arrangeRepair(machines, cancel),
-            ways: (machines, auto, relays) => this.setWays(machines, auto, relays),
+            of: (machine) => this.updateView?.of(machine.written),
+            schedule: (machines, version) => this.updateView!.schedule(machines, version),
+            repair: (machines, cancel) => this.updateView!.repair(machines, cancel),
+            ways: (machines, auto, relays) => this.updateView!.setWays(machines, auto, relays),
             state: updating.state,
             versions: updating.versions,
           }
         : undefined,
     });
+    this.updateView = updating
+      ? new MachineUpdates({
+          updates: updating,
+          access: options.access,
+          world: () => options.store.world.peek(),
+          shown: () => this.view === "updates" && !this.left,
+          draw: () => {
+            if (!this.left) this.draw(options.store.world.peek(), options.store.clock.peek());
+          },
+          failure: () => (this.note?.machine === "" ? this.note.text : null),
+          failed: (text) => {
+            if (text !== null) this.note = { machine: "", text };
+            else if (this.note?.machine === "") this.note = null;
+          },
+          width: () => this.list.clientWidth,
+        })
+      : null;
     this.moving = new HubMoving({ ...options.moving, words, access: options.access, confirm: options.confirm, changed: () => this.redraw() });
     this.spotViews = new SpotViews({
       words,
@@ -482,7 +441,7 @@ export class MachinesPage implements Page {
     this.list.addEventListener("click", (event) => {
       const target = event.target as HTMLElement;
       const press = event as MouseEvent;
-      if (this.updatesPress(target)) {
+      if (this.updateView?.press(target)) {
         event.preventDefault();
         event.stopPropagation();
         return;
@@ -614,9 +573,9 @@ export class MachinesPage implements Page {
     this.stop = () => {
       stopWorld();
       stopUpdates();
-      clearTimeout(this.updatesTimer);
+      this.updateView?.stop();
     };
-    this.askUpdatesNow();
+    this.updateView?.watch();
     let narrow: boolean | null = null;
     this.resized = new ResizeObserver(() => {
       if (narrow === this.narrow()) return;
@@ -813,7 +772,7 @@ export class MachinesPage implements Page {
     // What is chosen stays chosen: one machine alone is the one chosen on
     // the drawing, and ticked in the list and the update view. On a narrow
     // page the list ticks only what a long press began to choose.
-    this.askUpdatesNow();
+    this.updateView?.watch();
     if (view !== "map" && !this.framed.length && this.selected && this.isPickable(this.selected) && !this.narrow()) {
       this.framed = [this.selected];
       this.selected = null;
@@ -826,291 +785,6 @@ export class MachinesPage implements Page {
     this.closeCard();
     this.redraw();
     if (view === "map") requestAnimationFrame(() => this.map.refresh());
-  }
-
-  /** Asks for the update view now and every few seconds while it is
-   *  shown; stops asking once it is not. */
-  private askUpdatesNow(): void {
-    clearTimeout(this.updatesTimer);
-    if (this.view !== "updates" || !this.options.updates) return;
-    void this.askUpdates().finally(() => {
-      if (this.view !== "updates" || !this.element.isConnected) return;
-      this.updatesTimer = window.setTimeout(() => this.askUpdatesNow(), document.hidden ? UPDATES_HIDDEN_MS : UPDATES_EVERY_MS);
-    });
-  }
-
-  /** Each login of this device asks its hub for its update view; the
-   *  machines in them are one list, each from the view that lets the most
-   *  be done to it. */
-  private async askUpdates(): Promise<void> {
-    const updates = this.options.updates;
-    const world = this.options.store.world.peek();
-    if (!updates || !world) return;
-    const logins = loginsOf(world.accounts);
-    const asked = ++this.updatesAsked;
-    const answers = await Promise.allSettled(logins.map((login) => updates.ask(login.hubName, login.account, { do: "view" })));
-    if (asked !== this.updatesAsked) return;
-    const views = new Map<string, UpdatesView>();
-    const byName = new Map<string, MachineUpdate>();
-    const from = new Map<string, Login>();
-    const bare = new Map<string, string>();
-    // A machine is known by how it is written here: two hubs' machines of
-    // one name stay two, and each is asked by its own.
-    const written = new Map<string, string>();
-    const keyOf = (hub: string, name: string) => `${hub}\n${name}`;
-    for (const machine of machinesOf(world)) {
-      for (const on of machine.on) if (!written.has(keyOf(on.hub, machine.name))) written.set(keyOf(on.hub, machine.name), machine.written);
-    }
-    const writtenOf = (login: Login, name: string) => written.get(keyOf(login.hub, name)) ?? name;
-    let old = false;
-    let failed: string | null = null;
-    answers.forEach((answer, index) => {
-      const login = logins[index]!;
-      const key = `${login.hub}\n${login.account}`;
-      let view: UpdatesView | undefined;
-      if (answer.status === "rejected") {
-        const why = detailOf(answer.reason);
-        // Only a hub before the view says so; anything else passes, and
-        // what was read last stands meanwhile.
-        if (/does not support the updates view/.test(why)) old = true;
-        else {
-          failed = why;
-          view = this.updateViews.get(key);
-        }
-      } else if (answer.value.kind === "view") view = answer.value.view;
-      if (!view) return;
-      views.set(key, view);
-      for (const told of view.machines) {
-        const written = writtenOf(login, told.machine);
-        const machine = written === told.machine ? told : { ...told, machine: written };
-        const kept = byName.get(written);
-        const more = (one: MachineUpdate) => Number(one.actions.schedule.allowed) + Number(one.actions.settings.allowed) + Number(one.actions.update.allowed);
-        if (!kept || more(machine) > more(kept)) {
-          byName.set(written, machine);
-          from.set(written, login);
-          bare.set(written, told.machine);
-        }
-      }
-    });
-    this.updateViews = views;
-    this.updatesByName = byName;
-    this.updatesLogin = from;
-    this.updatesBare = bare;
-    this.updatesOld = !views.size && old;
-    this.updatesFailed = views.size || old ? null : failed;
-    // Drawn again as any change is: what is the same as it was is left as
-    // it is, every few seconds while the view is open.
-    if (!this.left) this.draw(this.options.store.world.peek(), this.options.store.clock.peek());
-  }
-
-  /** What the list draws in the update view: the machines that may be
-   *  updated, the ruler and the network's policy over them. */
-  private updatesNow(narrow: boolean): UpdatesNow | undefined {
-    const updates = this.options.updates;
-    if (!updates) return undefined;
-    const words = updates.view;
-    const views = [...this.updateViews.values()];
-    const newest = views.flatMap((view) => [view.stable?.version, view.beta?.version].filter((version): version is string => !!version));
-    const hub = views[0]?.hub ?? null;
-    const top = [...newest].sort(compareVersions).pop() ?? hub;
-    const line = lineOf(top);
-    const policies = [...this.updateViews.entries()].filter(([, view]) => view.policy);
-    const policy = policies[0]?.[1].policy ?? null;
-    const machines = [...this.updatesByName.values()];
-    let head = "";
-    if (this.updatesOld) head = `<p class="uv-old">${escape(words.hubOld)}</p>`;
-    else if (this.updatesFailed) head = `<p class="uv-old" title="${escape(this.updatesFailed)}">${escape(words.unread)}</p>`;
-    // What the page itself was asked and could not do, said over it.
-    if (this.note?.machine === "") head = `<p class="uv-old">${escape(this.note.text)}</p>${head}`;
-    else if (machines.length) {
-      const width = Math.max(0, this.list.clientWidth - (narrow ? 32 : 48));
-      head = rulerOf({ machines, newest, hub, minimum: policy?.minimum ?? null, line, width: width || 900, phone: narrow }, words);
-      if (policies.length) {
-        // Each hub's own, its name first where there are several.
-        const logins = loginsOf(this.options.store.world.peek()?.accounts);
-        const rows = policies
-          .map(([key, view]) => {
-            const one = view.policy!;
-            const minimum = one.minimum ?? null;
-            const managed = one.managed_auto !== false;
-            const hubName = policies.length > 1 ? (logins.find((login) => `${login.hub}\n${login.account}` === key)?.hubName ?? "") : "";
-            return `<div class="uv-policy">${hubName ? `<span class="uv-policy-hub">${escape(hubName)}</span>` : ""}<span class="uv-policy-item"><span>${escape(words.minimum)}</span><button class="uv-chip" type="button" data-uv-minimum="${escape(key)}"><span class="ml-num">${escape(minimum ?? words.noMinimum)}</span>${glyph("chevron", 12)}</button></span><span class="uv-policy-item"><span>${escape(words.managedAuto)}</span><span class="uv-auto${managed ? " on" : ""}" role="switch" aria-checked="${managed}" aria-label="${escape(words.managedAuto)}" data-uv-managed="${escape(key)}"><span class="switch-track"><span class="switch-knob"></span></span></span></span></div>`;
-          })
-          .join("");
-        // On a phone the policy is folded into one line until it is opened.
-        head += narrow
-          ? `<details class="uv-policy-fold"${this.policyOpen ? " open" : ""}><summary>${glyph("chevron", 14)}<span>${escape(words.policy)}</span></summary>${rows}</details>`
-          : rows;
-      }
-    }
-    return { byName: this.updatesByName, line, words, head, said: this.updatesSaid };
-  }
-
-  /** How many machines may take a newer release, beside the view's name. */
-  private drawUpdateCount(): void {
-    const count = this.views.querySelector<HTMLElement>(".ml-view-count");
-    if (!count) return;
-    const able = [...this.updatesByName.values()].filter((machine) => machine.offer && machine.actions.schedule.allowed).length;
-    count.hidden = !able;
-    count.textContent = able ? String(able) : "";
-  }
-
-  /** The update view's own presses in the list: a machine's switch, and the
-   *  network's policy. Whether the press was one of them. */
-  private updatesPress(target: HTMLElement): boolean {
-    const updates = this.options.updates;
-    if (!updates || this.view !== "updates") return false;
-    const fold = target.closest<HTMLElement>(".uv-policy-fold > summary");
-    if (fold) {
-      this.policyOpen = !this.policyOpen;
-      this.redraw();
-      return true;
-    }
-    const auto = target.closest<HTMLElement>("[data-uv-auto]")?.dataset.uvAuto;
-    if (auto) {
-      const machine = this.updatesByName.get(auto);
-      if (machine) void this.setWays([machine], !machine.auto, null);
-      return true;
-    }
-    const minimumOf = target.closest<HTMLElement>("[data-uv-minimum]")?.dataset.uvMinimum;
-    const managedOf = target.closest<HTMLElement>("[data-uv-managed]")?.dataset.uvManaged;
-    const key = minimumOf ?? managedOf;
-    const policy = key === undefined ? undefined : this.updateViews.get(key)?.policy;
-    if (minimumOf !== undefined && policy) {
-      updates.minimum(policy.minimum ?? null, (version) => void this.setPolicy(minimumOf, version, policy.managed_auto !== false));
-      return true;
-    }
-    if (managedOf !== undefined && policy) {
-      void this.setPolicy(managedOf, policy.minimum ?? null, policy.managed_auto === false);
-      return true;
-    }
-    return false;
-  }
-
-  /** Schedules `version` for each of `machines` with the hub whose view
-   *  let it, or takes back what was scheduled; what did not go is said on
-   *  its row for a while. */
-  private async schedule(machines: MachineUpdate[], version: string | null): Promise<void> {
-    const updates = this.options.updates;
-    if (!updates) return;
-    const words = updates.view;
-    const byLogin = new Map<string, { login: Login; names: string[] }>();
-    for (const machine of machines) {
-      const login = this.updatesLogin.get(machine.machine);
-      if (!login) continue;
-      const key = `${login.hub}\n${login.account}`;
-      const entry = byLogin.get(key) ?? { login, names: [] };
-      // The hub knows it by its name there.
-      entry.names.push(this.updatesBare.get(machine.machine) ?? machine.machine);
-      byLogin.set(key, entry);
-    }
-    for (const { login, names } of byLogin.values()) {
-      // Back from the hub's name to how it is written here.
-      const written = (name: string) =>
-        [...this.updatesBare.entries()].find(([as, one]) => one === name && this.updatesLogin.get(as) === login)?.[0] ?? name;
-      try {
-        const reply = await updates.ask(login.hubName, login.account, { do: "schedule", machines: names, version });
-        if (reply.kind !== "scheduled") continue;
-        for (const result of reply.results) {
-          if (result.done) this.updatesSaid.delete(written(result.machine));
-          else this.sayOnRow(written(result.machine), words.notScheduled(result.reason ? words.reasons[result.reason] : (result.why ?? words.reasons.other)));
-        }
-      } catch (error) {
-        for (const name of names) this.sayOnRow(written(name), words.notScheduled(error instanceof Error ? error.message : String(error)));
-      }
-    }
-    if (version !== null) {
-      const stuck = machines.filter((machine) => machine.online && machine.kernel && compareVersions(machine.kernel, ARRANGED_PAST_STUCK_SINCE) < 0);
-      await inTurns(stuck, WAYS_AT_ONCE, async (machine) => {
-        try {
-          await updates.remote(machine.machine, { do: "kernel", version });
-        } catch (error) {
-          this.sayOnRow(machine.machine, words.notScheduled(error instanceof Error ? error.message : String(error)));
-        }
-      });
-    }
-    await this.askUpdates();
-  }
-
-  /** Has each machine's hub keep a repair for it, made at once where it is
-   *  online and once it is back where not; or calls off the repairs kept
-   *  (`dev-notes/2026-10-22-更新的修复-设计.md`, 别的设备替它). */
-  private async arrangeRepair(machines: MachineUpdate[], cancel: boolean): Promise<void> {
-    const updates = this.options.updates;
-    if (!updates) return;
-    const words = updates.view;
-    const byLogin = new Map<string, { login: Login; names: string[] }>();
-    for (const machine of machines) {
-      const login = this.updatesLogin.get(machine.machine);
-      if (!login) continue;
-      const key = `${login.hub}\n${login.account}`;
-      const entry = byLogin.get(key) ?? { login, names: [] };
-      entry.names.push(this.updatesBare.get(machine.machine) ?? machine.machine);
-      byLogin.set(key, entry);
-    }
-    for (const { login, names } of byLogin.values()) {
-      const written = (name: string) =>
-        [...this.updatesBare.entries()].find(([as, one]) => one === name && this.updatesLogin.get(as) === login)?.[0] ?? name;
-      try {
-        const reply = await updates.ask(login.hubName, login.account, cancel ? { do: "cancel_repair", machines: names } : { do: "repair", machines: names, version: null });
-        if (reply.kind !== "scheduled") continue;
-        for (const result of reply.results) {
-          if (result.done) this.updatesSaid.delete(written(result.machine));
-          else this.sayOnRow(written(result.machine), words.notScheduled(result.reason ? words.reasons[result.reason] : (result.why ?? words.reasons.other)));
-        }
-      } catch (error) {
-        for (const name of names) this.sayOnRow(written(name), words.notScheduled(error instanceof Error ? error.message : String(error)));
-      }
-    }
-    await this.askUpdates();
-  }
-
-  /** Sets how each of `machines` updates, as far as it says: a release
-   *  that sets them one by one is told only what changes, an earlier one
-   *  the whole of them. */
-  private async setWays(machines: MachineUpdate[], auto: boolean | null, relays: boolean | null): Promise<void> {
-    const updates = this.options.updates;
-    if (!updates) return;
-    // A room of machines is asked a few at a time, not all at once.
-    await inTurns(machines, WAYS_AT_ONCE, async (machine) => {
-      const call: UpdateCall =
-        machine.kernel && compareVersions(machine.kernel, PREFERENCES_SINCE) >= 0
-          ? { do: "preferences", auto, relays }
-          : { do: "set", settings: { auto: auto ?? !!machine.auto, chosen: auto !== null || machine.auto_chosen, relays: relays ?? machine.relays ?? true } };
-      try {
-        await updates.remote(machine.machine, call);
-        this.updatesSaid.delete(machine.machine);
-      } catch (error) {
-        this.sayOnRow(machine.machine, error instanceof Error ? error.message : String(error));
-      }
-    });
-    await this.askUpdates();
-  }
-
-  /** A network's update policy, set by the login `key` of this device that
-   *  is its super administrator. */
-  private async setPolicy(key: string, minimum: string | null, managedAuto: boolean): Promise<void> {
-    const updates = this.options.updates;
-    if (!updates) return;
-    const login = loginsOf(this.options.store.world.peek()?.accounts).find((one) => `${one.hub}\n${one.account}` === key);
-    if (!login) return;
-    try {
-      await updates.ask(login.hubName, login.account, { do: "policy", minimum, managed_auto: managedAuto });
-      if (this.note?.machine === "") this.note = null;
-    } catch (error) {
-      this.note = { machine: "", text: this.options.access.failed(detailOf(error)) };
-    }
-    await this.askUpdates();
-  }
-
-  /** Says `text` on a machine's row in the update view for a while. */
-  private sayOnRow(name: string, text: string): void {
-    this.updatesSaid.set(name, text);
-    window.setTimeout(() => {
-      if (this.updatesSaid.get(name) !== text) return;
-      this.updatesSaid.delete(name);
-      this.redraw();
-    }, SAID_MS);
   }
 
   /** The machines chosen that an action pointed at leaves stand back, on
@@ -1584,7 +1258,12 @@ export class MachinesPage implements Page {
     this.list.hidden = !listing;
     this.list.classList.toggle("picking", framed.length > 0);
     this.list.classList.toggle("updates", updating);
-    this.drawUpdateCount();
+    const able = this.updateView?.able() ?? 0;
+    const count = this.views.querySelector<HTMLElement>(".ml-view-count");
+    if (count) {
+      count.hidden = !able;
+      count.textContent = able ? String(able) : "";
+    }
     this.list.classList.toggle("selecting", this.selecting);
     // Beside the list on a wide page the panel takes its own room.
     this.canvas.classList.toggle("beside", listing && open && !narrow);
@@ -1601,7 +1280,7 @@ export class MachinesPage implements Page {
           picked: new Set(framed),
           pick: { one: this.options.batch.pickOne, all: this.options.batch.pickAll },
           open: (key, byDefault) => this.listFolds.get(key) ?? byDefault,
-          updates: updating ? this.updatesNow(narrow) : undefined,
+          updates: updating ? this.updateView?.now(narrow) : undefined,
           found: found && new Set(found),
           reach: this.listReach,
         },
@@ -2557,16 +2236,4 @@ function directPicture(direct: boolean): string {
   const lines = [bowed(middle, 8), ...sides.map((side) => bowed(side, 6))];
   const straight = direct ? sides.map((side) => ruled([side[0] + (side[0] < 66 ? 8 : -8), side[1] + 1], [middle[0] + (side[0] < 66 ? -10 : 10), middle[1]], 1.1, random)) : [];
   return `<svg class="map-card-picture" viewBox="0 0 132 40" aria-hidden="true"><g class="ink graphite" filter="url(#pen-marker)"><path d="${circle(knot, 3.5, 1.2, random)}"/><path d="${blot(knot, 1.5, random)}"/>${[...rings, ...lines].map((d) => `<path d="${d}"/>`).join("")}</g><g class="ink clay" filter="url(#pen-marker)">${straight.map((d) => `<path d="${d}"/>`).join("")}</g></svg>`;
-}
-
-/** How many machines a change of their ways is sent to at once. */
-const WAYS_AT_ONCE = 6;
-
-/** Runs `each` over `items`, at most `width` at a time. */
-async function inTurns<T>(items: T[], width: number, each: (item: T) => Promise<void>): Promise<void> {
-  let next = 0;
-  const lane = async (): Promise<void> => {
-    while (next < items.length) await each(items[next++]!);
-  };
-  await Promise.all(Array.from({ length: Math.min(width, items.length) }, lane));
 }
