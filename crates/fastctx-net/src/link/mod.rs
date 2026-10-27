@@ -17,6 +17,7 @@
 pub mod account_records;
 mod accounts;
 mod addresses;
+pub mod admission;
 mod afoot;
 mod answering;
 mod answers;
@@ -97,6 +98,16 @@ pub struct Caller {
 
 /// What the link hands the node: calls to answer and letters to keep.
 pub trait Node: Send + Sync + 'static {
+    /// Waits for this caller's fair share, before opening or executing work.
+    fn acquire(
+        &self,
+        request: admission::Request,
+    ) -> BoxFuture<Result<admission::Admitted, fastctx_types::ipc::Failure>> {
+        let place = self.place(&request.machine, &request.account, request.pool);
+        Box::pin(async move {
+            place.map(|guard| Arc::new(admission::Held { _guard: std::sync::Mutex::new(guard) }) as admission::Admitted)
+        })
+    }
     /// Known local login directories, without scanning or asking a host.
     fn login_homes(&self, agent: &fastctx_types::AgentName) -> Result<Vec<(std::path::PathBuf, bool)>, String> {
         Err(format!("this device has no local {agent} logins"))

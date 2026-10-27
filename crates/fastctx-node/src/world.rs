@@ -672,15 +672,16 @@ impl fastctx_net::link::Node for Handler {
         let node = self.node.upgrade().ok_or("the node is stopping")?;
         crate::logins::identities(&node, agent).map_err(|error| error.message)
     }
-    fn place(
+    fn acquire(
         &self,
-        machine: &MachineName,
-        account: &fastctx_types::AccountName,
-        pool: fastctx_types::contract::Pool,
-    ) -> Result<Box<dyn Send>, Failure> {
-        let node = self.node.upgrade().ok_or_else(|| Failure::not_run("the node is stopping"))?;
-        crate::intake::take(&node.machine(), &self.hub, machine, account, pool)
-            .map(|place| Box::new(place) as Box<dyn Send>)
+        request: fastctx_net::link::admission::Request,
+    ) -> BoxFuture<Result<fastctx_net::link::admission::Admitted, Failure>> {
+        let node = self.node.upgrade();
+        let hub = self.hub.clone();
+        Box::pin(async move {
+            let node = node.ok_or_else(|| Failure::not_run("the node is stopping"))?;
+            crate::intake::take(node.machine(), hub, request).await
+        })
     }
 
     fn answering(&self, call: &RemoteCall) -> Result<Option<Box<dyn Send>>, Failure> {

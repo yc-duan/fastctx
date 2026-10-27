@@ -51,6 +51,7 @@ impl Drop for Lease {
                     for entry in &mut state.queue {
                         entry.editors.remove(&name);
                     }
+                    storage::cache(&node, &id, state.view());
                 }
                 node.log.line(format_args!("closing {id}'s composer editor: {error}"));
             }

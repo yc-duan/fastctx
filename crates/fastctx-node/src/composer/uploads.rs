@@ -218,6 +218,7 @@ pub async fn failed(node: &Arc<Node>, id: &ResidentId, scope: &UploadScope, why:
                 record.outcome = Outcome::Failed { why: why.into() };
             }
             mark(state, scope, &attachment, Some(why), "");
+            storage::cache(node, id, state.view());
         }
         return Err(error);
     }

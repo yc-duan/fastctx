@@ -215,6 +215,22 @@ pub struct NodeSeen {
     pub refused: Option<Refused>,
 }
 
+/// One call admitted by the local node, without its user's request contents.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CallWork {
+    pub id: u64,
+    pub account: String,
+    pub machine: String,
+    pub conversation: Option<String>,
+    pub kind: String,
+    pub pool: String,
+    pub phase: String,
+    pub seconds: u64,
+    pub within: Option<u64>,
+    pub overdue: bool,
+    pub waiting: String,
+}
+
 /// A place macOS kept private from a node.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Refused {

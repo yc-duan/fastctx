@@ -184,6 +184,18 @@ pub struct Failure {
     /// the caller must not infer that nothing ran.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub not_run: bool,
+    /// Resource admission failures, independent of authorization and host errors.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub capacity: Option<CapacityReason>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "reason", rename_all = "snake_case")]
+pub enum CapacityReason {
+    Settling { unfinished: usize },
+    Pending,
+    Waiting { seconds: u64 },
+    Expired,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -222,12 +234,23 @@ pub enum FailureCode {
 }
 
 impl Failure {
+    pub fn capacity(mut self, reason: CapacityReason) -> Self {
+        self.capacity = Some(reason);
+        self
+    }
+
     pub fn new(message: impl Into<String>) -> Self {
-        Self { denial: None, message: message.into(), not_run: false, code: None }
+        Self { capacity: None, denial: None, message: message.into(), not_run: false, code: None }
     }
 
     pub fn control_uncertain(message: impl Into<String>) -> Self {
-        Self { denial: None, message: message.into(), not_run: false, code: Some(FailureCode::ControlUncertain) }
+        Self {
+            capacity: None,
+            denial: None,
+            message: message.into(),
+            not_run: false,
+            code: Some(FailureCode::ControlUncertain),
+        }
     }
 
     pub fn is_control_uncertain(&self) -> bool {
@@ -235,16 +258,23 @@ impl Failure {
     }
 
     pub fn host_unavailable(message: impl Into<String>) -> Self {
-        Self { denial: None, message: message.into(), not_run: true, code: Some(FailureCode::HostUnavailable) }
+        Self {
+            capacity: None,
+            denial: None,
+            message: message.into(),
+            not_run: true,
+            code: Some(FailureCode::HostUnavailable),
+        }
     }
 
     pub fn not_run(message: impl Into<String>) -> Self {
-        Self { denial: None, message: message.into(), not_run: true, code: None }
+        Self { capacity: None, denial: None, message: message.into(), not_run: true, code: None }
     }
 
     pub fn original_gone() -> Self {
         Self {
             denial: None,
+            capacity: None,
             message: "the original is gone and its host record holds no recoverable copy".into(),
             not_run: false,
             code: Some(FailureCode::OriginalGone),
@@ -253,19 +283,43 @@ impl Failure {
 
     /// A place macOS keeps private from Fastctx, refused before anything ran.
     pub fn mac_privacy(message: impl Into<String>) -> Self {
-        Self { denial: None, message: message.into(), not_run: true, code: Some(FailureCode::MacPrivacy) }
+        Self {
+            capacity: None,
+            denial: None,
+            message: message.into(),
+            not_run: true,
+            code: Some(FailureCode::MacPrivacy),
+        }
     }
 
     pub fn output_not_retained(message: impl Into<String>) -> Self {
-        Self { denial: None, message: message.into(), not_run: false, code: Some(FailureCode::OutputNotRetained) }
+        Self {
+            capacity: None,
+            denial: None,
+            message: message.into(),
+            not_run: false,
+            code: Some(FailureCode::OutputNotRetained),
+        }
     }
 
     pub fn source_missing(message: impl Into<String>) -> Self {
-        Self { denial: None, message: message.into(), not_run: false, code: Some(FailureCode::SourceMissing) }
+        Self {
+            capacity: None,
+            denial: None,
+            message: message.into(),
+            not_run: false,
+            code: Some(FailureCode::SourceMissing),
+        }
     }
 
     pub fn unanswered(message: impl Into<String>) -> Self {
-        Self { denial: None, message: message.into(), not_run: false, code: Some(FailureCode::Unanswered) }
+        Self {
+            capacity: None,
+            denial: None,
+            message: message.into(),
+            not_run: false,
+            code: Some(FailureCode::Unanswered),
+        }
     }
 
     /// Whether no answer came: worth asking again, as it was asked.
@@ -274,7 +328,7 @@ impl Failure {
     }
 
     pub fn deleted(message: impl Into<String>) -> Self {
-        Self { denial: None, message: message.into(), not_run: true, code: Some(FailureCode::Deleted) }
+        Self { capacity: None, denial: None, message: message.into(), not_run: true, code: Some(FailureCode::Deleted) }
     }
 
     /// Whether the conversation asked about was deleted: nothing more will
@@ -284,7 +338,7 @@ impl Failure {
     }
 
     pub fn refused(message: impl Into<String>) -> Self {
-        Self { denial: None, message: message.into(), not_run: true, code: Some(FailureCode::Refused) }
+        Self { capacity: None, denial: None, message: message.into(), not_run: true, code: Some(FailureCode::Refused) }
     }
 
     /// Whether the machine refused the caller's account: asking again on

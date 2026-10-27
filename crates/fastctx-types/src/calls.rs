@@ -20,6 +20,8 @@ use crate::{Address, AgentName, EntryId, JobId, JournalName, MachineName, Notice
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "call")]
 pub enum Call {
+    /// Local operational diagnostics. Never relayed through another machine.
+    DoctorCalls,
     Plan {
         hub: Option<crate::HubName>,
         account: Option<crate::AccountName>,
@@ -820,6 +822,9 @@ pub enum Call {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "reply")]
 pub enum Reply {
+    DoctorCalls {
+        calls: Vec<crate::stats::CallWork>,
+    },
     Plan {
         result: crate::plan::Result,
     },

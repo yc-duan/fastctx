@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 
 pub(super) fn failed(operation: &str, error: impl std::fmt::Display) -> ! {
     eprintln!("fastctx node: {operation}: {error}; runtime state cannot be trusted, stopping the node");
-    std::process::exit(1)
+    crate::ending::exit(1)
 }
 
 fn required<T>(result: Result<T, impl std::fmt::Display>, operation: &str) -> T {

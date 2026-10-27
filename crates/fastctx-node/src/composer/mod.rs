@@ -42,9 +42,11 @@ pub struct Composers {
     cells: crate::leases::Registry<ResidentId, fastctx_platform::doing::Mutex<Option<Stored>>>,
     watches: Mutex<HashMap<String, ResidentId>>,
     failed: Mutex<HashMap<ResidentId, Cell>>,
+    snapshots: Mutex<HashMap<ResidentId, fastctx_types::composer::Composer>>,
 }
 
 pub fn removed(node: &Node, id: &ResidentId) {
+    node.composers.snapshots.lock().expect("composer snapshots").remove(id);
     node.composers.failed.lock().expect("failed composer checkpoints").remove(id);
 }
 
@@ -97,15 +99,26 @@ pub async fn request(
 
 pub async fn here(node: &Arc<Node>, from: &MachineName, id: &ResidentId, request: Request) -> Result<Updated, Failure> {
     node.ready().await;
+    if matches!(request, Request::Read) {
+        node.residents.active(id)?;
+        if let Some(composer) = node.composers.snapshots.lock().expect("composer snapshots").get(id).cloned() {
+            return Ok(Updated { composer, landed: None, delivery: None });
+        }
+        let gate = node.residents.management(id)?;
+        let _reading = crate::gate_waits::shared(node, id, &gate).await?;
+        node.residents.active(id)?;
+        let cell = node.composers.cell(id);
+        let mut cell = cell.lock().await;
+        load(node, id, &mut cell)?;
+        return Ok(Updated { composer: cell.as_ref().expect("loaded").view(), landed: None, delivery: None });
+    }
     let gate = node.residents.management(id)?;
     let _reading = crate::gate_waits::shared(node, id, &gate).await?;
     node.residents.active(id)?;
     let cell = node.composers.cell(id);
     let mut cell = cell.lock().await;
     load(node, id, &mut cell)?;
-    if matches!(request, Request::Read) {
-        return Ok(Updated { composer: cell.as_ref().expect("loaded").view(), landed: None, delivery: None });
-    }
+
     let Request::Mutate { mutation } = request else { unreachable!() };
     let mutation = *mutation;
     if mutation.operation.is_empty() {
