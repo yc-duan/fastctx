@@ -1,0 +1,262 @@
+/* The project page's picture of now (`hub-view.ts`): a line for each
+   conversation, its way drawn across, and the ground of machines beneath.
+   Names are the only words; one size of type, told apart by ink; clay only
+   for what waits for the user. */
+
+.ph-now {
+  max-width: 920px;
+  margin: 0 auto;
+  padding: var(--space-6) 0 var(--space-10);
+}
+
+.ph-sessions {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* A conversation: its mark, its name, its way, and at the end what waits
+   for the user, its colleagues and its senses. */
+.ph-row {
+  display: grid;
+  grid-template-columns: 28px minmax(6em, 13em) minmax(0, 1fr) auto;
+  grid-template-areas: "mark name way company";
+  align-items: center;
+  column-gap: var(--space-3);
+  min-height: 56px;
+  margin: 0 calc(-1 * var(--space-3));
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-m);
+  color: var(--text);
+  text-decoration: none;
+  transition: background-color var(--hover) ease;
+}
+
+.ph-row:hover,
+.ph-row:focus-visible {
+  background: var(--fill);
+}
+
+.ph-mark {
+  grid-area: mark;
+  display: grid;
+  place-items: center;
+  color: var(--text-2);
+}
+
+.ph-mark.ph-busy {
+  color: var(--text);
+  opacity: var(--breath-alpha);
+  animation: pulse var(--breath) ease-in-out infinite;
+}
+
+.ph-mark.ph-asleep {
+  color: var(--text-3);
+}
+
+.ph-name {
+  grid-area: name;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The way, in the plan's inks; the stops ahead in the quiet ink. */
+.ph-way {
+  grid-area: way;
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  color: var(--text-3);
+}
+
+.ph-way-ink {
+  flex: none;
+  display: block;
+  max-width: 100%;
+  height: auto;
+}
+
+.ph-company {
+  grid-area: company;
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 2px;
+  min-width: 0;
+  color: var(--text-3);
+}
+
+.ph-need,
+.ph-colleague,
+.ph-sense {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+}
+
+.ph-need-ask,
+.ph-need-urgent {
+  color: var(--accent);
+}
+
+.ph-drop {
+  width: 7px;
+  height: 7px;
+  border-radius: var(--radius-full);
+  background: var(--text-2);
+}
+
+.ph-colleague.ph-busy {
+  color: var(--text);
+}
+
+.ph-colleague.ph-idle,
+.ph-sense {
+  color: var(--text-2);
+}
+
+.ph-sense.found {
+  color: var(--text);
+}
+
+.ph-sense.trouble {
+  color: var(--caution);
+}
+
+.ph-more {
+  padding: 0 2px;
+  font-size: var(--size-fine);
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+
+.ph-empty {
+  padding: var(--space-6) 0;
+}
+
+/* The ground: one line ruled across, each machine standing on it, what
+   lives on it, watches it and runs there just above its name. A line
+   pointed at darkens the machines its work stands on. */
+.ph-ground {
+  margin-top: var(--space-8);
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.ph-ground::-webkit-scrollbar {
+  display: none;
+}
+
+.ph-ground-inner {
+  position: relative;
+  min-width: 100%;
+  width: max-content;
+}
+
+.ph-ground-line {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 28px;
+  height: 12px;
+  pointer-events: none;
+}
+
+.ph-ground-ink {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.ph-places {
+  display: flex;
+  justify-content: space-around;
+  gap: var(--space-4);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.ph-place {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 20px;
+  min-width: 72px;
+  padding: 0 var(--space-2) var(--space-1);
+  border-radius: var(--radius-s);
+  color: var(--text-3);
+  text-decoration: none;
+  transition: color var(--hover) ease;
+}
+
+.ph-place:hover,
+.ph-place:focus-visible,
+.ph-place.lit {
+  color: var(--text);
+}
+
+.ph-place-marks {
+  display: inline-flex;
+  align-items: flex-end;
+  gap: 1px;
+  height: 24px;
+  color: var(--text-3);
+}
+
+.ph-place-agent.ph-busy,
+.ph-place.lit .ph-place-agent {
+  color: var(--text);
+}
+
+.ph-place-agent.ph-idle,
+.ph-place-sense {
+  color: var(--text-2);
+}
+
+.ph-place-job {
+  flex: none;
+  width: 5px;
+  height: 5px;
+  margin: 0 2px 6px;
+  border-radius: var(--radius-full);
+  background: var(--text-2);
+}
+
+.ph-place-name {
+  white-space: nowrap;
+}
+
+/* On a narrow screen the way goes under the name. */
+@container (max-width: 600px) {
+  .ph-now {
+    padding-top: var(--space-4);
+  }
+
+  .ph-row {
+    grid-template-columns: 28px minmax(0, 1fr) auto;
+    grid-template-areas:
+      "mark name company"
+      ". way way";
+    row-gap: var(--space-1);
+  }
+
+  .ph-places {
+    gap: var(--space-1);
+  }
+
+  .ph-place {
+    min-width: 0;
+    padding: 0 var(--space-1) var(--space-1);
+  }
+}
+
+:root[data-reduced] .ph-mark.ph-busy {
+  animation: none;
+}

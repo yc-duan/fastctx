@@ -29,8 +29,6 @@
 // quiet line on the left; what was done to a turn (copy, ask again, fork)
 // appears only once the turn is over.
 
-import { ownWork, tripItems } from "./trip";
-import { fillStep, stepKey, stepRowHtml, stepRowText, type StepItem } from "./trip-rows";
 import { diffCard, unifiedDiff, type DiffCard, type DiffKind } from "./diff-card";
 import { handOnAtEdge } from "../scroll-handoff";
 import { ActsMenu } from "../app/acts-menu";
@@ -38,7 +36,7 @@ import { onHeld } from "../app/press";
 import type { AgentActivity, Content, Health, MachineName, Notice, Speaker, Tool, TurnEnd } from "../world/events";
 import type { Attachment } from "../world/attachments";
 import type { Decoding } from "../world/remote-lines";
-import type { RunFacts, RunStep, WriteFact } from "../world/run-facts";
+import type { RunFacts, WriteFact } from "../world/run-facts";
 import type { JsonValue } from "../world/wire";
 import { folderName, type Focus } from "../world/focus";
 import { answerOf, drawAsk, readAsk, type AskWords } from "./asks";
@@ -47,21 +45,30 @@ import { glyph } from "./glyphs";
 import { controlName } from "./control-queue";
 import { saidHtml } from "./said";
 import { effortLabel } from "./effort-slider";
-import { isThinking, runsOf, startsAgent, type Activity, type Block, type Entry, type Gap, type SendState, type ShownAttachment } from "./model";
+import { isThinking, runsOf, startsAgent, type Activity, type Block, type Entry, type Gap, type Say, type SendState, type ShownAttachment } from "./model";
 import { AgentBox } from "./agent-box";
 import { toldSaid, type AgentRun } from "./agents";
 import type { Conversation } from "./conversation";
 import { escape, plain, render } from "./prose";
+import { askedHtml, askedOf } from "./goal-notice";
 import { numbered, parse } from "./diff";
-import { DiffLines, RemoteDiff, diffPaint, keptDiff, memoryDiff } from "./diff-lines";
+import { DiffLines, RemoteDiff, diffPaint, encodeRow, keptDiff, memoryDiff } from "./diff-lines";
+import { readRun } from "./deeds/read";
+import { scriptSaid } from "./deeds/script";
+import { drawDeeds, goingOn, type DeedTools } from "./deeds/draw";
+import type { Deed } from "./deeds/types";
+import { cardsOf, type Card } from "./cards/cards";
+import { bunched, cardsIn, type Bunch } from "./cards/bunch";
+import { lineHtml, lineText } from "./cards/lines";
 import { headline, onlyWrites, tenseOf, writeHeadline } from "./tool";
 import { drawDiagrams } from "./diagrams";
-import { readTold, worldSaid, type WorldSaid } from "./told";
+import { readTold, undelivered, worldSaid, type UndeliveredWhy, type WorldSaid } from "./told";
 import { allowanceOf, detailOf, heldOf } from "../app/problem";
 import { AnchorLayout, AnchoredHeight } from "../longview";
 import { FEW, LongText, type LongLines, type LongTextWords, type OtherSource } from "./long-text";
 import { Said, WholeOutput, outputPaint, type OpenedLines } from "./run-output";
 import { replyOf } from "./async-ask";
+import "./say.css";
 import { chosenIn, drawQuestions, type QuestionWords } from "./question-card";
 import { StreamedProse } from "./stream-prose";
 import { TurnLine, time, type LineSays } from "./turn-line";
@@ -69,7 +76,7 @@ import { fly, type Departure } from "./flight";
 import { estimate } from "./estimate";
 import { Heights } from "./heights";
 import { FindContent, displayedDiff, toolText } from "./find-content";
-import { clockSays, sections, stretchSays, thoughtOnly, thoughtText, thoughtTook } from "./stretch-says";
+import { clockSays, stretchSays, thoughtHeads, thoughtOnly, thoughtText, thoughtTook } from "./stretch-says";
 import { displayedText, htmlText as displayedTextHtml, type TextMatch } from "./find-text";
 import { GAP, type FindChanges, type FindMatch, type FindPart } from "./find-index";
 import { composing } from "../typing";
@@ -87,6 +94,9 @@ export interface Context {
   agent?: string | undefined;
   /** The region the conversation scrolls in. */
   scroller: HTMLElement;
+  /** Opens one of the host's agents in the panel beside the conversation,
+   *  rather than under the row that sent it; false where it cannot. */
+  openAgent?: ((id: string) => boolean) | undefined;
   /** The reader opened or closed something: the page stops keeping the
    *  newest in view, so nothing moves under their hand. */
   reading(): void;
@@ -145,8 +155,6 @@ interface Row {
 
 /** A write's row is keyed by its run's row and the write. */
 const WRITE = "~";
-/** Between a run's key and one of its steps' (`trip.ts`). */
-const STEP = "^";
 /** The most bytes of rows a change is read ahead in, not kept with the
  *  conversation: larger ones are read as they are opened. */
 const PREFETCH = 1024 * 1024;
@@ -208,6 +216,19 @@ function focusSaid(focus: Focus, words: Words): string {
   return items.length ? words.focusChanged(items.join(words.listSeparator)) : words.focusCleared;
 }
 
+/** Why something could not be delivered, in the interface's words where the
+ *  World's are known; its own words otherwise. */
+function undeliveredWhy(why: UndeliveredWhy, words: Words): string {
+  switch (why.kind) {
+    case "gone":
+      return words.goneFromNetwork(why.machine);
+    case "left":
+      return words.networksLeft;
+    case "other":
+      return why.text;
+  }
+}
+
 /** The menu the user's words raise when held on a touch screen. */
 const heldMenu = new ActsMenu();
 
@@ -223,6 +244,13 @@ export class ConversationView {
   private byElement = new WeakMap<HTMLElement, Slot>();
   /** Long texts open under rows, by row, to be let go when the row is. */
   private longs = new Map<string, LongText[]>();
+  /** What each run did, as read from it (`deeds`), while it stays as it
+   *  was read. */
+  private deedsRead = new Map<string, { stamp: number; deeds: Deed[] | null }>();
+  /** The things a stretch did as their rows show them, and the rows that
+   *  gather several, by key: what opening one fills it with. */
+  private cards = new Map<string, Card>();
+  private bunches = new Map<string, Bunch>();
   /** What else a row holds open on another machine (lines being read),
    *  let go with it. */
   private closers = new Map<string, (() => void)[]>();
@@ -260,6 +288,14 @@ export class ConversationView {
   private measured = new Map<string, number>();
   private guesses = new Map<string, { stamp: number; width: number; height: number }>();
   private shown: Slot[] = [];
+  /** Which view of the conversation is drawn (`world-voice.md`, 两种看法):
+   *  only what was said, or every step. */
+  private mode: "said" | "steps" = "steps";
+  /** The block kept where it is on the screen across a change of view,
+   *  once. */
+  private pin: { slot: Slot; top: number } | null = null;
+  /** Blocks a change of view brought in, which come in once. */
+  private unfolding = new Set<string>();
   /** The spaces that stand for the blocks above and below those drawn. */
   private readonly above: HTMLElement;
   private readonly below: HTMLElement;
@@ -328,7 +364,8 @@ export class ConversationView {
       if (!this.own(event)) return;
       // Words of one's own answer a question instead of an option.
       const free = (event.target as HTMLElement).closest<HTMLInputElement>("[data-question-free]");
-      if (!free?.value.trim()) return;
+      // Where several may be chosen, they are kept beside the words.
+      if (!free?.value.trim() || free.closest("fieldset")?.hasAttribute("data-multiple")) return;
       for (const option of free.closest("fieldset")?.querySelectorAll<HTMLElement>("[data-question-pick]") ?? []) option.setAttribute("aria-pressed", "false");
     });
     // On a touch screen every answer has its actions under it; the user's
@@ -364,13 +401,14 @@ export class ConversationView {
   /** Brings the page up to the conversation as it now stands; `read` when
    *  what is new came as history rather than as it happened. */
   update(read = false): void {
-    const blocks = this.conversation.blocks();
+    const blocks = this.mode === "said" ? this.conversation.chatBlocks() : this.conversation.blocks();
     this.reading = read;
     // Words already on their way when the page is first drawn (the first
     // words of a conversation just begun) rose where they were sent.
     if (!this.live) for (const block of blocks) if (block.kind === "heard" && block.sending) this.flown.add(block.key);
     this.adopt(blocks);
     const drawn = this.lay(read);
+    this.unfolding.clear();
     const says = this.context.nested ? null : this.lineSays(blocks);
     // Words rising this frame land before the line beneath them is drawn.
     const flying = this.flights(blocks);
@@ -431,8 +469,11 @@ export class ConversationView {
     const scroller = this.context.scroller;
     const n = this.blocks.length;
     const following = this.context.following?.() ?? true;
-    // Where the reader is, before anything moves.
-    const anchor = following || moved ? null : this.anchorNow();
+    // Where the reader is, before anything moves: across a change of
+    // view, the block both views show that the reader was at.
+    const pinned = this.pin;
+    this.pin = null;
+    const anchor = following || moved ? null : (pinned ?? this.anchorNow());
     // An agent's box grows with what it holds, up to a height: it is laid
     // out for the tallest it can be, not for how tall it is so far.
     const view = this.context.nested ? Math.max(scroller.clientHeight, innerHeight) : scroller.clientHeight || innerHeight;
@@ -534,6 +575,28 @@ export class ConversationView {
       if (box.bottom > view.top) return box.top < view.bottom ? { slot, top: box.top } : null;
     }
     return null;
+  }
+
+  /** Shows only what was said, or every step: what both show stays where
+   *  it is on the screen, and what comes in comes in once. */
+  showing(mode: "said" | "steps"): void {
+    if (mode === this.mode) return;
+    const next = mode === "said" ? this.conversation.chatBlocks() : this.conversation.blocks();
+    const kept = new Set(next.map((block) => block.key));
+    const view = this.context.scroller.getBoundingClientRect();
+    this.pin = null;
+    for (const slot of this.shown) {
+      if (!kept.has(slot.key) || slot.block.kind === "gap" || !slot.element.isConnected) continue;
+      const box = slot.element.getBoundingClientRect();
+      if (box.bottom > view.top && box.top < view.bottom) {
+        this.pin = { slot, top: box.top };
+        break;
+      }
+    }
+    const before = new Set(this.blocks.map((block) => block.key));
+    this.unfolding = new Set(this.live ? next.filter((block) => !before.has(block.key)).map((block) => block.key) : []);
+    this.mode = mode;
+    this.update();
   }
 
   /** Where the first block would begin, in the scroll region's terms. */
@@ -928,6 +991,10 @@ export class ConversationView {
         return `${block.stamp}|${block.members.length}|${this.openStretches.has(block.key) ? "o" : ""}${block.agents ? `|${conversation.agentStamp}` : ""}`;
       case "prose": {
         const last = block.prose === "message" && conversation.lastMessageOf(block.turn) === block.key;
+        return `${block.stamp}|${last ? `l${conversation.turnEnded(block.turn) ? "e" : ""}${conversation.latestEnded() === block.turn ? "n" : ""}` : ""}${conversation.spokeIn(block.turn) ? "|s" : ""}`;
+      }
+      case "say": {
+        const last = conversation.lastSayOf(block.turn) === block.key;
         return `${block.stamp}|${last ? `l${conversation.turnEnded(block.turn) ? "e" : ""}${conversation.latestEnded() === block.turn ? "n" : ""}` : ""}`;
       }
       case "heard":
@@ -961,6 +1028,15 @@ export class ConversationView {
     this.reading = read;
     try {
       slot.signature = this.signature(block);
+      if (this.unfolding.delete(block.key)) {
+        element.classList.add("say-unfold");
+        element.addEventListener("animationend", () => element.classList.remove("say-unfold"), { once: true });
+      }
+      if (block.kind === "say") {
+        this.letGo(block.key);
+        element.innerHTML = this.said(block);
+        return;
+      }
       if (block.kind === "gap") {
         element.innerHTML = this.gapRow(block);
         return;
@@ -1016,6 +1092,39 @@ export class ConversationView {
     }
     const acts = this.answerActs(entry);
     if (slot.acts!.innerHTML !== acts) slot.acts!.innerHTML = acts;
+    // In a turn that said something to the user, its other words are its
+    // working notes, in the quieter ink (`world-voice.md`).
+    slot.element.classList.toggle("say-notes", this.conversation.spokeIn(entry.turn));
+  }
+
+  /** Words the agent said to the user: its answer, set as its words are,
+   *  an urgent one marked in the margin, the files it showed with them
+   *  below; under the turn's last, what can be done to the turn. */
+  private said(say: Say): string {
+    const { words } = this.context;
+    const mark = say.status === "urgent" ? `<span class="say-mark" title="${escape(words.sayUrgent)}"><span aria-hidden="true">※</span><span class="spoken">${escape(words.sayUrgent)}</span></span>` : "";
+    const nameOf = (file: { path: string }) => file.path.split(/[\\/]/).pop() || file.path;
+    const picture = (file: { path: string }) => /\.(png|jpe?g|gif|webp|bmp)$/i.test(nameOf(file));
+    const pictures = say.attachments.filter(picture);
+    const others = say.attachments.filter((file) => !picture(file));
+    // Pictures are drawn from the machine holding them, as an answer's are
+    // (`pictures.ts`); other files open from there when pressed.
+    const files =
+      (pictures.length
+        ? `<div class="say-pictures">${pictures
+            .map((file) => `<span class="prose-picture"><img data-picture data-path="${escape(file.path)}" data-machine="${escape(file.machine)}" alt="${escape(nameOf(file))}" tabindex="0"></span>`)
+            .join("")}</div>`
+        : "") +
+      (others.length
+        ? `<ul class="say-files">${others
+            .map((file) => `<li><a class="say-file" href="#" data-file="${escape(file.path)}" data-file-machine="${escape(file.machine)}">${glyph("file", 16)}<span class="say-file-name">${escape(nameOf(file))}</span></a></li>`)
+            .join("")}</ul>`
+        : "");
+    const last = !this.context.nested && this.conversation.lastSayOf(say.turn) === say.key && this.conversation.turnEnded(say.turn);
+    // The mark opens the first line, where it is read first.
+    const body = render(say.text);
+    const marked = mark && body.startsWith("<p>") ? `<p>${mark}${body.slice(3)}` : `${mark}${body}`;
+    return `<div class="say say-${say.status}"><div class="prose">${marked}</div>${files}</div>${last ? this.turnActs(say.turn) : ""}`;
   }
 
   /** The session is no longer followed: whether its model still works is
@@ -1196,7 +1305,7 @@ export class ConversationView {
   /** Whether a message is the last its turn said, where what was done to
    *  the turn is offered. */
   private lastOfTurn(entry: ProseEntry): boolean {
-    return entry.prose === "message" && this.conversation.lastMessageOf(entry.turn) === entry.key;
+    return entry.prose === "message" && this.conversation.lastMessageOf(entry.turn) === entry.key && !this.conversation.spokeIn(entry.turn);
   }
 
   /** The turn whose actions stay shown: the last that ended. */
@@ -1209,6 +1318,12 @@ export class ConversationView {
    *  stay shown; earlier ones come with the pointer. */
   private answerActs(entry: ProseEntry): string {
     if (this.context.nested || entry.writing || !this.lastOfTurn(entry) || !this.conversation.turnEnded(entry.turn)) return "";
+    return this.turnActs(entry.turn);
+  }
+
+  /** What can be done to a turn that ended, under what it last said. */
+  private turnActs(turn: string): string {
+    const entry = { turn };
     const { words } = this.context;
     const ended = this.conversation.get(`e:${entry.turn}`);
     const info = ended?.kind === "ended" ? turnInfo(ended.end, words, this.context.english) : [];
@@ -1387,7 +1502,8 @@ export class ConversationView {
   private noticeOf(entry: HeardEntry): Notice | null {
     const notice = entry.notice;
     if (!notice || entry.from?.kind === "user") return null;
-    return notice.kind === "answer" || notice.kind === "health" || notice.kind === "world" ? notice : null;
+    if (notice.kind === "words") return notice.goal_report?.shown || notice.goal_question ? notice : null;
+    return notice.kind === "answer" || notice.kind === "health" || notice.kind === "question" || notice.kind === "world" ? notice : null;
   }
 
   private heardEntry(entry: HeardEntry): string {
@@ -1425,6 +1541,8 @@ export class ConversationView {
     let said: string;
     let ok = true;
     let more = "";
+    // Why, where the line itself cannot say it: under the pointer.
+    let why = "";
     switch (notice.kind) {
       case "answer": {
         const failed = notice.end.how === "failed";
@@ -1437,29 +1555,64 @@ export class ConversationView {
         ok = false;
         said = `${notice.label}: ${healthSaid(notice.health, words)}`;
         break;
+      case "question":
+        said = words.colleagueAsks(notice.text.trim().split("\n")[0] ?? "");
+        more = "text";
+        break;
+      case "words": {
+        // A colleague's goal settled, or it asks on the side.
+        const report = notice.goal_report?.shown;
+        if (report) {
+          ok = report.status !== "blocked";
+          said = words.goalReported(report.label, report.status, words.took(Date.parse(report.ended_at) - Date.parse(report.started_at)));
+          more = report.text.trim() ? "text" : "";
+          break;
+        }
+        const asked = askedOf(notice.goal_question?.questions);
+        said = asked.length ? words.colleagueAsks(asked[0]!.ask) : words.colleagueAsked;
+        more = asked.length ? "text" : "";
+        break;
+      }
       case "world": {
         const fact = notice.fact;
-        said =
-          fact.fact === "moved"
-            ? fact.to
-              ? words.movedTo(fact.to)
-              : words.movedOut
-            : fact.fact === "focus"
-              ? focusSaid(fact.focus, words)
-              : fact.fact === "desk_free"
-                ? words.deskFree(fact.by.resident)
-                : fact.fact === "desk_taken"
-                  ? words.deskTaken(fact.by.resident)
-                  : words.deskOutside;
-        more = fact.fact === "moved" || fact.fact === "focus" ? "text" : "";
+        switch (fact.fact) {
+          case "moved":
+            said = fact.to ? words.movedTo(fact.to) : words.movedOut;
+            more = "text";
+            break;
+          case "focus":
+            said = focusSaid(fact.focus, words);
+            more = "text";
+            break;
+          case "desk_free":
+            said = words.deskFree(fact.by.resident);
+            break;
+          case "desk_taken":
+            said = words.deskTaken(fact.by.resident);
+            break;
+          case "desk_outside":
+            said = words.deskOutside;
+            break;
+          case "delivery_failed": {
+            ok = false;
+            const gone = undelivered(notice.text);
+            said = !gone ? words.undelivered : gone.kind === "end" ? words.endUndelivered(gone.machine) : words.stopUndelivered(gone.machine);
+            why = gone ? undeliveredWhy(gone.why, words) : notice.text.trim();
+            break;
+          }
+          default:
+            said = "";
+        }
         break;
       }
       default:
         said = "";
     }
-    const mark = ok ? glyph("check", 14) : glyph("cross", 14);
+    const asks = notice.kind === "question" || (notice.kind === "words" && !notice.goal_report);
+    const paused = notice.kind === "words" && notice.goal_report?.shown?.status === "paused";
+    const mark = asks ? glyph("ask", 14) : paused ? glyph("pause", 14) : ok ? glyph("check", 14) : glyph("cross", 14);
     const line = `<span class="notice-mark${ok ? "" : " wrong"}">${mark}</span><span class="notice-said">${escape(said)}</span>`;
-    if (!more) return `<div class="notice-line${ok ? "" : " failed"}">${line}</div>`;
+    if (!more) return `<div class="notice-line${ok ? "" : " failed"}"${why ? ` title="${escape(why)}"` : ""}>${line}</div>`;
     const open = this.openRows.has(entry.key);
     return `<div class="notice-line${ok ? "" : " failed"}"><button class="notice-open" type="button" data-open="${escape(entry.key)}" aria-expanded="${open}">${line}${glyph("chevron", 14)}</button></div><div class="fold-box notice-box"${open ? "" : " style=\"height:0\" inert"}><div class="fold-content"></div></div>`;
   }
@@ -1473,6 +1626,12 @@ export class ConversationView {
       into.innerHTML = `<div class="prose notice-answer">${render(notice.end.last_message)}</div>`;
     } else if (notice.kind === "world") {
       into.innerHTML = `<div class="told-plain">${plain(entry.text)}</div>`;
+    } else if (notice.kind === "question") {
+      into.innerHTML = `<div class="told-plain">${plain(notice.text)}</div>`;
+    } else if (notice.kind === "words" && notice.goal_report?.shown) {
+      into.innerHTML = `<div class="prose notice-answer">${render(notice.goal_report.shown.text)}</div>`;
+    } else if (notice.kind === "words" && notice.goal_question) {
+      into.innerHTML = askedHtml(askedOf(notice.goal_question.questions));
     }
   }
 
@@ -1578,12 +1737,21 @@ export class ConversationView {
    *  words, its heading having said the rest. */
   private rows(stretch: Stretch, group: Activity): void {
     const runs = runsOf(group.members);
-    const all = thoughtOnly(group) ? [this.thoughtWords(runs[0] as ProseEntry[])] : runs.flatMap((run) => this.rowsOf(run));
-    // A stretch of hundreds of steps opens on its latest; the earlier come
-    // a few screens at a time, from a line above them.
-    const limit = this.stretchRows.get(group.key) ?? STRETCH_ROWS;
-    const rows = all.length > limit ? all.slice(all.length - limit) : all;
-    const hidden = all.length - rows.length;
+    let rows: Row[];
+    let hidden = 0;
+    if (thoughtOnly(group)) rows = [this.thoughtWords(runs[0] as ProseEntry[])];
+    else {
+      // What it did, a row a thing, what goes by alike gathered; a stretch
+      // of hundreds of rows opens on its latest, the earlier coming a few
+      // screens at a time from a line above them.
+      const all = bunched(
+        runs.flatMap((run) => this.partsOf(run)),
+        (part): part is Card => !("html" in part),
+      ).map((part) => ("html" in part ? part : this.lineRow(part)));
+      const limit = this.stretchRows.get(group.key) ?? STRETCH_ROWS;
+      rows = all.length > limit ? all.slice(all.length - limit) : all;
+      hidden = all.length - rows.length;
+    }
     let earlier = stretch.rows.querySelector<HTMLButtonElement>(":scope > .rows-earlier");
     if (hidden > 0) {
       if (!earlier) {
@@ -1685,6 +1853,65 @@ export class ConversationView {
     }
   }
 
+  /** Keeps a long text with what else is held under `key`. */
+  private held(key: string, long: LongText): void {
+    const longs = this.longs.get(key);
+    if (longs) longs.push(long);
+    else this.longs.set(key, [long]);
+  }
+
+  /** What a card holds: a change of a file in its card, the deeds read
+   *  from a run as theirs above the run's own words, folded; anything else
+   *  in its own words. */
+  private fillCard(key: string, thing: Card, content: HTMLElement): void {
+    const longs: LongText[] = [];
+    const closers: (() => void)[] = [];
+    this.longs.set(key, longs);
+    this.closers.set(key, closers);
+    // The deeds read from one run are drawn together, under its own words.
+    const deeds = new Map<string, number[]>();
+    const order: (string | { write: string; entry: string } | { change: number; entry: string })[] = [];
+    for (const source of thing.sources) {
+      if ("deed" in source) {
+        const kept = deeds.get(source.entry);
+        if (kept) kept.push(source.deed);
+        else {
+          deeds.set(source.entry, [source.deed]);
+          order.push(source.entry);
+        }
+      } else if ("write" in source || "change" in source) order.push(source);
+      else if (!order.includes(source.entry)) order.push(source.entry);
+    }
+    for (const part of order) {
+      const entry = this.conversation.get(typeof part === "string" ? part : part.entry);
+      if (entry?.kind !== "tool") continue;
+      if (typeof part !== "string" && "write" in part) {
+        const write = entry.tool.run?.writes.find((one) => one.id === part.write);
+        if (write) this.fillWrite(key, write, content);
+        continue;
+      }
+      if (typeof part !== "string" && "change" in part) {
+        if (entry.tool.does.as !== "edit") continue;
+        const change = entry.tool.does.changes[part.change];
+        if (!change) continue;
+        const rows = parse(change.diff);
+        const long = this.diffText(memoryDiff(rows).lines, change.path, numbered(rows));
+        longs.push(long);
+        const how = change.how;
+        const { card, shown } = this.changeCard(change.path, entry.tool.machine ?? this.context.residentMachine ?? null, how === "added" ? "added" : how === "deleted" ? "deleted" : "modified");
+        card.body.append(long.element);
+        shown(long);
+        content.append(card.element);
+        continue;
+      }
+      if (startsAgent(entry.tool)) {
+        this.fillAgent(entry, content);
+        continue;
+      }
+      content.append(this.commandWords(entry, deeds.get(part) ?? null, longs, closers));
+    }
+  }
+
   /** Brings the running stretches' clocks up to date, once a second while
    *  any runs. */
   private tick(): void {
@@ -1711,6 +1938,78 @@ export class ConversationView {
    *  is one row; a command's writes have one each, after its own, which a
    *  command that did nothing but write does not have. */
   private rowsOf(run: Entry[]): Row[] {
+    return this.partsOf(run).map((part) => ("html" in part ? part : this.cardRow(part)));
+  }
+
+  /** What a run of members is drawn as: a call's cards, each thing it did
+   *  in its order (`cards/`); rows for what is not drawn as cards. */
+  private partsOf(run: Entry[]): (Row | Card)[] {
+    const member = run[0]!;
+    if (member.kind === "tool" && !startsAgent(member.tool)) {
+      const cards = cardsOf(member, (entry) => this.deedsOf(entry), (job) => this.jobCommand(job));
+      if (cards.length) return cards;
+    }
+    return this.rowsOfRun(run);
+  }
+
+  /** What a job this conversation started was running: the command of
+   *  the run that went on as it. */
+  private jobCommand(job: string): string | null {
+    if (this.jobsRead !== this.blocks) {
+      this.jobsRead = this.blocks;
+      this.jobs.clear();
+      for (const block of this.blocks) {
+        const members = block.kind === "activity-group" ? block.members : [block];
+        for (const member of members) {
+          if (member.kind !== "tool" || member.tool.does.as !== "command" || !member.tool.does.job) continue;
+          const said = scriptSaid(member.tool.does.command, member.tool.machine);
+          this.jobs.set(member.tool.does.job, (said ?? member.tool.does.command).replace(/^on\s+\S+\s+/, ""));
+        }
+      }
+    }
+    return this.jobs.get(job) ?? null;
+  }
+  private jobs = new Map<string, string>();
+  private jobsRead: Block[] | null = null;
+
+  /** A thing as finding reads it, a row of its own. */
+  private cardRow(card: Card): Row {
+    this.cards.set(card.key, card);
+    return { key: card.key, signature: `card|${JSON.stringify(card)}`, html: () => "", text: () => lineText(card, this.context.words) };
+  }
+
+  /** A thing, or things gathered, as their row (`cards/lines.ts`). */
+  private lineRow(part: Card | Bunch): Row {
+    if (part.kind === "bunch") {
+      this.bunches.set(part.key, part);
+      for (const card of cardsIn(part)) this.cards.set(card.key, card);
+    } else this.cards.set(part.key, part);
+    const words = this.context.words;
+    return {
+      key: part.key,
+      signature: `line|${JSON.stringify(part)}`,
+      html: () => lineHtml(part, { words, open: this.openRows.has(part.key), enter: this.entering(part.key) }),
+      text: () => lineText(part, words),
+    };
+  }
+
+  /** What things gathered hold, opened: their rows, each opening as its
+   *  own. */
+  private fillBunch(bunch: Bunch, content: HTMLElement): void {
+    const words = this.context.words;
+    const rows = document.createElement("div");
+    rows.className = "rows row-bunched";
+    rows.innerHTML = bunch.parts.map((part) => lineHtml(part, { words, open: this.openRows.has(part.key), enter: "" })).join("");
+    content.append(rows);
+    for (const part of bunch.parts) {
+      if (part.kind === "bunch") this.bunches.set(part.key, part);
+      if (!this.openRows.has(part.key)) continue;
+      const row = rows.querySelector<HTMLElement>(`[data-row="${CSS.escape(part.key)}"]`);
+      if (row) this.fill(part.key, row);
+    }
+  }
+
+  private rowsOfRun(run: Entry[]): Row[] {
     const member = run[0]!;
     if (isThinking(member)) {
       const thoughts = run as ProseEntry[];
@@ -1718,32 +2017,9 @@ export class ConversationView {
     }
     const own: Row = { key: member.key, signature: this.memberSignature(member), html: () => this.member(member), text: () => this.findRowText(member) };
     if (member.kind !== "tool") return [own];
-    const steps = member.tool.run?.steps ?? [];
-    if (steps.length) return this.tripRows(member, steps);
     const writes = member.tool.run?.writes ?? [];
     if (!writes.length) return [own];
     return [...(onlyWrites(member.tool) ? [] : [own]), ...writes.map((write) => this.writeRowOf(member, write))];
-  }
-
-  /** A run that did things through the World, as the things it did, each
-   *  where it happened (`trip.ts`): what the script did on its own machine
-   *  first, named by the command that does work. */
-  private tripRows(member: ToolEntry, steps: readonly RunStep[]): Row[] {
-    const tool = member.tool;
-    const script = tool.does.as === "command" ? tool.does.command : "";
-    const said = ownWork(script) ?? undefined;
-    const draw = { words: this.context.words };
-    return tripItems(script, steps, tool.run?.writes ?? []).map((item): Row => {
-      if (item.kind === "own") return { key: member.key, signature: `${this.memberSignature(member)}|own`, html: () => this.member(member, said), text: () => this.findRowText(member, said) };
-      if (item.kind === "write") return this.writeRowOf(member, item.write);
-      const key = `${member.key}${STEP}${stepKey(item)}`;
-      return {
-        key,
-        signature: JSON.stringify(item),
-        html: () => stepRowHtml(key, item, { ...draw, enter: this.entering(key), open: this.openRows.has(key) }),
-        text: () => stepRowText(item, draw),
-      };
-    });
   }
 
   /** A file a run wrote, as its row. */
@@ -1759,19 +2035,6 @@ export class ConversationView {
         return [line.action, line.object, stats, write.machine !== this.context.residentMachine ? this.context.words.on(write.machine) : ""].filter(Boolean).join(" ");
       },
     };
-  }
-
-  /** What a step of a run holds, opened under its row. */
-  private fillTripStep(key: string, owner: string, part: string, content: HTMLElement): void {
-    const entry = this.conversation.get(owner);
-    if (entry?.kind !== "tool") return;
-    const tool = entry.tool;
-    const script = tool.does.as === "command" ? tool.does.command : "";
-    const item = tripItems(script, tool.run?.steps ?? [], tool.run?.writes ?? []).find(
-      (one): one is StepItem => one.kind !== "own" && one.kind !== "write" && stepKey(one) === part,
-    );
-    if (!item) return;
-    this.longs.set(key, fillStep(item, content, this.context.words, (text, label) => new LongText(text, label, this.layoutAnchor, this.longWords())));
   }
 
   /** What a run of thinking is drawn from: its parts, and the tokens told
@@ -1803,8 +2066,8 @@ export class ConversationView {
     const { words } = this.context;
     const writing = run.some((entry) => entry.writing);
     const took = writing ? null : thoughtTook(run);
-    const titles = sections(thoughtText(run));
-    const title = writing ? titles.at(-1) : titles[0];
+    const titles = thoughtHeads(run);
+    const title = writing ? titles.at(-1) : thoughtText(run).trim() ? titles[0] : undefined;
     const tokens = writing ? null : this.conversation.thinkingTokens(run);
     return [writing ? words.thinking : took === null ? words.thought : words.thoughtFor(took), title ?? "", tokens === null ? "" : words.thinkingTokens(tokens)].filter(Boolean).join(" ");
   }
@@ -2017,7 +2280,8 @@ export class ConversationView {
   /** A run of thinking as one row: "Thinking…" while it goes, "Thought for
    *  4s" once over where the host said how long, "Thought" where not; the title of its words'
    *  section after it, the tokens it took at the end. It opens only where
-   *  the host gave words; none are made up. */
+   *  the host gave words to show; none are made up. GPT's are titles only:
+   *  the one it is in shows while it thinks, and nothing opens. */
   private thinkingRow(run: readonly ProseEntry[], enter: string): string {
     const { words } = this.context;
     const key = run[0]!.key;
@@ -2028,9 +2292,10 @@ export class ConversationView {
     const took = writing ? null : thoughtTook(run);
     const said = writing ? words.thinking : took === null ? words.thought : words.thoughtFor(took);
     // A summary comes in sections, each under a bold title of the host's:
-    // the row says the latest while it thinks, the first after.
-    const titles = sections(text);
-    const title = writing ? titles.at(-1) : titles[0];
+    // the row says the latest while it thinks, the first after where its
+    // words can be opened.
+    const titles = thoughtHeads(run);
+    const title = writing ? titles.at(-1) : has ? titles[0] : undefined;
     const tokens = writing ? null : this.conversation.thinkingTokens(run);
     const figures = tokens === null ? "" : `<span class="row-figures">${escape(words.thinkingTokens(tokens))}</span>`;
     const chevron = has ? `<span class="row-chevron">${glyph("chevron", 16)}</span>` : "";
@@ -2088,12 +2353,12 @@ export class ConversationView {
   }
 
   /** A change as rows to read: its numbers, its sign, its text. */
-  private diffText(lines: readonly string[] | RemoteDiff, path: string, numberedRows: boolean): LongText {
+  private diffText(lines: readonly string[] | RemoteDiff, path: string, numberedRows: boolean, gap: (n: number) => string = this.context.words.unchangedLines): LongText {
     return new LongText(
       {
         lines,
         ...(Array.isArray(lines) ? { source: new DiffLines(lines as readonly string[]) } : {}),
-        paint: diffPaint(path, this.context.words.unchangedLines, numberedRows),
+        paint: diffPaint(path, gap, numberedRows),
         kind: "diff",
         scroll: true,
       },
@@ -2127,7 +2392,7 @@ export class ConversationView {
     const kept = this.heldRows(key, write);
     if (kept) {
       const long = this.diffText(kept, write.path, true);
-      this.longs.set(key, [long]);
+      this.held(key, long);
       card.body.append(long.element);
       shown(long);
       return;
@@ -2147,12 +2412,13 @@ export class ConversationView {
       held.raw = null;
       if (raw) void raw.close().catch((error: unknown) => console.warn("a change's lines could not be let go", error));
     };
-    this.closers.set(key, [
-      () => {
-        request.abort();
-        close();
-      },
-    ]);
+    const closing = () => {
+      request.abort();
+      close();
+    };
+    const closers = this.closers.get(key);
+    if (closers) closers.push(closing);
+    else this.closers.set(key, [closing]);
     const pending = (async () => {
       try {
         held.raw = await lines(diff.machine, diff.path, { kind: "file", encoding: "utf-8" });
@@ -2169,7 +2435,7 @@ export class ConversationView {
           long.destroy();
           return close();
         }
-        this.longs.set(key, [long]);
+        this.held(key, long);
         note.replaceWith(long.element);
         shown(long);
       } catch (error) {
@@ -2247,9 +2513,14 @@ export class ConversationView {
     if (!content) return;
     this.letGo(key);
     content.replaceChildren();
-    const stepAt = key.indexOf(STEP);
-    if (stepAt !== -1) {
-      this.fillTripStep(key, key.slice(0, stepAt), key.slice(stepAt + 1), content);
+    const bunch = this.bunches.get(key);
+    if (bunch && row.classList.contains("row-bunch")) {
+      this.fillBunch(bunch, content);
+      return;
+    }
+    const card = this.cards.get(key);
+    if (card) {
+      this.fillCard(key, card, content);
       return;
     }
     const split = key.indexOf(WRITE);
@@ -2285,7 +2556,6 @@ export class ConversationView {
       return;
     }
     if (entry.kind !== "tool") return;
-    const { words } = this.context;
     const { tool } = entry;
     if (tool.does.as === "edit") {
       // Each file's change in a card of its own, saying which file it is.
@@ -2303,6 +2573,81 @@ export class ConversationView {
       this.longs.set(key, longs);
       return;
     }
+    const longs: LongText[] = [];
+    const closers: (() => void)[] = [];
+    content.append(this.commandWords(entry, null, longs, closers));
+    this.longs.set(key, longs);
+    this.closers.set(key, closers);
+  }
+
+  /** A call in its own words; a run that did things a person recognises,
+   *  those things drawn as cards (`deeds/draw.ts`) above its own words,
+   *  folded. `only` keeps to some of its deeds. */
+  private commandWords(entry: ToolEntry, only: readonly number[] | null, longs: LongText[], closers: (() => void)[]): HTMLElement {
+    const { tool } = entry;
+    const deeds = this.deedsOf(entry);
+    // A command an `on` carried elsewhere is drawn as what it did there; a
+    // command only named opens on the run's own words.
+    const drawn = (deeds ?? []).filter((deed, index) => (deed.kind !== "plain" || (only !== null && !!deed.on && deed.machine != null)) && deed.kind !== "writes" && (!only || only.includes(index)));
+    // A run that went on after the call came back says so above all it did.
+    const job = tool.does.as === "command" && tool.does.job && (!only || drawn.length === 0) ? goingOn(tool.does.job, tool.machine, this.context.words.deeds) : null;
+    if (!drawn.length) {
+      const words = this.runWords(tool, longs, closers);
+      if (!job) return words;
+      const both = document.createElement("div");
+      both.className = "dd-deeds";
+      both.append(job, words);
+      return both;
+    }
+    const { words } = this.context;
+    const failed = tool.does.as === "command" && !tool.does.job && tool.does.exit !== null && tool.does.exit !== 0;
+    const ending = failed && tool.does.as === "command" ? `<span class="io-end nonzero">${escape(words.exited(tool.does.exit ?? 0))}</span>` : "";
+    const cards = drawDeeds(drawn, this.deedTools(tool), () => this.runWords(tool, longs, closers), ending);
+    longs.push(...cards.longs);
+    if (job) cards.element.prepend(job);
+    return cards.element;
+  }
+
+  /** What a run did, as read from its script and what it printed; null for
+   *  what is not a run, or a run nothing of which is recognised. */
+  private deedsOf(entry: Entry): Deed[] | null {
+    if (entry.kind !== "tool" || entry.tool.does.as !== "command") return null;
+    const read = this.deedsRead.get(entry.key);
+    if (read?.stamp === entry.stamp) return read.deeds;
+    const { shown, output } = toolText(entry.tool, this.context.words);
+    const lines = shown ? shown.lines.map((line, index) => (shown.numbers[index] === null ? null : line)) : output ? output.split("\n") : [];
+    const steps = entry.tool.run?.steps ?? [];
+    const deeds = entry.ended || steps.length ? readRun(entry.tool.does.command, entry.tool.machine ?? this.context.residentMachine ?? null, lines, steps) : null;
+    this.deedsRead.set(entry.key, { stamp: entry.stamp, deeds });
+    return deeds;
+  }
+
+  /** How deeds are drawn with this view's own cards. */
+  private deedTools(tool: Tool): DeedTools {
+    const { words } = this.context;
+    return {
+      words: words.deeds,
+      // The call's pictures, in the order its output gave them.
+      picture: (deed) => imagesOf(tool.output.filter((content) => content.type === "image" || content.type === "image_url" || content.type === "image_ref").slice(deed.index, deed.index + 1)),
+      file: (deed) => {
+        const rows = deed.rows.map((row) =>
+          "text" in row ? encodeRow({ kind: "same", old: row.line, new: row.line, text: row.text }) : encodeRow({ kind: "gap", old: null, new: null, hidden: row.skipped, text: "" }),
+        );
+        const text = deed.rows.flatMap((row) => ("text" in row ? [row.text] : [])).join("\n");
+        const card = diffCard(deed.path, deed.machine, { copy: words.copy, copied: words.copied }, async () => text);
+        // Lines passed over in a file read are left out, not unchanged.
+        const long = this.diffText(rows, deed.path, deed.rows.some((row) => "line" in row && row.line !== null), (n) => words.deeds.skipped(n));
+        card.body.append(long.element);
+        const full = long.takeFull();
+        if (full) card.act(full);
+        return { element: card.element, longs: [long] };
+      },
+    };
+  }
+
+  /** A run in its own words: what it was given above what it wrote. */
+  private runWords(tool: Tool, longs: LongText[], closers: (() => void)[]): HTMLElement {
+    const { words } = this.context;
     // A World run says what the model got as facts: its own output, apart
     // from what its writes printed of themselves, which their rows show.
     const { run, shown, output, given, ending: endText } = toolText(tool, words);
@@ -2312,8 +2657,6 @@ export class ConversationView {
     // it ended on one quiet line at the foot.
     const surface = document.createElement("div");
     surface.className = "surface io";
-    const longs: LongText[] = [];
-    const closers: (() => void)[] = [];
     const part = (side: "in" | "out", label: string, text: string | LongLines, pictures = "", end = "") => {
       const holder = document.createElement("div");
       holder.className = `io-part io-${side}`;
@@ -2373,9 +2716,7 @@ export class ConversationView {
     const named = tool.does.as === "command" ? tool.does.command.split("\n")[0]?.trim() : "";
     if (given) part("in", words.output.input, given);
     if (printed || images || ending) part("out", named || words.output.printed, printed, images, ending);
-    content.append(surface);
-    this.longs.set(key, longs);
-    this.closers.set(key, closers);
+    return surface;
   }
 
   /** What one of the host's own agents did, in its box under the row of
@@ -2531,6 +2872,11 @@ export class ConversationView {
     if (target.dataset.questionPick !== undefined) {
       const fieldset = target.closest("fieldset");
       const pressed = target.getAttribute("aria-pressed") !== "true";
+      // Several may be chosen together; otherwise one, in place of words.
+      if (fieldset?.hasAttribute("data-multiple")) {
+        target.setAttribute("aria-pressed", String(pressed));
+        return;
+      }
       for (const other of fieldset?.querySelectorAll<HTMLElement>("[data-question-pick]") ?? []) other.setAttribute("aria-pressed", "false");
       target.setAttribute("aria-pressed", String(pressed));
       const free = fieldset?.querySelector<HTMLInputElement>("[data-question-free]");
@@ -2606,6 +2952,11 @@ export class ConversationView {
     }
     const key = target.dataset.open;
     if (!key) return;
+    const sent = this.conversation.get(key);
+    if (sent?.kind === "tool" && startsAgent(sent.tool) && this.context.openAgent) {
+      const run = this.conversation.agentOf(sent);
+      if (run && this.context.openAgent(run.id)) return;
+    }
     const row = target.closest<HTMLElement>("[data-row], .block-heard, .block-agent-told, .block-command");
     const box = (target.closest(".notice-line")?.nextElementSibling as HTMLElement | null) ?? row?.querySelector<HTMLElement>(":scope > .fold-box") ?? null;
     if (!row || !box) return;

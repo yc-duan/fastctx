@@ -9,7 +9,8 @@
   height: 100%;
 }
 
-.conversation-page > .page-head {
+.conversation-page > .page-head,
+.talk-main > .page-head {
   position: relative;
   z-index: 2;
 }
@@ -18,7 +19,8 @@
    fades out beneath the composer; the fade grows in once the conversation
    has left its top. A shade over the words, not a mask on them: masked,
    the whole conversation would lose its subpixel smoothing on Windows. */
-.conversation-page > .page-head::after {
+.conversation-page > .page-head::after,
+.talk-main > .page-head::after {
   content: "";
   position: absolute;
   left: 0;
@@ -30,7 +32,8 @@
   transition: --edge var(--hover) ease;
 }
 
-.conversation-page.scrolled > .page-head::after {
+.conversation-page.scrolled > .page-head::after,
+.conversation-page.scrolled > .talk-main > .page-head::after {
   --edge: var(--space-6);
 }
 
@@ -141,8 +144,8 @@
 }
 
 /* On a phone the line keeps the seal, the title, the machines as a mark and
-   a count, and the "⋯"; where it lives, finding and the details are a
-   press of the seal or the "⋯" away. */
+   a count, and the "⋯"; where it lives, finding, the choice of view and the
+   details are a press of the seal or the "⋯" away. */
 @media (max-width: 760px) {
   .who {
     gap: 10px;
@@ -171,7 +174,7 @@
     font-variant-numeric: tabular-nums;
   }
 
-  .page-head-actions:has(.talk-menu-toggle) .find-toggle {
+  .page-head-actions:has(.talk-menu-toggle) :is(.find-toggle, .view-steps) {
     display: none;
   }
 }

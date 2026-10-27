@@ -72,6 +72,8 @@ export function stageMark(stage: UpdateStage, line: string | null, words: Update
       return with_("going", "update", stage.version, words.administrator);
     case "failed":
       return { ...with_("failed", "cross", stage.version, words.failed(stage.version, words.failures[stage.problem.reason.kind])), why: stage.problem.why };
+    case "repairing":
+      return with_("going", "repair", stage.version, words.repairing((words.repairWords.layers as Record<string, string>)[stage.layer] ?? stage.layer));
   }
   return null;
 }
@@ -82,6 +84,16 @@ export function markOf(machine: MachineUpdate, line: string | null, words: Updat
   if (machine.kind === "phone") return { kind: "quiet", html: "", said: words.reasons.phone };
   const staged = stageMark(machine.stage, line, words);
   if (staged) return staged;
+  // A repair kept for it until it is back, or its last one that stopped short.
+  if (machine.repair_due) {
+    const blocked = machine.repair_due.problem;
+    return blocked
+      ? { ...with_("failed", "repair", machine.repair_due.version, words.repairDueBlocked(words.failures[blocked.reason.kind])), why: blocked.why }
+      : with_("due", "repair", machine.repair_due.version, words.repairDue(machine.repair_due.by));
+  }
+  if (machine.repair?.finished && !machine.repair.success) {
+    return { ...with_("failed", "repair", machine.repair.version, words.repairFailed), why: machine.repair.error ?? "" };
+  }
   if (machine.due) {
     const blocked = machine.due.problem;
     return blocked

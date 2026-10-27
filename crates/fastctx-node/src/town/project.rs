@@ -15,6 +15,12 @@ use crate::town::caller::Caller;
 use crate::town::{map, read};
 
 pub async fn call(node: &Arc<Node>, caller: &Caller, call: ProjectCall) -> Result<Reply, Failure> {
+    if matches!(&call, ProjectCall::New { fields, .. } | ProjectCall::Edit { fields, .. } if fields.canon.is_some()) {
+        return Err(Failure::not_run(fastctx_types::memory::LEGACY));
+    }
+    if matches!(call, ProjectCall::New { .. } | ProjectCall::Edit { .. }) {
+        crate::memory::identity::author(node, caller).await?;
+    }
     match call {
         ProjectCall::New { town, fields, account, hub } => new(node, caller, town, fields, account, hub).await,
         ProjectCall::Edit { town, fields } => {
@@ -28,19 +34,17 @@ pub async fn call(node: &Arc<Node>, caller: &Caller, call: ProjectCall) -> Resul
         ProjectCall::Show { town } => {
             let town = caller.town_or(node, town)?;
             map::query(node, &town).await?;
-            let records = blocking(node, &town, read::records).await?;
-            let (Some(first), Some(record)) = (records.first(), records.last()) else {
+            let Some((mut record, opened)) = blocking(node, &town, read::current).await? else {
                 return Err(map::no_ledger(node, &town));
             };
-            let opened = Stamp { by: first.by.clone(), on: first.on.clone(), at: first.at };
-            let mut record = record.clone();
             seen(node, caller, &town, &mut record)?;
             Ok(Reply::Record { town, record: Box::new(record), opened })
         }
         ProjectCall::Map { town } => {
             let town = caller.town_or(node, town)?;
             map::query(node, &town).await?;
-            let mut map = map::view(node, &town, &crate::around::acting_of(node, caller)).await?;
+            let read_only = crate::memory::identity::read_only(node, caller).await?;
+            let mut map = map::view_for(node, &town, &crate::around::acting_of(node, caller), read_only).await?;
             seen(node, caller, &town, &mut map.record)?;
             Ok(Reply::Map { map: Box::new(map) })
         }
@@ -59,7 +63,6 @@ async fn new(
     hub: Option<HubName>,
 ) -> Result<Reply, Failure> {
     let owner = owner(node, caller, account, hub)?;
-    let _writing = node.writing.lock().await;
     crate::ledger::query(node, Some(&town)).await.map_err(Failure::new)?;
     if blocking(node, &town, read::latest).await?.is_some() {
         return Err(Failure::new(format!(
@@ -95,13 +98,11 @@ async fn new(
 /// Writes the next version of a town's record: what `fields` gives
 /// replaces what the latest version says; the rest stays.
 async fn edit(node: &Arc<Node>, caller: &Caller, town: TownName, fields: RecordFields) -> Result<Reply, Failure> {
-    let _writing = node.writing.lock().await;
     if fields == RecordFields::default() {
         return Err(Failure::new("nothing to change: give what the next version says"));
     }
     map::query(node, &town).await?;
-    let records = blocking(node, &town, read::records).await?;
-    let (Some(first), Some(latest)) = (records.first(), records.last()) else {
+    let Some((latest, opened)) = blocking(node, &town, read::current).await? else {
         return Err(map::no_ledger(node, &town));
     };
     let record = Record {
@@ -127,7 +128,6 @@ async fn edit(node: &Arc<Node>, caller: &Caller, town: TownName, fields: RecordF
             failure
         }
     })?;
-    let opened = Stamp { by: first.by.clone(), on: first.on.clone(), at: first.at };
     Ok(Reply::Record { town, record: Box::new(record), opened })
 }
 

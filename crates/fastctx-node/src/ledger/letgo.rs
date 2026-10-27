@@ -39,7 +39,7 @@ pub async fn let_go(node: &Arc<Node>, link: &Arc<Link>) {
         let kept = {
             let view = link.view();
             let Some(me) = view.me().map(|me| me.name.clone()) else { return };
-            view.member_in_project(&me, &place.town)
+            view.member_keeps_project(&me, &place.town)
         };
         let living: Vec<_> =
             node.residents.everyone().filter(|resident| resident.town.as_ref() == Some(&town)).collect();
@@ -76,10 +76,12 @@ pub async fn let_go(node: &Arc<Node>, link: &Arc<Link>) {
                 stuck = true;
             }
         }
-        if kept || stuck {
+        if kept {
             continue;
         }
-        match remove(node, &town).await {
+        let used = link.view().member_in_project(&link.view().me, &place.town);
+        let removed = if used || stuck { remove_copy(node, &town).await } else { remove(node, &town).await };
+        match removed {
             Ok(()) => {
                 node.log.line(format_args!("let go of the project {town}: no account here may keep it"));
                 gone = true;
@@ -111,6 +113,24 @@ pub(crate) async fn leave_kept(
 /// Removes what this computer kept of `town`: its ledger, its signed
 /// entries, attachments, pages and records; the folder itself only when
 /// nothing else is left in it, as a conversation may stand there.
+pub(super) async fn remove_copy(node: &Arc<Node>, town: &TownName) -> io::Result<()> {
+    let _syncing = node.syncing.lock().await;
+    let directory = node.world.town(town);
+    tokio::task::spawn_blocking(move || {
+        super::remove(&directory.signed())?;
+        for folder in ["ledger", "attachments", "journals", "specs", "pages", "tampering"] {
+            super::remove(&directory.path().join(folder))?;
+        }
+        match std::fs::remove_file(directory.path().join("refused.json")) {
+            Err(error) if error.kind() != io::ErrorKind::NotFound => return Err(error),
+            _ => {}
+        }
+        Ok(())
+    })
+    .await
+    .map_err(io::Error::other)?
+}
+
 pub(super) async fn remove(node: &Arc<Node>, town: &TownName) -> io::Result<()> {
     let _syncing = node.syncing.lock().await;
     let directory = node.world.town(town);
@@ -120,10 +140,10 @@ pub(super) async fn remove(node: &Arc<Node>, town: &TownName) -> io::Result<()> 
         super::remove(&directory.signed())?;
         super::remove(&directory.ledger())?;
         super::remove(&directory.attachments())?;
-        for folder in ["pages", "tampering"] {
+        for folder in ["journals", "specs", "pages", "tampering"] {
             super::remove(&directory.path().join(folder))?;
         }
-        for file in ["project.json", "refused.json"] {
+        for file in ["project.json", "refused.json", "index.json"] {
             match std::fs::remove_file(directory.path().join(file)) {
                 Err(error) if error.kind() != io::ErrorKind::NotFound => return Err(error),
                 _ => {}

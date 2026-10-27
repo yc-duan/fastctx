@@ -20,6 +20,8 @@ use super::record;
 
 /// Who asks, where, and with what.
 pub struct Launch<'a> {
+    /// The owner confirms the foreground answer after its host accepts it.
+    pub answer_receipts: bool,
     pub world: &'a WorldDir,
     /// The names machines answer to here: this machine's, and every name
     /// of a machine renamed since, whose residents' jobs go on in the rooms
@@ -62,7 +64,7 @@ pub fn launch(launch: &Launch<'_>) -> Result<Launched, Failure> {
 /// `stdin` names an already complete, verified local file. The caller keeps
 /// it unchanged and present until the job ends. None connects null input.
 pub fn launch_with_io(launch: &Launch<'_>, mode: OutputMode, stdin: Option<&Path>) -> Result<Launched, Failure> {
-    launch_with_io_registered(launch, mode, stdin, |_| {})
+    launch_with_io_registered(launch, mode, stdin, |_| Ok(()))
 }
 
 /// Registers a consumer after preparation is durable and before a
@@ -71,11 +73,11 @@ pub fn launch_with_io_registered(
     launch: &Launch<'_>,
     mode: OutputMode,
     stdin: Option<&Path>,
-    register: impl FnOnce(&Path),
+    register: impl FnOnce(&Path) -> Result<(), Failure>,
 ) -> Result<Launched, Failure> {
     let (job, output, stderr, record_path, resident) =
         prepare(launch, mode, stdin).map_err(|failure| Failure::not_run(failure.message))?;
-    register(&record_path);
+    register(&record_path)?;
     if let Some(request) = launch.on.and_then(|on| on.request.as_ref()) {
         let stopped = resident.jobs().join(format!("request-{request}.stopped"));
         if stopped
@@ -142,6 +144,7 @@ fn prepare(launch: &Launch<'_>, mode: OutputMode, stdin: Option<&Path>) -> Resul
     publish_new(&script, super::heredoc::mark_on_pipes(&launch.request.script).as_bytes(), Permissions::Private)
         .map_err(|error| failure("could not write the script", &error))?;
     let record = JobRecord {
+        turn: launch.request.turn.clone(),
         call_id: launch.request.call_id.clone(),
         id: job.clone(),
         machine: launch.names.me.clone(),
@@ -173,9 +176,14 @@ fn prepare(launch: &Launch<'_>, mode: OutputMode, stdin: Option<&Path>) -> Resul
         account: launch.account.cloned(),
     };
     record::write(&record_path, &record).map_err(|error| failure("could not write the job's record", &error))?;
-    if launch.on.is_some() {
+    if launch.owner.resident().is_some()
+        && launch.on.is_none_or(|on| on.sentinel.is_none())
+        && (launch.on.is_some() || launch.answer_receipts)
+    {
         // No supervisor can execute until its completion debt is durable.
-        publish_new(&resident.job_owed(&job), b"", Permissions::Private)
+        // Empty markers retain the pre-negotiation background/on behavior.
+        let debt: &[u8] = if launch.on.is_none() && launch.answer_receipts { b"answer" } else { b"" };
+        publish_new(&resident.job_owed(&job), debt, Permissions::Private)
             .map_err(|error| failure("could not keep the job's completion debt", &error))?;
     }
     Ok((job, output, stderr, record_path, resident))

@@ -118,9 +118,11 @@ fn askers(node: &Node, acting: &Acting) -> Vec<(Arc<Link>, Asker)> {
 fn reached<'a>(node: &Node, call: &'a Call) -> Option<&'a ResidentId> {
     let here = |machine: Option<&fastctx_types::access::Written>| machine.is_none_or(|machine| node.is_here(machine));
     match call {
-        Call::Talk { to: resident, machine, .. }
+        Call::Collaboration { resident, machine }
+        | Call::Talk { to: resident, machine, .. }
         | Call::Message { to: resident, machine, .. }
         | Call::Watch { resident, machine, .. }
+        | Call::Goal { resident, machine, .. }
         | Call::Composer { resident, machine, .. }
         | Call::Stop { resident, machine }
         | Call::Control { resident, machine, .. }
@@ -133,7 +135,10 @@ fn reached<'a>(node: &Node, call: &'a Call) -> Option<&'a ResidentId> {
             Some(resident)
         }
         Call::Forget { resident, machine } if node.is_here(machine) => Some(resident),
-        Call::Attach { resident } | Call::HoldHost { resident } => Some(resident),
+        Call::Attach { resident }
+        | Call::HoldHost { resident }
+        | Call::TurnEvidence { resident, .. }
+        | Call::CompactBetweenTurns { resident } => Some(resident),
         Call::Upload { target, node: machine, .. } => {
             let machine = match target {
                 UploadTarget::Sent { machine, .. } => Some(machine),

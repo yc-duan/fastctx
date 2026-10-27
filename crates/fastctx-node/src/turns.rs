@@ -20,12 +20,12 @@ use fastctx_types::layout::ConversationDir;
 use fastctx_types::residents::{
     Delivery, LAST_SAID_CHARS, MessageKind, MessageLine, Notice, Origin, Owing, Pending, Trouble,
 };
-use fastctx_types::session::{Happened, Health, SessionChange, SessionEvent, TurnEnd, TurnHow};
+use fastctx_types::session::{Happened, Health, SessionChange, SessionEvent, Speaker, TurnEnd, TurnHow};
 use fastctx_types::{Address, ResidentId};
 use jiff::Timestamp;
 
 use crate::Node;
-use crate::speech::{self, Owed};
+use crate::speech;
 
 /// A turn whose end is told this long after it is not given the login's
 /// windows: those read since are not the ones it ended with.
@@ -42,7 +42,7 @@ fn deleted(id: &ResidentId) -> std::io::Error {
 pub async fn apply(node: &Arc<Node>, id: &ResidentId, mut event: SessionEvent) -> std::io::Result<()> {
     let Some((about, _)) = node.residents.about(id) else { return Err(deleted(id)) };
     if let Happened::Heard { message: Some(message), .. } = &event.happened
-        && (about.host.agent.as_str() == "codex" && about.world_started && message.detail["type"] == "userMessage"
+        && (about.host.agent.as_str() == "codex" && about.world_managed() && message.detail["type"] == "userMessage"
             || about.host.agent.as_str() == "claude" && message.detail["uuid"].is_string())
     {
         return crate::user_images::live(node, id, event).await;
@@ -52,6 +52,15 @@ pub async fn apply(node: &Arc<Node>, id: &ResidentId, mut event: SessionEvent) -
         return Ok(());
     }
     let directory = node.world.conversation(id);
+    let question_key = match &event.happened {
+        Happened::Finished { turn, item } => crate::goals::questions::key(turn, item),
+        _ => None,
+    };
+    if let Some(key) = &question_key
+        && crate::delivery::has_event(&directory, key)?
+    {
+        return Ok(());
+    }
     if about.host.agent.as_str() == "claude" {
         crate::claude::turn_facts::observe(&directory, &event.happened)?;
     }
@@ -88,6 +97,9 @@ pub async fn apply(node: &Arc<Node>, id: &ResidentId, mut event: SessionEvent) -
             _ => break,
         }
     }
+    if !matches!(event.happened, Happened::TurnStarted { .. }) {
+        crate::turn_evidence::observe(node, id, &event)?;
+    }
     crate::run_facts::attach(&directory, &mut event)?;
     if let Happened::Changed { change: SessionChange::Status { waiting_for_user: Some(waiting), .. }, .. } =
         &event.happened
@@ -118,7 +130,9 @@ pub async fn apply(node: &Arc<Node>, id: &ResidentId, mut event: SessionEvent) -
             crate::asked::settle(node, id, |asked| asked.waits && asked.id == request_id)?;
         }
         Happened::Finished { item, .. } => {
-            if let Some(asked) = crate::asked::of_item(item, event.at) {
+            if let Some(asked) = crate::asked::of_item(item, event.at)
+                && !crate::goals::questions::route(node, id, item, event.at)?
+            {
                 crate::asked::ask(node, id, asked)?;
             }
             // A Codex thread keeps its first instructions through compacting
@@ -132,11 +146,9 @@ pub async fn apply(node: &Arc<Node>, id: &ResidentId, mut event: SessionEvent) -
             }
             if matches!(item.what, fastctx_types::session::What::Compaction)
                 && about.host.agent.as_str() == "codex"
-                && about.world_started
+                && about.world_managed()
             {
-                node.residents.compacted(id);
-                let (node, id, compaction) = (node.clone(), id.clone(), item.id.clone());
-                tokio::spawn(async move { crate::focus::compacted(&node, &id, &compaction).await });
+                crate::context::compacted(node, id, &item.id)?;
             }
         }
         Happened::TurnEnded { .. } => crate::asked::settle(node, id, |asked| asked.waits)?,
@@ -199,11 +211,14 @@ pub async fn apply(node: &Arc<Node>, id: &ResidentId, mut event: SessionEvent) -
                         return Ok(());
                     }
                     node.residents.turn_started(&node.world, id, turn, event.at)?;
+                    node.idle_probes.touched(id);
+                    crate::turn_evidence::observe(node, id, &event)?;
                     // What waited to ride with the next turn goes into this one.
                     let (node, id) = (node.clone(), id.clone());
                     tokio::spawn(async move { crate::speech::along(&node, &id).await });
                     format!("started:{turn}")
                 }
+                Happened::Finished { .. } if question_key.is_some() => question_key.expect("known question"),
                 _ => serde_json::to_string(&event).map_err(std::io::Error::other)?,
             };
             if crate::delivery::event(&directory, &key, &event)? {
@@ -234,7 +249,9 @@ pub fn opening(text: &str, chars: usize) -> String {
 fn recorded(agent: &str, happened: &Happened) -> bool {
     match happened {
         happened if !happened.kept() => false,
-        Happened::Finished { .. } => !matches!(agent, "codex" | "claude"),
+        Happened::Finished { turn, item } => {
+            crate::goals::questions::key(turn, item).is_some() || !matches!(agent, "codex" | "claude")
+        }
         _ => true,
     }
 }
@@ -303,6 +320,7 @@ async fn finish_at(
     {
         end.facts.get_or_insert_with(Default::default).limits = Some(limits);
     }
+    crate::turn_evidence::freeze(node, id, turn, &mut end);
     let mut readers = node.residents.readers(id, turn);
     readers.extend_from_slice(additional);
     let accepted: Vec<_> = crate::delivery::handovers(&directory)?
@@ -317,6 +335,15 @@ async fn finish_at(
             || (turn.is_empty() && now.turn.is_none() && now.activity == fastctx_types::residents::Activity::Busy)
     });
     let settles_queue = current || crate::composer::awaits_turn(node, id, turn).await.map_err(std::io::Error::other)?;
+    if end.how == TurnHow::Interrupted
+        && settles_queue
+        && crate::delivery::terminal(&directory, turn)?.is_none()
+        && crate::turn_evidence::source(node, id, turn)?.is_none()
+        && crate::turn_evidence::classify(&end, None, about.host.agent.as_str()).kind
+            == fastctx_types::turn_evidence::StopKind::UserStopped
+    {
+        crate::goals::holding::stop(node, id, Some(turn.to_string())).map_err(std::io::Error::other)?;
+    }
     let (finished, first) = crate::delivery::finish_at(&directory, turn, end, &readers, ended_at, settles_queue)?;
     if first {
         crate::usage::turn_ended(node, id, &about, &finished.end, ended_at.unwrap_or_else(Timestamp::now));
@@ -342,7 +369,14 @@ async fn finish_at(
         (how, Some(reason)) => Some(Trouble { at: finished.at, text: format!("turn {how}: {reason}") }),
         (how, None) => Some(Trouble { at: finished.at, text: format!("turn {how}") }),
     };
-    node.residents.take_owed(&node.world, id, turn, &node.machine(), trouble)?;
+    // Words the user sent that this turn took, at its start or beside a
+    // tool's result.
+    let heard_user = accepted.iter().flat_map(|handover| &handover.inputs).any(|input| {
+        matches!(input.delivery.notice, Notice::Words { from: Speaker::User { .. }, .. } | Notice::Attached { .. })
+    });
+    node.residents.take_owed(&node.world, id, turn, &node.machine(), trouble, heard_user)?;
+    crate::turn_evidence::ended(node, id, turn);
+    node.idle_probes.touched(id);
     node.watchers.changed.notify_one();
     for handover in &accepted {
         for input in &handover.inputs {
@@ -449,109 +483,13 @@ async fn keep_answers(
     .map_err(std::io::Error::other)?
 }
 
-/// Tells each reader the answers kept for it in the resident's outbox; each
-/// leaves the outbox once its reader's machine has it, or telling it failed
-/// for good, which the colleague's records keep.
+/// Starts or resumes durable delivery of this conversation's answers.
 pub fn pay<'a>(
     node: &'a Arc<Node>,
     id: &'a ResidentId,
     directory: &'a ConversationDir,
 ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + 'a>> {
-    Box::pin(async move {
-        node.ready().await;
-        let Some(paying) = node.residents.paying(id) else { return };
-        // The lock is held only to take what is owed: telling another
-        // conversation takes its locks, never while this one's is held
-        // (`specs/world-concurrency.md`, 锁只管落账). What is being told
-        // is not taken again by a payment that comes meanwhile.
-        let owing = {
-            let _paying = paying.lock().await;
-            let directory = directory.clone();
-            let owing = tokio::task::spawn_blocking(move || crate::inbox::owing(&directory)).await;
-            match owing {
-                Ok(Ok(owing)) => {
-                    let mut telling = TELLING.lock().expect("never poisoned");
-                    owing.into_iter().filter(|answer| telling.insert(answer.delivery.id.clone())).collect::<Vec<_>>()
-                }
-                Ok(Err(error)) => {
-                    node.log.line(format_args!("reading the answers {id} owes: {error}"));
-                    return;
-                }
-                Err(error) => {
-                    node.log.line(format_args!("reading the answers {id} owes: {error}"));
-                    return;
-                }
-            }
-        };
-        let _told = Told(owing.iter().map(|answer| answer.delivery.id.clone()).collect());
-        let Some((about, _)) = node.residents.about(id) else {
-            node.log.line(format_args!("answers for {id} wait: its account identity is no longer known"));
-            return;
-        };
-        let colleague = matches!(about.origin, Origin::Colleague { .. });
-        let acting = about.acting;
-        for answer in owing {
-            let turn = match &answer.delivery.notice {
-                Notice::Answer { turn, .. } => Some(turn.clone()).filter(|turn| !turn.is_empty()),
-                _ => None,
-            };
-            // Telling can lead back here, as a reader's turn ends at once.
-            let landed = Box::pin(speech::tell(
-                node,
-                &acting,
-                &answer.to,
-                answer.delivery.id.clone(),
-                answer.delivery.notice.clone(),
-                Owed::Working,
-            ))
-            .await;
-            if let Err(failure) = &landed {
-                node.log.line(format_args!("telling {} how {id}'s turn ended: {failure}", answer.to));
-            }
-            if colleague {
-                let line = MessageLine {
-                    at: Timestamp::now(),
-                    what: MessageKind::Told { to: answer.to.clone(), turn, outcome: speech::outcome(&landed) },
-                };
-                if let Err(error) = crate::residents::append_message(directory, &line) {
-                    node.log.line(format_args!("recording that {} was told: {error}", answer.to));
-                }
-            }
-            if landed.is_err() || matches!(landed, Ok(fastctx_types::residents::Landed::Uncertain { .. })) {
-                if landed.is_err() && node.is_me(&answer.to.machine) && !node.residents.knows(&answer.to.resident) {
-                    match node.world.conversation(&answer.to.resident).about().try_exists() {
-                        Ok(false) => {
-                            if let Err(error) = crate::inbox::without_reader(directory, &answer) {
-                                node.log.line(format_args!("settling the answer without a local recipient: {error}"));
-                            }
-                        }
-                        Ok(true) => {}
-                        Err(error) => node.log.line(format_args!("checking the answer's local recipient: {error}")),
-                    }
-                }
-                continue;
-            }
-            if let Err(error) = crate::inbox::paid(directory, &answer.delivery.id) {
-                node.log.line(format_args!("settling the answer for {}: {error}", answer.to));
-            }
-        }
-    })
-}
-
-/// The answers a payment is telling now.
-static TELLING: std::sync::LazyLock<std::sync::Mutex<std::collections::HashSet<fastctx_types::NoticeId>>> =
-    std::sync::LazyLock::new(Default::default);
-
-/// Answers a payment took to tell: free to be taken again once it is done.
-struct Told(Vec<fastctx_types::NoticeId>);
-
-impl Drop for Told {
-    fn drop(&mut self) {
-        let mut telling = TELLING.lock().expect("never poisoned");
-        for id in &self.0 {
-            telling.remove(id);
-        }
-    }
+    crate::outbox::pay(node, id, directory)
 }
 
 /// Words kept for a resident whose fate will not be told by any turn's end:
@@ -567,7 +505,7 @@ pub async fn unsettled(
 ) {
     let result = async {
         let mut handover = crate::delivery::begin(directory, vec![pending])?;
-        unresolved(node, id, directory, &mut handover, how, why).await
+        unresolved(node, id, directory, &mut handover, how, why, None).await
     }
     .await;
     if let Err(error) = result {
@@ -584,6 +522,7 @@ pub async fn unresolved(
     handover: &mut crate::delivery::Handover,
     how: TurnHow,
     why: String,
+    error: Option<serde_json::Value>,
 ) -> std::io::Result<()> {
     let accepted: std::collections::HashSet<_> = crate::delivery::handovers(directory)?
         .into_iter()
@@ -593,7 +532,7 @@ pub async fn unresolved(
     if handover.inputs.iter().all(|input| accepted.contains(&input.delivery.id)) {
         return Ok(());
     }
-    let end = TurnEnd { facts: None, error: None, how, reason: Some(why), duration_ms: None, last_message: None };
+    let end = TurnEnd { facts: None, error, how, reason: Some(why), duration_ms: None, last_message: None };
     crate::delivery::unresolved(directory, handover, end)?;
     let Some((about, _)) = node.residents.about(id) else { return Ok(()) };
     let readers: std::collections::BTreeSet<Address> = handover
@@ -757,7 +696,7 @@ async fn recover_one(node: &Arc<Node>, id: &ResidentId, turn: &str) -> std::io::
     }
     let end = TurnEnd {
         facts: None,
-        error: None,
+        error: Some(serde_json::json!({"world":"node_restarted"})),
         how: TurnHow::Interrupted,
         reason: Some(format!("the node on {} restarted while it ran", node.machine())),
         duration_ms: None,

@@ -67,6 +67,8 @@ pub struct HubFile {
     /// machine's key: a name it is renamed to keeps them.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub due: Vec<DueFor>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub repairs: Vec<RepairFor>,
     /// Package targets last reported by each device; retained while it is away.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub package_targets: BTreeMap<PublicKey, PackageTargets>,
@@ -80,6 +82,13 @@ pub struct DueFor {
     pub due: fastctx_types::update::Due,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub batch: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RepairFor {
+    pub key: PublicKey,
+    #[serde(flatten)]
+    pub due: fastctx_types::update::RepairDue,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]

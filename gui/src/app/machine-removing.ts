@@ -13,7 +13,7 @@ import { cannotUninstall, removerLoginOf } from "./machine-logins";
 import type { ReadLog } from "./machine-log";
 import type { ManageWords } from "./machine-manage-words";
 import type { Following, RemoveMachineSheet } from "./machine-remove";
-import type { Machine } from "./reach";
+import { owns, type Machine } from "./reach";
 
 export interface RemovingOptions {
   manage: ManageWords;
@@ -46,6 +46,7 @@ export function removeMachines(machines: Machine[], world: WorldNow, title: stri
     cannot,
     some: unable.length && unable.length < each.length ? manage.onlyLeave(unable.length, why) : null,
     offline: each.some((one) => one.machine.online === false),
+    others: each.some((one) => !owns(one.machine, one.login)) ? manage.othersLose(each.length) : null,
     remove: async (way) => {
       const uninstall = way === "leave" ? null : way;
       const told = uninstall ? each.filter((one) => one.cannot === null) : [];

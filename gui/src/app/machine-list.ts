@@ -103,8 +103,10 @@ export function machineList(now: ListNow, words: MachinesWords): string {
     const ms = seen?.link.kind === "online" ? seen.link.ms : null;
     const count = nodes.filter((node) => node.hubs.includes(hub.id) && node.hold !== "assist" && !node.device).length;
     const state = [hubLabels.get(hub.id) ?? "", ms ? words.listMs(ms) : ""].filter(Boolean).join("　");
+    // Since when the line is down, and why, for a pointer resting on it.
+    const down = seen?.link.kind === "connecting" ? words.hubDownSince(now.when(new Date(seen.link.since), now.now), seen.link.last_error ?? null) : "";
     const key = `hub:${hub.id}`;
-    return `<button class="ml-row ml-hub${hub.online ? " online" : " offline"}${now.selected === key ? " chosen" : ""}" type="button" data-ml-open="${escape(key)}">
+    return `<button class="ml-row ml-hub${hub.online ? " online" : " offline"}${now.selected === key ? " chosen" : ""}" type="button" data-ml-open="${escape(key)}"${down ? ` title="${escape(down)}"` : ""}>
       <span class="ml-pick none" aria-hidden="true"></span>
       ${nameCell(knot(), `<span class="ml-name-text">${escape(hub.name)}</span><span class="tag">${escape(words.listHub)}</span>`, false)}
       <span class="ml-system">${escape(words.hubMachines(count))}</span>
@@ -386,6 +388,10 @@ function linkSaid(node: MapNode, machine: Machine | null, now: ListNow, words: M
     return escape(words.offline(since ? now.when(new Date(since), now.now) : null));
   }
   if (node.online === null) return escape(words.unknown);
+  // While no hub it is on is connected, how its line goes now is not known:
+  // this computer says it is reconnecting, the others stand as they were.
+  const heard = node.hubs.some((id) => now.world.accounts.hubs.find((hub) => hub.hub === id)?.link.kind === "online");
+  if (!heard) return node.here ? escape(words.hubConnecting) : "";
   if (node.through) return escape(words.viaShort(node.through));
   return node.hubMs !== undefined ? `<span class="ml-ms">${escape(words.listMs(node.hubMs))}</span>` : escape(words.onlineNow);
 }

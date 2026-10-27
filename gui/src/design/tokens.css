@@ -59,6 +59,9 @@
      the size. Gutters close in on a phone and open out on a wide screen. */
   --column: calc(var(--body-size) * 48);
   --gutter: clamp(16px, 4.5vw, 36px);
+  /* The panel beside a conversation, opened: its plan, goal and who works
+     with it. */
+  --side-width: clamp(340px, 30vw, 440px);
 
   /* Space, on a 4px step. */
   --space-1: 4px;
@@ -104,6 +107,8 @@
   --settle: 380ms;
   --slow: 700ms;
   --linger: 1.4s;
+  /* A thing carried from one place to another in a drawing, once. */
+  --travel: 900ms;
   --say: 480ms;
   --draw: 1100ms;
   --stagger: 60ms;
@@ -354,6 +359,7 @@
   --settle: 0ms;
   --slow: 0ms;
   --linger: 0ms;
+  --travel: 0ms;
   --say: 0ms;
   --draw: 0ms;
   --stagger: 0ms;

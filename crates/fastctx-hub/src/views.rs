@@ -57,6 +57,7 @@ pub(crate) fn view_for(
     // administrator's own included.
     for account in &mut directory.accounts {
         if !mine.contains(&account.name) {
+            account.collab = None;
             account.profile = account.profile.as_ref().map(|profile| profile.located(|machine| all.same(machine, me)));
         }
     }
@@ -130,10 +131,16 @@ pub(crate) fn view_for(
         })
         .collect();
     View {
+        ledger_parts: true,
+        project_memory: true,
+        collaboration_tree: true,
         call_details: true,
         machine_log: true,
         hub: store.hub.id.clone(),
         hub_name: store.hub.name.clone(),
+        hub_machine: crate::hub_machine::current(hub, store)
+            .filter(|machine| whole || mine.iter().any(|account| all.rights(account, machine).hands)),
+        machine_notices: store.book.machine_log.notices(all, me),
         me: me.clone(),
         self_registration: store.hub.self_registration,
         direct_links: true,
@@ -154,6 +161,11 @@ pub(crate) fn view_for(
         lan_relays: true,
         paced_intake: true,
         profiles: true,
+        account_records: true,
+        conversation_plans: true,
+        goal_control: true,
+        scratch_locations: true,
+        goal_commands: true,
         subagents: true,
         versions: true,
         package_progress: true,
@@ -223,11 +235,9 @@ fn cut(all: &Directory, me: &MachineName, mine: &BTreeSet<AccountName>) -> Direc
         all.members.iter().filter(|member| sees(all, me, mine, &users, member)).cloned().collect();
     let seen: BTreeSet<&MachineName> = members.iter().map(|member| &member.name).collect();
     // What concerns this member: given to the accounts it sees, of itself,
-    // or of a machine one of its accounts owns.
+    // or of a machine one of its accounts holds (whole-machine sharing).
     let concerns = |account: &AccountName, machine: &MachineName| {
-        accounts.contains(account)
-            || machine == me
-            || all.member(machine).and_then(|machine| machine.home.as_ref()).is_some_and(|home| mine.contains(home))
+        accounts.contains(account) || machine == me || mine.iter().any(|account| all.holds(account, machine))
     };
     let shares: Vec<_> = all.shares.iter().filter(|share| concerns(&share.account, &share.machine)).cloned().collect();
     let assists: Vec<_> =

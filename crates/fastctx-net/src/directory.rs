@@ -355,10 +355,15 @@ impl Directory {
         self.account(account).is_some_and(Account::is_super)
     }
 
-    /// Whether an account may manage a machine's updates: its owner or the
-    /// super administrator, except for another account's visitor machines.
+    /// Managing a machine has the same authority as working on it
+    /// (`world-network.md`, 共享机器与智能体协助).
     pub fn may_update(&self, account: &AccountName, machine: &MachineName) -> bool {
         self.authorize(account, crate::authorization::Action::Manage(machine)).is_ok()
+    }
+
+    /// Whether this account holds a machine, rather than merely administering it.
+    pub fn holds(&self, account: &AccountName, machine: &MachineName) -> bool {
+        self.authorize(account, crate::authorization::Action::Hold(machine)).is_ok()
     }
 
     /// Whether `account` is a visitor: its machines are its alone, and it
@@ -543,11 +548,32 @@ impl Directory {
     pub fn member_in_project(&self, member: &MachineName, town: &TownId) -> bool {
         self.acts_for(member).iter().any(|account| self.in_project(account, town))
     }
+
+    /// Full project bodies belong only on devices logged into a project account.
+    /// Hosting an assisting agent grants access to the index, not replication.
+    pub fn member_keeps_project(&self, member: &MachineName, town: &TownId) -> bool {
+        self.member(member).is_some_and(|member| {
+            !member.managed
+                && member
+                    .logins
+                    .iter()
+                    .any(|account| self.may_act_for(account, &member.name) && self.in_project(account, town))
+        })
+    }
 }
 
 /// One member's view of its hub's directory.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct View {
+    /// The hub takes ledger questions in parts and serves large ledger entries.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub ledger_parts: bool,
+    /// Account-scoped project indices and signed memory reads/writes.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub project_memory: bool,
+    /// Relays collaboration-tree calls with their authorization facts.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub collaboration_tree: bool,
     /// The hub authorizes large calls from control-frame facts and requires a verifying receiver.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub call_details: bool,
@@ -556,6 +582,12 @@ pub struct View {
     pub machine_log: bool,
     pub hub: HubId,
     pub hub_name: HubName,
+    /// Current hub host, only when visible to this member.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hub_machine: Option<MachineName>,
+    /// Committed changes delivered to accounts logged in on this device.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub machine_notices: Vec<fastctx_types::sharing::Notice>,
     /// The member this view is for.
     pub me: MachineName,
     /// Whether accounts may be opened by anyone who reaches the hub.
@@ -646,6 +678,20 @@ pub struct View {
     /// would end the session of a member that sent one.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub profiles: bool,
+    /// Account-scoped records, fetched separately from this view.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub account_records: bool,
+    /// Plan operations and their authorized return from remote jobs.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub conversation_plans: bool,
+    /// The hub understands the account-scoped goal control call.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub goal_control: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub scratch_locations: bool,
+    /// The hub relays resident goal commands and requester controls.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub goal_commands: bool,
     /// The hub accepts account-level Claude subagent changes.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub subagents: bool,
@@ -700,10 +746,15 @@ impl View {
     /// An empty view, before the hub has given one.
     pub fn empty(hub: HubId, hub_name: HubName, me: MachineName) -> Self {
         Self {
+            ledger_parts: false,
+            project_memory: false,
+            collaboration_tree: false,
             call_details: false,
             machine_log: false,
             hub,
             hub_name,
+            hub_machine: None,
+            machine_notices: Vec::new(),
             me,
             self_registration: false,
             direct_links: false,
@@ -724,6 +775,11 @@ impl View {
             lan_relays: false,
             paced_intake: false,
             profiles: false,
+            account_records: false,
+            conversation_plans: false,
+            goal_control: false,
+            scratch_locations: false,
+            goal_commands: false,
             subagents: false,
             versions: false,
             package_progress: false,

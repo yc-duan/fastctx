@@ -98,6 +98,9 @@ pub fn fixtures() -> Fixtures {
         })
         .collect();
     let machine = MachineUpdate {
+        repair_supported: true,
+        repair_due: None,
+        repair: None,
         machine: "server".parse().unwrap(),
         owner: "owner".parse().unwrap(),
         group: None,
@@ -119,6 +122,7 @@ pub fn fixtures() -> Fixtures {
         due: Some(due),
         offer: Some(manifest.clone()),
         actions: Actions {
+            repair: None,
             update: Permission::yes(),
             choose: Permission::yes(),
             settings: Permission::no(ActionReason::Offline),
@@ -145,6 +149,7 @@ pub fn fixtures() -> Fixtures {
         replies: vec![
             ViewReply::View {
                 view: Box::new(View {
+                    repair_supported: true,
                     hub: "1.0.1".into(),
                     stable: Some(manifest.clone()),
                     beta: None,

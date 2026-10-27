@@ -85,6 +85,9 @@ function mapMade(world: WorldNow, words: MapWords): MapNow {
     // Written with its hub where another hub has a computer of its name.
     const suffix = machine.written.startsWith(machine.name) ? machine.written.slice(machine.name.length) : "";
     const hubLink = machine.here ? world.accounts.hubs.map((hub) => hub.link).find((link) => link.kind === "online") : undefined;
+    // How its line to the hub goes is known only while a hub it is on is
+    // connected: a round trip measured before stays unsaid.
+    const heard = world.accounts.hubs.some((hub) => hub.link.kind === "online" && machine.on.some((on) => on.hub === hub.hub));
     // A managed machine says so under its name.
     const said = owner ? words.ownedBy(owner) : facts ? osName(facts.os) : "";
     nodes.push({
@@ -101,7 +104,7 @@ function mapMade(world: WorldNow, words: MapWords): MapNow {
       ...(was.length ? { was: was.map((name) => `m:${name}${suffix}`) } : {}),
       directAt: direct,
       through: machine.through ?? null,
-      hubMs: (hubLink?.kind === "online" ? hubLink.ms : member?.paths?.hub_ms) ?? undefined,
+      hubMs: (machine.here ? (hubLink?.kind === "online" ? hubLink.ms : undefined) : heard ? member?.paths?.hub_ms : undefined) ?? undefined,
       group: boxOf(owner ? { key: `of:${owner}`, label: words.ownedBy(owner) } : { key: "mine", label: words.mineGroup }, member?.group),
     });
   }

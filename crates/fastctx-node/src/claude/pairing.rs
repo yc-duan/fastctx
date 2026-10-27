@@ -15,6 +15,9 @@ use crate::Node;
 
 /// Creates the home and compatibility alias before a new mod publishes any
 /// files. Existing legacy writers keep their path until they have exited.
+/// `home` is the login the session runs with, as its environment names it,
+/// and `background` whether Claude Code's daemon runs it.
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn directory(
     node: &Arc<Node>,
     session: String,
@@ -22,6 +25,8 @@ pub(crate) async fn directory(
     cwd: Option<String>,
     conversation: Option<String>,
     process: Option<fastctx_types::ProcessIdentity>,
+    home: Option<String>,
+    background: Option<bool>,
 ) -> Result<String, fastctx_types::ipc::Failure> {
     let _place = match conversation.as_deref() {
         Some(conversation) => Some(node.places.using(conversation).await),
@@ -56,6 +61,24 @@ pub(crate) async fn directory(
             (started_here(&id) && crate::homes::same_dir(cwd, node.world.conversation(&id).path())).then_some(id)
         }),
     };
+    // A session that names no conversation may be a copy Claude Code started
+    // instead of waking one: a wake in flight says so before it pairs.
+    if known.is_none() {
+        node.claude.copies.settled().await;
+        if node.claude.copies.is_copy(&session) {
+            node.log.line(format_args!("refused the Claude session {session}: it is a copy the World stopped"));
+            return Err(fastctx_types::ipc::Failure::new(
+                "the Claude session is a copy Claude Code started instead of waking a running session; the World stopped it",
+            ));
+        }
+    }
+    let arrival = crate::adoption::Arrival {
+        login: match home {
+            Some(home) => crate::adoption::Login::Named(Some(home.into())),
+            None => crate::adoption::Login::Unknown,
+        },
+        own: background == Some(false),
+    };
     // A World launch holds births.read until the background CLI returns.
     // Its settings already name its conversation, independently of that ID.
     // Births come before the session's own lock (`fastctx_platform::doing::Rank`).
@@ -63,6 +86,7 @@ pub(crate) async fn directory(
     let reading = super::reading(node, &session);
     let _reading = reading.lock().await;
     let observing = process.clone();
+    let reported = session.clone();
     let reserve = || -> io::Result<String> {
         validate_session(&session)?;
         let source = exchange::sessions(node.world.path()).join(&session);
@@ -103,17 +127,11 @@ pub(crate) async fn directory(
                 node.residents.set_session(&node.world, &id, &registration.session, None, None)?;
                 id
             }
-            None => resident(node, &registration)?,
+            None => resident(node, &registration, &arrival)?,
         };
         node.residents.active(&id).map_err(|failure| io::Error::other(failure.message))?;
-        // What it is told of its machines and folders, for its plugin to add
-        // to the first message's context.
-        if node.residents.about(&id).is_some_and(|(about, _)| about.world_started) {
-            crate::focus::hand_to_session(&node.world.conversation(&id), &source)?;
-        }
-        // Its project's record, with the user's instructions for it.
-        crate::profile::session::hand_to_session(node, &id, &source)?;
-        crate::town::instructions::hand_to_session(node, &id, &source)?;
+        crate::context::refresh_local(node, &id)?;
+        crate::context::hand_to_session(node, &id, &source)?;
         if registration.process.is_some() {
             fastctx_platform::publish(
                 &source.join("session.json"),
@@ -134,6 +152,9 @@ pub(crate) async fn directory(
     };
     let result = reserve()
         .map_err(|error| fastctx_types::ipc::Failure::new(format!("reserving the Claude session directory: {error}")));
+    if let Err(failure) = &result {
+        node.log.line(format_args!("Claude session {reported}: {}", failure.message));
+    }
     if result.is_ok() {
         super::process::observe(node, observing);
         node.claude.changed.notify_waiters();
@@ -143,7 +164,13 @@ pub(crate) async fn directory(
 
 /// Called with the node's births lock held for writing.
 /// A clear chain can arrive in any order, including only after a restart.
-pub(super) fn resident(node: &Node, registration: &Registration) -> io::Result<ResidentId> {
+/// A session that continues no conversation here becomes one only when it
+/// is the owner's own (`crate::adoption`), and never when it is a copy.
+pub(super) fn resident(
+    node: &Node,
+    registration: &Registration,
+    arrival: &crate::adoption::Arrival,
+) -> io::Result<ResidentId> {
     if let Some(deleted) = node.residents.deleted_session(&registration.session) {
         return Err(io::Error::other(format!("it was {deleted}, a conversation deleted here")));
     }
@@ -225,6 +252,12 @@ pub(super) fn resident(node: &Node, registration: &Registration) -> io::Result<R
     let id = match candidates.into_iter().next() {
         Some(id) => id,
         None => {
+            if node.claude.copies.is_copy(&registration.session) {
+                return Err(io::Error::other(
+                    "it is a copy Claude Code started instead of waking a running session; the World stopped it",
+                ));
+            }
+            let home = crate::adoption::owners_own(node, "claude", arrival)?;
             let first = chain.last().expect("the chain includes this registration");
             let agent = AgentName::try_from("claude").expect("a valid agent name");
             let id = node.residents.new_id(&agent).map_err(io::Error::other)?;
@@ -243,10 +276,11 @@ pub(super) fn resident(node: &Node, registration: &Registration) -> io::Result<R
                 origin: Origin::User,
                 session: Some(first.session.clone()),
                 world_started: false,
+                native_resumed: false,
                 model: first.model_name(),
                 acting: Default::default(),
                 focus: Default::default(),
-                home: None,
+                home,
                 callee: None,
             };
             node.residents.create(&node.world, about, None, crate::residents::idle(at))?;
