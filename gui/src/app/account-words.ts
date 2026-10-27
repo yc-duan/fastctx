@@ -7,6 +7,7 @@
 // (`world-gui.md`, 用词).
 
 import { wholeDollars } from "../world/money";
+import type { MachineFindWords } from "./machine-find";
 import type { GroupWords } from "./machine-groups";
 import type { PasswordProblem } from "./password";
 import { enProblems, failure, zhProblems, type ProblemWords } from "./problem";
@@ -627,6 +628,10 @@ export interface MachinesWords {
   viewMap: string;
   viewList: string;
   views: string;
+  /** Finding machines by name, by whose they are or by group, and the list
+   *  when none matches. */
+  find: MachineFindWords;
+  noneFound: string;
   /** On the list: the hub's row, a line's round trip, how many agents are
    *  at work on a machine, and a read-only device with what it is. */
   listHub: string;
@@ -899,6 +904,17 @@ export const zhMachines: MachinesWords = {
   viewMap: "图",
   viewList: "列表",
   views: "显示方式",
+  find: {
+    find: "查找机器",
+    placeholder: "机器、人或分组…",
+    found: (total) => `${total} 台`,
+    count: (current, total) => `${current} / ${total}`,
+    none: "无结果",
+    previous: "上一个",
+    next: "下一个",
+    close: "关闭查找",
+  },
+  noneFound: "没有匹配的机器",
   listHub: "中枢服务器",
   listMs: (ms) => `${ms} ms`,
   busy: (n) => `${n} 个智能体在进行`,
@@ -1221,6 +1237,17 @@ export const enMachines: MachinesWords = {
   viewMap: "Map",
   viewList: "List",
   views: "Show as",
+  find: {
+    find: "Find machines",
+    placeholder: "Machine, person or group…",
+    found: (total) => `${total} machine${total === 1 ? "" : "s"}`,
+    count: (current, total) => `${current} of ${total}`,
+    none: "No matches",
+    previous: "Previous",
+    next: "Next",
+    close: "Close find",
+  },
+  noneFound: "No machine matches",
   listHub: "Hub",
   listMs: (ms) => `${ms} ms`,
   busy: (n) => `${n} agent${n === 1 ? "" : "s"} at work`,

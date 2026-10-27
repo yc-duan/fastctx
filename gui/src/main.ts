@@ -34,6 +34,7 @@ import "./app/assist.css";
 import "./app/machines.css";
 import "./app/machine-framed.css";
 import "./app/machine-list.css";
+import "./app/machine-find.css";
 import "./app/update-view.css";
 import "./app/machine-page.css";
 import "./app/machine-manage.css";

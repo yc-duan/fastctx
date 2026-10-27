@@ -221,6 +221,12 @@
   animation: arrived var(--linger) var(--ease-out) both;
 }
 
+/* What is looked for and found: a still clay ring, drawn in once. */
+.map-live .found {
+  opacity: calc(var(--shown) * 0.55);
+  animation: paper-in var(--settle) var(--ease-out) both;
+}
+
 /* The machines that can take the server, while its new place is chosen:
    their clay rings breathe; the rest of the names are faint. */
 .map-live .lit {

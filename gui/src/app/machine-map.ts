@@ -74,6 +74,9 @@ export interface MachineMapScene {
   /** The boxes of groups the user may rename or end, by key: each has a
    *  "⋯" at the end of its strip, as a person's box has. */
   grouped?: ReadonlySet<string>;
+  /** While machines are looked for, those that match, by key: each ringed
+   *  in clay, the other names faint. */
+  found?: ReadonlySet<string> | null;
 }
 
 /** Where this device remembers the order of the machines on the drawing,
@@ -830,7 +833,8 @@ export class MachineMap {
     if (!scene || !placement) return;
     const near = this.level >= 1 || !!this.options.still;
     const lit = scene.lit ?? null;
-    const key = JSON.stringify([scene.selected, scene.framed, [...scene.fresh], near, scene.nodes.map((node) => [node.key, node.online, node.busy > 0]), [...placement.machines], lit && [...lit]]);
+    const found = scene.found ?? null;
+    const key = JSON.stringify([scene.selected, scene.framed, [...scene.fresh], near, scene.nodes.map((node) => [node.key, node.online, node.busy > 0]), [...placement.machines], lit && [...lit], found && [...found]]);
     if (key === this.marked) return;
     this.marked = key;
     const circles: Ring[] = [];
@@ -853,8 +857,15 @@ export class MachineMap {
       circles.push({ id: `lit:${key}`, kind: "lit", d: circle(point, RING + 8, 3, seeded(`lit:${key}`)) });
       if (candidate.sleeps) moons.push(`<path class="moon" d="${crescent([point[0] - (RING + 18) * 0.72, point[1] - (RING + 18) * 0.72], 7)}"/>`);
     }
+    // What is looked for and found is ringed and stays in ink, as still as
+    // the one chosen is.
+    for (const key of found ?? []) {
+      const point = this.pointOf(key);
+      if (point && key !== scene.selected) circles.push({ id: `found:${key}`, kind: "found", d: circle(point, RING + 8, 3, seeded(`found:${key}`)) });
+    }
     for (const name of this.names.querySelectorAll<SVGTextElement>(".machine-name")) {
-      name.classList.toggle("unlit", !!lit && !lit.has(name.dataset.name ?? ""));
+      const named = name.dataset.name ?? "";
+      name.classList.toggle("unlit", (!!lit && !lit.has(named)) || (!!found && !found.has(named)));
     }
     const flows: string[] = [];
     if (near) {
@@ -882,7 +893,7 @@ export class MachineMap {
 /** A clay ring drawn live, by what it rings and why. */
 interface Ring {
   id: string;
-  kind: "chosen" | "arrived" | "lit";
+  kind: "chosen" | "arrived" | "lit" | "found";
   d: string;
 }
 

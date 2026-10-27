@@ -44,6 +44,7 @@ import { isManaged, machineList } from "./machine-list";
 import { MapPeople } from "./map-people";
 import type { PeopleWords } from "./people-words";
 import { RING } from "./map-layout";
+import { foundIn, MachineFind } from "./machine-find";
 import { mapOf, phonesOf } from "./map-of";
 import { deviceKey, type MapNode } from "./map-nodes";
 import { link, talkLink } from "./places";
@@ -142,6 +143,23 @@ type Spot =
   | { kind: "device"; hub: HubAccounts; member: MemberSeen; login: Login; owner: string | null; here: boolean };
 
 const spotsMade = new WeakMap<WorldNow, Map<string, Spot>>();
+
+/** The boxes folded, but those holding a machine looked for and found: they
+ *  stand open while it is, as the user left them after. */
+function unfolded(folded: Set<string>, nodes: readonly MapNode[], found: readonly string[] | null): Set<string> {
+  if (!found?.length) return folded;
+  const open = new Set(folded);
+  const wanted = new Set(found);
+  for (const node of nodes) {
+    if (!wanted.has(node.key)) continue;
+    const group = node.group?.key ?? "mine";
+    for (const hub of node.hubs) {
+      open.delete(`group:${hub}:${boxParts(group).owner}`);
+      open.delete(`group:${hub}:${group}`);
+    }
+  }
+  return open;
+}
 
 type GlyphName = Parameters<typeof glyph>[0];
 
@@ -254,6 +272,13 @@ export class MachinesPage implements Page {
   private floated = "";
   /** The list's groups and people the viewer opened or closed. */
   private readonly listFolds = keptFolds();
+  /** Finding machines: the bar, its glass in the head, and what was last
+   *  found for what was looked for. */
+  private readonly finder: MachineFind;
+  private readonly findToggle: HTMLElement;
+  private found: { world: WorldNow; query: string; keys: string[] } | null = null;
+  /** The match gone to in the list. */
+  private findCurrent: string | null = null;
   private readonly stop: () => void;
   /** The spot chosen, by its key on the map. */
   private selected: string | null;
@@ -404,7 +429,7 @@ export class MachinesPage implements Page {
     this.element.innerHTML = `
       ${options.head(
         `<h1 class="page-title">${escape(words.title)}</h1>`,
-        `<div class="ml-views" role="radiogroup" aria-label="${escape(words.views)}" hidden>${(options.updates ? (["map", "list", "updates"] as View[]) : (["map", "list"] as View[]))
+        `<button class="icon-button mf-toggle" type="button" aria-label="${escape(words.find.find)}" title="${escape(words.find.find)}" hidden>${glyph("search", 18)}</button><div class="ml-views" role="radiogroup" aria-label="${escape(words.views)}" hidden>${(options.updates ? (["map", "list", "updates"] as View[]) : (["map", "list"] as View[]))
           .map((view) => {
             const label = view === "map" ? words.viewMap : view === "list" ? words.viewList : options.updates!.view.view;
             return `<button class="ml-view" type="button" role="radio" data-view="${view}" title="${escape(label)}">${glyph(view === "map" ? "tree" : view === "list" ? "rows" : "update", 16)}<span>${escape(label)}</span>${view === "updates" ? `<span class="ml-view-count" hidden></span>` : ""}</button>`;
@@ -449,6 +474,17 @@ export class MachinesPage implements Page {
     this.card = this.element.querySelector<HTMLElement>(".map-card")!;
     this.list = this.element.querySelector<HTMLElement>(".ml-list")!;
     this.views = this.element.querySelector<HTMLElement>(".ml-views")!;
+    this.finder = new MachineFind(words.find, {
+      changed: () => {
+        this.findCurrent = null;
+        this.redraw();
+      },
+      reach: (key) => this.reachFound(key),
+    });
+    this.canvas.append(this.finder.element);
+    this.findToggle = this.element.querySelector<HTMLElement>(".mf-toggle")!;
+    this.findToggle.addEventListener("click", () => (this.finder.open ? this.finder.close() : this.finder.show()));
+    document.addEventListener("keydown", this.findKey);
     // A machine named in the address is shown on the drawing, or ticked in
     // the update view.
     this.view = ticked ? "updates" : options.focus ? "map" : keptView();
@@ -617,7 +653,61 @@ export class MachinesPage implements Page {
     this.log.dispose();
     if (this.undoing) clearTimeout(this.undoing.timer);
     document.removeEventListener("pointerdown", this.outside, true);
+    document.removeEventListener("keydown", this.findKey);
     this.map.dispose();
+  }
+
+  /** Ctrl+F finds machines while the page is shown, the drawing, the list
+   *  or the update view alike. */
+  private readonly findKey = (event: KeyboardEvent) => {
+    if (!this.element.isConnected || this.findToggle.hidden || !(event.ctrlKey || event.metaKey) || event.key.toLowerCase() !== "f" || event.altKey) return;
+    event.preventDefault();
+    this.finder.show();
+  };
+
+  /** The machines that match what is looked for, by key, in the order the
+   *  World gives them; null while nothing is. */
+  private foundIn(world: WorldNow): string[] | null {
+    const query = this.finder.query;
+    if (!query) return null;
+    const kept = this.found;
+    if (kept?.world === world && kept.query === query) return kept.keys;
+    const keys = foundIn(mapOf(world, this.options.words).nodes, query);
+    this.found = { world, query, keys };
+    return keys;
+  }
+
+  /** The machines found, in the order the page shows them: the list's rows
+   *  down, the drawing's columns across and each down. */
+  private foundShown(found: readonly string[]): string[] {
+    if (this.view !== "map") {
+      const wanted = new Set(found);
+      return [...this.list.querySelectorAll<HTMLElement>("[data-ml-row]")].map((row) => row.dataset.mlRow!).filter((key) => wanted.has(key));
+    }
+    const at = new Map(found.map((key) => [key, this.map.screenOf(key)] as const));
+    return found.filter((key) => at.get(key)).sort((a, b) => at.get(a)![0] - at.get(b)![0] || at.get(a)![1] - at.get(b)![1]);
+  }
+
+  /** Goes to a machine looked for and found: on the drawing it is chosen
+   *  and brought to the middle; in the list its row is washed and comes
+   *  into view, what is ticked and what is open beside it left as they are. */
+  private reachFound(key: string): void {
+    if (this.view !== "map") {
+      this.findCurrent = key;
+      this.redraw();
+      requestAnimationFrame(() => this.list.querySelector(`[data-ml-row="${CSS.escape(key)}"]`)?.scrollIntoView({ block: "nearest" }));
+      return;
+    }
+    this.selected = key;
+    this.detailsOpen = false;
+    this.redraw();
+    requestAnimationFrame(() => {
+      if (this.narrow()) return this.bringIntoView(key);
+      const at = this.map.screenOf(key);
+      if (!at) return;
+      const box = this.canvas.getBoundingClientRect();
+      this.map.glide(box.width / 2 - at[0], box.height / 2 - at[1]);
+    });
   }
 
   /** A press anywhere but the menu closes it. */
@@ -1455,6 +1545,7 @@ export class MachinesPage implements Page {
     if (!world) return;
     const { words } = this.options;
     const spots = this.spots(world);
+    const found = this.foundIn(world);
     // A machine named in the address may be one whose agent assists.
     if (this.selected?.startsWith("m:") && !spots.has(this.selected) && spots.has(`assist:${this.selected.slice(2)}`)) this.selected = `assist:${this.selected.slice(2)}`;
     if (this.selected && !spots.has(this.selected)) this.selected = null;
@@ -1492,6 +1583,9 @@ export class MachinesPage implements Page {
     const listing = !alone && this.view !== "map";
     const updating = listing && this.view === "updates";
     this.views.hidden = alone;
+    // Nothing is found where there is only this computer.
+    this.findToggle.hidden = alone;
+    if (alone && this.finder.open) queueMicrotask(() => this.finder.close());
     for (const button of this.views.querySelectorAll<HTMLElement>("[data-view]")) {
       const chosen = button.dataset.view === this.view;
       button.classList.toggle("chosen", chosen);
@@ -1511,13 +1605,15 @@ export class MachinesPage implements Page {
         {
           world,
           now,
-          selected: open ? this.selected : null,
+          selected: open ? this.selected : this.findCurrent && found?.includes(this.findCurrent) ? this.findCurrent : null,
           adds,
-          when: this.options.when,
+          // The list's columns are narrow: a day before today is its date.
+          when: (at, now) => (at.toDateString() === now.toDateString() ? this.options.when(at, now) : this.options.access.moment.short(at, now)),
           picked: new Set(framed),
           pick: { one: this.options.batch.pickOne, all: this.options.batch.pickAll },
           open: (key, byDefault) => this.listFolds.get(key) ?? byDefault,
           updates: updating ? this.updatesNow(narrow) : undefined,
+          found: found && new Set(found),
         },
         words,
       );
@@ -1565,6 +1661,7 @@ export class MachinesPage implements Page {
     if (top && spot?.kind === "hub") this.moving.watch(top, spot.hub.hub);
     else this.moving.unwatch();
     this.float();
+    this.finder.showing(found ? this.foundShown(found) : []);
   }
 
   /** The strip over the drawing while the server's new place is chosen. */
@@ -1628,6 +1725,7 @@ export class MachinesPage implements Page {
    *  way to is circled as it arrives. */
   private drawMap(world: WorldNow): void {
     const made = mapOf(world, this.options.words);
+    const found = this.foundIn(world);
     const { hubs, nodes, links, people } = made;
     const hubLabels = new Map(made.hubLabels);
     for (const [hub, before] of this.waiting) {
@@ -1660,8 +1758,9 @@ export class MachinesPage implements Page {
       links,
       opening: this.opening,
       framed: this.framing.length ? this.framing : this.framed,
-      folded: this.foldedOf(nodes),
+      folded: unfolded(this.foldedOf(nodes), nodes, found),
       lit: this.moving.chosenHub ? this.litKeys(world) : null,
+      found: found && new Set(found),
       people: this.people.shown(people),
       adding: this.people.hubs(world),
       grouped: this.groupedBoxes(world, nodes),
