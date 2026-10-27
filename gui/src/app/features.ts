@@ -128,10 +128,12 @@ export class FeaturesPage implements Page {
     this.undone?.();
   }
 
-  /** A film set into `holder`: playing, or `still` on its last frame. */
+  /** A film set into `holder`: playing, or `still` on its last frame. A
+   *  still is a band over the feature's settings, wide even on a phone,
+   *  so that they begin on the first screen. */
   private film(holder: Element | null, make: (shape: Shape) => Built, label: string, still = false): void {
     if (!holder) return;
-    const film = new Film(make, label, still);
+    const film = new Film(make, label, still, still ? "wide" : undefined);
     this.films.push(film);
     holder.replaceChildren(film.element);
   }
