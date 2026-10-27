@@ -229,6 +229,10 @@ pub enum Intent {
         /// The receiver verifies a large call's control-frame authorization facts against its body.
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         call_details: bool,
+        /// The member reads `Down::View`: what changed in its view, in
+        /// place of being told to ask for the whole view again.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        view_deltas: bool,
     },
     /// A password login to `account`: the first OPAQUE message. The hub
     /// answers `Down::LoginResponse`; the device finishes with
@@ -445,6 +449,10 @@ pub enum Down {
     /// they are what `Told` would carry. Sent only to a member whose session
     /// says it reads this.
     Part { id: u64, index: u32, total: u32, text: String },
+    /// What changed in this member's view (`crate::view_delta`). Sent only
+    /// to a member whose session says it reads this; one too large for a
+    /// frame goes as `DirectoryChanged`.
+    View { delta: Box<crate::view_delta::ViewDelta> },
 }
 
 /// The most bytes of text one `Down::Part` carries.

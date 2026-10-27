@@ -477,6 +477,16 @@ pub(crate) async fn drop_for(hub: &Arc<Hub>, conversation: &Address) -> std::io:
     Ok(dropped)
 }
 
+/// The letters `seqs` of `name`'s numbering `epoch` are settled
+/// (`crate::expiry`): they are no longer waiting.
+pub(crate) fn settled(store: &mut Store, name: &MachineName, epoch: u64, seqs: impl IntoIterator<Item = u64>) {
+    if let Some(mailbox) = numbered_as(store, name, epoch) {
+        for seq in seqs {
+            mailbox.held.remove(&seq);
+        }
+    }
+}
+
 /// Keeps the records of where every member's letters stand as they change,
 /// one write for a burst of changes, off the store's lock.
 pub(crate) async fn keep_records(hub: Weak<Hub>, changed: Arc<Notify>) {

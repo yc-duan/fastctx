@@ -66,6 +66,8 @@ pub(crate) struct Said {
     pub presence: bool,
     /// Whether it reads an answer too large for one frame in parts.
     pub parts: bool,
+    /// Whether it reads what changed in its view (`Down::View`).
+    pub view_deltas: bool,
 }
 
 /// What a call or a data connection was allowed under: `from` saying it to
@@ -606,6 +608,7 @@ fn open(
         cancels: said.cancels,
         presence: said.presence,
         project_entry: said.project_entry,
+        view_deltas: said.view_deltas,
     };
     let replaced = hub.sessions().insert(name.clone(), session);
     drop(store);
@@ -625,6 +628,7 @@ pub(crate) fn close(hub: &Hub, name: &MachineName, generation: u64) {
         let mut sessions = hub.sessions();
         if sessions.get(name).is_some_and(|session| session.generation == generation) {
             sessions.remove(name);
+            hub.forget_view(name, generation);
             // Renamed while connected, it may be connected again under its
             // name now, which what is kept of it is under.
             let current = store.book.directory.canonical(name).clone();

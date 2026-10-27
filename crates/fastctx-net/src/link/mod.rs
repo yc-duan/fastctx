@@ -45,6 +45,7 @@ mod session;
 pub mod state;
 mod update_policy;
 pub mod versions;
+mod view_changes;
 mod watching;
 mod ways;
 pub use watching::{Input as WatchInput, Watching};
@@ -321,6 +322,10 @@ pub(crate) struct Inner {
     refreshing: tokio::sync::Mutex<Refreshed>,
     /// How many refreshes of the view began.
     refreshes: AtomicU64,
+    /// Whether a write of the view to disk is due, and when the last one
+    /// began (`view_changes`).
+    keeping: std::sync::atomic::AtomicBool,
+    kept_at: Mutex<Option<std::time::Instant>>,
     status: watch::Sender<Status>,
     record_changes: tokio::sync::broadcast::Sender<Option<fastctx_types::account_records::Changed>>,
     connection: Mutex<Option<Connection>>,
@@ -497,6 +502,8 @@ impl Link {
             view: Mutex::new(Arc::new(view)),
             refreshing: tokio::sync::Mutex::new(Refreshed::default()),
             refreshes: AtomicU64::new(0),
+            keeping: std::sync::atomic::AtomicBool::new(false),
+            kept_at: Mutex::new(None),
             status,
             record_changes: tokio::sync::broadcast::channel(1024).0,
             connection: Mutex::new(None),
@@ -1099,40 +1106,9 @@ impl Inner {
         let Told::Directory { mut view } = self.ask(Question::Directory).await? else {
             return Err("the hub answered something else".to_string());
         };
-        // Its times by this machine's clock, and who came or went since the
-        // hub made it.
+        // Its times by this machine's clock.
         self.localize(&mut view);
-        self.with_presences(&mut view);
-        if view.hub != self.hub {
-            return Err(format!("the hub gave a view of {}, not of {}", view.hub, self.hub));
-        }
-        let me = self.me();
-        if view.me != me {
-            // The hub renamed this machine: it says so of this machine's key.
-            let renamed = view.me().is_some_and(|member| member.key == self.key.public() && member.named(&me));
-            if !renamed {
-                return Err(format!("the hub gave the view of {}, not of {me}", view.me));
-            }
-            self.follow_name(view.me.clone());
-        }
-        let changed = *self.view() != *view;
-        if changed {
-            state::write(&self.dir.view(), &*view).map_err(|error| format!("keeping the view: {error}"))?;
-            self.follow_addresses(&view);
-            let mut current = self.view.lock().expect("never poisoned");
-            // Who came or went while it was being kept goes in with it: a
-            // change told meanwhile went into the view it replaces.
-            self.with_presences(&mut view);
-            *current = Arc::from(view);
-            drop(current);
-            if let Some(this) = self.this.upgrade() {
-                this.follow_view();
-            }
-            self.prune_afoot();
-            self.ways_changed();
-        }
-        self.reroute_if_changed();
-        Ok(())
+        self.adopt(*view)
     }
 
     /// Checks that `envelope` is for this machine and that the view lets

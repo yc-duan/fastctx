@@ -251,6 +251,7 @@ async fn open(inner: &Inner, upstream: &Upstream) -> Result<Opened, Ended> {
             presence: true,
             parts: true,
             call_details: true,
+            view_deltas: true,
         },
     };
     match tokio::time::timeout(SILENCE, dial::send(&mut socket, &hello)).await {
@@ -591,6 +592,7 @@ async fn connected(
             Down::Told { id, answer } => inner.asks.told(generation, id, answer),
             Down::Part { id, index, total, text } => inner.asks.part(generation, id, index, total, text),
             Down::Presence { machine, presence, rev } => inner.heard_presence(machine, presence, rev),
+            Down::View { delta } => inner.heard_view(*delta),
             Down::DirectoryChanged => {
                 let inner = inner.clone();
                 tokio::spawn(async move {

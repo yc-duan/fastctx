@@ -29,6 +29,7 @@ mod assists;
 mod control;
 mod data;
 mod direct;
+mod expiry;
 pub mod dissolve;
 mod forget;
 mod health;
@@ -223,6 +224,10 @@ pub(crate) struct Hub {
     /// The pin of the hub's certificate, written into tokens.
     pin: CertPin,
     sessions: Mutex<HashMap<MachineName, Session>>,
+    /// The view last given each session that reads what changes in it,
+    /// which the next change is made against. Taken after `store` and
+    /// `sessions` when held with them, and nothing taken while it is.
+    given: Mutex<HashMap<MachineName, Given>>,
     /// The checks of machines' direct addresses under way (`direct`).
     trials: Mutex<direct::Trials>,
     calls: Mutex<HashMap<u64, control::Pending>>,
@@ -262,6 +267,17 @@ pub(crate) struct Hub {
     account_records: account_records::Records,
 }
 
+/// The view a session that reads what changes in its view was last given
+/// (`fastctx_net::view_delta`), numbered among those it was given.
+pub(crate) struct Given {
+    generation: u64,
+    view: Arc<View>,
+}
+
+/// The most bytes a change to a view takes in one frame; a larger one is
+/// told as `Down::DirectoryChanged`, and the member asks for the view whole.
+const VIEW_CHANGE_AT_MOST: usize = 192 * 1024;
+
 /// A member's open control connection.
 pub(crate) struct Session {
     key: PublicKey,
@@ -294,6 +310,8 @@ pub(crate) struct Session {
     /// Whether it reads who is online as it changes (`Down::Presence`).
     presence: bool,
     project_entry: bool,
+    /// Whether it reads what changed in its view (`Down::View`).
+    view_deltas: bool,
 }
 
 pub(crate) enum Out {
@@ -358,7 +376,82 @@ impl Hub {
         let trial = self.trial_of(name);
         let mut view = views::view_for(self, &self.store(), &presence, name, trial);
         view.presence = rev;
+        self.give(name, &mut view);
         view
+    }
+
+    /// Numbers `view`, given whole to `name`, and keeps it as what the next
+    /// change to it is made against, when `name`'s session reads changes.
+    fn give(&self, name: &MachineName, view: &mut View) {
+        let Some(generation) =
+            self.sessions().get(name).filter(|session| session.view_deltas).map(|session| session.generation)
+        else {
+            return;
+        };
+        let mut given = self.given.lock().expect("never poisoned");
+        let revision =
+            given.get(name).filter(|given| given.generation == generation).map_or(1, |given| given.view.revision + 1);
+        view.revision = revision;
+        given.insert(name.clone(), Given { generation, view: Arc::new(view.clone()) });
+    }
+
+    /// `name`'s session `generation` ended: what it was given goes with it.
+    pub(crate) fn forget_view(&self, name: &MachineName, generation: u64) {
+        let mut given = self.given.lock().expect("never poisoned");
+        if given.get(name).is_some_and(|given| given.generation == generation) {
+            given.remove(name);
+        }
+    }
+
+    /// The directory changed: each session that reads what changes in its
+    /// view is sent what changed in it, all of them made from one index;
+    /// one whose view did not change is sent nothing, and one never given
+    /// a whole view, or whose change is too large for a frame, is told to
+    /// ask for it.
+    fn push_views(&self, sessions: Vec<(MachineName, u64, outq::Outq)>) {
+        let rev = self.presence.load(Ordering::SeqCst);
+        let online = self.online();
+        let trials: Vec<_> = sessions.iter().map(|(name, _, _)| self.trial_of(name)).collect();
+        let views: Vec<View> = {
+            let store = self.store();
+            let index = fastctx_net::directory_index::Index::new(&store.book.directory);
+            let indexed = fastctx_net::directory_index::Indexed::new(&store.book.directory, &index);
+            sessions
+                .iter()
+                .zip(trials)
+                .map(|((name, _, _), trial)| {
+                    let mut view = views::view_for_in(self, &store, &indexed, &online, name, trial);
+                    view.presence = rev;
+                    view
+                })
+                .collect()
+        };
+        for ((name, generation, out), mut view) in sessions.into_iter().zip(views) {
+            let mut given = self.given.lock().expect("never poisoned");
+            let Some(before) = given.get(&name).filter(|given| given.generation == generation) else {
+                drop(given);
+                let _ = out.send(Out::Frame(Down::DirectoryChanged));
+                continue;
+            };
+            let base = before.view.revision;
+            view.revision = base + 1;
+            let delta = fastctx_net::view_delta::between(&before.view, &view, base, base + 1);
+            let frame = match delta {
+                Ok(None) => continue,
+                Ok(Some(delta)) => Down::View { delta: Box::new(delta) },
+                Err(error) => {
+                    self.log.line(format_args!("making what changed in {name}'s view: {error}"));
+                    let _ = out.send(Out::Frame(Down::DirectoryChanged));
+                    continue;
+                }
+            };
+            if serde_json::to_vec(&frame).map_or(true, |bytes| bytes.len() > VIEW_CHANGE_AT_MOST) {
+                let _ = out.send(Out::Frame(Down::DirectoryChanged));
+                continue;
+            }
+            given.insert(name, Given { generation, view: Arc::new(view) });
+            let _ = out.send(Out::Frame(frame));
+        }
     }
 
     /// Who is connected, and how, as the hub sees it now.
@@ -463,16 +556,27 @@ async fn tell_directory(
             () = present.notified() => false,
         };
         let Some(hub) = hub.upgrade() else { return };
-        let outs: Vec<outq::Outq> = hub
-            .sessions()
-            .values()
-            .filter(|session| every || !session.presence)
-            .map(|session| session.out.clone())
-            .collect();
-        drop(hub);
+        let mut outs: Vec<outq::Outq> = Vec::new();
+        let mut changes = Vec::new();
+        for (name, session) in hub.sessions().iter() {
+            if every && session.view_deltas {
+                changes.push((name.clone(), session.generation, session.out.clone()));
+            } else if every || !session.presence {
+                outs.push(session.out.clone());
+            }
+        }
         for out in outs {
             let _ = out.send(Out::Frame(Down::DirectoryChanged));
         }
+        if !changes.is_empty() {
+            // Making every view takes a while on a large hub; the runtime's
+            // other work goes on meanwhile.
+            let pushing = hub.clone();
+            if let Err(error) = tokio::task::spawn_blocking(move || pushing.push_views(changes)).await {
+                hub.log.line(format_args!("telling members what changed in their views: {error}"));
+            }
+        }
+        drop(hub);
         tokio::time::sleep(DIRECTORY_SPACING).await;
     }
 }
@@ -581,6 +685,7 @@ async fn serving(dir: &Path, kept: Option<Kept>, log: Arc<log::Log>) -> anyhow::
         secrets,
         pin: certificate.pin(),
         sessions: Mutex::new(HashMap::new()),
+        given: Mutex::new(HashMap::new()),
         trials: Mutex::new(direct::Trials::default()),
         calls: Mutex::new(HashMap::new()),
         data: Mutex::new(data::Pairing::default()),
@@ -607,6 +712,7 @@ async fn serving(dir: &Path, kept: Option<Kept>, log: Arc<log::Log>) -> anyhow::
     }
     tokio::spawn(health::keep(Arc::downgrade(&hub)));
     tokio::spawn(data::expire(Arc::downgrade(&hub)));
+    tokio::spawn(expiry::settle(Arc::downgrade(&hub)));
     tokio::spawn(updates::look_every(Arc::downgrade(&hub)));
     tokio::spawn(tell_directory(Arc::downgrade(&hub), hub.directory_changed.clone(), hub.presence_changed.clone()));
     let letters_changed = hub.store().letters_changed.clone();
@@ -796,6 +902,7 @@ async fn intended(
                 presence,
                 parts,
                 call_details,
+                view_deltas,
             },
         ) => {
             let said = control::Said {
@@ -822,6 +929,7 @@ async fn intended(
                 presence,
                 parts,
                 call_details,
+                view_deltas,
             };
             control::session(hub, socket, peer, binding, key, proof, letters, said).await;
         }

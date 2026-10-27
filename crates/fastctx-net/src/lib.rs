@@ -49,6 +49,7 @@ pub mod sign;
 pub mod tls;
 pub mod token;
 pub mod transport;
+pub mod view_delta;
 pub mod watch_flow;
 pub mod watch_ipc;
 pub mod watch_mux;

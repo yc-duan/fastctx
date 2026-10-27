@@ -48,14 +48,26 @@ pub(crate) fn view_for(
     me: &MachineName,
     trial: Vec<std::net::SocketAddr>,
 ) -> View {
+    let index = Index::new(&store.book.directory);
+    view_for_in(hub, store, &Indexed::new(&store.book.directory, &index), online, me, trial)
+}
+
+/// `me`'s view, the directory asked through `x`, its index: one index
+/// makes the views of every member told of one change (`Hub::push_views`).
+pub(crate) fn view_for_in(
+    hub: &crate::Hub,
+    store: &Store,
+    x: &Indexed<'_>,
+    online: &HashMap<MachineName, Presence>,
+    me: &MachineName,
+    trial: Vec<std::net::SocketAddr>,
+) -> View {
     let all = &store.book.directory;
-    let index = Index::new(all);
-    let x = Indexed::new(all, &index);
     let mine = x.acts_for(me);
-    let users = users_in(&x, me);
+    let users = users_in(x, me);
     let whole = mine.iter().any(|account| x.logged_in(me, account) && x.is_super(account));
-    let mut directory = if whole { all.clone() } else { cut_in(&x, me, &mine, &users) };
-    directory.projects = projects_in(&x, &mine, &users);
+    let mut directory = if whole { all.clone() } else { cut_in(x, me, &mine, &users) };
+    directory.projects = projects_in(x, &mine, &users);
     // An account's own configuration goes whole only to the machines that
     // work for it; another is given what of it runs there, the super
     // administrator's own included.
@@ -177,6 +189,7 @@ pub(crate) fn view_for(
         hub_addresses: crate::moving::addresses_for(store, me),
         hub_moves: crate::moving::requests::told(hub, store, me, whole),
         presence: 0,
+        revision: 0,
         directory,
     }
 }

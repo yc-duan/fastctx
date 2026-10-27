@@ -734,6 +734,11 @@ pub struct View {
     /// past this. An older hub gives none.
     #[serde(default, skip_serializing_if = "is_zero")]
     pub presence: u64,
+    /// The hub's number of this view among those it gave this member's
+    /// session, which a change to it starts from (`crate::view_delta`).
+    /// A hub that sends no changes gives none.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub revision: u64,
     #[serde(flatten)]
     pub directory: Directory,
 }
@@ -789,6 +794,7 @@ impl View {
             hub_addresses: Vec::new(),
             hub_moves: Vec::new(),
             presence: 0,
+            revision: 0,
             directory: Directory::default(),
         }
     }
