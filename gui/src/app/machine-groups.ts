@@ -6,9 +6,10 @@
 // administrator for a member's.
 
 import { escape } from "../conversation/prose";
-import { loginsOf, names, type AccountChange, type AccountName, type Login } from "../world/accounts";
+import { loginsOf, type AccountChange, type AccountName, type Login } from "../world/accounts";
 import type { WorldNow } from "../world/bridge";
 import { holds, isSuper, sameLogin, type Machine } from "./reach";
+import { indexOf } from "./world-index";
 
 export interface GroupWords {
   /** The action beside a machine, and the title of its card. */
@@ -51,15 +52,17 @@ export interface Grouping {
  *  hub refuses the administrator a visitor's machines. On `hub`, where one
  *  is named. */
 export function groupingOf(machine: Machine, world: WorldNow, hub?: string): Grouping | null {
+  const index = indexOf(world);
   for (const login of loginsOf(world.accounts)) {
     if (hub !== undefined && login.hub !== hub) continue;
-    const seen = world.accounts.hubs.find((one) => one.hub === login.hub);
-    if (!seen?.groups || !machine.on.some((on) => on.hub === login.hub)) continue;
-    const member = seen.members.find((one) => one.kind === "computer" && names(one, machine.name));
+    const seen = index.hubs.get(login.hub);
+    if (!seen?.hub.groups || !machine.on.some((on) => on.hub === login.hub)) continue;
+    // The computer by the name it goes by or had (`names`).
+    const member = seen.computer.get(machine.name);
     const owner = member?.home;
     if (!member || !owner) continue;
     const own = owner === login.account || holds(machine, login, world);
-    const visitor = seen.accounts.find((account) => account.name === owner)?.level === "visitor";
+    const visitor = seen.accounts.get(owner)?.level === "visitor";
     if (!own && !(isSuper(world, login) && !visitor)) continue;
     return { login, owner, now: member.group ?? null, groups: groupsOf(world, login.hub, owner) };
   }
@@ -78,8 +81,7 @@ export function groupingTogether(machines: Machine[], world: WorldNow): Grouping
 
 /** The groups `owner` has on `hub`, by name. */
 export function groupsOf(world: WorldNow, hub: string, owner: AccountName): string[] {
-  const members = world.accounts.hubs.find((one) => one.hub === hub)?.members ?? [];
-  return [...new Set(members.filter((member) => member.home === owner && member.group).map((member) => member.group!))].sort((a, b) => a.localeCompare(b));
+  return [...(indexOf(world).hubs.get(hub)?.groups.get(owner) ?? [])];
 }
 
 /** A group's name as given, made plain the way the hub makes it: spaces at

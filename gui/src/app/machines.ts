@@ -141,6 +141,8 @@ type Spot =
   | { kind: "hub"; hub: HubAccounts }
   | { kind: "device"; hub: HubAccounts; member: MemberSeen; login: Login; owner: string | null; here: boolean };
 
+const spotsMade = new WeakMap<WorldNow, Map<string, Spot>>();
+
 type GlyphName = Parameters<typeof glyph>[0];
 
 /** What can be done to a hub or machine, as an icon beside it and a line
@@ -378,7 +380,7 @@ export class MachinesPage implements Page {
       confirm: options.confirm,
       change: options.change,
       card: (key, html, go) => {
-        this.openCard(key, this.map.screenOf(key) ?? [0, 0], html, go);
+        this.openCard(key, this.anchorOf(key) ?? [0, 0], html, go);
         return this.card;
       },
       undo: (said, redo) => this.offerUndo(said, redo),
@@ -1430,9 +1432,12 @@ export class MachinesPage implements Page {
     this.draw(this.options.store.world.peek(), this.options.store.clock.peek());
   }
 
-  /** Everything on the map, by its key. */
+  /** Everything on the map, by its key, made once for each World. */
   private spots(world: WorldNow): Map<string, Spot> {
+    const kept = spotsMade.get(world);
+    if (kept) return kept;
     const spots = new Map<string, Spot>();
+    spotsMade.set(world, spots);
     for (const hub of world.accounts.hubs) if (hub.logins.length) spots.set(`hub:${hub.hub}`, { kind: "hub", hub });
     for (const machine of machinesOf(world)) spots.set(`m:${machine.written}`, { kind: "machine", machine });
     for (const assistant of assistantsOf(world)) {
@@ -1453,7 +1458,9 @@ export class MachinesPage implements Page {
     // A machine named in the address may be one whose agent assists.
     if (this.selected?.startsWith("m:") && !spots.has(this.selected) && spots.has(`assist:${this.selected.slice(2)}`)) this.selected = `assist:${this.selected.slice(2)}`;
     if (this.selected && !spots.has(this.selected)) this.selected = null;
-    this.drawMap(world);
+    // The drawing is laid out only while it is the view shown: showing it
+    // again draws it as the World then stands (`show`).
+    if (this.view === "map") this.drawMap(world);
     const spot = this.selected ? spots.get(this.selected) : undefined;
     if (this.focusing && spot) {
       this.focusing = false;
@@ -1905,7 +1912,7 @@ export class MachinesPage implements Page {
     if (!first) return;
     const now = groupings.every((one) => one.now === first.now) ? first.now : undefined;
     const title = machines.length === 1 ? words.groupTitle(machines[0]!.written) : words.groupMany(machines.length);
-    this.openCard(key, this.map.screenOf(key) ?? [0, 0], groupForm(words, title, first.groups, now), async () => {
+    this.openCard(key, this.anchorOf(key) ?? [0, 0], groupForm(words, title, first.groups, now), async () => {
       const chosen = chosenGroup(this.card, words);
       if ("wrong" in chosen) throw this.cardWrong(chosen.wrong);
       const moving = machines.filter((_, at) => groupings[at]!.now !== chosen.group);
@@ -1927,7 +1934,7 @@ export class MachinesPage implements Page {
     const box = world ? this.groupBox(key, world) : null;
     if (!box) return;
     const words = this.options.words.groups;
-    this.openCard(key, this.map.screenOf(key) ?? [0, 0], groupRenameForm(words, box.group), async () => {
+    this.openCard(key, this.anchorOf(key) ?? [0, 0], groupRenameForm(words, box.group), async () => {
       const named = groupNameOf(this.card.querySelector<HTMLInputElement>("input[name=name]")?.value ?? "", words);
       if ("wrong" in named) throw this.cardWrong(named.wrong);
       if (named.name === box.group) return;
@@ -1981,32 +1988,39 @@ export class MachinesPage implements Page {
   private groupBox(key: string, world: WorldNow, nodes: MapNode[] = mapOf(world, this.options.words).nodes): GroupBox | null {
     const box = groupMoreOf(key);
     if (!box) return null;
+    return this.groupBoxOf(box, world, nodes.filter((node) => node.group?.key === box.kind && node.hubs.includes(box.hub)));
+  }
+
+  /** As `groupBox`, of the nodes the box holds. */
+  private groupBoxOf(box: { hub: string; group: string }, world: WorldNow, inside: MapNode[]): GroupBox | null {
     const spots = this.spots(world);
-    const machines = nodes
-      .filter((node) => node.group?.key === box.kind && node.hubs.includes(box.hub))
-      .flatMap((node) => {
-        const spot = spots.get(node.key);
-        return spot?.kind === "machine" ? [spot.machine] : [];
-      });
+    const machines = inside.flatMap((node) => {
+      const spot = spots.get(node.key);
+      return spot?.kind === "machine" ? [spot.machine] : [];
+    });
     const groupings = machines.map((machine) => groupingOf(machine, world, box.hub));
     if (!machines.length || groupings.some((one) => !one)) return null;
     return { group: box.group, machines, groupings: groupings as Grouping[] };
   }
 
   /** The boxes of groups whose "⋯" the drawing shows, by its keys for
-   *  boxes. */
+   *  boxes: the nodes sorted into their boxes once, each box then asked. */
   private groupedBoxes(world: WorldNow, nodes: MapNode[]): Set<string> {
-    const asked = new Set<string>();
-    const boxes = new Set<string>();
+    const inside = new Map<string, { hub: string; kind: string; nodes: MapNode[] }>();
     for (const node of nodes) {
       const kind = node.group?.key;
       if (!kind || boxParts(kind).group === null) continue;
       for (const hub of node.hubs) {
         const key = `group:${hub}:${kind}`;
-        if (asked.has(key)) continue;
-        asked.add(key);
-        if (this.groupBox(groupMoreKey(hub, kind), world, nodes)) boxes.add(key);
+        const known = inside.get(key);
+        if (known) known.nodes.push(node);
+        else inside.set(key, { hub, kind, nodes: [node] });
       }
+    }
+    const boxes = new Set<string>();
+    for (const [key, { hub, kind, nodes: held }] of inside) {
+      const box = groupMoreOf(groupMoreKey(hub, kind));
+      if (box && this.groupBoxOf(box, world, held)) boxes.add(key);
     }
     return boxes;
   }
@@ -2053,7 +2067,7 @@ export class MachinesPage implements Page {
     if (!rename) return;
     const { words, nameSaid, check } = this.options.renaming;
     const from = machine.name;
-    this.openCard(key, this.map.screenOf(key) ?? [0, 0], `<p class="map-card-title">${escape(words.renameTitle(machine.written))}</p><div class="map-card-rename"></div>`, async () => {});
+    this.openCard(key, this.anchorOf(key) ?? [0, 0], `<p class="map-card-title">${escape(words.renameTitle(machine.written))}</p><div class="map-card-rename"></div>`, async () => {});
     const field = new RenameField({
       words,
       nameSaid,
@@ -2098,7 +2112,7 @@ export class MachinesPage implements Page {
     const cards = (member.reach?.interfaces ?? []).map(hostOf).filter((host) => !seen.includes(host));
     const choice = (host: string, note: string, checked: boolean) =>
       `<label class="choice map-card-choice"><input type="checkbox" name="host" value="${escape(host)}"${checked ? " checked" : ""}><span class="mono">${escape(host)}</span><span class="choice-note">${escape(note)}</span></label>`;
-    const at = this.map.screenOf(key) ?? [0, 0];
+    const at = this.anchorOf(key) ?? [0, 0];
     this.openCard(
       key,
       at,
@@ -2149,7 +2163,7 @@ export class MachinesPage implements Page {
     // An IPv6 link-local address is named by each machine's own card, so no
     // other machine reaches the relay at it.
     const cards = (member.reach?.interfaces ?? []).map(hostOf).filter((host) => !/^fe[89ab][0-9a-f]:/i.test(host));
-    const at = this.map.screenOf(key) ?? [0, 0];
+    const at = this.anchorOf(key) ?? [0, 0];
     this.openCard(
       key,
       at,
@@ -2193,7 +2207,7 @@ export class MachinesPage implements Page {
    *  card of before and after; for a moment they can be given back. */
   private stopDirect(login: Login, machine: Machine, key: string, before: string[]): void {
     const { words } = this.options;
-    const at = this.map.screenOf(key) ?? [0, 0];
+    const at = this.anchorOf(key) ?? [0, 0];
     this.openCard(
       key,
       at,
@@ -2207,6 +2221,17 @@ export class MachinesPage implements Page {
         this.offerUndo(words.directStopped(machine.written), () => this.options.change(login, { change: "direct", machine: machine.name, at: before }));
       },
     );
+  }
+
+  /** Where a card about `key` stands beside: its ring on the drawing, or
+   *  its row in the list, which the drawing is not laid out under. */
+  private anchorOf(key: string): Point | null {
+    if (this.view === "map") return this.map.screenOf(key);
+    const row = this.list.querySelector<HTMLElement>(`[data-ml-key="${CSS.escape(key)}"]`);
+    if (!row) return null;
+    const canvas = this.canvas.getBoundingClientRect();
+    const name = (row.querySelector<HTMLElement>(".ml-name") ?? row).getBoundingClientRect();
+    return [name.right - canvas.left, name.top - canvas.top + name.height / 2];
   }
 
   /** A card beside a ring, or rising from below on a narrow page; `go`
@@ -2303,7 +2328,7 @@ export class MachinesPage implements Page {
    *  drawing keep clear of them. */
   private float(): void {
     const world = this.options.store.world.peek();
-    const key = this.menuFor || this.cardFor || this.narrow() || this.view === "list" ? null : this.selected;
+    const key = this.menuFor || this.cardFor || this.narrow() || this.view !== "map" ? null : this.selected;
     const at = key ? this.map.screenOf(key) : null;
     if (!world || !key || !at) {
       if (!this.acts.hidden) {

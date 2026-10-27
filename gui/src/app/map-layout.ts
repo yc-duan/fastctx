@@ -201,15 +201,30 @@ interface Block {
   online: number;
 }
 
+/** Each machine's direct links, by the key of the machine at the other end. */
+function nearOf(links: readonly MapLink[]): Map<string, Set<string>> {
+  const near = new Map<string, Set<string>>();
+  const add = (from: string, to: string) => {
+    const known = near.get(from);
+    if (known) known.add(to);
+    else near.set(from, new Set([to]));
+  };
+  for (const link of links) {
+    add(link.a, link.b);
+    add(link.b, link.a);
+  }
+  return near;
+}
+
 /** Puts machines linked directly next to each other, keeping the order
  *  they came in otherwise. */
-function chained(ordered: MapNode[], links: readonly MapLink[]): MapNode[] {
-  const linked = (a: string, b: string) => links.some((link) => (link.a === a && link.b === b) || (link.a === b && link.b === a));
+function chained(ordered: MapNode[], near: Map<string, Set<string>>): MapNode[] {
+  if (!ordered.some((node) => near.has(node.key))) return [...ordered];
   const left = [...ordered];
   const chain: MapNode[] = [];
   while (left.length) {
     const last = chain[chain.length - 1];
-    const at = last ? left.findIndex((node) => linked(last.key, node.key)) : -1;
+    const at = last ? left.findIndex((node) => near.get(last.key)?.has(node.key)) : -1;
     chain.push(...left.splice(at >= 0 ? at : 0, 1));
   }
   return chain;
@@ -272,9 +287,26 @@ export class MapLayout {
     this.vacancies = new Map();
     let left = 0;
     let below = 0;
+    const near = nearOf(links);
     for (const id of order) {
       const own = nodes.filter((node) => hubOf(node) === id);
       const persons = people.filter((person) => person.hub === id);
+      // The machines of each box, sorted into once: those in no group by
+      // their box, those in a group by the box the group stands in.
+      const looseIn = new Map<string, MapNode[]>();
+      const groupedIn = new Map<string, MapNode[]>();
+      const put = (into: Map<string, MapNode[]>, key: string, node: MapNode) => {
+        const known = into.get(key);
+        if (known) known.push(node);
+        else into.set(key, [node]);
+      };
+      for (const node of own) {
+        put(looseIn, node.group?.key ?? "mine", node);
+        const within = node.group?.within?.key;
+        if (within !== undefined) put(groupedIn, within, node);
+      }
+      const personOf = new Map<string, MapPerson>();
+      for (const person of persons) if (!personOf.has(`of:${person.account}`)) personOf.set(`of:${person.account}`, person);
       // Each box by whose it is; a group stands inside its owner's.
       const ownerOf = (node: MapNode) => node.group?.within?.key ?? node.group?.key ?? "mine";
       const kinds = [
@@ -299,13 +331,13 @@ export class MapLayout {
           const grid = gridOf([]);
           return { kind, key: `adding:${id}`, label: "", grid, bands: [], fold: false, strip: true, width: TRUNK + 20 + ADDING * grow, height: TITLE_AT, count: 0, online: 0 };
         }
-        const loose = chained(own.filter((node) => (node.group?.key ?? "mine") === kind).sort(byOrder), links);
-        const person = persons.find((one) => kind === `of:${one.account}`);
-        const inside = own.filter((node) => node.group?.within?.key === kind);
+        const loose = chained([...(looseIn.get(kind) ?? [])].sort(byOrder), near);
+        const person = personOf.get(kind);
+        const inside = groupedIn.get(kind) ?? [];
         const bands = [...new Set(inside.map((node) => node.group!.key))]
           .sort((a, b) => compareBoxes(a, b, groupRank))
           .map((group): Band => {
-            const members = chained(inside.filter((node) => node.group!.key === group).sort(byOrder), links);
+            const members = chained(inside.filter((node) => node.group!.key === group).sort(byOrder), near);
             const key = `group:${id}:${group}`;
             const fold = folded.has(key);
             return { kind: group, key, label: members[0]!.group!.label, grid: gridOf(fold ? [] : members), fold, count: members.length, online: onlineOf(members) };
