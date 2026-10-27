@@ -1725,7 +1725,6 @@ async fn pump(server: Arc<AppServer>, mut inbound: mpsc::UnboundedReceiver<Inbou
                     method.as_str(),
                     "item/commandExecution/requestApproval"
                         | "item/fileChange/requestApproval"
-                        | "item/tool/requestUserInput"
                         | "mcpServer/elicitation/request"
                         | "item/permissions/requestApproval"
                         | "applyPatchApproval"
@@ -1878,7 +1877,8 @@ pub fn world_tools(binary: &Path, env: &[(String, String)], tools: &[&str], budg
             "goals": false,
             "send_message_to_user_async": false,
         },
-        "tools": { "update_plan": { "enabled": false } },
+        // `message_user` speaks to the user, asking too, without stopping.
+        "tools": { "update_plan": { "enabled": false }, "experimental_request_user_input": { "enabled": false } },
         "tool_output_token_limit": limit,
         "mcp_servers": { SERVER_NAME: {
             "command": binary,

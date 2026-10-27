@@ -27,10 +27,6 @@ pub fn of_request(id: &Value, request: &str, params: &Value, at: Timestamp) -> O
     }
     let text = |value: &Value| value.as_str().unwrap_or_default().to_string();
     let (what, said, options) = match request {
-        "item/tool/requestUserInput" | "AskUserQuestion" => {
-            let (said, options) = questions(&params["questions"], "question");
-            (AskedFor::Answer, said, options)
-        }
         "item/commandExecution/requestApproval" => (AskedFor::Command, text(&params["command"]), vec![]),
         "execCommandApproval" => {
             let argv: Vec<_> = params["command"].as_array().into_iter().flatten().filter_map(Value::as_str).collect();

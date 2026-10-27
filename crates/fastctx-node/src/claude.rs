@@ -1741,11 +1741,13 @@ pub(crate) fn settings_json(id: &ResidentId) -> String {
         },
         "permissions": {
             // The World's own tools take these places: its shell and files,
-            // the plan, the goal, `message_user` (`world-voice.md`), and a
-            // sentinel for any later wake-up (`world-senses.md`).
+            // the plan, the goal, `message_user` (`world-voice.md`), which
+            // asks without stopping as well, and a sentinel for any later
+            // wake-up (`world-senses.md`).
             "deny": ["Bash", "PowerShell", "Read", "Write", "Edit", "MultiEdit", "NotebookEdit", "Grep", "Glob",
                 "TodoWrite", "TaskCreate", "TaskUpdate", "TaskList", "TaskGet", "ProposeGoal",
-                "SendUserMessage", "PushNotification", "CronCreate", "CronDelete", "CronList", "ScheduleWakeup"],
+                "SendUserMessage", "AskUserQuestion", "PushNotification", "CronCreate", "CronDelete", "CronList",
+                "ScheduleWakeup"],
         },
         "worktree": { "bgIsolation": "none" },
     });
