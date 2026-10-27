@@ -88,9 +88,14 @@
   display: none;
 }
 
-/* While some are chosen the list scrolls its last rows clear of the bar. */
+/* While some are chosen the list scrolls its last rows clear of the bar, and
+   a row gone to stands clear of it. */
 .ml-list.picking {
   padding-bottom: 104px;
+}
+
+.ml-list.picking [data-ml-row] {
+  scroll-margin-bottom: 104px;
 }
 
 /* Pointed at, an action that does not reach every machine chosen: those

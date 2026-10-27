@@ -13,6 +13,8 @@
 import { glyph } from "../conversation/glyphs";
 import { escape } from "../conversation/prose";
 import type { FocusPlace } from "./focus-panel";
+import { naturally } from "./machine-groups";
+import { readOn } from "./read-on";
 
 export interface MachineChoiceWords {
   here: string;
@@ -59,11 +61,32 @@ interface Holding {
 }
 
 const byName = (a: FocusPlace, b: FocusPlace) =>
-  Number(b.here) - Number(a.here) || Number(b.online !== false) - Number(a.online !== false) || a.written.localeCompare(b.written, undefined, { numeric: true });
+  Number(b.here) - Number(a.here) || Number(b.online !== false) - Number(a.online !== false) || naturally(a.written, b.written);
+
+/** The choice drawn, and how many rows each person's opens onto. */
+export interface ChoiceDrawn {
+  /** Empty where nothing holds what is looked for. */
+  html: string;
+  /** By a person's key: the rows of their machines and groups, drawn as the
+   *  person is opened. */
+  inside: Map<string, number>;
+}
 
 /** The machines as rows to choose by `data-act="toggle"`, groups to open by
- *  `data-act="fold"`; empty where nothing holds `query`. */
-export function machineChoice(places: FocusPlace[], chosen: ReadonlySet<string>, query: string, folds: ReadonlyMap<string, boolean>, words: MachineChoiceWords): string {
+ *  `data-act="fold"`. At most `reach` rows are drawn, a group's, a person's
+ *  or a machine's alike; the rest wait under a mark at the end
+ *  (`read-on.ts`). */
+export function machineChoice(places: FocusPlace[], chosen: ReadonlySet<string>, query: string, folds: ReadonlyMap<string, boolean>, words: MachineChoiceWords, reach = Infinity): ChoiceDrawn {
+  let left = reach;
+  let cut = false;
+  const take = () => {
+    if (left <= 0) {
+      cut = true;
+      return false;
+    }
+    left -= 1;
+    return true;
+  };
   const holdings: Holding[] = [];
   const holder = new Map<string | null, Holding>();
   const grouped = new Map<string, Holding["groups"][number]>();
@@ -91,6 +114,7 @@ export function machineChoice(places: FocusPlace[], chosen: ReadonlySet<string>,
   holdings.sort((a, b) => (a.owner === null ? -1 : b.owner === null ? 1 : a.owner.localeCompare(b.owner)));
   const matches = (place: FocusPlace, group: string | null) => !query || place.written.toLowerCase().includes(query) || (!!group && group.toLowerCase().includes(query));
   const row = (place: FocusPlace, depth: number, group: string | null) => {
+    if (!take()) return "";
     const on = chosen.has(place.written);
     const away = place.online === false;
     const note = place.here ? words.here : "";
@@ -99,14 +123,18 @@ export function machineChoice(places: FocusPlace[], chosen: ReadonlySet<string>,
     return `<button type="button" class="focus-toggle${on ? " chosen" : ""}${away ? " offline" : ""}" data-act="toggle" data-machine="${escape(place.written)}" aria-pressed="${on}" style="--depth:${depth}" title="${escape(title)}"><span class="focus-mark">${glyph(place.form ?? "machine", 16)}</span><span class="focus-name">${escape(rest || place.written)}</span>${note ? `<span class="focus-note">${escape(note)}</span>` : ""}</button>`;
   };
   // One person's machines, `depth` steps in: those in no group, then
-  // each group's.
+  // each group's, a row for the group and one for each of its machines.
+  const loosely = (holding: Holding) => holding.loose.filter((place) => matches(place, null)).sort(byName);
+  const groupsOf = (holding: Holding) =>
+    holding.groups
+      .sort((a, b) => naturally(a.label, b.label))
+      .map((group) => ({ group, shown: group.places.filter((place) => matches(place, group.label)).sort(byName) }))
+      .filter(({ shown }) => shown.length);
   const inside = (holding: Holding, depth: number) => {
-    const loose = holding.loose.filter((place) => matches(place, null)).sort(byName);
-    const groups = holding.groups
-      .sort((a, b) => a.label.localeCompare(b.label, undefined, { numeric: true }))
-      .map((group) => {
-        const shown = group.places.filter((place) => matches(place, group.label)).sort(byName);
-        if (!shown.length) return "";
+    const loose = loosely(holding).map((place) => row(place, depth, null)).join("");
+    const groups = groupsOf(holding)
+      .map(({ group, shown }) => {
+        if (!take()) return "";
         const key = `${holding.owner ?? ""}/${group.label}`;
         const held = group.places.filter((place) => chosen.has(place.written)).length;
         const open = !!query || (folds.get(key) ?? (group.places.length <= OPEN_GROUP || held > 0));
@@ -114,8 +142,10 @@ export function machineChoice(places: FocusPlace[], chosen: ReadonlySet<string>,
         return foldRow(key, open, head, shown.map((place) => row(place, depth + 1, group.label)).join(""), depth);
       })
       .join("");
-    return loose.length || groups ? `${loose.map((place) => row(place, depth, null)).join("")}${groups}` : "";
+    return loose + groups;
   };
+  const counted = new Map<string, number>();
+  const end = () => (cut ? readOn : "");
   const mine = holdings.filter((holding) => holding.owner === null || !rowed);
   const parts = mine
     .map((holding) => {
@@ -125,7 +155,7 @@ export function machineChoice(places: FocusPlace[], chosen: ReadonlySet<string>,
       return `<section class="focus-part"><h3 class="picker-title">${escape(title)}</h3>${rows}</section>`;
     })
     .join("");
-  if (!rowed) return parts;
+  if (!rowed) return { html: parts + end(), inside: counted };
   const people = holdings
     .filter((holding) => holding.owner !== null)
     .map((holding) => {
@@ -134,13 +164,16 @@ export function machineChoice(places: FocusPlace[], chosen: ReadonlySet<string>,
       if (!found.length) return "";
       const owner = holding.owner!;
       const key = `person:${owner}`;
+      counted.set(key, loosely(holding).length + groupsOf(holding).reduce((sum, { shown }) => sum + 1 + shown.length, 0));
+      if (!take()) return "";
       const held = all.filter((place) => chosen.has(place.written)).length;
       const open = !!query || (folds.get(key) ?? held > 0);
       const head = `<span class="focus-mark"><span class="focus-face">${escape([...owner][0]?.toUpperCase() ?? "")}</span></span><span class="focus-name">${escape(owner)}</span><span class="focus-count-of">${found.length}</span>${held ? `<span class="focus-held-count">${held}</span>` : ""}`;
       return foldRow(key, open, head, open ? inside(holding, 1) : "", 0);
     })
     .join("");
-  return people ? `${parts}<section class="focus-part"><h3 class="picker-title">${escape(words.others)}</h3>${people}</section>` : parts;
+  const html = people ? `${parts}<section class="focus-part"><h3 class="picker-title">${escape(words.others)}</h3>${people}</section>` : parts;
+  return { html: html + end(), inside: counted };
 }
 
 /** A row that opens and closes onto `inner`, `depth` steps in. */

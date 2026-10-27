@@ -40,7 +40,8 @@ import { GiveSheet } from "./machine-sheets";
 import { MachineLog, type ReadLog } from "./machine-log";
 import { boxParts, chosenGroup, groupChange, groupForm, groupingOf, groupMoreKey, groupMoreOf, groupNameOf, groupRenameForm, wireGroupForm, type Grouping } from "./machine-groups";
 import { foldedOf, MachineMap, MAP_ORDER, personKey } from "./machine-map";
-import { isManaged, machineList } from "./machine-list";
+import { isManaged, listOrder, machineList } from "./machine-list";
+import { whenNear } from "./read-on";
 import { MapPeople } from "./map-people";
 import type { PeopleWords } from "./people-words";
 import { RING } from "./map-layout";
@@ -144,21 +145,31 @@ type Spot =
 
 const spotsMade = new WeakMap<WorldNow, Map<string, Spot>>();
 
+/** Opening the boxes of every machine found may show at most this many
+ *  machines more: past it the drawing grows too large to read, or to lay
+ *  out again at every letter typed. */
+const OPEN_FOUND = 240;
+
 /** The boxes folded, but those holding a machine looked for and found: they
- *  stand open while it is, as the user left them after. */
-function unfolded(folded: Set<string>, nodes: readonly MapNode[], found: readonly string[] | null): Set<string> {
-  if (!found?.length) return folded;
-  const open = new Set(folded);
-  const wanted = new Set(found);
-  for (const node of nodes) {
-    if (!wanted.has(node.key)) continue;
+ *  stand open while it is, as the user left them after. Where that would
+ *  show more than `OPEN_FOUND` machines more, only the box of the one gone
+ *  to opens. Says whether every one found then stands open. */
+function unfolded(folded: Set<string>, nodes: readonly MapNode[], found: readonly string[] | null, current: string | null): { folded: Set<string>; whole: boolean } {
+  if (!found?.length) return { folded, whole: true };
+  const boxesOf = (node: MapNode) => {
     const group = node.group?.key ?? "mine";
-    for (const hub of node.hubs) {
-      open.delete(`group:${hub}:${boxParts(group).owner}`);
-      open.delete(`group:${hub}:${group}`);
-    }
-  }
-  return open;
+    return node.hubs.flatMap((hub) => [`group:${hub}:${boxParts(group).owner}`, `group:${hub}:${group}`]);
+  };
+  const openTo = (keys: readonly string[]) => {
+    const open = new Set(folded);
+    const wanted = new Set(keys);
+    for (const node of nodes) if (wanted.has(node.key)) for (const box of boxesOf(node)) open.delete(box);
+    return open;
+  };
+  const shown = (shut: Set<string>) => nodes.filter((node) => !boxesOf(node).some((box) => shut.has(box))).length;
+  const every = openTo(found);
+  if (every.size === folded.size || shown(every) - shown(folded) <= OPEN_FOUND) return { folded: every, whole: true };
+  return { folded: current && found.includes(current) ? openTo([current]) : folded, whole: false };
 }
 
 type GlyphName = Parameters<typeof glyph>[0];
@@ -223,6 +234,10 @@ const SAID_MS = 15000;
  *  opened or closed, by their keys. */
 const FOLDS_KEY = "machines.folds";
 
+/** How many of the list's rows are drawn at first, and how many more each
+ *  time the end of those comes near. */
+const LIST_ROWS = 150;
+
 function keptFolds(): Map<string, boolean> {
   try {
     const kept = JSON.parse(localStorage.getItem(FOLDS_KEY) ?? "{}") as Record<string, unknown>;
@@ -276,7 +291,9 @@ export class MachinesPage implements Page {
    *  found for what was looked for. */
   private readonly finder: MachineFind;
   private readonly findToggle: HTMLElement;
-  private found: { world: WorldNow; query: string; keys: string[] } | null = null;
+  private found: { world: WorldNow; query: string; keys: string[]; order?: string[] } | null = null;
+  /** Whether every machine found stands open on the drawing. */
+  private foundWhole = true;
   /** The match gone to in the list. */
   private findCurrent: string | null = null;
   private readonly stop: () => void;
@@ -364,6 +381,11 @@ export class MachinesPage implements Page {
   private readonly views: HTMLElement;
   private readonly list: HTMLElement;
   private listed = "";
+  /** How many of the list's rows are drawn, where its machines stand in it,
+   *  and what stops watching the end of those coming near. */
+  private listReach = LIST_ROWS;
+  private listRows = new Map<string, number>();
+  private listUnwatch = () => {};
   private barDrawn = "";
 
   constructor(private readonly options: MachinesOptions) {
@@ -477,6 +499,7 @@ export class MachinesPage implements Page {
     this.finder = new MachineFind(words.find, {
       changed: () => {
         this.findCurrent = null;
+        this.listReach = LIST_ROWS;
         this.redraw();
       },
       reach: (key) => this.reachFound(key),
@@ -654,6 +677,7 @@ export class MachinesPage implements Page {
     if (this.undoing) clearTimeout(this.undoing.timer);
     document.removeEventListener("pointerdown", this.outside, true);
     document.removeEventListener("keydown", this.findKey);
+    this.listUnwatch();
     this.map.dispose();
   }
 
@@ -678,11 +702,13 @@ export class MachinesPage implements Page {
   }
 
   /** The machines found, in the order the page shows them: the list's rows
-   *  down, the drawing's columns across and each down. */
+   *  down, drawn yet or not; the drawing's columns across and each down,
+   *  or, where not all of them stand open on it, the list's order. */
   private foundShown(found: readonly string[]): string[] {
-    if (this.view !== "map") {
-      const wanted = new Set(found);
-      return [...this.list.querySelectorAll<HTMLElement>("[data-ml-row]")].map((row) => row.dataset.mlRow!).filter((key) => wanted.has(key));
+    if (this.view !== "map") return [...this.listRows.keys()];
+    if (!this.foundWhole) {
+      const kept = this.found;
+      if (kept?.keys === found) return (kept.order ??= listOrder(kept.world, new Set(found), this.options.words));
     }
     const at = new Map(found.map((key) => [key, this.map.screenOf(key)] as const));
     return found.filter((key) => at.get(key)).sort((a, b) => at.get(a)![0] - at.get(b)![0] || at.get(a)![1] - at.get(b)![1]);
@@ -694,6 +720,9 @@ export class MachinesPage implements Page {
   private reachFound(key: string): void {
     if (this.view !== "map") {
       this.findCurrent = key;
+      // Its row is drawn, however far down it stands.
+      const at = this.listRows.get(key);
+      if (at !== undefined && at >= this.listReach) this.listReach = at + LIST_ROWS;
       this.redraw();
       requestAnimationFrame(() => this.list.querySelector(`[data-ml-row="${CSS.escape(key)}"]`)?.scrollIntoView({ block: "nearest" }));
       return;
@@ -1606,7 +1635,7 @@ export class MachinesPage implements Page {
     this.canvas.classList.toggle("beside", listing && open && !narrow);
     if (listing) {
       const adds = world.accounts.hubs.filter((hub) => this.hubLogin(hub.hub)).map((hub) => hub.hub);
-      const html = machineList(
+      const { html, rows } = machineList(
         {
           world,
           now,
@@ -1619,9 +1648,11 @@ export class MachinesPage implements Page {
           open: (key, byDefault) => this.listFolds.get(key) ?? byDefault,
           updates: updating ? this.updatesNow(narrow) : undefined,
           found: found && new Set(found),
+          reach: this.listReach,
         },
         words,
       );
+      this.listRows = rows;
       if (html !== this.listed) {
         this.listed = html;
         // The update view's machines scroll on their own, and are where
@@ -1631,6 +1662,11 @@ export class MachinesPage implements Page {
           this.list.innerHTML = html;
           const rows = this.list.querySelector<HTMLElement>(".uv-rows");
           if (rows) rows.scrollTop = scrolled;
+        });
+        this.listUnwatch();
+        this.listUnwatch = whenNear(this.list, () => {
+          this.listReach += LIST_ROWS;
+          this.redraw();
         });
       }
     }
@@ -1752,6 +1788,8 @@ export class MachinesPage implements Page {
       const moving = this.moving.label(hub.id);
       if (moving) hubLabels.set(hub.id, moving);
     }
+    const shown = unfolded(this.foldedOf(nodes), nodes, found, this.selected);
+    this.foundWhole = shown.whole;
     this.map.update({
       hubs,
       nodes,
@@ -1763,7 +1801,7 @@ export class MachinesPage implements Page {
       links,
       opening: this.opening,
       framed: this.framing.length ? this.framing : this.framed,
-      folded: unfolded(this.foldedOf(nodes), nodes, found),
+      folded: shown.folded,
       lit: this.moving.chosenHub ? this.litKeys(world) : null,
       found: found && new Set(found),
       people: this.people.shown(people),

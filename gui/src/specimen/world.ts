@@ -192,6 +192,33 @@ function scaleWho(): MachineWho[] {
   );
 }
 
+/** With `?talks=<n>`, n conversations more of the account's, as many as a
+ *  heavy user keeps over months: in the two projects and outside them, each
+ *  idle since a little earlier than the last, now and then one waiting on
+ *  the reader. */
+function talking(): ResidentNow[] {
+  const wanted = Number(new URLSearchParams(location.search).get("talks") ?? 0);
+  if (!(wanted > 0)) return [];
+  const towns = ["mark50", "ingest", null];
+  const subjects = ["日志轮转", "批量提交", "图标导出", "PID 环改定点", "Fix the flaky upload test", "迁移到 SQLite", "Release notes", "缓存命中率", "Refactor the parser", "部署脚本"];
+  const start = Date.parse(at("13:00:00"));
+  return Array.from({ length: wanted }, (_, n) =>
+    resident(`codex-${(0x10000 + n).toString(16)}`, "laptop", codex(), towns[n % towns.length]!, "gpt-6.1-sol", "00:00:00", {
+      now: {
+        owed: {},
+        answering: [],
+        activity: "idle",
+        since: new Date(start - n * 7 * 60_000).toISOString(),
+        turn: null,
+        trouble: null,
+        desk: false,
+        waiting_for_user: n % 499 === 0,
+        title: `${subjects[n % subjects.length]} ${n + 1}`,
+      },
+    }),
+  );
+}
+
 /** With `?s=tour`, the Claude of that conversation (`tour.ts`), at work
  *  across four machines. */
 function touring(): ResidentNow[] {
@@ -491,6 +518,7 @@ export function specimenWorld(): { world: WorldState; now: Date; lastVisit: Date
             ...touring(),
             ...voicing(),
             ...hubbing("laptop"),
+            ...talking(),
             resident("codex-7f3a", "laptop", codex(), "ingest", "gpt-6.1-sol", "08:40:00", {
               focus: { machines: [{ machine: "lab", folders: ["/srv/ingest", "/srv/ingest/fixtures"] }, { machine: "laptop", folders: [] }] },
               now: {

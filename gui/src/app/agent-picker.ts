@@ -10,12 +10,13 @@
 // and why it cannot begin where it cannot, on the same columns down the
 // whole table. The chosen row is washed in clay. Above the table, a field
 // narrows it to the machines and logins that hold what is typed
-// (`new-talk.ts`).
+// (`new-talk.ts`). A table of thousands is drawn as far as it is read.
 
 import { glyph, type GlyphName } from "../conversation/glyphs";
 import { escape } from "../conversation/prose";
 import type { AgentFacts } from "../world/agents";
 import { accountOf, windowsShort } from "./agent-homes";
+import { readOn } from "./read-on";
 
 export type PickerHold = "mine" | "shared" | "others" | "assist";
 
@@ -71,6 +72,38 @@ export interface PickerView {
   kind: PickerKind;
   open(key: string, byDefault: boolean): boolean;
   query?: string;
+  /** At most how many rows are drawn, a person's, a machine's or a login's
+   *  alike; the rest wait under a mark at the end (`read-on.ts`). Every row
+   *  when absent. */
+  reach?: number;
+}
+
+/** The table drawn, and how many rows each person's opens onto. */
+export interface PickerDrawn {
+  html: string;
+  /** By a person's key: the rows of their machines and logins, drawn as
+   *  the person is opened. */
+  inside: Map<string, number>;
+}
+
+/** The rows a drawing may still take, and whether any were left out. */
+class Budget {
+  private left: number;
+  cut = false;
+
+  constructor(reach: number | undefined) {
+    this.left = reach ?? Infinity;
+  }
+
+  /** Takes the next row: whether it is drawn. */
+  take(): boolean {
+    if (this.left <= 0) {
+      this.cut = true;
+      return false;
+    }
+    this.left -= 1;
+    return true;
+  }
 }
 
 const HOLDS: PickerHold[] = ["mine", "shared", "others", "assist"];
@@ -85,7 +118,7 @@ const markOf = (agent: string): GlyphName => (agent === "claude" ? "claude" : "c
 /** The key a machine's row opens and closes by. */
 export const machineKey = (written: string) => `machine:${written}`;
 
-export function agentPicker(machines: PickerMachine[], words: PickerWords, view: PickerView): string {
+export function agentPicker(machines: PickerMachine[], words: PickerWords, view: PickerView): PickerDrawn {
   // Only this agent's logins; a machine with none of them is not listed.
   const kept = machines
     .map((machine) => ({ ...machine, rows: machine.rows.filter((row) => row.agent === view.kind) }))
@@ -102,15 +135,18 @@ export function agentPicker(machines: PickerMachine[], words: PickerWords, view:
       })
     : kept;
   if (query) view = { ...view, open: () => true };
+  const budget = new Budget(view.reach);
+  const inside = new Map<string, number>();
   const body = HOLDS.map((hold) => {
     const held = shown.filter((machine) => machine.hold === hold);
     if (!held.length) return "";
     const people = hold === "shared" || hold === "others";
-    const rows = people ? persons(held, hold === "shared", words, view) : held.map((machine) => machineRows(machine, 0, words, view)).join("");
-    return `<div class="agent-hold"><h3 class="agent-group">${escape(words.holds[hold])}</h3>${rows}</div>`;
+    const rows = people ? persons(held, hold === "shared", words, view, budget, inside) : held.map((machine) => machineRows(machine, 0, words, view, budget)).join("");
+    return rows ? `<div class="agent-hold"><h3 class="agent-group">${escape(words.holds[hold])}</h3>${rows}</div>` : "";
   }).join("");
   const none = machines.length ? words.noneOf(programName(view.kind)) : words.noMachine;
-  return `<div class="agent-picker" role="radiogroup" aria-label="${escape(words.agent)}">${body || `<p class="agent-none">${escape(none)}</p>`}</div>`;
+  const more = budget.cut ? readOn : "";
+  return { html: `<div class="agent-picker" role="radiogroup" aria-label="${escape(words.agent)}">${body || `<p class="agent-none">${escape(none)}</p>`}${more}</div>`, inside };
 }
 
 /** The choice of Codex or Claude, over the table. */
@@ -128,25 +164,33 @@ function fold(key: string, open: boolean, head: string, inside: string, depth: n
 
 /** Other people's machines: a row a person, opening onto theirs. A person
  *  holding the login chosen is open, so the choice is in sight. */
-function persons(held: PickerMachine[], shared: boolean, words: PickerWords, view: PickerView): string {
-  const owners = [...new Set(held.map((machine) => machine.owner ?? ""))];
-  return owners
-    .map((owner) => {
-      const theirs = held.filter((machine) => (machine.owner ?? "") === owner);
+function persons(held: PickerMachine[], shared: boolean, words: PickerWords, view: PickerView, budget: Budget, inside: Map<string, number>): string {
+  const owners = new Map<string, PickerMachine[]>();
+  for (const machine of held) {
+    const theirs = owners.get(machine.owner ?? "");
+    if (theirs) theirs.push(machine);
+    else owners.set(machine.owner ?? "", [machine]);
+  }
+  return [...owners]
+    .map(([owner, theirs]) => {
+      const key = `person:${owner}`;
+      // A machine's row, and its logins' where it is there to begin on.
+      inside.set(key, theirs.reduce((sum, machine) => sum + 1 + (machine.online === false ? 0 : machine.rows.length), 0));
+      if (!budget.take()) return "";
       const logins = theirs.reduce((sum, machine) => sum + machine.rows.length, 0);
       const chosen = theirs.some((machine) => machine.rows.some((row) => row.chosen));
-      const key = `person:${owner}`;
       const open = view.open(key, chosen || (shared && logins <= OPEN_PERSON));
       const head = `<span class="agent-icon" aria-hidden="true"><span class="agent-face">${escape([...owner][0]?.toUpperCase() ?? "")}</span></span><span class="agent-machine-name">${escape(owner)}</span><span class="agent-machine-note">${escape(words.personSub(theirs.length, logins))}</span>`;
       // Folded, a person's machines are drawn as they are opened: a network's
       // administrator may hold thousands.
-      const inside = open ? theirs.map((machine) => machineRows(machine, 1, words, view)).join("") : "";
-      return `<div class="agent-people">${fold(key, open, head, inside, 0, "agent-person")}</div>`;
+      const rows = open ? theirs.map((machine) => machineRows(machine, 1, words, view, budget)).join("") : "";
+      return `<div class="agent-people">${fold(key, open, head, rows, 0, "agent-person")}</div>`;
     })
     .join("");
 }
 
-function machineRows(machine: PickerMachine, depth: number, words: PickerWords, view: PickerView): string {
+function machineRows(machine: PickerMachine, depth: number, words: PickerWords, view: PickerView, budget: Budget): string {
+  if (!budget.take()) return "";
   const state = machine.online === false ? " offline" : machine.online === true ? " online" : "";
   const notes = machine.notes.map((note) => `<span class="agent-machine-note">${escape(note)}</span>`).join("");
   const head = `<span class="agent-icon" aria-hidden="true">${glyph(machine.form, 15)}</span><span class="agent-machine-name">${escape(machine.written)}</span>${notes}`;
@@ -159,7 +203,7 @@ function machineRows(machine: PickerMachine, depth: number, words: PickerWords, 
   const chosen = machine.rows.some((row) => row.chosen);
   const key = machineKey(machine.written);
   const open = view.open(key, true) || chosen;
-  const rows = machine.rows.map((row) => rowHtml(row, depth + 1, words)).join("");
+  const rows = machine.rows.map((row) => (budget.take() ? rowHtml(row, depth + 1, words) : "")).join("");
   return host(fold(key, open, head, rows, depth, `agent-machine${state}`));
 }
 

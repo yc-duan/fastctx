@@ -910,6 +910,12 @@ html.framed .page-head {
   font-size: var(--size-text);
 }
 
+/* The end of the rows of a long list drawn so far; more are drawn as it
+   comes near (`read-on.ts`). */
+.read-on {
+  height: 1px;
+}
+
 /* At the foot of every conversation, the way on to the archived ones. */
 .talks-archived {
   display: flex;

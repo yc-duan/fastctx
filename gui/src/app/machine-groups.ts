@@ -171,6 +171,11 @@ export function boxParts(key: string): { owner: string; group: string | null } {
   return at < 0 ? { owner: key, group: null } : { owner: key.slice(0, at), group: key.slice(at + 1) };
 }
 
+/** Two names compared as they are read, a number in them by its value: pc2
+ *  before pc10. One collator for every comparison; `localeCompare` with its
+ *  options makes one each time, which costs more than a sort of thousands. */
+export const naturally = new Intl.Collator(undefined, { numeric: true }).compare;
+
 /** The order of two boxes under a hub: by whose they are, as `rank` says
  *  and then by name; each owner's own box before their groups, and the
  *  groups by name. */
@@ -179,7 +184,7 @@ export function compareBoxes(a: string, b: string, rank: (owner: string) => numb
   if (rank(x.owner) !== rank(y.owner)) return rank(x.owner) - rank(y.owner);
   if (x.owner !== y.owner) return x.owner < y.owner ? -1 : 1;
   if (x.group === null || y.group === null) return x.group === y.group ? 0 : x.group === null ? -1 : 1;
-  return x.group.localeCompare(y.group, undefined, { numeric: true });
+  return naturally(x.group, y.group);
 }
 
 /** The change that puts `machine` in `group`. */
