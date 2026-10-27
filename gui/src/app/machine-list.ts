@@ -31,7 +31,7 @@ import type { WorldNow } from "../world/bridge";
 import { loginsOf } from "../world/accounts";
 import { agentName, osName } from "../world/names";
 import type { MachinesWords } from "./account-words";
-import { compareBoxes, naturally } from "./machine-groups";
+import { compareBoxes, nameInGroup, naturally } from "./machine-groups";
 import { mapOf } from "./map-of";
 import type { MapNode } from "./map-nodes";
 import { pickable, pickableIn } from "./machine-picking";
@@ -125,7 +125,7 @@ export function machineList(now: ListNow, words: MachinesWords): ListDrawn {
     const seen = world.accounts.hubs.find((one) => one.hub === hub.id);
     const ms = seen?.link.kind === "online" ? seen.link.ms : null;
     const count = listed.filter((node) => node.hubs.includes(hub.id) && node.hold !== "assist" && !node.device).length;
-    const state = [hubLabels.get(hub.id) ?? "", ms ? words.listMs(ms) : ""].filter(Boolean).join("　");
+    const state = seen?.link.kind === "online" ? (ms ? words.listMs(ms) : words.hubOnline) : (hubLabels.get(hub.id) ?? "");
     // Since when the line is down, and why, for a pointer resting on it.
     const down = seen?.link.kind === "connecting" ? words.hubDownSince(now.when(new Date(seen.link.since), now.now), seen.link.last_error ?? null) : "";
     const key = `hub:${hub.id}`;
@@ -405,18 +405,20 @@ class Drawing {
       ? `<span class="ml-pick" role="checkbox" aria-checked="${chosen}" aria-label="${escape(now.pick.one(node.name))}" data-ml-pick="${escape(node.key)}"></span>`
       : `<span class="ml-pick none" aria-hidden="true"></span>`;
     const title = assist && agents.length ? `${node.title}　${agents.map(agentName).join("、")}` : node.title;
+    // In a group, what follows the group's name, as on the drawing.
+    const shown = nameInGroup(node.name, node.group?.within ? node.group.label : null);
     const go = visitor ? "" : glyph("chevron", 16);
     const update = now.updates && !assist ? updateOf(node, this.machines, now.updates) : undefined;
     const inner = now.updates && update
       ? `${node.device ? `<span class="ml-pick none" aria-hidden="true"></span>` : pick}
-      ${nameCell(glyph(icon, 15), `<span class="ml-name-text">${escape(node.name)}</span>${tags}`, false)}
+      ${nameCell(glyph(icon, 15), `<span class="ml-name-text">${escape(shown)}</span>${tags}`, false)}
       ${versionCell(update, now.updates)}
       ${markCell(now.updates.said.has(update.machine) ? { kind: "failed", html: glyph("cross", 16), said: now.updates.said.get(update.machine)! } : markOf(update, now.updates.line, now.updates.words))}
       <span class="ml-given"></span>
       <span class="ml-busy">${autoSwitch(update, now.updates)}</span>
       <span class="ml-go" aria-hidden="true">${go}</span>`
       : `${pick}
-      ${nameCell(glyph(icon, 15), `<span class="ml-name-text">${escape(node.name)}</span>${tags}`, false)}
+      ${nameCell(glyph(icon, 15), `<span class="ml-name-text">${escape(shown)}</span>${tags}`, false)}
       <span class="ml-system">${system}</span>
       <span class="ml-link">${linkSaid(node, machine, now, words)}</span>
       <span class="ml-given">${given}</span>

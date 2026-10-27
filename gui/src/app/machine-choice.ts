@@ -13,7 +13,7 @@
 import { glyph } from "../conversation/glyphs";
 import { escape } from "../conversation/prose";
 import type { FocusPlace } from "./focus-panel";
-import { naturally } from "./machine-groups";
+import { nameInGroup, naturally } from "./machine-groups";
 import { readOn } from "./read-on";
 
 export interface MachineChoiceWords {
@@ -118,9 +118,9 @@ export function machineChoice(places: FocusPlace[], chosen: ReadonlySet<string>,
     const on = chosen.has(place.written);
     const away = place.online === false;
     const note = place.here ? words.here : "";
-    const rest = group && place.written.startsWith(group) ? place.written.slice(group.length).replace(/^[\s\-_\u00b7.]+/, "") : "";
+    const shown = nameInGroup(place.written, group);
     const title = [place.written, away ? words.offline : ""].filter(Boolean).join("　");
-    return `<button type="button" class="focus-toggle${on ? " chosen" : ""}${away ? " offline" : ""}" data-act="toggle" data-machine="${escape(place.written)}" aria-pressed="${on}" style="--depth:${depth}" title="${escape(title)}"><span class="focus-mark">${glyph(place.form ?? "machine", 16)}</span><span class="focus-name">${escape(rest || place.written)}</span>${note ? `<span class="focus-note">${escape(note)}</span>` : ""}</button>`;
+    return `<button type="button" class="focus-toggle${on ? " chosen" : ""}${away ? " offline" : ""}" data-act="toggle" data-machine="${escape(place.written)}" aria-pressed="${on}" style="--depth:${depth}" title="${escape(title)}"><span class="focus-mark">${glyph(place.form ?? "machine", 16)}</span><span class="focus-name">${escape(shown)}</span>${note ? `<span class="focus-note">${escape(note)}</span>` : ""}</button>`;
   };
   // One person's machines, `depth` steps in: those in no group, then
   // each group's, a row for the group and one for each of its machines.

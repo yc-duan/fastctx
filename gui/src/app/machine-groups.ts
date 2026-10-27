@@ -171,6 +171,14 @@ export function boxParts(key: string): { owner: string; group: string | null } {
   return at < 0 ? { owner: key, group: null } : { owner: key.slice(0, at), group: key.slice(at + 1) };
 }
 
+/** A machine's name in its group, where its name begins with the group's:
+ *  what follows, so a room's machines read "A1", "A2" under the room's name;
+ *  the whole name where nothing would be left. */
+export function nameInGroup(name: string, group: string | null): string {
+  if (!group || !name.startsWith(group)) return name;
+  return name.slice(group.length).replace(/^[\s\-_\u00b7.]+/, "") || name;
+}
+
 /** Two names compared as they are read, a number in them by its value: pc2
  *  before pc10. One collator for every comparison; `localeCompare` with its
  *  options makes one each time, which costs more than a sort of thousands. */

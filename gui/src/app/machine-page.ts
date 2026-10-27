@@ -35,7 +35,7 @@ import type { ManageWords } from "./machine-manage-words";
 import { RemoveMachineSheet } from "./machine-remove";
 import { removeMachines } from "./machine-removing";
 import { GiveSheet } from "./machine-sheets";
-import { linkSaid, linkWhy } from "./machines";
+import { linkSaid, linkWhy } from "./machine-spot";
 import { formerNames, mapOf } from "./map-of";
 import type { NameSaid } from "./name-words";
 import { isManaged } from "./machine-list";

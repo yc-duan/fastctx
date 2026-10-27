@@ -23,7 +23,7 @@ import { codeName, codeRow, codesOf } from "./code-rows";
 import { Confirm, Sheet } from "./confirm";
 import { redrawKeepingFocus } from "./focus";
 import { row } from "./rows";
-import { linkSaid } from "./machines";
+import { linkSaid } from "./machine-spot";
 import type { MeWords } from "./me-words";
 import { newPasswordFields, passwordReady, sayPassword } from "./new-password";
 import { link } from "./places";

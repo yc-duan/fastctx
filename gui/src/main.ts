@@ -34,6 +34,7 @@ import "./app/assist.css";
 import "./app/machines.css";
 import "./app/machine-framed.css";
 import "./app/machine-list.css";
+import "./app/machine-spot.css";
 import "./app/machine-find.css";
 import "./app/update-view.css";
 import "./app/machine-page.css";
@@ -234,7 +235,7 @@ import { liveSide, specimenSide } from "./side/live";
 import { enSide, zhSide } from "./side/words";
 import { enPlan, zhPlan } from "./plan/words";
 import { samples as planSamples } from "./plan/specimen-samples";
-import { foldedOf, MachineMap, MAP_ORDER, type MachineMapScene } from "./app/machine-map";
+import { MachineMap, MAP_ORDER, type MachineMapScene } from "./app/machine-map";
 import { mapOf } from "./app/map-of";
 import {
   addAgentLogin,
@@ -1338,7 +1339,7 @@ function townsFor(r: ResidentNow): { town: string; name: string }[] {
  *  nothing being added, framed or moved, `marked` circled. */
 function stillScene(world: WorldNow, marked: string | null = null): MachineMapScene {
   const map = mapOf(world, english ? enMachines : zhMachines);
-  return { ...map, adds: [], waiting: new Set(), selected: marked, fresh: new Set(), opening: new Set(), framed: [], folded: foldedOf(map.nodes) };
+  return { ...map, adds: [], waiting: new Set(), selected: marked, fresh: new Set(), opening: new Set(), framed: [] };
 }
 
 function home(): Page {

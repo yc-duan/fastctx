@@ -600,6 +600,11 @@ export interface MachinesWords {
   details: string;
   closeDetails: string;
   actions: string;
+  /** The bar beside the one chosen: its "⋯", letting it go on a phone,
+   *  and the names of the facts on the card of a hub or a phone. */
+  moreActs: string;
+  closeSpot: string;
+  spot: { copy: string; address: string; link: string; machines: string; admin: string; signedIn: string; state: string };
   /** A share or an assistance ended from the drawing, and giving it
    *  again. */
   tookBack(to: string): string;
@@ -618,6 +623,9 @@ export interface MachinesWords {
   groups: GroupWords;
   /** Under a group's name on the drawing: how many, how many online. */
   groupSub(count: number, online: number): string;
+  /** On a box seen from afar, after its name: how many; its bar says how
+   *  many are online. */
+  groupCount(count: number): string;
   /** The list's sections past the account's own: the machines shared with
    *  it, the members' its administrator sees, and those whose agents
    *  assist it. */
@@ -870,6 +878,9 @@ export const zhMachines: MachinesWords = {
   details: "详情",
   closeDetails: "收起详情",
   actions: "操作",
+  moreActs: "更多",
+  closeSpot: "不选了",
+  spot: { copy: "复制地址", address: "地址", link: "连接", machines: "机器", admin: "管理员", signedIn: "登录", state: "状态" },
   tookBack: (to) => `已收回 ${to}`,
   undo: "撤回",
   confirm: "确定",
@@ -898,6 +909,7 @@ export const zhMachines: MachinesWords = {
     groupNameEmpty: "写一个组名",
   },
   groupSub: (count, online) => `${count} 台　${online} 在线`,
+  groupCount: (count) => `${count} 台`,
   sharedSection: "共享给我的",
   membersSection: "其他成员的",
   assistSection: "协助我的",
@@ -1203,6 +1215,9 @@ export const enMachines: MachinesWords = {
   details: "Details",
   closeDetails: "Hide details",
   actions: "Actions",
+  moreActs: "More",
+  closeSpot: "Deselect",
+  spot: { copy: "Copy address", address: "Address", link: "Connection", machines: "Machines", admin: "Admin", signedIn: "Signed in", state: "Status" },
   tookBack: (to) => `Revoked ${to}`,
   undo: "Undo",
   confirm: "Confirm",
@@ -1231,6 +1246,7 @@ export const enMachines: MachinesWords = {
     groupNameEmpty: "Give the group a name",
   },
   groupSub: (count, online) => `${count}, ${online} online`,
+  groupCount: (count) => String(count),
   sharedSection: "Shared with me",
   membersSection: "Other members'",
   assistSection: "Assisting me",

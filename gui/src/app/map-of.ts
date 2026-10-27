@@ -73,7 +73,8 @@ function mapMade(world: WorldNow, words: MapWords): MapNow {
   for (const machine of world.who.machines) if (machine.kind === "answered" && machine.reply.busy) busy.set(machine.reply.machine, machine.reply.busy);
   const logins = loginsOf(world.accounts);
   const hubs: MapHub[] = world.accounts.hubs.filter((hub) => hub.logins.length).map((hub) => ({ id: hub.hub, name: hub.name, online: hub.link.kind === "online" }));
-  const hubLabels = new Map(world.accounts.hubs.map((hub) => [hub.hub, hub.link.kind === "online" ? words.hubOnline : hub.link.kind === "connecting" ? words.hubConnecting : words.hubOff]));
+  // Nothing is said beside a hub that is reached: its knot's drop says it.
+  const hubLabels = new Map(world.accounts.hubs.map((hub) => [hub.hub, hub.link.kind === "online" ? "" : hub.link.kind === "connecting" ? words.hubConnecting : words.hubOff]));
   const nodes: MapNode[] = [];
   const index = indexOf(world);
   for (const machine of machinesOf(world)) {
