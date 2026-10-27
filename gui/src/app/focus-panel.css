@@ -582,3 +582,20 @@
 .focus-mcp[aria-checked="true"] .switch-track {
   background: var(--text-2);
 }
+
+/* Put away, it settles where it stood, or sinks back down as a sheet, its
+   shade going with it. */
+.focus-pop.leaving {
+  pointer-events: none;
+  animation: panel-settle var(--quick) var(--ease-out) both;
+}
+
+@media (max-width: 760px) {
+  .focus-pop.leaving {
+    animation: sheet-sink var(--fold) var(--fold-easing) both;
+  }
+
+  .focus-strip:has(.focus-pop.leaving)::after {
+    animation: sheet-scrim-out var(--fold) var(--ease-out) both;
+  }
+}

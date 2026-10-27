@@ -182,12 +182,13 @@
   margin: var(--space-1) 0 -2px auto;
   font-size: var(--size-text);
   color: var(--on-bubble);
-  opacity: 0.7;
-  transition: opacity var(--hover) ease;
+  --shown: 0.7;
+  opacity: var(--shown);
+  transition: --shown var(--hover) ease;
 }
 
 .bubble-more:hover {
-  opacity: 1;
+  --shown: 1;
 }
 
 .bubble p + p {

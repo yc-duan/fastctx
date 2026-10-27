@@ -865,6 +865,17 @@ html.framed .page-head {
   }
 }
 
+/* The pointer gone from every mark, its hint fades where it stands. */
+.pointer-hint.leaving {
+  animation: hint-fall var(--quick) var(--ease-out) both;
+}
+
+@keyframes hint-fall {
+  to {
+    --shown: 0;
+  }
+}
+
 :root[data-reduced] .touch-hint,
 :root[data-reduced] .pointer-hint {
   animation: none;

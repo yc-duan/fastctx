@@ -16,6 +16,28 @@
   background: var(--scrim);
 }
 
+/* The shade comes as the sheet does and goes with it. It holds no words, so
+   it moves its colour, not its opacity. */
+.sheet[open]::backdrop {
+  animation: scrim-in var(--enter) var(--ease-out) both;
+}
+
+.sheet.sheet-leaving::backdrop {
+  animation: scrim-out var(--quick) var(--ease-out) both;
+}
+
+@keyframes scrim-in {
+  from {
+    background-color: transparent;
+  }
+}
+
+@keyframes scrim-out {
+  to {
+    background-color: transparent;
+  }
+}
+
 .sheet[open] .sheet-body {
   opacity: var(--shown);
   translate: var(--slide) var(--lift);
@@ -27,6 +49,20 @@
   from {
     --shown: 0;
     --lift: 8px;
+    --grow: 0.99;
+  }
+}
+
+/* Closed, it goes back the way it came, quicker. */
+.sheet.sheet-leaving .sheet-body {
+  pointer-events: none;
+  animation: sheet-out var(--quick) var(--ease-out) both;
+}
+
+@keyframes sheet-out {
+  to {
+    --shown: 0;
+    --lift: 6px;
     --grow: 0.99;
   }
 }
@@ -246,6 +282,10 @@
     width: 100%;
     translate: var(--slide) var(--lift);
     animation-name: sheet-rise;
+  }
+
+  .sheet.sheet-leaving .sheet-body {
+    animation: sheet-sink var(--fold) var(--fold-easing) both;
   }
 
   .choice-row {

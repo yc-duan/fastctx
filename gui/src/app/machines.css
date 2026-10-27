@@ -54,6 +54,31 @@
   }
 }
 
+.machines-layout > .machine-panel.leaving {
+  pointer-events: none;
+  animation: map-panel-out var(--quick) var(--ease-out) both;
+}
+
+@keyframes map-panel-out {
+  to {
+    --shown: 0;
+    --slide: 8px;
+  }
+}
+
+/* A note on the drawing, a card over it: gone, they fade where they stand. */
+.map-undo.leaving,
+.map-card.leaving {
+  pointer-events: none;
+  animation: paper-out var(--quick) var(--ease-out) both;
+}
+
+@keyframes paper-out {
+  to {
+    --shown: 0;
+  }
+}
+
 :root[data-reduced] .machines-layout > .machine-panel {
   animation: none;
 }
@@ -478,6 +503,10 @@
   animation: map-sheet-rise var(--enter) var(--ease-out) both;
 }
 
+.map-card.as-sheet.leaving {
+  animation: sheet-sink var(--fold) var(--fold-easing) both;
+}
+
 .map-card-pictures {
   display: flex;
   align-items: center;
@@ -690,6 +719,10 @@
     box-shadow: var(--shadow-pop);
     translate: var(--slide) var(--lift);
     animation: map-sheet-rise var(--enter) var(--ease-out) both;
+  }
+
+  .machines-layout > .machine-panel.leaving {
+    animation: sheet-sink var(--fold) var(--fold-easing) both;
   }
 
   /* Solid, so the drawing beneath does not show through. */

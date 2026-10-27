@@ -14,6 +14,7 @@
 // the ring (`machine-cards.ts`). Long sayings stand behind a pointer's rest,
 // not on the page.
 
+import { leave, leaving, showOrLeave } from "./leave";
 import { glyph } from "../conversation/glyphs";
 import { layerOpened, type Layer } from "./back";
 import { onHeld } from "./press";
@@ -1238,9 +1239,9 @@ export class MachinesPage implements Page {
     const barred = !!spot && !together && !open && this.view === "map" && this.menuFor === null && !this.cards.open && !this.moving.chosenHub;
     if (open && this.panel.hidden) layerOpened(this.detailsLayer);
     if (barred && narrow && this.spotBar.hidden) layerOpened(this.barLayer);
-    this.panel.hidden = !open;
+    showOrLeave(this.panel, open);
     this.panel.classList.toggle("anchored", anchored);
-    this.spotBar.hidden = !barred;
+    showOrLeave(this.spotBar, barred);
     this.spotBar.classList.toggle("phone", narrow);
     // Laid beside the one chosen only on a wide page's drawing.
     if (!anchored) this.panel.style.transform = this.spotBar.style.transform = "";
@@ -1324,7 +1325,7 @@ export class MachinesPage implements Page {
       });
     }
     const chosenBar = !alone && together ? this.chosen.html(this.pickedMachines(world), world, updating) : "";
-    this.bar.hidden = !chosenBar;
+    showOrLeave(this.bar, !!chosenBar);
     this.bar.classList.toggle("phone", narrow);
     if (chosenBar !== this.barDrawn) {
       this.barDrawn = chosenBar;
@@ -1812,8 +1813,12 @@ export class MachinesPage implements Page {
   private endUndo(): void {
     if (this.undoing) clearTimeout(this.undoing.timer);
     this.undoing = null;
-    this.undoBar.hidden = true;
-    this.undoBar.innerHTML = "";
+    if (!this.undoBar.hidden && !leaving(this.undoBar)) {
+      leave(this.undoBar, () => {
+        this.undoBar.hidden = true;
+        this.undoBar.innerHTML = "";
+      });
+    }
   }
 
   /** On a wide page's drawing, lays the bar of the one chosen beside it,

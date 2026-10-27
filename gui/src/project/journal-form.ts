@@ -3,6 +3,7 @@
 // own and never changed after. A name the World would not take says why
 // beside it, in a line, only when it is wrong.
 
+import { leave } from "../app/leave";
 import { onShade, watchShade } from "../app/shade-press";
 import { glyph } from "../conversation/glyphs";
 import { escape } from "../conversation/prose";
@@ -38,8 +39,10 @@ export class JournalForm {
     this.dialog.addEventListener("click", (event) => {
       if (onShade(this.dialog, event) || (event.target as HTMLElement).closest(".sheet-close")) this.close();
     });
+    // Escape closes it as the close button does, going as it came.
     this.dialog.addEventListener("cancel", (event) => {
-      if (this.busy) event.preventDefault();
+      event.preventDefault();
+      this.close();
     });
     this.body.addEventListener("submit", (event) => {
       event.preventDefault();
@@ -74,7 +77,7 @@ export class JournalForm {
   }
 
   close(): void {
-    if (!this.busy) this.dialog.close();
+    if (!this.busy && this.dialog.open) leave(this.dialog, () => this.dialog.close(), { as: "sheet-leaving", moving: this.body });
   }
 
   /** Whether the name is one the World takes; its rule shown beside it
@@ -104,7 +107,7 @@ export class JournalForm {
     try {
       await this.options.write(this.town, name, composeText(name, description, text));
       this.busy = false;
-      this.dialog.close();
+      this.close();
       this.options.written(this.town, name);
     } catch (error) {
       this.busy = false;

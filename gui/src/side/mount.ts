@@ -166,6 +166,12 @@ export class SideMount {
     return true;
   }
 
+  /** Whether the panel holds anything: its switch shows, and a phone's
+   *  "⋯" offers it. */
+  get shown(): boolean {
+    return !!this.planSeen || !!this.shownGoal || this.team;
+  }
+
   /** Whether a goal may be set here, from the input among others. */
   get goals(): boolean {
     return !this.context.seams.noGoal;
@@ -254,8 +260,7 @@ export class SideMount {
     this.page.classList.toggle("sp-shown", open);
     this.toggle.setAttribute("aria-pressed", String(open));
     this.toggle.classList.toggle("news", this.panel.hasNews);
-    const something = !!this.planSeen || !!this.shownGoal || this.team;
-    this.toggle.hidden = !open && !this.panel.leaving && !something;
+    this.toggle.hidden = !open && !this.panel.leaving && !this.shown;
   }
 
   /** What the user did to the goal: said beside the input when it did not

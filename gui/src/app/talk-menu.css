@@ -500,6 +500,14 @@
   animation: panel-rise var(--fold) var(--fold-easing) both;
 }
 
+/* Gone, it fades where it stands. */
+.talk-toast.leaving {
+  pointer-events: none;
+  opacity: var(--shown);
+  translate: var(--slide) var(--lift);
+  animation: talk-menu-leave var(--quick) var(--ease-out) both;
+}
+
 .talk-toast:not(:has(.talk-toast-undo)) {
   padding-right: var(--space-3);
 }

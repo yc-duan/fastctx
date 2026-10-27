@@ -5,6 +5,7 @@
 // made by one can be undone for a moment from the drawing's corner. The
 // people's cards (`map-people.ts`) open here too.
 
+import { leave } from "./leave";
 import { escape } from "../conversation/prose";
 import type { Point } from "../map-canvas";
 import { blot, circle, outline, ruled, seeded } from "../pen/shapes";
@@ -316,9 +317,11 @@ export class MachineCards {
     const card = this.element;
     const held = card.contains(document.activeElement);
     this.about = null;
-    card.hidden = true;
-    card.innerHTML = "";
     card.onsubmit = null;
+    leave(card, () => {
+      card.hidden = true;
+      card.innerHTML = "";
+    });
     this.host.closed(held);
   }
 

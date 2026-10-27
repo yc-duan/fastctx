@@ -5,6 +5,7 @@
 // window's foot where no sidebar shows. A new one takes the place of the one
 // before.
 
+import { leave, leaving, stay } from "./leave";
 import { escape } from "../conversation/prose";
 
 /** How long a line stays, and an undo with it. */
@@ -45,6 +46,7 @@ export class TalkToast {
     }`;
     this.element.classList.toggle("wrong", !!options.detail);
     this.place();
+    stay(this.element);
     this.element.hidden = false;
     // Played again for a line said over another.
     this.element.classList.remove("talk-toast-in");
@@ -70,7 +72,10 @@ export class TalkToast {
   private hide(): void {
     clearTimeout(this.timer);
     this.undo = null;
-    this.element.hidden = true;
-    this.element.innerHTML = "";
+    if (this.element.hidden || leaving(this.element)) return;
+    leave(this.element, () => {
+      this.element.hidden = true;
+      this.element.innerHTML = "";
+    });
   }
 }

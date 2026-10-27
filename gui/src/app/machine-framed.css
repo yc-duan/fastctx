@@ -32,6 +32,18 @@
   }
 }
 
+.ms-bar.leaving {
+  pointer-events: none;
+  animation: ms-fall var(--quick) var(--ease-out) both;
+}
+
+@keyframes ms-fall {
+  to {
+    --shown: 0;
+    --lift: 10px;
+  }
+}
+
 :root[data-reduced] .ms-bar {
   animation: none;
 }
@@ -101,8 +113,9 @@
 /* Pointed at, an action that does not reach every machine chosen: those
    it leaves stand back, on the list and the drawing. */
 .ms-left {
-  opacity: 0.35;
-  transition: opacity var(--hover) ease;
+  --shown: 0.35;
+  opacity: var(--shown);
+  transition: --shown var(--hover) ease;
 }
 
 /* A phone: along the bottom, the acts in equal columns, a mark over a short

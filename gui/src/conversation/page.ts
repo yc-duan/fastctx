@@ -2,6 +2,7 @@
 // conversation itself in a region that scrolls on its own, and the words
 // the user is about to send, always at the foot.
 
+import { leave, leaving, stay } from "../app/leave";
 import { keepChoice } from "../app/model-memory";
 import { layerOpened } from "../app/back";
 import { FocusPanel, type FocusServers, focusSummary, type FocusPlace } from "../app/focus-panel";
@@ -1418,6 +1419,13 @@ export class ConversationPage {
     return this.element.querySelector(".view-steps")!.getAttribute("aria-pressed") === "true";
   }
 
+  /** The panel beside the conversation, opened from the head's "⋯" on a
+   *  phone; none where it holds nothing. */
+  panel(): (() => void) | null {
+    const side = this.side;
+    return side?.shown ? () => side.panel.show() : null;
+  }
+
   /** Shows every step, or only what was said again: by the head's button,
    *  or from its "⋯" on a phone. */
   toggleSteps(): void {
@@ -2158,6 +2166,7 @@ export class ConversationPage {
     );
     this.focusPanel.set(current);
     pop.replaceChildren(this.focusPanel.element);
+    stay(pop);
     pop.hidden = false;
     strip.querySelector(".focus-chip")!.setAttribute("aria-expanded", "true");
     layerOpened({ isOpen: () => !pop.hidden && this.element.isConnected, close: () => this.closeFocus(focus) });
@@ -2166,8 +2175,8 @@ export class ConversationPage {
   private closeFocus(focus: NonNullable<PageOptions["focus"]>): void {
     const strip = this.element.querySelector<HTMLElement>(".focus-strip")!;
     const pop = strip.querySelector<HTMLElement>(".focus-pop")!;
-    if (pop.hidden) return;
-    pop.hidden = true;
+    if (pop.hidden || leaving(pop)) return;
+    leave(pop, () => (pop.hidden = true));
     strip.querySelector(".focus-chip")!.setAttribute("aria-expanded", "false");
     const before = this.options.someone.focus;
     const next = this.focusDraft;

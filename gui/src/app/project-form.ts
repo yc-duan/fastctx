@@ -11,6 +11,7 @@
 // project is opened in the one chosen, and spans only machines that account
 // may work on (`world-network.md`, 项目也照同一个规矩).
 
+import { leave } from "./leave";
 import { onShade, watchShade } from "./shade-press";
 import { glyph } from "../conversation/glyphs";
 import { escape } from "../conversation/prose";
@@ -97,6 +98,11 @@ export class ProjectForm {
     this.body = this.dialog.querySelector("form")!;
     watchShade(this.dialog);
     this.dialog.addEventListener("click", (event) => this.click(event));
+    // Escape closes it as the close button does, going as it came.
+    this.dialog.addEventListener("cancel", (event) => {
+      event.preventDefault();
+      this.close();
+    });
     this.body.addEventListener("input", (event) => {
       const target = event.target as HTMLInputElement;
       if (target.name === "slug") {
@@ -149,7 +155,7 @@ export class ProjectForm {
   }
 
   close(): void {
-    if (!this.busy) this.dialog.close();
+    if (!this.busy && this.dialog.open) leave(this.dialog, () => this.dialog.close(), { as: "sheet-leaving", moving: this.body });
   }
 
   private click(event: Event): void {
@@ -415,7 +421,7 @@ export class ProjectForm {
     try {
       const written = this.editing ? await this.options.edit(town, fields) : await this.options.create(town, fields, this.login);
       this.busy = false;
-      this.dialog.close();
+      this.close();
       this.options.done(written.town);
     } catch (error) {
       this.busy = false;

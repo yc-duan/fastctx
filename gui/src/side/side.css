@@ -191,6 +191,14 @@
   display: none;
 }
 
+/* A phone has no room beside the words: shut, the panel is reached from the
+   head's "⋯", and its switch shows only to put it away. */
+@media (max-width: 760px) {
+  .sp-toggle[aria-pressed="false"] {
+    display: none;
+  }
+}
+
 .sp-toggle[aria-pressed="true"] {
   background: var(--fill);
   color: var(--text);

@@ -924,6 +924,7 @@ function talkManage(address: Address, page: () => ConversationPage, markdown?: (
         rename: () => page().startRename(),
         find: () => page().showFind(),
         steps: { shown: () => page().stepsShown(), toggle: () => page().toggleSteps() },
+        panel: page().panel(),
         deleted: () => replacePlace(link({ kind: "home" })),
         ...(markdown
           ? {

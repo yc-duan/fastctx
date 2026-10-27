@@ -36,6 +36,18 @@
   }
 }
 
+.spot-bar.leaving {
+  pointer-events: none;
+  animation: spot-out var(--quick) var(--ease-out) both;
+}
+
+@keyframes spot-out {
+  to {
+    --shown: 0;
+    --lift: 4px;
+  }
+}
+
 /* On a wide page the head is the name alone, in the row. */
 .spot-head {
   display: contents;
@@ -160,6 +172,10 @@
   from {
     --lift: 100%;
   }
+}
+
+.spot-bar.phone.leaving .spot-head {
+  animation: sheet-sink var(--fold) var(--fold-easing) both;
 }
 
 .spot-bar.phone .spot-head {
