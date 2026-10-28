@@ -69,6 +69,7 @@ fn exercise() -> Result {
         cwd: Some(display(&root)),
         writes_off: false,
         wait: None,
+        attachments: Vec::new(),
     };
     let names = Names { me: machine.clone(), was: Vec::new(), renamed: Vec::new() };
     let launch = run::Launch {
@@ -98,8 +99,15 @@ fn exercise() -> Result {
         let (gate, address) = new_gate()?;
         let script =
             format!("exec 3<&0\n{} child {address} <&3 &\ncat {}\nexit 17\n", quote(&executable), quote(&input));
-        let request =
-            RunRequest { turn: None, call_id: None, script, cwd: Some(display(&root)), writes_off: false, wait: None };
+        let request = RunRequest {
+            turn: None,
+            call_id: None,
+            script,
+            cwd: Some(display(&root)),
+            writes_off: false,
+            wait: None,
+            attachments: Vec::new(),
+        };
         let launch = run::Launch { request: &request, ..launch };
         let job = run::launch_with_io(&launch, OutputMode::Separate, Some(&input))?;
         let (mut child, identity) = arrived(&gate, &job).await?;
@@ -127,6 +135,7 @@ fn exercise() -> Result {
             cwd: Some(display(&root)),
             writes_off: false,
             wait: None,
+            attachments: Vec::new(),
         };
         let launch = run::Launch { request: &request, ..launch };
         let job = run::launch(&launch)?;
@@ -148,6 +157,7 @@ fn exercise() -> Result {
                 cwd: Some(display(&root)),
                 writes_off: false,
                 wait: None,
+                attachments: Vec::new(),
             };
             let launch = run::Launch { request: &request, ..launch };
             let mode = if separate { OutputMode::Separate } else { OutputMode::Merged };
@@ -189,6 +199,7 @@ fn exercise() -> Result {
             cwd: Some(display(&root)),
             writes_off: false,
             wait: None,
+            attachments: Vec::new(),
         };
         let launch = run::Launch { request: &request, ..launch };
         let job = run::launch(&launch)?;
@@ -214,6 +225,7 @@ fn exercise() -> Result {
                 cwd: Some(display(&root)),
                 writes_off: false,
                 wait: None,
+                attachments: Vec::new(),
             };
             let launch = run::Launch { request: &request, ..launch };
             let job = run::launch(&launch)?;

@@ -499,9 +499,7 @@ async fn converse(node: &Arc<Node>, connection: Connection) -> std::io::Result<(
             return crate::file_read::serve_local(node, acting, machine, request, id, &mut reader, &mut writer).await;
         }
         if let Call::ReadAttachment { attachment, range } = call {
-            if let Err(failure) = users_voice(node, &hello.peer)
-                && !crate::attachments::own::of_its_own(node, &hello.peer, &attachment)
-            {
+            if let Err(failure) = users_voice(node, &hello.peer) {
                 writer.send(&json(&NodeFrame::Reply { id, reply: Err(failure) })).await?;
                 return writer.drain().await;
             }
@@ -1006,7 +1004,8 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
                 if let Some(resident) = &hints.resident {
                     node.residents.active(resident)?;
                 }
-                let whereabouts = crate::claude::identify(node, id).await?;
+                let mut whereabouts = crate::claude::identify(node, id).await?;
+                whereabouts.machine = Some(node.machine());
                 if hints.resident.is_some_and(|resident| resident != whereabouts.resident) {
                     return Err(fastctx_types::authorization::Denial::new(
                         fastctx_types::authorization::DenialReason::NoSubject,
@@ -1034,7 +1033,8 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
                 node.log.line(format_args!("refused a {} session the World did not start: {error}", host.agent));
                 return Err(Failure::new(error.to_string()));
             }
-            let whereabouts = node.residents.arrive(&node.world, &node.machine(), host, hints)?;
+            let mut whereabouts = node.residents.arrive(&node.world, &node.machine(), host, hints)?;
+            whereabouts.machine = Some(node.machine());
             if let Err(error) = crate::codex::native_context::observe(node, &whereabouts.resident).await {
                 node.log.line(format_args!("initializing {}'s context observation: {error}", whereabouts.resident));
             }
@@ -1361,7 +1361,6 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
         Call::On { .. } => Err(Failure::new("an on is answered as it goes, not at once")),
         Call::ReadFile { .. } => Err(Failure::new("a file read is answered as a byte stream")),
         Call::ReadAttachment { .. } => Err(Failure::new("an attachment read is answered as a byte stream")),
-        Call::OwnAttachment { id } => crate::attachments::own::asked(node, peer, id).await.map(Reply::Uploaded),
         Call::ReadLines { .. } | Call::ReadLineNotes { .. } => {
             Err(Failure::new("logical rows are answered as a text stream"))
         }
@@ -1766,6 +1765,9 @@ async fn run(
 ) -> Result<RunReply, Failure> {
     request.call_id = call_id.map(str::to_owned);
     request.turn = node.residents.now(&resident).and_then(|now| now.turn);
+    // Whichever machine runs it brings the files the user attached first.
+    request.attachments =
+        crate::attachments::follow::known(node, &Address { machine: node.machine(), resident: resident.clone() });
     let (goes_to, request) = crate::here::start(node, request).map_err(|why| unnamed(node, &resident, &why))?;
     let machine = goes_to.as_ref().map(|place| place.name.clone()).unwrap_or_else(|| node.machine());
     if let Some(id) = call_id {

@@ -330,7 +330,8 @@ async fn read_here(node: &Arc<Node>, resident: &ResidentId) -> Result<HistoryRea
         }
         _ => (recorded(&directory)?, None),
     };
-    let mut history = history(recorded, hosted, about.host.agent.as_str());
+    let receipts = crate::attachments::delivered::of(node, resident);
+    let mut history = history(recorded, hosted, about.host.agent.as_str(), &receipts);
     // A change of history tells a view already open to read again; the
     // history read here is already what follows it. Kept in a view, an
     // interface that reads it as news would read again on every event.
@@ -362,7 +363,12 @@ async fn read_here(node: &Arc<Node>, resident: &ResidentId) -> Result<HistoryRea
 /// cut short. Words the World sent are told by its own record, which knows
 /// who said them; the host's copy of them carries the World's head note or,
 /// in Codex, the id the World gave the message.
-fn history(recorded: Vec<SessionEvent>, hosted: Option<Vec<SessionEvent>>, agent: &str) -> Vec<SessionEvent> {
+fn history(
+    recorded: Vec<SessionEvent>,
+    hosted: Option<Vec<SessionEvent>>,
+    agent: &str,
+    receipts: &dyn fastctx_types::session::attachments::Receipts,
+) -> Vec<SessionEvent> {
     use fastctx_types::session::Happened;
     let Some(hosted) = hosted else {
         return recorded_history(recorded);
@@ -376,7 +382,7 @@ fn history(recorded: Vec<SessionEvent>, hosted: Option<Vec<SessionEvent>>, agent
         .collect();
     let mut history: Vec<SessionEvent> = hosted
         .into_iter()
-        .flat_map(fastctx_types::session::attachments::restore)
+        .flat_map(|event| fastctx_types::session::attachments::restore(event, receipts))
         .filter(|event| match &event.happened {
             Happened::Heard { message: Some(message), .. } if !message.images.is_empty() => true,
             Happened::Heard { delivery: Some(_), message: Some(message), .. } if !message.attachments.is_empty() => {

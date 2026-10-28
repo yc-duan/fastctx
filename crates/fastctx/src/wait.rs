@@ -47,7 +47,7 @@ pub fn run(args: WaitArgs) -> anyhow::Result<ExitCode> {
     };
     let mut out = std::io::stdout().lock();
     for record in &records {
-        writeln!(out, "{}", fastctx_hands::told::told(&ended(record)))?;
+        writeln!(out, "{}", fastctx_hands::told::told(&ended(record), None))?;
     }
     out.flush()?;
     drop(out);

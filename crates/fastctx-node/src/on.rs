@@ -429,12 +429,18 @@ async fn there(
     // Its output goes straight to the `on` the script pipes it into when
     // that machine may take it from there (`world-run.md`, 数据跟着命令走).
     let piped = request.pipe_to.as_ref().is_some_and(|to| straight(node, &link, &account, &machine, to));
+    // A sentinel's look is no script of the conversation.
+    let attachments = match origin.sentinel {
+        None => crate::attachments::follow::known(node, &origin.resident),
+        Some(_) => Vec::new(),
+    };
     let call = RemoteCall::On {
         origin: origin.clone(),
         sizes,
         writes_off: request.package.writes_off,
         piped,
         source: request.package.source.clone(),
+        attachments,
     };
     let piping = origin.request.clone().filter(|_| piped);
     let sending = feed(
@@ -827,6 +833,7 @@ pub(crate) struct Sent {
     pub(crate) writes_off: bool,
     pub(crate) piped: bool,
     pub(crate) source: Option<OnSource>,
+    pub(crate) attachments: Vec<fastctx_types::attachments::Attachment>,
 }
 
 /// Runs the package an `On` call from `from` brings, and hands over the
@@ -851,6 +858,9 @@ pub async fn serve_on(
             let path = staged.state.with_extension("in");
             take_piped(node, &origin, source, &path, &mut stream).await?;
             staged.input = Some(path);
+        }
+        if origin.sentinel.is_none() {
+            bring_files(node, &origin, how.attachments, &mut stream).await?;
         }
         start(node, &origin, staged, how.writes_off, how.piped).await
     }
@@ -890,6 +900,33 @@ pub async fn serve_on(
     .await;
     follower.finish(handed).await?;
     Ok(RemoteReply::OnDone)
+}
+
+/// Brings the files the user attached in the conversation into its scratch
+/// here before its job starts, saying `Still` to whoever sent it while they
+/// come. A file not to be had leaves the job to start without it.
+async fn bring_files(
+    node: &Arc<Node>,
+    origin: &OnOrigin,
+    files: Vec<fastctx_types::attachments::Attachment>,
+    stream: &mut Stream,
+) -> Result<(), Failure> {
+    if files.is_empty() {
+        return Ok(());
+    }
+    let acting = acting(node, origin);
+    let mut bringing = Box::pin(crate::attachments::follow::bring(node, &origin.resident, &acting, files, None));
+    loop {
+        tokio::select! {
+            _ = &mut bringing => return Ok(()),
+            () = tokio::time::sleep(STILL_EVERY) => {
+                stream
+                    .say(&OnWord::Still { scratch: Vec::new() })
+                    .await
+                    .map_err(|error| Failure::new(format!("telling the sender its files are coming: {error}")))?;
+            }
+        }
+    }
 }
 
 /// Takes the output of the `on` `source` names, which went straight on to
@@ -1254,6 +1291,7 @@ async fn start(
         cwd: None,
         writes_off,
         wait: None,
+        attachments: Vec::new(),
     };
     let owner = JobOwner::Resident(origin.resident.clone());
     let registration = Arc::new(Mutex::new(None));

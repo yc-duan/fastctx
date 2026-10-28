@@ -154,7 +154,7 @@ impl Claude {
         crate::inbox::pending(directory).is_ok_and(|pending| {
             pending.iter().any(|pending| {
                 matches!(pending.state, PendingState::Handed | PendingState::Waking)
-                    && matches!(words(&pending.delivery.notice), (words, true) if words == text)
+                    && matches!(words(&pending.delivery.notice, None), (words, true) if words == text)
             })
         })
     }
@@ -976,7 +976,7 @@ pub async fn identify(node: &Arc<Node>, tool_use_id: &str) -> Result<fastctx_typ
     node.residents.active(&resident)?;
     let town =
         node.residents.town_of(&resident).ok_or_else(|| Failure::new("the paired Claude resident is missing"))?;
-    Ok(fastctx_types::residents::Whereabouts { resident, town, subagent })
+    Ok(fastctx_types::residents::Whereabouts { resident, town, machine: None, subagent })
 }
 
 /// Pairs a registered session with its resident, if it is known yet.
@@ -1204,7 +1204,7 @@ pub async fn deliver(
                 Err(error) => return Some(Err(Failure::new(error.to_string()))),
                 _ => {}
             }
-            let (text, as_user) = words(&pending.delivery.notice);
+            let (text, as_user) = words(&pending.delivery.notice, Some(&node.machine()));
             if as_user {
                 node.claude.handing(to, &text);
             }
@@ -1340,7 +1340,7 @@ async fn into_inbox(
     }
     let session_directory = exchange::sessions(node.world.path()).join(session);
     crate::inbox::target(directory, &pending.delivery.id, session).map_err(|error| Failure::new(error.to_string()))?;
-    let (text, as_user) = words(&pending.delivery.notice);
+    let (text, as_user) = words(&pending.delivery.notice, Some(&node.machine()));
     if as_user {
         node.claude.handing(resident, &text);
     }
@@ -1375,11 +1375,11 @@ async fn into_inbox(
 
 /// The text a notice is in a Claude session, and whether it is the user's
 /// own words, which go in as the user's.
-fn words(notice: &Notice) -> (String, bool) {
+fn words(notice: &Notice, here: Option<&fastctx_types::MachineName>) -> (String, bool) {
     match notice {
         Notice::Words { from: Speaker::User { .. }, text, .. } => (text.clone(), true),
         Notice::Attached { message, text } => (message.render(text), true),
-        notice => (told::told(notice), false),
+        notice => (told::told(notice, here), false),
     }
 }
 
@@ -1642,7 +1642,7 @@ pub async fn open_here(
     };
     crate::inbox::keep(&directory, &first)
         .map_err(|error| Failure::new(format!("keeping the first words: {error}")))?;
-    let text = self::words(&first.delivery.notice).0;
+    let text = self::words(&first.delivery.notice, Some(&node.machine())).0;
     node.claude.handing(&id, &text);
     let world = node.world.path().to_path_buf();
     // Until the World knows which session this is, a Claude session's MCP

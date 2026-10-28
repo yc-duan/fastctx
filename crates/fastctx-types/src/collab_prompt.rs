@@ -83,9 +83,12 @@ on your own until it is done or you truly cannot go on. `fastctx plan` shows its
   you tried and what would clear it.
 - The project's journals and specs are for you to read, not to write."#;
 
-pub fn started(id: &crate::ResidentId, machine: &crate::MachineName) -> String {
+/// What the asker is told of a colleague it started: where it lives, when
+/// that is not where the asker does.
+pub fn started(id: &crate::ResidentId, elsewhere: Option<&crate::MachineName>) -> String {
+    let on = elsewhere.map(|machine| format!(" on {machine}")).unwrap_or_default();
     format!(
-        "=== colleague {id} on {machine} (started) ===\nIts report comes back to you when it is done or cannot go on. See what it is doing: fastctx w {id}"
+        "=== colleague {id}{on} (started) ===\nIts report comes back to you when it is done or cannot go on. See what it is doing: fastctx w {id}"
     )
 }
 

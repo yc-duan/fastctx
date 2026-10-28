@@ -7,7 +7,7 @@ use crate::attachments::{Attachment, AttachmentSource, HostImage};
 use crate::{Address, NoticeId};
 
 use super::UserMessage;
-use super::attachments::AttachedMessage;
+use super::attachments::Envelope;
 
 /// A user picture not already represented by a kept attachment. Unknown
 /// display metadata stays null; the source is passed unchanged to image reads.
@@ -32,13 +32,12 @@ fn blocks<'a>(content: &'a [Value], attachments: &[Attachment], codex: bool) -> 
     let envelopes: Vec<_> = content
         .iter()
         .enumerate()
-        .filter_map(|(index, block)| Some((index, AttachedMessage::read(block["text"].as_str()?)?.0)))
+        .filter_map(|(index, block)| Some((index, Envelope::read(block["text"].as_str()?)?.0)))
         .collect();
-    let kept: Vec<&Attachment> = attachments
-        .iter()
-        .chain(envelopes.iter().flat_map(|(_, envelope)| &envelope.attachments))
-        .filter(|attachment| attachment.is_image())
-        .collect();
+    let kept = |path: &str| {
+        attachments.iter().any(|attachment| attachment.is_image() && attachment.path == path)
+            || envelopes.iter().any(|(_, envelope)| envelope.holds_picture(path))
+    };
     content
         .iter()
         .enumerate()
@@ -46,12 +45,7 @@ fn blocks<'a>(content: &'a [Value], attachments: &[Attachment], codex: bool) -> 
         .map(|(index, value)| {
             let envelope = envelopes.iter().rev().find(|(start, _)| *start <= index).or_else(|| envelopes.first());
             let delivery = envelope.map(|(_, envelope)| envelope.delivery.clone());
-            let represented = if codex {
-                value["type"] == "localImage"
-                    && value["path"].as_str().is_some_and(|path| kept.iter().any(|a| a.path == path))
-            } else {
-                false
-            };
+            let represented = codex && value["type"] == "localImage" && value["path"].as_str().is_some_and(kept);
             Block { value, delivery, kept: represented }
         })
         .collect()
@@ -161,8 +155,7 @@ pub(super) fn delivered(message: &UserMessage) -> Vec<(Option<NoticeId>, UserIma
 pub fn kept(content: &[Value]) -> Vec<Attachment> {
     content
         .iter()
-        .filter_map(|block| AttachedMessage::read(block["text"].as_str()?))
-        .flat_map(|(envelope, _)| envelope.attachments)
-        .filter(Attachment::is_image)
+        .filter_map(|block| Envelope::read(block["text"].as_str()?))
+        .flat_map(|(envelope, _)| envelope.carried_images().cloned().collect::<Vec<_>>())
         .collect()
 }

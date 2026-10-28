@@ -29,6 +29,7 @@ fn rejection_precedes_all_job_side_effects() {
             cwd: None,
             writes_off: false,
             wait: None,
+            attachments: Vec::new(),
         };
         let result = run::launch(&run::Launch {
             answer_receipts: false,

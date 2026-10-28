@@ -260,6 +260,7 @@ impl Session {
                     cwd,
                     writes_off: self.writes_off,
                     wait,
+                    attachments: Vec::new(),
                 },
                 node: None,
             };
@@ -402,7 +403,7 @@ impl Session {
                 facts: None,
                 content: vec![Content::Text(fastctx_types::collab_prompt::started(
                     &colleague.resident,
-                    &colleague.machine,
+                    (whereabouts.machine.as_ref() != Some(&colleague.machine)).then_some(&colleague.machine),
                 ))],
                 is_error: false,
                 receipt: None,
@@ -565,7 +566,8 @@ impl Session {
         let collected = client.call(collect).await.map_err(|error| error.to_string());
         match collected {
             Ok(Reply::Notices { notices, notes, leading_notes }) => {
-                let messages = notices.into_iter().map(|delivery| (delivery.id, told::told(&delivery.notice)));
+                let here = whereabouts.machine.as_ref();
+                let messages = notices.into_iter().map(|delivery| (delivery.id, told::told(&delivery.notice, here)));
                 let ids = match answer::assemble(&self.world, answer, notes, leading_notes, messages) {
                     Ok(ids) => ids,
                     Err(error) => {

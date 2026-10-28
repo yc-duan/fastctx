@@ -46,6 +46,8 @@ fn legacy_queue() -> bool {
 
 pub fn begin(directory: &ConversationDir, inputs: Vec<Pending>) -> io::Result<Handover> {
     let _transaction = crate::resident_storage::lock();
+    // The host's record will name the files by id alone.
+    crate::attachments::delivered::record(directory, &inputs)?;
     let ids: Vec<&str> = inputs.iter().map(|input| input.delivery.id.as_str()).collect();
     let id = crate::speech::fixed_id("handover", &ids);
     let handover = Handover { id, inputs, turn: None, unresolved: None, attempting: true };

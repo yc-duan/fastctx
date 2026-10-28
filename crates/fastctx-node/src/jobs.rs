@@ -182,7 +182,7 @@ impl Jobs {
         node: &Arc<Node>,
         owner: fastctx_types::run::JobOwner,
         town: Option<TownName>,
-        request: RunRequest,
+        mut request: RunRequest,
         account: Option<fastctx_types::access::HubAccount>,
         answer_receipts: bool,
         dispatch: Option<fastctx_types::NoticeId>,
@@ -227,6 +227,15 @@ impl Jobs {
         // The job stops with the turn of the call that waits for it; one the
         // call left running goes on (`world-run.md`).
         let mut interrupted = owner.resident().map(|address| node.interrupts.watch(address));
+        // The files the user attached come before the script that may read them.
+        let files = std::mem::take(&mut request.attachments);
+        let missing = match (owner.resident(), &acting) {
+            (Some(address), Some(acting)) => {
+                let waits = Some(crate::attachments::follow::RUN_WAITS);
+                crate::attachments::follow::bring(node, address, acting, files, waits).await
+            }
+            _ => Vec::new(),
+        };
         let launched = self.launch(node, owner, town, request, None, None, account, answer_receipts, dispatch).await?;
         let mut answered = None;
         loop {
@@ -327,6 +336,7 @@ impl Jobs {
             answered,
             consumed,
             privacy,
+            missing,
         };
         if record.call_id.is_some() {
             let mut facts = crate::run_facts::assemble(&reply, &launched.record)

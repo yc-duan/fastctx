@@ -94,6 +94,16 @@ fn render(reply: &RunReply, project: bool) -> (Vec<Content>, Vec<ModelSpan>) {
             reply.machine
         ));
     }
+    for missing in &reply.missing {
+        let path = format!("$FASTCTX_SCRATCH/{}", missing.path);
+        answer.line(&match &missing.why {
+            None => format!(
+                "=== {path} was still arriving on {} when this started; a later script finds it there ===",
+                reply.machine
+            ),
+            Some(why) => format!("=== {path} could not be brought to {}: {why} ===", reply.machine),
+        });
+    }
     (answer.blocks, answer.regions)
 }
 

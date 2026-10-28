@@ -4,16 +4,29 @@
 //! Each is one block of its own whose first line is a head note saying who
 //! or what it is about and where (`world-colleagues.md`, 两个工具). A
 //! colleague's answer is its last message verbatim, between a head note
-//! saying how the turn ended and a last line pointing at what it did.
+//! saying how the turn ended and a last line pointing at what it did. A
+//! conversation of the machine the reader lives on is named without it:
+//! the reader need not know where it lives itself, and one assisting another
+//! account's user is not to (`world-run.md`, 每段对话在每台机器上的地方).
 
 use fastctx_types::residents::{Notice, STOPPED_BY_USER};
 use fastctx_types::run::EndedHow;
 use fastctx_types::session::{Speaker, TurnEnd, TurnHow};
+use fastctx_types::{Address, MachineName};
 
 use crate::run::present::{display_path, status_text};
 
-/// A notice as one block of text.
-pub fn told(notice: &Notice) -> String {
+/// `address` in a head note for a reader living on `here`.
+fn named(address: &Address, here: Option<&MachineName>) -> String {
+    if here == Some(&address.machine) {
+        address.resident.to_string()
+    } else {
+        format!("{} on {}", address.resident, address.machine)
+    }
+}
+
+/// A notice as one block of text, for a reader living on `here`.
+pub fn told(notice: &Notice, here: Option<&MachineName>) -> String {
     match notice {
         Notice::Sentinel { observation } => {
             fastctx_types::sentinel_words::notification(observation, jiff::Timestamp::now())
@@ -67,32 +80,35 @@ pub fn told(notice: &Notice) -> String {
             let how = turn_end(end);
             let message = end.last_message.as_deref().unwrap_or("(it ended the turn without a message)");
             format!(
-                "=== colleague {} on {} ({how}) ===\n{message}\n=== what it did: fastctx w {} ===",
-                colleague.resident, colleague.machine, colleague.resident
+                "=== colleague {} ({how}) ===\n{message}\n=== what it did: fastctx w {} ===",
+                named(colleague, here),
+                colleague.resident
             )
         }
         Notice::Health { colleague, health, .. } => format!(
-            "=== colleague {} on {} (in its turn) ===\n{}\n=== what it is doing: fastctx w {} ===",
-            colleague.resident, colleague.machine, health.text, colleague.resident
+            "=== colleague {} (in its turn) ===\n{}\n=== what it is doing: fastctx w {} ===",
+            named(colleague, here),
+            health.text,
+            colleague.resident
         ),
         Notice::Question { text, .. } => text.clone(),
         Notice::Words { text, goal_report: Some(_), .. } | Notice::Words { text, goal_question: Some(_), .. } => {
             text.clone()
         }
-        Notice::Words { from, text, .. } => words(from, text),
+        Notice::Words { from, text, .. } => words(from, text, here),
         Notice::Attached { message, text } => message.render(text),
-        Notice::World { text, .. } => words(&Speaker::World, text),
+        Notice::World { text, .. } => words(&Speaker::World, text, here),
     }
 }
 
-/// The colleague's original conclusion, with only a factual envelope around it.
-pub fn goal_report(report: &fastctx_types::goals::Report) -> String {
+/// The colleague's original conclusion, with only a factual envelope
+/// around it, for a reader living on `here`.
+pub fn goal_report(report: &fastctx_types::goals::Report, here: Option<&MachineName>) -> String {
     let elapsed = report.ended_at.as_second().saturating_sub(report.started_at.as_second()).max(0) as u64;
     let resume = report.resume_at.map(|at| format!(", resumes at {at}")).unwrap_or_default();
     format!(
-        "=== colleague {} on {} (goal {}, {}{resume}) ===\n{}\n=== what it did: fastctx w {} ===",
-        report.colleague.resident,
-        report.colleague.machine,
+        "=== colleague {} (goal {}, {}{resume}) ===\n{}\n=== what it did: fastctx w {} ===",
+        named(&report.colleague, here),
         goal_status(report.status),
         duration(elapsed),
         report.text,
@@ -102,11 +118,11 @@ pub fn goal_report(report: &fastctx_types::goals::Report) -> String {
 
 /// Words for a session, under a head note saying who they are from, so the
 /// reader knows who is speaking (`world-colleagues.md`, 两个工具).
-pub fn words(from: &Speaker, text: &str) -> String {
+pub fn words(from: &Speaker, text: &str, here: Option<&MachineName>) -> String {
     let from = match from {
         Speaker::Page { page } => page.to_string(),
         Speaker::User { machine } => format!("the user, on {machine}"),
-        Speaker::Resident { address } => format!("{} on {}", address.resident, address.machine),
+        Speaker::Resident { address } => named(address, here),
         Speaker::World => "fastctx".to_string(),
     };
     format!("=== from {from} ===\n{text}")

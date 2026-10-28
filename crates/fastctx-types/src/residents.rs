@@ -656,6 +656,9 @@ pub struct Owing {
 pub struct Whereabouts {
     pub resident: ResidentId,
     pub town: Option<TownName>,
+    /// The machine it lives on, the one answering.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub machine: Option<crate::MachineName>,
     /// The call came from one of the conversation's own subagents, which
     /// is handed none of what waits for the conversation itself.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]

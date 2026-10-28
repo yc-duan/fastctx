@@ -179,6 +179,7 @@ async fn execute(node: &Arc<Node>, source: PageSource, action: PageInvocation) -
                 cwd: None,
                 writes_off: false,
                 wait: None,
+                attachments: Vec::new(),
             };
             let (reply, _) = node.jobs.run(node, owner, town, request, account, false, None).await?;
             Ok(PageResult::Run(Box::new(reply)))

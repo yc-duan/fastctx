@@ -31,6 +31,21 @@ pub struct RunRequest {
     /// in the background; without it, the World's own wait (`world-run.md`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub wait: Option<u32>,
+    /// The files the user attached in the conversation, which the machine
+    /// the script runs on brings into its scratch before it starts
+    /// (`world-run.md`, 用户附的文件).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub attachments: Vec<crate::attachments::Attachment>,
+}
+
+/// A file the user attached that was not in the scratch where a script ran
+/// when it started: still arriving (`why` none), or not to be had.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MissingAttachment {
+    /// Where it goes, under the scratch.
+    pub path: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub why: Option<String>,
 }
 
 /// Why a call answered while its job still ran.
@@ -97,6 +112,10 @@ pub struct RunReply {
     /// found once what the command did was refused (`world-gui.md`, 设置).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub privacy: Vec<String>,
+    /// The files the user attached that were not in the scratch there when
+    /// the script started.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub missing: Vec<MissingAttachment>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

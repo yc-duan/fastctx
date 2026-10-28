@@ -20,7 +20,7 @@ use std::sync::Arc;
 use fastctx_net::wire::{Forgetting, Forgot};
 use fastctx_types::access::{Acting, HubId};
 use fastctx_types::ipc::Failure;
-use fastctx_types::layout::{Here as _, Kind};
+use fastctx_types::layout::Here as _;
 use fastctx_types::management::Forgetting as How;
 use fastctx_types::{AccountName, Address, MachineName, ResidentId};
 use serde::{Deserialize, Serialize};
@@ -315,11 +315,9 @@ async fn elsewhere(node: &Arc<Node>, hub: &HubId, account: &AccountName, convers
         Ok(world
             .kept()?
             .into_iter()
-            .filter_map(|kept| match kept.kind {
-                Kind::Guest(owner) if owner.resident == resident && machines.contains(&owner.machine) => {
-                    Some((kept.name, owner))
-                }
-                _ => None,
+            .filter_map(|kept| {
+                let machine = machines.iter().find(|machine| kept.kind.is_room_of(&resident, machine))?;
+                Some((kept.name, Address { machine: machine.clone(), resident: resident.clone() }))
             })
             .collect())
     })

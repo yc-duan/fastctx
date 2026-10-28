@@ -828,11 +828,11 @@ impl fastctx_net::link::Node for Handler {
                 RemoteCall::Write { .. } => Err(Failure::new(format!(
                     "{machine} takes files from other machines only through `on`; the fastctx on {from} is older and needs updating"
                 ))),
-                RemoteCall::On { mut origin, sizes, writes_off, piped, source } => {
+                RemoteCall::On { mut origin, sizes, writes_off, piped, source, attachments } => {
                     let stream = stream.ok_or_else(|| Failure::new("an on comes with a data connection"))?;
                     origin.follower = Some(from.clone());
                     origin.account = Some(HubAccount { hub: hub.clone(), account: caller.account.clone() });
-                    let how = crate::on::Sent { writes_off, piped, source };
+                    let how = crate::on::Sent { writes_off, piped, source, attachments };
                     crate::on::serve_on(&node, origin, sizes, how, stream).await
                 }
                 RemoteCall::PipeOut { mut origin, job } => {
@@ -956,9 +956,6 @@ impl fastctx_net::link::Node for Handler {
                 }
                 RemoteCall::AttachmentThumbnail { attachment, max } => {
                     crate::thumbnail::attachment(&node, attachment, max).await.map(RemoteReply::Thumbnail)
-                }
-                RemoteCall::OwnAttachment { resident, id } => {
-                    crate::attachments::own::receipt(&node, &resident, &id).map(RemoteReply::Uploaded)
                 }
                 RemoteCall::Lines { request } => {
                     if let fastctx_types::lines::Request::Open { path, decoding } = request {

@@ -149,6 +149,7 @@ fn exercise() -> anyhow::Result<()> {
                 cwd: Some(display(&root)),
                 writes_off: false,
                 wait: None,
+                attachments: Vec::new(),
             },
             home: &root,
             executable: &old_program,

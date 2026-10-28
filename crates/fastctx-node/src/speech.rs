@@ -634,7 +634,11 @@ async fn submit_thread(
         // A fact of its own work reads best as the output of the tool that
         // started it.
         [only] if matches!(only.delivery.notice, Notice::JobEnded { .. }) => (
-            Input::ToolOutput { name: "run".to_string(), namespace: None, output: told::told(&only.delivery.notice) },
+            Input::ToolOutput {
+                name: "run".to_string(),
+                namespace: None,
+                output: told::told(&only.delivery.notice, Some(&node.machine())),
+            },
             None,
         ),
         batch if batch.iter().any(|kept| matches!(kept.delivery.notice, Notice::Attached { .. })) => (
@@ -651,14 +655,21 @@ async fn submit_thread(
                                 .collect(),
                             _ => Vec::new(),
                         };
-                        fastctx_hosts::codex::InputMessage { text: told::told(&kept.delivery.notice), images }
+                        let text = told::told(&kept.delivery.notice, Some(&node.machine()));
+                        fastctx_hosts::codex::InputMessage { text, images }
                     })
                     .collect(),
             ),
             client,
         ),
         batch => {
-            (Input::Text(batch.iter().map(|kept| said(&kept.delivery.notice)).collect::<Vec<_>>().join("\n\n")), client)
+            let here = node.machine();
+            (
+                Input::Text(
+                    batch.iter().map(|kept| said(&kept.delivery.notice, &here)).collect::<Vec<_>>().join("\n\n"),
+                ),
+                client,
+            )
         }
     };
     for kept in &batch {
@@ -738,10 +749,10 @@ fn hand_over_later(node: Arc<Node>, id: ResidentId, about: About, directory: Con
 
 /// A notice as it goes into a thread: the user's words as they typed them,
 /// everything else as the World tells it.
-fn said(notice: &Notice) -> String {
+fn said(notice: &Notice, here: &fastctx_types::MachineName) -> String {
     match notice {
         Notice::Words { from: Speaker::User { .. }, text, .. } => text.clone(),
-        notice => told::told(notice),
+        notice => told::told(notice, Some(here)),
     }
 }
 
@@ -797,10 +808,10 @@ pub fn heard(node: &Arc<Node>, id: &ResidentId, delivery: &Delivery, turn: &str)
         Notice::Words { from, text, .. } => (from.clone(), text.clone()),
         Notice::Attached { message, text } => (message.speaker(), text.clone()),
         Notice::Answer { colleague, .. } | Notice::Question { colleague, .. } => {
-            (Speaker::Resident { address: colleague.clone() }, told::told(&delivery.notice))
+            (Speaker::Resident { address: colleague.clone() }, told::told(&delivery.notice, Some(&node.machine())))
         }
         Notice::JobEnded { .. } | Notice::Health { .. } | Notice::Sentinel { .. } => {
-            (Speaker::World, told::told(&delivery.notice))
+            (Speaker::World, told::told(&delivery.notice, Some(&node.machine())))
         }
         Notice::World { text, .. } => (Speaker::World, text.clone()),
     };

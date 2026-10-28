@@ -304,12 +304,6 @@ pub enum Call {
         #[serde(default, skip_serializing_if = "crate::file_read::FileRange::is_all")]
         range: crate::file_read::FileRange,
     },
-    /// The receipt of the file `id` the user attached in the conversation a
-    /// command runs for, wherever the conversation lives; answered as
-    /// `Uploaded`. Older nodes do not know it.
-    OwnAttachment {
-        id: crate::NoticeId,
-    },
     Lines {
         machine: Option<Written>,
         request: crate::lines::Request,

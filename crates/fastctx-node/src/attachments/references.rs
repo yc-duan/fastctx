@@ -62,16 +62,19 @@ pub(crate) fn inherit(
     events: &[fastctx_types::session::SessionEvent],
 ) -> Result<(), Failure> {
     use fastctx_types::session::{Happened, attachments::restore};
-    let retained: Vec<_> = events
+    let receipts = super::delivered::of(node, parent);
+    let deliveries: Vec<_> = events
         .iter()
         .cloned()
-        .flat_map(restore)
-        .flat_map(|event| match event.happened {
-            Happened::Heard { message: Some(message), .. } => message.attachments,
-            _ => Vec::new(),
+        .flat_map(|event| restore(event, &receipts))
+        .filter_map(|event| match event.happened {
+            Happened::Heard { delivery: Some(delivery), message: Some(message), .. } => {
+                Some((delivery, message.attachments))
+            }
+            _ => None,
         })
         .collect();
-    keep_inherited(node, parent, child, &retained)
+    keep_deliveries(node, parent, child, deliveries)
 }
 
 pub(crate) fn inherit_texts(
@@ -80,13 +83,30 @@ pub(crate) fn inherit_texts(
     child: &ResidentId,
     messages: &[serde_json::Value],
 ) -> Result<(), Failure> {
-    let retained: Vec<_> = messages
+    let receipts = super::delivered::of(node, parent);
+    let deliveries: Vec<_> = messages
         .iter()
         .filter(|message| message["role"] == "user")
-        .filter_map(|message| fastctx_types::session::attachments::AttachedMessage::read(message["text"].as_str()?))
-        .flat_map(|(message, _)| message.attachments)
+        .filter_map(|message| fastctx_types::session::attachments::Envelope::read(message["text"].as_str()?))
+        .map(|(envelope, _)| {
+            let attached = envelope.attached(&receipts);
+            (attached.delivery, attached.attachments)
+        })
         .collect();
-    keep_inherited(node, parent, child, &retained)
+    keep_deliveries(node, parent, child, deliveries)
+}
+
+/// Keeps for `child` the files of the deliveries its history brings from
+/// `parent`, and the receipts its host's record will name them by.
+fn keep_deliveries(
+    node: &Node,
+    parent: &ResidentId,
+    child: &ResidentId,
+    deliveries: Vec<(fastctx_types::NoticeId, Vec<Attachment>)>,
+) -> Result<(), Failure> {
+    let retained: Vec<_> = deliveries.iter().flat_map(|(_, attachments)| attachments.iter().cloned()).collect();
+    keep_inherited(node, parent, child, &retained)?;
+    super::delivered::inherit(&node.world.conversation(child), deliveries).map_err(failure)
 }
 
 fn keep_inherited(

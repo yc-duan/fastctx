@@ -160,6 +160,10 @@ pub enum RemoteCall {
         /// machine takes from where it is kept before the job starts.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         source: Option<crate::on::OnSource>,
+        /// The files the user attached in the conversation, which the
+        /// machine brings into its scratch before the job starts.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        attachments: Vec<crate::attachments::Attachment>,
     },
     /// Hand over, on this call's data connection, the standard output of
     /// the `on` job `job`, which went straight on to the calling machine
@@ -236,13 +240,6 @@ pub enum RemoteCall {
         read: u64,
         #[serde(default, skip_serializing_if = "crate::file_read::FileRange::is_all")]
         range: crate::file_read::FileRange,
-    },
-    /// The receipt of the file `id` the user attached in the conversation
-    /// `resident`, which lives here, for an account it works for; answered
-    /// as `Uploaded`. Its bytes are then read as any attachment's.
-    OwnAttachment {
-        resident: crate::ResidentId,
-        id: crate::NoticeId,
     },
     Lines {
         request: crate::lines::Request,
@@ -637,7 +634,6 @@ impl RemoteCall {
             | RemoteCall::Composer { .. }
             | RemoteCall::AttachmentThumbnail { .. }
             | RemoteCall::ReadAttachment { .. }
-            | RemoteCall::OwnAttachment { .. }
             | RemoteCall::Ask { .. }
             | RemoteCall::Talk { .. }
             | RemoteCall::Watch { .. }

@@ -143,7 +143,15 @@ async fn run(node: &Arc<Node>, acting: &Acting, machine: &Written, script: Strin
         dispatch: None,
         resident: ResidentId::try_from("world-0000").expect("system job identity"),
         town: None,
-        request: RunRequest { turn: None, call_id: None, script, cwd: None, writes_off: false, wait: Some(600) },
+        request: RunRequest {
+            turn: None,
+            call_id: None,
+            script,
+            cwd: None,
+            writes_off: false,
+            wait: Some(600),
+            attachments: Vec::new(),
+        },
     };
     let reply = node
         .call(acting, machine, Purpose::Hands, call)

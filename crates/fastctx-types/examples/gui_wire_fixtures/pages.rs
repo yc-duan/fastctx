@@ -128,6 +128,7 @@ pub fn fixtures() -> Fixtures {
             run: None,
             consumed: None,
             privacy: Vec::new(),
+            missing: Vec::new(),
             machine: machine.clone(),
             job: "j-abc123".parse().unwrap(),
             state: RunState::Ended { status: ExitStatus::Code(0) },

@@ -42,6 +42,8 @@ pub fn keep(directory: &ConversationDir, pending: &Pending) -> io::Result<bool> 
     {
         return Ok(false);
     }
+    // However they reach the host, its record names the files by id alone.
+    crate::attachments::delivered::record(directory, std::slice::from_ref(pending))?;
     ensure_private_dir(&directory.inbox())?;
     match publish_new(&path(directory, &pending.delivery.id), &json(pending)?, Permissions::Private) {
         Ok(()) => Ok(true),

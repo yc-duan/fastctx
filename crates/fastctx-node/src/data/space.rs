@@ -498,6 +498,11 @@ fn describe(
             let town = one.job_town.take().and_then(|(_, town)| town);
             (Group::Elsewhere, owner.resident.agent(), None, town, Some(owner.machine.clone()), false, running)
         }
+        // Its room does not name the machine it lives on, and neither does this.
+        Kind::Visiting { resident, .. } => {
+            let town = one.job_town.take().and_then(|(_, town)| town);
+            (Group::Elsewhere, resident.agent(), None, town, None, false, running)
+        }
         Kind::Unplaced(id) => (Group::Elsewhere, id.agent(), None, None, None::<MachineName>, false, running),
     };
     let host = std::mem::take(&mut one.host_record);

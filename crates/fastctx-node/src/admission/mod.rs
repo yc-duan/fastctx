@@ -55,8 +55,7 @@ fn resident_of(call: &RemoteCall) -> Option<&ResidentId> {
         | RemoteCall::Manage { resident: who, .. }
         | RemoteCall::Offers { resident: who }
         | RemoteCall::ItemDetail { resident: who, .. }
-        | RemoteCall::AgentActivity { resident: who, .. }
-        | RemoteCall::OwnAttachment { resident: who, .. } => Some(who),
+        | RemoteCall::AgentActivity { resident: who, .. } => Some(who),
         RemoteCall::CommitAttachment { attachment, .. } => Some(&attachment.conversation().resident),
         RemoteCall::AttachmentPlaces { target, .. }
         | RemoteCall::Upload { target, .. }

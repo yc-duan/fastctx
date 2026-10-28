@@ -1,9 +1,10 @@
 //! User originals remain on the computer that attached them.
 
+pub(crate) mod delivered;
 pub(crate) mod destinations;
+pub(crate) mod follow;
 pub(crate) mod forwarded;
 pub(crate) mod lifetime;
-pub(crate) mod own;
 mod references;
 pub(crate) mod sent;
 pub(crate) use references::{inherit, inherit_texts, preview};
@@ -871,7 +872,7 @@ pub async fn resolve(node: &Arc<Node>, resident: &ResidentId, attachments: &[Att
             }
             let kept = kept_here(&node, &resident, &attachment)?;
             if !holds(&kept, &mut buffer)? {
-                return Err(failure(format!("{} on {} changed after upload", kept.path, kept.owner.machine)));
+                return Err(failure(format!("{} changed after it was attached", kept.file.name)));
             }
         }
         Ok(())
@@ -890,7 +891,7 @@ fn slot_name(attachment: &Attachment) -> Option<&str> {
 /// the one a copy placed on another machine was made from, known by its id
 /// and its file. What it gives says where the file is now.
 fn kept_here(node: &Node, resident: &ResidentId, attachment: &Attachment) -> Result<Attachment, Failure> {
-    let unknown = || failure(format!("{} was not attached for {resident} on {}", attachment.file.name, node.machine()));
+    let unknown = || failure(format!("{} was not attached in this conversation", attachment.file.name));
     if attachment.owner.resident != *resident {
         return Err(unknown());
     }
@@ -960,11 +961,9 @@ fn kept_here(node: &Node, resident: &ResidentId, attachment: &Attachment) -> Res
 fn room_named(node: &Node, attachment: &Attachment) -> Option<ConversationDir> {
     let room = Path::new(&attachment.path).parent()?.parent()?.parent()?.file_name()?.to_str()?;
     match Kind::of(room)? {
-        Kind::Guest(owner) if owner.resident == attachment.owner.resident => Some(node.world.guest(&owner)),
-        Kind::Unplaced(id) if id == attachment.owner.resident => {
-            Some(ConversationDir::at(&node.world.conversations().join(room)))
-        }
-        _ => None,
+        Kind::Home(_) => None,
+        kind => (*kind.resident() == attachment.owner.resident)
+            .then(|| ConversationDir::at(&node.world.conversations().join(room))),
     }
 }
 

@@ -469,7 +469,7 @@ impl Residents {
                         .thread
                         .as_deref()
                         .is_some_and(|thread| live.about.session.as_deref().is_some_and(|own| own != thread));
-                    Ok(Whereabouts { resident, town: live.town(), subagent })
+                    Ok(Whereabouts { resident, town: live.town(), machine: None, subagent })
                 }
                 None => Err(Failure::new(format!(
                     "this session says it is {resident}, but {machine} has no record of that resident"
@@ -484,7 +484,7 @@ impl Residents {
                 return Err(removal::refused(&resident));
             }
             live.connections += 1;
-            return Ok(Whereabouts { resident, town: live.town(), subagent: false });
+            return Ok(Whereabouts { resident, town: live.town(), machine: None, subagent: false });
         }
         if let Some(resident) = hints.was {
             let live = state.live.get_mut(&resident).ok_or_else(|| {
@@ -497,7 +497,7 @@ impl Residents {
                 return Err(removal::refused(&resident));
             }
             live.connections += 1;
-            return Ok(Whereabouts { resident, town: live.town(), subagent: false });
+            return Ok(Whereabouts { resident, town: live.town(), machine: None, subagent: false });
         }
         let resident = new_id(&host.agent, &state)?;
         let about = About {
@@ -527,7 +527,7 @@ impl Residents {
         let mut live = Live::new(about, places, None);
         live.connections = 1;
         state.admit(live);
-        Ok(Whereabouts { resident, town: None, subagent: false })
+        Ok(Whereabouts { resident, town: None, machine: None, subagent: false })
     }
 
     /// A connection that residents arrived on has closed. Returns those of
