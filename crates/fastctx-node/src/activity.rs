@@ -88,7 +88,7 @@ pub fn who(
             for town in world.towns()? {
                 if let Some(record) = crate::town::read::latest(world, &town)? {
                     towns.push(TownSummary {
-                        journals: crate::town::read::journal_names(world, &town)?.len(),
+                        journals: crate::memory::store::catalog(world, &town)?.journals.len(),
                         town,
                         record,
                     });
@@ -103,6 +103,7 @@ pub fn who(
     }
     let mut who = WorldWho {
         others: Vec::new(),
+        involved: Vec::new(),
         machine: machine.name,
         scope,
         machines: vec![MachineWho::Answered { observation: None, reply: local }],

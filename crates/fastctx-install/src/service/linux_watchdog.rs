@@ -52,7 +52,7 @@ impl Watchdog {
     /// Writes the check for `main` as the running systemd `version` reads
     /// it: 243 brought `ExecCondition=`, 230 the start limit in `[Unit]`;
     /// an older one asks whether `main` is enabled in a shell line.
-    pub fn write(&self, main: &str, version: u32) -> anyhow::Result<()> {
+    fn definitions(&self, main: &str, version: u32) -> anyhow::Result<Vec<(&str, String)>> {
         let systemctl = super::linux_restart::systemctl().context("systemctl is not found")?;
         let systemctl = systemctl.display();
         let checker = if version >= 243 {
@@ -73,7 +73,20 @@ impl Watchdog {
             "{}[Unit]\nDescription=Check fastctx service every minute\n\n[Timer]\nOnCalendar=*-*-* *:*:00\nAccuracySec=1us\nPersistent=true\nUnit={}\n\n[Install]\nWantedBy=timers.target\n",
             self.marker, self.checker
         );
-        for (name, text) in [(&self.checker, checker), (&self.timer, timer)] {
+        Ok(vec![(&self.checker, checker), (&self.timer, timer)])
+    }
+
+    pub fn current(&self, main: &str, version: u32) -> anyhow::Result<bool> {
+        for (name, text) in self.definitions(main, version)? {
+            if self.read(name)?.as_deref() != Some(text.as_bytes()) {
+                return Ok(false);
+            }
+        }
+        Ok(true)
+    }
+
+    pub fn write(&self, main: &str, version: u32) -> anyhow::Result<()> {
+        for (name, text) in self.definitions(main, version)? {
             if self.read(name)?.as_deref() != Some(text.as_bytes()) {
                 publish(&file(name), text.as_bytes(), Permissions::KeepExisting)?;
             }

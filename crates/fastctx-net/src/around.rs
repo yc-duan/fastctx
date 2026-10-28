@@ -114,12 +114,17 @@ async fn refresh(link: &Link) -> Result<(), String> {
     AssertUnwindSafe(work).catch_unwind().await.unwrap_or_else(|panic| Err(panicked(panic)))
 }
 
+/// The most machines one round asks at once: a network of hundreds is asked
+/// a few dozen at a time (`world-concurrency.md`). One offline is not asked.
+const ASKING_AT_ONCE: usize = 32;
+
 async fn ask<F: Future<Output = Result<(), String>>>(
     machines: Vec<Reachable>,
     call: impl Fn(&MachineName) -> RemoteCall,
     mut refreshed: impl FnMut(&Arc<Link>) -> F,
 ) -> Vec<(Asked, Heard)> {
     let mut asks = FuturesUnordered::new();
+    let asking = Arc::new(tokio::sync::Semaphore::new(ASKING_AT_ONCE));
     let sources: Vec<_> = machines
         .iter()
         .map(|machine| MachineSource {
@@ -131,6 +136,7 @@ async fn ask<F: Future<Output = Result<(), String>>>(
     for (Reachable { link, name, account, key, .. }, mut source) in machines.into_iter().zip(sources) {
         let fresh = refreshed(&link);
         let call = call(&name);
+        let asking = asking.clone();
         asks.push(async move {
             let answer = AssertUnwindSafe(async {
                 if let Err(error) = fresh.await {
@@ -144,6 +150,7 @@ async fn ask<F: Future<Output = Result<(), String>>>(
                 }
                 match seen {
                     Some(seen) if seen.online => {
+                        let _turn = asking.acquire().await;
                         let name = &seen.name;
                         let purpose = call.purpose();
                         let within = call.contract().within;

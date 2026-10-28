@@ -2,7 +2,7 @@
 
 use crate::{Node, town::caller::Caller};
 use fastctx_net::link::Link;
-use fastctx_types::access::Acting;
+
 use fastctx_types::ipc::Failure;
 use fastctx_types::{AccountName, HubName};
 pub(crate) mod session;
@@ -17,14 +17,8 @@ pub(crate) fn scope(
     account: Option<&AccountName>,
 ) -> Result<(Arc<Link>, AccountName), Failure> {
     let acting = crate::around::acting_of(node, caller);
-    match caller {
-        Caller::Page(_) | Caller::Session(_) => {
-            return Err(Failure::refused("this caller has no account configuration"));
-        }
-        Caller::Resident(_) if matches!(acting, Acting::Here) => {
-            return Err(Failure::refused("this conversation does not work for an account"));
-        }
-        _ => {}
+    if matches!(caller, Caller::Page(_) | Caller::Session(_)) {
+        return Err(Failure::refused("this caller has no account configuration"));
     }
     let mut choices = Vec::new();
     for link in node.links().into_iter().filter(|link| hub.is_none_or(|hub| link.hub_name() == *hub)) {

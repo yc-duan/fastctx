@@ -14,10 +14,9 @@
 // GPT (callers), which GPTs they may hand it to (callees: a Codex login
 // each, its model and effort, the name and the line the calling model
 // chooses by, whether it may use the screen), the text the callers are given
-// and the rules every callee is given. It is in development: its card says
-// so, and its page is its film and what it gives, with nothing to turn on,
-// until `COLLABORATION_READY`. Project memory is in development too: its
-// card says so and its page says nothing else.
+// and the rules every callee is given. Project memory: for the whole account, a
+// project's journal and decisions shown with it and given to its
+// conversations; it has no settings.
 
 import { EffortSlider, effortLabel } from "../conversation/effort-slider";
 import { glyph } from "../conversation/glyphs";
@@ -37,13 +36,18 @@ import type { Page } from "./shell";
 import { effect } from "./signals";
 import { residentsOf, type Store } from "./store";
 import { deviceFeatures } from "./device-features";
+import { leave } from "./leave";
 import { collaboration } from "../film/collaboration";
+import { memoryFilm } from "../film/memory";
+import { sentinelFilm } from "../film/sentinel";
+import { SentinelForm } from "./sentinel-form";
+import type { SentinelSeam, SentinelSettingsView } from "../world/sentinels";
 import { Film } from "../film/film";
 import type { Built, Shape } from "../film/reel";
 
-/** Whether model collaboration can be turned on; while it is in
- *  development, no session is offered a colleague either (`collab.rs`). */
-const COLLABORATION_READY = false;
+/** Whether model collaboration can be turned on; a node offers a colleague
+ *  only as `collab.rs` lets it. */
+const COLLABORATION_READY = true;
 import { watchFilm } from "../film/theater";
 import { workbench } from "../film/workbench";
 
@@ -57,6 +61,11 @@ export interface FeaturesOptions {
   agents(): Promise<WorldAgents>;
   /** Asks before a feature is turned off. */
   confirm: Confirm;
+  /** Project memory's switch, for the account. */
+  /** Project memory, on or off for a login's account; null lets the World pick. */
+  memory: { enabled(hub: string | null, account: string | null): Promise<boolean>; set(on: boolean, hub: string | null, account: string | null): Promise<void> };
+  /** The sentinels' settings, and the machines they may live on. */
+  sentinels: { seam: SentinelSeam; machines(hub: string, account: string): { name: string; form: "desktop" | "laptop" | "server" }[] };
 }
 
 /** A login an agent can work in, as the settings name it, with what the
@@ -88,7 +97,16 @@ export class FeaturesPage implements Page {
 
   constructor(private readonly options: FeaturesOptions) {
     const { words, feature } = options;
-    this.title = feature === "collaboration" ? words.collaboration.name : feature === "memory" ? words.memory.name : feature === "conversations" ? words.conversations.name : words.title;
+    this.title =
+      feature === "collaboration"
+        ? words.collaboration.name
+        : feature === "memory"
+          ? words.memory.name
+          : feature === "sentinels"
+            ? words.sentinels.name
+            : feature === "conversations"
+              ? words.conversations.name
+              : words.title;
     this.element = document.createElement("div");
     this.element.className = "features-page";
     this.element.innerHTML = `${options.head(`<h1 class="page-title">${escape(this.title)}</h1>`)}<div class="features-body scroller"></div>`;
@@ -98,7 +116,8 @@ export class FeaturesPage implements Page {
     });
     if (feature === null) this.cards();
     else if (feature === "conversations") this.conversations();
-    else if (feature === "memory") this.body.innerHTML = `<p class="feature-coming">${glyph("info", 18)}<span>${escape(words.coming)}</span></p>`;
+    else if (feature === "memory") this.memory();
+    else if (feature === "sentinels") this.sentinels();
     else this.collaboration();
   }
 
@@ -110,10 +129,12 @@ export class FeaturesPage implements Page {
     this.undone?.();
   }
 
-  /** A film set into `holder`: playing, or `still` on its last frame. */
+  /** A film set into `holder`: playing, or `still` on its last frame. A
+   *  still is a band over the feature's settings, wide even on a phone,
+   *  so that they begin on the first screen. */
   private film(holder: Element | null, make: (shape: Shape) => Built, label: string, still = false): void {
     if (!holder) return;
-    const film = new Film(make, label, still);
+    const film = new Film(make, label, still, still ? "wide" : undefined);
     this.films.push(film);
     holder.replaceChildren(film.element);
   }
@@ -157,10 +178,12 @@ export class FeaturesPage implements Page {
     const takeAway = () => {
       if (!open) return;
       open = false;
-      film.destroy();
-      done.remove();
       removeEventListener("keydown", key);
       this.undone = null;
+      leave(done, () => {
+        film.destroy();
+        done.remove();
+      });
     };
     const close = () => {
       if (!open) return;
@@ -213,7 +236,7 @@ export class FeaturesPage implements Page {
   private cards(): void {
     const { words } = this.options;
     const tag = (on: boolean | null) =>
-      on === null ? "" : on ? `<span class="tag feature-tag-on">${glyph("check", 12)}<span>${escape(words.on)}</span></span>` : `<span class="tag">${escape(words.off)}</span>`;
+      on === null ? "" : on ? `<span class="tag feature-tag-on">${glyph("check", 12)}<span>${escape(words.on)}</span></span>` : `<span class="tag feature-tag-off">${escape(words.off)}</span>`;
     const coming = `<span class="tag">${escape(words.coming)}</span>`;
     const draw = (on: boolean | null) => {
       this.body.innerHTML = `<ul class="feature-cards">
@@ -225,18 +248,42 @@ export class FeaturesPage implements Page {
           <span class="feature-card-art">${glyph("codex", 22)}${glyph("claude", 22)}</span>
           <span class="feature-card-name">${escape(words.collaboration.name)}</span>
           <span class="feature-card-line">${escape(words.collaboration.line)}</span>${COLLABORATION_READY ? tag(on) : coming}</a></li>
-        <li><a class="feature-card coming" href="${link({ kind: "feature", feature: "memory" })}">
-          <span class="feature-card-art">${glyph("folder", 22)}</span>
-          <span class="feature-card-name">${escape(words.memory.name)}</span>${coming}</a></li>
+        <li><a class="feature-card" href="${link({ kind: "feature", feature: "memory" })}">
+          <span class="feature-card-art">${glyph("journal", 22)}${glyph("spec", 22)}</span>
+          <span class="feature-card-name">${escape(words.memory.name)}</span>
+          <span class="feature-card-line">${escape(words.memory.line)}</span>${tag(memoryOn)}</a></li>
+        <li><a class="feature-card" href="${link({ kind: "feature", feature: "sentinels" })}">
+          <span class="feature-card-art">${glyph("sentinel", 22)}${glyph("server", 22)}</span>
+          <span class="feature-card-name">${escape(words.sentinels.name)}</span>
+          <span class="feature-card-line">${escape(words.sentinels.line)}</span>${tag(sentinelsOn)}</a></li>
       </ul>`;
     };
+    let memoryOn: boolean | null = null;
+    let sentinelsOn: boolean | null = null;
     draw(null);
+    const login = this.login();
+    if (login)
+      this.options.sentinels.seam.read(login.hub, login.account).then(
+        (view) => {
+          sentinelsOn = view.settings.home !== null;
+          draw(collabOn);
+        },
+        () => {},
+      );
+    this.options.memory.enabled(login?.hub ?? null, login?.account ?? null).then(
+      (on) => {
+        memoryOn = on;
+        draw(collabOn);
+      },
+      () => {},
+    );
+    let collabOn: boolean | null = null;
     if (!COLLABORATION_READY) return;
     // In no network, this computer keeps its own settings.
     const [first] = loginsOf(this.options.store.world.peek()?.accounts);
     readCollab(first?.hubName ?? null, first?.account ?? null)
-      .then((view) => draw(view.collab.on))
-      .catch(() => draw(false));
+      .then((view) => draw((collabOn = view.collab.on)))
+      .catch(() => draw((collabOn = false)));
   }
 
   /** The workbench: its film and its switch; on, a still of the film
@@ -276,6 +323,127 @@ export class FeaturesPage implements Page {
           turn.title = detailOf(error);
         },
       );
+    });
+  }
+
+  /** Project memory: its film and its switch, for the account; on, a still
+   *  of the film waits at the top. */
+  private memory(): void {
+    const { words } = this.options;
+    const login = this.login();
+    const memory = this.options.memory;
+    const seam = {
+      enabled: () => memory.enabled(login?.hub ?? null, login?.account ?? null),
+      set: (on: boolean) => memory.set(on, login?.hub ?? null, login?.account ?? null),
+    };
+    const make = (shape: Shape) => memoryFilm(words.memory.film, shape);
+    const label = words.memory.name;
+    this.replayFilm = () => this.watch(make, label);
+    const draw = (on: boolean) => {
+      this.dropFilms();
+      this.body.classList.toggle("features-film", !on);
+      this.body.classList.toggle("features-on", on);
+      this.body.innerHTML = on
+        ? this.onTop(words.memory.after, true) + this.offWay(label)
+        : `<div class="feature-intro"><div class="feature-film"></div><button class="sheet-go feature-turn" type="button" data-turn="1">${escape(words.turnOn)}</button></div>`;
+      this.film(this.body.querySelector(on ? ".feature-still" : ".feature-film"), make, label, on);
+    };
+    seam.enabled().then(draw, () => draw(false));
+    this.body.addEventListener("click", (event) => {
+      const target = event.target as HTMLElement;
+      if (target.closest("[data-act='turn-off']")) {
+        this.askOff(label, words.memory.offWhat, () => seam.set(false), () => draw(false));
+        return;
+      }
+      const turn = target.closest<HTMLButtonElement>("[data-turn]");
+      if (!turn || turn.disabled) return;
+      turn.disabled = true;
+      void seam.set(true).then(
+        () => {
+          draw(true);
+          this.celebrate(label, words.memory.after, make);
+        },
+        (error: unknown) => {
+          turn.disabled = false;
+          turn.title = detailOf(error);
+        },
+      );
+    });
+  }
+
+  /** The login the account's settings are read and kept for. */
+  private login(): { hub: string; account: string } | null {
+    const [first] = loginsOf(this.options.store.world.peek()?.accounts);
+    return first ? { hub: first.hubName, account: first.account } : null;
+  }
+
+  /** Sentinels: their film and, on, their settings; on is a machine for
+   *  them to live on, chosen and saved. */
+  private sentinels(): void {
+    const { words } = this.options;
+    const label = words.sentinels.name;
+    const make = (shape: Shape) => sentinelFilm(words.sentinels.film, shape);
+    this.replayFilm = () => this.watch(make, label);
+    const login = this.login();
+    const seam = this.options.sentinels.seam;
+    let view: SentinelSettingsView | null = null;
+    const form = login
+      ? new SentinelForm({
+          words: words.sentinels,
+          seam,
+          login,
+          machines: () => (login ? this.options.sentinels.machines(login.hub, login.account) : []),
+          saved: (saved) => {
+            const was = view?.settings.home ?? null;
+            view = saved;
+            if (was === null && saved.settings.home !== null) {
+              draw(true);
+              this.celebrate(label, words.sentinels.after, make);
+            }
+          },
+        })
+      : null;
+    const draw = (on: boolean, starting = false) => {
+      this.dropFilms();
+      this.body.classList.toggle("features-film", !on && !starting);
+      this.body.classList.toggle("features-on", on || starting);
+      this.body.innerHTML =
+        on || starting
+          ? `${on ? this.onTop(words.sentinels.after) : ""}<div class="sf-holder"></div>${on ? this.offWay(label) : ""}`
+          : `<div class="feature-intro"><div class="feature-film"></div><button class="sheet-go feature-turn" type="button" data-turn="1"${form ? "" : " disabled"}>${escape(words.turnOn)}</button></div>`;
+      if (form && (on || starting)) {
+        this.body.querySelector(".sf-holder")!.append(form.element);
+        if (starting && !view?.settings.home) form.start();
+        else if (view) form.show(view);
+      }
+      if (on) this.film(this.body.querySelector(".feature-still"), make, label, true);
+      else if (!starting) this.film(this.body.querySelector(".feature-film"), make, label);
+    };
+    draw(false);
+    if (login)
+      seam.read(login.hub, login.account).then(
+        (read) => {
+          view = read;
+          draw(read.settings.home !== null);
+        },
+        () => {},
+      );
+    this.body.addEventListener("click", (event) => {
+      const target = event.target as HTMLElement;
+      if (target.closest("[data-turn]")) return draw(false, true);
+      if (target.closest("[data-act='turn-off']") && login && view) {
+        const current = view;
+        this.askOff(
+          label,
+          words.sentinels.offWhat,
+          async () => {
+            const reply = await seam.write(login.hub, login.account, current.version, { ...current.settings, home: null });
+            if (reply.kind === "conflict") throw new Error(words.sentinels.changedElsewhere);
+            view = reply.view;
+          },
+          () => draw(false),
+        );
+      }
     });
   }
 

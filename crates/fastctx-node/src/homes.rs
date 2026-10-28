@@ -91,12 +91,8 @@ pub(crate) fn listed(node: &Node, agent: &str, dir: Option<&Path>) -> Result<Opt
     crate::logins::listed(node, agent, dir)
 }
 
-pub(crate) fn canonical(node: &Node, agent: &str, home: Option<&Path>) -> Result<Option<PathBuf>, Failure> {
-    let Some(home) = home else { return Ok(None) };
-    let context = crate::logins::Context::of(node)?;
-    Ok((!same_dir(home, context.default_of(agent))).then(|| home.to_path_buf()))
-}
-
+/// The assistance `account` has of `agent`'s login `home` on `machine`, a
+/// login written as the node writes logins: none for the default one.
 pub(crate) fn assistance(
     node: &Node,
     view: &fastctx_net::directory::Directory,
@@ -105,13 +101,15 @@ pub(crate) fn assistance(
     agent: &fastctx_types::AgentName,
     home: Option<&Path>,
 ) -> Result<Option<fastctx_net::directory::Assist>, Failure> {
-    let home = canonical(node, agent.as_str(), home)?;
-    for assist in view.assisting(account, machine) {
-        if assist.agent == *agent && canonical(node, agent.as_str(), assist.home.as_deref())? == home {
-            return Ok(Some(assist.clone()));
-        }
-    }
-    Ok(None)
+    // The default login found once for all of them.
+    let context = crate::logins::Context::of(node)?;
+    let default = context.default_of(agent.as_str());
+    let canonical = |home: Option<&Path>| home.filter(|home| !same_dir(home, default)).map(Path::to_path_buf);
+    let home = canonical(home);
+    Ok(view
+        .assisting(account, machine)
+        .find(|assist| assist.agent == *agent && canonical(assist.home.as_deref()) == home)
+        .cloned())
 }
 
 pub(crate) fn may_use_login(

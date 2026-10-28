@@ -67,6 +67,8 @@ pub struct HubFile {
     /// machine's key: a name it is renamed to keeps them.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub due: Vec<DueFor>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub repairs: Vec<RepairFor>,
     /// Package targets last reported by each device; retained while it is away.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub package_targets: BTreeMap<PublicKey, PackageTargets>,
@@ -80,6 +82,13 @@ pub struct DueFor {
     pub due: fastctx_types::update::Due,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub batch: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RepairFor {
+    pub key: PublicKey,
+    #[serde(flatten)]
+    pub due: fastctx_types::update::RepairDue,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -401,6 +410,9 @@ pub struct Store {
     /// The session of each member whose letters move its count now: one
     /// replaced keeps no more (`crate::control::intake`).
     pub(crate) intake: std::collections::HashMap<MachineName, u64>,
+    /// Moves each time the book is kept, so what is worked out from the
+    /// directory knows it may have changed (`crate::afoot`).
+    pub(crate) book_saves: std::sync::atomic::AtomicU64,
 }
 
 /// A sender's count of its own letters, the last of which the hub holds,
@@ -531,6 +543,7 @@ impl Store {
             records: std::sync::Arc::new(crate::records::Records::new()),
             counts: std::collections::HashMap::new(),
             intake: std::collections::HashMap::new(),
+            book_saves: std::sync::atomic::AtomicU64::new(0),
         };
         if changed {
             store.save_letters_now()?;
@@ -812,6 +825,7 @@ impl Store {
     }
 
     pub fn save_book(&self) -> io::Result<()> {
+        self.book_saves.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         publish(&Self::directory_file(&self.dir), &json(&self.book)?, Permissions::Private)
     }
 

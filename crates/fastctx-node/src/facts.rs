@@ -120,3 +120,57 @@ fn write(node: &Node, hub: &HubId, machines: &BTreeMap<MachineName, Kept>) {
         node.log.line(format_args!("keeping what the machines said of themselves in {}: {error}", path.display()));
     }
 }
+
+/// Reads the last declaration without starting a network query.
+pub(crate) fn cached(node: &Node, destination: &fastctx_types::access::Written) -> Option<MachineFacts> {
+    for link in node.locate(destination).ok()? {
+        let view = link.view();
+        let name = view.member(&destination.name).map(|member| &member.name).unwrap_or(&destination.name);
+        let hub = &link.membership().id;
+        let mut kept = node.facts.kept.lock().expect("never poisoned");
+        let machines = kept.entry(hub.clone()).or_insert_with(|| read(node, hub));
+        if let Some(Ok(facts)) = machines.get(name).map(|kept| &kept.facts) {
+            return Some(facts.clone());
+        }
+    }
+    None
+}
+
+/// A capability declaration wins over a version hint. Unknown peers use
+/// their older call format; delivery never waits for a Facts preflight.
+pub(crate) fn control_letters(node: &Node, destination: &fastctx_types::access::Written) -> bool {
+    if let Some(facts) = cached(node, destination) {
+        return facts.control_letters;
+    }
+    reported_at_least(node, destination, "1.0.1-beta.12")
+}
+
+pub(crate) fn run_stops(node: &Node, destination: &fastctx_types::access::Written) -> bool {
+    if let Some(facts) = cached(node, destination) {
+        return facts.run_stops;
+    }
+    reported_at_least(node, destination, "1.0.1-beta.12")
+}
+
+pub(crate) fn completion_receipts(node: &Node, destination: &fastctx_types::access::Written) -> bool {
+    if let Some(facts) = cached(node, destination) {
+        return facts.completion_receipts;
+    }
+    // Beta 11's shipped binary declares this capability; older unknown
+    // peers retain their original whole-answer-only cleanup contract.
+    reported_at_least(node, destination, "1.0.1-beta.11")
+}
+
+fn reported_at_least(node: &Node, destination: &fastctx_types::access::Written, minimum: &str) -> bool {
+    let minimum = fastctx_types::update::release(minimum).expect("release version");
+    node.locate(destination).is_ok_and(|links| {
+        links.into_iter().any(|link| {
+            let view = link.view();
+            let name = view.member(&destination.name).map(|member| &member.name).unwrap_or(&destination.name);
+            link.versions()
+                .and_then(|versions| versions.machines.get(name).cloned())
+                .and_then(|running| fastctx_types::update::release(&running.kernel))
+                .is_some_and(|version| version >= minimum)
+        })
+    })
+}

@@ -15,7 +15,7 @@ pub struct Fixtures {
 
 pub fn example() -> RunFacts {
     RunFacts {
-        notes: vec![OutputNoteMatch {
+        turn: None, record: None, notes: vec![OutputNoteMatch {
             note: OutputNote { command: NoteCommand::Write, write: Some("00112233445566778899aabbccddeeff".into()) },
             from: 0,
             to: 42,
@@ -33,11 +33,12 @@ pub fn example() -> RunFacts {
             cut: true,
         }),
         visited: vec![("gpu".parse().unwrap(), "j-def456".parse().unwrap())],
+        steps: steps(),
         writes: [ChangeKind::Added, ChangeKind::Modified, ChangeKind::Deleted]
             .into_iter()
             .enumerate()
             .map(|(i, kind)| WriteFact {
-                note: Some(if i == 0 {
+                turn: None, note: Some(if i == 0 {
                     WriteNote::Text {
                         command: NoteCommand::Write,
                         text: "=== write /work/file on gpu (created) ===\n".into(),
@@ -183,7 +184,8 @@ pub fn fixtures() -> Fixtures {
             },
         ],
         updates: vec![JobFacts {
-            notes: None,
+            record: None, script: None, started_at: None, finished_at: None,
+            turn: None, notes: None,
             call_id: "host-call-1".into(),
             primary: true,
             output: example().output,
@@ -193,8 +195,103 @@ pub fn fixtures() -> Fixtures {
             sequence: 2,
             state: Some(RunState::Running),
             writes: example().writes,
+            steps: steps().into_iter().take(2).collect(),
         }],
         calls,
         diff,
     }
+}
+
+/// One step of every kind, as a run of `j-abc123` on laptop told them.
+fn steps() -> Vec<RunStep> {
+    let at = |minute: i64| jiff::Timestamp::from_second(1_792_000_000 + minute * 60).unwrap();
+    let step = |n: i64, machine: &str, job: &str, did: StepDid| RunStep {
+        id: format!("step-{n}"),
+        job: job.parse().unwrap(),
+        machine: machine.parse().unwrap(),
+        began: at(n),
+        ended: (n != 1).then(|| at(n + 1)),
+        did,
+    };
+    let place = |machine: &str, path: &str| StepPlace { machine: machine.parse().unwrap(), path: path.into() };
+    vec![
+        step(0, "laptop", "j-abc123", StepDid::On {
+            to: "gpu".parse().unwrap(),
+            command: "cat /data/fit.csv".into(),
+            sent: Some("j-def456".parse().unwrap()),
+            end: Some(StepEnd::Exited { code: 0 }),
+            pipes_to: Some("lab".parse().unwrap()),
+            fed_by: None,
+            tail: None,
+        }),
+        step(1, "laptop", "j-abc123", StepDid::On {
+            to: "lab".parse().unwrap(),
+            command: "wc -l".into(),
+            sent: Some("j-ghi789".parse().unwrap()),
+            end: None,
+            pipes_to: None,
+            fed_by: Some("j-def456".parse().unwrap()),
+            tail: Some("12040".into()),
+        }),
+        step(2, "gpu", "j-def456", StepDid::Copy {
+            from: vec![place("gpu", "/data/fit.csv")],
+            to: place("lab", "/srv/in/"),
+            files: 1,
+            bytes: 4_200_000,
+            unchanged: 0,
+            problems: vec!["/data/locked.csv: permission denied".into()],
+        }),
+        step(3, "laptop", "j-abc123", StepDid::View {
+            paths: vec!["/work/plot.png".into(), "/work/paper.pdf".into()],
+            pictures: vec![
+                StepPicture { path: "/work/plot.png".into(), page: None, width: 1200, height: 800, mime: "image/png".into() },
+                StepPicture { path: "/work/paper.pdf".into(), page: Some(3), width: 1545, height: 2000, mime: "image/png".into() },
+            ],
+        }),
+        step(4, "laptop", "j-abc123", StepDid::Wait {
+            jobs: vec![
+                WaitedJob {
+                    job: "j-k3x9a2".parse().unwrap(),
+                    machine: "laptop".parse().unwrap(),
+                    at: at(3),
+                    end: StepEnd::Exited { code: 1 },
+                    tail: Some("error: 2 tests failed".into()),
+                    command: Some("cargo test --workspace".into()),
+                },
+                WaitedJob {
+                    job: "j-q8w2e1".parse().unwrap(),
+                    machine: "laptop".parse().unwrap(),
+                    at: at(4),
+                    end: StepEnd::Lost { why: "the machine restarted".into() },
+                    tail: None,
+                    command: None,
+                },
+            ],
+        }),
+        step(5, "laptop", "j-abc123", StepDid::Stop { what: "j-ghi789".into(), on: Some("lab".parse().unwrap()), how: StopHow::Stopped }),
+        step(6, "laptop", "j-abc123", StepDid::Stop { what: "s-9f2c".into(), on: None, how: StopHow::AlreadyStopped }),
+        step(7, "laptop", "j-abc123", StepDid::Page { name: "fit".into(), town: "ingest".parse().unwrap(), title: "Fit".into(), version: 4 }),
+        step(8, "laptop", "j-abc123", StepDid::Project { town: "ingest".parse().unwrap() }),
+        step(9, "laptop", "j-abc123", StepDid::Plan { version: 7 }),
+        step(10, "laptop", "j-abc123", StepDid::Goal { mark: GoalMark::Complete }),
+        step(11, "laptop", "j-abc123", StepDid::Sense { sentinel: "s-9f2c".into(), condition: "the training loss stops falling".into() }),
+        step(12, "laptop", "j-abc123", StepDid::On {
+            to: "server".parse().unwrap(),
+            command: "git --version".into(),
+            sent: None,
+            end: Some(StepEnd::NotRun { why: "server is offline".into() }),
+            pipes_to: None,
+            fed_by: None,
+            tail: None,
+        }),
+        step(13, "laptop", "j-abc123", StepDid::On {
+            to: "lab".parse().unwrap(),
+            command: "sleep 600".into(),
+            sent: Some("j-z0z0z0".parse().unwrap()),
+            end: Some(StepEnd::Stopped),
+            pipes_to: None,
+            fed_by: None,
+            tail: None,
+        }),
+    ]
 }

@@ -1,7 +1,7 @@
 {
   "name": "fastctx-gui",
   "private": true,
-  "version": "1.0.1-beta.11",
+  "version": "1.0.1-beta.12",
   "description": "The World's graphical interface: one conversation surface for every agent on every machine",
   "license": "Apache-2.0",
   "type": "module",
@@ -24,7 +24,8 @@
     "markdown-it": "14.1.0",
     "mermaid": "11.12.0",
     "pdfjs-dist": "5.4.624",
-    "qrcode-generator": "2.0.4"
+    "qrcode-generator": "2.0.4",
+    "yjs": "13.6.27"
   },
   "devDependencies": {
     "@tauri-apps/cli": "2.12.1",

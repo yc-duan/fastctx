@@ -36,6 +36,7 @@ export interface UsageWords {
   weekly(amount: string): string;
   daily(amount: string): string;
   fiveHourCap(percent: number): string;
+  turnsCap(turns: number): string;
   noCap: string;
   /** The rings of an assistance's allowances, to the account it assists. */
   aDay: string;
@@ -168,6 +169,7 @@ export const zhUsage: UsageWords = {
   weekly: (amount) => `每周 约 ${amount}`,
   daily: (amount) => `每天 约 ${amount}`,
   fiveHourCap: (percent) => `5 小时额度用到 ${percent}% 停`,
+  turnsCap: (turns) => `同时至多 ${turns} 轮`,
   noCap: "不限额",
   aDay: "每天",
   aWeek: "每周",
@@ -265,6 +267,7 @@ export const enUsage: UsageWords = {
   weekly: (amount) => `≈ ${amount} a week`,
   daily: (amount) => `≈ ${amount} a day`,
   fiveHourCap: (percent) => `Stops at ${percent}% of the 5-hour limit`,
+  turnsCap: (turns) => `At most ${turns} turns at once`,
   noCap: "No allowance",
   aDay: "A day",
   aWeek: "A week",

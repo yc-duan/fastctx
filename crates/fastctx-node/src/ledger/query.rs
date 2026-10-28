@@ -17,21 +17,31 @@ use crate::town::read;
 /// already here; `fastctx nodes` reports the disconnected state. Explicit
 /// refusals and corrupt data still fail.
 pub async fn query(node: &Arc<Node>, town: Option<&TownName>) -> Result<Vec<TownName>, String> {
-    let _syncing = node.syncing.lock().await;
     for link in node.links() {
         let Some(catalog) = link.try_ledger_catalog().await? else { continue };
         for (id, latest) in catalog {
+            if !link.view().member_keeps_project(&link.view().me, &id) {
+                continue;
+            }
             let Some(name) = link.view().project(&id).map(|project| project.name.clone()) else { continue };
             if town.is_some_and(|town| *town != name) {
                 continue;
             }
-            let have = crate::ledger::seq(&node.world, &name).map_err(|error| format!("reading {name}: {error}"))?;
-            if have >= latest {
-                continue;
-            }
-            let name = super::local_name(node, &link, &id)?;
+            let name = {
+                let _syncing = node.syncing.lock().await;
+                let have = crate::ledger::replica_seq(&node.world, &name)
+                    .map_err(|error| format!("reading {name}: {error}"))?;
+                if have >= latest {
+                    continue;
+                }
+                super::local_name(node, &link, &id)?
+            };
             super::take(node, &link, &name, &id, latest).await?;
         }
+        let wanted = town.and_then(|town| {
+            link.view().projects.iter().find(|project| project.name == *town).map(|project| project.town.clone())
+        });
+        super::metadata::refresh(node, &link, wanted.as_ref()).await?;
     }
     Ok(available(node, town).await?.into_keys().collect())
 }
@@ -199,7 +209,7 @@ async fn summaries(node: &Arc<Node>, towns: Vec<TownName>) -> Result<Vec<TownSum
             let record = read::latest(&world, &town)?
                 .ok_or_else(|| std::io::Error::other(format!("{town} has no project record in its ledger")))?;
 
-            let journals = read::journal_names(&world, &town)?.len();
+            let journals = crate::memory::store::catalog(&world, &town)?.journals.len();
             listed.push(TownSummary { town, record, journals });
         }
         std::io::Result::Ok(listed)

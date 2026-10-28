@@ -11,7 +11,8 @@ import type { TallyPart, Words } from "../words";
 import { counts } from "./diff";
 import { isThinking, runsOf, type Activity, type Entry } from "./model";
 import { groupHeading, headline } from "./tool";
-import { tripNow } from "./trip-rows";
+import { shortCommand } from "./deeds/rows";
+import type { Card } from "./cards/cards";
 
 type ToolEntry = Extract<Entry, { kind: "tool" }>;
 export type ProseEntry = Extract<Entry, { kind: "prose" }>;
@@ -45,6 +46,8 @@ export function stretchSays(
   attachment: (path: string) => string | null,
   tokens: (run: readonly ProseEntry[]) => number | null,
   agents: StretchAgents = { of: () => null, named: () => null },
+  /** The rows a call is drawn as, which the heading counts. */
+  cards?: (tool: ToolEntry) => Card[],
 ): StretchSaid {
   const tools = group.members.filter((member): member is ToolEntry => member.kind === "tool");
   const thinking = group.members.filter(isThinking);
@@ -64,10 +67,12 @@ export function stretchSays(
     const line = headline(tool, null, words, attachment);
     const object = group.agents && tool.does.as === "agent" && tool.does.act !== "start" ? (agents.named(runningTool) ?? line.object) : line.object;
     // A run doing things through the World says the one it is on.
-    const now = tool.run?.steps?.length && tool.does.as === "command" ? tripNow(tool.does.command, tool.run.steps, tool.run.writes, words) : null;
-    title = now ? `${now.action} ${now.object}` : [line.action, object].filter(Boolean).join(" ");
+    // A run doing things elsewhere says the command it is on there.
+    const going = (tool.run?.steps ?? []).filter((step) => step.kind === "on" && step.ended === undefined).at(-1);
+    const now = going?.kind === "on" ? shortCommand(going.command.split("\n").find((said) => said.trim()) ?? going.command) : null;
+    title = now ? `${words.act("command", "running")} ${now}` : [line.action, object].filter(Boolean).join(" ");
   } else if (writing) {
-    const last = sections(writing.text).at(-1);
+    const last = thoughtHeads([writing]).at(-1);
     title = last ? words.thinkingAbout(last) : words.thinking;
   } else if (only) {
     const took = thoughtTook(thinking);
@@ -76,7 +81,7 @@ export function stretchSays(
     if (counted !== null) figures = words.thinkingTokens(counted);
   } else {
     // Two kinds of thing at most, the weightiest; failures always.
-    const all = groupHeading(tools, thinking.length, words);
+    const all = groupHeading(tools, thinking.length, words, cards);
     parts = [...all.filter((part) => part.kind !== "failed").slice(0, KINDS), ...all.filter((part) => part.kind === "failed")];
     title = parts.map((part) => part.said).join(words.tallyGap);
     for (const tool of tools) {
@@ -155,6 +160,11 @@ export function thoughtTook(run: readonly ProseEntry[]): number | null {
     took += entry.took;
   }
   return took;
+}
+
+/** The titles a run of thinking said it was in, its words shown or not. */
+export function thoughtHeads(run: readonly ProseEntry[]): string[] {
+  return sections(run.map((entry) => entry.text || entry.heads || "").join("\n"));
 }
 
 /** The titles a summary of thinking puts its sections under, in bold on a

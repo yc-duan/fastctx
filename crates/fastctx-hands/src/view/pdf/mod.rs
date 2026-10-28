@@ -157,6 +157,15 @@ fn read_selected(path: &Path, options: &Options, budget: usize, document: &Docum
             break;
         }
         section.text.push_str(&part.text);
+        if let Some((width, height)) = part.drawn {
+            section.pictures.push(fastctx_types::run_facts::StepPicture {
+                path: path.to_string_lossy().into_owned(),
+                page: Some(number),
+                width,
+                height,
+                mime: "image/png".into(),
+            });
+        }
         section.cost += part.cost;
         left -= part.cost;
         section.shown |= part.shown;
@@ -185,11 +194,13 @@ struct PageOutput {
     shown: bool,
     partial: bool,
     failed: bool,
+    /// The page drawn as a picture, its width and height.
+    drawn: Option<(u32, u32)>,
 }
 impl PageOutput {
     fn note(number: u64, reason: &str) -> Self {
         let text = format!("=== page {number} ({}) ===\n", super::text::visible(reason));
-        Self { cost: text.len(), text, shown: false, partial: false, failed: true }
+        Self { cost: text.len(), text, shown: false, partial: false, failed: true, drawn: None }
     }
 }
 
@@ -204,7 +215,7 @@ fn image(page: ImagePage, number: u64) -> PageOutput {
     // their raw pixels remain below the image transport's 400 MiB allowance.
     let cost = note.len() + bytes(IMAGE_COST) + 1;
     let text = format!("{note}\x1b]1337;File=inline=1;size={}:{}\x07\n", page.png.len(), STANDARD.encode(page.png));
-    PageOutput { text, cost, shown: true, partial: false, failed: false }
+    PageOutput { text, cost, shown: true, partial: false, failed: false, drawn: Some((u32::from(page.width), u32::from(page.height))) }
 }
 
 fn text(page: TextPage, number: u64, budget: usize) -> PageOutput {
@@ -246,7 +257,7 @@ fn text(page: TextPage, number: u64, budget: usize) -> PageOutput {
     if shown == 0 && !lines.is_empty() {
         // Not even the start of the page fits: it is named among the pages
         // not shown.
-        return PageOutput { text: String::new(), cost: 0, shown: false, partial: true, failed: false };
+        return PageOutput { text: String::new(), cost: 0, shown: false, partial: true, failed: false, drawn: None };
     }
     let mut facts = format!("lines 1-{shown} of {}", lines.len());
     if let Some((line, take, length)) = cut {
@@ -257,5 +268,5 @@ fn text(page: TextPage, number: u64, budget: usize) -> PageOutput {
     }
     facts.push_str(&warning);
     let text = format!("=== page {number} ({facts}) ===\n{body}");
-    PageOutput { cost: text.len(), text, shown: shown > 0, partial, failed: false }
+    PageOutput { cost: text.len(), text, shown: shown > 0, partial, failed: false, drawn: None }
 }

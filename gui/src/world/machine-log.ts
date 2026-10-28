@@ -11,10 +11,10 @@ export interface MachineLogActor {
 
 export type MachineLogAction =
   | { change: "collab"; version: number }
-  | { change: "share"; machine: MachineName; to: AccountName; shared: boolean }
+  | { change: "share"; machine: MachineName; to: AccountName; shared: boolean; jobs?: number }
   // Assistance, under the names the hub first wrote it under, which hubs
   // and nodes of every version read.
-  | { change: "lend"; machine: MachineName; to: AccountName; agent: string; home: string | null; lent: boolean; until?: Timestamp; weekly?: number; daily?: number; five_hour?: number }
+  | { change: "lend"; machine: MachineName; to: AccountName; agent: string; home: string | null; lent: boolean; until?: Timestamp; weekly?: number; daily?: number; five_hour?: number; turns?: number }
   | { change: "lend_ended"; machine: MachineName; to: AccountName; agent: string; home: string | null }
   | { change: "plan"; machine: MachineName; agent: string; home: string | null; plan: PlanLabel | null }
   | { change: "stop_acting"; machine: MachineName }
@@ -51,6 +51,7 @@ export type MachineLogAction =
   | { change: "delete_project"; town: string; name: string | null }
   | { change: "joined"; name: MachineName; kind: MemberKind; registered: boolean; via: "password" | "token"; managed?: boolean }
   | { change: "allow_acting"; machine: MachineName; agent: string; home: string | null }
+  | { change: "allow_sentinel_home"; machine: MachineName }
   | { change: "acting_stopped"; machine: MachineName; account: AccountName }
   | { change: "left"; name: MachineName; account: AccountName; kind: MemberKind; unregistered: boolean; reason: string }
   /** A conversation the user deleted everywhere; then each member's part

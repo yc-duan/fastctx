@@ -30,7 +30,13 @@ async fn cancelling_a_call_during_its_probe_keeps_the_original_arrival() {
         connection
             .send(
                 &serde_json::to_vec(&Welcome::Accepted {
+                    goal_runtime: false,
+                    watch_many: false,
+                    sentinels: false,
+                    goal_commands: false,
                     profiles: false,
+                    account_records: false,
+                    conversation_plans: false, scratch_locations: false,
                     machine: "fixture".parse().unwrap(),
                     version: env!("CARGO_PKG_VERSION").into(),
                     node_lifetime: None,
@@ -50,10 +56,12 @@ async fn cancelling_a_call_during_its_probe_keeps_the_original_arrival() {
         let machines = NodeFrame::Reply {
             id,
             reply: Ok(Reply::Machines {
+                scratch: Default::default(),
                 groups: vec![],
                 here: Some("fixture".to_string()),
                 others: vec![],
                 collab: None,
+                speaks: false,
             }),
         };
         let sent = connection.send(&serde_json::to_vec(&machines).unwrap()).await.map_err(|error| error.to_string());
@@ -68,10 +76,12 @@ async fn cancelling_a_call_during_its_probe_keeps_the_original_arrival() {
             &mut connection,
             next.0,
             Reply::Machines {
+                scratch: Default::default(),
                 here: Some("fixture".to_string()),
                 others: vec![],
                 groups: vec![],
                 collab: None,
+                speaks: false,
             },
         )
         .await;

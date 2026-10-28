@@ -281,7 +281,7 @@ pub fn run(directory: &Path, elicitation: bool) -> io::Result<()> {
         let mut random = [0u8; 16];
         getrandom::fill(&mut random).map_err(io::Error::other)?;
         let key = format!("elicitation-{}", random.iter().map(|byte| format!("{byte:02x}")).collect::<String>());
-        (directory, Question { key, host, turn, request: "Elicitation".into(), params, native_wait: false })
+        (directory, Question { key, host, turn, request: "Elicitation".into(), params })
     } else {
         (directory.to_path_buf(), serde_json::from_str::<Question>(&input).map_err(io::Error::other)?)
     };

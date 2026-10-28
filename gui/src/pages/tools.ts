@@ -8,10 +8,10 @@
 import { machinesOf } from "../app/reach";
 import type { Tools } from "../page/tools";
 import { residentsOf, type Store } from "../app/store";
-import { journal, look, project, readText } from "../world/bridge";
+import { look, project, readText } from "../world/bridge";
 import type { Address } from "../world/events";
 import type { PageInvocation, PageResult, RunReply } from "../world/pages";
-import type { JobRecord, ResidentNow, Writer } from "../world/world";
+import type { JobRecord, ResidentNow } from "../world/world";
 import { agentName, titleOf } from "../world/names";
 import type { HeldReads } from "../world/reads";
 
@@ -33,19 +33,6 @@ function state(resident: ResidentNow): Answer<"world.now">["agents"][number]["st
   if (resident.now?.activity === "busy") return "working";
   if (resident.now?.activity === "asleep") return "asleep";
   return "idle";
-}
-
-function writer(by: Writer): string {
-  switch (by.kind) {
-    case "user":
-      return "user";
-    case "resident":
-      return `${by.address.resident} ${by.address.machine}`;
-    case "session":
-      return agentName(by.agent);
-    case "page":
-      return `page ${by.page.page}`;
-  }
 }
 
 /** How a job stands, from its record: the shell exiting is not the end
@@ -129,21 +116,7 @@ export function toolsFor(options: ToolsOptions): (tool: string, args: Record<str
         name: map.record.name,
         what: map.record.what,
         machines: map.record.machines,
-        journals: map.journals.map((summary) => ({
-          journal: summary.journal,
-          description: summary.description?.text ?? null,
-          entries: summary.entries,
-          latest: summary.latest?.at ?? null,
-        })),
         pages: map.pages.filter((summary) => !summary.current.withdrawn).map((summary) => ({ page: summary.page, title: summary.current.title, description: summary.current.description || null })),
-      };
-    },
-
-    async "journal.read"(args) {
-      const view = await journal(town, text(args.journal, "journal"), typeof args.before === "string" ? args.before : null);
-      return {
-        entries: [...view.entries].reverse().map((entry) => ({ id: entry.stamp.id, at: entry.stamp.at, by: writer(entry.stamp.by), text: entry.text })),
-        more: view.first > 1,
       };
     },
 
@@ -194,11 +167,6 @@ export function toolsFor(options: ToolsOptions): (tool: string, args: Record<str
       return { delivered: true };
     },
 
-    async "journal.add"(args) {
-      const result = await options.act({ kind: "journal", journal: text(args.journal, "journal"), text: text(args.text, "text") });
-      if (result.kind !== "entry_added") throw new Error("Fastctx answered something other than an entry");
-      return { id: result.id };
-    },
   };
 
   return (tool, args) => {
