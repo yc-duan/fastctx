@@ -27,10 +27,14 @@ pub enum Call {
         account: Option<crate::AccountName>,
         operation: crate::plan::Operation,
     },
+    /// `machine` is the conversation's: a plan of another conversation of
+    /// the same short name is not its own. Older callers omit it.
     PlanRead {
         hub: Option<crate::HubName>,
         account: Option<crate::AccountName>,
         owner: ResidentId,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        machine: Option<MachineName>,
     },
     PlanWrite {
         hub: Option<crate::HubName>,
@@ -38,6 +42,8 @@ pub enum Call {
         owner: ResidentId,
         expected: Option<u64>,
         markdown: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        machine: Option<MachineName>,
     },
     AccountRecords {
         hub: Option<crate::HubName>,
@@ -297,6 +303,12 @@ pub enum Call {
         attachment: crate::attachments::AttachmentSource,
         #[serde(default, skip_serializing_if = "crate::file_read::FileRange::is_all")]
         range: crate::file_read::FileRange,
+    },
+    /// The receipt of the file `id` the user attached in the conversation a
+    /// command runs for, wherever the conversation lives; answered as
+    /// `Uploaded`. Older nodes do not know it.
+    OwnAttachment {
+        id: crate::NoticeId,
     },
     Lines {
         machine: Option<Written>,

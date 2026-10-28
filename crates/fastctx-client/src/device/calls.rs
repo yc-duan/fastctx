@@ -120,18 +120,26 @@ impl Device {
                 let view = session.link.profile_subagents(&account, operation).await.map_err(failed)?;
                 return Ok((Reply::ProfileSubagents(Box::new(view)), here()));
             }
-            Call::PlanRead { hub, account, owner } => {
+            Call::PlanRead { hub, account, owner, machine } => {
                 let session = self.on_hub(hub.as_ref())?;
                 let account = profile_account(&session, account)?;
-                let page = session.link.plan_read(&account, owner).await.map_err(failed)?;
+                let page = match machine {
+                    Some(machine) => session
+                        .link
+                        .plan_read_of(&account, &fastctx_types::Address { machine, resident: owner })
+                        .await
+                        .map_err(failed)?,
+                    None => session.link.plan_read(&account, owner).await.map_err(failed)?,
+                };
                 return Ok((Reply::Plan { result: fastctx_types::plan::Result::Page { page } }, here()));
             }
-            Call::PlanWrite { hub, account, owner, expected, markdown } => {
+            Call::PlanWrite { hub, account, owner, expected, markdown, machine } => {
                 let session = self.on_hub(hub.as_ref())?;
                 let account = profile_account(&session, account)?;
+                let whose = machine.map(|machine| fastctx_types::Address { machine, resident: owner.clone() });
                 let result = session
                     .link
-                    .plan_write(&account, owner, expected, markdown, fastctx_types::plan::Author::User)
+                    .plan_write(&account, owner, expected, markdown, fastctx_types::plan::Author::User, whose.as_ref())
                     .await
                     .map_err(failed)?;
                 return Ok((Reply::Plan { result }, here()));

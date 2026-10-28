@@ -499,7 +499,9 @@ async fn converse(node: &Arc<Node>, connection: Connection) -> std::io::Result<(
             return crate::file_read::serve_local(node, acting, machine, request, id, &mut reader, &mut writer).await;
         }
         if let Call::ReadAttachment { attachment, range } = call {
-            if let Err(failure) = users_voice(node, &hello.peer) {
+            if let Err(failure) = users_voice(node, &hello.peer)
+                && !crate::attachments::own::of_its_own(node, &hello.peer, &attachment)
+            {
                 writer.send(&json(&NodeFrame::Reply { id, reply: Err(failure) })).await?;
                 return writer.drain().await;
             }
@@ -1359,6 +1361,7 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
         Call::On { .. } => Err(Failure::new("an on is answered as it goes, not at once")),
         Call::ReadFile { .. } => Err(Failure::new("a file read is answered as a byte stream")),
         Call::ReadAttachment { .. } => Err(Failure::new("an attachment read is answered as a byte stream")),
+        Call::OwnAttachment { id } => crate::attachments::own::asked(node, peer, id).await.map(Reply::Uploaded),
         Call::ReadLines { .. } | Call::ReadLineNotes { .. } => {
             Err(Failure::new("logical rows are answered as a text stream"))
         }
@@ -1594,20 +1597,24 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
                 .await
                 .map(|result| Reply::Plan { result })
         }
-        Call::PlanRead { hub, account, owner } => {
+        Call::PlanRead { hub, account, owner, machine } => {
             users_voice(node, peer)?;
             let (link, account) =
                 crate::profile::scope(node, &caller::of(node, peer)?, hub.as_ref(), account.as_ref())?;
-            link.plan_read(&account, owner)
-                .await
-                .map(|page| Reply::Plan { result: fastctx_types::plan::Result::Page { page } })
-                .map_err(Failure::new)
+            let page = match machine {
+                Some(machine) => {
+                    link.plan_read_of(&account, &fastctx_types::Address { machine, resident: owner }).await
+                }
+                None => link.plan_read(&account, owner).await,
+            };
+            page.map(|page| Reply::Plan { result: fastctx_types::plan::Result::Page { page } }).map_err(Failure::new)
         }
-        Call::PlanWrite { hub, account, owner, expected, markdown } => {
+        Call::PlanWrite { hub, account, owner, expected, markdown, machine } => {
             users_voice(node, peer)?;
             let (link, account) =
                 crate::profile::scope(node, &caller::of(node, peer)?, hub.as_ref(), account.as_ref())?;
-            link.plan_write(&account, owner, expected, markdown, fastctx_types::plan::Author::User)
+            let whose = machine.map(|machine| fastctx_types::Address { machine, resident: owner.clone() });
+            link.plan_write(&account, owner, expected, markdown, fastctx_types::plan::Author::User, whose.as_ref())
                 .await
                 .map(|result| Reply::Plan { result })
                 .map_err(Failure::new)

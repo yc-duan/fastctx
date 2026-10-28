@@ -20,15 +20,22 @@ fn named(hub: Option<String>, account: Option<String>, owner: String) -> Result<
     ))
 }
 
+/// The conversation's machine, which tells its plan from another's of the
+/// same short name.
+fn machine_named(machine: Option<String>) -> Result<Option<fastctx_types::MachineName>, String> {
+    machine.map(fastctx_types::MachineName::try_from).transpose().map_err(|e| e.to_string())
+}
+
 #[fastctx_gui_command::command]
 pub(crate) async fn plan_read(
     shell: tauri::State<'_, Shell>,
     hub: Option<String>,
     account: Option<String>,
     owner: String,
+    machine: Option<String>,
 ) -> Result<Page, String> {
     let (hub, account, owner) = named(hub, account, owner)?;
-    shell.world().plan_read(hub, account, owner).await.map_err(|e| e.to_string())
+    shell.world().plan_read(hub, account, owner, machine_named(machine)?).await.map_err(|e| e.to_string())
 }
 
 #[fastctx_gui_command::command]
@@ -39,9 +46,14 @@ pub(crate) async fn plan_write(
     owner: String,
     expected: Option<u64>,
     markdown: String,
+    machine: Option<String>,
 ) -> Result<plan::Result, String> {
     let (hub, account, owner) = named(hub, account, owner)?;
-    shell.world().plan_write(hub, account, owner, expected, markdown).await.map_err(|e| e.to_string())
+    shell
+        .world()
+        .plan_write(hub, account, owner, expected, markdown, machine_named(machine)?)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 #[derive(Clone, Serialize)]

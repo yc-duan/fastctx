@@ -237,6 +237,13 @@ pub enum RemoteCall {
         #[serde(default, skip_serializing_if = "crate::file_read::FileRange::is_all")]
         range: crate::file_read::FileRange,
     },
+    /// The receipt of the file `id` the user attached in the conversation
+    /// `resident`, which lives here, for an account it works for; answered
+    /// as `Uploaded`. Its bytes are then read as any attachment's.
+    OwnAttachment {
+        resident: crate::ResidentId,
+        id: crate::NoticeId,
+    },
     Lines {
         request: crate::lines::Request,
     },
@@ -630,6 +637,7 @@ impl RemoteCall {
             | RemoteCall::Composer { .. }
             | RemoteCall::AttachmentThumbnail { .. }
             | RemoteCall::ReadAttachment { .. }
+            | RemoteCall::OwnAttachment { .. }
             | RemoteCall::Ask { .. }
             | RemoteCall::Talk { .. }
             | RemoteCall::Watch { .. }

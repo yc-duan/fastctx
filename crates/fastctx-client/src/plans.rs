@@ -2,7 +2,7 @@
 
 use crate::{Error, World, account_records::RecordsWatch};
 use fastctx_types::{
-    AccountName, Call, HubName, Reply, ResidentId,
+    AccountName, Call, HubName, MachineName, Reply, ResidentId,
     account_records::{Metadata, Watched},
     plan::{self, Page},
 };
@@ -13,8 +13,9 @@ impl World {
         hub: Option<HubName>,
         account: Option<AccountName>,
         owner: ResidentId,
+        machine: Option<MachineName>,
     ) -> Result<Page, Error> {
-        match self.ask(Call::PlanRead { hub, account, owner }).await? {
+        match self.ask(Call::PlanRead { hub, account, owner, machine }).await? {
             Reply::Plan { result: plan::Result::Page { page } } => Ok(page),
             other => Err(Error::Unexpected(format!("{other:?}"))),
         }
@@ -26,8 +27,9 @@ impl World {
         owner: ResidentId,
         expected: Option<u64>,
         markdown: String,
+        machine: Option<MachineName>,
     ) -> Result<plan::Result, Error> {
-        match self.ask(Call::PlanWrite { hub, account, owner, expected, markdown }).await? {
+        match self.ask(Call::PlanWrite { hub, account, owner, expected, markdown, machine }).await? {
             Reply::Plan { result } => Ok(result),
             other => Err(Error::Unexpected(format!("{other:?}"))),
         }

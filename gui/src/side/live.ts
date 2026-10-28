@@ -3,7 +3,7 @@
 // it; its plan and goal come from the conversation's own records.
 
 import { effect } from "../app/signals";
-import { jobsOf, residentsOf } from "../app/store";
+import { bareName, jobsOf, residentsOf } from "../app/store";
 import { titleOf } from "../world/names";
 import type { LiveFact } from "../plan/live";
 import type { Store } from "../app/store";
@@ -174,7 +174,7 @@ export function liveSide(options: LiveSide): SideSeams {
     facts: (id) => planFact(options.store.world.peek(), id, options.planWords, options.took, Date.now(), sentinels),
     open: (id) => options.openId(id),
     save: async (source, expected) => {
-      const result = await planWrite(owner, expected, source, at());
+      const result = await planWrite(owner, expected, source, at(), bareName(options.address.machine));
       return result.result === "page" ? { ok: true } : { ok: false, current: result.current?.version ?? null };
     },
   };
@@ -194,7 +194,7 @@ export function liveSide(options: LiveSide): SideSeams {
         let watching: number | null = null;
         let shown: PlanShown | null = null;
         const refresh = () => {
-          planRead(owner, at())
+          planRead(owner, at(), bareName(options.address.machine))
             .then((page) => {
               if (alive) show((shown = planShownOf(page, options.words, Date.now())));
             })

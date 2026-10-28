@@ -108,10 +108,11 @@ pub(crate) async fn here(
     node.residents.active(id)?;
     crate::context::plugin_heard(node, id).map_err(|error| Failure::new(error.to_string()))?;
     let (about, _) = node.residents.about(id).ok_or_else(|| Failure::refused(words::RESIDENT))?;
-    let (owner, colleague) = match &about.origin {
-        Origin::Colleague { asked_by, .. } => (asked_by.resident.clone(), true),
-        Origin::User => (id.clone(), false),
+    let (whose, colleague) = match &about.origin {
+        Origin::Colleague { asked_by, .. } => (asked_by.clone(), true),
+        Origin::User => (Address { machine: about.machine.clone(), resident: id.clone() }, false),
     };
+    let owner = whose.resident.clone();
     if colleague && matches!(operation, Operation::Write { .. }) {
         return Err(Failure::refused(words::READ_ONLY));
     }
@@ -134,6 +135,9 @@ pub(crate) async fn here(
     let result = match operation {
         Operation::Read => {
             let page = link.plan_read(&account, owner).await.map_err(Failure::new)?;
+            if let Some(other) = link.plan_of_another(&page, &whose) {
+                return Err(Failure::not_run(words::elsewhere(other)));
+            }
             if page.deleted() {
                 return Err(Failure::new(words::DELETED));
             }
@@ -145,15 +149,9 @@ pub(crate) async fn here(
                 Some(_) => return Err(Failure::not_run(words::READ_FIRST)),
                 None => None,
             };
-            link.plan_write(
-                &account,
-                owner,
-                expected,
-                markdown,
-                Author::Resident { address: Address { machine: about.machine, resident: id.clone() } },
-            )
-            .await
-            .map_err(Failure::new)?
+            link.plan_write(&account, owner, expected, markdown, Author::Resident { address: whose.clone() }, None)
+                .await
+                .map_err(Failure::new)?
         }
     };
     if let plan::Result::Page { page } = &result {
@@ -208,13 +206,18 @@ pub(crate) async fn context(
     if !view.account_records || !view.conversation_plans {
         return unavailable();
     }
-    let owner = match origin {
-        Origin::User => id.clone(),
-        Origin::Colleague { asked_by, .. } => asked_by.resident.clone(),
+    let whose = match origin {
+        Origin::User => Address { machine: node.machine(), resident: id.clone() },
+        Origin::Colleague { asked_by, .. } => asked_by.clone(),
     };
     // A hub that does not answer now changed nothing: the conversation keeps
     // the plan it was told, and a later refresh reads it again.
-    let Ok(page) = link.plan_read(&scope.account, owner).await else { return Ok(()) };
+    let Ok(mut page) = link.plan_read(&scope.account, whose.resident.clone()).await else { return Ok(()) };
+    // Another's is not this one's to see, nor its version this one's to
+    // write over.
+    if link.plan_of_another(&page, &whose).is_some() {
+        page = Page { owner: page.owner, metadata: None, body: None };
+    }
     let version = serde_json::to_string(&Seen { account: scope, owner: page.owner.clone(), version: page.version() })
         .map_err(|error| Failure::new(error.to_string()))?;
     crate::context::plan(node, id, &page, &version).map_err(|error| Failure::new(error.to_string()))
@@ -253,6 +256,14 @@ pub(crate) async fn delete(node: &Arc<Node>, about: &About) -> Result<(), Failur
         link.refresh().await.map_err(Failure::new)?;
         // Earlier hubs never held plans; their conversations retain their former deletion behavior.
         if !link.view().conversation_plans {
+            continue;
+        }
+        // Another conversation's of the same short name stays.
+        let page = link.plan_read(&scope.account, about.id.clone()).await.map_err(Failure::new)?;
+        if link
+            .plan_of_another(&page, &Address { machine: about.machine.clone(), resident: about.id.clone() })
+            .is_some()
+        {
             continue;
         }
         link.plan_delete(&scope.account, &about.id).await.map_err(Failure::new)?;

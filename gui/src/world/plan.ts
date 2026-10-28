@@ -44,15 +44,16 @@ export interface PlanAccount {
   account: string;
 }
 
-/** The plan as it stands, for the conversation whose resident is `owner`. */
-export function planRead(owner: ResidentId, at: PlanAccount | null = null): Promise<PlanPage> {
-  return invoke<PlanPage>("plan_read", { owner, hub: at?.hub ?? null, account: at?.account ?? null });
+/** The plan as it stands, for the conversation whose resident is `owner` on
+ *  `machine`: another conversation's of the same short name reads as none. */
+export function planRead(owner: ResidentId, at: PlanAccount | null = null, machine: string | null = null): Promise<PlanPage> {
+  return invoke<PlanPage>("plan_read", { owner, machine, hub: at?.hub ?? null, account: at?.account ?? null });
 }
 
 /** Puts the edited plan up as the next version. `expected` is the version the
  *  edit began at; a newer version in the meantime comes back as a conflict. */
-export function planWrite(owner: ResidentId, expected: number | null, markdown: string, at: PlanAccount | null = null): Promise<PlanResult> {
-  return invoke<PlanResult>("plan_write", { owner, expected, markdown, hub: at?.hub ?? null, account: at?.account ?? null });
+export function planWrite(owner: ResidentId, expected: number | null, markdown: string, at: PlanAccount | null = null, machine: string | null = null): Promise<PlanResult> {
+  return invoke<PlanResult>("plan_write", { owner, expected, markdown, machine, hub: at?.hub ?? null, account: at?.account ?? null });
 }
 
 /** Follows the plan: its metadata now, then after each change. The id resolves

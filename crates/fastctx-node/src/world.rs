@@ -957,6 +957,9 @@ impl fastctx_net::link::Node for Handler {
                 RemoteCall::AttachmentThumbnail { attachment, max } => {
                     crate::thumbnail::attachment(&node, attachment, max).await.map(RemoteReply::Thumbnail)
                 }
+                RemoteCall::OwnAttachment { resident, id } => {
+                    crate::attachments::own::receipt(&node, &resident, &id).map(RemoteReply::Uploaded)
+                }
                 RemoteCall::Lines { request } => {
                     if let fastctx_types::lines::Request::Open { path, decoding } = request {
                         let stream =

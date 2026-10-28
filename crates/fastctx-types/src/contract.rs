@@ -132,7 +132,9 @@ impl RemoteCall {
             Self::Goal { request: crate::goals::Request::Read | crate::goals::Request::History { .. }, .. } => {
                 Contract::QUERY
             }
-            Self::GoalCommand { request: crate::goals::AgentRequest::Read, .. } => Contract::QUERY,
+            Self::GoalCommand { request: crate::goals::AgentRequest::Read, .. } | Self::OwnAttachment { .. } => {
+                Contract::QUERY
+            }
             Self::Goal { .. } | Self::GoalCommand { .. } => Contract::CHANGE,
             Self::SentinelControl {
                 request: crate::sentinel_control::Request::List { .. } | crate::sentinel_control::Request::Help,
@@ -346,6 +348,7 @@ impl Call {
             | Self::Thumbnail { .. }
             | Self::AttachmentThumbnail { .. }
             | Self::ReadAttachment { .. }
+            | Self::OwnAttachment { .. }
             | Self::Lines { .. }
             | Self::ReadLines { .. }
             | Self::ReadLineNotes { .. }

@@ -130,7 +130,7 @@ import { specimenCache, specimenData } from "./specimen/data";
 import { ReaderPage } from "./app/reader";
 import { Shell, pageHead, type Page } from "./app/shell";
 import { effect, signal } from "./app/signals";
-import { addressOf, createStore, isUnreached, jobsOf, residentAt, residentsOf, sameAddress, unreachedOf } from "./app/store";
+import { addressOf, bareName, createStore, isUnreached, jobsOf, residentAt, residentsOf, sameAddress, unreachedOf } from "./app/store";
 import { TalkActs } from "./app/talk-acts";
 import { TalkMenu } from "./app/talk-menu";
 import { enTalkMenu, zhTalkMenu } from "./app/talk-menu-words";
@@ -2246,7 +2246,7 @@ function projectPage(town: string): Page {
       stale.map(async (r) => {
         const key = talkKey({ resident: r.about.id, machine: r.about.machine });
         planMoments.set(key, `${r.now?.activity}@${r.now?.since}`);
-        const read = await planRead(r.about.id).catch(() => null);
+        const read = await planRead(r.about.id, null, bareName(r.about.machine)).catch(() => null);
         plans.set(key, read?.body?.markdown ?? null);
       }),
     );

@@ -18,6 +18,23 @@ pub enum Author {
 pub struct Body {
     pub markdown: String,
     pub author: Author,
+    /// The conversation whose plan it is. Plans are kept under the short
+    /// name of a conversation, which a conversation on another machine may
+    /// share: this tells them apart. Earlier releases wrote none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub owner: Option<Box<Address>>,
+}
+
+impl Body {
+    /// The conversation it is known to be of: the one written with it, else
+    /// the conversation that last wrote it; none for one only the user wrote
+    /// before owners were written.
+    pub fn of(&self) -> Option<&Address> {
+        self.owner.as_deref().or(match &self.author {
+            Author::Resident { address } => Some(address),
+            Author::User => None,
+        })
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -80,6 +97,13 @@ pub mod words {
     pub const CONTROL: &str = "a plan request must be a complete control request through the hub";
     pub fn too_large(bytes: usize) -> String {
         format!("the plan is {bytes} bytes; the limit is {}", super::MAX_MARKDOWN_BYTES)
+    }
+    /// The plan kept under this conversation's short name is another's.
+    pub fn elsewhere(owner: &crate::Address) -> String {
+        format!(
+            "the conversation {} on {} keeps its plan under this conversation's short name, so this conversation cannot keep one",
+            owner.resident, owner.machine
+        )
     }
     pub fn version(version: Option<u64>) -> String {
         version.map_or_else(|| "No plan yet.".into(), |version| format!("Plan version {version}."))
