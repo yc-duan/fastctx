@@ -576,8 +576,8 @@ async fn converse(node: &Arc<Node>, connection: Connection) -> std::io::Result<(
         }
         let answer = async {
             match call {
-                Call::Collect { resident, answering } => {
-                    collect(node, resident, answering, &mut arrived.collected, &mut arrived.notes).await
+                Call::Collect { resident, answering, subagent } => {
+                    collect(node, resident, answering, subagent, &mut arrived.collected, &mut arrived.notes).await
                 }
                 Call::Taken { resident, ids, shown, completed } => {
                     let pending = arrived.completed.take().filter(|(owner, _)| *owner == resident).map(|(_, job)| job);
@@ -703,14 +703,20 @@ impl Drop for Arrived<'_> {
 }
 
 /// What waits for a resident with no other way in, for the answer of one
-/// of its World tools, and what it is to be told of where it lives.
+/// of its World tools, and what it is to be told of where it lives. An
+/// answer to one of its subagents takes none of it: what is handed over is
+/// the conversation's own agent's to hear (`collect_notes`).
 async fn collect(
     node: &Arc<Node>,
     resident: ResidentId,
     answering: Option<fastctx_types::JobId>,
+    subagent: bool,
     collected: &mut Vec<(ResidentId, NoticeId, Option<String>)>,
     collected_notes: &mut Vec<(ResidentId, crate::residents::Heard)>,
 ) -> Result<Reply, Failure> {
+    if subagent {
+        return collect_notes(node, resident, answering, Vec::new(), None).await;
+    }
     let gate = node.residents.management(&resident)?;
     let _collecting = gate.write().await;
     // What the host did to its context, and the blocks kept for it, are read
@@ -724,12 +730,12 @@ async fn collect(
         node.log.line(format_args!("{resident}: refreshing its context: {}", failure.message));
     }
     if native_delivery(node, &resident) {
-        return collect_notes(node, resident, answering, Vec::new(), collected_notes).await;
+        return collect_notes(node, resident, answering, Vec::new(), Some(collected_notes)).await;
     }
     let speaking = node.residents.speaking(&resident).ok_or_else(|| Failure::new("unknown resident"))?;
     let _speaking = speaking.lock().await;
     if native_delivery(node, &resident) {
-        return collect_notes(node, resident, answering, Vec::new(), collected_notes).await;
+        return collect_notes(node, resident, answering, Vec::new(), Some(collected_notes)).await;
     }
     present(node, &resident)?;
     let directory = node.world.conversation(&resident);
@@ -768,7 +774,7 @@ async fn collect(
             }
         }
     }
-    collect_notes(node, resident, answering, notices, collected_notes).await
+    collect_notes(node, resident, answering, notices, Some(collected_notes)).await
 }
 
 fn native_delivery(node: &Node, resident: &ResidentId) -> bool {
@@ -786,21 +792,27 @@ fn native_delivery(node: &Node, resident: &ResidentId) -> bool {
     })
 }
 
+/// The notes that go with an answer. Who it is, its named context and
+/// where its scratch is are told to the conversation's own agent, and held
+/// as heard once the answer went out (`collected_notes`); an answer to a
+/// subagent, given none, is told only what still runs.
 async fn collect_notes(
     node: &Arc<Node>,
     resident: ResidentId,
     answering: Option<fastctx_types::JobId>,
     notices: Vec<fastctx_types::residents::Delivery>,
-    collected_notes: &mut Vec<(ResidentId, crate::residents::Heard)>,
+    collected_notes: Option<&mut Vec<(ResidentId, crate::residents::Heard)>>,
 ) -> Result<Reply, Failure> {
-    let (reading, id) = (node.clone(), resident.clone());
+    let (reading, id, own) = (node.clone(), resident.clone(), collected_notes.is_some());
     let (mut notes, mut leading_notes, heard) = blocking("reading the town", move || {
         let node = &reading;
-        let (mut notes, mut heard) = crate::town::notes::notes(node, &id)?;
-        let (paths, scratch) = crate::scratch::collect(node, &id, notes.len())?;
-        notes.extend(paths);
-        if let Some(heard) = &mut heard {
-            heard.scratch = Some(scratch);
+        let (mut notes, mut heard) = if own { crate::town::notes::notes(node, &id)? } else { (Vec::new(), None) };
+        if own {
+            let (paths, scratch) = crate::scratch::collect(node, &id, notes.len())?;
+            notes.extend(paths);
+            if let Some(heard) = &mut heard {
+                heard.scratch = Some(scratch);
+            }
         }
         let leading_notes = notes.len();
         if let Some(warning) = node.lifetime.warning() {
@@ -825,7 +837,9 @@ async fn collect_notes(
             leading_notes -= omitted.len();
             notes.drain(omitted);
         }
-        collected_notes.push((resident, heard));
+        if let Some(collected_notes) = collected_notes {
+            collected_notes.push((resident, heard));
+        }
     }
     Ok(Reply::Notices { notices, notes, leading_notes })
 }

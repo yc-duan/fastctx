@@ -553,7 +553,8 @@ impl Session {
         answer: &mut Answer,
         meta: Option<&Value>,
     ) {
-        let collect = Call::Collect { resident: whereabouts.resident.clone(), answering };
+        let collect =
+            Call::Collect { resident: whereabouts.resident.clone(), answering, subagent: whereabouts.subagent };
         let mut client = match self.client(meta).await {
             Ok(client) => client,
             Err(error) => {

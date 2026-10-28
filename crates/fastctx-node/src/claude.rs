@@ -958,10 +958,11 @@ pub async fn identify(node: &Arc<Node>, tool_use_id: &str) -> Result<fastctx_typ
         .keys()
         .map(|session| exchange::sessions(&world).join(session))
         .collect();
-    let registration = tokio::task::spawn_blocking(move || claude::calls::take_from(&world, &id, sessions))
+    let proof = tokio::task::spawn_blocking(move || claude::calls::take_from(&world, &id, sessions))
         .await
         .map_err(|error| Failure::new(format!("reading Claude call evidence: {error}")))?
         .map_err(|error| Failure::new(format!("pairing Claude call {tool_use_id}: {error}")))?;
+    let (registration, subagent) = (proof.registration, proof.agent.is_some());
     pairing::validate_session(&registration.session)
         .map_err(|error| Failure::new(format!("pairing Claude call {tool_use_id}: {error}")))?;
     let session = registration.session.clone();
@@ -975,7 +976,7 @@ pub async fn identify(node: &Arc<Node>, tool_use_id: &str) -> Result<fastctx_typ
     node.residents.active(&resident)?;
     let town =
         node.residents.town_of(&resident).ok_or_else(|| Failure::new("the paired Claude resident is missing"))?;
-    Ok(fastctx_types::residents::Whereabouts { resident, town })
+    Ok(fastctx_types::residents::Whereabouts { resident, town, subagent })
 }
 
 /// Pairs a registered session with its resident, if it is known yet.

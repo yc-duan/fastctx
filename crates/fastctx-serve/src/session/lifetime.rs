@@ -47,7 +47,7 @@ async fn cancelling_a_call_during_its_probe_keeps_the_original_arrival() {
             .unwrap();
         let (id, call) = request(&mut connection).await;
         assert!(matches!(call, Call::Arrive { .. }));
-        reply(&mut connection, id, Reply::Arrived(Whereabouts { resident: "codex-cafe".parse().unwrap(), town: None }))
+        reply(&mut connection, id, Reply::Arrived(Whereabouts { resident: "codex-cafe".parse().unwrap(), town: None, subagent: false }))
             .await;
         let (id, call) = request(&mut connection).await;
         assert!(matches!(call, Call::Machines { .. }));

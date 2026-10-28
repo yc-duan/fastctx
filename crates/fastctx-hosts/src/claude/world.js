@@ -1191,7 +1191,7 @@ export function register(on) {
     const context = await route($, registry, 'tool.call', e)
     if (registry.worldTools.has(e.tool)) {
       try {
-        await proveCall($, context, e.tool_use_id)
+        await proveCall($, context, e.tool_use_id, e.agentId)
         registry.provedCalls.add(e.tool_use_id)
       } catch (error) {
         return unidentifiedWorldCall(error)
@@ -1251,6 +1251,11 @@ export function register(on) {
     const fresh = context.contextFresh === true
     context.contextFresh = false
     context.lastRead = undefined
+    // A first message begun anew holds none of the blocks until they are
+    // read: the node is told so first, so one read that fails leaves the
+    // node to tell them all at the next tool boundary (`contextCompacted`).
+    if (fresh) await $.fs.write(context.dir + '/context-heard.json', JSON.stringify({ epoch: 0, revisions: {}, versions: {},
+      compacted: 'claude-opening-' + Date.now() + '-' + Math.random().toString(36).slice(2) }))
     const added = await contextBlocks($, context, fresh)
     if (fresh) await agentsHeard($, context)
     if (context.subagentInstructions) {
@@ -1389,12 +1394,15 @@ export function register(on) {
 }
 
 // The file is whole before the call leaves the host, so the node reads it
-// whole. Its name spells each UTF-16 unit of the id in four hex digits.
-async function proveCall($, context, id) {
+// whole. Its name spells each UTF-16 unit of the id in four hex digits. A
+// call one of the session's subagents made names that agent.
+async function proveCall($, context, id, agent) {
   if (typeof id !== 'string' || id.length === 0) throw new Error('the call has no tool_use_id to identify it by')
   let name = ''
   for (let i = 0; i < id.length; i++) name += id.charCodeAt(i).toString(16).padStart(4, '0')
-  await $.fs.write(context.dir + '/calls/' + name + '.json', JSON.stringify({ tool_use_id: id, registration: context.registration }))
+  const proof = { tool_use_id: id, registration: context.registration }
+  if (agent !== undefined) proof.agent = String(agent)
+  await $.fs.write(context.dir + '/calls/' + name + '.json', JSON.stringify(proof))
 }
 
 async function worldTools($, registry) {

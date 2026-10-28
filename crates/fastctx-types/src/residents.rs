@@ -656,6 +656,10 @@ pub struct Owing {
 pub struct Whereabouts {
     pub resident: ResidentId,
     pub town: Option<TownName>,
+    /// The call came from one of the conversation's own subagents, which
+    /// is handed none of what waits for the conversation itself.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub subagent: bool,
 }
 
 impl About {

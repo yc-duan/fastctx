@@ -675,6 +675,11 @@ pub enum Call {
         /// answer says still run.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         answering: Option<JobId>,
+        /// The answer goes to one of the conversation's subagents: what
+        /// waits for the conversation, and its named context, wait for an
+        /// answer to the conversation's own agent. Older callers omit it.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        subagent: bool,
     },
     /// The named notices from `Collect`, and all its town notes, went out
     /// with the answer. Unnamed notices remain waiting; an empty list can
