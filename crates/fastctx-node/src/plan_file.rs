@@ -147,13 +147,13 @@ pub(crate) fn pulled(node: &Node, id: &ResidentId, page: &Page) {
         files.entry(id.clone()).or_insert(Synced { stamp: None, text: hash(markdown) });
         return;
     }
-    if on_disk.as_deref() != Some(markdown) && !(on_disk.is_none() && markdown.is_empty()) {
-        if let Err(error) =
+    if on_disk.as_deref() != Some(markdown)
+        && !(on_disk.is_none() && markdown.is_empty())
+        && let Err(error) =
             fastctx_platform::publish(&path, markdown.as_bytes(), fastctx_platform::Permissions::Private)
-        {
-            node.log.line(format_args!("writing the plan of {id} into its file: {error}"));
-            return;
-        }
+    {
+        node.log.line(format_args!("writing the plan of {id} into its file: {error}"));
+        return;
     }
     files.insert(id.clone(), Synced { stamp: stamp(&path), text: hash(markdown) });
 }
