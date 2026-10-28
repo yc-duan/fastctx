@@ -72,13 +72,91 @@
   color: var(--text-strong);
 }
 
-/* What a change of view brings in comes in once, around what stays. */
-.say-unfold {
-  opacity: var(--rise);
-  translate: 0 calc((1 - var(--rise)) * 4px);
-  animation: rise var(--enter) var(--fold-easing) both;
+/* The two views of a conversation (`world-voice.md`, 两种看法). In the
+   view of what was said, the agent's words to the user stand on a ground
+   of their own facing the user's: the ground hangs out round the words,
+   so the words stand where they stand in every step's view and only the
+   ground comes and goes, and the user's words slide out as far to face
+   them. An urgent one stands on the accent's wash. The ground fits the
+   words in the view of what was said; in every step's view it is gone. */
+@property --said {
+  syntax: "<number>";
+  inherits: false;
+  initial-value: 0;
 }
 
-:root[data-reduced] .say-unfold {
-  animation: none;
+.transcript {
+  --hang-x: min(var(--space-4), calc(var(--gutter) - var(--space-3)));
+  --hang-y: var(--space-2);
+}
+
+.transcript > .block-say > .say,
+.transcript > .block-prose.prose-message > .prose {
+  margin: calc(-1 * var(--hang-y)) calc(-1 * var(--hang-x));
+  padding: var(--hang-y) var(--hang-x);
+  border-radius: var(--radius-l);
+  background: color-mix(in srgb, var(--ground, var(--fill)) calc(var(--said) * 100%), transparent);
+  transition: --said var(--glide) var(--glide-easing);
+}
+
+.transcript > .block-say > .say-urgent {
+  --ground: var(--accent-wash);
+}
+
+.transcript[data-view="said"] > .block-say > .say,
+.transcript[data-view="said"] > .block-prose.prose-message > .prose {
+  width: fit-content;
+}
+
+.transcript > .block.from-user {
+  translate: calc(var(--said) * var(--hang-x)) 0;
+  transition: --said var(--glide) var(--glide-easing);
+}
+
+.transcript[data-view="said"]:not(.view-leaving) > .block-say > .say,
+.transcript[data-view="said"]:not(.view-leaving) > .block-prose.prose-message > .prose,
+.transcript[data-view="said"]:not(.view-leaving) > .block.from-user {
+  --said: 1;
+}
+
+/* What follows the words keeps clear of their ground. */
+.transcript > .block-say > .say + .turn-acts,
+.transcript > .block-prose > .prose + .message-acts > .turn-acts {
+  margin-top: calc(var(--space-1) + var(--hang-y));
+}
+
+@media (hover: none) {
+  .transcript > .block-say > .say + .turn-acts,
+  .transcript > .block-prose > .prose + .message-acts > .turn-acts {
+    margin-top: calc(var(--hang-y) - 6px);
+  }
+}
+
+/* What a change of view brings in near the reader unfolds round what
+   stays, its room opening and its ink coming up in the second half; what
+   it takes away folds the other way, and goes once it has (`view.ts`,
+   showing). */
+@property --unfold {
+  syntax: "<number>";
+  inherits: false;
+  initial-value: 1;
+}
+
+.transcript > .block.view-fold {
+  box-sizing: border-box;
+  height: calc(var(--full) * var(--unfold));
+  padding-top: calc(var(--gap) * var(--unfold));
+  overflow: clip;
+  opacity: clamp(0, calc(var(--unfold) * 2 - 1), 1);
+  transition: --unfold var(--glide) var(--glide-easing);
+}
+
+.transcript > .block.view-folded {
+  --unfold: 0;
+}
+
+/* Shut at once, to unfold from nothing. */
+.transcript > .block.view-shut {
+  --unfold: 0;
+  transition: none;
 }

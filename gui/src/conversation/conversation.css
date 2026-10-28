@@ -25,13 +25,6 @@
   transition: --shown var(--enter) var(--ease-out);
 }
 
-/* Between what was said and every step, the conversation dips and comes
-   back up (`view.ts`, showing). */
-.transcript.view-dip {
-  --shown: 0;
-  transition-duration: var(--quick);
-}
-
 /* Carried through a change of the room beside it (`column-hold.ts`): the
    column at once at the width it will end with, its lines broken once, and
    carried from where its words stood as the room changes round it; where

@@ -299,12 +299,11 @@ export class ConversationView {
   /** The block kept where it is on the screen across a change of view,
    *  once. */
   private pin: { slot: Slot; top: number } | null = null;
-  /** Blocks a change of view brought in, which come in once. */
+  /** Blocks a change of view brings in: drawn folded near the reader, and
+   *  unfolding once. */
   private unfolding = new Set<string>();
-  /** A switch of what is shown under way: the conversation has dipped, and
-   *  changes to the view asked last when it is out of sight. */
-  private dip = 0;
-  private dipTo: "said" | "steps" | null = null;
+  /** A change of view under way: ends it at once, as another one comes. */
+  private changing: (() => void) | null = null;
   /** The spaces that stand for the blocks above and below those drawn. */
   private readonly above: HTMLElement;
   private readonly below: HTMLElement;
@@ -329,6 +328,7 @@ export class ConversationView {
     private readonly context: Context,
   ) {
     root.classList.add("transcript");
+    root.dataset.view = this.mode;
     this.above = document.createElement("div");
     this.below = document.createElement("div");
     this.above.className = this.below.className = "transcript-space";
@@ -526,6 +526,7 @@ export class ConversationView {
         drawn.push(slot.element);
       }
     }
+    this.foldIn(wanted.filter((slot) => this.unfolding.has(slot.key)));
     this.shown = wanted;
     this.above.style.height = `${n ? this.heights.top(first) : 0}px`;
     this.below.style.height = `${n ? this.heights.total() - this.heights.top(last + 1) : 0}px`;
@@ -587,34 +588,83 @@ export class ConversationView {
     return null;
   }
 
-  /** Shows only what was said, or every step: what both show stays where
-   *  it is on the screen, and what comes in comes in once. */
+  /** Shows only what was said, or every step (`world-voice.md`, 两种看法),
+   *  over one glide. What both show stays where it is on the screen: the
+   *  agent's words to the user take their ground or leave it, the user's
+   *  slide out to face them or back, and the work between them unfolds or
+   *  folds away around them (`say.css`). */
   showing(mode: "said" | "steps"): void {
-    if (this.dip) {
-      this.dipTo = mode;
-      return;
-    }
+    this.changing?.();
     if (mode === this.mode) return;
-    const quick = reducedMotion() || !this.root.isConnected ? 0 : msOf(getComputedStyle(this.root).getPropertyValue("--quick"));
-    if (!quick) {
+    const glide = reducedMotion() || !this.root.isConnected ? 0 : msOf(getComputedStyle(this.root).getPropertyValue("--glide"));
+    if (!glide) {
+      this.root.dataset.view = mode;
       this.switchTo(mode);
       return;
     }
-    // What moves while the view changes is not seen moving: the whole
-    // conversation dips, changes, and comes back up where it was read.
-    this.dipTo = mode;
-    this.root.classList.add("view-dip");
-    this.dip = window.setTimeout(() => {
-      this.dip = 0;
-      if (this.dipTo && this.dipTo !== this.mode) this.switchTo(this.dipTo);
-      this.dipTo = null;
-      requestAnimationFrame(() => this.root.classList.remove("view-dip"));
-    }, quick);
+    if (mode === "steps") {
+      // The work comes in folded and unfolds; the words leave their ground
+      // as it does, and their own shape once it has.
+      this.root.classList.add("view-leaving");
+      this.switchTo("steps", true);
+      this.after(glide, () => {
+        this.root.classList.remove("view-leaving");
+        this.root.dataset.view = "steps";
+        for (const element of this.root.querySelectorAll<HTMLElement>(":scope > .view-fold")) unfold(element);
+      });
+    } else {
+      // The words take their shape at once, their ground unseen yet, and it
+      // comes up as the work folds away; the work goes once it has.
+      this.root.dataset.view = "said";
+      this.foldAway(new Set(this.conversation.chatBlocks().map((block) => block.key)));
+      this.after(glide, () => this.switchTo("said"));
+    }
+  }
+
+  /** Ends the change of view under way after `ms`, or at once when
+   *  another comes first. */
+  private after(ms: number, end: () => void): void {
+    const timer = window.setTimeout(() => this.changing?.(), ms);
+    this.changing = () => {
+      window.clearTimeout(timer);
+      this.changing = null;
+      end();
+    };
+  }
+
+  /** Blocks a change of view brought in near the reader, drawn: folded at
+   *  once, their room known first and held by none of it, and unfolding
+   *  from the next frame. */
+  private foldIn(slots: Slot[]): void {
+    if (!slots.length) return;
+    const sizes = slots.map((slot) => roomOf(slot.element));
+    slots.forEach((slot, at) => {
+      foldable(slot.element, sizes[at]!);
+      slot.element.classList.add("view-shut");
+      const index = this.heights.index(slot.key);
+      if (index === undefined) return;
+      this.measured.set(slot.key, 0);
+      this.heights.set(index, 0);
+    });
+    requestAnimationFrame(() => {
+      for (const slot of slots) slot.element.classList.remove("view-shut");
+    });
+  }
+
+  /** The work a change of view takes away, near the reader: folded away
+   *  where it stands from the next frame, to go once it has. */
+  private foldAway(keep: Set<string>): void {
+    const going = this.shown.filter((slot) => !keep.has(slot.key) && slot.element.isConnected);
+    const sizes = going.map((slot) => roomOf(slot.element));
+    going.forEach((slot, at) => foldable(slot.element, sizes[at]!));
+    requestAnimationFrame(() => {
+      for (const slot of going) slot.element.classList.add("view-folded");
+    });
   }
 
   /** Shows `mode`'s blocks at once, the block read at the top kept where it
-   *  stands. */
-  private switchTo(mode: "said" | "steps"): void {
+   *  stands; `unfold`, what they bring in near the reader comes in folded. */
+  private switchTo(mode: "said" | "steps", unfold = false): void {
     const next = mode === "said" ? this.conversation.chatBlocks() : this.conversation.blocks();
     const kept = new Set(next.map((block) => block.key));
     const view = this.context.scroller.getBoundingClientRect();
@@ -627,7 +677,8 @@ export class ConversationView {
         break;
       }
     }
-    this.unfolding = new Set();
+    const now = new Set(this.blocks.map((block) => block.key));
+    this.unfolding = new Set(unfold ? next.filter((block) => !now.has(block.key)).map((block) => block.key) : []);
     this.mode = mode;
     this.update();
   }
@@ -1056,10 +1107,6 @@ export class ConversationView {
     this.reading = read;
     try {
       slot.signature = this.signature(block);
-      if (this.unfolding.delete(block.key)) {
-        element.classList.add("say-unfold");
-        element.addEventListener("animationend", () => element.classList.remove("say-unfold"), { once: true });
-      }
       if (block.kind === "say") {
         this.letGo(block.key);
         element.innerHTML = this.said(block);
@@ -3174,6 +3221,26 @@ export function modelName(id: string): string {
   if (!claude) return id;
   const [, family, major, minor] = claude;
   return `${family![0]!.toUpperCase()}${family!.slice(1)} ${major}${minor ? `.${minor}` : ""}`;
+}
+
+/** A block's room, whole and above its words: what it folds from or
+ *  unfolds to. */
+function roomOf(element: HTMLElement): { full: number; gap: number } {
+  return { full: element.offsetHeight, gap: parseFloat(getComputedStyle(element).paddingTop) || 0 };
+}
+
+/** Sets a block to fold or unfold within `room`. */
+function foldable(element: HTMLElement, room: { full: number; gap: number }): void {
+  element.style.setProperty("--full", `${room.full}px`);
+  element.style.setProperty("--gap", `${room.gap}px`);
+  element.classList.add("view-fold");
+}
+
+/** A block unfolded, its room its own again. */
+function unfold(element: HTMLElement): void {
+  element.classList.remove("view-fold", "view-folded", "view-shut");
+  element.style.removeProperty("--full");
+  element.style.removeProperty("--gap");
 }
 
 /** A CSS time, as a token holds it, in milliseconds. */
