@@ -48,6 +48,18 @@ impl std::fmt::Display for ProtectedApplication {
 }
 impl std::error::Error for ProtectedApplication {}
 
+/// The application's window could not be opened to be checked, there being
+/// no display where the check runs: nothing is known to be wrong with it,
+/// and installing it again would change nothing.
+#[derive(Debug)]
+struct Unseen;
+impl std::fmt::Display for Unseen {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("there is no display to open the application's window on")
+    }
+}
+impl std::error::Error for Unseen {}
+
 pub(super) fn program_build(root: &Path, app: &Registration) -> anyhow::Result<fastctx_types::renewal::Build> {
     #[cfg(target_os = "linux")]
     if app.app.target.ends_with("-appimage") {
@@ -81,6 +93,10 @@ pub fn check(root: &Path, app: &Registration, build: &fastctx_types::renewal::Bu
         );
     }
     let executable = app.executable()?;
+    #[cfg(target_os = "linux")]
+    if std::env::var_os("DISPLAY").is_none() && std::env::var_os("WAYLAND_DISPLAY").is_none() {
+        return Err(Unseen.into());
+    }
     let receipt = root.join("updates").join(format!("application-probe-{}.json", std::process::id()));
     let profile = root.join("updates").join(format!("application-probe-{}", std::process::id()));
     #[cfg(not(windows))]
@@ -208,6 +224,9 @@ pub async fn repair(
             return Ok("application version, carried program and WebView startup are correct".into());
         }
         Err(error) if error.is::<ProtectedApplication>() => return Err(error),
+        Err(error) if error.is::<Unseen>() => {
+            return Ok(format!("application version and carried program are correct; {error}"));
+        }
         Err(error) => journal.action(format!("reinstall application {}: {error:#}", app.executable()?.display()))?,
     }
     ensure!(
@@ -221,7 +240,10 @@ pub async fn repair(
         journal.action(format!("obtain and verify {}", installer.path.display()))?;
     }
     install(root, &app, &installer.path, &manifest).await?;
-    check(root, &app, build)?;
+    match check(root, &app, build) {
+        Err(error) if !error.is::<Unseen>() => return Err(error),
+        _ => {}
+    }
     app.app.version = build.version.clone();
     crate::renewal::write_json(&path, &app)?;
     Ok("application reinstalled and its isolated window opened".into())
@@ -268,17 +290,35 @@ pub async fn install(
                 .context("application package has no bundle")?
                 .path();
             let backup = staging.join("previous.app");
-            std::fs::rename(bundle, &backup)
-                .with_context(|| format!("moving {} to {}", bundle.display(), backup.display()))?;
+            // A repair stopped between its two moves, or a bundle removed,
+            // leaves none to move aside: the verified one goes in its place.
+            let moved = match std::fs::rename(bundle, &backup) {
+                Ok(()) => true,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => false,
+                Err(error) => {
+                    return Err(error)
+                        .with_context(|| format!("moving {} to {}", bundle.display(), backup.display()));
+                }
+            };
             if let Err(error) = std::fs::rename(&replacement, bundle) {
-                std::fs::rename(&backup, bundle)
-                    .with_context(|| format!("restoring {} after replacement failed: {error}", bundle.display()))?;
+                if moved {
+                    std::fs::rename(&backup, bundle).with_context(|| {
+                        format!("restoring {} after replacement failed: {error}", bundle.display())
+                    })?;
+                }
                 return Err(error).with_context(|| format!("publishing application {}", bundle.display()));
             }
             Ok(())
         })();
         if result.is_ok() {
             std::fs::remove_dir_all(&staging)?;
+            // What repairs stopped part way left aside: the bundle is whole
+            // again. Repairs take turns (`lock`), so none is in use.
+            for entry in std::fs::read_dir(parent)?.flatten() {
+                if entry.file_name().to_string_lossy().starts_with(".fastctx-repair-") {
+                    let _ = std::fs::remove_dir_all(entry.path());
+                }
+            }
         }
         let _ = root;
         result

@@ -586,7 +586,11 @@ pub fn launch(
     // Maintenance preserves the selected host homes and executable search
     // path. Credentials and other launcher variables still come only from
     // the user's logon environment; jobs keep their own fresh environment.
-    for name in ["CODEX_HOME", "CLAUDE_CONFIG_DIR", "PATH"] {
+    // On Linux the display the user's desktop gives goes too, so a repair
+    // begun from the application checks its window there.
+    let display: &[&str] =
+        if cfg!(target_os = "linux") { &["DISPLAY", "XAUTHORITY", "WAYLAND_DISPLAY", "XDG_RUNTIME_DIR"] } else { &[] };
+    for name in ["CODEX_HOME", "CLAUDE_CONFIG_DIR", "PATH"].iter().chain(display).copied() {
         if let Some(value) = std::env::var_os(name) {
             environment.retain(|(key, _)| !key.eq_ignore_ascii_case(name));
             environment.push((name.into(), value));
