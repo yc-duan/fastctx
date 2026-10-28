@@ -10,7 +10,7 @@
   display: flex;
   justify-content: flex-end;
   min-width: 0;
-  background: var(--bg-elevated);
+  background: var(--bg);
   color: var(--text);
   font-family: var(--font-reading);
   font-size: var(--size-text);
@@ -47,6 +47,48 @@
   display: block;
   width: 4px;
   height: 100%;
+}
+
+/* The same stroke in ink over it, coming up while the line is held or
+   pointed at: it can be dragged. */
+.sp-margin-ink {
+  position: absolute;
+  inset: 0;
+  color: var(--text-2);
+  opacity: var(--grip-ink);
+}
+
+/* The line between the panel and the conversation, to drag (`app/grip.ts`):
+   the panel wider or narrower, kept on this device; pressed twice, back to
+   its first width. */
+.sp-grip {
+  position: absolute;
+  z-index: 3;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 10px;
+  cursor: col-resize;
+  touch-action: none;
+}
+
+.sp-grip:focus-visible {
+  outline: none;
+}
+
+.sp-panel {
+  --grip-ink: 0;
+  transition: --grip-ink var(--hover) var(--ease);
+}
+
+.sp-panel:has(> .sp-grip:hover),
+.sp-panel:has(> .sp-grip:focus-visible),
+.sp-resizing .sp-panel {
+  --grip-ink: 1;
+}
+
+.sp-panel.sp-over .sp-grip {
+  display: none;
 }
 
 /* The pages' names; their row ends where the switch stands. */
@@ -146,9 +188,17 @@
   initial-value: 0;
 }
 
+/* Registered so its width is a length where it is read: the page, the
+   conversation's column carried as it opens (`column-hold.ts`). */
+@property --side-width {
+  syntax: "<length>";
+  inherits: true;
+  initial-value: 0px;
+}
+
 .conversation-page.sp-host {
   --sp-open: 0;
-  transition: --sp-open var(--settle) var(--fold-easing);
+  transition: --sp-open var(--glide) var(--glide-easing);
 }
 
 .conversation-page.sp-host.sp-shown {

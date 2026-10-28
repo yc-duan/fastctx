@@ -1,6 +1,6 @@
 // The panel at the right of a conversation (`world-gui.md`, 对话右边的侧面板):
-// shut until asked for, then a sheet beside the conversation, under its head,
-// with a margin ruled down its left edge and its pages named at its top, the
+// shut until asked for, then the page beside the conversation, under its
+// head, set apart from it by the margin ruled down its left edge alone and its pages named at its top, the
 // one shown in the semibold face on a field's shade. A page that has something
 // new while not shown carries a dot after its name, as the switch does while
 // the panel is shut. It opens and shuts by the page's `--sp-open` (`side.css`):
@@ -8,7 +8,7 @@
 // lies over the conversation.
 
 import { escape } from "../conversation/prose";
-import { reducedMotion } from "../motion";
+import { msOf, reducedMotion } from "../motion";
 import { Sketch } from "../pen/sketch";
 import type { SideWords } from "./words";
 import "./side.css";
@@ -101,8 +101,7 @@ export class SidePanel {
   /** Shuts it: it goes as `--sp-open` goes back, then is no longer drawn. */
   close(): void {
     if (!this.open) return;
-    const settle = getComputedStyle(this.element).getPropertyValue("--settle").trim();
-    const ms = reducedMotion() ? 0 : parseFloat(settle) * (settle.endsWith("ms") ? 1 : 1000) || 0;
+    const ms = reducedMotion() ? 0 : msOf(getComputedStyle(this.element).getPropertyValue("--glide"));
     this.shutting = window.setTimeout(() => {
       this.shutting = 0;
       this.element.hidden = true;
@@ -149,11 +148,13 @@ export class SidePanel {
     }
   }
 
-  /** The margin is drawn again when the sheet's height changes. */
+  /** The margin is drawn again when the sheet's height changes, with the
+   *  same stroke in ink over it for while it is held. */
   private rule(): void {
     const height = this.sheet.clientHeight;
     if (height === 0 || height === this.height) return;
     this.height = height;
-    this.margin.innerHTML = new Sketch("side-margin").rule([2, 6], [2, height - 6], 1.2, "graphite").svg(4, height, "sp-margin-svg");
+    const stroke = (ink: "graphite" | "current") => new Sketch("side-margin").rule([2, 6], [2, height - 6], 1.2, ink).svg(4, height, "sp-margin-svg");
+    this.margin.innerHTML = `${stroke("graphite")}<div class="sp-margin-ink">${stroke("current")}</div>`;
   }
 }

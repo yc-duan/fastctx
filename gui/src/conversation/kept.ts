@@ -47,6 +47,7 @@ export class KeptPages {
     return {
       element: kept.element,
       title: kept.title,
+      roomWillChange: (by) => kept.roomWillChange?.(by),
       leave: () => {
         if (this.pages.get(key) !== kept) return;
         if (this.ending.has(key)) this.drop(key);

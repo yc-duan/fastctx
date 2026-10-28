@@ -15,23 +15,73 @@ body {
 
 .shell {
   --sidebar: 292px;
+  position: relative;
   display: grid;
   grid-template-columns: var(--sidebar) minmax(0, 1fr);
   height: 100dvh;
-  transition: grid-template-columns var(--fold) var(--fold-easing);
+  transition:
+    grid-template-columns var(--glide) var(--glide-easing),
+    --grip-ink var(--hover) var(--ease);
 }
 
 .shell.folded {
   grid-template-columns: 0 minmax(0, 1fr);
 }
 
-/* The sidebar is the book's contents, on a sheet a shade under the page,
-   its edge a line ruled by hand. */
+/* The line between the sidebar and the page, to drag (`grip.ts`): the
+   sidebar wider or narrower, kept on this device; pressed twice, back to
+   its first width. Its drawn line darkens while it is held or pointed at. */
+.shell-grip {
+  position: absolute;
+  z-index: 3;
+  top: 0;
+  bottom: 0;
+  left: calc(var(--sidebar) - 5px);
+  width: 10px;
+  cursor: col-resize;
+  touch-action: none;
+}
+
+.shell-grip:focus-visible {
+  outline: none;
+}
+
+.shell.folded > .shell-grip,
+.shell.alone > .shell-grip {
+  display: none;
+}
+
+.shell.resizing {
+  transition: --grip-ink var(--hover) var(--ease);
+}
+
+.shell:has(> .shell-grip:hover),
+.shell:has(> .shell-grip:focus-visible),
+.shell.resizing {
+  --grip-ink: 1;
+}
+
+@media (max-width: 760px) {
+  .shell-grip {
+    display: none;
+  }
+}
+
+/* While a line is dragged, the pointer is the line's wherever it goes, and
+   no words are picked up on the way. */
+html.gripping,
+html.gripping * {
+  cursor: col-resize !important;
+  user-select: none !important;
+}
+
+/* The sidebar is the book's contents, on the same page as the rest, set
+   apart by its edge alone, a line ruled by hand. */
 .sidebar-frame {
   position: relative;
   min-width: 0;
   overflow: hidden;
-  background: var(--bg-sunken);
+  background: var(--bg);
 }
 
 .sidebar-frame::after {
@@ -42,7 +92,7 @@ body {
   right: -3px;
   width: 6px;
   background: var(--pen-rule);
-  opacity: 0.55;
+  opacity: calc(0.55 + 0.45 * var(--grip-ink));
   -webkit-mask: var(--pen-rule-down) 50% 0 / 100% 100% no-repeat;
   mask: var(--pen-rule-down) 50% 0 / 100% 100% no-repeat;
   pointer-events: none;

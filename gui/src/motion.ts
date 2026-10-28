@@ -25,6 +25,13 @@ export function chosenMotion(): Motion {
   }
 }
 
+/** A CSS time, as a token holds it, in milliseconds. */
+export function msOf(time: string): number {
+  const value = parseFloat(time);
+  if (!Number.isFinite(value)) return 0;
+  return time.trim().endsWith("ms") ? value : value * 1000;
+}
+
 /** Whether the interface moves less now. */
 export function reducedMotion(): boolean {
   const motion = chosenMotion();

@@ -21,7 +21,7 @@
   padding: var(--space-6) var(--gutter) var(--space-12);
   display: flex;
   flex-direction: column;
-  opacity: var(--shown);
+  opacity: calc(var(--shown) * var(--held-ink));
   transition: --shown var(--enter) var(--ease-out);
 }
 
@@ -30,6 +30,54 @@
 .transcript.view-dip {
   --shown: 0;
   transition-duration: var(--quick);
+}
+
+/* Carried through a change of the room beside it (`column-hold.ts`): the
+   column at once at the width it will end with, its lines broken once, and
+   carried from where its words stood as the room changes round it; where
+   they break anew, the words dip and come back up. */
+@property --held-glide {
+  syntax: "<number>";
+  inherits: false;
+  initial-value: 0;
+}
+
+@property --held-ink {
+  syntax: "<number>";
+  inherits: false;
+  initial-value: 1;
+}
+
+.column-held .talk-scroller {
+  overflow-x: hidden;
+}
+
+.column-held .talk-scroller > .transcript {
+  --held-glide: 1;
+  width: var(--held);
+  max-width: none;
+  translate: calc(var(--held-shift) * var(--held-glide)) 0;
+}
+
+.column-held.column-moving .talk-scroller > .transcript {
+  --held-glide: 0;
+  transition:
+    --shown var(--enter) var(--ease-out),
+    --held-glide var(--glide) var(--glide-easing);
+}
+
+.transcript.column-dip {
+  animation: column-dip var(--glide) var(--ease-out);
+}
+
+@keyframes column-dip {
+  from {
+    --held-ink: 0.45;
+  }
+
+  to {
+    --held-ink: 1;
+  }
 }
 
 /* In whole pixels where the system can round. */

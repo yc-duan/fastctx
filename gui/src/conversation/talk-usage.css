@@ -364,6 +364,29 @@
   display: none;
 }
 
+/* The row is measured by its own width, as beside the panel or in a side
+   conversation: narrowing, the clock gives way first, then the figures
+   give way to the dial, so the model's name keeps its room. */
+.composer-row {
+  container: composer-row / inline-size;
+}
+
+@container composer-row (max-width: 600px) {
+  .talk-gauge[data-figure="warm"] {
+    display: none;
+  }
+}
+
+@container composer-row (max-width: 500px) {
+  .talk-gauge {
+    display: none;
+  }
+
+  .talk-gauge-dial:not(:empty) {
+    display: inline-flex;
+  }
+}
+
 .talk-gauge-dial.caution {
   color: var(--caution);
 }

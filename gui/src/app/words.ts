@@ -37,6 +37,8 @@ export interface ShellWords {
   edit: string;
   openSidebar: string;
   foldSidebar: string;
+  /** The line between the sidebar and the page, dragged. */
+  resizeSidebar: string;
   /** A page head's way back, for a screen reader: to the page named. */
   backTo(page: string): string;
   /** "laptop 上的 Claude". */
@@ -1704,6 +1706,7 @@ export const zhShell: ShellWords = {
   edit: "编辑",
   openSidebar: "显示侧栏",
   foldSidebar: "隐藏侧栏",
+  resizeSidebar: "调整侧栏宽度",
   backTo: (page) => `返回${page}`,
   someone: (agent, machine) => `${machine} 上的 ${agent}`,
   someoneAssisting: (agent, owner) => `${owner} 的 ${agent}`,
@@ -1756,6 +1759,7 @@ export const enShell: ShellWords = {
   edit: "Edit",
   openSidebar: "Show sidebar",
   foldSidebar: "Hide sidebar",
+  resizeSidebar: "Resize the sidebar",
   backTo: (page) => `Back to ${page}`,
   someone: (agent, machine) => `${agent} on ${machine}`,
   someoneAssisting: (agent, owner) => `${owner}'s ${agent}`,

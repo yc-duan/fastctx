@@ -1716,6 +1716,7 @@ function specimenTalk(address: Address): KeepablePage {
   return {
     element: page.element,
     title: sample.title,
+    roomWillChange: (by) => page.roomWillChange(by),
     suspend: () => {
       suspended = true;
       page.suspend();
@@ -2079,6 +2080,7 @@ function liveTalk(address: Address, inPanel = false): KeepablePage {
   return {
     element: page.element,
     title: `${someone.agent} ${someone.machine}`,
+    roomWillChange: (by) => page.roomWillChange(by),
     suspend: () => {
       suspended = true;
       page.suspend();

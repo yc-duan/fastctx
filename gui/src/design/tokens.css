@@ -60,7 +60,8 @@
   --column: calc(var(--body-size) * 48);
   --gutter: clamp(16px, 4.5vw, 36px);
   /* The panel beside a conversation, opened: its plan, goal and who works
-     with it. */
+     with it; a width the user dragged it to stands in its place on the
+     conversation's page (`side/mount.ts`). */
   --side-width: clamp(340px, 30vw, 440px);
 
   /* Space, on a 4px step. */
@@ -94,6 +95,11 @@
   --hover: 180ms;
   --fold: 220ms;
   --fold-easing: cubic-bezier(0.2, 0, 0, 1);
+  /* A side of the window coming or going, the sidebar or the panel beside
+     a conversation, and the page giving way to it: slow enough to follow,
+     easing in and settling long. */
+  --glide: 520ms;
+  --glide-easing: cubic-bezier(0.45, 0, 0.2, 1);
   --enter: 220ms;
   /* A turn's line comes in softly, and goes at once. */
   --line-in: 240ms;
@@ -360,6 +366,7 @@
 :root[data-reduced] {
   --hover: 0ms;
   --fold: 0ms;
+  --glide: 0ms;
   --enter: 0ms;
   --line-in: 0ms;
   --send: 0ms;

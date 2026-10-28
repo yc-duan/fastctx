@@ -7,6 +7,8 @@ export interface SideWords {
   pages: { plan: string; goal: string; collab: string };
   /** The head's switch for the panel. */
   panel: string;
+  /** The line between the panel and the conversation, dragged. */
+  resize: string;
   close: string;
   back: string;
   goal: GoalWords;
@@ -75,6 +77,7 @@ function clock(ms: number, now: number, locale: string, today: string, tomorrow:
 export const zhSide: SideWords = {
   pages: { plan: "计划", goal: "目标", collab: "协作" },
   panel: "侧面板",
+  resize: "调整侧面板宽度",
   close: "收起",
   back: "返回",
   goal: {
@@ -126,6 +129,7 @@ export const zhSide: SideWords = {
 export const enSide: SideWords = {
   pages: { plan: "Plan", goal: "Goal", collab: "Team" },
   panel: "Side panel",
+  resize: "Resize the side panel",
   close: "Close",
   back: "Back",
   goal: {

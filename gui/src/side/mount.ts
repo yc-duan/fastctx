@@ -7,8 +7,10 @@
 // colleagues it asked, from the World, and the host's own agents, from the
 // conversation itself as it goes.
 
+import { makeGrip } from "../app/grip";
 import { glyph } from "../conversation/glyphs";
 import type { AgentRun } from "../conversation/agents";
+import { holdColumn } from "../conversation/column-hold";
 import { PlanPage, type PlanShown } from "../plan/panel";
 import { CollabPage } from "./collab-page";
 import { GoalBar } from "./goal-bar";
@@ -19,6 +21,22 @@ import type { CollabNode, GoalShown, NodeState } from "./types";
 
 /** Narrower than this, the panel lies over the conversation. */
 const OVER = matchMedia("(max-width: 760px)");
+
+/** The width the panel was dragged to, kept on this device. */
+const KEPT = "side-width";
+/** The least the panel may be dragged to, and the least it leaves the
+ *  conversation beside it. */
+const LEAST = 300;
+const ROOM = 380;
+
+function keptWidth(): number | null {
+  try {
+    const width = Number(localStorage.getItem(KEPT));
+    return Number.isFinite(width) && width > 0 ? width : null;
+  } catch {
+    return null;
+  }
+}
 
 export interface MountContext {
   host: "claude" | "codex";
@@ -77,6 +95,8 @@ export class SideMount {
   private shownGoal: GoalShown | null = null;
   /** The box of one of the host's agents open in the panel. */
   private box: { id: string; update(run: AgentRun): void } | null = null;
+  /** The conversation and the panel side by side, under the head. */
+  private split: HTMLElement | null = null;
 
   constructor(
     private readonly page: HTMLElement,
@@ -126,6 +146,22 @@ export class SideMount {
     split.append(main, this.panel.element, this.toggle);
     page.append(split);
     page.classList.add("sp-host");
+    this.split = split;
+    this.panel.element.append(
+      makeGrip("sp-grip", {
+        part: "right",
+        label: words.resize,
+        width: () => this.width(),
+        least: () => LEAST,
+        most: () => this.most(),
+        set: (width) => this.resize(width),
+        moving: (moving) => page.classList.toggle("sp-resizing", moving),
+      }),
+    );
+    this.fit();
+    const fitting = new ResizeObserver(() => this.fit());
+    fitting.observe(split);
+    this.stops.push(() => fitting.disconnect());
 
     this.toggle.type = "button";
     this.toggle.className = "icon-button sp-toggle";
@@ -190,6 +226,36 @@ export class SideMount {
 
   private readonly place = () => this.panel.over(OVER.matches);
 
+  /** The panel's width when open. */
+  private width(): number {
+    return parseFloat(getComputedStyle(this.page).getPropertyValue("--side-width")) || 0;
+  }
+
+  /** The most the panel may be, the conversation keeping its room. */
+  private most(): number {
+    return Math.max(LEAST, (this.split?.clientWidth ?? 0) - ROOM);
+  }
+
+  /** Takes a width the panel was dragged to, or none to go back to the
+   *  first. */
+  private resize(width: number | null): void {
+    try {
+      if (width === null) localStorage.removeItem(KEPT);
+      else localStorage.setItem(KEPT, String(width));
+    } catch {
+      // Not kept: the width holds while the page is open.
+    }
+    this.fit(width);
+  }
+
+  /** The width dragged to, within what the window leaves room for now. */
+  private fit(width: number | null = keptWidth()): void {
+    const value = width === null ? "" : `${Math.min(this.most(), Math.max(LEAST, width))}px`;
+    if (this.page.style.getPropertyValue("--side-width") === value) return;
+    if (value) this.page.style.setProperty("--side-width", value);
+    else this.page.style.removeProperty("--side-width");
+  }
+
   private plan(plan: PlanShown | null): void {
     const seen = plan?.source == null ? "" : `${plan.version}`;
     if (this.planSeen !== null && seen !== this.planSeen && seen !== "") this.panel.news("plan");
@@ -252,11 +318,14 @@ export class SideMount {
   }
 
   /** The switch, and the page opening or shutting by the panel. Opening,
-   *  the page is laid out shut first, so it opens from nothing. A panel with
-   *  nothing in it has no switch. */
+   *  the page is laid out shut first, so it opens from nothing; either way
+   *  the conversation's column is carried to where it will stand. A panel
+   *  with nothing in it has no switch. */
   private drawToggle(): void {
     const open = this.panel.open;
-    if (open && !this.page.classList.contains("sp-shown")) void this.page.offsetWidth;
+    const was = this.page.classList.contains("sp-shown");
+    if (open !== was && !OVER.matches) holdColumn(this.page, open ? -this.width() : this.width());
+    if (open && !was) void this.page.offsetWidth;
     this.page.classList.toggle("sp-shown", open);
     this.toggle.setAttribute("aria-pressed", String(open));
     this.toggle.classList.toggle("news", this.panel.hasNews);

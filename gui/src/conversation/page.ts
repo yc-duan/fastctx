@@ -29,6 +29,7 @@ import { FileLinks } from "./file-links";
 import { JobsPanel, type Job, type OutputLines } from "./jobs-panel";
 import { AgentBox } from "./agent-box";
 import { SideMount } from "../side/mount";
+import { holdColumn } from "./column-hold";
 import type { SideSeams } from "../side/seams";
 import type { AgentActivity, Tool } from "../world/events";
 import { Pictures, type PictureSeams } from "./pictures";
@@ -941,6 +942,12 @@ export class ConversationPage {
     if (phoneWide.matches && head) head.prepend(this.context);
     else row.insertBefore(this.context, row.querySelector(".composer-action"));
   };
+
+  /** The sidebar folds or comes back: the column is carried rather than
+   *  set again at every frame (`column-hold.ts`). */
+  roomWillChange(by: number): void {
+    holdColumn(this.element, by);
+  }
 
   /** Stops what the page keeps asking for. */
   leave(): void {
