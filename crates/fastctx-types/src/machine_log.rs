@@ -40,6 +40,8 @@ pub enum Action {
         machine: MachineName,
         to: AccountName,
         shared: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        jobs: Option<u16>,
     },
     /// Written under the name it was first written under, so hubs and
     /// nodes of every version read one another's records.

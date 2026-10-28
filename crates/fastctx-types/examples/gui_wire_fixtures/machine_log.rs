@@ -9,7 +9,7 @@ pub fn fixtures() -> Vec<Page> {
     let at = "2026-10-10T12:00:00Z".parse().unwrap();
     let actions = vec![
         Action::Collab { version: 2 },
-        Action::Share { machine: machine(), to: to(), shared: true },
+        Action::Share { machine: machine(), to: to(), shared: true, jobs: Some(8) },
         Action::Assist {
             machine: machine(),
             to: to(),

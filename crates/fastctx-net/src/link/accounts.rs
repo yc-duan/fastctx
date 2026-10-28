@@ -39,7 +39,7 @@ impl Link {
             self.inner.refresh().await?;
         }
         let wire = match change {
-            AccountChange::Share { machine, to, shared } => Change::Share { machine, to, shared },
+            AccountChange::Share { machine, to, shared, jobs } => Change::Share { machine, to, shared, jobs },
             AccountChange::Assist { machine, to, agent, home, assisting, until, weekly, daily, five_hour, turns } => {
                 return self
                     .assist(
@@ -357,7 +357,11 @@ impl Link {
             shares: view
                 .shares
                 .iter()
-                .map(|share| ShareSeen { machine: share.machine.clone(), account: share.account.clone() })
+                .map(|share| ShareSeen {
+                    machine: share.machine.clone(),
+                    account: share.account.clone(),
+                    jobs: share.jobs,
+                })
                 .collect(),
             assists: view
                 .assists

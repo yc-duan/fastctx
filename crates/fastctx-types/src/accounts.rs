@@ -133,6 +133,9 @@ pub enum AccountChange {
         machine: MachineName,
         to: AccountName,
         shared: bool,
+        /// The most jobs `to` runs on it at once; sharing again sets it anew.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        jobs: Option<u16>,
     },
     /// Lets one login of an agent on `machine`, one of the account's own,
     /// assist `to`; or no longer. `home` is the login's directory as
@@ -642,6 +645,9 @@ pub fn group_name(text: &str) -> Result<Option<String>, String> {
 pub struct ShareSeen {
     pub machine: MachineName,
     pub account: AccountName,
+    /// The most jobs the account runs on it at once; none is no limit.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub jobs: Option<u16>,
 }
 
 /// One login of an agent on a machine, assisting an account.

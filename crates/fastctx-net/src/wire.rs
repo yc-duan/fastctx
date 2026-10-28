@@ -726,6 +726,8 @@ pub enum Change {
         machine: MachineName,
         to: AccountName,
         shared: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        jobs: Option<u16>,
     },
     /// Lets `agent`'s login `home` on `machine`, one of the account's own,
     /// assist `to`, or no longer; none is that agent's default login there.

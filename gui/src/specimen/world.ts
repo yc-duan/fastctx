@@ -441,7 +441,7 @@ function hubs(two: boolean): { nodes: HubNodes[]; accounts: HubAccounts[] } {
       ],
       // With ?many, a room of machines shared one by one, as a lab is.
       shares: [
-        { machine: "lab", account: "ada" },
+        { machine: "lab", account: "ada", jobs: 4 },
         { machine: "lab-a-01", account: "bo" },
         { machine: "lab-a-02", account: "bo" },
         ...manyOnes()

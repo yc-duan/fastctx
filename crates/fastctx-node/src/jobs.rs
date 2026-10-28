@@ -107,14 +107,28 @@ impl Jobs {
             node.residents.active(&address.resident)?;
         }
         let (world, names, executable) = (node.world.clone(), node.names(), node.fastctx.clone());
+        // Counted for whom it works, within the limit the owner set for it.
+        let sent_for = on.as_ref().and_then(|(on, _)| on.account.clone()).or_else(|| account.clone());
+        let counted = crate::job_accounts::of(node, &owner, sent_for.as_ref());
+        let share = crate::job_accounts::share_key(counted.as_ref());
         let registering = node.clone();
         let launched = tokio::task::spawn_blocking(move || -> Result<run::Launched, Failure> {
+            let starting = crate::job_accounts::start(&registering, counted)?;
             let _collecting = registering.disk.lock();
             let home = user_home().map_err(|error| before_start("finding the home directory", error))?;
             let mut environment =
                 world_process_environment().map_err(|error| before_start("reading the user's environment", error))?;
             if on.as_ref().is_some_and(|(on, _)| on.sentinel.is_some()) && fastctx_hands::run::sentinel::unwalled() {
                 environment.push(("FASTCTX_LAB_UNSANDBOXED_SENTINEL".into(), "1".into()));
+            }
+            // Its supervisor joins its account's share of the processors.
+            if let Some(shares) = &registering.cpu_shares {
+                match shares.of(&share) {
+                    Ok(dir) => environment.push((fastctx_platform::cpu_share::VARIABLE.into(), dir.into())),
+                    Err(error) => {
+                        registering.log.line(format_args!("sharing the processors with job of {share}: {error}"))
+                    }
+                }
             }
             // An `on` job hands its standard error back apart from its output,
             // and reads the input that came with it (`world-run.md`).
@@ -148,6 +162,7 @@ impl Jobs {
                 }
                 Ok(())
             })?;
+            starting.started(&launched.record);
             crate::job_watch::start(&registering, &launched.record, launched.supervisor.clone());
             crate::run_facts::update_job(&registering, &launched.record, Vec::new())
                 .map_err(|error| failure("updating call facts", error))?;

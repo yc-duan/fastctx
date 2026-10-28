@@ -52,6 +52,21 @@ pub struct MachineStats {
     pub lines: Vec<Line>,
     /// Its node: the program's version, and when this node started.
     pub node: NodeSeen,
+    /// The jobs running on it now, by the account each works for, with the
+    /// limit its owner set for that account; its own under none.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub jobs: Vec<AccountJobs>,
+}
+
+/// How many jobs one account runs on a machine now.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AccountJobs {
+    /// None for the machine's own, its owner's.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub account: Option<crate::access::HubAccount>,
+    pub running: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub most: Option<u16>,
 }
 
 /// The rates and shares in a reading are measured, never NaN, so a reading

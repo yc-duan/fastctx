@@ -394,7 +394,7 @@ fn notification<'a>(
             (machine, Some(by), Notice::Updated { from: from.clone(), to: to.clone() })
         }
         Action::Remove { name, then, .. } => (name, by, Notice::Remove { then: *then }),
-        Action::Share { machine, to, shared } => (machine, by, Notice::Share { to: to.clone(), shared: *shared }),
+        Action::Share { machine, to, shared, .. } => (machine, by, Notice::Share { to: to.clone(), shared: *shared }),
         Action::Assist { machine, to, agent, home, assisting, until, .. } => (
             machine,
             by,
@@ -425,8 +425,8 @@ pub(crate) fn action(change: &Change, book: &Book, policy: &fastctx_types::updat
         Change::Subagents { version, .. } | Change::MemorySettings { version, .. } => {
             Action::Profile { version: *version }
         }
-        Change::Share { machine, to, shared } => {
-            Action::Share { machine: machine.clone(), to: to.clone(), shared: *shared }
+        Change::Share { machine, to, shared, jobs } => {
+            Action::Share { machine: machine.clone(), to: to.clone(), shared: *shared, jobs: jobs.filter(|_| *shared) }
         }
         Change::Assist { machine, to, agent, home, assisting, until, weekly, daily, five_hour, turns } => {
             Action::Assist {

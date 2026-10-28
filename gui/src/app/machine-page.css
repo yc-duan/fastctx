@@ -932,6 +932,54 @@
   margin-top: 0;
 }
 
+/* Who runs how many jobs on it: a name, then an inked dot for each job
+   running and a faint one for each its owner still lets it run. */
+.mp-jobs {
+  list-style: none;
+  margin: var(--space-2) 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.mp-jobs li {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-height: 24px;
+}
+
+.mp-jobs-who {
+  flex: none;
+  min-width: var(--mp-label);
+  font-size: var(--size-text);
+  color: var(--text-2);
+}
+
+.mp-jobs-dots {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.mp-jobs-dots i {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--hairline);
+}
+
+.mp-jobs-dots i.on {
+  background: var(--text-2);
+}
+
+.mp-jobs-n {
+  font-size: var(--size-fine);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-3);
+}
+
 .mp-sharing .given-row:first-of-type {
   margin-top: 0;
 }

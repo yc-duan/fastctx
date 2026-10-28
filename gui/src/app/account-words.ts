@@ -1502,6 +1502,13 @@ export interface AccessWords {
   turnsOf(turns: number): string;
   turnsUnit: string;
   turnsBad: string;
+  /** The most jobs an account a machine is shared with runs there at once. */
+  jobsLabel: string;
+  jobsHint: string;
+  jobsNone: string;
+  jobsOf(jobs: number): string;
+  jobsUnit: string;
+  jobsBad: string;
   change: string;
   save: string;
   cancel: string;
@@ -1564,6 +1571,12 @@ export const zhAccess: AccessWords = {
   turnsOf: (turns) => `至多 ${turns} 轮`,
   turnsUnit: "轮",
   turnsBad: "填 1 以上的整数",
+  jobsLabel: "同时几条作业",
+  jobsHint: "这个账号在这台上同时最多跑几条作业；到了，要等一条结束才能再起。不填为不限。",
+  jobsNone: "作业不限",
+  jobsOf: (jobs) => `至多 ${jobs} 条作业`,
+  jobsUnit: "条",
+  jobsBad: "填 1 以上的整数",
   change: "改",
   save: "保存",
   cancel: "取消",
@@ -1626,6 +1639,12 @@ export const enAccess: AccessWords = {
   turnsOf: (turns) => `At most ${turns}`,
   turnsUnit: "turns",
   turnsBad: "Enter a whole number from 1",
+  jobsLabel: "Jobs at once",
+  jobsHint: "The most jobs this account runs on this machine at once; past it, one has to end before another starts. Left empty, no limit.",
+  jobsNone: "Any jobs",
+  jobsOf: (jobs) => `At most ${jobs} jobs`,
+  jobsUnit: "jobs",
+  jobsBad: "Enter a whole number from 1",
   change: "Change",
   save: "Save",
   cancel: "Cancel",

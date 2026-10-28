@@ -1079,6 +1079,14 @@ export class MachinesPage implements Page {
         await this.options.store.refresh();
         return this.sharedWith(login, machine);
       },
+      {
+        of: (account) => (this.hubOf(login)?.shares ?? []).find((share) => share.machine === machine && share.account === account)?.jobs ?? null,
+        set: async (account, jobs) => {
+          await this.options.change(login, { change: "share", machine, to: account, shared: true, ...(jobs ? { jobs } : {}) });
+          await this.options.store.refresh();
+          return this.sharedWith(login, machine);
+        },
+      },
     );
   }
 

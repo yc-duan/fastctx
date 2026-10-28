@@ -445,6 +445,12 @@ fn definition(service: &Service, reg: &Registration, version: u32) -> anyhow::Re
     if version < 230 {
         unit.push_str("StartLimitInterval=0\n");
     }
+    // The node shares the processors among the accounts whose jobs run on
+    // it, in cgroups below its own, itself in a leaf systemd starts it in
+    // (`fastctx_platform::cpu_share`); older systemd has no such leaf.
+    if version >= 254 {
+        unit.push_str("Delegate=yes\nDelegateSubgroup=node\n");
+    }
     unit.push_str(&format!(
         "User={}\nExecStart={start}{args}\nRestart=always\nRestartSec=0\nKillMode=process\nStandardInput=null\nStandardOutput=journal\nStandardError=journal\n\n[Install]\nWantedBy=multi-user.target\n",
         service.uid

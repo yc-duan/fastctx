@@ -221,6 +221,10 @@ pub(crate) async fn here(
             Line { hub, kept: Some(kept), since, up, through, trips, changes }
         })
         .collect();
+    let jobs = {
+        let node = node.clone();
+        tokio::task::spawn_blocking(move || crate::job_accounts::counts(&node)).await.unwrap_or_default()
+    };
     Ok(MachineStats {
         run: Some(run),
         machine: node.machine(),
@@ -271,6 +275,7 @@ pub(crate) async fn here(
                 Some(fastctx_types::stats::Refused { path, at: jiff::Timestamp::try_from(at).ok()? })
             }),
         },
+        jobs,
     })
 }
 

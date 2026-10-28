@@ -93,6 +93,17 @@ pub fn fixtures() -> Fixtures {
             health: Vec::new(),
             refused: None,
         },
+        jobs: vec![
+            AccountJobs { account: None, running: 3, most: None },
+            AccountJobs {
+                account: Some(fastctx_types::access::HubAccount {
+                    hub: "w-0123456789abcdef".parse().unwrap(),
+                    account: "bo".parse().unwrap(),
+                }),
+                running: 2,
+                most: Some(4),
+            },
+        ],
     };
     let linux = MachineStats {
         run: None,
@@ -134,6 +145,7 @@ pub fn fixtures() -> Fixtures {
                 at: at("2026-10-01T08:00:00Z"),
             }),
         },
+        jobs: Vec::new(),
     };
     Fixtures { stats: vec![windows, linux] }
 }

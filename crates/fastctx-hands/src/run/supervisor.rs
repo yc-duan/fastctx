@@ -129,6 +129,11 @@ impl Job {
         prepare: impl FnOnce(&WorldDir, &JobRecord) -> io::Result<shell::Prepared>,
         #[cfg(unix)] stop_signals: libc::sigset_t,
     ) -> io::Result<()> {
+        // Its account's share of the processors, where the node gave one:
+        // joined before anything of the job starts.
+        if let Some(dir) = std::env::var_os(fastctx_platform::cpu_share::VARIABLE) {
+            let _ = fastctx_platform::cpu_share::join(Path::new(&dir));
+        }
         let mut server = control::Server::bind(&self.world, &self.record)?;
         let shell = prepare(&self.world, &self.record)?;
         let args: Vec<&std::ffi::OsStr> = shell.args.iter().map(|arg| arg.as_os_str()).collect();

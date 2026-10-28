@@ -182,7 +182,7 @@ fn hub() -> HubAccounts {
                 group: Some("lab A".into()),
             },
         ],
-        shares: vec![ShareSeen { machine: "desktop".parse().unwrap(), account: "bo".parse().unwrap() }],
+        shares: vec![ShareSeen { machine: "desktop".parse().unwrap(), account: "bo".parse().unwrap(), jobs: Some(8) }],
         assists: vec![
             AssistSeen {
                 machine: "desktop".parse().unwrap(),
@@ -289,7 +289,7 @@ pub fn fixtures() -> Fixtures {
             },
         ],
         changes: vec![
-            AccountChange::Share { machine: machine(), to: "bo".parse().unwrap(), shared: true },
+            AccountChange::Share { machine: machine(), to: "bo".parse().unwrap(), shared: true, jobs: Some(8) },
             AccountChange::Assist {
                 machine: machine(),
                 to: "cy".parse().unwrap(),

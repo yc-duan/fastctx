@@ -1253,7 +1253,8 @@
             "change": "share",
             "machine": "laptop",
             "to": "bo",
-            "shared": true
+            "shared": true,
+            "jobs": 8
           },
           "outcome": {
             "kind": "done"
@@ -4478,7 +4479,8 @@
             "shares": [
               {
                 "machine": "desktop",
-                "account": "bo"
+                "account": "bo",
+                "jobs": 8
               }
             ],
             "assists": [
@@ -4600,7 +4602,8 @@
         "change": "share",
         "machine": "desktop",
         "to": "bo",
-        "shared": true
+        "shared": true,
+        "jobs": 8
       },
       {
         "change": "assist",
@@ -24388,7 +24391,20 @@
           "version": "1.0.0",
           "started": "2026-10-12T22:01:00Z",
           "service": true
-        }
+        },
+        "jobs": [
+          {
+            "running": 3
+          },
+          {
+            "account": {
+              "hub": "w-0123456789abcdef",
+              "account": "bo"
+            },
+            "running": 2,
+            "most": 4
+          }
+        ]
       },
       {
         "machine": "server",

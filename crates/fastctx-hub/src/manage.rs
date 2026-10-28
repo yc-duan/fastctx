@@ -264,7 +264,7 @@ fn apply(
             found.profile = Some(profile);
             Ok(Told::ProfileWritten { version })
         }
-        Change::Share { machine, to, shared } => {
+        Change::Share { machine, to, shared, jobs } => {
             let directory = &mut store.book.directory;
             let owner = held_machine(directory, account, &machine)?;
             other_account(directory, &owner, &to, &machine)?;
@@ -276,8 +276,11 @@ fn apply(
                 return Err(fastctx_types::sharing::HUB_NOT_SHARED.into());
             }
             let directory = &mut store.book.directory;
-            let share = Share { machine, account: to };
-            directory.shares.retain(|existing| *existing != share);
+            if shared && jobs == Some(0) {
+                return Err("the most jobs at once is a number above zero".to_string());
+            }
+            let share = Share { machine, account: to, jobs: jobs.filter(|_| shared) };
+            directory.shares.retain(|existing| existing.machine != share.machine || existing.account != share.account);
             if shared {
                 directory.shares.push(share);
             }

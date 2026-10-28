@@ -250,5 +250,15 @@ export async function specimenStats(machine: string | null, after: string | null
         ? { stuck: [{ doing: "task 128037", what: "holds draining(this machine)", seconds: 4_740 }] }
         : {}),
     },
+    // Who runs how many jobs there: the lab is shared with ada, up to four.
+    ...(name === "lab"
+      ? {
+          jobs: [
+            { account: { hub: "w-0123456789abcdef", account: "ada" }, running: 3, most: 4 },
+            { running: 2 },
+            { account: { hub: "w-0123456789abcdef", account: "bo" }, running: 1 },
+          ],
+        }
+      : {}),
   };
 }

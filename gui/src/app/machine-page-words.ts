@@ -41,6 +41,11 @@ export interface MachinePageWords {
   /** Agents of other accounts at work or waiting on it, told its owner
    *  without their names. */
   othersAtWork(count: number): string;
+  /** The machine's own jobs, its owner's, where the owner is not known. */
+  ownJobs: string;
+  /** One account's jobs on it, on hover: how many run, and the most it
+   *  may run at once when its owner set one. */
+  jobsOf(who: string, running: number, most: number | null): string;
   sharing: string;
 
   threads(count: number): string;
@@ -166,6 +171,8 @@ export const zhMachinePage: MachinePageWords = {
   about: "资料",
   present: "在这台上",
   othersAtWork: (count) => `另有 ${count} 个在跑`,
+  ownJobs: "主人",
+  jobsOf: (who, running, most) => `${who} 在跑 ${running} 条作业${most ? `，至多 ${most} 条` : ""}`,
   sharing: "共享与协助",
 
   threads: (count) => `${count} 线程`,
@@ -265,6 +272,8 @@ export const enMachinePage: MachinePageWords = {
   about: "Details",
   present: "On it",
   othersAtWork: (count) => `${count} more running`,
+  ownJobs: "Owner",
+  jobsOf: (who, running, most) => `${who} runs ${running} job${running === 1 ? "" : "s"}${most ? `, at most ${most}` : ""}`,
   sharing: "Sharing",
 
   threads: (count) => `${count} threads`,

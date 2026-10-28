@@ -147,6 +147,10 @@ impl Member {
 pub struct Share {
     pub machine: MachineName,
     pub account: AccountName,
+    /// The most jobs the account runs on the machine at once, as its owner
+    /// set; none is no limit (`world-network.md`, 共享机器与智能体协助).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub jobs: Option<u16>,
 }
 
 /// One login of an agent on a machine, assisting an account that is not the

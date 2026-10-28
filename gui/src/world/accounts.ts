@@ -122,6 +122,8 @@ export interface MemberSeen {
 export interface ShareSeen {
   machine: MachineName;
   account: AccountName;
+  /** The most jobs the account runs on it at once; absent is no limit. */
+  jobs?: number;
 }
 
 /** One login of an agent on a machine, assisting an account. */
@@ -334,7 +336,7 @@ export interface Dissolution {
 
 /** A change made as an account (`fastctx_types::accounts::AccountChange`). */
 export type AccountChange =
-  | { change: "share"; machine: MachineName; to: AccountName; shared: boolean }
+  | { change: "share"; machine: MachineName; to: AccountName; shared: boolean; jobs?: number }
   | { change: "assist"; machine: MachineName; to: AccountName; agent: string; home?: string; assisting: boolean; until?: Timestamp; weekly?: number; daily?: number; five_hour?: number; turns?: number }
   | { change: "plan"; machine: MachineName; agent: string; home?: string; plan: PlanLabel | null }
   | { change: "stop_acting"; machine: MachineName }

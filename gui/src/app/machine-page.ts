@@ -15,7 +15,7 @@
 
 import { glyph } from "../conversation/glyphs";
 import { escape } from "../conversation/prose";
-import { loginsOf, names, type AccountChange, type HubAccounts, type Login } from "../world/accounts";
+import { loginsOf, names, type AccountChange, type HubAccounts, type Login, type ShareSeen } from "../world/accounts";
 import type { NameProblem, WorldNow } from "../world/bridge";
 import { agentName, osName, titleOf } from "../world/names";
 import type { Card, MachineStats, StatsSeen } from "../world/stats";
@@ -1001,10 +1001,30 @@ export class MachinePage implements Page {
           )}${r.town ? `<span class="tag">${escape(r.town)}</span>` : ""}</a></li>`,
       )
       .join("");
+    // Who runs how many jobs on it, as it says: a row of dots each, the
+    // faint ones what its owner still lets that account run.
+    const owner = this.holder(machine, world)?.account ?? words.ownJobs;
+    const byAccount = (stats?.jobs ?? []).filter((one) => one.running > 0);
+    const jobsSaid = byAccount.length
+      ? `<ul class="mp-jobs">${byAccount
+          .map((one) => {
+            const who = one.account?.account ?? owner;
+            const most = one.most ?? null;
+            const shown = Math.min(one.running, JOB_DOTS);
+            const room = most !== null && most <= JOB_DOTS ? Math.max(0, most - one.running) : 0;
+            const dots = `${"<i class=\"on\"></i>".repeat(shown)}${"<i></i>".repeat(room)}`;
+            const count = one.running > JOB_DOTS || (most !== null && most > JOB_DOTS) ? `<span class="mp-jobs-n">${most ? `${one.running}/${most}` : one.running}</span>` : "";
+            return `<li title="${escape(words.jobsOf(who, one.running, most))}"><span class="mp-jobs-who">${escape(who)}</span><span class="mp-jobs-dots" aria-hidden="true">${dots}</span>${count}</li>`;
+          })
+          .join("")}</ul>`
+      : jobs.length
+        ? `<p class="machine-jobs">${escape(machines.jobs(jobs.length))}</p>`
+        : "";
+    this.presentBox.hidden &&= !byAccount.length;
     this.put(
       "present",
       this.presentBox,
-      `<h2 class="mp-sec-title">${escape(words.present)}</h2>${agents ? `<ul class="machine-agents">${agents}</ul>` : ""}${others ? `<p class="machine-jobs">${escape(words.othersAtWork(others))}</p>` : ""}${jobs.length ? `<p class="machine-jobs">${escape(machines.jobs(jobs.length))}</p>` : ""}${stuckSaid}`,
+      `<h2 class="mp-sec-title">${escape(words.present)}</h2>${agents ? `<ul class="machine-agents">${agents}</ul>` : ""}${others ? `<p class="machine-jobs">${escape(words.othersAtWork(others))}</p>` : ""}${jobsSaid}${stuckSaid}`,
     );
   }
 
@@ -1051,7 +1071,11 @@ export class MachinePage implements Page {
       giver || to.includes(owner.account)
         ? `<div class="given-row"><span class="given-label">${escape(machines.sharedTo)}</span>${to
             .filter((one) => giver || one === owner.account)
-            .map((one) => (one === owner.account ? chip(one, `data-act="leave"`, machines.leave) : chip(one, `data-act="unshare" data-to="${escape(one)}"`)))
+            .map((one) => {
+              if (one === owner.account) return chip(one, `data-act="leave"`, machines.leave);
+              const jobs = shareOf(world, owner, machine.name, one)?.jobs;
+              return chip(one, `data-act="unshare" data-to="${escape(one)}"${jobs ? ` data-jobs="${jobs}"` : ""}`);
+            })
             .join("")}${giver ? `<button class="text-button quiet-button" type="button" data-act="share">${glyph("plus", 13)}<span>${escape(machines.share)}</span></button>` : ""}</div>`
         : "";
     const assists = owner ? (hubOf(world, owner)?.assists ?? []).filter((assist) => assist.machine === machine.name) : [];
@@ -1163,7 +1187,9 @@ export class MachinePage implements Page {
         return;
       case "unshare": {
         const to = target.dataset.to ?? "";
-        if (owner) void this.takeBack(button, owner, to, { change: "share", machine: machine.name, to, shared: false }, { change: "share", machine: machine.name, to, shared: true });
+        // Given again by the undo, it keeps its limit of jobs.
+        const jobs = target.dataset.jobs ? { jobs: Number(target.dataset.jobs) } : {};
+        if (owner) void this.takeBack(button, owner, to, { change: "share", machine: machine.name, to, shared: false }, { change: "share", machine: machine.name, to, shared: true, ...jobs });
         return;
       }
       case "assist-edit":
@@ -1212,6 +1238,14 @@ export class MachinePage implements Page {
         await this.options.change(login, { change: "share", machine: machine.name, to, shared });
         await store.refresh();
         return sharedWith(store.world.peek(), login, machine.name);
+      },
+      {
+        of: (account) => shareOf(store.world.peek(), login, machine.name, account)?.jobs ?? null,
+        set: async (account, jobs) => {
+          await this.options.change(login, { change: "share", machine: machine.name, to: account, shared: true, ...(jobs ? { jobs } : {}) });
+          await store.refresh();
+          return sharedWith(store.world.peek(), login, machine.name);
+        },
       },
     );
   }
@@ -1340,6 +1374,14 @@ function hubOf(world: WorldNow | null, login: Login): HubAccounts | null {
 }
 
 /** The accounts `machine` is shared with, as `login`'s hub says. */
+/** The share of `machine` with `account`, as its holder's hub keeps it. */
+function shareOf(world: WorldNow | null, login: Login, machine: string, account: string): ShareSeen | undefined {
+  return (hubOf(world, login)?.shares ?? []).find((share) => share.machine === machine && share.account === account);
+}
+
+/** The most dots an account's jobs are drawn with; past it, a count. */
+const JOB_DOTS = 12;
+
 function sharedWith(world: WorldNow | null, login: Login, machine: string): string[] {
   return (hubOf(world, login)?.shares ?? []).filter((share) => share.machine === machine).map((share) => share.account);
 }

@@ -11,7 +11,7 @@ export interface MachineLogActor {
 
 export type MachineLogAction =
   | { change: "collab"; version: number }
-  | { change: "share"; machine: MachineName; to: AccountName; shared: boolean }
+  | { change: "share"; machine: MachineName; to: AccountName; shared: boolean; jobs?: number }
   // Assistance, under the names the hub first wrote it under, which hubs
   // and nodes of every version read.
   | { change: "lend"; machine: MachineName; to: AccountName; agent: string; home: string | null; lent: boolean; until?: Timestamp; weekly?: number; daily?: number; five_hour?: number; turns?: number }

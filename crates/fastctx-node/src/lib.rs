@@ -72,6 +72,7 @@ mod hub_moving;
 mod inbox;
 mod initializing;
 mod intake;
+mod job_accounts;
 mod job_reader;
 mod job_receipts;
 mod job_watch;
@@ -228,6 +229,10 @@ pub(crate) struct Node {
     /// How many turns each agent login runs at once, and the turns waiting
     /// for room (`turn_slots`).
     turn_slots: turn_slots::Slots,
+    /// Whom each job running here works for (`job_accounts`).
+    job_accounts: job_accounts::JobAccounts,
+    /// Where each account's jobs share the processors, where they do.
+    cpu_shares: Option<fastctx_platform::cpu_share::Shares>,
     file_searches: file_search::Searches,
     line_sources: lines::Sources,
     log: Arc<log::Log>,
@@ -577,6 +582,15 @@ pub async fn run_prepared(
     let endpoint = Endpoint::for_world(world.path())?;
     let mut listener = Listener::bind(&endpoint)?;
     log.line(format_args!("listening at {endpoint}"));
+    // The processors shared evenly among the accounts whose jobs run here,
+    // where the service was given its cgroup (`fastctx_platform::cpu_share`).
+    let cpu_shares = match fastctx_platform::cpu_share::Shares::take_up() {
+        Ok(shares) => shares,
+        Err(error) => {
+            log.line(format_args!("sharing the processors among the accounts' jobs: {error}"));
+            None
+        }
+    };
     if waits {
         no_longer_waiting(&world);
     }
@@ -643,6 +657,8 @@ pub async fn run_prepared(
         actions: Default::default(),
         long_controls: Default::default(),
         turn_slots: Default::default(),
+        job_accounts: Default::default(),
+        cpu_shares,
         file_searches: file_search::Searches::default(),
         line_sources: lines::Sources::default(),
         log,

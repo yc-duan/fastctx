@@ -245,6 +245,30 @@ a.text-button {
   color: var(--text-3);
 }
 
+/* A machine given to an account: the most jobs it runs there at once, a
+   pill beside the way to take it back, changed in a line under the row. */
+.give-row .give-cap {
+  margin-left: auto;
+}
+
+.give-row.editing {
+  flex-wrap: wrap;
+  padding-bottom: var(--space-3);
+}
+
+.give-cap-edit {
+  flex-basis: 100%;
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: var(--space-4);
+}
+
+.give-cap-edit .assist-amount {
+  width: 112px;
+  margin-top: 0;
+}
+
 .give-new .field {
   margin-top: var(--space-4);
 }

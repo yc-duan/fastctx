@@ -118,6 +118,10 @@ pub struct ShareArgs {
     /// Take the share back.
     #[arg(long)]
     off: bool,
+    /// The most jobs the account runs on it at once; no limit when not
+    /// given. Sharing again sets it anew.
+    #[arg(long, conflicts_with = "off", value_parser = clap::value_parser!(u16).range(1..))]
+    jobs: Option<u16>,
     /// The account the machine is registered under; the one this computer
     /// is logged in to when not given.
     #[arg(long = "as")]
@@ -584,7 +588,8 @@ fn until(expires: Timestamp) -> String {
 
 pub fn share(args: ShareArgs) -> anyhow::Result<()> {
     let owner = account_or_owner(args.hub.as_ref(), args.owner, Some(&args.machine))?;
-    let change = AccountChange::Share { machine: args.machine.clone(), to: args.to.clone(), shared: !args.off };
+    let change =
+        AccountChange::Share { machine: args.machine.clone(), to: args.to.clone(), shared: !args.off, jobs: args.jobs };
     self::change(args.hub, owner, change)?;
     if args.off {
         println!("{} no longer shares {}", args.to, args.machine);
