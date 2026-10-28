@@ -14,8 +14,10 @@
 //! the account it names (`crate::directory`). The node checks again what
 //! each call asks.
 
+pub mod account_records;
 mod accounts;
 mod addresses;
+pub mod admission;
 mod afoot;
 mod answering;
 mod answers;
@@ -27,11 +29,15 @@ mod direct;
 mod kernel;
 mod ledger;
 mod letters;
+mod posting;
+pub use posting::{Posted, Posting};
 mod line;
 mod login_identity;
 mod machine_log;
+mod memory;
 mod moving;
 mod outgoing;
+mod plans;
 mod presence;
 mod profile;
 mod questions;
@@ -39,7 +45,10 @@ mod session;
 pub mod state;
 mod update_policy;
 pub mod versions;
+mod view_changes;
+mod watching;
 mod ways;
+pub use watching::{Input as WatchInput, Watching};
 
 use std::collections::{BTreeSet, HashMap};
 use std::future::Future;
@@ -88,10 +97,23 @@ pub struct Caller {
     pub names: Vec<MachineName>,
     /// The original envelope name, used only to admit older message bodies.
     pub sent_as: MachineName,
+    /// Where a letter came in its hub's numbering: once that place is
+    /// acknowledged, what the letter did is settled. None for a call.
+    pub received: Option<fastctx_storage::receipts::Reference>,
 }
 
 /// What the link hands the node: calls to answer and letters to keep.
 pub trait Node: Send + Sync + 'static {
+    /// Waits for this caller's fair share, before opening or executing work.
+    fn acquire(
+        &self,
+        request: admission::Request,
+    ) -> BoxFuture<Result<admission::Admitted, fastctx_types::ipc::Failure>> {
+        let place = self.place(&request.machine, &request.account, request.pool);
+        Box::pin(async move {
+            place.map(|guard| Arc::new(admission::Held { _guard: std::sync::Mutex::new(guard) }) as admission::Admitted)
+        })
+    }
     /// Known local login directories, without scanning or asking a host.
     fn login_homes(&self, agent: &fastctx_types::AgentName) -> Result<Vec<(std::path::PathBuf, bool)>, String> {
         Err(format!("this device has no local {agent} logins"))
@@ -134,6 +156,8 @@ pub trait Node: Send + Sync + 'static {
     /// This machine's view of the directory may have changed: the link has
     /// just asked the hub.
     fn directory_changed(&self) {}
+    /// An account record changed; consumers fetch the authoritative body as needed.
+    fn account_record_changed(&self, _change: &fastctx_types::account_records::Changed) {}
     /// The hub calls this machine `to` now, no longer `from`.
     fn renamed(&self, from: &MachineName, to: &MachineName) {
         let _ = (from, to);
@@ -298,9 +322,18 @@ pub(crate) struct Inner {
     refreshing: tokio::sync::Mutex<Refreshed>,
     /// How many refreshes of the view began.
     refreshes: AtomicU64,
+    /// The connection on which the hub last gave the whole view, 0 before
+    /// any (`Link::view_current`).
+    view_synced: AtomicU64,
+    /// Whether a write of the view to disk is due, and when the last one
+    /// began (`view_changes`).
+    keeping: std::sync::atomic::AtomicBool,
+    kept_at: Mutex<Option<std::time::Instant>>,
     status: watch::Sender<Status>,
+    record_changes: tokio::sync::broadcast::Sender<Option<fastctx_types::account_records::Changed>>,
     connection: Mutex<Option<Connection>>,
     calls: Mutex<HashMap<u64, Waiter>>,
+    watching: watching::Pools,
     /// The calls of other machines this one is answering (`answers`).
     answers: answers::Answers,
     asks: questions::Questions,
@@ -308,7 +341,7 @@ pub(crate) struct Inner {
     /// Woken when a letter is put in the outbox.
     outbox_changed: Notify,
     /// Held while one of the hub's letters is taken (`session::take_letters`).
-    taking: Arc<tokio::sync::Mutex<()>>,
+    taking: fastctx_platform::doing::Mutex<()>,
     /// What this session was last told of how each machine is connected,
     /// and when among the hub's changes (`presence`).
     presences: Mutex<HashMap<MachineName, (u64, crate::directory::Presence)>>,
@@ -412,13 +445,14 @@ impl Link {
     }
 
     fn start_with_changes(
-        dir: NetDir,
+        mut dir: NetDir,
         membership: Membership,
         key: SecretKey,
         node: Arc<dyn Node>,
         changes: Option<changes::Changes>,
     ) -> io::Result<Self> {
         dir.prepare()?;
+        dir.open_database(&membership.id)?;
         let counter = Counter::open(dir.counter())?;
         let letters_file = match state::read::<LettersFile>(&dir.letters()) {
             Ok(file) => file,
@@ -455,6 +489,7 @@ impl Link {
         };
         let policy = update_policy::UpdatePolicy::read(dir.path())?;
         let (status, _) = watch::channel(Status::Connecting { since: Timestamp::now(), last_error: None });
+        let receiving = dir.path().display().to_string();
         let inner = Arc::new_cyclic(|this| Inner {
             this: this.clone(),
             dir,
@@ -470,16 +505,26 @@ impl Link {
             view: Mutex::new(Arc::new(view)),
             refreshing: tokio::sync::Mutex::new(Refreshed::default()),
             refreshes: AtomicU64::new(0),
+            view_synced: AtomicU64::new(0),
+            keeping: std::sync::atomic::AtomicBool::new(false),
+            kept_at: Mutex::new(None),
             status,
+            record_changes: tokio::sync::broadcast::channel(1024).0,
             connection: Mutex::new(None),
             calls: Mutex::new(HashMap::new()),
+            watching: Mutex::new(HashMap::new()),
             answers: answers::Answers::default(),
             asks: questions::Questions::default(),
             next_id: AtomicU64::new(0),
             dissolved: std::sync::atomic::AtomicBool::new(false),
             then: Mutex::new(None),
             outbox_changed: Notify::new(),
-            taking: Arc::default(),
+            taking: fastctx_platform::doing::Mutex::new(
+                fastctx_platform::doing::Rank::RECEIVING,
+                "incoming letters",
+                receiving,
+                (),
+            ),
             presences: Mutex::new(HashMap::new()),
             clock: Mutex::default(),
             reconnect: Notify::new(),
@@ -495,6 +540,7 @@ impl Link {
             versions: versions::Versions::with_policy(policy),
             task: Mutex::new(None),
         });
+        letters::start(&inner);
         inner.line_started();
         // A machine that allows direct connections takes them from the
         // roster it last had, before it reaches the hub, and whether or not
@@ -586,6 +632,30 @@ impl Link {
     /// This machine's view of the directory, as last given by the hub.
     pub fn view(&self) -> Arc<View> {
         self.inner.view()
+    }
+
+    /// Whether the view is the one the hub gave on the connection up now:
+    /// not while there is none, nor on a new one until its directory came,
+    /// the view then being what an earlier one left, which may lack a
+    /// machine that came meanwhile. Only such a view decides for good that
+    /// a machine is gone from it.
+    pub fn view_current(&self) -> bool {
+        self.inner
+            .connection()
+            .is_some_and(|connection| self.inner.view_synced.load(Ordering::Acquire) == connection.generation)
+    }
+
+    /// The view as last given, while this machine is a member of the hub:
+    /// it stays while the line to the hub is down, and the machines in it
+    /// are then not gone, only not heard from (`world-network.md`, 断开不是
+    /// 结束). None once the hub removed this machine. What may be done on
+    /// them is decided apart, on the view as it stands then.
+    pub fn last_view(&self) -> Option<Arc<View>> {
+        if matches!(self.status(), Status::Stopped { .. }) {
+            return None;
+        }
+        let view = self.inner.view();
+        view.me().is_some().then_some(view)
     }
 
     /// This machine's direct links with machines on this hub, as they stand.
@@ -707,12 +777,26 @@ impl Link {
     ) -> Result<RemoteResult, CallFailure> {
         // A call's future is tens of kilobytes; on the heap it does not grow
         // every future that makes a call, which a build without
-        // optimizations keeps whole on the stack, once for each.
-        let call = match self.login_call(to, account, call).await {
-            Ok(call) => call,
-            Err(reason) => return Ok(Err(fastctx_types::ipc::Failure::not_run(reason))),
-        };
-        Box::pin(self.inner.call(to, account, purpose, call, None)).await
+        // optimizations keeps whole on the stack, once for each. Its type is
+        // erased too: proving a caller's future `Send` then stops here instead
+        // of descending through every layer to the TLS stream, which passes
+        // the compiler's recursion limit where a device calls a hub itself.
+        let within = call.contract().within;
+        let calling: Pin<Box<dyn Future<Output = Result<RemoteResult, CallFailure>> + Send + '_>> = Box::pin(async {
+            let call = match Box::pin(self.login_call(to, account, call)).await {
+                Ok(call) => call,
+                Err(reason) => return Ok(Err(fastctx_types::ipc::Failure::not_run(reason))),
+            };
+            Box::pin(self.inner.call(to, account, purpose, call, None)).await
+        });
+        match within {
+            Some(within) => {
+                fastctx_platform::doing::outside(format!("{to}'s call including preparation"), within, calling)
+                    .await
+                    .map_err(|late| CallFailure::Unknown { name: to.clone(), reason: late.to_string() })?
+            }
+            None => calling.await,
+        }
     }
 
     /// Calls `to` with a data connection, whose source end `feed` is given
@@ -725,11 +809,23 @@ impl Link {
         call: RemoteCall,
         feed: Feed,
     ) -> Result<RemoteResult, CallFailure> {
-        let call = match self.login_call(to, account, call).await {
-            Ok(call) => call,
-            Err(reason) => return Ok(Err(fastctx_types::ipc::Failure::not_run(reason))),
-        };
-        Box::pin(self.inner.call(to, account, purpose, call, Some(feed))).await
+        // Boxed and erased as in `call`.
+        let within = call.contract().within;
+        let calling: Pin<Box<dyn Future<Output = Result<RemoteResult, CallFailure>> + Send + '_>> = Box::pin(async {
+            let call = match Box::pin(self.login_call(to, account, call)).await {
+                Ok(call) => call,
+                Err(reason) => return Ok(Err(fastctx_types::ipc::Failure::not_run(reason))),
+            };
+            Box::pin(self.inner.call(to, account, purpose, call, Some(feed))).await
+        });
+        match within {
+            Some(within) => {
+                fastctx_platform::doing::outside(format!("{to}'s call including preparation"), within, calling)
+                    .await
+                    .map_err(|late| CallFailure::Unknown { name: to.clone(), reason: late.to_string() })?
+            }
+            None => calling.await,
+        }
     }
 
     /// Sends a letter to `to`, for `account`. It is on this machine's disk
@@ -742,6 +838,18 @@ impl Link {
         id: LetterId,
         letter: Letter,
     ) -> io::Result<()> {
+        self.post_letter(to, account, purpose, id, letter).map(|_| ())
+    }
+
+    /// Posts a letter and returns the durable reference used to observe hub custody.
+    pub fn post_letter(
+        &self,
+        to: &MachineName,
+        account: &AccountName,
+        purpose: Purpose,
+        id: LetterId,
+        letter: Letter,
+    ) -> io::Result<Posted> {
         self.inner.send_letter(to, account, purpose, id, letter)
     }
 
@@ -940,6 +1048,11 @@ impl Inner {
     /// still under way, as just after the node started, the outcome of that
     /// attempt.
     async fn connected(&self) -> Option<Connection> {
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(60);
+        let _wait = fastctx_platform::doing::waiting_outside(
+            "the first connection to the hub",
+            std::time::Duration::from_secs(60),
+        );
         let mut status = self.status.subscribe();
         loop {
             if let Some(connection) = self.connection() {
@@ -948,7 +1061,7 @@ impl Inner {
             if !matches!(*status.borrow_and_update(), Status::Connecting { last_error: None, .. }) {
                 return self.connection();
             }
-            if status.changed().await.is_err() {
+            if !matches!(tokio::time::timeout_at(deadline, status.changed()).await, Ok(Ok(()))) {
                 return None;
             }
         }
@@ -1008,40 +1121,9 @@ impl Inner {
         let Told::Directory { mut view } = self.ask(Question::Directory).await? else {
             return Err("the hub answered something else".to_string());
         };
-        // Its times by this machine's clock, and who came or went since the
-        // hub made it.
+        // Its times by this machine's clock.
         self.localize(&mut view);
-        self.with_presences(&mut view);
-        if view.hub != self.hub {
-            return Err(format!("the hub gave a view of {}, not of {}", view.hub, self.hub));
-        }
-        let me = self.me();
-        if view.me != me {
-            // The hub renamed this machine: it says so of this machine's key.
-            let renamed = view.me().is_some_and(|member| member.key == self.key.public() && member.named(&me));
-            if !renamed {
-                return Err(format!("the hub gave the view of {}, not of {me}", view.me));
-            }
-            self.follow_name(view.me.clone());
-        }
-        let changed = *self.view() != *view;
-        if changed {
-            state::write(&self.dir.view(), &*view).map_err(|error| format!("keeping the view: {error}"))?;
-            self.follow_addresses(&view);
-            let mut current = self.view.lock().expect("never poisoned");
-            // Who came or went while it was being kept goes in with it: a
-            // change told meanwhile went into the view it replaces.
-            self.with_presences(&mut view);
-            *current = Arc::from(view);
-            drop(current);
-            if let Some(this) = self.this.upgrade() {
-                this.follow_view();
-            }
-            self.prune_afoot();
-            self.ways_changed();
-        }
-        self.reroute_if_changed();
-        Ok(())
+        self.adopt(*view)
     }
 
     /// Checks that `envelope` is for this machine and that the view lets
@@ -1085,15 +1167,26 @@ impl Inner {
         names.push(envelope.from.clone());
         names.sort();
         names.dedup();
-        Ok(Caller { machine, account: account.clone(), key: member.key, names, sent_as: envelope.from.clone() })
+        Ok(Caller {
+            machine,
+            account: account.clone(),
+            key: member.key,
+            names,
+            sent_as: envelope.from.clone(),
+            received: None,
+        })
     }
 
     async fn ask(&self, question: Question) -> Result<Told, String> {
-        let connection =
-            self.connected().await.ok_or_else(|| format!("not connected to the hub: {}", self.not_connected()))?;
-        self.ask_on(connection, question)
-            .await?
-            .ok_or_else(|| "the connection to the hub ended before it answered".to_string())
+        fastctx_platform::doing::outside("the hub's answer, including its first connection", within(&question), async {
+            let connection =
+                self.connected().await.ok_or_else(|| format!("not connected to the hub: {}", self.not_connected()))?;
+            self.ask_on(connection, question)
+                .await?
+                .ok_or_else(|| "the connection to the hub ended before it answered".to_string())
+        })
+        .await
+        .map_err(|late| late.to_string())?
     }
 
     /// None means that the connection ended, distinct from a hub refusal. A
@@ -1102,18 +1195,24 @@ impl Inner {
     async fn ask_on(&self, connection: Connection, question: Question) -> Result<Option<Told>, String> {
         let within = within(&question);
         let id = self.next_id();
+        let frames = crate::question_parts::frames(id, question, self.view().ledger_parts)?;
+        let multipart = frames.len() > 1;
         let (answer, answered) = oneshot::channel();
         self.asks.insert(id, connection.generation, answer, None);
-        struct Waiting<'a>(&'a Inner, u64);
+        struct Waiting<'a>(&'a Inner, u64, Option<outgoing::Outgoing>);
         impl Drop for Waiting<'_> {
             fn drop(&mut self) {
                 self.0.asks.remove(self.1);
+                if let Some(up) = &self.2 {
+                    let _ = up.send(crate::wire::Up::CancelQuestion { id: self.1 });
+                }
             }
         }
-        let _waiting = Waiting(self, id);
-        if connection.up.send(crate::wire::Up::Ask { id, question }).is_err() {
-            self.asks.remove(id);
-            return Ok(None);
+        let _waiting = Waiting(self, id, multipart.then(|| connection.up.clone()));
+        for frame in frames {
+            if connection.up.send(frame).is_err() {
+                return Ok(None);
+            }
         }
         // The answer, or the end of the connection, which drops the sender.
         match fastctx_platform::doing::outside("the hub's answer", within, answered).await {

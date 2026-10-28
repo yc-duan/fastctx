@@ -59,8 +59,9 @@ export function talksOf(world: WorldNow | null, acts: TalkActs): { listed: Resid
 }
 
 export function byRecent(residents: ResidentNow[]): ResidentNow[] {
-  const stirred = (r: ResidentNow) => Date.parse(r.now?.since ?? r.about.born_at);
-  return [...residents].sort((a, b) => stirred(b) - stirred(a));
+  // Each one's moment is read once, not at every comparison.
+  const stirred = residents.map((r) => ({ r, at: Date.parse(r.now?.since ?? r.about.born_at) }));
+  return stirred.sort((a, b) => b.at - a.at).map(({ r }) => r);
 }
 
 /** Each machine's facts by name, for the device marks. */

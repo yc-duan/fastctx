@@ -2,7 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::data::Stream;
+use crate::data::{ReadHalf, Stream};
 use crate::sign::{Bytes, Signature, Signed};
 
 #[derive(Serialize, Deserialize)]
@@ -63,4 +63,35 @@ pub async fn receive(stream: &mut Stream) -> Result<Option<Signed>, String> {
             Ok(Some(Signed { data: Bytes(bytes), sig: carried.sig }))
         }
     }
+}
+
+/// A legacy packet keeps its byte reservation through signature verification
+/// and decoding, including when the peer sent a length-prefixed large history.
+pub(crate) struct Received {
+    signed: Signed,
+    _memory: crate::reassembly::Reservation,
+}
+impl std::ops::Deref for Received {
+    type Target = Signed;
+    fn deref(&self) -> &Signed { &self.signed }
+}
+
+pub(crate) async fn receive_half(stream: &mut ReadHalf, first: Option<serde_json::Value>) -> Result<Option<Received>, String> {
+    let incoming = match first {
+        Some(first) => serde_json::from_value(first).map_err(|e| format!("the legacy watch header: {e}"))?,
+        None => match stream.hear_or_end::<Incoming>().await? { Some(incoming) => incoming, None => return Ok(None) },
+    };
+    Ok(Some(match incoming {
+        Incoming::Signed(signed) => Received {
+            _memory: crate::reassembly::Reservation::new(signed.data.0.len().saturating_mul(2))?, signed,
+        },
+        Incoming::Carried(carried) => {
+            let limit = usize::try_from(carried.watch_bytes).ok().filter(|size| *size <= crate::watch_mux::MAX_PACKET)
+                .ok_or("the watch packet exceeds 64 MiB")?;
+            let mut bytes = crate::reassembly::Buffer::new(limit, limit)?;
+            stream.take(carried.watch_bytes, |part| bytes.extend(part)).await?;
+            let signed = Signed { data: Bytes(bytes.to_vec()), sig: carried.sig };
+            Received { signed, _memory: bytes.into_reservation() }
+        }
+    }))
 }

@@ -37,6 +37,15 @@ fn hub() -> HubAccounts {
         addresses: vec!["203.0.113.10:7443".parse().unwrap()],
         link: online(),
         me: Some("desktop".parse().unwrap()),
+        hub_machine: Some("server".parse().unwrap()),
+        machine_notices: vec![fastctx_types::sharing::Notice {
+            id: 42,
+            at: at(),
+            account: "ada".parse().unwrap(),
+            machine: "laptop".parse().unwrap(),
+            by: Some("bo".parse().unwrap()),
+            action: fastctx_types::sharing::Change::Rename { to: "workstation".parse().unwrap() },
+        }],
         renames: true,
         managed: true,
         roles: true,
@@ -173,7 +182,7 @@ fn hub() -> HubAccounts {
                 group: Some("lab A".into()),
             },
         ],
-        shares: vec![ShareSeen { machine: "desktop".parse().unwrap(), account: "bo".parse().unwrap() }],
+        shares: vec![ShareSeen { machine: "desktop".parse().unwrap(), account: "bo".parse().unwrap(), jobs: Some(8) }],
         assists: vec![
             AssistSeen {
                 machine: "desktop".parse().unwrap(),
@@ -184,6 +193,7 @@ fn hub() -> HubAccounts {
                 weekly: None,
                 daily: None,
                 five_hour: Some(80),
+                turns: Some(4),
             },
             AssistSeen {
                 machine: "gpu".parse().unwrap(),
@@ -194,6 +204,7 @@ fn hub() -> HubAccounts {
                 weekly: Some(fastctx_types::usage::Usd(42_500_000)),
                 daily: Some(fastctx_types::usage::Usd(8_000_000)),
                 five_hour: None,
+                turns: None,
             },
         ],
         plans: vec![PlanSeen {
@@ -278,7 +289,7 @@ pub fn fixtures() -> Fixtures {
             },
         ],
         changes: vec![
-            AccountChange::Share { machine: machine(), to: "bo".parse().unwrap(), shared: true },
+            AccountChange::Share { machine: machine(), to: "bo".parse().unwrap(), shared: true, jobs: Some(8) },
             AccountChange::Assist {
                 machine: machine(),
                 to: "cy".parse().unwrap(),
@@ -289,6 +300,7 @@ pub fn fixtures() -> Fixtures {
                 weekly: None,
                 daily: None,
                 five_hour: Some(90),
+                turns: Some(3),
             },
             AccountChange::Assist {
                 machine: machine(),
@@ -300,6 +312,7 @@ pub fn fixtures() -> Fixtures {
                 weekly: Some(fastctx_types::usage::Usd(50_000_000)),
                 daily: Some(fastctx_types::usage::Usd(10_000_000)),
                 five_hour: None,
+                turns: None,
             },
             AccountChange::Plan {
                 machine: "gpu".parse().unwrap(),

@@ -23,6 +23,7 @@ use crate::protocol::{CLIENT_INFO, VERSION_KEY};
 pub struct Session {
     world: WorldDir,
     host: OnceLock<Host>,
+    host_process: Option<fastctx_types::ProcessIdentity>,
     /// Set when the World started this session as a Codex thread.
     resident: Option<String>,
     /// The conversation a Claude Code session the World started is, named
@@ -71,6 +72,7 @@ impl Session {
         Ok(Self {
             world,
             host: OnceLock::new(),
+            host_process: fastctx_platform::host_process::parent_identity().ok(),
             resident,
             conversation,
             residents: tokio::sync::Mutex::new(HashMap::new()),
@@ -119,6 +121,7 @@ impl Session {
         Arc::new(Self {
             world: self.world.clone(),
             host: OnceLock::new(),
+            host_process: self.host_process.clone(),
             resident: self.resident.clone(),
             conversation: self.conversation.clone(),
             residents: tokio::sync::Mutex::new(HashMap::new()),
@@ -238,8 +241,9 @@ impl Session {
                 }
             },
         };
+        let machine = fastctx_hands::run::preread::on_only(&command).ok().map(|(machine, _)| machine);
         let reply = async {
-            let mut client = self.client(meta).await?;
+            let mut client = self.client(meta).await.map_err(crate::run_failure::Failure::before_dispatch)?;
             let call = Call::Run {
                 call_id: meta.and_then(|meta| {
                     meta.get("claudecode/toolUseId")
@@ -249,13 +253,20 @@ impl Session {
                         .map(str::to_string)
                 }),
                 resident: whereabouts.resident.clone(),
-                request: RunRequest { call_id: None, script: command, cwd, writes_off: self.writes_off, wait },
+                request: RunRequest {
+                    turn: None,
+                    call_id: None,
+                    script: command,
+                    cwd,
+                    writes_off: self.writes_off,
+                    wait,
+                },
                 node: None,
             };
             // The node records failures after accepting Run; the one-use host
             // proof must never be consumed again to record the same call.
             *sent = true;
-            client.call(call).await.map_err(|error| error.to_string())
+            client.call(call).await.map_err(crate::run_failure::Failure::from)
         }
         .await;
         let answering = match &reply {
@@ -315,7 +326,7 @@ impl Session {
                 }
             }
             Ok(other) => Answer::error(format!("=== run (the node answered something else: {other:?}) ===")),
-            Err(error) => Answer::error(format!("=== run (not run) ===\n{error}")),
+            Err(error) => error.answer(machine.as_deref()),
         };
         self.add_waiting_words_about(whereabouts, answering, &mut answer, meta).await;
         answer
@@ -389,9 +400,9 @@ impl Session {
         let mut answer = match reply {
             Ok(Reply::Asked { colleague }) => Answer {
                 facts: None,
-                content: vec![Content::Text(format!(
-                    "=== colleague {} on {} (started) ===\nIts last message of each turn will be delivered to you. See what it is doing: fastctx w {}",
-                    colleague.resident, colleague.machine, colleague.resident
+                content: vec![Content::Text(fastctx_types::collab_prompt::started(
+                    &colleague.resident,
+                    &colleague.machine,
                 ))],
                 is_error: false,
                 receipt: None,
@@ -400,6 +411,56 @@ impl Session {
                 completed: None,
             },
             Ok(other) => Answer::error(format!("=== ask_colleague (the node answered something else: {other:?}) ===")),
+            Err(error) => failed(error),
+        };
+        self.add_waiting_words(&whereabouts, &mut answer, meta).await;
+        answer
+    }
+
+    /// `message_user`: words of this session's resident for the user.
+    pub async fn say(self: &Arc<Self>, arguments: &Value, meta: Option<&Value>) -> Answer {
+        let failed = |error: String| Answer::error(format!("=== message_user (not sent: {error}) ==="));
+        let message = match text_argument(arguments, "message") {
+            Ok(message) => message,
+            Err(error) => return failed(error),
+        };
+        let status = match arguments.get("status").and_then(Value::as_str) {
+            Some("reply") => fastctx_types::residents::TellStatus::Reply,
+            Some("info") => fastctx_types::residents::TellStatus::Info,
+            Some("urgent") => fastctx_types::residents::TellStatus::Urgent,
+            _ => return failed("status is one of reply, info, urgent".to_string()),
+        };
+        let attachments: Vec<fastctx_types::voice::Attachment> = match arguments.get("attachments") {
+            None | Some(Value::Null) => Vec::new(),
+            Some(value) => match serde_json::from_value(value.clone()) {
+                Ok(attachments) => attachments,
+                Err(_) => return failed("each attachment names its machine and its path".to_string()),
+            },
+        };
+        if attachments.len() > fastctx_types::voice::ATTACHMENTS_MOST {
+            return failed(format!("at most {} attachments", fastctx_types::voice::ATTACHMENTS_MOST));
+        }
+        let whereabouts = match self.whereabouts(meta).await {
+            Ok(whereabouts) => whereabouts,
+            Err(error) => return failed(error),
+        };
+        let reply = async {
+            let mut client = self.client(meta).await?;
+            let call = Call::Say { resident: whereabouts.resident.clone(), message, status, attachments };
+            client.call(call).await.map_err(|error| error.to_string())
+        }
+        .await;
+        let mut answer = match reply {
+            Ok(Reply::Told) => Answer {
+                facts: None,
+                content: vec![Content::Text(fastctx_types::voice::TOLD.to_string())],
+                is_error: false,
+                receipt: None,
+                source: None,
+                shown: None,
+                completed: None,
+            },
+            Ok(other) => Answer::error(format!("=== message_user (the node answered something else: {other:?}) ===")),
             Err(error) => failed(error),
         };
         self.add_waiting_words(&whereabouts, &mut answer, meta).await;
@@ -492,7 +553,8 @@ impl Session {
         answer: &mut Answer,
         meta: Option<&Value>,
     ) {
-        let collect = Call::Collect { resident: whereabouts.resident.clone(), answering };
+        let collect =
+            Call::Collect { resident: whereabouts.resident.clone(), answering, subagent: whereabouts.subagent };
         let mut client = match self.client(meta).await {
             Ok(client) => client,
             Err(error) => {
@@ -502,9 +564,9 @@ impl Session {
         };
         let collected = client.call(collect).await.map_err(|error| error.to_string());
         match collected {
-            Ok(Reply::Notices { notices, notes }) => {
+            Ok(Reply::Notices { notices, notes, leading_notes }) => {
                 let messages = notices.into_iter().map(|delivery| (delivery.id, told::told(&delivery.notice)));
-                let ids = match answer::assemble(&self.world, answer, notes, messages) {
+                let ids = match answer::assemble(&self.world, answer, notes, leading_notes, messages) {
                     Ok(ids) => ids,
                     Err(error) => {
                         answer.follow(format!("=== could not prepare words for you: {error} ==="));
@@ -563,7 +625,8 @@ impl Session {
         if let Some(mut known) = residents.remove(&thread) {
             // Check the arrival connection itself before trusting presence. A detached
             // EOF watcher can run after this call has already reached a replacement node.
-            match known.client.call(Call::Machines { resident: None, login: None, thread: None }).await {
+            match known.client.call(Call::Machines { resident: None, login: None, thread: None, scratch: false }).await
+            {
                 Ok(Reply::Machines { .. }) => {
                     let whereabouts = known.whereabouts.clone();
                     residents.insert(thread, known);
@@ -583,7 +646,15 @@ impl Session {
             .map_err(|error| error.to_string())?
             .map(|address| address.resident)
             .or_else(|| self.conversation.clone());
-        let hints = Hints { resident, thread: thread.clone(), was, tool_use_id: None };
+        let home = self.login(&host).and_then(|login| login.home);
+        let hints = Hints {
+            host_process: self.host_process.clone(),
+            resident,
+            thread: thread.clone(),
+            was,
+            tool_use_id: None,
+            home,
+        };
         let mut client = self.client_for(host.clone()).await?;
         match client.call(Call::Arrive { host, hints }).await {
             Ok(Reply::Arrived(whereabouts)) => {
@@ -614,11 +685,24 @@ impl Session {
         };
         let thread = meta.and_then(|meta| meta.get("threadId")).and_then(Value::as_str).map(str::to_string);
         match client
-            .call(Call::Machines { resident: self.known_resident(meta), login: self.login(&host), thread })
+            .call(Call::Machines {
+                resident: self.known_resident(meta),
+                login: self.login(&host),
+                thread,
+                scratch: true,
+            })
             .await
         {
-            Ok(Reply::Machines { here, others, groups, collab }) => {
-                Ok(Some(crate::tools::Machines { here, others, groups, collab }))
+            Ok(Reply::Machines { here, others, groups, collab, mut scratch, speaks }) => {
+                if !client.scratch_locations {
+                    scratch = here
+                        .iter()
+                        .cloned()
+                        .chain(others.iter().cloned())
+                        .map(|name| (name, Err(fastctx_types::scratch::words::OLD_NODE.into())))
+                        .collect();
+                }
+                Ok(Some(crate::tools::Machines { here, others, groups, collab, scratch, speaks }))
             }
             Ok(other) => Err(format!("the node answered something else: {other:?}")),
             Err(error) => Err(error.to_string()),

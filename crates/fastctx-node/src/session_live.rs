@@ -8,7 +8,7 @@ use fastctx_types::session::{Content, Happened, Part, SessionChange, SessionEven
 #[derive(Default)]
 pub struct Live {
     items: Vec<SessionEvent>,
-    deltas: HashMap<(String, String), HashSet<String>>,
+    deltas: HashMap<(String, String), HashSet<[u8; 32]>>,
 }
 
 impl Live {
@@ -24,7 +24,14 @@ impl Live {
 
     pub fn observe(&mut self, event: &SessionEvent) -> bool {
         match &event.happened {
-            Happened::Changed { change: SessionChange::Composer { .. }, .. } => {
+            Happened::Changed { change: SessionChange::Composer { composer }, .. } => {
+                if self.items.iter().any(|snapshot| {
+                    matches!(&snapshot.happened,
+                    Happened::Changed { change: SessionChange::Composer { composer: previous }, .. }
+                    if previous.revision > composer.revision)
+                }) {
+                    return false;
+                }
                 self.items.retain(|snapshot| {
                     !matches!(&snapshot.happened, Happened::Changed { change: SessionChange::Composer { .. }, .. })
                 });
@@ -81,12 +88,7 @@ impl Live {
                     // Late fragments still reach subscribers, but have no live snapshot to extend.
                     return true;
                 }
-                if !self
-                    .deltas
-                    .entry((turn.clone(), item.clone()))
-                    .or_default()
-                    .insert(serde_json::to_string(event).expect("session event serializes"))
-                {
+                if !self.deltas.entry((turn.clone(), item.clone())).or_default().insert(fingerprint(event)) {
                     return false;
                 }
                 for snapshot in &mut self.items {
@@ -165,6 +167,23 @@ impl Live {
         }
         true
     }
+}
+
+fn fingerprint(event: &SessionEvent) -> [u8; 32] {
+    use sha2::{Digest as _, Sha256};
+    struct Hash(Sha256);
+    impl std::io::Write for Hash {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.0.update(bytes);
+            Ok(bytes.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    let mut hash = Hash(Sha256::new());
+    serde_json::to_writer(&mut hash, event).expect("session events serialize");
+    hash.0.finalize().into()
 }
 
 #[cfg(test)]

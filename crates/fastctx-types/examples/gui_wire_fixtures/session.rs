@@ -366,6 +366,60 @@ pub fn fixtures() -> Fixtures {
             })),
         }));
     }
+    events.push(event(Happened::Heard {
+        delivery: Some("goal-question-1".parse().unwrap()),
+        turn: Some(turn.clone()),
+        from: Some(Speaker::Resident { address: address() }),
+        text: "Question from a colleague: which output format?".into(),
+        message: None,
+        notice: Some(Box::new(fastctx_types::residents::Notice::Words {
+            from: Speaker::Resident { address: address() },
+            text: "Question from a colleague: which output format?".into(),
+            goal_report: None,
+            goal_question: Some(Box::new(fastctx_types::goals::QuestionDelivery {
+                id: "goal-question-1".into(),
+                colleague: address(),
+                account: Some(fastctx_types::access::HubAccount {
+                    hub: "w-0123456789abcdef".parse().unwrap(),
+                    account: "ada".parse().unwrap(),
+                }),
+                questions: Some(json!([{"question":"Which output format?","header":"Format","multiSelect":false,
+                    "options":[{"label":"Text","description":"Plain lines"},{"label":"Table"}]}])),
+            })),
+        })),
+    }));
+    events.push(event(Happened::Heard {
+        delivery: Some("goal-result-1".parse().unwrap()),
+        turn: Some(turn.clone()),
+        from: Some(Speaker::Resident { address: address() }),
+        text: "=== colleague codex-ab12 on desktop (goal complete, 2h14m) ===\nOriginal report.\n=== what it did: fastctx w codex-ab12 ===".into(),
+        message: None,
+        notice: Some(Box::new(fastctx_types::residents::Notice::Words {
+            from: Speaker::Resident { address: address() },
+            text: "=== colleague codex-ab12 on desktop (goal complete, 2h14m) ===\nOriginal report.\n=== what it did: fastctx w codex-ab12 ===".into(),
+            goal_question: None,
+            goal_report: Some(Box::new(fastctx_types::goals::ReportDelivery {
+                id: "goal-result-1".parse().unwrap(), completion: Some("goal-completion-1".parse().unwrap()), colleague: address(),
+                account: fastctx_types::access::HubAccount { hub: "w-0123456789abcdef".parse().unwrap(), account: "ada".parse().unwrap() },
+                shown: Some(fastctx_types::goals::ReportShown {
+                    label: "fit the model".into(),
+                    status: fastctx_types::goals::Status::Complete,
+                    started_at: "2026-10-23T08:00:00Z".parse().unwrap(),
+                    ended_at: "2026-10-23T10:14:00Z".parse().unwrap(),
+                    resume_at: None,
+                    text: "Original report.".into(),
+                }),
+            })),
+        })),
+    }));
+    let mut question = item("goal-question-card", What::Message { text: "Which output format?".into() });
+    question.detail = Some(json!({
+        "delivery":"async",
+        "questions":[{"title":"Which output format?","options":["Text","Table"],"multiSelect":false}],
+        "fastctx_goal_question":{"tool_use_id":"question-tool","agent_id":null,
+            "questions":[{"question":"Which output format?","options":[{"label":"Text"},{"label":"Table"}]}]}
+    }));
+    events.push(event(Happened::Finished { turn: turn.clone(), item: question }));
     let mut items = vec![
         item("message", What::Message { text: "hello".into() }),
         item("thinking", What::Thinking { text: "thinking".into(), duration_ms: Some(4_200) }),
@@ -449,6 +503,10 @@ pub fn fixtures() -> Fixtures {
             end: TurnEnd {
                 facts: match i {
                     0 => Some(Box::new(TurnFacts {
+                        world_started_at: None,
+                        world_last_activity_at: None,
+                        world_progress: false,
+                        world_compacted: false,
                         models: vec![],
                         efforts: vec![],
                         tokens: Some(TurnTokens::Codex {
@@ -472,6 +530,10 @@ pub fn fixtures() -> Fixtures {
                         }),
                     })),
                     1 => Some(Box::new(TurnFacts {
+                        world_started_at: None,
+                        world_last_activity_at: None,
+                        world_progress: false,
+                        world_compacted: false,
                         models: vec!["response-model-a".into(), "response-model-b".into()],
                         efforts: vec![
                             TurnEffort::Requested { value: json!("low") },

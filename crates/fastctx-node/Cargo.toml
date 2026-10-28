@@ -23,7 +23,11 @@ fastctx-hosts = { path = "../fastctx-hosts" }
 fastctx-hub = { path = "../fastctx-hub" }
 fastctx-install = { path = "../fastctx-install" }
 fastctx-net = { path = "../fastctx-net" }
+fastctx-agent = { path = "../fastctx-agent" }
+fastctx-sentinel = { path = "../fastctx-sentinel" }
 fastctx-platform = { path = "../fastctx-platform" }
+fastctx-storage = { path = "../fastctx-storage" }
+fastctx-draft = { path = "../fastctx-draft" }
 fastctx-ripgrep = { path = "../fastctx-ripgrep" }
 fastctx-types = { path = "../fastctx-types" }
 fastctx-uninstall = { path = "../fastctx-uninstall" }
@@ -36,4 +40,4 @@ quick-xml = "0.42"
 serde.workspace = true
 serde_json.workspace = true
 sha2 = "0.10"
-tokio = { workspace = true, features = ["fs", "io-util", "macros", "rt-multi-thread", "sync", "time"] }
+tokio = { workspace = true, features = ["fs", "io-util", "macros", "rt-multi-thread", "sync", "time", "signal"] }

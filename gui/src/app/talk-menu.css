@@ -19,7 +19,7 @@
   --shown: 0;
   opacity: var(--shown);
   pointer-events: none;
-  transition: --shown var(--hover) ease;
+  transition: --shown var(--hover) var(--ease);
 }
 
 .talk-item:hover .talk-quick,
@@ -50,7 +50,7 @@
   background: transparent;
   color: var(--text-3);
   cursor: pointer;
-  transition: background-color var(--hover) ease, color var(--hover) ease;
+  transition: background-color var(--hover) var(--ease), color var(--hover) var(--ease);
 }
 
 .talk-more:hover,
@@ -90,7 +90,7 @@
 .talk-device,
 .talk-state {
   opacity: var(--shown);
-  transition: --shown var(--hover) ease;
+  transition: --shown var(--hover) var(--ease);
 }
 
 /* Being deleted: quieter, the state said in words where the mark was. */
@@ -160,7 +160,7 @@
   font-size: var(--size-text);
   text-align: left;
   cursor: pointer;
-  transition: color var(--hover) ease;
+  transition: color var(--hover) var(--ease);
 }
 
 .side-archived-head:hover,
@@ -373,6 +373,15 @@
   }
 }
 
+.talk-menu.as-sheet .talk-menu-head {
+  position: sticky;
+  top: calc(-1 * var(--space-2));
+  z-index: 1;
+  margin-top: calc(-1 * var(--space-2));
+  padding-top: var(--space-2);
+  background: var(--bg-elevated);
+}
+
 .talk-menu.as-sheet .talk-menu-item,
 .talk-menu.as-sheet .talk-menu-back {
   min-height: 48px;
@@ -409,7 +418,7 @@
   z-index: 39;
   background: var(--scrim);
   opacity: var(--shown);
-  animation: talk-menu-shade-in var(--fold) ease both;
+  animation: talk-menu-shade-in var(--fold) var(--ease) both;
 }
 
 @keyframes talk-menu-shade-in {
@@ -423,7 +432,7 @@
   pointer-events: none;
   opacity: var(--shown);
   translate: var(--slide) var(--lift);
-  animation: talk-menu-leave var(--quick) ease both;
+  animation: talk-menu-leave var(--quick) var(--ease) both;
 }
 
 .talk-menu.as-sheet.leaving {
@@ -434,7 +443,7 @@
 .talk-menu-shade.leaving {
   pointer-events: none;
   opacity: var(--shown);
-  animation: talk-menu-shade-out var(--fold) ease both;
+  animation: talk-menu-shade-out var(--fold) var(--ease) both;
 }
 
 @keyframes talk-menu-leave {
@@ -489,6 +498,14 @@
   opacity: var(--shown);
   translate: var(--slide) var(--lift);
   animation: panel-rise var(--fold) var(--fold-easing) both;
+}
+
+/* Gone, it fades where it stands. */
+.talk-toast.leaving {
+  pointer-events: none;
+  opacity: var(--shown);
+  translate: var(--slide) var(--lift);
+  animation: talk-menu-leave var(--quick) var(--ease-out) both;
 }
 
 .talk-toast:not(:has(.talk-toast-undo)) {

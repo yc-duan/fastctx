@@ -1136,6 +1136,7 @@ fn relative_paths(scanner: &Scanner, uncertain: &std::collections::HashSet<Vec<u
                 b"--range",
                 b"--encoding",
                 b"--files0-from",
+                b"--attachment",
             ],
             _ => &[],
         };

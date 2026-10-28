@@ -34,6 +34,7 @@ impl Stream {
             if written.is_err() {
                 return Ok((writer, written));
             }
+            fastctx_platform::doing::progress();
             count -= here as u64;
         }
         Ok((writer, Ok(())))

@@ -72,6 +72,7 @@ pub(super) fn measured(
             Entry::Tokens {
                 at: event.at,
                 who: super::who(about),
+                with: super::with(about),
                 model: counted.model.or_else(|| about.model.clone()).unwrap_or_default(),
                 tokens,
                 key: Some(key),

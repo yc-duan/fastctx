@@ -34,6 +34,8 @@ export class NodeQueue {
   private state: ComposerSessionState | null = null;
   private editing: Editing | null = null;
   private dragging: { id: string; pointer: number; startY: number } | null = null;
+  /** The rows drawn last, which rise in no more; none before the first drawing. */
+  private rows: Set<string> | null = null;
   private controls: PendingControl[] = [];
   private commands: { words: ControlQueueWords; withdraw: (id: string) => void } | null = null;
 
@@ -275,6 +277,15 @@ export class NodeQueue {
     if (this.element.dataset.drawn !== html) {
       this.element.dataset.drawn = html;
       this.element.innerHTML = html;
+      // A row rises into the queue the first time it is drawn, not the
+      // rows there as the page opened, and never again.
+      const shown = new Set<string>();
+      for (const row of this.element.querySelectorAll<HTMLElement>(".queue-row[data-key]")) {
+        const key = row.dataset.key ?? "";
+        shown.add(key);
+        if (this.rows && !this.rows.has(key)) row.classList.add("fresh");
+      }
+      this.rows = shown;
       if (this.editing) {
         this.element.querySelector(".queue-edit-slot")?.replaceWith(this.editing.field);
         if (this.editing.tray) {

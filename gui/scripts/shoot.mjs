@@ -141,14 +141,25 @@ for (const session of sessions) {
       const loaded = once("Page.loadEventFired");
       const two = session.endsWith("-2");
       const named = two ? session.slice(0, -2) : session;
-      const shown = named.startsWith("invite-") ? "invite" : named === "stop" ? "claude" : named === "drawer" || named === "palette" ? "home" : named === "service" || named.startsWith("remove-") ? "settings" : named === "slash" || named === "mention" || named === "find" || named === "attach" || named === "rewind" || named === "usage" ? "codex" : named.startsWith("asks") ? "asks" : named === "new-codex" || named === "new-attach" || named === "new-lent" || named === "new-pick" ? "new" : named === "manage" ? "about" : named === "welcome" || named === "create" || named === "created" ? "login" : named === "share" || named === "relays" ? "machines" : named === "lend" || named.startsWith("ledger") ? "home" : named === "queue" ? "codex" : named.startsWith("page") ? "page" : named;
+      const shown = named.startsWith("invite-") ? "invite" : named === "stop" ? "claude" : named === "drawer" || named === "palette" ? "home" : named === "service" || named.startsWith("remove-") ? "settings" : named === "slash" || named === "mention" || named === "find" || named === "attach" || named === "rewind" || named === "usage" ? "codex" : named.startsWith("asks") ? "asks" : named === "new-codex" || named === "new-attach" || named === "new-lent" || named === "new-pick" ? "new" : named === "manage" ? "about" : named === "welcome" || named === "create" || named === "created" ? "login" : named === "share" || named === "relays" ? "machines" : named === "lend" || named.startsWith("ledger") ? "home" : named === "queue" ? "codex" : named.startsWith("page") ? "page" : named.startsWith("panel") ? "claude" : named.startsWith("team") ? "stream" : named.startsWith("repair-") ? "home" : named === "updates-repair" ? "machines" : named === "journal-edit" ? "journal" : named === "project-write" ? "project" : named === "features" || named.startsWith("feature-") ? "home" : named;
       // `welcome` and `create` are a computer's first open, in no World yet.
       const alone = named === "welcome" || named === "create" || named === "created";
-      const ask = (session.startsWith("asks-") ? `&ask=${session.slice(5)}` : "") + (two ? "&accounts=2" : "") + (alone ? "&accounts=0" : "");
+      const ask = (session.startsWith("asks-") ? `&ask=${session.slice(5)}` : "") + (two ? "&accounts=2" : "") + (alone ? "&accounts=0" : "") + (named.startsWith("team") ? "&start=agents" : "") + (named.startsWith("repair-") ? `&repair=${named === "repair-broken" ? "broken" : "failed"}` : "");
       // A page an agent wrote is its own document, with a stand-in host.
       const written = session === "written";
       const specimen = named === "mapcanvas" ? "mapcanvas-specimen.html" : named === "longview" ? "longview-specimen.html" : written ? "page-specimen.html" : null;
-      const url = specimen ? `${base}/${specimen}?theme=${theme}${extra ? `&${extra}` : ""}` : `${base}/?s=${shown}${ask}&theme=${theme}${extra ? `&${extra}` : ""}`;
+      // `startup-failed` and the like are the page shown until Fastctx opens.
+      const startup = named.startsWith("startup-") ? named.slice("startup-".length) : null;
+      // `side-goal-blocked` is the panel beside a conversation at its goal
+      // page, the goal blocked; `side-plan` its plan.
+      const side = named.startsWith("side-") ? named.slice("side-".length).split("-") : null;
+      const url = side
+        ? `${base}/side-specimen.html?page=${side[0]}${side[1] ? `&goal=${side[1]}` : ""}&theme=${theme}${extra ? `&${extra}` : ""}`
+        : specimen
+        ? `${base}/${specimen}?theme=${theme}${extra ? `&${extra}` : ""}`
+        : startup
+          ? `${base}/?startup=${startup}&theme=${theme}${extra ? `&${extra}` : ""}`
+          : `${base}/?s=${shown}${ask}&theme=${theme}${extra ? `&${extra}` : ""}`;
       await send("Page.navigate", { url });
       await loaded;
       // The interface loads after the engine check: wait until it is there.
@@ -156,7 +167,11 @@ for (const session of sessions) {
         awaitPromise: true,
         expression: written
           ? "new Promise((r) => { const look = () => (customElements.get('w-card') ? setTimeout(r, 900) : setTimeout(look, 30)); look(); })"
-          : "new Promise((r) => { const look = () => (document.querySelector('.shell') ? r(true) : setTimeout(look, 30)); look(); })",
+          : startup
+            ? "new Promise((r) => { const look = () => (document.querySelector('.su-page') ? setTimeout(r, 600) : setTimeout(look, 30)); look(); })"
+            : side
+              ? "new Promise((r) => { const look = () => (document.querySelector('.sp-panel') ? setTimeout(r, 900) : setTimeout(look, 30)); look(); })"
+            : "new Promise((r) => { const look = () => (document.querySelector('.shell') ? r(true) : setTimeout(look, 30)); look(); })",
       });
       if (session === "drawer") {
         await send("Runtime.evaluate", { expression: "document.querySelector('.menu-button')?.click()" });
@@ -170,6 +185,58 @@ for (const session of sessions) {
             if (${JSON.stringify(session)} === "page-versions") document.querySelector(".page-versions")?.click();
             return new Promise((r) => setTimeout(r, 900));
           })`,
+        });
+      }
+      // `features` is the features' cards; `feature-memory` and the like one
+      // feature's page.
+      if (named === "features" || named.startsWith("feature-")) {
+        const where = named === "features" ? "#/features" : `#/feature/${named.slice("feature-".length)}`;
+        await send("Runtime.evaluate", { awaitPromise: true, expression: `new Promise((r) => { location.hash = ${JSON.stringify(where)}; setTimeout(r, 2600); })` });
+      }
+      // `journal-edit` is a decision being edited; `project-write` the sheet
+      // for writing a journal (both with `--query memory`).
+      if (named === "journal-edit" || named === "project-write") {
+        await send("Runtime.evaluate", {
+          awaitPromise: true,
+          expression: `new Promise((r) => setTimeout(() => { document.querySelector(${JSON.stringify(named === "journal-edit" ? ".mm-edit" : "[data-write-journal]")})?.click(); setTimeout(r, 700); }, 700))`,
+        });
+      }
+      // `updates-repair` is the machines' update view with two machines picked,
+      // its bar offering to repair them.
+      if (named === "updates-repair") {
+        await send("Runtime.evaluate", {
+          awaitPromise: true,
+          expression: `new Promise((r) => { location.hash = "#/updates"; setTimeout(() => { document.querySelector("[data-ml-pick-all]")?.click(); setTimeout(r, 900); }, 1200); })`,
+        });
+      }
+      // `repair-offered` is this device's update card where the update did not
+      // go through; `repair-going`, `repair-done` and `repair-broken` a repair
+      // pressed there, under way, ended well, and stopped short.
+      if (named.startsWith("repair-")) {
+        const wait = named === "repair-going" ? 2200 : named === "repair-offered" ? 0 : 6500;
+        await send("Runtime.evaluate", {
+          awaitPromise: true,
+          expression: `new Promise((r) => { document.querySelector(".update-place")?.click(); setTimeout(() => { ${named === "repair-offered" ? "" : "document.querySelector('[data-update-repair]')?.click();"} setTimeout(r, ${wait} + 900); }, 600); })`,
+        });
+      }
+      // `team` is a conversation whose host sent agents, the panel open at
+      // who works with it; `team-open` with the first of them opened from
+      // the row that sent it.
+      if (named.startsWith("team")) {
+        await send("Runtime.evaluate", {
+          awaitPromise: true,
+          expression: `new Promise((r) => setTimeout(r, 2500)).then(() => new Promise((r) => { ${
+            named === "team-open" ? "const head = [...document.querySelectorAll('.group-head')].filter((one) => one.getAttribute('aria-expanded') !== 'true').pop(); head?.click(); [...document.querySelectorAll('.row-agent .row-line')].pop()?.click();" : "document.querySelector('.sp-toggle')?.click(); document.querySelector('.sp-tab[data-page=\"collab\"]')?.click();"
+          } setTimeout(r, 1200); }))`,
+        });
+      }
+      // `panel` is a conversation with the panel beside it open; `panel-goal`
+      // and `panel-collab` open it at that page.
+      if (named.startsWith("panel")) {
+        const tab = named.slice("panel".length).replace(/^-/, "");
+        await send("Runtime.evaluate", {
+          awaitPromise: true,
+          expression: `new Promise((r) => { document.querySelector(".sp-toggle")?.click(); ${tab ? `document.querySelector('.sp-tab[data-page="${tab}"]')?.click();` : ""} setTimeout(r, 900); })`,
         });
       }
       if (session === "palette") {
@@ -322,7 +389,7 @@ for (const session of sessions) {
         // The startup service missing, then installed.
         await send("Runtime.evaluate", {
           awaitPromise: true,
-          expression: "new Promise(r => setTimeout(r, 200)).then(() => { document.querySelector('[data-service=keep]')?.click(); return new Promise(r => setTimeout(r, 1300)); })",
+          expression: "new Promise(r => setTimeout(r, 200)).then(() => { document.querySelector('#st-tab-device')?.click(); return new Promise(r => setTimeout(r, 300)); }).then(() => { document.querySelector('[data-service=keep]')?.click(); return new Promise(r => setTimeout(r, 1300)); })",
         });
       }
       if (session.startsWith("remove-")) {
@@ -334,6 +401,10 @@ for (const session of sessions) {
           expression: `(async () => {
             const pause = (ms) => new Promise((r) => setTimeout(r, ms));
             await pause(300);
+            document.querySelector('#st-tab-device').click();
+            await pause(300);
+            document.querySelector('[data-uninstall]').click();
+            await pause(600);
             document.querySelector('[data-removal=${way}]').click();
             await pause(800);
             if (${JSON.stringify(session)} === "remove-erase") document.querySelector('[data-removal=list]').click();

@@ -14,6 +14,8 @@ mod attachments;
 mod claude;
 #[path = "gui_wire_fixtures/composer.rs"]
 mod composer;
+#[path = "gui_wire_fixtures/composer_sync.rs"]
+mod composer_sync;
 #[path = "gui_wire_fixtures/control.rs"]
 mod control;
 #[path = "gui_wire_fixtures/file_read.rs"]
@@ -72,6 +74,7 @@ struct Fixtures {
     focus: focus::Fixtures,
     attachments: attachments::Fixtures,
     composer: composer::Fixtures,
+    composer_sync: composer_sync::Fixtures,
     claude: claude::Fixtures,
     management: management::Fixtures,
     renewal: renewal::Fixtures,
@@ -99,6 +102,7 @@ fn main() {
         focus: focus::fixtures(),
         attachments: attachments::fixtures(),
         composer: composer::fixtures(),
+        composer_sync: composer_sync::fixtures(),
         claude: claude::fixtures(),
         management: management::fixtures(),
         renewal: renewal::fixtures(),
