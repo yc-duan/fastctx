@@ -17,9 +17,11 @@
 //!
 //! Over the connection go the manifest, then the destination's answer of
 //! which files it needs, then those files' bytes, each checked against the
-//! manifest's hash before it is put in place. The connection is sealed with
-//! a key only the two ends hold; a sent manifest is pinned besides by the
-//! digest the signed call carries.
+//! manifest's hash before it is put in place. The connection runs over TLS
+//! to the hub, which pairs the two ends and passes the bytes on, as it sees
+//! what it carries (`world-network.md`), or straight between the machines
+//! over a direct link; a sent manifest is pinned besides by the digest the
+//! signed call carries.
 //!
 //! A copy that began is not over until its machines say so
 //! (`world-network.md`, 断开不是结束): whatever breaks after, the line to the

@@ -420,8 +420,8 @@ impl Directory {
 
     /// What `account` may do on `machine`: everything on its own machines,
     /// on those shared with it and, for the super administrator, on every
-    /// machine; the logins assisting it alone on another's; nothing on what
-    /// is no machine.
+    /// member's machine, a visitor's being its own alone; the logins
+    /// assisting it alone on another's; nothing on what is no machine.
     pub fn rights(&self, account: &AccountName, machine: &MachineName) -> Rights {
         use crate::authorization::Action;
         Rights {

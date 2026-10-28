@@ -132,6 +132,8 @@ pub(crate) fn view_for_in(
         .into_iter()
         .map(|at| &all.members[at])
         .filter(|member| member.name != *me)
+        // A visitor's machine is nobody else's to know of, nor to go through.
+        .filter(|member| !member.home.as_ref().is_some_and(|owner| x.is_visitor(owner) && !mine.contains(owner)))
         .filter_map(|member| {
             let relays = member.home.as_ref().is_some_and(|owner| mine.contains(owner)) && !member.relay.is_empty();
             let at = if !member.direct.is_empty() {

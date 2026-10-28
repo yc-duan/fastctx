@@ -55,7 +55,8 @@ fn resident_of(call: &RemoteCall) -> Option<&ResidentId> {
         | RemoteCall::Manage { resident: who, .. }
         | RemoteCall::Offers { resident: who }
         | RemoteCall::ItemDetail { resident: who, .. }
-        | RemoteCall::AgentActivity { resident: who, .. } => Some(who),
+        | RemoteCall::AgentActivity { resident: who, .. }
+        | RemoteCall::OwnAttachment { resident: who, .. } => Some(who),
         RemoteCall::CommitAttachment { attachment, .. } => Some(&attachment.conversation().resident),
         RemoteCall::AttachmentPlaces { target, .. }
         | RemoteCall::Upload { target, .. }
@@ -143,6 +144,7 @@ pub fn admit(node: &Arc<Node>, link: &Arc<Link>, caller: &Caller, call: &RemoteC
             | RemoteCall::PreviewAgentChange { .. }
             | RemoteCall::ChangeAgentLogin { .. }
             | RemoteCall::ClaudeConsent { .. }
+            | RemoteCall::Homes { .. }
     );
     // A managed machine's agents work for no one: nobody scans them or puts
     // the World's tools in them, its owner neither (`world-network.md`, 受管机器).

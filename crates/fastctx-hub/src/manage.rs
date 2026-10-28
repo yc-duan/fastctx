@@ -839,6 +839,12 @@ fn set_role(store: &mut Store, name: &AccountName, visitor: bool) -> Result<(), 
                 .collect();
             directory.shares.retain(|share| !machines.contains(&share.machine));
             directory.assists.retain(|assist| !machines.contains(&assist.machine));
+            // Nor does one carry others' connections, nor are its own
+            // machines' addresses anyone else's to dial.
+            for member in directory.members.iter_mut().filter(|member| member.home.as_ref() == Some(name)) {
+                member.direct.clear();
+                member.relay.clear();
+            }
             Ok(())
         }
     }
