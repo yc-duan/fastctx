@@ -1,8 +1,10 @@
 //! Session events in their durable acceptance order. The caller holds the
 //! resident storage lock, including while allocating a sequence number.
 
+use std::collections::HashMap;
 use std::io;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 
 use fastctx_platform::{Permissions, ensure_private_dir, publish, publish_new};
 use fastctx_types::layout::ConversationDir;
@@ -17,6 +19,14 @@ struct Recorded {
     event: SessionEvent,
 }
 
+/// Positions are reserved this many at a time: the counter on disk names
+/// the last one reserved, not the last one used.
+const RESERVED: u64 = 64;
+
+/// For each conversation's counter, the next position to give and the last
+/// one this node reserved there, as it last wrote the counter.
+static RESERVATIONS: Mutex<Option<HashMap<PathBuf, (u64, u64)>>> = Mutex::new(None);
+
 pub fn append(directory: &ConversationDir, key: &str, event: &SessionEvent) -> io::Result<bool> {
     let records = directory.session_events();
     let path = records.join(format!("{key}.json"));
@@ -25,20 +35,51 @@ pub fn append(directory: &ConversationDir, key: &str, event: &SessionEvent) -> i
     }
     ensure_private_dir(&records)?;
     let counter = directory.session_sequence();
-    let previous: u64 = match std::fs::read(&counter) {
-        Ok(bytes) => serde_json::from_slice(&bytes).map_err(io::Error::other)?,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => {
-            read(&records)?.iter().filter_map(|(_, record)| record.sequence).max().unwrap_or(0)
-        }
+    let written: Option<u64> = match std::fs::read(&counter) {
+        Ok(bytes) => Some(serde_json::from_slice(&bytes).map_err(io::Error::other)?),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => None,
         Err(error) => return Err(error),
     };
-    let sequence = previous.checked_add(1).ok_or_else(|| io::Error::other("session event sequence exhausted"))?;
+    let mut reservations = RESERVATIONS.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    let reservations = reservations.get_or_insert_with(HashMap::new);
+    // A counter that is not as this node last left it was reset, moved or
+    // advanced by someone else: positions start again after what it says,
+    // or after every event on record where it is missing.
+    let (next, reserved) = match reservations.get(&counter) {
+        Some(&(next, reserved)) if written == Some(reserved) => (next, reserved),
+        _ => {
+            let previous = match written {
+                Some(previous) => previous,
+                None => read(&records)?.iter().filter_map(|(_, record)| record.sequence).max().unwrap_or(0),
+            };
+            (previous.checked_add(1).ok_or_else(exhausted)?, previous)
+        }
+    };
     // Reserve before publishing. A crash can leave a gap, never duplicate
     // the position of an event that already reached disk.
-    publish(&counter, &serde_json::to_vec(&sequence).map_err(io::Error::other)?, Permissions::Private)?;
-    let record = Recorded { sequence: Some(sequence), event: event.clone() };
+    let reserved = if next > reserved {
+        let until = next.checked_add(RESERVED - 1).ok_or_else(exhausted)?;
+        publish(&counter, &serde_json::to_vec(&until).map_err(io::Error::other)?, Permissions::Private)?;
+        until
+    } else {
+        reserved
+    };
+    reservations.insert(counter, (next + 1, reserved));
+    let record = Recorded { sequence: Some(next), event: event.clone() };
     publish_new(&path, &serde_json::to_vec(&record).map_err(io::Error::other)?, Permissions::Private)?;
     Ok(true)
+}
+
+/// Forgets what this node reserved at a counter someone else just wrote, so
+/// the next position follows what it says.
+pub(crate) fn reset(counter: &Path) {
+    if let Some(reservations) = RESERVATIONS.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).as_mut() {
+        reservations.remove(counter);
+    }
+}
+
+fn exhausted() -> io::Error {
+    io::Error::other("session event sequence exhausted")
 }
 
 pub fn history(directory: &ConversationDir) -> io::Result<Vec<SessionEvent>> {

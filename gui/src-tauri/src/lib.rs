@@ -14,6 +14,7 @@ mod composer;
 mod connection;
 #[cfg(desktop)]
 mod data;
+mod held_events;
 mod features;
 mod goals;
 mod hub_moving;

@@ -5,6 +5,9 @@ use fastctx_client::World;
 
 use super::bridge::Bridge;
 
+/// How long an unchanged state goes without being handed over again.
+const SETTLE: Duration = Duration::from_secs(30);
+
 pub(super) async fn run(world: World, bridge: Arc<Bridge>) {
     let mut clock = match fastctx_platform::awake::Sample::now() {
         Ok(clock) => clock,
@@ -18,6 +21,11 @@ pub(super) async fn run(world: World, bridge: Arc<Bridge>) {
         }
     };
     let mut last_error = None;
+    // What was last handed to the service, and when: the same state again
+    // crosses only now and then, for the service to settle against it (start
+    // again where it stopped), while waking from sleep is looked for every
+    // round.
+    let mut published: Option<(String, std::time::Instant)> = None;
     loop {
         let result = (|| {
             let now = fastctx_platform::awake::Sample::now().map_err(|error| error.to_string())?;
@@ -26,7 +34,13 @@ pub(super) async fn run(world: World, bridge: Arc<Bridge>) {
             }
             clock = now;
             let state = world.device().expect("Android device").state();
-            bridge.action("publishState", &serde_json::to_string(&state).map_err(|error| error.to_string())?)
+            let state = serde_json::to_string(&state).map_err(|error| error.to_string())?;
+            if published.as_ref().is_some_and(|(said, at)| *said == state && at.elapsed() < SETTLE) {
+                return Ok(());
+            }
+            bridge.action("publishState", &state)?;
+            published = Some((state, std::time::Instant::now()));
+            Ok(())
         })();
         let error = result.err();
         if error != last_error {

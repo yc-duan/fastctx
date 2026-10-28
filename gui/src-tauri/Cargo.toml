@@ -37,6 +37,8 @@ serde = { version = "1", features = ["derive"] }
 # A watched conversation is kept as the JSON the page reads (`transcript.rs`).
 serde_json = { version = "1", features = ["raw_value"] }
 sha2 = "0.10"
+# Folds a long conversation's older events in memory (`held_events.rs`).
+flate2 = { version = "1.1.10", default-features = false, features = ["rust_backend"] }
 tauri = { version = "2", features = [] }
 # Links leave the app for the system's browser, on a computer and a phone.
 tauri-plugin-opener = "2.7"
