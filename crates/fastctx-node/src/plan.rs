@@ -1,5 +1,6 @@
-//! Plans are stored on the hub; only a conversation's observed revision lives
-//! here. Commands in remote jobs return to this home before changing that state.
+//! Plans are stored on the hub, written there from each conversation's plan
+//! file (`plan_file`); only a conversation's observed revision lives here.
+//! A command reads the plan; it changes as its file does.
 
 use std::sync::Arc;
 
@@ -143,15 +144,11 @@ pub(crate) async fn here(
             }
             plan::Result::Page { page }
         }
-        Operation::Write { markdown } => {
-            let expected = match previous {
-                Some(seen) if seen.account == scope && seen.owner == owner => seen.version,
-                Some(_) => return Err(Failure::not_run(words::READ_FIRST)),
-                None => None,
-            };
-            link.plan_write(&account, owner, expected, markdown, Author::Resident { address: whose.clone() }, None)
-                .await
-                .map_err(Failure::new)?
+        // The plan changes as its file does; an older command that writes
+        // it whole is told where the file is.
+        Operation::Write { .. } => {
+            let _ = (previous, scope);
+            return Err(Failure::not_run(words::file(&crate::plan_file::path(node, id), &node.machine())));
         }
     };
     if let plan::Result::Page { page } = &result {
@@ -174,24 +171,7 @@ pub(crate) async fn context(
     acting: &Acting,
 ) -> Result<(), Failure> {
     let previous = seen(node, id)?;
-    let selected = previous.as_ref().map(|seen| seen.account.clone()).or_else(|| {
-        let accounts = match acting {
-            Acting::Accounts { accounts } => accounts.clone(),
-            Acting::Here => node
-                .links()
-                .into_iter()
-                .flat_map(|link| {
-                    node.accounts_on(&link, acting)
-                        .into_iter()
-                        .map(move |account| HubAccount { hub: link.membership().id, account })
-                })
-                .collect(),
-        };
-        match accounts.as_slice() {
-            [account] => Some(account.clone()),
-            _ => None,
-        }
-    });
+    let selected = previous.as_ref().map(|seen| seen.account.clone()).or_else(|| only_account(node, acting));
     let unavailable = || crate::context::plan_unavailable(node, id).map_err(|error| Failure::new(error.to_string()));
     let Some(scope) = selected else { return unavailable() };
     if !node.serves(acting, &scope.hub, &scope.account) {
@@ -217,10 +197,74 @@ pub(crate) async fn context(
     // write over.
     if link.plan_of_another(&page, &whose).is_some() {
         page = Page { owner: page.owner, metadata: None, body: None };
+    } else {
+        crate::plan_file::pulled(node, id, &page);
     }
     let version = serde_json::to_string(&Seen { account: scope, owner: page.owner.clone(), version: page.version() })
         .map_err(|error| Failure::new(error.to_string()))?;
     crate::context::plan(node, id, &page, &version).map_err(|error| Failure::new(error.to_string()))
+}
+
+/// Writes `markdown`, what the plan file of the conversation `id` holds
+/// now, as the plan's next version, written by the conversation. A version
+/// another wrote meanwhile is written over: the file is the plan. None where
+/// no hub keeps plans for it.
+pub(crate) async fn save(node: &Arc<Node>, id: &ResidentId, markdown: String) -> Result<Option<Page>, Failure> {
+    let (about, _) = node.residents.about(id).ok_or_else(|| Failure::refused(words::RESIDENT))?;
+    if matches!(about.origin, Origin::Colleague { .. }) {
+        return Ok(None);
+    }
+    let whose = Address { machine: about.machine.clone(), resident: id.clone() };
+    let previous = seen(node, id)?;
+    let selected = previous.as_ref().map(|seen| seen.account.clone()).or_else(|| only_account(node, &about.acting));
+    let Some(scope) = selected else { return Ok(None) };
+    let Some(link) = node.link_of(&scope.hub) else { return Ok(None) };
+    if !link.view().conversation_plans {
+        return Ok(None);
+    }
+    let mut expected = previous.filter(|seen| seen.account == scope && seen.owner == *id).and_then(|seen| seen.version);
+    for _ in 0..3 {
+        let author = Author::Resident { address: whose.clone() };
+        match link
+            .plan_write(&scope.account, id.clone(), expected, markdown.clone(), author, None)
+            .await
+            .map_err(Failure::new)?
+        {
+            plan::Result::Page { page } => {
+                let version = serde_json::to_string(&Seen {
+                    account: scope.clone(),
+                    owner: page.owner.clone(),
+                    version: page.version(),
+                })
+                .map_err(|error| Failure::new(error.to_string()))?;
+                crate::context::plan(node, id, &page, &version).map_err(|error| Failure::new(error.to_string()))?;
+                remember(node, id, scope, &page)?;
+                return Ok(Some(page));
+            }
+            plan::Result::Conflict { current } => expected = current.map(|current| current.version),
+        }
+    }
+    Err(Failure::new(words::CONFLICT))
+}
+
+/// The one account `acting` works for, where it is one.
+fn only_account(node: &Node, acting: &Acting) -> Option<HubAccount> {
+    let accounts = match acting {
+        Acting::Accounts { accounts } => accounts.clone(),
+        Acting::Here => node
+            .links()
+            .into_iter()
+            .flat_map(|link| {
+                node.accounts_on(&link, acting)
+                    .into_iter()
+                    .map(move |account| HubAccount { hub: link.membership().id, account })
+            })
+            .collect(),
+    };
+    match accounts.as_slice() {
+        [account] => Some(account.clone()),
+        _ => None,
+    }
 }
 
 pub(crate) fn context_seen(node: &Node, id: &ResidentId, version: &str) -> Result<(), Failure> {

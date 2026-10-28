@@ -104,6 +104,10 @@ fn opening(machines: Option<&Machines>) -> String {
 
 fn run_definition(writes_off: bool, woken: bool, codex: bool, machines: Option<&Machines>) -> Value {
     let writing = if writes_off { "" } else { RUN_WRITING };
+    // A session the World holds keeps its projects, pages, plan and
+    // sentinels; one the user opened on their own is given `run` alone
+    // (`world-layers.md`).
+    let held = if woken { RUN_COMMANDS_HELD } else { "" };
     let ends = if woken { RUN_ENDS_WOKEN } else { RUN_ENDS_ASKED };
     let exec = if codex { RUN_EXEC } else { "" };
     let paths = run_paths(writes_off);
@@ -122,7 +126,7 @@ fn run_definition(writes_off: bool, woken: bool, codex: bool, machines: Option<&
     json!({
         "name": "run",
         "description": format!(
-            "{exec}{}\n\n{RUN_SHELL}{RUN_START}\n{RUN_SHELL_REST}{ends}\n\nFiles:\n{paths}{RUN_FILES}{writing}{RUN_COPY}\n\n{}\n\n{}\n\n{RUN_COMMANDS}",
+            "{exec}{}\n\n{RUN_SHELL}{RUN_START}\n{RUN_SHELL_REST}{ends}\n\nFiles:\n{paths}{RUN_FILES}{writing}{RUN_COPY}\n\n{}\n\n{}\n\n{RUN_COMMANDS}{held}",
             opening(machines),
             run_on(writes_off),
             run_together(writes_off),
@@ -265,10 +269,13 @@ const RUN_COMMANDS: &str = "\
 More commands (`--help` on each gives all its options):
 - `fastctx nodes` lists the machines, which are online, and what each runs.
 - `fastctx w` shows what runs and who works now, and what happened since your last turn; `fastctx w ID...` shows those sessions or jobs.
-- `fastctx wait JOB...` waits until jobs end and shows how each ended; `fastctx stop ID...` stops jobs and their processes, or a colleague's current turn.
+- `fastctx wait JOB...` waits until jobs end and shows how each ended; `fastctx stop ID...` stops jobs and their processes, or a colleague's current turn.";
+
+/// The commands of a session the World holds, after the others.
+const RUN_COMMANDS_HELD: &str = "
 - `fastctx project` lists the user's projects and shows their records. A fastctx project is not a folder or a repository but a named piece of work that can span several machines; its record says what it is for and where its code and data are on each. `fastctx project enter NAME` makes you work in one; enter one only when the user tells you which project to work on.
 - `fastctx page` publishes an HTML page the user opens in the World app.
-- `fastctx plan` shows this conversation's plan; `fastctx plan --file DRAFT` puts up its next version.
+- `fastctx plan` shows this conversation's plan, which is a Markdown file your instructions name: change it as any file.
 - `fastctx sense` leaves a sentinel to wait for something and wake you when it happens.";
 
 fn ask_colleague_definition(collab: &fastctx_types::collab::Offered) -> Value {

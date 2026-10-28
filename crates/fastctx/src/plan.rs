@@ -1,4 +1,4 @@
-//! The resident's whole-page plan command.
+//! Shows the conversation's plan; it changes as its file does (`world-plan.md`).
 
 use clap::Args;
 use fastctx_types::{
@@ -12,27 +12,14 @@ pub(crate) struct PlanArgs {
     account: Option<AccountName>,
     #[arg(long)]
     hub: Option<HubName>,
-    #[arg(long, value_parser = crate::paths::parser())]
-    file: Option<std::path::PathBuf>,
 }
 
 pub(crate) fn run(args: PlanArgs) -> anyhow::Result<()> {
-    let writing = args.file.is_some();
-    let operation = match args.file {
-        Some(path) => {
-            Operation::Write { markdown: std::fs::read_to_string(crate::paths::absolute("fastctx plan", &path)?)? }
-        }
-        None => Operation::Read,
-    };
-    let began = crate::steps::began();
-    let (reply, _) = crate::ask::call(Call::Plan { hub: args.hub, account: args.account, operation })?;
+    let (reply, _) = crate::ask::call(Call::Plan { hub: args.hub, account: args.account, operation: Operation::Read })?;
     match reply {
         Reply::Plan { result: Result::Page { page } } => {
             println!("{}", words::version(page.version()));
-            if writing && let Some(began) = began {
-                began.tell(fastctx_types::run_facts::StepDid::Plan { version: page.version().unwrap_or(0) });
-            }
-            if !writing && let Some(body) = page.body {
+            if let Some(body) = page.body {
                 print!("\n{}", body.markdown);
             }
             Ok(())

@@ -420,3 +420,33 @@
     min-height: 44px;
   }
 }
+
+/* A checklist: no bullets, each item a small box ruled by hand, ticked where
+   done; the words stay in the page's one ink. */
+.pb-plan ul.pb-checklist {
+  padding-left: 0;
+  list-style: none;
+}
+
+.pb-check {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  column-gap: 10px;
+  align-items: start;
+}
+
+.pb-check > :not(.pb-box) {
+  grid-column: 2;
+}
+
+.pb-box {
+  display: inline-grid;
+  width: 18px;
+  height: 18px;
+  margin-top: 0.2em;
+}
+
+.pb-box-svg {
+  width: 18px;
+  height: 18px;
+}

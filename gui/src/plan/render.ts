@@ -61,6 +61,7 @@ export function planElement(source: string, seams: PlanSeams): HTMLElement {
   const root = document.createElement("div");
   root.className = "pb-plan prose";
   root.innerHTML = markdown.render(source);
+  checklists(root);
   let count = 0;
   for (const slot of root.querySelectorAll<HTMLElement>(".pb-picture")) {
     const kind = slot.dataset.kind!;
@@ -89,6 +90,40 @@ export function planElement(source: string, seams: PlanSeams): HTMLElement {
     if (event.key === "Enter") open(event);
   });
   return root;
+}
+
+/** A checklist's items, `[ ] step` and `[x] step` as Markdown leaves them:
+ *  each a small box drawn by hand, ticked where done. */
+function checklists(root: HTMLElement): void {
+  let count = 0;
+  for (const item of root.querySelectorAll<HTMLLIElement>("li")) {
+    const walker = document.createTreeWalker(item, NodeFilter.SHOW_TEXT);
+    let text = walker.nextNode() as Text | null;
+    while (text && !text.data.trim()) text = walker.nextNode() as Text | null;
+    const mark = text ? /^\s*\[([ xX])\]\s+/.exec(text.data) : null;
+    if (!text || !mark) continue;
+    text.data = text.data.slice(mark[0].length);
+    const done = mark[1] !== " ";
+    item.classList.add("pb-check");
+    if (done) item.classList.add("done");
+    item.parentElement?.classList.add("pb-checklist");
+    const box = document.createElement("span");
+    box.className = "pb-box";
+    box.setAttribute("aria-hidden", "true");
+    box.innerHTML = checkBox(done, `check-${count++}`);
+    item.prepend(box);
+  }
+}
+
+/** A small square as a hand rules it, and a tick through it once done. */
+export function checkBox(done: boolean, seed: string): string {
+  const sketch = new Sketch(seed);
+  sketch.rule([3, 3.4], [14.6, 3], 1.1, "graphite");
+  sketch.rule([14.6, 3], [14.8, 14.6], 1.1, "graphite");
+  sketch.rule([14.8, 14.6], [3.2, 14.8], 1.1, "graphite");
+  sketch.rule([3.2, 14.8], [3, 3.4], 1.1, "graphite");
+  if (done) sketch.stroke([[5.4, 9.2], [8, 12.2], [15.6, 3.6]], 1.7, "graphite", 0.18);
+  return sketch.svg(18, 18, "pb-box-svg");
 }
 
 /** The rule a hand lays under the plan's title, as at the head of a

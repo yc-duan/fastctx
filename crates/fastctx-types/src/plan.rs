@@ -81,7 +81,7 @@ pub fn validate(markdown: &str) -> std::result::Result<(), String> {
 }
 
 pub mod words {
-    pub const HELP: &str = "Read or replace this conversation's plan";
+    pub const HELP: &str = "Show this conversation's plan";
     pub fn invalid_body(error: impl std::fmt::Display) -> String {
         format!("invalid plan body: {error}")
     }
@@ -103,6 +103,13 @@ pub mod words {
         format!(
             "the conversation {} on {} keeps its plan under this conversation's short name, so this conversation cannot keep one",
             owner.resident, owner.machine
+        )
+    }
+    /// Said to a command that would write the plan whole.
+    pub fn file(path: &std::path::Path, machine: &crate::MachineName) -> String {
+        format!(
+            "the plan is the Markdown file {} on {machine}: change it as any file, and each change saved is its next version",
+            path.to_string_lossy().replace('\\', "/")
         )
     }
     pub fn version(version: Option<u64>) -> String {

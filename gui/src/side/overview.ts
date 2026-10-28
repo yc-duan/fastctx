@@ -46,6 +46,18 @@ function around(stops: Stop[]): { shown: Stop[]; before: boolean; after: boolean
   return { shown: stops.slice(start, start + STOPS), before: start > 0, after: start + STOPS < stops.length };
 }
 
+/** A checklist as the card shows it: the item ticked last before the first
+ *  still open, and the next two open, as stops on the plan's ink line;
+ *  how many are ticked; whether items come before and after those shown. */
+function ticked(checks: { text: string; done: boolean }[]): { shown: Stop[]; before: boolean; after: boolean; done: number } {
+  const done = checks.filter((check) => check.done).length;
+  const open = checks.findIndex((check) => !check.done);
+  const first = open < 0 ? Math.max(0, checks.length - STOPS) : Math.max(0, open - 1);
+  const picked = checks.slice(first, first + STOPS);
+  const shown = picked.map((check): Stop => ({ label: check.text, note: "", branch: false, maybe: false, where: check.done ? "walked" : "ahead" }));
+  return { shown, before: first > 0, after: first + picked.length < checks.length, done };
+}
+
 /** Those who work with the conversation as one list, those at work first,
  *  each group in the tree's own order. */
 function atWorkFirst(nodes: CollabNode[]): CollabNode[] {
@@ -123,18 +135,21 @@ export class Overview implements PaneContent {
     body.querySelector(".ov-mark")!.innerHTML = goalMark(goal.status, `ov-${goal.version}-${goal.status}`, 16, "ov-goal-svg");
   }
 
-  /** The stops around the one the work stands at, and the questions. */
+  /** The checklist's last ticked item and the next two, or else the
+   *  first stops of its flow; and the questions. */
   showPlan(plan: PlanShown | null): void {
     const card = this.element.querySelector<HTMLElement>(".ov-plan")!;
     const shape = plan?.source ? planShape(plan.source) : null;
-    card.hidden = !shape || (shape.stops.length === 0 && shape.asks.length === 0 && !shape.title);
+    card.hidden = !shape || (shape.checks.length === 0 && shape.stops.length === 0 && shape.asks.length === 0 && !shape.title);
     if (!shape || card.hidden) {
       if (this.opened === "plan" && !shape) this.back();
       return;
     }
-    const reached = Math.max(shape.stops.findIndex((stop) => stop.where === "here") + 1, shape.stops.filter((stop) => stop.where === "walked").length);
-    card.querySelector(".ov-count")!.textContent = shape.stops.length ? this.words.planCount(reached, shape.stops.length) : "";
-    const { shown, before, after } = around(shape.stops);
+    const checked = shape.checks.length ? ticked(shape.checks) : null;
+    card.querySelector(".ov-count")!.textContent = checked
+      ? this.words.planCount(checked.done, shape.checks.length)
+      : "";
+    const { shown, before, after } = checked ?? around(shape.stops);
     this.route = { before, after };
     const stops = shown
       .map((stop) => `<li class="ov-stop" data-where="${stop.where || "ahead"}"${stop.maybe ? " data-maybe" : ""}><span class="ov-dot"></span><span class="ov-lines"><span class="ov-words">${escape(stop.label)}</span>${stop.note ? `<span class="ov-note">${escape(stop.note)}</span>` : ""}</span></li>`)
@@ -143,7 +158,7 @@ export class Overview implements PaneContent {
       .slice(0, ASKS)
       .map((ask) => `<li><button class="ov-row ov-ask" type="button" data-open="plan"><span class="ov-mark">${glyph("ask", 16)}</span><span class="ov-words">${escape(ask)}</span></button></li>`)
       .join("");
-    const title = shape.stops.length === 0 && shape.title ? `<p class="ov-title">${escape(shape.title)}</p>` : "";
+    const title = shown.length === 0 && shape.title ? `<p class="ov-title">${escape(shape.title)}</p>` : "";
     card.querySelector(".ov-body")!.innerHTML = `${title}${stops ? `<div class="ov-route"${before ? " data-before" : ""}${after ? " data-after" : ""}><div class="ov-ink" aria-hidden="true"></div><ol class="ov-stops">${stops}</ol></div>` : ""}${asks ? `<ul class="ov-asks">${asks}</ul>` : ""}<button class="text-button ov-whole" type="button" data-open="plan">${escape(this.words.planOpen)}</button>`;
     this.inked = "";
     requestAnimationFrame(() => this.ink());

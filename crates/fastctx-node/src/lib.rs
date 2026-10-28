@@ -81,6 +81,7 @@ mod labels;
 mod learned;
 mod leases;
 mod activity_book;
+mod plan_file;
 mod layers;
 mod ledger;
 mod letters;
@@ -195,6 +196,7 @@ pub(crate) struct Node {
     sentinels: sentinels::Services,
     mcp_keeping: std::sync::Mutex<()>,
     job_watches: job_watch::Watches,
+    plan_files: plan_file::PlanFiles,
     disk: ranked::Disk,
     /// Each conversation's place here, deleted alone (`data::places`).
     places: data::places::Places,
@@ -636,6 +638,7 @@ pub async fn run_prepared(
         sentinels: sentinels::connected(weak.clone()),
         mcp_keeping: std::sync::Mutex::new(()),
         job_watches: Default::default(),
+        plan_files: Default::default(),
         contexts: Default::default(),
         context_deliveries: Default::default(),
         scratch_deliveries: Default::default(),
@@ -768,6 +771,7 @@ pub async fn run_prepared(
     job_receipts::start(&node);
     obligations::start(&node);
     retention::start(&node).context("starting command artifact retention")?;
+    plan_file::start(&node);
     profile::session::start(&node);
     context::start(&node);
     updates::start(&node);

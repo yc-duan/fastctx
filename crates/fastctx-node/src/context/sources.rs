@@ -88,12 +88,17 @@ pub(crate) async fn prepare(
 /// user opened outside Fastctx keeps none (`world-layers.md`).
 fn plan_guide(node: &Node, id: &ResidentId, origin: &Origin) -> io::Result<()> {
     let own = node.residents.about(id).is_some_and(|(about, _)| !about.world_managed());
-    let text = if matches!(origin, Origin::Colleague { .. }) || own { "" } else { words::PLAN_GUIDE };
+    let text = if matches!(origin, Origin::Colleague { .. }) || own {
+        String::new()
+    } else {
+        let path = crate::plan_file::path(node, id).to_string_lossy().replace('\\', "/");
+        words::plan_guide(&path, node.machine().as_str())
+    };
     let change = Change { by: None, version: "", fact: &words::changed("plan-guide", words::USER), full: true };
     if node.residents.about(id).is_some() {
-        super::set(node, id, "plan-guide", text, change)
+        super::set(node, id, "plan-guide", &text, change)
     } else {
-        storage::set(&node.world, id, "plan-guide", text, change)
+        storage::set(&node.world, id, "plan-guide", &text, change)
     }
 }
 
@@ -120,7 +125,9 @@ pub(crate) async fn map(
     let after = map_cursor::Cursor::of(town, snapshot.as_ref().map(|(_, catalog)| catalog));
     let me = Address { machine: node.machine(), resident: id.clone() };
     let told = match (&before, &snapshot) {
-        (Some(before), Some((_, catalog))) if before.town == after.town => Some(map_cursor::facts(node, before, catalog, id)),
+        (Some(before), Some((_, catalog))) if before.town == after.town => {
+            Some(map_cursor::facts(node, before, catalog, id))
+        }
         _ => None,
     };
     let fact = match &told {
@@ -177,7 +184,11 @@ mod map_cursor {
     }
     pub fn keep(directory: &ConversationDir, cursor: &Cursor) -> io::Result<()> {
         fastctx_platform::ensure_private_dir(&directory.books())?;
-        fastctx_platform::publish(&path(directory), &serde_json::to_vec(cursor)?, fastctx_platform::Permissions::Private)
+        fastctx_platform::publish(
+            &path(directory),
+            &serde_json::to_vec(cursor)?,
+            fastctx_platform::Permissions::Private,
+        )
     }
     /// One fact for each document someone other than `id` wrote since `before`.
     pub fn facts(node: &Node, before: &Cursor, after: &Catalog, id: &ResidentId) -> Vec<String> {

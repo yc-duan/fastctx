@@ -33,8 +33,10 @@ export function readFlow(text: string): Flow {
   let previous: string | null = null;
   const node = (raw: string, note = ""): string | null => {
     let label = raw.trim();
-    const strong = label.startsWith("*");
-    if (strong) label = label.slice(1).trim();
+    // Progress is a checklist's (`world-plan.md`): an older plan's `*` before
+    // a step is read past, and the step drawn as any other.
+    if (label.startsWith("*")) label = label.slice(1).trim();
+    const strong = false;
     label = label.replace(/^\[(.*)\]$/, "$1").replace(/\s+/g, " ");
     if (!label) return null;
     const key = label.replace(/\s*[（(][^（）()]*[）)]$/, "") || label;
@@ -105,14 +107,15 @@ export interface TimelineRow {
   strong: boolean;
 }
 
-/** `when | title | detail`, one a line; `*` first marks the one that matters. */
+/** `when | title | detail`, one a line; an older plan's `*` first is read
+ *  past. */
 export function readTimeline(text: string): TimelineRow[] {
   const rows: TimelineRow[] = [];
   for (const line of text.split("\n")) {
     let trimmed = line.trim();
     if (!trimmed) continue;
-    const strong = trimmed.startsWith("*");
-    if (strong) trimmed = trimmed.slice(1).trim();
+    if (trimmed.startsWith("*")) trimmed = trimmed.slice(1).trim();
+    const strong = false;
     const [when = "", title = "", ...rest] = trimmed.split("|").map((part) => part.trim());
     if (!title && !rest.length) rows.push({ when: "", title: when, detail: "", strong });
     else rows.push({ when, title, detail: rest.join(" | "), strong });
