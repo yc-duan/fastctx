@@ -163,7 +163,14 @@ impl Job {
         let (tree, output) = if self.record.is_sentinel() {
             super::sentinel::spawn(&shell, &self.record, self.world.path())?
         } else {
-            ProcessTree::spawn_with_io(&shell.program,&args,Path::new(&self.record.cwd),&shell.environment,mode,self.record.stdin.as_deref().map(Path::new))?
+            ProcessTree::spawn_with_io(
+                &shell.program,
+                &args,
+                Path::new(&self.record.cwd),
+                &shell.environment,
+                mode,
+                self.record.stdin.as_deref().map(Path::new),
+            )?
         };
         let tree = Arc::new(tree);
         self.record.pid = Some(tree.main_pid());
@@ -253,53 +260,61 @@ impl Job {
                     self.stop(tree, request).await?;
                 }
                 event = events.recv() => {
-                    match event.ok_or_else(|| io::Error::other("the job's lifecycle channel closed before it ended"))? {
-                        Event::Main(status) => {
-                            self.record.exit = Some(Exited { status: exit_status(status?), at: Timestamp::now() });
-                            for checkpoint in checkpoints {
-                                checkpoint.request()?;
+                    let mut event = event.ok_or_else(|| io::Error::other("the job's lifecycle channel closed before it ended"))?;
+                    loop {
+                        match event {
+                            Event::Main(status) => {
+                                self.record.exit = Some(Exited { status: exit_status(status?), at: Timestamp::now() });
+                                for checkpoint in checkpoints {
+                                    checkpoint.request()?;
+                                }
+                            }
+                            Event::Drained { stderr, bytes, lost } => {
+                                if stderr {
+                                    drained_err = Some(bytes);
+                                    self.record.stderr_lost = lost;
+                                } else {
+                                    drained_out = Some(bytes);
+                                    self.record.output_lost = lost;
+                                }
+                            }
+                            Event::Remaining(count) => {
+                                self.record.remaining = Some(u32::try_from(count?).map_err(io::Error::other)?);
+                            }
+                            Event::Output { stderr, result } => {
+                                if stderr { self.record.stderr_lost = result?; } else { self.record.output_lost = result?; }
+                                streams -= 1;
+                                if streams == 0 {
+                                    self.record.output_ended_at = Some(Timestamp::now());
+                                }
+                            }
+                            Event::Empty(result) => { result?; empty = true; }
+                            #[cfg(unix)]
+                            Event::Stop(request) => {
+                                resume.take();
+                                self.stop(tree, request?).await?;
+                            },
+                        }
+                        if self.record.exit.is_some()
+                            && let (Some(stdout), Some(stderr)) = (drained_out, drained_err)
+                        {
+                            self.record.output_drained = Some(OutputDrained { stdout, stderr });
+                            if let Some(resume) = resume.take() {
+                                resume.send(()).map_err(|_| io::Error::other("the job's process waiter closed"))?;
                             }
                         }
-                        Event::Drained { stderr, bytes, lost } => {
-                            if stderr {
-                                drained_err = Some(bytes);
-                                self.record.stderr_lost = lost;
-                            } else {
-                                drained_out = Some(bytes);
-                                self.record.output_lost = lost;
-                            }
+                        if empty && streams == 0 {
+                            self.record.remaining = Some(0);
+                            let how = if self.record.stop.is_some() { EndedHow::Stopped } else { EndedHow::Finished };
+                            self.record.end = Some(Ended { at: Timestamp::now(), how });
+                            return self.publish().await;
                         }
-                        Event::Remaining(count) => {
-                            self.record.remaining = Some(u32::try_from(count?).map_err(io::Error::other)?);
+                        // The record is a snapshot. Include events already queued
+                        // before publishing it, without delaying for future events.
+                        match events.try_recv() {
+                            Ok(next) => event = next,
+                            Err(_) => break,
                         }
-                        Event::Output { stderr, result } => {
-                            if stderr { self.record.stderr_lost = result?; } else { self.record.output_lost = result?; }
-                            streams -= 1;
-                            if streams == 0 {
-                                self.record.output_ended_at = Some(Timestamp::now());
-                            }
-                        }
-                        Event::Empty(result) => { result?; empty = true; }
-                        #[cfg(unix)]
-                        Event::Stop(request) => {
-                            resume.take();
-                            self.stop(tree, request?).await?;
-                            continue;
-                        },
-                    }
-                    if self.record.exit.is_some()
-                        && let (Some(stdout), Some(stderr)) = (drained_out, drained_err)
-                    {
-                        self.record.output_drained = Some(OutputDrained { stdout, stderr });
-                        if let Some(resume) = resume.take() {
-                            resume.send(()).map_err(|_| io::Error::other("the job's process waiter closed"))?;
-                        }
-                    }
-                    if empty && streams == 0 {
-                        self.record.remaining = Some(0);
-                        let how = if self.record.stop.is_some() { EndedHow::Stopped } else { EndedHow::Finished };
-                        self.record.end = Some(Ended { at: Timestamp::now(), how });
-                        return self.publish().await;
                     }
                     self.publish().await?;
                 }
