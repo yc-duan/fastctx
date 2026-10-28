@@ -5,7 +5,7 @@
 //! what a script then does with its copy is its own (`world-run.md`,
 //! 用户附的文件).
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, LazyLock, Mutex};
@@ -39,6 +39,11 @@ const UNPLACED: &str = "it could not be written into the scratch here";
 /// The files being brought on this machine, by the directory each goes to,
 /// so two scripts starting at once bring a file once.
 static BRINGING: LazyLock<Mutex<HashMap<PathBuf, Bringing>>> = LazyLock::new(Default::default);
+
+/// The files a script here was told could not be brought, by the directory
+/// each goes to. A later script still tries to bring them, and is not told
+/// again of one it was told of.
+static TOLD: LazyLock<Mutex<HashSet<PathBuf>>> = LazyLock::new(Default::default);
 
 /// The list a guest room keeps of the files its conversation was given, as
 /// its home last sent them, for the `on`s its scripts run from here.
@@ -116,10 +121,10 @@ pub(crate) async fn bring(
                 }
             }
         };
-        waiting.push((place(&attachment), bringing));
+        waiting.push((directory, place(&attachment), bringing));
     }
     let all = async {
-        for (_, bringing) in &mut waiting {
+        for (_, _, bringing) in &mut waiting {
             let _ = bringing.wait_for(Option::is_some).await;
         }
     };
@@ -129,11 +134,15 @@ pub(crate) async fn bring(
         }
         None => all.await,
     }
+    let mut told = TOLD.lock().expect("never poisoned");
     waiting
         .into_iter()
-        .filter_map(|(path, bringing)| match *bringing.borrow() {
-            Some(Ok(())) => None,
-            Some(Err(said)) => Some(MissingAttachment { path, why: Some(said.to_string()) }),
+        .filter_map(|(directory, path, bringing)| match *bringing.borrow() {
+            Some(Ok(())) => {
+                told.remove(&directory);
+                None
+            }
+            Some(Err(said)) => told.insert(directory).then(|| MissingAttachment { path, why: Some(said.to_string()) }),
             None => Some(MissingAttachment { path, why: None }),
         })
         .collect()
