@@ -9,6 +9,11 @@ use fastctx_types::ipc::Failure;
 
 use std::sync::Arc;
 
+/// How long words judged not known to have gone in hold the goal back: as
+/// long as their host may still say it took them. After that they are what
+/// the user sees and decides on, and the goal goes on.
+const UNSETTLED: std::time::Duration = std::time::Duration::from_secs(5 * 60);
+
 pub(super) async fn quiet(node: &Arc<Node>, id: &ResidentId) -> Result<bool, Failure> {
     if crate::here::being_born(node, id)
         || crate::control_queue::busy(node, id)?
@@ -16,10 +21,11 @@ pub(super) async fn quiet(node: &Arc<Node>, id: &ResidentId) -> Result<bool, Fai
     {
         return Ok(false);
     }
-    let (pending, uncertain) = crate::inbox::input_states(&node.world.conversation(id)).map_err(failure)?;
+    let directory = node.world.conversation(id);
+    let (pending, _) = crate::inbox::input_states(&directory).map_err(failure)?;
     // Facts that ride along cannot start a turn or prevent the goal from starting one.
     Ok(pending.iter().all(|input| input.delivery.notice.along().is_some())
-        && uncertain.is_empty()
+        && !crate::inbox::uncertain_lately(&directory, UNSETTLED).map_err(failure)?
         && crate::control_queue::pending(node, id)?.is_empty())
 }
 

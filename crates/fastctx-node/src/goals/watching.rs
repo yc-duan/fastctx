@@ -74,12 +74,38 @@ async fn consume(node: &Arc<Node>, account: &HubAccount) -> Result<(), Failure> 
     }
 }
 
-/// One conversation's trouble stays its own: the account's other goals go on.
+/// One conversation's trouble stays its own: the account's other goals go
+/// on, and its goal is read again apart, with its own waits, until the
+/// account's version of it is in place; no later change need come for it.
 async fn refresh_one(node: &Arc<Node>, account: &HubAccount, row: Changed) {
     let key = row.key.clone();
     if let Err(failure) = refresh(node, account, row).await {
-        node.log.line(format_args!("goal of {key}: {}", failure.message));
+        node.log.line(format_args!("goal of {key}: {}; reading it again", failure.message));
+        retry(node, account, key);
     }
+}
+
+fn retry(node: &Arc<Node>, account: &HubAccount, key: String) {
+    if !node.goals.retrying.lock().expect("goal retries").insert((account.clone(), key.clone())) {
+        return;
+    }
+    let (node, account) = (node.clone(), account.clone());
+    tokio::spawn(async move {
+        let mut again = crate::again::Again::default();
+        let mut told = None;
+        loop {
+            tokio::time::sleep(again.next()).await;
+            match refresh(&node, &account, Changed { key: key.clone(), version: 0 }).await {
+                Ok(()) => break,
+                Err(failure) if told.as_ref() != Some(&failure.message) => {
+                    node.log.line(format_args!("goal of {key}: {}; reading it again", failure.message));
+                    told = Some(failure.message);
+                }
+                Err(_) => {}
+            }
+        }
+        node.goals.retrying.lock().expect("goal retries").remove(&(account, key));
+    });
 }
 
 async fn refresh(node: &Arc<Node>, account: &HubAccount, row: Changed) -> Result<(), Failure> {

@@ -44,6 +44,9 @@ pub(crate) struct Services {
     recovering: Mutex<HashSet<Address>>,
     lifecycle: Mutex<HashSet<ResidentId>>,
     watching: Mutex<HashSet<HubAccount>>,
+    /// Goals whose reading failed, read again apart until it succeeds
+    /// (`watching::refresh_one`).
+    retrying: Mutex<HashSet<(HubAccount, String)>>,
 }
 
 impl Default for Services {
@@ -58,6 +61,7 @@ impl Default for Services {
             recovering: Default::default(),
             lifecycle: Default::default(),
             watching: Default::default(),
+            retrying: Default::default(),
         }
     }
 }

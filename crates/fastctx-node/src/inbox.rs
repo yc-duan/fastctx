@@ -155,6 +155,24 @@ pub(crate) fn input_states(directory: &ConversationDir) -> io::Result<(Vec<Pendi
     Ok((pending, uncertain))
 }
 
+/// Whether words were judged not known to have gone in within `within`:
+/// their host may yet say it took them (`reclaim`). Older ones stay so,
+/// kept for the user to see and say again, and hold nothing back.
+pub(crate) fn uncertain_lately(directory: &ConversationDir, within: std::time::Duration) -> io::Result<bool> {
+    let _transaction = crate::resident_storage::lock();
+    for path in entries(&directory.uncertain())? {
+        if path.file_name().is_some_and(|name| name.to_string_lossy().starts_with('.'))
+            || path.extension().is_none_or(|extension| extension != "json")
+        {
+            continue;
+        }
+        if std::fs::metadata(&path)?.modified()?.elapsed().is_ok_and(|age| age < within) {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
 /// The caller holds the resident-storage transaction.
 pub(crate) fn pending_here(directory: &ConversationDir) -> io::Result<Vec<Pending>> {
     let mut all = Vec::new();
