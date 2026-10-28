@@ -11,6 +11,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { inShell } from "../world/bridge";
 import { escape } from "../conversation/prose";
+import type { Place } from "./places";
 import type { PresenceWords } from "./presence";
 import type { SettingsWords } from "./words";
 
@@ -45,6 +46,14 @@ export function configurePhone(words: PresenceWords, enabled: boolean): Promise<
     { when: "finished", userStartedOnly: true, title: words.finished(who), compacted: words.compacted },
   ];
   return call("configure", { configuration: { enabled, agentNames: { codex: "Codex", claude: "Claude" }, rules } });
+}
+
+/** Tells the phone which conversation the page shows, none on another
+ *  page: what that one says is not called about while the app is in front
+ *  of the user. */
+export function tellPhoneViewing(place: Place): Promise<void> {
+  const conversation = place.kind === "talk" ? `${place.address.resident}@${place.address.machine}` : "";
+  return call("viewing", { conversation });
 }
 
 interface Activation {

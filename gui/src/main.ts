@@ -221,7 +221,7 @@ import { showPathNotice } from "./app/path-notice";
 import { PageScreen } from "./pages/view";
 import { forgetConversation, manage as manageResident, type Forgetting, type Managed, type Management } from "./world/management";
 import { FileSearch } from "./world/file-search";
-import { configurePhone, onPhone, phoneSeam, routeActivations } from "./app/phone";
+import { configurePhone, onPhone, phoneSeam, routeActivations, tellPhoneViewing } from "./app/phone";
 import { renewalState, renewHere, type VersionMismatch } from "./world/renewal";
 import { toolsFor } from "./pages/tools";
 import { enPages, zhPages } from "./pages/words";
@@ -3127,6 +3127,9 @@ if (!live && params.get("s") === "invite") {
 if (live && onPhone()) {
   void configurePhone(presenceWords, notifying()).catch((error: unknown) => console.error("telling the phone its calls", error));
   void routeActivations().catch((error: unknown) => console.error("opening tapped calls", error));
+  const viewing = () => void tellPhoneViewing(placeOf(location.hash)).catch((error: unknown) => console.error("telling the phone what is in view", error));
+  addEventListener("hashchange", viewing);
+  viewing();
 }
 
 startPresence({

@@ -8,8 +8,10 @@
 // with a few answers to choose from carries them as buttons, answered from
 // the notification without opening the window. A notification is taken
 // back once what it called for no longer holds, and a click on it opens
-// that conversation. A network this computer was on, dissolved, is called
-// about once too. The shell's own mechanics are in `world/desktop.ts`.
+// that conversation. What a conversation says is not called about while the
+// window is in front of the user showing that conversation; from any other
+// page it is. A network this computer was on, dissolved, is called about
+// once too. The shell's own mechanics are in `world/desktop.ts`.
 
 import { connectDesktop, desktopAvailable, dismissDesktopNotice, getWindowPresence, notifyDesktop } from "../world/desktop";
 import type { Address } from "../world/events";
@@ -76,6 +78,12 @@ export function chooseNotifying(on: boolean): void {
  *  says it waits is a question too. */
 export function askedKey(now: ResidentNow["now"]): string | null {
   return now?.asked?.id ?? (now?.waiting_for_user ? "waiting" : null);
+}
+
+/** Whether this window shows the conversation at `address`. */
+function viewing(address: Address): boolean {
+  const place = placeOf(location.hash);
+  return place.kind === "talk" && place.address.resident === address.resident && place.address.machine === address.machine;
 }
 
 export function startPresence(options: PresenceOptions): void {
@@ -192,7 +200,7 @@ export function startPresence(options: PresenceOptions): void {
           body: asked?.text ?? "",
           route: talkLink(address),
           actions: [{ id: "open", title: words.open }],
-        });
+        }, address);
       } else if (was && now.told && now.told !== was.told && r.now?.told && r.now.told.status !== "info") {
         // What can wait is not pushed: it waits on the home page. Only what
         // is said while the conversation is in view of this window: one that
@@ -203,7 +211,7 @@ export function startPresence(options: PresenceOptions): void {
           body: told.text,
           route: talkLink(address),
           actions: [{ id: "open", title: words.open }],
-        });
+        }, address);
       } else if (was?.busy && !now.busy && !now.asked && r.about.origin.kind === "user" && r.about.world_started && endedUntold(r.now)) {
         // Only conversations opened through the World: one the user opened
         // in an editor or an app is in front of them there.
@@ -212,7 +220,7 @@ export function startPresence(options: PresenceOptions): void {
           body: r.now?.last_compacted ? words.compacted : (r.now?.last_said ?? ""),
           route: talkLink(address),
           actions: [{ id: "open", title: words.open }],
-        });
+        }, address);
       }
     }
   });
@@ -225,10 +233,11 @@ export function startPresence(options: PresenceOptions): void {
     return !now.told?.turn || now.told.turn !== now.last_turn;
   }
 
-  /** Calls the user, unless the window is in front of them already. */
-  async function call(id: string, notice: { title: string; body: string; route: string; actions: { id: string; title: string; quiet?: boolean }[] }): Promise<void> {
+  /** Calls the user, unless the window is in front of them already, and,
+   *  for what the conversation at `about` says, shows that conversation. */
+  async function call(id: string, notice: { title: string; body: string; route: string; actions: { id: string; title: string; quiet?: boolean }[] }, about?: Address): Promise<void> {
     const presence = await getWindowPresence();
-    if (presence.focused) return;
+    if (presence.focused && (!about || viewing(about))) return;
     const previous = shown.get(id);
     if (previous) await dismissDesktopNotice(previous).catch(() => {});
     shown.set(id, await notifyDesktop(notice));

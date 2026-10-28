@@ -13,6 +13,7 @@ fn main() {
                     "request_notifications",
                     "settings",
                     "scan",
+                    "viewing",
                 ])
                 .default_permission(tauri_build::DefaultPermissionRule::AllowAllCommands),
         )

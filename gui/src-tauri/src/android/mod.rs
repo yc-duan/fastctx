@@ -173,6 +173,20 @@ command!(notify, "notify", notice);
 command!(dismiss, "dismiss", id);
 command!(settings, "settings", destination);
 
+/// The conversation the page shows, `resident@machine`; empty on another
+/// page (`observer::in_view`).
+static VIEWING: std::sync::Mutex<String> = std::sync::Mutex::new(String::new());
+
+#[fastctx_gui_command::command]
+async fn viewing(conversation: String) -> Result<(), String> {
+    *VIEWING.lock().expect("never poisoned") = conversation;
+    Ok(())
+}
+
+pub(super) fn viewing_now() -> String {
+    VIEWING.lock().expect("never poisoned").clone()
+}
+
 pub fn plugin() -> TauriPlugin<tauri::Wry> {
     Builder::new("android-world")
         .invoke_handler(tauri::generate_handler![
@@ -184,7 +198,8 @@ pub fn plugin() -> TauriPlugin<tauri::Wry> {
             acknowledge,
             notify,
             dismiss,
-            settings
+            settings,
+            viewing
         ])
         .setup(|app, api| {
             let plugin = api.register_android_plugin("dev.fastctx.world", "WorldPlugin")?;

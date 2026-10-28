@@ -124,6 +124,19 @@ struct Seen {
 
 /// A resident as the observations know it: the same for every spelling of
 /// its machine.
+/// Whether the app is in front of the user showing `about`'s conversation:
+/// what it says there is seen, not called about; from another page it is.
+fn in_view(bridge: &Bridge, about: &fastctx_types::residents::About) -> Result<bool, String> {
+    if !bridge.focused()? {
+        return Ok(false);
+    }
+    let viewing = super::viewing_now();
+    Ok(viewing.rsplit_once('@').is_some_and(|(resident, machine)| {
+        resident == about.id.as_str()
+            && fastctx_types::MachineName::try_from(machine).is_ok_and(|machine| machine == about.machine)
+    }))
+}
+
 fn key_of(about: &fastctx_types::residents::About) -> String {
     fastctx_types::Address { machine: about.machine.clone(), resident: about.id.clone() }.key()
 }
@@ -185,7 +198,7 @@ fn observe(who: WorldWho, bridge: &Bridge, observed: &mut Observed) -> Result<()
             };
             if observed.learned
                 && policy.enabled
-                && !bridge.focused()?
+                && !in_view(bridge, &resident.about)?
                 && let Some(rule) = policy.rules.iter().find(|rule| {
                     Some(rule.when) == transition
                         && (!rule.user_started_only
