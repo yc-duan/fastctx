@@ -12,6 +12,9 @@ use std::{io, path::Path};
 pub(super) struct Meter {
     pub at: Timestamp,
     pub who: Option<HubAccount>,
+    /// The other accounts it was used for alike (`Entry::uses`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub with: Vec<HubAccount>,
     pub session: String,
     pub process: String,
     pub since: Usd,
@@ -55,6 +58,7 @@ impl Meter {
                 Entry::Summary {
                     at: *at,
                     who: self.who.clone(),
+                    with: self.with.clone(),
                     usage: Use {
                         model: String::new(),
                         usd: Some(*usd),
@@ -93,6 +97,7 @@ pub(super) fn record(
     let mut meter = previous.cloned().unwrap_or_else(|| Meter {
         at,
         who: super::who(about),
+        with: super::with(about),
         session: session.clone(),
         process,
         since,

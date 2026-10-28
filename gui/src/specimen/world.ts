@@ -451,8 +451,8 @@ function hubs(two: boolean): { nodes: HubNodes[]; accounts: HubAccounts[] } {
       assists: [
         { machine: "desktop", account: "ada", agent: "codex", home: "C:\\Users\\me\\.codex-work", until: daysAhead(3) },
         { machine: "desktop", account: "bo", agent: "codex", home: "C:\\Users\\me\\.codex-work", until: null },
-        { machine: "desktop", account: "ada", agent: "claude", home: null, until: daysAhead(6), weekly: 20_000_000, daily: 5_000_000, five_hour: 80 },
-        { machine: "desktop", account: "bo", agent: "claude", home: null, until: null, five_hour: 80 },
+        { machine: "desktop", account: "ada", agent: "claude", home: null, until: daysAhead(6), weekly: 20_000_000, daily: 5_000_000, five_hour: 80, turns: 3 },
+        { machine: "desktop", account: "bo", agent: "claude", home: null, until: null, five_hour: 80, turns: 3 },
       ],
       plans: [],
       acting: [{ machine: "gpu", account: "me", since: at("03:42:00") }],

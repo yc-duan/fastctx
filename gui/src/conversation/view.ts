@@ -1625,6 +1625,7 @@ export class ConversationView {
       if (sending?.state === "landed") {
         note = `<div class="bubble-note"${sending.why ? ` title="${escape(sending.why)}"` : ""}>${escape(words.landed(sending.how, sending.machine, sending.why ?? null))}</div>`;
       }
+      if (sending?.state === "queued") note = `<div class="bubble-note" title="${escape(words.queuedTurnWhy)}">${escape(words.queuedTurn(sending.ahead))}</div>`;
       // Still on their way: their host has not started for a minute.
       if (sending?.state === "going" && sending.retry) {
         note = `<div class="bubble-note" title="${escape(words.hostRetryWhy(sending.retry))}">${escape(words.hostRetrying(this.context.agent))}</div>`;

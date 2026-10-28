@@ -170,8 +170,10 @@ pub(super) fn fold(rows: &[Entry], boundaries: &[Timestamp], now: Timestamp) -> 
             _ => {}
         }
     }
-    let mut folded: Vec<_> =
-        uses.into_iter().map(|((at, _, _, _), (who, usage))| Entry::Summary { at, who, usage }).collect();
+    let mut folded: Vec<_> = uses
+        .into_iter()
+        .map(|((at, _, _, _), (who, usage))| Entry::Summary { at, who, with: Vec::new(), usage })
+        .collect();
     folded.extend(checkpoints.into_iter().map(|((session, process), (at, total, mut reports))| {
         reports.sort();
         reports.dedup();

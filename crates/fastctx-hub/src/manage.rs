@@ -283,7 +283,7 @@ fn apply(
             }
             Ok(Told::Done)
         }
-        Change::Assist { machine, to, agent, home, assisting, until, weekly, daily, five_hour } => {
+        Change::Assist { machine, to, agent, home, assisting, until, weekly, daily, five_hour, turns } => {
             let directory = &mut store.book.directory;
             let owner = held_machine(directory, account, &machine)?;
             other_account(directory, &owner, &to, &machine)?;
@@ -306,6 +306,9 @@ fn apply(
             if assisting && daily.is_some_and(|daily| daily.0 == 0) {
                 return Err("the daily allowance is an amount above zero".to_string());
             }
+            if assisting && turns == Some(0) {
+                return Err("the most turns at once is a number above zero".to_string());
+            }
             let assist = Assist {
                 machine,
                 account: to,
@@ -315,6 +318,7 @@ fn apply(
                 weekly: weekly.filter(|_| assisting),
                 daily: daily.filter(|_| assisting),
                 five_hour: five_hour.filter(|_| assisting),
+                turns: turns.filter(|_| assisting),
             };
             directory.assists.retain(|existing| !existing.same(&assist));
             if assisting {

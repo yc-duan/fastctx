@@ -90,7 +90,7 @@ impl Day {
                 if low > 0 {
                     subtract(&mut usage, &group.points[low - 1].1);
                 }
-                into.push(Entry::Summary { at: edge[0], who: group.who.clone(), usage });
+                into.push(Entry::Summary { at: edge[0], who: group.who.clone(), with: Vec::new(), usage });
             }
         }
     }

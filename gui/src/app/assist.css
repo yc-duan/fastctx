@@ -41,6 +41,12 @@
   padding-bottom: var(--space-3);
 }
 
+/* The login's turns at once sit under its five-hour share, the two as one
+   group. */
+.assist-window-line + .assist-window-line {
+  margin-top: 2px;
+}
+
 .assist-window {
   position: relative;
   justify-self: end;

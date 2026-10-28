@@ -176,6 +176,11 @@ pub struct Assist {
     /// which the login assists no one; none is no limit.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub five_hour: Option<u8>,
+    /// The most turns the login runs at once, its owner's and those it
+    /// assists together; none is no limit of the owner's (`world-usage.md`,
+    /// 一个登录同时开几轮).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub turns: Option<u16>,
 }
 
 impl Assist {

@@ -750,6 +750,8 @@ pub enum Change {
         daily: Option<fastctx_types::usage::Usd>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         five_hour: Option<u8>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        turns: Option<u16>,
     },
     /// The super administrator sets the plan shown for `agent`'s login
     /// `home` on `machine`, or takes it away.

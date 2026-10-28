@@ -695,6 +695,7 @@ export class MachinesPage implements Page {
           ...(button.dataset.daily ? { daily: Number(button.dataset.daily) } : {}),
           ...(button.dataset.weekly ? { weekly: Number(button.dataset.weekly) } : {}),
           ...(button.dataset.fiveHour ? { five_hour: Number(button.dataset.fiveHour) } : {}),
+          ...(button.dataset.turns ? { turns: Number(button.dataset.turns) } : {}),
         };
         if (login)
           void this.takeBack(

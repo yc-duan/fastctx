@@ -379,6 +379,11 @@ async fn finish_at(
         matches!(input.delivery.notice, Notice::Words { from: Speaker::User { .. }, .. } | Notice::Attached { .. })
     });
     node.residents.take_owed(&node.world, id, turn, &node.machine(), trouble, heard_user)?;
+    // Its login has room for one more, and the vendor's answer may move
+    // how many it runs at once.
+    if first && current {
+        crate::turn_slots::ended(node, id, &about, &finished.end);
+    }
     crate::turn_evidence::ended(node, id, turn);
     node.idle_probes.touched(id);
     node.watchers.changed.notify_one();

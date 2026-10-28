@@ -37,7 +37,7 @@ pub(crate) enum Login {
 /// the owner's own; why it is no one's otherwise.
 pub(crate) fn owners_own(node: &Node, agent: &str, arrival: &Arrival) -> io::Result<Option<PathBuf>> {
     let default = default_login(node, agent)?;
-    // As `crate::homes::canonical` writes a login, with the default found once.
+    // As `crate::homes::assistance` writes a login, with the default found once.
     let written =
         |home: Option<&Path>| home.filter(|home| !crate::homes::same_dir(home, &default)).map(Path::to_path_buf);
     let home = match &arrival.login {

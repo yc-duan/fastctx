@@ -1494,6 +1494,14 @@ export interface AccessWords {
   fiveHourRead(percent: number, resets: string | null): string;
   fiveHourUnread: string;
   fiveHourReset: string;
+  /** The most turns the login runs at once, for the whole login. */
+  turns: string;
+  turnsHint: string;
+  /** None set: Fastctx follows the vendor's rate limits. */
+  turnsNone: string;
+  turnsOf(turns: number): string;
+  turnsUnit: string;
+  turnsBad: string;
   change: string;
   save: string;
   cancel: string;
@@ -1550,6 +1558,12 @@ export const zhAccess: AccessWords = {
   fiveHourRead: (percent, resets) => `已用 ${percent}%${resets ? `，${resets} 重置` : ""}`,
   fiveHourUnread: "还没读到这个登录的 5 小时额度",
   fiveHourReset: "已重置",
+  turns: "同时几轮",
+  turnsHint: "这个登录同时最多开几轮，你自己的也算；满了就排队，你的先开。不填则按厂商的限速自动收放。",
+  turnsNone: "自动",
+  turnsOf: (turns) => `至多 ${turns} 轮`,
+  turnsUnit: "轮",
+  turnsBad: "填 1 以上的整数",
   change: "改",
   save: "保存",
   cancel: "取消",
@@ -1606,6 +1620,12 @@ export const enAccess: AccessWords = {
   fiveHourRead: (percent, resets) => `${percent}% used${resets ? `, resets ${resets}` : ""}`,
   fiveHourUnread: "This login's 5-hour limit hasn't been read yet",
   fiveHourReset: "Reset",
+  turns: "Turns at once",
+  turnsHint: "The most turns this login runs at once, yours included; past it they queue, yours first. Left empty, it follows the vendor's rate limits.",
+  turnsNone: "Auto",
+  turnsOf: (turns) => `At most ${turns}`,
+  turnsUnit: "turns",
+  turnsBad: "Enter a whole number from 1",
   change: "Change",
   save: "Save",
   cancel: "Cancel",

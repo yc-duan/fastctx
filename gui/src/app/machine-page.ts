@@ -1059,7 +1059,7 @@ export class MachinePage implements Page {
       ? `<div class="given-row"><span class="given-label">${escape(machines.assisting)}</span>${assists
           .map((assist) => {
             const label = `${agentName(assist.agent)} ${assist.account}`;
-            const at = `data-to="${escape(assist.account)}" data-agent="${escape(assist.agent)}"${assist.home ? ` data-home="${escape(assist.home)}"` : ""}${assist.until ? ` data-until="${escape(assist.until)}"` : ""}${assist.daily ? ` data-daily="${assist.daily}"` : ""}${assist.weekly ? ` data-weekly="${assist.weekly}"` : ""}${assist.five_hour ? ` data-five-hour="${assist.five_hour}"` : ""}`;
+            const at = `data-to="${escape(assist.account)}" data-agent="${escape(assist.agent)}"${assist.home ? ` data-home="${escape(assist.home)}"` : ""}${assist.until ? ` data-until="${escape(assist.until)}"` : ""}${assist.daily ? ` data-daily="${assist.daily}"` : ""}${assist.weekly ? ` data-weekly="${assist.weekly}"` : ""}${assist.five_hour ? ` data-five-hour="${assist.five_hour}"` : ""}${assist.turns ? ` data-turns="${assist.turns}"` : ""}`;
             const until = assist.until ? new Date(assist.until) : null;
             const said = until ? access.moment.until(until, now) : access.when.none;
             const day = until ? `<span class="assist-tag-until">${glyph("history", 12)}${escape(access.moment.short(until, now))}</span>` : "";
@@ -1179,6 +1179,7 @@ export class MachinePage implements Page {
           ...(target.dataset.daily ? { daily: Number(target.dataset.daily) } : {}),
           ...(target.dataset.weekly ? { weekly: Number(target.dataset.weekly) } : {}),
           ...(target.dataset.fiveHour ? { five_hour: Number(target.dataset.fiveHour) } : {}),
+          ...(target.dataset.turns ? { turns: Number(target.dataset.turns) } : {}),
         };
         if (owner)
           void this.takeBack(

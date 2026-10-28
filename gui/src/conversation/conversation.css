@@ -195,7 +195,8 @@
   margin-top: 0.7em;
 }
 
-.bubble.going {
+.bubble.going,
+.bubble.queued {
   --shown: 0.62;
 }
 

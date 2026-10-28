@@ -297,6 +297,7 @@ export class LoginUsagePage implements Page {
       assist.weekly ? words.weekly(wholeDollars(assist.weekly / 1_000_000)) : "",
       assist.daily || assist.weekly ? "" : words.noCap,
       assist.five_hour ? words.fiveHourCap(assist.five_hour) : "",
+      assist.turns ? words.turnsCap(assist.turns) : "",
     ]
       .filter(Boolean)
       .join("\n");
@@ -470,7 +471,7 @@ export class LoginUsagePage implements Page {
     const rows = listed
       .map((person) => {
         const assisted = this.assistOf(person);
-        const terms = assisted ? [words.assistUntil(assisted.until ? new Date(assisted.until) : null, clock), assisted.daily ? words.daily(wholeDollars(assisted.daily / 1_000_000)) : "", assisted.weekly ? words.weekly(wholeDollars(assisted.weekly / 1_000_000)) : "", assisted.five_hour ? words.fiveHourCap(assisted.five_hour) : ""].filter(Boolean) : [];
+        const terms = assisted ? [words.assistUntil(assisted.until ? new Date(assisted.until) : null, clock), assisted.daily ? words.daily(wholeDollars(assisted.daily / 1_000_000)) : "", assisted.weekly ? words.weekly(wholeDollars(assisted.weekly / 1_000_000)) : "", assisted.five_hour ? words.fiveHourCap(assisted.five_hour) : "", assisted.turns ? words.turnsCap(assisted.turns) : ""].filter(Boolean) : [];
         const value = valueOf(person.week, unit);
         const part = parted ? (week!.parts.get(person.index) ?? 0) : null;
         const picked = this.only === person.key;

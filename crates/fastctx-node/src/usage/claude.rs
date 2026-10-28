@@ -112,6 +112,7 @@ pub(super) fn measured(
                         Entry::Tokens {
                             at,
                             who: super::who(about),
+                            with: super::with(about),
                             model: usage.model,
                             tokens: usage.tokens,
                             call: usage.call,
@@ -157,6 +158,7 @@ pub(super) fn measured(
             Entry::Spent {
                 at,
                 who: super::who(about),
+                with: super::with(about),
                 session: session.clone(),
                 process,
                 total: if since.is_some() { total.max(before) } else { total },

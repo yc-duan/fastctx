@@ -140,6 +140,7 @@ pub mod thumbnail;
 pub mod timers;
 mod town;
 mod turn_evidence;
+mod turn_slots;
 mod turns;
 mod uninstall;
 mod unpublished;
@@ -224,6 +225,9 @@ pub(crate) struct Node {
     /// The controls running outside their conversation's action gate
     /// (`control_long`).
     long_controls: control_long::Running,
+    /// How many turns each agent login runs at once, and the turns waiting
+    /// for room (`turn_slots`).
+    turn_slots: turn_slots::Slots,
     file_searches: file_search::Searches,
     line_sources: lines::Sources,
     log: Arc<log::Log>,
@@ -638,6 +642,7 @@ pub async fn run_prepared(
         composers: composer::Composers::default(),
         actions: Default::default(),
         long_controls: Default::default(),
+        turn_slots: Default::default(),
         file_searches: file_search::Searches::default(),
         line_sources: lines::Sources::default(),
         log,

@@ -142,6 +142,9 @@ export interface AssistSeen {
   /** The share of the login's own five-hour window, in percent, past which
    *  the login assists no one; absent is no limit. */
   five_hour?: number;
+  /** The most turns the login runs at once, its owner's own counted too;
+   *  absent leaves it to the vendor's rate limits. */
+  turns?: number;
 }
 
 /** A plan a login names none of (a Claude Code long-lived token), set by
@@ -332,7 +335,7 @@ export interface Dissolution {
 /** A change made as an account (`fastctx_types::accounts::AccountChange`). */
 export type AccountChange =
   | { change: "share"; machine: MachineName; to: AccountName; shared: boolean }
-  | { change: "assist"; machine: MachineName; to: AccountName; agent: string; home?: string; assisting: boolean; until?: Timestamp; weekly?: number; daily?: number; five_hour?: number }
+  | { change: "assist"; machine: MachineName; to: AccountName; agent: string; home?: string; assisting: boolean; until?: Timestamp; weekly?: number; daily?: number; five_hour?: number; turns?: number }
   | { change: "plan"; machine: MachineName; agent: string; home?: string; plan: PlanLabel | null }
   | { change: "stop_acting"; machine: MachineName }
   /** The administrator's change: the server checks it reaches the machine

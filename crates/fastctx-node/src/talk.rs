@@ -683,9 +683,13 @@ fn kept(node: &Node, resident: &ResidentId) -> Vec<fastctx_types::session::KeptW
     let directory = node.world.conversation(resident);
     let managed = node.residents.about(resident).is_some_and(|(about, _)| about.world_started);
     let Ok(pending) = crate::inbox::pending(&directory) else { return Vec::new() };
+    // The words that would start its next turn, while that waits for room
+    // in its login.
+    let mut queued = crate::turn_slots::ahead(node, resident);
     pending
         .into_iter()
         .map(|pending| {
+            let first = pending.state == PendingState::Waiting && pending.delivery.notice.along().is_none();
             let progress = crate::lifecycle::retry::progress(node, resident, &pending.delivery.id).ok().flatten();
             let retrying = progress.is_some();
             let host_retry = progress
@@ -700,6 +704,7 @@ fn kept(node: &Node, resident: &ResidentId) -> Vec<fastctx_types::session::KeptW
                     _ => WordsState::Handing,
                 },
                 host_retry,
+                queued: if first { queued.take() } else { None },
             }
         })
         .collect()

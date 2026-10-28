@@ -1444,6 +1444,8 @@ function specimenTalk(address: Address): KeepablePage {
   let shared: SpecimenComposer | null = null;
   // `?retrying=<ms>`: words sent at rest wait for a host that does not
   // start, and after the delay their node says so, as it does after a minute.
+  // `?turnline=<n>`: they wait for room in their agent login instead, `n`
+  // turns ahead of them.
   const retrying = params.has("retrying")
     ? (id: string) =>
         setTimeout(() => {
@@ -1454,7 +1456,13 @@ function specimenTalk(address: Address): KeepablePage {
           conversation.now(false, null, [{ id, state: "handing", host_retry: { since: new Date(Date.now() - 60_000).toISOString(), reason } }]);
           page.update();
         }, Number(params.get("retrying") || 1500))
-    : undefined;
+    : params.has("turnline")
+      ? (id: string) =>
+          setTimeout(() => {
+            conversation.now(false, null, [{ id, state: "handing", queued: Number(params.get("turnline") || 2) }]);
+            page.update();
+          }, 300)
+      : undefined;
   const sharedInput = () =>
     (shared ??= specimenComposer(address, () => conversation.turning(), params.has("queued") ? (english ? ["Then run the overflow test on lab", "And write the result into the journal"] : ["然后在 lab 上跑溢出测试", "再把结果写进手记"]) : [], retrying));
   const name = address.resident;

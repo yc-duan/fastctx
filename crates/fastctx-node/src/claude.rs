@@ -1174,6 +1174,15 @@ pub async fn deliver(
             Ok(Landed::Waiting { why: None, answered: true })
         });
     }
+    // A turn these words would start waits for room in its login
+    // (`turn_slots`); words for a running turn go in with it.
+    if pending.delivery.notice.along().is_none()
+        && node.residents.now(to).is_none_or(|now| now.turn.is_none() && now.activity != Activity::Busy)
+        && let Err(queued) = crate::turn_slots::admit(node, to, &current)
+    {
+        crate::lifecycle::retry::kick(node, to);
+        return Some(Ok(queued.landed()));
+    }
     Some(match alive {
         true => into_inbox(node, to, &session, directory, pending).await,
         // What rides with the next turn wakes nobody: it waits for the turn

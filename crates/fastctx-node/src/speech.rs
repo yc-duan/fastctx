@@ -525,6 +525,16 @@ async fn submit_thread(
             crate::goals::engine::input_changed(node, id);
         }
     }
+    // A turn these words would start waits for room in its login
+    // (`turn_slots`); words for a running turn go in with it.
+    if pending.delivery.notice.along().is_none()
+        && codex.running_turn(thread).is_none()
+        && node.residents.now(id).is_none_or(|now| now.turn.is_none())
+        && let Err(queued) = crate::turn_slots::admit(node, id, &about)
+    {
+        crate::lifecycle::retry::kick(node, id);
+        return Ok(Some(queued.landed()));
+    }
     let missing = match crate::lifecycle::wake::wake(
         node,
         id,

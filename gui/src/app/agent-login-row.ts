@@ -196,6 +196,7 @@ function assistedTag(mine: { assist: AssistSeen; owner: string | null }, now: Da
     weekly ? usageWords.weekly(wholeDollars(weekly)) : "",
     daily || weekly ? "" : usageWords.noCap,
     assist.five_hour ? usageWords.fiveHourCap(assist.five_hour) : "",
+    assist.turns ? usageWords.turnsCap(assist.turns) : "",
   ]
     .filter(Boolean)
     .join("\n");

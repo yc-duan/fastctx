@@ -233,6 +233,11 @@ pub struct KeptWords {
     /// is still being sent; this is not a failed delivery.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub host_retry: Option<HostRetry>,
+    /// How many turns of its agent login go before the one these words
+    /// would start, while that waits for room in the login
+    /// (`world-usage.md`, 一个登录同时开几轮).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub queued: Option<u32>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

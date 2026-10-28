@@ -193,6 +193,7 @@ fn hub() -> HubAccounts {
                 weekly: None,
                 daily: None,
                 five_hour: Some(80),
+                turns: Some(4),
             },
             AssistSeen {
                 machine: "gpu".parse().unwrap(),
@@ -203,6 +204,7 @@ fn hub() -> HubAccounts {
                 weekly: Some(fastctx_types::usage::Usd(42_500_000)),
                 daily: Some(fastctx_types::usage::Usd(8_000_000)),
                 five_hour: None,
+                turns: None,
             },
         ],
         plans: vec![PlanSeen {
@@ -298,6 +300,7 @@ pub fn fixtures() -> Fixtures {
                 weekly: None,
                 daily: None,
                 five_hour: Some(90),
+                turns: Some(3),
             },
             AccountChange::Assist {
                 machine: machine(),
@@ -309,6 +312,7 @@ pub fn fixtures() -> Fixtures {
                 weekly: Some(fastctx_types::usage::Usd(50_000_000)),
                 daily: Some(fastctx_types::usage::Usd(10_000_000)),
                 five_hour: None,
+                turns: None,
             },
             AccountChange::Plan {
                 machine: "gpu".parse().unwrap(),

@@ -1,6 +1,6 @@
 // One login of an agent assisting others (`world-gui.md`, 账号、机器、共享与
-// 协助): how much of its own five-hour window it lends at most, for the
-// whole login; whom it assists now, each until when and, for Claude Code,
+// 协助): how much of its own five-hour window it lends at most and how many
+// turns it runs at once, for the whole login; whom it assists now, each until when and, for Claude Code,
 // up to how much a day and a week, changed or ended in place; then whom it
 // assists next, the network's accounts that match listed under the name as
 // it is typed. The hub ends an assistance by itself at its deadline; the
@@ -22,14 +22,16 @@ import { windowOf } from "./usage/model";
 const accountRule = "[a-z][a-z0-9\\-]{0,63}";
 
 /** What an assistance allows: until when (none: no end), what may be spent
- *  of the login a day and a week, in dollars (none: no limit), and the
- *  share of the login's own five-hour window, in percent, past which it
- *  assists no one (none: no limit). */
+ *  of the login a day and a week, in dollars (none: no limit), the share
+ *  of the login's own five-hour window, in percent, past which it assists
+ *  no one (none: no limit), and the most turns the login runs at once
+ *  (none: as the vendor's rate limits allow). */
 export interface Terms {
   until: Date | null;
   daily: number | null;
   weekly: number | null;
   fiveHour: number | null;
+  turns: number | null;
 }
 
 /** One account the login assists, on its terms. */
@@ -39,6 +41,7 @@ export interface Assistance {
   daily: number | null;
   weekly: number | null;
   fiveHour: number | null;
+  turns: number | null;
 }
 
 /** Lets the login assist `to` on `terms`, or no longer when there are
@@ -68,12 +71,12 @@ const dollars = (micro: number | undefined) => (micro ? micro / 1_000_000 : null
 export function assistancesIn(assists: AssistSeen[], machine: string, agent: string, home: string | null): Assistance[] {
   return assists
     .filter((assist) => assist.machine === machine && assist.agent === agent && (assist.home ?? null) === home)
-    .map((assist) => ({ to: assist.account, until: assist.until ?? null, daily: dollars(assist.daily), weekly: dollars(assist.weekly), fiveHour: assist.five_hour ?? null }));
+    .map((assist) => ({ to: assist.account, until: assist.until ?? null, daily: dollars(assist.daily), weekly: dollars(assist.weekly), fiveHour: assist.five_hour ?? null, turns: assist.turns ?? null }));
 }
 
 /** The terms an assistance the hub keeps was given on. */
 export function termsOf(assist: AssistSeen): Terms {
-  return { until: assist.until ? new Date(assist.until) : null, daily: dollars(assist.daily), weekly: dollars(assist.weekly), fiveHour: assist.five_hour ?? null };
+  return { until: assist.until ? new Date(assist.until) : null, daily: dollars(assist.daily), weekly: dollars(assist.weekly), fiveHour: assist.five_hour ?? null, turns: assist.turns ?? null };
 }
 
 /** The five-hour window among a login's windows. */
@@ -100,12 +103,18 @@ export function assistChange(machine: string, agent: string, home: string | null
     ...(terms?.weekly ? { weekly: Math.round(terms.weekly * 1_000_000) } : {}),
     ...(terms?.daily ? { daily: Math.round(terms.daily * 1_000_000) } : {}),
     ...(terms?.fiveHour ? { five_hour: terms.fiveHour } : {}),
+    ...(terms?.turns ? { turns: terms.turns } : {}),
   };
 }
 
 /** What is being changed: one assistance, with the picker its deadline is
- *  changed in and its amounts as they were, or the login's five-hour share. */
-type Editing = { kind: "one"; to: string; picker: WhenPicker; daily: string; weekly: string } | { kind: "window"; share: string } | null;
+ *  changed in and its amounts as they were, or the login's five-hour share,
+ *  or its turns at once. */
+type Editing =
+  | { kind: "one"; to: string; picker: WhenPicker; daily: string; weekly: string }
+  | { kind: "window"; share: string }
+  | { kind: "turns"; turns: string }
+  | null;
 
 export class AssistSheet {
   private readonly sheet = new Sheet("device-sheet assist-sheet");
@@ -115,6 +124,8 @@ export class AssistSheet {
    *  assistance it gives carries; kept here for the next one while it
    *  assists no one. */
   private fiveHour: number | null = null;
+  /** The most turns the login runs at once, kept the same way. */
+  private turns: number | null = null;
   /** The deadline for the next one assisted. */
   private fresh: WhenPicker;
   private editing: Editing = null;
@@ -130,6 +141,7 @@ export class AssistSheet {
       if (button.dataset.takeBack) void this.change(button.dataset.takeBack, null);
       else if (button.dataset.change) this.edit(button.dataset.change);
       else if (button.hasAttribute("data-window")) this.editWindow();
+      else if (button.hasAttribute("data-turns")) this.editTurns();
       else if (button.dataset.save) this.save();
       else if (button.hasAttribute("data-cancel")) this.edit(null);
     });
@@ -145,7 +157,7 @@ export class AssistSheet {
       if (this.editing) return this.save();
       const to = this.sheet.body.querySelector<HTMLInputElement>("[name=to]")!.value.trim();
       const amounts = this.amounts(".assist-new");
-      if (amounts && to) void this.change(to, { until: this.fresh.value, ...amounts, fiveHour: this.fiveHour });
+      if (amounts && to) void this.change(to, { until: this.fresh.value, ...amounts, fiveHour: this.fiveHour, turns: this.turns });
     });
   }
 
@@ -154,6 +166,7 @@ export class AssistSheet {
     this.opening = opening;
     this.assistances = opening.assistances;
     this.fiveHour = shareOf(opening.assistances);
+    this.turns = turnsOf(opening.assistances);
     this.fresh = new WhenPicker(this.words.when, null);
     this.editing = null;
     this.sheet.body.innerHTML = "";
@@ -187,16 +200,29 @@ export class AssistSheet {
     field?.select();
   }
 
+  private editTurns(): void {
+    this.editing = { kind: "turns", turns: this.turns ? String(this.turns) : "" };
+    redrawKeepingFocus(this.sheet.body, () => this.draw());
+    const field = this.sheet.body.querySelector<HTMLInputElement>("[name=turns]");
+    field?.focus();
+    field?.select();
+  }
+
   private save(): void {
     const editing = this.editing;
     if (editing?.kind === "window") {
       const share = shareTyped(this.sheet.body.querySelector<HTMLInputElement>("[name=five-hour]")?.value ?? editing.share);
       if (share === undefined) return this.say(this.words.fiveHourBad);
-      return void this.setShare(share);
+      return void this.setLogin({ fiveHour: share });
+    }
+    if (editing?.kind === "turns") {
+      const turns = turnsTyped(this.sheet.body.querySelector<HTMLInputElement>("[name=turns]")?.value ?? editing.turns);
+      if (turns === undefined) return this.say(this.words.turnsBad);
+      return void this.setLogin({ turns });
     }
     if (editing?.kind !== "one") return;
     const amounts = this.amounts(".assist-edit");
-    if (amounts) void this.change(editing.to, { until: editing.picker.value, ...amounts, fiveHour: this.fiveHour });
+    if (amounts) void this.change(editing.to, { until: editing.picker.value, ...amounts, fiveHour: this.fiveHour, turns: this.turns });
   }
 
   /** The amounts typed under `within`, or none when one is not an amount,
@@ -241,6 +267,7 @@ export class AssistSheet {
       <p class="confirm-what">${escape(words.assistWhat)}</p>
       <p class="field-hint give-sees">${glyph("shield", 14)}<span>${escape(words.assistSees)}</span></p>
       ${this.windowLine(now)}
+      ${this.turnsLine()}
       <section class="give-list">
         <h3 class="field-label">${escape(words.assisting)}</h3>
         ${rows ? `<ul class="assist-rows">${rows}</ul>` : `<p class="field-hint">${escape(words.nobodyYet)}</p>`}
@@ -302,6 +329,23 @@ export class AssistSheet {
     </section>`;
   }
 
+  /** The most turns the login runs at once, pressed to change. */
+  private turnsLine(): string {
+    const { words, editing, turns } = this;
+    const open = editing?.kind === "turns";
+    return `<section class="assist-window-line assist-turns-line${open ? " editing" : ""}">
+      <span class="field-label">${escape(words.turns)}</span>
+      <span></span>
+      <button class="assist-until${turns === null ? " none" : ""}" type="button" data-turns title="${escape(words.turnsHint)}"><span>${escape(turns === null ? words.turnsNone : words.turnsOf(turns))}</span></button>
+      ${
+        open
+          ? `<div class="assist-edit"><label class="field assist-amount" title="${escape(words.turnsHint)}">
+          <span class="assist-amount-input"><input name="turns" inputmode="numeric" autocomplete="off" spellcheck="false" aria-label="${escape(words.turns)}" placeholder="${escape(words.turnsNone)}" value="${escape(editing.turns)}"><span class="assist-unit">${escape(words.turnsUnit)}</span></span></label>${this.acts()}</div>`
+          : ""
+      }
+    </section>`;
+  }
+
   /** What one may spend a day and a week, pressed to change. */
   private amountsPill(one: Assistance): string {
     const { words } = this;
@@ -343,19 +387,27 @@ export class AssistSheet {
     await this.run(() => this.opening.assist(to, terms), wasNew);
   }
 
-  /** Sets the share of its five-hour window the login lends at most, on
-   *  every assistance it gives; while it gives none, for the next one. */
-  private async setShare(share: number | null): Promise<void> {
+  /** Sets what holds for the whole login, the share of its five-hour
+   *  window it lends at most or the turns it runs at once, on every
+   *  assistance it gives; while it gives none, for the next one. */
+  private async setLogin(change: { fiveHour?: number | null; turns?: number | null }): Promise<void> {
     const given = this.assistances;
     if (!given.length) {
-      this.fiveHour = share;
+      if (change.fiveHour !== undefined) this.fiveHour = change.fiveHour;
+      if (change.turns !== undefined) this.turns = change.turns;
       this.edit(null);
       return;
     }
     await this.run(async () => {
       let now = given;
       for (const one of given) {
-        const terms = { until: one.until ? new Date(one.until) : null, daily: one.daily, weekly: one.weekly, fiveHour: share };
+        const terms = {
+          until: one.until ? new Date(one.until) : null,
+          daily: one.daily,
+          weekly: one.weekly,
+          fiveHour: change.fiveHour !== undefined ? change.fiveHour : one.fiveHour,
+          turns: change.turns !== undefined ? change.turns : one.turns,
+        };
         now = await this.opening.assist(one.to, terms);
       }
       return now;
@@ -373,6 +425,7 @@ export class AssistSheet {
     try {
       this.assistances = await work();
       this.fiveHour = shareOf(this.assistances) ?? (this.assistances.length ? null : this.fiveHour);
+      this.turns = turnsOf(this.assistances) ?? (this.assistances.length ? null : this.turns);
       sheet.busy = false;
       this.editing = null;
       if (wasNew) this.fresh = new WhenPicker(words.when, null);
@@ -401,6 +454,20 @@ export class AssistSheet {
 /** The share the login's assistances carry; they carry one alike. */
 function shareOf(assistances: Assistance[]): number | null {
   return assistances.find((one) => one.fiveHour)?.fiveHour ?? null;
+}
+
+/** The turns at once the login's assistances carry; they carry one alike. */
+function turnsOf(assistances: Assistance[]): number | null {
+  return assistances.find((one) => one.turns)?.turns ?? null;
+}
+
+/** Turns as typed: a whole number from 1, none when empty, and undefined
+ *  otherwise. */
+function turnsTyped(text: string): number | null | undefined {
+  const plain = text.replace(/\s/g, "");
+  if (!plain) return null;
+  const turns = Number(plain);
+  return /^\d+$/.test(plain) && turns >= 1 && turns <= 1000 ? turns : undefined;
 }
 
 /** An amount as typed: dollars to the cent, none when empty, and undefined

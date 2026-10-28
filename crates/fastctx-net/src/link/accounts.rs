@@ -40,11 +40,11 @@ impl Link {
         }
         let wire = match change {
             AccountChange::Share { machine, to, shared } => Change::Share { machine, to, shared },
-            AccountChange::Assist { machine, to, agent, home, assisting, until, weekly, daily, five_hour } => {
+            AccountChange::Assist { machine, to, agent, home, assisting, until, weekly, daily, five_hour, turns } => {
                 return self
                     .assist(
                         account,
-                        Assist { machine, account: to, agent, home, until, weekly, daily, five_hour },
+                        Assist { machine, account: to, agent, home, until, weekly, daily, five_hour, turns },
                         assisting,
                     )
                     .await
@@ -230,6 +230,7 @@ impl Link {
                     weekly: None,
                     daily: None,
                     five_hour: None,
+                    turns: None,
                 },
             )
             .await?;
@@ -244,10 +245,11 @@ impl Link {
             weekly: assist.weekly.filter(|_| limited),
             daily: assist.daily.filter(|_| limited),
             five_hour: assist.five_hour.filter(|_| limited),
+            turns: assist.turns.filter(|_| limited),
         };
         self.manage(account, change(assisting, true)).await?;
-        let limits = (assist.until, assist.weekly, assist.daily, assist.five_hour);
-        if !assisting || limits == (None, None, None, None) {
+        let limits = (assist.until, assist.weekly, assist.daily, assist.five_hour, assist.turns);
+        if !assisting || limits == (None, None, None, None, None) {
             return Ok(());
         }
         let hub = self.hub_name();
@@ -260,7 +262,7 @@ impl Link {
             .assists
             .iter()
             .find(|found| found.same(&assist))
-            .map(|found| (found.until, found.weekly, found.daily, found.five_hour));
+            .map(|found| (found.until, found.weekly, found.daily, found.five_hour, found.turns));
         let why = match kept {
             Some(found) if found == limits => return Ok(()),
             Some((None, ..)) if assist.until.is_some() => {
@@ -270,7 +272,7 @@ impl Link {
                 format!("the hub {hub} keeps no weekly allowance on assistance; upgrade it to assist up to an amount")
             }
             Some(_) => format!(
-                "the hub {hub} keeps no daily allowance or five-hour share on assistance; upgrade it to assist within them"
+                "the hub {hub} keeps no daily allowance, five-hour share or limit of turns at once on assistance; upgrade it to assist within them"
             ),
             None => format!("the hub {hub} could not be asked whether it kept the assistance as given; give it again"),
         };
@@ -369,6 +371,7 @@ impl Link {
                     weekly: assist.weekly,
                     daily: assist.daily,
                     five_hour: assist.five_hour,
+                    turns: assist.turns,
                 })
                 .collect(),
             plans: view

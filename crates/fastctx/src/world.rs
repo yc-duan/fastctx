@@ -162,6 +162,11 @@ pub struct AssistArgs {
     /// counted too; no limit when not given.
     #[arg(long = "five-hour", conflicts_with = "off", value_parser = clap::value_parser!(u8).range(1..=100))]
     five_hour: Option<u8>,
+    /// The most turns the login runs at once, its owner's own counted too,
+    /// the same on every assistance of the login; no limit of yours when
+    /// not given.
+    #[arg(long, conflicts_with = "off", value_parser = clap::value_parser!(u16).range(1..))]
+    turns: Option<u16>,
     #[arg(long = "as")]
     owner: Option<AccountName>,
     #[arg(long)]
@@ -605,6 +610,7 @@ pub fn assist(args: AssistArgs) -> anyhow::Result<()> {
         weekly: args.weekly,
         daily: args.daily,
         five_hour: args.five_hour,
+        turns: args.turns,
     };
     self::change(args.hub, owner, change)?;
     if args.off {

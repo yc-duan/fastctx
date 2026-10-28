@@ -1300,7 +1300,8 @@
             "until": "2026-10-10T12:00:00Z",
             "weekly": 25000000,
             "daily": 5000000,
-            "five_hour": 75
+            "five_hour": 75,
+            "turns": 6
           },
           "outcome": {
             "kind": "done"
@@ -4487,7 +4488,8 @@
                 "agent": "codex",
                 "home": null,
                 "until": null,
-                "five_hour": 80
+                "five_hour": 80,
+                "turns": 4
               },
               {
                 "machine": "gpu",
@@ -4608,7 +4610,8 @@
         "home": "C:/Users/ada/.codex-work",
         "assisting": true,
         "until": "2026-10-20T10:00:00Z",
-        "five_hour": 90
+        "five_hour": 90,
+        "turns": 3
       },
       {
         "change": "assist",
