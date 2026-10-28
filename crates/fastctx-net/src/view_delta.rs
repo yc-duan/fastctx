@@ -12,8 +12,26 @@ use serde_json::{Map, Value};
 
 use crate::directory::View;
 
-/// The lists sent entry by entry, each with the field that names an entry.
-const KEYED: &[(&str, &str)] = &[("members", "name"), ("accounts", "name"), ("projects", "town")];
+/// The lists sent entry by entry, each with the fields that name an entry.
+const KEYED: &[(&str, &[&str])] = &[
+    ("members", &["name"]),
+    ("accounts", &["name"]),
+    ("projects", &["town"]),
+    ("shares", &["machine", "account"]),
+    ("lends", &["machine", "account", "agent", "home"]),
+    ("acting", &["machine", "account"]),
+    ("plans", &["machine", "agent", "home"]),
+    ("tokens", &["key"]),
+];
+
+/// The name of `entry` by `key`'s fields; none where it has none of them.
+fn name_of(entry: &Value, key: &[&str]) -> Option<String> {
+    let fields: Vec<&Value> = key.iter().map(|field| entry.get(*field).unwrap_or(&Value::Null)).collect();
+    fields
+        .iter()
+        .any(|value| !value.is_null())
+        .then(|| Value::from(fields.into_iter().cloned().collect::<Vec<_>>()).to_string())
+}
 
 /// What of a member the hub tells as it changes (`crate::wire::Down::Presence`):
 /// a member that changed in nothing else is not sent again for it.
@@ -83,10 +101,9 @@ pub fn between(old: &View, new: &View, base: u64, revision: u64) -> Result<Optio
 /// How the list `before` became `after`, entries named by `key`, an entry
 /// that changed only in what `told` names left out; none where an entry has
 /// no name or shares one, and the list goes whole.
-fn list(before: &[Value], after: &[Value], key: &str, told: &[&str]) -> Option<ListDelta> {
+fn list(before: &[Value], after: &[Value], key: &[&str], told: &[&str]) -> Option<ListDelta> {
     let named = |entries: &[Value]| -> Option<Vec<String>> {
-        let names: Vec<String> =
-            entries.iter().map(|entry| entry.get(key).map(Value::to_string)).collect::<Option<_>>()?;
+        let names: Vec<String> = entries.iter().map(|entry| name_of(entry, key)).collect::<Option<_>>()?;
         let distinct: std::collections::HashSet<&String> = names.iter().collect();
         (distinct.len() == names.len()).then_some(names)
     };
@@ -146,9 +163,7 @@ pub fn apply(view: &View, delta: &ViewDelta) -> Result<(View, Vec<String>), Stri
             Value::Array(entries) => entries,
             _ => return Err(format!("{field} is not a list")),
         };
-        let name = |entry: &Value| {
-            entry.get(key).map(Value::to_string).ok_or_else(|| format!("an entry of {field} has no {key}"))
-        };
+        let name = |entry: &Value| name_of(entry, key).ok_or_else(|| format!("an entry of {field} has no name"));
         let gone: std::collections::HashSet<&String> = change.removed.iter().collect();
         let mut kept = Vec::with_capacity(entries.len());
         for entry in entries.drain(..) {
@@ -163,7 +178,7 @@ pub fn apply(view: &View, delta: &ViewDelta) -> Result<(View, Vec<String>), Stri
         for entry in &change.put {
             let named = name(entry)?;
             if field == "members" {
-                members.push(entry.get(key).and_then(Value::as_str).unwrap_or_default().to_string());
+                members.push(entry.get("name").and_then(Value::as_str).unwrap_or_default().to_string());
             }
             match at.get(&named) {
                 Some(&index) => kept[index] = entry.clone(),
