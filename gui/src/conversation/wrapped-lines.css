@@ -1,0 +1,44 @@
+/* Lines in the page's flow that wrap rather than run off sideways
+   (`wrapped-lines.ts`); `.long-static` gives them the code face. */
+.wrapped-lines {
+  tab-size: 4;
+}
+
+.wrapped-lines > .lv-line {
+  min-height: 1lh;
+}
+
+/* The box over the lines: it closes over those past the first few, and
+   only lines opened past most of the conversation's height scroll in it. */
+.wrapped-clip {
+  position: relative;
+  overflow: hidden;
+  overflow-anchor: none;
+}
+
+.wrapped-clip.wrapped-scroll {
+  overflow-y: auto;
+  scrollbar-width: thin;
+}
+
+.wrapped-shut > .wrapped-past {
+  display: none;
+}
+
+.wrapped-more {
+  font-size: var(--size-text);
+  line-height: var(--leading-ui);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-3);
+  transition: color var(--hover) var(--ease);
+}
+
+.wrapped-more:hover {
+  color: var(--text);
+}
+
+.wrapped-more:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+  border-radius: var(--radius-s);
+}

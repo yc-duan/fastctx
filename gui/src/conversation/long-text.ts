@@ -1,5 +1,7 @@
 // Long text under an open tool row (`world-gui.md`, 对话): its first lines,
-// then "+ 28 行", nothing scrolling. Pressed, the lines read so far stay
+// then "+ 28 行", nothing scrolling. Lines held here that are not a change
+// go on to the next line rather than run off sideways (`wrapped-lines.ts`);
+// a change keeps its columns. Pressed, the lines read so far stay
 // where they are and the rest comes in below them, the whole of it where it
 // fits in most of the conversation's height; only longer text is a box of
 // that height that draws the lines in view and scrolls inside, handing the
@@ -11,6 +13,7 @@
 // (a diff's); the popup numbers them.
 
 import { glyph } from "./glyphs";
+import { WrappedLines } from "./wrapped-lines";
 import {
   AnchoredHeight,
   LineViewport,
@@ -60,6 +63,9 @@ export interface LongLines {
   /** Shown whole in a box that scrolls from the start, as a change is: no
    *  first lines and button for the rest, however few or many. */
   scroll?: boolean;
+  /** Lines held here that wrap rather than scroll sideways: all but a
+   *  change's. */
+  wrap?: boolean;
 }
 
 /** Lines shown before the rest is asked for, and how many more lines are
@@ -74,10 +80,22 @@ const TALLEST = 0.7;
 /** How much of it a box that scrolls from the start takes at most. */
 const SCROLLING = 0.5;
 
-export class LongText {
+/** Text opened under a row, as finding and folding reach it: a long text,
+ *  or a command's printout (`printout.ts`). */
+export interface OpenedText {
+  readonly element: HTMLElement;
+  /** Brings a line found in it into view. */
+  reveal(line: number): Promise<void>;
+  /** Sets its height once it is on the page. */
+  settle(): void;
+  destroy(): void;
+}
+
+export class LongText implements OpenedText {
   readonly element = document.createElement("div");
   private readonly source: LineSource;
   private viewport: LineViewport | null = null;
+  private wrapped: WrappedLines | null = null;
   private motion: AnchoredHeight | null = null;
   private full = false;
   /** A box that scrolls from the start (`LongLines.scroll`). */
@@ -93,18 +111,30 @@ export class LongText {
     private readonly layout: AnchorLayout,
     private readonly words: LongTextWords,
   ) {
-    const given: LongLines = typeof content === "string" ? { lines: content.replace(/\n$/, "").split("\n") } : content;
+    const given: LongLines = typeof content === "string" ? { lines: content.replace(/\n$/, "").split("\n"), wrap: true } : content;
     const others = given.others ?? [];
     const lines = Array.isArray(given.lines) ? (given.lines as readonly string[]) : null;
     this.source = given.source ?? (lines ? new MemoryLines(lines, true) : (given.lines as LineSource));
     this.element.className = `long-text${given.kind ? ` ${given.kind}` : ""}`;
     const inline = given.inline ?? given.paint;
     this.scrolling = !!given.scroll;
-    if (lines && lines.length <= FEW && !others.length && !this.scrolling) {
+    if (lines && lines.length <= FEW && !others.length && !this.scrolling && !given.wrap) {
       this.element.append(inline ? painted(lines, inline) : plainText(lines));
       return;
     }
     const viewerWords: ViewerWords = { ...(words.english ? englishViewer : chineseViewer), ...(words.failed ? { failed: words.failed } : {}) };
+    if (lines && given.wrap) {
+      this.wrapped = new WrappedLines({
+        lines,
+        ...(inline ? { paint: inline } : {}),
+        ...(this.scrolling ? { box: SCROLLING } : { scrolls: true }),
+        layout,
+        words,
+      });
+      this.element.append(this.wrapped.clip);
+      if (this.wrapped.more) this.element.append(this.wrapped.more);
+      if (lines.length <= FEW && !others.length) return;
+    }
     this.box.className = "long-text-box";
     const corner = document.createElement("button");
     this.corner = corner;
@@ -121,6 +151,10 @@ export class LongText {
       });
       viewer.open(this.viewport?.range.start ?? 0);
     });
+    if (this.wrapped) {
+      this.element.append(corner);
+      return;
+    }
     this.viewport = new LineViewport(this.source, {
       label,
       ...(this.scrolling ? {} : { limit: PREVIEW }),
@@ -150,6 +184,10 @@ export class LongText {
    *  the line it shares with what else is said under the text; none where
    *  the text is short enough to be shown whole. */
   takeMore(): HTMLElement | null {
+    if (this.wrapped) {
+      this.wrapped.more?.remove();
+      return this.wrapped.more;
+    }
     if (!this.viewport || this.scrolling) return null;
     this.more.remove();
     return this.more;
@@ -188,6 +226,7 @@ export class LongText {
 
   /** Sets the box to the preview's height; called again once it is on the page, where its rows have a height. */
   settle(): void {
+    this.wrapped?.settle();
     if (!this.viewport) return;
     const height = this.height();
     this.viewport.element.style.height = `${height}px`;
@@ -196,6 +235,7 @@ export class LongText {
 
   /** Brings a search hit beyond the preview into the existing line box. */
   async reveal(line: number): Promise<void> {
+    if (this.wrapped) return this.wrapped.reveal(line);
     if (!this.viewport) return;
     if (line >= PREVIEW && !this.scrolling) await this.setFull(true);
     this.settle();
@@ -233,6 +273,7 @@ export class LongText {
   }
 
   destroy(): void {
+    this.wrapped?.destroy();
     this.unsubscribe();
     this.motion?.destroy();
     this.viewport?.destroy();

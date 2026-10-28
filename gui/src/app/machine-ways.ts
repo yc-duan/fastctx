@@ -93,6 +93,6 @@ export class WaysSheet {
       ${row("auto", words.auto, this.auto)}${row("relays", words.relays, this.relays)}
       ${skipped}
       <p class="sheet-note" role="alert"${this.said ? "" : " hidden"}>${escape(this.said)}</p>
-      <div class="mr-go"><button class="sheet-go" type="button" data-ways-go${sheet.busy || !ready ? " disabled" : ""}>${escape(words.apply(ways.count))}</button></div>`;
+      <div class="sheet-foot mr-go"><button class="sheet-go" type="button" data-ways-go${sheet.busy || !ready ? " disabled" : ""}>${escape(words.apply(ways.count))}</button></div>`;
   }
 }

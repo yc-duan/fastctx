@@ -49,12 +49,30 @@ pub(crate) fn start(node: &Arc<Node>) {
     let spawned = std::thread::Builder::new().name("node-stuck".to_string()).spawn(move || {
         let mut told: HashMap<String, Instant> = HashMap::new();
         let mut circle: Option<(String, Instant)> = None;
+        let mut handoff_reported: Option<Instant> = None;
         loop {
             std::thread::sleep(LOOK);
             // The node is gone when its last holder let go: nothing to watch.
             let Some(node) = watched.upgrade() else { return };
-            let snapshot = doing::snapshot(WAITS, HOLDS);
+            let mut snapshot = doing::snapshot(WAITS, HOLDS);
+            snapshot.stuck.extend(crate::intake::stuck());
             let now = Instant::now();
+            if !node.handoff.yielding() {
+                handoff_reported = None;
+            } else if !snapshot.active.is_empty()
+                && handoff_reported.is_none_or(|last| now.duration_since(last) >= AGAIN)
+            {
+                let mut active: Vec<_> = snapshot
+                    .active
+                    .iter()
+                    .map(|work| {
+                        format!("{}: {} ({} s)", work.what, work.doing, now.duration_since(work.since).as_secs())
+                    })
+                    .collect();
+                active.sort();
+                node.log.line(format_args!("handoff waits for {} active tasks: {}", active.len(), active.join("; ")));
+                handoff_reported = Some(now);
+            }
             told.retain(|key, _| snapshot.stuck.iter().any(|stuck| &stuck.key == key));
             for stuck in &snapshot.stuck {
                 let due = told.get(&stuck.key).is_none_or(|at| now.duration_since(*at) >= AGAIN);
@@ -78,12 +96,14 @@ pub(crate) fn start(node: &Arc<Node>) {
             let key = links.join("; ");
             match &circle {
                 Some((seen, since)) if *seen == key && now.duration_since(*since) >= CIRCLE => {
-                    node.log.line(format_args!(
-                        "tasks have waited on each other in a circle for {} s, so none of them can go on: {key}; \
+                    crate::ending::with_reason(
+                        1,
+                        format!(
+                            "tasks have waited on each other in a circle for {} s, so none of them can go on: {key}; \
                          ending this node for its service to start it again",
-                        now.duration_since(*since).as_secs()
-                    ));
-                    std::process::exit(1);
+                            now.duration_since(*since).as_secs()
+                        ),
+                    );
                 }
                 Some((seen, _)) if *seen == key => {}
                 _ => {

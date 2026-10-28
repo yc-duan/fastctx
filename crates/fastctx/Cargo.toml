@@ -28,6 +28,7 @@ fastctx-ripgrep = { path = "../fastctx-ripgrep" }
 fastctx-serve = { path = "../fastctx-serve" }
 fastctx-tui = { path = "../fastctx-tui" }
 fastctx-types = { path = "../fastctx-types" }
+fastctx-update = { path = "../fastctx-update" }
 fastctx-uninstall = { path = "../fastctx-uninstall" }
 getrandom = { version = "0.3", features = ["std"] }
 jiff.workspace = true

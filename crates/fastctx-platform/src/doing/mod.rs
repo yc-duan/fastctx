@@ -28,7 +28,10 @@ pub use lock::{
     Busy, Mutex, MutexGuard, OwnedMutexGuard, OwnedRwLockReadGuard, OwnedRwLockWriteGuard, RwLock, RwLockReadGuard,
     RwLockWriteGuard,
 };
-pub use registry::{Cycle, OutsideWait, Snapshot, Stuck, set_reporter, snapshot, violations};
+pub use registry::{
+    Active, Cycle, OutsideWait, Snapshot, Stuck, Work, progress, set_reporter, snapshot, task_waits, try_task_waits,
+    violations,
+};
 pub use sync::{SyncMutex, SyncMutexGuard};
 
 /// A lock's place in the order locks are taken in: a task holding a lock
@@ -44,6 +47,8 @@ impl Rank {
     pub const DRAINING: Rank = Rank(10);
     /// Sending the deletions asked of other machines.
     pub const FORGETTING: Rank = Rank(12);
+    /// Persisting incoming letters of one hub across reconnects.
+    pub const RECEIVING: Rank = Rank(11);
     /// Scanning or changing the agents' logins.
     pub const LOGINS: Rank = Rank(14);
     /// Carrying an account's collaboration files.

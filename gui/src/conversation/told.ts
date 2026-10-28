@@ -46,6 +46,31 @@ export function worldSaid(body: string): WorldSaid | null {
   return null;
 }
 
+/** Something the World gave up delivering, from the words it wrote for the
+ *  model (`fastctx-node`'s `obligations.rs` and `on_stop.rs`): a command's
+ *  end that can no longer come, or a stop that could not reach its machine,
+ *  and why; null for words in any other form. */
+export type Undelivered = { kind: "end" | "stop"; machine: string; why: UndeliveredWhy };
+
+/** Why, in the forms the World writes; any other is kept as it came. */
+export type UndeliveredWhy = { kind: "gone"; machine: string } | { kind: "left" } | { kind: "other"; text: string };
+
+export function undelivered(text: string): Undelivered | null {
+  const said = text.trim();
+  const end = /^The end of j-[0-9a-z]+ on (\S+) cannot be delivered: (.+)\.$/.exec(said);
+  const stop = /^The stop on (\S+) could not be delivered: (.+)\.$/.exec(said);
+  const found = end ?? stop;
+  if (!found) return null;
+  return { kind: end ? "end" : "stop", machine: found[1]!, why: undeliveredWhy(found[2]!) };
+}
+
+function undeliveredWhy(why: string): UndeliveredWhy {
+  const gone = /^(\S+) is no longer in this account's current network view$/.exec(why);
+  if (gone) return { kind: "gone", machine: gone[1]! };
+  if (why === "every network this work belongs to has been left or removed") return { kind: "left" };
+  return { kind: "other", text: why };
+}
+
 export function readTold(text: string): Told {
   const lines = text.replace(/\r\n/g, "\n").split("\n");
   const first = lines[0] ?? "";

@@ -10,15 +10,17 @@ use fastctx_types::ipc::Failure;
 use crate::Node;
 
 /// Whether a currently known account of `acting` may use `town`.
-/// This reads authorization only; it never reads project content.
+/// This reads authorization only; it never reads project content, and
+/// what asked is not done when it cannot tell.
 pub(crate) fn permits(node: &Node, acting: &Acting, town: &TownName) -> Result<bool, Failure> {
-    let place = crate::ledger::names::place(&node.world, town).map_err(|error| Failure::new(error.to_string()))?;
+    let place = crate::ledger::names::place(&node.world, town).map_err(|error| Failure::not_run(error.to_string()))?;
     if let Some(place) = place {
         if let Some(link) = node.link_of(&place.hub) {
             let view = link.view();
             return Ok(node.accounts_on(&link, acting).iter().any(|account| view.in_project(account, &place.town)));
         }
-        return Ok(place.hub == crate::ledger::alone(&node.world).map_err(|error| Failure::new(error.to_string()))?
+        return Ok(place.hub
+            == crate::ledger::alone(&node.world).map_err(|error| Failure::not_run(error.to_string()))?
             && matches!(acting, Acting::Here));
     }
     Ok(node.links().iter().any(|link| {

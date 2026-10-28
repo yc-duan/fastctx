@@ -114,8 +114,9 @@ export function sectionMark(section: AgentSection, size = 16): string {
 
 /** The sections under 「智能体」 in the sidebar, `current` among them; the
  *  account's own only where the device is logged in to one. A host's row
- *  opens the tab last shown. */
-export function sectionRows(current: AgentSection | null, own: boolean, words: ProfileWords): string {
+ *  opens the tab last shown. On the workbench, model collaboration's
+ *  settings stand last among them (`collab`), the kernels' own. */
+export function sectionRows(current: AgentSection | null, own: boolean, words: ProfileWords, collab: { name: string; current: boolean } | null = null): string {
   const shown: AgentSection[] = own ? [...HOSTS, ...OWN] : [...HOSTS];
   const tab = own ? keptTab() : "logins";
   return `<ul class="asec-list">${shown
@@ -124,5 +125,9 @@ export function sectionRows(current: AgentSection | null, own: boolean, words: P
       const place: Place = isHost(section) && tab !== "logins" ? { kind: "agents", machine: null, section, tab } : { kind: "agents", machine: null, section };
       return `<li><a class="place asec-row${on ? " current" : ""}" href="${link(place)}"${on ? ' aria-current="page"' : ""}><span class="place-mark">${sectionMark(section)}</span><span class="place-name">${escape(words.sections[section])}</span></a></li>`;
     })
-    .join("")}</ul>`;
+    .join("")}${
+    collab
+      ? `<li><a class="place asec-row${collab.current ? " current" : ""}" href="${link({ kind: "feature", feature: "collaboration" })}"${collab.current ? ' aria-current="page"' : ""}><span class="place-mark">${glyph("colleague", 16)}</span><span class="place-name">${escape(collab.name)}</span></a></li>`
+      : ""
+  }</ul>`;
 }

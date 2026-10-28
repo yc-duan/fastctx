@@ -34,6 +34,8 @@ pub struct TownView {
     /// Whom the residents and jobs that work for other accounts than the
     /// asker's work for, by machine and id.
     others: BTreeMap<(Option<HubId>, MachineName, String), Vec<fastctx_types::AccountName>>,
+    /// The machines the asking conversation involves.
+    pub involved: BTreeSet<MachineName>,
 }
 
 #[derive(Clone, Debug)]
@@ -87,9 +89,12 @@ impl TownView {
             .map(|other| ((hub(other.source.as_ref()), other.machine, other.id), other.accounts))
             .collect();
         let mut unanswered = Vec::new();
+        let involved = who.involved.into_iter().collect();
         for machine in who.machines {
             let written = machine.written();
-            if !matches!(machine, MachineWho::NoAnswer { .. })
+            // A machine offline or silent is said so once; an account that
+            // did not answer on one that answered is said apart.
+            if matches!(machine, MachineWho::Answered { .. })
                 && let Some(observation) = machine.observation()
             {
                 unanswered.extend(observation.unanswered.iter().map(|missing| format!("{written} ({missing})")));
@@ -140,7 +145,7 @@ impl TownView {
             }
         };
         residents.sort_by_key(|resident| (Some(&address(resident)) != you, std::cmp::Reverse(latest(resident))));
-        Self { machine: who.machine, scope, machines, residents, jobs, present, known, others, unanswered }
+        Self { machine: who.machine, scope, machines, residents, jobs, present, known, others, unanswered, involved }
     }
 
     /// Whom the resident or job `id` on `machine` works for, when that is

@@ -67,6 +67,11 @@ pub(crate) fn replace(service: &Service, digest: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// How long the guardian is given to stop and come back on the new image:
+/// it takes seconds; one held in a pending state or failing to start is
+/// taken for stuck, its gates let go, and the renewal or repair tried again.
+const RESTARTING: std::time::Duration = std::time::Duration::from_secs(10 * 60);
+
 pub(crate) fn restart(service: &Service, digest: &str) -> anyhow::Result<()> {
     let config = Config::new(service)?;
     ensure!(staged(service, digest)?, "the approved guardian image is not in place");
@@ -80,8 +85,15 @@ pub(crate) fn restart(service: &Service, digest: &str) -> anyhow::Result<()> {
     let mut requested = false;
     let mut started = false;
     let mut stopped = None;
+    let began = std::time::Instant::now();
     loop {
         let status = registered.query_status()?;
+        ensure!(
+            began.elapsed() < RESTARTING,
+            "the guardian did not come back on the new program within {} minutes; it is {:?}",
+            RESTARTING.as_secs() / 60,
+            status.current_state
+        );
         if !requested {
             match status.current_state {
                 ServiceState::Running => {

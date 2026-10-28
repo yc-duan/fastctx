@@ -85,6 +85,10 @@ pub enum Stage {
     WaitingApp {
         version: String,
     },
+    Repairing {
+        version: String,
+        layer: String,
+    },
     Installing {
         version: String,
     },
@@ -112,6 +116,7 @@ impl Stage {
             | Self::Ready { version }
             | Self::WaitingIdle { version }
             | Self::WaitingApp { version }
+            | Self::Repairing { version, .. }
             | Self::Installing { version }
             | Self::Renewing { version, .. }
             | Self::Administrator { version }

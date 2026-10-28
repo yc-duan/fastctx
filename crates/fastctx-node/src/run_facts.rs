@@ -1,12 +1,14 @@
 //! Call facts survive their large artifacts and are attached by explicit host identity only.
 
 mod log;
+mod steps;
 mod storage;
 mod updates;
 pub(crate) use storage::{
-    begin as begin_for, discard_unlaunched, failed as failed_for, receive, record_failure, stamp,
+    begin as begin_for, evidence, evidence_all, failed as failed_for, job_updates, legacy_reply, observations, receive, record_failure, stamp,
 };
-pub(crate) use updates::job as update_job;
+pub(crate) use steps::{steps, tell as tell_step};
+pub(crate) use updates::{job as update_job, job_with as update_job_with};
 
 use crate::Node;
 use fastctx_platform::{Permissions, publish, publish_new};
@@ -88,6 +90,8 @@ pub(crate) fn assemble(reply: &RunReply, record: &Path) -> io::Result<RunFacts> 
     }
     let (spans, notes) = fastctx_hands::run::projection::read_with_matches(&reply.output, &writes)?;
     Ok(RunFacts {
+        turn: fastctx_hands::run::record::read(record)?.turn,
+        record: Some(record.to_string_lossy().into_owned()),
         machine: reply.machine.clone(),
         state: reply.state.clone(),
         job: Some(reply.job.clone()),
@@ -108,6 +112,7 @@ pub(crate) fn assemble(reply: &RunReply, record: &Path) -> io::Result<RunFacts> 
         writes,
         spans,
         notes,
+        steps: steps::steps(record)?,
     })
 }
 

@@ -102,9 +102,11 @@ impl Answers {
                 Some(since) => {
                     MachineWho::Offline { machine: self.source.written.name.clone(), since, last: None, observation }
                 }
+                // The machine is named beside the reason, which is then the
+                // same for every machine that went unasked for one cause.
                 None => MachineWho::NoAnswer {
                     machine: self.source.written.name.clone(),
-                    reason: self.missing().join("; "),
+                    reason: self.unanswered.iter().map(ToString::to_string).collect::<Vec<_>>().join("; "),
                     observation,
                 },
             },

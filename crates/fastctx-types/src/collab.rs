@@ -95,6 +95,31 @@ pub struct Offer {
     pub lives_on: Option<String>,
 }
 
+/// The goal runtime's summary for a colleague shown in the collaboration tree.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GoalSummary {
+    pub state: GoalState,
+    pub started_at: jiff::Timestamp,
+    pub elapsed_ms: u64,
+    /// The goal itself, and the asker's goal it branched from, for the
+    /// drawing of the conversation's goals (`world-goal.md`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub objective: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GoalState {
+    Active,
+    Complete,
+    Blocked,
+    Paused,
+}
+
 /// Kept with a callee so cold resumes retain the configuration it was born with.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Started {

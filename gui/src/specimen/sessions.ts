@@ -6,10 +6,12 @@ import { requestEvents } from "./requests";
 import { run, Script, sent, text } from "./script";
 import { steps } from "./steps";
 import { trips } from "./trips";
+import { deeds } from "./deeds";
 import type { SessionEvent, Speaker } from "../world/events";
 import type { JsonValue } from "../world/wire";
 import { cut, hunk, leftOut, noted, printed, put, ran, same, wrote } from "./run-facts";
 import { tour } from "./tour";
+import { voice } from "./voice";
 
 export interface Specimen {
   title: string;
@@ -297,11 +299,19 @@ let i = (self.ki.widen() * self.integral).narrow();
   );
   s.ended("t2", "completed");
 
+  // The bench machine was taken out of the network while a benchmark ran
+  // there: its end can no longer come, and the stop sent after it could not
+  // reach it either. The World says so, once each.
+  const gone = "The end of j-b7m2q5 on bench cannot be delivered: bench is no longer in this account's current network view.";
+  const unstopped = "The stop on bench could not be delivered: bench is no longer in this account's current network view.";
+  s.heard("t3", { kind: "world" }, gone, 600, { kind: "world", fact: { fact: "delivery_failed", id: "delivery-failed-6c1e0a93b2d4f5a7c8e9" }, text: gone });
+  s.heard("t3", { kind: "world" }, unstopped, 1, { kind: "world", fact: { fact: "delivery_failed", id: "delivery-failed-0b7d2e4f6a8c1e3d5f7a" }, text: unstopped });
+
   s.heard(
     "t3",
     { kind: "resident", address: { machine: "laptop", resident: "codex-91c0" } },
     "=== colleague codex-91c0 on laptop (turn completed, 14m) ===\nFound one. With `ki = 0x7FFF_0000` and a constant error of 32767 at `dt = 1`, the integral saturates after 65 538 steps as meant, but `narrow()` then **wraps** instead of saturating: the output jumps from 32767 to −32768.\n\nRepro: `cargo test -p ctrl overflow_repro` on branch `colleague/q16-edge` (laptop, `/home/me/wt/q16-edge`).\n=== what it did: fastctx w codex-91c0 ===",
-    840,
+    240,
     {
       kind: "answer",
       colleague: { machine: "laptop", resident: "codex-91c0" },
@@ -569,8 +579,8 @@ function codex(): Specimen {
 
 /** A conversation that waits on the user: an approval answered elsewhere,
  *  then one request still waiting, of the kind `?ask=` names (Codex's
- *  command, question, form, link; Claude's claude-permission,
- *  claude-question, claude-plan, claude-form). */
+ *  command, form, link; Claude's claude-permission, claude-plan,
+ *  claude-form). */
 function asking(): Specimen {
   const s = new Script("2026-10-04T15:10:00Z");
   const kind = new URLSearchParams(location.search).get("ask") ?? "command";
@@ -641,43 +651,15 @@ function asking(): Specimen {
         },
       });
       break;
-    case "claude-question":
-      s.say("t2", "message", "提交之前有两件事想问你。", 2);
-      s.push({
-        event: "changed",
-        turn: "t2",
-        change: {
-          kind: "request",
-          id: claudeId("r-2"),
-          request: "AskUserQuestion",
-          params: {
-            tool: "AskUserQuestion",
-            tool_use_id: "toolu_01",
-            questions: [
-              {
-                question: "批量提交的大小定多少？",
-                header: "批量",
-                multiSelect: false,
-                options: [
-                  { label: "1000", description: "回放快，提交多" },
-                  { label: "5000", description: "现在的做法" },
-                  { label: "20000", description: "提交少，出错时回放多" },
-                ],
-              },
-              {
-                question: "这次改动要在哪些机器上验证？",
-                header: "机器",
-                multiSelect: true,
-                options: [
-                  { label: "laptop", description: "Windows，本地 Postgres" },
-                  { label: "lab", description: "Linux，跑整套集成测试" },
-                  { label: "server", description: "线上的副本" },
-                ],
-              },
-            ],
-          },
-        },
-      });
+    case "thinking":
+      // GPT thinking at length: the row says the section it is in.
+      s.say(
+        "t2",
+        "thinking",
+        "**Reading the migration**\n\nThe batches table is in; what remains is the offline query cache.\n\n**Checking whether the batch size survives a replay after a crash**\n\nA smaller batch replays faster after a crash but commits more often.",
+        2,
+        true,
+      );
       break;
     case "claude-plan":
       s.say("t2", "message", "我把迁移的步骤理了一遍，写成了计划。", 2);
@@ -726,39 +708,6 @@ function asking(): Specimen {
                 priority: { type: "string", title: "优先级", enum: ["urgent", "high", "normal", "low"], enumNames: ["紧急", "高", "普通", "低"], default: "normal" },
               },
             },
-          },
-        },
-      });
-      break;
-    case "question":
-      s.say("t2", "message", "生成缓存之前要连上测试库，有两件事得问你。", 2);
-      s.push({
-        event: "changed",
-        turn: "t2",
-        change: {
-          kind: "request",
-          id: { server, id: 1 },
-          request: "item/tool/requestUserInput",
-          params: {
-            threadId: "th-1",
-            turnId: "t2",
-            itemId: "item-ask-1",
-            isBlocking: true,
-            autoResolutionMs: null,
-            questions: [
-              {
-                id: "where",
-                header: "连接串",
-                question: "测试库的连接串放在哪里？",
-                isOther: true,
-                isSecret: false,
-                options: [
-                  { label: ".env", description: "仓库根目录下，已在 .gitignore 里" },
-                  { label: "环境变量", description: "DATABASE_URL，只在这台机器上" },
-                ],
-              },
-              { id: "password", header: "密码", question: "测试库 ingest_test 的密码是什么？", isOther: false, isSecret: true, options: null },
-            ],
           },
         },
       });
@@ -903,4 +852,4 @@ function controls(): Specimen {
   return { title: "迁移说明", agent: "claude", resident: "claude-c0ntrols", machine: "laptop", model: "claude-opus-5-5", town: "ingest", here: "desktop", events: s.recent() };
 }
 
-export const specimens: Record<string, () => Specimen> = { claude, codex, asking, steps, trips, tour, controls };
+export const specimens: Record<string, () => Specimen> = { claude, codex, asking, steps, trips, tour, deeds, controls, voice };
