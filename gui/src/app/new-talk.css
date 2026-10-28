@@ -93,7 +93,7 @@
   font-size: var(--body-size);
   color: var(--text-2);
   white-space: nowrap;
-  transition: color var(--hover) ease, background-color var(--hover) ease;
+  transition: color var(--hover) var(--ease), background-color var(--hover) var(--ease);
 }
 
 .talk-chip > .glyph {
@@ -219,7 +219,7 @@
   text-align: left;
   font-size: var(--body-size);
   color: var(--text-2);
-  transition: color var(--hover) ease, background-color var(--hover) ease;
+  transition: color var(--hover) var(--ease), background-color var(--hover) var(--ease);
 }
 
 .pop-row:hover:not(:disabled) {
@@ -338,7 +338,7 @@
     z-index: 4;
     background: var(--scrim);
     opacity: var(--shown);
-    animation: sheet-scrim var(--fold) ease both;
+    animation: sheet-scrim var(--fold) var(--ease) both;
   }
 }
 
@@ -436,7 +436,7 @@
   font-size: var(--body-size);
   color: var(--text-strong);
   text-align: left;
-  transition: background-color var(--hover) ease;
+  transition: background-color var(--hover) var(--ease);
 }
 
 button.agent-machine:hover,
@@ -551,7 +551,7 @@ button.agent-machine:hover,
   font-size: var(--body-size);
   text-align: left;
   color: var(--text-2);
-  transition: color var(--hover) ease, background-color var(--hover) ease;
+  transition: color var(--hover) var(--ease), background-color var(--hover) var(--ease);
 }
 
 .agent-row:hover:not(:disabled) {

@@ -8,6 +8,7 @@
 // travels on a curve. Where the system asks for less motion the words are
 // simply there.
 
+import { curve } from "../design/curve";
 import { time } from "./turn-line";
 
 /** Where words leave from: the top left of the first line of the input they
@@ -79,7 +80,7 @@ export function fly(find: () => HTMLElement | null, from: Departure, done: () =>
       { backgroundColor: "transparent", color: from.color, boxShadow: "none" },
       { backgroundColor: style.backgroundColor, color: style.color },
     ],
-    { duration: duration * 0.25, easing: "ease-out", fill: "backwards" },
+    { duration: duration * 0.25, easing: curve("--ease-out"), fill: "backwards" },
   );
   const began = performance.now();
   const hidden = new Set<HTMLElement>([bubble]);

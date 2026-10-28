@@ -131,7 +131,7 @@
 .uv-policy-fold > summary .glyph {
   rotate: -90deg;
   color: var(--text-3);
-  transition: rotate var(--hover) ease;
+  transition: rotate var(--hover) var(--ease);
 }
 
 .uv-policy-fold[open] > summary .glyph {
@@ -162,7 +162,7 @@
   border-radius: var(--radius-full);
   background: var(--fill-strong);
   color: var(--text);
-  transition: background-color var(--hover) ease;
+  transition: background-color var(--hover) var(--ease);
 }
 
 .uv-chip:hover {

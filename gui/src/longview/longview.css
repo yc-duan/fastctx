@@ -32,7 +32,7 @@
 .lv-viewer-head strong { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--font-emphasis); font-weight: 400; color: var(--text-strong); }
 .lv-viewer-count { flex: none; font-size: var(--size-fine); color: var(--text-3); font-variant-numeric: tabular-nums; }
 .lv-viewer-sources { flex: none; display: flex; gap: 2px; margin-left: auto; }
-.lv-viewer-sources button { height: 26px; padding: 0 var(--space-2); border-radius: var(--radius-full); font-size: var(--size-text); color: var(--text-2); white-space: nowrap; transition: background-color var(--hover) ease, color var(--hover) ease; }
+.lv-viewer-sources button { height: 26px; padding: 0 var(--space-2); border-radius: var(--radius-full); font-size: var(--size-text); color: var(--text-2); white-space: nowrap; transition: background-color var(--hover) var(--ease), color var(--hover) var(--ease); }
 .lv-viewer-sources button:hover { color: var(--text); }
 .lv-viewer-sources button[aria-pressed="true"] { background: var(--accent-wash); color: var(--text); }
 .lv-viewer-close { flex: none; margin-left: auto; margin-right: -6px; }

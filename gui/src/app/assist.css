@@ -141,7 +141,7 @@
   color: var(--text-2);
   font-size: var(--size-text);
   white-space: nowrap;
-  transition: color var(--hover) ease, background-color var(--hover) ease;
+  transition: color var(--hover) var(--ease), background-color var(--hover) var(--ease);
 }
 
 .assist-until:hover {

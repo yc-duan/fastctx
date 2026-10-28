@@ -45,7 +45,7 @@
   position: absolute;
   inset: 0 auto 0 0;
   background: var(--hairline);
-  transition: width var(--settle) ease;
+  transition: width var(--settle) var(--ease);
   pointer-events: none;
 }
 
@@ -198,7 +198,7 @@
   height: 100%;
   border-radius: inherit;
   background: var(--accent);
-  transition: width var(--settle) ease;
+  transition: width var(--settle) var(--ease);
 }
 
 .update-said {

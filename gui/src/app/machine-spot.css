@@ -92,7 +92,7 @@
   color: var(--text-2);
   font: inherit;
   cursor: pointer;
-  transition: color var(--hover) ease, background-color var(--hover) ease;
+  transition: color var(--hover) var(--ease), background-color var(--hover) var(--ease);
 }
 
 .spot-act:hover,
@@ -436,7 +436,7 @@
   font-size: var(--size-text);
   white-space: nowrap;
   cursor: pointer;
-  transition: background-color var(--hover) ease;
+  transition: background-color var(--hover) var(--ease);
 }
 
 .spot-card-act:hover,

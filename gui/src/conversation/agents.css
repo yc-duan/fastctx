@@ -135,7 +135,7 @@
   padding: 2px 0;
   font-size: var(--size-text);
   color: var(--text-3);
-  transition: color var(--hover) ease;
+  transition: color var(--hover) var(--ease);
 }
 
 .agent-asked-more:hover {
@@ -165,7 +165,7 @@
 /* Pressed in the picture of them all: the row is found with a wash that
    fades. */
 .row.row-found > .row-line {
-  animation: row-found var(--found) ease both;
+  animation: row-found var(--found) var(--ease) both;
 }
 
 /* It stays washed a moment, then fades back. */

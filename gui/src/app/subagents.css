@@ -76,7 +76,7 @@
   background: var(--fill);
   color: var(--text);
   text-align: left;
-  transition: background-color var(--hover) ease;
+  transition: background-color var(--hover) var(--ease);
 }
 
 .sa-row:hover,
@@ -148,7 +148,7 @@
 .sa-more > summary .glyph {
   rotate: -90deg;
   color: var(--text-3);
-  transition: rotate var(--hover) ease;
+  transition: rotate var(--hover) var(--ease);
 }
 
 .sa-more[open] > summary .glyph {

@@ -370,7 +370,7 @@ a.text-button {
   height: 18px;
   border-radius: var(--radius-full);
   color: var(--text-3);
-  transition: color var(--hover) ease, background-color var(--hover) ease;
+  transition: color var(--hover) var(--ease), background-color var(--hover) var(--ease);
 }
 
 .chip-x:hover {
@@ -404,7 +404,7 @@ a.text-button {
   font-size: var(--size-text);
   color: var(--text-2);
   text-align: left;
-  transition: color var(--hover) ease, background-color var(--hover) ease;
+  transition: color var(--hover) var(--ease), background-color var(--hover) var(--ease);
 }
 
 .side-account-fold:hover {

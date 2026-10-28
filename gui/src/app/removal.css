@@ -312,7 +312,7 @@
   color: var(--bg);
   font-size: var(--size-text);
   scale: var(--press);
-  transition: background-color var(--hover) ease, --press var(--settle) var(--spring);
+  transition: background-color var(--hover) var(--ease), --press var(--settle) var(--spring);
 }
 
 .removal-button:hover:not(:disabled) {
@@ -321,7 +321,7 @@
 
 .removal-button.armed {
   translate: 0 var(--lift);
-  animation: removal-armed var(--armed) ease-in-out infinite;
+  animation: removal-armed var(--armed) var(--ease-in-out) infinite;
 }
 
 @keyframes removal-armed {
@@ -334,7 +334,7 @@
 .removal-button:active:not(:disabled) {
   --press: 0.97;
   transition-duration: var(--hover), var(--quick);
-  transition-timing-function: ease, var(--ease-out);
+  transition-timing-function: var(--ease), var(--ease-out);
 }
 
 .removal-button:disabled {

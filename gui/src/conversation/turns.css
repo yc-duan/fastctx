@@ -76,7 +76,7 @@
   color: var(--text-3);
   --shown: 0;
   opacity: var(--shown);
-  transition: --shown var(--hover) ease, color var(--hover) ease;
+  transition: --shown var(--hover) var(--ease), color var(--hover) var(--ease);
 }
 
 .long-text-box:hover .long-text-full,
@@ -108,7 +108,7 @@
   margin-top: var(--space-1);
   --shown: 0;
   opacity: var(--shown);
-  transition: --shown var(--hover) ease;
+  transition: --shown var(--hover) var(--ease);
 }
 
 .turn-acts.latest,
@@ -141,7 +141,7 @@
   height: 28px;
   border-radius: var(--radius-s);
   color: var(--text-3);
-  transition: color var(--hover) ease, background-color var(--hover) ease;
+  transition: color var(--hover) var(--ease), background-color var(--hover) var(--ease);
 }
 
 .turn-icon:hover,
@@ -188,7 +188,7 @@
 .turn-info:focus .turn-info-card {
   display: grid;
   opacity: var(--shown);
-  animation: paper-in var(--quick) ease both;
+  animation: paper-in var(--quick) var(--ease) both;
 }
 
 /* The gap between the mark and the card is the card's: the pointer
@@ -214,7 +214,7 @@
   padding: 3px var(--space-2);
   border-radius: var(--radius-s);
   color: var(--text-2);
-  transition: color var(--hover) ease, background-color var(--hover) ease;
+  transition: color var(--hover) var(--ease), background-color var(--hover) var(--ease);
 }
 
 .turn-info-calls:hover {
@@ -367,7 +367,7 @@
   font: inherit;
   text-align: left;
   border-radius: var(--radius-s);
-  transition: color var(--hover) ease;
+  transition: color var(--hover) var(--ease);
 }
 
 .notice-open:hover {
@@ -627,7 +627,7 @@
 /* What came with the words comes up quietly once they have landed. */
 .bubble-landing {
   opacity: var(--rise);
-  animation: rise var(--enter) ease-out both;
+  animation: rise var(--enter) var(--ease-out) both;
 }
 
 :root[data-reduced] .bubble-landing {

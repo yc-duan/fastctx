@@ -241,7 +241,7 @@ b {
   border-radius: 2px;
   -webkit-box-decoration-break: clone;
   box-decoration-break: clone;
-  transition: background-color var(--hover) ease;
+  transition: background-color var(--hover) var(--ease);
 }
 
 .prose a:hover {
@@ -305,7 +305,7 @@ pre code {
   color: var(--text-3);
   --shown: 0;
   opacity: var(--shown);
-  transition: --shown var(--hover) ease, color var(--hover) ease, background-color var(--hover) ease;
+  transition: --shown var(--hover) var(--ease), color var(--hover) var(--ease), background-color var(--hover) var(--ease);
   background-repeat: no-repeat;
   background-position: center;
 }
@@ -475,7 +475,7 @@ pre code {
   height: 17px;
   border-radius: var(--radius-full);
   background: var(--fill-strong);
-  transition: background-color var(--hover) ease;
+  transition: background-color var(--hover) var(--ease);
 }
 
 .switch-knob {

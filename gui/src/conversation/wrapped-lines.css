@@ -30,7 +30,7 @@
   line-height: var(--leading-ui);
   font-variant-numeric: tabular-nums;
   color: var(--text-3);
-  transition: color var(--hover) ease;
+  transition: color var(--hover) var(--ease);
 }
 
 .wrapped-more:hover {

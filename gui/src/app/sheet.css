@@ -132,7 +132,7 @@
   color: var(--text-2);
   font-size: var(--size-text);
   line-height: var(--leading-ui);
-  transition: color var(--hover) ease, background-color var(--hover) ease;
+  transition: color var(--hover) var(--ease), background-color var(--hover) var(--ease);
 }
 
 .choice:hover:not(:disabled) {
@@ -244,7 +244,7 @@
   color: var(--bg);
   font-size: var(--size-text);
   scale: var(--press);
-  transition: background-color var(--hover) ease, --press var(--settle) var(--spring);
+  transition: background-color var(--hover) var(--ease), --press var(--settle) var(--spring);
 }
 
 .sheet-go:hover:not(:disabled) {
@@ -254,7 +254,7 @@
 .sheet-go:active:not(:disabled) {
   --press: 0.97;
   transition-duration: var(--hover), var(--quick);
-  transition-timing-function: ease, var(--ease-out);
+  transition-timing-function: var(--ease), var(--ease-out);
 }
 
 .sheet-go:disabled {
@@ -531,7 +531,7 @@
 .field-tip:focus .field-tip-card {
   display: block;
   opacity: var(--shown);
-  animation: paper-in var(--quick) ease both;
+  animation: paper-in var(--quick) var(--ease) both;
 }
 
 .field input,

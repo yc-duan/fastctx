@@ -188,7 +188,7 @@
   color: var(--text);
   font: inherit;
   text-align: left;
-  transition: background-color var(--hover) ease;
+  transition: background-color var(--hover) var(--ease);
 }
 
 .mm-version:hover {

@@ -223,7 +223,7 @@
   color: var(--text-3);
   --shown: 0;
   opacity: var(--shown);
-  transition: --shown var(--hover) ease, color var(--hover) ease, background-color var(--hover) ease;
+  transition: --shown var(--hover) var(--ease), color var(--hover) var(--ease), background-color var(--hover) var(--ease);
 }
 
 .mcp-group:hover .mcp-group-add,
@@ -322,7 +322,7 @@
   height: 30px;
   border-radius: var(--radius-s);
   color: var(--text-3);
-  transition: color var(--hover) ease, background-color var(--hover) ease;
+  transition: color var(--hover) var(--ease), background-color var(--hover) var(--ease);
 }
 
 .mcp-more:hover,
@@ -537,7 +537,7 @@
   border-radius: var(--radius-m);
   background: var(--fill);
   text-align: left;
-  transition: background-color var(--hover) ease;
+  transition: background-color var(--hover) var(--ease);
 }
 
 .mcp-pick:hover {

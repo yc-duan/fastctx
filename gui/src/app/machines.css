@@ -173,7 +173,7 @@
 }
 
 .machine-map .canvas-object {
-  transition: background-color var(--hover) ease;
+  transition: background-color var(--hover) var(--ease);
 }
 
 .machine-map .canvas-object:hover,
@@ -207,7 +207,7 @@
   border-radius: 46% 54% 43% 57% / 55% 45% 58% 42%;
   background: var(--pen-clay);
   scale: var(--grow);
-  transition: --grow var(--hover) ease;
+  transition: --grow var(--hover) var(--ease);
 }
 
 .machine-map .canvas-handle:hover::after,
@@ -281,7 +281,7 @@
    their clay rings breathe; the rest of the names are faint. */
 .map-live .lit {
   opacity: calc(var(--shown) * var(--lit));
-  animation: paper-in var(--settle) var(--ease-out) both, lit-breathe var(--breath-slow) ease-in-out var(--settle) infinite;
+  animation: paper-in var(--settle) var(--ease-out) both, lit-breathe var(--breath-slow) var(--ease-in-out) var(--settle) infinite;
 }
 
 .map-live .moons path {
@@ -304,7 +304,7 @@
   stroke-width: 2.4;
   stroke-linecap: round;
   stroke-dasharray: 3 14 6 11;
-  animation: pen-flow var(--flow) linear infinite;
+  animation: pen-flow var(--flow) var(--linear) infinite;
 }
 
 /* A way asked for and not yet taken: a pencil line, dashed, still being
@@ -316,7 +316,7 @@
   stroke-linecap: round;
   stroke-dasharray: 5 9;
   opacity: 0.85;
-  animation: pen-flow-slow var(--flow-slow) linear infinite;
+  animation: pen-flow-slow var(--flow-slow) var(--linear) infinite;
 }
 
 @keyframes pen-flow-slow {
@@ -384,7 +384,7 @@
   font-size: var(--size-text);
   color: var(--text-2);
   opacity: var(--shown);
-  animation: paper-in var(--enter) ease both;
+  animation: paper-in var(--enter) var(--ease) both;
 }
 
 /* A small menu other pages hold up (the agents' pickers): a slip over
@@ -484,7 +484,7 @@
   color: var(--text-2);
   outline: none;
   opacity: var(--shown);
-  animation: paper-in var(--enter) ease both;
+  animation: paper-in var(--enter) var(--ease) both;
 }
 
 .map-card.as-sheet {

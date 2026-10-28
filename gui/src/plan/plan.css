@@ -44,7 +44,7 @@
   color: var(--text-2);
   font: inherit;
   line-height: 1.2;
-  transition: background-color var(--hover) ease, color var(--hover) ease;
+  transition: background-color var(--hover) var(--ease), color var(--hover) var(--ease);
 }
 
 .pb-act:hover {
@@ -302,7 +302,7 @@
   color: var(--text);
   font: inherit;
   text-align: left;
-  transition: background var(--hover) ease;
+  transition: background var(--hover) var(--ease);
 }
 
 .pb-ask-option:hover:not(:disabled) {

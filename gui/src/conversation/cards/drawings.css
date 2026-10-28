@@ -92,7 +92,7 @@
   transform-origin: center;
   scale: calc(1 + (1 - var(--wsk-set)) * 0.35);
   opacity: var(--wsk-set);
-  animation: wsk-set var(--enter) ease-out both;
+  animation: wsk-set var(--enter) var(--ease-out) both;
 }
 
 @keyframes wsk-set {

@@ -100,7 +100,7 @@
   margin: -4px -8px -4px 0;
   --shown: 0;
   opacity: var(--shown);
-  transition: --shown var(--hover) ease;
+  transition: --shown var(--hover) var(--ease);
 }
 
 .po:hover .po-tools,
@@ -115,7 +115,7 @@
   height: 28px;
   border-radius: var(--radius-s);
   color: var(--text-3);
-  transition: color var(--hover) ease, background-color var(--hover) ease;
+  transition: color var(--hover) var(--ease), background-color var(--hover) var(--ease);
 }
 
 .po-tool:hover {

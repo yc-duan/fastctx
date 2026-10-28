@@ -155,7 +155,7 @@
   line-height: var(--leading-ui);
   text-align: left;
   color: var(--text-2);
-  transition: color var(--hover) ease;
+  transition: color var(--hover) var(--ease);
 }
 
 button.dd-opener-line:hover {
@@ -396,7 +396,7 @@ button.dd-opener-line:hover {
   font: inherit;
   font-size: var(--size-text);
   color: var(--text-3);
-  transition: color var(--hover) ease;
+  transition: color var(--hover) var(--ease);
 }
 
 .dd-more:hover {
@@ -476,7 +476,7 @@ button.dd-opener-line:hover {
   font: inherit;
   font-size: var(--size-text);
   color: var(--text-3);
-  transition: color var(--hover) ease;
+  transition: color var(--hover) var(--ease);
 }
 
 .dd-raw:hover {

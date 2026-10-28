@@ -4,7 +4,7 @@
 .rp-layers li[data-state="now"] .removal-mark svg {
   transform: scale(var(--breath-scale));
   opacity: var(--breath-alpha);
-  animation: pulse var(--breath) ease-in-out infinite;
+  animation: pulse var(--breath) var(--ease-in-out) infinite;
 }
 
 .rp-layers li[data-repaired] .removal-mark svg {

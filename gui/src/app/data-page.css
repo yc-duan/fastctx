@@ -117,7 +117,7 @@
   background: var(--fill);
   color: var(--text-2);
   font-size: var(--size-text);
-  transition: color var(--hover) ease, background-color var(--hover) ease;
+  transition: color var(--hover) var(--ease), background-color var(--hover) var(--ease);
 }
 
 .data-tab:hover {
@@ -148,7 +148,7 @@
 
 .data-row {
   border-radius: var(--radius-m);
-  transition: background-color var(--hover) ease;
+  transition: background-color var(--hover) var(--ease);
 }
 
 .data-row:hover,

@@ -26,7 +26,7 @@
   border-radius: var(--radius-m) var(--radius-m) 0 0;
   color: var(--text-3);
   font-size: var(--size-text);
-  transition: color var(--hover) ease;
+  transition: color var(--hover) var(--ease);
 }
 
 .st-tab:hover {
@@ -174,7 +174,7 @@
   color: var(--text-2);
   font-size: var(--size-text);
   text-decoration: none;
-  transition: color var(--hover) ease, background-color var(--hover) ease;
+  transition: color var(--hover) var(--ease), background-color var(--hover) var(--ease);
 }
 
 .machine-agents a:hover {
@@ -187,7 +187,7 @@
   padding-left: calc(8px + 2px + var(--space-2) - var(--space-3));
   --shown: 0;
   opacity: var(--shown);
-  transition: --shown var(--hover) ease;
+  transition: --shown var(--hover) var(--ease);
 }
 
 .machine-acts:focus-within {
@@ -328,7 +328,7 @@
   background: var(--fill);
   text-align: left;
   translate: var(--slide) var(--lift);
-  transition: background-color var(--hover) ease, --lift var(--hover) ease, box-shadow var(--hover) ease;
+  transition: background-color var(--hover) var(--ease), --lift var(--hover) var(--ease), box-shadow var(--hover) var(--ease);
 }
 
 .welcome-way:hover,
@@ -593,7 +593,7 @@
   margin-left: auto;
   --shown: 0;
   opacity: var(--shown);
-  transition: --shown var(--hover) ease;
+  transition: --shown var(--hover) var(--ease);
 }
 
 .host-home:hover .home-hide,
@@ -839,7 +839,7 @@
   border-radius: var(--radius-s);
   color: inherit;
   text-decoration: none;
-  transition: background-color var(--hover) ease;
+  transition: background-color var(--hover) var(--ease);
 }
 
 .canon-open:hover {
@@ -932,7 +932,7 @@ a.details-job {
   height: 4px;
   border-radius: 2px;
   background: var(--fill-strong);
-  transition: background-color var(--hover) ease;
+  transition: background-color var(--hover) var(--ease);
 }
 
 .password-meter[data-strength="1"] i:nth-child(-n + 1),
@@ -967,7 +967,7 @@ a.details-job {
   background: var(--accent-wash);
   color: var(--text-strong);
   font-size: var(--size-text);
-  transition: background-color var(--hover) ease;
+  transition: background-color var(--hover) var(--ease);
 }
 
 .scan-code:hover {
@@ -1088,7 +1088,7 @@ a.details-job {
   color: var(--text-2);
   font-size: var(--size-text);
   line-height: var(--leading-ui);
-  transition: color var(--hover) ease, background-color var(--hover) ease;
+  transition: color var(--hover) var(--ease), background-color var(--hover) var(--ease);
 }
 
 .segment:hover:not(.chosen) {
@@ -1137,7 +1137,7 @@ a.details-job {
   background: var(--fill);
   color: var(--text-2);
   font-size: var(--size-text);
-  transition: color var(--hover) ease, background-color var(--hover) ease;
+  transition: color var(--hover) var(--ease), background-color var(--hover) var(--ease);
 }
 
 .pick-file:hover {

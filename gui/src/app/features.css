@@ -40,7 +40,7 @@
   background: var(--bg-sunken);
   color: var(--text-2);
   text-decoration: none;
-  transition: background-color var(--hover) ease;
+  transition: background-color var(--hover) var(--ease);
 }
 
 .feature-card:hover {
@@ -361,7 +361,7 @@
   background: var(--fill);
   color: var(--text-2);
   font-size: var(--size-fine);
-  transition: color var(--hover) ease, background-color var(--hover) ease;
+  transition: color var(--hover) var(--ease), background-color var(--hover) var(--ease);
 }
 
 .feature-chip:hover {
@@ -475,7 +475,7 @@
   background: color-mix(in srgb, var(--bg-sunken) 55%, transparent);
   color: var(--text-3);
   font-size: var(--size-text);
-  transition: color var(--hover) ease, background-color var(--hover) ease;
+  transition: color var(--hover) var(--ease), background-color var(--hover) var(--ease);
 }
 
 .callee-add:hover:not(:disabled) {
@@ -518,7 +518,7 @@
   pointer-events: none;
   --lift: 6px;
   translate: var(--slide) var(--lift);
-  transition: --shown var(--hover) ease, --lift var(--hover) ease;
+  transition: --shown var(--hover) var(--ease), --lift var(--hover) var(--ease);
 }
 
 .feature-save-bar.shown {
@@ -701,7 +701,7 @@
 
 .feature-still .film-stage {
   opacity: var(--shown);
-  transition: --shown var(--hover) ease;
+  transition: --shown var(--hover) var(--ease);
 }
 
 .feature-still:hover .film-stage {

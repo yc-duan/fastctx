@@ -31,7 +31,7 @@
   color: var(--text-3);
   font: inherit;
   font-size: var(--size-text);
-  transition: color var(--hover) ease, background-color var(--hover) ease;
+  transition: color var(--hover) var(--ease), background-color var(--hover) var(--ease);
 }
 
 .ml-view:hover {
@@ -128,7 +128,7 @@
   cursor: pointer;
   --shown: 0;
   opacity: var(--shown);
-  transition: --shown var(--hover) ease, background-color var(--hover) ease;
+  transition: --shown var(--hover) var(--ease), background-color var(--hover) var(--ease);
 }
 
 .ml-pick.none {
@@ -195,7 +195,7 @@
   text-align: left;
   text-decoration: none;
   cursor: pointer;
-  transition: color var(--hover) ease, background-color var(--hover) ease;
+  transition: color var(--hover) var(--ease), background-color var(--hover) var(--ease);
 }
 
 .ml-row:hover,
@@ -391,7 +391,7 @@
   --shown: 0;
   opacity: var(--shown);
   transform: rotate(-90deg);
-  transition: --shown var(--hover) ease;
+  transition: --shown var(--hover) var(--ease);
 }
 
 .ml-row:hover .ml-go,

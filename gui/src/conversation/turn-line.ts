@@ -14,6 +14,7 @@
 // the turn ends or is stopped. The dots go on where the system asks for
 // less motion: they are the one sign that the model is at work.
 
+import { curve } from "../design/curve";
 import { blot, seeded } from "../pen/shapes";
 
 /** What the line says. */
@@ -148,7 +149,7 @@ export class TurnLine {
     this.tick();
     if (!drawn) return;
     const duration = time(getComputedStyle(this.element), "--line-in");
-    if (duration > 0) this.element.animate([{ "--rise": 0 }, { "--rise": 1 }], { duration, delay: after, easing: "ease-out", fill: "backwards" });
+    if (duration > 0) this.element.animate([{ "--rise": 0 }, { "--rise": 1 }], { duration, delay: after, easing: curve("--ease-out"), fill: "backwards" });
   }
 
   /** Takes the line away at once. */
@@ -171,7 +172,7 @@ export class TurnLine {
 /** Keyframes that each ease out into the next: an easing on the whole
  *  animation would bend its clock instead, and the dots would land early. */
 function eased(frames: Keyframe[]): Keyframe[] {
-  return frames.map((frame) => ({ ...frame, easing: "ease-out" }));
+  return frames.map((frame) => ({ ...frame, easing: curve("--ease-out") }));
 }
 
 /** A duration from a design token, in milliseconds. */

@@ -72,7 +72,7 @@
   border-radius: var(--radius-s);
   color: var(--text-2);
   white-space: nowrap;
-  transition: color var(--hover) ease, background-color var(--hover) ease;
+  transition: color var(--hover) var(--ease), background-color var(--hover) var(--ease);
 }
 
 .ms-act:hover {
@@ -115,7 +115,7 @@
 .ms-left {
   --shown: 0.35;
   opacity: var(--shown);
-  transition: --shown var(--hover) ease;
+  transition: --shown var(--hover) var(--ease);
 }
 
 /* A phone: along the bottom, the acts in equal columns, a mark over a short

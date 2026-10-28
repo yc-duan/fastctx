@@ -55,7 +55,7 @@
   border-radius: var(--radius-full);
   background: var(--fill);
   color: var(--text-strong);
-  transition: background-color var(--hover) ease;
+  transition: background-color var(--hover) var(--ease);
 }
 
 .ledger-talk:hover {
@@ -230,7 +230,7 @@
   inset: -5px -12px;
   border-radius: var(--radius-m);
   background: transparent;
-  transition: background-color var(--hover) ease;
+  transition: background-color var(--hover) var(--ease);
 }
 
 .ledger-person:hover::before {
@@ -254,7 +254,7 @@
   border-radius: var(--radius-s);
   color: var(--text-3);
   font-size: var(--size-text);
-  transition: color var(--hover) ease, background-color var(--hover) ease;
+  transition: color var(--hover) var(--ease), background-color var(--hover) var(--ease);
 }
 
 .ledger-fewer:hover {
@@ -402,7 +402,7 @@
   color: var(--text-2);
   font-size: var(--size-text);
   white-space: nowrap;
-  transition: color var(--hover) ease, background-color var(--hover) ease;
+  transition: color var(--hover) var(--ease), background-color var(--hover) var(--ease);
 }
 
 .ledger-switch button:hover {
@@ -495,7 +495,7 @@
    and its hint. The ink over it lets the pointer through. */
 .ledger-hit {
   fill: transparent;
-  transition: fill var(--hover) ease;
+  transition: fill var(--hover) var(--ease);
 }
 
 .ledger-hit:hover {

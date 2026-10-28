@@ -62,7 +62,7 @@
   font-size: var(--size-text);
   white-space: nowrap;
   scale: var(--press);
-  transition: background-color var(--hover) ease, color var(--hover) ease, --press var(--settle) var(--spring);
+  transition: background-color var(--hover) var(--ease), color var(--hover) var(--ease), --press var(--settle) var(--spring);
 }
 
 .su-main {
@@ -89,7 +89,7 @@
 .su-quiet:active {
   --press: 0.97;
   transition-duration: var(--hover), var(--hover), var(--quick);
-  transition-timing-function: ease, ease, var(--ease-out);
+  transition-timing-function: var(--ease), var(--ease), var(--ease-out);
 }
 
 /* While it opens: three dots that breathe in turn, and the line. */
@@ -113,7 +113,7 @@
   background: var(--text-2);
   transform: scale(var(--breath-scale));
   opacity: var(--breath-alpha);
-  animation: pulse var(--breath) ease-in-out infinite;
+  animation: pulse var(--breath) var(--ease-in-out) infinite;
 }
 
 .su-dots > span:nth-child(2) {
