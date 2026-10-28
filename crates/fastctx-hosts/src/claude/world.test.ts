@@ -10,6 +10,11 @@ function fixtureUi(on: On, lines: string[] = []) {
   return lines
 }
 
+// The World's hooks act only in a session it holds (`world-layers.md`): the
+// launch settings it starts a session with name its conversation.
+const heldByWorld = (_: unknown, e: { source?: string }) => ({
+  value: e.source === 'flag' ? { env: { FASTCTX_CONVERSATION: 'fixture-conversation' } } : {},
+})
 const worldTool = 'mcp__configured_World_alias__run'
 // What connect answers; the tools carry its tool-name spelling.
 const serverName = 'configured:World alias'
@@ -62,7 +67,7 @@ test('loads, streams without waiting for disk, and retains the old session after
   ] as const
   on('session.id', () => ({ value: sessionId }))
   on('session.cwd', () => ({ value: '/fixture' }))
-  on('settings.read', () => ({ value: {} }))
+  on('settings.read', heldByWorld)
   on('session.model', () => ({ value: 'fixture' }))
   on('session.surfaces', () => ({ value: ['terminal', 'vscode'] }))
   on('session.version', () => ({ value: { version: '2.1.289' } }))
@@ -151,7 +156,7 @@ test('proves only World calls, before they run, and distinguishes clear from res
   on('session.usage', () => ({ value: usage() }))
   on('session.id', () => ({ value: sessionId }))
   on('session.cwd', () => ({ value: '/fixture' }))
-  on('settings.read', () => ({ value: {} }))
+  on('settings.read', heldByWorld)
   on('session.model', () => ({ value: 'fixture' }))
   on('session.surfaces', () => ({ value: ['terminal'] }))
   on('session.version', () => ({ value: { version: '2.1.289' } }))
@@ -247,7 +252,7 @@ test('World failures preserve native operations before and after initialization'
   on('mcp.connect', () => ({ value: { isConnected: false, reason: 'disabled', message: 'fixture' } }))
   on('session.id', () => ({ value: sessionId }))
   on('session.cwd', () => ({ value: '/fixture' }))
-  on('settings.read', () => ({ value: {} }))
+  on('settings.read', heldByWorld)
   on('session.model', () => ({ value: 'fixture' }))
   on('session.surfaces', () => ({ value: ['terminal'] }))
   on('session.version', () => ({ value: { version: '2.1.294' } }))
@@ -352,4 +357,44 @@ test('World failures preserve native operations before and after initialization'
   expect(stored.appended().length).toBe(2)
   expect(classics).toEqual(Array.from({ length: 2 }).flatMap(() => ['Elicitation', 'SubagentStart', 'SubagentStop', 'UserPromptSubmit', 'PostToolUse', 'PostToolUseFailure', 'SessionStart', 'PostModelSwitch']))
   expect(lines.some((line) => line.includes('disk unavailable'))).toBe(true)
+})
+
+// A session the user opened outside Fastctx is given the World's run and
+// nothing more (`world-layers.md`): the World's hooks step aside in it,
+// reserving no directory and writing nothing of the session.
+test('steps aside in a session the World does not hold', async ($, on) => {
+  mock.clock(on)
+  mock.env(on, {})
+  fixtureUi(on)
+  on('mcp.connect', () => ({ value: { isConnected: true, server: serverName } }))
+  on('session.usage', () => ({ value: usage(true) }))
+  on('config.list', () => ({ value: [] }))
+  on('session.messages', () => ({ value: [] }))
+  on('session.id', () => ({ value: 'own' }))
+  on('session.cwd', () => ({ value: '/fixture' }))
+  on('settings.read', () => ({ value: {} }))
+  on('session.model', () => ({ value: 'fixture' }))
+  on('session.surfaces', () => ({ value: ['terminal'] }))
+  on('session.version', () => ({ value: { version: '2.1.289' } }))
+  const ran: string[][] = []
+  on('process.run', (_, e) => {
+    ran.push(e.argv)
+    return { value: { exitCode: 0, stdout: '{}', stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
+  })
+  on('process.spawn', guard)
+  const written: string[] = []
+  on('fs.write', (_, e) => {
+    written.push(e.path)
+    return { value: undefined }
+  })
+  on('fs.read', () => ({ deny: 'fixture: file unavailable' }))
+  on('fs.list', () => ({ value: [] }))
+  on('session.start', (_, e) => ({ cwd: e.cwd }))
+  on('turn.start', (_, e) => ({ turnId: e.turnId }))
+  on('turn.complete', (_, e) => ({ text: e.answer }))
+  await $.session.start({ cwd: '/fixture', surface: 'terminal', isInteractive: true })
+  await $.turn.start({ turnId: 'own-turn', text: 'work' })
+  await $.turn.complete({ turnId: 'own-turn', answer: 'done', reason: 'answer', isAborted: false, durationMs: 0 })
+  expect(ran.filter((argv) => argv.includes('claude-session-directory'))).toEqual([])
+  expect(written).toEqual([])
 })

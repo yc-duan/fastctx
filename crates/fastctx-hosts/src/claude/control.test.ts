@@ -1,5 +1,11 @@
 import { test, expect, mock } from 'claude-code/testing'
 
+// The World's hooks act only in a session it holds (`world-layers.md`): the
+// launch settings it starts a session with name its conversation.
+const heldByWorld = (_: unknown, e: { source?: string }) => ({
+  value: e.source === 'flag' ? { env: { FASTCTX_CONVERSATION: 'fixture-conversation' } } : {},
+})
+
 // A loader/engine contract test: fixtures stand for host facts. This does
 // not assert account eligibility, model execution or CLI forking behavior.
 test('uses the public controls and request return types through the official engine', async ($, on) => {
@@ -26,7 +32,7 @@ test('uses the public controls and request return types through the official eng
   on('mcp.connect', () => ({ value: { isConnected: true, server: 'fixture:world' } }))
   on('session.id', () => ({ value: 'control-fixture' }))
   on('session.cwd', () => ({ value: '/fixture' }))
-  on('settings.read', () => ({ value: {} }))
+  on('settings.read', heldByWorld)
   on('session.model', () => ({ value: model }))
   on('session.messages', () => ({ value: [] }))
   on('session.surfaces', () => ({ value: surfaces }))
