@@ -27,6 +27,17 @@ export interface MachineStats {
   /** Its lines to the hubs it is on. */
   lines: Line[];
   node: NodeSeen;
+  /** The jobs running on it now, by the account each works for; its own
+   *  under none. */
+  jobs?: AccountJobs[];
+}
+
+/** How many jobs one account runs on a machine now, and the most its owner
+ *  lets it run at once. */
+export interface AccountJobs {
+  account?: { hub: string; account: string };
+  running: number;
+  most?: number;
 }
 
 export interface Cpu {

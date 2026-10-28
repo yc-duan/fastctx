@@ -1,17 +1,20 @@
 // The machines a login may use (`world-gui.md`, 账号、机器、共享与协助),
 // drawn: the account's World as a hand-drawn map that moves under the hand
 // (`machine-map.ts`), or set out as a list (`machine-list.ts`), as chosen in
-// the page's head and kept on this device. Choosing a hub or a machine floats its actions beside
-// it, small icons that say what they do when pointed at; the right button,
-// or a long press, lists them with their names. What is known of the one
-// chosen stands in a panel that opens only when asked for. Beside each hub
-// a dashed ring adds a machine: it says one is on its way once a way in was
-// given, and the machine is circled as it arrives. A machine of the
-// account's own is shared and removed from here; whom it is shared with is
-// taken back with a press. The network's administrator manages its people
-// here too (`map-people.ts`). Long sayings stand behind a pointer's rest,
+// the page's head and kept on this device. A hub or a machine chosen on the
+// drawing has a small bar beside it (`machine-spot.ts`): what is done to it
+// most, a few marks, and "⋯" for the rest, which the right button lists
+// too; on a narrow page the bar lies along the bottom. A machine's details
+// are its own page; a hub's, a phone's and an assisting agent's are a small
+// card opened from the bar, or from a row of the list. Beside each hub a
+// dashed ring adds a machine: it says one is on its way once a way in was
+// given, and the machine is circled as it arrives. The network's
+// administrator manages its people here too (`map-people.ts`). What asks
+// for one thing, a name, a group, a way to connect, is a small card beside
+// the ring (`machine-cards.ts`). Long sayings stand behind a pointer's rest,
 // not on the page.
 
+import { leave, leaving, showOrLeave } from "./leave";
 import { glyph } from "../conversation/glyphs";
 import { layerOpened, type Layer } from "./back";
 import { onHeld } from "./press";
@@ -20,16 +23,16 @@ import { Film } from "../film/film";
 import { network } from "../film/network";
 import { watchFilm } from "../film/theater";
 import type { Point } from "../map-canvas";
-import { blot, circle, outline, ruled, seeded } from "../pen/shapes";
 import type { AccountChange, HubAccounts, Login, MemberSeen } from "../world/accounts";
+import { MachineCards, type Renaming } from "./machine-cards";
+import { moreEntries, nameOf, spotActs, SpotViews, type Act, type Spot } from "./machine-spot";
+import { ActsMenu } from "./acts-menu";
+import { MachineUpdates, type UpdatesAccess } from "./machine-updates";
+import { copyFrom } from "./copy-button";
 import { loginsOf, names } from "../world/accounts";
-import type { NameProblem } from "../world/bridge";
-import type { MachinePageWords } from "./machine-page-words";
-import type { NameSaid } from "./name-words";
-import { RenameField, renamerOf } from "./rename";
+import { renamerOf } from "./rename";
 import type { WorldNow } from "../world/bridge";
-import type { LinkState } from "../world/world";
-import { agentName, osName, titleOf } from "../world/names";
+import { agentName } from "../world/names";
 import type { AccessWords, MachinesWords } from "./account-words";
 import type { Confirm } from "./confirm";
 import { redrawKeepingFocus } from "./focus";
@@ -38,36 +41,29 @@ import { HubMoving, type HubMovingOptions } from "./hub-moving";
 import { holdUntilNamed, typedName } from "./typed-name";
 import { GiveSheet } from "./machine-sheets";
 import { MachineLog, type ReadLog } from "./machine-log";
-import { boxParts, chosenGroup, groupChange, groupForm, groupingOf, groupMoreKey, groupMoreOf, groupNameOf, groupRenameForm, wireGroupForm, type Grouping } from "./machine-groups";
-import { foldedOf, MachineMap, MAP_ORDER, personKey } from "./machine-map";
-import { isManaged, machineList } from "./machine-list";
+import { boxParts, groupingOf, groupMoreKey, groupMoreOf, regroup, renameGroups, type GroupBox, type Grouping } from "./machine-groups";
+import { MachineMap, MAP_ORDER, personKey } from "./machine-map";
+import { isManaged, listOrder, machineList } from "./machine-list";
+import { whenNear } from "./read-on";
 import { MapPeople } from "./map-people";
 import type { PeopleWords } from "./people-words";
 import { RING } from "./map-layout";
+import { foundIn, MachineFind } from "./machine-find";
 import { mapOf, phonesOf } from "./map-of";
 import { deviceKey, type MapNode } from "./map-nodes";
-import { link, talkLink } from "./places";
-import { assistantsOf, groupsOf, isComputer, isSuper, isVisitor, machineActsFor, machinesOf, ownerOf, owns, residentIn, sameLogin, superOf, type Assistant, type Machine } from "./reach";
+import { link } from "./places";
+import { runsHub, holds, assistantsOf, isComputer, isSuper, isVisitor, machinesOf, owns, type Machine } from "./reach";
 import type { Page } from "./shell";
 import { effect } from "./signals";
-import type { UpdateWords } from "./update-words";
-import { compareVersions, type MachineUpdate, type UpdateCall, type UpdateState, type UpdatesView, type UpdatesViewCall, type UpdatesViewReply } from "../world/updates";
 import type { BatchWords } from "./machine-batch-words";
 import { ChosenBar } from "./machine-framed";
-import { rulerOf } from "./update-ruler";
-import { lineOf } from "./update-marks";
-import type { UpdateViewWords } from "./update-view-words";
-import type { UpdatesNow } from "./machine-list";
 import { removerLoginOf } from "./machine-logins";
 import type { ManageWords } from "./machine-manage-words";
 import { added, between, pickable, pickableIn, toggled } from "./machine-picking";
 import { RemoveMachineSheet } from "./machine-remove";
 import { removeMachines } from "./machine-removing";
 import { WaysSheet } from "./machine-ways";
-import type { Signal } from "./signals";
-import type { VersionWindow } from "./version-window";
-import { jobsOf, residentsOf, type Store } from "./store";
-import { detailOf } from "./problem";
+import type { Store } from "./store";
 
 export interface MachinesOptions {
   store: Store;
@@ -94,66 +90,21 @@ export interface MachinesOptions {
   log: ReadLog;
   /** Moving the server to another machine. */
   moving: Pick<HubMovingOptions, "move" | "arrive" | "remote">;
-  /** Renaming a machine: the words of its field, the rule a name is
-   *  checked by, and renaming this computer. */
-  renaming: {
-    words: MachinePageWords;
-    nameSaid: NameSaid;
-    check(text: string): Promise<NameProblem | null>;
-    here(to: string): Promise<void>;
-  };
-  /** The network's update policy, as this device last heard it, and the
-   *  words of setting it; what this device knows of releases and of the
-   *  network's machines, and asking other machines about their updates. */
-  updates?:
-    | {
-        words: UpdateWords;
-        /** The update view's words. */
-        view: UpdateViewWords;
-        /** Asks `account`'s hub for its update view, or to schedule or set. */
-        ask(hub: string, account: string, call: UpdatesViewCall): Promise<UpdatesViewReply>;
-        /** The window of versions, picking the network's lowest one, or none. */
-        minimum(current: string | null, pick: (version: string | null) => void): void;
-        state: Signal<UpdateState | null>;
-        remote(machine: string, call: UpdateCall): Promise<UpdateState>;
-        /** Has a machine of an earlier release update to the newest on its line. */
-        older(machine: string): Promise<unknown>;
-        versions: VersionWindow;
-      }
-    | undefined;
+  /** Renaming a machine. */
+  renaming: Renaming;
+  /** The network's updates, for the update view (`machine-updates.ts`). */
+  updates?: UpdatesAccess | undefined;
   /** The words of machines chosen together, and of taking machines off. */
   batch: BatchWords;
   manage: ManageWords;
 }
 
-/** A group's box on the drawing: its name, its machines, and how each is
- *  grouped from this device, in the same order. */
-interface GroupBox {
-  group: string;
-  machines: Machine[];
-  groupings: Grouping[];
-}
+const spotsMade = new WeakMap<WorldNow, Map<string, Spot>>();
 
-/** One thing on the map, as the page knows it. */
-type Spot =
-  | { kind: "machine"; machine: Machine }
-  | { kind: "assist"; assistants: Assistant[] }
-  | { kind: "hub"; hub: HubAccounts }
-  | { kind: "device"; hub: HubAccounts; member: MemberSeen; login: Login; owner: string | null; here: boolean };
-
-type GlyphName = Parameters<typeof glyph>[0];
-
-/** What can be done to a hub or machine, as an icon beside it and a line
- *  in its menu. */
-interface Act {
-  act: string;
-  label: string;
-  icon: GlyphName;
-  danger?: boolean;
-  /** For a setting that is on or off, whether it is on. */
-  on?: boolean;
-}
-
+/** The menu of the right button on the drawing, and behind the "⋯" of the
+ *  one chosen. */
+let spotMenu: ActsMenu | null = null;
+const menuOf = () => (spotMenu ??= new ActsMenu());
 
 /** How long a taking back can be undone from the drawing's corner. */
 const UNDO_MS = 6_000;
@@ -161,12 +112,6 @@ const UNDO_MS = 6_000;
 /** How long a machine that just arrived stays circled: the drawing-in of
  *  the circle and a moment to see it. */
 const ARRIVED_MS = 6_000;
-
-/** Past this many machines others' groups start folded. */
-
-/** The port offered first for direct connections: the one after the hub's
- *  own, 7443. */
-const DIRECT_PORT = 7444;
 
 /** Where this device keeps whether the machines show as a drawing or a list. */
 const VIEW_KEY = "machines.view";
@@ -182,26 +127,13 @@ function keptView(): View {
   }
 }
 
-/** The first release that sets a machine's choices one by one
- *  (`UpdateCall::Preferences`); earlier ones take the whole of them. */
-const PREFERENCES_SINCE = "1.0.1-beta.8";
-
-/** The first release whose node takes an update kept for it past a change
- *  of World program of its own stuck on the way; an earlier one online is
- *  also asked at once, which it takes regardless. */
-const ARRANGED_PAST_STUCK_SINCE = "1.0.1-beta.10";
-
-/** How often the update view asks while it is shown, and while the page
- *  is out of sight. */
-const UPDATES_EVERY_MS = 2500;
-const UPDATES_HIDDEN_MS = 15000;
-
-/** How long what scheduling a machine said stays on its row. */
-const SAID_MS = 15000;
-
 /** Where this device keeps which of the list's groups and people the viewer
  *  opened or closed, by their keys. */
 const FOLDS_KEY = "machines.folds";
+
+/** How many of the list's rows are drawn at first, and how many more each
+ *  time the end of those comes near. */
+const LIST_ROWS = 150;
 
 function keptFolds(): Map<string, boolean> {
   try {
@@ -213,70 +145,50 @@ function keptFolds(): Map<string, boolean> {
 }
 
 export class MachinesPage implements Page {
-  /** The update view as each login of this device was last told it, the
-   *  machines in it as one, and which login's view each came from. */
-  private updateViews = new Map<string, UpdatesView>();
-  private updatesByName = new Map<string, MachineUpdate>();
-  private updatesLogin = new Map<string, Login>();
-  /** Each machine's name on its own hub, by how it is written here. */
-  private updatesBare = new Map<string, string>();
-  /** The hub answers no update view: it runs an older release. */
-  private updatesOld = false;
   /** The page was left: nothing more is drawn. */
   private left = false;
-  /** Why the update view could not be read, while none was; and which ask
-   *  was the latest, so an earlier answer coming later is dropped. */
-  private updatesFailed: string | null = null;
-  private updatesAsked = 0;
-  private updatesTimer = 0;
-  /** What scheduling or setting a machine just said, by its name. */
-  private readonly updatesSaid = new Map<string, string>();
-  /** Whether the network's policy is unfolded on a phone. */
-  private policyOpen = false;
+  /** The update view, where this device updates machines. */
+  private readonly updateView: MachineUpdates | null;
   readonly element: HTMLElement;
   readonly title: string;
   private readonly panel: HTMLElement;
   private readonly canvas: HTMLElement;
   private readonly map: MachineMap;
-  /** The actions floating beside the one chosen, the menu, the tags of
-   *  whom each machine is given to, and the moment to undo a taking back. */
-  private readonly acts: HTMLElement;
-  private readonly menu: HTMLElement;
+  /** The bar beside the one chosen and the card of a hub, a phone or an
+   *  assisting agent, and the moment to undo a taking back. */
+  private readonly spotViews: SpotViews;
+  private readonly spotBar: HTMLElement;
+  private spotDrawn = "";
+  /** Whether the drawing wrote no names as the bar was last drawn. */
+  private spotNamed = false;
   private readonly undoBar: HTMLElement;
   private undoing: { timer: number; redo: () => Promise<void> } | null = null;
-  /** The card asking to confirm a change made on the drawing, or to fill
-   *  in what one needs. */
-  private readonly card: HTMLElement;
-  private cardFor: string | null = null;
+  /** The card asking for one thing about a machine, a group or a person. */
+  private readonly cards: MachineCards;
   private drawn = "";
-  private floated = "";
   /** The list's groups and people the viewer opened or closed. */
   private readonly listFolds = keptFolds();
+  /** Finding machines: the bar, its glass in the head, and what was last
+   *  found for what was looked for. */
+  private readonly finder: MachineFind;
+  private readonly findToggle: HTMLElement;
+  private found: { world: WorldNow; query: string; keys: string[]; order?: string[] } | null = null;
+  /** The match gone to in the list. */
+  private findCurrent: string | null = null;
   private readonly stop: () => void;
   /** The spot chosen, by its key on the map. */
   private selected: string | null;
+  /** Whether what is known of a hub, a phone or an assisting agent is open. */
   private detailsOpen: boolean;
-  /** On a narrow page the chosen one's sheet shows its name and actions;
-   *  pulled up, everything known of it. */
-  private grown = false;
-  /** When the sheet was last pulled, so the press that pulled it is not
-   *  also taken for a tap. */
-  private pulled = 0;
-  /** The details, the menu and the card over the drawing, as the system
-   *  back closes them. */
+  /** The details, the bar along a phone's bottom, the menu and the card
+   *  over the drawing, as the system back closes them. */
   private readonly detailsLayer: Layer = {
     isOpen: () => !!this.selected && !this.panel.hidden && this.element.isConnected,
     close: () => this.closeDetails(),
   };
-  private readonly menuLayer: Layer = {
-    isOpen: () => !!this.menuFor && this.element.isConnected,
-    close: () => this.closeMenu(),
-    holds: (target) => this.menu.contains(target),
-  };
-  private readonly cardLayer: Layer = {
-    isOpen: () => !!this.cardFor && this.element.isConnected,
-    close: () => this.closeCard(),
-    holds: (target) => this.card.contains(target),
+  private readonly barLayer: Layer = {
+    isOpen: () => !!this.selected && !this.spotBar.hidden && this.narrow() && this.element.isConnected,
+    close: () => this.choose(null),
   };
   /** Redraws when the page turns narrow or wide: the sheet and what floats
    *  beside the one chosen depend on it. */
@@ -285,7 +197,9 @@ export class MachinesPage implements Page {
   /** The one to bring into view once the drawing has drawn its next
    *  frame at its size: until then where it stands is not yet known. */
   private bring: string | null = null;
-  private menuFor: { key: string | null; at: Point; sheet: boolean } | null = null;
+  /** The spot whose menu the right button opened, while it is open; the
+   *  drawing's own, "". */
+  private menuFor: string | null = null;
   private scale = 1;
   private note: { machine: string; text: string } | null = null;
   private readonly giving: GiveSheet;
@@ -319,9 +233,6 @@ export class MachinesPage implements Page {
   /** What is done to the machines chosen, floating at the foot of the page. */
   private readonly bar: HTMLElement;
   private readonly removing: RemoveMachineSheet;
-  /** Groups the user folded or opened, by key; the rest follow the
-   *  default. */
-  private readonly folds = new Map<string, boolean>();
   /** Come to a spot named in the address, until the drawing knows it. */
   private focusing: boolean;
   /** The machine named for the update view is ticked once it is known. */
@@ -337,6 +248,11 @@ export class MachinesPage implements Page {
   private readonly views: HTMLElement;
   private readonly list: HTMLElement;
   private listed = "";
+  /** How many of the list's rows are drawn, where its machines stand in it,
+   *  and what stops watching the end of those coming near. */
+  private listReach = LIST_ROWS;
+  private listRows = new Map<string, number>();
+  private listUnwatch = () => {};
   private barDrawn = "";
 
   constructor(private readonly options: MachinesOptions) {
@@ -362,24 +278,45 @@ export class MachinesPage implements Page {
       updates: updating
         ? {
             words: updating.view,
-            of: (machine) => this.updatesByName.get(machine.written),
-            schedule: (machines, version) => this.schedule(machines, version),
-            ways: (machines, auto, relays) => this.setWays(machines, auto, relays),
+            of: (machine) => this.updateView?.of(machine.written),
+            schedule: (machines, version) => this.updateView!.schedule(machines, version),
+            repair: (machines, cancel) => this.updateView!.repair(machines, cancel),
+            ways: (machines, auto, relays) => this.updateView!.setWays(machines, auto, relays),
             state: updating.state,
             versions: updating.versions,
           }
         : undefined,
     });
+    this.updateView = updating
+      ? new MachineUpdates({
+          updates: updating,
+          access: options.access,
+          world: () => options.store.world.peek(),
+          shown: () => this.view === "updates" && !this.left,
+          draw: () => {
+            if (!this.left) this.draw(options.store.world.peek(), options.store.clock.peek());
+          },
+          failure: () => (this.note?.machine === "" ? this.note.text : null),
+          failed: (text) => {
+            if (text !== null) this.note = { machine: "", text };
+            else if (this.note?.machine === "") this.note = null;
+          },
+          width: () => this.list.clientWidth,
+        })
+      : null;
     this.moving = new HubMoving({ ...options.moving, words, access: options.access, confirm: options.confirm, changed: () => this.redraw() });
+    this.spotViews = new SpotViews({
+      words,
+      access: options.access,
+      when: (at, now) => options.when(at, now),
+      moving: (hub, here) => this.moving.section(hub, here),
+    });
     this.people = new MapPeople({
       words: options.people,
       store: options.store,
       confirm: options.confirm,
       change: options.change,
-      card: (key, html, go) => {
-        this.openCard(key, this.map.screenOf(key) ?? [0, 0], html, go);
-        return this.card;
-      },
+      card: (key, html, go) => this.cards.show(key, html, go),
       undo: (said, redo) => this.offerUndo(said, redo),
       failed: (said) => {
         this.note = { machine: "", text: said };
@@ -401,7 +338,7 @@ export class MachinesPage implements Page {
     this.element.innerHTML = `
       ${options.head(
         `<h1 class="page-title">${escape(words.title)}</h1>`,
-        `<div class="ml-views" role="radiogroup" aria-label="${escape(words.views)}" hidden>${(options.updates ? (["map", "list", "updates"] as View[]) : (["map", "list"] as View[]))
+        `<button class="icon-button mf-toggle" type="button" aria-label="${escape(words.find.find)}" title="${escape(words.find.find)}" hidden>${glyph("search", 18)}</button><div class="ml-views" role="radiogroup" aria-label="${escape(words.views)}" hidden>${(options.updates ? (["map", "list", "updates"] as View[]) : (["map", "list"] as View[]))
           .map((view) => {
             const label = view === "map" ? words.viewMap : view === "list" ? words.viewList : options.updates!.view.view;
             return `<button class="ml-view" type="button" role="radio" data-view="${view}" title="${escape(label)}">${glyph(view === "map" ? "tree" : view === "list" ? "rows" : "update", 16)}<span>${escape(label)}</span>${view === "updates" ? `<span class="ml-view-count" hidden></span>` : ""}</button>`;
@@ -409,9 +346,18 @@ export class MachinesPage implements Page {
           .join("")}</div><button class="text-button add-device" type="button" hidden>${glyph("plus", 16)}<span>${escape(words.add)}</span></button>`,
       )}
       <div class="machines-intro" hidden><div class="machines-film"></div><p class="machines-hub-is">${escape(words.hubIs)}</p><div class="machines-ways"><a class="sheet-go" href="${link({ kind: "login", way: "new" })}">${escape(words.newNetwork)}</a><a class="text-button quiet-button" href="${link({ kind: "login", way: "join" })}">${escape(words.joinNetwork)}</a></div></div>
-      <div class="machines-layout"><div class="machines-canvas"><div class="ml-list scroller" role="list" hidden></div><div class="map-undo" role="status" hidden></div><div class="map-choose" role="status" hidden></div><div class="map-acts" role="toolbar" aria-label="${escape(words.actions)}" hidden></div><div class="map-menu" role="menu" aria-label="${escape(words.actions)}" hidden></div><form class="map-card" tabindex="-1" hidden></form></div><div class="ms-bar" role="toolbar" aria-label="${escape(words.actions)}" hidden></div><aside class="machine-panel scroller" aria-live="polite" hidden></aside></div>`;
+      <div class="machines-layout"><div class="machines-canvas"><div class="ml-list scroller" role="list" hidden></div><div class="map-undo" role="status" hidden></div><div class="map-choose" role="status" hidden></div><form class="map-card" tabindex="-1" hidden></form></div><div class="ms-bar" role="toolbar" aria-label="${escape(words.actions)}" hidden></div><div class="spot-bar" role="toolbar" aria-label="${escape(words.actions)}" hidden></div><aside class="machine-panel scroller" aria-live="polite" hidden></aside></div>`;
     this.panel = this.element.querySelector<HTMLElement>(".machine-panel")!;
+    this.panel.tabIndex = -1;
     this.bar = this.element.querySelector<HTMLElement>(".ms-bar")!;
+    this.spotBar = this.element.querySelector<HTMLElement>(".spot-bar")!;
+    this.spotBar.addEventListener("click", (event) => {
+      const target = event.target as HTMLElement;
+      const more = target.closest<HTMLElement>("[data-spot-more]");
+      if (more) return this.openMore(more);
+      if (target.closest("[data-spot=close]")) return this.choose(null);
+      this.clickAct(event);
+    });
     this.bar.addEventListener("click", (event) => {
       const act = (event.target as HTMLElement).closest<HTMLElement>("[data-act]")?.dataset.act;
       const world = this.options.store.world.peek();
@@ -439,13 +385,60 @@ export class MachinesPage implements Page {
     this.intro = this.element.querySelector<HTMLElement>(".machines-intro")!;
     this.layout = this.element.querySelector<HTMLElement>(".machines-layout")!;
     this.canvas = this.element.querySelector<HTMLElement>(".machines-canvas")!;
-    this.acts = this.element.querySelector<HTMLElement>(".map-acts")!;
-    this.menu = this.element.querySelector<HTMLElement>(".map-menu")!;
     this.undoBar = this.element.querySelector<HTMLElement>(".map-undo")!;
     this.chooseBar = this.element.querySelector<HTMLElement>(".map-choose")!;
-    this.card = this.element.querySelector<HTMLElement>(".map-card")!;
+    this.cards = new MachineCards(this.element.querySelector<HTMLElement>(".map-card")!, {
+      words,
+      access: options.access,
+      renaming: options.renaming,
+      change: (login, change) => options.change(login, change),
+      refresh: () => options.store.refresh(),
+      world: () => options.store.world.peek(),
+      anchorOf: (key) => this.anchorOf(key),
+      room: () => {
+        const canvas = this.canvas.getBoundingClientRect();
+        const right = this.panel.hidden ? canvas.width : Math.min(canvas.width, this.panel.getBoundingClientRect().left - canvas.left);
+        return { right, bottom: this.canvas.clientHeight };
+      },
+      narrow: () => this.narrow(),
+      opened: () => {
+        this.closeMenu();
+        this.redraw();
+      },
+      closed: (held) => {
+        this.redraw();
+        if (held) this.refocus();
+      },
+      redraw: () => this.redraw(),
+      failed: (key, said) => {
+        this.note = { machine: key.replace(/^m:/, ""), text: options.access.failed(said) };
+        this.redraw();
+      },
+      undo: (said, redo) => this.offerUndo(said, redo),
+      arrived: (keys, chosen) => {
+        if (chosen) this.selected = chosen;
+        this.arrived(keys);
+      },
+      checking: (key, on) => {
+        if (on) this.opening.add(key);
+        else this.opening.delete(key);
+        this.redraw();
+      },
+    });
     this.list = this.element.querySelector<HTMLElement>(".ml-list")!;
     this.views = this.element.querySelector<HTMLElement>(".ml-views")!;
+    this.finder = new MachineFind(words.find, {
+      changed: () => {
+        this.findCurrent = null;
+        this.listReach = LIST_ROWS;
+        this.redraw();
+      },
+      reach: (key) => this.reachFound(key),
+    });
+    this.canvas.append(this.finder.element);
+    this.findToggle = this.element.querySelector<HTMLElement>(".mf-toggle")!;
+    this.findToggle.addEventListener("click", () => (this.finder.open ? this.finder.close() : this.finder.show()));
+    document.addEventListener("keydown", this.findKey);
     // A machine named in the address is shown on the drawing, or ticked in
     // the update view.
     this.view = ticked ? "updates" : options.focus ? "map" : keptView();
@@ -457,7 +450,7 @@ export class MachinesPage implements Page {
     this.list.addEventListener("click", (event) => {
       const target = event.target as HTMLElement;
       const press = event as MouseEvent;
-      if (this.updatesPress(target)) {
+      if (this.updateView?.press(target)) {
         event.preventDefault();
         event.stopPropagation();
         return;
@@ -505,11 +498,13 @@ export class MachinesPage implements Page {
       event: (event) => {
         if (event.kind === "select") this.choose(event.key, event.add);
         else if (event.kind === "marquee") this.frame(event.keys, event.done, event.add);
-        else if (event.kind === "context") this.openMenu(event.key, event.at, event.input !== "mouse" || matchMedia("(max-width: 760px)").matches);
+        else if (event.kind === "context") this.openMenu(event.key, event.at);
+        else if (event.kind === "open") this.opened(event.key);
       },
       frame: (frame) => {
         this.scale = frame.view.scale;
-        this.float();
+        if (this.selected && !this.spotBar.hidden && this.map.distant !== this.spotNamed) this.redraw();
+        this.placeSpot();
         if (this.bring && frame.view.height > 0) {
           const key = this.bring;
           this.bring = null;
@@ -519,15 +514,10 @@ export class MachinesPage implements Page {
     });
     this.canvas.prepend(this.map.element);
     this.log = new MachineLog(words, options.log, () => loginsOf(options.store.world.peek()?.accounts), (at) => options.when(at, options.store.clock.peek()));
-    this.canvas.append(this.log.button, this.log.panel);
-    // A ring pressed twice opens what is known of it: a machine's own page,
-    // or the details of a hub or of a machine whose agent assists.
-    this.map.element.addEventListener("dblclick", (event) => {
-      const key = (event.target as HTMLElement).closest<HTMLElement>("[data-item]")?.dataset.item;
-      if (!key || key.startsWith("add:")) return;
-      if (key.startsWith("m:")) location.hash = link({ kind: "machine", name: key.slice("m:".length) });
-      else this.details(key);
-    });
+    // The record of changes is the first of the drawing's controls, in its
+    // corner; it opens over them.
+    this.map.element.querySelector(".canvas-controls")?.prepend(this.log.button);
+    this.canvas.append(this.log.panel);
     const add = this.element.querySelector<HTMLButtonElement>(".add-device")!;
     // Another device comes into an account: offered where there is one.
     effect(() => {
@@ -546,10 +536,14 @@ export class MachinesPage implements Page {
       const hub = this.selected?.startsWith("hub:") ? this.selected.slice(4) : null;
       if (section && hub) void this.moving.click(event.target as HTMLElement, hub).catch((error: unknown) => console.warn("the move could not go on", error));
     });
-    this.panel.addEventListener("click", (event) => this.clickAct(event));
-    this.panel.addEventListener("pointerdown", (event) => this.pull(event));
-    this.acts.addEventListener("click", (event) => this.clickAct(event));
-    this.menu.addEventListener("click", (event) => this.clickAct(event));
+    this.panel.addEventListener("click", (event) => {
+      const target = event.target as HTMLElement;
+      const more = target.closest<HTMLElement>("[data-spot-more]");
+      const copy = target.closest<HTMLElement>(".spot-copy .copy-button");
+      if (more) this.openMore(more);
+      else if (copy) void copyFrom(copy, options.manage.copied);
+      else this.clickAct(event);
+    });
     this.undoBar.addEventListener("click", (event) => {
       if ((event.target as HTMLElement).closest(".map-undo-go")) void this.undo();
     });
@@ -559,24 +553,21 @@ export class MachinesPage implements Page {
       else if (target.closest("[data-choose=cancel]")) this.stopChoosing();
     });
     this.element.addEventListener("keydown", (event) => {
-      if (event.key === "Escape" && this.menuFor) {
+      if (event.key === "Escape" && this.cards.open) {
         event.stopPropagation();
-        this.closeMenu();
-      } else if (event.key === "Escape" && this.cardFor) {
-        event.stopPropagation();
-        this.closeCard();
+        this.cards.close();
       } else if (event.key === "Escape" && (this.moving.chosenHub || this.whyNot)) {
         event.stopPropagation();
         this.stopChoosing();
       } else if (event.key === "Escape" && this.framed.length) {
         event.stopPropagation();
         this.setPicked([]);
+      } else if (event.key === "Escape" && this.selected) {
+        event.stopPropagation();
+        if (this.detailsOpen) this.closeDetails();
+        else this.choose(null);
       }
     });
-    this.card.addEventListener("click", (event) => {
-      if ((event.target as HTMLElement).closest("[data-card=cancel]")) this.closeCard();
-    });
-    document.addEventListener("pointerdown", this.outside, true);
     const stopWorld = effect(() => this.draw(options.store.world.get(), options.store.clock.get()));
     const updates = options.updates;
     const stopUpdates = updates
@@ -588,9 +579,9 @@ export class MachinesPage implements Page {
     this.stop = () => {
       stopWorld();
       stopUpdates();
-      clearTimeout(this.updatesTimer);
+      this.updateView?.stop();
     };
-    this.askUpdatesNow();
+    this.updateView?.watch();
     let narrow: boolean | null = null;
     this.resized = new ResizeObserver(() => {
       if (narrow === this.narrow()) return;
@@ -613,14 +604,64 @@ export class MachinesPage implements Page {
     this.resized.disconnect();
     this.log.dispose();
     if (this.undoing) clearTimeout(this.undoing.timer);
-    document.removeEventListener("pointerdown", this.outside, true);
+    document.removeEventListener("keydown", this.findKey);
+    this.listUnwatch();
     this.map.dispose();
   }
 
-  /** A press anywhere but the menu closes it. */
-  private readonly outside = (event: Event): void => {
-    if (this.menuFor && !this.menu.contains(event.target as Node)) this.closeMenu();
+  /** Ctrl+F finds machines while the page is shown, the drawing, the list
+   *  or the update view alike. */
+  private readonly findKey = (event: KeyboardEvent) => {
+    if (!this.element.isConnected || this.findToggle.hidden || !(event.ctrlKey || event.metaKey) || event.key.toLowerCase() !== "f" || event.altKey) return;
+    event.preventDefault();
+    this.finder.show();
   };
+
+  /** The machines that match what is looked for, by key, in the order the
+   *  World gives them; null while nothing is. */
+  private foundIn(world: WorldNow): string[] | null {
+    const query = this.finder.query;
+    if (!query) return null;
+    const kept = this.found;
+    if (kept?.world === world && kept.query === query) return kept.keys;
+    const keys = foundIn(mapOf(world, this.options.words).nodes, query);
+    this.found = { world, query, keys };
+    return keys;
+  }
+
+  /** The machines found, in the order the page shows them: the list's rows
+   *  down, drawn yet or not; on the drawing, the list's order too, as the
+   *  drawing reads by whose they are and in which group. */
+  private foundShown(found: readonly string[]): string[] {
+    if (this.view !== "map") return [...this.listRows.keys()];
+    const kept = this.found;
+    if (kept?.keys === found) return (kept.order ??= listOrder(kept.world, new Set(found), this.options.words));
+    const world = this.options.store.world.peek();
+    return world ? listOrder(world, new Set(found), this.options.words) : [...found];
+  }
+
+  /** Goes to a machine looked for and found: on the drawing it is chosen
+   *  and flown to, near enough to read; in the list its row is washed and
+   *  comes into view, what is ticked and what is open beside it left as they
+   *  are. */
+  private reachFound(key: string): void {
+    if (this.view !== "map") {
+      this.findCurrent = key;
+      // Its row is drawn, however far down it stands.
+      const at = this.listRows.get(key);
+      if (at !== undefined && at >= this.listReach) this.listReach = at + LIST_ROWS;
+      this.redraw();
+      requestAnimationFrame(() => this.list.querySelector(`[data-ml-row="${CSS.escape(key)}"]`)?.scrollIntoView({ block: "nearest" }));
+      return;
+    }
+    this.selected = key;
+    this.detailsOpen = false;
+    this.redraw();
+    requestAnimationFrame(() => {
+      if (this.narrow()) return this.bringIntoView(key);
+      this.map.flyTo(key);
+    });
+  }
 
   private loginOf(element: HTMLElement): Login | undefined {
     const at = element.closest<HTMLElement>("[data-hub]");
@@ -654,6 +695,7 @@ export class MachinesPage implements Page {
           ...(button.dataset.daily ? { daily: Number(button.dataset.daily) } : {}),
           ...(button.dataset.weekly ? { weekly: Number(button.dataset.weekly) } : {}),
           ...(button.dataset.fiveHour ? { five_hour: Number(button.dataset.fiveHour) } : {}),
+          ...(button.dataset.turns ? { turns: Number(button.dataset.turns) } : {}),
         };
         if (login)
           void this.takeBack(
@@ -677,11 +719,6 @@ export class MachinesPage implements Page {
       case "close-details":
         this.closeDetails();
         return;
-      case "grow":
-        if (Date.now() - this.pulled < 400) return;
-        this.grown = !this.grown;
-        this.redraw();
-        return;
     }
     const act = button.dataset.act ?? "";
     const world = this.options.store.world.peek();
@@ -695,34 +732,22 @@ export class MachinesPage implements Page {
     return width > 0 && width <= 860;
   }
 
-  /** The sheet pulled by its grip: up shows everything, down shows less or
-   *  lets the choice go. */
-  private pull(event: PointerEvent): void {
-    if (!this.narrow() || !(event.target as HTMLElement).closest(".sheet-grip")) return;
-    const from = event.clientY;
-    const up = (ended: PointerEvent) => {
-      const dy = ended.clientY - from;
-      if (Math.abs(dy) < 24) return;
-      this.pulled = Date.now();
-      if (dy < 0) this.grown = true;
-      else if (this.grown) this.grown = false;
-      else this.selected = null;
-      this.redraw();
-    };
-    window.addEventListener("pointerup", up, { once: true });
-  }
-
-  /** On a narrow page the one chosen is brought to the middle of what the
-   *  sheet leaves of the drawing. */
+  /** On a narrow page the one chosen is kept clear of its bar, or its
+   *  card: where they would lie over it, the drawing moves up only as far as
+   *  brings it into what they leave, a little air round it. */
   private bringIntoView(key: string): void {
     const at = this.map.screenOf(key);
-    if (!at || this.panel.hidden) return;
+    const below = !this.panel.hidden ? this.panel : !this.spotBar.hidden ? this.spotBar : null;
+    if (!at || !below) return;
     const box = this.canvas.getBoundingClientRect();
-    // The sheet stands on the bottom of the window; its height, not where
-    // it is while it still rises.
-    const top = document.documentElement.clientHeight - this.panel.offsetHeight;
+    // It stands on the bottom of the window; its height, not where it is
+    // while it still rises.
+    const top = document.documentElement.clientHeight - below.offsetHeight;
     const room = Math.max(0, Math.min(box.height, top - box.top));
-    this.map.glide(box.width / 2 - at[0], room / 2 - at[1]);
+    const air = Math.max(RING * this.scale, 16) + 24;
+    const dy = at[1] > room - air ? room - air - at[1] : at[1] < air ? air - at[1] : 0;
+    const dx = at[0] < air ? air - at[0] : at[0] > box.width - air ? box.width - air - at[0] : 0;
+    this.map.glide(dx, dy);
   }
 
   /** Ticks the machine a machine's page sent here for, and brings its row
@@ -754,7 +779,7 @@ export class MachinesPage implements Page {
     // What is chosen stays chosen: one machine alone is the one chosen on
     // the drawing, and ticked in the list and the update view. On a narrow
     // page the list ticks only what a long press began to choose.
-    this.askUpdatesNow();
+    this.updateView?.watch();
     if (view !== "map" && !this.framed.length && this.selected && this.isPickable(this.selected) && !this.narrow()) {
       this.framed = [this.selected];
       this.selected = null;
@@ -764,256 +789,9 @@ export class MachinesPage implements Page {
     }
     this.detailsOpen = false;
     this.closeMenu();
-    this.closeCard();
+    this.cards.close();
     this.redraw();
     if (view === "map") requestAnimationFrame(() => this.map.refresh());
-  }
-
-  /** Asks for the update view now and every few seconds while it is
-   *  shown; stops asking once it is not. */
-  private askUpdatesNow(): void {
-    clearTimeout(this.updatesTimer);
-    if (this.view !== "updates" || !this.options.updates) return;
-    void this.askUpdates().finally(() => {
-      if (this.view !== "updates" || !this.element.isConnected) return;
-      this.updatesTimer = window.setTimeout(() => this.askUpdatesNow(), document.hidden ? UPDATES_HIDDEN_MS : UPDATES_EVERY_MS);
-    });
-  }
-
-  /** Each login of this device asks its hub for its update view; the
-   *  machines in them are one list, each from the view that lets the most
-   *  be done to it. */
-  private async askUpdates(): Promise<void> {
-    const updates = this.options.updates;
-    const world = this.options.store.world.peek();
-    if (!updates || !world) return;
-    const logins = loginsOf(world.accounts);
-    const asked = ++this.updatesAsked;
-    const answers = await Promise.allSettled(logins.map((login) => updates.ask(login.hubName, login.account, { do: "view" })));
-    if (asked !== this.updatesAsked) return;
-    const views = new Map<string, UpdatesView>();
-    const byName = new Map<string, MachineUpdate>();
-    const from = new Map<string, Login>();
-    const bare = new Map<string, string>();
-    // A machine is known by how it is written here: two hubs' machines of
-    // one name stay two, and each is asked by its own.
-    const known = machinesOf(world);
-    const writtenOf = (login: Login, name: string) =>
-      known.find((one) => one.name === name && one.on.some((on) => on.hub === login.hub))?.written ?? name;
-    let old = false;
-    let failed: string | null = null;
-    answers.forEach((answer, index) => {
-      const login = logins[index]!;
-      const key = `${login.hub}\n${login.account}`;
-      let view: UpdatesView | undefined;
-      if (answer.status === "rejected") {
-        const why = detailOf(answer.reason);
-        // Only a hub before the view says so; anything else passes, and
-        // what was read last stands meanwhile.
-        if (/does not support the updates view/.test(why)) old = true;
-        else {
-          failed = why;
-          view = this.updateViews.get(key);
-        }
-      } else if (answer.value.kind === "view") view = answer.value.view;
-      if (!view) return;
-      views.set(key, view);
-      for (const told of view.machines) {
-        const written = writtenOf(login, told.machine);
-        const machine = written === told.machine ? told : { ...told, machine: written };
-        const kept = byName.get(written);
-        const more = (one: MachineUpdate) => Number(one.actions.schedule.allowed) + Number(one.actions.settings.allowed) + Number(one.actions.update.allowed);
-        if (!kept || more(machine) > more(kept)) {
-          byName.set(written, machine);
-          from.set(written, login);
-          bare.set(written, told.machine);
-        }
-      }
-    });
-    this.updateViews = views;
-    this.updatesByName = byName;
-    this.updatesLogin = from;
-    this.updatesBare = bare;
-    this.updatesOld = !views.size && old;
-    this.updatesFailed = views.size || old ? null : failed;
-    this.redraw();
-  }
-
-  /** What the list draws in the update view: the machines that may be
-   *  updated, the ruler and the network's policy over them. */
-  private updatesNow(narrow: boolean): UpdatesNow | undefined {
-    const updates = this.options.updates;
-    if (!updates) return undefined;
-    const words = updates.view;
-    const views = [...this.updateViews.values()];
-    const newest = views.flatMap((view) => [view.stable?.version, view.beta?.version].filter((version): version is string => !!version));
-    const hub = views[0]?.hub ?? null;
-    const top = [...newest].sort(compareVersions).pop() ?? hub;
-    const line = lineOf(top);
-    const policies = [...this.updateViews.entries()].filter(([, view]) => view.policy);
-    const policy = policies[0]?.[1].policy ?? null;
-    const machines = [...this.updatesByName.values()];
-    let head = "";
-    if (this.updatesOld) head = `<p class="uv-old">${escape(words.hubOld)}</p>`;
-    else if (this.updatesFailed) head = `<p class="uv-old" title="${escape(this.updatesFailed)}">${escape(words.unread)}</p>`;
-    // What the page itself was asked and could not do, said over it.
-    if (this.note?.machine === "") head = `<p class="uv-old">${escape(this.note.text)}</p>${head}`;
-    else if (machines.length) {
-      const width = Math.max(0, this.list.clientWidth - (narrow ? 32 : 48));
-      head = rulerOf({ machines, newest, hub, minimum: policy?.minimum ?? null, line, width: width || 900, phone: narrow }, words);
-      if (policies.length) {
-        // Each hub's own, its name first where there are several.
-        const logins = loginsOf(this.options.store.world.peek()?.accounts);
-        const rows = policies
-          .map(([key, view]) => {
-            const one = view.policy!;
-            const minimum = one.minimum ?? null;
-            const managed = one.managed_auto !== false;
-            const hubName = policies.length > 1 ? (logins.find((login) => `${login.hub}\n${login.account}` === key)?.hubName ?? "") : "";
-            return `<div class="uv-policy">${hubName ? `<span class="uv-policy-hub">${escape(hubName)}</span>` : ""}<span class="uv-policy-item"><span>${escape(words.minimum)}</span><button class="uv-chip" type="button" data-uv-minimum="${escape(key)}"><span class="ml-num">${escape(minimum ?? words.noMinimum)}</span>${glyph("chevron", 12)}</button></span><span class="uv-policy-item"><span>${escape(words.managedAuto)}</span><span class="uv-auto${managed ? " on" : ""}" role="switch" aria-checked="${managed}" aria-label="${escape(words.managedAuto)}" data-uv-managed="${escape(key)}"><span class="switch-track"><span class="switch-knob"></span></span></span></span></div>`;
-          })
-          .join("");
-        // On a phone the policy is folded into one line until it is opened.
-        head += narrow
-          ? `<details class="uv-policy-fold"${this.policyOpen ? " open" : ""}><summary>${glyph("chevron", 14)}<span>${escape(words.policy)}</span></summary>${rows}</details>`
-          : rows;
-      }
-    }
-    return { byName: this.updatesByName, line, words, head, said: this.updatesSaid };
-  }
-
-  /** How many machines may take a newer release, beside the view's name. */
-  private drawUpdateCount(): void {
-    const count = this.views.querySelector<HTMLElement>(".ml-view-count");
-    if (!count) return;
-    const able = [...this.updatesByName.values()].filter((machine) => machine.offer && machine.actions.schedule.allowed).length;
-    count.hidden = !able;
-    count.textContent = able ? String(able) : "";
-  }
-
-  /** The update view's own presses in the list: a machine's switch, and the
-   *  network's policy. Whether the press was one of them. */
-  private updatesPress(target: HTMLElement): boolean {
-    const updates = this.options.updates;
-    if (!updates || this.view !== "updates") return false;
-    const fold = target.closest<HTMLElement>(".uv-policy-fold > summary");
-    if (fold) {
-      this.policyOpen = !this.policyOpen;
-      this.redraw();
-      return true;
-    }
-    const auto = target.closest<HTMLElement>("[data-uv-auto]")?.dataset.uvAuto;
-    if (auto) {
-      const machine = this.updatesByName.get(auto);
-      if (machine) void this.setWays([machine], !machine.auto, null);
-      return true;
-    }
-    const minimumOf = target.closest<HTMLElement>("[data-uv-minimum]")?.dataset.uvMinimum;
-    const managedOf = target.closest<HTMLElement>("[data-uv-managed]")?.dataset.uvManaged;
-    const key = minimumOf ?? managedOf;
-    const policy = key === undefined ? undefined : this.updateViews.get(key)?.policy;
-    if (minimumOf !== undefined && policy) {
-      updates.minimum(policy.minimum ?? null, (version) => void this.setPolicy(minimumOf, version, policy.managed_auto !== false));
-      return true;
-    }
-    if (managedOf !== undefined && policy) {
-      void this.setPolicy(managedOf, policy.minimum ?? null, policy.managed_auto === false);
-      return true;
-    }
-    return false;
-  }
-
-  /** Schedules `version` for each of `machines` with the hub whose view
-   *  let it, or takes back what was scheduled; what did not go is said on
-   *  its row for a while. */
-  private async schedule(machines: MachineUpdate[], version: string | null): Promise<void> {
-    const updates = this.options.updates;
-    if (!updates) return;
-    const words = updates.view;
-    const byLogin = new Map<string, { login: Login; names: string[] }>();
-    for (const machine of machines) {
-      const login = this.updatesLogin.get(machine.machine);
-      if (!login) continue;
-      const key = `${login.hub}\n${login.account}`;
-      const entry = byLogin.get(key) ?? { login, names: [] };
-      // The hub knows it by its name there.
-      entry.names.push(this.updatesBare.get(machine.machine) ?? machine.machine);
-      byLogin.set(key, entry);
-    }
-    for (const { login, names } of byLogin.values()) {
-      // Back from the hub's name to how it is written here.
-      const written = (name: string) =>
-        [...this.updatesBare.entries()].find(([as, one]) => one === name && this.updatesLogin.get(as) === login)?.[0] ?? name;
-      try {
-        const reply = await updates.ask(login.hubName, login.account, { do: "schedule", machines: names, version });
-        if (reply.kind !== "scheduled") continue;
-        for (const result of reply.results) {
-          if (result.done) this.updatesSaid.delete(written(result.machine));
-          else this.sayOnRow(written(result.machine), words.notScheduled(result.reason ? words.reasons[result.reason] : (result.why ?? words.reasons.other)));
-        }
-      } catch (error) {
-        for (const name of names) this.sayOnRow(written(name), words.notScheduled(error instanceof Error ? error.message : String(error)));
-      }
-    }
-    if (version !== null) {
-      const stuck = machines.filter((machine) => machine.online && machine.kernel && compareVersions(machine.kernel, ARRANGED_PAST_STUCK_SINCE) < 0);
-      await inTurns(stuck, WAYS_AT_ONCE, async (machine) => {
-        try {
-          await updates.remote(machine.machine, { do: "kernel", version });
-        } catch (error) {
-          this.sayOnRow(machine.machine, words.notScheduled(error instanceof Error ? error.message : String(error)));
-        }
-      });
-    }
-    await this.askUpdates();
-  }
-
-  /** Sets how each of `machines` updates, as far as it says: a release
-   *  that sets them one by one is told only what changes, an earlier one
-   *  the whole of them. */
-  private async setWays(machines: MachineUpdate[], auto: boolean | null, relays: boolean | null): Promise<void> {
-    const updates = this.options.updates;
-    if (!updates) return;
-    // A room of machines is asked a few at a time, not all at once.
-    await inTurns(machines, WAYS_AT_ONCE, async (machine) => {
-      const call: UpdateCall =
-        machine.kernel && compareVersions(machine.kernel, PREFERENCES_SINCE) >= 0
-          ? { do: "preferences", auto, relays }
-          : { do: "set", settings: { auto: auto ?? !!machine.auto, chosen: auto !== null || machine.auto_chosen, relays: relays ?? machine.relays ?? true } };
-      try {
-        await updates.remote(machine.machine, call);
-        this.updatesSaid.delete(machine.machine);
-      } catch (error) {
-        this.sayOnRow(machine.machine, error instanceof Error ? error.message : String(error));
-      }
-    });
-    await this.askUpdates();
-  }
-
-  /** A network's update policy, set by the login `key` of this device that
-   *  is its super administrator. */
-  private async setPolicy(key: string, minimum: string | null, managedAuto: boolean): Promise<void> {
-    const updates = this.options.updates;
-    if (!updates) return;
-    const login = loginsOf(this.options.store.world.peek()?.accounts).find((one) => `${one.hub}\n${one.account}` === key);
-    if (!login) return;
-    try {
-      await updates.ask(login.hubName, login.account, { do: "policy", minimum, managed_auto: managedAuto });
-      if (this.note?.machine === "") this.note = null;
-    } catch (error) {
-      this.note = { machine: "", text: this.options.access.failed(detailOf(error)) };
-    }
-    await this.askUpdates();
-  }
-
-  /** Says `text` on a machine's row in the update view for a while. */
-  private sayOnRow(name: string, text: string): void {
-    this.updatesSaid.set(name, text);
-    window.setTimeout(() => {
-      if (this.updatesSaid.get(name) !== text) return;
-      this.updatesSaid.delete(name);
-      this.redraw();
-    }, SAID_MS);
   }
 
   /** The machines chosen that an action pointed at leaves stand back, on
@@ -1041,14 +819,6 @@ export class MachinesPage implements Page {
       this.film.destroy();
       this.film = null;
     }
-  }
-
-  /** The groups folded to their knot. Past two dozen machines the drawing
-   *  fitted to the page is too small to read them all, so others' groups
-   *  start folded and the account's own open; what the user opened or
-   *  folded stays so. */
-  private foldedOf(nodes: MapNode[]): Set<string> {
-    return foldedOf(nodes, this.folds);
   }
 
   /** A frame drawn round machines: one chosen, or several together; with
@@ -1081,7 +851,7 @@ export class MachinesPage implements Page {
     }
     if (!this.framed.length) this.selecting = false;
     this.closeMenu();
-    this.closeCard();
+    this.cards.close();
     this.redraw();
   }
 
@@ -1195,15 +965,13 @@ export class MachinesPage implements Page {
     }
     if (key?.startsWith("who:") || key?.startsWith("gm:")) {
       const at = this.map.screenOf(key);
-      if (at) this.openMenu(key, [at[0] - 20, at[1] + 18], this.narrow());
+      if (at) this.openMenu(key, [at[0] - 20, at[1] + 18]);
       return;
     }
-    // A group's knot folds its machines away, or opens them again.
+    // A box or a group pressed: brought to fill the view, near enough to see
+    // its machines.
     if (key?.startsWith("group:")) {
-      const world = this.options.store.world.peek();
-      const nodes = world ? mapOf(world, this.options.words).nodes : [];
-      this.folds.set(key, !this.foldedOf(nodes).has(key));
-      this.redraw();
+      this.map.flyTo(key);
       return;
     }
     this.framed = [];
@@ -1217,19 +985,19 @@ export class MachinesPage implements Page {
       return;
     }
     this.selected = key;
+    this.detailsOpen = false;
     this.note = null;
-    this.grown = false;
     this.redraw();
     if (key && this.narrow()) requestAnimationFrame(() => this.bringIntoView(key));
   }
 
+  /** What is known of the one chosen closes; on the drawing its bar is
+   *  there again. */
   private closeDetails(): void {
-    // On a narrow page the sheet is the choice itself.
-    if (this.narrow()) {
-      this.selected = null;
-      this.grown = false;
-    } else this.detailsOpen = false;
+    const held = this.panel.contains(document.activeElement);
+    this.detailsOpen = false;
     this.redraw();
+    if (held) this.refocus();
   }
 
   /** A group's or a person's row pressed: it opens or closes, and stays so
@@ -1244,12 +1012,27 @@ export class MachinesPage implements Page {
     this.redraw();
   }
 
+  /** A ring pressed twice opens what is known of it: a machine's own page,
+   *  or the card of a hub, a phone or an assisting agent. */
+  private opened(key: string): void {
+    const world = this.options.store.world.peek();
+    if (world && this.spots(world).has(key)) this.details(key);
+  }
+
+  /** What is known of `key`: a machine's own page; the card of a hub, a
+   *  phone or an assisting agent. */
   private details(key: string): void {
+    if (key.startsWith("m:")) {
+      location.hash = link({ kind: "machine", name: key.slice("m:".length) });
+      return;
+    }
     this.selected = key;
     this.detailsOpen = true;
     this.closeMenu();
     this.redraw();
     this.panel.scrollTop = 0;
+    // Keys go to the card: Escape closes it.
+    this.panel.focus({ preventScroll: true });
   }
 
   /** The first login on a hub, as which a device is let in there. */
@@ -1295,6 +1078,14 @@ export class MachinesPage implements Page {
         await this.options.change(login, { change: "share", machine, to, shared });
         await this.options.store.refresh();
         return this.sharedWith(login, machine);
+      },
+      {
+        of: (account) => (this.hubOf(login)?.shares ?? []).find((share) => share.machine === machine && share.account === account)?.jobs ?? null,
+        set: async (account, jobs) => {
+          await this.options.change(login, { change: "share", machine, to: account, shared: true, ...(jobs ? { jobs } : {}) });
+          await this.options.store.refresh();
+          return this.sharedWith(login, machine);
+        },
       },
     );
   }
@@ -1396,9 +1187,12 @@ export class MachinesPage implements Page {
     this.draw(this.options.store.world.peek(), this.options.store.clock.peek());
   }
 
-  /** Everything on the map, by its key. */
+  /** Everything on the map, by its key, made once for each World. */
   private spots(world: WorldNow): Map<string, Spot> {
+    const kept = spotsMade.get(world);
+    if (kept) return kept;
     const spots = new Map<string, Spot>();
+    spotsMade.set(world, spots);
     for (const hub of world.accounts.hubs) if (hub.logins.length) spots.set(`hub:${hub.hub}`, { kind: "hub", hub });
     for (const machine of machinesOf(world)) spots.set(`m:${machine.written}`, { kind: "machine", machine });
     for (const assistant of assistantsOf(world)) {
@@ -1416,15 +1210,19 @@ export class MachinesPage implements Page {
     if (!world) return;
     const { words } = this.options;
     const spots = this.spots(world);
+    const found = this.foundIn(world);
     // A machine named in the address may be one whose agent assists.
     if (this.selected?.startsWith("m:") && !spots.has(this.selected) && spots.has(`assist:${this.selected.slice(2)}`)) this.selected = `assist:${this.selected.slice(2)}`;
     if (this.selected && !spots.has(this.selected)) this.selected = null;
-    this.drawMap(world);
+    // The drawing is laid out only while it is the view shown: showing it
+    // again draws it as the World then stands (`show`).
+    if (this.view === "map") this.drawMap(world);
     const spot = this.selected ? spots.get(this.selected) : undefined;
     if (this.focusing && spot) {
       this.focusing = false;
       if (spot.kind === "machine") this.detailsOpen = false;
     }
+    if (spot?.kind === "machine") this.detailsOpen = false;
     if (this.ticking && spot) this.tick(this.selected!);
     // On a narrow page nothing floats beside the one chosen: its sheet rises
     // at once, its actions a row in it.
@@ -1440,10 +1238,22 @@ export class MachinesPage implements Page {
     // them is the bar at the foot of the page, which takes no room from the
     // list; the panel is only ever the details of one.
     const together = framed.length > (this.view === "map" ? 1 : 0);
-    const open = !!spot && (narrow || this.detailsOpen) && !together;
+    // The one chosen on the drawing has its bar beside it, out of the way
+    // of a menu or a card of changes while they are open, and of the
+    // server's new place being chosen; what is known of a hub, a phone or
+    // an assisting agent opens when asked for, on the drawing in the bar's
+    // place, beside the list, or from below.
+    const anchored = !narrow && this.view === "map";
+    const open = !!spot && !together && this.detailsOpen;
+    const barred = !!spot && !together && !open && this.view === "map" && this.menuFor === null && !this.cards.open && !this.moving.chosenHub;
     if (open && this.panel.hidden) layerOpened(this.detailsLayer);
-    this.panel.hidden = !open;
-    this.panel.classList.toggle("peek", narrow && !this.grown);
+    if (barred && narrow && this.spotBar.hidden) layerOpened(this.barLayer);
+    showOrLeave(this.panel, open);
+    this.panel.classList.toggle("anchored", anchored);
+    showOrLeave(this.spotBar, barred);
+    this.spotBar.classList.toggle("phone", narrow);
+    // Laid beside the one chosen only on a wide page's drawing.
+    if (!anchored) this.panel.style.transform = this.spotBar.style.transform = "";
     // In no network, the page is the film of what a network is for and the
     // ways into one; the drawing waits until there is one.
     const alone = !loginsOf(world.accounts).length && isComputer(world);
@@ -1451,6 +1261,9 @@ export class MachinesPage implements Page {
     const listing = !alone && this.view !== "map";
     const updating = listing && this.view === "updates";
     this.views.hidden = alone;
+    // Nothing is found where there is only this computer.
+    this.findToggle.hidden = alone;
+    if (alone && this.finder.open) queueMicrotask(() => this.finder.close());
     for (const button of this.views.querySelectorAll<HTMLElement>("[data-view]")) {
       const chosen = button.dataset.view === this.view;
       button.classList.toggle("chosen", chosen);
@@ -1460,26 +1273,35 @@ export class MachinesPage implements Page {
     this.list.hidden = !listing;
     this.list.classList.toggle("picking", framed.length > 0);
     this.list.classList.toggle("updates", updating);
-    this.drawUpdateCount();
+    const able = this.updateView?.able() ?? 0;
+    const count = this.views.querySelector<HTMLElement>(".ml-view-count");
+    if (count) {
+      count.hidden = !able;
+      count.textContent = able ? String(able) : "";
+    }
     this.list.classList.toggle("selecting", this.selecting);
     // Beside the list on a wide page the panel takes its own room.
     this.canvas.classList.toggle("beside", listing && open && !narrow);
     if (listing) {
       const adds = world.accounts.hubs.filter((hub) => this.hubLogin(hub.hub)).map((hub) => hub.hub);
-      const html = machineList(
+      const { html, rows } = machineList(
         {
           world,
           now,
-          selected: open ? this.selected : null,
+          selected: open ? this.selected : this.findCurrent && found?.includes(this.findCurrent) ? this.findCurrent : null,
           adds,
-          when: this.options.when,
+          // The list's columns are narrow: a day before today is its date.
+          when: (at, now) => (at.toDateString() === now.toDateString() ? this.options.when(at, now) : this.options.access.moment.short(at, now)),
           picked: new Set(framed),
           pick: { one: this.options.batch.pickOne, all: this.options.batch.pickAll },
           open: (key, byDefault) => this.listFolds.get(key) ?? byDefault,
-          updates: updating ? this.updatesNow(narrow) : undefined,
+          updates: updating ? this.updateView?.now(narrow) : undefined,
+          found: found && new Set(found),
+          reach: this.listReach,
         },
         words,
       );
+      this.listRows = rows;
       if (html !== this.listed) {
         this.listed = html;
         // The update view's machines scroll on their own, and are where
@@ -1490,15 +1312,29 @@ export class MachinesPage implements Page {
           const rows = this.list.querySelector<HTMLElement>(".uv-rows");
           if (rows) rows.scrollTop = scrolled;
         });
+        this.listUnwatch();
+        this.listUnwatch = whenNear(this.list, this.list.querySelector(".uv-rows") ?? this.list, () => {
+          this.listReach += LIST_ROWS;
+          this.redraw();
+        });
       }
     }
-    // Beside the list nothing floats: the actions are a row in the details.
-    const acts = (narrow || listing) && this.selected ? this.sheetActs(this.selected, world) : "";
-    const grip = narrow
-      ? `<button class="sheet-grip" type="button" data-act="grow" aria-expanded="${this.grown}" aria-label="${escape(this.grown ? words.closeDetails : words.details)}"></button>`
-      : "";
+    // What can be done to it: on its bar, the one done most and a few
+    // marks, the rest behind "⋯"; at the foot of its card the same.
+    const acts = spot && (open || barred) ? spotActs(this.actsOf(this.selected!, world)) : null;
+    const note = this.note && spot && this.note.machine && this.note.machine === nameOf(spot) ? { said: this.note.text, detail: this.note.text } : null;
+    // Where the drawing writes no names, the bar says whose it is.
+    this.spotNamed = this.map.distant;
+    const named = narrow || (spot?.kind !== "hub" && this.map.distant);
+    const barHtml = barred && acts ? this.spotViews.bar(spot!, this.selected!, acts, named, note) : "";
+    if (barHtml !== this.spotDrawn) {
+      this.spotDrawn = barHtml;
+      redrawKeepingFocus(this.spotBar, () => {
+        this.spotBar.innerHTML = barHtml;
+      });
+    }
     const chosenBar = !alone && together ? this.chosen.html(this.pickedMachines(world), world, updating) : "";
-    this.bar.hidden = !chosenBar;
+    showOrLeave(this.bar, !!chosenBar);
     this.bar.classList.toggle("phone", narrow);
     if (chosenBar !== this.barDrawn) {
       this.barDrawn = chosenBar;
@@ -1508,8 +1344,8 @@ export class MachinesPage implements Page {
     }
     const html = alone
       ? ""
-      : spot && open
-        ? `${grip}<button class="icon-button panel-close" type="button" data-act="close-details" aria-label="${escape(words.closeDetails)}" title="${escape(words.closeDetails)}">${glyph("close", 16)}</button>${spot.kind === "hub" ? this.hubPanel(spot.hub, world, acts) : spot.kind === "assist" ? this.assistPanel(spot.assistants, world, now, acts) : spot.kind === "device" ? this.phonePanel(spot.member, spot.owner, spot.here, now, acts) : this.machinePanel(spot.machine, world, now, acts)}`
+      : spot && open && acts
+        ? `<button class="icon-button panel-close" type="button" data-act="close-details" aria-label="${escape(words.closeDetails)}" title="${escape(words.closeDetails)}">${glyph("close", 16)}</button>${this.spotViews.card(spot, this.selected!, world, now, acts, note)}`
         : "";
     if (html !== this.drawn) {
       this.drawn = html;
@@ -1523,7 +1359,8 @@ export class MachinesPage implements Page {
     const top = spot?.kind === "hub" && open ? this.superLogin(spot.hub, world) : undefined;
     if (top && spot?.kind === "hub") this.moving.watch(top, spot.hub.hub);
     else this.moving.unwatch();
-    this.float();
+    this.placeSpot();
+    this.finder.showing(found ? this.foundShown(found) : []);
   }
 
   /** The strip over the drawing while the server's new place is chosen. */
@@ -1587,6 +1424,7 @@ export class MachinesPage implements Page {
    *  way to is circled as it arrives. */
   private drawMap(world: WorldNow): void {
     const made = mapOf(world, this.options.words);
+    const found = this.foundIn(world);
     const { hubs, nodes, links, people } = made;
     const hubLabels = new Map(made.hubLabels);
     for (const [hub, before] of this.waiting) {
@@ -1619,8 +1457,8 @@ export class MachinesPage implements Page {
       links,
       opening: this.opening,
       framed: this.framing.length ? this.framing : this.framed,
-      folded: this.foldedOf(nodes),
       lit: this.moving.chosenHub ? this.litKeys(world) : null,
+      found: found && new Set(found),
       people: this.people.shown(people),
       adding: this.people.hubs(world),
       grouped: this.groupedBoxes(world, nodes),
@@ -1665,33 +1503,33 @@ export class MachinesPage implements Page {
     if (spot.kind === "assist") return [{ act: "talk", label: words.talk, icon: "plus" }, details];
     // A phone is only signed in: nothing runs on it to work with.
     if (spot.kind === "device") return [details, ...(spot.here ? [] : [{ act: "remove", label: words.removePhone, icon: "close" as const, danger: true }])];
-    const owners = this.ownersOf(spot.machine, world);
+    const holders = this.holdersOf(spot.machine, world);
     // Direct connections are the network's administrator's to allow: to a
     // computer, while it is online to be checked, and no longer at any time.
     const admin = this.adminOf(spot.machine, world);
     const member = admin ? this.memberOf(spot.machine, admin, world) : undefined;
     const direct: Act[] =
       member?.kind !== "computer" ? [] : member.direct?.length ? [{ act: "direct", label: words.stopDirect, icon: "link", on: true }] : member.reach ? [{ act: "direct", label: words.allowDirect, icon: "link", on: false }] : [];
-    // Relaying for its owner's other machines on its network is the owner's
-    // to allow, a visitor's too, on a hub that keeps relays; where it takes
-    // direct connections, they forward already.
-    const own = this.ownersOf(spot.machine, world)[0];
+    // Relaying for its owner's other machines on its network is for those
+    // who hold it to allow, a visitor too, on a hub that keeps relays; where
+    // it takes direct connections, they forward already.
+    const own = holders[0];
     const mine = own ? this.memberOf(spot.machine, own, world) : undefined;
     const relays = !!own && !!world.accounts.hubs.find((hub) => hub.hub === own.hub)?.lan_relays;
     const relay: Act[] =
       relays && mine?.kind === "computer" && !mine.direct?.length && (mine.relay?.length || mine.reach?.interfaces?.length)
         ? [{ act: "relay", label: words.relay, icon: "relay", on: !!mine.relay?.length }]
         : [];
-    // Its owner and the network's administrator rename it.
+    // Those who hold it and the network's administrator rename it.
     const rename: Act[] = renamerOf(spot.machine, world, this.options.change, this.options.renaming.here)
       ? [{ act: "rename", label: this.options.renaming.words.rename, icon: "edit" }]
       : [];
     // And they group it.
     const group: Act[] = groupingOf(spot.machine, world) ? [{ act: "group", label: words.groups.group, icon: "folder" }] : [];
     // A managed machine has no agents of anyone's on it; a visitor shares
-    // none of its machines.
+    // nothing it holds, and the machine the hub runs on is shared with no one.
     const managed = isManaged(world, spot.machine.name);
-    const shares = owners.length > 0 && !owners.some((login) => isVisitor(world, login));
+    const shares = !!this.giverOf(spot.machine, world);
     return [
       ...(managed
         ? []
@@ -1709,67 +1547,56 @@ export class MachinesPage implements Page {
     ];
   }
 
-  /** The actions of the one chosen as a row in its sheet, each with its
-   *  name, large enough for a finger. */
-  private sheetActs(key: string, world: WorldNow): string {
-    // The sheet is a hub's details; a machine's are on its own page.
-    const acts = this.actsOf(key, world).filter((act) => act.act !== "details" || key.startsWith("m:"));
-    // Verbs share one row of equal columns; a setting is a row of its own
-    // with its switch, and what cannot be taken back stands apart below.
-    const verbs = acts.filter((act) => act.on === undefined && !act.danger);
-    const settings = acts.filter((act) => act.on !== undefined);
-    const dangers = acts.filter((act) => act.danger);
-    const { words } = this.options;
-    const row = verbs.length
-      ? `<div class="sheet-acts" style="--acts:${verbs.length}">${verbs
-          .map((act) => `<button class="sheet-act" type="button" data-map-act="${act.act}" data-key="${escape(key)}">${glyph(act.icon, 18)}<span>${escape(act.label)}</span></button>`)
-          .join("")}</div>`
-      : "";
-    const switches = settings
-      .map(
-        (act) =>
-          `<button class="sheet-row sheet-switch" type="button" role="switch" aria-checked="${act.on}" data-map-act="${act.act}" data-key="${escape(key)}">${glyph(act.icon, 18)}<span class="sheet-row-label">${escape(act.act === "direct" ? words.allowDirect : act.act === "signup" ? this.options.people.signUp : act.label)}</span><span class="switch-track" aria-hidden="true"><span class="switch-knob"></span></span></button>`,
-      )
-      .join("");
-    const removals = dangers
-      .map((act) => `<button class="sheet-row danger" type="button" data-map-act="${act.act}" data-key="${escape(key)}">${glyph(act.icon, 18)}<span class="sheet-row-label">${escape(act.label)}</span></button>`)
-      .join("");
-    return row + (switches || removals ? `<div class="sheet-rows">${switches}${removals}</div>` : "");
-  }
-
-  /** The logins whose own a machine is: this computer's account on each
-   *  hub it is registered on, or the one that registered another. */
-  private ownersOf(machine: Machine, world: WorldNow): Login[] {
+  /** The logins a machine is in the hands of: this computer's account on
+   *  each hub it is registered on; another's owner first, then those it is
+   *  shared with whole, who manage it alike. */
+  private holdersOf(machine: Machine, world: WorldNow): Login[] {
     const logins = loginsOf(world.accounts);
     if (machine.here) return logins.filter((login) => world.nodes.hubs.some((hub) => hub.hub === login.hub && hub.home === login.account));
-    const owner = logins.find((login) => owns(machine, login));
-    return owner ? [owner] : [];
+    return [...logins.filter((login) => owns(machine, login)), ...logins.filter((login) => !owns(machine, login) && holds(machine, login, world))];
   }
 
-  /** Does an action chosen beside a spot or in its menu. */
+  /** The login that shares `machine` on: one holding it that is no visitor,
+   *  where it does not run the hub. */
+  private giverOf(machine: Machine, world: WorldNow): Login | undefined {
+    return this.holdersOf(machine, world).find((login) => !isVisitor(world, login) && !runsHub(machine, login, world));
+  }
+
+  /** Does an action pressed on a spot's bar or card, or in its menu. */
   private clickAct(event: Event): void {
     const button = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-map-act]");
-    const world = this.options.store.world.peek();
-    if (!button || !world) return;
-    const key = button.dataset.key ?? "";
-    const act = button.dataset.mapAct!;
+    if (!button) return;
     this.closeMenu();
+    this.runAct(button.dataset.key ?? "", button.dataset.mapAct!);
+  }
+
+  /** What lies behind the "⋯" of the one chosen, under it. */
+  private openMore(anchor: HTMLElement): void {
+    const world = this.options.store.world.peek();
+    const key = anchor.dataset.spotMore ?? "";
+    const spot = world ? this.spots(world).get(key) : undefined;
+    if (!world || !spot) return;
+    const { more } = spotActs(this.actsOf(key, world));
+    if (!more.length) return;
+    menuOf().open(anchor, nameOf(spot), moreEntries(more, this.options.words, this.options.people), (act) => this.runAct(key, act));
+  }
+
+  /** Does `act` to `key`. */
+  private runAct(key: string, act: string): void {
+    const world = this.options.store.world.peek();
+    if (!world) return;
     if (act === "fit") return this.map.fit();
     if (act === "pick-group") return this.setPicked(added(this.pickedNow(), pickableIn(mapOf(world, this.options.words).nodes, key)));
     const person = personOf(key);
     if (person) return this.people.run(act, person.hub, person.account, key);
     if (groupMoreOf(key)) {
-      if (act === "rename-group") this.renameGroupCard(key);
+      if (act === "rename-group") this.renameGroup(key);
       else if (act === "end-group") void this.endGroup(key);
       return;
     }
     const spot = this.spots(world).get(key);
     if (!spot) return;
-    if (act === "details") {
-      if (spot.kind !== "machine") return this.details(key);
-      location.hash = link({ kind: "machine", name: spot.machine.written });
-      return;
-    }
+    if (act === "details") return this.details(key);
     if (spot.kind === "hub") {
       const login = this.hubLogin(spot.hub.hub);
       if (act === "invite" && login) this.invite(login);
@@ -1804,7 +1631,6 @@ export class MachinesPage implements Page {
       return;
     }
     const machine = spot.machine;
-    const login = this.ownersOf(machine, world)[0];
     switch (act) {
       case "talk":
         this.options.talk(machine.written);
@@ -1812,34 +1638,36 @@ export class MachinesPage implements Page {
       case "agents":
         location.hash = link({ kind: "agents", machine: machine.written });
         return;
-      case "share":
-        if (login) this.share(login, machine.name);
+      case "share": {
+        const giver = this.giverOf(machine, world);
+        if (giver) this.share(giver, machine.name);
         return;
+      }
       case "remove":
         this.removeNamed(machine.written);
         return;
       case "rename":
-        this.renameCard(key, machine);
+        this.cards.rename(key, machine);
         return;
       case "group": {
         const grouping = groupingOf(machine, world);
-        if (grouping) this.groupCard(key, [machine], [grouping]);
+        if (grouping) this.cards.group(key, [machine], [grouping]);
         return;
       }
       case "direct": {
         const admin = this.adminOf(machine, world);
         const member = admin ? this.memberOf(machine, admin, world) : undefined;
         if (!admin || !member) return;
-        if (member.direct?.length) this.stopDirect(admin, machine, key, member.direct);
-        else this.allowDirect(admin, machine, key, member);
+        if (member.direct?.length) this.cards.stopDirect(admin, machine, key, member.direct);
+        else this.cards.direct(admin, machine, key, member);
         return;
       }
       case "relay": {
-        const own = this.ownersOf(machine, world)[0];
+        const own = this.holdersOf(machine, world)[0];
         const member = own ? this.memberOf(machine, own, world) : undefined;
         if (!own || !member) return;
-        if (member.relay?.length) void this.stopRelay(own, machine, member.relay);
-        else this.allowRelay(own, machine, key, member);
+        if (member.relay?.length) void this.cards.stopRelay(own, machine, member.relay);
+        else this.cards.relay(own, machine, key, member);
         return;
       }
     }
@@ -1851,50 +1679,14 @@ export class MachinesPage implements Page {
     const world = this.options.store.world.peek();
     const groupings = world ? machines.map((machine) => groupingOf(machine, world)) : [];
     if (!machines.length || groupings.some((one) => !one)) return;
-    this.groupCard(`m:${machines[0]!.written}`, machines, groupings as Grouping[]);
+    this.cards.group(`m:${machines[0]!.written}`, machines, groupings as Grouping[]);
   }
 
-  /** The card that puts machines in a group, beside the ring of the one, or
-   *  the first of those framed together: one of their owner's groups, a new
-   *  one, or none. Put there, each is circled in its new box, and for a
-   *  moment the change can be undone from the drawing's corner. */
-  private groupCard(key: string, machines: Machine[], groupings: Grouping[]): void {
-    const words = this.options.words.groups;
-    const first = groupings[0];
-    if (!first) return;
-    const now = groupings.every((one) => one.now === first.now) ? first.now : undefined;
-    const title = machines.length === 1 ? words.groupTitle(machines[0]!.written) : words.groupMany(machines.length);
-    this.openCard(key, this.map.screenOf(key) ?? [0, 0], groupForm(words, title, first.groups, now), async () => {
-      const chosen = chosenGroup(this.card, words);
-      if ("wrong" in chosen) throw this.cardWrong(chosen.wrong);
-      const moving = machines.filter((_, at) => groupings[at]!.now !== chosen.group);
-      if (!moving.length) return;
-      const before = new Map(machines.map((machine, at) => [machine.name, groupings[at]!.now]));
-      for (const machine of moving) await this.options.change(first.login, groupChange(machine.name, chosen.group));
-      this.circle(moving);
-      this.offerUndo(machines.length === 1 ? words.movedOne(machines[0]!.written, chosen.group) : words.movedMany(moving.length, chosen.group), async () => {
-        for (const machine of moving) await this.options.change(first.login, groupChange(machine.name, before.get(machine.name) ?? null));
-      });
-    });
-    wireGroupForm(this.card);
-  }
-
-  /** The card that renames a group: its machines are in the group of the
-   *  new name, with any already in one of that name. */
-  private renameGroupCard(key: string): void {
+  /** The card that renames the group of the box `key` names. */
+  private renameGroup(key: string): void {
     const world = this.options.store.world.peek();
     const box = world ? this.groupBox(key, world) : null;
-    if (!box) return;
-    const words = this.options.words.groups;
-    this.openCard(key, this.map.screenOf(key) ?? [0, 0], groupRenameForm(words, box.group), async () => {
-      const named = groupNameOf(this.card.querySelector<HTMLInputElement>("input[name=name]")?.value ?? "", words);
-      if ("wrong" in named) throw this.cardWrong(named.wrong);
-      if (named.name === box.group) return;
-      await this.renameGroups(box, named.name);
-      this.circle(box.machines);
-      this.offerUndo(words.renamedGroup(box.group, named.name), () => this.regroup(box));
-    });
-    this.card.querySelector<HTMLInputElement>("input[name=name]")?.select();
+    if (box) this.cards.renameGroup(key, box);
   }
 
   /** Ends a group at once: its machines stand in their owner's box again,
@@ -1905,7 +1697,7 @@ export class MachinesPage implements Page {
     const box = world ? this.groupBox(key, world) : null;
     if (!box) return;
     try {
-      await this.renameGroups(box, null);
+      await renameGroups(box, null, (login, change) => this.options.change(login, change));
       this.note = null;
     } catch (error) {
       this.note = { machine: "", text: this.options.access.failed(error instanceof Error ? error.message : String(error)) };
@@ -1913,25 +1705,9 @@ export class MachinesPage implements Page {
       return;
     }
     this.circle(box.machines);
-    this.offerUndo(this.options.words.groups.endedGroup(box.group), () => this.regroup(box));
+    this.offerUndo(this.options.words.groups.endedGroup(box.group), () => regroup(box, (login, change) => this.options.change(login, change)));
     await this.options.store.refresh();
     this.redraw();
-  }
-
-  /** Renames a box's group for each owner it holds machines of, or ends it
-   *  where `to` is none. */
-  private async renameGroups(box: GroupBox, to: string | null): Promise<void> {
-    const done: Grouping[] = [];
-    for (const grouping of box.groupings) {
-      if (done.some((one) => sameLogin(one.login, grouping.login) && one.owner === grouping.owner)) continue;
-      done.push(grouping);
-      await this.options.change(grouping.login, { change: "rename_group", owner: grouping.owner, from: box.group, to });
-    }
-  }
-
-  /** Puts a box's machines back in its group, as they were before. */
-  private async regroup(box: GroupBox): Promise<void> {
-    for (const [at, machine] of box.machines.entries()) await this.options.change(box.groupings[at]!.login, groupChange(machine.name, box.group));
   }
 
   /** A group's box on the drawing, by its "⋯": its name, its machines and
@@ -1940,56 +1716,57 @@ export class MachinesPage implements Page {
   private groupBox(key: string, world: WorldNow, nodes: MapNode[] = mapOf(world, this.options.words).nodes): GroupBox | null {
     const box = groupMoreOf(key);
     if (!box) return null;
+    return this.groupBoxOf(box, world, nodes.filter((node) => node.group?.key === box.kind && node.hubs.includes(box.hub)));
+  }
+
+  /** As `groupBox`, of the nodes the box holds. */
+  private groupBoxOf(box: { hub: string; group: string }, world: WorldNow, inside: MapNode[]): GroupBox | null {
     const spots = this.spots(world);
-    const machines = nodes
-      .filter((node) => node.group?.key === box.kind && node.hubs.includes(box.hub))
-      .flatMap((node) => {
-        const spot = spots.get(node.key);
-        return spot?.kind === "machine" ? [spot.machine] : [];
-      });
+    const machines = inside.flatMap((node) => {
+      const spot = spots.get(node.key);
+      return spot?.kind === "machine" ? [spot.machine] : [];
+    });
     const groupings = machines.map((machine) => groupingOf(machine, world, box.hub));
     if (!machines.length || groupings.some((one) => !one)) return null;
     return { group: box.group, machines, groupings: groupings as Grouping[] };
   }
 
   /** The boxes of groups whose "⋯" the drawing shows, by its keys for
-   *  boxes. */
+   *  boxes: the nodes sorted into their boxes once, each box then asked. */
   private groupedBoxes(world: WorldNow, nodes: MapNode[]): Set<string> {
-    const asked = new Set<string>();
-    const boxes = new Set<string>();
+    const inside = new Map<string, { hub: string; kind: string; nodes: MapNode[] }>();
     for (const node of nodes) {
       const kind = node.group?.key;
       if (!kind || boxParts(kind).group === null) continue;
       for (const hub of node.hubs) {
         const key = `group:${hub}:${kind}`;
-        if (asked.has(key)) continue;
-        asked.add(key);
-        if (this.groupBox(groupMoreKey(hub, kind), world, nodes)) boxes.add(key);
+        const known = inside.get(key);
+        if (known) known.nodes.push(node);
+        else inside.set(key, { hub, kind, nodes: [node] });
       }
+    }
+    const boxes = new Set<string>();
+    for (const [key, { hub, kind, nodes: held }] of inside) {
+      const box = groupMoreOf(groupMoreKey(hub, kind));
+      if (box && this.groupBoxOf(box, world, held)) boxes.add(key);
     }
     return boxes;
   }
 
   /** Circles machines for a moment, as they stand somewhere new. */
   private circle(machines: Machine[]): void {
-    for (const machine of machines) {
-      const key = `m:${machine.written}`;
+    this.arrived(machines.map((machine) => `m:${machine.written}`));
+  }
+
+  /** Circles spots for a moment, by their keys. */
+  private arrived(keys: string[]): void {
+    for (const key of keys) {
       this.fresh.add(key);
       setTimeout(() => {
         this.fresh.delete(key);
         this.redraw();
       }, ARRIVED_MS);
     }
-  }
-
-  /** Says in the open card why it does not go, and keeps it open. */
-  private cardWrong(said: string): Error {
-    const wrong = this.card.querySelector<HTMLElement>(".map-card-wrong");
-    if (wrong) {
-      wrong.textContent = said;
-      wrong.hidden = false;
-    }
-    return new Error("kept open");
   }
 
   /** The login of the network's administrator among this device's, on a
@@ -2003,230 +1780,22 @@ export class MachinesPage implements Page {
     return world.accounts.hubs.find((hub) => hub.hub === login.hub)?.members.find((member) => names(member, machine.name));
   }
 
-  /** A card beside the ring with its name to change. Renamed, it is
-   *  circled under its new name, and for a moment the old name can be given
-   *  back from the drawing's corner: a name a machine had stays its own. */
-  private renameCard(key: string, machine: Machine): void {
-    const world = this.options.store.world.peek();
-    const rename = world ? renamerOf(machine, world, this.options.change, this.options.renaming.here) : null;
-    if (!rename) return;
-    const { words, nameSaid, check } = this.options.renaming;
-    const from = machine.name;
-    this.openCard(key, this.map.screenOf(key) ?? [0, 0], `<p class="map-card-title">${escape(words.renameTitle(machine.written))}</p><div class="map-card-rename"></div>`, async () => {});
-    const field = new RenameField({
-      words,
-      nameSaid,
-      name: from,
-      note: !machine.here && machine.online === false ? words.renameOffline(machine.written) : undefined,
-      check,
-      rename: async (to) => {
-        await rename(to);
-        await this.options.store.refresh();
-      },
-      done: (to) => {
-        field.dispose();
-        this.closeCard();
-        const renamed = `m:${to}`;
-        this.selected = renamed;
-        this.fresh.add(renamed);
-        setTimeout(() => {
-          this.fresh.delete(renamed);
-          this.redraw();
-        }, ARRIVED_MS);
-        this.offerUndo(words.renamed(from, to), () => rename(from, to));
-        this.redraw();
-      },
-      cancel: () => {
-        field.dispose();
-        this.closeCard();
-      },
-    });
-    this.card.querySelector(".map-card-rename")!.append(field.element);
-    field.focus();
+  /** Where a card about `key` stands beside: its ring on the drawing, or
+   *  its row in the list, which the drawing is not laid out under. */
+  private anchorOf(key: string): Point | null {
+    if (this.view === "map") return this.map.screenOf(key);
+    const row = this.list.querySelector<HTMLElement>(`[data-ml-key="${CSS.escape(key)}"]`);
+    if (!row) return null;
+    const canvas = this.canvas.getBoundingClientRect();
+    const name = (row.querySelector<HTMLElement>(".ml-name") ?? row).getBoundingClientRect();
+    return [name.right - canvas.left, name.top - canvas.top + name.height / 2];
   }
 
-  /** The card that lets other machines connect to one directly: a small
-   *  drawing of their lines meeting it, its addresses to choose from (its
-   *  network cards' and where the server sees it, never an example), and
-   *  the port. The server then tries it from outside; until it has, the
-   *  socket on its ring is pencil, and what kept the server out is said in
-   *  the card. */
-  private allowDirect(login: Login, machine: Machine, key: string, member: MemberSeen): void {
-    const { words } = this.options;
-    const seen = member.reach?.seen ? [hostOf(member.reach.seen)] : [];
-    const cards = (member.reach?.interfaces ?? []).map(hostOf).filter((host) => !seen.includes(host));
-    const choice = (host: string, note: string, checked: boolean) =>
-      `<label class="choice map-card-choice"><input type="checkbox" name="host" value="${escape(host)}"${checked ? " checked" : ""}><span class="mono">${escape(host)}</span><span class="choice-note">${escape(note)}</span></label>`;
-    const at = this.map.screenOf(key) ?? [0, 0];
-    this.openCard(
-      key,
-      at,
-      `<p class="map-card-title">${escape(words.directTitle(machine.written))}</p>
-       <div class="map-card-pictures">${directPicture(true)}</div>
-       <fieldset class="map-card-field"><legend>${escape(words.directAddresses)}</legend><div class="choice-options">${[
-         ...seen.map((host) => choice(host, words.directSeen, true)),
-         ...cards.map((host) => choice(host, words.directCard, !seen.length)),
-       ].join("")}</div></fieldset>
-       <label class="field map-card-port"><span class="field-label">${escape(words.directPort)}</span><input class="mono" name="port" inputmode="numeric" value="${DIRECT_PORT}" autocomplete="off" spellcheck="false" required></label>
-       <p class="map-card-wrong" role="alert" hidden></p>
-       <details class="map-card-more"><summary>${escape(words.more)}</summary><p>${escape(words.directWhat)}</p></details>
-       <footer class="map-card-acts"><button class="text-button" type="button" data-card="cancel">${escape(words.cancel)}</button><button class="text-button map-card-go" type="submit">${escape(words.directGo)}</button></footer>`,
-      async () => {
-        const wrong = this.card.querySelector<HTMLElement>(".map-card-wrong")!;
-        const hosts = [...this.card.querySelectorAll<HTMLInputElement>("input[name=host]:checked")].map((input) => input.value);
-        const port = Number(this.card.querySelector<HTMLInputElement>("input[name=port]")!.value.trim());
-        const refuse = (said: string) => {
-          wrong.textContent = said;
-          wrong.hidden = false;
-          return new Error("kept open");
-        };
-        if (!hosts.length) throw refuse(words.directPickOne);
-        if (!Number.isInteger(port) || port < 1 || port > 65535) throw refuse(words.directPortWrong);
-        wrong.textContent = words.directChecking;
-        wrong.hidden = false;
-        wrong.classList.add("quiet");
-        this.opening.add(key);
-        this.redraw();
-        try {
-          await this.options.change(login, { change: "direct", machine: machine.name, at: hosts.map((host) => (host.includes(":") ? `[${host}]:${port}` : `${host}:${port}`)) });
-        } catch (error) {
-          wrong.classList.remove("quiet");
-          throw refuse(error instanceof Error ? error.message : String(error));
-        } finally {
-          this.opening.delete(key);
-          this.redraw();
-        }
-      },
-    );
-  }
-
-  /** The card that lets one's own computer relay for one's other machines
-   *  on its network: its network cards' addresses to choose from, and the
-   *  port. Nothing checks it from outside: only its own network reaches it. */
-  private allowRelay(login: Login, machine: Machine, key: string, member: MemberSeen): void {
-    const { words } = this.options;
-    // An IPv6 link-local address is named by each machine's own card, so no
-    // other machine reaches the relay at it.
-    const cards = (member.reach?.interfaces ?? []).map(hostOf).filter((host) => !/^fe[89ab][0-9a-f]:/i.test(host));
-    const at = this.map.screenOf(key) ?? [0, 0];
-    this.openCard(
-      key,
-      at,
-      `<p class="map-card-title">${escape(words.relayTitle(machine.written))}</p>
-       <fieldset class="map-card-field"><legend>${escape(words.relayAddresses)}</legend><div class="choice-options">${cards
-         .map((host, index) => `<label class="choice map-card-choice"><input type="checkbox" name="host" value="${escape(host)}"${index === 0 ? " checked" : ""}><span class="mono">${escape(host)}</span><span class="choice-note">${escape(words.directCard)}</span></label>`)
-         .join("")}</div></fieldset>
-       <label class="field map-card-port"><span class="field-label">${escape(words.directPort)}</span><input class="mono" name="port" inputmode="numeric" value="${DIRECT_PORT}" autocomplete="off" spellcheck="false" required></label>
-       <p class="map-card-wrong" role="alert" hidden></p>
-       <details class="map-card-more"><summary>${escape(words.more)}</summary><p>${escape(words.relayWhat)}</p></details>
-       <footer class="map-card-acts"><button class="text-button" type="button" data-card="cancel">${escape(words.cancel)}</button><button class="text-button map-card-go" type="submit">${escape(words.relayGo)}</button></footer>`,
-      async () => {
-        const wrong = this.card.querySelector<HTMLElement>(".map-card-wrong")!;
-        const hosts = [...this.card.querySelectorAll<HTMLInputElement>("input[name=host]:checked")].map((input) => input.value);
-        const port = Number(this.card.querySelector<HTMLInputElement>("input[name=port]")!.value.trim());
-        const refuse = (said: string) => {
-          wrong.textContent = said;
-          wrong.hidden = false;
-          return new Error("kept open");
-        };
-        if (!hosts.length) throw refuse(words.directPickOne);
-        if (!Number.isInteger(port) || port < 1 || port > 65535) throw refuse(words.directPortWrong);
-        try {
-          await this.options.change(login, { change: "relay", machine: machine.name, at: hosts.map((host) => (host.includes(":") ? `[${host}]:${port}` : `${host}:${port}`)) });
-        } catch (error) {
-          throw refuse(error instanceof Error ? error.message : String(error));
-        }
-      },
-    );
-  }
-
-  /** Stops one's own computer relaying at once; for a moment it can be
-   *  turned on again where it was. */
-  private async stopRelay(login: Login, machine: Machine, before: string[]): Promise<void> {
-    const { words } = this.options;
-    await this.options.change(login, { change: "relay", machine: machine.name, at: [] });
-    this.offerUndo(words.relayStopped(machine.written), () => this.options.change(login, { change: "relay", machine: machine.name, at: before }));
-  }
-
-  /** Takes direct connections to a machine away at once, after a small
-   *  card of before and after; for a moment they can be given back. */
-  private stopDirect(login: Login, machine: Machine, key: string, before: string[]): void {
-    const { words } = this.options;
-    const at = this.map.screenOf(key) ?? [0, 0];
-    this.openCard(
-      key,
-      at,
-      `<p class="map-card-title">${escape(words.stopDirectTitle(machine.written))}</p>
-       <div class="map-card-pictures">${directPicture(true)}<span aria-hidden="true">→</span>${directPicture(false)}</div>
-       <p class="map-card-said">${escape(words.stopDirectSaid)}</p>
-       <p class="map-card-wrong" role="alert" hidden></p>
-       <footer class="map-card-acts"><button class="text-button" type="button" data-card="cancel">${escape(words.cancel)}</button><button class="text-button map-card-go" type="submit">${escape(words.confirm)}</button></footer>`,
-      async () => {
-        await this.options.change(login, { change: "direct", machine: machine.name, at: [] });
-        this.offerUndo(words.directStopped(machine.written), () => this.options.change(login, { change: "direct", machine: machine.name, at: before }));
-      },
-    );
-  }
-
-  /** A card beside a ring, or rising from below on a narrow page; `go`
-   *  runs when it is confirmed, and an error it throws stays in the card. */
-  private openCard(key: string, at: Point, html: string, go: () => Promise<void | "keep">): void {
-    this.closeMenu();
-    this.cardFor = key;
-    this.float();
-    this.card.innerHTML = html;
-    const sheet = this.narrow();
-    this.card.classList.toggle("as-sheet", sheet);
-    this.card.hidden = false;
-    layerOpened(this.cardLayer);
-    if (!sheet) {
-      // Beside the ring, on its right unless what is open on the right, the
-      // panel or the canvas's edge, leaves no room there.
-      const canvas = this.canvas.getBoundingClientRect();
-      const right = this.panel.hidden ? canvas.width : Math.min(canvas.width, this.panel.getBoundingClientRect().left - canvas.left);
-      const width = this.card.offsetWidth;
-      const x = at[0] + 16 + width + 8 <= right ? at[0] + 16 : at[0] - 16 - width;
-      const y = Math.min(this.canvas.clientHeight - this.card.offsetHeight - 8, at[1] - 24);
-      this.card.style.transform = `translate(${Math.max(8, Math.min(x, right - width - 8))}px, ${Math.max(8, y)}px)`;
-    } else this.card.style.transform = "";
-    this.card.onsubmit = (event) => {
-      event.preventDefault();
-      const button = this.card.querySelector<HTMLButtonElement>(".map-card-go");
-      if (button) button.disabled = true;
-      go().then(
-        (kept) => {
-          if (kept === "keep") {
-            if (button) button.disabled = false;
-            return;
-          }
-          this.closeCard();
-          void this.options.store.refresh().then(() => this.redraw());
-        },
-        (error: unknown) => {
-          if (button) button.disabled = false;
-          if (error instanceof Error && error.message === "kept open") return;
-          const wrong = this.card.querySelector<HTMLElement>(".map-card-wrong");
-          const said = error instanceof Error ? error.message : String(error);
-          if (wrong) {
-            wrong.textContent = said;
-            wrong.hidden = false;
-          } else {
-            this.note = { machine: key.replace(/^m:/, ""), text: this.options.access.failed(said) };
-            this.redraw();
-          }
-        },
-      );
-    };
-    this.card.focus({ preventScroll: true });
-  }
-
-  private closeCard(): void {
-    if (!this.cardFor) return;
-    this.cardFor = null;
-    this.card.hidden = true;
-    this.card.innerHTML = "";
-    this.card.onsubmit = null;
-    this.float();
+  /** Back on the drawing, or the list, once a card or a menu over it is
+   *  gone: keys go on to the page, Escape letting the one chosen go. */
+  private refocus(): void {
+    if (this.element.contains(document.activeElement) && document.activeElement !== document.body) return;
+    (this.view === "map" ? this.map.element : this.list).focus({ preventScroll: true });
   }
 
   /** A change made on the drawing, undone for a moment from its corner. */
@@ -2253,61 +1822,53 @@ export class MachinesPage implements Page {
   private endUndo(): void {
     if (this.undoing) clearTimeout(this.undoing.timer);
     this.undoing = null;
-    this.undoBar.hidden = true;
-    this.undoBar.innerHTML = "";
+    if (!this.undoBar.hidden && !leaving(this.undoBar)) {
+      leave(this.undoBar, () => {
+        this.undoBar.hidden = true;
+        this.undoBar.innerHTML = "";
+      });
+    }
   }
 
-  /** The icons beside the one chosen, in a row to the right of its name,
-   *  or under its ring where the right has no room; the names on the
-   *  drawing keep clear of them. */
-  private float(): void {
-    const world = this.options.store.world.peek();
-    const key = this.menuFor || this.cardFor || this.narrow() || this.view === "list" ? null : this.selected;
-    const at = key ? this.map.screenOf(key) : null;
-    if (!world || !key || !at) {
-      if (!this.acts.hidden) {
-        this.acts.hidden = true;
-        this.acts.innerHTML = "";
-        this.floated = "";
-      }
-      this.map.reserve([]);
-      return;
-    }
-    const acts = this.actsOf(key, world);
-    const html = acts
-      .map(
-        (act) =>
-          `<button class="map-act${act.danger ? " danger" : ""}${act.on ? " on" : ""}" type="button" data-map-act="${act.act}" data-key="${escape(key)}" aria-label="${escape(act.label)}" title="${escape(act.label)}"${act.on === undefined ? "" : ` aria-pressed="${act.on}"`}>${glyph(act.icon, 18)}</button>`,
-      )
-      .join("");
-    if (html !== this.floated) {
-      this.floated = html;
-      this.acts.innerHTML = html;
-    }
-    this.acts.hidden = false;
+  /** On a wide page's drawing, lays the bar of the one chosen beside it,
+   *  or the card asked for in its place: right of its name, else left of
+   *  its ring, else under it; always inside the drawing, and following it
+   *  as the drawing moves. The bar stands level with the ring, the card
+   *  from a little over it. */
+  private placeSpot(): void {
+    const key = this.selected;
+    if (!key || this.narrow() || this.view !== "map") return;
+    const laid = !this.spotBar.hidden ? this.spotBar : !this.panel.hidden && this.panel.classList.contains("anchored") ? this.panel : null;
+    const at = laid ? this.map.screenOf(key) : null;
+    if (!laid || !at) return;
     const width = this.canvas.clientWidth;
     const height = this.canvas.clientHeight;
-    const size = matchMedia("(pointer: coarse)").matches ? 44 : 36;
-    const gap = 6;
-    const count = this.acts.children.length;
-    const row = count * size + (count - 1) * gap;
-    // Past where its name stands right of its ring, measured from the ring
-    // so the row does not follow the name when the name makes way for it.
-    const right = at[0] + Math.max(RING * this.scale, 14) + 4 + this.map.nameWidth(key) + 14;
-    const beside = right + row <= width - 4;
-    const startX = beside ? right : Math.min(width - row - 4, Math.max(4, at[0] - row / 2));
-    const y = beside ? at[1] - size / 2 : Math.min(height - size - 4, at[1] + Math.max(RING * this.scale, 14) + 10);
-    const boxes = [...this.acts.children].map((button, index) => {
-      const x = startX + index * (size + gap);
-      (button as HTMLElement).style.transform = `translate(${x.toFixed(1)}px, ${Math.max(4, y).toFixed(1)}px)`;
-      return { x, y, width: size, height: size };
-    });
-    this.map.reserve(boxes);
+    const size = { width: laid.offsetWidth, height: laid.offsetHeight };
+    // A hub's name stands a little right of its knot, a machine's right of
+    // its ring (`machines.css`, .mw-hub and .mw-machine).
+    const hub = key.startsWith("hub:");
+    const ring = hub ? 8 : Math.max(RING * this.scale, 8);
+    const gap = 12;
+    const name = this.map.nameWidth(key);
+    const right = at[0] + (name ? (hub ? Math.max(14, 16 * this.scale) : (RING + 15) * this.scale) + name : ring) + gap;
+    const left = at[0] - ring - gap - size.width;
+    let x = right;
+    let y = laid === this.spotBar ? at[1] - size.height / 2 : at[1] - ring - 8;
+    if (right + size.width > width - 8) {
+      if (left >= 8) x = left;
+      else {
+        x = at[0] - size.width / 2;
+        y = at[1] + ring + gap;
+      }
+    }
+    x = Math.max(8, Math.min(width - size.width - 8, x));
+    y = Math.max(8, Math.min(height - size.height - 8, y));
+    laid.style.transform = `translate(${(this.canvas.offsetLeft + x).toFixed(1)}px, ${(this.canvas.offsetTop + y).toFixed(1)}px)`;
   }
 
   /** The menu of a spot, or of the drawing itself, where the right button
-   *  was pressed; on a phone it rises from below. */
-  private openMenu(key: string | null, at: Point, sheet: boolean): void {
+   *  was pressed; on a phone it rises from below, saying whose it is. */
+  private openMenu(key: string | null, at: Point): void {
     const world = this.options.store.world.peek();
     if (!world) return;
     const { words } = this.options;
@@ -2328,63 +1889,30 @@ export class MachinesPage implements Page {
       this.selected = null;
       this.detailsOpen = false;
     } else if (key) this.selected = key;
-    this.menuFor = { key, at, sheet };
-    this.menu.innerHTML = (alone !== null && sheet ? `<p class="map-menu-head">${escape(alone)}</p>` : "") + acts
-      .map(
-        (act) =>
-          `<button class="map-menu-item${act.danger ? " danger" : ""}" type="button" role="menuitem" data-map-act="${act.act}" data-key="${escape(key ?? "")}">${glyph(act.icon, 16)}<span>${escape(act.label)}</span></button>`,
-      )
-      .join("");
-    this.menu.classList.toggle("as-sheet", sheet);
-    this.menu.hidden = false;
-    layerOpened(this.menuLayer);
-    if (!sheet) {
-      const x = Math.min(this.canvas.clientWidth - this.menu.offsetWidth - 8, at[0]);
-      const y = Math.min(this.canvas.clientHeight - this.menu.offsetHeight - 8, at[1]);
-      this.menu.style.transform = `translate(${Math.max(8, x)}px, ${Math.max(8, y)}px)`;
-    } else this.menu.style.transform = "";
-    this.menu.querySelector<HTMLElement>("button")?.focus();
+    this.menuFor = key ?? "";
+    const spot = key ? this.spots(world).get(key) : undefined;
+    const box = this.canvas.getBoundingClientRect();
+    menuOf().openAt(
+      [box.left + at[0], box.top + at[1]],
+      alone ?? (spot ? nameOf(spot) : ""),
+      moreEntries(acts, words, this.options.people),
+      (act) => this.runAct(key ?? "", act),
+      () => {
+        // Closed however it was, the bar of the one chosen is back.
+        if (this.menuFor === null) return;
+        this.menuFor = null;
+        this.redraw();
+        queueMicrotask(() => this.refocus());
+      },
+    );
     this.redraw();
   }
 
   private closeMenu(): void {
-    if (!this.menuFor) return;
+    if (this.menuFor === null) return;
     this.menuFor = null;
-    this.menu.hidden = true;
-    this.menu.innerHTML = "";
-    this.float();
-  }
-
-  private stateOf(online: boolean | null, since: string | null, here: boolean, now: Date): { kind: string; said: string } {
-    const { words } = this.options;
-    const at = since ? this.options.when(new Date(since), now) : null;
-    if (here || online === true) return { kind: "online", said: at ? words.online(at) : words.onlineNow };
-    if (online === false) return { kind: "offline", said: words.offline(at) };
-    return { kind: "unknown", said: words.unknown };
-  }
-
-  /** The head of the panel: a name, grey while it is away, its tags, and
-   *  whether it is online in words. */
-  private panelHead(name: string, tags: string[], state: { kind: string; said: string }): string {
-    return `<header class="panel-head ${state.kind}"><h2 class="panel-title">${escape(name)}</h2>${tags.join("")}<span class="panel-state">${escape(state.said)}</span></header>`;
-  }
-
-  private tag(text: string, kind = "", title = ""): string {
-    return text ? `<span class="tag${kind ? ` ${kind}` : ""}"${title ? ` title="${escape(title)}"` : ""}>${kind === "tag-reach" ? glyph("shield", 12) : ""}${escape(text)}</span>` : "";
-  }
-
-  /** A row of accounts something is given to, each taken back with its
-   *  cross, and the button that gives it to another. */
-  private givenRow(label: string, given: string[], take: (to: string) => string, add: string): string {
-    const { words } = this.options;
-    const chips = given
-      .map((to) => `<span class="chip">${escape(to)}<button class="chip-x" type="button" ${take(to)} aria-label="${escape(words.takeBack(to))}" title="${escape(words.takeBack(to))}">${glyph("close", 12)}</button></span>`)
-      .join("");
-    return `<div class="given-row"><span class="given-label">${escape(label)}</span>${chips}${add}</div>`;
-  }
-
-  private button(act: string, label: string, extra = "", icon = ""): string {
-    return `<button class="text-button quiet-button" type="button" data-act="${act}"${extra}>${icon}<span>${escape(label)}</span></button>`;
+    spotMenu?.close();
+    this.redraw();
   }
 
   /** Shares `machines`, all `login`'s, with the same accounts: those all of
@@ -2402,268 +1930,10 @@ export class MachinesPage implements Page {
     });
   }
 
-  /** What is known of a machine the account may work on. */
-  private machinePanel(machine: Machine, world: WorldNow, now: Date, acts = ""): string {
-    const { words, access } = this.options;
-    const logins = loginsOf(world.accounts);
-    const owner = logins.find((login) => owns(machine, login)) ?? null;
-    const mine = machine.here || !!owner;
-    const ownerName = mine ? null : (logins.map((login) => ownerOf(machine, login)).find(Boolean) ?? null);
-    const viewer = logins.find((login) => machine.on.some((on) => on.hub === login.hub)) ?? null;
-    const shared = !!viewer && !mine && this.sharedWith(viewer, machine.name).includes(viewer.account);
-    const bySuper = !!viewer && !shared && isSuper(world, viewer);
-    const reaching = !mine && logins.some((login) => machineActsFor(world, machine.name, login));
-    const tags = [
-      machine.here ? this.tag(words.here) : "",
-      owner && !machine.here ? this.tag(words.yours, "tag-own") : "",
-      ownerName ? this.tag(bySuper ? words.superInShort(ownerName) : words.sharedInShort(ownerName), "", bySuper ? words.superIn(ownerName) : words.sharedIn(ownerName)) : "",
-      reaching ? this.tag(words.reaching, "tag-reach", words.reachingWhat) : "",
-    ];
-    const facts = "Ok" in machine.facts && machine.facts.Ok ? machine.facts.Ok : null;
-    const route = !machine.here && machine.online === true && machine.through ? words.via(machine.through) : "";
-    const factLine = facts
-      ? [osName(facts.os), facts.arch, `fastctx ${facts.version}`, route].filter(Boolean).map(escape).join(`<span class="sep"></span>`)
-      : "Err" in machine.facts && machine.facts.Err && machine.online !== false
-        ? `<span title="${escape(machine.facts.Err)}">${escape(words.factsUnknown(machine.facts.Err))}</span>`
-        : escape(route);
-    // This computer, hub by hub: how it reaches each, and whose it is there.
-    const hubs = machine.here
-      ? world.nodes.hubs
-          .map((hub) => {
-            const stand = hub.home ? words.registeredUnder(hub.home) : hub.logins.length ? words.onlyLogins(hub.logins.join(words.separator)) : "";
-            return `<li class="panel-hub ${hub.link.kind}"><span class="panel-hub-name">${escape(hub.name)}</span><span${linkWhy(hub.link) ? ` title="${escape(linkWhy(hub.link))}"` : ""}>${escape([linkSaid(hub.link, words), stand].filter(Boolean).join(" "))}</span></li>`;
-          })
-          .join("")
-      : "";
-    // Its owner's own: whom it is shared with, and the rest it sets.
-    const owners = machine.here ? logins.filter((login) => world.nodes.hubs.some((hub) => hub.hub === login.hub && hub.home === login.account)) : owner ? [owner] : [];
-    const sharing = owners
-      .map(
-        (login) =>
-          `<div class="panel-give" data-hub="${escape(login.hub)}" data-account="${escape(login.account)}">${this.givenRow(
-            owners.length > 1 ? `${words.sharedTo} ${login.hubName}` : words.sharedTo,
-            this.sharedWith(login, machine.name),
-            (to) => `data-act="unshare" data-to="${escape(to)}"`,
-            this.button("share", words.share, "", glyph("plus", 13)),
-          )}</div>`,
-      )
-      .join("");
-    const own = owners.length
-      ? `<div class="panel-acts" data-hub="${escape(owners[0]!.hub)}" data-account="${escape(owners[0]!.account)}">${machine.here ? "" : this.button("remove", words.remove, " data-danger", glyph("close", 14))}</div>`
-      : "";
-    // Whom an agent on it assists, ended here as on the agents page.
-    const assisting = owners
-      .map((login) => {
-        const assists = (this.hubOf(login)?.assists ?? []).filter((assist) => assist.machine === machine.name);
-        if (!assists.length) return "";
-        const chips = assists
-          .map((assist) => {
-            const label = `${agentName(assist.agent)} ${assist.account}`;
-            const at = `data-to="${escape(assist.account)}" data-agent="${escape(assist.agent)}"${assist.home ? ` data-home="${escape(assist.home)}"` : ""}${assist.until ? ` data-until="${escape(assist.until)}"` : ""}${assist.daily ? ` data-daily="${assist.daily}"` : ""}${assist.weekly ? ` data-weekly="${assist.weekly}"` : ""}${assist.five_hour ? ` data-five-hour="${assist.five_hour}"` : ""}`;
-            const until = assist.until ? new Date(assist.until) : null;
-            const said = until ? access.moment.until(until, now) : access.when.none;
-            const day = until ? `<span class="assist-tag-until">${glyph("history", 12)}${escape(access.moment.short(until, now))}</span>` : "";
-            return `<span class="chip assist-chip"><button class="assist-tag-open" type="button" data-act="assist-edit" ${at} title="${escape(`${access.changeUntil}\n${said}`)}">${escape(label)}${day}</button><button class="chip-x" type="button" data-act="assist-end" ${at} aria-label="${escape(words.endAssist(assist.account))}" title="${escape(words.endAssist(assist.account))}">${glyph("close", 12)}</button></span>`;
-          })
-          .join("");
-        return `<div class="panel-give" data-hub="${escape(login.hub)}" data-account="${escape(login.account)}"><div class="given-row"><span class="given-label">${escape(words.assisting)}</span>${chips}</div></div>`;
-      })
-      .join("");
-    const note = this.note?.machine === machine.name ? `<p class="machine-note">${escape(this.note.text)}</p>` : "";
-    const state = this.stateOf(machine.online, machine.since, machine.here, now);
-    const direct = this.directSaid(machine, world);
-    return `<article class="panel-machine" data-machine="${escape(machine.name)}">
-      ${this.panelHead(machine.written, tags, state)}
-      ${acts}
-      ${factLine ? `<p class="panel-facts">${factLine}</p>` : ""}
-      ${facts ? `<p class="panel-home"><span>${escape(words.home)}</span><code>${escape(facts.home)}</code></p>` : ""}
-      ${hubs ? `<ul class="panel-hubs">${hubs}</ul>` : ""}
-      ${direct}
-      ${sharing}
-      ${assisting}
-      ${this.present(machine.written, world, viewer)}
-      ${this.agentsLink(machine.written)}
-      ${note}
-      ${own}
-    </article>`;
-  }
-
-  /** A machine's direct links: with whom they are up and how fast, which
-   *  are down and why, and where others connect to it when it takes them. */
-  private directSaid(machine: Machine, world: WorldNow): string {
-    const { words } = this.options;
-    const { nodes, links } = mapOf(world, words);
-    const key = `m:${machine.written}`;
-    const name = (other: string) => nodes.find((node) => node.key === other)?.name ?? other.replace(/^m:/, "");
-    const mine = links.filter((link) => link.a === key || link.b === key).sort((a, b) => Number(b.up) - Number(a.up));
-    const at = nodes.find((node) => node.key === key)?.directAt ?? [];
-    if (!mine.length && !at.length) return "";
-    const said = mine.map((link) => {
-      const peer = name(link.a === key ? link.b : link.a);
-      return link.up ? `<span class="direct-up">${escape(words.directUp(peer, link.ms))}</span>` : `<span class="direct-down">${escape(words.directDown(peer, link.why))}</span>`;
-    });
-    return `<div class="panel-direct"><span class="given-label">${escape(words.directRow)}</span><span class="panel-direct-list">${said.join(`<span class="sep"></span>`)}</span>${at.length ? `<p class="panel-direct-at">${escape(words.takesDirectAt(at.join("、")))}</p>` : ""}</div>`;
-  }
-
-  /** What is known of a machine of another's whose agent assists: whose
-   *  it is, that it is no machine of the account's to work on, and the
-   *  assisting logins, each a way into a conversation. */
-  private assistPanel(assistants: Assistant[], world: WorldNow, now: Date, acts = ""): string {
-    const { words } = this.options;
-    const first = assistants[0]!;
-    const reaching = machineActsFor(world, first.machine, first.login);
-    const tags = [this.tag(words.assistShort(first.owner ?? ""), "tag-assist", words.assistantSaid(first.owner ?? "")), reaching ? this.tag(words.reaching, "tag-reach", words.reachingWhat) : ""];
-    const state = this.stateOf(first.online, first.since, false, now);
-    return `<article class="panel-machine" data-machine="${escape(first.machine)}">
-      ${this.panelHead(words.assistAgents(first.owner ?? ""), tags, state)}
-      ${acts}
-      <p class="panel-said" title="${escape(words.assistantSaid(first.owner ?? ""))}">${glyph("colleague", 14)}<span>${escape(words.assistantNote)}</span></p>
-      ${assistants
-        .filter((one) => one.until)
-        .map((one) => `<p class="panel-said">${glyph("history", 14)}<span>${escape(`${agentName(one.agent)} ${this.options.access.moment.until(new Date(one.until!), now)}`)}</span></p>`)
-        .join("")}
-      ${this.present(first.machine, world, first.login, false)}
-      ${this.agentsLink(first.written)}
-    </article>`;
-  }
-
-  /** A phone signed in to the account, or to `owner`'s for the network's
-   *  administrator: whether it is there, and since when it is signed in. */
-  private phonePanel(member: MemberSeen, owner: string | null, here: boolean, now: Date, acts = ""): string {
-    const { words } = this.options;
-    const state = this.stateOf(member.online, member.since ?? null, here, now);
-    const tags = [this.tag(words.phone, "", words.phoneWhat), owner ? this.tag(words.ownedBy(owner)) : "", here ? this.tag(words.here) : ""];
-    return `<article class="panel-machine" data-device="${escape(member.name)}">
-      ${this.panelHead(member.name, tags, state)}
-      ${acts}
-      <p class="panel-said">${glyph("phone", 14)}<span>${escape(words.phoneSince(this.options.when(new Date(member.added), now)))}</span></p>
-    </article>`;
-  }
-
-  /** The way to the agents on a machine, which have a page of their own. */
-  private agentsLink(machine: string): string {
-    const { words } = this.options;
-    return `<a class="text-button quiet-button panel-agents" href="${link({ kind: "agents", machine })}">${glyph("agents", 14)}<span>${escape(words.hosts)}</span></a>`;
-  }
-
-  /** What is known of a hub: how this computer reaches it, the account's
-   *  level there, who its super administrator is, and its machines. */
-  private hubPanel(hub: HubAccounts, world: WorldNow, acts = ""): string {
-    const { words } = this.options;
-    const logins = loginsOf(world.accounts).filter((login) => login.hub === hub.hub);
-    const state = { kind: hub.link.kind === "online" ? "online" : "offline", said: linkSaid(hub.link, words) || words.hubOff };
-    const rows = logins
-      .map((login) => {
-        const me = hub.accounts.find((account) => account.name === login.account);
-        const admin = superOf(world, login);
-        const top = me?.level === "super";
-        return `<li class="panel-login" data-hub="${escape(login.hub)}" data-account="${escape(login.account)}">
-          <span class="panel-login-name">${glyph("person", 14)}<span>${escape(login.account)}</span>${this.tag(top ? words.levelSuper : words.levelMember, top ? "tag-own" : "")}</span>
-          ${!top && admin ? `<span class="panel-said" title="${escape(words.superNote(admin))}">${glyph("shield", 13)}<span>${escape(words.superShort(admin))}</span></span>` : ""}
-          <span class="panel-login-acts">${this.button("invite", words.inviteDevice, "", glyph("plus", 13))}</span>
-        </li>`;
-      })
-      .join("");
-    const machines = hub.members.filter((member) => member.kind === "computer" && member.home).length;
-    return `<article class="panel-hub-card">
-      <header class="panel-head ${state.kind}"><span class="knot" aria-hidden="true"></span><h2 class="panel-title">${escape(words.hubTitle(hub.name))}</h2><span class="panel-state">${escape(state.said)}</span></header>
-      <p class="panel-what">${escape(words.hubIs)}</p>
-      ${acts}
-      <p class="panel-facts">${escape(words.hubMachines(machines))}</p>
-      <ul class="panel-logins">${rows}</ul>
-      ${this.superLogin(hub, world) ? this.moving.section(hub.hub, world.nodes.machine ?? null) : ""}
-    </article>`;
-  }
-
-  /** Who is at work on a machine and what runs there, as `login` sees it;
-   *  nothing when no one is. */
-  private present(machine: string, world: WorldNow, login: Login | null, counted = true): string {
-    const { words } = this.options;
-    const group = login ? (groupsOf(world).find((one) => sameLogin(one.login, login)) ?? null) : null;
-    const residents = residentsOf(world).filter(
-      (r) => r.about.machine === machine && (r.now?.activity === "busy" || r.now?.waiting_for_user) && (!group || residentIn(world, group, r)),
-    );
-    // Where agents assist the user, what runs there is its owner's, not counted.
-    const jobs = counted ? jobsOf(world).filter((job) => job.machine === machine) : [];
-    const agents = residents.length
-      ? `<ul class="machine-agents">${residents
-          .map(
-            (r) =>
-              `<li><a href="${talkLink({ resident: r.about.id, machine: r.about.machine })}"><span class="mark ${r.now?.waiting_for_user ? "mark-ask" : r.now?.activity === "busy" ? "mark-busy" : "mark-idle"}" aria-hidden="true"></span>${escape([agentName(r.about.host.agent), titleOf(r)].filter(Boolean).join(" "))}${r.town ? `<span class="tag">${escape(r.town)}</span>` : ""}</a></li>`,
-          )
-          .join("")}</ul>`
-      : "";
-    return `${agents}${jobs.length ? `<p class="machine-jobs">${escape(words.jobs(jobs.length))}</p>` : ""}`;
-  }
-
 }
 
 /** The person a key on the drawing stands for: their "⋯". */
 function personOf(key: string): { hub: string; account: string } | null {
   const found = key.match(/^who:([^:]+):(.+)$/);
   return found ? { hub: found[1]!, account: found[2]! } : null;
-}
-
-/** Why a hub is not reached, in the kernel's words, for the hover. */
-export function linkWhy(link: LinkState): string {
-  return link.kind === "connecting" ? (link.last_error ?? "") : link.kind === "stopped" ? link.reason : "";
-}
-
-/** How this computer reaches a hub, in words. */
-export function linkSaid(link: LinkState, words: MachinesWords): string {
-  switch (link.kind) {
-    case "online":
-      return link.through ? words.linkVia(link.through, link.hub) : words.linkOnline(link.hub);
-    case "connecting":
-      return words.linkConnecting(link.last_error);
-    case "stopped":
-      return link.dissolved ? words.linkDissolved : words.linkStopped(link.reason);
-    case "alone":
-      return "";
-  }
-}
-
-/** An address as the hub or a network card gives it, without a port. */
-function hostOf(address: string): string {
-  const bracketed = /^\[([^\]]+)\](?::\d+)?$/.exec(address);
-  if (bracketed) return bracketed[1]!;
-  return /^[^:]+:\d+$/.test(address) ? address.slice(0, address.lastIndexOf(":")) : address;
-}
-
-/** A machine others connect to directly, drawn small for a card: its ring
- *  in the middle with its line to the hub's knot above, and two machines
- *  beside it with theirs; with direct connections, straight clay lines from
- *  the two to it. */
-function directPicture(direct: boolean): string {
-  const random = seeded(`direct-picture:${direct}`);
-  const knot: [number, number] = [66, 7];
-  const middle: [number, number] = [66, 30];
-  const sides: [number, number][] = [
-    [18, 26],
-    [114, 26],
-  ];
-  const rings = [circle(middle, 8, 1.5, random), ...sides.map((side) => circle(side, 6, 1.3, random))];
-  const bowed = (from: [number, number], reach: number) => {
-    const dx = knot[0] - from[0];
-    const dy = knot[1] - from[1];
-    const length = Math.hypot(dx, dy);
-    const start: [number, number] = [from[0] + (dx / length) * (reach + 2), from[1] + (dy / length) * (reach + 2)];
-    const end: [number, number] = [knot[0] - (dx / length) * 5, knot[1] - (dy / length) * 5];
-    return outline([start, [(start[0] + end[0]) / 2 + 2, (start[1] + end[1]) / 2 - 2], end], 1.1, random, { pressure: 0.3, taper: 0.1 });
-  };
-  const lines = [bowed(middle, 8), ...sides.map((side) => bowed(side, 6))];
-  const straight = direct ? sides.map((side) => ruled([side[0] + (side[0] < 66 ? 8 : -8), side[1] + 1], [middle[0] + (side[0] < 66 ? -10 : 10), middle[1]], 1.1, random)) : [];
-  return `<svg class="map-card-picture" viewBox="0 0 132 40" aria-hidden="true"><g class="ink graphite" filter="url(#pen-marker)"><path d="${circle(knot, 3.5, 1.2, random)}"/><path d="${blot(knot, 1.5, random)}"/>${[...rings, ...lines].map((d) => `<path d="${d}"/>`).join("")}</g><g class="ink clay" filter="url(#pen-marker)">${straight.map((d) => `<path d="${d}"/>`).join("")}</g></svg>`;
-}
-
-/** How many machines a change of their ways is sent to at once. */
-const WAYS_AT_ONCE = 6;
-
-/** Runs `each` over `items`, at most `width` at a time. */
-async function inTurns<T>(items: T[], width: number, each: (item: T) => Promise<void>): Promise<void> {
-  let next = 0;
-  const lane = async (): Promise<void> => {
-    while (next < items.length) await each(items[next++]!);
-  };
-  await Promise.all(Array.from({ length: Math.min(width, items.length) }, lane));
 }

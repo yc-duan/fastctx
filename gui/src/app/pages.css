@@ -10,22 +10,101 @@
   height: 100%;
 }
 
+/* The settings: a row of tabs that stays where it is, and under it the
+   sheet of the one chosen, the tab and the sheet one block of fill. */
+.st-tabs {
+  flex: none;
+  display: flex;
+  gap: 2px;
+  width: var(--board);
+  margin: var(--space-2) auto 0;
+}
+
+.st-tab {
+  min-height: 38px;
+  padding: 0 var(--space-5);
+  border-radius: var(--radius-m) var(--radius-m) 0 0;
+  color: var(--text-3);
+  font-size: var(--size-text);
+  transition: color var(--hover) var(--ease);
+}
+
+.st-tab:hover {
+  color: var(--text);
+}
+
+.st-tab[aria-selected="true"] {
+  background: var(--fill);
+  color: var(--text-strong);
+}
+
+.st-tab:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: -2px;
+}
+
 .settings {
   flex: 1;
+  min-height: 0;
 }
 
-.settings > * {
+.st-sheet {
   width: var(--board);
-  margin-left: auto;
-  margin-right: auto;
+  margin: 0 auto var(--space-8);
+  padding: var(--space-5) var(--space-6) var(--space-6);
+  border-radius: var(--radius-l);
+  background: var(--fill);
 }
 
-.settings > .home-section {
+/* The room under the tabs: the sheet stands in it as tall as what it
+   holds, no taller than the room, and scrolls inside itself; the tabs and
+   what is above them stay where they are. */
+.st-room {
+  display: flex;
+  flex-direction: column;
+  padding-bottom: calc(var(--space-6) + var(--safe-bottom));
+}
+
+.st-room > .st-sheet {
+  flex: 0 1 auto;
+  margin-bottom: 0;
+}
+
+.settings.st-room::after {
+  content: none;
+}
+
+/* Where there is no keyboard, its keys are not offered. */
+@media (hover: none) and (pointer: coarse) {
+  .st-tab[data-tab="keys"] {
+    display: none;
+  }
+}
+
+.st-sheet.first {
+  border-top-left-radius: 0;
+}
+
+.st-pane[hidden] {
+  display: none;
+}
+
+/* Taking Fastctx off this computer: last, apart, a line of its own at the
+   start of the sheet's grid of rows. */
+.st-removal {
+  grid-column: 1 / -1;
+  display: flex;
   margin-top: var(--space-6);
 }
 
-.settings > .home-section:last-child {
-  padding-bottom: var(--space-12);
+@media (max-width: 600px) {
+  .st-tab {
+    padding: 0 var(--space-4);
+  }
+
+  .st-sheet {
+    padding: var(--space-4);
+  }
 }
 
 .facts {
@@ -55,18 +134,13 @@
   grid-column: 1 / -1;
 }
 
-/* This computer's name: the way to its page, then renaming it; the field
-   takes the row while it is renamed. */
+/* This computer's name, the way to its page; the field takes the row while
+   it is renamed. */
 .settings-name-value {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 2px var(--space-2);
-}
-
-.settings-name-value .quiet-button {
-  height: 24px;
-  padding: 0 var(--space-2);
 }
 
 .settings-name + .facts {
@@ -100,7 +174,7 @@
   color: var(--text-2);
   font-size: var(--size-text);
   text-decoration: none;
-  transition: color var(--hover) ease, background-color var(--hover) ease;
+  transition: color var(--hover) var(--ease), background-color var(--hover) var(--ease);
 }
 
 .machine-agents a:hover {
@@ -113,7 +187,7 @@
   padding-left: calc(8px + 2px + var(--space-2) - var(--space-3));
   --shown: 0;
   opacity: var(--shown);
-  transition: --shown var(--hover) ease;
+  transition: --shown var(--hover) var(--ease);
 }
 
 .machine-acts:focus-within {
@@ -254,7 +328,7 @@
   background: var(--fill);
   text-align: left;
   translate: var(--slide) var(--lift);
-  transition: background-color var(--hover) ease, --lift var(--hover) ease, box-shadow var(--hover) ease;
+  transition: background-color var(--hover) var(--ease), --lift var(--hover) var(--ease), box-shadow var(--hover) var(--ease);
 }
 
 .welcome-way:hover,
@@ -519,7 +593,7 @@
   margin-left: auto;
   --shown: 0;
   opacity: var(--shown);
-  transition: --shown var(--hover) ease;
+  transition: --shown var(--hover) var(--ease);
 }
 
 .host-home:hover .home-hide,
@@ -765,7 +839,7 @@
   border-radius: var(--radius-s);
   color: inherit;
   text-decoration: none;
-  transition: background-color var(--hover) ease;
+  transition: background-color var(--hover) var(--ease);
 }
 
 .canon-open:hover {
@@ -858,7 +932,7 @@ a.details-job {
   height: 4px;
   border-radius: 2px;
   background: var(--fill-strong);
-  transition: background-color var(--hover) ease;
+  transition: background-color var(--hover) var(--ease);
 }
 
 .password-meter[data-strength="1"] i:nth-child(-n + 1),
@@ -893,7 +967,7 @@ a.details-job {
   background: var(--accent-wash);
   color: var(--text-strong);
   font-size: var(--size-text);
-  transition: background-color var(--hover) ease;
+  transition: background-color var(--hover) var(--ease);
 }
 
 .scan-code:hover {
@@ -1014,7 +1088,7 @@ a.details-job {
   color: var(--text-2);
   font-size: var(--size-text);
   line-height: var(--leading-ui);
-  transition: color var(--hover) ease, background-color var(--hover) ease;
+  transition: color var(--hover) var(--ease), background-color var(--hover) var(--ease);
 }
 
 .segment:hover:not(.chosen) {
@@ -1063,7 +1137,7 @@ a.details-job {
   background: var(--fill);
   color: var(--text-2);
   font-size: var(--size-text);
-  transition: color var(--hover) ease, background-color var(--hover) ease;
+  transition: color var(--hover) var(--ease), background-color var(--hover) var(--ease);
 }
 
 .pick-file:hover {
@@ -1231,19 +1305,59 @@ a.details-job {
   }
 }
 
-/* This computer's facts in settings: one column of labels for every row of
-   the group, whichever part of the page draws it, the same space between
-   all of them, and what a row says of itself beside its value. */
-.settings-device .facts + .facts {
-  margin-top: var(--space-2);
+/* This computer's facts in settings: one grid for every row of the group,
+   whichever part of the page draws it. A label, a short value, and the one
+   thing to do with it at the row's end, so the actions stand in a column;
+   what a row says of itself sits beside its value, the rest is said when
+   it is pointed at. */
+.settings-device {
+  display: grid;
+  grid-template-columns: minmax(6.5em, max-content) minmax(0, 1fr) auto;
+  column-gap: var(--space-4);
+  align-items: start;
+}
+
+.settings-device > .section-title {
+  grid-column: 1 / -1;
+}
+
+.settings-device > .facts:not([hidden]) {
+  display: contents;
+}
+
+.settings-device .facts dt {
+  grid-column: 1;
+  display: flex;
+  align-items: center;
+  min-height: 40px;
 }
 
 .settings-device .facts dd {
+  grid-column: 2;
   display: flex;
   flex-wrap: wrap;
-  align-items: baseline;
+  align-items: center;
   column-gap: var(--space-3);
   row-gap: 2px;
+  min-height: 40px;
+}
+
+.settings-device .facts dd.sd-act {
+  grid-column: 3;
+  justify-content: flex-end;
+}
+
+/* Every row's action the same button, its words ending on one line. */
+.settings-device .sd-act .text-button {
+  height: 28px;
+  min-height: 0;
+  margin: 0;
+  padding: 0 var(--space-2);
+}
+
+/* A field being filled in takes the value and the action's room. */
+.settings-device .facts dd.sd-wide {
+  grid-column: 2 / -1;
 }
 
 .settings-device .facts dd > .settings-said {
@@ -1254,6 +1368,89 @@ a.details-job {
 .settings-device .facts dd > .settings-notes,
 .settings-device .facts dd > .settings-steps {
   flex: 1 1 100%;
+}
+
+.settings-device .facts .quiet {
+  grid-column: 1 / -1;
+}
+
+/* On a phone each label stands over its value, as the appearance rows do
+   there, the action still at the value's end. */
+@media (max-width: 760px) {
+  .settings-device {
+    grid-template-columns: minmax(0, 1fr) auto;
+    column-gap: var(--space-3);
+  }
+
+  .settings-device .facts dt {
+    grid-column: 1 / -1;
+    min-height: 0;
+    padding-top: var(--space-3);
+  }
+
+  .settings-device .facts dt:empty {
+    display: none;
+  }
+
+  .settings-device .facts dd {
+    grid-column: 1;
+    min-height: 36px;
+  }
+
+  .settings-device .facts dd.sd-act {
+    grid-column: 2;
+  }
+}
+
+/* A finger's action is at least its size, and its value as tall, so the
+   two stand level. */
+@media (hover: none) and (pointer: coarse) {
+  .settings-device .facts dd {
+    min-height: 44px;
+  }
+
+  .settings-device .sd-act .text-button {
+    height: 44px;
+    padding: 0 var(--space-3);
+    margin-right: calc(-1 * var(--space-3));
+  }
+}
+
+/* A hub: the line drawn to it, its name, a state only while it is not
+   connected, and the accounts logged in to it. */
+.sd-line {
+  flex: none;
+  width: 64px;
+  height: 22px;
+  overflow: visible;
+}
+
+.sd-hub-name {
+  color: var(--text);
+}
+
+.sd-state {
+  color: var(--text-3);
+}
+
+.sd-login {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 26px;
+  padding: 0 10px 0 8px;
+  border-radius: var(--radius-full);
+  background: var(--fill);
+  color: var(--text-2);
+}
+
+.sd-login .glyph {
+  flex: none;
+  color: var(--text-3);
+}
+
+.sd-version {
+  font-variant-numeric: tabular-nums;
 }
 
 .settings-link {
@@ -1272,10 +1469,6 @@ a.details-job {
 .settings-link:hover {
   text-decoration: underline;
   text-underline-offset: 3px;
-}
-
-.settings-device .facts {
-  align-items: baseline;
 }
 
 /* In: the drawing, the line that says where, who, and the way in, held

@@ -1,0 +1,760 @@
+/* The panel beside a conversation (`panel.ts`) and what it holds: the
+   goal's bar above the input (`goal-bar.ts`), the goal's page
+   (`goal-page.ts`), who works with the conversation (`collab-page.ts`).
+   Every page is set in one voice: the reading face at the text size, in
+   the text's ink, the semibold face for what heads a part; the accent is
+   kept for the marks a hand adds and the one act that matters. */
+
+.sp-panel {
+  position: relative;
+  display: flex;
+  justify-content: flex-end;
+  min-width: 0;
+  background: var(--bg-elevated);
+  color: var(--text);
+  font-family: var(--font-reading);
+  font-size: var(--size-text);
+}
+
+.sp-panel[hidden] {
+  display: none;
+}
+
+/* The sheet keeps its width while the panel widens over it, so nothing in
+   it is set again as it comes: it slides in from the right, its words
+   coming up as it does. */
+.sp-sheet {
+  position: relative;
+  flex: none;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr);
+  width: var(--side-width);
+  min-height: 0;
+  opacity: var(--sp-open);
+}
+
+.sp-margin {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 4px;
+  pointer-events: none;
+}
+
+.sp-margin-svg {
+  display: block;
+  width: 4px;
+  height: 100%;
+}
+
+/* The pages' names; their row ends where the switch stands. */
+.sp-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-height: 48px;
+  padding: 0 calc(36px + var(--space-3) + var(--space-2)) 0 var(--space-5);
+}
+
+.sp-tabs {
+  flex: 1;
+  display: flex;
+  gap: 2px;
+  min-width: 0;
+}
+
+/* A page's name; the one shown is in the semibold face on a field's
+   shade. Each name keeps the width of its semibold self, so choosing a
+   page moves nothing beside it. */
+.sp-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 var(--space-3);
+  border-radius: var(--radius-full);
+  color: var(--text-2);
+  font-size: var(--size-text);
+  white-space: nowrap;
+  transition: background-color var(--hover) var(--ease), color var(--hover) var(--ease);
+}
+
+.sp-tab > span:first-child {
+  display: inline-grid;
+}
+
+.sp-tab > span:first-child::after {
+  content: attr(data-label);
+  height: 0;
+  overflow: hidden;
+  visibility: hidden;
+  font-family: var(--font-emphasis);
+}
+
+.sp-tab:hover {
+  background: var(--hairline);
+  color: var(--text);
+}
+
+.sp-tab.current {
+  background: var(--fill);
+  color: var(--text);
+  font-family: var(--font-emphasis);
+}
+
+.sp-dot {
+  display: none;
+  width: 6px;
+  height: 6px;
+  border-radius: var(--radius-full);
+  background: var(--accent);
+}
+
+.sp-tab.fresh .sp-dot {
+  display: block;
+}
+
+.sp-body {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  min-height: 0;
+}
+
+.sp-page {
+  grid-area: 1 / 1;
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  overflow-wrap: anywhere;
+  padding: var(--space-2) var(--space-6) var(--space-12);
+  line-height: var(--leading-prose);
+}
+
+.sp-page[hidden] {
+  display: none;
+}
+
+/* Set into a conversation's page: the head across the page, and under it
+   the conversation and the panel side by side. --sp-open goes from nothing
+   to one as the panel opens: the panel widens by it from the right, the
+   conversation giving way beside it, and back as it shuts. */
+@property --sp-open {
+  syntax: "<number>";
+  inherits: true;
+  initial-value: 0;
+}
+
+.conversation-page.sp-host {
+  --sp-open: 0;
+  transition: --sp-open var(--settle) var(--fold-easing);
+}
+
+.conversation-page.sp-host.sp-shown {
+  --sp-open: 1;
+}
+
+.sp-split {
+  position: relative;
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+
+.talk-main {
+  position: relative;
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.sp-split > .sp-panel:not(.sp-over) {
+  flex: none;
+  width: calc(var(--side-width) * var(--sp-open));
+  overflow: hidden;
+}
+
+/* The switch, in one place at the top right under the head: over the
+   conversation while the panel is shut, at the end of its names while it
+   is open; a dot while something new waits in it. */
+.sp-toggle {
+  position: absolute;
+  z-index: 41;
+  top: 6px;
+  right: var(--space-3);
+  background: var(--bg);
+}
+
+.sp-toggle[hidden] {
+  display: none;
+}
+
+/* A phone has no room beside the words: shut, the panel is reached from the
+   head's "⋯", and its switch shows only to put it away. */
+@media (max-width: 760px) {
+  .sp-toggle[aria-pressed="false"] {
+    display: none;
+  }
+}
+
+.sp-toggle[aria-pressed="true"] {
+  background: var(--fill);
+  color: var(--text);
+}
+
+.sp-toggle-dot {
+  position: absolute;
+  top: 5px;
+  right: 5px;
+  display: none;
+  width: 6px;
+  height: 6px;
+  border-radius: var(--radius-full);
+  background: var(--accent);
+}
+
+.sp-toggle.news .sp-toggle-dot {
+  display: block;
+}
+
+/* On a phone it lies over the conversation under the head, coming up as
+   it opens and going down as it shuts. */
+.sp-panel.sp-over {
+  position: absolute;
+  inset: 0;
+  z-index: 40;
+  padding-bottom: var(--safe-bottom);
+  opacity: var(--sp-open);
+  translate: 0 calc((1 - var(--sp-open)) * 24px);
+}
+
+.sp-panel.sp-over > .sp-sheet {
+  width: 100%;
+  opacity: 1;
+}
+
+.sp-panel.sp-over .sp-margin {
+  display: none;
+}
+
+/* The goal's bar, among the words waiting above the input. */
+.gb-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  max-width: var(--column);
+  min-height: 38px;
+  margin: 0 auto var(--space-2);
+  padding: 0 var(--space-1) 0 var(--space-3);
+  box-sizing: border-box;
+  border-radius: var(--radius-m);
+  background: var(--fill);
+  font-size: var(--size-text);
+}
+
+.gb-bar[hidden] {
+  display: none;
+}
+
+.gb-mark {
+  flex: none;
+  display: grid;
+  place-items: center;
+  color: var(--text-2);
+}
+
+.gb-bar[data-status="blocked"] .gb-mark {
+  color: var(--caution);
+}
+
+.gb-bar[data-status="complete"] .gb-mark {
+  color: var(--accent);
+}
+
+.gb-state {
+  flex: none;
+  color: var(--text);
+  font-family: var(--font-emphasis);
+  white-space: nowrap;
+}
+
+.gb-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--text);
+}
+
+.gb-when {
+  flex: none;
+  color: var(--text-2);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.gb-acts {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.gb-act {
+  width: 28px;
+  height: 28px;
+  color: var(--text-3);
+}
+
+.gb-act:hover {
+  background: var(--hairline);
+  color: var(--text);
+}
+
+.gb-undo {
+  height: 28px;
+  padding: 0 var(--space-3);
+  border-radius: var(--radius-full);
+  color: var(--text);
+  font-size: var(--size-text);
+  transition: background-color var(--hover) var(--ease);
+}
+
+.gb-undo:hover {
+  background: var(--hairline);
+}
+
+/* On a phone the bar is one press: it opens the goal, where its acts are.
+   A goal going on is its mark and its words. */
+@media (max-width: 760px) {
+  .gb-bar:not([data-status="paused"]) .gb-when,
+  .gb-bar .gb-act:not([data-act="expand"]),
+  .gb-bar[data-status="active"] .gb-state {
+    display: none;
+  }
+}
+
+@media (pointer: coarse) {
+  .gb-bar {
+    min-height: 44px;
+  }
+
+  .gb-act,
+  .gb-undo {
+    min-width: 44px;
+    min-height: 44px;
+  }
+}
+
+/* The goal's page. */
+.gp-state {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 36px;
+  margin: 0 0 var(--space-3);
+}
+
+.gp-mark {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 16px;
+  height: 18px;
+}
+
+.gp-mark-svg {
+  display: block;
+  overflow: visible;
+}
+
+/* The drop of ink breathes while the goal is worked at. */
+.gp-state[data-status="active"] .gp-mark-svg {
+  transform: scale(var(--breath-scale));
+  opacity: var(--breath-alpha);
+  animation: ink-breathe var(--breath-slow) var(--ease-in-out) infinite;
+}
+
+:root[data-reduced] .gp-state .gp-mark-svg {
+  animation: none;
+}
+
+.gp-word {
+  font-family: var(--font-emphasis);
+}
+
+.gp-when {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-variant-numeric: tabular-nums;
+}
+
+.gp-acts {
+  flex: none;
+  display: flex;
+  gap: 2px;
+  margin-left: auto;
+}
+
+.gp-act {
+  display: inline-grid;
+  place-items: center;
+  min-height: 32px;
+  padding: 0 var(--space-3);
+  border-radius: var(--radius-full);
+  color: var(--text-2);
+  font-size: var(--size-text);
+  transition: background-color var(--hover) var(--ease), color var(--hover) var(--ease);
+}
+
+.gp-act:hover {
+  background: var(--fill);
+  color: var(--text);
+}
+
+/* The user's words, edited where they stand: a solid field that keeps its
+   shade whether pointed at, pressed or typed in. */
+.gp-field {
+  display: block;
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 5.5em;
+  margin: 0;
+  padding: var(--space-3) var(--space-4);
+  border: 0;
+  border-radius: var(--radius-m);
+  outline: none;
+  resize: none;
+  overflow: hidden;
+  background: var(--field);
+  color: var(--text);
+  font-family: var(--font-reading);
+  font-size: var(--size-text);
+  line-height: var(--leading-prose);
+}
+
+.gp-field::placeholder {
+  color: var(--text-3);
+}
+
+.gp-save {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: var(--space-2);
+}
+
+.gp-save[hidden] {
+  display: none;
+}
+
+.gp-main {
+  height: 34px;
+  padding: 0 var(--space-5);
+  border-radius: var(--radius-full);
+  background: var(--accent);
+  color: var(--bg);
+  font-size: var(--size-text);
+  scale: var(--press);
+  transition: background-color var(--hover) var(--ease), --press var(--settle) var(--spring);
+}
+
+.gp-main:hover {
+  background: var(--accent-bright);
+}
+
+.gp-main:active {
+  --press: 0.97;
+}
+
+.gp-part {
+  margin-top: var(--space-8);
+}
+
+.gp-label {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-3);
+  margin: 0 0 var(--space-2);
+  font-family: var(--font-emphasis);
+  font-weight: 400;
+  font-size: var(--size-text);
+  line-height: var(--leading-ui);
+  color: var(--text);
+}
+
+.gp-label-when {
+  font-family: var(--font-reading);
+}
+
+.gp-statement > :first-child {
+  margin-top: 0;
+}
+
+.gp-statement > :last-child {
+  margin-bottom: 0;
+}
+
+.gp-said {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  column-gap: var(--space-4);
+  row-gap: var(--space-2);
+  margin: 0;
+}
+
+.gp-said dt {
+  font-family: var(--font-emphasis);
+}
+
+.gp-said dd {
+  margin: 0;
+}
+
+@media (pointer: coarse) {
+  .gp-act,
+  .gp-main {
+    min-height: 44px;
+  }
+}
+
+/* Who works with the conversation, as a tree drawn by hand. */
+.cp-tree {
+  position: relative;
+  margin: var(--space-1) calc(var(--space-2) * -1) 0;
+}
+
+.cp-ink {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.cp-ink-svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+
+.cp-node {
+  position: relative;
+  display: grid;
+  grid-template-columns: 26px minmax(0, 1fr);
+  column-gap: var(--space-3);
+  align-items: start;
+  box-sizing: border-box;
+  width: 100%;
+  padding: 7px var(--space-2) 7px calc(var(--space-2) + var(--depth) * 30px);
+  border-radius: var(--radius-m);
+  color: var(--text);
+  font: inherit;
+  line-height: 26px;
+  text-align: left;
+  transition: background-color var(--hover) var(--ease);
+}
+
+button.cp-node:hover {
+  background: var(--fill);
+}
+
+.cp-seal {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border-radius: var(--radius-full);
+  background: var(--fill-strong);
+  color: var(--text-2);
+}
+
+.cp-lines {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.cp-top {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.cp-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-family: var(--font-emphasis);
+}
+
+.cp-meta {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--text-2);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.cp-meta .glyph {
+  margin-right: -4px;
+}
+
+.cp-end {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  color: var(--text-2);
+}
+
+.cp-node.failed .cp-end {
+  color: var(--wrong);
+}
+
+.cp-pulse {
+  width: 7px;
+  height: 7px;
+  border-radius: var(--radius-full);
+  background: var(--text-2);
+  transform: scale(var(--breath-scale));
+  opacity: var(--breath-alpha);
+  animation: pulse var(--breath) var(--ease-in-out) infinite;
+}
+
+:root[data-reduced] .cp-pulse {
+  animation: none;
+}
+
+.cp-stopped {
+  width: 10px;
+  height: 1.5px;
+  border-radius: 1px;
+  background: var(--text-2);
+}
+
+.cp-task {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.cp-empty {
+  margin: var(--space-3) 0 0 calc(var(--space-2) + 26px + var(--space-3));
+  color: var(--text-2);
+}
+
+@media (pointer: coarse) {
+  .cp-node {
+    min-height: 44px;
+  }
+}
+
+/* One that works with the conversation, opened in the page: its own
+   conversation fills the page under a head leading back to the tree. */
+.cp-page.cp-chatting {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr);
+  padding: 0;
+  overflow: hidden;
+}
+
+.cp-tree[hidden],
+.cp-chat[hidden] {
+  display: none;
+}
+
+.cp-chat {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  min-height: 0;
+}
+
+.cp-chat-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 44px;
+  padding: 0 var(--space-4) 0 var(--space-3);
+}
+
+.cp-back,
+.cp-chat-act {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  height: 32px;
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-full);
+  color: var(--text-2);
+  font-size: var(--size-text);
+  white-space: nowrap;
+  transition: background-color var(--hover) var(--ease), color var(--hover) var(--ease);
+}
+
+.cp-chat-act {
+  padding: 0 var(--space-3);
+}
+
+.cp-back:hover,
+.cp-chat-act:hover {
+  background: var(--fill);
+  color: var(--text);
+}
+
+.cp-chat-who {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.cp-chat-body {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.cp-chat-body > * {
+  flex: 1;
+  min-height: 0;
+}
+
+/* What one of the host's agents did fills the page rather than sitting
+   in a box of its own. */
+.cp-chat-body > .agent-box {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto auto;
+  margin: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.cp-chat-body > .agent-box > .agent-scroll {
+  max-height: none;
+}
+
+@media (pointer: coarse) {
+  .cp-back,
+  .cp-chat-act {
+    min-height: 44px;
+  }
+}
+
+/* A colleague's own conversation in the panel: its page, under the
+   panel's head rather than its own. */
+.cp-chat-body > .conversation-page {
+  height: 100%;
+  --gutter: var(--space-4);
+}

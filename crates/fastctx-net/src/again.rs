@@ -28,9 +28,21 @@ pub fn backoff(failures: u32) -> Duration {
     if failures <= 1 {
         return Duration::ZERO;
     }
-    let ceiling_ms = 1000_u64.saturating_mul(1 << (failures - 2).min(6)).min(LONGEST.as_millis() as u64);
+    let ceiling_ms = ceiling(failures);
     let random = u64::from_le_bytes(crate::sign::random::<8>().unwrap_or([0; 8]));
     Duration::from_millis(250 + random % ceiling_ms.saturating_sub(250).max(1))
+}
+
+/// Whether this retry's upper bound has reached the common maximum.
+pub fn at_ceiling(failures: u32) -> bool {
+    ceiling(failures) == LONGEST.as_millis() as u64
+}
+
+fn ceiling(failures: u32) -> u64 {
+    if failures <= 1 {
+        return 0;
+    }
+    1000_u64.saturating_mul(1 << (failures - 2).min(6)).min(LONGEST.as_millis() as u64)
 }
 
 /// Resolves once a way opens that was not there when this was asked:

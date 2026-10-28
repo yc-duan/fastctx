@@ -9,7 +9,8 @@
   height: 100%;
 }
 
-.conversation-page > .page-head {
+.conversation-page > .page-head,
+.talk-main > .page-head {
   position: relative;
   z-index: 2;
 }
@@ -18,7 +19,8 @@
    fades out beneath the composer; the fade grows in once the conversation
    has left its top. A shade over the words, not a mask on them: masked,
    the whole conversation would lose its subpixel smoothing on Windows. */
-.conversation-page > .page-head::after {
+.conversation-page > .page-head::after,
+.talk-main > .page-head::after {
   content: "";
   position: absolute;
   left: 0;
@@ -27,11 +29,20 @@
   height: var(--edge);
   background: linear-gradient(to bottom, var(--bg), transparent);
   pointer-events: none;
-  transition: --edge var(--hover) ease;
+  transition: --edge var(--hover) var(--ease);
 }
 
-.conversation-page.scrolled > .page-head::after {
+.conversation-page.scrolled > .page-head::after,
+.conversation-page.scrolled > .talk-main > .page-head::after {
   --edge: var(--space-6);
+}
+
+/* Beside an open panel the fade is the conversation's alone, its edge
+   following the panel's as it opens. */
+@media (min-width: 761px) {
+  .conversation-page.sp-host > .page-head::after {
+    right: calc(var(--side-width) * var(--sp-open));
+  }
 }
 
 .talk-scroller {
@@ -64,7 +75,7 @@
   border-radius: var(--radius-full);
   background: var(--fill-strong);
   color: var(--text-2);
-  transition: color var(--hover) ease;
+  transition: color var(--hover) var(--ease);
 }
 
 .who-seal.gone {
@@ -141,8 +152,8 @@
 }
 
 /* On a phone the line keeps the seal, the title, the machines as a mark and
-   a count, and the "⋯"; where it lives, finding and the details are a
-   press of the seal or the "⋯" away. */
+   a count, and the "⋯"; where it lives, finding, the choice of view and the
+   details are a press of the seal or the "⋯" away. */
 @media (max-width: 760px) {
   .who {
     gap: 10px;
@@ -171,7 +182,7 @@
     font-variant-numeric: tabular-nums;
   }
 
-  .page-head-actions:has(.talk-menu-toggle) .find-toggle {
+  .page-head-actions:has(.talk-menu-toggle) :is(.find-toggle, .view-steps) {
     display: none;
   }
 }
@@ -207,8 +218,8 @@
   transform: translateX(-50%);
   opacity: var(--shown);
   translate: var(--slide) var(--lift);
-  animation: to-latest-in var(--enter) ease-out;
-  transition: color var(--hover) ease;
+  animation: to-latest-in var(--enter) var(--ease-out);
+  transition: color var(--hover) var(--ease);
 }
 
 .to-latest[hidden] {
@@ -265,7 +276,7 @@
   font: inherit;
   font-size: var(--size-text);
   cursor: pointer;
-  transition: color var(--hover) ease, background-color var(--hover) ease;
+  transition: color var(--hover) var(--ease), background-color var(--hover) var(--ease);
 }
 
 .steps-back-go .glyph {
@@ -442,7 +453,7 @@
   color: var(--text-2);
   font-size: var(--body-size);
   white-space: nowrap;
-  transition: color var(--hover) ease, background-color var(--hover) ease;
+  transition: color var(--hover) var(--ease), background-color var(--hover) var(--ease);
 }
 
 .composer-chip > span {
@@ -616,7 +627,7 @@
   background: var(--accent);
   color: var(--bg);
   scale: var(--press);
-  transition: background-color var(--hover) ease, --press var(--settle) var(--spring);
+  transition: background-color var(--hover) var(--ease), --press var(--settle) var(--spring);
 }
 
 .composer-action:hover:not(:disabled) {
@@ -626,7 +637,7 @@
 .composer-action:active:not(:disabled) {
   --press: 0.94;
   transition-duration: var(--hover), var(--quick);
-  transition-timing-function: ease, var(--ease-out);
+  transition-timing-function: var(--ease), var(--ease-out);
 }
 
 .composer-action:disabled {
@@ -642,7 +653,7 @@
 /* Asked to stop: it breathes until the turn has ended. */
 .composer-action.stopping {
   opacity: var(--shown);
-  animation: stopping var(--armed) ease-in-out infinite alternate;
+  animation: stopping var(--armed) var(--ease-in-out) infinite alternate;
 }
 
 @keyframes stopping {
@@ -693,6 +704,40 @@
 
 .attach-item.failed {
   background: color-mix(in srgb, var(--wrong) 14%, transparent);
+}
+
+/* A card rises into the tray the first time it is drawn; one taken away
+   sinks out before it goes. */
+.attach-item {
+  opacity: var(--shown);
+  translate: 0 var(--lift);
+}
+
+.attach-item.fresh {
+  animation: attach-in var(--enter) var(--ease-out) both;
+}
+
+.attach-item.leaving {
+  pointer-events: none;
+  animation: attach-out var(--quick) var(--ease-out) both;
+}
+
+@keyframes attach-in {
+  from {
+    --shown: 0;
+    --lift: 6px;
+  }
+}
+
+@keyframes attach-out {
+  to {
+    --shown: 0;
+    --lift: 6px;
+  }
+}
+
+:root[data-reduced] .attach-item.fresh {
+  animation: none;
 }
 
 .attach-thumb {
@@ -754,7 +799,7 @@
   place-items: center;
   border-radius: var(--radius-full);
   color: var(--text-3);
-  transition: color var(--hover) ease, background-color var(--hover) ease;
+  transition: color var(--hover) var(--ease), background-color var(--hover) var(--ease);
 }
 
 .attach-remove:hover {
@@ -769,7 +814,7 @@
   height: 2px;
   width: 0;
   background: var(--accent);
-  transition: width var(--hover) linear;
+  transition: width var(--hover) var(--linear);
 }
 
 .composer-attach {
@@ -844,7 +889,7 @@ button.composer-context {
   height: 28px;
   padding: 0 var(--space-2);
   border-radius: var(--radius-full);
-  transition: background-color var(--hover) ease, color var(--hover) ease;
+  transition: background-color var(--hover) var(--ease), color var(--hover) var(--ease);
 }
 
 button.composer-context:hover {
@@ -973,16 +1018,18 @@ button.composer-context[hidden] {
   box-shadow: 0 2px 0 -1px var(--rule);
 }
 
+/* Renamed in place: a solid field a shade deeper than the page, its words
+   where the title's were. */
 .who-rename {
   width: min(28em, 100%);
-  margin: 0;
-  padding: 0;
+  margin: 0 calc(-1 * var(--space-2));
+  padding: 0 var(--space-2);
   border: 0;
   outline: 0;
-  background: transparent;
+  border-radius: var(--radius-s);
+  background: var(--fill);
   color: var(--text-strong);
   font: inherit;
-  box-shadow: 0 2px 0 -1px var(--accent);
 }
 
 /* Words said while the agent works: a block of their own above the input,
@@ -1026,6 +1073,8 @@ button.composer-context[hidden] {
   gap: var(--space-1);
   min-height: 34px;
   padding: 2px var(--space-2) 2px 2px;
+  opacity: var(--shown);
+  translate: 0 var(--lift);
 }
 
 .queue-row.wrong .queue-text {
@@ -1085,6 +1134,22 @@ button.composer-context[hidden] {
     width: 44px;
     height: 44px;
   }
+}
+
+/* A row rises into the queue the first time it is drawn. */
+.queue-row.fresh {
+  animation: queue-in var(--enter) var(--ease-out) both;
+}
+
+@keyframes queue-in {
+  from {
+    --shown: 0;
+    --lift: 6px;
+  }
+}
+
+:root[data-reduced] .queue-row.fresh {
+  animation: none;
 }
 
 .queue-row.dragging {

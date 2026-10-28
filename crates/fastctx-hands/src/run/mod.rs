@@ -28,6 +28,8 @@ pub mod record;
 mod records;
 mod remap;
 pub mod shell;
+pub mod sentinel;
+pub mod walls;
 pub mod supervisor;
 pub mod terminal;
 mod unfinished;

@@ -3058,6 +3058,8 @@ Used by:
 - crc32fast 1.5.2 (https://github.com/srijs/rust-crc32fast)
 - env_filter 2.0.0 (https://github.com/rust-cli/env_logger)
 - env_logger 0.11.11 (https://github.com/rust-cli/env_logger)
+- fallible-iterator 0.3.0 (https://github.com/sfackler/rust-fallible-iterator)
+- fallible-streaming-iterator 0.1.9 (https://github.com/sfackler/fallible-streaming-iterator)
 - hex 0.4.3 (https://github.com/KokaKiwi/rust-hex)
 - is_terminal_polyfill 1.70.2 (https://github.com/polyfill-rs/is_terminal_polyfill)
 - once_cell_polyfill 1.70.2 (https://github.com/polyfill-rs/once_cell_polyfill)
@@ -6653,10 +6655,12 @@ limitations under the License.
 Used by:
 
 - ahash 0.8.12 (https://github.com/tkaitchuck/ahash)
+- arc-swap 1.9.3 (https://github.com/vorner/arc-swap)
 - arrayvec 0.7.8 (https://github.com/bluss/arrayvec)
 - asn1-rs-derive 0.6.0 (https://github.com/rusticata/asn1-rs.git)
 - asn1-rs 0.7.2 (https://github.com/rusticata/asn1-rs.git)
 - async-io 2.6.0 (https://github.com/smol-rs/async-io)
+- async-lock 3.4.2 (https://github.com/smol-rs/async-lock)
 - atomic-waker 1.1.2 (https://github.com/smol-rs/atomic-waker)
 - autocfg 1.5.1 (https://github.com/cuviper/autocfg)
 - base64 0.22.1 (https://github.com/marshallpierce/rust-base64)
@@ -6685,9 +6689,11 @@ Used by:
 - find-msvc-tools 0.1.14 (https://github.com/rust-lang/cc-rs)
 - flate2 1.1.10 (https://github.com/rust-lang/flate2-rs)
 - fnv 1.0.7 (https://github.com/servo/rust-fnv)
+- form_urlencoded 1.2.2 (https://github.com/servo/rust-url)
 - fraction 0.15.4 (https://github.com/dnsl48/fraction.git)
 - futures-lite 2.6.1 (https://github.com/smol-rs/futures-lite)
 - group 0.13.0 (https://github.com/zkcrypto/group)
+- hashbrown 0.14.5 (https://github.com/rust-lang/hashbrown)
 - hashbrown 0.15.5 (https://github.com/rust-lang/hashbrown)
 - hashbrown 0.16.1 (https://github.com/rust-lang/hashbrown)
 - hashbrown 0.17.1 (https://github.com/rust-lang/hashbrown)
@@ -6739,6 +6745,7 @@ Used by:
 - signal-hook-mio 0.2.5 (https://github.com/vorner/signal-hook)
 - signal-hook-registry 1.4.8 (https://github.com/vorner/signal-hook)
 - signal-hook 0.3.18 (https://github.com/vorner/signal-hook)
+- smallstr 0.3.1 (https://github.com/murarth/smallstr)
 - smallvec 1.16.2 (https://github.com/servo/rust-smallvec)
 - socket2 0.6.5 (https://github.com/rust-lang/socket2)
 - stable_deref_trait 1.2.1 (https://github.com/storyyeller/stable_deref_trait)
@@ -6757,6 +6764,7 @@ Used by:
 - unicode-segmentation 1.13.3 (https://github.com/unicode-rs/unicode-segmentation)
 - unicode-truncate 2.0.1 (https://github.com/Aetf/unicode-truncate)
 - unicode-width 0.2.2 (https://github.com/unicode-rs/unicode-width)
+- url 2.5.8 (https://github.com/servo/rust-url)
 - uuid 1.27.0 (https://github.com/uuid-rs/uuid)
 - version_check 0.9.5 (https://github.com/SergioBenitez/version_check)
 - x509-parser 0.18.1 (https://github.com/rusticata/x509-parser.git)
@@ -7178,6 +7186,216 @@ See the License for the specific language governing permissions and
 limitations under the License.
 
 
+````
+
+## Apache License 2.0
+
+Used by:
+
+- hashlink 0.12.2 (https://github.com/djc/hashlink)
+
+````text
+                              Apache License
+                        Version 2.0, January 2004
+                     http://www.apache.org/licenses/
+
+TERMS AND CONDITIONS FOR USE, REPRODUCTION, AND DISTRIBUTION
+
+1. Definitions.
+
+   "License" shall mean the terms and conditions for use, reproduction,
+   and distribution as defined by Sections 1 through 9 of this document.
+
+   "Licensor" shall mean the copyright owner or entity authorized by
+   the copyright owner that is granting the License.
+
+   "Legal Entity" shall mean the union of the acting entity and all
+   other entities that control, are controlled by, or are under common
+   control with that entity. For the purposes of this definition,
+   "control" means (i) the power, direct or indirect, to cause the
+   direction or management of such entity, whether by contract or
+   otherwise, or (ii) ownership of fifty percent (50%) or more of the
+   outstanding shares, or (iii) beneficial ownership of such entity.
+
+   "You" (or "Your") shall mean an individual or Legal Entity
+   exercising permissions granted by this License.
+
+   "Source" form shall mean the preferred form for making modifications,
+   including but not limited to software source code, documentation
+   source, and configuration files.
+
+   "Object" form shall mean any form resulting from mechanical
+   transformation or translation of a Source form, including but
+   not limited to compiled object code, generated documentation,
+   and conversions to other media types.
+
+   "Work" shall mean the work of authorship, whether in Source or
+   Object form, made available under the License, as indicated by a
+   copyright notice that is included in or attached to the work
+   (an example is provided in the Appendix below).
+
+   "Derivative Works" shall mean any work, whether in Source or Object
+   form, that is based on (or derived from) the Work and for which the
+   editorial revisions, annotations, elaborations, or other modifications
+   represent, as a whole, an original work of authorship. For the purposes
+   of this License, Derivative Works shall not include works that remain
+   separable from, or merely link (or bind by name) to the interfaces of,
+   the Work and Derivative Works thereof.
+
+   "Contribution" shall mean any work of authorship, including
+   the original version of the Work and any modifications or additions
+   to that Work or Derivative Works thereof, that is intentionally
+   submitted to Licensor for inclusion in the Work by the copyright owner
+   or by an individual or Legal Entity authorized to submit on behalf of
+   the copyright owner. For the purposes of this definition, "submitted"
+   means any form of electronic, verbal, or written communication sent
+   to the Licensor or its representatives, including but not limited to
+   communication on electronic mailing lists, source code control systems,
+   and issue tracking systems that are managed by, or on behalf of, the
+   Licensor for the purpose of discussing and improving the Work, but
+   excluding communication that is conspicuously marked or otherwise
+   designated in writing by the copyright owner as "Not a Contribution."
+
+   "Contributor" shall mean Licensor and any individual or Legal Entity
+   on behalf of whom a Contribution has been received by Licensor and
+   subsequently incorporated within the Work.
+
+2. Grant of Copyright License. Subject to the terms and conditions of
+   this License, each Contributor hereby grants to You a perpetual,
+   worldwide, non-exclusive, no-charge, royalty-free, irrevocable
+   copyright license to reproduce, prepare Derivative Works of,
+   publicly display, publicly perform, sublicense, and distribute the
+   Work and such Derivative Works in Source or Object form.
+
+3. Grant of Patent License. Subject to the terms and conditions of
+   this License, each Contributor hereby grants to You a perpetual,
+   worldwide, non-exclusive, no-charge, royalty-free, irrevocable
+   (except as stated in this section) patent license to make, have made,
+   use, offer to sell, sell, import, and otherwise transfer the Work,
+   where such license applies only to those patent claims licensable
+   by such Contributor that are necessarily infringed by their
+   Contribution(s) alone or by combination of their Contribution(s)
+   with the Work to which such Contribution(s) was submitted. If You
+   institute patent litigation against any entity (including a
+   cross-claim or counterclaim in a lawsuit) alleging that the Work
+   or a Contribution incorporated within the Work constitutes direct
+   or contributory patent infringement, then any patent licenses
+   granted to You under this License for that Work shall terminate
+   as of the date such litigation is filed.
+
+4. Redistribution. You may reproduce and distribute copies of the
+   Work or Derivative Works thereof in any medium, with or without
+   modifications, and in Source or Object form, provided that You
+   meet the following conditions:
+
+   (a) You must give any other recipients of the Work or
+       Derivative Works a copy of this License; and
+
+   (b) You must cause any modified files to carry prominent notices
+       stating that You changed the files; and
+
+   (c) You must retain, in the Source form of any Derivative Works
+       that You distribute, all copyright, patent, trademark, and
+       attribution notices from the Source form of the Work,
+       excluding those notices that do not pertain to any part of
+       the Derivative Works; and
+
+   (d) If the Work includes a "NOTICE" text file as part of its
+       distribution, then any Derivative Works that You distribute must
+       include a readable copy of the attribution notices contained
+       within such NOTICE file, excluding those notices that do not
+       pertain to any part of the Derivative Works, in at least one
+       of the following places: within a NOTICE text file distributed
+       as part of the Derivative Works; within the Source form or
+       documentation, if provided along with the Derivative Works; or,
+       within a display generated by the Derivative Works, if and
+       wherever such third-party notices normally appear. The contents
+       of the NOTICE file are for informational purposes only and
+       do not modify the License. You may add Your own attribution
+       notices within Derivative Works that You distribute, alongside
+       or as an addendum to the NOTICE text from the Work, provided
+       that such additional attribution notices cannot be construed
+       as modifying the License.
+
+   You may add Your own copyright statement to Your modifications and
+   may provide additional or different license terms and conditions
+   for use, reproduction, or distribution of Your modifications, or
+   for any such Derivative Works as a whole, provided Your use,
+   reproduction, and distribution of the Work otherwise complies with
+   the conditions stated in this License.
+
+5. Submission of Contributions. Unless You explicitly state otherwise,
+   any Contribution intentionally submitted for inclusion in the Work
+   by You to the Licensor shall be under the terms and conditions of
+   this License, without any additional terms or conditions.
+   Notwithstanding the above, nothing herein shall supersede or modify
+   the terms of any separate license agreement you may have executed
+   with Licensor regarding such Contributions.
+
+6. Trademarks. This License does not grant permission to use the trade
+   names, trademarks, service marks, or product names of the Licensor,
+   except as required for reasonable and customary use in describing the
+   origin of the Work and reproducing the content of the NOTICE file.
+
+7. Disclaimer of Warranty. Unless required by applicable law or
+   agreed to in writing, Licensor provides the Work (and each
+   Contributor provides its Contributions) on an "AS IS" BASIS,
+   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or
+   implied, including, without limitation, any warranties or conditions
+   of TITLE, NON-INFRINGEMENT, MERCHANTABILITY, or FITNESS FOR A
+   PARTICULAR PURPOSE. You are solely responsible for determining the
+   appropriateness of using or redistributing the Work and assume any
+   risks associated with Your exercise of permissions under this License.
+
+8. Limitation of Liability. In no event and under no legal theory,
+   whether in tort (including negligence), contract, or otherwise,
+   unless required by applicable law (such as deliberate and grossly
+   negligent acts) or agreed to in writing, shall any Contributor be
+   liable to You for damages, including any direct, indirect, special,
+   incidental, or consequential damages of any character arising as a
+   result of this License or out of the use or inability to use the
+   Work (including but not limited to damages for loss of goodwill,
+   work stoppage, computer failure or malfunction, or any and all
+   other commercial damages or losses), even if such Contributor
+   has been advised of the possibility of such damages.
+
+9. Accepting Warranty or Additional Liability. While redistributing
+   the Work or Derivative Works thereof, You may choose to offer,
+   and charge a fee for, acceptance of support, warranty, indemnity,
+   or other liability obligations and/or rights consistent with this
+   License. However, in accepting such obligations, You may act only
+   on Your own behalf and on Your sole responsibility, not on behalf
+   of any other Contributor, and only if You agree to indemnify,
+   defend, and hold each Contributor harmless for any liability
+   incurred by, or claims asserted against, such Contributor by reason
+   of your accepting any such warranty or additional liability.
+
+END OF TERMS AND CONDITIONS
+
+APPENDIX: How to apply the Apache License to your work.
+
+   To apply the Apache License to your work, attach the following
+   boilerplate notice, with the fields enclosed by brackets "[]"
+   replaced with your own identifying information. (Don't include
+   the brackets!)  The text should be enclosed in the appropriate
+   comment syntax for the file format. We also recommend that a
+   file or class name and description of purpose be included on the
+   same "printed page" as the copyright notice for easier
+   identification within third-party archives.
+
+Copyright [yyyy] [name of copyright owner]
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
 ````
 
 ## Apache License 2.0
@@ -8682,6 +8900,218 @@ limitations under the License.
 
 Used by:
 
+- vcpkg 0.2.15 (https://github.com/mcgoo/vcpkg-rs)
+
+````text
+                              Apache License
+                        Version 2.0, January 2004
+                     http://www.apache.org/licenses/
+
+TERMS AND CONDITIONS FOR USE, REPRODUCTION, AND DISTRIBUTION
+
+1. Definitions.
+
+   "License" shall mean the terms and conditions for use, reproduction,
+   and distribution as defined by Sections 1 through 9 of this document.
+
+   "Licensor" shall mean the copyright owner or entity authorized by
+   the copyright owner that is granting the License.
+
+   "Legal Entity" shall mean the union of the acting entity and all
+   other entities that control, are controlled by, or are under common
+   control with that entity. For the purposes of this definition,
+   "control" means (i) the power, direct or indirect, to cause the
+   direction or management of such entity, whether by contract or
+   otherwise, or (ii) ownership of fifty percent (50%) or more of the
+   outstanding shares, or (iii) beneficial ownership of such entity.
+
+   "You" (or "Your") shall mean an individual or Legal Entity
+   exercising permissions granted by this License.
+
+   "Source" form shall mean the preferred form for making modifications,
+   including but not limited to software source code, documentation
+   source, and configuration files.
+
+   "Object" form shall mean any form resulting from mechanical
+   transformation or translation of a Source form, including but
+   not limited to compiled object code, generated documentation,
+   and conversions to other media types.
+
+   "Work" shall mean the work of authorship, whether in Source or
+   Object form, made available under the License, as indicated by a
+   copyright notice that is included in or attached to the work
+   (an example is provided in the Appendix below).
+
+   "Derivative Works" shall mean any work, whether in Source or Object
+   form, that is based on (or derived from) the Work and for which the
+   editorial revisions, annotations, elaborations, or other modifications
+   represent, as a whole, an original work of authorship. For the purposes
+   of this License, Derivative Works shall not include works that remain
+   separable from, or merely link (or bind by name) to the interfaces of,
+   the Work and Derivative Works thereof.
+
+   "Contribution" shall mean any work of authorship, including
+   the original version of the Work and any modifications or additions
+   to that Work or Derivative Works thereof, that is intentionally
+   submitted to Licensor for inclusion in the Work by the copyright owner
+   or by an individual or Legal Entity authorized to submit on behalf of
+   the copyright owner. For the purposes of this definition, "submitted"
+   means any form of electronic, verbal, or written communication sent
+   to the Licensor or its representatives, including but not limited to
+   communication on electronic mailing lists, source code control systems,
+   and issue tracking systems that are managed by, or on behalf of, the
+   Licensor for the purpose of discussing and improving the Work, but
+   excluding communication that is conspicuously marked or otherwise
+   designated in writing by the copyright owner as "Not a Contribution."
+
+   "Contributor" shall mean Licensor and any individual or Legal Entity
+   on behalf of whom a Contribution has been received by Licensor and
+   subsequently incorporated within the Work.
+
+2. Grant of Copyright License. Subject to the terms and conditions of
+   this License, each Contributor hereby grants to You a perpetual,
+   worldwide, non-exclusive, no-charge, royalty-free, irrevocable
+   copyright license to reproduce, prepare Derivative Works of,
+   publicly display, publicly perform, sublicense, and distribute the
+   Work and such Derivative Works in Source or Object form.
+
+3. Grant of Patent License. Subject to the terms and conditions of
+   this License, each Contributor hereby grants to You a perpetual,
+   worldwide, non-exclusive, no-charge, royalty-free, irrevocable
+   (except as stated in this section) patent license to make, have made,
+   use, offer to sell, sell, import, and otherwise transfer the Work,
+   where such license applies only to those patent claims licensable
+   by such Contributor that are necessarily infringed by their
+   Contribution(s) alone or by combination of their Contribution(s)
+   with the Work to which such Contribution(s) was submitted. If You
+   institute patent litigation against any entity (including a
+   cross-claim or counterclaim in a lawsuit) alleging that the Work
+   or a Contribution incorporated within the Work constitutes direct
+   or contributory patent infringement, then any patent licenses
+   granted to You under this License for that Work shall terminate
+   as of the date such litigation is filed.
+
+4. Redistribution. You may reproduce and distribute copies of the
+   Work or Derivative Works thereof in any medium, with or without
+   modifications, and in Source or Object form, provided that You
+   meet the following conditions:
+
+   (a) You must give any other recipients of the Work or
+       Derivative Works a copy of this License; and
+
+   (b) You must cause any modified files to carry prominent notices
+       stating that You changed the files; and
+
+   (c) You must retain, in the Source form of any Derivative Works
+       that You distribute, all copyright, patent, trademark, and
+       attribution notices from the Source form of the Work,
+       excluding those notices that do not pertain to any part of
+       the Derivative Works; and
+
+   (d) If the Work includes a "NOTICE" text file as part of its
+       distribution, then any Derivative Works that You distribute must
+       include a readable copy of the attribution notices contained
+       within such NOTICE file, excluding those notices that do not
+       pertain to any part of the Derivative Works, in at least one
+       of the following places: within a NOTICE text file distributed
+       as part of the Derivative Works; within the Source form or
+       documentation, if provided along with the Derivative Works; or,
+       within a display generated by the Derivative Works, if and
+       wherever such third-party notices normally appear. The contents
+       of the NOTICE file are for informational purposes only and
+       do not modify the License. You may add Your own attribution
+       notices within Derivative Works that You distribute, alongside
+       or as an addendum to the NOTICE text from the Work, provided
+       that such additional attribution notices cannot be construed
+       as modifying the License.
+
+   You may add Your own copyright statement to Your modifications and
+   may provide additional or different license terms and conditions
+   for use, reproduction, or distribution of Your modifications, or
+   for any such Derivative Works as a whole, provided Your use,
+   reproduction, and distribution of the Work otherwise complies with
+   the conditions stated in this License.
+
+5. Submission of Contributions. Unless You explicitly state otherwise,
+   any Contribution intentionally submitted for inclusion in the Work
+   by You to the Licensor shall be under the terms and conditions of
+   this License, without any additional terms or conditions.
+   Notwithstanding the above, nothing herein shall supersede or modify
+   the terms of any separate license agreement you may have executed
+   with Licensor regarding such Contributions.
+
+6. Trademarks. This License does not grant permission to use the trade
+   names, trademarks, service marks, or product names of the Licensor,
+   except as required for reasonable and customary use in describing the
+   origin of the Work and reproducing the content of the NOTICE file.
+
+7. Disclaimer of Warranty. Unless required by applicable law or
+   agreed to in writing, Licensor provides the Work (and each
+   Contributor provides its Contributions) on an "AS IS" BASIS,
+   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or
+   implied, including, without limitation, any warranties or conditions
+   of TITLE, NON-INFRINGEMENT, MERCHANTABILITY, or FITNESS FOR A
+   PARTICULAR PURPOSE. You are solely responsible for determining the
+   appropriateness of using or redistributing the Work and assume any
+   risks associated with Your exercise of permissions under this License.
+
+8. Limitation of Liability. In no event and under no legal theory,
+   whether in tort (including negligence), contract, or otherwise,
+   unless required by applicable law (such as deliberate and grossly
+   negligent acts) or agreed to in writing, shall any Contributor be
+   liable to You for damages, including any direct, indirect, special,
+   incidental, or consequential damages of any character arising as a
+   result of this License or out of the use or inability to use the
+   Work (including but not limited to damages for loss of goodwill,
+   work stoppage, computer failure or malfunction, or any and all
+   other commercial damages or losses), even if such Contributor
+   has been advised of the possibility of such damages.
+
+9. Accepting Warranty or Additional Liability. While redistributing
+   the Work or Derivative Works thereof, You may choose to offer,
+   and charge a fee for, acceptance of support, warranty, indemnity,
+   or other liability obligations and/or rights consistent with this
+   License. However, in accepting such obligations, You may act only
+   on Your own behalf and on Your sole responsibility, not on behalf
+   of any other Contributor, and only if You agree to indemnify,
+   defend, and hold each Contributor harmless for any liability
+   incurred by, or claims asserted against, such Contributor by reason
+   of your accepting any such warranty or additional liability.
+
+END OF TERMS AND CONDITIONS
+
+APPENDIX: How to apply the Apache License to your work.
+
+   To apply the Apache License to your work, attach the following
+   boilerplate notice, with the fields enclosed by brackets "[]"
+   replaced with your own identifying information. (Don't include
+   the brackets!)  The text should be enclosed in the appropriate
+   comment syntax for the file format. We also recommend that a
+   file or class name and description of purpose be included on the
+   same "printed page" as the copyright notice for easier
+   identification within third-party archives.
+
+Copyright [yyyy] [name of copyright owner]
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+	http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+
+
+````
+
+## Apache License 2.0
+
+Used by:
+
 - psm 0.1.32 (https://github.com/rust-lang/stacker/)
 
 ````text
@@ -9491,24 +9921,28 @@ limitations under the License.
 
 Used by:
 
-- fastctx 1.0.1-beta.11 (https://github.com/yc-duan/fastctx)
-- fastctx-client 1.0.1-beta.11 (https://github.com/yc-duan/fastctx)
-- fastctx-file-search 1.0.1-beta.11 (https://github.com/yc-duan/fastctx)
-- fastctx-hands 1.0.1-beta.11 (https://github.com/yc-duan/fastctx)
-- fastctx-hosts 1.0.1-beta.11 (https://github.com/yc-duan/fastctx)
-- fastctx-hub 1.0.1-beta.11 (https://github.com/yc-duan/fastctx)
-- fastctx-install 1.0.1-beta.11 (https://github.com/yc-duan/fastctx)
-- fastctx-net 1.0.1-beta.11 (https://github.com/yc-duan/fastctx)
-- fastctx-node 1.0.1-beta.11 (https://github.com/yc-duan/fastctx)
-- fastctx-office 1.0.1-beta.11 (https://github.com/yc-duan/fastctx)
-- fastctx-pdf 1.0.1-beta.11 (https://github.com/yc-duan/fastctx)
-- fastctx-platform 1.0.1-beta.11 (https://github.com/yc-duan/fastctx)
-- fastctx-ripgrep 1.0.1-beta.11 (https://github.com/yc-duan/fastctx)
-- fastctx-serve 1.0.1-beta.11 (https://github.com/yc-duan/fastctx)
-- fastctx-tui 1.0.1-beta.11 (https://github.com/yc-duan/fastctx)
-- fastctx-types 1.0.1-beta.11 (https://github.com/yc-duan/fastctx)
-- fastctx-uninstall 1.0.1-beta.11
-- fastctx-update 1.0.1-beta.11 (https://github.com/yc-duan/fastctx)
+- fastctx 1.0.1-beta.12 (https://github.com/yc-duan/fastctx)
+- fastctx-agent 1.0.1-beta.12 (https://github.com/yc-duan/fastctx)
+- fastctx-client 1.0.1-beta.12 (https://github.com/yc-duan/fastctx)
+- fastctx-draft 1.0.1-beta.12 (https://github.com/yc-duan/fastctx)
+- fastctx-file-search 1.0.1-beta.12 (https://github.com/yc-duan/fastctx)
+- fastctx-hands 1.0.1-beta.12 (https://github.com/yc-duan/fastctx)
+- fastctx-hosts 1.0.1-beta.12 (https://github.com/yc-duan/fastctx)
+- fastctx-hub 1.0.1-beta.12 (https://github.com/yc-duan/fastctx)
+- fastctx-install 1.0.1-beta.12 (https://github.com/yc-duan/fastctx)
+- fastctx-net 1.0.1-beta.12 (https://github.com/yc-duan/fastctx)
+- fastctx-node 1.0.1-beta.12 (https://github.com/yc-duan/fastctx)
+- fastctx-office 1.0.1-beta.12 (https://github.com/yc-duan/fastctx)
+- fastctx-pdf 1.0.1-beta.12 (https://github.com/yc-duan/fastctx)
+- fastctx-platform 1.0.1-beta.12 (https://github.com/yc-duan/fastctx)
+- fastctx-ripgrep 1.0.1-beta.12 (https://github.com/yc-duan/fastctx)
+- fastctx-sentinel 1.0.1-beta.12 (https://github.com/yc-duan/fastctx)
+- fastctx-serve 1.0.1-beta.12 (https://github.com/yc-duan/fastctx)
+- fastctx-storage 1.0.1-beta.12 (https://github.com/yc-duan/fastctx)
+- fastctx-tui 1.0.1-beta.12 (https://github.com/yc-duan/fastctx)
+- fastctx-types 1.0.1-beta.12 (https://github.com/yc-duan/fastctx)
+- fastctx-uninstall 1.0.1-beta.12
+- fastctx-update 1.0.1-beta.12 (https://github.com/yc-duan/fastctx)
 - pdf_oxide 0.3.78 (https://github.com/yfedoseev/pdf_oxide)
 - allocator-api2 0.2.21 (https://github.com/zakarumych/allocator-api2)
 - anyhow 1.0.104 (https://github.com/dtolnay/anyhow)
@@ -10514,6 +10948,36 @@ THE SOFTWARE.
 
 Used by:
 
+- libsqlite3-sys 0.39.1 (https://github.com/rusqlite/rusqlite)
+- rusqlite 0.41.0 (https://github.com/rusqlite/rusqlite)
+
+````text
+Copyright (c) 2014 The rusqlite developers
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.
+
+````
+
+## MIT License
+
+Used by:
+
 - nom 7.1.3 (https://github.com/Geal/nom)
 - nom 8.0.0 (https://github.com/rust-bakery/nom)
 
@@ -11132,6 +11596,37 @@ Used by:
 MIT License
 
 Copyright (c) 2018 PistonDevelopers
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+````
+
+## MIT License
+
+Used by:
+
+- dashmap 6.2.1 (https://github.com/xacrimon/dashmap)
+
+````text
+MIT License
+
+Copyright (c) 2019 Acrimon
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -12086,6 +12581,39 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
+
+````
+
+## MIT License
+
+Used by:
+
+- yrs 0.26.0 (https://github.com/y-crdt/y-crdt/)
+
+````text
+The MIT License (MIT)
+
+Copyright (c) 2020
+  - Bartosz Sypytkowski <b.sypytkowski@gmail.com>
+  - Kevin Jahns <kevin.jahns@pm.me>.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
 
 ````
 
@@ -85970,6 +86498,7 @@ Source archives for the crates.io dependencies recorded by this build follow. Ea
 - anyhow 1.0.104: https://static.crates.io/crates/anyhow/anyhow-1.0.104.crate
 - approx 0.5.1: https://static.crates.io/crates/approx/approx-0.5.1.crate
 - ar_archive_writer 0.5.3: https://static.crates.io/crates/ar_archive_writer/ar_archive_writer-0.5.3.crate
+- arc-swap 1.9.3: https://static.crates.io/crates/arc-swap/arc-swap-1.9.3.crate
 - argon2 0.5.3: https://static.crates.io/crates/argon2/argon2-0.5.3.crate
 - arrayvec 0.7.8: https://static.crates.io/crates/arrayvec/arrayvec-0.7.8.crate
 - asn1-rs 0.7.2: https://static.crates.io/crates/asn1-rs/asn1-rs-0.7.2.crate
@@ -85977,6 +86506,7 @@ Source archives for the crates.io dependencies recorded by this build follow. Ea
 - asn1-rs-impl 0.2.0: https://static.crates.io/crates/asn1-rs-impl/asn1-rs-impl-0.2.0.crate
 - async-broadcast 0.7.2: https://static.crates.io/crates/async-broadcast/async-broadcast-0.7.2.crate
 - async-io 2.6.0: https://static.crates.io/crates/async-io/async-io-2.6.0.crate
+- async-lock 3.4.2: https://static.crates.io/crates/async-lock/async-lock-3.4.2.crate
 - async-recursion 1.2.0: https://static.crates.io/crates/async-recursion/async-recursion-1.2.0.crate
 - async-trait 0.1.92: https://static.crates.io/crates/async-trait/async-trait-0.1.92.crate
 - atoi_simd 0.18.1: https://static.crates.io/crates/atoi_simd/atoi_simd-0.18.1.crate
@@ -86051,6 +86581,7 @@ Source archives for the crates.io dependencies recorded by this build follow. Ea
 - darling 0.24.1: https://static.crates.io/crates/darling/darling-0.24.1.crate
 - darling_core 0.24.1: https://static.crates.io/crates/darling_core/darling_core-0.24.1.crate
 - darling_macro 0.24.1: https://static.crates.io/crates/darling_macro/darling_macro-0.24.1.crate
+- dashmap 6.2.1: https://static.crates.io/crates/dashmap/dashmap-6.2.1.crate
 - data-encoding 2.11.1: https://static.crates.io/crates/data-encoding/data-encoding-2.11.1.crate
 - debug_unsafe 0.1.4: https://static.crates.io/crates/debug_unsafe/debug_unsafe-0.1.4.crate
 - defmt 1.1.1: https://static.crates.io/crates/defmt/defmt-1.1.1.crate
@@ -86083,6 +86614,8 @@ Source archives for the crates.io dependencies recorded by this build follow. Ea
 - euclid 0.22.14: https://static.crates.io/crates/euclid/euclid-0.22.14.crate
 - event-listener 5.4.2: https://static.crates.io/crates/event-listener/event-listener-5.4.2.crate
 - event-listener-strategy 0.5.4: https://static.crates.io/crates/event-listener-strategy/event-listener-strategy-0.5.4.crate
+- fallible-iterator 0.3.0: https://static.crates.io/crates/fallible-iterator/fallible-iterator-0.3.0.crate
+- fallible-streaming-iterator 0.1.9: https://static.crates.io/crates/fallible-streaming-iterator/fallible-streaming-iterator-0.1.9.crate
 - fancy-regex 0.16.2: https://static.crates.io/crates/fancy-regex/fancy-regex-0.16.2.crate
 - fast-float2 0.2.4: https://static.crates.io/crates/fast-float2/fast-float2-0.2.4.crate
 - fastrand 2.5.0: https://static.crates.io/crates/fastrand/fastrand-2.5.0.crate
@@ -86105,6 +86638,7 @@ Source archives for the crates.io dependencies recorded by this build follow. Ea
 - font-types 0.12.6: https://static.crates.io/crates/font-types/font-types-0.12.6.crate
 - fontconfig-parser 0.5.8: https://static.crates.io/crates/fontconfig-parser/fontconfig-parser-0.5.8.crate
 - fontdb 0.24.0: https://static.crates.io/crates/fontdb/fontdb-0.24.0.crate
+- form_urlencoded 1.2.2: https://static.crates.io/crates/form_urlencoded/form_urlencoded-1.2.2.crate
 - fraction 0.15.4: https://static.crates.io/crates/fraction/fraction-0.15.4.crate
 - fsevent-sys 4.1.0: https://static.crates.io/crates/fsevent-sys/fsevent-sys-4.1.0.crate
 - futures-core 0.3.34: https://static.crates.io/crates/futures-core/futures-core-0.3.34.crate
@@ -86123,9 +86657,11 @@ Source archives for the crates.io dependencies recorded by this build follow. Ea
 - group 0.13.0: https://static.crates.io/crates/group/group-0.13.0.crate
 - guillotiere 0.7.0: https://static.crates.io/crates/guillotiere/guillotiere-0.7.0.crate
 - half 2.7.1: https://static.crates.io/crates/half/half-2.7.1.crate
+- hashbrown 0.14.5: https://static.crates.io/crates/hashbrown/hashbrown-0.14.5.crate
 - hashbrown 0.15.5: https://static.crates.io/crates/hashbrown/hashbrown-0.15.5.crate
 - hashbrown 0.16.1: https://static.crates.io/crates/hashbrown/hashbrown-0.16.1.crate
 - hashbrown 0.17.1: https://static.crates.io/crates/hashbrown/hashbrown-0.17.1.crate
+- hashlink 0.12.2: https://static.crates.io/crates/hashlink/hashlink-0.12.2.crate
 - hayro 0.8.0: https://static.crates.io/crates/hayro/hayro-0.8.0.crate
 - hayro-ccitt 0.4.0: https://static.crates.io/crates/hayro-ccitt/hayro-ccitt-0.4.0.crate
 - hayro-cmap 0.1.0: https://static.crates.io/crates/hayro-cmap/hayro-cmap-0.1.0.crate
@@ -86191,6 +86727,7 @@ Source archives for the crates.io dependencies recorded by this build follow. Ea
 - lazy_static 1.5.1: https://static.crates.io/crates/lazy_static/lazy_static-1.5.1.crate
 - libc 0.2.190: https://static.crates.io/crates/libc/libc-0.2.190.crate
 - libm 0.2.16: https://static.crates.io/crates/libm/libm-0.2.16.crate
+- libsqlite3-sys 0.39.1: https://static.crates.io/crates/libsqlite3-sys/libsqlite3-sys-0.39.1.crate
 - line-clipping 0.3.8: https://static.crates.io/crates/line-clipping/line-clipping-0.3.8.crate
 - linebender_resource_handle 0.1.1: https://static.crates.io/crates/linebender_resource_handle/linebender_resource_handle-0.1.1.crate
 - linux-raw-sys 0.12.1: https://static.crates.io/crates/linux-raw-sys/linux-raw-sys-0.12.1.crate
@@ -86299,6 +86836,8 @@ Source archives for the crates.io dependencies recorded by this build follow. Ea
 - ring 0.17.14: https://static.crates.io/crates/ring/ring-0.17.14.crate
 - roxmltree 0.20.0: https://static.crates.io/crates/roxmltree/roxmltree-0.20.0.crate
 - roxmltree 0.21.1: https://static.crates.io/crates/roxmltree/roxmltree-0.21.1.crate
+- rsqlite-vfs 0.2.0: https://static.crates.io/crates/rsqlite-vfs/rsqlite-vfs-0.2.0.crate
+- rusqlite 0.41.0: https://static.crates.io/crates/rusqlite/rusqlite-0.41.0.crate
 - rustc-hash 2.1.3: https://static.crates.io/crates/rustc-hash/rustc-hash-2.1.3.crate
 - rustc_version 0.4.1: https://static.crates.io/crates/rustc_version/rustc_version-0.4.1.crate
 - rusticata-macros 4.1.0: https://static.crates.io/crates/rusticata-macros/rusticata-macros-4.1.0.crate
@@ -86335,8 +86874,10 @@ Source archives for the crates.io dependencies recorded by this build follow. Ea
 - skrifa 0.46.2: https://static.crates.io/crates/skrifa/skrifa-0.46.2.crate
 - slab 0.4.12: https://static.crates.io/crates/slab/slab-0.4.12.crate
 - slotmap 1.1.1: https://static.crates.io/crates/slotmap/slotmap-1.1.1.crate
+- smallstr 0.3.1: https://static.crates.io/crates/smallstr/smallstr-0.3.1.crate
 - smallvec 1.16.2: https://static.crates.io/crates/smallvec/smallvec-1.16.2.crate
 - socket2 0.6.5: https://static.crates.io/crates/socket2/socket2-0.6.5.crate
+- sqlite-wasm-rs 0.6.2: https://static.crates.io/crates/sqlite-wasm-rs/sqlite-wasm-rs-0.6.2.crate
 - stable_deref_trait 1.2.1: https://static.crates.io/crates/stable_deref_trait/stable_deref_trait-1.2.1.crate
 - stacker 0.1.25: https://static.crates.io/crates/stacker/stacker-0.1.25.crate
 - static_assertions 1.1.0: https://static.crates.io/crates/static_assertions/static_assertions-1.1.0.crate
@@ -86397,10 +86938,12 @@ Source archives for the crates.io dependencies recorded by this build follow. Ea
 - unicode-truncate 2.0.1: https://static.crates.io/crates/unicode-truncate/unicode-truncate-2.0.1.crate
 - unicode-width 0.2.2: https://static.crates.io/crates/unicode-width/unicode-width-0.2.2.crate
 - untrusted 0.9.0: https://static.crates.io/crates/untrusted/untrusted-0.9.0.crate
+- url 2.5.8: https://static.crates.io/crates/url/url-2.5.8.crate
 - utf8_iter 1.0.4: https://static.crates.io/crates/utf8_iter/utf8_iter-1.0.4.crate
 - utf8parse 0.2.2: https://static.crates.io/crates/utf8parse/utf8parse-0.2.2.crate
 - uuid 1.27.0: https://static.crates.io/crates/uuid/uuid-1.27.0.crate
 - uuid-simd 0.8.0: https://static.crates.io/crates/uuid-simd/uuid-simd-0.8.0.crate
+- vcpkg 0.2.15: https://static.crates.io/crates/vcpkg/vcpkg-0.2.15.crate
 - vello_common 0.3.0: https://static.crates.io/crates/vello_common/vello_common-0.3.0.crate
 - vello_cpu 0.3.0: https://static.crates.io/crates/vello_cpu/vello_cpu-0.3.0.crate
 - version_check 0.9.5: https://static.crates.io/crates/version_check/version_check-0.9.5.crate
@@ -86489,4 +87032,4 @@ Source archives for the crates.io dependencies recorded by this build follow. Ea
 - zvariant_derive 5.15.0: https://static.crates.io/crates/zvariant_derive/zvariant_derive-5.15.0.crate
 - zvariant_utils 4.2.0: https://static.crates.io/crates/zvariant_utils/zvariant_utils-4.2.0.crate
 
-<!-- fastctx-notices-inputs: 1c193a79a17f5eda975f2474a70c01856487f30a491eb090989d2ba78d31f4e5 -->
+<!-- fastctx-notices-inputs: 0499ad05989eafe6a4f05783030e53f994840333d448c48c7660dc1e9d72cc95 -->

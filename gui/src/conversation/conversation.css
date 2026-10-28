@@ -21,6 +21,15 @@
   padding: var(--space-6) var(--gutter) var(--space-12);
   display: flex;
   flex-direction: column;
+  opacity: var(--shown);
+  transition: --shown var(--enter) var(--ease-out);
+}
+
+/* Between what was said and every step, the conversation dips and comes
+   back up (`view.ts`, showing). */
+.transcript.view-dip {
+  --shown: 0;
+  transition-duration: var(--quick);
 }
 
 /* In whole pixels where the system can round. */
@@ -65,7 +74,7 @@
   background: none;
   border: 0;
   cursor: pointer;
-  transition: color var(--hover) ease;
+  transition: color var(--hover) var(--ease);
 }
 
 .rows-earlier:hover,
@@ -113,7 +122,7 @@
 
 .gap-said {
   flex: none;
-  transition: color var(--hover) ease;
+  transition: color var(--hover) var(--ease);
 }
 
 .gap-row:hover .gap-said,
@@ -148,7 +157,7 @@
   line-height: var(--leading-prose);
   overflow-wrap: anywhere;
   opacity: var(--shown);
-  transition: --shown var(--hover) ease;
+  transition: --shown var(--hover) var(--ease);
 }
 
 .bubble p {
@@ -173,19 +182,21 @@
   margin: var(--space-1) 0 -2px auto;
   font-size: var(--size-text);
   color: var(--on-bubble);
-  opacity: 0.7;
-  transition: opacity var(--hover) ease;
+  --shown: 0.7;
+  opacity: var(--shown);
+  transition: --shown var(--hover) var(--ease);
 }
 
 .bubble-more:hover {
-  opacity: 1;
+  --shown: 1;
 }
 
 .bubble p + p {
   margin-top: 0.7em;
 }
 
-.bubble.going {
+.bubble.going,
+.bubble.queued {
   --shown: 0.62;
 }
 
@@ -443,7 +454,7 @@
   line-height: var(--row-leading);
   color: var(--text-2);
   border-radius: var(--radius-s);
-  transition: color var(--hover) ease;
+  transition: color var(--hover) var(--ease);
 }
 
 .group-head:not([aria-disabled]):hover {
@@ -474,7 +485,7 @@
   color: var(--text-3);
   --turn: -90deg;
   rotate: var(--turn);
-  transition: --turn var(--fold) var(--fold-easing), color var(--hover) ease;
+  transition: --turn var(--fold) var(--fold-easing), color var(--hover) var(--ease);
 }
 
 .group-head[aria-expanded="true"] .glyph {
@@ -549,7 +560,7 @@
   font-size: var(--size-text);
   color: var(--text-2);
   text-decoration: none;
-  transition: color var(--hover) ease, background-color var(--hover) ease;
+  transition: color var(--hover) var(--ease), background-color var(--hover) var(--ease);
 }
 
 .row-link .glyph {
@@ -613,7 +624,7 @@
   color: var(--text-2);
   text-align: left;
   border-radius: var(--radius-s);
-  transition: color var(--hover) ease;
+  transition: color var(--hover) var(--ease);
 }
 
 .row-line:not([aria-disabled]):hover {
@@ -626,10 +637,13 @@
   cursor: default;
 }
 
+/* The verb is quiet: the glyph before it says the same. What it was done
+   to is what the eye reads. */
 .row-action {
   grid-column: 1;
   padding-right: var(--space-2);
   white-space: nowrap;
+  color: var(--text-3);
 }
 
 .row-rest {
@@ -646,12 +660,12 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  color: var(--text-3);
-  transition: color var(--hover) ease;
+  color: var(--text-2);
+  transition: color var(--hover) var(--ease);
 }
 
 .row-line:not([aria-disabled]):hover .row-object {
-  color: var(--text-2);
+  color: var(--text);
 }
 
 .row-line.static .row-object {
@@ -753,7 +767,7 @@
   color: var(--text-2);
   font-size: var(--size-text);
   text-align: left;
-  transition: background-color var(--hover) ease, color var(--hover) ease;
+  transition: background-color var(--hover) var(--ease), color var(--hover) var(--ease);
 }
 
 .fan-tile > .glyph,
@@ -762,11 +776,16 @@
   color: var(--text-3);
 }
 
+/* Machines of one place share a long name and differ at its end: a name
+   goes onto a second line before it is cut. */
 .fan-name {
+  display: -webkit-box;
   min-width: 0;
   overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
 }
 
 .fan-tile:hover {
@@ -860,7 +879,7 @@
   opacity: var(--shown);
   --turn: -90deg;
   rotate: var(--turn);
-  transition: --shown var(--hover) ease, --turn var(--fold) var(--fold-easing);
+  transition: --shown var(--hover) var(--ease), --turn var(--fold) var(--fold-easing);
 }
 
 .row-line:hover .row-chevron,
@@ -873,7 +892,8 @@
   --turn: 0deg;
 }
 
-.row-failed .rail {
+/* A row that failed marks its own glyph; the rows it gathers keep theirs. */
+.row-failed > .rail {
   color: var(--wrong);
 }
 
@@ -954,7 +974,7 @@
   background: var(--text-2);
   transform: scale(var(--breath-scale));
   opacity: var(--breath-alpha);
-  animation: pulse var(--breath) ease-in-out infinite;
+  animation: pulse var(--breath) var(--ease-in-out) infinite;
 }
 
 /* A tool that arrives in a live conversation comes in once, quietly. */
@@ -1348,7 +1368,7 @@
 .io-more {
   font-size: var(--size-text);
   color: var(--text-3);
-  transition: color var(--hover) ease;
+  transition: color var(--hover) var(--ease);
 }
 
 .io-more:hover {
@@ -1405,7 +1425,7 @@
   vertical-align: 0.05em;
   transform: scale(var(--breath-scale));
   opacity: var(--breath-alpha);
-  animation: pulse var(--breath) ease-in-out infinite;
+  animation: pulse var(--breath) var(--ease-in-out) infinite;
 }
 
 :root[data-reduced] .prose.writing > :last-child::after {
@@ -1420,7 +1440,7 @@
   position: relative;
   padding: 2px 0 2px var(--space-5);
   opacity: var(--shown);
-  transition: --shown var(--hover) ease;
+  transition: --shown var(--hover) var(--ease);
 }
 
 .ask-card::before {
@@ -1462,7 +1482,7 @@
   box-shadow: inset 0 0 0 2px var(--accent);
   transform: scale(var(--breath-scale));
   opacity: var(--breath-alpha);
-  animation: pulse var(--breath) ease-in-out infinite;
+  animation: pulse var(--breath) var(--ease-in-out) infinite;
 }
 
 .ask-waiting::before {
@@ -1473,7 +1493,7 @@
   box-shadow: inset 0 0 0 2px var(--accent);
   transform: scale(var(--breath-scale));
   opacity: var(--breath-alpha);
-  animation: pulse var(--breath) ease-in-out infinite;
+  animation: pulse var(--breath) var(--ease-in-out) infinite;
 }
 
 .ask-title {
@@ -1573,7 +1593,7 @@
   color: var(--text-2);
   background: var(--fill);
   scale: var(--press);
-  transition: color var(--hover) ease, background-color var(--hover) ease, box-shadow var(--hover) ease, --press var(--settle) var(--spring);
+  transition: color var(--hover) var(--ease), background-color var(--hover) var(--ease), box-shadow var(--hover) var(--ease), --press var(--settle) var(--spring);
 }
 
 .ask-button:hover:not(:disabled) {
@@ -1600,7 +1620,7 @@
 .ask-button:active:not(:disabled) {
   --press: 0.97;
   transition-duration: var(--hover), var(--hover), var(--hover), var(--quick);
-  transition-timing-function: ease, ease, ease, var(--ease-out);
+  transition-timing-function: var(--ease), var(--ease), var(--ease), var(--ease-out);
 }
 
 .ask-status {
@@ -1657,7 +1677,7 @@
   font-size: var(--size-text);
   line-height: var(--leading-ui);
   color: var(--text-2);
-  transition: color var(--hover) ease, background-color var(--hover) ease, box-shadow var(--hover) ease;
+  transition: color var(--hover) var(--ease), background-color var(--hover) var(--ease), box-shadow var(--hover) var(--ease);
 }
 
 .ask-option:hover:not(:disabled) {
@@ -1801,7 +1821,7 @@
   color: var(--text-3);
   --shown: 0;
   opacity: var(--shown);
-  transition: --shown var(--hover) ease, color var(--hover) ease, background-color var(--hover) ease;
+  transition: --shown var(--hover) var(--ease), color var(--hover) var(--ease), background-color var(--hover) var(--ease);
 }
 
 .block-prose:hover .prose-copy,
@@ -2225,7 +2245,7 @@ a.bubble-file:hover {
   font-size: var(--size-text);
   color: var(--text-3);
   opacity: var(--shown);
-  transition: color var(--hover) ease, background-color var(--hover) ease, --shown var(--hover) ease;
+  transition: color var(--hover) var(--ease), background-color var(--hover) var(--ease), --shown var(--hover) var(--ease);
 }
 
 .turn-act:hover {

@@ -1,6 +1,7 @@
-// The settings: how the interface looks and reads on this device, and what
-// this device is in the World. Choices take effect at once and are kept on
-// this device; the language takes effect as the interface starts again.
+// The settings: how the interface looks and reads on this device, what this
+// device is in the World, and the keys, a tab each, the one last open kept
+// on this device. Choices take effect at once and are kept on this device;
+// the language takes effect as the interface starts again.
 
 import { ProxyRow, type ProxySeam } from "./proxy-row";
 import { glyph } from "../conversation/glyphs";
@@ -33,6 +34,7 @@ import { formerNames } from "./map-of";
 import { link } from "./places";
 import { inNoNetwork, machinesOf } from "./reach";
 import { RenameField, renamerOf } from "./rename";
+import { hubLine, type HubReach } from "./hub-line";
 
 export interface SettingsOptions {
   store: Store;
@@ -87,6 +89,24 @@ export function legacySaid(legacy: Legacy | null, words: SettingsWords): string 
   return words.legacyCleaned(legacy.tidied, legacy.archived, legacy.archives.at(-1) ?? legacy.record, legacy.waiting);
 }
 
+/** The settings' tabs, in their order. */
+const TABS = ["look", "device", "keys"] as const;
+type Tab = (typeof TABS)[number];
+
+/** Where this device keeps the tab last open. */
+const TAB_KEY = "settings.tab";
+
+function keptTab(): Tab {
+  try {
+    const kept = localStorage.getItem(TAB_KEY);
+    // Where there is no keyboard, its keys are not offered.
+    if (kept === "keys" && matchMedia("(hover: none) and (pointer: coarse)").matches) return "look";
+    return TABS.find((tab) => tab === kept) ?? "look";
+  } catch {
+    return "look";
+  }
+}
+
 export class SettingsPage implements Page {
   readonly element: HTMLElement;
   readonly title: string;
@@ -100,6 +120,26 @@ export class SettingsPage implements Page {
   private setup: Setup | null = null;
   private busy = false;
   private said = "";
+  private tab: Tab = "look";
+
+  /** Shows `tab`'s sheet, and keeps it for the next time where `kept`. */
+  private showTab(tab: Tab, kept = false): void {
+    this.tab = tab;
+    for (const button of this.element.querySelectorAll<HTMLElement>(".st-tab")) {
+      const chosen = button.dataset.tab === tab;
+      button.setAttribute("aria-selected", String(chosen));
+      button.tabIndex = chosen ? 0 : -1;
+    }
+    for (const pane of this.element.querySelectorAll<HTMLElement>(".st-pane")) pane.hidden = pane.dataset.pane !== tab;
+    this.element.querySelector<HTMLElement>(".st-sheet")?.classList.toggle("first", tab === TABS[0]);
+    this.element.querySelector<HTMLElement>(".st-sheet")?.scrollTo({ top: 0 });
+    if (!kept) return;
+    try {
+      localStorage.setItem(TAB_KEY, tab);
+    } catch {
+      // Kept for this visit only.
+    }
+  }
 
   constructor(private readonly options: SettingsOptions) {
     const { words } = options;
@@ -108,14 +148,29 @@ export class SettingsPage implements Page {
     this.element.className = "settings-page";
     this.element.innerHTML = `
       ${options.head(`<h1 class="page-title">${escape(words.title)}</h1>`)}
-      <div class="settings scroller">
-        <section class="home-section"><h2 class="section-title">${escape(words.look)}</h2><div class="look"></div></section>
-        <section class="home-section settings-device"><h2 class="section-title">${escape(words.device)}</h2><dl class="facts settings-name" hidden></dl><dl class="facts device"></dl><dl class="facts settings-app" hidden></dl><dl class="facts settings-service" hidden></dl>${options.computer ? `<dl class="facts settings-data"><dt>${escape(words.data)}</dt><dd><a class="settings-link" href="#/data"><span class="settings-data-size">${escape(words.dataOpen)}</span>${glyph("chevron", 14)}</a></dd></dl>` : ""}<dl class="facts settings-phone" hidden></dl></section>
-        <section class="home-section settings-keys"><h2 class="section-title">${escape(words.keys)}</h2><dl class="facts keys">${words.keyList
+      <div class="st-tabs" role="tablist" aria-label="${escape(words.title)}">${TABS.map((tab) => `<button class="st-tab" type="button" role="tab" id="st-tab-${tab}" aria-controls="st-pane-${tab}" data-tab="${tab}">${escape(words[tab])}</button>`).join("")}</div>
+      <div class="settings st-room"><div class="st-sheet scroller">
+        <section class="st-pane" id="st-pane-look" role="tabpanel" aria-labelledby="st-tab-look" data-pane="look"><div class="look"></div></section>
+        <section class="st-pane settings-device" id="st-pane-device" role="tabpanel" aria-labelledby="st-tab-device" data-pane="device"><dl class="facts settings-name" hidden></dl><dl class="facts device"></dl><dl class="facts settings-app" hidden></dl><dl class="facts settings-service" hidden></dl>${options.computer ? `<dl class="facts settings-data"><dt>${escape(words.data)}</dt><dd><a class="settings-link" href="#/data"><span class="settings-data-size">${escape(words.dataOpen)}</span>${glyph("chevron", 14)}</a></dd></dl>` : ""}<dl class="facts settings-phone" hidden></dl>${options.computer ? `<div class="st-removal"><button class="text-button danger-text settings-uninstall" type="button" data-uninstall>${glyph("logout", 16)}<span>${escape(options.removalWords.open)}</span></button></div>` : ""}</section>
+        <section class="st-pane settings-keys" id="st-pane-keys" role="tabpanel" aria-labelledby="st-tab-keys" data-pane="keys"><dl class="facts keys">${words.keyList
           .map(([keys, what]) => `<dt>${keys.split(" ").map((key) => `<kbd>${escape(key)}</kbd>`).join(" ")}</dt><dd>${escape(what)}</dd>`)
           .join("")}</dl></section>
-        ${options.computer ? `<section class="home-section"><h2 class="section-title">${escape(options.removalWords.title)}</h2><button class="text-button danger-text settings-uninstall" type="button" data-uninstall>${glyph("logout", 16)}<span>${escape(options.removalWords.open)}</span></button></section>` : ""}
-      </div>`;
+      </div></div>`;
+    this.showTab(keptTab());
+    const tabs = this.element.querySelector<HTMLElement>(".st-tabs")!;
+    tabs.addEventListener("click", (event) => {
+      const tab = (event.target as HTMLElement).closest<HTMLElement>("[data-tab]")?.dataset.tab as Tab | undefined;
+      if (tab) this.showTab(tab, true);
+    });
+    // The arrow keys go from tab to tab, as a row of tabs does.
+    tabs.addEventListener("keydown", (event) => {
+      if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+      const at = TABS.indexOf(this.tab);
+      const next = TABS[(at + (event.key === "ArrowRight" ? 1 : TABS.length - 1)) % TABS.length]!;
+      event.preventDefault();
+      this.showTab(next, true);
+      tabs.querySelector<HTMLElement>(`[data-tab="${next}"]`)?.focus();
+    });
     void options.computer?.dataSize?.().then(
       (bytes) => {
         const size = this.element.querySelector(".settings-data-size");
@@ -210,9 +265,9 @@ export class SettingsPage implements Page {
     const name = inNoNetwork(world)
       ? `<span${formerly}>${escape(here.written)}</span>`
       : `<a class="settings-link" href="${link({ kind: "machine", name: here.written })}"${formerly}><span>${escape(here.written)}</span>${glyph("chevron", 14)}</a>`;
-    const html = `<dt>${escape(this.options.words.machine)}</dt><dd class="settings-name-value">${name}${
-      renamable ? `<button class="text-button quiet-button" type="button" data-rename>${escape(renaming!.words.rename)}</button>` : ""
-    }</dd>`;
+    const html = `<dt>${escape(this.options.words.machine)}</dt><dd class="settings-name-value">${name}</dd>${
+      renamable ? `<dd class="sd-act"><button class="text-button quiet-button" type="button" data-rename>${escape(renaming!.words.rename)}</button></dd>` : ""
+    }`;
     if (this.name.innerHTML !== html) this.name.innerHTML = html;
   }
 
@@ -242,6 +297,9 @@ export class SettingsPage implements Page {
       cancel: end,
     });
     this.renaming = field;
+    // The field takes the row, its own buttons in place of renaming.
+    this.name.querySelector(".sd-act")?.remove();
+    value.classList.add("sd-wide");
     value.replaceChildren(field.element);
     field.focus();
   }
@@ -296,12 +354,15 @@ export class SettingsPage implements Page {
     const inNetwork = loginsOf(this.options.store.world.peek()?.accounts).length > 0;
     const button =
       kept === false && inNetwork
-        ? `<button class="text-button quiet-button" type="button" data-service="keep" title="${escape(words.keepAsks)}"${this.busy ? " disabled" : ""}>${escape(words.keep)}</button>`
+        ? `<dd class="sd-act"><button class="text-button quiet-button" type="button" data-service="keep" title="${escape(words.keepAsks)}"${this.busy ? " disabled" : ""}>${escape(words.keep)}</button></dd>`
         : "";
     this.service.hidden = false;
-    const old = legacySaid(this.setup?.legacy ?? null, words);
-    this.service.innerHTML = `<dt>${escape(words.service)}</dt><dd><span>${escape(state)}</span>${button}${this.said ? `<p class="settings-said">${escape(this.said)}</p>` : ""}</dd>${
-      old ? `<dt>${escape(words.legacy)}</dt><dd class="settings-legacy">${escape(old)}</dd>` : ""
+    const legacy = this.setup?.legacy ?? null;
+    const old = legacySaid(legacy, words);
+    // What became of an old fastctx in a word, the sentence behind it.
+    const done = legacy?.kind === "unreadable" ? words.legacyUnreadable(legacy.why) : legacy?.waiting ? words.legacyBusy(legacy.waiting) : words.legacyDone;
+    this.service.innerHTML = `<dt>${escape(words.service)}</dt><dd><span${kept ? ` title="${escape(words.serviceWhat)}"` : ""}>${escape(state)}</span>${this.said ? `<p class="settings-said">${escape(this.said)}</p>` : ""}</dd>${button}${
+      old ? `<dt>${escape(words.legacy)}</dt><dd class="settings-legacy"><span title="${escape(old)}">${escape(done)}</span></dd>` : ""
     }`;
   }
 
@@ -327,37 +388,39 @@ export class SettingsPage implements Page {
   }
 
   private drawDevice(world: WorldNow | null, now: Date): void {
-    const { words, store } = this.options;
-    if (!store.live || !world) {
+    const { words } = this.options;
+    if (!world) {
       this.device.innerHTML = `<p class="quiet">${escape(words.notInShell)}</p>`;
       return;
     }
     // How this computer or device reaches each hub it is logged in to, and
-    // as whom.
-    const hubs = world.nodes.hubs.map((hub): [string, string, string] => {
+    // as whom: drawn, the hub's name and the accounts beside the line, the
+    // address and since when said when pointed at.
+    const hubs = world.nodes.hubs.map((hub, index) => {
       const link = hub.link;
-      const linked =
-        link.kind === "alone"
-          ? words.alone
-          : link.kind === "online"
-            ? words.online(link.hub, this.options.ago(new Date(link.since), now))
-            : link.kind === "connecting"
-              ? words.connecting(link.last_error)
-              : link.dissolved
-                ? words.dissolved
-                : words.stopped(link.reason);
+      const label = `<dt>${index === 0 ? escape(words.link) : ""}</dt>`;
+      if (link.kind === "alone") return `${label}<dd>${escape(words.alone)}</dd>`;
+      const reach: HubReach = link.kind === "online" ? "online" : link.kind === "connecting" ? "connecting" : "stopped";
+      const said =
+        link.kind === "online"
+          ? words.online(link.hub, this.options.ago(new Date(link.since), now))
+          : link.kind === "connecting"
+            ? words.connecting(link.last_error)
+            : link.dissolved
+              ? words.dissolved
+              : words.stopped(link.reason);
       const why = link.kind === "connecting" ? (link.last_error ?? "") : link.kind === "stopped" ? link.reason : "";
-      return [words.hub(hub.name), [linked, words.as(hub.logins.join(", "))].filter(Boolean).join(" "), why];
+      const logins = hub.logins.join(", ");
+      const pointed = [said, words.as(logins), why].filter(Boolean).join("\n");
+      return `${label}<dd class="sd-hub" title="${escape(pointed)}">${hubLine(reach, hub.name)}<span class="sd-hub-name">${escape(hub.name)}</span>${
+        reach === "online" ? "" : `<span class="sd-state">${escape(said)}</span>`
+      }${logins ? `<span class="sd-login">${glyph("person", 14)}<span>${escape(logins)}</span></span>` : ""}</dd>`;
     });
     // The version is said once, by the local service's own row below; a
     // computer's name has its own row above.
-    const facts: [string, string, string?][] = [
-      ...(this.options.phone ? [[words.phoneName, world.here] as [string, string]] : []),
-      ...(hubs.length ? hubs : [[words.link, words.alone] as [string, string]]),
-    ];
-    this.device.innerHTML = facts
-      .filter(([, value]) => value)
-      .map(([name, value, why]) => `<dt>${escape(name)}</dt><dd${why ? ` title="${escape(why)}"` : ""}>${escape(value)}</dd>`)
-      .join("");
+    this.device.innerHTML = [
+      ...(this.options.phone ? [`<dt>${escape(words.phoneName)}</dt><dd>${escape(world.here)}</dd>`] : []),
+      ...(hubs.length ? hubs : [`<dt>${escape(words.link)}</dt><dd>${escape(words.alone)}</dd>`]),
+    ].join("");
   }
 }

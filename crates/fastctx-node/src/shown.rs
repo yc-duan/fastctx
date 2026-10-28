@@ -31,6 +31,7 @@ pub(crate) async fn now(node: &Arc<Node>) -> Result<WorldNow, Failure> {
         machines,
         history: None,
         others: Vec::new(),
+        involved: Vec::new(),
     };
     Ok(WorldNow { here, who, nodes: nodes(node), towns, accounts: crate::world::accounts(node) })
 }
@@ -113,6 +114,7 @@ fn elsewhere(node: &Node) -> Vec<MachineWho> {
             busy: afoot.busy,
         };
         let name = reachable.name.clone();
+        let current = matches!(reachable.link.status(), Status::Online { .. });
         machines.push(match (member.online, afoot) {
             (false, afoot) => MachineWho::Offline {
                 observation: None,
@@ -121,6 +123,11 @@ fn elsewhere(node: &Node) -> Vec<MachineWho> {
                 last: afoot.map(|afoot| Box::new(reply(afoot))),
             },
             (true, Some(afoot)) => MachineWho::Answered { observation: None, reply: reply(afoot) },
+            (true, None) if !current => MachineWho::NoAnswer {
+                observation: None,
+                machine: name,
+                reason: "this computer is not connected to the hub now".to_string(),
+            },
             (true, None) if !view.afoot => MachineWho::NoAnswer {
                 observation: None,
                 machine: name,
@@ -151,13 +158,14 @@ fn nodes(node: &Arc<Node>) -> NodesReply {
     let mut hubs = Vec::new();
     for link in node.links() {
         let view = link.view();
-        // A view kept while the line to the hub is down says who was online
-        // then, not now.
+        // A view kept while the line to the hub is down still has the
+        // machines, and says who was online then, not now.
         let current = matches!(link.status(), Status::Online { .. });
+        let listed = link.last_view().is_some();
         let logins: Vec<fastctx_types::AccountName> =
             view.me().map(|me| me.logins.iter().cloned().collect()).unwrap_or_default();
         let mut machines = Vec::new();
-        for machine in view.machines().filter(|machine| current && !view.is_me(&machine.name)) {
+        for machine in view.machines().filter(|machine| listed && !view.is_me(&machine.name)) {
             let rights: Vec<_> = logins
                 .iter()
                 .map(|account| (account.clone(), view.call_rights(&view.me, account, &machine.name)))

@@ -10,7 +10,7 @@ import type { QueueWords } from "./conversation/queue";
 
 import type { FindWords } from "./conversation/find";
 import type { OutputWords } from "./conversation/run-output";
-import { enQuestions, zhQuestions, type QuestionWords } from "./conversation/question-card";
+import type { DeedWords } from "./conversation/deeds/types";
 
 export type Tense = "running" | "done" | "failed";
 
@@ -66,16 +66,11 @@ export interface Tally {
 
 /** The host's own agents, as a conversation shows them (`agents.ts`). */
 export interface AgentWords {
-  /** The panel of them, and its mark beside the input. */
-  title: string;
-  /** How many still work, beside the title and on the mark. */
-  running(n: number): string;
   /** How one stands where its row does not say it by its mark. */
   failed: string;
   stopped: string;
   waiting: string;
-  /** What it was asked, at the head of what it did; opened in full. */
-  asked: string;
+  /** What it was asked, at the head of what it did, opened in full. */
   more: string;
   less: string;
   /** Its own record, read from its conversation's machine. */
@@ -89,40 +84,14 @@ export interface AgentWords {
   stoppedTold(task: string | null): string;
   /** What it used, at the foot of what it did. */
   tools(n: number): string;
-  /** Each of them in the panel: goes to it in the conversation. */
-  goTo: string;
-  /** The panel's clock ends now while one of them works. */
-  now: string;
   /** A call that names agents the conversation does not hold. */
   unknownAgents(n: number): string;
-}
-
-/** The rows of what a run did through the World. */
-export interface TripWords {
-  /** One command sent to `n` machines. */
-  machines(n: number): string;
-  /** How many of them did not end as they should. */
-  troubled(n: number): string;
-  command: string;
-  lastLines: string;
-  stopped: string;
-  lost(why: string): string;
-  /** A command whose machine went away under it, as its row says it. */
-  unfinished: string;
-  /** Under the pointer on the hook of a command whose input flowed
-   *  straight from the row above. */
-  fed: string;
-  from: string;
-  to: string;
-  copied(files: number, size: string): string;
-  problems: string;
 }
 
 export interface Words {
   english: boolean;
   queue: QueueWords;
   /** A card of questions asked without waiting. */
-  questions: QuestionWords;
   act(act: Act, tense: Tense): string;
   failedTool(name: string): string;
   /** What a finished stretch did, by kind: its heading's parts in the order
@@ -172,6 +141,11 @@ export interface Words {
   forkPartial: string;
   /** Turns not held, before everything held and between two parts. */
   turnsEarlier(turns: number): string;
+  /** Said beside words the agent marked urgent for the user (`world-voice.md`). */
+  sayUrgent: string;
+  /** The two views of a conversation: only what was said, or every step. */
+  viewSaid: string;
+  viewSteps: string;
   turnsBetween(turns: number): string;
   /** Back to the newest, from far up a conversation. */
   toLatest: string;
@@ -225,15 +199,21 @@ export interface Words {
   unchangedLines(n: number): string;
   /** Long text opened whole, in a popup. */
   fullScreen: string;
+  /** What a run did, drawn (`conversation/deeds`). */
+  deeds: DeedWords;
   /** What a command printed and what a write changed, opened under their
    *  rows: what was left out of what the model got, the whole output on
    *  its machine beside it, and what is said when either is gone. */
-  /** What a run did through the World, row by row (`conversation/trip.ts`). */
-  trip: TripWords;
   output: OutputWords & {
     /** What a call was given, and what it gave back, as their boxes are named. */
     input: string;
     printed: string;
+    /** A copy of what a command printed, as its button says. */
+    copyOutput: string;
+    /** The script a run was given, as the reader names it. */
+    script: string;
+    /** A command that printed nothing, opened. */
+    nothing: string;
     modelCopy: string;
     whole: string;
     wholeGone: string;
@@ -268,6 +248,12 @@ export interface Words {
   /** A colleague handed back its answer: "GPT 交回　14 分钟". */
   answered(label: string, took: string | null): string;
   answerFailed(label: string): string;
+  /** A colleague asked the conversation that asked it something. */
+  colleagueAsks(question: string): string;
+  /** A colleague asked, in a shape older nodes do not tell. */
+  colleagueAsked: string;
+  /** A colleague's goal settled: done after how long, blocked, or paused. */
+  goalReported(label: string, status: "active" | "complete" | "blocked" | "paused", took: string): string;
   /** The watch on the session ended: the node ended it, or the connection
    *  to it broke. */
   watchEnded(why: string | null): string;
@@ -299,6 +285,13 @@ export interface Words {
   stillRunning: string;
   /** Before a job is stopped by the user, and when it could not be. */
   stopJobAsk: string;
+  /** A sentinel the conversation left: withdrawing it, and how it stands. */
+  withdrawSentinel: string;
+  withdrawSentinelAsk: string;
+  sentinelPhase(phase: "starting" | "watching" | "satisfied" | "unable" | "withdrawn" | "unavailable"): string;
+  /** When a sentinel next wakes its conversation, and every time it will. */
+  sentinelWakeAt(at: number, now: number): string;
+  sentinelWakes(times: string[]): string;
   notStopped: string;
   cancel: string;
   /** A job's output opened under its row. */
@@ -320,6 +313,11 @@ export interface Words {
   /** Why it did not start, for the pointer to rest on: in plain words where
    *  the interface knows them, else as its machine said it. */
   hostRetryWhy(reason: string): string;
+  /** Words waiting for room in their agent login, which runs as many turns
+   *  at once as it may: how many turns go before theirs. */
+  queuedTurn(ahead: number): string;
+  /** Why they wait, for the pointer to rest on. */
+  queuedTurnWhy: string;
   /** A job the resident started has ended, on that machine. */
   jobEnded(job: string, machine: string): string;
   /** The user moved it to another project through the World. */
@@ -333,6 +331,16 @@ export interface Words {
   deskFree(who: string): string;
   deskTaken(who: string): string;
   deskOutside: string;
+  /** A background command whose end can no longer reach the conversation. */
+  endUndelivered(machine: string): string;
+  /** A stop that could not reach the machine of what it was to stop. */
+  stopUndelivered(machine: string): string;
+  /** Something the World gave up delivering, told in words not known. */
+  undelivered: string;
+  /** Why it could not be delivered: the machine left the account's network. */
+  goneFromNetwork(machine: string): string;
+  /** Why it could not be delivered: every network it belongs to was left. */
+  networksLeft: string;
   /** How a job or a colleague's turn ended, from the World's own wording
    *  (`exited 0`, `turn completed, 14m`); a wording not known is kept. */
   ended(how: string): string;
@@ -388,7 +396,6 @@ const index = (tense: Tense) => (tense === "done" ? 0 : tense === "running" ? 1 
 
 export const zh: Words = {
   english: false,
-  questions: zhQuestions,
   queue: {
     waiting: (count) => `排队 ${count} 条`,
     held: "已暂停，本轮停止",
@@ -461,6 +468,9 @@ export const zh: Words = {
   rewound: (files) => (files ? "已回到这一轮之前" : "已回到这一轮之前，改过的文件没有还原"),
   forkPartial: "已分叉，部分内容没带过去",
   turnsEarlier: (turns) => (turns > 0 ? `更早的 ${turns} 轮` : "更早的记录"),
+  sayUrgent: "要紧",
+  viewSaid: "只看对话",
+  viewSteps: "显示每一步",
   turnsBetween: (turns) => (turns > 0 ? `中间还有 ${turns} 轮` : "中间还有记录"),
   toLatest: "回到最新",
   stepsEarlier: (steps) => `更早的 ${steps} 步`,
@@ -502,23 +512,70 @@ export const zh: Words = {
   moreLines: (n) => `+ ${n.toLocaleString("zh-CN")} 行`,
   unchangedLines: (n) => `${n} 行未改动`,
   fullScreen: "查看全部",
-  trip: {
+  deeds: {
+    raw: "原文",
+    tests: (passed, failed, ignored) => [`${passed} 个通过`, failed ? `${failed} 个失败` : "", ignored ? `${ignored} 个跳过` : ""].filter(Boolean).join("，"),
+    failed: (n) => `${n} 个失败`,
+    passed: (n) => `${n} 个通过`,
+    skippedTests: (n) => `${n} 个跳过`,
+    searches: (n) => `搜索 ${n} 次`,
+    pushedTo: (branch) => `推到 ${branch}`,
+    commandsRun: (n) => `${n} 条命令`,
+    moreCommands: (n) => `等 ${n} 条`,
+    looks: { machines: "机器", working: "在做的事", projects: "项目", plan: "计划", goal: "目标", accounts: "账号", usage: (of) => `${of} 的用法` },
+    world: { wait: "等待", stop: "停止", publish: "发布", enter: "进入", plan: "更新", sense: "盯着", look: "查看" },
+    thePlan: "计划",
+    goal: {
+      complete: { verb: "完成", object: "目标", said: "目标完成了" },
+      blocked: { verb: "标记", object: "目标受阻", said: "目标受阻" },
+      pause: { verb: "暂停", object: "目标", said: "目标暂停了" },
+    },
+    ago: (ms) => {
+      const minutes = Math.floor(ms / 60_000);
+      if (minutes < 1) return "刚刚";
+      if (minutes < 60) return `${minutes} 分钟前`;
+      const hours = Math.floor(minutes / 60);
+      return hours < 24 ? `${hours} 小时前` : `${Math.floor(hours / 24)} 天前`;
+    },
+    ended: (end) =>
+      end.kind === "exited" ? (end.code === 0 ? "跑完了" : `退出 ${end.code}`) : end.kind === "stopped" ? "已停止" : end.kind === "not_run" ? "没有跑起来" : "没有跑完",
+    stopped: (how) => ({ stopped: "已停止", already_stopped: "早已停下", had_ended: "早已结束", not_cleanly: "没能停干净", still_running: "还在跑" })[how],
     machines: (n) => `${n} 台`,
     troubled: (n) => `${n} 台出错`,
-    command: "命令",
     lastLines: "最后几行",
-    stopped: "已停止",
-    lost: (why) => `没有跑完：${why}`,
-    unfinished: "没有跑完",
     fed: "用上一行的输出",
-    from: "从",
-    to: "到",
-    copied: (files, size) => `${files} 个文件，${size}`,
-    problems: "没复制成的",
+    version: (n) => `第 ${n} 版`,
+    page: (n) => `第 ${n} 页`,
+    copied: (files, size) => `${files} 个文件　${size}`,
+    same: (n) => `${n} 个已经一样`,
+    notCopied: (n) => `${n} 个没复制`,
+    inBackground: "在后台继续",
+    entered: "从现在起在这个项目里工作",
+    watching: "一有动静就叫醒",
+    looked: (n) => `查看 ${n} 次`,
+    errors: (n) => `${n} 个错误`,
+    warnings: (n) => `${n} 个警告`,
+    clean: "没有错误和警告",
+    files: (n) => `${n} 个文件`,
+    noChanges: "没有改动",
+    upToDate: "已是最新",
+    rejected: "被拒绝",
+    hits: (n, files) => (files > 1 ? `${files} 个文件中 ${n} 处` : `${n} 处`),
+    more: (n) => `还有 ${n} 处`,
+    skipped: (n) => `省略 ${n} 行`,
+    lines: (first, last, of) => (of ? `第 ${first}–${last} 行，共 ${of} 行` : `第 ${first}–${last} 行`),
+    states: { modified: "已修改", added: "新文件", deleted: "已删除", renamed: "已重命名", untracked: "未跟踪", conflict: "冲突" },
+    verbs: { search: "搜索", read: "读取", test: "测试", check: "检查", build: "构建", commit: "提交", push: "推送", status: "查看", log: "查看", run: "运行" },
+    tree: "工作区",
+    history: "提交历史",
+    commits: (n) => `${n} 次提交`,
   },
   output: {
     input: "输入",
     printed: "输出",
+    copyOutput: "复制输出",
+    script: "脚本",
+    nothing: "没有输出",
     linesLeftOut: (n) => `⋯ 省略 ${n.toLocaleString("zh-CN")} 行`,
     charsLeftOut: (n) => `⋯ 省略 ${n.toLocaleString("zh-CN")} 个字符`,
     unreadable: "此行无法显示",
@@ -557,6 +614,10 @@ export const zh: Words = {
   regenerate: "重新回答",
   answered: (label, took) => (took ? `${label} 交回　${took}` : `${label} 交回`),
   answerFailed: (label) => `${label} 本轮失败`,
+  colleagueAsks: (question) => `同事问：${question}`,
+  colleagueAsked: "同事有一个问题",
+  goalReported: (label, status, took) =>
+    status === "blocked" ? `${label} 受阻` : status === "paused" ? `${label} 暂停了` : `${label} 完成　${took}`,
   watchEnded: () => "已停止同步",
   watchRefused: "你的账号看不了这段对话",
   watchInterrupted: () => "连接中断，正在重连…",
@@ -601,12 +662,9 @@ export const zh: Words = {
   },
   openColleague: "查看",
   agents: {
-    title: "子代理",
-    running: (n) => `${n} 个在工作`,
     failed: "失败",
     stopped: "已停止",
     waiting: "在等",
-    asked: "任务",
     more: "展开",
     less: "收起",
     reading: "正在读取…",
@@ -616,12 +674,16 @@ export const zh: Words = {
     failedTold: (task) => (task ? `子代理失败：${task}` : "子代理失败"),
     stoppedTold: (task) => (task ? `子代理已停止：${task}` : "子代理已停止"),
     tools: (n) => `${n} 次工具调用`,
-    goTo: "转到它",
-    now: "现在",
     unknownAgents: (n) => `${n} 个子代理`,
   },
-  stillRunning: "运行中的命令",
+  stillRunning: "还在跑的",
   stopJobAsk: "停下这条命令？会告诉智能体是你停的。",
+  withdrawSentinel: "撤掉",
+  withdrawSentinelAsk: "撤掉这个哨兵？",
+  sentinelPhase: (phase) =>
+    ({ starting: "刚开始", watching: "盯着", satisfied: "已成立", unable: "盯不成", withdrawn: "已撤掉", unavailable: "暂时问不到" })[phase],
+  sentinelWakeAt: (at, now) => wakeTime(at, now, "zh-CN", "明天"),
+  sentinelWakes: (times) => `到点叫醒对话：${times.join("、")}`,
   notStopped: "没能停下",
   cancel: "取消",
   jobOutput: (command) => `${command} 的输出`,
@@ -644,6 +706,8 @@ export const zh: Words = {
           : "等它下次用世界的工具时送到",
   hostRetrying: (agent) => (agent ? `${agent} 未能启动，正在重试` : "未能启动，正在重试"),
   hostRetryWhy: (reason) => known(reason, zhProblems) ?? reason,
+  queuedTurn: (ahead) => (ahead ? `排队中，前面还有 ${ahead} 个` : "排队中，下一个就轮到它"),
+  queuedTurnWhy: "这个智能体登录同时开着的轮已到上限；主人的先开，受协助的人按账号轮流",
   jobEnded: (_job, machine) => `后台命令在 ${machine} 上结束`,
   movedTo: (town) => `已移到项目 ${town}`,
   movedOut: "已移出项目",
@@ -653,6 +717,11 @@ export const zh: Words = {
   deskFree: (who) => `${who} 这一轮结束，屏幕空出来了`,
   deskTaken: (who) => `${who} 正在操作屏幕，结束后会通知`,
   deskOutside: "屏幕被 Fastctx 之外的会话占着",
+  endUndelivered: (machine) => `${machine} 上那条后台命令的结果送不到了`,
+  stopUndelivered: (machine) => `停止没能送到 ${machine}`,
+  undelivered: "有一件事没能送到",
+  goneFromNetwork: (machine) => `${machine} 已不在这个账号的网络里`,
+  networksLeft: "它所属的网络都已退出",
   ended: (how) =>
     endedIn(how, {
       exited: (code) => `退出 ${code}`,
@@ -670,7 +739,6 @@ export const zh: Words = {
 
 export const en: Words = {
   english: true,
-  questions: enQuestions,
   queue: {
     waiting: (count) => `${count} queued`,
     held: "Paused, turn stopped",
@@ -745,6 +813,9 @@ export const en: Words = {
   rewound: (files) => (files ? "Back to before this turn" : "Back to before this turn; changed files were not restored"),
   forkPartial: "Forked; part of it did not come over",
   turnsEarlier: (turns) => (turns === 1 ? "1 earlier turn" : turns > 0 ? `${turns} earlier turns` : "Earlier turns"),
+  sayUrgent: "Urgent",
+  viewSaid: "Show only what was said",
+  viewSteps: "Show every step",
   turnsBetween: (turns) => (turns === 1 ? "1 more turn between" : turns > 0 ? `${turns} more turns between` : "More turns between"),
   toLatest: "Back to latest",
   stepsEarlier: (steps) => (steps === 1 ? "1 earlier step" : `${steps} earlier steps`),
@@ -786,23 +857,72 @@ export const en: Words = {
   moreLines: (n) => `+ ${n.toLocaleString("en")} more line${n === 1 ? "" : "s"}`,
   unchangedLines: (n) => `${n} unchanged lines`,
   fullScreen: "View all",
-  trip: {
-    machines: (n) => `${n} machines`,
+  deeds: {
+    raw: "Raw output",
+    tests: (passed, failed, ignored) => [`${passed} passed`, failed ? `${failed} failed` : "", ignored ? `${ignored} skipped` : ""].filter(Boolean).join(", "),
+    failed: (n) => `${n} failed`,
+    passed: (n) => `${n} passed`,
+    skippedTests: (n) => `${n} skipped`,
+    searches: (n) => `${n} search${n === 1 ? "" : "es"}`,
+    pushedTo: (branch) => `pushed to ${branch}`,
+    commandsRun: (n) => `${n} command${n === 1 ? "" : "s"}`,
+    moreCommands: (n) => `and ${n} more`,
+    looks: { machines: "the machines", working: "what is working", projects: "the projects", plan: "the plan", goal: "the goal", accounts: "the accounts", usage: (of) => `how to use ${of}` },
+    world: { wait: "Waited for", stop: "Stopped", publish: "Published", enter: "Entered", plan: "Updated", sense: "Watching", look: "Looked at" },
+    thePlan: "the plan",
+    goal: {
+      complete: { verb: "Completed", object: "the goal", said: "The goal is complete" },
+      blocked: { verb: "Marked", object: "the goal blocked", said: "The goal is blocked" },
+      pause: { verb: "Paused", object: "the goal", said: "The goal is paused" },
+    },
+    ago: (ms) => {
+      const minutes = Math.floor(ms / 60_000);
+      if (minutes < 1) return "just now";
+      if (minutes < 60) return `${minutes} minute${minutes === 1 ? "" : "s"} ago`;
+      const hours = Math.floor(minutes / 60);
+      if (hours < 24) return `${hours} hour${hours === 1 ? "" : "s"} ago`;
+      const days = Math.floor(hours / 24);
+      return `${days} day${days === 1 ? "" : "s"} ago`;
+    },
+    ended: (end) =>
+      end.kind === "exited" ? (end.code === 0 ? "finished" : `exit ${end.code}`) : end.kind === "stopped" ? "stopped" : end.kind === "not_run" ? "didn't start" : "didn't finish",
+    stopped: (how) => ({ stopped: "stopped", already_stopped: "already stopped", had_ended: "had already ended", not_cleanly: "not stopped cleanly", still_running: "still running" })[how],
+    machines: (n) => `${n} machine${n === 1 ? "" : "s"}`,
     troubled: (n) => `${n} failed`,
-    command: "Command",
     lastLines: "Last lines",
-    stopped: "Stopped",
-    lost: (why) => `Did not finish: ${why}`,
-    unfinished: "Did not finish",
     fed: "Takes the output of the row above",
-    from: "From",
-    to: "To",
-    copied: (files, size) => `${files} ${files === 1 ? "file" : "files"}, ${size}`,
-    problems: "Not copied",
+    version: (n) => `version ${n}`,
+    page: (n) => `page ${n}`,
+    copied: (files, size) => `${files} file${files === 1 ? "" : "s"}, ${size}`,
+    same: (n) => `${n} already the same`,
+    notCopied: (n) => `${n} not copied`,
+    inBackground: "Goes on in the background",
+    entered: "Works in this project from now on",
+    watching: "Wakes the conversation when it happens",
+    looked: (n) => `${n} look${n === 1 ? "" : "s"}`,
+    errors: (n) => `${n} error${n === 1 ? "" : "s"}`,
+    warnings: (n) => `${n} warning${n === 1 ? "" : "s"}`,
+    clean: "No errors or warnings",
+    files: (n) => `${n} file${n === 1 ? "" : "s"}`,
+    noChanges: "Nothing changed",
+    upToDate: "Up to date",
+    rejected: "Rejected",
+    hits: (n, files) => (files > 1 ? `${n} in ${files} files` : `${n} match${n === 1 ? "" : "es"}`),
+    more: (n) => `${n} more`,
+    skipped: (n) => `${n} line${n === 1 ? "" : "s"} left out`,
+    lines: (first, last, of) => (of ? `Lines ${first}–${last} of ${of}` : `Lines ${first}–${last}`),
+    states: { modified: "Modified", added: "New", deleted: "Deleted", renamed: "Renamed", untracked: "Untracked", conflict: "Conflict" },
+    verbs: { search: "Searched", read: "Read", test: "Tested", check: "Checked", build: "Built", commit: "Committed", push: "Pushed", status: "Looked at", log: "Looked at", run: "Ran" },
+    tree: "the working tree",
+    history: "the history",
+    commits: (n) => `${n} commit${n === 1 ? "" : "s"}`,
   },
   output: {
     input: "Input",
     printed: "Output",
+    copyOutput: "Copy output",
+    script: "Script",
+    nothing: "Nothing printed",
     linesLeftOut: (n) => `⋯ ${n.toLocaleString("en")} line${n === 1 ? "" : "s"} left out`,
     charsLeftOut: (n) => `⋯ ${n.toLocaleString("en")} character${n === 1 ? "" : "s"} left out`,
     unreadable: "This line can't be shown",
@@ -841,6 +961,10 @@ export const en: Words = {
   regenerate: "Answer again",
   answered: (label, took) => (took ? `${label} handed back after ${took}` : `${label} handed back`),
   answerFailed: (label) => `${label}: turn failed`,
+  colleagueAsks: (question) => `A colleague asks: ${question}`,
+  colleagueAsked: "A colleague asks a question",
+  goalReported: (label, status, took) =>
+    status === "blocked" ? `${label} is blocked` : status === "paused" ? `${label} paused` : `${label} done after ${took}`,
   watchEnded: () => "Sync stopped",
   watchRefused: "Your account can't see this conversation",
   watchInterrupted: () => "Disconnected, reconnecting…",
@@ -885,12 +1009,9 @@ export const en: Words = {
   },
   openColleague: "Open",
   agents: {
-    title: "Agents",
-    running: (n) => `${n} working`,
     failed: "failed",
     stopped: "stopped",
     waiting: "waiting",
-    asked: "Task",
     more: "Show all",
     less: "Show less",
     reading: "Reading…",
@@ -900,12 +1021,16 @@ export const en: Words = {
     failedTold: (task) => (task ? `Agent failed: ${task}` : "Agent failed"),
     stoppedTold: (task) => (task ? `Agent stopped: ${task}` : "Agent stopped"),
     tools: (n) => (n === 1 ? "1 tool call" : `${n} tool calls`),
-    goTo: "Go to it",
-    now: "now",
     unknownAgents: (n) => (n === 1 ? "1 agent" : `${n} agents`),
   },
-  stillRunning: "Running commands",
+  stillRunning: "Still under way",
   stopJobAsk: "Stop this command? The agent will be told you stopped it.",
+  withdrawSentinel: "Withdraw",
+  withdrawSentinelAsk: "Withdraw this sentinel?",
+  sentinelPhase: (phase) =>
+    ({ starting: "starting", watching: "watching", satisfied: "found it", unable: "can't watch", withdrawn: "withdrawn", unavailable: "can't be asked now" })[phase],
+  sentinelWakeAt: (at, now) => wakeTime(at, now, "en-US", "tomorrow"),
+  sentinelWakes: (times) => `Wakes the conversation at ${times.join(", ")}`,
   notStopped: "Couldn't stop it",
   cancel: "Cancel",
   jobOutput: (command) => `Output of ${command}`,
@@ -927,6 +1052,8 @@ export const en: Words = {
           : "Arrives when it next uses a Fastctx tool",
   hostRetrying: (agent) => (agent ? `${agent} couldn't start; retrying` : "Couldn't start; retrying"),
   hostRetryWhy: (reason) => known(reason, enProblems) ?? reason,
+  queuedTurn: (ahead) => (ahead ? `Queued, ${ahead} ahead` : "Queued, next up"),
+  queuedTurnWhy: "This agent login runs as many turns at once as it may; the owner's go first, then the assisted accounts' in turn",
   jobEnded: (_job, machine) => `Background command on ${machine} ended`,
   movedTo: (town) => `Moved to project ${town}`,
   movedOut: "Removed from project",
@@ -936,6 +1063,11 @@ export const en: Words = {
   deskFree: (who) => `${who}'s turn ended; the screen is free`,
   deskTaken: (who) => `${who} is using the screen; you'll be told when it's free`,
   deskOutside: "Computer Use is held by a session outside Fastctx",
+  endUndelivered: (machine) => `The background command on ${machine} can't report back`,
+  stopUndelivered: (machine) => `The stop didn't reach ${machine}`,
+  undelivered: "Something couldn't be delivered",
+  goneFromNetwork: (machine) => `${machine} is no longer in this account's network`,
+  networksLeft: "Every network it belongs to was left",
   ended: (how) =>
     endedIn(how, {
       exited: (code) => `exit ${code}`,
@@ -988,6 +1120,19 @@ function clock(ms: number): string {
   const minutes = Math.floor(seconds / 60);
   if (minutes < 60) return seconds % 60 ? `${minutes}m ${seconds % 60}s` : `${minutes}m`;
   return minutes % 60 ? `${Math.floor(minutes / 60)}h ${minutes % 60}m` : `${Math.floor(minutes / 60)}h`;
+}
+
+/** A time of day as a sentinel will wake at it: the day too where it is
+ *  not today. */
+function wakeTime(at: number, now: number, locale: string, tomorrow: string): string {
+  const day = new Date(at);
+  const time = day.toLocaleTimeString(locale, { hour: "2-digit", minute: "2-digit", hour12: false });
+  const start = new Date(now);
+  start.setHours(0, 0, 0, 0);
+  const days = Math.floor((at - start.getTime()) / 86_400_000);
+  if (days === 0) return time;
+  if (days === 1) return `${tomorrow} ${time}`;
+  return `${day.toLocaleDateString(locale, { month: "short", day: "numeric" })} ${time}`;
 }
 
 /** Tokens as the hosts count them in a line: 640 tokens, 1.2k tokens. */

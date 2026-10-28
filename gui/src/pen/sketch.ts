@@ -12,8 +12,9 @@ import { blot, circlePoints, outline, ruledPoints, seeded, swatch, type Point } 
  *  for a mark whose colour says how something went. */
 export type SketchInk = "graphite" | "clay" | "paper" | "current";
 /** The washes: a thing as the interface's boxes are, a field a step lighter
- *  than it, the accent's solid, and graphite for a small dark part. */
-export type SketchWash = "box" | "field" | "clay" | "graphite";
+ *  than it, the accent's solid, the accent's light wash for the one thing
+ *  that matters among others, and graphite for a small dark part. */
+export type SketchWash = "box" | "field" | "clay" | "accent" | "graphite";
 
 export class Sketch {
   private readonly random: () => number;
