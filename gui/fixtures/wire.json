@@ -22930,7 +22930,7 @@
         }
       }
     ],
-    "host_text": "=== from fastctx (user attachments, v2) ===\nThe user attached these files. Each original stays on owner.machine at path; sizes are in bytes. Look at one on its machine, as in `on MACHINE fastctx view PATH`; images come back as images.\n{\"delivery\":\"talk-ab12\",\"from\":\"phone\",\"attachments\":[{\"id\":\"attachment-ab12\",\"owner\":{\"machine\":\"laptop\",\"resident\":\"codex-ab12\"},\"conversation\":{\"machine\":\"desktop\",\"resident\":\"codex-ab12\"},\"town\":\"world\",\"path\":\"C:/world/towns/world/residents/codex-ab12/attachments/attachment-ab12/content.png\",\"name\":\"截图.png\",\"media_type\":\"image/png\",\"size\":3145728,\"sha256\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"}]}\n=== user's words (verbatim) ===\n看这张图。\nKeep my words verbatim."
+    "host_text": "=== from fastctx (user attachments, v3) ===\nThe user attached these files; sizes are in bytes. A script finds each at $FASTCTX_SCRATCH/<path> on whichever machine it runs; `fastctx view` on an image shows it to you.\n{\"delivery\":\"talk-ab12\",\"from\":\"phone\",\"files\":[{\"id\":\"attachment-ab12\",\"name\":\"截图.png\",\"media_type\":\"image/png\",\"size\":3145728,\"path\":\"attachments/attachment-ab12/截图.png\"}]}\n=== user's words (verbatim) ===\n看这张图。\nKeep my words verbatim."
   },
   "composer": {
     "snapshots": [
