@@ -257,7 +257,18 @@
   color: var(--text-3);
 }
 
+/* What was left behind keeps its name and why on one line each, the path
+   between them giving way: a narrow screen shortens the path, never the
+   words. */
+.removal-left li > span:first-child {
+  flex: none;
+  white-space: nowrap;
+}
+
 .removal-why {
+  flex: none;
+  margin-left: auto;
+  white-space: nowrap;
   color: var(--wrong);
 }
 
