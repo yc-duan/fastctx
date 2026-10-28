@@ -24,6 +24,7 @@ import { previewDiff, shortPath } from "./change-diff";
 import { Sheet } from "./confirm";
 import { detailOf, enProblems, known, zhProblems } from "./problem";
 import { stepMark as mark } from "../pen/step-mark";
+import { accountLayer } from "./layer";
 
 export interface AgentChangeWords {
   applyTitle(who: string, machine: string): string;
@@ -318,7 +319,8 @@ export class AgentChangeSheet {
     const lines = [
       ...(target.takeBack ? [words.takeBack] : []),
       words.openSessions(target.agent, target.into),
-      ...(target.into && target.agent === "claude" ? [words.permission] : []),
+      // Only the workbench opens Claude conversations of its own.
+      ...(target.into && target.agent === "claude" && accountLayer.workbench.peek() ? [words.permission] : []),
       ...(target.here ? [] : [words.elsewhere(target.machine)]),
     ];
     const head = `${handsDrawing(target.into)}
