@@ -336,7 +336,9 @@ pub async fn ask_here(
                 | Landed::Handed { .. }
                 | Landed::Uncertain { .. },
             ) => return,
-            Ok(Landed::Waiting { why, .. }) if why.as_deref() == Some(crate::handoff::WAITING) => return,
+            // Kept on its way, as for room in its login or a release being
+            // put in: it goes in when it may.
+            Ok(Landed::Waiting { answered: true, .. }) => return,
             Ok(Landed::Waiting { why, .. }) => why.unwrap_or_else(|| "its session could not be reached".to_string()),
             Err(failure) => failure.message,
         };

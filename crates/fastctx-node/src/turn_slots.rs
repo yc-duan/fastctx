@@ -107,10 +107,13 @@ pub(crate) fn admit(node: &Arc<Node>, id: &ResidentId, about: &About) -> Result<
     let defaults = Defaults::of(node);
     let Some((key, dir)) = defaults.login(about) else { return Ok(()) };
     let hard = hard(node, about, &dir, &defaults);
-    let running = running(node, &key, &defaults, Some(id));
     let assisted = assisted(node, about);
     let now = Instant::now();
     let mut slots = node.turn_slots.0.lock().expect("never poisoned");
+    // Who runs is read under this lock: a turn let through counts as
+    // starting until its host says it began, and as running from then, so
+    // read before it, a turn could pass from one to the other unseen by both.
+    let running = running(node, &key, &defaults, Some(id));
     let login = slots.entry(key).or_default();
     login.prune(now, &running);
     let Some(limit) = login.limit(hard) else {
@@ -158,12 +161,12 @@ pub(crate) fn ended(node: &Arc<Node>, id: &ResidentId, about: &About, end: &Turn
     let Some((key, dir)) = defaults.login(about) else { return };
     let refused = refused_for_rate(node, about, &dir, end);
     let hard = hard(node, about, &dir, &defaults);
-    let running = running(node, &key, &defaults, None);
     let now = Instant::now();
     let mut slots = node.turn_slots.0.lock().expect("never poisoned");
     if !refused && !slots.contains_key(&key) {
         return;
     }
+    let running = running(node, &key, &defaults, None);
     let login = slots.entry(key.clone()).or_default();
     login.starting.retain(|(starting, _)| starting != id);
     if refused {

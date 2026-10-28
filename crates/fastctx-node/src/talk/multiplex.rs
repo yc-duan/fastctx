@@ -254,17 +254,14 @@ async fn run(
         &call,
         &node.machine(),
     );
-    // Only history preparation takes a read slot. A quiet live subscription
-    // never occupies execution capacity, and its bounded queue is independent.
-    admission.pool = if request.composer.is_some() {
-        fastctx_types::contract::Pool::Draft
-    } else {
-        fastctx_types::contract::Pool::Short
-    };
+    // Only preparing what it is first told takes a read slot, a shared
+    // input's too: the draft's slots are for changes to the draft. A quiet
+    // live subscription never occupies execution capacity, and its bounded
+    // queue is independent.
+    admission.pool = fastctx_types::contract::Pool::Short;
     admission.kind = if request.composer.is_some() { "opening the shared input" } else { "opening a watch" }.into();
     drop(call);
-    let permit = crate::intake::take(node.machine(), link.hub().clone(), admission).await?;
-    permit.started();
+    // Told it is open before the slot is taken, so no slot waits on the line.
     let mut flow = Flow::default();
     flow.deliver(
         link,
@@ -273,6 +270,8 @@ async fn run(
         consumed,
     )
     .await?;
+    let permit = crate::intake::take(node.machine(), link.hub().clone(), admission).await?;
+    permit.started();
     if let Some(subscription) = request.documents.take() {
         if request.goal {
             return Err(Failure::not_run("goal observations do not accept document updates"));
