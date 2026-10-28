@@ -425,6 +425,7 @@ async fn connected(
                     }
                 }
             }
+            inner.view_synced.store(generation, std::sync::atomic::Ordering::Release);
             // The directory and the initial status snapshot complete independently.
             inner.afoot_synced(generation);
             inner.versions_synced(generation);

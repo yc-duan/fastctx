@@ -322,6 +322,9 @@ pub(crate) struct Inner {
     refreshing: tokio::sync::Mutex<Refreshed>,
     /// How many refreshes of the view began.
     refreshes: AtomicU64,
+    /// The connection on which the hub last gave the whole view, 0 before
+    /// any (`Link::view_current`).
+    view_synced: AtomicU64,
     /// Whether a write of the view to disk is due, and when the last one
     /// began (`view_changes`).
     keeping: std::sync::atomic::AtomicBool,
@@ -502,6 +505,7 @@ impl Link {
             view: Mutex::new(Arc::new(view)),
             refreshing: tokio::sync::Mutex::new(Refreshed::default()),
             refreshes: AtomicU64::new(0),
+            view_synced: AtomicU64::new(0),
             keeping: std::sync::atomic::AtomicBool::new(false),
             kept_at: Mutex::new(None),
             status,
@@ -628,6 +632,17 @@ impl Link {
     /// This machine's view of the directory, as last given by the hub.
     pub fn view(&self) -> Arc<View> {
         self.inner.view()
+    }
+
+    /// Whether the view is the one the hub gave on the connection up now:
+    /// not while there is none, nor on a new one until its directory came,
+    /// the view then being what an earlier one left, which may lack a
+    /// machine that came meanwhile. Only such a view decides for good that
+    /// a machine is gone from it.
+    pub fn view_current(&self) -> bool {
+        self.inner
+            .connection()
+            .is_some_and(|connection| self.inner.view_synced.load(Ordering::Acquire) == connection.generation)
     }
 
     /// The view as last given, while this machine is a member of the hub:

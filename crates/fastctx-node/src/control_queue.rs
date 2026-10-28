@@ -396,6 +396,13 @@ pub(crate) fn drain<'a>(
             let mut row = first.clone();
             row.state = ControlState::Running;
             event(node, id, &row)?;
+            // A long one runs on its own as one given directly does: the
+            // gate let go, words and other controls waiting for it, the rest
+            // of the queue taken up as it ends (`crate::control_long`).
+            if crate::control_long::long(node, id, &row.control) {
+                crate::control_long::start(node, id, row);
+                return Ok(());
+            }
             let result = Box::pin(crate::control::execute(node, id, row.control.clone())).await;
             let deferred = result.as_ref().err().is_some_and(|error| error.code == Some(FailureCode::HostUnavailable));
             let _ = end(node, id, row, result).await?;
