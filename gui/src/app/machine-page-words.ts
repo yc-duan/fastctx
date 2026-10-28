@@ -205,7 +205,7 @@ export const zhMachinePage: MachinePageWords = {
   notRecorded: "没有记录",
   noLines: "不在任何网络里",
 
-  kernel: "内核",
+  kernel: "系统内核",
   host: "主机名",
   home: "主目录",
   booted: "开机于",
@@ -306,7 +306,7 @@ export const enMachinePage: MachinePageWords = {
   notRecorded: "Not recorded",
   noLines: "In no network",
 
-  kernel: "Kernel",
+  kernel: "OS kernel",
   host: "Host name",
   home: "Home",
   booted: "Started",

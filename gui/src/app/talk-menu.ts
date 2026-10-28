@@ -99,6 +99,11 @@ export class TalkMenu {
     return !this.element.hidden && this.opened?.r.about.id === r.about.id && this.opened.r.about.machine === r.about.machine;
   }
 
+  /** Asks before deleting `r`, as its menu's delete does. */
+  askDelete(r: ResidentNow): void {
+    this.options.askDelete(r);
+  }
+
   open(r: ResidentNow, how: MenuOpening): void {
     if (this.isOpenFor(r) && how.anchor) {
       this.close();

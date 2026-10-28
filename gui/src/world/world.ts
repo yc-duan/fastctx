@@ -24,6 +24,9 @@ export interface About {
   origin: Origin;
   session: string | null;
   world_started: boolean;
+  /** A Codex session the user opened on their own and brought in
+   *  (`world-layers.md`, 接进来). */
+  native_resumed?: boolean;
   model: string | null;
   /** Whom it works for: this computer's logins, or these accounts. */
   acting: Acting;

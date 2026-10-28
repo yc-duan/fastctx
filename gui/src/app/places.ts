@@ -11,6 +11,10 @@ const sections: AgentSection[] = ["claude", "codex", "prompt", "mcp"];
 
 export type Place =
   | { kind: "home" }
+  /** What agents did with run on the user's machines (`world-layers.md`). */
+  | { kind: "activity" }
+  /** Connect or the workbench (`world-layers.md`). */
+  | { kind: "mode" }
   | { kind: "talk"; address: Address }
   /** Beginning a conversation, in a project or outside any. */
   | { kind: "new"; town: string | null }
@@ -59,6 +63,10 @@ export function link(place: Place): string {
   switch (place.kind) {
     case "home":
       return "#/";
+    case "activity":
+      return "#/activity";
+    case "mode":
+      return "#/mode";
     case "talk":
       return `#/talk/${part(`${place.address.resident}@${place.address.machine}`)}`;
     case "new":
@@ -145,11 +153,18 @@ export function placeOf(hash: string): Place {
       if (parts[1] === "subagents") return { kind: "subagents" };
       if (sections.includes(parts[1] as AgentSection)) return { kind: "agents", section: parts[1] as AgentSection, machine: parts[2] || null };
       return { kind: "agents", machine: parts[1] || null };
+    case "activity":
+      return { kind: "activity" };
+    case "mode":
+      return { kind: "mode" };
+    // The features page is gone: the workbench is a mode, and the other
+    // features' settings stand where they are used.
     case "features":
-      return { kind: "features" };
+      return { kind: "mode" };
     case "feature":
+      if (parts[1] === "conversations") return { kind: "mode" };
       if (features.includes(parts[1] as Feature)) return { kind: "feature", feature: parts[1] as Feature };
-      return { kind: "features" };
+      return { kind: "mode" };
     case "talks":
       return { kind: "talks", town: parts[1] || null };
     case "archived":

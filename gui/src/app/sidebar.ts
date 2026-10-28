@@ -2,9 +2,10 @@
 // can be seen from any page (`world-gui.md`, 界面的结构). At its top, the
 // network shown, by its server's name (this computer's own name while it is
 // in none); pressed, every network this device is in, the way to make a new
-// one or join one, and each one's management. Then the agents, the
-// machines and the features, each a line with its mark. With the workbench on,
-// the front page and a new conversation come first, and below are each
+// one or join one, and each one's management. Then the places, each a line
+// with its mark: the activity, the agents and the machines in Connect; on
+// the workbench (`world-layers.md`) the front page and a new conversation
+// as well, the agents named its kernels, and below are each
 // project, its name a way to its overview and its folder opening and closing
 // on its conversations (the rest from its "⋯"), and the conversations in
 // no project, most recent first; a conversation is listed as long as it is not archived,
@@ -16,12 +17,14 @@
 // the settings are at its foot.
 
 import { glyph } from "../conversation/glyphs";
-import { sectionOf, sectionRows } from "./agent-sections";
+import { keptSection, sectionOf, sectionRows } from "./agent-sections";
+import { dropZones, followDrags } from "./sidebar-drag";
+import "./sidebar-drag.css";
 import type { ProfileWords } from "./profile-words";
 import { ActsMenu, type MenuAct, type MenuEntry } from "./acts-menu";
 import { Popover } from "../conversation/popover";
 import { escape } from "../conversation/prose";
-import { deviceFeatures } from "./device-features";
+import { accountLayer } from "./layer";
 import { networksOf, shownNetwork } from "./network";
 import { redrawKeepingFocus } from "./focus";
 import { loginsOf, type Login } from "../world/accounts";
@@ -139,6 +142,7 @@ export class Sidebar {
       <button class="new-talk" type="button">${glyph("plus", 18)}<span>${escape(words.newTalk)}</span><kbd>Ctrl N</kbd></button>
       <div class="sidebar-places"></div>
       <div class="sidebar-update" hidden></div>
+      ${dropZones(options.menuWords)}
       <div class="sidebar-foot"></div>`;
     this.list = this.element.querySelector<HTMLElement>(".sidebar-places")!;
     this.foot = this.element.querySelector<HTMLElement>(".sidebar-foot")!;
@@ -177,7 +181,18 @@ export class Sidebar {
       const item = (event.target as HTMLElement).closest<HTMLElement>(".talk-item[data-resident]");
       if (!item?.dataset.resident || !item.dataset.machine || !event.dataTransfer) return;
       event.dataTransfer.setData(TALK_DRAG, JSON.stringify({ resident: item.dataset.resident, machine: item.dataset.machine }));
-      event.dataTransfer.effectAllowed = "copyLink";
+      event.dataTransfer.effectAllowed = "all";
+    });
+    // Dragged within the sidebar, it moves, is archived or deleted.
+    followDrags({
+      sidebar: this.element,
+      words: options.menuWords,
+      find: (resident, machine) => {
+        const { listed, archived } = talksOf(options.store.world.peek(), options.acts);
+        return [...listed, ...archived].find((r) => r.about.id === resident && r.about.machine === machine) ?? null;
+      },
+      acts: options.acts,
+      askDelete: (r) => options.menu.askDelete(r),
     });
     this.talkList = new TalkList(this.list, {
       acts: options.acts,
@@ -225,7 +240,7 @@ export class Sidebar {
     effect(() => {
       options.store.world.get();
       options.acts.changed.get();
-      deviceFeatures.conversations.get();
+      accountLayer.workbench.get();
       options.store.trouble.get();
       options.store.clock.get();
       options.store.unanswered.get();
@@ -261,7 +276,7 @@ export class Sidebar {
     const place = this.options.place();
     const now = store.clock.peek();
     // The new conversation outside any project is a place of its own.
-    const talking = deviceFeatures.conversations.peek();
+    const talking = accountLayer.workbench.peek();
     this.drawSwitcher();
     const begin = this.element.querySelector<HTMLElement>(".new-talk");
     if (begin) begin.hidden = !talking;
@@ -283,18 +298,19 @@ export class Sidebar {
       `<a class="place home${current}" href="${href}"${current.includes("current") ? ' aria-current="page"' : ""}><span class="place-mark">${mark}</span><span class="place-name">${escape(name)}</span>${extra}</a>`;
     // While one of the agents' sections is open they stand under it, and
     // it is the section that is current; they slide in once as they come.
-    const section = sectionOf(place);
+    const inCollab = place.kind === "feature" && place.feature === "collaboration";
+    const section = sectionOf(place) ?? (inCollab && talking ? keptSection() : null);
     if (section === null) this.sectionsSince = null;
     else this.sectionsSince ??= performance.now();
     const opening = this.sectionsSince !== null && performance.now() - this.sectionsSince < FOLDING_MS ? " opening" : "";
-    const sections = section === null ? "" : `<div class="asec-fold${opening}"><div class="asec-inner">${sectionRows(section, loggedIn, this.options.sections)}</div></div>`;
+    const sections = section === null ? "" : `<div class="asec-fold${opening}"><div class="asec-inner">${sectionRows(inCollab ? null : section, loggedIn, this.options.sections, talking && loggedIn ? { name: words.collaboration, current: inCollab } : null)}</div></div>`;
     // The agents come first: they are what the interface is for on a
     // computer of its own.
     const places = `<div class="side-places">
         ${talking ? top(link({ kind: "home" }), at(["home"]), knotMark(), words.world, waiting ? `<span class="count waiting"><span class="spoken">${escape(words.waiting)}</span>${waiting}</span>` : "") : ""}
-        ${machines || assisted ? top(link({ kind: "agents", machine: null }), section === null ? "" : " open", glyph("agents", 18), words.agents) + sections : ""}
+        ${top(link({ kind: "activity" }), at(["activity"]), glyph("history", 18), words.activity)}
+        ${machines || assisted || !talking ? top(link({ kind: "agents", machine: null }), section === null ? "" : " open", glyph("agents", 18), talking ? words.kernels : words.agents) + sections : ""}
         ${machines ? top(link({ kind: "machines" }), at(["machines", "machine"]), glyph("machine", 18), words.machines) : ""}
-        ${machines || loggedIn ? top(link({ kind: "features" }), at(["features", "feature"]), glyph("features", 18), words.features) : ""}
       </div>
       ${store.trouble.peek() ? `<p class="sidebar-trouble" title="${escape(store.trouble.peek() ?? "")}">${escape(words.unreachable)}</p>` : ""}
       ${store.unanswered.peek() >= SLOW ? `<p class="sidebar-trouble" role="status">${escape(words.unanswered(store.unanswered.peek()))}</p>` : ""}`;
@@ -421,7 +437,7 @@ export class Sidebar {
         // Its name leads to its overview; its folder opens and closes on its
         // conversations where it is. Shut, it says whether something in it
         // waits or works, and how many are in it.
-        return `<li class="project-place${shut ? " shut" : ""}" data-town="${escape(town)}" data-name="${escape(name)}">
+        return `<li class="project-place${shut ? " shut" : ""}" data-drop="town" data-town="${escape(town)}" data-name="${escape(name)}">
           <div class="place-row project-row" data-own-press>
             <button class="project-fold" type="button" data-fold="${escape(town)}" aria-expanded="${!shut}" aria-label="${escape(words.agentsIn(name))}" title="${escape(words.agentsIn(name))}">${glyph(shut ? "folder" : "folder-open", 18)}</button>
             <a class="place project-link${current ? " current" : ""}" href="${link({ kind: "project", town })}"${current ? ' aria-current="page"' : ""}>
@@ -484,9 +500,11 @@ export class Sidebar {
   /** The conversations in no project. */
   private loose(talks: ResidentNow[], place: Place, now: Date, facts: Map<string, MachineFacts>): string {
     const outside = talks.filter((r) => !r.town);
+    // With none outside a project, the group is still a place to drop one
+    // into while a conversation is dragged (`sidebar-drag.ts`).
     return outside.length
-      ? `<section class="sidebar-group"><h2 class="side-group-title">${escape(this.options.words.outside)}</h2>${this.talks(outside, place, now, facts, null, "talks")}</section>`
-      : "";
+      ? `<section class="sidebar-group" data-drop="loose"><h2 class="side-group-title">${escape(this.options.words.outside)}</h2>${this.talks(outside, place, now, facts, null, "talks")}</section>`
+      : `<section class="sidebar-group sb-loose-empty" data-drop="loose"><h2 class="side-group-title">${escape(this.options.words.outside)}</h2></section>`;
   }
 
   /** The most recent conversations of a list, and a way to all of them.

@@ -18,6 +18,7 @@ import type { Address } from "../world/events";
 import type { Asked, ResidentNow } from "../world/world";
 import type { MachineNotice } from "../world/accounts";
 import { link, placeOf, talkLink } from "./places";
+import { accountLayer } from "./layer";
 import { effect } from "./signals";
 import { residentsOf, type Store } from "./store";
 
@@ -236,6 +237,8 @@ export function startPresence(options: PresenceOptions): void {
   /** Calls the user, unless the window is in front of them already, and,
    *  for what the conversation at `about` says, shows that conversation. */
   async function call(id: string, notice: { title: string; body: string; route: string; actions: { id: string; title: string; quiet?: boolean }[] }, about?: Address): Promise<void> {
+    // What a conversation asks or answers is the workbench's (`world-layers.md`).
+    if (!accountLayer.workbench.peek()) return;
     const presence = await getWindowPresence();
     if (presence.focused && (!about || viewing(about))) return;
     const previous = shown.get(id);

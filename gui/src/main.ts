@@ -93,8 +93,14 @@ import "./app/agent-logins.css";
 import { specimenChange as specimenLoginChange, specimenFolder, specimenLogins, specimenPreview, specimenScan, specimenSetTitle, specimenTakeUp } from "./specimen/logins";
 import { TalksPage, enTalks, zhTalks } from "./app/talks";
 import { FeaturesPage } from "./app/features";
-import { deviceFeatures } from "./app/device-features";
-import { readFeatures, setFeature, setLanguage, watchFeatures } from "./world/features";
+import { accountLayer, liveLayer } from "./app/layer";
+import { ModePage } from "./app/mode-page";
+import { enMode, zhMode } from "./app/mode-words";
+import { ActivityPage } from "./activity/page";
+import { enActivity, zhActivity } from "./activity/words";
+import { specimenBook, specimenBookMachines } from "./specimen/activity";
+import { bringIn, readBook } from "./world/book";
+import { setLanguage } from "./world/features";
 import { untilAnswered, whyOf } from "./world/again";
 import { enFeatures, zhFeatures } from "./app/features-words";
 import { enHomes, zhHomes } from "./app/agent-homes";
@@ -138,6 +144,7 @@ import { TalkToast } from "./app/talk-toast";
 import type { Controlled, PendingControl } from "./world/control";
 import type { JsonValue } from "./world/wire";
 import { escape as escapeText } from "./conversation/prose";
+import { glyph } from "./conversation/glyphs";
 import {
   enComposer,
   enConsent,
@@ -427,6 +434,9 @@ async function agentModels(agent: "claude" | "codex"): Promise<AgentModel[]> {
 
 let place: Place = { kind: "home" };
 
+/** The places that are the workbench's: in Connect they open the activity. */
+const WORKBENCH_PLACES: Place["kind"][] = ["home", "new", "project", "talk", "talks", "archived", "memory", "page", "feature"];
+
 /** The pages one comes into from another, which have a way back in their
  *  head (`world-gui.md`, 界面的结构); the sidebar's own pages have none. */
 function inner(at: Place): boolean {
@@ -461,7 +471,11 @@ function parentOf(at: Place): Place {
 function placeName(at: Place): string {
   switch (at.kind) {
     case "home":
-      return deviceFeatures.conversations.peek() ? shellWords.world : shellWords.agents;
+      return accountLayer.workbench.peek() ? shellWords.world : shellWords.activity;
+    case "activity":
+      return shellWords.activity;
+    case "mode":
+      return (english ? enMode : zhMode).title;
     case "agents":
       return at.section === "claude" || at.section === "codex" ? (english ? enProfile : zhProfile).sections[at.section] : shellWords.agents;
     case "usage":
@@ -554,6 +568,8 @@ function newTalkOf(town: string | null): NewTalk {
 /** Opens a new conversation's page, in `town` or outside any, for a login
  *  (`pick`) or a machine when one was chosen where it was asked for. */
 function beginTalk(town: string | null = null, pick: string | null = null, machine: string | null = null): void {
+  // A new conversation is the workbench's: in Connect it is not begun.
+  if (!accountLayer.workbench.peek()) return;
   newTalkFor = pick || machine ? { pick, machine } : null;
   const there = link({ kind: "new", town });
   if (location.hash === there) show(placeOf(there));
@@ -2419,10 +2435,24 @@ function when(at: Date, now: Date): string {
   return sameDay ? homeWords.clock(at) : `${homeWords.day(at)} ${homeWords.clock(at)}`;
 }
 
+/** The machines whose activity the page asks: this computer, and every
+ *  machine one of its logins may run on. */
+function bookMachines(world: WorldNow | null): { written: string | null; name: string; online: boolean }[] {
+  const machines = machinesOf(world);
+  const here = machines.find((machine) => machine.here);
+  const asked = [{ written: null as string | null, name: here?.name ?? "", online: true }];
+  for (const machine of machines) {
+    if (machine.here) continue;
+    if (!machine.on.some((on) => on.rights.some(([, rights]) => rights.hands))) continue;
+    asked.push({ written: machine.written, name: machine.written, online: machine.online === true });
+  }
+  return asked;
+}
+
 function show(next: Place): void {
   // The front page belongs to the workbench: without it, the interface opens on
   // the agents (`world-gui.md`, 界面的结构).
-  if (next.kind === "home" && !deviceFeatures.conversations.peek()) next = { kind: "agents", machine: null };
+  if (!accountLayer.workbench.peek() && WORKBENCH_PLACES.includes(next.kind)) next = { kind: "activity" };
   // A computer in no network has no machine details: the machines page
   // tells what a network is (`world-gui.md`, 机器的详情).
   if (next.kind === "machine" && inNoNetwork(store.world.peek())) {
@@ -2629,7 +2659,7 @@ function show(next: Place): void {
           shell.mark(place);
         },
         when,
-        workbench: deviceFeatures.conversations,
+        workbench: accountLayer.workbench,
         read: (machine) => (live ? agentLogins(machine) : specimenLogins(machine, specimen.now)),
         scan: (machine, stop) => (live ? scanAgents(machine, stop) : specimenScan(machine, stop, specimen.now)),
         add: (machine, agent, dir) => (live ? addAgentLogin(machine, agent, dir) : specimenTakeUp(machine, agent, dir, specimen.now)),
@@ -2671,7 +2701,7 @@ function show(next: Place): void {
         machine: next.machine,
         agent: next.agent,
         dir: next.dir,
-        workbench: deviceFeatures.conversations,
+        workbench: accountLayer.workbench,
         read: (machine) => (live ? agentLogins(machine) : specimenLogins(machine, specimen.now)),
         usage: (machine, agent, dir) => (live ? agentUsage(machine, agent, dir) : specimenUsage(machine, agent, dir, specimen.now)),
         when,
@@ -2708,8 +2738,28 @@ function show(next: Place): void {
       });
       break;
     case "features":
+    case "mode":
+      page = new ModePage({
+        words: english ? enMode : zhMode,
+        film: (english ? enFeatures : zhFeatures).conversations.film,
+        head,
+        confirm: accountConfirm,
+        chosen: (layer) => show(layer === "workbench" ? { kind: "home" } : { kind: "activity" }),
+      });
+      break;
     case "feature":
-      page = new FeaturesPage({ store, words: english ? enFeatures : zhFeatures, homeWords: agentHomeWords, english, head, feature: next.kind === "feature" ? next.feature : null, agents: () => agentsOn(null), confirm: accountConfirm, memory: memorySwitch, sentinels: { seam: sentinelSeam, machines: sentinelHomes } });
+      page = new FeaturesPage({ store, words: english ? enFeatures : zhFeatures, homeWords: agentHomeWords, english, head, feature: next.feature === "conversations" ? "collaboration" : next.feature, agents: () => agentsOn(null), confirm: accountConfirm, memory: memorySwitch, sentinels: { seam: sentinelSeam, machines: sentinelHomes } });
+      break;
+    case "activity":
+      page = new ActivityPage({
+        words: english ? enActivity : zhActivity,
+        head,
+        machines: () => (live ? bookMachines(store.world.peek()) : specimenBookMachines),
+        read: (machine, query) => (live ? readBook(machine, query) : specimenBook(machine, query, specimen.now.getTime())),
+        workbench: accountLayer.workbench,
+        bringIn: (resident) => (live ? bringIn(resident).then(() => store.refresh()) : Promise.resolve()),
+        ...(live ? {} : { now: () => specimen.now.getTime() }),
+      });
       break;
     case "login": {
       // The World's drawing, for the moment this computer is in it.
@@ -2765,7 +2815,7 @@ function show(next: Place): void {
         },
         enter() {
           welcomed.now();
-          replacePlace(asDevice && !deviceFeatures.conversations.peek() ? link({ kind: "feature", feature: "conversations" }) : link({ kind: "home" }));
+          replacePlace(link(accountLayer.chosen.peek() === null ? { kind: "mode" } : { kind: "home" }));
         },
       });
       break;
@@ -2809,6 +2859,22 @@ function show(next: Place): void {
       page = new SettingsPage({
         store,
         words: english ? enSettings : zhSettings,
+        account: () => {
+          const settingsWords = english ? enSettings : zhSettings;
+          const mode = english ? enMode : zhMode;
+          const features = english ? enFeatures : zhFeatures;
+          const chosen = accountLayer.chosen.peek();
+          const row = (label: string, href: string, value: string) =>
+            `<dt>${escapeText(label)}</dt><dd><a class="settings-link" href="${href}"><span>${escapeText(value)}</span>${glyph("chevron", 14)}</a></dd>`;
+          const name = chosen === "connect" ? mode.connect.name : chosen === "workbench" ? mode.workbench.name : mode.ask;
+          return (
+            row(mode.title, link({ kind: "mode" }), name) +
+            (accountLayer.workbench.peek()
+              ? row(features.memory.name, link({ kind: "feature", feature: "memory" }), settingsWords.dataOpen) +
+                row(features.sentinels.name, link({ kind: "feature", feature: "sentinels" }), settingsWords.dataOpen)
+              : "")
+          );
+        },
         removalWords: english ? enRemoval : zhRemoval,
         head,
         language,
@@ -2990,9 +3056,14 @@ new Palette({
     const go = (to: Place) => () => {
       location.hash = link(to);
     };
+    const workbench = accountLayer.workbench.peek();
     const items: PaletteItem[] = [
-      { group: paletteWords.actions, label: shellWords.newTalk, note: "Ctrl N", run: () => beginTalk(place.kind === "project" || place.kind === "new" ? place.town : null) },
-      { group: paletteWords.actions, label: shellWords.newProject, run: () => projectForm.open() },
+      ...(workbench
+        ? [
+            { group: paletteWords.actions, label: shellWords.newTalk, note: "Ctrl N", run: () => beginTalk(place.kind === "project" || place.kind === "new" ? place.town : null) },
+            { group: paletteWords.actions, label: shellWords.newProject, run: () => projectForm.open() },
+          ]
+        : []),
       ...loginsOf(world?.accounts).map((login) => ({
         group: paletteWords.actions,
         label: paletteWords.invite(loginLabel(login)),
@@ -3010,14 +3081,15 @@ new Palette({
           ]
         : []),
       ...themes.map((theme) => ({ group: paletteWords.actions, label: paletteWords.theme(themeNames[theme]), run: () => chooseTheme(theme) })),
-      { group: paletteWords.places, label: shellWords.world, run: go({ kind: "home" }) },
-      ...(world?.towns ?? []).map((town) => ({ group: paletteWords.places, label: town.record.name, note: town.town, run: go({ kind: "project", town: town.town }) })),
+      ...(workbench ? [{ group: paletteWords.places, label: shellWords.world, run: go({ kind: "home" }) }] : []),
+      { group: paletteWords.places, label: shellWords.activity, run: go({ kind: "activity" }) },
+      ...(workbench ? (world?.towns ?? []) : []).map((town) => ({ group: paletteWords.places, label: town.record.name, note: town.town, run: go({ kind: "project", town: town.town }) })),
       { group: paletteWords.places, label: shellWords.machines, run: go({ kind: "machines" }) },
       { group: paletteWords.places, label: shellWords.settings, run: go({ kind: "settings" }) },
       ...(loginsOf(world?.accounts).length ? [{ group: paletteWords.places, label: shellWords.account, run: go({ kind: "account" }) }] : []),
       { group: paletteWords.places, label: shellWords.logIn, run: go({ kind: "login" }) },
       ...residentsOf(world)
-        .filter((r) => r.here || r.now?.waiting_for_user)
+        .filter((r) => workbench && (r.about.world_started || r.about.native_resumed) && (r.here || r.now?.waiting_for_user))
         .map((r) => ({
           group: paletteWords.agents,
           label: titleOf(r) ?? someoneSaid(r),
@@ -3070,10 +3142,10 @@ if (live) {
       .catch(() => {});
   });
 }
-// The front page comes and goes with the workbench: the place shown follows.
+// The workbench's places go with it: the place shown follows the mode.
 effect(() => {
-  const talking = deviceFeatures.conversations.get();
-  if (!talking && place.kind === "home") show({ kind: "agents", machine: null });
+  const workbench = accountLayer.workbench.get();
+  if (!workbench && WORKBENCH_PLACES.includes(place.kind)) show({ kind: "activity" });
 });
 
 // Everything that broke is tried again at once when the window comes to the
@@ -3084,15 +3156,17 @@ if (live) {
   addEventListener("online", now);
 }
 
-// The workbench as this device keeps it: a computer's node, shared with its TUI.
+// The account's mode, kept on its hub (`world-layers.md`): read at start,
+// again when the window comes to the front, and asked once when it was
+// never chosen.
 if (live) {
-  deviceFeatures.attach({
-    read: async () => (await readFeatures()).conversations,
-    write: async (on) => void (await setFeature("conversations", on)),
-    follow: (heard) =>
-      void watchFeatures((piece) => {
-        if (piece.kind === "features") heard(piece.features.conversations);
-      }).catch((error: unknown) => console.error("following this device's features", error)),
+  accountLayer.attach(liveLayer);
+  addEventListener("focus", () => void accountLayer.refresh());
+  let asked = false;
+  effect(() => {
+    if (!accountLayer.known.get() || accountLayer.chosen.get() !== null || asked) return;
+    asked = true;
+    if (place.kind === "home" || place.kind === "activity") show({ kind: "mode" });
   });
 }
 

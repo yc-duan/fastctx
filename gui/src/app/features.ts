@@ -1,15 +1,13 @@
-// The features (`world-gui.md`, 功能): a card for each, and each its own
-// page. A feature is off until turned on; off, its page is the film that
-// tells what it does, playing on a loop, and the button that turns it on
-// under it. Turned on, the same page for every feature fills the window: it
-// is on, what the interface gained, and the way back to the features. On,
-// its page shows a still of the film, to be watched again over the page,
-// beside what it gave; the settings below; and, last and light, the way to
-// turn it off, asked once more before it is.
+// What the workbench brings that has settings of its own (`world-layers.md`):
+// model collaboration, reached from the kernels, and project memory and the
+// sentinels, reached from Settings. Each is a page: off, the film that tells
+// what it does, playing on a loop, and the button that turns it on under
+// it; turned on, a page over the window says it is on and what the
+// interface gained. On, its page shows a still of the film, to be watched
+// again over the page, beside what it gave; the settings below; and, last
+// and light, the way to turn it off, asked once more before it is.
 //
-// The workbench is the first: the agents' work drawn step by step, agents
-// on other computers and in a phone; it is kept per device and has no
-// settings. Model collaboration:
+// Model collaboration:
 // for the whole account, which agents may hand a part of their work to a
 // GPT (callers), which GPTs they may hand it to (callees: a Codex login
 // each, its model and effort, the name and the line the calling model
@@ -35,7 +33,6 @@ import { detailOf } from "./problem";
 import type { Page } from "./shell";
 import { effect } from "./signals";
 import { residentsOf, type Store } from "./store";
-import { deviceFeatures } from "./device-features";
 import { leave } from "./leave";
 import { collaboration } from "../film/collaboration";
 import { memoryFilm } from "../film/memory";
@@ -49,7 +46,6 @@ import type { Built, Shape } from "../film/reel";
  *  only as `collab.rs` lets it. */
 const COLLABORATION_READY = true;
 import { watchFilm } from "../film/theater";
-import { workbench } from "../film/workbench";
 
 export interface FeaturesOptions {
   store: Store;
@@ -57,7 +53,7 @@ export interface FeaturesOptions {
   homeWords: HomeWords;
   english: boolean;
   head(title: string, actions?: string): string;
-  feature: Feature | null;
+  feature: Exclude<Feature, "conversations">;
   agents(): Promise<WorldAgents>;
   /** Asks before a feature is turned off. */
   confirm: Confirm;
@@ -97,16 +93,7 @@ export class FeaturesPage implements Page {
 
   constructor(private readonly options: FeaturesOptions) {
     const { words, feature } = options;
-    this.title =
-      feature === "collaboration"
-        ? words.collaboration.name
-        : feature === "memory"
-          ? words.memory.name
-          : feature === "sentinels"
-            ? words.sentinels.name
-            : feature === "conversations"
-              ? words.conversations.name
-              : words.title;
+    this.title = feature === "memory" ? words.memory.name : feature === "sentinels" ? words.sentinels.name : words.collaboration.name;
     this.element = document.createElement("div");
     this.element.className = "features-page";
     this.element.innerHTML = `${options.head(`<h1 class="page-title">${escape(this.title)}</h1>`)}<div class="features-body scroller"></div>`;
@@ -114,9 +101,7 @@ export class FeaturesPage implements Page {
     this.body.addEventListener("click", (event) => {
       if ((event.target as HTMLElement).closest("[data-act='replay']")) this.replay();
     });
-    if (feature === null) this.cards();
-    else if (feature === "conversations") this.conversations();
-    else if (feature === "memory") this.memory();
+    if (feature === "memory") this.memory();
     else if (feature === "sentinels") this.sentinels();
     else this.collaboration();
   }
@@ -157,7 +142,7 @@ export class FeaturesPage implements Page {
 
   /** The page that says a feature was turned on, the same for every one,
    *  over the whole window: it is on, what the interface gained, and the way
-   *  to the features, which Esc and the system back take as well. */
+   *  back to its page, which Esc and the system back take as well. */
   private celebrate(name: string, gained: string, make: (shape: Shape) => Built): void {
     const { words } = this.options;
     this.undone?.();
@@ -188,7 +173,6 @@ export class FeaturesPage implements Page {
     const close = () => {
       if (!open) return;
       takeAway();
-      location.hash = link({ kind: "features" });
     };
     const key = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
@@ -230,100 +214,6 @@ export class FeaturesPage implements Page {
   private askOff(name: string, what: string, off: () => Promise<void>, done: () => void): void {
     const { words, confirm } = this.options;
     confirm.ask({ title: words.offTitle(name), what, go: words.turnOff, gentle: true, act: off, done });
-  }
-
-  /** Every feature, a card each. */
-  private cards(): void {
-    const { words } = this.options;
-    const tag = (on: boolean | null) =>
-      on === null ? "" : on ? `<span class="tag feature-tag-on">${glyph("check", 12)}<span>${escape(words.on)}</span></span>` : `<span class="tag feature-tag-off">${escape(words.off)}</span>`;
-    const coming = `<span class="tag">${escape(words.coming)}</span>`;
-    const draw = (on: boolean | null) => {
-      this.body.innerHTML = `<ul class="feature-cards">
-        <li><a class="feature-card" href="${link({ kind: "feature", feature: "conversations" })}">
-          <span class="feature-card-art">${glyph("phone", 22)}${glyph("desktop", 22)}</span>
-          <span class="feature-card-name">${escape(words.conversations.name)}</span>
-          <span class="feature-card-line">${escape(words.conversations.line)}</span>${tag(deviceFeatures.conversations.peek())}</a></li>
-        <li><a class="feature-card${COLLABORATION_READY ? "" : " coming"}" href="${link({ kind: "feature", feature: "collaboration" })}">
-          <span class="feature-card-art">${glyph("codex", 22)}${glyph("claude", 22)}</span>
-          <span class="feature-card-name">${escape(words.collaboration.name)}</span>
-          <span class="feature-card-line">${escape(words.collaboration.line)}</span>${COLLABORATION_READY ? tag(on) : coming}</a></li>
-        <li><a class="feature-card" href="${link({ kind: "feature", feature: "memory" })}">
-          <span class="feature-card-art">${glyph("journal", 22)}${glyph("spec", 22)}</span>
-          <span class="feature-card-name">${escape(words.memory.name)}</span>
-          <span class="feature-card-line">${escape(words.memory.line)}</span>${tag(memoryOn)}</a></li>
-        <li><a class="feature-card" href="${link({ kind: "feature", feature: "sentinels" })}">
-          <span class="feature-card-art">${glyph("sentinel", 22)}${glyph("server", 22)}</span>
-          <span class="feature-card-name">${escape(words.sentinels.name)}</span>
-          <span class="feature-card-line">${escape(words.sentinels.line)}</span>${tag(sentinelsOn)}</a></li>
-      </ul>`;
-    };
-    let memoryOn: boolean | null = null;
-    let sentinelsOn: boolean | null = null;
-    draw(null);
-    const login = this.login();
-    if (login)
-      this.options.sentinels.seam.read(login.hub, login.account).then(
-        (view) => {
-          sentinelsOn = view.settings.home !== null;
-          draw(collabOn);
-        },
-        () => {},
-      );
-    this.options.memory.enabled(login?.hub ?? null, login?.account ?? null).then(
-      (on) => {
-        memoryOn = on;
-        draw(collabOn);
-      },
-      () => {},
-    );
-    let collabOn: boolean | null = null;
-    if (!COLLABORATION_READY) return;
-    // In no network, this computer keeps its own settings.
-    const [first] = loginsOf(this.options.store.world.peek()?.accounts);
-    readCollab(first?.hubName ?? null, first?.account ?? null)
-      .then((view) => draw((collabOn = view.collab.on)))
-      .catch(() => draw((collabOn = false)));
-  }
-
-  /** The workbench: its film and its switch; on, a still of the film
-   *  waits at the top. */
-  private conversations(): void {
-    const { words } = this.options;
-    const make = (shape: Shape) => workbench(words.conversations.film, shape);
-    const label = words.conversations.name;
-    this.replayFilm = () => this.watch(make, label);
-    const draw = () => {
-      this.dropFilms();
-      const on = deviceFeatures.conversations.peek();
-      this.body.classList.toggle("features-film", !on);
-      this.body.classList.toggle("features-on", on);
-      this.body.innerHTML = on
-        ? this.onTop(words.conversations.after, true) + this.offWay(label)
-        : `<div class="feature-intro"><div class="feature-film"></div><button class="sheet-go feature-turn" type="button" data-turn="1">${escape(words.turnOn)}</button></div>`;
-      this.film(this.body.querySelector(on ? ".feature-still" : ".feature-film"), make, label, on);
-    };
-    draw();
-    this.body.addEventListener("click", (event) => {
-      const target = event.target as HTMLElement;
-      if (target.closest("[data-act='turn-off']")) {
-        this.askOff(label, words.conversations.offWhat, () => deviceFeatures.setConversations(false), draw);
-        return;
-      }
-      const turn = target.closest<HTMLButtonElement>("[data-turn]");
-      if (!turn || turn.disabled) return;
-      turn.disabled = true;
-      void deviceFeatures.setConversations(true).then(
-        () => {
-          draw();
-          this.celebrate(label, words.conversations.after, make);
-        },
-        (error: unknown) => {
-          turn.disabled = false;
-          turn.title = detailOf(error);
-        },
-      );
-    });
   }
 
   /** Project memory: its film and its switch, for the account; on, a still

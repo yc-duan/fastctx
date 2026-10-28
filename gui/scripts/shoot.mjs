@@ -145,7 +145,7 @@ for (const session of sessions) {
       const loaded = once("Page.loadEventFired");
       const two = session.endsWith("-2");
       const named = two ? session.slice(0, -2) : session;
-      const shown = named.startsWith("invite-") ? "invite" : named === "stop" ? "claude" : named === "drawer" || named === "palette" ? "home" : named === "service" || named.startsWith("remove-") ? "settings" : named === "slash" || named === "mention" || named === "find" || named === "attach" || named === "rewind" || named === "usage" ? "codex" : named.startsWith("asks") ? "asks" : named === "new-codex" || named === "new-attach" || named === "new-lent" || named === "new-pick" ? "new" : named === "manage" ? "about" : named === "welcome" || named === "create" || named === "created" ? "login" : named === "share" || named === "relays" ? "machines" : named === "lend" || named.startsWith("ledger") ? "home" : named === "queue" ? "codex" : named.startsWith("page") ? "page" : named.startsWith("panel") && named !== "panel-agent" ? "claude" : named.startsWith("team") || named === "panel-agent" ? "stream" : named.startsWith("repair-") ? "home" : named === "updates-repair" ? "machines" : named === "journal-edit" ? "journal" : named === "project-write" ? "project" : named === "features" || named.startsWith("feature-") || named.startsWith("prefs-") ? "home" : named;
+      const shown = named.startsWith("invite-") ? "invite" : named === "stop" ? "claude" : named === "drawer" || named === "palette" ? "home" : named === "service" || named.startsWith("remove-") ? "settings" : named === "slash" || named === "mention" || named === "find" || named === "attach" || named === "rewind" || named === "usage" ? "codex" : named.startsWith("asks") ? "asks" : named === "new-codex" || named === "new-attach" || named === "new-lent" || named === "new-pick" ? "new" : named === "manage" ? "about" : named === "welcome" || named === "create" || named === "created" ? "login" : named === "share" || named === "relays" ? "machines" : named === "lend" || named.startsWith("ledger") ? "home" : named === "queue" ? "codex" : named.startsWith("page") ? "page" : named.startsWith("panel") && named !== "panel-agent" ? "claude" : named.startsWith("team") || named === "panel-agent" ? "stream" : named.startsWith("repair-") ? "home" : named === "updates-repair" ? "machines" : named === "journal-edit" ? "journal" : named === "project-write" ? "project" : named === "features" || named.startsWith("feature-") || named.startsWith("prefs-") || named.startsWith("activity") || named === "mode" || named === "sidebar-drag" ? "home" : named;
       // `welcome` and `create` are a computer's first open, in no World yet.
       const alone = named === "welcome" || named === "create" || named === "created";
       const ask = (session.startsWith("asks-") ? `&ask=${session.slice(5)}` : "") + (two ? "&accounts=2" : "") + (alone ? "&accounts=0" : "") + (named.startsWith("team") || named === "panel-agent" ? "&start=agents" : "") + (named.startsWith("repair-") ? `&repair=${named === "repair-broken" ? "broken" : "failed"}` : "") + (named.startsWith("panel-goal-") ? `&goal=${named.slice("panel-goal-".length)}` : "");
@@ -190,6 +190,31 @@ for (const session of sessions) {
       if (named === "features" || named.startsWith("feature-") || named.startsWith("prefs-")) {
         const where = named === "features" ? "#/features" : named.startsWith("prefs-") ? `#/agents/prefs/${named.slice("prefs-".length)}` : `#/feature/${named.slice("feature-".length)}`;
         await send("Runtime.evaluate", { awaitPromise: true, expression: `new Promise((r) => { location.hash = ${JSON.stringify(where)}; setTimeout(r, 2600); })` });
+      }
+      // `sidebar-drag` is a conversation being dragged over the sidebar's
+      // delete place (with `--query conversations`).
+      if (named === "sidebar-drag") {
+        await send("Runtime.evaluate", {
+          awaitPromise: true,
+          expression: `new Promise((r) => setTimeout(() => {
+            const data = new DataTransfer();
+            const row = document.querySelector(".sidebar .talk-item[data-resident]");
+            row?.dispatchEvent(new DragEvent("dragstart", { bubbles: true, dataTransfer: data }));
+            setTimeout(() => {
+              document.querySelector(".sidebar [data-drop='delete']")?.dispatchEvent(new DragEvent("dragover", { bubbles: true, cancelable: true, dataTransfer: data }));
+              setTimeout(r, 400);
+            }, 120);
+          }, 900))`,
+        });
+      }
+      // `activity-<view>` is one view of the activity page; `mode` the page
+      // that chooses Connect or the workbench (`--query layer=connect` for
+      // Connect, nothing for an account that has not chosen).
+      if (named.startsWith("activity") || named === "mode") {
+        const view = named.startsWith("activity-") ? named.slice("activity-".length) : null;
+        const where = named === "mode" ? "#/mode" : "#/activity";
+        const keep = view ? `localStorage.setItem("activity.view", ${JSON.stringify(view)});` : "";
+        await send("Runtime.evaluate", { awaitPromise: true, expression: `new Promise((r) => { ${keep} location.hash = ${JSON.stringify(where)}; setTimeout(r, 2400); })` });
       }
       // `journal-edit` is a decision being edited; `project-write` the sheet
       // for writing a journal (both with `--query memory`).

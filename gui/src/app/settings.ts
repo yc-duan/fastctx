@@ -35,10 +35,14 @@ import { link } from "./places";
 import { inNoNetwork, machinesOf } from "./reach";
 import { RenameField, renamerOf } from "./rename";
 import { hubLine, type HubReach } from "./hub-line";
+import { accountLayer } from "./layer";
 
 export interface SettingsOptions {
   store: Store;
   words: SettingsWords;
+  /** The account's rows: its mode, and on the workbench where the settings
+   *  of what it brings are (`world-layers.md`). */
+  account(): string;
   removalWords: RemovalWords;
   head(title: string, actions?: string): string;
   language: "zh" | "en";
@@ -151,7 +155,7 @@ export class SettingsPage implements Page {
       <div class="st-tabs" role="tablist" aria-label="${escape(words.title)}">${TABS.map((tab) => `<button class="st-tab" type="button" role="tab" id="st-tab-${tab}" aria-controls="st-pane-${tab}" data-tab="${tab}">${escape(words[tab])}</button>`).join("")}</div>
       <div class="settings st-room"><div class="st-sheet scroller">
         <section class="st-pane" id="st-pane-look" role="tabpanel" aria-labelledby="st-tab-look" data-pane="look"><div class="look"></div></section>
-        <section class="st-pane settings-device" id="st-pane-device" role="tabpanel" aria-labelledby="st-tab-device" data-pane="device"><dl class="facts settings-name" hidden></dl><dl class="facts device"></dl><dl class="facts settings-app" hidden></dl><dl class="facts settings-service" hidden></dl>${options.computer ? `<dl class="facts settings-data"><dt>${escape(words.data)}</dt><dd><a class="settings-link" href="#/data"><span class="settings-data-size">${escape(words.dataOpen)}</span>${glyph("chevron", 14)}</a></dd></dl>` : ""}<dl class="facts settings-phone" hidden></dl>${options.computer ? `<div class="st-removal"><button class="text-button danger-text settings-uninstall" type="button" data-uninstall>${glyph("logout", 16)}<span>${escape(options.removalWords.open)}</span></button></div>` : ""}</section>
+        <section class="st-pane settings-device" id="st-pane-device" role="tabpanel" aria-labelledby="st-tab-device" data-pane="device"><dl class="facts settings-mode"></dl><dl class="facts settings-name" hidden></dl><dl class="facts device"></dl><dl class="facts settings-app" hidden></dl><dl class="facts settings-service" hidden></dl>${options.computer ? `<dl class="facts settings-data"><dt>${escape(words.data)}</dt><dd><a class="settings-link" href="#/data"><span class="settings-data-size">${escape(words.dataOpen)}</span>${glyph("chevron", 14)}</a></dd></dl>` : ""}<dl class="facts settings-phone" hidden></dl>${options.computer ? `<div class="st-removal"><button class="text-button danger-text settings-uninstall" type="button" data-uninstall>${glyph("logout", 16)}<span>${escape(options.removalWords.open)}</span></button></div>` : ""}</section>
         <section class="st-pane settings-keys" id="st-pane-keys" role="tabpanel" aria-labelledby="st-tab-keys" data-pane="keys"><dl class="facts keys">${words.keyList
           .map(([keys, what]) => `<dt>${keys.split(" ").map((key) => `<kbd>${escape(key)}</kbd>`).join(" ")}</dt><dd>${escape(what)}</dd>`)
           .join("")}</dl></section>
@@ -238,6 +242,8 @@ export class SettingsPage implements Page {
     });
     this.stop = effect(() => {
       const world = options.store.world.get();
+      accountLayer.chosen.get();
+      this.element.querySelector(".settings-mode")!.innerHTML = options.account();
       this.drawName(world);
       this.drawDevice(world, options.store.clock.get());
     });

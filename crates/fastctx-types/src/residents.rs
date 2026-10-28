@@ -68,8 +68,9 @@ pub struct About {
     /// through its calls of the World's tools.
     #[serde(default)]
     pub world_started: bool,
-    /// A native Codex thread the World resumed for a requested background event.
-    /// Birth provenance remains unchanged in world_started and origin.
+    /// A native Codex thread the user brought into Fastctx (`world-layers.md`,
+    /// 接进来), or one an earlier release took over by itself. Birth
+    /// provenance remains unchanged in world_started and origin.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub native_resumed: bool,
     /// The model, as the host told the World; `None` when it did not.

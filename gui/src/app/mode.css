@@ -1,0 +1,82 @@
+/* The mode page (`mode-page.ts`): two paper cards side by side, the one in
+   use marked by its circled word, the other by its one button. */
+
+.md-page {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.md-cards {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-4);
+  align-content: start;
+  max-width: 980px;
+  min-height: 0;
+  padding: var(--space-2) var(--gutter) var(--space-6);
+  overflow-y: auto;
+}
+
+.md-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-4);
+  border-radius: var(--radius-l);
+  background: var(--fill);
+}
+
+.md-picture {
+  display: grid;
+  place-items: center;
+  aspect-ratio: 16 / 9;
+  overflow: hidden;
+  border-radius: var(--radius-m);
+  background: var(--bg);
+}
+
+.md-picture .film {
+  width: 100%;
+  margin: 0;
+}
+
+.md-sketch {
+  width: 80%;
+  height: auto;
+}
+
+.md-name {
+  margin: var(--space-2) 0 0;
+  color: var(--text-strong);
+  font-family: var(--font-display);
+  font-size: var(--size-h3);
+  font-weight: normal;
+}
+
+.md-line {
+  flex: 1 1 auto;
+  margin: 0;
+  color: var(--text-2);
+  line-height: var(--leading-prose);
+}
+
+.md-act {
+  display: flex;
+  justify-content: flex-end;
+  min-height: 40px;
+  align-items: center;
+}
+
+.md-using {
+  margin-inline: 0;
+  cursor: default;
+}
+
+@media (max-width: 640px) {
+  .md-cards {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

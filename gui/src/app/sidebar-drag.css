@@ -1,0 +1,51 @@
+/* Dragging a conversation in the sidebar (`sidebar-drag.ts`): the places it
+   can go wash in the accent as it comes over them; archive and delete rise
+   at the foot only while it is dragged, delete washed red under it. */
+
+.sb-zones {
+  display: none;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3) var(--space-1);
+}
+
+.sb-dragging .sb-zones {
+  display: grid;
+}
+
+.sb-zone {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  min-height: 64px;
+  border-radius: var(--radius-m);
+  background: var(--fill);
+  color: var(--text-2);
+  transition: background-color var(--hover) var(--ease), color var(--hover) var(--ease);
+}
+
+.sb-zone.sb-over {
+  background: var(--accent-wash);
+  color: var(--text-strong);
+}
+
+.sb-zone-delete.sb-over {
+  background: color-mix(in srgb, var(--wrong) 18%, transparent);
+  color: var(--wrong);
+}
+
+.sb-loose-empty {
+  display: none;
+}
+
+.sb-dragging .sb-loose-empty {
+  display: block;
+}
+
+.project-place.sb-over > .project-row,
+.sidebar-group.sb-over > .side-group-title {
+  border-radius: var(--radius-s);
+  background: var(--accent-wash);
+}
