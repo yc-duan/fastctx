@@ -30,7 +30,7 @@
   height: 100%;
   border-radius: inherit;
   background: var(--accent);
-  transition: width var(--settle) ease;
+  transition: width var(--settle) var(--ease);
 }
 
 .mr-ways {
@@ -50,7 +50,7 @@
   border-radius: var(--radius-m);
   background: var(--fill);
   text-align: left;
-  transition: background-color var(--hover) ease;
+  transition: background-color var(--hover) var(--ease);
 }
 
 .mr-way:hover:not(:disabled) {
@@ -98,10 +98,8 @@
   color: var(--caution);
 }
 
-.mr-go {
-  display: flex;
+.sheet-body > .mr-go {
   justify-content: flex-end;
-  margin-top: var(--space-4);
 }
 
 /* Once taken off: each machine told to uninstall, and how that goes there. */

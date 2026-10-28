@@ -35,6 +35,14 @@ impl Device {
         {
             return Err(failed(format!("only an interface on {machine} says what it is or brings packages there")));
         }
+        if let Call::MachineUpdates { machine, update: fastctx_types::update::UpdateCall::Repair { .. } } = &call {
+            let (reply, _) = self.call(Call::MachineUpdates { machine: machine.clone(), update: fastctx_types::update::UpdateCall::State }).await?;
+            let Reply::Update(current) = reply else { return Err(failed("the machine did not report its repair capability")); };
+            if !current.repair_supported { return Err(failed(format!("{machine} runs a version too old to accept repair; arrange repair through a newer hub"))); }
+            if !self.reaching(machine)?.link.versions().is_some_and(|n| n.repair_supported) {
+                return Err(failed("the hub is too old to route repair; update it first"));
+            }
+        }
         let preferences = match &call {
             Call::MachineUpdates {
                 machine,
@@ -112,6 +120,103 @@ impl Device {
                 let view = session.link.profile_subagents(&account, operation).await.map_err(failed)?;
                 return Ok((Reply::ProfileSubagents(Box::new(view)), here()));
             }
+            Call::PlanRead { hub, account, owner, machine } => {
+                let session = self.on_hub(hub.as_ref())?;
+                let account = profile_account(&session, account)?;
+                let page = match machine {
+                    Some(machine) => session
+                        .link
+                        .plan_read_of(&account, &fastctx_types::Address { machine, resident: owner })
+                        .await
+                        .map_err(failed)?,
+                    None => session.link.plan_read(&account, owner).await.map_err(failed)?,
+                };
+                return Ok((Reply::Plan { result: fastctx_types::plan::Result::Page { page } }, here()));
+            }
+            Call::PlanWrite { hub, account, owner, expected, markdown, machine } => {
+                let session = self.on_hub(hub.as_ref())?;
+                let account = profile_account(&session, account)?;
+                let whose = machine.map(|machine| fastctx_types::Address { machine, resident: owner.clone() });
+                let result = session
+                    .link
+                    .plan_write(&account, owner, expected, markdown, fastctx_types::plan::Author::User, whose.as_ref())
+                    .await
+                    .map_err(failed)?;
+                return Ok((Reply::Plan { result }, here()));
+            }
+            Call::AccountRecords { hub, account, request } => {
+                let session = self.on_hub(hub.as_ref())?;
+                let account = profile_account(&session, account)?;
+                let response = session.link.account_records(&account, request).await.map_err(failed)?;
+                return Ok((Reply::AccountRecords { response }, here()));
+            }
+            Call::Sentinel { hub, account, request } => {
+                if matches!(request, fastctx_types::sentinel_control::Request::Create { .. }) {return Err(failed("a device cannot create a conversation's sentinel"));}
+                let session = self.on_hub(hub.as_ref())?;
+                let account = profile_account(&session, account)?;
+                let view = session.link.view();
+                let candidates: Vec<_> = view.machines().filter(|m| m.online && view.may_act_for(&account, &m.name) && view.rights(&account, &m.name).any()).map(|m|m.name.clone()).collect();
+                let mut unavailable = Vec::new();
+                for machine in candidates {
+                    match session.link.call(&machine, &account, fastctx_types::access::Purpose::Look, RemoteCall::Facts).await {
+                        Ok(Ok(RemoteReply::Facts(facts))) if facts.sentinels => {},
+                        Ok(Ok(_)) => { unavailable.push(format!("upgrade {machine} to use sentinels")); continue; },
+                        Ok(Err(error)) => { unavailable.push(error.to_string()); continue; },
+                        Err(error) => { unavailable.push(error.to_string()); continue; },
+                    }
+                    let call = RemoteCall::SentinelControl { request };
+                    return match session.link.call(&machine, &account, call.purpose(), call).await.map_err(failed)?.map_err(failed)? {
+                        RemoteReply::SentinelControl(reply) => Ok((Reply::Sentinel(reply), machine)),
+                        _ => Err(failed("the machine did not answer sentinel control")),
+                    };
+                }
+                return Err(failed(format!("no online sentinel-capable machine answered: {}", unavailable.join("; "))));
+            }
+            Call::SentinelSettings { hub, account, change } => {
+                let session = self.on_hub(hub.as_ref())?;
+                let account = profile_account(&session, account)?;
+                let view = session.link.view();
+                let candidates: Vec<_> = view.machines().filter(|m| m.online && view.may_act_for(&account, &m.name) && view.rights(&account, &m.name).any()).map(|m|m.name.clone()).collect();
+                let mut unavailable = Vec::new();
+                for machine in candidates {
+                    match session.link.call(&machine, &account, fastctx_types::access::Purpose::Look, RemoteCall::Facts).await {
+                        Ok(Ok(RemoteReply::Facts(facts))) if facts.sentinels => {},
+                        Ok(Ok(_)) => { unavailable.push(format!("upgrade {machine} to use sentinels")); continue; },
+                        Ok(Err(error)) => { unavailable.push(error.to_string()); continue; },
+                        Err(error) => { unavailable.push(error.to_string()); continue; },
+                    }
+                    let call = RemoteCall::SentinelSettings { change };
+                    return match session.link.call(&machine, &account, call.purpose(), call).await.map_err(failed)?.map_err(failed)? {
+                        RemoteReply::SentinelSettings(reply) => Ok((Reply::SentinelSettings(reply), machine)),
+                        _ => Err(failed("the machine did not answer sentinel settings")),
+                    };
+                }
+                return Err(failed(format!("no online sentinel-capable machine can read this account's settings: {}", unavailable.join("; "))));
+            }
+            Call::SentinelKey { hub, account, key, value } => {
+                // The key goes from this device straight to the home, through the hub alone.
+                let session = self.on_hub(hub.as_ref())?;
+                let account = profile_account(&session, account)?;
+                let request = fastctx_types::account_records::Request::Read {
+                    kind: fastctx_types::sentinel_settings::RECORD_KIND.into(),
+                    key: fastctx_types::sentinel_settings::RECORD_KEY.into(),
+                };
+                let home = match session.link.account_records(&account, request).await.map_err(failed)? {
+                    fastctx_types::account_records::Response::Read { record: Some(record) } if !record.metadata.deleted => {
+                        serde_json::from_value::<fastctx_types::sentinel_settings::Settings>(record.body)
+                            .map_err(failed)?
+                            .home
+                    }
+                    fastctx_types::account_records::Response::Read { .. } => None,
+                    _ => return Err(failed("the hub answered another account-records reply")),
+                };
+                let home = home.ok_or_else(|| failed("choose the sentinel home first"))?;
+                let call = RemoteCall::SentinelKey { key, value };
+                return match session.link.call(&home, &account, call.purpose(), call).await.map_err(failed)?.map_err(failed)? {
+                    RemoteReply::SentinelKeys(_) => Ok((Reply::Done, home)),
+                    _ => Err(failed("the sentinel home did not answer the key")),
+                };
+            }
             Call::ProfileRead { hub, account } => {
                 let session = self.on_hub(hub.as_ref())?;
                 let account = profile_account(&session, account)?;
@@ -183,6 +288,11 @@ impl Device {
         // chose one.
         let mut chosen = None;
         let (machine, remote, resident) = match call {
+            Call::Goal { resident, machine, account, request } => {
+                chosen = account;
+                let machine = self.find(&resident, machine).await?;
+                (machine, RemoteCall::Goal { resident: resident.clone(), request }, Some(resident))
+            }
             Call::Composer { resident, machine, request } => {
                 let machine = self.find(&resident, machine).await?;
                 (machine, RemoteCall::Composer { resident: resident.clone(), request }, Some(resident))
@@ -255,6 +365,10 @@ impl Device {
                     files_on: choices.files_on,
                 };
                 (machine, open, None)
+            }
+            Call::Collaboration { resident, machine } => {
+                let machine = self.find(&resident, machine).await?;
+                (machine, RemoteCall::Collaboration { resident: resident.clone(), colleagues: true }, Some(resident))
             }
             Call::Stop { resident, machine } => {
                 let machine = self.find(&resident, machine).await?;
@@ -356,11 +470,19 @@ impl Device {
                 return Ok((Reply::AgentLogins(self.agent_logins(machine).await?), here()));
             }
             Call::Nodes => return Ok((Reply::Nodes(self.nodes().await?), here())),
+            Call::Memory(request) => return Ok((Reply::Memory(self.memory(request).await?), here())),
+            Call::MemorySettings { hub, account, enabled } => {
+                let (link, account) = self.project_account(hub.as_ref(), account.as_ref())?;
+                return Ok((
+                    Reply::MemorySettings(link.memory_settings(&account, enabled).await.map_err(failed)?),
+                    here(),
+                ));
+            }
+            Call::Project(request) => return Ok((self.project(request).await?, here())),
             // What only the projects' ledgers hold, one machine answers from
             // its own copy, for what this device's account may use.
-            call @ (Call::Project(_)
-            | Call::Journal(_)
-            | Call::Page(
+            Call::Journal(_) => return Err(failed(fastctx_types::memory::LEGACY)),
+            call @ Call::Page(
                 PageCall::Read { .. }
                 | PageCall::List { .. }
                 | PageCall::History { .. }
@@ -368,7 +490,7 @@ impl Device {
                 | PageCall::Act { .. }
                 | PageCall::Withdraw { .. }
                 | PageCall::Restore { .. },
-            )) => return self.relay(call).await,
+            ) => return self.relay(call).await,
             _ => return Err(failed("this call belongs to a local node, not a device")),
         };
         let session = self.reaching(&machine)?;
@@ -385,6 +507,27 @@ impl Device {
             }
             None => session.account_for(&machine, purpose)?,
         };
+        if matches!(&remote, RemoteCall::Goal { .. }) {
+            if !session.link.view().goal_control { return Err(failed(fastctx_types::goals::words::OLDER_HUB)); }
+            let facts = session.link.call(&machine, &account, fastctx_types::access::Purpose::Look, RemoteCall::Facts).await.map_err(failed)?.map_err(failed)?;
+            if !matches!(facts, RemoteReply::Facts(facts) if facts.goal_runtime) {
+                return Err(failed(fastctx_types::goals::words::OLDER_NODE));
+            }
+        }
+        if matches!(remote, RemoteCall::Collaboration { .. }) {
+            if !session.link.view().collaboration_tree {
+                return Err(failed(fastctx_types::collab_prompt::TREE_HUB_OLD));
+            }
+            let facts = session
+                .link
+                .call(&machine, &account, fastctx_types::access::Purpose::Look, RemoteCall::Facts)
+                .await
+                .map_err(|error| failed(error.to_string()))?
+                .map_err(failed)?;
+            if !matches!(facts, RemoteReply::Facts(facts) if facts.collaboration_tree) {
+                return Err(failed(fastctx_types::collab_prompt::TREE_MACHINE_OLD));
+            }
+        }
         let needs_profile = match &remote {
             RemoteCall::Manage { action: fastctx_types::management::Management::Mcp { .. }, .. } => true,
             RemoteCall::Open { mcp_off, .. } => {
@@ -435,6 +578,8 @@ impl Device {
         .map_err(|failure| Error::from(crate::CallError::Failed(failure)))?;
         let address = resident.map(|resident| Address { machine: machine.clone(), resident });
         let reply = match (remote, answer) {
+            (RemoteCall::Goal { .. }, RemoteReply::Goal { updated }) => Reply::Goal { updated },
+            (RemoteCall::Collaboration { .. }, RemoteReply::Collaboration(tree)) => Reply::Collaboration(tree),
             (RemoteCall::Composer { .. }, RemoteReply::Composer(updated)) => Reply::Composer(updated),
             (RemoteCall::FindFiles { .. }, RemoteReply::FilesFound(reply)) => Reply::FilesFound(reply),
             (RemoteCall::Folders { .. }, RemoteReply::Folders(folders)) => Reply::Folders(folders),
@@ -639,7 +784,7 @@ fn actors(session: &Session) -> Vec<(MachineName, fastctx_types::AccountName)> {
         .collect()
 }
 
-fn profile_account(
+pub(super) fn profile_account(
     session: &Session,
     account: Option<fastctx_types::AccountName>,
 ) -> Result<fastctx_types::AccountName, Error> {

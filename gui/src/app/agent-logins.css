@@ -23,7 +23,7 @@
   background: var(--fill);
   color: var(--text-strong);
   font-size: var(--size-text);
-  transition: background-color var(--hover) ease;
+  transition: background-color var(--hover) var(--ease);
 }
 
 .agents-pick:hover,
@@ -227,7 +227,7 @@
   border-radius: var(--radius-l);
   background: var(--fill);
   cursor: pointer;
-  transition: background-color var(--hover) ease;
+  transition: background-color var(--hover) var(--ease);
 }
 
 .logins-row:hover {
@@ -696,7 +696,7 @@
 .logins-found-row.fresh,
 .logins-folder.fresh,
 .logins-row.fresh {
-  animation: logins-fresh var(--fresh) ease-out both;
+  animation: logins-fresh var(--fresh) var(--ease-out) both;
 }
 
 .logins-folder {
@@ -839,7 +839,7 @@
 .agent-change-toggle .glyph {
   --turn: -90deg;
   rotate: var(--turn);
-  transition: --turn var(--hover) ease;
+  transition: --turn var(--hover) var(--ease);
 }
 
 .agent-change-toggle[aria-expanded="true"] .glyph {
@@ -847,7 +847,9 @@
 }
 
 /* The details, once opened: the files a line each, scrolling here alone. */
-.agent-change > .agent-change-details {
+.agent-change > .agent-change-details,
+.agent-change > .agent-change-steps,
+.agent-change > .agent-change-kept {
   flex: 0 1 auto;
   min-height: 0;
   overflow-y: auto;
@@ -872,7 +874,7 @@
   border-radius: var(--radius-s);
   color: var(--text-2);
   text-align: left;
-  transition: background-color var(--hover) ease;
+  transition: background-color var(--hover) var(--ease);
 }
 
 .agent-change-file-line:hover {
@@ -900,7 +902,7 @@
   color: var(--text-3);
   --turn: -90deg;
   rotate: var(--turn);
-  transition: --turn var(--hover) ease;
+  transition: --turn var(--hover) var(--ease);
 }
 
 .agent-change-file.open .agent-change-chevron {

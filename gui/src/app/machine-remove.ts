@@ -42,6 +42,8 @@ export interface Removing {
   /** Of several, those that only leave and why, when some do. */
   some: string | null;
   offline: boolean;
+  /** Said when the one taking them off is not their owner. */
+  others: string | null;
   /** Takes them off; resolves to those told to uninstall, to follow. */
   remove(way: RemoveWay): Promise<Following | null>;
 }
@@ -152,7 +154,7 @@ export class RemoveMachineSheet {
       sheet.body.innerHTML = `${sheet.head(words.removedTitle, words.close)}
         <div class="mr-follow">${this.following.machines.map((one) => this.row(one)).join("")}</div>
         ${failed}
-        <div class="mr-go"><button class="sheet-go" type="button" data-mr-done>${escape(words.done)}</button></div>`;
+        <div class="sheet-foot mr-go"><button class="sheet-go" type="button" data-mr-done>${escape(words.done)}</button></div>`;
       return;
     }
     const way = (kind: RemoveWay) => {
@@ -165,12 +167,14 @@ export class RemoveMachineSheet {
         <span class="mr-way-what">${escape(blocked ? removing.cannot! : what)}</span>${some}
       </button>`;
     };
-    const note = removing.offline && this.way !== "leave" ? `<p class="mr-note">${escape(words.removeOffline)}</p>` : "";
+    const note =
+      (removing.others ? `<p class="mr-note">${escape(removing.others)}</p>` : "") +
+      (removing.offline && this.way !== "leave" ? `<p class="mr-note">${escape(words.removeOffline)}</p>` : "");
     sheet.body.innerHTML = `${sheet.head(removing.title, words.close)}
       <div class="mr-ways" role="radiogroup" aria-label="${escape(removing.title)}">${way("uninstall")}${way("everything")}${way("leave")}</div>
       ${note}
       <p class="sheet-note" role="alert"${this.said ? "" : " hidden"}>${escape(this.said)}</p>
-      <div class="mr-go"><button class="sheet-go danger" type="button" data-mr-go${sheet.busy ? " disabled" : ""}>${escape(words.removeGo)}</button></div>`;
+      <div class="sheet-foot mr-go"><button class="sheet-go danger" type="button" data-mr-go${sheet.busy ? " disabled" : ""}>${escape(words.removeGo)}</button></div>`;
   }
 
   /** One machine taken off to uninstall, and how that goes as it said. */

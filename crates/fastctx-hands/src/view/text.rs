@@ -213,7 +213,15 @@ pub(super) fn section(path: &Path, options: &Options, read: &Read, encoding_fact
     }
     let cost = text.len();
     let shown = read.shown_lines > 0 || read.cut.is_some() || read.total_lines == 0;
-    Section { text, cost, shown, partial: read.cut.is_some() || read.out_of_budget, failed: false, whole: false }
+    Section {
+        text,
+        cost,
+        shown,
+        partial: read.cut.is_some() || read.out_of_budget,
+        failed: false,
+        whole: false,
+        pictures: Vec::new(),
+    }
 }
 
 /// Which characters of a line too long to show were shown.

@@ -83,6 +83,7 @@ impl Device {
             machines: self.afoot(),
             history: None,
             others: Vec::new(),
+            involved: Vec::new(),
         };
         let accounts = match Box::pin(self.call(Call::Accounts)).await? {
             (Reply::Accounts(accounts), _) => accounts,
@@ -100,8 +101,8 @@ impl Device {
             towns.listing = true;
             let device = self.clone();
             tokio::spawn(async move {
-                let listed = match device.relay(Call::Project(ProjectCall::List)).await {
-                    Ok((Reply::Towns { towns }, _)) => Some(towns),
+                let listed = match device.project(ProjectCall::List).await {
+                    Ok(Reply::Towns { towns }) => Some(towns),
                     Ok(_) => None,
                     // Listed again when a hub next says they changed, or the
                     // device connects again.
@@ -125,10 +126,10 @@ impl Device {
     fn afoot(&self) -> Vec<MachineWho> {
         let mut machines = Vec::new();
         for session in self.sessions() {
-            if !matches!(session.link.status(), fastctx_net::link::Status::Online { .. }) {
-                continue;
-            }
-            let view = session.link.view();
+            // While the line to a hub is down, its machines are as it last
+            // told of them.
+            let Some(view) = session.link.last_view() else { continue };
+            let current = matches!(session.link.status(), Status::Online { .. });
             let told = session.link.afoot();
             let logins: Vec<AccountName> = view.me().map(|me| me.logins.iter().cloned().collect()).unwrap_or_default();
             for member in view.machines() {
@@ -152,6 +153,11 @@ impl Device {
                         last: afoot.map(|afoot| Box::new(reply(afoot))),
                     },
                     (true, Some(afoot)) => MachineWho::Answered { observation: None, reply: reply(afoot) },
+                    (true, None) if !current => MachineWho::NoAnswer {
+                        observation: None,
+                        machine: name.clone(),
+                        reason: "this device is not connected to the hub now".into(),
+                    },
                     (true, None) if !view.afoot => MachineWho::NoAnswer {
                         observation: None,
                         machine: name.clone(),
@@ -175,14 +181,14 @@ impl Device {
     fn machines_now(self: &Arc<Self>) -> NodesReply {
         let mut hubs = Vec::new();
         for session in self.sessions() {
-            if !matches!(session.link.status(), fastctx_net::link::Status::Online { .. }) {
-                continue;
-            }
             let view = session.link.view();
+            // A view kept while the line to the hub is down still has the
+            // machines, and says who was online then, not now.
             let current = matches!(session.link.status(), Status::Online { .. });
+            let listed = session.link.last_view().is_some();
             let logins: Vec<AccountName> = view.me().map(|me| me.logins.iter().cloned().collect()).unwrap_or_default();
             let mut machines = Vec::new();
-            for member in view.machines() {
+            for member in view.machines().filter(|_| listed) {
                 let Some(account) =
                     logins.iter().find(|account| view.call_rights(&view.me, account, &member.name).hands)
                 else {
@@ -228,11 +234,7 @@ impl Device {
         account: Option<AccountName>,
     ) -> Result<MachineFacts, String> {
         let hub = link.membership().id.clone();
-        let kept = {
-            let mut facts = self.shown.facts.lock().expect("never poisoned");
-            let machines = facts.entry(hub.clone()).or_insert_with(|| self.read_facts(&hub));
-            machines.get(&member.name).cloned()
-        };
+        let kept = self.kept(&hub, &member.name);
         let current = kept.as_ref().is_some_and(|kept| kept.since == member.since);
         if member.online
             && !current
@@ -264,11 +266,19 @@ impl Device {
                 super::changed(&device.shown_changes);
             });
         }
-        match kept {
-            Some(kept) => kept.facts,
-            None if member.online => Err("it has not said yet".to_string()),
-            None => Err("it is offline".to_string()),
-        }
+        said(kept, member)
+    }
+
+    /// What `member` said of itself when it last connected, as kept, asking
+    /// nothing.
+    pub(super) fn kept_facts(&self, link: &Link, member: &Member) -> Result<MachineFacts, String> {
+        said(self.kept(&link.membership().id, &member.name), member)
+    }
+
+    fn kept(&self, hub: &HubId, name: &MachineName) -> Option<Kept> {
+        let mut facts = self.shown.facts.lock().expect("never poisoned");
+        let machines = facts.entry(hub.clone()).or_insert_with(|| self.read_facts(hub));
+        machines.get(name).cloned()
     }
 
     fn read_facts(&self, hub: &HubId) -> BTreeMap<MachineName, Kept> {
@@ -291,5 +301,14 @@ fn machine_of(who: &MachineWho) -> &MachineName {
     match who {
         MachineWho::Answered { reply, .. } => &reply.machine,
         MachineWho::Offline { machine, .. } | MachineWho::NoAnswer { machine, .. } => machine,
+    }
+}
+
+/// What a machine said of itself as kept, or why there is nothing kept.
+fn said(kept: Option<Kept>, member: &Member) -> Result<MachineFacts, String> {
+    match kept {
+        Some(kept) => kept.facts,
+        None if member.online => Err("it has not said yet".to_string()),
+        None => Err("it is offline".to_string()),
     }
 }

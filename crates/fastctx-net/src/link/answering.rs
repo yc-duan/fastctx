@@ -14,8 +14,9 @@
 //! What each call is (`fastctx_types::contract`) says what stops it. Until
 //! the node takes it on, anything does: its caller giving it up, or the
 //! connection it came on ending. Once taken on, a call that only reads stops
-//! too, and also on its own a little past the time its caller waits; a
-//! change is done whole, whoever is left to hear of it.
+//! too, and at its contract deadline. A change returns its processing place
+//! at that deadline or when the caller leaves, retaining only its bounded
+//! settlement reservation and handover guard until it finishes.
 //!
 //! A call holds its place here, and what keeps its node from handing over
 //! (`Node::answering`), until its answer is written, a large answer's bytes
@@ -23,12 +24,12 @@
 //! to go, not only for the work behind them.
 
 use std::sync::Arc;
-use std::time::Duration;
 
 use fastctx_types::contract::Pool;
 use fastctx_types::ipc::Failure;
 use fastctx_types::remote::{RemoteCall, RemoteResult};
 
+use super::admission::{Admitted, Request};
 use super::answers::Answer;
 use super::direct::DataWay;
 use super::{Caller, Inner, Replier};
@@ -38,10 +39,11 @@ use crate::message::Body;
 use crate::sign::sha256;
 use crate::wire::{self, Carried, End, Ticket, Up};
 
-/// How long past the time its caller waits a call that only reads is
-/// answered, for a caller whose giving up never came: past that it is
-/// given up here too.
-const PAST_THE_CALLER: Duration = Duration::from_secs(5);
+struct Held {
+    guards: Vec<Box<dyn Send>>,
+    came: tokio::time::Instant,
+    deadline: Option<tokio::time::Instant>,
+}
 
 /// Checks a call from another machine, and does what it asks.
 pub(super) async fn answer(inner: Arc<Inner>, replier: Replier, message: Envelope, mut stop: Answer) {
@@ -55,6 +57,18 @@ pub(super) async fn answer(inner: Arc<Inner>, replier: Replier, message: Envelop
         let reason = format!("it says it is from {}, on the direct link of {}", message.from, conn.name);
         inner.node.log(format!("refused a direct call: {reason}"));
         reply(&inner, &replier, &message, Kind::Refused, None, serde_json::Value::String(reason)).await;
+        return;
+    }
+    if matches!(replier, Replier::Peer(..)) && crate::message::plan_request(&message).is_some() {
+        reply(
+            &inner,
+            &replier,
+            &message,
+            Kind::Refused,
+            None,
+            serde_json::Value::String(fastctx_types::plan::words::CONTROL.into()),
+        )
+        .await;
         return;
     }
     if matches!(replier, Replier::Peer(..)) && crate::message::project_entry(&message).is_some() {
@@ -72,9 +86,13 @@ pub(super) async fn answer(inner: Arc<Inner>, replier: Replier, message: Envelop
             // waits in one of the few places kept for what comes in before
             // it is known, and stops with the call.
             let account = message.standing().map(|(account, _)| account.clone());
-            let waiting = account.and_then(|account| {
-                inner.node.place(&message.from, &account, Pool::Receiving).map_err(|failure| failure.message)
-            });
+            let waiting = match account {
+                Ok(account) => tokio::select! {
+                    place = inner.node.acquire(Request::receiving(message.from.clone(), account, came)) => place.map_err(|failure| failure.message),
+                    _ = stop.stopping() => return,
+                },
+                Err(reason) => Err(reason),
+            };
             match waiting {
                 Ok(_place) => tokio::select! {
                     admitted = inner.admit(&message) => admitted,
@@ -113,62 +131,72 @@ pub(super) async fn answer(inner: Arc<Inner>, replier: Replier, message: Envelop
         )),
     };
     // Kept until the answer has gone, or is given up.
-    let mut held: Vec<Box<dyn Send>> = Vec::new();
-    let Some(result) = work(&inner, &caller, &message, &endpoint, &mut stop, &mut held, came).await else {
+    let mut held = Held { guards: Vec::new(), came, deadline: None };
+    let Some(result) = work(&inner, &caller, &message, &endpoint, &mut stop, &mut held).await else {
         // Nobody is left to hear the answer.
         return;
     };
-    if stop.stopped().is_some() || registered.as_ref().is_some_and(|registered| !registered.wanted()) {
-        // Given up or cut while it ran: the caller was told, and the answer
-        // is dropped.
-        return;
-    }
-    let small = Body::Answer { result: result.clone() };
-    let fits = match &replier {
-        Replier::Hub(_, call) => {
-            let frame =
-                Up::Answer { call: *call, message: answer_envelope(&inner, &message, Kind::Answer, None, &small) };
-            wire::encode(&frame).len() <= wire::MAX_CONTROL_FRAME
-        }
-        Replier::Peer(_, id) => {
-            let frame = crate::peer::Frame::Answer {
-                id: *id,
-                message: answer_envelope(&inner, &message, Kind::Answer, None, &small),
-            };
-            crate::peer::encode(&frame).len() <= wire::MAX_CONTROL_FRAME
-        }
-    };
-    if fits {
-        if let Err(error) = send(&replier, answer_envelope(&inner, &message, Kind::Answer, None, &small)).await {
-            inner.node.log(format!("sending an answer to {}: {error}", caller.machine));
-        }
-        return;
-    }
-    // Too large for the control connection: the answer says what follows
-    // over a data connection.
-    let bytes = serde_json::to_vec(&result).expect("answers serialize");
-    let stream = match crate::sign::random::<8>() {
-        Ok(random) => u64::from_le_bytes(random),
-        Err(error) => {
-            inner.node.log(format!("choosing a data connection for a large answer: {error}"));
+    let deadline = held.deadline;
+    let sending = async {
+        if stop.stopped().is_some() || registered.as_ref().is_some_and(|registered| !registered.wanted()) {
+            // Given up or cut while it ran: the caller was told, and the answer
+            // is dropped.
             return;
         }
+        let small = Body::Answer { result: result.clone() };
+        let fits = match &replier {
+            Replier::Hub(_, call) => {
+                let frame =
+                    Up::Answer { call: *call, message: answer_envelope(&inner, &message, Kind::Answer, None, &small) };
+                wire::encode(&frame).len() <= wire::MAX_CONTROL_FRAME
+            }
+            Replier::Peer(_, id) => {
+                let frame = crate::peer::Frame::Answer {
+                    id: *id,
+                    message: answer_envelope(&inner, &message, Kind::Answer, None, &small),
+                };
+                crate::peer::encode(&frame).len() <= wire::MAX_CONTROL_FRAME
+            }
+        };
+        if fits {
+            if let Err(error) = send(&replier, answer_envelope(&inner, &message, Kind::Answer, None, &small)).await {
+                inner.node.log(format!("sending an answer to {}: {error}", caller.machine));
+            }
+            return;
+        }
+        // Too large for the control connection: the answer says what follows
+        // over a data connection.
+        let bytes = serde_json::to_vec(&result).expect("answers serialize");
+        let stream = match crate::sign::random::<8>() {
+            Ok(random) => u64::from_le_bytes(random),
+            Err(error) => {
+                inner.node.log(format!("choosing a data connection for a large answer: {error}"));
+                return;
+            }
+        };
+        let ticket = Ticket { stream, source: inner.me(), sink: caller.machine.clone() };
+        let carried = Carried { stream, bytes: bytes.len() as u64, sha256: crate::sign::Digest(sha256(&bytes)) };
+        let large = answer_envelope(&inner, &message, Kind::Answer, Some(ticket), &Body::LargeAnswer { carried });
+        if let Err(error) = send(&replier, large).await {
+            inner.node.log(format!("announcing a large answer to {}: {error}", caller.machine));
+            return;
+        }
+        let sent = tokio::select! {
+            sent = crate::data::source(&endpoint, &inner.key, stream, &bytes) => sent,
+            _ = stop.stopping() => Err("its caller gave it up".to_string()),
+        };
+        if let Err(error) = sent {
+            inner.node.log(format!("sending a large answer to {}: {error}", caller.machine));
+        }
+        drop(held);
     };
-    let ticket = Ticket { stream, source: inner.me(), sink: caller.machine.clone() };
-    let carried = Carried { stream, bytes: bytes.len() as u64, sha256: crate::sign::Digest(sha256(&bytes)) };
-    let large = answer_envelope(&inner, &message, Kind::Answer, Some(ticket), &Body::LargeAnswer { carried });
-    if let Err(error) = send(&replier, large).await {
-        inner.node.log(format!("announcing a large answer to {}: {error}", caller.machine));
-        return;
-    }
-    let sent = tokio::select! {
-        sent = crate::data::source(&endpoint, &inner.key, stream, &bytes) => sent,
-        _ = stop.stopping() => Err("its caller gave it up".to_string()),
+    let expired = async {
+        match deadline {
+            Some(deadline) => tokio::time::sleep_until(deadline).await,
+            None => std::future::pending().await,
+        }
     };
-    if let Err(error) = sent {
-        inner.node.log(format!("sending a large answer to {}: {error}", caller.machine));
-    }
-    drop(held);
+    tokio::select! { () = sending => {}, () = expired => {} }
 }
 
 /// Takes the call `message` holds on and does it; none when it was stopped
@@ -180,12 +208,12 @@ async fn work(
     message: &Envelope,
     endpoint: &Endpoint,
     stop: &mut Answer,
-    held: &mut Vec<Box<dyn Send>>,
-    came: tokio::time::Instant,
+    held: &mut Held,
 ) -> Option<RemoteResult> {
+    let came = held.came;
     let refused = |reason: String| {
         inner.node.log(format!("refused a call from {}: {reason}", caller.machine));
-        Err(Failure::new(format!("{} refused the call: {reason}", inner.me())))
+        Err(Failure::not_run(format!("{} refused the call: {reason}", inner.me())))
     };
     // A call this release does not know, as a newer one may make, is
     // refused saying so.
@@ -199,7 +227,13 @@ async fn work(
         Body::Call { call } | Body::StreamCall { call } => call.contract().pool,
         Body::LargeCall { .. } | Body::Answer { .. } | Body::LargeAnswer { .. } => Pool::Receiving,
     };
-    let mut place = match inner.node.place(&caller.machine, &caller.account, pool) {
+    let request = match &body {
+        Body::Call { call } | Body::StreamCall { call } => {
+            Request::call(caller.machine.clone(), caller.account.clone(), came, call, &inner.me())
+        }
+        _ => Request::receiving(caller.machine.clone(), caller.account.clone(), came),
+    };
+    let mut place = match acquire(inner, request, stop).await? {
         Ok(place) => place,
         Err(failure) => return Some(Err(failure)),
     };
@@ -209,10 +243,10 @@ async fn work(
         }
         _ => None,
     };
-    let opening_deadline = came + fastctx_types::contract::OPENED_WITHIN + PAST_THE_CALLER;
+    let opening_deadline = came + fastctx_types::contract::OPENED_WITHIN;
     let accepting_deadline = async {
         match accepting {
-            Some(within) => tokio::time::sleep_until(came + within + PAST_THE_CALLER).await,
+            Some(within) => tokio::time::sleep_until(came + within).await,
             None => std::future::pending().await,
         }
     };
@@ -220,7 +254,7 @@ async fn work(
         opened = open_call(inner, message, body, endpoint, opening_deadline) => opened,
         _ = stop.stopping() => return None,
         () = accepting_deadline => {
-            Err(format!("opening the call did not finish within {} seconds", (accepting.expect("finite opening") + PAST_THE_CALLER).as_secs()))
+            Err(format!("opening the call did not finish within {} seconds", (accepting.expect("finite opening")).as_secs()))
         },
     };
     let (remote, stream, received) = match opened {
@@ -230,21 +264,32 @@ async fn work(
     if matches!(remote, RemoteCall::EnterProject { .. }) && crate::message::project_entry(message).is_none() {
         return Some(refused("a project entry must be a complete, unstreamed control request".into()));
     }
+    if matches!(remote, RemoteCall::Plan { .. }) && crate::message::plan_request(message).is_none() {
+        return Some(refused(fastctx_types::plan::words::CONTROL.into()));
+    }
     let contract = remote.contract();
+    held.deadline = contract.within.map(|within| came + within);
     if contract.pool != pool {
-        place = match inner.node.place(&caller.machine, &caller.account, contract.pool) {
+        drop(place);
+        place = match acquire(
+            inner,
+            Request::call(caller.machine.clone(), caller.account.clone(), came, &remote, &inner.me()),
+            stop,
+        )
+        .await?
+        {
             Ok(place) => place,
             Err(failure) => return Some(Err(failure)),
         };
     }
-    held.push(place);
+    held.guards.push(Box::new(place.clone()));
     // A large call's bytes stay counted until its answer is written, past
     // the receiving place it came in through.
     if let Some(received) = received {
-        held.push(Box::new(received));
+        held.guards.push(Box::new(received));
     }
     match inner.node.answering(&remote) {
-        Ok(Some(guard)) => held.push(guard),
+        Ok(Some(guard)) => held.guards.push(guard),
         Ok(None) => {}
         Err(failure) => {
             // Its data connection is closed, not dropped: the other end
@@ -255,26 +300,76 @@ async fn work(
             return Some(Err(failure));
         }
     }
+    if stop.stopped().is_some() {
+        return None;
+    }
+    if contract.within.is_some_and(|within| tokio::time::Instant::now() >= came + within) {
+        return Some(Err(Failure::not_run(format!(
+            "the call's time ran out before {} could begin it; it was not started",
+            inner.me()
+        ))
+        .capacity(fastctx_types::ipc::CapacityReason::Expired)));
+    }
     let kind = remote.kind();
     let doing = inner.node.call(caller.clone(), remote, stream);
-    if !contract.cancellable {
-        return Some(doing.await);
-    }
     let past = async {
         match contract.within {
-            Some(within) => tokio::time::sleep_until(came + within + PAST_THE_CALLER).await,
+            Some(within) => tokio::time::sleep_until(came + within).await,
             None => std::future::pending().await,
         }
     };
+    if !contract.cancellable {
+        let kept = std::mem::take(&mut held.guards);
+        let working_place = place.clone();
+        let worker = tokio::spawn(async move {
+            working_place.started();
+            let result = doing.await;
+            (result, kept)
+        });
+        let mut worker = worker;
+        let reason = tokio::select! {
+            result = &mut worker => {
+                return Some(match result {
+                    Ok((result, guards)) => { held.guards.extend(guards); result },
+                    Err(error) => Err(Failure::new(format!("answering {kind}: {error}"))),
+                });
+            },
+            _ = stop.stopping() => None,
+            () = past => Some(format!("{} did not finish {kind} within {} s; it is still being done there, and whether it takes effect is not known yet", inner.me(), contract.within.unwrap_or_default().as_secs())),
+        };
+        place.settling();
+        // The expired work owns its settlement guards. Its small failure
+        // still reaches a caller whose own deadline may be longer.
+        held.deadline = None;
+        let node = inner.node.clone();
+        tokio::spawn(async move {
+            match worker.await {
+                Ok((Err(error), _)) => node.log(format!("finishing {kind}: {}", error.message)),
+                Err(error) => node.log(format!("finishing {kind}: {error}")),
+                _ => {}
+            }
+        });
+        return reason.map(|reason| Err(Failure::new(reason)));
+    }
+    place.started();
     tokio::select! {
         result = doing => Some(result),
         _ = stop.stopping() => None,
         () = past => {
-            let waited = contract.within.unwrap_or_default() + PAST_THE_CALLER;
+            held.guards.clear();
+            held.deadline = None;
+            let waited = contract.within.unwrap_or_default();
             let reason = format!("gave up answering its {kind}: no answer within {} s", waited.as_secs());
             inner.node.log(format!("{reason}, for {}", caller.machine));
             Some(Err(Failure::new(format!("{} {reason}", inner.me()))))
         }
+    }
+}
+
+async fn acquire(inner: &Inner, request: Request, stop: &mut Answer) -> Option<Result<Admitted, Failure>> {
+    tokio::select! {
+        place = inner.node.acquire(request) => Some(place),
+        _ = stop.stopping() => None,
     }
 }
 

@@ -81,9 +81,30 @@ pub fn install() -> Result<(), String> {
         properties.Commit().map_err(|e| e.to_string())?;
         let file: IPersistFile = link.cast().map_err(|e| e.to_string())?;
         file.Save(&HSTRING::from(shortcut()?.as_path()), true).map_err(|e| e.to_string())?;
-        shell_changed()?;
     }
-    Ok(())
+    // The repair shortcut is a convenience beside the identity notifications
+    // need; an installation goes on without it, and says why in its details.
+    if let Err(error) = repair_link() {
+        eprintln!("the Repair Fastctx shortcut was not created: {error}");
+    }
+    unsafe { shell_changed() }
+}
+
+/// A Start menu shortcut that opens this program's own repair.
+fn repair_link() -> Result<(), String> {
+    unsafe {
+        let repair: IShellLinkW =
+            CoCreateInstance(&ShellLink, None, CLSCTX_INPROC_SERVER).map_err(|e| e.to_string())?;
+        repair
+            .SetPath(&HSTRING::from(std::env::current_exe().map_err(|e| e.to_string())?.as_path()))
+            .map_err(|e| e.to_string())?;
+        repair.SetArguments(&HSTRING::from("--repair")).map_err(|e| e.to_string())?;
+        repair
+            .SetDescription(&HSTRING::from("Repair Fastctx program files; keep user data"))
+            .map_err(|e| e.to_string())?;
+        let file: IPersistFile = repair.cast().map_err(|e| e.to_string())?;
+        file.Save(&HSTRING::from(repair_shortcut()?.as_path()), true).map_err(|e| e.to_string())
+    }
 }
 
 /// Refuses to remove another installation's handler.
@@ -114,6 +135,7 @@ pub fn uninstall() -> Result<(), String> {
     if has_shortcut {
         std::fs::remove_file(shortcut).map_err(|e| e.to_string())?;
     }
+    delete_repair_shortcut()?;
     if has_protocol {
         CURRENT_USER.remove_tree(format!("Software\\Classes\\{SCHEME}")).map_err(|e| e.to_string())?;
     }
@@ -184,4 +206,36 @@ fn verify_shortcut() -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+fn repair_shortcut() -> Result<PathBuf, String> {
+    Ok(shortcut()?.with_file_name(if cfg!(debug_assertions) {
+        "修复 Fastctx development.lnk"
+    } else {
+        "修复 Fastctx.lnk"
+    }))
+}
+
+fn delete_repair_shortcut() -> Result<(), String> {
+    let path = repair_shortcut()?;
+    if !path.try_exists().map_err(|e| format!("checking {}: {e}", path.display()))? {
+        return Ok(());
+    }
+    unsafe {
+        let link: IShellLinkW = CoCreateInstance(&ShellLink, None, CLSCTX_INPROC_SERVER).map_err(|e| e.to_string())?;
+        let file: IPersistFile = link.cast().map_err(|e| e.to_string())?;
+        file.Load(&HSTRING::from(path.as_path()), windows::Win32::System::Com::STGM_READ).map_err(|e| e.to_string())?;
+        let mut target = vec![0u16; 32768];
+        link.GetPath(&mut target, std::ptr::null_mut(), 0).map_err(|e| e.to_string())?;
+        target.truncate(target.iter().position(|&c| c == 0).unwrap_or(target.len()));
+        let target = PathBuf::from(String::from_utf16_lossy(&target));
+        if target != std::env::current_exe().map_err(|e| e.to_string())? {
+            return Err(format!(
+                "repair shortcut {} belongs to {}; it was left in place",
+                path.display(),
+                target.display()
+            ));
+        }
+    }
+    std::fs::remove_file(&path).map_err(|e| format!("deleting repair shortcut {}: {e}", path.display()))
 }

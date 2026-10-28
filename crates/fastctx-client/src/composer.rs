@@ -1,10 +1,10 @@
 //! Shared input uses the ordinary user call and resident watch transports.
 
+use fastctx_net::watch_queue;
 use fastctx_types::access::Written;
 use fastctx_types::composer::{Composer, Mutation, Request, Updated};
 use fastctx_types::session::{Happened, SessionChange, Watched};
 use fastctx_types::{Call, Reply, ResidentId};
-use tokio::sync::mpsc;
 
 use crate::{Error, World};
 
@@ -45,7 +45,10 @@ impl World {
         name: String,
     ) -> Result<(Composing, Composer), Error> {
         let mut watching = self.watch_with_composer(resident, machine, Some(name)).await?;
-        let (sender, states) = mpsc::unbounded_channel();
+        let (sender, states) = watch_queue::channel(|state: &Result<Composer, Error>| match state {
+            Ok(state) => (watch_queue::size(state), Some("composer".into())),
+            Err(error) => (error.to_string().len(), None),
+        });
         tokio::spawn(async move {
             loop {
                 tokio::select! {
@@ -62,6 +65,10 @@ impl World {
                             }
                             // A composer has no history; nothing of one is asked for.
                             Ok(Some(Watched::History { .. } | Watched::Unchanged { .. } | Watched::Segments { .. } | Watched::Now { .. })) => {},
+                            Ok(Some(Watched::Documents { .. })) => {
+                                let _ = sender.send(Err(Error::Unexpected("document packets arrived on a legacy composer watch".into())));
+                                return;
+                            }
                             Ok(None) => return,
                             Err(error) => { let _ = sender.send(Err(error.into())); return; }
                         }
@@ -80,13 +87,13 @@ impl World {
 
 /// Cancellation-safe snapshot stream. Dropping it closes its read task and watch.
 pub struct Composing {
-    states: mpsc::UnboundedReceiver<Result<Composer, Error>>,
+    states: watch_queue::Receiver<Result<Composer, Error>>,
     revision: Option<u64>,
 }
 
 impl Composing {
     pub async fn next(&mut self) -> Result<Option<Composer>, Error> {
-        while let Some(state) = self.states.recv().await {
+        while let Some(state) = self.states.recv().await.map_err(|error| Error::Unexpected(error.to_string()))? {
             let state = state?;
             if self.revision.is_some_and(|revision| state.revision <= revision) {
                 continue;

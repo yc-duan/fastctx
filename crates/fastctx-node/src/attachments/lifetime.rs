@@ -137,10 +137,16 @@ pub(crate) async fn ensure_holders(node: &Arc<Node>, id: &ResidentId) -> Result<
 pub(crate) async fn remote_retained(node: &Arc<Node>, places: &[PathBuf]) -> Result<Vec<PathBuf>, Failure> {
     let mut retained = Vec::new();
     for place in places {
-        let Some(Kind::Guest(owner)) = place.file_name().and_then(|name| name.to_str()).and_then(Kind::of) else {
-            continue;
-        };
         let slots = slots(place)?;
+        // A room named by a tag of its home learns it from what it holds.
+        let owner = match place.file_name().and_then(|name| name.to_str()).and_then(Kind::of) {
+            Some(Kind::Guest(owner)) => owner,
+            Some(Kind::Visiting { .. }) => match slots.first() {
+                Some((_, file)) => file.conversation().clone(),
+                None => continue,
+            },
+            _ => continue,
+        };
         if slots.is_empty() {
             continue;
         }
@@ -181,7 +187,7 @@ pub(crate) fn remove(node: &Node, place: &Path, remote: &[PathBuf]) -> Result<bo
     let slots = slots(place)?;
     let kind = place.file_name().and_then(|name| name.to_str()).and_then(Kind::of);
     let kept = match kind {
-        Some(Kind::Guest(_)) => slots.iter().map(|(path, _)| remote.contains(path)).collect(),
+        Some(Kind::Guest(_) | Kind::Visiting { .. }) => slots.iter().map(|(path, _)| remote.contains(path)).collect(),
         Some(Kind::Home(ref id)) => {
             readers(node, &slots.iter().map(|(_, file)| file.clone()).collect::<Vec<_>>(), Some(id))?
         }

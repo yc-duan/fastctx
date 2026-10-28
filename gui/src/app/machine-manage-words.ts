@@ -37,6 +37,9 @@ export interface ManageWords {
   remove: string;
   removeTitle(machine: string): string;
   removeMany(count: number): string;
+  /** Said when one who is not its owner takes a machine off: its owner and
+   *  everyone it is shared with lose it too. */
+  othersLose(count: number): string;
   ways: { uninstall: { title: string; what: string }; everything: { title: string; what: string }; leave: { title: string; what: string } };
   /** Why it cannot uninstall Fastctx from here. */
   notMember: string;
@@ -104,6 +107,7 @@ export const zhManage: ManageWords = {
   remove: "移除…",
   removeTitle: (machine) => `移除 ${machine}？`,
   removeMany: (count) => `移除这 ${count} 台？`,
+  othersLose: (count) => (count === 1 ? "移出之后，它的主人和所有能用它的人都不再有这台" : "移出之后，它们的主人和所有能用它们的人都不再有这些机器"),
   ways: {
     uninstall: { title: "移出并卸载，保留数据", what: "那台上的 Fastctx 卸掉，世界的记录、登录与身份留着，重新装上还能接着用" },
     everything: { title: "移出并彻底移除", what: "把 Fastctx 写在那台上的一切清掉" },
@@ -166,6 +170,7 @@ export const enManage: ManageWords = {
   remove: "Remove…",
   removeTitle: (machine) => `Remove ${machine}?`,
   removeMany: (count) => `Remove these ${count}?`,
+  othersLose: (count) => (count === 1 ? "Once it is off, its owner and everyone who uses it no longer have it" : "Once they are off, their owners and everyone who uses them no longer have them"),
   ways: {
     uninstall: { title: "Remove and uninstall, keeping its data", what: "Fastctx goes from it; its World's records, logins and identity stay, to carry on once installed again" },
     everything: { title: "Remove and erase", what: "Everything Fastctx wrote there goes" },

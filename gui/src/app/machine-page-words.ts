@@ -41,6 +41,11 @@ export interface MachinePageWords {
   /** Agents of other accounts at work or waiting on it, told its owner
    *  without their names. */
   othersAtWork(count: number): string;
+  /** The machine's own jobs, its owner's, where the owner is not known. */
+  ownJobs: string;
+  /** One account's jobs on it, on hover: how many run, and the most it
+   *  may run at once when its owner set one. */
+  jobsOf(who: string, running: number, most: number | null): string;
   sharing: string;
 
   threads(count: number): string;
@@ -99,8 +104,9 @@ export interface MachinePageWords {
   fastctxRuns(version: string): string;
   fastctxLatest: string;
   fastctxBehind(newer: string): string;
-  /** Work of its own that is stuck, as it says, and for how long. */
-  stuck(doing: string, what: string, span: string): string;
+  /** Work of its own that is stuck, and for how long; what the node says of
+   *  it is a hover away. */
+  stuck(span: string): string;
   /** Its usage ledger keeps rows it could not read aside; its totals go
    *  without them. */
   ledgerRows(rows: number): string;
@@ -165,6 +171,8 @@ export const zhMachinePage: MachinePageWords = {
   about: "资料",
   present: "在这台上",
   othersAtWork: (count) => `另有 ${count} 个在跑`,
+  ownJobs: "主人",
+  jobsOf: (who, running, most) => `${who} 在跑 ${running} 条作业${most ? `，至多 ${most} 条` : ""}`,
   sharing: "共享与协助",
 
   threads: (count) => `${count} 线程`,
@@ -212,7 +220,7 @@ export const zhMachinePage: MachinePageWords = {
   fastctxRuns: (version) => `Fastctx ${version}`,
   fastctxLatest: "已是最新",
   fastctxBehind: (newer) => `可更新到 ${newer}`,
-  stuck: (doing, what, span) => `卡住 ${span}：${doing} 在等 ${what}`,
+  stuck: (span) => `有一件事卡了 ${span}`,
   ledgerRows: (rows) => `用量账本有 ${rows} 行读不了，已另存，统计不含它们`,
   ledgerBroken: "用量账本现在读写不了，受协助的用量暂停到它恢复",
   healthOther: "这台有一条提醒",
@@ -264,6 +272,8 @@ export const enMachinePage: MachinePageWords = {
   about: "Details",
   present: "On it",
   othersAtWork: (count) => `${count} more running`,
+  ownJobs: "Owner",
+  jobsOf: (who, running, most) => `${who} runs ${running} job${running === 1 ? "" : "s"}${most ? `, at most ${most}` : ""}`,
   sharing: "Sharing",
 
   threads: (count) => `${count} threads`,
@@ -311,7 +321,7 @@ export const enMachinePage: MachinePageWords = {
   fastctxRuns: (version) => `Fastctx ${version}`,
   fastctxLatest: "Up to date",
   fastctxBehind: (newer) => `${newer} available`,
-  stuck: (doing, what, span) => `Stuck ${span}: ${doing} waits for ${what}`,
+  stuck: (span) => `Something has been stuck for ${span}`,
   ledgerRows: (rows) => `${rows} usage ledger row${rows === 1 ? "" : "s"} could not be read and were set aside; totals leave them out`,
   ledgerBroken: "Its usage ledger cannot be read or written now; assisted use waits until it can",
   healthOther: "This machine has a warning",

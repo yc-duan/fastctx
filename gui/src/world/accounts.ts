@@ -122,6 +122,8 @@ export interface MemberSeen {
 export interface ShareSeen {
   machine: MachineName;
   account: AccountName;
+  /** The most jobs the account runs on it at once; absent is no limit. */
+  jobs?: number;
 }
 
 /** One login of an agent on a machine, assisting an account. */
@@ -142,6 +144,9 @@ export interface AssistSeen {
   /** The share of the login's own five-hour window, in percent, past which
    *  the login assists no one; absent is no limit. */
   five_hour?: number;
+  /** The most turns the login runs at once, its owner's own counted too;
+   *  absent leaves it to the vendor's rate limits. */
+  turns?: number;
 }
 
 /** A plan a login names none of (a Claude Code long-lived token), set by
@@ -174,6 +179,23 @@ export interface ProjectSeen {
 
 /** A device that logged in to an account, or a machine registered under
  *  it, not shown to the user yet. */
+/** What another did to a machine this account holds, told to its holders
+ *  once (`world-network.md`, 共享机器与智能体协助). `by` is none where the hub
+ *  itself took back a share of the machine it runs on. */
+export interface MachineNotice {
+  id: number;
+  at: Timestamp;
+  account: AccountName;
+  machine: MachineName;
+  by: AccountName | null;
+  action:
+    | { kind: "rename"; to: MachineName }
+    | { kind: "updated"; from: string; to: string }
+    | { kind: "remove"; then: "uninstall" | "everything" | null }
+    | { kind: "share"; to: AccountName; shared: boolean }
+    | { kind: "assist"; to: AccountName; agent: string; home: string | null; assisting: boolean; until: Timestamp | null };
+}
+
 export interface Arrival {
   hub: HubId;
   account: AccountName;
@@ -278,6 +300,11 @@ export interface HubAccounts {
   accounts: AccountSeen[];
   members: MemberSeen[];
   shares: ShareSeen[];
+  /** The machine this hub runs on, when it is known: it is shared with no
+   *  one (`world-network.md`, 共享机器与智能体协助). */
+  hub_machine?: MachineName;
+  /** What others did to machines this device's accounts hold. */
+  machine_notices?: MachineNotice[];
   assists: AssistSeen[];
   /** Plans the super administrator set on logins that name none. */
   plans: PlanSeen[];
@@ -309,8 +336,8 @@ export interface Dissolution {
 
 /** A change made as an account (`fastctx_types::accounts::AccountChange`). */
 export type AccountChange =
-  | { change: "share"; machine: MachineName; to: AccountName; shared: boolean }
-  | { change: "assist"; machine: MachineName; to: AccountName; agent: string; home?: string; assisting: boolean; until?: Timestamp; weekly?: number; daily?: number; five_hour?: number }
+  | { change: "share"; machine: MachineName; to: AccountName; shared: boolean; jobs?: number }
+  | { change: "assist"; machine: MachineName; to: AccountName; agent: string; home?: string; assisting: boolean; until?: Timestamp; weekly?: number; daily?: number; five_hour?: number; turns?: number }
   | { change: "plan"; machine: MachineName; agent: string; home?: string; plan: PlanLabel | null }
   | { change: "stop_acting"; machine: MachineName }
   /** The administrator's change: the server checks it reaches the machine
