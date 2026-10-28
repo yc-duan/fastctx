@@ -25,10 +25,11 @@ export class Sheet {
     className: string,
     private readonly fixed = false,
   ) {
+    // It stands in the document only while it is open, so a page let go
+    // of takes the sheets it made with it.
     this.dialog = document.createElement("dialog");
     this.dialog.className = `sheet ${className}`;
     this.dialog.innerHTML = `<form class="sheet-body" method="dialog"></form>`;
-    document.body.append(this.dialog);
     this.body = this.dialog.querySelector("form")!;
     this.steady = new Steady(this.body, true);
     watchShade(this.dialog);
@@ -40,7 +41,10 @@ export class Sheet {
       event.preventDefault();
       this.close();
     });
-    this.dialog.addEventListener("close", () => this.steady.free());
+    this.dialog.addEventListener("close", () => {
+      this.steady.free();
+      this.dialog.remove();
+    });
   }
 
   head(title: string, close: string): string {
@@ -50,6 +54,7 @@ export class Sheet {
   show(): void {
     stay(this.dialog);
     if (this.dialog.open) return;
+    if (!this.dialog.isConnected) document.body.append(this.dialog);
     this.dialog.showModal();
     if (this.fixed) return;
     this.steady.hold();

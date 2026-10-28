@@ -676,6 +676,17 @@ html.gripping-y * {
   min-height: 0;
 }
 
+/* A page whose code is on its way holds its place as the page will. */
+.deferred-page {
+  display: flex;
+  flex-direction: column;
+}
+
+.deferred-page > * {
+  flex: 1;
+  min-height: 0;
+}
+
 /* Every page's head: the way back to the sidebar where it is hidden, the
    page's name, what can be done here. */
 .page-head {

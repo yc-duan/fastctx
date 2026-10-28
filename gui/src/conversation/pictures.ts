@@ -94,6 +94,9 @@ interface Picture extends PictureSource {
  *  the largest of them is drawn at (`.bubble-picture img`, 260 CSS pixels),
  *  for screens of twice the density. */
 const SMALL = 520;
+/** The most pictures kept made at once: the one asked for longest ago goes
+ *  first, and is asked of its machine again if it comes back into view. */
+const KEPT = 200;
 
 /** Whether a failure says the picture is nowhere to be had: a file the user
  *  sent says so itself; a file on a machine is gone when the system says
@@ -106,6 +109,7 @@ const isGone = (error: unknown, message: string): boolean =>
 export class Pictures {
   private readonly made = new Map<string, Promise<string>>();
   private readonly watching: IntersectionObserver;
+  private readonly arriving: MutationObserver;
   private viewer: PictureViewer | null = null;
   /** Pictures being saved, which outlive the viewer they were saved from. */
   readonly saves = new HeldReads();
@@ -129,9 +133,10 @@ export class Pictures {
     const look = (within: ParentNode) => {
       for (const image of within.querySelectorAll<HTMLImageElement>("img[data-picture]:not([src])")) this.watching.observe(image);
     };
-    new MutationObserver((changes) => {
+    this.arriving = new MutationObserver((changes) => {
       for (const change of changes) for (const node of change.addedNodes) if (node instanceof Element) look(node.parentElement ?? node);
-    }).observe(root, { childList: true, subtree: true });
+    });
+    this.arriving.observe(root, { childList: true, subtree: true });
     look(root);
     root.addEventListener("click", (event) => {
       const image = (event.target as Element).closest<HTMLImageElement>("img[data-picture]");
@@ -157,14 +162,24 @@ export class Pictures {
   sized(picture: Picture, max: number): Promise<string> | null {
     const key = picture.attachment ? `a:${JSON.stringify(picture.attachment)}:${max}` : picture.path ? `f:${picture.machine}:${picture.path}:${max}` : null;
     if (!key) return null;
-    let made = this.made.get(key);
-    if (!made) {
-      made = picture.attachment
-        ? this.options.seams.attachmentThumbnail(picture.attachment, max)
-        : this.options.seams.thumbnail(picture.machine, picture.path!, max);
-      // A failure is not kept: the next look asks again.
-      made.catch(() => this.made.delete(key));
-      this.made.set(key, made);
+    const kept = this.made.get(key);
+    if (kept) {
+      // The latest asked for is the last to go.
+      this.made.delete(key);
+      this.made.set(key, kept);
+      return kept;
+    }
+    const made = picture.attachment
+      ? this.options.seams.attachmentThumbnail(picture.attachment, max)
+      : this.options.seams.thumbnail(picture.machine, picture.path!, max);
+    // A failure is not kept: the next look asks again.
+    made.catch(() => {
+      if (this.made.get(key) === made) this.made.delete(key);
+    });
+    this.made.set(key, made);
+    for (const oldest of this.made.keys()) {
+      if (this.made.size <= KEPT) break;
+      this.made.delete(oldest);
     }
     return made;
   }
@@ -185,9 +200,14 @@ export class Pictures {
   }
 
   /** The page went: what is still coming is not wanted. */
+  /** The page is gone for good: what it watched and the pictures it made
+   *  are let go. */
   release(): void {
     this.viewer?.close();
     this.saves.release();
+    this.watching.disconnect();
+    this.arriving.disconnect();
+    this.made.clear();
   }
 
   private open(image: HTMLImageElement): void {

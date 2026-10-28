@@ -53,13 +53,10 @@ import "./home/front.css";
 import "./project/project.css";
 import "./pages/pages.css";
 
-import { MePage } from "./app/me";
 import { ProjectActs, enProjectActs, zhProjectActs } from "./app/project-acts";
 import { enMe, zhMe } from "./app/me-words";
 import { enPeople, zhPeople } from "./app/people-words";
 import { LoginPage } from "./app/login";
-import { MachinesPage } from "./app/machines";
-import { AgentLoginsPage } from "./app/agent-logins";
 import { LoginUsagePage } from "./app/usage/login-page";
 import { enUsage, zhUsage } from "./app/usage/words";
 import "./app/usage/usage.css";
@@ -122,7 +119,6 @@ import "./app/fingers.css";
 import { Palette, type PaletteItem } from "./app/palette";
 import { ProjectForm } from "./app/project-form";
 import { fileLink, link, placeOf, talkLink, type Place } from "./app/places";
-import { MachinePage } from "./app/machine-page";
 import { enMachinePage, zhMachinePage } from "./app/machine-page-words";
 import { enManage, zhManage } from "./app/machine-manage-words";
 import { enBatch, zhBatch } from "./app/machine-batch-words";
@@ -135,6 +131,7 @@ import { keptUsage, keptClear, seenDissolved, unwatch } from "./world/bridge";
 import { specimenCache, specimenData } from "./specimen/data";
 import { ReaderPage } from "./app/reader";
 import { Shell, pageHead, type Page } from "./app/shell";
+import { deferredPage } from "./app/deferred-page";
 import { effect, signal } from "./app/signals";
 import { addressOf, bareName, createStore, isUnreached, jobsOf, residentAt, residentsOf, sameAddress, unreachedOf } from "./app/store";
 import { TalkActs } from "./app/talk-acts";
@@ -2525,7 +2522,9 @@ function show(next: Place): void {
       break;
     case "machine": {
       const name = next.name;
-      page = new MachinePage({
+      page = deferredPage(next.name, async () => {
+        const { MachinePage } = await import("./app/machine-page");
+        return new MachinePage({
         store,
         words: english ? enMachinePage : zhMachinePage,
         machines: english ? enMachines : zhMachines,
@@ -2558,10 +2557,13 @@ function show(next: Place): void {
         manage: english ? enManage : zhManage,
         ...(live ? { allowPrivacy: () => void allowPrivacy().catch((error: unknown) => console.error("opening the Mac's privacy settings", error)) } : {}),
       });
+      });
       break;
     }
     case "machines":
-      page = new MachinesPage({
+      page = deferredPage((english ? enMachines : zhMachines).title, async () => {
+        const { MachinesPage } = await import("./app/machines");
+        return new MachinesPage({
         store,
         updates: {
           words: updateWords,
@@ -2616,6 +2618,7 @@ function show(next: Place): void {
                 },
         },
       });
+      });
       break;
     case "agents": {
       const section = sectionOf(next) ?? "claude";
@@ -2629,7 +2632,9 @@ function show(next: Place): void {
         page = new McpPage({ store, words: profile, head, calls: profileCalls, confirm: accountConfirm, close: pageWords.close });
         break;
       }
-      page = new AgentLoginsPage({
+      page = deferredPage(section === "claude" ? (english ? enAgentLogins : zhAgentLogins).claude : (english ? enAgentLogins : zhAgentLogins).codex, async () => {
+        const { AgentLoginsPage } = await import("./app/agent-logins");
+        return new AgentLoginsPage({
         store,
         words: english ? enAgentLogins : zhAgentLogins,
         changeWords: english ? enAgentChange : zhAgentChange,
@@ -2692,6 +2697,7 @@ function show(next: Place): void {
         usageOf: (machine, agent, dir) => (live ? agentUsage(machine, agent, dir) : specimenUsage(machine, agent, dir, specimen.now)),
         change_: change,
         confirm: accountConfirm,
+      });
       });
       break;
     }
@@ -2838,7 +2844,9 @@ function show(next: Place): void {
       break;
     }
     case "account":
-      page = new MePage({
+      page = deferredPage((english ? enMe : zhMe).title, async () => {
+        const { MePage } = await import("./app/me");
+        return new MePage({
         store,
         words: english ? enMe : zhMe,
         machines: english ? enMachines : zhMachines,
@@ -2848,6 +2856,7 @@ function show(next: Place): void {
         change,
         confirm: accountConfirm,
         say: (text, options) => talkToast.say(text, options),
+      });
       });
       break;
     case "file":

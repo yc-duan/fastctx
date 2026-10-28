@@ -83,7 +83,9 @@ function unplaced(lines: string[]): DiffRow[] {
       rows.push({ kind: "same", old: null, new: null, text: lines[index++].slice(1) });
       continue;
     }
-    rows.push(...between(removed, added));
+    // One at a time: a run of a hundred thousand lines is more than a
+    // call's arguments can carry.
+    for (const row of between(removed, added)) rows.push(row);
   }
   return rows;
 }
@@ -141,7 +143,8 @@ function between(before: string[], after: string[]): DiffRow[] {
   const ordered: DiffRow[] = [];
   let run: DiffRow[] = [];
   const flush = () => {
-    ordered.push(...run.filter((r) => r.kind === "del"), ...run.filter((r) => r.kind === "add"));
+    for (const r of run) if (r.kind === "del") ordered.push(r);
+    for (const r of run) if (r.kind === "add") ordered.push(r);
     run = [];
   };
   for (const r of middle) {

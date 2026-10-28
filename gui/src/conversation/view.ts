@@ -2681,9 +2681,13 @@ export class ConversationView {
     const notes = new Set<number>();
     let paint: LinePaint | undefined;
     let reading: LinePaint | undefined;
-    if (sent?.tail) lines.push(...sent.tail.replace(/\n$/, "").split("\n"));
+    // Line by line: an output's lines are more than a call's arguments can carry.
+    const take = (more: string[]) => {
+      for (const line of more) lines.push(line);
+    };
+    if (sent?.tail) take(sent.tail.replace(/\n$/, "").split("\n"));
     else if (!sent && shown) {
-      lines.push(...shown.lines);
+      take(shown.lines);
       shown.numbers.forEach((number, at) => {
         if (number === null) notes.add(at);
       });
@@ -2694,7 +2698,7 @@ export class ConversationView {
         reading = outputPaint(shown);
         paint = outputPaint(shown, false);
       }
-    } else if (!sent && output) lines.push(...output.replace(/\n$/, "").split("\n"));
+    } else if (!sent && output) take(output.replace(/\n$/, "").split("\n"));
     // How it ended, where it did not end well and nothing above says so.
     let end: PrintoutEnd | null = null;
     if (ending && sent?.end) {
