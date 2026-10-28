@@ -447,8 +447,9 @@ fn definition(service: &Service, reg: &Registration, version: u32) -> anyhow::Re
     }
     // The node shares the processors among the accounts whose jobs run on
     // it, in cgroups below its own, itself in a leaf systemd starts it in
-    // (`fastctx_platform::cpu_share`); older systemd has no such leaf.
-    if version >= 254 {
+    // (`fastctx_platform::cpu_share`); older systemd has no such leaf. A hub
+    // runs no jobs.
+    if version >= 254 && service.kind == super::Kind::Node {
         unit.push_str("Delegate=yes\nDelegateSubgroup=node\n");
     }
     unit.push_str(&format!(

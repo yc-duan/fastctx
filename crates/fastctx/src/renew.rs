@@ -326,24 +326,29 @@ async fn finish_bridge(root: &Path, plan: &mut Plan, needs_guardian: bool) -> an
             let why = refused.unwrap_or_else(|| "the boot service has not taken the new program yet".to_string());
             return waiting_for_service(root, plan, why);
         }
-        // A macOS node is the user's own LaunchAgent, restarted by its user.
-        // A stopped Linux unit restarts as root, or by the rule its install
-        // left (`fastctx_install::service::Service::may_restart`); where it
-        // has none, its own checking timer, root's, starts it within a minute
-        // on the program in place now, and the bridge serves till then.
-        #[cfg(target_os = "linux")]
-        let restart = {
-            let status = service.status()?;
-            service.main_pid()? == 0 && !status.state.starts_with("activating/") && service.may_restart().is_ok()
-        };
-        #[cfg(not(target_os = "linux"))]
-        let restart = true;
         let _gate = FileLock::acquire(&store::directory(root).join("manager-gate.lock"))?;
         let Probe::Running(node) = renewal::probe(&WorldDir::under(root)).await? else {
             bail!("no serving replacement bridge")
         };
         ensure!(node.bridge && node.build == plan.candidate.build, "the replacement bridge is not serving");
         phase(root, plan, Phase::UpdatingGuardian)?;
+        // A macOS node is the user's own LaunchAgent, restarted by its user.
+        // A stopped Linux unit restarts as root, or by the rule its install
+        // left (`fastctx_install::service::Service::may_restart`); where it
+        // has none, its own checking timer, root's, starts it within a minute
+        // on the program in place now, and the bridge serves till then. A
+        // unit written again for this release is started already.
+        #[cfg(target_os = "linux")]
+        let restart = {
+            let written = rewrite_unit(root, &service);
+            let status = service.status()?;
+            !written
+                && service.main_pid()? == 0
+                && !status.state.starts_with("activating/")
+                && service.may_restart().is_ok()
+        };
+        #[cfg(not(target_os = "linux"))]
+        let restart = true;
         if restart {
             service.restart_guardian(&plan.candidate.build.digest)?;
         }
@@ -376,6 +381,56 @@ async fn finish_bridge(root: &Path, plan: &mut Plan, needs_guardian: bool) -> an
         }
         tick().await;
     }
+}
+
+/// Writes this release's definition over a unit an earlier release wrote,
+/// while the bridge serves and the service's node only waits at the gate,
+/// so no turn sees the service go. The unit is root's: it is installed again
+/// where this account may run the program as root without a password, as an
+/// administrator's may by the rule an install leaves
+/// (`fastctx_install::service::linux_restart`). Elsewhere the unit goes on as
+/// written, working without what is new in it, till an administrator
+/// installs the service again; a repair says how. Whether it was written,
+/// and so started.
+#[cfg(target_os = "linux")]
+fn rewrite_unit(root: &Path, service: &fastctx_install::service::Service) -> bool {
+    let written = match service.definition_current() {
+        Ok(true) => return false,
+        Ok(false) if fastctx_platform::elevation::is_elevated().unwrap_or(false) => service.install().map(drop),
+        Ok(false) => install_unasked(root, &store::installed(root)).and_then(|output| {
+            ensure!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr).trim());
+            Ok(())
+        }),
+        Err(error) => Err(error),
+    };
+    if let Err(error) = &written {
+        eprintln!("the boot service keeps the definition an earlier release wrote: {error:#}");
+    }
+    written.is_ok()
+}
+
+/// Installs the node's boot service for the World under `root` again, as
+/// root and with no prompt: `sudo -n` runs `program` for it, as an account
+/// that may run it as root without a password does by itself, and fails
+/// where sudo would ask for one.
+#[cfg(target_os = "linux")]
+pub(crate) fn install_unasked(root: &Path, program: &Path) -> anyhow::Result<std::process::Output> {
+    use std::os::unix::fs::MetadataExt as _;
+    let mut command = std::process::Command::new("sudo");
+    command
+        .arg("-n")
+        .arg(program)
+        .args(["service", "node", "install", "--dir"])
+        .arg(root)
+        .arg("--executable")
+        .arg(store::installed(root))
+        .arg("--uid")
+        .arg(std::fs::metadata(root)?.uid().to_string());
+    Ok(fastctx_platform::bounded::output(
+        command,
+        "installing the boot service without a prompt",
+        std::time::Duration::from_secs(120),
+    )?)
 }
 
 /// The guardian takes the program its node runs already, by the program's
@@ -681,12 +736,25 @@ async fn guardian_apply(root: &Path, user_sid: Option<String>, uid: Option<u32>)
     }
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     {
-        service.restart_guardian(&own.digest)?;
-        // A unit an earlier release installed has no rule letting its user
-        // restart it; this approval leaves the one an install now does, so
-        // it is the last a renewal here asks for.
-        if let Err(error) = service.allow_restart(service.uid) {
-            eprintln!("the boot service's user may not restart it by itself yet: {error:#}");
+        // A unit an earlier release wrote is written again for this release,
+        // which starts it again too and leaves the rule below.
+        #[cfg(target_os = "linux")]
+        let written = if matches!(service.definition_current(), Ok(false)) {
+            service.install()?;
+            true
+        } else {
+            false
+        };
+        #[cfg(target_os = "macos")]
+        let written = false;
+        if !written {
+            service.restart_guardian(&own.digest)?;
+            // A unit an earlier release installed has no rule letting its
+            // user restart it; this approval leaves the one an install now
+            // does, so it is the last a renewal here asks for.
+            if let Err(error) = service.allow_restart(service.uid) {
+                eprintln!("the boot service's user may not restart it by itself yet: {error:#}");
+            }
         }
         // systemd and launchd run a kept hub straight from the World
         // program, so a restart is all it takes to run the new one.

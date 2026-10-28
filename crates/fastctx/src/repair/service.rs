@@ -122,21 +122,7 @@ pub(super) fn run(
         {
             use std::os::unix::fs::MetadataExt as _;
             let uid = std::fs::metadata(root)?.uid();
-            let mut command = std::process::Command::new("sudo");
-            command
-                .arg("-n")
-                .arg(std::env::current_exe()?)
-                .args(["service", "node", "install", "--dir"])
-                .arg(root)
-                .arg("--executable")
-                .arg(store::installed(root))
-                .arg("--uid")
-                .arg(uid.to_string());
-            let output = fastctx_platform::bounded::output(
-                command,
-                "restoring boot service without a prompt",
-                Duration::from_secs(120),
-            )?;
+            let output = crate::renew::install_unasked(root, &std::env::current_exe()?)?;
             anyhow::ensure!(
                 output.status.success(),
                 "repairing {description} requires: sudo {} service node install --dir {} --executable {} --uid {uid}; {}",
