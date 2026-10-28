@@ -10,7 +10,8 @@
   width: min(760px, 100vw - 32px);
   height: min(540px, 100dvh - 96px);
   overflow: hidden;
-  padding: var(--space-4) var(--space-5) var(--space-4);
+  --sheet-pad-top: var(--space-4);
+  padding: var(--sheet-pad-top) var(--space-5) var(--space-4);
   font-size: var(--body-size);
 }
 
@@ -282,7 +283,8 @@
     width: 100%;
     height: 100%;
     max-height: none;
-    padding: calc(var(--space-3) + var(--safe-top)) var(--space-4) calc(var(--space-3) + var(--safe-bottom));
+    --sheet-pad-top: calc(var(--space-3) + var(--safe-top));
+    padding: var(--sheet-pad-top) var(--space-4) calc(var(--space-3) + var(--safe-bottom));
     border-radius: 0;
   }
 

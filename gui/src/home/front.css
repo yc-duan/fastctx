@@ -44,10 +44,11 @@
   gap: var(--space-1);
 }
 
-/* Nothing waits: one quiet line under the drawing. */
-.front-calm {
+/* Nothing waits: one quiet line under the drawing, centred beneath it. A
+   quiet line's own flex row and padding (`.front-quiet`) give way here. */
+.front-quiet.front-calm {
+  justify-content: center;
   padding: var(--space-6) 0;
-  text-align: center;
 }
 
 .front-map {

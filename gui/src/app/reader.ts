@@ -48,8 +48,8 @@ export interface ReaderWords {
   brokenFor(took: string, why: string): string;
   /** A length of time: "1 分 12 秒". */
   took(ms: number): string;
-  /** Only the end is shown: how much, of how much. */
-  tail(shown: string, size: string): string;
+  /** Only the end is shown, how much of it; the size is beside it. */
+  tail(shown: string): string;
   notText(size: string): string;
   /** A PDF's page, for its position and for a screen reader. */
   page(page: number, count: number): string;
@@ -256,7 +256,7 @@ export class ReaderPage implements Page {
       `<span class="reader-path">${escape(info.path)}</span>`,
       escape(size),
       escape(words.modified(this.options.ago(new Date(info.file.modified)))),
-      info.offset > 0 ? escape(words.tail(words.bytes(info.length), size)) : "",
+      info.offset > 0 ? escape(words.tail(words.bytes(info.length))) : "",
     ].filter(Boolean);
     this.facts.innerHTML = facts.map((fact) => `<span class="fact">${fact}</span>`).join(`<span class="sep"></span>`);
   }

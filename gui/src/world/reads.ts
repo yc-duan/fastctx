@@ -5,6 +5,7 @@
 // wants it: a page left, a picture closed.
 
 import { Channel, invoke } from "@tauri-apps/api/core";
+import { inShell } from "./bridge";
 
 /** How a read goes, as the shell tells it. */
 export interface ReadProgress {
@@ -41,9 +42,10 @@ export class HeldRead {
   released = false;
   private readonly channel: Channel<ReadProgress> | null;
 
-  /** `told` hears how the read goes, a few times a second at most. */
+  /** `told` hears how the read goes, a few times a second at most; outside
+   *  the shell, as in the specimen, nothing tells it. */
   constructor(told?: (progress: ReadProgress) => void) {
-    this.channel = told ? new Channel<ReadProgress>(told) : null;
+    this.channel = told && inShell() ? new Channel<ReadProgress>(told) : null;
   }
 
   /** What a read command of the shell takes besides its own arguments. */
