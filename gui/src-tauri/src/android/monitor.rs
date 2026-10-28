@@ -27,7 +27,7 @@ pub(super) async fn run(world: World, bridge: Arc<Bridge>) {
     // round.
     let mut published: Option<(String, std::time::Instant)> = None;
     loop {
-        let result = (|| {
+        let result = (|| -> Result<(), String> {
             let now = fastctx_platform::awake::Sample::now().map_err(|error| error.to_string())?;
             if now.suspended_since(&clock) {
                 super::reconnect();
