@@ -8,6 +8,8 @@
 //! ```text
 //! <root>/conversations/<address key>/index.json      which segments, which version
 //! <root>/conversations/<address key>/<segment>.zst   one segment of the history
+//! <root>/conversations/<address key>/live.jsonl      events kept since the segments
+//! <root>/conversations/<address key>/live-sequence.json  the latest of those, by its sequence
 //! <root>/conversations/<address key>/.lock           held while one is written
 //! <root>/pictures/<picture key>-<size>.thumb         a picture made small, by its bytes
 //! <root>/originals/<picture key>/<name>              a picture or file as it was sent

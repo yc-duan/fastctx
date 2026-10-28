@@ -452,17 +452,25 @@ impl Keeping {
                 .ok_or_else(|| std::io::Error::other("conversation live sequence overflow"))?;
             let blobs = cache.line_keys(std::slice::from_ref(&saved));
             let pictures = cache.learn(std::slice::from_ref(&saved));
+            let mut listed = false;
             for picture in pictures {
                 if !index.pictures.contains(&picture) {
                     index.pictures.push(picture);
+                    listed = true;
                 }
             }
             for blob in blobs {
                 if !index.blobs.contains(&blob) {
                     index.blobs.push(blob);
+                    listed = true;
                 }
             }
-            entry.write_index(&index)?;
+            // The index is written again only when what it lists grew: the
+            // sequence alone goes in its own small file.
+            if listed {
+                entry.write_index(&index)?;
+            }
+            entry.set_live_sequence(index.live_sequence)?;
             entry.record(&saved, index.live_sequence)?;
             Ok(Some(turn.generation()))
         })
