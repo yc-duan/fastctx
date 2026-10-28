@@ -274,6 +274,8 @@ pub(crate) struct Hub {
 pub(crate) struct Given {
     generation: u64,
     view: Arc<View>,
+    /// When it read the directory (`store::Store::view_reads`).
+    read: u64,
 }
 
 /// The most bytes a change to a view takes in one frame; a larger one is
@@ -376,25 +378,34 @@ impl Hub {
         let rev = self.presence.load(Ordering::SeqCst);
         let presence = self.online();
         let trial = self.trial_of(name);
-        let mut view = views::view_for(self, &self.store(), &presence, name, trial);
+        let (mut view, read) = {
+            let store = self.store();
+            let read = store.view_reads.fetch_add(1, Ordering::SeqCst) + 1;
+            (views::view_for(self, &store, &presence, name, trial), read)
+        };
         view.presence = rev;
-        self.give(name, &mut view);
+        self.give(name, &mut view, read);
         view
     }
 
     /// Numbers `view`, given whole to `name`, and keeps it as what the next
     /// change to it is made against, when `name`'s session reads changes.
-    fn give(&self, name: &MachineName, view: &mut View) {
+    /// One read before what the session was last given is given that
+    /// instead: a view made earlier is never numbered past a later one.
+    fn give(&self, name: &MachineName, view: &mut View, read: u64) {
         let Some(generation) =
             self.sessions().get(name).filter(|session| session.view_deltas).map(|session| session.generation)
         else {
             return;
         };
         let mut given = self.given.lock().expect("never poisoned");
-        let revision =
-            given.get(name).filter(|given| given.generation == generation).map_or(1, |given| given.view.revision + 1);
-        view.revision = revision;
-        given.insert(name.clone(), Given { generation, view: Arc::new(view.clone()) });
+        let before = given.get(name).filter(|given| given.generation == generation);
+        if let Some(later) = before.filter(|given| given.read > read) {
+            *view = View::clone(&later.view);
+            return;
+        }
+        view.revision = before.map_or(1, |given| given.view.revision + 1);
+        given.insert(name.clone(), Given { generation, view: Arc::new(view.clone()), read });
     }
 
     /// `name`'s session `generation` ended: what it was given goes with it.
@@ -411,22 +422,19 @@ impl Hub {
     /// a whole view, or whose change is too large for a frame, is told to
     /// ask for it.
     fn push_views(&self, sessions: Vec<(MachineName, u64, outq::Outq)>) {
-        let rev = self.presence.load(Ordering::SeqCst);
         let online = self.online();
         let trials: Vec<_> = sessions.iter().map(|(name, _, _)| self.trial_of(name)).collect();
-        let views: Vec<View> = {
+        let (views, read): (Vec<View>, u64) = {
             let store = self.store();
+            let read = store.view_reads.fetch_add(1, Ordering::SeqCst) + 1;
             let index = fastctx_net::directory_index::Index::new(&store.book.directory);
             let indexed = fastctx_net::directory_index::Indexed::new(&store.book.directory, &index);
-            sessions
+            let views = sessions
                 .iter()
                 .zip(trials)
-                .map(|((name, _, _), trial)| {
-                    let mut view = views::view_for_in(self, &store, &indexed, &online, name, trial);
-                    view.presence = rev;
-                    view
-                })
-                .collect()
+                .map(|((name, _, _), trial)| views::view_for_in(self, &store, &indexed, &online, name, trial))
+                .collect();
+            (views, read)
         };
         for ((name, generation, out), mut view) in sessions.into_iter().zip(views) {
             let mut given = self.given.lock().expect("never poisoned");
@@ -435,6 +443,15 @@ impl Hub {
                 let _ = out.send(Out::Frame(Down::DirectoryChanged));
                 continue;
             };
+            // What it was given since was read after this: it holds this.
+            if before.read > read {
+                continue;
+            }
+            // A change counts no change of who is online (`view_delta`'s
+            // `PRESENCE`): those are told apart, and one told before it
+            // may reach the member after it, so it holds them only as far
+            // as the view it starts from did.
+            view.presence = before.view.presence;
             let base = before.view.revision;
             view.revision = base + 1;
             let delta = fastctx_net::view_delta::between(&before.view, &view, base, base + 1);
@@ -451,7 +468,7 @@ impl Hub {
                 let _ = out.send(Out::Frame(Down::DirectoryChanged));
                 continue;
             }
-            given.insert(name, Given { generation, view: Arc::new(view) });
+            given.insert(name, Given { generation, view: Arc::new(view), read });
             let _ = out.send(Out::Frame(frame));
         }
     }

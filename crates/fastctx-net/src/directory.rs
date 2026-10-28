@@ -90,6 +90,11 @@ pub struct Member {
     /// How its lines go, as it last told the hub, while online.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub paths: Option<Paths>,
+    /// When the hub last set aside what waited for it, it having been away
+    /// more than 30 days: a letter to it from before then that was not
+    /// answered never will be, nor one from it to a machine away as long.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub settled: Option<Timestamp>,
 }
 
 /// How a member is connected, as the hub sees it now, as one member's view

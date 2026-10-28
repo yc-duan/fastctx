@@ -303,6 +303,11 @@ pub struct Letters {
     pub last_seen: Option<Timestamp>,
     /// Set while the member is connected.
     pub connected_at: Option<Timestamp>,
+    /// When what waited for the member was last set aside, it having been
+    /// away too long (`crate::expiry`): told in its view, so whoever waits
+    /// on an answer through those letters stops waiting.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub settled: Option<Timestamp>,
     /// The member's last session said it reads names of any language
     /// (`fastctx_net::wire::Intent::Session`).
     #[serde(default)]
@@ -358,6 +363,7 @@ impl Letters {
             next: 1,
             last_seen: None,
             connected_at: None,
+            settled: None,
             any_names: false,
             renames: false,
             forgets: false,
@@ -413,6 +419,9 @@ pub struct Store {
     /// Moves each time the book is kept, so what is worked out from the
     /// directory knows it may have changed (`crate::afoot`).
     pub(crate) book_saves: std::sync::atomic::AtomicU64,
+    /// Counts the members' views made from it, in the order they read it,
+    /// which this lock keeps: one read later holds every change made before.
+    pub(crate) view_reads: std::sync::atomic::AtomicU64,
 }
 
 /// A sender's count of its own letters, the last of which the hub holds,
@@ -544,6 +553,7 @@ impl Store {
             counts: std::collections::HashMap::new(),
             intake: std::collections::HashMap::new(),
             book_saves: std::sync::atomic::AtomicU64::new(0),
+            view_reads: std::sync::atomic::AtomicU64::new(0),
         };
         if changed {
             store.save_letters_now()?;

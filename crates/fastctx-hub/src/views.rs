@@ -416,6 +416,7 @@ fn projects_in(
 }
 
 fn present(store: &Store, online: &HashMap<MachineName, Presence>, member: &mut Member, reach: bool) {
+    member.settled = store.letters.get(&member.name).and_then(|letters| letters.settled);
     match online.get(&member.name) {
         Some(presence) => {
             member.online = true;

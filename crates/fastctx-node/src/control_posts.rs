@@ -27,6 +27,10 @@ struct Request {
 struct Posted {
     id: NoticeId,
     posted: crate::letters::Posted,
+    /// When it was posted; an earlier release's marker says so by its
+    /// file's time.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    at: Option<jiff::Timestamp>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -76,19 +80,47 @@ pub(crate) fn send(
                 id.clone(),
                 Letter::Control { command: Box::new(command) },
             )?;
-            let posted = Posted { id, posted };
+            let posted = Posted { id, posted, at: Some(jiff::Timestamp::now()) };
             fastctx_install::renewal::write_json(&marker, &posted)?;
             posted
         }
     };
     match posted.posted.state(node)? {
-        Posting::Pending | Posting::Held => Ok(None),
+        Posting::Pending => Ok(None),
+        Posting::Held => {
+            Ok(set_aside(node, &marker, &posted, destination)?.map(|reason| Err(Failure::refused(reason))))
+        }
         Posting::Replaced => {
             std::fs::remove_file(marker)?;
             Ok(None)
         }
         Posting::Refused(reason) => Ok(Some(Err(Failure::refused(reason)))),
     }
+}
+
+/// Why the answer to a request the hub took will never come: since it was
+/// posted, the hub set aside what waited for the machine it went to, or for
+/// this one, one of them having been away more than 30 days
+/// (`world-network.md`, 每一笔账都有终点). Only the view given on the
+/// connection up now says so.
+fn set_aside(node: &Node, marker: &Path, posted: &Posted, destination: &Written) -> io::Result<Option<String>> {
+    let Some(link) = node.link_of(posted.posted.hub()) else { return Ok(None) };
+    let Ok(view) = crate::authorization::current_view(&link) else { return Ok(None) };
+    let at = match posted.at {
+        Some(at) => at,
+        None => jiff::Timestamp::try_from(marker.metadata()?.modified()?).map_err(io::Error::other)?,
+    };
+    let since = |member: Option<&fastctx_net::directory::Member>| member.and_then(|member| member.settled) > Some(at);
+    Ok(if since(view.member(&destination.name)) {
+        Some(format!("{} was away more than 30 days, and what waited for it was set aside", destination.name))
+    } else if since(view.me()) {
+        Some(
+            "this computer was away more than 30 days, and its answer was set aside; whether it was done is not known"
+                .into(),
+        )
+    } else {
+        None
+    })
 }
 
 /// A reply names a request recorded by this node before posting. Its hub,

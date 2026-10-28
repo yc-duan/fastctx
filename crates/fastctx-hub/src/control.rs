@@ -1369,6 +1369,17 @@ fn call(hub: &Hub, name: &MachineName, generation: u64, id: u64, message: Envelo
             }
             return CallStatus::Refused { reason };
         }
+        // Kept only while the session it is for is there, as seen under
+        // this lock (the sessions are locked after the calls, never
+        // before): one that closes after this finds it and ends it
+        // (`fail_calls_of`); one closed before is not called.
+        if hub.sessions().get(&to).is_none_or(|session| session.generation != target_generation) {
+            drop(calls);
+            if let Some(stream) = stream {
+                crate::data::forget(hub, stream, &format!("{to} left the hub before it was called"));
+            }
+            return CallStatus::Offline { last_seen: Some(Timestamp::now()) };
+        }
         calls.insert(key, pending);
     }
     if target.send(Out::Frame(Down::Incoming { call: key, message })).is_err() {

@@ -60,6 +60,11 @@ pub(crate) struct Posted {
 }
 
 impl Posted {
+    /// The hub it was posted to.
+    pub(crate) fn hub(&self) -> &fastctx_types::access::HubId {
+        &self.hub
+    }
+
     pub(crate) fn state(&self, node: &Node) -> io::Result<fastctx_net::link::Posting> {
         use fastctx_net::link::Posting;
         let Some(link) = node.link_of(&self.hub) else {

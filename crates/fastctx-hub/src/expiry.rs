@@ -110,7 +110,13 @@ async fn settle_one(hub: &Arc<Hub>, name: &MachineName) -> std::io::Result<usize
             return Ok(0);
         }
         crate::mailbox::settled(&mut store, name, epoch, found.iter().map(|(seq, _)| *seq));
+        // Kept before a letter goes: the senders stop waiting by it.
+        if let Some(letters) = store.letters.get_mut(name) {
+            letters.settled = Some(Timestamp::now());
+        }
+        store.save_letters_now()?;
     }
+    hub.changed();
     let mut senders: std::collections::BTreeMap<&str, usize> = std::collections::BTreeMap::new();
     for (_, from) in &found {
         *senders.entry(from.as_str()).or_default() += 1;

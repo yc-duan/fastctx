@@ -33,6 +33,7 @@ impl Inner {
                     view.directory.members.iter_mut().filter(|member| members.contains(&member.name.to_string()))
                 {
                     member.since = member.since.map(|at| self.local(at));
+                    member.settled = member.settled.map(|at| self.local(at));
                 }
                 match self.adopt(view) {
                     Ok(()) => {

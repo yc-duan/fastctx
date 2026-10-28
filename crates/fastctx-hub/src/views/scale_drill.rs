@@ -59,6 +59,7 @@ fn member(name: MachineName, kind: Kind, logins: BTreeSet<AccountName>, home: Op
         through: None,
         reach: None,
         paths: None,
+        settled: None,
     }
 }
 
