@@ -410,6 +410,9 @@ pub struct Store {
     /// The session of each member whose letters move its count now: one
     /// replaced keeps no more (`crate::control::intake`).
     pub(crate) intake: std::collections::HashMap<MachineName, u64>,
+    /// Moves each time the book is kept, so what is worked out from the
+    /// directory knows it may have changed (`crate::afoot`).
+    pub(crate) book_saves: std::sync::atomic::AtomicU64,
 }
 
 /// A sender's count of its own letters, the last of which the hub holds,
@@ -540,6 +543,7 @@ impl Store {
             records: std::sync::Arc::new(crate::records::Records::new()),
             counts: std::collections::HashMap::new(),
             intake: std::collections::HashMap::new(),
+            book_saves: std::sync::atomic::AtomicU64::new(0),
         };
         if changed {
             store.save_letters_now()?;
@@ -821,6 +825,7 @@ impl Store {
     }
 
     pub fn save_book(&self) -> io::Result<()> {
+        self.book_saves.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         publish(&Self::directory_file(&self.dir), &json(&self.book)?, Permissions::Private)
     }
 

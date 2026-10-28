@@ -29,8 +29,8 @@ mod assists;
 mod control;
 mod data;
 mod direct;
-mod expiry;
 pub mod dissolve;
+mod expiry;
 mod forget;
 mod health;
 mod hub_machine;
@@ -262,6 +262,8 @@ pub(crate) struct Hub {
     /// Held while a change in who is online is counted, looked at and
     /// queued, so that of two at once the later counted is queued later.
     presenting: Mutex<()>,
+    /// The directory's index for telling who is online (`Hub::index_of`).
+    presence_index: Mutex<Option<(u64, Arc<fastctx_net::directory_index::Index>)>>,
     /// What the hub counts for its health (`health`).
     health: health::Health,
     account_records: account_records::Records,
@@ -456,19 +458,28 @@ impl Hub {
 
     /// Who is connected, and how, as the hub sees it now.
     fn online(&self) -> HashMap<MachineName, views::Presence> {
-        self.sessions()
-            .iter()
-            .map(|(name, session)| {
-                let seen = session.through.is_none().then(|| session.peer.ip());
-                let presence = views::Presence {
-                    since: Some(session.since),
-                    through: session.through.clone(),
-                    reach: fastctx_net::directory::Reach { seen, interfaces: session.interfaces.clone() },
-                    paths: session.paths.clone(),
-                };
-                (name.clone(), presence)
-            })
-            .collect()
+        self.sessions().iter().map(|(name, session)| (name.clone(), presence_of(session))).collect()
+    }
+
+    /// How `name` alone is connected now, when it is.
+    fn online_one(&self, name: &MachineName) -> HashMap<MachineName, views::Presence> {
+        self.sessions().get(name).map(|session| (name.clone(), presence_of(session))).into_iter().collect()
+    }
+
+    /// The index of the directory as last kept, made again only once it is
+    /// kept or changed, as `afoot` keeps its copy: who is online changes
+    /// many times a second in a network of thousands, the directory seldom.
+    fn index_of(&self, store: &store::Store) -> Arc<fastctx_net::directory_index::Index> {
+        let saves = store.book_saves.load(Ordering::SeqCst);
+        let mut kept = self.presence_index.lock().expect("never poisoned");
+        match &*kept {
+            Some((at, index)) if *at == saves => index.clone(),
+            _ => {
+                let index = Arc::new(fastctx_net::directory_index::Index::new(&store.book.directory));
+                *kept = Some((saves, index.clone()));
+                index
+            }
+        }
     }
 
     /// Resolves once `name`'s session ends, at once when it has none.
@@ -491,14 +502,15 @@ impl Hub {
             // reader is never told an older state past a newer one.
             let _presenting = self.presenting.lock().expect("never poisoned");
             let rev = self.presence.fetch_add(1, Ordering::SeqCst) + 1;
-            let online = self.online();
+            // What each reader is told is of `name` alone.
+            let online = self.online_one(name);
             let readers: Vec<(MachineName, outq::Outq, bool)> = self
                 .sessions()
                 .iter()
                 .map(|(reader, session)| (reader.clone(), session.out.clone(), session.presence))
                 .collect();
             let store = self.store();
-            let index = fastctx_net::directory_index::Index::new(&store.book.directory);
+            let index = self.index_of(&store);
             let indexed = fastctx_net::directory_index::Indexed::new(&store.book.directory, &index);
             for (reader, out, reads) in readers {
                 if !reads {
@@ -523,6 +535,8 @@ impl Hub {
     /// The directory changed, or who is online did: every member is told to
     /// look again, and what lost the standing it was allowed under ends.
     fn changed(&self) {
+        afoot::directory_changed(self);
+        *self.presence_index.lock().expect("never poisoned") = None;
         self.account_records.settle(&self.store().book.directory);
         self.machine_log_changed.notify_one();
         self.assists_changed.notify_one();
@@ -704,6 +718,7 @@ async fn serving(dir: &Path, kept: Option<Kept>, log: Arc<log::Log>) -> anyhow::
         presence_changed: Arc::new(tokio::sync::Notify::new()),
         presence: AtomicU64::new(0),
         presenting: Mutex::new(()),
+        presence_index: Mutex::new(None),
         health: health::Health::default(),
         account_records,
     });
@@ -1006,4 +1021,15 @@ pub(crate) async fn recv(socket: &mut Socket) -> Result<Option<Up>, String> {
 pub(crate) fn storage_failure(hub: &Hub, what: &str, error: &io::Error) -> Refusal {
     hub.log.line(format_args!("storage failed {what}: {error}"));
     Refusal::Broken { reason: format!("the hub could not store what it was given ({what}: {error})") }
+}
+
+/// How a session's machine is connected, as the hub sees it.
+fn presence_of(session: &Session) -> views::Presence {
+    let seen = session.through.is_none().then(|| session.peer.ip());
+    views::Presence {
+        since: Some(session.since),
+        through: session.through.clone(),
+        reach: fastctx_net::directory::Reach { seen, interfaces: session.interfaces.clone() },
+        paths: session.paths.clone(),
+    }
 }

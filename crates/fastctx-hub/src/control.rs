@@ -85,23 +85,57 @@ pub(crate) struct Standing {
 impl Standing {
     /// Why it no longer holds, if it does not.
     pub fn lapsed(&self, hub: &Hub) -> Option<String> {
-        let store = hub.store();
+        self.lapsed_in(hub, &hub.store())
+    }
+
+    /// The same, against the directory in `store`, held by the caller.
+    fn lapsed_in(&self, hub: &Hub, store: &crate::store::Store) -> Option<String> {
         store
             .book
             .directory
             .admits(&self.from, &self.account, &self.to, self.purpose)
             .and_then(|()| match &self.project_entry {
                 Some((resident, town)) => {
-                    crate::project_entry::check(&store, &self.from, &self.account, &self.to, resident, town)
+                    crate::project_entry::check(store, &self.from, &self.account, &self.to, resident, town)
                 }
                 None => Ok(()),
             })
             .and_then(|()| match &self.plan {
-                Some(resident) => crate::plan_calls::check(hub, &store, &self.from, &self.account, &self.to, resident),
+                Some(resident) => crate::plan_calls::check(hub, store, &self.from, &self.account, &self.to, resident),
                 None => Ok(()),
             })
             .err()
     }
+}
+
+/// The most calls one member has on their way through the hub at once.
+const MEMBER_CALLS: usize = 1024;
+/// The most one account has, across its machines.
+const ACCOUNT_CALLS: usize = 4096;
+
+/// Why `pending` may not go on its way now: its member, or its account,
+/// has as many calls on their way as it may. A member gone wrong fills
+/// only its own share, and the others are forwarded as before
+/// (`world-concurrency.md`, 别的机器来的调用按来者公平地分).
+fn crowded(calls: &std::collections::HashMap<u64, Pending>, pending: &Pending) -> Option<String> {
+    let (member, account) = calls.values().fold((0usize, 0usize), |(member, account), other| {
+        (
+            member + usize::from(other.caller == pending.caller),
+            account + usize::from(other.standing.account == pending.standing.account),
+        )
+    });
+    if member >= MEMBER_CALLS {
+        return Some(format!(
+            "{} has {member} calls on their way through the hub already; one has to end first",
+            pending.caller
+        ));
+    }
+    (account >= ACCOUNT_CALLS).then(|| {
+        format!(
+            "the account {} has {account} calls on their way through the hub already; one has to end first",
+            pending.standing.account
+        )
+    })
 }
 
 /// A call on its way: who asked, who is to answer, and what it was allowed
@@ -704,8 +738,14 @@ pub(crate) fn cut_calls(hub: &Hub) {
         .iter()
         .map(|(key, pending)| (*key, pending.standing.clone()))
         .collect();
-    let keys: Vec<(u64, String)> =
-        standings.into_iter().filter_map(|(key, standing)| standing.lapsed(hub).map(|why| (key, why))).collect();
+    // Judged under one look at the directory, not one for each call.
+    let keys: Vec<(u64, String)> = {
+        let store = hub.store();
+        standings
+            .into_iter()
+            .filter_map(|(key, standing)| standing.lapsed_in(hub, &store).map(|why| (key, why)))
+            .collect()
+    };
     let lapsed: Vec<(u64, Pending, String)> = {
         let mut calls = hub.calls.lock().expect("never poisoned");
         keys.into_iter().filter_map(|(key, why)| calls.remove(&key).map(|pending| (key, pending, why))).collect()
@@ -1320,7 +1360,17 @@ fn call(hub: &Hub, name: &MachineName, generation: u64, id: u64, message: Envelo
         stream,
         at: tokio::time::Instant::now(),
     };
-    hub.calls.lock().expect("never poisoned").insert(key, pending);
+    {
+        let mut calls = hub.calls.lock().expect("never poisoned");
+        if let Some(reason) = crowded(&calls, &pending) {
+            drop(calls);
+            if let Some(stream) = stream {
+                crate::data::forget(hub, stream, &reason);
+            }
+            return CallStatus::Refused { reason };
+        }
+        calls.insert(key, pending);
+    }
     if target.send(Out::Frame(Down::Incoming { call: key, message })).is_err() {
         hub.calls.lock().expect("never poisoned").remove(&key);
         if let Some(stream) = stream {

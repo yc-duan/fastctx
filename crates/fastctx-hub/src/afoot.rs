@@ -34,6 +34,29 @@ pub(crate) struct Afoots {
     prior: HashMap<MachineName, Previous>,
     shown: HashMap<MachineName, Shown>,
     rejected: HashMap<MachineName, Problems>,
+    /// The directory as of the book's last keeping, copied once for each
+    /// time it is kept or changed rather than for each change told: in a
+    /// network of thousands, what is afoot changes many times a second.
+    directory: Option<(u64, Arc<Directory>)>,
+}
+
+/// The directory as it is kept now, from the copy made since it was last
+/// kept or changed.
+fn directory(afoots: &mut Afoots, store: &crate::store::Store) -> Arc<Directory> {
+    let saves = store.book_saves.load(std::sync::atomic::Ordering::SeqCst);
+    match &afoots.directory {
+        Some((kept, directory)) if *kept == saves => directory.clone(),
+        _ => {
+            let directory = Arc::new(store.book.directory.clone());
+            afoots.directory = Some((saves, directory.clone()));
+            directory
+        }
+    }
+}
+
+/// The directory changed: the next telling copies it again.
+pub(crate) fn directory_changed(hub: &Hub) {
+    hub.afoots().directory = None;
 }
 
 /// What one session of a member was told, machine by machine.
@@ -114,11 +137,11 @@ fn tell(hub: &Hub, scope: Scope<'_>) {
     // admitted machine cannot publish into a snapshot from before it joined.
     // Afoot writers never acquire the store while holding this leaf lock.
     let store = hub.store();
-    let directory = store.book.directory.clone();
     let hidden = crate::forget::hidden(&store);
     let mut afoots = hub.afoots();
+    let directory = directory(&mut afoots, &store);
     drop(store);
-    let Afoots { told, prior, shown, rejected } = &mut *afoots;
+    let Afoots { told, prior, shown, rejected, .. } = &mut *afoots;
     // A machine's last stays while it is on the hub under that name.
     told.retain(|machine, _| directory.member(machine).is_some_and(|member| member.name == *machine));
     shown.retain(|reader, shown| {
