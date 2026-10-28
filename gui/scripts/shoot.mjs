@@ -389,7 +389,7 @@ for (const session of sessions) {
         // The startup service missing, then installed.
         await send("Runtime.evaluate", {
           awaitPromise: true,
-          expression: "new Promise(r => setTimeout(r, 200)).then(() => { document.querySelector('[data-service=keep]')?.click(); return new Promise(r => setTimeout(r, 1300)); })",
+          expression: "new Promise(r => setTimeout(r, 200)).then(() => { document.querySelector('#st-tab-device')?.click(); return new Promise(r => setTimeout(r, 300)); }).then(() => { document.querySelector('[data-service=keep]')?.click(); return new Promise(r => setTimeout(r, 1300)); })",
         });
       }
       if (session.startsWith("remove-")) {
@@ -401,6 +401,10 @@ for (const session of sessions) {
           expression: `(async () => {
             const pause = (ms) => new Promise((r) => setTimeout(r, ms));
             await pause(300);
+            document.querySelector('#st-tab-device').click();
+            await pause(300);
+            document.querySelector('[data-uninstall]').click();
+            await pause(600);
             document.querySelector('[data-removal=${way}]').click();
             await pause(800);
             if (${JSON.stringify(session)} === "remove-erase") document.querySelector('[data-removal=list]').click();

@@ -880,7 +880,7 @@
 
 .composer-confirm-acts {
   display: flex;
-  gap: var(--space-2);
+  gap: var(--space-4);
   margin-top: var(--space-3);
 }
 

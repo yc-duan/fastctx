@@ -415,6 +415,8 @@ export function drawAsk(key: string, ask: Ask, state: AskState, machine: string,
   }
   const head = (title: string) => `<div class="ask-head"><span class="ask-waiting">${escape(words.waiting)}</span><span class="ask-title">${escape(title)}</span></div>`;
   const reason = (why: string | null) => (why ? `<p class="ask-reason">${escape(words.reason(why))}</p>` : "");
+  // What is asked above, the answer below, one stroke of the pen between.
+  const rule = `<div class="ask-rule" aria-hidden="true"></div>`;
   const buttons = (decisions: Decision[]) =>
     `<div class="ask-actions">${decisions
       .map((d, index) => `<button type="button" class="ask-button ${index === 0 ? "ask-primary" : `ask-${d.tone}`}" data-ask="${escape(key)}" data-decision="${index}">${escape(d.label)}</button>`)
@@ -425,7 +427,7 @@ export function drawAsk(key: string, ask: Ask, state: AskState, machine: string,
       const title = ask.network ? words.network(ask.network.host, ask.network.protocol) : ask.stdin ? words.stdin(machine) : words.command(machine);
       const command = ask.command ? `<pre class="ask-command"><code>${escape(ask.command)}</code></pre>` : "";
       const where = ask.cwd ? `<p class="ask-where">${escape(words.inDir(ask.cwd))}</p>` : "";
-      body = `${head(title)}${command}${where}${reason(ask.reason)}${buttons(ask.decisions)}`;
+      body = `${head(title)}${command}${where}${reason(ask.reason)}${rule}${buttons(ask.decisions)}`;
       break;
     }
     case "files": {
@@ -433,31 +435,31 @@ export function drawAsk(key: string, ask: Ask, state: AskState, machine: string,
         ? `<ul class="ask-paths">${ask.paths.map((path) => `<li title="${escape(path)}">${escape(path)}</li>`).join("")}</ul>`
         : "";
       const root = ask.grantRoot ? `<p class="ask-reason">${escape(words.grantRoot(ask.grantRoot))}</p>` : "";
-      body = `${head(ask.paths.length ? words.filesNamed(ask.paths.length) : words.files)}${paths}${reason(ask.reason)}${root}${buttons(ask.decisions)}`;
+      body = `${head(ask.paths.length ? words.filesNamed(ask.paths.length) : words.files)}${paths}${reason(ask.reason)}${root}${rule}${buttons(ask.decisions)}`;
       break;
     }
     case "tool": {
       const input = ask.input !== "{}" ? `<pre class="ask-command ask-tool-input"><code>${escape(ask.input)}</code></pre>` : "";
-      body = `${head(words.tool(ask.tool))}${input}${buttons(ask.decisions)}`;
+      body = `${head(words.tool(ask.tool))}${input}${rule}${buttons(ask.decisions)}`;
       break;
     }
     case "plan": {
       const plan = ask.plan ? `<div class="ask-plan prose">${render(ask.plan)}</div>` : "";
       const where = ask.path ? `<p class="ask-where">${escape(words.planAt(ask.path))}</p>` : "";
       const note = `<textarea class="ask-input ask-plan-note" rows="2" aria-label="${escape(words.planNote)}" placeholder="${escape(words.planNote)}"></textarea>`;
-      body = `${head(words.plan)}${plan}${where}${note}${buttons(ask.decisions)}`;
+      body = `${head(words.plan)}${plan}${where}${rule}${note}${buttons(ask.decisions)}`;
       break;
     }
     case "form": {
       const message = ask.message ? `<div class="ask-message">${plain(ask.message)}</div>` : "";
       const fields = ask.fields ? `<div class="ask-fields">${ask.fields.map((field, index) => drawField(field, index, words)).join("")}</div>` : `<p class="ask-reason">${escape(words.formUnreadable)}</p>`;
       const submit = ask.fields ? `<button type="button" class="ask-button ask-primary" data-ask="${escape(key)}" data-submit="accept">${escape(words.fill)}</button>` : "";
-      body = `${head(words.form(ask.server))}${message}${fields}<div class="ask-actions">${submit}<button type="button" class="ask-button ask-no" data-ask="${escape(key)}" data-submit="decline">${escape(words.refuse)}</button><button type="button" class="ask-button ask-no" data-ask="${escape(key)}" data-submit="cancel">${escape(words.dismiss)}</button></div>`;
+      body = `${head(words.form(ask.server))}${message}${rule}${fields}<div class="ask-actions">${submit}<button type="button" class="ask-button ask-no" data-ask="${escape(key)}" data-submit="decline">${escape(words.refuse)}</button><button type="button" class="ask-button ask-no" data-ask="${escape(key)}" data-submit="cancel">${escape(words.dismiss)}</button></div>`;
       break;
     }
     case "link": {
       const message = ask.message ? `<div class="ask-message">${plain(ask.message)}</div>` : "";
-      body = `${head(words.link(ask.server))}${message}<p class="ask-url">${escape(ask.url)}</p><div class="ask-actions"><button type="button" class="ask-button ask-primary" data-ask="${escape(key)}" data-submit="open">${escape(words.openLink)}</button><button type="button" class="ask-button ask-no" data-ask="${escape(key)}" data-submit="decline">${escape(words.refuse)}</button><button type="button" class="ask-button ask-no" data-ask="${escape(key)}" data-submit="cancel">${escape(words.dismiss)}</button></div>`;
+      body = `${head(words.link(ask.server))}${message}<p class="ask-url">${escape(ask.url)}</p>${rule}<div class="ask-actions"><button type="button" class="ask-button ask-primary" data-ask="${escape(key)}" data-submit="open">${escape(words.openLink)}</button><button type="button" class="ask-button ask-no" data-ask="${escape(key)}" data-submit="decline">${escape(words.refuse)}</button><button type="button" class="ask-button ask-no" data-ask="${escape(key)}" data-submit="cancel">${escape(words.dismiss)}</button></div>`;
       break;
     }
     case "cannot":
