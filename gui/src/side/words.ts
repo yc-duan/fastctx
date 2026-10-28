@@ -30,6 +30,11 @@ export interface SideWords {
   planCount: (reached: number, stops: number) => string;
   /** The team's whole tree, opened from its card. */
   teamOpen: string;
+  /** Branching off a side conversation, its name where it has none yet,
+   *  and the branch not made. */
+  fork: string;
+  sideTalk: string;
+  forkFailed: string;
   goal: GoalWords;
   collab: CollabWords;
 }
@@ -119,6 +124,9 @@ export const zhSide: SideWords = {
   planOpen: "全文",
   planCount: (reached, stops) => `${reached}/${stops}`,
   teamOpen: "全部",
+  fork: "分出一段侧边对话",
+  sideTalk: "侧边对话",
+  forkFailed: "侧边对话没分出来",
   back: "返回",
   goal: {
     bar: { active: "进行中的目标", paused: "已暂停", blocked: "阻碍", complete: "已完成" },
@@ -174,7 +182,7 @@ export const zhSide: SideWords = {
   collab: {
     empty: "还没有同事或子代理",
     here: "这段对话",
-    states: { working: "在干", done: "交回了", failed: "失败", stopped: "已停下", unknown: "不知道是否还在干" },
+    states: { working: "在干", done: "交回了", failed: "失败", stopped: "已停下", idle: "空着", unknown: "不知道是否还在干" },
     goal: { active: "进行中", paused: "已暂停", blocked: "阻碍", complete: "已完成" },
     steps: (n) => `${n} 步`,
     separator: "，",
@@ -197,6 +205,9 @@ export const enSide: SideWords = {
   planOpen: "The whole plan",
   planCount: (reached, stops) => `${reached}/${stops}`,
   teamOpen: "Everyone",
+  fork: "Branch off a side conversation",
+  sideTalk: "Side conversation",
+  forkFailed: "Couldn't branch off a side conversation",
   back: "Back",
   goal: {
     bar: { active: "Goal", paused: "Paused", blocked: "Blocked", complete: "Done" },
@@ -250,7 +261,7 @@ export const enSide: SideWords = {
   collab: {
     empty: "No colleagues or subagents yet",
     here: "This conversation",
-    states: { working: "Working", done: "Handed back", failed: "Failed", stopped: "Stopped", unknown: "Not known whether it still works" },
+    states: { working: "Working", done: "Handed back", failed: "Failed", stopped: "Stopped", idle: "Idle", unknown: "Not known whether it still works" },
     goal: { active: "Under way", paused: "Paused", blocked: "Blocked", complete: "Done" },
     steps: (n) => `${n} step${n === 1 ? "" : "s"}`,
     separator: ", ",

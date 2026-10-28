@@ -36,8 +36,13 @@ pub enum Control {
     Rename { name: String },
     /// A new conversation carrying this one's history through the turn
     /// `through`, or all of it; the new one is a resident of its own, on the
-    /// same machine and in the same town.
-    Fork { through: Option<String> },
+    /// same machine and in the same town. `side` keeps it in this one's side
+    /// panel rather than in the list.
+    Fork {
+        through: Option<String>,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        side: bool,
+    },
     /// Drops the turn `from` and every turn after it from the conversation.
     /// Files the turns changed stay as they are.
     Rewind { from: String },

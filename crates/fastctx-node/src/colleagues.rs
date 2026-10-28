@@ -236,6 +236,7 @@ pub async fn ask_here(
         })?;
     let born_at = Timestamp::now();
     let about = About {
+        side: false,
         forked_from: None,
         mcp_off: Default::default(),
         id: id.clone(),

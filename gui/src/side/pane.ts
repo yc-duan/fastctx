@@ -15,6 +15,8 @@ import { glyph } from "../conversation/glyphs";
 import { escape } from "../conversation/prose";
 import { msOf, reducedMotion } from "../motion";
 import { Sketch } from "../pen/sketch";
+import { goalMark } from "./marks";
+import type { GoalStatus } from "./types";
 import type { SideWords } from "./words";
 import "./side.css";
 
@@ -43,6 +45,8 @@ export interface PaneTab {
   agent: "claude" | "codex";
   /** Opens the tab's conversation as the page's own, where it is one. */
   main?: () => void;
+  /** How the goal of the tab's conversation stands, where it has one. */
+  goal?: GoalStatus | null;
 }
 
 interface Held {
@@ -78,13 +82,15 @@ export class SidePane {
       changed: () => void;
       /** The user chose where the side stands. */
       dock: (dock: Dock) => void;
+      /** The user asked for a side conversation branched off this one. */
+      fork?: () => void;
     },
   ) {
     this.element = document.createElement("aside");
     this.element.className = "sp-panel";
     this.element.hidden = true;
     this.element.setAttribute("aria-label", words.panel);
-    this.element.innerHTML = `<div class="sp-sheet"><div class="sp-margin" aria-hidden="true"></div><header class="sp-head"><nav class="sp-tabs" role="tablist"></nav><div class="sp-acts"><button class="icon-button sp-main" type="button" hidden aria-label="${escape(words.openMain)}" title="${escape(words.openMain)}">${glyph("expand", 16)}</button><button class="icon-button sp-dock" type="button" aria-haspopup="menu" aria-expanded="false" aria-label="${escape(words.dock)}" title="${escape(words.dock)}">${glyph("more", 18)}</button><button class="icon-button sp-shut" type="button" aria-label="${escape(words.shut)}" title="${escape(words.shut)}">${glyph("dock-right", 18)}</button><div class="sp-dock-menu" role="menu" hidden>${(["right", "bottom", "left"] as const)
+    this.element.innerHTML = `<div class="sp-sheet"><div class="sp-margin" aria-hidden="true"></div><header class="sp-head"><nav class="sp-tabs" role="tablist"></nav><button class="icon-button sp-new" type="button" hidden aria-label="${escape(words.fork)}" title="${escape(words.fork)}">${glyph("plus", 16)}</button><div class="sp-acts"><button class="icon-button sp-main" type="button" hidden aria-label="${escape(words.openMain)}" title="${escape(words.openMain)}">${glyph("expand", 16)}</button><button class="icon-button sp-dock" type="button" aria-haspopup="menu" aria-expanded="false" aria-label="${escape(words.dock)}" title="${escape(words.dock)}">${glyph("more", 18)}</button><button class="icon-button sp-shut" type="button" aria-label="${escape(words.shut)}" title="${escape(words.shut)}">${glyph("dock-right", 18)}</button><div class="sp-dock-menu" role="menu" hidden>${(["right", "bottom", "left"] as const)
       .map((dock) => `<button class="sp-dock-row" type="button" role="menuitemradio" aria-checked="false" data-dock="${dock}">${glyph(`dock-${dock}`, 16)}<span>${escape(words.docks[dock])}</span></button>`)
       .join("")}</div></div></header><div class="sp-body"><div class="sp-home"></div></div></div>`;
     this.sheet = this.element.querySelector(".sp-sheet")!;
@@ -108,6 +114,7 @@ export class SidePane {
     });
     this.main.addEventListener("click", () => (this.current ? this.held.get(this.current)?.tab.main?.() : undefined));
     this.element.querySelector(".sp-shut")!.addEventListener("click", () => this.close());
+    this.element.querySelector(".sp-new")!.addEventListener("click", () => this.seams.fork?.());
     this.strip.addEventListener("click", (event) => {
       const target = event.target as HTMLElement;
       if (target.closest(".sp-tab-home")) {
@@ -168,6 +175,26 @@ export class SidePane {
   /** The tabs, in their order. */
   get tabs(): PaneTab[] {
     return this.order.map((id) => this.held.get(id)!.tab);
+  }
+
+  /** Whether a side conversation can be branched off here now. */
+  offerFork(on: boolean): void {
+    this.element.querySelector<HTMLButtonElement>(".sp-new")!.hidden = !on;
+  }
+
+  /** A side conversation is being branched off: the "+" waits. */
+  forking(on: boolean): void {
+    const button = this.element.querySelector<HTMLButtonElement>(".sp-new")!;
+    button.disabled = on;
+    button.setAttribute("aria-busy", String(on));
+  }
+
+  /** How the goal of a tab's conversation stands now. */
+  markGoal(id: string, goal: GoalStatus | null): void {
+    const held = this.held.get(id);
+    if (!held || held.tab.goal === goal) return;
+    held.tab = { ...held.tab, goal };
+    this.drawTabs();
   }
 
   /** What the tab shows, once it was made. */
@@ -333,10 +360,18 @@ export class SidePane {
       .map((id) => {
         const { tab } = this.held.get(id)!;
         const current = id === this.current;
-        return `<button class="sp-tab${current ? " current" : ""}${this.fresh.has(id) ? " fresh" : ""}" type="button" role="tab" data-tab="${escape(id)}" aria-selected="${current}" tabindex="${current ? 0 : -1}" title="${escape(tab.name)}"><span class="sp-tab-seal">${glyph(tab.agent, 14)}</span><span class="sp-tab-name" data-label="${escape(tab.name)}"><span>${escape(tab.name)}</span></span><span class="sp-dot" aria-hidden="true"></span><span class="sp-tab-x" aria-label="${escape(this.words.close)}" title="${escape(this.words.close)}">${glyph("close", 12)}</span></button>`;
+        return `<button class="sp-tab${current ? " current" : ""}${this.fresh.has(id) ? " fresh" : ""}" type="button" role="tab" data-tab="${escape(id)}" aria-selected="${current}" tabindex="${current ? 0 : -1}" title="${escape(tab.name)}"><span class="sp-tab-seal">${glyph(tab.agent, 14)}</span><span class="sp-tab-name" data-label="${escape(tab.name)}"><span>${escape(tab.name)}</span></span>${this.goalMark(tab.goal)}<span class="sp-dot" aria-hidden="true"></span><span class="sp-tab-x" aria-label="${escape(this.words.close)}" title="${escape(this.words.close)}">${glyph("close", 12)}</span></button>`;
       })
       .join("");
     this.strip.querySelector<HTMLElement>(".sp-tab.current")?.scrollIntoView({ block: "nearest", inline: "nearest" });
+  }
+
+  /** A goal at work is the goal's flag on its tab; one paused or stopped
+   *  its own small mark; one done leaves the tab, as it leaves the bar. */
+  private goalMark(goal: GoalStatus | null | undefined): string {
+    if (!goal || goal === "complete") return "";
+    const mark = goal === "active" ? glyph("goal", 12) : goalMark(goal, `tab-${goal}`, 12, "sp-tab-goal-svg");
+    return `<span class="sp-tab-goal" aria-label="${escape(this.words.goal.states[goal])}">${mark}</span>`;
   }
 
   /** The margin is drawn again when the sheet's length along it changes,

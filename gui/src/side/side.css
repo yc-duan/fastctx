@@ -171,7 +171,7 @@ html.framed .sp-split[data-dock="right"] .sp-head {
 }
 
 .sp-tabs {
-  flex: 1;
+  flex: 0 1 auto;
   display: flex;
   align-items: center;
   gap: 2px;
@@ -280,6 +280,35 @@ html.framed .sp-split[data-dock="right"] .sp-head {
   display: flex;
   align-items: center;
   gap: 2px;
+  margin-left: auto;
+}
+
+/* Branching off a side conversation: a cross of ink right after the last
+   tab, as a browser puts its new tab. */
+.sp-new {
+  flex: none;
+}
+
+.sp-new[hidden] {
+  display: none;
+}
+
+.sp-new[aria-busy="true"] {
+  opacity: 0.5;
+}
+
+/* How the tab's conversation's goal stands, in the goal's own small mark. */
+.sp-tab-goal {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 12px;
+  height: 14px;
+}
+
+.sp-tab-goal-svg {
+  display: block;
+  overflow: visible;
 }
 
 .sp-acts > [hidden] {

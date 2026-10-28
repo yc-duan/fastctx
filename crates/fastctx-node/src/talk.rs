@@ -877,6 +877,7 @@ pub async fn open_here(
         .map_err(Failure::new)?;
     let born_at = Timestamp::now();
     let about = About {
+        side: false,
         forked_from: None,
         mcp_off: options.mcp_off.clone(),
         id: id.clone(),

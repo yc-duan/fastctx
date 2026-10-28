@@ -13,6 +13,8 @@ pub(super) struct Stored {
     origin: Origin,
     #[serde(default)]
     forked_from: Option<Address>,
+    #[serde(default)]
+    side: bool,
     session: Option<String>,
     #[serde(default)]
     world_started: bool,
@@ -51,6 +53,7 @@ impl TryFrom<Stored> for About {
             born_at: stored.born_at,
             origin: stored.origin,
             forked_from: stored.forked_from,
+            side: stored.side,
             session: stored.session,
             world_started: stored.world_started,
             native_resumed: stored.native_resumed,

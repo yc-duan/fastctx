@@ -63,6 +63,7 @@ fn resident(
     ResidentNow {
         source: None,
         about: About {
+            side: false,
             forked_from: None,
             id: id(who),
             host: Host {

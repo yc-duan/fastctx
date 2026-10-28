@@ -40,6 +40,8 @@ export interface About {
   home?: string;
   /** The conversation it was forked from, even after that one is deleted. */
   forked_from?: Address;
+  /** A side conversation, kept in its source's side panel rather than in the list. */
+  side?: boolean;
 }
 
 export type Activity = "busy" | "idle" | "asleep";

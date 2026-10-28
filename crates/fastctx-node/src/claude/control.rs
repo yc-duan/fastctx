@@ -65,7 +65,7 @@ pub async fn control(node: &Arc<Node>, resident: &ResidentId, control: Control) 
     }
     super::resume::ready(node, resident).await?;
     match control {
-        Control::Fork { through } => super::fork::fork(node, resident, through).await,
+        Control::Fork { through, side } => super::fork::fork(node, resident, through, side).await,
         Control::Answer { request, answer } => answer_request(node, resident, request, answer).await,
         Control::Rewind { .. } if !REWIND_SUPPORTED => Err(Failure::not_run(
             "Claude Code has no supported in-place rewind; fork through the selected turn instead",

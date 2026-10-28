@@ -21348,6 +21348,11 @@
         "through": "turn-1"
       },
       {
+        "do": "fork",
+        "through": null,
+        "side": true
+      },
+      {
         "do": "rewind",
         "from": "turn-2"
       },

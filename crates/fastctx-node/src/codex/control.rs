@@ -124,7 +124,7 @@ pub async fn control(node: &Arc<Node>, resident: &ResidentId, mut control: Contr
             "rename" => Control::Rename { name: args.clone() },
             "fork" => {
                 no_args(args)?;
-                Control::Fork { through: None }
+                Control::Fork { through: None, side: false }
             }
             "status" | "usage" | "skills" => {
                 no_args(args)?;
@@ -181,9 +181,9 @@ pub async fn control(node: &Arc<Node>, resident: &ResidentId, mut control: Contr
             codex.rename(&thread, &name).await.map_err(|error| error.failure())?;
             Ok(Controlled::Done { said: None })
         }
-        Control::Fork { through } => {
+        Control::Fork { through, side } => {
             drop(speaking);
-            fork(node, resident, &codex, &thread, through).await
+            fork(node, resident, &codex, &thread, through, side).await
         }
         Control::Rewind { from } => {
             codex.rewind(&thread, &from).await.map_err(|error| error.failure())?;
@@ -258,6 +258,7 @@ async fn fork(
     codex: &Arc<CodexHost>,
     thread: &str,
     through: Option<String>,
+    side: bool,
 ) -> Result<Controlled, Failure> {
     let gate = node.residents.management(parent)?;
     let source_guard = crate::gate_waits::shared(node, parent, &gate).await?;
@@ -279,6 +280,7 @@ async fn fork(
     let at = Timestamp::now();
     let about = About {
         forked_from: Some(Address { machine: node.machine(), resident: parent.clone() }),
+        side,
         mcp_off: source.mcp_off.clone(),
         id: id.clone(),
         host: source.host,
@@ -287,7 +289,7 @@ async fn fork(
         origin: Origin::User,
         session: Some(fork.clone()),
         world_started: true,
-            native_resumed: false,
+        native_resumed: false,
         model,
         acting: source.acting,
         focus: source.focus,

@@ -60,6 +60,10 @@ pub struct About {
     /// The conversation this one was forked from, even after its source is deleted.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub forked_from: Option<Address>,
+    /// A side conversation: forked to talk beside the one it came from, and
+    /// kept in that one's side panel rather than in the list (`world-gui.md`).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub side: bool,
     /// The session or thread id on the host's side, when there is one.
     pub session: Option<String>,
     /// The World started the session and reaches it itself: a thread of

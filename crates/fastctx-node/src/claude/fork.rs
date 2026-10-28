@@ -13,7 +13,12 @@ use serde_json::json;
 
 use crate::Node;
 
-pub async fn fork(node: &Arc<Node>, resident: &ResidentId, through: Option<String>) -> Result<Controlled, Failure> {
+pub async fn fork(
+    node: &Arc<Node>,
+    resident: &ResidentId,
+    through: Option<String>,
+    side: bool,
+) -> Result<Controlled, Failure> {
     if let Some(why) = super::fork_ready::pending(node, resident)? {
         return Err(Failure::new(why));
     }
@@ -82,6 +87,7 @@ pub async fn fork(node: &Arc<Node>, resident: &ResidentId, through: Option<Strin
     let at = Timestamp::now();
     let about = About {
         forked_from: Some(Address { machine: node.machine(), resident: resident.clone() }),
+        side,
         mcp_off: source.mcp_off.clone(),
         id: id.clone(),
         host: Host { agent: source.host.agent, client: "claude-code".into(), version: source.host.version },
@@ -90,7 +96,7 @@ pub async fn fork(node: &Arc<Node>, resident: &ResidentId, through: Option<Strin
         origin: Origin::User,
         session: None,
         world_started: true,
-            native_resumed: false,
+        native_resumed: false,
         model: model.clone(),
         acting: source.acting.clone(),
         focus: source.focus,

@@ -239,7 +239,7 @@ import type { MachineLogins } from "./world/logins";
 import { ownerResident, type ResidentNow, type WorldWho } from "./world/world";
 import { agentName, titleOf } from "./world/names";
 import { liveSide, specimenSide } from "./side/live";
-import type { OpenedTalk } from "./side/seams";
+import type { OpenedTalk, SideSeams } from "./side/seams";
 import { enSide, zhSide } from "./side/words";
 import { enPlan, zhPlan } from "./plan/words";
 import { samples as planSamples } from "./plan/specimen-samples";
@@ -1533,6 +1533,8 @@ function specimenTalk(address: Address, inPanel = false): KeepablePage {
       },
       goal: params.get("goal"),
       bare: inPanel,
+      // A specimen branch opens the colleague the specimen already has.
+      ...(inPanel ? {} : { fork: { can: async () => true, make: () => new Promise<Address>((resolve) => setTimeout(() => resolve({ resident: "codex-b10g", machine: "lab" }), 600)) } }),
     }),
     focus: {
       words: focusWords,
@@ -1807,6 +1809,20 @@ function someoneOf(world: ReturnType<typeof store.world.peek>, address: Address)
   };
 }
 
+/** A side conversation branched off the one at `address`, once its host
+ *  offers to branch: known to the list before its tab opens. */
+function sideFork(address: Address): NonNullable<SideSeams["fork"]> {
+  return {
+    can: async () => (await offers(address)).controls.includes("fork"),
+    make: async () => {
+      const done = await control(address, { do: "fork", through: null, side: true });
+      if (done.kind !== "forked" && done.kind !== "fork_incomplete") throw new Error(done.kind === "refused" ? done.said : done.kind);
+      await store.refresh();
+      return done.resident;
+    },
+  };
+}
+
 /** Another conversation, opened in a tab beside the one shown, named as
  *  the list names it; one the list does not know goes by its id. */
 function besideTalk(address: Address, make: (address: Address) => KeepablePage): OpenedTalk {
@@ -1867,6 +1883,7 @@ function liveTalk(address: Address, inPanel = false): KeepablePage {
       go: (other) => {
         location.hash = talkLink(other);
       },
+      ...(inPanel ? {} : { fork: sideFork(address) }),
     }),
     controls: {
       words: composerWords,

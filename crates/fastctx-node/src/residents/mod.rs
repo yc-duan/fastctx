@@ -501,6 +501,7 @@ impl Residents {
         }
         let resident = new_id(&host.agent, &state)?;
         let about = About {
+            side: false,
             forked_from: None,
             mcp_off: Default::default(),
             id: resident.clone(),

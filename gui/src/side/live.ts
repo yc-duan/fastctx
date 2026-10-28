@@ -4,7 +4,7 @@
 
 import { effect } from "../app/signals";
 import { bareName, jobsOf, residentsOf } from "../app/store";
-import { titleOf } from "../world/names";
+import { agentName, titleOf } from "../world/names";
 import type { LiveFact } from "../plan/live";
 import type { Store } from "../app/store";
 import { modelName } from "../conversation/view";
@@ -141,6 +141,34 @@ export interface LiveSide {
   took(ms: number): string;
   /** Opens what one of the world's ids names, from the plan. */
   openId(id: string): void;
+  /** Branches off a side conversation; absent in another's side. */
+  fork?: SideSeams["fork"];
+}
+
+/** The side conversations branched off the one at `address`, from the
+ *  World's list: each named by its model, with its title or what it is. */
+function sideNodes(store: Store, address: Address, words: SideWords, now: number): CollabNode[] {
+  return residentsOf(store.world.peek())
+    .filter((r) => r.about.side && r.about.forked_from?.resident === address.resident && r.about.forked_from.machine === address.machine)
+    .map((r) => {
+      const busy = r.now?.activity === "busy";
+      const born = Date.parse(r.about.born_at);
+      const since = Date.parse(r.now?.since ?? r.about.born_at);
+      const state: NodeState = r.now?.trouble ? "failed" : busy ? "working" : "idle";
+      return {
+        id: r.about.id,
+        kind: "side",
+        agent: /codex/i.test(r.about.host.agent) ? "codex" : "claude",
+        name: r.about.model ? modelName(r.about.model) : agentName(r.about.host.agent),
+        task: titleOf(r) ?? words.sideTalk,
+        state,
+        goal: null,
+        took: Number.isFinite(born) ? Math.max(0, (busy ? now : Number.isFinite(since) ? since : now) - born) : 0,
+        steps: null,
+        machine: r.about.machine,
+        children: [],
+      };
+    });
 }
 
 /** Applies a change to a goal against the version the user saw, with a
@@ -286,7 +314,8 @@ export function liveSide(options: LiveSide): SideSeams {
         again = false;
         collaborationTree(owner, options.address.machine)
           .then((tree) => {
-            if (alive) show((last = treeNodes(tree, options.store, Date.now())));
+            const now = Date.now();
+            if (alive) show((last = [...treeNodes(tree, options.store, now), ...sideNodes(options.store, options.address, options.words, now)]));
           })
           .catch((error: unknown) => {
             // What was known stays, no longer said to stand as it did.
@@ -309,6 +338,24 @@ export function liveSide(options: LiveSide): SideSeams {
     },
     open: (address) => options.open(address),
     go: (address) => options.go(address),
+    ...(options.fork ? { fork: options.fork } : {}),
+    goalOf: (address, show) => {
+      let alive = true;
+      let watching: number | null = null;
+      watchGoal(address.resident, (piece) => {
+        if (alive && piece.kind === "snapshot") show(goalShown(piece.view)?.status ?? null);
+      })
+        .then(({ id, view }) => {
+          if (!alive) return void unwatch(id);
+          watching = id;
+          show(goalShown(view)?.status ?? null);
+        })
+        .catch(() => {});
+      return () => {
+        alive = false;
+        if (watching != null) void unwatch(watching);
+      };
+    },
   };
 }
 
@@ -320,7 +367,7 @@ export function specimenSide(
   planWords: PlanWords,
   plan: PlanShown & { facts: PageSeams["facts"] },
   english: boolean,
-  side: { self: Address; open(address: Address): OpenedTalk | null; go(address: Address): void; goal?: string | null; bare?: boolean },
+  side: { self: Address; open(address: Address): OpenedTalk | null; go(address: Address): void; goal?: string | null; bare?: boolean; fork?: SideSeams["fork"] },
 ): SideSeams {
   let goal: GoalShown | null = side.goal === "none" ? null : (goalSamples(english, Date.now())[side.goal ?? "active"] ?? null);
   const past: PastGoal[] = pastSamples(english, Date.now());
@@ -385,5 +432,11 @@ export function specimenSide(
     },
     open: (address) => side.open(address),
     go: (address) => side.go(address),
+    ...(side.fork ? { fork: side.fork } : {}),
+    // A specimen colleague works at its goal.
+    goalOf: (_address, show) => {
+      show("active");
+      return () => {};
+    },
   };
 }

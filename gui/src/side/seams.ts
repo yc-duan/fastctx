@@ -6,7 +6,7 @@
 import type { PageSeams, PlanShown } from "../plan/panel";
 import type { PlanWords } from "../plan/words";
 import type { Address } from "../world/wire";
-import type { CollabNode, GoalShown, PastGoal } from "./types";
+import type { CollabNode, GoalShown, GoalStatus, PastGoal } from "./types";
 import type { SideWords } from "./words";
 
 /** A conversation opened beside another, in a tab of its side. */
@@ -60,4 +60,10 @@ export interface SideSeams {
   /** Another conversation, opened as the page's own instead, where there is
    *  no room for two. */
   go(address: Address): void;
+  /** A side conversation branched off this one, carrying its history, to
+   *  talk with beside it (`world-gui.md`); `can` says whether its host
+   *  branches now. Absent on a conversation shown in another's side. */
+  fork?: { can(): Promise<boolean>; make(): Promise<Address> };
+  /** How another conversation's goal stands, followed for its tab. */
+  goalOf?(address: Address, show: (status: GoalStatus | null) => void): () => void;
 }

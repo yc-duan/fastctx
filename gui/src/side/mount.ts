@@ -137,6 +137,8 @@ export class SideMount {
   private drawnTeam = "";
   /** The goal as last shown, whose version a change is made against. */
   private shownGoal: GoalShown | null = null;
+  /** The goals of the conversations open in tabs, followed for their marks. */
+  private readonly tabGoals = new Map<string, () => void>();
   /** The boxes of the host's agents open in tabs, followed as they go. */
   private readonly boxes = new Map<string, (run: AgentRun) => void>();
   /** The conversation and the side, the two columns of the page. */
@@ -173,7 +175,14 @@ export class SideMount {
       past: () => seams.goal.past(),
       open: (node) => this.openNode(node),
     });
-    this.pane = new SidePane(words, { changed: () => this.drawSwitch(), dock: (dock) => this.setDock(dock) });
+    this.pane = new SidePane(words, {
+      changed: () => {
+        this.forgetGoals();
+        this.drawSwitch();
+      },
+      dock: (dock) => this.setDock(dock),
+      ...(seams.fork ? { fork: () => this.fork() } : {}),
+    });
     this.bar = new GoalBar(words.goal, {
       pause: () => void this.act(seams.goal.pause(version())),
       resume: () => void this.act(seams.goal.resume(version())),
@@ -252,6 +261,41 @@ export class SideMount {
     );
     this.drawTeam();
     this.drawSwitch();
+    seams.fork?.can().then(
+      (can) => this.pane.offerFork(can),
+      () => {},
+    );
+    this.stops.push(() => {
+      for (const stop of this.tabGoals.values()) stop();
+      this.tabGoals.clear();
+    });
+  }
+
+  /** A side conversation branched off this one, opened in a tab beside it. */
+  private fork(): void {
+    const fork = this.context.seams.fork;
+    if (!fork) return;
+    this.pane.forking(true);
+    fork.make().then(
+      (address) => {
+        this.pane.forking(false);
+        if (!this.openTalk(address, this.context.seams.words.sideTalk)) this.context.seams.go(address);
+      },
+      (error: unknown) => {
+        this.pane.forking(false);
+        this.context.say(this.context.seams.words.forkFailed, error instanceof Error ? error.message : String(error));
+      },
+    );
+  }
+
+  /** The goals of tabs closed are no longer followed. */
+  private forgetGoals(): void {
+    const open = new Set(this.pane.tabs.map((tab) => tab.id));
+    for (const [id, stop] of this.tabGoals) {
+      if (open.has(id)) continue;
+      stop();
+      this.tabGoals.delete(id);
+    }
   }
 
   /** The host's own agents, as the conversation now knows them. */
@@ -508,6 +552,10 @@ export class SideMount {
         return { element: talk.element, leave: () => talk.leave(), roomWillChange: (by) => talk.roomWillChange?.(by) } satisfies PaneContent;
       },
     );
+    const id = talkId(address);
+    if (!this.tabGoals.has(id) && this.context.seams.goalOf) {
+      this.tabGoals.set(id, this.context.seams.goalOf(address, (status) => this.pane.markGoal(id, status)));
+    }
     return true;
   }
 
@@ -515,8 +563,8 @@ export class SideMount {
    *  conversation: a colleague opens beside it to talk with, one of the
    *  host's agents to read. */
   private openNode(node: CollabNode): void {
-    if (node.kind === "colleague") {
-      this.openTalk({ resident: node.id, machine: node.machine ?? this.context.seams.self.machine }, node.name);
+    if (node.kind === "colleague" || node.kind === "side") {
+      this.openTalk({ resident: node.id, machine: node.machine ?? this.context.seams.self.machine }, node.kind === "side" ? node.task : node.name);
       return;
     }
     // An agent a colleague sent is read in the colleague's conversation.

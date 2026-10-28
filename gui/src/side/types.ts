@@ -55,13 +55,14 @@ export interface PastGoal {
 
 /** How one stands; `unknown` where only its start is known, and it may
  *  have ended long ago or work still. */
-export type NodeState = "working" | "done" | "failed" | "stopped" | "unknown";
+export type NodeState = "working" | "done" | "failed" | "stopped" | "idle" | "unknown";
 
-/** One that works with a conversation: a colleague it asked, or one of the
- *  host's own agents, under whoever sent it. */
+/** One that works with a conversation: a colleague it asked, a side
+ *  conversation branched off it, or one of the host's own agents, under
+ *  whoever sent it. */
 export interface CollabNode {
   id: string;
-  kind: "colleague" | "subagent";
+  kind: "colleague" | "subagent" | "side";
   agent: "claude" | "codex";
   name: string;
   task: string;

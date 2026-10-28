@@ -56,7 +56,7 @@ export interface RowActs {
 export function talksOf(world: WorldNow | null, acts: TalkActs): { listed: ResidentNow[]; archived: ResidentNow[] } {
   const every = byRecent(
     [...residentsOf(world, true), ...unreachedOf(world, true)]
-      .filter((r) => r.about.origin.kind !== "colleague" && (r.about.world_started || r.about.native_resumed))
+      .filter((r) => r.about.origin.kind !== "colleague" && !r.about.side && (r.about.world_started || r.about.native_resumed))
       .map((r) => acts.view(r)),
   );
   return { listed: every.filter((r) => !r.removed), archived: every.filter((r) => r.removed) };
