@@ -38,6 +38,7 @@ pub fn fixtures() -> Fixtures {
                 minutes: Some(10080),
                 used_tenths: 1000,
                 resets_at: Some("2026-10-14T00:00:00Z".parse().unwrap()),
+                since: None,
             }],
             credits: Some(AgentCredits { balance: Some("52086".into()), unlimited: false }),
         }),

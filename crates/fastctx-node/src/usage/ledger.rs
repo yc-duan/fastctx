@@ -205,6 +205,9 @@ pub(super) struct Book {
     pub keys: HashSet<String>,
     pub reading: Option<Reading>,
     pub readings: HashMap<Option<String>, Reading>,
+    /// Of each account, weekly readings lower than the kept ones, waiting
+    /// for the next to say whether the week was cleared (`readings::merge`).
+    pub lowered: HashMap<Option<String>, super::readings::Lowered>,
     pub accounts: Vec<(Timestamp, String)>,
     pub recent: Vec<Charge>,
     pub history: super::history::History,
@@ -279,7 +282,7 @@ impl Book {
                 let old = self.readings.get(&account);
                 let mut merged = old.map_or_else(Vec::new, |(_, windows)| windows.clone());
                 if old.is_none_or(|(seen, _)| *seen <= *at) {
-                    super::readings::merge(&mut merged, windows.clone());
+                    super::readings::merge(&mut merged, windows.clone(), *at, None);
                     self.readings.insert(account, (*at, merged));
                 }
                 self.reading = self.readings.get(&self.account_at(Timestamp::MAX)).cloned();

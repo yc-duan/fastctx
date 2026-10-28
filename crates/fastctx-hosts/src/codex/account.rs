@@ -198,6 +198,7 @@ pub fn limits_of(buckets: &BTreeMap<String, Value>, observed_at: Timestamp) -> F
                 minutes: window["windowDurationMins"].as_u64().and_then(|minutes| u32::try_from(minutes).ok()),
                 used_tenths: used.saturating_mul(10),
                 resets_at,
+                since: None,
             });
         }
     }

@@ -525,6 +525,7 @@ pub fn fixtures() -> Fixtures {
                                 minutes: Some(10_080),
                                 used_tenths: 90,
                                 resets_at: Some("2026-10-15T18:00:00Z".parse().unwrap()),
+                                since: None,
                             }],
                             credits: None,
                         }),

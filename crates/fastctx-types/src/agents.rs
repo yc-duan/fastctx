@@ -190,6 +190,11 @@ pub struct LimitWindow {
     pub used_tenths: u32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub resets_at: Option<Timestamp>,
+    /// When its usage began counting this period, where that was not a
+    /// whole window before it resets: the vendor cleared it in place, as
+    /// when the plan changed, its reset kept.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub since: Option<Timestamp>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

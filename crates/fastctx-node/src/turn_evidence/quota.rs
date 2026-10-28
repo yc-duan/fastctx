@@ -55,6 +55,7 @@ fn claude(value: &Value, at: Timestamp) -> Result<Fact<AgentLimits>, String> {
             name,
             used_tenths: (used * 10.0).round() as u32,
             resets_at,
+            since: None,
         });
     }
     if windows.is_empty() {
