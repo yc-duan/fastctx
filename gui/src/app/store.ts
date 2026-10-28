@@ -259,6 +259,10 @@ export const addressOf = (r: ResidentNow): Address => ({ resident: r.about.id, m
  *  directory knows it by. */
 export const bareName = (written: string): string => written.split(".")[0]!;
 
+/** What each machine read last was written as, by the machine read: the
+ *  projection depends on it alone, so one unchanged keeps its object. */
+const writtenAs = new WeakMap<MachineWho, MachineWho>();
+
 /** Each machine of `now` as this computer writes it, `name.hub` where two
  *  of its hubs each have a different computer of that name, as the node
  *  says (`Node.written`); and so the machine of each conversation and
@@ -280,16 +284,21 @@ function written(now: WorldNow): WorldNow {
     return { ...reply, ...(renamed ? { machine: as } : {}), residents, jobs };
   };
   const machines = (now.who?.machines ?? []).map((machine): MachineWho => {
+    const kept = writtenAs.get(machine);
+    if (kept) return kept;
     const as = machine.observation?.source.written;
+    let next: MachineWho = machine;
     if (machine.kind === "answered") {
       const reply = answer(machine.reply, as);
-      return reply === machine.reply ? machine : { ...machine, reply };
+      if (reply !== machine.reply) next = { ...machine, reply };
+    } else {
+      if (as && as !== machine.machine) next = { ...machine, machine: as };
+      if (next.kind === "offline" && next.last) {
+        const last = answer(next.last, as);
+        if (last !== next.last) next = { ...next, last };
+      }
     }
-    let next: MachineWho = as && as !== machine.machine ? { ...machine, machine: as } : machine;
-    if (next.kind === "offline" && next.last) {
-      const last = answer(next.last, as);
-      if (last !== next.last) next = { ...next, last };
-    }
+    writtenAs.set(machine, next);
     return next;
   });
   if (!now.who || machines.every((machine, i) => machine === now.who.machines[i])) return now;

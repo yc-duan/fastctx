@@ -60,6 +60,10 @@ export function shownNetwork(world: WorldNow | null): string | null {
   return hubs.find((hub) => hub.hub === chosen)?.hub ?? hubs[0]?.hub ?? null;
 }
 
+/** What each machine read last showed in one network, by the machine read
+ *  and what decided it: one unchanged keeps its object. */
+const shownAs = new WeakMap<MachineWho, { by: string; shown: MachineWho | null }>();
+
 /** The World as one network shows it. With one network or none it is the
  *  World as it was read. */
 export function viewOf(world: WorldNow, hub: string | null): WorldNow {
@@ -77,11 +81,18 @@ export function viewOf(world: WorldNow, hub: string | null): WorldNow {
   const keepsTown = (town: string | null) => !town || own.has(town) || !elsewhere.has(town);
   const keepsResident = (resident: ResidentNow) =>
     keepsTown(resident.town) && (resident.about.acting.kind === "here" || resident.about.acting.accounts.some((account) => account.hub === hub));
+  const by = [hub, [...machines].sort().join(" "), [...own].sort().join(" "), [...elsewhere].sort().join(" ")].join("|");
   const who = (machine: MachineWho): MachineWho | null => {
+    const kept = shownAs.get(machine);
+    if (kept?.by === by) return kept.shown;
     const name = machine.kind === "answered" ? machine.reply.machine : machine.machine;
-    if (!machines.has(name)) return null;
-    if (machine.kind !== "answered") return machine;
-    return { ...machine, reply: { ...machine.reply, residents: machine.reply.residents.filter(keepsResident) } };
+    let shown: MachineWho | null = null;
+    if (machines.has(name)) {
+      const residents = machine.kind === "answered" ? machine.reply.residents.filter(keepsResident) : null;
+      shown = machine.kind !== "answered" || residents!.length === machine.reply.residents.length ? machine : { ...machine, reply: { ...machine.reply, residents: residents! } };
+    }
+    shownAs.set(machine, { by, shown });
+    return shown;
   };
   return {
     ...world,
