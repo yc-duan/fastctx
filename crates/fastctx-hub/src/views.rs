@@ -433,3 +433,6 @@ fn present(store: &Store, online: &HashMap<MachineName, Presence>, member: &mut 
         }
     }
 }
+
+#[cfg(test)]
+mod scale_drill;
