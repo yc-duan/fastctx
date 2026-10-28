@@ -13,6 +13,9 @@ use std::time::Duration;
 
 pub(super) const IDLE_SECONDS: u64 = 10;
 pub(super) const REMINDER_SECONDS: u64 = 30 * 60;
+/// How often a standing goal that waits is looked at again, in case what
+/// was to wake it went away unseen.
+pub(super) const STANDING_CHECK_SECONDS: u64 = 60 * 60;
 pub(super) const QUOTA_MARGIN_SECONDS: u64 = 30;
 pub(super) const RETRY_SECONDS: [u64; 10] = [5, 15, 30, 60, 300, 420, 600, 900, 1800, 3600];
 pub(super) const FAILURE_LIMIT_MS: u64 = 6 * 60 * 60 * 1000;
@@ -54,6 +57,30 @@ fn stop(goal: &mut Goal, status: Status, kind: StopKind, reason: String) {
     goal.stop = Some(Stop { kind, reason, resume_at: None });
     goal.claim = None;
     goal.runtime.pending = None;
+}
+
+/// How long a goal that waits on something waits before it is looked at again.
+pub(super) fn remind_seconds(goal: &Goal) -> u64 {
+    if goal.standing { STANDING_CHECK_SECONDS } else { REMINDER_SECONDS }
+}
+
+/// A standing goal never completes. Stopped with something left to wake it,
+/// it waits quietly; stopped with nothing, it is asked once to leave
+/// something, and paused at the second such stop in a row.
+fn standing(mut goal: Goal, clock: &Clock, id: NoticeId) -> Decision {
+    if !goal.runtime.waiting.is_empty() {
+        goal.runtime.unwoken = 0;
+        work(&mut goal, id, after(clock.now, STANDING_CHECK_SECONDS), Task::Remind { since: clock.now });
+        return decision(goal, "waiting", words::WAITING);
+    }
+    goal.runtime.unwoken = goal.runtime.unwoken.saturating_add(1);
+    if goal.runtime.unwoken >= 2 {
+        goal.runtime.unwoken = 0;
+        stop(&mut goal, Status::Paused, StopKind::Review, words::STANDING_UNWOKEN.into());
+        return decision(goal, "standing_unwoken", words::STANDING_UNWOKEN);
+    }
+    work(&mut goal, id, clock.now, Task::Tell { text: words::STANDING_REMIND.into(), advice: false });
+    decision(goal, "standing_remind", words::STANDING_REMIND)
 }
 
 pub(super) fn waiting(handles: &[WaitHandle]) -> Vec<WaitKey> {
@@ -204,6 +231,9 @@ pub(super) fn ended(
     if let Some(claim) = &goal.claim {
         let cause = if claim.status == Status::Blocked { ReviewCause::Blocked } else { ReviewCause::Paused };
         return Some(review_requested(goal, cause, clock, id));
+    }
+    if goal.standing {
+        return Some(standing(goal, clock, id));
     }
     if !goal.runtime.waiting.is_empty() {
         work(&mut goal, id, after(clock.now, REMINDER_SECONDS), Task::Remind { since: clock.now });
@@ -431,6 +461,7 @@ pub(super) fn wait_returned(current: &Goal, handle: &WaitKey) -> Option<Decision
     let mut goal = current.clone();
     goal.runtime.waiting.retain(|waiting| waiting != handle);
     goal.runtime.advice_sent = 0;
+    goal.runtime.unwoken = 0;
     if goal.runtime.pending.as_ref().is_some_and(|work| matches!(work.task, Task::Remind { .. } | Task::Idle { .. })) {
         goal.runtime.pending = None;
     }
@@ -445,6 +476,7 @@ pub(super) fn owner_spoke(current: &Goal, input: &str) -> Option<Decision> {
     let mut goal = current.clone();
     goal.runtime.owner_input = Some(input.into());
     goal.runtime.advice_sent = 0;
+    goal.runtime.unwoken = 0;
     if goal.runtime.pending.as_ref().is_some_and(|pending| {
         matches!(pending.task, Task::Idle { .. } | Task::Review { .. } | Task::Tell { advice: true, .. })
     }) {
@@ -493,6 +525,12 @@ pub(super) fn idle_ready(
             "The conversation did not remain idle throughout the observation window.",
         ));
     }
+    if current.standing {
+        let mut goal = current.clone();
+        goal.runtime.pending = None;
+        goal.runtime.waiting.clear();
+        return Some(standing(goal, clock, id));
+    }
     Some(review_requested(current.clone(), ReviewCause::Idle, clock, id))
 }
 
@@ -516,6 +554,9 @@ pub(super) fn reminded(
         return Some(decision(goal, "reminder_cancelled", "The conversation resumed before its waiting reminder."));
     }
     goal.runtime.waiting = waiting(handles);
+    if goal.standing {
+        return Some(standing(goal, clock, id));
+    }
     if goal.runtime.waiting.is_empty() {
         work(&mut goal, id, after(clock.now, IDLE_SECONDS), Task::Idle { generation });
         return Some(decision(goal, "idle_window", words::IDLE));

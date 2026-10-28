@@ -72,7 +72,8 @@ async fn settle(node: &Arc<Node>, resident: &Address) -> Result<(), fastctx_type
         if let Some(view) = cached {
             super::operations::apply(node, &resident.resident, &view).await?;
         } else {
-            super::operations::bounded(node.goals.context.set(&resident.resident, "goal", "")).await?;
+            super::operations::bounded(node.goals.context.set(&resident.resident, "goal", "", super::words::CHANGED))
+                .await?;
         }
     }
     for mut intent in

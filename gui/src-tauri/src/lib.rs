@@ -1250,6 +1250,7 @@ pub fn run() {
             item_details::agent_activity,
             goals::goal_read,
             goals::goal_history,
+            goals::goal_past,
             goals::goal_update,
             goals::goal_watch,
             composer::composer_read,

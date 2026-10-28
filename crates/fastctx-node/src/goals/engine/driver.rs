@@ -151,7 +151,8 @@ pub(super) async fn reconcile(node: &Arc<Node>, id: &ResidentId) -> Result<(), F
             if let Some(decision) =
                 policy::ended(&goal, &facts, assistance(node, &goal)?, &clock(node), new_work(), generation(node, id))
             {
-                if matches!(decision.kind, "idle_window" | "review_requested") {
+                if matches!(decision.kind, "idle_window" | "review_requested" | "standing_remind" | "standing_unwoken")
+                {
                     waiting_known(&facts.waiting)?;
                 }
                 return commit(node, &view, decision).await;
@@ -180,7 +181,7 @@ pub(super) async fn reconcile(node: &Arc<Node>, id: &ResidentId) -> Result<(), F
             let (task, seconds) = if goal.runtime.waiting.is_empty() {
                 (Task::Idle { generation: generation(node, id) }, policy::IDLE_SECONDS)
             } else {
-                (Task::Remind { since }, policy::REMINDER_SECONDS)
+                (Task::Remind { since }, policy::remind_seconds(&goal))
             };
             goal.runtime.pending = Some(fastctx_types::goals::runtime::Work {
                 id: new_work(),

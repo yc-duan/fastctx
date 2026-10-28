@@ -101,6 +101,14 @@ pub struct GoalSummary {
     pub state: GoalState,
     pub started_at: jiff::Timestamp,
     pub elapsed_ms: u64,
+    /// The goal itself, and the asker's goal it branched from, for the
+    /// drawing of the conversation's goals (`world-goal.md`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub objective: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]

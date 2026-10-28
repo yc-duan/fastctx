@@ -148,7 +148,7 @@ for (const session of sessions) {
       const shown = named.startsWith("invite-") ? "invite" : named === "stop" ? "claude" : named === "drawer" || named === "palette" ? "home" : named === "service" || named.startsWith("remove-") ? "settings" : named === "slash" || named === "mention" || named === "find" || named === "attach" || named === "rewind" || named === "usage" ? "codex" : named.startsWith("asks") ? "asks" : named === "new-codex" || named === "new-attach" || named === "new-lent" || named === "new-pick" ? "new" : named === "manage" ? "about" : named === "welcome" || named === "create" || named === "created" ? "login" : named === "share" || named === "relays" ? "machines" : named === "lend" || named.startsWith("ledger") ? "home" : named === "queue" ? "codex" : named.startsWith("page") ? "page" : named.startsWith("panel") && named !== "panel-agent" ? "claude" : named.startsWith("team") || named === "panel-agent" ? "stream" : named.startsWith("repair-") ? "home" : named === "updates-repair" ? "machines" : named === "journal-edit" ? "journal" : named === "project-write" ? "project" : named === "features" || named.startsWith("feature-") || named.startsWith("prefs-") || named.startsWith("activity") || named === "mode" || named === "sidebar-drag" ? "home" : named;
       // `welcome` and `create` are a computer's first open, in no World yet.
       const alone = named === "welcome" || named === "create" || named === "created";
-      const ask = (session.startsWith("asks-") ? `&ask=${session.slice(5)}` : "") + (two ? "&accounts=2" : "") + (alone ? "&accounts=0" : "") + (named.startsWith("team") || named === "panel-agent" ? "&start=agents" : "") + (named.startsWith("repair-") ? `&repair=${named === "repair-broken" ? "broken" : "failed"}` : "") + (named.startsWith("panel-goal-") ? `&goal=${named.slice("panel-goal-".length)}` : "");
+      const ask = (session.startsWith("asks-") ? `&ask=${session.slice(5)}` : "") + (two ? "&accounts=2" : "") + (alone ? "&accounts=0" : "") + (named.startsWith("team") || named === "panel-agent" ? "&start=agents" : "") + (named.startsWith("repair-") ? `&repair=${named === "repair-broken" ? "broken" : "failed"}` : "") + (named.startsWith("panel-goal-") ? `&goal=${named.slice("panel-goal-".length)}` : "") + (named.startsWith("panel-goalpage-") ? `&goal=${named.slice("panel-goalpage-".length).replace(/-typed$/, "")}` : "");
       // A page an agent wrote is its own document, with a stand-in host.
       const written = session === "written";
       const specimen = named === "mapcanvas" ? "mapcanvas-specimen.html" : named === "longview" ? "longview-specimen.html" : written ? "page-specimen.html" : null;
@@ -266,11 +266,19 @@ for (const session of sessions) {
           expression: `new Promise((r) => setTimeout(() => { const split = document.querySelector('.sp-split'); const box = split.getBoundingClientRect(); const carried = new DataTransfer(); carried.setData('application/x-fastctx-talk', JSON.stringify({ resident: 'x', machine: 'y' })); split.dispatchEvent(new DragEvent('dragover', { bubbles: true, cancelable: true, dataTransfer: carried, clientX: box.left + box.width * ${at[0]}, clientY: box.top + box.height * ${at[1]} })); setTimeout(r, 600); }, 600))`,
         });
       } else if (named.startsWith("panel")) {
-        const opened = named === "panel-talk" ? `'.ov-member[data-id="codex-b10g"]'` : named === "panel-agent" ? `'.ov-member[data-id="b7c1d9e4f2"]'` : named === "panel-plan" ? `'.ov-plan .ov-whole'` : named === "panel-goal" ? `'.gb-act[data-act="expand"]'` : named === "panel-team" ? `'.ov-team .ov-whole'` : named === "panel-menu" ? `'.sp-dock'` : named === "panel-bottom" || named === "panel-left" ? `'.sp-dock-row[data-dock="${named.slice("panel-".length)}"]'` : null;
+        const opened = named === "panel-talk" ? `'.ov-member[data-id="codex-b10g"]'` : named === "panel-agent" ? `'.ov-member[data-id="b7c1d9e4f2"]'` : named === "panel-plan" ? `'.ov-plan .ov-whole'` : named === "panel-goal" ? `'.gb-act[data-act="expand"]'` : named === "panel-team" ? `'.ov-team .ov-whole'` : named === "panel-menu" ? `'.sp-dock'` : named === "panel-bottom" || named === "panel-left" ? `'.sp-dock-row[data-dock="${named.slice("panel-".length)}"]'` : named.startsWith("panel-goalpage-") ? `'.ov-cards [data-open="goal"]'` : null;
         await send("Runtime.evaluate", {
           awaitPromise: true,
           // The row to press is waited for: an agent comes as the stream goes.
           expression: `new Promise((r) => { if (!document.querySelector(".sp-host.sp-shown")) document.querySelector(".sp-toggle")?.click(); let tries = 0; const press = () => { const row = ${opened ? `document.querySelector(${opened})` : "null"}; if (row) row.click(); else if (${opened ? "true" : "false"} && tries++ < 40) return setTimeout(press, 200); setTimeout(r, 1300); }; setTimeout(press, 300); })`,
+        });
+      }
+      // `panel-goalpage-none-typed` and the like: a new goal's words typed
+      // on the goal's page, and chosen to stand.
+      if (named.startsWith("panel-goalpage-") && named.endsWith("-typed")) {
+        await send("Runtime.evaluate", {
+          awaitPromise: true,
+          expression: `new Promise((r) => { const f = document.querySelector('.gp-field'); f.focus(); f.value = ${JSON.stringify("每周一把依赖升一遍，测试过了就合并。")}; f.dispatchEvent(new Event('input', { bubbles: true })); document.querySelector('.gp-standing')?.click(); setTimeout(r, 500); })`,
         });
       }
       if (session === "palette") {

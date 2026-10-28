@@ -12,6 +12,10 @@ export interface TreeGoal {
   state: GoalStateWire;
   started_at: Timestamp;
   elapsed_ms: number;
+  id?: string | null;
+  /** The asker's goal it branched from. */
+  parent?: string | null;
+  objective?: string | null;
 }
 
 /** The host's agent, and the agents it sent under it, as far as they are known. */

@@ -166,10 +166,12 @@ export class SideMount {
     });
     const version = () => this.shownGoal?.version;
     this.goalPage = new GoalPage(words.goal, {
-      save: (text, seen) => this.act(seams.goal.set(text, seen)),
+      save: (text, seen, standing) => this.act(seams.goal.set(text, seen, standing)),
       pause: () => void this.act(seams.goal.pause(version())),
       resume: () => void this.act(seams.goal.resume(version())),
       clear: () => void this.act(seams.goal.clear(version())),
+      past: () => seams.goal.past(),
+      open: (node) => this.openNode(node),
     });
     this.pane = new SidePane(words, { changed: () => this.drawSwitch(), dock: (dock) => this.setDock(dock) });
     this.bar = new GoalBar(words.goal, {
@@ -244,6 +246,7 @@ export class SideMount {
       seams.goal.watch((goal) => this.goal(goal)),
       seams.colleagues((nodes) => {
         this.colleagues = nodes;
+        this.goalPage.showTeam(nodes);
         this.drawTeam();
       }),
     );

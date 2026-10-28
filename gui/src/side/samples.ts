@@ -1,7 +1,7 @@
 // What the panel's specimens show: a goal in each of its states, and a
 // conversation's colleagues with the host's agents they and it sent.
 
-import type { CollabNode, GoalShown } from "./types";
+import type { CollabNode, GoalShown, PastGoal } from "./types";
 
 export function goalSamples(english: boolean, now: number): Record<string, GoalShown | null> {
   const minute = 60_000;
@@ -61,7 +61,51 @@ goals.advised = {
     thinks: english ? "The test that posts one and reads it back may still be missing." : "那个发一条再读回来的测试可能还没写。",
   },
 };
+// A goal that is never done, under way, and paused when it twice left
+// nothing to wake it.
+const watch = english ? "Every night, look over CI and fix it when it is red." : "每晚看一遍 CI，红了就修。";
+goals.standing = { objective: watch, version: 1, status: "active", worked: 26 * minute, since: now - 26 * minute, standing: true };
+goals.unwoken = { objective: watch, version: 2, status: "paused", worked: 41 * minute, since: now - 5 * minute, standing: true, paused: { by: "unwoken", until: null } };
+for (const goal of Object.values(goals)) if (goal) goal.id ??= "goal-sample-now";
   return goals;
+}
+
+/** The goals the specimen conversation had before: one done that sent a
+ *  colleague, one put down, and one that stood until it was cleared. */
+export function pastSamples(english: boolean, now: number): PastGoal[] {
+  const hour = 3_600_000;
+  const day = 24 * hour;
+  return [
+    {
+      id: "goal-sample-astro",
+      objective: english ? "Move the blog from Hugo to Astro, with every old link still opening." : "把博客从 Hugo 迁到 Astro，旧的链接都还能打开。",
+      done: true,
+      standing: false,
+      created: now - 3 * day,
+      closed: now - 2 * day - 5 * hour,
+      statement: english
+        ? "- **Site**: builds with Astro on lab (`j-a7s2q1`).\n- **Links**: all 412 old addresses open, checked by `scripts/links.ts`."
+        : "- **站点**：在 lab 上用 Astro 编出来了（`j-a7s2q1`）。\n- **链接**：412 个旧地址都能打开，`scripts/links.ts` 一条条查过。",
+    },
+    {
+      id: "goal-sample-lazy",
+      objective: english ? "Lazy-load the pictures in posts." : "给文章里的图片加懒加载。",
+      done: false,
+      standing: false,
+      created: now - 2 * day,
+      closed: now - day - 20 * hour,
+      statement: null,
+    },
+    {
+      id: "goal-sample-404",
+      objective: english ? "Every morning, look over the site's 404s and fix what can be fixed." : "每天早上看一遍站点的 404，修掉能修的。",
+      done: false,
+      standing: true,
+      created: now - day - 18 * hour,
+      closed: now - 3 * hour,
+      statement: null,
+    },
+  ];
 }
 
 export function teamSample(english: boolean): CollabNode[] {
@@ -75,6 +119,7 @@ export function teamSample(english: boolean): CollabNode[] {
     task: english ? "The comments back end, with its tests" : "评论的后端，连同它的测试",
     state: "working",
     goal: "active",
+    branchOf: "goal-sample-now",
     took: 62 * minute,
     steps: 48,
     machine: "lab",
@@ -91,9 +136,24 @@ export function teamSample(english: boolean): CollabNode[] {
     task: english ? "The form under each post" : "每篇文章下面的表单",
     state: "done",
     goal: "complete",
+    branchOf: "goal-sample-now",
     took: 38 * minute,
     steps: 31,
     machine: "laptop",
+    children: [],
+  },
+  {
+    id: "codex-l1nk",
+    kind: "colleague",
+    agent: "codex",
+    name: "GPT-6.1 Luna",
+    task: english ? "Open every old link" : "旧链接一条条打开看",
+    state: "done",
+    goal: "complete",
+    branchOf: "goal-sample-astro",
+    took: 21 * minute,
+    steps: 26,
+    machine: "lab",
     children: [],
   },
   { id: "explore-1", kind: "subagent", agent: "claude", name: "Explore", task: english ? "Where the blog renders a post" : "博客在哪里渲染一篇文章", state: "done", took: 2 * minute, steps: 9, children: [] },

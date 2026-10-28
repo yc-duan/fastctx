@@ -24,6 +24,11 @@ const UNDO_MS = 6000;
 /** How often the time worked is said again while it goes on. */
 const TICK_MS = 30_000;
 
+/** The page's word for how a goal stands; a standing one under way says it stands. */
+export function stateWord(goal: GoalShown, words: GoalWords): string {
+  return goal.standing && goal.status === "active" ? words.standing : words.states[goal.status];
+}
+
 /** How long a goal has been worked at now, counting the stretch under way. */
 export function workedNow(goal: GoalShown, now: number): number {
   return goal.worked + (goal.status === "active" ? Math.max(0, now - goal.since) : 0);
@@ -71,9 +76,11 @@ export class GoalBar {
         ? words.paused(goal.paused.by, goal.paused.until === null ? null : words.at(goal.paused.until, now))
         : words.worked(workedNow(goal, now));
     const turn = goal.status === "active" ? this.button("pause", "pause", words.pause) : this.button("resume", "resume", words.resume);
-    const why = goal.status === "paused" && goal.paused?.reason ? ` title="${escape(goal.paused.reason)}"` : "";
+    const reason = goal.paused?.by === "unwoken" ? words.unwokenWhy : goal.paused?.reason;
+    const why = goal.status === "paused" && reason ? ` title="${escape(reason)}"` : "";
     const acts = [this.button("clear", "close", words.clear), turn, this.acts.expand ? this.button("expand", "expand", words.expand) : ""].join("");
-    this.element.innerHTML = `<span class="gb-mark" aria-hidden="true">${glyph("goal", 16)}</span><span class="gb-state">${escape(words.bar[goal.status])}</span><span class="gb-text" title="${escape(goal.objective)}">${escape(goal.objective)}</span><span class="gb-when"${why}>${escape(when)}</span><span class="gb-acts">${acts}</span>`;
+    const state = goal.standing && goal.status === "active" ? words.barStanding : words.bar[goal.status];
+    this.element.innerHTML = `<span class="gb-mark" aria-hidden="true">${glyph("goal", 16)}</span><span class="gb-state">${escape(state)}</span><span class="gb-text" title="${escape(goal.objective)}">${escape(goal.objective)}</span><span class="gb-when"${why}>${escape(when)}</span><span class="gb-acts">${acts}</span>`;
     if (goal.status === "active") this.tick = window.setTimeout(() => this.draw(), TICK_MS);
   }
 

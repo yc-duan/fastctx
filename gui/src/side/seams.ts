@@ -6,7 +6,7 @@
 import type { PageSeams, PlanShown } from "../plan/panel";
 import type { PlanWords } from "../plan/words";
 import type { Address } from "../world/wire";
-import type { CollabNode, GoalShown } from "./types";
+import type { CollabNode, GoalShown, PastGoal } from "./types";
 import type { SideWords } from "./words";
 
 /** A conversation opened beside another, in a tab of its side. */
@@ -43,7 +43,9 @@ export interface SideSeams {
     /** Sets the goal or its words anew, opening one done again. `seen` is
      *  the version the user began from; each resolves false when the goal
      *  changed elsewhere first. */
-    set(objective: string, seen?: number): Promise<boolean>;
+    set(objective: string, seen?: number, standing?: boolean): Promise<boolean>;
+    /** The conversation's earlier goals, oldest first. */
+    past(): Promise<PastGoal[]>;
     pause(seen?: number): Promise<boolean>;
     resume(seen?: number): Promise<boolean>;
     clear(seen?: number): Promise<boolean>;

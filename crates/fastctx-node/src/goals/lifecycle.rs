@@ -304,6 +304,7 @@ pub(crate) fn keeps_books(node: &Node, id: &ResidentId) -> Result<bool, Failure>
 pub(crate) async fn delete(node: &Arc<Node>, id: &ResidentId) -> Result<(), Failure> {
     let Some(account) = scope::pinned(node, id)? else { return Ok(()) };
     let resident = Address { machine: node.machine(), resident: id.clone() };
+    super::past::forget(node, &account, &resident).await?;
     let current = operations::read(node, &resident, &account).await?;
     if current.goal.is_none() && current.version.is_some() {
         super::archive::for_resident(node, &account, id).await?;

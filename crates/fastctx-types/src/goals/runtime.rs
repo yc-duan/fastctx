@@ -16,6 +16,9 @@ pub struct Runtime {
     pub pending: Option<Work>,
     pub retry: Option<Retry>,
     pub advice_sent: u8,
+    /// Stops in a row of a standing goal with nothing left to wake it.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub unwoken: u8,
     pub last_review: Option<Review>,
     pub reviewed_through: Option<Timestamp>,
     /// The accepted review whose evidence fingerprints define the next delta.
@@ -111,4 +114,8 @@ pub enum Verdict {
     Sound { reason: String },
     Advice { looked: String, saw: String, thinks: String },
     Failed { reason: String },
+}
+
+fn is_zero(count: &u8) -> bool {
+    *count == 0
 }

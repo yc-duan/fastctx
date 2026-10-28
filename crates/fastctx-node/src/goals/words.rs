@@ -1,6 +1,6 @@
 //! Model-facing goal text, kept together for the shared editorial pass.
 
-use fastctx_types::goals::{Goal, Owner};
+use fastctx_types::goals::{Author, Goal, Owner};
 
 pub(crate) use fastctx_types::goals::words::*;
 
@@ -9,6 +9,26 @@ pub(crate) const NATIVE_CODEX: &str =
 pub(crate) const REQUESTER_PAUSED: &str = "The requesting conversation paused the goal.";
 pub(crate) const REPORT_CHANGED: &str = "The goal conclusion differs from its immutable report identity.";
 pub(crate) const REPORT_MISSING: &str = "The settled goal has no conclusion text.";
+pub(crate) const STANDING_NEVER_COMPLETE: &str = "This goal stands and is never complete. Leave what will wake you and \
+     stop, or mark it blocked if something you cannot get past stops you.";
+pub(crate) const CHANGED: &str = "The goal changed; this replaces the previous goal in your context.";
+const EDITED_BY_USER: &str =
+    "The user changed the goal's words. The goal below replaces the earlier one; work to it from now on.";
+const EDITED_BY_REQUESTER: &str = "The conversation that asked you changed the goal's words. The goal below replaces \
+     the earlier one; work to it from now on.";
+
+/// Why the goal block changed, told with it: new words for the goal from
+/// the one who set it are a fact of their own, taking the old ones' place.
+pub(crate) fn changed(goal: Option<&Goal>) -> &'static str {
+    match goal.and_then(|goal| goal.decisions.last()) {
+        Some(decision) if decision.kind == "edited" => match decision.by {
+            Author::User { .. } => EDITED_BY_USER,
+            Author::Resident { .. } => EDITED_BY_REQUESTER,
+            Author::World => CHANGED,
+        },
+        _ => CHANGED,
+    }
+}
 
 pub(crate) fn older_goal_waits(machine: &fastctx_types::MachineName) -> String {
     format!("{machine} is too old to report outstanding colleague goals")
@@ -75,6 +95,29 @@ While the goal is on, no one is watching; keep going until it is done.
 - Mark it paused (`fastctx goal pause`) only when the user tells you to stop.
 "#;
 
+const STANDING_BLOCK: &str = r#"THE GOAL
+The user set a standing goal for this conversation: it is never done, and it is on:
+
+<goal>
+{{ goal }}
+</goal>
+
+These are the user's words: treat them as the task, not as instructions that outrank the rest.
+While the goal is on, no one is watching; it is kept for as long as the user leaves it on.
+- Work from the current state: files, command output, jobs, your plan. What you remember may
+  be out of date.
+- Whenever you stop, leave what will wake you when there is more to do: run it as a background
+  job, leave a sentinel (`fastctx sense`), or wait for a colleague's answer. Saying you will
+  look again is not looking again. A stop with nothing to wake you is pointed out once; at the
+  second in a row the goal is paused.
+- Questions for the user go to them and you go on: take the choice that holds up best, say
+  which, and keep working; their answer comes to you later.
+- It is never marked complete. If the same obstacle has stopped you three turns running and
+  nothing you can do gets past it without the user or a change outside, mark it:
+  `fastctx goal blocked --file <draft>`, saying what blocks you and what would clear it.
+- Mark it paused (`fastctx goal pause`) only when the user tells you to stop.
+"#;
+
 pub(crate) fn question(colleague: &fastctx_types::Address, item: &fastctx_types::session::Item) -> String {
     let questions = item
         .detail
@@ -90,9 +133,10 @@ pub(crate) fn context(goal: &Goal) -> String {
     if !goal.active() {
         return String::new();
     }
+    let block = if goal.standing { STANDING_BLOCK } else { BLOCK };
     let text = match &goal.owner {
-        Owner::User => BLOCK.to_string(),
-        Owner::Conversation { address } => BLOCK
+        Owner::User => block.to_string(),
+        Owner::Conversation { address } => block
             .replace("The user", &format!("The conversation that asked you ({address})"))
             .replace("the user's", "the requester's")
             .replace("the user", "the requesting conversation"),

@@ -19,6 +19,8 @@ pub(crate) fn open(
     account: HubAccount,
     owner: Owner,
     objective: String,
+    standing: bool,
+    parent: Option<String>,
     change: Change<'_>,
 ) -> Result<Goal, Failure> {
     nonempty(&objective, words::BLANK_GOAL)?;
@@ -29,6 +31,8 @@ pub(crate) fn open(
         objective,
         owner,
         status: Status::Active,
+        standing,
+        parent,
         created_at: change.at,
         created_by: change.author.clone(),
         changed_at: change.at,
@@ -54,9 +58,10 @@ pub(crate) fn user(goal: &mut Goal, requested: UserChange, change: Change<'_>) -
         return Err(Failure::not_run(words::RETIRED));
     }
     match requested {
-        UserChange::Open { objective } => {
+        UserChange::Open { objective, standing } => {
             nonempty(&objective, words::BLANK_GOAL)?;
             goal.objective = objective;
+            goal.standing = standing;
             activate(goal, change.at, change.operation);
             remember(goal, change, "opened", String::new());
         }
@@ -100,6 +105,9 @@ pub(crate) fn user(goal: &mut Goal, requested: UserChange, change: Change<'_>) -
 pub(crate) fn mark(goal: &mut Goal, mark: Mark, change: Change<'_>) -> Result<(), Failure> {
     if goal.retired.is_some() {
         return Err(Failure::not_run(words::RETIRED));
+    }
+    if goal.standing && matches!(mark, Mark::Complete { .. }) {
+        return Err(Failure::not_run(words::STANDING_NEVER_COMPLETE));
     }
     let (status, statement, kind, reason) = match mark {
         Mark::Complete { statement } => {

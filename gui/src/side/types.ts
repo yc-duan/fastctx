@@ -7,8 +7,9 @@ export type GoalStatus = "active" | "paused" | "blocked" | "complete";
 /** Who put a goal on pause: the user, the agent at the user's word, the
  *  World when the login's quota ran out, or the World stopping it for the
  *  user to decide: the goal's sentinel found a stop sound, no sentinel could
- *  look, or the assistance it ran under ended. */
-export type PausedBy = "user" | "agent" | "quota" | "world";
+ *  look, or the assistance it ran under ended; `unwoken`, a standing goal
+ *  that twice in a row stopped with nothing left to wake it. */
+export type PausedBy = "user" | "agent" | "quota" | "world" | "unwoken";
 
 export interface SentinelLook {
   /** When it looked, in milliseconds since the epoch. */
@@ -35,6 +36,21 @@ export interface GoalShown {
   /** The agent's account of it done or blocked, as Markdown. */
   statement?: string | null;
   sentinel?: SentinelLook | null;
+  id?: string;
+  /** Never done: kept going, waking on what it leaves to wake it. */
+  standing?: boolean;
+}
+
+/** A goal no longer current: done, or put down when it was cleared or
+ *  another was set after it. Moments in milliseconds since the epoch. */
+export interface PastGoal {
+  id: string;
+  objective: string;
+  done: boolean;
+  standing: boolean;
+  created: number;
+  closed: number;
+  statement: string | null;
 }
 
 /** How one stands; `unknown` where only its start is known, and it may
@@ -52,6 +68,8 @@ export interface CollabNode {
   state: NodeState;
   /** A colleague's own goal, which it works at until it hands back. */
   goal?: GoalStatus | null;
+  /** The asker's goal the colleague's goal branched from. */
+  branchOf?: string | null;
   /** How long it has worked, in milliseconds. */
   took: number;
   steps: number | null;

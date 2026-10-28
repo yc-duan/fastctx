@@ -6,17 +6,15 @@ use std::sync::{Arc, Weak};
 
 use fastctx_net::link::Link;
 use fastctx_net::link::account_records::RecordWatch;
-use fastctx_types::account_records::{Request, Response, Watched};
-use fastctx_types::access::HubAccount;
-use fastctx_types::ipc::Failure;
 use fastctx_types::ResidentId;
+use fastctx_types::access::HubAccount;
+use fastctx_types::account_records::{Request, Response, Watched};
+use fastctx_types::ipc::Failure;
 use serde_json::Value;
 
 use super::context::Context;
 use super::records::{Changed, Changes, Exchanged, Record, Records, Reply};
 use crate::Node;
-
-const GOAL_CONTEXT_CHANGED: &str = "The goal changed; this replaces the previous goal in your context.";
 
 /// Account records reached through this machine's link to the account's hub.
 struct AccountRecords {
@@ -129,10 +127,10 @@ impl Context for NamedContext {
         true
     }
 
-    fn set<'a>(&'a self, resident: &'a ResidentId, name: &'a str, text: &'a str) -> Reply<'a, ()> {
+    fn set<'a>(&'a self, resident: &'a ResidentId, name: &'a str, text: &'a str, fact: &'a str) -> Reply<'a, ()> {
         Box::pin(async move {
             let node = self.node.upgrade().ok_or_else(|| Failure::new("the node has gone"))?;
-            let change = crate::context::Change { by: None, version: "", fact: GOAL_CONTEXT_CHANGED, full: true };
+            let change = crate::context::Change { by: None, version: "", fact, full: true };
             // An archived conversation still has its goal block taken down.
             let result = if text.is_empty() {
                 crate::context::clear(&node, resident, name, change)
@@ -153,4 +151,3 @@ pub(crate) fn connected(node: Weak<Node>) -> super::Services {
         ..Default::default()
     }
 }
-

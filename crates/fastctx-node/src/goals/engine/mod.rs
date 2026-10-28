@@ -232,7 +232,7 @@ async fn commit(node: &Arc<Node>, view: &View, mut decision: policy::Decision) -
     super::recovery::schedule(node, resident);
     match operations::finish(node, &mut intent).await? {
         Updated::Goal { .. } => Ok(()),
-        Updated::History { .. } => Err(Failure::new("a goal mutation returned history")),
+        Updated::History { .. } | Updated::Past { .. } => Err(Failure::new("a goal mutation returned history")),
         Updated::Conflict { .. } => {
             node.goals.changed.send_modify(|revision| *revision = revision.wrapping_add(1));
             Ok(())

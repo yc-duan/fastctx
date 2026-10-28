@@ -129,9 +129,11 @@ impl RemoteCall {
             Self::Stop { .. } | Self::TurnInterrupted { .. } | Self::StopJob { .. } | Self::StopOn { .. } => {
                 Contract { pool: Pool::Stop, ..Contract::CONTROL }
             }
-            Self::Goal { request: crate::goals::Request::Read | crate::goals::Request::History { .. }, .. } => {
-                Contract::QUERY
-            }
+            Self::Goal {
+                request:
+                    crate::goals::Request::Read | crate::goals::Request::History { .. } | crate::goals::Request::Past,
+                ..
+            } => Contract::QUERY,
             Self::GoalCommand { request: crate::goals::AgentRequest::Read, .. } => Contract::QUERY,
             Self::Goal { .. } | Self::GoalCommand { .. } => Contract::CHANGE,
             Self::SentinelControl {

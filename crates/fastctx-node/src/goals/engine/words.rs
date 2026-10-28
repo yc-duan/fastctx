@@ -11,6 +11,10 @@ pub(super) const CONTEXT_AGAIN: &str = "The first turn after compaction could no
 pub(super) const IDLE: &str =
     "The turn ended with no verified work to wake it; checking ten seconds of continuous idle.";
 pub(super) const WAITING: &str = "Waiting on work that will wake this conversation.";
+pub(super) const STANDING_REMIND: &str = "The goal stands, and this stop leaves nothing to wake you. Leave what will: \
+     a background job, a sentinel (`fastctx sense`), or a colleague's answer. If the next stop leaves nothing \
+     either, the goal is paused.";
+pub(super) const STANDING_UNWOKEN: &str = "The standing goal stopped twice in a row with nothing left to wake it.";
 pub(super) const WAITING_CHANGED: &str = "The colleague's current goal changed what this conversation is waiting for.";
 pub(super) const REVIEW_EXHAUSTED: &str = "Two consecutive sentinel suggestions were delivered; this stop is accepted.";
 pub(super) const REVIEW_FAILED: &str = "The goal's sentinel could not judge this stop after three attempts.";
@@ -30,7 +34,9 @@ pub(super) fn stopped(stop: &StopReason) -> String {
             value.as_str().map_or_else(|| name.clone(), str::to_owned)
         }
         Some(category) => category.to_string(),
-        None => serde_json::to_value(stop.kind).ok().and_then(|kind| kind.as_str().map(str::to_owned)).unwrap_or_default(),
+        None => {
+            serde_json::to_value(stop.kind).ok().and_then(|kind| kind.as_str().map(str::to_owned)).unwrap_or_default()
+        }
     };
     match stop.message.as_deref().map(str::trim).filter(|message| !message.is_empty()) {
         Some(message) => format!("The previous turn stopped with an error ({category}). The host said:\n{message}"),

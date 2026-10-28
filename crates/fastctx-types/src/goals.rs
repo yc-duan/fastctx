@@ -89,6 +89,14 @@ pub struct Goal {
     pub objective: String,
     pub owner: Owner,
     pub status: Status,
+    /// A standing goal never completes: it is kept going, waking on what it
+    /// leaves to wake it (`world-goal.md`).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub standing: bool,
+    /// For a colleague's goal, the goal of the conversation that asked it,
+    /// as it was when it asked.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent: Option<String>,
     pub created_at: Timestamp,
     pub created_by: Author,
     pub changed_at: Timestamp,
@@ -157,11 +165,51 @@ pub struct Pending {
     pub at: Timestamp,
 }
 
+/// A goal no longer current: done, or put down when the user cleared it or
+/// set another (`world-goal.md`, 目标的历史).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PastGoal {
+    pub id: String,
+    pub objective: String,
+    pub outcome: PastOutcome,
+    pub created_at: Timestamp,
+    pub closed_at: Timestamp,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub statement: Option<String>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub standing: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PastOutcome {
+    Complete,
+    Dropped,
+}
+
+/// The body of the `goal_past` account record, keyed as the goal's: the
+/// conversation's earlier goals, oldest first, the latest few kept.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GoalPast {
+    /// The conversation whose goals these were.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resident: Option<Address>,
+    pub goals: Vec<PastGoal>,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "change", rename_all = "snake_case")]
 pub enum UserChange {
-    Open { objective: String },
-    Edit { objective: String },
+    Open {
+        objective: String,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        standing: bool,
+    },
+    Edit {
+        objective: String,
+    },
     Pause,
     Resume,
     Clear,
@@ -179,9 +227,20 @@ pub enum Mark {
 #[serde(tag = "request", rename_all = "snake_case")]
 pub enum Request {
     Read,
-    History { page: Option<String> },
-    Change { operation: String, expected: Option<u64>, change: UserChange },
-    Mark { operation: String, mark: Mark },
+    History {
+        page: Option<String>,
+    },
+    /// The conversation's earlier goals.
+    Past,
+    Change {
+        operation: String,
+        expected: Option<u64>,
+        change: UserChange,
+    },
+    Mark {
+        operation: String,
+        mark: Mark,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -189,6 +248,7 @@ pub enum Request {
 pub enum Updated {
     Goal { view: Box<View> },
     History { page: Option<Box<HistoryPage>> },
+    Past { past: GoalPast },
     Conflict { current: Option<u64> },
 }
 

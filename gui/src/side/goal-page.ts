@@ -3,23 +3,30 @@
 // and said in a word, with how long it has been worked at or why it waits;
 // the user's words in a field that is edited where it stands, saved as the
 // goal's next version; the agent's account of it done or blocked; and what
-// the goal's sentinel last made of a stop. With no goal, the same field
-// sets one.
+// the goal's sentinel last made of a stop; and the goals it had before.
+// With no goal, or one done, the same field sets a new one, standing or
+// not.
 
 import { escape, render } from "../conversation/prose";
-import { workedNow } from "./goal-bar";
+import { checkBox } from "../plan/render";
+import { stateWord, workedNow } from "./goal-bar";
+import { drawPast, pastHtml } from "./goal-past";
 import { goalMark } from "./marks";
 import type { SidePage } from "./pane";
-import type { GoalShown } from "./types";
+import type { CollabNode, GoalShown, PastGoal } from "./types";
 import type { GoalWords } from "./words";
 
 export interface GoalPageActs {
-  /** A goal set, or its words changed, from the version the edit began at;
-   *  resolves whether it went through. */
-  save(objective: string, seen: number | undefined): Promise<boolean>;
+  /** A goal set, standing or not, or its words changed, from the version
+   *  the edit began at; resolves whether it went through. */
+  save(objective: string, seen: number | undefined, standing: boolean): Promise<boolean>;
   pause(): void;
   resume(): void;
   clear(): void;
+  /** The conversation's earlier goals. */
+  past(): Promise<PastGoal[]>;
+  /** A colleague, opened beside the conversation. */
+  open(node: CollabNode): void;
 }
 
 export class GoalPage implements SidePage {
@@ -29,6 +36,13 @@ export class GoalPage implements SidePage {
   private kept = "";
   /** The version an edit under way began at. */
   private editFrom: number | undefined;
+  /** Whether a goal about to be set stands. */
+  private standing = false;
+  private past: PastGoal[] = [];
+  private team: CollabNode[] = [];
+  /** The goal the earlier ones were last asked after, to ask again once
+   *  it is replaced or cleared. */
+  private pastAfter: string | null | undefined;
 
   constructor(
     private readonly words: GoalWords,
@@ -42,7 +56,21 @@ export class GoalPage implements SidePage {
       else if (act === "resume") this.acts.resume();
       else if (act === "clear") this.acts.clear();
       else if (act === "save") this.save();
+      else if (act === "standing") this.toggleStanding();
+      const target = event.target as HTMLElement;
+      const opened = target.closest<HTMLButtonElement>("button.gh-goal");
+      if (opened) {
+        const said = opened.nextElementSibling as HTMLElement | null;
+        const open = opened.getAttribute("aria-expanded") !== "true";
+        opened.setAttribute("aria-expanded", String(open));
+        if (said) said.hidden = !open;
+        this.drawInk();
+      }
+      const branch = target.closest<HTMLElement>(".gh-branch")?.dataset.node;
+      const node = branch ? this.team.find((one) => one.id === branch) : undefined;
+      if (node) this.acts.open(node);
     });
+    new ResizeObserver(() => this.drawInk()).observe(this.element);
     this.element.addEventListener("input", (event) => {
       const field = event.target as HTMLTextAreaElement;
       if (!field.classList.contains("gp-field")) return;
@@ -65,6 +93,7 @@ export class GoalPage implements SidePage {
     // An edit under way is not swept away by news of the goal.
     const editing = field !== null && document.activeElement === field && field.value.trim() !== this.kept.trim();
     this.goal = goal;
+    if ((goal?.id ?? null) !== this.pastAfter) this.askPast();
     if (editing) return this.drawState();
     this.draw();
   }
@@ -73,6 +102,50 @@ export class GoalPage implements SidePage {
     const field = this.element.querySelector<HTMLTextAreaElement>(".gp-field");
     if (field) this.fit(field);
     this.drawMark();
+    this.askPast();
+  }
+
+  /** The colleagues the conversation asked, some under its earlier goals. */
+  showTeam(nodes: CollabNode[]): void {
+    const team = nodes.filter((node) => node.kind === "colleague" && node.branchOf);
+    const key = (list: CollabNode[]) => JSON.stringify(list.map((node) => [node.id, node.branchOf, node.goal, node.task]));
+    if (key(team) === key(this.team)) return;
+    this.team = team;
+    this.drawPast();
+  }
+
+  private askPast(): void {
+    const after = this.goal?.id ?? null;
+    this.pastAfter = after;
+    this.acts.past().then(
+      (past) => {
+        if (this.pastAfter !== after) return;
+        this.past = past.filter((one) => one.id !== after);
+        this.drawPast();
+      },
+      (error: unknown) => console.error("the earlier goals could not be read", error),
+    );
+  }
+
+  /** The earlier goals, in their place at the foot of the page. */
+  private drawPast(): void {
+    const slot = this.element.querySelector<HTMLElement>(".gp-past-slot");
+    if (!slot) return;
+    slot.innerHTML = pastHtml(this.past, this.team, this.words, Date.now());
+    requestAnimationFrame(() => this.drawInk());
+  }
+
+  private drawInk(): void {
+    const slot = this.element.querySelector<HTMLElement>(".gp-past-slot");
+    if (slot?.firstElementChild) drawPast(slot);
+  }
+
+  private toggleStanding(): void {
+    this.standing = !this.standing;
+    const toggle = this.element.querySelector<HTMLElement>(".gp-standing");
+    if (!toggle) return;
+    toggle.setAttribute("aria-pressed", String(this.standing));
+    toggle.querySelector(".gp-standing-box")!.innerHTML = checkBox(this.standing, "goal-standing");
   }
 
   private draw(): void {
@@ -85,7 +158,14 @@ export class GoalPage implements SidePage {
         ? `<section class="gp-part"><h2 class="gp-label">${escape(goal.status === "complete" ? words.done : words.blocked)}</h2><div class="prose gp-statement">${render(goal.statement)}</div></section>`
         : "";
     const sentinel = goal?.sentinel ? this.sentinel(goal.sentinel) : "";
-    this.element.innerHTML = `${goal ? '<div class="gp-state"></div>' : ""}<div class="gp-edit"><textarea class="gp-field" rows="2" spellcheck="false" placeholder="${escape(words.ask)}" aria-label="${escape(words.ask)}">${escape(this.kept)}</textarea><div class="gp-save" hidden><button class="gp-main" type="button" data-act="save">${escape(goal ? words.save : words.start)}</button></div></div>${statement}${sentinel}`;
+    // Words for no goal, or for one done, set a new one: it may stand.
+    const fresh = !goal || goal.status === "complete";
+    this.standing = false;
+    const standing = fresh
+      ? `<button class="gp-standing" type="button" data-act="standing" aria-pressed="false" title="${escape(words.standingTip)}"><span class="gp-standing-box" aria-hidden="true">${checkBox(false, "goal-standing")}</span><span>${escape(words.standing)}</span></button>`
+      : "";
+    this.element.innerHTML = `${goal ? '<div class="gp-state"></div>' : ""}<div class="gp-edit"><textarea class="gp-field" rows="2" spellcheck="false" placeholder="${escape(words.ask)}" aria-label="${escape(words.ask)}">${escape(this.kept)}</textarea><div class="gp-save" hidden>${standing}<button class="gp-main" type="button" data-act="save">${escape(fresh ? words.start : words.save)}</button></div></div>${statement}${sentinel}<div class="gp-past-slot"></div>`;
+    this.drawPast();
     this.drawState();
     const field = this.element.querySelector<HTMLTextAreaElement>(".gp-field")!;
     requestAnimationFrame(() => this.fit(field));
@@ -104,9 +184,10 @@ export class GoalPage implements SidePage {
         : words.worked(workedNow(goal, now));
     // A goal done goes on where the user finds it not done.
     const turn = goal.status === "active" ? this.act("pause", words.pause) : this.act("resume", words.resume);
-    const why = goal.status === "paused" && goal.paused?.reason ? ` title="${escape(goal.paused.reason)}"` : "";
+    const reason = goal.paused?.by === "unwoken" ? words.unwokenWhy : goal.paused?.reason;
+    const why = goal.status === "paused" && reason ? ` title="${escape(reason)}"` : "";
     line.dataset.status = goal.status;
-    line.innerHTML = `<span class="gp-mark" aria-hidden="true"></span><span class="gp-word">${escape(words.states[goal.status])}</span><span class="gp-when"${why}>${escape(when)}</span><span class="gp-acts">${turn}${this.act("clear", words.clear)}</span>`;
+    line.innerHTML = `<span class="gp-mark" aria-hidden="true"></span><span class="gp-word">${escape(stateWord(goal, words))}</span><span class="gp-when"${why}>${escape(when)}</span><span class="gp-acts">${turn}${this.act("clear", words.clear)}</span>`;
     this.drawMark();
   }
 
@@ -143,10 +224,11 @@ export class GoalPage implements SidePage {
     const text = field?.value.trim() ?? "";
     if (!text || text === this.kept.trim()) return;
     const seen = this.editFrom ?? this.goal?.version;
+    const fresh = !this.goal || this.goal.status === "complete";
     this.kept = text;
     this.element.querySelector<HTMLElement>(".gp-save")!.hidden = true;
     field?.blur();
-    void this.acts.save(text, seen).then((went) => {
+    void this.acts.save(text, seen, fresh && this.standing).then((went) => {
       if (went) return;
       // Not taken: the user's words stay, to save again over what is there now.
       const now = this.element.querySelector<HTMLTextAreaElement>(".gp-field");

@@ -35,7 +35,9 @@ pub async fn goal_read(
         .map_err(|error| error.to_string())?;
     match updated {
         Updated::Goal { view } => Ok(*view),
-        Updated::Conflict { .. } | Updated::History { .. } => Err(fastctx_types::goals::words::INVALID_READ.into()),
+        Updated::Conflict { .. } | Updated::History { .. } | Updated::Past { .. } => {
+            Err(fastctx_types::goals::words::INVALID_READ.into())
+        }
     }
 }
 
@@ -185,6 +187,25 @@ async fn follow(
                 }
             }
         }
+    }
+}
+
+/// The conversation's earlier goals, oldest first.
+#[fastctx_gui_command::command]
+pub async fn goal_past(
+    shell: tauri::State<'_, Shell>,
+    resident_id: String,
+    machine_name: Option<String>,
+    account: Option<HubAccount>,
+) -> Result<fastctx_types::goals::GoalPast, String> {
+    match shell
+        .world()
+        .goal(resident(resident_id)?, machine(machine_name)?, account, Request::Past)
+        .await
+        .map_err(|error| error.to_string())?
+    {
+        Updated::Past { past } => Ok(past),
+        _ => Err(fastctx_types::goals::words::INVALID_READ.into()),
     }
 }
 

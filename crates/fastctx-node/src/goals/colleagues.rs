@@ -38,7 +38,14 @@ pub(crate) async fn summary(
             Status::Paused => GoalState::Paused,
         };
         let elapsed = (jiff::Timestamp::now().as_millisecond() - goal.created_at.as_millisecond()).max(0) as u64;
-        GoalSummary { state, started_at: goal.created_at, elapsed_ms: elapsed }
+        GoalSummary {
+            state,
+            started_at: goal.created_at,
+            elapsed_ms: elapsed,
+            id: Some(goal.id),
+            parent: goal.parent,
+            objective: Some(goal.objective),
+        }
     }))
 }
 
@@ -80,7 +87,7 @@ pub(crate) async fn open(
         Request::Change {
             operation,
             expected: view.version,
-            change: UserChange::Open { objective: objective.to_string() },
+            change: UserChange::Open { objective: objective.to_string(), standing: false },
         },
     )
     .await?

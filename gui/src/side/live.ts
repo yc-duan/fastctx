@@ -12,13 +12,13 @@ import type { PlanShown, PageSeams } from "../plan/panel";
 import type { PlanWords } from "../plan/words";
 import { unwatch, type WorldNow } from "../world/bridge";
 import { planRead, planWrite, watchPlan, type PlanAccount, type PlanPage } from "../world/plan";
-import { goalShown, goalUpdate, watchGoal, type GoalChange, type GoalView } from "../world/goal";
+import { goalPast, goalShown, goalUpdate, watchGoal, type GoalChange, type GoalView } from "../world/goal";
 import { collaborationTree, type Branch, type NativeAgent, type Tree } from "../world/collab-tree";
 import type { Address } from "../world/wire";
 import type { GoalStatus } from "./types";
-import { goalSamples, teamSample } from "./samples";
+import { goalSamples, pastSamples, teamSample } from "./samples";
 import type { OpenedTalk, SideSeams } from "./seams";
-import type { CollabNode, GoalShown, NodeState } from "./types";
+import type { CollabNode, GoalShown, NodeState, PastGoal } from "./types";
 import type { SideWords } from "./words";
 import { sentinelList, type SentinelSummary } from "../world/sentinels";
 
@@ -50,6 +50,7 @@ function branchNode(branch: Branch, agent: "claude" | "codex", store: Store, now
     state,
     why: why || null,
     goal: treeGoal(branch.goal),
+    branchOf: "Ok" in branch.goal ? (branch.goal.Ok?.parent ?? null) : null,
     took: Number.isFinite(born) ? Math.max(0, (busy ? now : Number.isFinite(since) ? since : now) - born) : 0,
     steps: null,
     machine: branch.address.machine,
@@ -259,12 +260,14 @@ export function liveSide(options: LiveSide): SideSeams {
           if (watching != null) void unwatch(watching);
         };
       },
-      // New words for a goal done open it again; for any other, they replace its words.
-      set: (objective, version) => {
+      // Words for a goal done set a new one; for any other, they replace its words.
+      set: (objective, version, standing) => {
         const goal = current?.goal;
-        const change: GoalChange = goal && goal.status !== "complete" ? { change: "edit", objective } : { change: "open", objective };
+        const change: GoalChange =
+          goal && goal.status !== "complete" ? { change: "edit", objective } : { change: "open", objective, ...(standing ? { standing: true } : {}) };
         return changeGoal(owner, seen(version), change);
       },
+      past: () => goalPast(owner),
       pause: (version) => changeGoal(owner, seen(version), { change: "pause" }),
       resume: (version) => changeGoal(owner, seen(version), { change: "resume" }),
       clear: (version) => changeGoal(owner, seen(version), { change: "clear" }),
@@ -320,6 +323,11 @@ export function specimenSide(
   side: { self: Address; open(address: Address): OpenedTalk | null; go(address: Address): void; goal?: string | null; bare?: boolean },
 ): SideSeams {
   let goal: GoalShown | null = side.goal === "none" ? null : (goalSamples(english, Date.now())[side.goal ?? "active"] ?? null);
+  const past: PastGoal[] = pastSamples(english, Date.now());
+  // A goal done or cleared joins the earlier ones, as the World keeps it.
+  const retire = () => {
+    if (goal) past.push({ id: goal.id ?? `goal-${past.length}`, objective: goal.objective, done: goal.status === "complete", standing: goal.standing === true, created: goal.since - goal.worked, closed: Date.now(), statement: goal.statement ?? null });
+  };
   const shows = new Set<(goal: GoalShown | null) => void>();
   const tell = (next: GoalShown | null) => {
     goal = next;
@@ -344,12 +352,16 @@ export function specimenSide(
         show(goal);
         return () => shows.delete(show);
       },
-      set: async (objective) => {
+      set: async (objective, _seen, standing) => {
         await wait();
-        const reopened = goal?.status === "complete" ? { status: "active" as const, since: Date.now() } : {};
-        tell(goal ? { ...goal, objective, version: goal.version + 1, ...reopened } : { objective, version: 1, status: "active", worked: 0, since: Date.now() });
+        if (goal && goal.status !== "complete") tell({ ...goal, objective, version: goal.version + 1 });
+        else {
+          retire();
+          tell({ objective, version: (goal?.version ?? 0) + 1, status: "active", worked: 0, since: Date.now(), id: `goal-${Date.now()}`, ...(standing ? { standing: true } : {}) });
+        }
         return true;
       },
+      past: async () => past.map((one) => ({ ...one })),
       pause: async () => {
         await wait();
         if (goal) tell({ ...goal, status: "paused", worked: goal.worked + Date.now() - goal.since, since: Date.now(), paused: { by: "user", until: null } });
@@ -362,6 +374,7 @@ export function specimenSide(
       },
       clear: async () => {
         await wait();
+        retire();
         tell(null);
         return true;
       },

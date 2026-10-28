@@ -20,7 +20,7 @@ import { Sketch } from "../pen/sketch";
 import type { Stop } from "../plan/flow";
 import type { PlanShown } from "../plan/panel";
 import { planShape } from "../plan/shape";
-import { workedNow } from "./goal-bar";
+import { stateWord, workedNow } from "./goal-bar";
 import { goalMark } from "./marks";
 import type { PaneContent, SidePage } from "./pane";
 import type { CollabNode, GoalShown } from "./types";
@@ -131,7 +131,7 @@ export class Overview implements PaneContent {
     }
     const now = Date.now();
     const when = goal.status === "paused" && goal.paused ? words.paused(goal.paused.by, goal.paused.until === null ? null : words.at(goal.paused.until, now)) : words.worked(workedNow(goal, now));
-    body.innerHTML = `<button class="ov-row ov-goal-now" type="button" data-open="goal" data-status="${goal.status}" title="${escape(goal.objective)}"><span class="ov-mark"></span><span class="ov-lines"><span class="ov-words">${escape(goal.objective)}</span><span class="ov-meta"><span>${escape(words.states[goal.status])}</span><span>${escape(when)}</span></span></span></button>`;
+    body.innerHTML = `<button class="ov-row ov-goal-now" type="button" data-open="goal" data-status="${goal.status}" title="${escape(goal.objective)}"><span class="ov-mark"></span><span class="ov-lines"><span class="ov-words">${escape(goal.objective)}</span><span class="ov-meta"><span>${escape(stateWord(goal, words))}</span><span>${escape(when)}</span></span></span></button>`;
     body.querySelector(".ov-mark")!.innerHTML = goalMark(goal.status, `ov-${goal.version}-${goal.status}`, 16, "ov-goal-svg");
   }
 

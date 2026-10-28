@@ -4,7 +4,7 @@
 
 import { invoke } from "@tauri-apps/api/core";
 import { observe } from "./delivery";
-import type { GoalShown, GoalStatus, PausedBy, SentinelLook } from "../side/types";
+import type { GoalShown, GoalStatus, PastGoal, PausedBy, SentinelLook } from "../side/types";
 import type { ResidentId, Timestamp } from "./wire";
 
 type StopKind = "user" | "claimed" | "quota" | "assistance" | "review" | "retry_exhausted" | "context";
@@ -21,7 +21,9 @@ type Verdict =
   | { verdict: "failed"; reason: string };
 
 interface GoalRecord {
+  id: string;
   objective: string;
+  standing?: boolean;
   status: GoalStatus;
   created_at: Timestamp;
   changed_at: Timestamp;
@@ -45,8 +47,25 @@ export interface GoalView {
 
 export type GoalUpdated = { result: "goal"; view: GoalView } | { result: "conflict"; current: number | null };
 
-/** A change to the goal: its words anew, or how it stands. */
-export type GoalChange = { change: "open" | "edit"; objective: string } | { change: "pause" | "resume" | "clear" };
+/** A change to the goal: a new one, standing or not; its words anew; or how it stands. */
+export type GoalChange =
+  | { change: "open"; objective: string; standing?: boolean }
+  | { change: "edit"; objective: string }
+  | { change: "pause" | "resume" | "clear" };
+
+interface PastWire {
+  id: string;
+  objective: string;
+  outcome: "complete" | "dropped";
+  created_at: Timestamp;
+  closed_at: Timestamp;
+  statement?: string | null;
+  standing?: boolean;
+}
+
+/** The World's words for a standing goal paused at its second stop in a
+ *  row with nothing left to wake it, said in the interface's own. */
+const UNWOKEN = "The standing goal stopped twice in a row with nothing left to wake it.";
 
 export type GoalPiece =
   | { kind: "snapshot"; view: GoalView }
@@ -54,6 +73,20 @@ export type GoalPiece =
 
 export function goalRead(owner: ResidentId): Promise<GoalView> {
   return invoke<GoalView>("goal_read", { residentId: owner });
+}
+
+/** The conversation's earlier goals, oldest first. */
+export async function goalPast(owner: ResidentId): Promise<PastGoal[]> {
+  const past = await invoke<{ goals: PastWire[] }>("goal_past", { residentId: owner });
+  return past.goals.map((goal) => ({
+    id: goal.id,
+    objective: goal.objective,
+    done: goal.outcome === "complete",
+    standing: goal.standing === true,
+    created: Date.parse(goal.created_at),
+    closed: Date.parse(goal.closed_at),
+    statement: goal.statement ?? null,
+  }));
 }
 
 export function goalUpdate(
@@ -73,7 +106,8 @@ export function watchGoal(owner: ResidentId, onPiece: (piece: GoalPiece) => void
 /** Which stop paused the goal, in the interface's terms: the agent pauses
  *  only at the user's word; a review or an ended assistance is the World's,
  *  left for the user to decide. */
-function pausedBy(kind: StopKind | undefined): PausedBy {
+function pausedBy(kind: StopKind | undefined, reason: string | undefined): PausedBy {
+  if (kind === "review" && reason === UNWOKEN) return "unwoken";
   if (kind === "user") return "user";
   if (kind === "quota") return "quota";
   if (kind === "review" || kind === "assistance") return "world";
@@ -112,11 +146,13 @@ export function goalShown(view: GoalView): GoalShown | null {
     paused: null,
     statement: goal.statement ?? null,
     sentinel: lookOf(goal),
+    id: goal.id,
+    ...(goal.standing ? { standing: true } : {}),
   };
   if (status === "paused") {
     const until = goal.stop?.resume_at ? Date.parse(goal.stop.resume_at) : NaN;
     shown.paused = {
-      by: pendingPause ? "agent" : pausedBy(goal.stop?.kind),
+      by: pendingPause ? "agent" : pausedBy(goal.stop?.kind, goal.stop?.reason),
       until: Number.isFinite(until) ? until : null,
       reason: view.pending?.reason ?? goal.stop?.reason ?? null,
     };

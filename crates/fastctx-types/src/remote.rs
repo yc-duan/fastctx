@@ -576,9 +576,11 @@ impl RemoteCall {
     /// check it.
     pub fn purpose(&self) -> Purpose {
         match self {
-            Self::Goal { request: crate::goals::Request::Read | crate::goals::Request::History { .. }, .. } => {
-                Purpose::Look
-            }
+            Self::Goal {
+                request:
+                    crate::goals::Request::Read | crate::goals::Request::History { .. } | crate::goals::Request::Past,
+                ..
+            } => Purpose::Look,
             Self::GoalCommand { request: crate::goals::AgentRequest::Read, .. } => Purpose::Look,
             Self::Goal { .. } | Self::GoalCommand { .. } => Purpose::Agents,
             Self::EnterProject { .. } | Self::Plan { .. } => Purpose::Echo,

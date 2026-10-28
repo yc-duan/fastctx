@@ -10,6 +10,7 @@ pub(crate) mod holding;
 mod intents;
 pub(crate) mod lifecycle;
 pub(crate) mod operations;
+pub(crate) mod past;
 pub(crate) mod questions;
 pub(crate) mod records;
 mod recovery;

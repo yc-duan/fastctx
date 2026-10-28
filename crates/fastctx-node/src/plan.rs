@@ -325,7 +325,7 @@ pub(crate) fn records_allowed(
     // A goal changes only through the goal command's restricted state entry; a
     // resident or page writing the record directly would bypass that (the goal
     // runtime's own provider reaches the record below this gate, not through it).
-    if request.kind() == crate::goals::operations::KIND
+    if [crate::goals::operations::KIND, crate::goals::past::KIND].contains(&request.kind())
         && matches!(request, Request::Write { .. } | Request::Delete { .. })
         && matches!(caller, Caller::Resident(_) | Caller::Page(_))
     {

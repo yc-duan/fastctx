@@ -54,6 +54,19 @@ export interface GoalWords {
   ask: string;
   start: string;
   save: string;
+  /** A goal that is never done, as it is set and as it stands; the bar's
+   *  name for it, and the one sentence saying what it is. */
+  standing: string;
+  barStanding: string;
+  standingTip: string;
+  /** Why a standing goal was paused: twice it stopped with nothing left to
+   *  wake it. */
+  unwokenWhy: string;
+  /** The goals the conversation had before, how each ended, and when. */
+  earlier: string;
+  outcome: { done: string; dropped: string };
+  span: (from: string, to: string) => string;
+  separator: string;
   /** The agent's account of a goal done or blocked. */
   done: string;
   blocked: string;
@@ -111,7 +124,17 @@ export const zhSide: SideWords = {
     bar: { active: "进行中的目标", paused: "已暂停", blocked: "阻碍", complete: "已完成" },
     states: { active: "进行中", paused: "已暂停", blocked: "阻碍", complete: "已完成" },
     paused: (by, until) =>
-      by === "quota" ? (until ? `额度用完，${until} 接着` : "额度用完") : by === "world" ? "停下了，等你定" : by === "agent" ? "照你的话停下" : "你停下的",
+      by === "quota"
+        ? until
+          ? `额度用完，${until} 接着`
+          : "额度用完"
+        : by === "unwoken"
+          ? "没留下叫醒它的"
+          : by === "world"
+            ? "停下了，等你定"
+            : by === "agent"
+              ? "照你的话停下"
+              : "你停下的",
     pause: "暂停",
     resume: "接着",
     clear: "清掉",
@@ -123,6 +146,14 @@ export const zhSide: SideWords = {
     ask: "要它做成什么",
     start: "设为目标",
     save: "保存",
+    standing: "一直挂着",
+    barStanding: "一直挂着的目标",
+    standingTip: "不以办成为止：每停一次，留下能叫醒它的，接着做下去",
+    unwokenWhy: "连着两次停下，都没留下能叫醒它的东西",
+    earlier: "以前的目标",
+    outcome: { done: "办成了", dropped: "放下了" },
+    span: (from, to) => `${from} 到 ${to}`,
+    separator: "，",
     done: "完成说明",
     blocked: "阻碍说明",
     sentinel: "哨兵",
@@ -191,6 +222,14 @@ export const enSide: SideWords = {
     ask: "What should it get done",
     start: "Set as goal",
     save: "Save",
+    standing: "Standing",
+    barStanding: "Standing goal",
+    standingTip: "Never done: each time it stops it leaves something to wake it, and goes on",
+    unwokenWhy: "It stopped twice in a row with nothing left to wake it",
+    earlier: "Earlier goals",
+    outcome: { done: "Done", dropped: "Put down" },
+    span: (from, to) => `${from} to ${to}`,
+    separator: ", ",
     done: "How it was done",
     blocked: "What blocks it",
     sentinel: "Sentinel",

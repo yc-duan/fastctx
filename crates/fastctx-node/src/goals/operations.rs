@@ -73,6 +73,16 @@ pub(crate) async fn call(
     if matches!(request, Request::Read) {
         return read(node, &resident, &account).await.map(|view| Updated::Goal { view: Box::new(view) });
     }
+    if matches!(request, Request::Past) {
+        // The current goal is never among the earlier ones, even when kept
+        // there just before a change that did not land.
+        let view = read(node, &resident, &account).await?;
+        let mut past = super::past::read(node, &resident, &account).await?;
+        if let Some(goal) = &view.goal {
+            past.goals.retain(|kept| kept.id != goal.id);
+        }
+        return Ok(Updated::Past { past });
+    }
     if let Request::History { page } = &request {
         let view = read(node, &resident, &account).await?;
         let history = match view.goal {
@@ -120,7 +130,7 @@ pub(crate) async fn call_held(
     }
     let operation = match &request {
         Request::Change { operation, .. } | Request::Mark { operation, .. } => operation,
-        Request::Read | Request::History { .. } => unreachable!(),
+        Request::Read | Request::History { .. } | Request::Past => unreachable!(),
     };
     if operation.is_empty() {
         return Err(Failure::not_run(fastctx_types::goals::words::NO_OPERATION));
@@ -144,9 +154,24 @@ pub(crate) async fn call_held(
             if *expected != current.version {
                 return Ok(Updated::Conflict { current: current.version });
             }
+            // A goal done, or cleared, joins the earlier goals; a new one set
+            // after it is a goal of its own (`world-goal.md`, 目标的历史).
+            let replaced = match (requested, current.goal.as_ref()) {
+                (UserChange::Clear, Some(goal)) => Some(goal.clone()),
+                (UserChange::Open { .. }, Some(goal)) if goal.status == fastctx_types::goals::Status::Complete => {
+                    Some(goal.clone())
+                }
+                _ => None,
+            };
+            if let Some(goal) = &replaced {
+                super::past::keep(node, goal, at).await?;
+                if matches!(requested, UserChange::Open { .. }) {
+                    proposed = None;
+                }
+            }
             match requested {
                 UserChange::Clear => proposed = None,
-                UserChange::Open { objective } if proposed.is_none() => {
+                UserChange::Open { objective, standing } if proposed.is_none() => {
                     let owner = node
                         .residents
                         .about(&resident.resident)
@@ -158,7 +183,21 @@ pub(crate) async fn call_held(
                             _ => None,
                         })
                         .unwrap_or(Owner::User);
-                    proposed = Some(state::open(resident.clone(), account.clone(), owner, objective.clone(), change)?);
+                    let parent = match &owner {
+                        Owner::Conversation { address } => {
+                            read(node, address, &account).await.ok().and_then(|view| view.goal).map(|goal| goal.id)
+                        }
+                        Owner::User => None,
+                    };
+                    proposed = Some(state::open(
+                        resident.clone(),
+                        account.clone(),
+                        owner,
+                        objective.clone(),
+                        *standing,
+                        parent,
+                        change,
+                    )?);
                 }
                 requested => state::user(
                     proposed.as_mut().ok_or_else(|| Failure::not_run(words::NO_GOAL))?,
@@ -176,7 +215,7 @@ pub(crate) async fn call_held(
             }
             state::mark(proposed.as_mut().ok_or_else(|| Failure::not_run(words::NO_GOAL))?, mark.clone(), change)?;
         }
-        Request::Read | Request::History { .. } => unreachable!(),
+        Request::Read | Request::History { .. } | Request::Past => unreachable!(),
     }
     if node.is_me(&resident.machine)
         && matches!(&request, Request::Change { change: UserChange::Open { .. } | UserChange::Resume, .. })
@@ -345,7 +384,7 @@ pub(crate) async fn apply(node: &Arc<Node>, resident: &ResidentId, view: &View) 
         if let Some(accepted) = accepted {
             return super::engine::timing(node, resident, &accepted);
         }
-        bounded(node.goals.context.set(resident, "goal", &text)).await?;
+        bounded(node.goals.context.set(resident, "goal", &text, words::changed(view.goal.as_ref()))).await?;
         installed = Some(text);
     }
 }
