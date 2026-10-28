@@ -263,6 +263,7 @@ fn who(now: Timestamp, scope: WhoScope) -> WorldWho {
         jobs.into_iter().partition(|job| job.machine.as_str() == "desktop");
     WorldWho {
         others: Vec::new(),
+        involved: Vec::new(),
         history: None,
         you: None,
         machine: machine("desktop"),

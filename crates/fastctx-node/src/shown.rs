@@ -31,6 +31,7 @@ pub(crate) async fn now(node: &Arc<Node>) -> Result<WorldNow, Failure> {
         machines,
         history: None,
         others: Vec::new(),
+        involved: Vec::new(),
     };
     Ok(WorldNow { here, who, nodes: nodes(node), towns, accounts: crate::world::accounts(node) })
 }

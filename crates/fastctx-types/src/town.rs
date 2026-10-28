@@ -343,6 +343,10 @@ pub struct WorldWho {
     /// accounts.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub others: Vec<WhoFor>,
+    /// The machines the asking conversation involves (`crate::focus`): named
+    /// in the head of `w` however many machines there are.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub involved: Vec<MachineName>,
 }
 
 /// A resident or a job on `machine`, by its id, that works for other

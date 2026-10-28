@@ -166,10 +166,16 @@ async fn checked(
         .chain(record.places.iter().map(|place| &place.location.machine))
         .chain(record.canon.iter().map(|canon| &canon.machine));
     if let Some(stranger) = named.into_iter().find(|machine| unknown(machine)) {
-        return Err(Failure::new(format!(
-            "there is no machine named {stranger}; the machines are {}",
-            known.iter().map(ToString::to_string).collect::<Vec<_>>().join(", ")
-        )));
+        let closest = fastctx_types::closest::names(stranger.as_str(), known.iter().map(|machine| machine.as_str()), 3);
+        return Err(Failure::new(if closest.is_empty() {
+            format!("there is no machine named {stranger}")
+        } else {
+            format!(
+                "there is no machine named {stranger}; the closest are {} ({} machines in all)",
+                closest.join(", "),
+                known.len()
+            )
+        }));
     }
     for place in &mut record.places {
         if here(&place.location.machine) {

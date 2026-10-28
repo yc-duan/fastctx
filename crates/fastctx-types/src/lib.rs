@@ -15,6 +15,7 @@ pub mod agents;
 pub mod attachments;
 pub mod authorization;
 pub mod calls;
+pub mod closest;
 pub mod collab;
 pub mod collab_prompt;
 pub mod collaboration;

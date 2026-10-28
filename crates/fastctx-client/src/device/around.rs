@@ -89,8 +89,15 @@ impl Device {
         let heard = around::ask_each(self.asked(&scope), |_| RemoteCall::Who { all, town: town.clone(), since }).await;
         let machines =
             around::answers::collect(heard).into_iter().map(|answers| answers.who(since.is_some())).collect();
-        let mut reply =
-            WorldWho { machine: self.here(), scope, machines, you: None, history: None, others: Vec::new() };
+        let mut reply = WorldWho {
+            machine: self.here(),
+            scope,
+            machines,
+            you: None,
+            history: None,
+            others: Vec::new(),
+            involved: Vec::new(),
+        };
         // This device works for the accounts it is logged in to, on each hub.
         let sessions = self.sessions();
         let logins = |session: &Session| -> Vec<AccountName> {

@@ -1098,6 +1098,14 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
                 },
             };
             let mut reply = who(node, &acting, here_too, all, town, since).await?;
+            // The machines the asking conversation involves, named in the head
+            // of `w` however many there are.
+            if let Some(address) = &you
+                && node.is_me(&address.machine)
+                && let Some((about, _)) = node.residents.about(&address.resident)
+            {
+                reply.involved = about.focus.machines.iter().map(|focused| focused.machine.name.clone()).collect();
+            }
             reply.you = you;
             Ok(Reply::Who(reply))
         }
@@ -1940,7 +1948,8 @@ async fn who(
     let heard = crate::around::ask_each(reachable, |_| RemoteCall::Who { all, town: town.clone(), since }).await;
     machines
         .extend(fastctx_net::around::answers::collect(heard).into_iter().map(|answers| answers.who(since.is_some())));
-    let mut reply = WorldWho { machine: here, scope, machines, you: None, history: None, others: Vec::new() };
+    let mut reply =
+        WorldWho { machine: here, scope, machines, you: None, history: None, others: Vec::new(), involved: Vec::new() };
     crate::who::mark_others(node, acting, &mut reply);
     if let Some(since) = since {
         reply.collect_history(since, town.clone());

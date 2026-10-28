@@ -103,6 +103,7 @@ pub fn who(
     }
     let mut who = WorldWho {
         others: Vec::new(),
+        involved: Vec::new(),
         machine: machine.name,
         scope,
         machines: vec![MachineWho::Answered { observation: None, reply: local }],

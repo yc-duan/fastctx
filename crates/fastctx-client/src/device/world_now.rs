@@ -83,6 +83,7 @@ impl Device {
             machines: self.afoot(),
             history: None,
             others: Vec::new(),
+            involved: Vec::new(),
         };
         let accounts = match Box::pin(self.call(Call::Accounts)).await? {
             (Reply::Accounts(accounts), _) => accounts,

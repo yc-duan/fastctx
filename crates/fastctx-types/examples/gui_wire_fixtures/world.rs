@@ -272,6 +272,7 @@ fn who(towns: &[TownSummary]) -> Vec<WorldWho> {
                 id: "j-abc123".into(),
                 accounts: vec!["bob".parse().unwrap()],
             }],
+            involved: Vec::new(),
         })
         .collect()
 }

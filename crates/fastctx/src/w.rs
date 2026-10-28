@@ -1,6 +1,7 @@
 //! Current activity and the facts recorded since the caller's previous turn.
 
 mod detail;
+mod head;
 mod history;
 mod render;
 mod sentinels;
