@@ -597,9 +597,9 @@ async fn converse(node: &Arc<Node>, connection: Connection) -> std::io::Result<(
                             | Call::RecordRunFailure { .. }
                     );
                     if internal {
-                        handle(node, &hello.peer, call).await
+                        handled(node, &hello.peer, call).await
                     } else {
-                        crate::gate_waits::asked_since(requested, Box::pin(handle(node, &hello.peer, call))).await
+                        crate::gate_waits::asked_since(requested, handled(node, &hello.peer, call)).await
                     }
                 }
             }
@@ -926,6 +926,16 @@ fn active_caller(node: &Node, peer: &Peer) -> Result<(), Failure> {
         }
     }
     Ok(())
+}
+
+/// `handle`, its future made in a frame of its own: an unoptimized build
+/// keeps a slot as large as that future in every frame that makes it inline.
+fn handled<'a>(
+    node: &'a Arc<Node>,
+    peer: &'a Peer,
+    call: Call,
+) -> std::pin::Pin<Box<dyn Future<Output = Result<Reply, Failure>> + Send + 'a>> {
+    Box::pin(handle(node, peer, call))
 }
 
 pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<Reply, Failure> {

@@ -461,6 +461,13 @@ impl std::fmt::Display for AlreadyServed {
 
 impl std::error::Error for AlreadyServed {}
 
+/// The stack each thread of the node's runtime gets. Its calls run deep (one
+/// that opens a conversation goes through the server, the speech, the host
+/// and the login records), and an unoptimized build gives every temporary of
+/// a function a slot of its own, so the default 2 MiB leaves a debug build
+/// without room. Only the pages a thread touches are committed.
+pub const THREAD_STACK: usize = 8 * 1024 * 1024;
+
 pub async fn run_prepared(
     fastctx_root: &Path,
     supervision: Option<handoff::Supervision>,

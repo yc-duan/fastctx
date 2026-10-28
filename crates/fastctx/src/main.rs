@@ -737,7 +737,11 @@ fn node(
         }
         None => None,
     };
-    let ran = tokio::runtime::Builder::new_multi_thread().enable_all().build()?.block_on(fastctx_node::run_prepared(
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .thread_stack_size(fastctx_node::THREAD_STACK)
+        .enable_all()
+        .build()?;
+    let ran = runtime.block_on(fastctx_node::run_prepared(
         &root,
         supervision,
         successor.as_deref(),
