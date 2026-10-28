@@ -115,7 +115,6 @@ impl Jobs {
         let registering = node.clone();
         let launched = tokio::task::spawn_blocking(move || -> Result<run::Launched, Failure> {
             let starting = crate::job_accounts::start(&registering, counted)?;
-            let _collecting = registering.disk.lock();
             let home = user_home().map_err(|error| before_start("finding the home directory", error))?;
             let mut environment =
                 world_process_environment().map_err(|error| before_start("reading the user's environment", error))?;
@@ -150,7 +149,11 @@ impl Jobs {
                 on: on.as_ref(),
                 account: account.as_ref(),
             };
-            let launched = run::launch::launch_with_io_registered(&launch, mode, input.as_deref(), |path| {
+            // Parsing starts an external bash process; unrelated conversations
+            // must remain able to publish and collect their job records.
+            let checked = launch.check()?;
+            let _collecting = registering.disk.lock();
+            let launched = checked.launch_with_io_registered(mode, input.as_deref(), |path| {
                 if let Some(dispatch) = &dispatch {
                     crate::run_stops::register(&registering, path, dispatch)?;
                 }
