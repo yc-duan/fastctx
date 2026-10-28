@@ -89,7 +89,7 @@
   mask: var(--pen-rule-1) 0 50% / 100% 100% no-repeat;
 }
 
-:is(.project-page, .journal-page) :is(ul, ol):not(.prose *) {
+.project-page :is(ul, ol):not(.prose *) {
   list-style: none;
   margin: 0;
   padding: 0;
@@ -140,7 +140,7 @@
   border-radius: var(--radius-m);
   color: inherit;
   text-decoration: none;
-  transition: background-color var(--hover) ease;
+  transition: background-color var(--hover) var(--ease);
 }
 
 .someone:hover {
@@ -169,7 +169,7 @@
   background: color-mix(in srgb, var(--pen-clay) var(--swash-strength), transparent);
   -webkit-mask: var(--pen-swash) center / 100% 100% no-repeat;
   mask: var(--pen-swash) center / 100% 100% no-repeat;
-  transition: background-color var(--hover) ease;
+  transition: background-color var(--hover) var(--ease);
 }
 
 .someone.waiting:hover {
@@ -187,7 +187,7 @@
   box-shadow: inset 0 0 0 2px var(--accent);
   transform: scale(var(--breath-scale));
   opacity: var(--breath-alpha);
-  animation: pulse var(--breath) ease-in-out infinite;
+  animation: pulse var(--breath) var(--ease-in-out) infinite;
 }
 
 .someone-body {
@@ -256,7 +256,7 @@
   transform: rotate(-90deg);
   --shown: 0;
   opacity: var(--shown);
-  transition: --shown var(--hover) ease;
+  transition: --shown var(--hover) var(--ease);
 }
 
 .someone:hover .someone-go {

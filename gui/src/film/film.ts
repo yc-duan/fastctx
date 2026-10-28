@@ -55,11 +55,13 @@ export class Film {
   private readonly onShape = () => this.load();
 
   /** `still`: only its last frame, never played; for a small picture of
-   *  the film that opens it. */
+   *  the film that opens it. `shape`: drawn in that composition whatever
+   *  the page's, as a band of a picture across a phone's page. */
   constructor(
     private readonly make: (shape: Shape) => Built,
     private readonly label: string,
     private readonly still = false,
+    private readonly shape?: Shape,
   ) {
     this.element = document.createElement("figure");
     this.element.className = "film";
@@ -78,7 +80,7 @@ export class Film {
 
   /** The reel for the page's shape, from the start. */
   private load(): void {
-    const shape: Shape = this.narrow.matches ? "tall" : "wide";
+    const shape: Shape = this.shape ?? (this.narrow.matches ? "tall" : "wide");
     this.reel = this.make(shape);
     this.loop = this.reel.duration + REST;
     this.element.dataset.shape = shape;

@@ -7,8 +7,9 @@
 
 import { loginsOf } from "../world/accounts";
 import { inShell, watchWorld, worldNow, type WorldNow } from "../world/bridge";
+import { applyChange } from "../world/change";
 import type { Address } from "../world/events";
-import type { ResidentNow, RunningJob, WhoFor, WhoReply } from "../world/world";
+import type { MachineWho, ResidentNow, RunningJob, WhoFor, WhoReply } from "../world/world";
 import { keepNetwork, shownNetwork, viewOf } from "./network";
 import { signal, type Signal } from "./signals";
 
@@ -46,8 +47,8 @@ export function createStore(specimen: () => { world: WorldNow; now: Date }): Sto
   const live = inShell();
   const world = signal<WorldNow | null>(null);
   const whole = signal<WorldNow | null>(null);
-  const read = (now: WorldNow) => {
-    written(now);
+  const read = (given: WorldNow) => {
+    const now = written(given);
     whole.set(now);
     world.set(viewOf(now, shownNetwork(now)));
   };
@@ -113,14 +114,19 @@ export function createStore(specimen: () => { world: WorldNow; now: Date }): Sto
   let broken: string | null = null;
   let failed: string | null = null;
   let pieces = 0;
+  // The World as the watch last told it: what changes next builds on it,
+  // not on a reading `refresh` made meanwhile.
+  let watched: WorldNow | null = null;
   const say = () => trouble.set(broken ?? failed);
   void watchWorld((piece) => {
     pieces += 1;
-    if (piece.kind === "world") {
+    if (piece.kind === "world" || piece.kind === "changed") {
+      if (piece.kind === "changed" && !watched) return;
+      watched = piece.kind === "world" ? piece.world : (applyChange(watched, piece.change) as WorldNow);
       broken = null;
       failed = null;
       say();
-      came(piece.world);
+      came(watched);
       return;
     }
     broken = piece.error;
@@ -253,28 +259,48 @@ export const addressOf = (r: ResidentNow): Address => ({ resident: r.about.id, m
  *  directory knows it by. */
 export const bareName = (written: string): string => written.split(".")[0]!;
 
+/** What each machine read last was written as, by the machine read: the
+ *  projection depends on it alone, so one unchanged keeps its object. */
+const writtenAs = new WeakMap<MachineWho, MachineWho>();
+
 /** Each machine of `now` as this computer writes it, `name.hub` where two
  *  of its hubs each have a different computer of that name, as the node
  *  says (`Node.written`); and so the machine of each conversation and
  *  command shown, so that every call made of them names the one meant. */
-function written(now: WorldNow): void {
-  const answer = (reply: WhoReply, as: string | undefined) => {
-    if (as) reply.machine = as;
-    for (const r of reply.residents) {
+function written(now: WorldNow): WorldNow {
+  // A machine, its conversations and its jobs as named where the World was
+  // read; each object changed is a new one, the rest are the same objects.
+  const answer = (reply: WhoReply, as: string | undefined): WhoReply => {
+    const residents = reply.residents.map((r) => {
       const machine = r.source?.written ?? as;
-      if (machine) r.about.machine = machine;
-    }
-    for (const job of reply.jobs) {
+      return machine && machine !== r.about.machine ? { ...r, about: { ...r.about, machine } } : r;
+    });
+    const jobs = reply.jobs.map((job) => {
       const machine = job.source?.written ?? as;
-      if (machine) job.machine = machine;
-    }
+      return machine && machine !== job.machine ? { ...job, machine } : job;
+    });
+    const renamed = !!as && as !== reply.machine;
+    if (!renamed && residents.every((r, i) => r === reply.residents[i]) && jobs.every((job, i) => job === reply.jobs[i])) return reply;
+    return { ...reply, ...(renamed ? { machine: as } : {}), residents, jobs };
   };
-  for (const machine of now.who?.machines ?? []) {
+  const machines = (now.who?.machines ?? []).map((machine): MachineWho => {
+    const kept = writtenAs.get(machine);
+    if (kept) return kept;
     const as = machine.observation?.source.written;
-    if (machine.kind === "answered") answer(machine.reply, as);
-    else {
-      if (as) machine.machine = as;
-      if (machine.kind === "offline" && machine.last) answer(machine.last, as);
+    let next: MachineWho = machine;
+    if (machine.kind === "answered") {
+      const reply = answer(machine.reply, as);
+      if (reply !== machine.reply) next = { ...machine, reply };
+    } else {
+      if (as && as !== machine.machine) next = { ...machine, machine: as };
+      if (next.kind === "offline" && next.last) {
+        const last = answer(next.last, as);
+        if (last !== next.last) next = { ...next, last };
+      }
     }
-  }
+    writtenAs.set(machine, next);
+    return next;
+  });
+  if (!now.who || machines.every((machine, i) => machine === now.who.machines[i])) return now;
+  return { ...now, who: { ...now.who, machines } };
 }

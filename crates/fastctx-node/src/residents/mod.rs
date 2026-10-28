@@ -155,6 +155,10 @@ pub struct Former {
 #[derive(Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Heard {
     #[serde(default)]
+    pub scratch: Option<crate::scratch::Receipt>,
+    #[serde(default)]
+    pub context: Option<crate::context::Receipt>,
+    #[serde(default)]
     pub user_prompt: Option<String>,
     pub town: Option<TownName>,
     pub ledger: u64,
@@ -403,21 +407,18 @@ impl Residents {
         }
     }
 
-    /// The session of `id` compacted its conversation, and knows of its town
-    /// only what its instructions tell it: what changed since is told again,
-    /// as all of it is to one whose instructions told it of another town or
-    /// of none.
-    pub fn compacted(&self, id: &ResidentId) {
-        if let Some(live) = self.lock().live.get_mut(id) {
-            let town = live.town();
-            live.heard = live.instructed.clone().filter(|heard| heard.town == town);
-        }
-    }
-
     /// Its host told of its context compacted, at `at`.
     pub fn compacted_at(&self, id: &ResidentId, at: Timestamp) {
         if let Some(live) = self.lock().live.get_mut(id) {
             live.compacted_at = Some(at);
+            live.heard = live.instructed.clone();
+        }
+    }
+
+    /// Compaction retains the opening instructions, not earlier tool-response notes.
+    pub(crate) fn restore_opening_heard(&self, id: &ResidentId) {
+        if let Some(live) = self.lock().live.get_mut(id) {
+            live.heard = live.instructed.clone();
         }
     }
 
@@ -462,7 +463,13 @@ impl Residents {
                         return Err(removal::refused(&resident));
                     }
                     live.connections += 1;
-                    Ok(Whereabouts { resident, town: live.town() })
+                    // A thread of its own that is not the conversation's is
+                    // one of its subagents, which shares its configuration.
+                    let subagent = hints
+                        .thread
+                        .as_deref()
+                        .is_some_and(|thread| live.about.session.as_deref().is_some_and(|own| own != thread));
+                    Ok(Whereabouts { resident, town: live.town(), machine: None, subagent })
                 }
                 None => Err(Failure::new(format!(
                     "this session says it is {resident}, but {machine} has no record of that resident"
@@ -477,7 +484,7 @@ impl Residents {
                 return Err(removal::refused(&resident));
             }
             live.connections += 1;
-            return Ok(Whereabouts { resident, town: live.town() });
+            return Ok(Whereabouts { resident, town: live.town(), machine: None, subagent: false });
         }
         if let Some(resident) = hints.was {
             let live = state.live.get_mut(&resident).ok_or_else(|| {
@@ -490,7 +497,7 @@ impl Residents {
                 return Err(removal::refused(&resident));
             }
             live.connections += 1;
-            return Ok(Whereabouts { resident, town: live.town() });
+            return Ok(Whereabouts { resident, town: live.town(), machine: None, subagent: false });
         }
         let resident = new_id(&host.agent, &state)?;
         let about = About {
@@ -503,10 +510,11 @@ impl Residents {
             origin: Origin::User,
             session: hints.thread.clone(),
             world_started: false,
+            native_resumed: false,
             model: None,
             acting: fastctx_types::access::Acting::Here,
             focus: Default::default(),
-            home: None,
+            home: hints.home,
             callee: None,
         };
         let places = Places::born(None, about.born_at);
@@ -519,7 +527,7 @@ impl Residents {
         let mut live = Live::new(about, places, None);
         live.connections = 1;
         state.admit(live);
-        Ok(Whereabouts { resident, town: None })
+        Ok(Whereabouts { resident, town: None, machine: None, subagent: false })
     }
 
     /// A connection that residents arrived on has closed. Returns those of
@@ -530,7 +538,7 @@ impl Residents {
         for resident in residents {
             if let Some(live) = state.live.get_mut(resident) {
                 live.connections = live.connections.saturating_sub(1);
-                if !here(live) && !live.about.world_started {
+                if !here(live) && !live.about.world_managed() {
                     gone.push(resident.clone());
                 }
             }
@@ -590,7 +598,7 @@ impl Residents {
         if let Some(live) = self.lock().live.get_mut(id) {
             let was_here = here(live);
             live.host_present = present;
-            return was_here && !here(live) && !live.about.world_started;
+            return was_here && !here(live) && !live.about.world_managed();
         }
         false
     }
@@ -628,6 +636,18 @@ impl Residents {
         live.about = about;
         state.record_session(prior_session.as_deref(), session);
         state.threads.insert(session.to_string(), id.clone());
+        Ok(())
+    }
+
+    /// Persists the restoration contract before the first native resumption.
+    pub(crate) fn set_native_resumed(&self, world: &WorldDir, id: &ResidentId) -> io::Result<()> {
+        let mut state=self.lock();
+        let live=state.live.get_mut(id).ok_or_else(||io::Error::other("unknown conversation"))?;
+        if live.about.native_resumed {return Ok(());}
+        let mut about=live.about.clone();
+        about.native_resumed=true;
+        records::write_about(&world.conversation(id),&about)?;
+        live.about=about;
         Ok(())
     }
 
@@ -845,10 +865,14 @@ impl Residents {
 
     /// Who the resident is working for: those owed the turn it runs, or,
     /// between turns, those its latest turn anyone was owed was for.
+    /// Colleagues incur debt only from explicit messages, never inherited background work.
     pub fn working_for(&self, id: &ResidentId) -> Vec<Address> {
         let mut state = self.lock();
         let Some(live) = state.live.get(id) else { return Vec::new() };
         let Some(now) = &live.now else { return Vec::new() };
+        if matches!(live.about.origin, Origin::Colleague { .. }) {
+            return Vec::new();
+        }
         if now.activity == Activity::Busy
             && let Some(turn) = &now.turn
         {
@@ -868,6 +892,7 @@ impl Residents {
         turn: &str,
         here_machine: &MachineName,
         trouble: Option<Trouble>,
+        heard_user: bool,
     ) -> io::Result<Vec<Address>> {
         let mut state = self.lock();
         let Some(origin) = state.live.get(id).map(|live| live.about.origin.clone()) else {
@@ -893,6 +918,8 @@ impl Residents {
                 // Words may meanwhile have started the next turn, whose state
                 // stands.
                 if current {
+                    now.last_turn = Some(turn.to_string());
+                    now.last_heard_user = Some(heard_user);
                     now.turn = None;
                     now.waiting_for_user = false;
                     now.waiting_since = None;
@@ -997,8 +1024,8 @@ fn here(live: &Live) -> bool {
     if live.removed.is_some() {
         return false;
     }
-    if live.about.world_started {
-        live.now.as_ref().is_none_or(|now| now.activity != Activity::Asleep)
+    if live.about.world_managed() {
+        (live.about.native_resumed && live.connections > 0) || live.now.as_ref().is_none_or(|now| now.activity != Activity::Asleep)
     } else {
         live.host_present || live.connections > 0
     }
@@ -1028,6 +1055,7 @@ pub fn idle(since: Timestamp) -> Now {
         activity: Activity::Idle,
         since,
         turn: None,
+        last_turn: None,
         owed: BTreeMap::new(),
         answering: Vec::new(),
         trouble: None,
@@ -1040,7 +1068,9 @@ pub fn idle(since: Timestamp) -> Now {
         first_words: None,
         last_said: None,
         last_compacted: false,
+        last_heard_user: None,
         asked: None,
+        told: None,
     }
 }
 
@@ -1079,12 +1109,19 @@ mod lifetime_tests {
         assert!(problems.is_empty());
         let machine = "private-node".parse().unwrap();
         let host = Host { agent: "codex".parse().unwrap(), version: "fixture".into(), client: "fixture".into() };
-        let hints =
-            |index| Hints { resident: None, thread: Some(format!("thread-{index}")), was: None, tool_use_id: None };
+        let hints = |index| Hints {
+            host_process: None,
+            resident: None,
+            thread: Some(format!("thread-{index}")),
+            was: None,
+            tool_use_id: None,
+            home: None,
+        };
         for index in 0..512 {
             let arrived = residents.arrive(&world, &machine, host.clone(), hints(index)).unwrap();
             let id = &arrived.resident;
-            residents.set_heard(id, Heard { user_prompt: None, town: None, ledger: index });
+            residents
+                .set_heard(id, Heard { scratch: None, context: None, user_prompt: None, town: None, ledger: index });
             residents.set_inbox(id, format!("old-{index}"));
             residents.set_inbox(id, format!("new-{index}"));
             assert!(residents.resident_of_inbox(&format!("old-{index}")).is_none());

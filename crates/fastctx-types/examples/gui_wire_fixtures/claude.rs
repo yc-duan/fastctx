@@ -15,20 +15,11 @@ pub struct Fixtures {
 
 pub fn fixtures() -> Fixtures {
     let at = "2026-10-04T17:00:00Z".parse().unwrap();
-    let questions = json!([{
-        "question":"Which machines?", "header":"Machines", "multiSelect":true,
-        "options":[{"label":"Desktop","description":"Here"},{"label":"Laptop","description":"There"}]
-    }]);
     let cases = [
         (
             "classic.PermissionRequest",
             json!({"session_id":"session-1","hook_event_name":"PermissionRequest","tool_name":"Bash", "tool_input":{"command":"pwd"}, "permission_suggestions":[],"permission_mode":"default"}),
             json!({"decision":{"behavior":"allow"}}),
-        ),
-        (
-            "AskUserQuestion",
-            json!({"tool":"AskUserQuestion","tool_use_id":"tool-1","questions":questions}),
-            json!({"result":{"questions":questions,"answers":{"Which machines?":"Desktop, Laptop"}}}),
         ),
         (
             "Elicitation",

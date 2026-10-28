@@ -2,20 +2,23 @@
 //! of those taken, and the ones that could not be delivered or opened.
 
 mod failures;
+mod receipts;
+mod taking;
 pub use failures::record_failure;
+pub(super) use receipts::{acknowledge, start};
+pub(super) use taking::take;
 
 use std::io;
 use std::path::PathBuf;
 
-use fastctx_platform::{Permissions, ensure_private_dir, publish, publish_new};
-use fastctx_types::MachineName;
+use fastctx_platform::{Permissions, publish, publish_new};
 use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 
 use super::state::{NetDir, read};
 use crate::envelope::Envelope;
-use crate::message::LetterId;
-use crate::sign::{Digest, PublicKey};
+
+use crate::sign::Digest;
 
 /// Letters not yet held by the hub, one file each, named by number.
 pub struct Outbox {
@@ -95,45 +98,6 @@ pub struct Receipt {
     pub at: Timestamp,
 }
 
-fn received(net: &NetDir, from: &PublicKey) -> PathBuf {
-    let bytes = serde_json::to_vec(from).expect("public identities serialize");
-    let name: String = crate::sign::sha256(&bytes).iter().map(|byte| format!("{byte:02x}")).collect();
-    net.path().join("received-by-key").join(name)
-}
-
-pub fn receipt(net: &NetDir, from: &PublicKey, names: &[MachineName], id: &LetterId) -> io::Result<Option<Receipt>> {
-    match read(&received(net, from).join(id.as_str())) {
-        Ok(receipt) => return Ok(Some(receipt)),
-        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-        Err(error) => return Err(error),
-    }
-    let mut found: Option<Receipt> = None;
-    for name in names {
-        let old: Receipt = match read(&net.received(name)?.join(id.as_str())) {
-            Ok(receipt) => receipt,
-            Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
-            Err(error) => return Err(error),
-        };
-        if found.as_ref().is_some_and(|kept| kept.digest != old.digest) {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "legacy letter receipts disagree across sender aliases",
-            ));
-        }
-        found = Some(old);
-    }
-    if let Some(receipt) = &found {
-        keep_receipt(net, from, id, receipt)?;
-    }
-    Ok(found)
-}
-
-pub fn keep_receipt(net: &NetDir, from: &PublicKey, id: &LetterId, receipt: &Receipt) -> io::Result<()> {
-    let directory = received(net, from);
-    ensure_private_dir(&directory)?;
-    let bytes = serde_json::to_vec(receipt).map_err(io::Error::other)?;
-    publish(&directory.join(id.as_str()), &bytes, Permissions::Private)
-}
 
 /// A letter that could not be delivered or opened, kept with the reason.
 #[derive(Clone, Debug, Serialize, Deserialize)]

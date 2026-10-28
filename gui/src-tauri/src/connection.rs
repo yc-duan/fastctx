@@ -25,15 +25,16 @@ struct Selected {
 
 impl Connection {
     pub fn open(directory: PathBuf) -> Result<Self, String> {
-        ensure_private_dir(&directory).map_err(|error| error.to_string())?;
+        ensure_private_dir(&directory)
+            .map_err(|error| format!("preparing application directory {}: {error}", directory.display()))?;
+        let choice = directory.join("connection.json");
         let device_requested = std::env::args_os().any(|argument| argument == "--device");
         let mode = if device_requested {
             Mode::Device
         } else {
-            match std::fs::read(directory.join("connection.json")) {
-                Ok(bytes) => {
-                    serde_json::from_slice(&bytes).map_err(|error| format!("reading the connection choice: {error}"))?
-                }
+            match std::fs::read(&choice) {
+                Ok(bytes) => serde_json::from_slice(&bytes)
+                    .map_err(|error| format!("decoding connection choice {}: {error}", choice.display()))?,
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
                     if cfg!(mobile) {
                         Mode::Device
@@ -41,7 +42,7 @@ impl Connection {
                         Mode::Local
                     }
                 }
-                Err(error) => return Err(error.to_string()),
+                Err(error) => return Err(format!("reading connection choice {}: {error}", choice.display())),
             }
         };
         let current = Self::make(&directory, mode)?;
@@ -142,11 +143,13 @@ impl Connection {
                     // The node starts from the World program, which on a
                     // computer in no network nothing else may have put there.
                     if !program.is_file() && crate::setup::carried().is_some() {
-                        crate::setup::place_initial()?;
+                        crate::setup::place_initial()
+                            .map_err(|error| format!("placing initial program {}: {error}", program.display()))?;
                     }
                     crate::setup::take_carried();
                     // The TUI on this computer keeps what it views in the same place.
-                    let cache = fastctx_client::cache::Cache::under(&root).map_err(|error| error.to_string())?;
+                    let cache = fastctx_client::cache::Cache::under(&root)
+                        .map_err(|error| format!("opening conversation cache under {}: {error}", root.display()))?;
                     let world = World::new(WorldDir::under(&root), Peer::Command { resident: None, session: None })
                         .starting_node_from(program.clone())
                         .keeping(cache);

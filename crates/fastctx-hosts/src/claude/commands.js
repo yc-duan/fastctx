@@ -26,6 +26,7 @@ async function controlCatalog($, state) {
   for (const command of commands) counts.set(command.name, (counts.get(command.name) ?? 0) + 1)
   const offered = []
   for (const command of commands) {
+    if (command.name === 'goal') continue
     if (assisting && (command.source !== 'builtin' || !assistedCommands.has(command.name))) continue
     // No public path executor exists. Ambiguous names cannot be advertised
     // with a fabricated identity that $.command.run cannot honor.
@@ -83,27 +84,54 @@ async function controlRunNative($, state, command, args, receipt) {
   finally { delete state.nativeCommand }
 }
 
-async function controlCompact($, state, instructions) {
+async function controlCompactRefresh($, state, control) {
+  const refresh = $.process.spawn({ argv: [FASTCTX, 'claude-control-claim', WORLD],
+    input: JSON.stringify({ key: control.receipt, host: state.host, controller: control.controller, refresh: true }) })
+  let stdout = '', stderr = ''
+  for await (const piece of refresh) {
+    if (piece.stream === 'stdout') stdout += piece.text
+    else stderr += piece.text
+  }
+  if ((await refresh.result).code !== 0 || !JSON.parse(stdout).claimed) {
+    const error = new Error('The compact claim could not be refreshed: ' + stderr)
+    error.uncertain = true
+    throw error
+  }
+}
+
+async function controlCompact($, state, instructions, control) {
   if (state.busy === true) throw controlRefusal('Claude Code can compact only between turns')
   if (state.compacting) throw controlRefusal('another context operation is still running')
   state.compacting = true
+  const compactingSession = await $.session.id()
+  compactedByWorld.add(compactingSession)
   try {
-    const parent = state.lastRawUuid
-    let result
-    try { result = await $.session.compact(instructions === undefined ? undefined : { instructions }) }
-    catch (error) {
-      // The public method throws this native no-op instead of returning skip.
-      if (String(error).endsWith('$.session.compact: Not enough messages to compact.')) {
-        return { kind: 'reported', said: 'Not enough messages to compact.' }
+    const until = Date.now() + 120000
+    let result, parent
+    for (;;) {
+      parent = state.lastRawUuid
+      try {
+        result = await $.session.compact(instructions === undefined ? undefined : { instructions })
+        break
+      } catch (error) {
+        // These native guards throw before any summary request or effect.
+        if (String(error).endsWith('$.session.compact: Not enough messages to compact.')) {
+          return { kind: 'reported', said: 'Not enough messages to compact.' }
+        }
+        if (!String(error).endsWith('$.session.compact: a turn is in flight; the conversation compacts between turns')) throw error
+        if (control?.receipt === undefined || Date.now() >= until) throw controlRefusal(String(error))
+        await controlCompactRefresh($, state, control)
       }
-      throw error
     }
     if (result.skip !== undefined) return { kind: 'refused', said: result.skip }
     // The host skips this plugin's own compact hook for this public method.
     await compactedCheckpoint($, state, result.messages, parent)
     if (state.busy === null) { state.busy = false; state.turn = null }
     return { kind: 'done', said: null }
-  } finally { state.compacting = false }
+  } finally {
+    state.compacting = false
+    compactedByWorld.delete(compactingSession)
+  }
 }
 
 const sideAnswerInstruction = "The user asks a side question about the conversation below without adding it to that conversation. Answer it from the conversation. Do not continue the conversation's work and do not call tools."
@@ -188,7 +216,7 @@ async function controlCommand($, state, control) {
   if (command.arguments === 'none' && args.trim()) throw controlRefusal('/' + command.name + ' takes no arguments')
   if (command.route === 'model') return controlSelection($, state, args.trim(), null)
   if (command.route === 'config') return controlConfig($, args)
-  if (command.route === 'compact') return controlCompact($, state, args, control.receipt)
+  if (command.route === 'compact') return controlCompact($, state, args, control)
   if (command.route === 'side_answer') return { kind: 'side_answer', reply: await controlSideAnswer($, state, args) }
   if (command.route === 'editor' || command.route === 'output_style') {
     const key = command.route === 'editor' ? 'editor' : 'outputStyle'

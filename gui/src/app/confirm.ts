@@ -4,6 +4,7 @@
 // It says what will happen, waits for the one button, and stays open with
 // what went wrong if the World refuses.
 
+import { leave, stay } from "./leave";
 import { onShade, watchShade } from "./shade-press";
 import { Steady } from "./steady";
 import { glyph } from "../conversation/glyphs";
@@ -34,8 +35,10 @@ export class Sheet {
     this.dialog.addEventListener("click", (event) => {
       if (onShade(this.dialog, event) || (event.target as HTMLElement).closest(".sheet-close")) this.close();
     });
+    // Escape closes it as the close button does, going as it came.
     this.dialog.addEventListener("cancel", (event) => {
-      if (this.busy) event.preventDefault();
+      event.preventDefault();
+      this.close();
     });
     this.dialog.addEventListener("close", () => this.steady.free());
   }
@@ -45,6 +48,7 @@ export class Sheet {
   }
 
   show(): void {
+    stay(this.dialog);
     if (this.dialog.open) return;
     this.dialog.showModal();
     if (this.fixed) return;
@@ -53,7 +57,8 @@ export class Sheet {
   }
 
   close(): void {
-    if (!this.busy) this.dialog.close();
+    if (this.busy || !this.dialog.open) return;
+    leave(this.dialog, () => this.dialog.close(), { as: "sheet-leaving", moving: this.body });
   }
 
   /** What it holds became another stage, as a sheet opened anew: it takes

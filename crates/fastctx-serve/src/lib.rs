@@ -8,6 +8,7 @@
 
 mod answer;
 mod protocol;
+mod run_failure;
 mod session;
 mod stdio;
 mod tools;
@@ -164,6 +165,8 @@ async fn serve_session(
                         // after the user turned them off.
                         "ask_colleague" => session.ask(&arguments, params.get("_meta")).await,
                         "message_colleague" => session.message(&arguments, params.get("_meta")).await,
+                        // The node says again whether this session speaks.
+                        fastctx_types::voice::TOOL => session.say(&arguments, params.get("_meta")).await,
                         _ => {
                             output.send(&error_response(&id, -32602, "unknown tool"));
                             return id.to_string();

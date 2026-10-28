@@ -5,8 +5,8 @@
 // one or join one, and each one's management. Then the agents, the
 // machines and the features, each a line with its mark. With the workbench on,
 // the front page and a new conversation come first, and below are each
-// project, a folder that opens and closes on its conversations as it is
-// pressed (its overview and the rest from its "⋯"), and the conversations in
+// project, its name a way to its overview and its folder opening and closing
+// on its conversations (the rest from its "⋯"), and the conversations in
 // no project, most recent first; a conversation is listed as long as it is not archived,
 // whether its agent's process runs or not, and the archived ones are folded
 // away at the end. Each conversation's "⋯" (a long press on a touch screen)
@@ -61,14 +61,12 @@ export interface SidebarOptions {
   /** A new version of the application, offered above the foot. */
   updates?: { offered: Signal<Offered | null>; open(): void; words: UpdateWords } | undefined;
   /** What is done to a project from its "⋯": a new conversation in it, its
-   *  overview, its record; then sharing it and handing it on, where the
-   *  reader may. */
+   *  record; then sharing it and handing it on, where the reader may. */
   projects?: ProjectMenuOptions | undefined;
 }
 
 export interface ProjectMenuOptions {
   newTalk(town: string): void;
-  overview(town: string): void;
   edit(town: string): void;
   /** Sharing and handing on, as the project's own page offers them. */
   acts(town: string): MenuAct[];
@@ -411,17 +409,18 @@ export class Sidebar {
         const shut = folded.has(town);
         const asking = inside.some((r) => r.now?.waiting_for_user);
         const working = inside.some((r) => r.now?.activity === "busy");
-        const current = (place.kind === "project" || place.kind === "journal" || place.kind === "page") && place.town === town;
+        const current = (place.kind === "project" || place.kind === "memory" || place.kind === "page") && place.town === town;
         const shutMark = asking ? "mark-ask" : working ? "mark-busy" : "";
-        // Pressed, the folder opens and closes; its overview and the rest
-        // are in its "⋯". Shut, it says whether something in it waits or
-        // works, and how many are in it.
+        // Its name leads to its overview; its folder opens and closes on its
+        // conversations where it is. Shut, it says whether something in it
+        // waits or works, and how many are in it.
         return `<li class="project-place${shut ? " shut" : ""}" data-town="${escape(town)}" data-name="${escape(name)}">
           <div class="place-row project-row" data-own-press>
-            <button class="place project-fold${current ? " current" : ""}" type="button" data-fold="${escape(town)}" aria-expanded="${!shut}" aria-label="${escape(words.agentsIn(name))}"${current ? ' aria-current="page"' : ""}>
-              <span class="place-mark">${glyph(shut ? "folder" : "folder-open", 18)}</span><span class="place-name">${escape(name)}</span>
+            <button class="project-fold" type="button" data-fold="${escape(town)}" aria-expanded="${!shut}" aria-label="${escape(words.agentsIn(name))}" title="${escape(words.agentsIn(name))}">${glyph(shut ? "folder" : "folder-open", 18)}</button>
+            <a class="place project-link${current ? " current" : ""}" href="${link({ kind: "project", town })}"${current ? ' aria-current="page"' : ""}>
+              <span class="place-name">${escape(name)}</span>
               <span class="project-shut-marks">${shutMark ? `<span class="mark ${shutMark}" aria-hidden="true"></span>` : ""}${inside.length ? `<span class="count">${inside.length}</span>` : ""}</span>
-            </button>
+            </a>
             ${this.options.projects ? `<button class="side-project-more" type="button" data-project-more="${escape(town)}" aria-haspopup="menu" aria-expanded="false" aria-label="${escape(words.projectMore)}" title="${escape(words.projectMore)}">${glyph("more", 18)}</button>` : ""}
           </div>
           <div class="project-talks${shut ? " shut" : ""}"${shut ? " inert" : ""}><div class="project-talks-inner">${
@@ -446,16 +445,15 @@ export class Sidebar {
     talks.classList.toggle("shut", !open);
     talks.inert = !open;
     row.setAttribute("aria-expanded", String(open));
-    const mark = row.querySelector<HTMLElement>(".place-mark");
-    if (mark) mark.innerHTML = glyph(open ? "folder-open" : "folder", 18);
+    row.innerHTML = glyph(open ? "folder-open" : "folder", 18);
     // The next drawing is the one that matches what is now shown.
     this.drawn = this.compose();
     this.folding = performance.now() + FOLDING_MS;
     return true;
   }
 
-  /** A project's "⋯": a new conversation in it, its overview, its record;
-   *  then sharing and handing it on where the reader may. */
+  /** A project's "⋯": a new conversation in it, its record; then sharing
+   *  and handing it on where the reader may. */
   private openProjectMenu(button: HTMLElement): void {
     const projects = this.options.projects;
     const place = button.closest<HTMLElement>(".project-place");
@@ -466,13 +464,11 @@ export class Sidebar {
     const more = projects.acts(town);
     const entries: MenuEntry[] = [
       { act: "new", icon: "plus", label: words.projectNewTalk },
-      { act: "overview", icon: "page", label: words.projectOverview },
       { act: "edit", icon: "edit", label: words.projectEdit },
       ...(more.length ? [{ rule: true as const }, ...more] : []),
     ];
     this.projectMenu.open(button, name, entries, (act) => {
       if (act === "new") projects.newTalk(town);
-      else if (act === "overview") projects.overview(town);
       else if (act === "edit") projects.edit(town);
       else projects.run(act, town, name);
     });

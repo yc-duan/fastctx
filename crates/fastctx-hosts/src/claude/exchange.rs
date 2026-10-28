@@ -86,13 +86,16 @@ pub fn registration(directory: &Path) -> io::Result<Option<Registration>> {
 }
 
 /// Where Claude Code keeps the session's own record, as its hooks told the
-/// mod (`transcript.json`); `None` while the mod has not said.
+/// mod (`transcript.json`); `None` while the mod has not said. The mod's file
+/// interface empties the file before it writes it, so an empty one is read
+/// as one not yet said.
 pub fn transcript(directory: &Path) -> io::Result<Option<PathBuf>> {
     #[derive(Deserialize)]
     struct Place {
         path: PathBuf,
     }
     match std::fs::read(directory.join("transcript.json")) {
+        Ok(bytes) if bytes.is_empty() => Ok(None),
         Ok(bytes) => serde_json::from_slice::<Place>(&bytes)
             .map(|place| Some(place.path))
             .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, format!("transcript.json: {error}"))),
@@ -241,6 +244,8 @@ enum ModEvent {
         aborted: bool,
         reason: Option<String>,
         refusal: Option<Refusal>,
+        #[serde(default)]
+        error: Option<Value>,
         #[serde(default, deserialize_with = "elapsed_milliseconds")]
         ms: Option<u64>,
         answer: Option<String>,
@@ -536,7 +541,7 @@ fn translate(event: ModEvent, recorded_at: Timestamp) -> Vec<Reported> {
             SessionEvent { at: at.unwrap_or(recorded_at), happened: Happened::TurnStarted { turn: turn_of(turn) } },
             activation,
         )],
-        ModEvent::TurnComplete { turn, at, aborted, reason, refusal, ms, answer, streamed, spent } => {
+        ModEvent::TurnComplete { turn, at, aborted, reason, refusal, error, ms, answer, streamed, spent } => {
             let turn = turn_of(turn);
             let mut reported = Vec::new();
             // Legacy mod reports had no completed blocks. Never manufacture
@@ -551,19 +556,17 @@ fn translate(event: ModEvent, recorded_at: Timestamp) -> Vec<Reported> {
                 };
                 reported.push(happened(at, Happened::Finished { turn: turn.clone(), item }));
             }
+            let error = error.or_else(|| refusal.as_ref().map(|refusal| serde_json::json!({
+                "category": refusal.category.as_deref().unwrap_or("refusal"), "message": refusal.explanation,
+            })));
+            // Cancellation determines how the turn ended, even when it also carries a diagnostic.
             let how = match reason.as_deref() {
-                Some("answer") => TurnHow::Completed,
+                _ if aborted => TurnHow::Interrupted,
                 Some("aborted") => TurnHow::Interrupted,
+                _ if error.is_some() => TurnHow::Failed,
+                Some("answer") | None => TurnHow::Completed,
                 Some("refusal" | "error") => TurnHow::Failed,
                 Some(other) => TurnHow::Other(other.to_string()),
-                // Events already on disk from the previous mod have only this flag.
-                None => {
-                    if aborted {
-                        TurnHow::Interrupted
-                    } else {
-                        TurnHow::Completed
-                    }
-                }
             };
             let reason = match refusal {
                 Some(Refusal { category: Some(category), explanation: Some(explanation) }) => {
@@ -578,7 +581,8 @@ fn translate(event: ModEvent, recorded_at: Timestamp) -> Vec<Reported> {
             let facts = spent
                 .and_then(Usd::from_dollars)
                 .map(|cost| Box::new(TurnFacts { cost: Some(cost), ..TurnFacts::default() }));
-            let end = TurnEnd { facts, error: None, how, reason, duration_ms: ms, last_message: answer };
+            let reason = error.as_ref().and_then(|error| error["message"].as_str()).map(str::to_owned).or(reason);
+            let end = TurnEnd { facts, error, how, reason, duration_ms: ms, last_message: answer };
             reported.push(happened(at, Happened::TurnEnded { turn, end }));
             reported
         }
