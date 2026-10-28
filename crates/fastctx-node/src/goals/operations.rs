@@ -106,11 +106,10 @@ pub(crate) async fn call_held(
     }
     if node.is_me(&resident.machine) {
         node.residents.active(&resident.resident)?;
+        // A goal is worked at by turns the World starts: only a conversation
+        // it holds has one (`world-layers.md`).
         if matches!(&request, Request::Change { change: UserChange::Open { .. } | UserChange::Resume, .. })
-            && node
-                .residents
-                .about(&resident.resident)
-                .is_some_and(|(about, _)| about.host.agent.as_str() == "codex" && !about.world_started)
+            && node.residents.about(&resident.resident).is_some_and(|(about, _)| !about.world_managed())
         {
             return Err(Failure::refused(words::NATIVE_CODEX));
         }

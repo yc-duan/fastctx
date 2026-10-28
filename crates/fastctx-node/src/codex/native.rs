@@ -35,9 +35,15 @@ pub(super) fn spec(node: &Node, about: &About) -> ThreadSpec {
         choices: node.world.conversation(&about.id).choices(),
     }
 }
-/// An open native frontend keeps taking its inbox at tool boundaries. Only a
-/// closed frontend is adopted here; a loaded World runtime is already usable.
+/// Whether words can go into a native thread the user brought into
+/// Fastctx: an open native frontend keeps taking them at its tool
+/// boundaries; a closed one's thread is held by the World, adopted again
+/// after a restart. A thread the user never brought in is never taken
+/// (`world-layers.md`).
 pub(crate) fn requested(node: &Arc<Node>, about: &About) -> Result<bool, Failure> {
+    if !about.native_resumed {
+        return Ok(false);
+    }
     let thread = about.session.as_ref().ok_or_else(|| Failure::not_run("the native Codex thread is not identified"))?;
     let host = node.codex.of(node, about)?;
     if !super::native_lifetime::closed(&node.world, &about.id, host.process().as_ref()).map_err(Failure::not_run)? {
@@ -60,7 +66,7 @@ pub(crate) fn left(node: &Arc<Node>, id: &ResidentId) {
         let Some((about, _)) = node.residents.about(&id) else {
             return;
         };
-        if about.host.agent.as_str() != "codex" || about.world_started {
+        if about.host.agent.as_str() != "codex" || about.world_started || !about.native_resumed {
             return;
         }
         let directory = node.world.conversation(&id);

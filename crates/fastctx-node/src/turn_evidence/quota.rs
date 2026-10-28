@@ -12,6 +12,9 @@ pub(crate) async fn read(node: &Arc<Node>, resident: &ResidentId) -> Quota {
     let observed_at = Timestamp::now();
     let result = async {
         let (about, _) = node.residents.about(resident).ok_or_else(|| "unknown conversation".to_string())?;
+        if !about.world_managed() {
+            return Err(crate::speech::OWN_SESSION.to_string());
+        }
         if node.residents.now(resident).is_some_and(|now| now.turn.is_some()) {
             return Err("quota is read for a stopped turn, not while it is running".to_string());
         }

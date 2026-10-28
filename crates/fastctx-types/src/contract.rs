@@ -177,6 +177,7 @@ impl RemoteCall {
             | Self::ItemDetail { .. }
             | Self::AgentActivity { .. }
             | Self::Stats { .. }
+            | Self::Book { .. }
             | Self::Interfaces
             | Self::OnReceipt { .. }
             | Self::Thumbnail { .. }
@@ -313,12 +314,13 @@ impl Call {
             Self::Memory(crate::memory::MemoryCall::List { .. } | crate::memory::MemoryCall::Read { .. }) => {
                 Leaving::Stop
             }
-            Self::Memory(crate::memory::MemoryCall::Save { .. }) | Self::MemorySettings { enabled: Some(_), .. } => {
-                Leaving::Finish
-            }
-            Self::WatchMemory { .. } | Self::MemorySettings { enabled: None, .. } | Self::Collaboration { .. } => {
-                Leaving::Stop
-            }
+            Self::Memory(crate::memory::MemoryCall::Save { .. })
+            | Self::MemorySettings { enabled: Some(_), .. }
+            | Self::Layer { layer: Some(_), .. } => Leaving::Finish,
+            Self::WatchMemory { .. }
+            | Self::MemorySettings { enabled: None, .. }
+            | Self::Layer { layer: None, .. }
+            | Self::Collaboration { .. } => Leaving::Stop,
             Self::Sentinel {
                 request: crate::sentinel_control::Request::List { .. } | crate::sentinel_control::Request::Help,
                 ..
@@ -352,6 +354,7 @@ impl Call {
             | Self::FindFiles { request: FileSearchRequest::Open { .. }, .. }
             | Self::Folders { .. }
             | Self::Stats { .. }
+            | Self::Book { .. }
             | Self::WatchTools { .. }
             | Self::HoldHost { .. }
             | Self::Who { .. }
@@ -441,7 +444,8 @@ impl Call {
             | Self::HubArrived { .. }
             | Self::HandOver { .. }
             | Self::SeenDissolved { .. }
-            | Self::UninstallPrepare { .. } => Leaving::Finish,
+            | Self::UninstallPrepare { .. }
+            | Self::BringIn { .. } => Leaving::Finish,
         }
     }
 }

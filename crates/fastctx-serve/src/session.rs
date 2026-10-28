@@ -141,12 +141,12 @@ impl Session {
     }
 
     /// Whether the World can start a turn here when something arrives for
-    /// this session: in a Codex thread the World started, through its
-    /// app-server, and in Claude Code, through the World's plugin. Any other
-    /// session, such as Codex the user opened, learns it only with the
-    /// answer of its next World tool call.
-    pub fn woken(&self, meta: Option<&Value>) -> bool {
-        self.resident.is_some() || self.host(meta).is_ok_and(|host| host.agent.as_str() == "claude")
+    /// this session: in a session it started, a Codex thread through its
+    /// app-server and Claude Code through the World's plugin. A session the
+    /// user opened outside Fastctx is never woken (`world-layers.md`): it
+    /// learns what came only with the answer of its next World tool call.
+    pub fn woken(&self) -> bool {
+        self.resident.is_some() || self.conversation.is_some()
     }
 
     pub async fn run(self: &Arc<Self>, arguments: &Value, meta: Option<&Value>) -> Answer {
@@ -589,12 +589,16 @@ impl Session {
         answer.bound(&self.world)
     }
 
-    /// Claude proves each call independently; other hosts keep their
-    /// connection or thread identity until the node connection closes.
+    /// A Claude session the World started proves each call through the
+    /// World's mod in it; any other session, a Claude session of the user's
+    /// own among them, keeps its connection or thread identity until the
+    /// node connection closes (`world-layers.md`: the user's own sessions
+    /// carry no mod).
     async fn whereabouts(self: &Arc<Self>, meta: Option<&Value>) -> Result<Whereabouts, String> {
         let host = self.host(meta)?;
         let tool_use_id = meta.and_then(|meta| meta.get("claudecode/toolUseId"));
-        if host.agent.as_str() == "claude" || tool_use_id.is_some() {
+        let started = self.resident.is_some() || self.conversation.is_some();
+        if started && (host.agent.as_str() == "claude" || tool_use_id.is_some()) {
             let tool_use_id = tool_use_id.and_then(Value::as_str).filter(|id| !id.is_empty())
                 .ok_or("Claude did not supply a nonempty _meta[\"claudecode/toolUseId\"]; this call cannot be paired with its mod session")?;
             let hints = Hints {

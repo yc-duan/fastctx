@@ -59,6 +59,7 @@ impl Jobs {
         } else {
             (Vec::new(), Vec::new())
         };
+        crate::activity_book::note(node, &record, &writes, &steps);
         crate::run_facts::update_job_with(node, &path, writes, steps)
             .map_err(|error| failure("updating call facts", error))?;
         match crate::inbox::tell_if_ended(node, &path, &record).await {

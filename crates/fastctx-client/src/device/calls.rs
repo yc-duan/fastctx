@@ -311,6 +311,10 @@ impl Device {
                     machine.ok_or_else(|| failed("choose a machine; a device has no details page of its own"))?;
                 (machine, RemoteCall::Stats { after, seen }, None)
             }
+            Call::Book { machine, query } => {
+                let machine = machine.ok_or_else(|| failed("choose a machine; a device keeps no activity of its own"))?;
+                (machine, RemoteCall::Book { query }, None)
+            }
             Call::UpdateMachine { machine } => (machine, RemoteCall::UpdateWorld, None),
             Call::MachineUpdates { machine, update } => (machine, RemoteCall::Updates { update }, None),
             Call::Thumbnail { machine, request } => {
@@ -478,6 +482,14 @@ impl Device {
                     here(),
                 ));
             }
+            Call::Layer { hub, account, layer } => {
+                let (link, account) = self.project_account(hub.as_ref(), account.as_ref())?;
+                let chosen = match layer {
+                    Some(layer) => link.set_layer(&account, layer).await,
+                    None => link.layer(&account),
+                };
+                return Ok((Reply::Layer(chosen.map_err(failed)?), here()));
+            }
             Call::Project(request) => return Ok((self.project(request).await?, here())),
             // What only the projects' ledgers hold, one machine answers from
             // its own copy, for what this device's account may use.
@@ -584,6 +596,7 @@ impl Device {
             (RemoteCall::FindFiles { .. }, RemoteReply::FilesFound(reply)) => Reply::FilesFound(reply),
             (RemoteCall::Folders { .. }, RemoteReply::Folders(folders)) => Reply::Folders(folders),
             (RemoteCall::Stats { .. }, RemoteReply::Stats(stats)) => Reply::Stats(stats),
+            (RemoteCall::Book { .. }, RemoteReply::Book(answer)) => Reply::Book(answer),
             (RemoteCall::UpdateWorld | RemoteCall::Updates { .. }, RemoteReply::Update(state)) => Reply::Update(state),
             (RemoteCall::Thumbnail { .. }, RemoteReply::Thumbnail(reply)) => Reply::Thumbnail(reply),
             (RemoteCall::AttachmentThumbnail { .. }, RemoteReply::Thumbnail(reply)) => Reply::Thumbnail(reply),

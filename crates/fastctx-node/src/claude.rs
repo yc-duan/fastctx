@@ -1135,6 +1135,11 @@ pub async fn deliver(
         Err(error) => return Some(Err(error)),
         Ok(None) => {}
     }
+    // The user's own session (`world-layers.md`): nothing goes into it and
+    // nothing wakes it; what is kept for it waits for its next call.
+    if !about.world_managed() {
+        return Some(Ok(Landed::Waiting { why: None, answered: false }));
+    }
     let session: String = node
         .claude
         .state

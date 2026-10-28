@@ -514,6 +514,11 @@ pub enum RemoteCall {
     Updates {
         update: crate::update::UpdateCall,
     },
+    /// That machine's activity book, as the asking accounts may see it:
+    /// only for an account that may work on it (`crate::activity_book`).
+    Book {
+        query: crate::activity_book::BookQuery,
+    },
     /// How that machine is doing, for its details page: only for an account
     /// that may work on it (`crate::stats`). With `after`, its lines bring
     /// only the round trips and changes since then: a page that asks every
@@ -626,7 +631,8 @@ impl RemoteCall {
             | RemoteCall::ChangeAgentLogin { .. }
             | RemoteCall::UpdateWorld
             | RemoteCall::Updates { .. }
-            | RemoteCall::Stats { .. } => Purpose::Hands,
+            | RemoteCall::Stats { .. }
+            | RemoteCall::Book { .. } => Purpose::Hands,
             RemoteCall::Collaboration { .. }
             | RemoteCall::AttachmentPlaces { .. }
             | RemoteCall::ReserveAttachment { .. }
@@ -783,6 +789,7 @@ pub enum RemoteReply {
         used: Vec<bool>,
     },
     Stats(Box<crate::stats::MachineStats>),
+    Book(Box<crate::activity_book::BookAnswer>),
     /// How updates stand on that machine after it was asked to update.
     Update(Box<crate::update::State>),
     Interfaces {

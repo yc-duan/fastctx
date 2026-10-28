@@ -68,6 +68,24 @@ pub enum Call {
         account: Option<crate::AccountName>,
         enabled: Option<bool>,
     },
+    /// The activity book of `machine`, or of this computer
+    /// (`crate::activity_book`).
+    Book {
+        machine: Option<Written>,
+        query: crate::activity_book::BookQuery,
+    },
+    /// Brings a session of this machine the user opened on their own into
+    /// Fastctx (`world-layers.md`, 接进来).
+    BringIn {
+        resident: ResidentId,
+    },
+    /// The account's layer (`world-layers.md`), changed to `layer` when
+    /// given; a computer in no network keeps its own.
+    Layer {
+        hub: Option<crate::HubName>,
+        account: Option<crate::AccountName>,
+        layer: Option<crate::layers::Layer>,
+    },
     Goal { resident: ResidentId, machine: Option<crate::access::Written>, account: Option<crate::access::HubAccount>, request: crate::goals::Request },
     GoalCommand { hub: Option<crate::HubName>, account: Option<crate::AccountName>, job: Option<crate::JobId>, request: crate::goals::AgentRequest },
     Timer { timer: crate::timers::TimerCall },
@@ -848,6 +866,8 @@ pub enum Reply {
     Collaboration(Box<crate::collaboration::Tree>),
     Memory(crate::memory::MemoryReply),
     MemorySettings(crate::memory::Settings),
+    Layer(crate::layers::Chosen),
+    Book(Box<crate::activity_book::BookAnswer>),
     Goal { updated: Box<crate::goals::Updated> },
     Timers { timers: Vec<crate::timers::Timer> },
     TurnEvidence { evidence: Box<crate::turn_evidence::TurnEvidence>, text: String },

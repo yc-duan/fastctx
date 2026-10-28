@@ -152,6 +152,7 @@ pub(crate) fn view_for_in(
         collaboration_tree: true,
         call_details: true,
         machine_log: true,
+        layers: true,
         hub: store.hub.id.clone(),
         hub_name: store.hub.name.clone(),
         hub_machine: crate::hub_machine::current(hub, store)

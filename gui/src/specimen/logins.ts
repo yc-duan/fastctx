@@ -271,7 +271,6 @@ export function specimenPreview(machine: string, agent: "codex" | "claude", dir:
               items: [
                 { item: "tool_output_token_limit", how: "changed", before: into ? "10000" : "41708", after: into ? "41708" : "10000" },
                 { item: "features.shell_tool", how, ...way("false") },
-                { item: "features.view_image", how, ...way("false") },
                 { item: "mcp_servers.fastctx.command", how, ...way(JSON.stringify("C:\\Users\\me\\.fastctx\\bin\\fastctx.exe")) },
                 { item: "mcp_servers.fastctx.args", how, ...way(JSON.stringify(["mcp"])) },
                 { item: "mcp_servers.fastctx.tool_timeout_sec", how, ...way("660") },
@@ -292,7 +291,7 @@ export function specimenPreview(machine: string, agent: "codex" | "claude", dir:
               how: "changed",
               items: [
                 { item: "env.MAX_MCP_OUTPUT_TOKENS", how, ...way(JSON.stringify("30000")) },
-                { item: "permissions.deny", how, ...way(JSON.stringify(["Bash", "Grep", "Glob"])) },
+                { item: "permissions.deny", how, ...way(JSON.stringify(["Bash", "PowerShell"])) },
                 { item: 'enabledPlugins."fastctx-world@fastctx"', how, ...way("true") },
               ],
             },

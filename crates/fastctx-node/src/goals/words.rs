@@ -4,7 +4,8 @@ use fastctx_types::goals::{Goal, Owner};
 
 pub(crate) use fastctx_types::goals::words::*;
 
-pub(crate) const NATIVE_CODEX: &str = "Goals are available only in Codex conversations started by the World.";
+pub(crate) const NATIVE_CODEX: &str =
+    "Goals are available only in conversations Fastctx started, or that the user brought into Fastctx.";
 pub(crate) const REQUESTER_PAUSED: &str = "The requesting conversation paused the goal.";
 pub(crate) const REPORT_CHANGED: &str = "The goal conclusion differs from its immutable report identity.";
 pub(crate) const REPORT_MISSING: &str = "The settled goal has no conclusion text.";

@@ -997,7 +997,10 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
         Call::Arrive { host, hints } => {
             // A managed machine takes no session of its own agents.
             crate::managed::refuse(node)?;
-            if host.agent.as_str() == "claude" || hints.tool_use_id.is_some() {
+            // A call proven by the World's mod names its session; a Claude
+            // session of the user's own carries no mod and arrives by its
+            // connection, as any other (`world-layers.md`).
+            if hints.tool_use_id.is_some() {
                 let id = hints.tool_use_id.as_deref().filter(|id| !id.is_empty()).ok_or_else(|| {
                     Failure::new("Claude did not supply a tool use id; its session cannot be identified")
                 })?;
@@ -1404,6 +1407,19 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
         Call::MemorySettings { hub, account, enabled } => {
             users_voice(node, peer)?;
             crate::memory::settings::call(node, hub, account, enabled).await.map(Reply::MemorySettings)
+        }
+        Call::Layer { hub, account, layer } => {
+            users_voice(node, peer)?;
+            crate::layers::call(node, hub, account, layer).await.map(Reply::Layer)
+        }
+        Call::Book { machine, query } => {
+            users_voice(node, peer)?;
+            let acting = crate::around::acting_of(node, &caller::of(node, peer)?);
+            crate::activity_book::answer(node, &acting, machine, query).await.map(|answer| Reply::Book(Box::new(answer)))
+        }
+        Call::BringIn { resident } => {
+            users_voice(node, peer)?;
+            crate::layers::bring_in(node, &resident).map(|()| Reply::Told)
         }
         Call::WatchMemory { .. } => Err(Failure::new("a memory watch is answered as it changes")),
         Call::Memory(request) => {

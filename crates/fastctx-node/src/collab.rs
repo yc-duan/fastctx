@@ -75,6 +75,12 @@ pub(crate) fn choices(
         return Ok(None);
     }
     let about = resident.and_then(|id| node.residents.about(id).map(|(about, _)| about));
+    // Only a conversation the World holds asks colleagues: a session the
+    // user opened outside Fastctx is given `run` and nothing more
+    // (`world-layers.md`).
+    if !about.as_ref().is_some_and(|about| about.world_managed()) {
+        return Ok(None);
+    }
     let was_started = resident.map(|id| started(node, id)).transpose()?.flatten().is_some();
     if about.as_ref().is_some_and(|about| matches!(about.origin, Origin::Colleague { .. })) || was_started {
         return Ok(None);
@@ -222,7 +228,9 @@ pub(crate) fn require(node: &Arc<Node>, resident: &ResidentId, login: Option<&Ca
         return Err(Failure::not_run(fastctx_types::collab_prompt::NO_NESTING));
     }
     choices(node, Some(resident), login)?.ok_or_else(|| {
-        Failure::not_run(if OFFERED {
+        Failure::not_run(if !node.residents.about(resident).is_some_and(|(about, _)| about.world_managed()) {
+            crate::speech::OWN_SESSION
+        } else if OFFERED {
             "model collaboration is off for this caller; the user changes it on the Model collaboration page"
         } else {
             "model collaboration is still in development: no colleague can be asked yet"

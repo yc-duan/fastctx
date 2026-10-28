@@ -286,6 +286,11 @@ fn as_deleted(node: &Node, resident: &ResidentId, failure: Failure) -> Failure {
 
 async fn read_here(node: &Arc<Node>, resident: &ResidentId) -> Result<HistoryRead, Failure> {
     let (about, _) = node.residents.about(resident).ok_or_else(|| crate::forget::gone(node, resident))?;
+    // A session the user opened on their own is theirs to read, in their
+    // own program (`world-layers.md`).
+    if !about.world_managed() {
+        return Err(Failure::refused(crate::speech::OWN_SESSION));
+    }
     let mut events = node.watchers.watch(resident);
     let directory = node.world.conversation(resident);
     let recorded = |directory: &ConversationDir| {
@@ -835,6 +840,7 @@ pub async fn open_here(
     // The login it is born in must be in this machine's agent list, the
     // default one too (`world-agent-logins.md`); the default one is recorded
     // as none, so that it follows the user's environment.
+    crate::layers::may_start(node, &acting)?;
     let mut options = options;
     options.mcp_off = choices.mcp_off;
     let home = crate::homes::listed(node, agent.as_str(), choices.home.as_deref())?;

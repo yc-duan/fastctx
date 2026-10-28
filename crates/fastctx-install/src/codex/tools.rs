@@ -6,13 +6,25 @@ use toml_edit::Item;
 use crate::source::{Source, comma_in, edit, newline, splice};
 use crate::{Error, Notice};
 
-pub(crate) const FEATURES: [&str; 3] = ["shell_tool", "view_image", "goals"];
+/// The features the user's own login gives up: its shell, which `run`
+/// takes the place of (`world-layers.md`).
+pub(crate) const FEATURES: [&str; 1] = ["shell_tool"];
+/// Every setting apply has ever owned, in the order receipts record them.
+/// Only the shell is still switched off in the user's login; the World's
+/// own threads switch off the rest in their thread settings. The others
+/// stay so older receipts line up, and what an earlier apply wrote of them
+/// is taken back.
 const SETTINGS: &[&[&str]] = &[
     &["features", "shell_tool"],
     &["features", "view_image"],
     &["features", "goals"],
     &["tools", "update_plan", "enabled"],
 ];
+
+/// Whether the setting at `index` of `SETTINGS` is switched off now.
+fn wanted(index: usize) -> bool {
+    index == 0
+}
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -40,7 +52,21 @@ pub(crate) fn apply(
     let mut notices = Vec::new();
     let known = previous.map_or(0, |receipt| receipt.settings.len());
     receipt.settings.resize(SETTINGS.len(), None);
+    // What an earlier apply switched off and the login keeps now goes back
+    // as it was, unless the user changed it since.
+    for index in (0..SETTINGS.len()).rev() {
+        if wanted(index) {
+            continue;
+        }
+        let Some(setting) = receipt.settings[index].take() else { continue };
+        let (next, notice) = restore(&bytes, location, SETTINGS[index], &setting)?;
+        bytes = next;
+        notices.extend(notice);
+    }
     for (index, path) in SETTINGS.iter().enumerate() {
+        if !wanted(index) {
+            continue;
+        }
         let source = Source::parse(&bytes, location)?;
         if index < known && !reinstall {
             // What is owned is the value written. A configuration manager
@@ -79,65 +105,72 @@ pub(crate) fn unapply(original: &[u8], location: &str, receipt: &Receipt) -> Res
     let mut bytes = original.to_vec();
     let mut notices = Vec::new();
     for (path, setting) in SETTINGS.iter().zip(&receipt.settings).rev() {
-        let (key, parent) = path.split_last().expect("setting path");
         let Some(setting) = setting else {
             continue;
         };
-        let source = Source::parse(&bytes, location)?;
-        let range = match owned_range(&source, path, setting) {
-            Ok(range) => range,
-            Err(_) => {
-                match rewritten(&source, path, setting)? {
-                    Some(next) => {
-                        bytes = next;
-                        Source::parse(&bytes, location)?;
-                    }
-                    None => notices.push(notice(location, path, "changed since apply; left untouched")),
-                }
-                continue;
-            }
-        };
-        if matches!(setting, Setting::Inserted { .. }) && edit::joins_lines(&bytes, &range) {
-            bytes = rewritten(&source, path, setting)?.expect("owned value was checked");
-            continue;
-        }
-        let mut edits = Vec::new();
-        let replacement = match setting {
-            Setting::Replaced { before } => before.clone(),
-            Setting::Inserted { inline: true, comma: false, .. } => {
-                let table = source
-                    .item(parent)
-                    .and_then(Item::as_inline_table)
-                    .ok_or_else(|| Error::at(parent.join("."), "the inserted inline table member changed"))?;
-                let next = table
-                    .get_values()
-                    .into_iter()
-                    .filter(|(keys, _)| keys[0].get() != *key)
-                    .map(|(keys, _)| source.span(keys[0].span()).map(|span| span.start))
-                    .collect::<Result<Vec<_>, _>>()?
-                    .into_iter()
-                    .filter(|start| *start >= range.end)
-                    .min();
-                if let Some(next) = next
-                    && let Some(comma) = comma_in(&bytes, range.end..next)
-                {
-                    edits.push((comma..comma + 1, Vec::new()));
-                }
-                Vec::new()
-            }
-            Setting::Inserted { .. } => Vec::new(),
-        };
-        edits.push((range, replacement));
-        let next = splice(&bytes, edits)?;
-        bytes = if Source::parse(&next, location).is_ok() {
-            next
-        } else {
-            // Matching local bytes do not prove that a rewritten inline
-            // table still has the original separator arrangement.
-            rewritten(&source, path, setting)?.ok_or_else(|| Error::at(*key, "the recorded value changed"))?
-        };
+        let (next, notice) = restore(&bytes, location, path, setting)?;
+        bytes = next;
+        notices.extend(notice);
     }
     Ok((bytes, notices))
+}
+
+/// Puts back what one owned setting replaced, or removes what it inserted.
+/// A value the user changed since stays, with a notice.
+fn restore(bytes: &[u8], location: &str, path: &[&str], setting: &Setting) -> Result<(Vec<u8>, Option<Notice>), Error> {
+    let (key, parent) = path.split_last().expect("setting path");
+    let source = Source::parse(bytes, location)?;
+    let range = match owned_range(&source, path, setting) {
+        Ok(range) => range,
+        Err(_) => {
+            return match rewritten(&source, path, setting)? {
+                Some(next) => {
+                    Source::parse(&next, location)?;
+                    Ok((next, None))
+                }
+                None => Ok((bytes.to_vec(), Some(notice(location, path, "changed since apply; left untouched")))),
+            };
+        }
+    };
+    if matches!(setting, Setting::Inserted { .. }) && edit::joins_lines(bytes, &range) {
+        return Ok((rewritten(&source, path, setting)?.expect("owned value was checked"), None));
+    }
+    let mut edits = Vec::new();
+    let replacement = match setting {
+        Setting::Replaced { before } => before.clone(),
+        Setting::Inserted { inline: true, comma: false, .. } => {
+            let table = source
+                .item(parent)
+                .and_then(Item::as_inline_table)
+                .ok_or_else(|| Error::at(parent.join("."), "the inserted inline table member changed"))?;
+            let next = table
+                .get_values()
+                .into_iter()
+                .filter(|(keys, _)| keys[0].get() != *key)
+                .map(|(keys, _)| source.span(keys[0].span()).map(|span| span.start))
+                .collect::<Result<Vec<_>, _>>()?
+                .into_iter()
+                .filter(|start| *start >= range.end)
+                .min();
+            if let Some(next) = next
+                && let Some(comma) = comma_in(bytes, range.end..next)
+            {
+                edits.push((comma..comma + 1, Vec::new()));
+            }
+            Vec::new()
+        }
+        Setting::Inserted { .. } => Vec::new(),
+    };
+    edits.push((range, replacement));
+    let next = splice(bytes, edits)?;
+    let next = if Source::parse(&next, location).is_ok() {
+        next
+    } else {
+        // Matching local bytes do not prove that a rewritten inline
+        // table still has the original separator arrangement.
+        rewritten(&source, path, setting)?.ok_or_else(|| Error::at(*key, "the recorded value changed"))?
+    };
+    Ok((next, None))
 }
 
 fn owned_range(source: &Source<'_>, path: &[&str], setting: &Setting) -> Result<std::ops::Range<usize>, Error> {
@@ -223,11 +256,6 @@ fn rewritten(source: &Source<'_>, path: &[&str], setting: &Setting) -> Result<Op
         }
         Setting::Inserted { .. } => edit::remove(source, path).map(Some),
     }
-}
-
-pub(crate) fn plan_configured(bytes: &[u8]) -> Result<bool, Error> {
-    let source = Source::parse(bytes, "config.toml")?;
-    Ok(source.item(&["tools", "update_plan", "enabled"]).and_then(Item::as_bool) == Some(false))
 }
 
 fn notice(location: &str, path: &[&str], reason: &str) -> Notice {

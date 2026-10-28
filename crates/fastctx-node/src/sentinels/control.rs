@@ -95,6 +95,13 @@ pub(crate) async fn control(
             let Caller::Resident(owner) = caller else {
                 return Err(Failure::refused(words::NEED_CONVERSATION));
             };
+            // A sentinel wakes the conversation it reports to: only one the
+            // World holds leaves one (`world-layers.md`).
+            if node.is_me(&owner.machine)
+                && node.residents.about(&owner.resident).is_some_and(|(about, _)| !about.world_managed())
+            {
+                return Err(Failure::refused(crate::speech::OWN_SESSION));
+            }
             if node.is_me(&owner.machine)
                 && let Some((about, _)) = node.residents.about(&owner.resident)
                 && about.host.agent.as_str() == "codex"

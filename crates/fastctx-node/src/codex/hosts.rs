@@ -150,7 +150,14 @@ impl CodexHosts {
     }
 
     /// The original or isolated host recorded when the conversation was born.
+    /// The app-server that serves the thread of `about`. The World's
+    /// app-servers serve only the threads it holds: a thread the user opened
+    /// on their own is never loaded, read or controlled there
+    /// (`world-layers.md`).
     pub(crate) fn of(&self, node: &crate::Node, about: &About) -> Result<Arc<CodexHost>, Failure> {
+        if !about.world_managed() {
+            return Err(Failure::refused(crate::speech::OWN_SESSION));
+        }
         self.session(about.home.as_deref(), crate::assists::host::kept(node, &about.id)?.unwrap_or(false))
     }
 

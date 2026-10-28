@@ -84,9 +84,11 @@ pub(crate) async fn prepare(
 }
 
 /// How to keep a plan, for a conversation that keeps its own; a colleague
-/// only reads the plan of the conversation that asked it.
+/// only reads the plan of the conversation that asked it, and a session the
+/// user opened outside Fastctx keeps none (`world-layers.md`).
 fn plan_guide(node: &Node, id: &ResidentId, origin: &Origin) -> io::Result<()> {
-    let text = if matches!(origin, Origin::Colleague { .. }) { "" } else { words::PLAN_GUIDE };
+    let own = node.residents.about(id).is_some_and(|(about, _)| !about.world_managed());
+    let text = if matches!(origin, Origin::Colleague { .. }) || own { "" } else { words::PLAN_GUIDE };
     let change = Change { by: None, version: "", fact: &words::changed("plan-guide", words::USER), full: true };
     if node.residents.about(id).is_some() {
         super::set(node, id, "plan-guide", text, change)

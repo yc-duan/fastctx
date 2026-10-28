@@ -9,6 +9,7 @@
 
 pub mod access;
 pub mod account_records;
+pub mod activity_book;
 pub mod accounts;
 pub mod agent;
 pub mod agents;
@@ -34,6 +35,7 @@ pub mod goals;
 pub mod hub_move;
 pub mod ipc;
 pub mod kernel;
+pub mod layers;
 pub mod layout;
 pub mod lines;
 pub mod logins;

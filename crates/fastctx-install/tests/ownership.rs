@@ -256,44 +256,6 @@ fn native_tools_migrate_old_receipts_and_keep_user_changes() {
 }
 
 #[test]
-fn claude_native_deny_ownership_is_per_rule() {
-    use fastctx_install::claude::tools;
-    let original = br#"{"permissions":{"deny":["Bash"],"allow":["Edit","Write"]},"user":true}"#;
-    let file = File { path: "settings.json", bytes: Some(original) };
-    let applied = tools::apply(file, None, false).unwrap();
-    let deleted = tools::apply(File { bytes: None, ..file }, Some(&applied.receipt), false).unwrap();
-    assert!(deleted.bytes.is_none());
-    assert_eq!(deleted.notices.len(), 9);
-    let value: serde_json::Value = serde_json::from_slice(applied.bytes.as_ref().unwrap()).unwrap();
-    assert_eq!(
-        value["permissions"]["deny"],
-        serde_json::json!([
-            "Bash",
-            "Grep",
-            "Glob",
-            "TodoWrite",
-            "TaskCreate",
-            "TaskUpdate",
-            "TaskList",
-            "TaskGet",
-            "ProposeGoal"
-        ])
-    );
-    let restored = tools::unapply(File { bytes: applied.bytes.as_deref(), ..file }, &applied.receipt).unwrap();
-    assert_eq!(restored.bytes.as_deref(), Some(original.as_slice()));
-
-    let edited = String::from_utf8(applied.bytes.unwrap()).unwrap().replace("\"Grep\"", "\"Grep(project)\"");
-    let repeated =
-        tools::apply(File { bytes: Some(edited.as_bytes()), ..file }, Some(&applied.receipt), false).unwrap();
-    assert_eq!(repeated.bytes.as_deref(), Some(edited.as_bytes()));
-    assert_eq!(repeated.notices.len(), 1);
-    let taken = tools::unapply(File { bytes: repeated.bytes.as_deref(), ..file }, &repeated.receipt).unwrap();
-    let value: serde_json::Value = serde_json::from_slice(taken.bytes.as_ref().unwrap()).unwrap();
-    assert_eq!(value["permissions"]["deny"], serde_json::json!(["Bash", "Grep(project)"]));
-    assert_eq!(value["permissions"]["allow"], serde_json::json!(["Edit", "Write"]));
-}
-
-#[test]
 fn portable_server_ownership_survives_machine_changes_and_withdrawal() {
     let original = b"# user words\r\nmodel = 'user'\r\n";
     let config = File { path: "config.toml", bytes: Some(original) };

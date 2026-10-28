@@ -54,6 +54,11 @@ impl WakeFailure {
 }
 
 pub(crate) fn check(node: &Node, id: &ResidentId, about: &fastctx_types::residents::About) -> Result<(), WakeFailure> {
+    // A conversation the World holds is not driven while its account is in
+    // Connect (`world-layers.md`): what comes for it waits.
+    if !crate::layers::drives(node, about) {
+        return Err(Failure::host_unavailable(fastctx_types::layers::CONNECT_ONLY).into());
+    }
     crate::homes::available(node, about)?;
     crate::assists::check_turn(node, id, about)?;
     crate::town::access::current(node, id)?;

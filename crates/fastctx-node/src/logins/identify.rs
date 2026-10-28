@@ -55,6 +55,10 @@ pub(super) async fn codex(node: &Arc<Node>, dir: &Path, limits: bool) -> Asked {
         node.codex.environment(),
         node.codex.log(),
         limits,
+        // The models are for the workbench's conversations; in Connect the
+        // World asks the login who it is and nothing more
+        // (`world-layers.md`).
+        crate::layers::of(node, &fastctx_types::access::Acting::Here) == fastctx_types::layers::Layer::Workbench,
     )
     .await
     {

@@ -1165,6 +1165,9 @@ impl fastctx_net::link::Node for Handler {
                         .map(|state| RemoteReply::Update(Box::new(state)))
                         .map_err(Failure::new)
                 }
+                RemoteCall::Book { query } => crate::activity_book::answer_here(&node, Some(&acting), query)
+                    .await
+                    .map(|answer| RemoteReply::Book(Box::new(answer))),
                 RemoteCall::Stats { after, seen } => {
                     crate::stats::here(&node, after, seen).await.map(|stats| RemoteReply::Stats(Box::new(stats)))
                 }

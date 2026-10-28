@@ -246,6 +246,21 @@ fn apply(
             found.profile = Some(profile);
             Ok(Told::ProfileWritten { version })
         }
+        Change::Layer { version, layer } => {
+            let found = store.book.directory.accounts.iter_mut().find(|found| found.name == *account).expect("checked");
+            let mut profile = found.profile.clone().unwrap_or_default();
+            if version != profile.version {
+                return Err(format!(
+                    "the profile changed: version {version} was read, current version is {}",
+                    profile.version
+                ));
+            }
+            profile.layer = Some(layer);
+            profile.version = version.checked_add(1).ok_or("the profile version cannot be incremented")?;
+            let version = profile.version;
+            found.profile = Some(profile);
+            Ok(Told::ProfileWritten { version })
+        }
         Change::Subagents { version, subagents } => {
             if let Some(config) = &subagents {
                 config.validate()?;

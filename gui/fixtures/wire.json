@@ -1086,6 +1086,7 @@
         "profile": {
           "version": 4,
           "memory": false,
+          "layer": "workbench",
           "prompt": "Use concise answers.",
           "claude": {
             "language": "English"
@@ -1136,6 +1137,7 @@
         "profile": {
           "version": 4,
           "memory": false,
+          "layer": "workbench",
           "prompt": "Use concise answers.",
           "claude": {
             "language": "English"

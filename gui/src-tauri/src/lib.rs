@@ -5,6 +5,7 @@
 //! come. The page speaks as the person at this machine, never as a session.
 
 mod accounts;
+mod book;
 #[cfg(target_os = "android")]
 mod android;
 mod collab;
@@ -18,6 +19,7 @@ mod goals;
 mod hub_moving;
 mod item_details;
 mod kept;
+mod layers;
 #[cfg(desktop)]
 mod local_repair;
 mod memory;
@@ -1200,6 +1202,10 @@ pub fn run() {
             memory::memory_settings_read,
             memory::memory_settings_set,
             memory::memory_watch,
+            layers::layer_read,
+            layers::layer_set,
+            layers::bring_in,
+            book::book,
             features::features_read,
             features::features_set,
             features::features_language,

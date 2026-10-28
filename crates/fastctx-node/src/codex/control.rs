@@ -264,6 +264,7 @@ async fn fork(
     node.residents.active(parent)?;
     let (source, town) = node.residents.about(parent).ok_or_else(|| Failure::new("unknown source resident"))?;
 
+    crate::layers::may_start(node, &source.acting)?;
     let id = node.residents.new_id(&source.host.agent)?;
     let _birth = crate::here::born(node, &id, source.acting.clone(), &Origin::User);
     crate::assists::host::inherit(node, codex.assisted_cwd().is_some(), &id)?;

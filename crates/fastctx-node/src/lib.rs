@@ -80,6 +80,8 @@ mod jobs;
 mod labels;
 mod learned;
 mod leases;
+mod activity_book;
+mod layers;
 mod ledger;
 mod letters;
 mod lifecycle;
@@ -615,7 +617,8 @@ pub async fn run_prepared(
         Arc::new(move |line| codex_log.line(line)),
     );
     let claude = claude::Claude::new(&world)?;
-    let database = fastctx_storage::Database::open(&world.path().join("node.sqlite3"), composer::SCHEMA)
+    let schema = format!("{}{}", composer::SCHEMA, activity_book::SCHEMA);
+    let database = fastctx_storage::Database::open(&world.path().join("node.sqlite3"), &schema)
         .context("opening the node database")?;
     // Built cyclically so the goal services can hold a weak handle back to the
     // node they reach account records and context through.

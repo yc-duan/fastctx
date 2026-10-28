@@ -209,7 +209,11 @@ fn measure_conversations(node: &Node, wanted: Option<&str>) -> io::Result<BTreeM
         let mut host_record = HostRecord::None;
         let mut keeping_days = None;
         let mut transcript_present = false;
-        match about.host.agent.as_str() {
+        // The host's own records of a session the user opened on their own
+        // are theirs: the World neither counts nor reads them
+        // (`world-layers.md`).
+        let agent = if about.world_managed() { about.host.agent.as_str() } else { "" };
+        match agent {
             "codex" => {
                 if let Some(thread) = &about.session {
                     one.sessions.push(thread.clone());

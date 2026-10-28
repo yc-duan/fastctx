@@ -32,6 +32,11 @@ use jiff::Timestamp;
 
 use crate::Node;
 
+/// Said when something is to be told to a session the user opened outside
+/// Fastctx: the World speaks only into the conversations it holds.
+pub(crate) const OWN_SESSION: &str =
+    "this is a session the user opened outside Fastctx; the World answers its calls and says nothing into it";
+
 /// Who is owed the end of the turn words go into.
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum Owed {
@@ -171,6 +176,13 @@ async fn receive_here_locked(
         .residents
         .about(to)
         .ok_or_else(|| Failure::new(format!("no resident {to} lives on {}", node.machine())))?;
+    // A session the user opened outside Fastctx and never brought in is
+    // only heard through its own calls (`world-layers.md`): the World says
+    // nothing into it. The end of a job it started waits for its next call
+    // of a World tool, which carries it back with the answer.
+    if !about.world_managed() && !matches!(delivery.notice, Notice::JobEnded { .. }) {
+        return Err(Failure::refused(OWN_SESSION));
+    }
     if let Some(error) =
         crate::lifecycle::refused::get(node, to, &delivery.id).map_err(|error| Failure::new(error.to_string()))?
     {
@@ -393,7 +405,7 @@ async fn hand_over_locked(
     }
     let why = None;
     let sentinel = matches!(pending.delivery.notice, Notice::Sentinel { .. });
-    if (about.world_managed() || pending.delivery.notice.wakes_closed())
+    if about.world_managed()
         && about.host.agent.as_str() == "codex"
         && let Some(thread) = &about.session
     {

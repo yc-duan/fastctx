@@ -224,6 +224,10 @@ pub(crate) async fn read_limits(
     dir: PathBuf,
 ) -> Result<MachineLogins, Failure> {
     if node.is_here(&machine) {
+        // A login's limits are read for the workbench only (`world-layers.md`).
+        if crate::layers::of(node, &fastctx_types::access::Acting::Here) == fastctx_types::layers::Layer::Connect {
+            return Err(Failure::refused(fastctx_types::layers::CONNECT_ONLY));
+        }
         super::limits::read(node, &agent, &dir).await?;
         return super::here(node).await;
     }

@@ -25,6 +25,10 @@ pub struct Profile {
     /// the account turned it off, so only an off is written.
     #[serde(default = "on", skip_serializing_if = "is_on")]
     pub memory: bool,
+    /// The layer the account chose (`world-layers.md`); none until it
+    /// chooses.
+    #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "crate::tolerant::read_option")]
+    pub layer: Option<crate::layers::Layer>,
     /// What the account writes to every agent that works for it.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub prompt: String,
@@ -145,6 +149,7 @@ impl Default for Profile {
         Self {
             version: 0,
             memory: on(),
+            layer: None,
             prompt: String::new(),
             claude: Map::new(),
             codex: Map::new(),

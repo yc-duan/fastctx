@@ -711,6 +711,13 @@ pub enum Change {
         version: u64,
         enabled: bool,
     },
+    /// Changes only the account's layer (`world-layers.md`), over the
+    /// profile version it was read at. Sent only to a hub whose view says
+    /// it keeps layers.
+    Layer {
+        version: u64,
+        layer: fastctx_types::layers::Layer,
+    },
     /// Writes the account's profile over the version it was read at; a
     /// machine that works for the account may (`world-user-config.md`).
     Profile {

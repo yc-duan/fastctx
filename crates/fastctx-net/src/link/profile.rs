@@ -29,6 +29,7 @@ impl Link {
         }
         profile.subagents = current.profile.subagents;
         profile.memory = current.profile.memory;
+        profile.layer = current.profile.layer;
         profile.validate()?;
         let confirmed = profile.clone();
         let told =

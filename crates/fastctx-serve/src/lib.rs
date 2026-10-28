@@ -145,7 +145,7 @@ async fn serve_session(
                         continue;
                     }
                 };
-                let tools = tools::definitions(writes_off, session.woken(meta), session.codex(meta), machines.as_ref());
+                let tools = tools::definitions(writes_off, session.woken(), session.codex(meta), machines.as_ref());
                 output.send(&protocol.response(&id, json!({ "tools": tools }), true));
                 session.watch_tools(&output, meta);
             }

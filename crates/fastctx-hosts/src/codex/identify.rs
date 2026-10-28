@@ -52,7 +52,7 @@ impl CodexHost {
             let (server, launch) = state.server.as_ref()?;
             (server.clone(), launch.clone(), state.version.clone())
         };
-        let said = ask(&server, version, limits).await;
+        let said = ask(&server, version, limits, true).await;
         if let Some(Ok((at, answer))) = &said.limits {
             self.limits_heard(*at, super::account::LimitsHow::Read(answer.clone()));
         }
@@ -85,7 +85,7 @@ impl CodexHost {
         };
         tokio::spawn(async move {
             let at = Timestamp::now();
-            let said = ask(&server, version, false).await;
+            let said = ask(&server, version, false, true).await;
             if let Fact::Known { value } = &said.who {
                 let mut owner = owner.lock().expect("never poisoned");
                 if owner.generation != generation {
@@ -109,7 +109,7 @@ pub(super) fn version_of(answer: &Value) -> Option<String> {
 }
 
 /// Starts `launch` for the Codex home `home`, asks it, its usage limits
-/// too with `limits`, and stops it.
+/// too with `limits` and its models with `models`, and stops it.
 pub async fn ask_once(
     launch: &Launch,
     home: &Path,
@@ -117,6 +117,7 @@ pub async fn ask_once(
     env: &[(OsString, OsString)],
     log: Log,
     limits: bool,
+    models: bool,
 ) -> Result<Said, String> {
     let mut env = env.to_vec();
     env.retain(|(name, _)| !name.eq_ignore_ascii_case("CODEX_HOME"));
@@ -155,7 +156,7 @@ pub async fn ask_once(
         .await
         .and_then(|answer| server.notify("initialized", json!({})).map(|()| answer));
     let said = match started {
-        Ok(answer) => Ok(ask(&server, version_of(&answer), limits).await),
+        Ok(answer) => Ok(ask(&server, version_of(&answer), limits, models).await),
         Err(error) => Err(format!("starting the Codex app-server {}: {error}", launch.binary.display())),
     };
     server.kill();
@@ -164,7 +165,7 @@ pub async fn ask_once(
     said
 }
 
-async fn ask(server: &AppServer, version: Option<String>, limits: bool) -> Said {
+async fn ask(server: &AppServer, version: Option<String>, limits: bool, models: bool) -> Said {
     let who = super::account::identity(server).await;
     let limits = match &who {
         Fact::Known { value } if value.logged_in && limits => {
@@ -173,9 +174,13 @@ async fn ask(server: &AppServer, version: Option<String>, limits: bool) -> Said 
         }
         _ => None,
     };
-    let models = match super::agents::models(server).await {
-        Ok(models) => Fact::known(models),
-        Err(error) => Fact::failed(error),
+    let models = if !models {
+        Fact::unavailable("the models are listed for the workbench")
+    } else {
+        match super::agents::models(server).await {
+            Ok(models) => Fact::known(models),
+            Err(error) => Fact::failed(error),
+        }
     };
     Said { version, who, limits, models }
 }

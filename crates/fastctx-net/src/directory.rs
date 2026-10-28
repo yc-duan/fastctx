@@ -594,6 +594,9 @@ pub struct View {
     /// Whether this hub supports `Question::MachineLog`. Older hubs omit it.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub machine_log: bool,
+    /// The hub keeps each account's layer (`Change::Layer`).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub layers: bool,
     pub hub: HubId,
     pub hub_name: HubName,
     /// Current hub host, only when visible to this member.
@@ -770,6 +773,7 @@ impl View {
             collaboration_tree: false,
             call_details: false,
             machine_log: false,
+            layers: false,
             hub,
             hub_name,
             hub_machine: None,

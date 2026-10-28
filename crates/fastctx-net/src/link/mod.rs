@@ -27,6 +27,7 @@ mod clock;
 mod collab;
 mod direct;
 mod kernel;
+mod layer;
 mod ledger;
 mod letters;
 mod posting;

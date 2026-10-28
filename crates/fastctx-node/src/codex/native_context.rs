@@ -31,7 +31,9 @@ struct Observed {
 
 pub(crate) async fn observe(node: &Arc<Node>, id: &ResidentId) -> Result<(), Failure> {
     let Some((about, _)) = node.residents.about(id) else { return Ok(()) };
-    if about.world_started || about.host.agent.as_str() != "codex" {
+    // Only a native thread the user brought in is followed: the World reads
+    // nothing of a session that is the user's own (`world-layers.md`).
+    if about.world_started || !about.native_resumed || about.host.agent.as_str() != "codex" {
         return Ok(());
     }
     let Some(thread) = about.session.as_ref() else { return Ok(()) };
