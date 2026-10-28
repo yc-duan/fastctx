@@ -1,4 +1,5 @@
-//! Account windows merge by reset period, so delayed sessions cannot move them backwards.
+//! Account windows merge by reset period, so delayed sessions cannot move
+//! them backwards, while a period whose usage was reset in place is seen.
 use super::Week;
 use super::ledger::{Book, Entry, Reading};
 use crate::Node;
@@ -12,6 +13,15 @@ pub(super) fn same(a: Timestamp, b: Timestamp) -> bool {
     a.duration_since(b).abs() <= SignedDuration::from_secs(120)
 }
 
+/// Within one period usage only rises: sessions report what they last saw,
+/// in no fixed order, so a reading a little lower is a late one. Falling to
+/// half or less, and by two points or more, is the period's usage reset with
+/// its end kept, as a vendor does when the plan changes.
+fn reset_in_place(known: u32, incoming: u32) -> bool {
+    incoming * 2 <= known && known - incoming >= 20
+}
+
+/// Merges `windows`, observed no earlier than `known`, into it.
 pub(super) fn merge(known: &mut Vec<LimitWindow>, windows: Vec<LimitWindow>) {
     for incoming in windows {
         let Some(old) = known.iter_mut().find(|old| old.name == incoming.name && old.minutes == incoming.minutes)
@@ -20,6 +30,9 @@ pub(super) fn merge(known: &mut Vec<LimitWindow>, windows: Vec<LimitWindow>) {
             continue;
         };
         match (old.resets_at, incoming.resets_at) {
+            (Some(a), Some(b)) if same(a, b) && reset_in_place(old.used_tenths, incoming.used_tenths) => {
+                *old = incoming;
+            }
             (Some(a), Some(b)) if same(a, b) => {
                 old.used_tenths = old.used_tenths.max(incoming.used_tenths);
             }
