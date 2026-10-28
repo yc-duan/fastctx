@@ -302,16 +302,17 @@ export class Tokens {
     this.ssh = null;
     const remote = this.options.remote;
     const ssh = this.face === "server" && !!remote && this.way === "ssh";
-    // How a Linux host comes in is a choice within its face: one switch of
-    // two, under the ways of adding a device, not a row like theirs.
+    // How a Linux host or a managed machine comes in is a choice within its
+    // face: a row of words under the ways of adding a device, the chosen
+    // one circled as theirs is.
     const ways =
       this.face === "server" && remote
-        ? `<div class="segmented device-ways" role="radiogroup" aria-label="${escape(words.kinds.server)}">${(["ssh", "line"] as const)
-            .map((way) => `<button class="segment${way === this.way ? " chosen" : ""}" type="button" role="radio" aria-checked="${way === this.way}" data-server-way="${way}">${escape(words.ways[way])}</button>`)
+        ? `<div class="choice-options device-ways" role="radiogroup" aria-label="${escape(words.kinds.server)}">${(["ssh", "line"] as const)
+            .map((way) => `<button class="choice${way === this.way ? " chosen" : ""}" type="button" role="radio" aria-checked="${way === this.way}" data-server-way="${way}">${escape(words.ways[way])}</button>`)
             .join("")}</div>`
         : this.face === "managed"
-          ? `<div class="segmented device-ways" role="radiogroup" aria-label="${escape(words.kinds.managed)}">${MANAGED_WAYS.map(
-              (way) => `<button class="segment${way === this.managedWay ? " chosen" : ""}" type="button" role="radio" aria-checked="${way === this.managedWay}" data-managed-way="${way}">${escape(words.managedWays[way])}</button>`,
+          ? `<div class="choice-options device-ways" role="radiogroup" aria-label="${escape(words.kinds.managed)}">${MANAGED_WAYS.map(
+              (way) => `<button class="choice${way === this.managedWay ? " chosen" : ""}" type="button" role="radio" aria-checked="${way === this.managedWay}" data-managed-way="${way}">${escape(words.managedWays[way])}</button>`,
             ).join("")}</div>`
           : "";
     // A Linux host may come in as a managed machine, over SSH or by its line.

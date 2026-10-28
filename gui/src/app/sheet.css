@@ -100,8 +100,9 @@
   margin-right: -8px;
 }
 
-/* A choice among a few: the question on the left, its answers as quiet
-   solid pills, the chosen one washed in clay. */
+/* A choice among a few: the question on the left, its answers a row of
+   words, the chosen one circled in clay ink, the loop drawn as it is chosen
+   (AGENTS.md, 形状: no row of pills). */
 .choice-row {
   display: grid;
   grid-template-columns: 6.5em minmax(0, 1fr);
@@ -118,37 +119,55 @@
 .choice-options {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
+  gap: 4px var(--space-6);
 }
 
+/* Each word keeps room round it for its loop, and stands where its text
+   does: the row lines up with the words above and below it. */
 .choice {
+  position: relative;
   display: inline-flex;
   align-items: baseline;
   gap: 6px;
   min-height: 30px;
-  padding: 4px 12px;
-  border-radius: var(--radius-full);
-  background: var(--fill);
+  margin-inline: -10px;
+  padding: 4px 10px;
+  border-radius: var(--radius-s);
   color: var(--text-2);
   font-size: var(--size-text);
   line-height: var(--leading-ui);
-  transition: color var(--hover) var(--ease), background-color var(--hover) var(--ease);
+  transition: color var(--hover) var(--ease);
 }
 
 .choice:hover:not(:disabled) {
   color: var(--text);
-  background: var(--fill-strong);
 }
 
-.choice.chosen,
-.choice.chosen:hover:not(:disabled) {
+.choice.chosen {
   color: var(--text-strong);
-  background: var(--accent-wash);
+}
+
+.choice::after {
+  content: "";
+  position: absolute;
+  inset: -5px -1px;
+  pointer-events: none;
+  background: var(--pen-clay);
+  -webkit-mask: var(--pen-ring) 50% 50% / 100% 100% no-repeat;
+  mask: var(--pen-ring) 50% 50% / 100% 100% no-repeat;
+  opacity: var(--ink-alpha);
+  scale: var(--ink-scale);
+  --ink-scale: 0.94;
+  transition: --ink-alpha var(--quick) var(--ease-out), --ink-scale var(--settle) var(--spring);
+}
+
+.choice.chosen::after {
+  --ink-alpha: 1;
+  --ink-scale: 1;
 }
 
 .choice:disabled {
   color: var(--text-3);
-  background: color-mix(in srgb, var(--fill) 50%, transparent);
 }
 
 .choice-note {
@@ -263,6 +282,17 @@
 }
 
 @media (max-width: 760px) {
+  /* Under a finger, each word a full target: the row a little apart. */
+  .choice-options {
+    row-gap: var(--space-3);
+  }
+
+  .choice::before {
+    content: "";
+    position: absolute;
+    inset: -8px -4px;
+  }
+
   .sheet {
     margin: auto 0 0;
     width: 100%;

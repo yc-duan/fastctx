@@ -8,8 +8,9 @@
 import { penDefs } from "./filters";
 import { outline, ruled, seeded, type Point } from "./shapes";
 
-function image(width: number, height: number, filter: string, d: string): string {
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}"><defs>${penDefs()}</defs><g filter="url(#${filter})"><path d="${d}" fill="white"/></g></svg>`;
+function image(width: number, height: number, filter: string, d: string, stretch = false): string {
+  const fit = stretch ? ` preserveAspectRatio="none"` : "";
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}"${fit}><defs>${penDefs()}</defs><g filter="url(#${filter})"><path d="${d}" fill="white"/></g></svg>`;
   return `url("data:image/svg+xml,${encodeURIComponent(svg)}")`;
 }
 
@@ -37,9 +38,10 @@ function underline(seed: string): string {
 
 /** A loop drawn round a word to mark it the one chosen: once round from the
  *  lower left and on a little past where it began, opening out and rising
- *  slightly as a hand does circling a word. */
+ *  slightly as a hand does circling a word. It stretches to the word it
+ *  goes round, so one of two characters and one of four sit alike in theirs. */
 function ring(seed: string): string {
-  const width = 112;
+  const width = 96;
   const height = 56;
   const random = seeded(seed);
   const points: Point[] = [];
@@ -52,7 +54,7 @@ function ring(seed: string): string {
     const ry = (height / 2 - 6) * open * (1 + (random() - 0.5) * 0.03);
     points.push([width / 2 + Math.cos(angle) * rx, height / 2 + Math.sin(angle) * ry - 1.5 * t]);
   }
-  return image(width, height, "pen-marker", outline(points, 3.2, random, { pressure: 0.3, taper: 0.08 }));
+  return image(width, height, "pen-marker", outline(points, 3.2, random, { pressure: 0.3, taper: 0.08 }), true);
 }
 
 /** Sets the page's drawn marks as custom properties on the root:

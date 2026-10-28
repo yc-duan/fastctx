@@ -388,12 +388,12 @@
   column-gap: var(--space-3);
 }
 
-/* This computer's addresses as pills to choose, then another typed in,
+/* This computer's addresses as words to choose, then another typed in,
    and the port. */
 .reach-chips {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
+  gap: 4px var(--space-6);
 }
 
 .reach-chip {

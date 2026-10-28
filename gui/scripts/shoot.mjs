@@ -10,6 +10,10 @@
 // `--probe` evaluates an expression in each scene once it has settled and
 // prints what it returns, for measuring a layout rather than eyeing it.
 //
+// `--query conversations` turns the workbench on, as most use it: the front
+// page, the projects and the conversations in the sidebar. Without it the
+// interface is a computer's agents, and the front page is not drawn.
+//
 // `drawer` is the front page with the sidebar pulled out as a drawer;
 // `about` is a conversation with its head's "⋯" open; a name
 // ending in `-2` is its page logged in to two accounts on two hubs.
@@ -141,7 +145,7 @@ for (const session of sessions) {
       const loaded = once("Page.loadEventFired");
       const two = session.endsWith("-2");
       const named = two ? session.slice(0, -2) : session;
-      const shown = named.startsWith("invite-") ? "invite" : named === "stop" ? "claude" : named === "drawer" || named === "palette" ? "home" : named === "service" || named.startsWith("remove-") ? "settings" : named === "slash" || named === "mention" || named === "find" || named === "attach" || named === "rewind" || named === "usage" ? "codex" : named.startsWith("asks") ? "asks" : named === "new-codex" || named === "new-attach" || named === "new-lent" || named === "new-pick" ? "new" : named === "manage" ? "about" : named === "welcome" || named === "create" || named === "created" ? "login" : named === "share" || named === "relays" ? "machines" : named === "lend" || named.startsWith("ledger") ? "home" : named === "queue" ? "codex" : named.startsWith("page") ? "page" : named.startsWith("panel") ? "claude" : named.startsWith("team") ? "stream" : named.startsWith("repair-") ? "home" : named === "updates-repair" ? "machines" : named === "journal-edit" ? "journal" : named === "project-write" ? "project" : named === "features" || named.startsWith("feature-") ? "home" : named;
+      const shown = named.startsWith("invite-") ? "invite" : named === "stop" ? "claude" : named === "drawer" || named === "palette" ? "home" : named === "service" || named.startsWith("remove-") ? "settings" : named === "slash" || named === "mention" || named === "find" || named === "attach" || named === "rewind" || named === "usage" ? "codex" : named.startsWith("asks") ? "asks" : named === "new-codex" || named === "new-attach" || named === "new-lent" || named === "new-pick" ? "new" : named === "manage" ? "about" : named === "welcome" || named === "create" || named === "created" ? "login" : named === "share" || named === "relays" ? "machines" : named === "lend" || named.startsWith("ledger") ? "home" : named === "queue" ? "codex" : named.startsWith("page") ? "page" : named.startsWith("panel") ? "claude" : named.startsWith("team") ? "stream" : named.startsWith("repair-") ? "home" : named === "updates-repair" ? "machines" : named === "journal-edit" ? "journal" : named === "project-write" ? "project" : named === "features" || named.startsWith("feature-") || named.startsWith("prefs-") ? "home" : named;
       // `welcome` and `create` are a computer's first open, in no World yet.
       const alone = named === "welcome" || named === "create" || named === "created";
       const ask = (session.startsWith("asks-") ? `&ask=${session.slice(5)}` : "") + (two ? "&accounts=2" : "") + (alone ? "&accounts=0" : "") + (named.startsWith("team") ? "&start=agents" : "") + (named.startsWith("repair-") ? `&repair=${named === "repair-broken" ? "broken" : "failed"}` : "");
@@ -189,8 +193,9 @@ for (const session of sessions) {
       }
       // `features` is the features' cards; `feature-memory` and the like one
       // feature's page.
-      if (named === "features" || named.startsWith("feature-")) {
-        const where = named === "features" ? "#/features" : `#/feature/${named.slice("feature-".length)}`;
+      // `prefs-claude` and `prefs-codex` are an agent's preferences.
+      if (named === "features" || named.startsWith("feature-") || named.startsWith("prefs-")) {
+        const where = named === "features" ? "#/features" : named.startsWith("prefs-") ? `#/agents/prefs/${named.slice("prefs-".length)}` : `#/feature/${named.slice("feature-".length)}`;
         await send("Runtime.evaluate", { awaitPromise: true, expression: `new Promise((r) => { location.hash = ${JSON.stringify(where)}; setTimeout(r, 2600); })` });
       }
       // `journal-edit` is a decision being edited; `project-write` the sheet
