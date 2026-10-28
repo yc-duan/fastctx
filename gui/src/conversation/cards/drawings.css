@@ -1,0 +1,107 @@
+/* The pens and washes the cards' drawings are made in (`drawings.ts`):
+   the interface's own surfaces for things, graphite for writing and
+   structure, clay for a commit's seal, a change's own colours. */
+.wsk {
+  display: block;
+  overflow: visible;
+}
+
+.wsk-thing {
+  fill: var(--fill-strong);
+}
+
+.wsk-part {
+  fill: var(--fill);
+}
+
+.wsk-graphite {
+  fill: var(--pen-graphite);
+}
+
+.wsk-clay {
+  fill: var(--pen-clay);
+}
+
+.wsk-added {
+  fill: var(--add-line);
+}
+
+.wsk-removed {
+  fill: var(--del-line);
+}
+
+.wsk-add {
+  fill: var(--add-fg);
+}
+
+.wsk-del {
+  fill: var(--del-fg);
+}
+
+.wsk-wrong {
+  fill: var(--wrong);
+}
+
+.wsk-caution {
+  fill: var(--caution);
+}
+
+.wsk-cut {
+  fill: var(--surface-code);
+}
+
+.wsk-mark {
+  fill: none;
+  stroke-width: 1.7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.wsk-mark.wsk-graphite {
+  stroke: var(--pen-graphite);
+}
+
+/* What moves, once, as a card is opened: a sheet carried from one machine
+   to the other along its way, a seal set down. Only the drawing's own
+   properties move; with less motion asked for, it is simply there. */
+@property --wsk-carry {
+  syntax: "<number>";
+  inherits: false;
+  initial-value: 1;
+}
+
+@property --wsk-set {
+  syntax: "<number>";
+  inherits: false;
+  initial-value: 1;
+}
+
+.wsk-travel {
+  translate: calc((var(--wsk-carry) - 1) * 52px) calc(var(--wsk-carry) * (1 - var(--wsk-carry)) * -40px);
+  animation: wsk-carry var(--travel) var(--fold-easing) both;
+}
+
+@keyframes wsk-carry {
+  from {
+    --wsk-carry: 0;
+  }
+}
+
+.wsk-stamp {
+  transform-box: fill-box;
+  transform-origin: center;
+  scale: calc(1 + (1 - var(--wsk-set)) * 0.35);
+  opacity: var(--wsk-set);
+  animation: wsk-set var(--enter) var(--ease-out) both;
+}
+
+@keyframes wsk-set {
+  from {
+    --wsk-set: 0;
+  }
+}
+
+:root[data-reduced] .wsk-travel,
+:root[data-reduced] .wsk-stamp {
+  animation: none;
+}

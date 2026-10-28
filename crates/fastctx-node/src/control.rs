@@ -94,20 +94,28 @@ pub async fn control_here(node: &Arc<Node>, resident: &ResidentId, control: Cont
         return execute(node, resident, control).await;
     }
     let gate = crate::control_queue::gate(node, resident);
-    let _action = gate.lock().await;
+    let _action = crate::gate_waits::action(node, resident, &gate).await?;
     node.residents.active(resident)?;
     crate::control_queue::drain(node, resident).await?;
     if let Some(queued) = crate::control_queue::enqueue_if_busy(node, resident, &control).await? {
         return Ok(queued);
     }
     if !told {
+        // What is only read waits for no long control: its host answers
+        // nothing else until that is done.
+        if node.long_controls.of(resident) {
+            return Err(Failure::not_run(crate::control_long::WAITING));
+        }
         return execute(node, resident, control).await;
     }
     let row = crate::control_queue::begin(node, resident, &control)?;
-    let result = match crate::control_queue::prepare(node, resident, &row).await {
-        Ok(()) => execute(node, resident, control).await,
-        Err(error) => Err(error),
-    };
+    if let Err(error) = crate::control_queue::prepare(node, resident, &row).await {
+        return crate::control_queue::end(node, resident, row, Err(error)).await;
+    }
+    if crate::control_long::long(node, resident, &control) {
+        return Ok(crate::control_long::start(node, resident, row));
+    }
+    let result = execute(node, resident, control).await;
     crate::control_queue::end(node, resident, row, result).await
 }
 
@@ -178,7 +186,7 @@ fn host_of(node: &Node, resident: &ResidentId) -> Result<&'static str, Failure> 
         .residents
         .about(resident)
         .ok_or_else(|| Failure::new(format!("no resident {resident} lives on {}", node.machine())))?;
-    match (about.host.agent.as_str(), about.world_started, &about.session) {
+    match (about.host.agent.as_str(), about.world_managed(), &about.session) {
         ("codex", true, Some(_)) => Ok("Codex"),
         ("claude", _, _) => Ok("Claude"),
         _ => Err(Failure::new(format!("{resident} is a session the World does not hold; do this where it is open"))),

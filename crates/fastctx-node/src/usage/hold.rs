@@ -2,10 +2,12 @@
 use super::allowance::{self, UsedUp};
 use crate::Node;
 use fastctx_types::ResidentId;
+use fastctx_types::access::Acting;
 use fastctx_types::residents::About;
 use fastctx_types::session::{Health, HealthKind};
 use jiff::Timestamp;
 use serde_json::json;
+use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -40,20 +42,45 @@ fn publish(
     Ok(())
 }
 
+/// Checks the conversations that work for accounts in `login`, or in every
+/// login, each login under its own lock (`world-usage.md`, 守线): only they
+/// can be held, and one login's check waits for no other's.
 pub(super) fn refresh(node: &Arc<Node>, login: Option<(&str, &Path)>) -> Option<Timestamp> {
-    let _refreshing = node.usage.enforcing.lock().expect("never poisoned");
-    let records: Vec<(ResidentId, About)> = node
-        .residents
-        .everyone()
-        .filter(|record| record.removed.is_none())
-        .filter(|record| {
-            login.is_none_or(|(agent, dir)| {
-                record.about.host.agent.as_str() == agent
-                    && allowance::login(node, &record.about).is_some_and(|home| crate::homes::same_dir(&home, dir))
-            })
-        })
-        .map(|record| (record.id, record.about))
-        .collect();
+    let defaults = (node.codex.default().config_home().to_path_buf(), super::claude_default());
+    let mut logins: BTreeMap<String, Vec<(ResidentId, About)>> = BTreeMap::new();
+    for record in node.residents.everyone() {
+        if record.removed.is_some() || !matches!(record.about.acting, Acting::Accounts { .. }) {
+            continue;
+        }
+        let agent = record.about.host.agent.as_str();
+        let dir = match (&record.about.home, agent) {
+            (Some(home), _) => home.clone(),
+            (None, "codex") => defaults.0.clone(),
+            (None, "claude") => match &defaults.1 {
+                Some(dir) => dir.clone(),
+                None => continue,
+            },
+            _ => continue,
+        };
+        if login.is_some_and(|(wanted, wanted_dir)| agent != wanted || !crate::homes::same_dir(&dir, wanted_dir)) {
+            continue;
+        }
+        logins.entry(format!("{agent}-{}", crate::homes::key(&dir))).or_default().push((record.id, record.about));
+    }
+    let mut next = None;
+    for (key, records) in logins {
+        let gate = node.usage.enforcing.lock().expect("never poisoned").entry(key).or_default().clone();
+        let _refreshing = gate.lock().expect("never poisoned");
+        if let Some(until) = refresh_login(node, records) {
+            next = Some(next.map_or(until, |old: Timestamp| old.min(until)));
+        }
+    }
+    next
+}
+
+/// Publishes each conversation's hold and stops the turns past a limit;
+/// says when the first hold ends.
+fn refresh_login(node: &Arc<Node>, records: Vec<(ResidentId, About)>) -> Option<Timestamp> {
     let mut next = None;
     for (id, about) in records {
         let restriction = allowance::restriction(node, &about);
@@ -75,7 +102,7 @@ pub(super) fn refresh(node: &Arc<Node>, login: Option<(&str, &Path)>) -> Option<
             // 2026-10-20: a report holds its session gate; stopping another session must
             // never wait beneath that gate (world-concurrency.md).
             if node.residents.now(&id).is_some_and(|now| now.turn.as_ref() == Some(&turn)) {
-                if let Err(failure) = crate::talk::stop_here(&node, &id).await {
+                if let Err(failure) = crate::talk::stop_here_as(&node, &id, fastctx_types::turn_evidence::StopSource::Allowance).await {
                     node.log.line(format_args!("stopping {id} at its allowance: {}", failure.message));
                 }
                 let health = Health { kind: HealthKind::Warning, text: used.said(&account) };

@@ -19,8 +19,12 @@ export interface CanvasItem {
   side?: "below" | "above" | "right" | "left";
   /** Pressed over this rectangle instead of the circle round `point`, its
    *  corners rounded by `corners` (top left, top right, bottom right, bottom
-   *  left), all in the drawing's units. */
+   *  left), all in the drawing's units; without them, as the page styles
+   *  it. */
   box?: { x: number; y: number; width: number; height: number; corners?: [number, number, number, number] };
+  /** Found only by where it is, as a press finds every item: no hit area
+   *  of its own, so not reached by the keyboard. */
+  quiet?: boolean;
 }
 
 /** A handle starts an intent; the page validates targets and confirms the result. */
@@ -45,12 +49,14 @@ export type CanvasEvent =
    *  it to those chosen or take it out. */
   | { kind: "select"; key: string | null; at: Point; add: boolean }
   | { kind: "context"; key: string | null; at: Point; input: "mouse" | "touch" | "keyboard" }
+  /** An item pressed twice, to be opened. */
+  | { kind: "open"; key: string }
   | { kind: "draft"; draft: Draft }
   | { kind: "drop"; handle: CanvasHandle; target: string; at: Point }
-  /** A frame drawn with the left mouse button: the items inside it, while
-   *  it is drawn and once it is let go; `add` while Ctrl or Command is held,
-   *  to add them to those chosen. */
-  | { kind: "marquee"; keys: string[]; done: boolean; add: boolean }
+  /** A frame drawn with the left mouse button: the items inside it, and
+   *  where it is in the drawing's units, while it is drawn and once it is let
+   *  go; `add` while Ctrl or Command is held, to add them to those chosen. */
+  | { kind: "marquee"; keys: string[]; area: Bounds; done: boolean; add: boolean }
   | { kind: "cancel"; handle: CanvasHandle; reason: "escape" | "outside" | "interrupted" | "changed" };
 
 export interface CanvasFrame {

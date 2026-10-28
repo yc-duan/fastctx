@@ -47,7 +47,7 @@ fn target(link: &Link, account: &AccountName, given: Option<Written>) -> Result<
             written.name
         }
         None => {
-            let own: Vec<_> = view.machines().filter(|m| m.home.as_ref() == Some(account)).collect();
+            let own: Vec<_> = view.machines().filter(|m| view.holds(account, &m.name)).collect();
             if own.len() != 1 {
                 return Err(failed("choose the MCP's machine"));
             }

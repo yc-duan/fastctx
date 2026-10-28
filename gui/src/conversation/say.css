@@ -1,0 +1,162 @@
+/* What the agent said to the user (`world-voice.md`): set as an answer is,
+   in the reading ink. An urgent one opens with a terracotta ※, the mark
+   the plan uses for what must not be missed. In a turn that said
+   something, the agent's other words are its working notes, in the
+   quieter ink: one face, one size, told apart by ink alone. */
+
+.say-mark {
+  margin-right: 0.3em;
+  color: var(--accent);
+}
+
+.say-notes .prose {
+  color: var(--text-2);
+}
+
+/* The pictures it showed, drawn from the machines holding them, and the
+   other files, each opened from its machine when pressed. */
+.say-pictures {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+}
+
+.say-pictures .prose-picture img {
+  max-width: min(100%, 420px);
+}
+
+.say-files {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin: var(--space-3) 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.say-file {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  max-width: 280px;
+  min-height: 32px;
+  padding: 4px 12px;
+  border-radius: var(--radius-m);
+  background: var(--fill);
+  color: var(--text);
+  font-size: var(--size-text);
+  text-decoration: none;
+}
+
+.say-file:hover {
+  background: color-mix(in srgb, var(--fill) 80%, var(--text-strong));
+}
+
+.say-file-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media (pointer: coarse) {
+  .say-file {
+    min-height: 44px;
+  }
+}
+
+/* The page's switch between what was said and every step: pressed, every
+   step is shown, and the button stands in the chosen wash. */
+.view-steps[aria-pressed="true"] {
+  background: var(--accent-wash);
+  color: var(--text-strong);
+}
+
+/* The two views of a conversation (`world-voice.md`, 两种看法). In the
+   view of what was said, the agent's words to the user stand on a ground
+   of their own facing the user's: the ground hangs out round the words,
+   so the words stand where they stand in every step's view and only the
+   ground comes and goes, and the user's words slide out as far to face
+   them. An urgent one stands on the accent's wash. The ground fits the
+   words in the view of what was said; in every step's view it is gone. */
+@property --said {
+  syntax: "<number>";
+  inherits: false;
+  initial-value: 0;
+}
+
+.transcript {
+  --hang-x: min(var(--space-4), calc(var(--gutter) - var(--space-3)));
+  --hang-y: var(--space-2);
+}
+
+.transcript > .block-say > .say,
+.transcript > .block-prose.prose-message > .prose {
+  margin: calc(-1 * var(--hang-y)) calc(-1 * var(--hang-x));
+  padding: var(--hang-y) var(--hang-x);
+  border-radius: var(--radius-l);
+  background: color-mix(in srgb, var(--ground, var(--fill)) calc(var(--said) * 100%), transparent);
+  transition: --said var(--glide) var(--glide-easing);
+}
+
+.transcript > .block-say > .say-urgent {
+  --ground: var(--accent-wash);
+}
+
+.transcript[data-view="said"] > .block-say > .say,
+.transcript[data-view="said"] > .block-prose.prose-message > .prose {
+  width: fit-content;
+}
+
+.transcript > .block.from-user {
+  translate: calc(var(--said) * var(--hang-x)) 0;
+  transition: --said var(--glide) var(--glide-easing);
+}
+
+.transcript[data-view="said"]:not(.view-leaving) > .block-say > .say,
+.transcript[data-view="said"]:not(.view-leaving) > .block-prose.prose-message > .prose,
+.transcript[data-view="said"]:not(.view-leaving) > .block.from-user {
+  --said: 1;
+}
+
+/* What follows the words keeps clear of their ground. */
+.transcript > .block-say > .say + .turn-acts,
+.transcript > .block-prose > .prose + .message-acts > .turn-acts {
+  margin-top: calc(var(--space-1) + var(--hang-y));
+}
+
+@media (hover: none) {
+  .transcript > .block-say > .say + .turn-acts,
+  .transcript > .block-prose > .prose + .message-acts > .turn-acts {
+    margin-top: calc(var(--hang-y) - 6px);
+  }
+}
+
+/* What a change of view brings in near the reader unfolds round what
+   stays, its room opening and its ink coming up in the second half; what
+   it takes away folds the other way, and goes once it has (`view.ts`,
+   showing). */
+@property --unfold {
+  syntax: "<number>";
+  inherits: false;
+  initial-value: 1;
+}
+
+.transcript > .block.view-fold {
+  box-sizing: border-box;
+  height: calc(var(--full) * var(--unfold));
+  padding-top: calc(var(--gap) * var(--unfold));
+  overflow: clip;
+  opacity: clamp(0, calc(var(--unfold) * 2 - 1), 1);
+  transition: --unfold var(--glide) var(--glide-easing);
+}
+
+.transcript > .block.view-folded {
+  --unfold: 0;
+}
+
+/* Shut at once, to unfold from nothing. */
+.transcript > .block.view-shut {
+  --unfold: 0;
+  transition: none;
+}

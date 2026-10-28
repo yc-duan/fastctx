@@ -8,6 +8,7 @@
 // uninstalls itself.
 
 import { Sketch } from "../pen/sketch";
+import { stepMark } from "../pen/step-mark";
 import { escape } from "../conversation/prose";
 import type { RemovalEvent, RemovalItem, RemovalPlan } from "../world/bridge";
 import { DrawnOnce } from "./drawn-once";
@@ -177,7 +178,7 @@ export class RemovalSection {
     const result = this.state.results.get(step);
     if (!row || !result) return;
     row.dataset.result = result.result;
-    row.querySelector(".removal-mark")!.innerHTML = mark(result.result);
+    row.querySelector(".removal-mark")!.innerHTML = stepMark(result.result);
     if (result.why) row.title = result.why;
     const count = this.host.querySelector<HTMLElement>(".removal-count");
     if (count) count.textContent = this.words.count(this.state.results.size, this.state.plan.steps.length);
@@ -313,48 +314,10 @@ export class RemovalSection {
     return `<ol class="removal-list">${steps
       .map((step) => {
         const result = results?.get(step.id);
-        return `<li data-step="${escape(step.id)}"${result ? ` data-result="${result.result}"` : ""}${result?.why ? ` title="${escape(result.why)}"` : ""}>${results ? `<span class="removal-mark" aria-hidden="true">${mark(result?.result ?? null)}</span>` : ""}<span class="removal-what">${escape(this.label(step))}</span>${step.where ? `<code class="removal-where" title="${escape(step.where)}">${escape(step.where)}</code>` : ""}</li>`;
+        return `<li data-step="${escape(step.id)}"${result ? ` data-result="${result.result}"` : ""}${result?.why ? ` title="${escape(result.why)}"` : ""}>${results ? `<span class="removal-mark" aria-hidden="true">${stepMark(result?.result ?? null)}</span>` : ""}<span class="removal-what">${escape(this.label(step))}</span>${step.where ? `<code class="removal-where" title="${escape(step.where)}">${escape(step.where)}</code>` : ""}</li>`;
       })
       .join("")}</ol>`;
   }
-}
-
-/** A pencil tick for a step done, a cross for one that failed, a dash for
- *  one there was nothing to do for, a faint dot for one still to come. */
-export function mark(result: Result["result"] | null): string {
-  const sheet = new Sketch(`removal-${result ?? "coming"}`);
-  if (result === "done")
-    sheet.stroke(
-      [
-        [3, 8.6],
-        [6.6, 12],
-        [13, 4.2],
-      ],
-      1.9,
-      "current",
-      0.18,
-    );
-  else if (result === "failed")
-    sheet
-      .stroke(
-        [
-          [4, 4],
-          [12, 12],
-        ],
-        1.9,
-        "current",
-      )
-      .stroke(
-        [
-          [12, 4],
-          [4, 12],
-        ],
-        1.9,
-        "current",
-      );
-  else if (result === "skipped") sheet.rule([4, 8.5], [12, 8], 1.8, "current");
-  else sheet.blot([8, 8], 1.6, "current");
-  return sheet.svg(16, 16, "removal-mark");
 }
 
 /** Keeping the data: the machine's ring drawn in dashes, going, and the

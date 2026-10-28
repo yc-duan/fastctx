@@ -42,6 +42,8 @@ pub fn keep(directory: &ConversationDir, pending: &Pending) -> io::Result<bool> 
     {
         return Ok(false);
     }
+    // However they reach the host, its record names the files by id alone.
+    crate::attachments::delivered::record(directory, std::slice::from_ref(pending))?;
     ensure_private_dir(&directory.inbox())?;
     match publish_new(&path(directory, &pending.delivery.id), &json(pending)?, Permissions::Private) {
         Ok(()) => Ok(true),
@@ -54,6 +56,7 @@ pub fn keep(directory: &ConversationDir, pending: &Pending) -> io::Result<bool> 
 pub(crate) fn knows(directory: &ConversationDir, id: &NoticeId) -> io::Result<bool> {
     let _transaction = crate::resident_storage::lock();
     Ok(delivered_here(directory, id)?
+        || directory.book("host-refusals").join(format!("{id}.json")).try_exists()?
         || path(directory, id).try_exists()?
         || directory.uncertain().join(format!("{id}.json")).try_exists()?)
 }
@@ -135,6 +138,45 @@ pub fn target(directory: &ConversationDir, id: &NoticeId, session: &str) -> io::
 /// Everything on its way into the resident's session, oldest first.
 pub fn pending(directory: &ConversationDir) -> io::Result<Vec<Pending>> {
     let _transaction = crate::resident_storage::lock();
+    pending_here(directory)
+}
+
+/// Reads both input states atomically: reconciliation can move uncertain words back to pending.
+pub(crate) fn input_states(directory: &ConversationDir) -> io::Result<(Vec<Pending>, Vec<Pending>)> {
+    let _transaction = crate::resident_storage::lock();
+    let pending = pending_here(directory)?;
+    let mut uncertain = Vec::new();
+    for path in entries(&directory.uncertain())? {
+        if path.file_name().is_some_and(|name| name.to_string_lossy().starts_with('.'))
+            || path.extension().is_none_or(|extension| extension != "json")
+        {
+            continue;
+        }
+        uncertain.push(serde_json::from_slice(&std::fs::read(path)?)?);
+    }
+    Ok((pending, uncertain))
+}
+
+/// Whether words were judged not known to have gone in within `within`:
+/// their host may yet say it took them (`reclaim`). Older ones stay so,
+/// kept for the user to see and say again, and hold nothing back.
+pub(crate) fn uncertain_lately(directory: &ConversationDir, within: std::time::Duration) -> io::Result<bool> {
+    let _transaction = crate::resident_storage::lock();
+    for path in entries(&directory.uncertain())? {
+        if path.file_name().is_some_and(|name| name.to_string_lossy().starts_with('.'))
+            || path.extension().is_none_or(|extension| extension != "json")
+        {
+            continue;
+        }
+        if std::fs::metadata(&path)?.modified()?.elapsed().is_ok_and(|age| age < within) {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+/// The caller holds the resident-storage transaction.
+pub(crate) fn pending_here(directory: &ConversationDir) -> io::Result<Vec<Pending>> {
     let mut all = Vec::new();
     for path in entries(&directory.inbox())? {
         // A file being written sits under a hidden temporary name until it
@@ -222,7 +264,7 @@ fn settle_read(
 }
 
 /// Whether something with this id went into the resident's session.
-fn delivered_here(directory: &ConversationDir, id: &NoticeId) -> io::Result<bool> {
+pub(crate) fn delivered_here(directory: &ConversationDir, id: &NoticeId) -> io::Result<bool> {
     if directory.delivery_receipts().join(id.as_str()).try_exists()? {
         return Ok(true);
     }
@@ -339,10 +381,15 @@ fn parse_pending(directory: &ConversationDir, path: &Path, bytes: &[u8]) -> io::
     // Before durable handovers the inbox contained Delivery directly.
     let delivery: fastctx_types::residents::Delivery = serde_json::from_value(value).map_err(io::Error::other)?;
     let (readers, working) = match &delivery.notice {
+        Notice::Question { .. }
+        | Notice::Words { goal_report: Some(_), .. }
+        | Notice::Words { goal_question: Some(_), .. } => (Vec::new(), false),
         Notice::Words { from: fastctx_types::session::Speaker::Resident { address }, .. } => {
             (vec![address.clone()], false)
         }
-        Notice::Words { from: fastctx_types::session::Speaker::User { .. }, .. } => (Vec::new(), false),
+        Notice::Words { from: fastctx_types::session::Speaker::User { .. }, .. } | Notice::Sentinel { .. } => {
+            (Vec::new(), false)
+        }
         _ => (Vec::new(), true),
     };
     let about: fastctx_types::residents::About = parse(&directory.about(), &std::fs::read(directory.about())?)?;
@@ -364,7 +411,11 @@ fn parse_pending(directory: &ConversationDir, path: &Path, bytes: &[u8]) -> io::
 pub fn owe_job(record_path: &Path) -> io::Result<JobRecord> {
     match publish_new(&record_path.with_extension("owed"), b"", Permissions::Private) {
         Ok(()) => {}
-        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
+        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
+            if std::fs::read(record_path.with_extension("owed"))? == b"answer" {
+                publish(&record_path.with_extension("owed"), b"", Permissions::Private)?;
+            }
+        }
         Err(error) => return Err(error),
     }
     record::read(record_path)
@@ -373,6 +424,13 @@ pub fn owe_job(record_path: &Path) -> io::Result<JobRecord> {
 /// Tells the resident that started the job of `record` that it ended, if it
 /// has and the resident is owed that word.
 pub async fn tell_if_ended(node: &Arc<Node>, record_path: &Path, record: &JobRecord) -> io::Result<()> {
+    crate::job_accounts::seen(node, record_path, record);
+    if record.is_sentinel() {
+        if record.end.is_none() {
+            crate::job_watch::restore(node, record_path, record)?;
+        }
+        return Ok(());
+    }
     let Some(owner) = record.owner.resident() else { return Ok(()) };
     let Some(end) = &record.end else {
         crate::job_watch::restore(node, record_path, record)?;
@@ -416,6 +474,20 @@ pub async fn tell_if_ended(node: &Arc<Node>, record_path: &Path, record: &JobRec
         }
         return Ok(());
     }
+    if record_path.with_extension("delivered").try_exists()? {
+        return crate::completion_debt::paid(record_path);
+    }
+    let account = record.on.as_ref().and_then(|on| on.account.clone()).or_else(|| record.account.clone());
+    let acting =
+        account.map(|account| fastctx_types::access::Acting::one(account.hub, account.account)).unwrap_or_default();
+    if let Some(reason) = crate::obligations::impossible(node, &acting, &(&owner.machine).into())? {
+        let bytes = std::fs::read(&owed)?;
+        crate::obligations::finish(node, &owed, &bytes, crate::obligations::Outcome::Impossible, &reason)?;
+        return Ok(());
+    }
+    if !crate::completion_debt::ready(node, record_path, owner)? {
+        return Err(crate::completion_debt::pending("the host has not yet acknowledged the run answer"));
+    }
     let notice_path = record_path.with_extension("notice");
     let notice = if notice_path.try_exists()? {
         parse(&notice_path, &std::fs::read(&notice_path)?)?
@@ -440,6 +512,8 @@ pub async fn tell_if_ended(node: &Arc<Node>, record_path: &Path, record: &JobRec
             machine: record.machine.clone(),
             request: record.on.as_ref().and_then(|on| on.request.clone()),
             follower: record.on.as_ref().and_then(|on| on.follower.clone()),
+            consumed: crate::job_receipts::snapshot(node, record_path)?,
+            follower_unconfirmed: false,
             how,
             status: record.exit.map(|exit| exit.status),
             at: end.at,
@@ -450,6 +524,7 @@ pub async fn tell_if_ended(node: &Arc<Node>, record_path: &Path, record: &JobRec
                 record.stderr.as_deref().map(Path::new),
             )?,
             stop: record.stop.as_ref().map(|stop| Box::new(stop.request.clone())),
+            scratch: crate::scratch::jobs::locations(record_path, &record.machine)?,
         };
         match publish_new(&notice_path, &json(&notice)?, Permissions::Private) {
             Err(error) if error.kind() != io::ErrorKind::AlreadyExists => return Err(error),
@@ -468,11 +543,16 @@ pub async fn tell_if_ended(node: &Arc<Node>, record_path: &Path, record: &JobRec
         .or_else(|| record.account.clone())
         .map(|account| fastctx_types::access::Acting::one(account.hub, account.account))
         .unwrap_or_default();
-    tell(node, &acting, owner, id, notice, Owed::Working).await.map_err(|failure| io::Error::other(failure.message))?;
-    match std::fs::remove_file(&owed) {
-        Err(error) if error.kind() != io::ErrorKind::NotFound => Err(error),
-        _ => Ok(()),
+    if node.is_me(&owner.machine) {
+        tell(node, &acting, owner, id, notice, Owed::Working)
+            .await
+            .map_err(|failure| io::Error::other(failure.message))?;
+    } else if let Err(reason) = crate::completion_debt::post(node, record_path, owner, &acting, id, notice)? {
+        let bytes = std::fs::read(&owed)?;
+        crate::obligations::finish(node, &owed, &bytes, crate::obligations::Outcome::Impossible, &reason)?;
+        return Ok(());
     }
+    crate::completion_debt::paid(record_path)
 }
 
 pub(crate) fn job_notice_id(record: &JobRecord) -> NoticeId {
@@ -537,7 +617,9 @@ pub async fn settle_jobs(node: &Arc<Node>) -> io::Result<Vec<(std::path::PathBuf
         };
         if let Err(error) = told {
             retry_job(node, &path.with_extension("json"));
-            problems.push((path, error));
+            if error.kind() != io::ErrorKind::WouldBlock {
+                problems.push((path, error));
+            }
         }
     }
     Ok(problems)
@@ -552,16 +634,30 @@ pub(crate) fn retry_job(node: &Arc<Node>, path: &Path) {
     let (node, path) = (node.clone(), path.to_path_buf());
     tokio::spawn(async move {
         let mut again = crate::again::Again::default();
+        let mut ways = node.ways.subscribe();
         loop {
+            ways.borrow_and_update();
             let result = match record::read(&path) {
                 Ok(record) => tell_if_ended(&node, &path, &record).await,
+                Err(error) if error.kind() == io::ErrorKind::NotFound => break,
                 Err(error) => Err(error),
             };
             match result {
                 Ok(()) => break,
-                Err(error) => node.log.line(format_args!("{} still owes its completion: {error}", path.display())),
+                Err(error) if error.kind() == io::ErrorKind::WouldBlock => {}
+                Err(error) => {
+                    if let Err(recording) =
+                        crate::obligations::retry(&node, &path.with_extension("owed"), &error.to_string())
+                    {
+                        node.log.line(format_args!("recording the completion retry reason: {recording}"));
+                    }
+                }
             }
-            tokio::time::sleep(again.next()).await;
+            let pause = crate::completion_debt::pause(&path).ok().flatten().unwrap_or_else(|| again.next());
+            tokio::select! {
+                () = tokio::time::sleep(pause.min(fastctx_net::again::LONGEST)) => {}
+                _ = ways.changed() => {}
+            }
         }
         node.notifying_jobs.lock().expect("never poisoned").remove(&path);
     });

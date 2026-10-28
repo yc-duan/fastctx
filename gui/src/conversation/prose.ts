@@ -125,10 +125,12 @@ export function proseBlocks(text: string, writing: boolean): ProseBlock[] {
       source,
       html: () => {
         guessing = !writing;
+        growing = writing;
         try {
           return markdown.renderer.render(slice, markdown.options, env);
         } finally {
           guessing = true;
+          growing = false;
         }
       },
     });
@@ -139,6 +141,11 @@ export function proseBlocks(text: string, writing: boolean): ProseBlock[] {
 
 /** Whether unlabelled code is coloured by guessing its language. */
 let guessing = true;
+/** Whether the words are still being written. */
+let growing = false;
+/** Code longer than this is coloured once it is written, not again at
+ *  every word that arrives while it grows. */
+const COLOURED_WHILE_WRITING = 6000;
 
 /** Text with no Markdown, as one escaped paragraph per blank-line block. */
 export function plain(text: string): string {
@@ -151,6 +158,7 @@ export function plain(text: string): string {
 function highlight(code: string, language: string): string {
   const name = language.trim().toLowerCase();
   if (name && hljs.getLanguage(name)) {
+    if (growing && code.length > COLOURED_WHILE_WRITING) return escape(code);
     return hljs.highlight(code, { language: name, ignoreIllegals: true }).value;
   }
   // Unlabelled code is guessed only while it is small enough to guess fast.

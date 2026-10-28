@@ -61,11 +61,11 @@ impl Supervision {
                     }
                     Ok(None) => {
                         let _ = writeln!(std::io::stderr(), "the guardian is gone; a node nobody keeps stops");
-                        std::process::exit(0);
+                        crate::ending::exit(0);
                     }
                     Err(error) => {
                         let _ = writeln!(std::io::stderr(), "reading the guardian's channel: {error}; stopping");
-                        std::process::exit(1);
+                        crate::ending::exit(1);
                     }
                 }
             }
@@ -117,6 +117,7 @@ struct State {
 pub(crate) struct Busy {
     handoff: Arc<Handoff>,
     kind: Kind,
+    _work: fastctx_platform::doing::Work,
 }
 
 enum Kind {
@@ -177,7 +178,11 @@ impl Handoff {
             return None;
         }
         state.starting += 1;
-        Some(Busy { handoff: self.clone(), kind: Kind::Starting })
+        Some(Busy {
+            handoff: self.clone(),
+            kind: Kind::Starting,
+            _work: fastctx_platform::doing::Work::begin("handoff: starting a turn"),
+        })
     }
 
     /// A call is being answered; `None` once the node is on its way out.
@@ -187,7 +192,11 @@ impl Handoff {
             return None;
         }
         state.calls += 1;
-        Some(Busy { handoff: self.clone(), kind: Kind::Call })
+        Some(Busy {
+            handoff: self.clone(),
+            kind: Kind::Call,
+            _work: fastctx_platform::doing::Work::begin("handoff: answering a call"),
+        })
     }
 
     /// Something the node waits on to yield may have changed, such as a
@@ -296,5 +305,5 @@ async fn yield_when_idle(node: Arc<Node>, say: impl Fn(ServiceEvent)) {
     }
     node.log.line("idle: handing the World on to the successor");
     say(ServiceEvent::Yielded);
-    std::process::exit(0);
+    crate::ending::exit(0);
 }

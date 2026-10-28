@@ -49,18 +49,27 @@ export interface RowActs {
 
 /** The conversations of the World a list shows, as the user's acts on them
  *  show them: those on a machine away as it last answered, the ones asked in
- *  to help another left out, since they hang under the one that asked them.
- *  Those listed apart from those archived, most recently stirred first. */
+ *  to help another left out, since they hang under the one that asked them,
+ *  and the sessions the user opened on their own and never brought in, which
+ *  are theirs and show in the activity (`world-layers.md`). Those listed
+ *  apart from those archived, most recently stirred first. */
 export function talksOf(world: WorldNow | null, acts: TalkActs): { listed: ResidentNow[]; archived: ResidentNow[] } {
   const every = byRecent(
-    [...residentsOf(world, true), ...unreachedOf(world, true)].filter((r) => r.about.origin.kind !== "colleague").map((r) => acts.view(r)),
+    [...residentsOf(world, true), ...unreachedOf(world, true)]
+      .filter((r) => r.about.origin.kind !== "colleague" && !r.about.side && (r.about.world_started || r.about.native_resumed))
+      .map((r) => acts.view(r)),
   );
   return { listed: every.filter((r) => !r.removed), archived: every.filter((r) => r.removed) };
 }
 
+/** What a conversation dragged from a list carries: its address, for the
+ *  page it is dropped on to open it beside its own (`side/mount.ts`). */
+export const TALK_DRAG = "application/x-fastctx-talk";
+
 export function byRecent(residents: ResidentNow[]): ResidentNow[] {
-  const stirred = (r: ResidentNow) => Date.parse(r.now?.since ?? r.about.born_at);
-  return [...residents].sort((a, b) => stirred(b) - stirred(a));
+  // Each one's moment is read once, not at every comparison.
+  const stirred = residents.map((r) => ({ r, at: Date.parse(r.now?.since ?? r.about.born_at) }));
+  return stirred.sort((a, b) => b.at - a.at).map(({ r }) => r);
 }
 
 /** Each machine's facts by name, for the device marks. */

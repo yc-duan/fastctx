@@ -8,7 +8,6 @@ export type Happening =
   | { kind: "file_action"; at: Timestamp; who: Address; town: TownName | null; hand: string; paths: string; result: string }
   | { kind: "turn_ended"; at: Timestamp; who: Address; town: TownName | null; how: string; reason: string | null; said: string | null }
   | { kind: "job_ended"; at: Timestamp; job: string; machine: MachineName; owner: JobOwner; town: TownName | null; how: string }
-  | { kind: "journal"; at: Timestamp; town: TownName; journal: string; entry: string; by: Writer; first: string | null }
   | { kind: "asked"; at: Timestamp; who: Address; colleague: Address; town: TownName | null; label: string }
   | { kind: "arrived"; at: Timestamp; who: Address; town: TownName | null; agent: string }
   | { kind: "moved"; at: Timestamp; who: Address; town: TownName | null; from: TownName | null; to: TownName | null }

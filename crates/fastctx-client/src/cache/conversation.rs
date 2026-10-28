@@ -66,15 +66,34 @@ impl Entry {
         Self { directory }
     }
 
-    /// The index, if the conversation is kept.
+    /// The index, if the conversation is kept. Its live sequence is the
+    /// later of the index's own and the one kept beside it, which moves
+    /// with every event kept while the index is written only as what it
+    /// lists changes (`set_live_sequence`).
     pub fn index(&self) -> io::Result<Option<Index>> {
-        match std::fs::read(self.directory.join("index.json")) {
-            Ok(bytes) => serde_json::from_slice(&bytes).map(Some).map_err(|error| {
+        let mut index: Index = match std::fs::read(self.directory.join("index.json")) {
+            Ok(bytes) => serde_json::from_slice(&bytes).map_err(|error| {
                 io::Error::new(io::ErrorKind::InvalidData, format!("{}: {error}", self.directory.display()))
-            }),
-            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
-            Err(error) => Err(error),
+            })?,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+            Err(error) => return Err(error),
+        };
+        match std::fs::read(self.directory.join("live-sequence.json")) {
+            Ok(bytes) => {
+                let kept: u64 = serde_json::from_slice(&bytes).map_err(|error| {
+                    io::Error::new(io::ErrorKind::InvalidData, format!("{}: {error}", self.directory.display()))
+                })?;
+                index.live_sequence = index.live_sequence.max(kept);
+            }
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error),
         }
+        Ok(Some(index))
+    }
+
+    /// The sequence of the latest live event, before the event is written.
+    pub fn set_live_sequence(&self, sequence: u64) -> io::Result<()> {
+        publish(&self.directory.join("live-sequence.json"), &serde_json::to_vec(&sequence)?, Permissions::Private)
     }
 
     /// The events of a kept segment. The file's checksum tells a damaged

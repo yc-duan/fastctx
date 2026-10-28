@@ -1,39 +1,11 @@
 use super::*;
 use fastctx_types::town::CurrentTool;
 
-pub(super) fn overview(view: &TownView, you: Option<&Address>, all: bool, now: Timestamp, local_only: bool) -> String {
-    let mut machines = Vec::new();
-    let online = view
-        .machines
-        .iter()
-        .filter_map(|state| match state {
-            MachineState::Answered(machine) => Some(machine.to_string()),
-            _ => None,
-        })
-        .collect::<Vec<_>>();
-    if !online.is_empty() {
-        machines.push(format!(
-            "{} {}",
-            online.join(", "),
-            if local_only { "local records; node not running" } else { "online" }
-        ));
-    }
-    for state in &view.machines {
-        match state {
-            MachineState::Answered(_) => {}
-            MachineState::Offline { machine, since: Some(since) } => {
-                machines.push(format!("{machine} offline for {}", ago(*since, now)))
-            }
-            MachineState::Offline { machine, since: None } => machines.push(format!("{machine} offline")),
-            MachineState::NoAnswer { machine, reason } => machines.push(format!("{machine} did not answer ({reason})")),
-        }
-    }
-    machines.extend(view.unanswered.iter().map(|missing| format!("not answered: {missing}")));
-    let place = match &view.scope {
-        Scope::Town { town, .. } => town.as_str(),
-        Scope::World { .. } => "all projects",
-    };
-    let mut text = format!("=== w: {place} ({}) ===\n", machines.join("; "));
+/// How many of a project's machines the list of projects names.
+const PROJECT_MACHINES: usize = 6;
+
+pub(super) fn overview(view: &TownView, you: Option<&Address>, all: bool, now: Timestamp, local_only: bool, sentinels: &[fastctx_types::sentinel_control::Summary]) -> String {
+    let mut text = super::head::line(view, now, local_only);
     if let Scope::Town { town, record: None } = &view.scope {
         text.push_str(&format!("{} has no record of {town}; every reachable machine was asked.\n", view.machine));
     }
@@ -46,11 +18,14 @@ pub(super) fn overview(view: &TownView, you: Option<&Address>, all: bool, now: T
                 .summary
                 .as_ref()
                 .map(|summary| {
-                    format!(
-                        "  {}  ({})",
-                        summary.record.name,
-                        summary.record.machines.iter().map(ToString::to_string).collect::<Vec<_>>().join(", ")
-                    )
+                    // A project's machines, the first few by name.
+                    let machines = &summary.record.machines;
+                    let mut named =
+                        machines.iter().take(PROJECT_MACHINES).map(ToString::to_string).collect::<Vec<_>>().join(", ");
+                    if machines.len() > PROJECT_MACHINES {
+                        named.push_str(&format!(" and {} more", machines.len() - PROJECT_MACHINES));
+                    }
+                    format!("  {}  ({named})", summary.record.name)
                 })
                 .unwrap_or_default();
             let activity = if local_only {
@@ -127,6 +102,10 @@ pub(super) fn overview(view: &TownView, you: Option<&Address>, all: bool, now: T
                 format!("  {}  desk  {time}  {}  Computer Use\n", resident.written(), resident.about.id),
             ));
         }
+    }
+    for sentinel in sentinels {
+        if matches!(view.scope, Scope::Town { .. }) && view.known(&sentinel.definition.owner).is_none() { continue; }
+        running.push((sentinel.definition.home.clone(), fastctx_types::sentinel_words::row(sentinel)));
     }
     running.sort_by(|a, b| a.0.cmp(&b.0));
     if !running.is_empty() {
