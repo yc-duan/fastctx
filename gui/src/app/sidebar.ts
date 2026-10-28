@@ -37,7 +37,7 @@ import type { TalkMenu } from "./talk-menu";
 import type { TalkMenuWords } from "./talk-menu-words";
 import { isUnreached } from "./store";
 import { TalkList } from "./talk-list";
-import { factsByMachine, talkRow, talksOf } from "./talk-row";
+import { factsByMachine, TALK_DRAG, talkRow, talksOf } from "./talk-row";
 import type { ShellWords } from "./words";
 import type { Offered } from "./updates";
 import type { UpdateWords } from "./update-words";
@@ -172,6 +172,13 @@ export class Sidebar {
       effect(() => drawUpdate(bar, updates.offered.get(), updates.words));
     }
     this.element.querySelector(".sidebar-fold")!.addEventListener("click", () => options.fold());
+    // A conversation dragged from the list opens beside the one shown.
+    this.element.addEventListener("dragstart", (event) => {
+      const item = (event.target as HTMLElement).closest<HTMLElement>(".talk-item[data-resident]");
+      if (!item?.dataset.resident || !item.dataset.machine || !event.dataTransfer) return;
+      event.dataTransfer.setData(TALK_DRAG, JSON.stringify({ resident: item.dataset.resident, machine: item.dataset.machine }));
+      event.dataTransfer.effectAllowed = "copyLink";
+    });
     this.talkList = new TalkList(this.list, {
       acts: options.acts,
       menu: options.menu,

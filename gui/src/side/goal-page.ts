@@ -7,9 +7,9 @@
 // sets one.
 
 import { escape, render } from "../conversation/prose";
-import { Sketch } from "../pen/sketch";
 import { workedNow } from "./goal-bar";
-import type { SidePage } from "./panel";
+import { goalMark } from "./marks";
+import type { SidePage } from "./pane";
 import type { GoalShown } from "./types";
 import type { GoalWords } from "./words";
 
@@ -117,12 +117,7 @@ export class GoalPage implements SidePage {
     const mark = this.element.querySelector<HTMLElement>(".gp-mark");
     const goal = this.goal;
     if (!mark || !goal) return;
-    const sketch = new Sketch(`goal-${goal.version}-${goal.status}`);
-    if (goal.status === "active") sketch.blot([8, 9], 3.4, "current");
-    else if (goal.status === "paused") sketch.rule([5.5, 4.5], [5.5, 13.5], 1.6, "graphite").rule([10.5, 4.5], [10.5, 13.5], 1.6, "graphite");
-    else if (goal.status === "blocked") sketch.rule([3, 9.2], [13, 8.6], 2.4, "clay");
-    else sketch.stroke([[2.5, 9], [6.2, 12.8], [13.5, 4]], 1.8, "clay");
-    mark.innerHTML = sketch.svg(16, 18, "gp-mark-svg");
+    mark.innerHTML = goalMark(goal.status, `goal-${goal.version}-${goal.status}`);
   }
 
   private sentinel(look: NonNullable<GoalShown["sentinel"]>): string {

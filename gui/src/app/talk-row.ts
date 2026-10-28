@@ -58,6 +58,10 @@ export function talksOf(world: WorldNow | null, acts: TalkActs): { listed: Resid
   return { listed: every.filter((r) => !r.removed), archived: every.filter((r) => r.removed) };
 }
 
+/** What a conversation dragged from a list carries: its address, for the
+ *  page it is dropped on to open it beside its own (`side/mount.ts`). */
+export const TALK_DRAG = "application/x-fastctx-talk";
+
 export function byRecent(residents: ResidentNow[]): ResidentNow[] {
   // Each one's moment is read once, not at every comparison.
   const stirred = residents.map((r) => ({ r, at: Date.parse(r.now?.since ?? r.about.born_at) }));

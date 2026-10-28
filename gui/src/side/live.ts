@@ -17,7 +17,7 @@ import { collaborationTree, type Branch, type NativeAgent, type Tree } from "../
 import type { Address } from "../world/wire";
 import type { GoalStatus } from "./types";
 import { goalSamples, teamSample } from "./samples";
-import type { SideSeams } from "./seams";
+import type { OpenedTalk, SideSeams } from "./seams";
 import type { CollabNode, GoalShown, NodeState } from "./types";
 import type { SideWords } from "./words";
 import { sentinelList, type SentinelSummary } from "../world/sentinels";
@@ -128,12 +128,14 @@ export interface LiveSide {
   planWords: PlanWords;
   store: Store;
   address: Address;
-  /** A colleague's page, for its own panel: only its goal's bar is drawn. */
+  /** A conversation shown in another's side: only its goal's bar is drawn. */
   bare?: boolean;
   /** No goal is set here (`SideSeams.noGoal`). */
   noGoal?: boolean;
-  /** A colleague's conversation, to talk with it in the panel. */
-  open(address: Address): { element: HTMLElement; leave(): void };
+  /** Another conversation, to talk with it beside this one, or as the
+   *  page's own. */
+  open(address: Address): OpenedTalk | null;
+  go(address: Address): void;
   /** A span of time, short. */
   took(ms: number): string;
   /** Opens what one of the world's ids names, from the plan. */
@@ -184,6 +186,7 @@ export function liveSide(options: LiveSide): SideSeams {
   const seen = (version: number | undefined) => version ?? current?.version ?? null;
   return {
     words: options.words,
+    self: options.address,
     ...(options.bare ? { bare: true } : {}),
     ...(options.noGoal ? { noGoal: true } : {}),
     plan: {
@@ -301,13 +304,22 @@ export function liveSide(options: LiveSide): SideSeams {
         stop();
       };
     },
-    colleague: (node) => options.open({ resident: node.id, machine: node.machine ?? options.address.machine }),
+    open: (address) => options.open(address),
+    go: (address) => options.go(address),
   };
 }
 
-/** A specimen conversation's panel: a plan, a goal under way and a team. */
-export function specimenSide(words: SideWords, planWords: PlanWords, plan: PlanShown & { facts: PageSeams["facts"] }, english: boolean): SideSeams {
-  let goal: GoalShown | null = goalSamples(english, Date.now()).active ?? null;
+/** A specimen conversation's side: a plan, a goal in the state `goal`
+ *  names (under way at first) and a team; other specimen conversations open
+ *  beside it through `open`. */
+export function specimenSide(
+  words: SideWords,
+  planWords: PlanWords,
+  plan: PlanShown & { facts: PageSeams["facts"] },
+  english: boolean,
+  side: { self: Address; open(address: Address): OpenedTalk | null; go(address: Address): void; goal?: string | null; bare?: boolean },
+): SideSeams {
+  let goal: GoalShown | null = side.goal === "none" ? null : (goalSamples(english, Date.now())[side.goal ?? "active"] ?? null);
   const shows = new Set<(goal: GoalShown | null) => void>();
   const tell = (next: GoalShown | null) => {
     goal = next;
@@ -316,6 +328,8 @@ export function specimenSide(words: SideWords, planWords: PlanWords, plan: PlanS
   const wait = () => new Promise<void>((resolve) => setTimeout(resolve, 300));
   return {
     words,
+    self: side.self,
+    ...(side.bare ? { bare: true } : {}),
     plan: {
       words: planWords,
       seams: { facts: plan.facts, save: async () => ({ ok: true }) },
@@ -356,6 +370,7 @@ export function specimenSide(words: SideWords, planWords: PlanWords, plan: PlanS
       show(teamSample(english).filter((node) => node.kind === "colleague"));
       return () => {};
     },
-    colleague: () => null,
+    open: (address) => side.open(address),
+    go: (address) => side.go(address),
   };
 }

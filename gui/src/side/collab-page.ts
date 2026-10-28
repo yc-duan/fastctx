@@ -6,12 +6,12 @@
 // breathing dot while it works, a tick once it handed back, a cross where it
 // failed, a stroke where it was stopped; a colleague also says how its goal
 // stands. How long and how many steps sit beside it; more is said when
-// pointed at. Pressing one opens it.
+// pointed at. Pressing one opens it beside the conversation, in a tab.
 
 import { glyph } from "../conversation/glyphs";
 import { escape } from "../conversation/prose";
 import { Sketch } from "../pen/sketch";
-import type { SidePage } from "./panel";
+import type { SidePage } from "./pane";
 import type { CollabNode } from "./types";
 import type { CollabWords, GoalWords } from "./words";
 
@@ -23,9 +23,6 @@ interface Placed {
 export class CollabPage implements SidePage {
   readonly element: HTMLElement;
   private readonly tree: HTMLElement;
-  private readonly chat: HTMLElement;
-  /** What the chat shows, to let go of when it is left. */
-  private chatting: { node: CollabNode; leave(): void } | null = null;
   private nodes: CollabNode[] = [];
   private root: { agent: "claude" | "codex"; name: string } = { agent: "claude", name: "" };
   private drawn = "";
@@ -36,15 +33,9 @@ export class CollabPage implements SidePage {
     private readonly pressed: (node: CollabNode) => void,
   ) {
     this.element = document.createElement("section");
-    this.element.className = "cp-page scroller";
-    this.element.innerHTML = `<div class="cp-tree"></div><div class="cp-chat" hidden></div>`;
+    this.element.className = "cp-page";
+    this.element.innerHTML = `<div class="cp-tree"></div>`;
     this.tree = this.element.querySelector(".cp-tree")!;
-    this.chat = this.element.querySelector(".cp-chat")!;
-    this.chat.addEventListener("click", (event) => {
-      const act = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-act]")?.dataset.act;
-      if (act === "back") this.back();
-      else if (act === "jump") this.jumping?.();
-    });
     this.tree.addEventListener("click", (event) => {
       const id = (event.target as HTMLElement).closest<HTMLElement>(".cp-node[data-id]")?.dataset.id;
       const node = id ? this.find(this.nodes, id) : null;
@@ -61,43 +52,6 @@ export class CollabPage implements SidePage {
 
   shown(): void {
     this.ink();
-  }
-
-  private jumping: (() => void) | null = null;
-
-  /** One that works with the conversation, opened in the page: a
-   *  colleague's own conversation, or what one of the host's agents did,
-   *  under a head that leads back to the tree. */
-  open(node: CollabNode, body: HTMLElement, leave: () => void, jump: (() => void) | null): void {
-    this.chatting?.leave();
-    this.chatting = { node, leave };
-    this.jumping = jump;
-    const words = this.words;
-    const tail = jump
-      ? `<button class="cp-chat-act" type="button" data-act="jump">${escape(words.jump)}</button>`
-      : "";
-    this.chat.innerHTML = `<header class="cp-chat-head"><button class="cp-back" type="button" data-act="back" aria-label="${escape(words.back)}">${glyph("back", 16)}<span>${escape(words.back)}</span></button><span class="cp-chat-who"><span class="cp-seal">${glyph(node.agent, 14)}</span><span class="cp-name">${escape(node.name)}</span></span>${tail}</header><div class="cp-chat-body"></div>`;
-    this.chat.querySelector(".cp-chat-body")!.append(body);
-    this.chat.hidden = false;
-    this.tree.hidden = true;
-    this.element.classList.add("cp-chatting");
-  }
-
-  /** The node shown in the chat, if one is. */
-  get openNode(): CollabNode | null {
-    return this.chatting?.node ?? null;
-  }
-
-  back(): void {
-    this.chatting?.leave();
-    this.chatting = null;
-    this.jumping = null;
-    this.chat.hidden = true;
-    this.chat.innerHTML = "";
-    this.tree.hidden = false;
-    this.element.classList.remove("cp-chatting");
-    this.drawn = "";
-    requestAnimationFrame(() => this.ink());
   }
 
   private draw(): void {

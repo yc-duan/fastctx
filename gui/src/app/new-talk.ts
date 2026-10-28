@@ -30,6 +30,7 @@
 // there, and the agent starts in that place with all of them.
 
 import { AttachTray, type AttachSource, type AttachWords } from "../conversation/attach";
+import { wireAttach } from "../conversation/attach-way";
 import { layerOpened } from "./back";
 import { glyph } from "../conversation/glyphs";
 import { ModelPanel, type ModelPanelWords } from "../conversation/model-panel";
@@ -304,7 +305,7 @@ export class NewTalk {
           <div class="composer-tray"></div>
           <textarea rows="1" enterkeyhint="send"></textarea>
           <div class="composer-row">
-            <div class="composer-tools"><button class="icon-button composer-attach" type="button" hidden></button><input class="composer-pick" type="file" multiple hidden><button class="icon-button composer-photo" type="button" hidden></button><input class="composer-shot" type="file" accept="image/*" capture="environment" hidden><button class="composer-chip" type="button" hidden></button></div>
+            <div class="composer-tools"><button class="icon-button composer-attach" type="button" hidden></button><input class="composer-pick" type="file" multiple hidden><input class="composer-shot" type="file" accept="image/*" capture="environment" hidden><button class="composer-chip" type="button" hidden></button></div>
             <span class="composer-note" aria-live="polite"></span>
             <button class="composer-action" type="submit" aria-label="${escape(words.start)}" title="${escape(words.start)}">${glyph("send", 18)}</button>
           </div>
@@ -501,30 +502,17 @@ export class NewTalk {
     tray.onlyImages(() => this.imagesOnly(), (why) => this.refuseFile(why));
     this.tray = tray;
     this.element.querySelector(".composer-tray")!.replaceWith(tray.element);
-    const button = this.element.querySelector<HTMLButtonElement>(".composer-attach")!;
     const pick = this.element.querySelector<HTMLInputElement>(".composer-pick")!;
-    button.hidden = false;
-    button.innerHTML = glyph("attach", 18);
-    button.setAttribute("aria-label", attach.words.attach);
-    button.title = attach.words.attach;
-    button.addEventListener("click", () => pick.click());
-    pick.addEventListener("change", () => {
-      if (pick.files) tray.addFiles(pick.files);
-      pick.value = "";
-      this.input.focus();
+    const shot = this.element.querySelector<HTMLInputElement>(".composer-shot")!;
+    // As in a conversation: the camera in the paperclip's menu on a phone.
+    wireAttach(this.element, this.element.querySelector<HTMLButtonElement>(".composer-attach")!, this.element.querySelector<HTMLElement>(".composer-menus")!, attach.words, {
+      files: () => pick.click(),
+      photo: () => shot.click(),
     });
-    // As in a conversation: the camera on a phone, nowhere else.
-    if (coarse()) {
-      const photo = this.element.querySelector<HTMLButtonElement>(".composer-photo")!;
-      const shot = this.element.querySelector<HTMLInputElement>(".composer-shot")!;
-      photo.hidden = false;
-      photo.innerHTML = glyph("camera", 18);
-      photo.setAttribute("aria-label", attach.words.photo);
-      photo.title = attach.words.photo;
-      photo.addEventListener("click", () => shot.click());
-      shot.addEventListener("change", () => {
-        if (shot.files) tray.addFiles(shot.files);
-        shot.value = "";
+    for (const input of [pick, shot]) {
+      input.addEventListener("change", () => {
+        if (input.files) tray.addFiles(input.files);
+        input.value = "";
         this.input.focus();
       });
     }

@@ -48,18 +48,20 @@
   initial-value: 1;
 }
 
-.column-held .talk-scroller {
+/* The page's own column, not one shown in its side. */
+.column-held > .talk-scroller,
+.column-held > .sp-split > .talk-main > .talk-scroller {
   overflow-x: hidden;
 }
 
-.column-held .talk-scroller > .transcript {
+:is(.column-held > .talk-scroller, .column-held > .sp-split > .talk-main > .talk-scroller) > .transcript {
   --held-glide: 1;
   width: var(--held);
   max-width: none;
   translate: calc(var(--held-shift) * var(--held-glide)) 0;
 }
 
-.column-held.column-moving .talk-scroller > .transcript {
+:is(.column-held.column-moving > .talk-scroller, .column-held.column-moving > .sp-split > .talk-main > .talk-scroller) > .transcript {
   --held-glide: 0;
   transition:
     --shown var(--enter) var(--ease-out),

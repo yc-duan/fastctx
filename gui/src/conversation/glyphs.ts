@@ -22,7 +22,7 @@ type Frame =
   | "logout" | "shield" | "lock" | "unlock" | "signup" | "relay" | "save" | "link"
   | "context" | "cache" | "clock" | "tree" | "rows" | "update"
   | "note" | "plug" | "tune"
-  | "goal" | "pause" | "resume" | "panel" | "repair" | "journal" | "spec" | "sentinel" | "steps"
+  | "goal" | "pause" | "resume" | "panel" | "repair" | "journal" | "spec" | "sentinel" | "steps" | "dock-right" | "dock-bottom" | "dock-left"
   | Marks;
 
 /** Which agent and which kind of device, drawn small beside a conversation's
@@ -141,6 +141,11 @@ const paths: Record<Named, string> = {
   tree: '<circle cx="10" cy="4.3" r="1.6"/><path d="M10 5.9v2.6M4.5 8.5h11M4.5 8.5v2.6M10 8.5v2.6M15.5 8.5v2.6"/><circle cx="4.5" cy="13.4" r="2.1"/><circle cx="10" cy="13.4" r="2.1"/><circle cx="15.5" cy="13.4" r="2.1"/>',
   /* What was said, two lines, with the steps between them folded to
      three dots: a conversation's view of every step (`world-voice.md`). */
+  // Where a conversation's side stands: a window with its side ruled off
+  // at the right, at the foot, or at the left.
+  "dock-right": '<rect x="3.75" y="4.25" width="12.5" height="11.5" rx="1.5"/><path d="M11.75 4.25v11.5"/>',
+  "dock-bottom": '<rect x="3.75" y="4.25" width="12.5" height="11.5" rx="1.5"/><path d="M3.75 11.25h12.5"/>',
+  "dock-left": '<rect x="3.75" y="4.25" width="12.5" height="11.5" rx="1.5"/><path d="M8.25 4.25v11.5"/>',
   steps: '<path d="M3.75 5h12.5M3.75 15h12.5"/><circle cx="7" cy="10" r="0.9" fill="currentColor"/><circle cx="10" cy="10" r="0.9" fill="currentColor"/><circle cx="13" cy="10" r="0.9" fill="currentColor"/>',
   rows: '<circle cx="5" cy="5.75" r="0.9" fill="currentColor"/><circle cx="5" cy="10" r="0.9" fill="currentColor"/><circle cx="5" cy="14.25" r="0.9" fill="currentColor"/><path d="M8.25 5.75h7.5M8.25 10h7.5M8.25 14.25h7.5"/>',
   clock: '<circle cx="10" cy="10" r="6.25"/><path d="M10 6.4V10l2.5 1.6"/>',

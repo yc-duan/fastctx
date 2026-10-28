@@ -145,21 +145,16 @@ for (const session of sessions) {
       const loaded = once("Page.loadEventFired");
       const two = session.endsWith("-2");
       const named = two ? session.slice(0, -2) : session;
-      const shown = named.startsWith("invite-") ? "invite" : named === "stop" ? "claude" : named === "drawer" || named === "palette" ? "home" : named === "service" || named.startsWith("remove-") ? "settings" : named === "slash" || named === "mention" || named === "find" || named === "attach" || named === "rewind" || named === "usage" ? "codex" : named.startsWith("asks") ? "asks" : named === "new-codex" || named === "new-attach" || named === "new-lent" || named === "new-pick" ? "new" : named === "manage" ? "about" : named === "welcome" || named === "create" || named === "created" ? "login" : named === "share" || named === "relays" ? "machines" : named === "lend" || named.startsWith("ledger") ? "home" : named === "queue" ? "codex" : named.startsWith("page") ? "page" : named.startsWith("panel") ? "claude" : named.startsWith("team") ? "stream" : named.startsWith("repair-") ? "home" : named === "updates-repair" ? "machines" : named === "journal-edit" ? "journal" : named === "project-write" ? "project" : named === "features" || named.startsWith("feature-") || named.startsWith("prefs-") ? "home" : named;
+      const shown = named.startsWith("invite-") ? "invite" : named === "stop" ? "claude" : named === "drawer" || named === "palette" ? "home" : named === "service" || named.startsWith("remove-") ? "settings" : named === "slash" || named === "mention" || named === "find" || named === "attach" || named === "rewind" || named === "usage" ? "codex" : named.startsWith("asks") ? "asks" : named === "new-codex" || named === "new-attach" || named === "new-lent" || named === "new-pick" ? "new" : named === "manage" ? "about" : named === "welcome" || named === "create" || named === "created" ? "login" : named === "share" || named === "relays" ? "machines" : named === "lend" || named.startsWith("ledger") ? "home" : named === "queue" ? "codex" : named.startsWith("page") ? "page" : named.startsWith("panel") && named !== "panel-agent" ? "claude" : named.startsWith("team") || named === "panel-agent" ? "stream" : named.startsWith("repair-") ? "home" : named === "updates-repair" ? "machines" : named === "journal-edit" ? "journal" : named === "project-write" ? "project" : named === "features" || named.startsWith("feature-") || named.startsWith("prefs-") ? "home" : named;
       // `welcome` and `create` are a computer's first open, in no World yet.
       const alone = named === "welcome" || named === "create" || named === "created";
-      const ask = (session.startsWith("asks-") ? `&ask=${session.slice(5)}` : "") + (two ? "&accounts=2" : "") + (alone ? "&accounts=0" : "") + (named.startsWith("team") ? "&start=agents" : "") + (named.startsWith("repair-") ? `&repair=${named === "repair-broken" ? "broken" : "failed"}` : "");
+      const ask = (session.startsWith("asks-") ? `&ask=${session.slice(5)}` : "") + (two ? "&accounts=2" : "") + (alone ? "&accounts=0" : "") + (named.startsWith("team") || named === "panel-agent" ? "&start=agents" : "") + (named.startsWith("repair-") ? `&repair=${named === "repair-broken" ? "broken" : "failed"}` : "") + (named.startsWith("panel-goal-") ? `&goal=${named.slice("panel-goal-".length)}` : "");
       // A page an agent wrote is its own document, with a stand-in host.
       const written = session === "written";
       const specimen = named === "mapcanvas" ? "mapcanvas-specimen.html" : named === "longview" ? "longview-specimen.html" : written ? "page-specimen.html" : null;
       // `startup-failed` and the like are the page shown until Fastctx opens.
       const startup = named.startsWith("startup-") ? named.slice("startup-".length) : null;
-      // `side-goal-blocked` is the panel beside a conversation at its goal
-      // page, the goal blocked; `side-plan` its plan.
-      const side = named.startsWith("side-") ? named.slice("side-".length).split("-") : null;
-      const url = side
-        ? `${base}/side-specimen.html?page=${side[0]}${side[1] ? `&goal=${side[1]}` : ""}&theme=${theme}${extra ? `&${extra}` : ""}`
-        : specimen
+      const url = specimen
         ? `${base}/${specimen}?theme=${theme}${extra ? `&${extra}` : ""}`
         : startup
           ? `${base}/?startup=${startup}&theme=${theme}${extra ? `&${extra}` : ""}`
@@ -173,8 +168,6 @@ for (const session of sessions) {
           ? "new Promise((r) => { const look = () => (customElements.get('w-card') ? setTimeout(r, 900) : setTimeout(look, 30)); look(); })"
           : startup
             ? "new Promise((r) => { const look = () => (document.querySelector('.su-page') ? setTimeout(r, 600) : setTimeout(look, 30)); look(); })"
-            : side
-              ? "new Promise((r) => { const look = () => (document.querySelector('.sp-panel') ? setTimeout(r, 900) : setTimeout(look, 30)); look(); })"
             : "new Promise((r) => { const look = () => (document.querySelector('.shell') ? r(true) : setTimeout(look, 30)); look(); })",
       });
       if (session === "drawer") {
@@ -231,17 +224,28 @@ for (const session of sessions) {
         await send("Runtime.evaluate", {
           awaitPromise: true,
           expression: `new Promise((r) => setTimeout(r, 2500)).then(() => new Promise((r) => { ${
-            named === "team-open" ? "const head = [...document.querySelectorAll('.group-head')].filter((one) => one.getAttribute('aria-expanded') !== 'true').pop(); head?.click(); [...document.querySelectorAll('.row-agent .row-line')].pop()?.click();" : "document.querySelector('.sp-toggle')?.click(); document.querySelector('.sp-tab[data-page=\"collab\"]')?.click();"
+            named === "team-open" ? "const head = [...document.querySelectorAll('.group-head')].filter((one) => one.getAttribute('aria-expanded') !== 'true').pop(); head?.click(); [...document.querySelectorAll('.row-agent .row-line')].pop()?.click();" : "document.querySelector('.sp-toggle')?.click();"
           } setTimeout(r, 1200); }))`,
         });
       }
-      // `panel` is a conversation with the panel beside it open; `panel-goal`
-      // and `panel-collab` open it at that page.
-      if (named.startsWith("panel")) {
-        const tab = named.slice("panel".length).replace(/^-/, "");
+      // `panel` is a conversation with its side open at its home;
+      // `panel-goal-blocked` and the like with its goal in that state;
+      // `panel-talk` with a colleague it asked opened beside it, and
+      // `panel-agent` one of the host's agents; `panel-menu` with the menu
+      // of where it stands open. `panel-drop-left` and the like are the
+      // page shut with a conversation dragged from the list over that part.
+      if (named.startsWith("panel-drop-")) {
+        const at = { right: [0.8, 0.4], left: [0.2, 0.4], bottom: [0.5, 0.85] }[named.slice("panel-drop-".length)];
         await send("Runtime.evaluate", {
           awaitPromise: true,
-          expression: `new Promise((r) => { document.querySelector(".sp-toggle")?.click(); ${tab ? `document.querySelector('.sp-tab[data-page="${tab}"]')?.click();` : ""} setTimeout(r, 900); })`,
+          expression: `new Promise((r) => setTimeout(() => { const split = document.querySelector('.sp-split'); const box = split.getBoundingClientRect(); const carried = new DataTransfer(); carried.setData('application/x-fastctx-talk', JSON.stringify({ resident: 'x', machine: 'y' })); split.dispatchEvent(new DragEvent('dragover', { bubbles: true, cancelable: true, dataTransfer: carried, clientX: box.left + box.width * ${at[0]}, clientY: box.top + box.height * ${at[1]} })); setTimeout(r, 600); }, 600))`,
+        });
+      } else if (named.startsWith("panel")) {
+        const opened = named === "panel-talk" ? `'.ov-member[data-id="codex-b10g"]'` : named === "panel-agent" ? `'.ov-member[data-id="b7c1d9e4f2"]'` : named === "panel-plan" ? `'.ov-plan .ov-whole'` : named === "panel-goal" ? `'.gb-act[data-act="expand"]'` : named === "panel-team" ? `'.ov-team .ov-whole'` : named === "panel-menu" ? `'.sp-dock'` : named === "panel-bottom" || named === "panel-left" ? `'.sp-dock-row[data-dock="${named.slice("panel-".length)}"]'` : null;
+        await send("Runtime.evaluate", {
+          awaitPromise: true,
+          // The row to press is waited for: an agent comes as the stream goes.
+          expression: `new Promise((r) => { if (!document.querySelector(".sp-host.sp-shown")) document.querySelector(".sp-toggle")?.click(); let tries = 0; const press = () => { const row = ${opened ? `document.querySelector(${opened})` : "null"}; if (row) row.click(); else if (${opened ? "true" : "false"} && tries++ < 40) return setTimeout(press, 200); setTimeout(r, 1300); }; setTimeout(press, 300); })`,
         });
       }
       if (session === "palette") {

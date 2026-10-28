@@ -37,14 +37,6 @@
   --edge: var(--space-6);
 }
 
-/* Beside an open panel the fade is the conversation's alone, its edge
-   following the panel's as it opens. */
-@media (min-width: 761px) {
-  .conversation-page.sp-host > .page-head::after {
-    right: calc(var(--side-width) * var(--sp-open));
-  }
-}
-
 .talk-scroller {
   flex: 1;
 }
@@ -472,8 +464,9 @@
   }
 
   /* A refusal does not fit beside the tools on a phone: it takes a line of
-     its own above them, and the tools keep theirs. */
-  .composer-row {
+     its own above them, and the tools keep theirs. Otherwise the row never
+     breaks: the model's name gives way, the send button keeps its end. */
+  .composer-row:has(> .composer-note.refused) {
     flex-wrap: wrap;
   }
 
@@ -563,6 +556,34 @@
 .composer-menu.efforts {
   right: auto;
   width: min(420px, 100%);
+}
+
+/* The paperclip's menu on a phone (`attach-way.ts`): the camera and files,
+   a row a finger presses each. */
+.composer-menu.attach-pop {
+  right: auto;
+  width: min(240px, 100%);
+}
+
+.attach-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  width: 100%;
+  min-height: 44px;
+  padding: 0 var(--space-3);
+  border-radius: var(--radius-s);
+  color: var(--text);
+  font-size: var(--size-text);
+}
+
+.attach-row:hover {
+  background: var(--hairline);
+}
+
+.attach-row > .glyph {
+  flex: none;
+  color: var(--text-2);
 }
 
 .menu-row {

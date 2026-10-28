@@ -5,7 +5,7 @@
 // the next version.
 
 import { escape } from "../conversation/prose";
-import type { SidePage } from "../side/panel";
+import type { SidePage } from "../side/pane";
 import { noteElement } from "./blocks";
 import { drawPlan, planElement, type PlanSeams } from "./render";
 import type { PlanWords } from "./words";

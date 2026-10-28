@@ -1,15 +1,31 @@
-// What the panel beside a conversation needs from the World: its plan, its
-// goal and the colleagues it asked, followed as they change, and what the
-// user does to them. Each `watch` returns how to stop following.
+// What the side of a conversation needs from the World: its plan, its goal
+// and the colleagues it asked, followed as they change, what the user does
+// to them, and other conversations to open beside it. Each `watch` returns
+// how to stop following.
 
 import type { PageSeams, PlanShown } from "../plan/panel";
 import type { PlanWords } from "../plan/words";
+import type { Address } from "../world/wire";
 import type { CollabNode, GoalShown } from "./types";
 import type { SideWords } from "./words";
 
+/** A conversation opened beside another, in a tab of its side. */
+export interface OpenedTalk {
+  element: HTMLElement;
+  name: string;
+  agent: "claude" | "codex";
+  leave(): void;
+  /** Its column is carried as the room beside it changes. */
+  roomWillChange?(by: number): void;
+  /** Opens it as the page's own conversation. */
+  main(): void;
+}
+
 export interface SideSeams {
   words: SideWords;
-  /** A colleague's page in another's panel: only its goal's bar, no panel
+  /** The conversation the side belongs to. */
+  self: Address;
+  /** A conversation shown in another's side: only its goal's bar, no side
    *  of its own. */
   bare?: boolean;
   /** No goal is set here: a Codex conversation the user opened in Codex's
@@ -35,7 +51,11 @@ export interface SideSeams {
   /** The colleagues the conversation asked, each with the host's agents
    *  it sent, as far as they are known. */
   colleagues(show: (nodes: CollabNode[]) => void): () => void;
-  /** A colleague's own conversation, to talk with it in the panel; null
-   *  where it cannot be opened here. */
-  colleague(node: CollabNode): { element: HTMLElement; leave(): void } | null;
+  /** Another conversation, to talk with it beside this one: a colleague it
+   *  asked, or one dragged in from the list; null where it cannot be opened
+   *  here. */
+  open(address: Address): OpenedTalk | null;
+  /** Another conversation, opened as the page's own instead, where there is
+   *  no room for two. */
+  go(address: Address): void;
 }

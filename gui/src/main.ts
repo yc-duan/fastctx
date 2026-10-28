@@ -232,6 +232,7 @@ import type { MachineLogins } from "./world/logins";
 import { ownerResident, type ResidentNow, type WorldWho } from "./world/world";
 import { agentName, titleOf } from "./world/names";
 import { liveSide, specimenSide } from "./side/live";
+import type { OpenedTalk } from "./side/seams";
 import { enSide, zhSide } from "./side/words";
 import { enPlan, zhPlan } from "./plan/words";
 import { samples as planSamples } from "./plan/specimen-samples";
@@ -1437,7 +1438,7 @@ function home(): Page {
   };
 }
 
-function specimenTalk(address: Address): KeepablePage {
+function specimenTalk(address: Address, inPanel = false): KeepablePage {
   let queuedHere: PendingControl[] = [];
   let toldHere = 0;
   // The shared input kept in the page; `?queued` puts two in its queue.
@@ -1505,10 +1506,18 @@ function specimenTalk(address: Address): KeepablePage {
       // A specimen with none listed is pointed at its own machine.
       focus: focusOf(known ?? null) ?? { machines: [{ machine: sample.machine, folders: [] }] },
     },
-    head,
+    head: inPanel ? quietHead : head,
     link: talkLink,
     conversation,
-    side: specimenSide(sideWords, planWords, { ...planSamples.blog!, facts: (id) => planSamples.blog!.facts[id] ?? null }, english),
+    side: specimenSide(sideWords, planWords, { ...planSamples.blog!, facts: (id) => planSamples.blog!.facts[id] ?? null }, english, {
+      self: address,
+      open: (other) => besideTalk(other, (at) => specimenTalk(at, true)),
+      go: (other) => {
+        location.hash = talkLink(other);
+      },
+      goal: params.get("goal"),
+      bare: inPanel,
+    }),
     focus: {
       words: focusWords,
       places: () =>
@@ -1782,8 +1791,27 @@ function someoneOf(world: ReturnType<typeof store.world.peek>, address: Address)
   };
 }
 
-/** A conversation's page; `inPanel` is a colleague's, opened in the panel
- *  beside the conversation that asked it, under the panel's own head. */
+/** Another conversation, opened in a tab beside the one shown, named as
+ *  the list names it; one the list does not know goes by its id. */
+function besideTalk(address: Address, make: (address: Address) => KeepablePage): OpenedTalk {
+  const known = residentAt(live ? store.world.peek() : specimen.world, address);
+  const page = make(address);
+  page.resume();
+  const host = known?.about.host.agent ?? address.resident;
+  return {
+    element: page.element,
+    name: (known && titleOf(known)) ?? (known ? agentName(known.about.host.agent) : address.resident),
+    agent: /codex/i.test(host) ? "codex" : "claude",
+    leave: () => page.leave(),
+    roomWillChange: (by) => page.roomWillChange?.(by),
+    main: () => {
+      location.hash = talkLink(address);
+    },
+  };
+}
+
+/** A conversation's page; `inPanel` is one shown in another's side, under
+ *  the side's own tab. */
 function liveTalk(address: Address, inPanel = false): KeepablePage {
   const world = store.world.peek();
   const listed = someoneOf(world, address);
@@ -1819,10 +1847,9 @@ function liveTalk(address: Address, inPanel = false): KeepablePage {
       noGoal,
       took: (ms) => words.took(ms),
       openId: (id) => openWorldId(id),
-      open: (colleague) => {
-        const page = liveTalk(colleague, true);
-        page.resume();
-        return { element: page.element, leave: () => page.leave() };
+      open: (other) => besideTalk(other, (at) => liveTalk(at, true)),
+      go: (other) => {
+        location.hash = talkLink(other);
       },
     }),
     controls: {

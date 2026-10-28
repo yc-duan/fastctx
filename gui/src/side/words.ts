@@ -4,13 +4,32 @@
 import type { GoalStatus, NodeState, PausedBy } from "./types";
 
 export interface SideWords {
+  /** The parts of the overview, each under its quiet name. */
   pages: { plan: string; goal: string; collab: string };
-  /** The head's switch for the panel. */
+  /** The switch that opens the side, and the act that shuts it. */
   panel: string;
-  /** The line between the panel and the conversation, dragged. */
+  shut: string;
+  /** The line between the side and the conversation, dragged. */
   resize: string;
   close: string;
   back: string;
+  /** A tab's conversation opened as the page's own. */
+  openMain: string;
+  /** Said where a conversation dragged from the list would open. */
+  dropHere: string;
+  /** Where the side stands: its menu, and each place in it. */
+  dock: string;
+  docks: { right: string; bottom: string; left: string };
+  /** The side's home, the way back to it from a tab, and how another
+   *  conversation comes into it. */
+  home: string;
+  dropHint: string;
+  /** The plan's way in the card above the input: opening it, and how far
+   *  along it is. */
+  planOpen: string;
+  planCount: (reached: number, stops: number) => string;
+  /** The team's whole tree, opened from its card. */
+  teamOpen: string;
   goal: GoalWords;
   collab: CollabWords;
 }
@@ -57,8 +76,6 @@ export interface CollabWords {
   steps: (n: number) => string;
   /** Between the facts of one line said when pointed at. */
   separator: string;
-  readOnly: string;
-  back: string;
   /** To the row of the call that sent one of the host's agents. */
   jump: string;
 }
@@ -77,8 +94,18 @@ function clock(ms: number, now: number, locale: string, today: string, tomorrow:
 export const zhSide: SideWords = {
   pages: { plan: "计划", goal: "目标", collab: "协作" },
   panel: "侧面板",
+  shut: "收起侧面板",
   resize: "调整侧面板宽度",
-  close: "收起",
+  close: "关闭",
+  openMain: "在主区打开",
+  dropHere: "分屏",
+  dock: "停靠位置",
+  docks: { right: "停在右边", bottom: "停在下边", left: "停在左边" },
+  home: "概览",
+  dropHint: "把左边的一段对话拖过来，分屏来看",
+  planOpen: "全文",
+  planCount: (reached, stops) => `${reached}/${stops}`,
+  teamOpen: "全部",
   back: "返回",
   goal: {
     bar: { active: "进行中的目标", paused: "已暂停", blocked: "阻碍", complete: "已完成" },
@@ -120,8 +147,6 @@ export const zhSide: SideWords = {
     goal: { active: "进行中", paused: "已暂停", blocked: "阻碍", complete: "已完成" },
     steps: (n) => `${n} 步`,
     separator: "，",
-    readOnly: "只读",
-    back: "协作",
     jump: "转到它",
   },
 };
@@ -129,8 +154,18 @@ export const zhSide: SideWords = {
 export const enSide: SideWords = {
   pages: { plan: "Plan", goal: "Goal", collab: "Team" },
   panel: "Side panel",
+  shut: "Close the side panel",
   resize: "Resize the side panel",
   close: "Close",
+  openMain: "Open as the main conversation",
+  dropHere: "Split view",
+  dock: "Where it stands",
+  docks: { right: "On the right", bottom: "At the foot", left: "On the left" },
+  home: "Overview",
+  dropHint: "Drag a conversation here from the list to see both",
+  planOpen: "The whole plan",
+  planCount: (reached, stops) => `${reached}/${stops}`,
+  teamOpen: "Everyone",
   back: "Back",
   goal: {
     bar: { active: "Goal", paused: "Paused", blocked: "Blocked", complete: "Done" },
@@ -180,8 +215,6 @@ export const enSide: SideWords = {
     goal: { active: "Under way", paused: "Paused", blocked: "Blocked", complete: "Done" },
     steps: (n) => `${n} step${n === 1 ? "" : "s"}`,
     separator: ", ",
-    readOnly: "Read only",
-    back: "Team",
     jump: "Go to it",
   },
 };

@@ -1,5 +1,5 @@
 // The conversation's column carried through a change of the room beside it
-// (`world-gui.md`, 对话右边的侧面板): as the sidebar or the panel beside a
+// (`world-gui.md`, 对话的侧面板): as the sidebar or the panel beside a
 // conversation comes or goes, the room the column has changes over a glide.
 // Its lines broken again at every frame of it, the words the reader was on
 // would shiver all the way; instead the column takes at once the width it

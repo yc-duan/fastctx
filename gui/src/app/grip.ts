@@ -1,12 +1,14 @@
 // A line between two parts of the window, dragged to make the part beside it
-// wider or narrower (`world-gui.md`, 界面的结构): the sidebar's edge, and the
-// edge of the panel beside a conversation. Pressed twice, the part goes back
-// to the width it has at first; the arrow keys move the line a step at a
-// time. Where the width is kept is the caller's to say.
+// larger or smaller (`world-gui.md`, 界面的结构): the sidebar's edge, and the
+// edge of the side of a conversation, which may stand at its right, left or
+// foot. Pressed twice, the part goes back to the size it has at first; the
+// arrow keys move the line a step at a time. Where the size is kept is the
+// caller's to say.
 
 export interface GripOptions {
-  /** Which side of the line the part is on: dragging away from it widens it. */
-  part: "left" | "right";
+  /** Which side of the line the part is on: dragging away from it makes it
+   *  larger. A part above or below is sized by its height. */
+  part: "left" | "right" | "top" | "bottom";
   label: string;
   /** The part's width now, and the least and most it may have. */
   width(): number;
@@ -25,9 +27,11 @@ export function makeGrip(className: string, options: GripOptions): HTMLElement {
   grip.className = className;
   grip.tabIndex = 0;
   grip.setAttribute("role", "separator");
-  grip.setAttribute("aria-orientation", "vertical");
   grip.setAttribute("aria-label", options.label);
-  const away = options.part === "left" ? 1 : -1;
+  const across = () => options.part === "left" || options.part === "right";
+  const away = () => (options.part === "left" || options.part === "top" ? 1 : -1);
+  const orient = () => grip.setAttribute("aria-orientation", across() ? "vertical" : "horizontal");
+  orient();
   const say = () => {
     grip.setAttribute("aria-valuenow", String(Math.round(options.width())));
     grip.setAttribute("aria-valuemin", String(Math.round(options.least())));
@@ -41,17 +45,19 @@ export function makeGrip(className: string, options: GripOptions): HTMLElement {
   grip.addEventListener("pointerdown", (event) => {
     if (event.button !== 0 || event.pointerType === "touch") return;
     event.preventDefault();
-    const from = event.clientX;
+    const x = across();
+    const from = x ? event.clientX : event.clientY;
     const began = options.width();
+    const sign = away();
     grip.setPointerCapture(event.pointerId);
-    document.documentElement.classList.add("gripping");
+    document.documentElement.classList.add(x ? "gripping" : "gripping-y");
     options.moving?.(true);
-    const move = (moved: PointerEvent) => take(began + away * (moved.clientX - from));
+    const move = (moved: PointerEvent) => take(began + sign * ((x ? moved.clientX : moved.clientY) - from));
     const end = () => {
       grip.removeEventListener("pointermove", move);
       grip.removeEventListener("pointerup", end);
       grip.removeEventListener("pointercancel", end);
-      document.documentElement.classList.remove("gripping");
+      document.documentElement.classList.remove("gripping", "gripping-y");
       options.moving?.(false);
     };
     grip.addEventListener("pointermove", move);
@@ -63,13 +69,18 @@ export function makeGrip(className: string, options: GripOptions): HTMLElement {
     say();
   });
   grip.addEventListener("keydown", (event) => {
-    const step = event.key === "ArrowRight" ? STEP : event.key === "ArrowLeft" ? -STEP : 0;
-    if (step) take(options.width() + away * step);
+    const forth = across() ? "ArrowRight" : "ArrowDown";
+    const back = across() ? "ArrowLeft" : "ArrowUp";
+    const step = event.key === forth ? STEP : event.key === back ? -STEP : 0;
+    if (step) take(options.width() + away() * step);
     else if (event.key === "Home") take(options.least());
     else if (event.key === "End") take(options.most());
     else return;
     event.preventDefault();
   });
-  grip.addEventListener("focus", say);
+  grip.addEventListener("focus", () => {
+    orient();
+    say();
+  });
   return grip;
 }

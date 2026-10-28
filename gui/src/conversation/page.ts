@@ -14,6 +14,7 @@ import type { Attachment } from "../world/attachments";
 import type { AttachmentSource } from "../world/files";
 import type { Decoding } from "../world/remote-lines";
 import { AttachTray, type AttachSeam, type AttachWords, type Attached } from "./attach";
+import { wireAttach } from "./attach-way";
 import { SendQueue, type Queued } from "./queue";
 import { bindComposer, type ComposerSession, type ComposerSessionState } from "./composer";
 import type { ComposerSnapshot, ComposerUpdated } from "../world/composer";
@@ -30,6 +31,7 @@ import { JobsPanel, type Job, type OutputLines } from "./jobs-panel";
 import { AgentBox } from "./agent-box";
 import { SideMount } from "../side/mount";
 import { holdColumn } from "./column-hold";
+import type { Address } from "../world/wire";
 import type { SideSeams } from "../side/seams";
 import type { AgentActivity, Tool } from "../world/events";
 import { Pictures, type PictureSeams } from "./pictures";
@@ -306,7 +308,7 @@ export class ConversationPage {
         `<div class="who">
         <span class="who-seal" tabindex="0">${glyph(markOf(someone.agent), 16)}</span>
         <h1 class="who-name">${escape(someone.agent)}</h1>
-        <span class="who-home">${glyph("machine", 14)}<span>${escape(someone.assistFrom ? words.assistFrom(someone.assistFrom) : someone.machine)}</span></span>
+        ${someone.assistFrom ? `<span class="who-home">${glyph("machine", 14)}<span>${escape(words.assistFrom(someone.assistFrom))}</span></span>` : ""}
         <span class="who-state" hidden></span>
       </div>`,
         `<button class="icon-button view-steps" type="button" aria-pressed="false" aria-label="${escape(words.viewSteps)}" title="${escape(words.viewSteps)}">${glyph("steps", 18)}</button><button class="icon-button find-toggle" type="button" aria-label="${escape(words.find.find)}" title="${escape(words.find.find)}">${glyph("search", 18)}</button>${
@@ -327,7 +329,7 @@ export class ConversationPage {
           <div class="composer-tray"></div>
           <textarea rows="1" enterkeyhint="send" placeholder="${escape(words.sendPlaceholder(someone.agent))}" aria-label="${escape(words.sendPlaceholder(someone.agent))}"></textarea>
           <div class="composer-row">
-            <div class="composer-tools"><button class="icon-button composer-attach" type="button" hidden></button><input class="composer-pick" type="file" multiple hidden><button class="icon-button composer-photo" type="button" hidden></button><input class="composer-shot" type="file" accept="image/*" capture="environment" hidden><button class="composer-chip" type="button" hidden></button><button class="composer-jobs" type="button" hidden></button></div>
+            <div class="composer-tools"><button class="icon-button composer-attach" type="button" hidden></button><input class="composer-pick" type="file" multiple hidden><input class="composer-shot" type="file" accept="image/*" capture="environment" hidden><button class="composer-chip" type="button" hidden></button><button class="composer-jobs" type="button" hidden></button></div>
             <span class="composer-note" aria-live="polite"></span>
             <button class="composer-context" type="button" hidden></button>
             <button class="composer-action" type="submit" aria-label="${escape(words.send)}"></button>
@@ -508,6 +510,8 @@ export class ConversationPage {
         jump: (id) => {
           if (this.view.openAgent(id)) this.following = false;
         },
+        // What it is pointed at leaves the head for the side's first page.
+        env: this.element.querySelector<HTMLElement>(".focus-strip"),
       });
     }
     // For how long a way has been broken, and why, as the note says it.
@@ -946,7 +950,7 @@ export class ConversationPage {
   /** The sidebar folds or comes back: the column is carried rather than
    *  set again at every frame (`column-hold.ts`). */
   roomWillChange(by: number): void {
-    holdColumn(this.element, by);
+    holdColumn(this.element, this.side ? this.side.roomWillChange(by) : by);
   }
 
   /** Stops what the page keeps asking for. */
@@ -1426,11 +1430,17 @@ export class ConversationPage {
     return this.element.querySelector(".view-steps")!.getAttribute("aria-pressed") === "true";
   }
 
-  /** The panel beside the conversation, opened from the head's "⋯" on a
-   *  phone; none where it holds nothing. */
+  /** The side of the conversation, opened from the head's "⋯" on a phone;
+   *  none where it has no side of its own. */
   panel(): (() => void) | null {
     const side = this.side;
-    return side?.shown ? () => side.panel.show() : null;
+    return side?.shown ? () => side.pane.show() : null;
+  }
+
+  /** Another conversation, opened beside this one; false where it cannot
+   *  be, as on a phone or for this conversation itself. */
+  openBeside(address: Address): boolean {
+    return this.side?.openTalk(address) ?? false;
   }
 
   /** Shows every step, or only what was said again: by the head's button,
@@ -1510,36 +1520,21 @@ export class ConversationPage {
     tray.onlyImages(() => this.imagesOnly(), (why) => this.say(why, "", true));
     this.tray = tray;
     this.element.querySelector(".composer-tray")!.replaceWith(tray.element);
-    const button = this.element.querySelector<HTMLButtonElement>(".composer-attach")!;
     const pick = this.element.querySelector<HTMLInputElement>(".composer-pick")!;
-    button.hidden = false;
-    button.innerHTML = glyph("attach", 18);
-    button.setAttribute("aria-label", attach.words.attach);
-    button.title = attach.words.attach;
-    // Where no machine of the user's can take a file, the picker offers
-    // images alone.
-    button.addEventListener("click", () => {
-      pick.accept = this.imagesOnly() ? "image/*" : "";
-      pick.click();
+    const shot = this.element.querySelector<HTMLInputElement>(".composer-shot")!;
+    wireAttach(this.element, this.element.querySelector<HTMLButtonElement>(".composer-attach")!, this.element.querySelector<HTMLElement>(".composer-menus")!, attach.words, {
+      // Where no machine of the user's can take a file, the picker offers
+      // images alone.
+      files: () => {
+        pick.accept = this.imagesOnly() ? "image/*" : "";
+        pick.click();
+      },
+      photo: () => shot.click(),
     });
-    pick.addEventListener("change", () => {
-      if (pick.files) this.attachFiles(pick.files);
-      pick.value = "";
-      this.input.focus();
-    });
-    // On a phone the camera is one tap away. Elsewhere an input that asks
-    // for a capture is only another file picker, so it is not offered.
-    if (matchMedia("(pointer: coarse)").matches) {
-      const photo = this.element.querySelector<HTMLButtonElement>(".composer-photo")!;
-      const shot = this.element.querySelector<HTMLInputElement>(".composer-shot")!;
-      photo.hidden = false;
-      photo.innerHTML = glyph("camera", 18);
-      photo.setAttribute("aria-label", attach.words.photo);
-      photo.title = attach.words.photo;
-      photo.addEventListener("click", () => shot.click());
-      shot.addEventListener("change", () => {
-        if (shot.files) this.attachFiles(shot.files);
-        shot.value = "";
+    for (const input of [pick, shot]) {
+      input.addEventListener("change", () => {
+        if (input.files) this.attachFiles(input.files);
+        input.value = "";
         this.input.focus();
       });
     }
@@ -2247,11 +2242,7 @@ export class ConversationPage {
     const summary = focusSummary(focus, words);
     // On a phone the chip is its machine and how many places it holds.
     const count = focus.machines.reduce((sum, chosen) => sum + Math.max(1, chosen.folders.length), 0);
-    // Pointed at the machine it lives on alone, it draws that machine and
-    // leaves its name to the head beside it.
-    const [only] = focus.machines;
-    const home = focus.machines.length === 1 && !only!.folders.length && only!.machine === this.options.someone.machine;
-    const named = summary ? (home ? "" : summary.html) : `<span class="talk-chip-name">${escape(words.none)}</span>`;
+    const named = summary ? summary.html : `<span class="talk-chip-name">${escape(words.none)}</span>`;
     const html = `${glyph("machine", 16)}${named}${count ? `<span class="focus-count">${count}</span>` : ""}${glyph("chevron", 12)}`;
     if (chip.innerHTML !== html) chip.innerHTML = html;
     chip.classList.toggle("quiet", !summary);

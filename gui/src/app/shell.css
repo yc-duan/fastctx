@@ -75,6 +75,12 @@ html.gripping * {
   user-select: none !important;
 }
 
+html.gripping-y,
+html.gripping-y * {
+  cursor: row-resize !important;
+  user-select: none !important;
+}
+
 /* The sidebar is the book's contents, on the same page as the rest, set
    apart by its edge alone, a line ruled by hand. */
 .sidebar-frame {
