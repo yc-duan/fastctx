@@ -45,6 +45,8 @@ pub struct Actions {
     pub settings: Permission,
     pub schedule: Permission,
     pub cancel: Permission,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repair: Option<Permission>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -70,6 +72,13 @@ pub struct MachineUpdate {
     pub due: Option<Due>,
     pub offer: Option<Manifest>,
     pub actions: Actions,
+    #[serde(default)]
+    pub repair_supported: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repair_due: Option<super::RepairDue>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repair: Option<crate::repair::Report>,
+
 }
 
 /// A known version, including a listed release whose manifest is unavailable.
@@ -94,11 +103,18 @@ pub struct View {
     pub policy: Option<Policy>,
     pub machines: Vec<MachineUpdate>,
     pub available: usize,
+    #[serde(default)]
+    pub repair_supported: bool,
+
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "do", rename_all = "snake_case")]
 pub enum ViewCall {
+    Repair { machines: Vec<MachineName>, #[serde(default)] version: Option<String> },
+    CancelRepair { machines: Vec<MachineName> },
+    /// The hub's node reports a legacy machine's independently read receipt.
+    RepairResult { machine: MachineName, result: Box<crate::repair::Report> },
     View,
     /// Reads one listed manifest on demand; ordinary view polling never does IO.
     Release {

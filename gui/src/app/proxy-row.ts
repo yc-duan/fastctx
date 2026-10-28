@@ -7,6 +7,7 @@ import "./proxy-row.css";
 
 export interface ProxyRowWords {
   proxy: string;
+  proxyShort: string;
   proxyWhat: string;
   proxySystem: string;
   proxyChange: string;
@@ -70,13 +71,13 @@ export class ProxyRow {
 
   private draw(): void {
     const { words } = this;
-    const label = `<dt title="${escape(words.proxyWhat)}">${escape(words.proxy)}</dt>`;
+    const label = `<dt title="${escape(words.proxyWhat)}">${escape(words.proxyShort)}</dt>`;
     if (!this.editing) {
-      this.element.innerHTML = `${label}<dd class="proxy-row-value"><span${this.url ? ' class="mono"' : ""}>${escape(this.url ? shown(this.url) : words.proxySystem)}</span><button class="text-button quiet-button" type="button" data-proxy="change">${escape(words.proxyChange)}</button></dd>`;
+      this.element.innerHTML = `${label}<dd class="proxy-row-value"><span${this.url ? ' class="mono"' : ""}>${escape(this.url ? shown(this.url) : words.proxySystem)}</span></dd><dd class="sd-act"><button class="text-button quiet-button" type="button" data-proxy="change">${escape(words.proxyChange)}</button></dd>`;
       return;
     }
     const said = this.wrong ? `<p class="rename-said wrong" title="${escape(this.wrong.why)}">${escape(this.wrong.said)}</p>` : "";
-    this.element.innerHTML = `${label}<dd><div class="rename-field${this.busy ? " busy" : ""}"><div class="rename-row"><input class="rename-input mono" name="proxy" spellcheck="false" autocapitalize="off" autocomplete="off" placeholder="http://host:port" aria-label="${escape(words.proxy)}" value="${escape(this.typed)}"${this.busy ? " readonly" : ""}><button class="text-button" type="button" data-proxy="save">${escape(words.proxySave)}</button><button class="text-button quiet-button" type="button" data-proxy="cancel">${escape(words.proxyCancel)}</button></div>${said}</div></dd>`;
+    this.element.innerHTML = `${label}<dd class="sd-wide"><div class="rename-field${this.busy ? " busy" : ""}"><div class="rename-row"><input class="rename-input mono" name="proxy" spellcheck="false" autocapitalize="off" autocomplete="off" placeholder="http://host:port" aria-label="${escape(words.proxy)}" value="${escape(this.typed)}"${this.busy ? " readonly" : ""}><button class="text-button" type="button" data-proxy="save">${escape(words.proxySave)}</button><button class="text-button quiet-button" type="button" data-proxy="cancel">${escape(words.proxyCancel)}</button></div>${said}</div></dd>`;
   }
 
   private edit(): void {

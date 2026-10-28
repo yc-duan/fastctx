@@ -9,6 +9,7 @@ repository.workspace = true
 publish = false
 
 [dependencies]
+base64 = "0.22"
 # Machine and hub names: NFKC, case folding, scripts and categories, from the Unicode data ICU4X carries.
 icu_casemap = { version = "2.3", default-features = false, features = ["compiled_data"] }
 icu_normalizer = { version = "2.3", default-features = false, features = ["compiled_data"] }
@@ -18,4 +19,6 @@ jiff = { workspace = true }
 semver = "1"
 serde.workspace = true
 serde_json.workspace = true
+# The tag a guest room is named by, in place of its home's name.
+sha2 = "0.10"
 thiserror.workspace = true

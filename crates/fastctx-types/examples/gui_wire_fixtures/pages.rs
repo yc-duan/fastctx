@@ -124,9 +124,11 @@ pub fn fixtures() -> Fixtures {
         .collect();
     let results = vec![
         PageResult::Run(Box::new(RunReply {
+            scratch: Vec::new(),
             run: None,
             consumed: None,
             privacy: Vec::new(),
+            missing: Vec::new(),
             machine: machine.clone(),
             job: "j-abc123".parse().unwrap(),
             state: RunState::Ended { status: ExitStatus::Code(0) },
@@ -146,6 +148,7 @@ pub fn fixtures() -> Fixtures {
         PageResult::EntryAdded { journal, id: "20261004T120000Z-desktop".parse().unwrap() },
     ];
     let map = fastctx_types::project::MapView {
+        memory: None,
         town: town.clone(),
         ledger: "C:/world/towns/mark50/ledger".into(),
         record: fastctx_types::project::Record {

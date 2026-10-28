@@ -7,13 +7,41 @@ use serde::{Deserialize, Serialize};
 use super::jsonc::{Document, Insertion};
 use crate::{File, Notice};
 
-pub const DENIED: [&str; 3] = ["Bash", "Grep", "Glob"];
+/// Every deny rule apply has ever owned, in the order receipts record
+/// them. Only the host's shell is denied in the user's own login now
+/// (`world-layers.md`): the World's `run` takes its place there, and the
+/// rest stays the user's; the World's own conversations deny more in their
+/// launch settings. The others are kept so older receipts still line up,
+/// and what an earlier apply added of them is withdrawn.
+pub const DENIED: [&str; 10] = [
+    "Bash",
+    "Grep",
+    "Glob",
+    "TodoWrite",
+    "TaskCreate",
+    "TaskUpdate",
+    "TaskList",
+    "TaskGet",
+    "ProposeGoal",
+    "PowerShell",
+];
+
+/// Whether the rule at `index` of `DENIED` is denied now: the shell, and
+/// on Windows the shell Claude Code offers there as well.
+fn wanted(index: usize) -> bool {
+    DENIED[index] == "Bash" || (DENIED[index] == "PowerShell" && cfg!(windows))
+}
+
+/// The rules denied now, for what the user is told.
+pub fn denied() -> Vec<&'static str> {
+    (0..DENIED.len()).filter(|index| wanted(*index)).map(|index| DENIED[index]).collect()
+}
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Receipt {
     path: String,
-    rules: [Option<Added>; 3],
+    rules: Vec<Option<Added>>,
     permissions: Option<Insertion>,
     deny: Option<Insertion>,
     document: Option<DocumentInsertion>,
@@ -58,7 +86,8 @@ pub struct Unapplied {
 /// Add missing bare deny rules on first install. A receipt, including an empty
 /// one, prevents subsequent apply calls from reclaiming user edits or deletions,
 /// unless they `take_back`: a rule removed since is added again, one the user
-/// rewrote that still denies the tool stays theirs.
+/// rewrote that still denies the tool stays theirs. A rule an earlier apply
+/// added that is no longer denied is withdrawn while it is as added.
 pub fn apply(file: File<'_>, previous: Option<&Receipt>, take_back: bool) -> Result<Applied, String> {
     if let Some(previous) = previous {
         crate::check_path(file.path, &previous.path).map_err(|error| error.to_string())?;
@@ -66,18 +95,20 @@ pub fn apply(file: File<'_>, previous: Option<&Receipt>, take_back: bool) -> Res
     let mut bytes = file.bytes.unwrap_or_default().to_vec();
     let mut receipt = previous.cloned().unwrap_or_else(|| Receipt {
         path: file.path.into(),
-        rules: [None, None, None],
+        rules: Vec::new(),
         permissions: None,
         deny: None,
         document: None,
     });
+    let known = previous.map_or(0, |receipt| receipt.rules.len());
+    receipt.rules.resize(DENIED.len(), None);
     let mut notices = Vec::new();
     if previous.is_some() {
         let document = Document::parse(&bytes)?;
         let array = match deny(&document) {
             Ok(array) => array,
             Err(error) => {
-                receipt.rules = [None, None, None];
+                receipt.rules.fill(None);
                 receipt.permissions = None;
                 receipt.deny = None;
                 receipt.document = None;
@@ -88,7 +119,10 @@ pub fn apply(file: File<'_>, previous: Option<&Receipt>, take_back: bool) -> Res
                 });
             }
         };
-        for (index, rule) in DENIED.iter().enumerate() {
+        for (index, rule) in DENIED.iter().take(known).enumerate() {
+            if !wanted(index) {
+                continue;
+            }
             let matches = matching(array, rule);
             let intact = match &receipt.rules[index] {
                 Some(added) => {
@@ -103,8 +137,29 @@ pub fn apply(file: File<'_>, previous: Option<&Receipt>, take_back: bool) -> Res
                 }
             }
         }
-        if !take_back {
-            return Ok(Applied { bytes: file.bytes.map(<[u8]>::to_vec), receipt, notices });
+        // What an earlier apply added and is no longer denied goes, unless
+        // the user changed it since.
+        for index in (0..known.min(DENIED.len())).rev() {
+            if wanted(index) {
+                continue;
+            }
+            let Some(added) = receipt.rules[index].take() else { continue };
+            let document = Document::parse(&bytes)?;
+            let array = deny(&document)?;
+            let matches = matching(array, DENIED[index]);
+            if matches.len() != 1 || document.raw(&array.expect("matched array").elements[matches[0]]) != added.raw {
+                notices.push(notice(file.path, DENIED[index], "changed or duplicated since apply; left untouched"));
+                continue;
+            }
+            bytes = document.remove_element(array.expect("matched array"), matches[0], &added.prefix)?;
+        }
+        if !take_back && (known >= DENIED.len() || file.bytes.is_none()) {
+            let changed = file.bytes.is_some_and(|original| original != bytes.as_slice());
+            return Ok(Applied {
+                bytes: if changed { Some(bytes) } else { file.bytes.map(<[u8]>::to_vec) },
+                receipt,
+                notices,
+            });
         }
     }
     if Document::parse(&bytes)?.root.is_none() {
@@ -126,6 +181,9 @@ pub fn apply(file: File<'_>, previous: Option<&Receipt>, take_back: bool) -> Res
         receipt.deny = Some(inserted);
     }
     for (index, rule) in DENIED.iter().enumerate() {
+        if !wanted(index) || (index < known && !take_back) {
+            continue;
+        }
         let document = Document::parse(&bytes)?;
         let array = deny(&document)?.expect("deny created");
         if !matching(Some(array), rule).is_empty() {
@@ -209,7 +267,7 @@ pub fn unapply(file: File<'_>, receipt: &Receipt) -> Result<Unapplied, String> {
 pub fn configured(bytes: Option<&[u8]>) -> Result<bool, String> {
     let document = Document::parse(bytes.unwrap_or_default())?;
     let array = deny(&document)?;
-    Ok(DENIED.iter().all(|rule| !matching(array, rule).is_empty()))
+    Ok(denied().iter().all(|rule| !matching(array, rule).is_empty()))
 }
 
 fn permissions<'a>(document: &'a Document<'a>) -> Result<Option<&'a Object<'a>>, String> {

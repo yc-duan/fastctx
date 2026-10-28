@@ -36,7 +36,7 @@ pub(super) fn codex(places: &Places) -> ToolCheck {
     let scope = match &cwd {
         Ok(cwd) => {
             format!(
-                "effective Codex features from {}, in {}; without explicit --profile or session/CLI overrides",
+                "effective Codex features from {}, in {}; explicit --profile or session/CLI overrides are not checked",
                 places.codex_home.display(),
                 cwd.display()
             )
@@ -123,7 +123,7 @@ pub(super) fn claude(places: &Places) -> ToolCheck {
         if crate::claude::tools::configured(file.bytes())? {
             Ok(())
         } else {
-            Err("permissions.deny does not contain all of Bash, Grep and Glob".into())
+            Err(format!("permissions.deny does not contain all of {}", crate::claude::tools::denied().join(", ")))
         }
     });
     ToolCheck {

@@ -1,13 +1,18 @@
 // The codes that still let devices into a network (`world-network.md`,
-// 入网码): one row each, saying what it is for by how it is given and its
-// name, how many came in by it, until when, and a way to revoke it. The
-// same rows on 「我」 and in the sheet that adds a device; the network's
-// administrator sees every account's.
+// 入网码): one row each, what it is for drawn by its mark beside its name,
+// how full it is as a short bar at its end, and a way to revoke it; how many came in
+// by it, until when and where it was made are said when it is pointed at.
+// The same rows on 「我」 and in the sheet that adds a device; the
+// network's administrator sees every account's, each marked whose.
 
 import { glyph, type GlyphName } from "../conversation/glyphs";
 import { escape } from "../conversation/prose";
 import { lasting, type HubAccounts, type Login, type TokenSeen } from "../world/accounts";
 import { row } from "./rows";
+import { bar } from "./usage/draw";
+
+/** How long a code's bar is drawn. */
+const METER_WIDTH = 64;
 
 export interface CodeWords {
   /** A code with no name, by how it is given. */
@@ -110,19 +115,24 @@ export function codesOf(hub: HubAccounts | undefined, login: Login, now: Date): 
 export function codeRow(token: TokenSeen, login: Login, here: string, words: CodeWords, when: (at: Date) => string): string {
   const way = wayOf(token);
   const kind = token.managed ? words.kinds.managed : way === "scan" ? words.kinds.scan : way === "line" ? words.kinds.line : words.kinds.paste;
+  const whose = token.account !== login.account ? words.whose(token.account) : "";
   const said = [
-    token.account !== login.account ? words.whose(token.account) : "",
-    token.label ? kind : "",
+    whose,
+    kind,
     words.came(token.used, token.uses),
     lasting(token.expires) ? words.lasting : words.until(when(new Date(token.expires))),
     token.made_by && token.made_by !== here ? words.madeOn(token.made_by) : "",
   ].filter(Boolean);
+  // A code for one device or for any number has no bar to fill.
+  const full = token.uses > 1 ? `<span class="code-meter">${bar(token.used / token.uses, `code:${token.key}`, METER_WIDTH, 10)}</span>` : "";
   return row(
     glyph(codeMark(token), 16),
     escape(codeName(token, words)),
-    escape(said.join(" ")),
+    escape(whose),
     "",
-    `<button class="text-button quiet-button" type="button" data-act="revoke" data-key="${escape(token.key)}">${escape(words.revoke)}</button>`,
-    " code-row",
+    `${full}<button class="text-button quiet-button" type="button" data-act="revoke" data-key="${escape(token.key)}">${escape(words.revoke)}</button>`,
+    // Its bar and its revoking stay on its line, even on a phone.
+    " code-row act",
+    said.join(" "),
   );
 }

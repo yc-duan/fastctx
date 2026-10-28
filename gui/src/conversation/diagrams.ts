@@ -9,6 +9,10 @@ type Mermaid = typeof import("mermaid").default;
 let loading: Promise<Mermaid> | null = null;
 let theme = "";
 let serial = 0;
+/** Drawings by source, theme and text size, so a diagram scrolled out and
+ *  back, or drawn again in another view, is not laid out anew. */
+const drawings = new Map<string, string>();
+const KEPT = 48;
 
 export async function drawDiagrams(root: HTMLElement): Promise<void> {
   const waiting = [...root.querySelectorAll<HTMLElement>("figure.diagram[data-mermaid]:not(.drawn):not(.unreadable)")].filter(
@@ -16,18 +20,30 @@ export async function drawDiagrams(root: HTMLElement): Promise<void> {
   );
   if (!waiting.length) return;
   const mermaid = await load();
+  const size = getComputedStyle(document.documentElement).getPropertyValue("--body-size").trim();
   for (const figure of waiting) {
     if (figure.classList.contains("drawn") || !figure.isConnected) continue;
     const source = figure.textContent ?? "";
-    serial += 1;
-    try {
-      const { svg } = await mermaid.render(`diagram-${serial}`, source);
-      figure.innerHTML = svg;
-      figure.classList.add("drawn");
-      figure.dataset.source = source;
-    } catch {
-      figure.classList.add("unreadable");
+    const key = `${theme}\n${size}\n${source}`;
+    let svg = drawings.get(key);
+    if (svg === undefined) {
+      serial += 1;
+      try {
+        svg = (await mermaid.render(`diagram-${serial}`, source)).svg;
+      } catch {
+        figure.classList.add("unreadable");
+        continue;
+      }
+      drawings.set(key, svg);
+      for (const oldest of drawings.keys()) {
+        if (drawings.size <= KEPT) break;
+        drawings.delete(oldest);
+      }
     }
+    if (!figure.isConnected || figure.classList.contains("drawn")) continue;
+    figure.innerHTML = svg;
+    figure.classList.add("drawn");
+    figure.dataset.source = source;
   }
 }
 

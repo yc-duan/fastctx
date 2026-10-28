@@ -249,7 +249,7 @@
 
 button.ctx-row {
   cursor: pointer;
-  transition: background-color var(--hover) ease;
+  transition: background-color var(--hover) var(--ease);
 }
 
 button.ctx-row:hover {

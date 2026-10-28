@@ -2,6 +2,7 @@
 // to do what is done often. Typing narrows the list to what contains the
 // words typed, in order; the arrow keys choose and Enter goes.
 
+import { leave } from "./leave";
 import { onShade, watchShade } from "./shade-press";
 import { escape } from "../conversation/prose";
 import type { PaletteWords } from "./words";
@@ -53,8 +54,13 @@ export class Palette {
     this.input = this.dialog.querySelector<HTMLInputElement>(".palette-input")!;
     this.list = this.dialog.querySelector<HTMLElement>(".palette-list")!;
     watchShade(this.dialog);
+    // Escape closes it as a click outside does, going as it came.
+    this.dialog.addEventListener("cancel", (event) => {
+      event.preventDefault();
+      this.close();
+    });
     this.dialog.addEventListener("click", (event) => {
-      if (onShade(this.dialog, event)) this.dialog.close();
+      if (onShade(this.dialog, event)) this.close();
       const item = (event.target as HTMLElement).closest<HTMLElement>("[data-index]");
       if (item) this.run(Number(item.dataset.index));
     });
@@ -78,7 +84,7 @@ export class Palette {
       if (document.querySelector(".shell.alone")) return;
       if ((event.ctrlKey || event.metaKey) && !event.shiftKey && !event.altKey && event.key.toLowerCase() === "k") {
         event.preventDefault();
-        if (this.dialog.open) this.dialog.close();
+        if (this.dialog.open) this.close();
         else this.open();
       }
     });
@@ -126,7 +132,13 @@ export class Palette {
   private run(index: number): void {
     const item = this.shown[index];
     if (!item) return;
-    this.dialog.close();
+    this.close();
     item.run();
+  }
+
+  /** Goes as a sheet does (`sheet.css`). */
+  private close(): void {
+    const body = this.dialog.querySelector(".sheet-body");
+    if (this.dialog.open) leave(this.dialog, () => this.dialog.close(), { as: "sheet-leaving", ...(body ? { moving: body } : {}) });
   }
 }

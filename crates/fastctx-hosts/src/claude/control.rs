@@ -49,10 +49,6 @@ pub struct Question {
     pub turn: Option<String>,
     pub request: String,
     pub params: Value,
-    /// The native tool is already running concurrently. Keeping the World
-    /// reply available cannot delay that tool's own answer or refusal.
-    #[serde(default)]
-    pub native_wait: bool,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -238,25 +234,6 @@ pub fn validate_answer(question: &Question, answer: &Value) -> Result<(), String
                     }
                 }
                 _ => return Err("permission behavior must be allow or deny".into()),
-            }
-        }
-        "AskUserQuestion" => {
-            if let Some(deny) = object.get("deny") {
-                if object.len() != 1 || !deny.is_string() {
-                    return Err("a declined question takes {deny:string}".into());
-                }
-            } else {
-                if object.len() != 1 {
-                    return Err("AskUserQuestion takes {result:{questions,answers,...}} or {deny:string}".into());
-                }
-                let result = object.get("result").and_then(Value::as_object).ok_or("result is required")?;
-                if result.get("questions") != question.params.get("questions") {
-                    return Err("questions must be returned unchanged".into());
-                }
-                let answers = result.get("answers").and_then(Value::as_object).ok_or("answers is required")?;
-                if answers.values().any(|answer| !answer.is_string()) {
-                    return Err("each answer must be a string; join multiple choices with comma-space".into());
-                }
             }
         }
         "Elicitation" => {

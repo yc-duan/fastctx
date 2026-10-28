@@ -25,7 +25,7 @@ impl UsedUp {
             Self::Unavailable => Timestamp::MAX,
         }
     }
-    pub(super) fn expires(&self) -> Option<Timestamp> {
+    pub(crate) fn expires(&self) -> Option<Timestamp> {
         (self.until() != Timestamp::MAX).then(|| self.until())
     }
     pub(super) fn fable(&self) -> bool {
@@ -109,12 +109,24 @@ pub(crate) fn used_up(node: &Node, about: &About, account: &HubAccount, model: O
     let now = Timestamp::now();
     let mut reached = super::with_book(node, &path, |book| {
         let mut reached = Vec::new();
+        // Every five-hour allowance still in its period is held to the line,
+        // as Codex's several buckets are; one past its reset says nothing of
+        // the others. Assistance waits until the last over the line resets.
         if let Some(share) = assist.five_hour
             && let Some((_, windows)) = &book.reading
-            && let Some(window) = super::readings::window(windows, 300)
         {
-            let until = window.resets_at;
-            if until.is_none_or(|until| until > now) && window.used_tenths >= u32::from(share) * 10 {
+            let over: Vec<_> = windows
+                .iter()
+                .filter(|window| window.minutes == Some(300))
+                .filter(|window| window.resets_at.is_none_or(|until| until > now))
+                .filter(|window| window.used_tenths >= u32::from(share) * 10)
+                .collect();
+            if !over.is_empty() {
+                let until = if over.iter().any(|window| window.resets_at.is_none()) {
+                    None
+                } else {
+                    over.iter().filter_map(|window| window.resets_at).max()
+                };
                 reached.push(UsedUp::FiveHour { share, until });
             }
         }

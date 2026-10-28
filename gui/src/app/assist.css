@@ -41,6 +41,12 @@
   padding-bottom: var(--space-3);
 }
 
+/* The login's turns at once sit under its five-hour share, the two as one
+   group. */
+.assist-window-line + .assist-window-line {
+  margin-top: 2px;
+}
+
 .assist-window {
   position: relative;
   justify-self: end;
@@ -124,23 +130,25 @@
   background: var(--bg-elevated);
 }
 
+/* A deadline, an amount, a number of turns: words to press and change,
+   not a pill (AGENTS.md, 形状); the row being changed is sunk already, so
+   its words only darken. */
 .assist-until {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  height: 30px;
-  padding: 0 12px;
-  border-radius: var(--radius-full);
-  background: var(--fill);
+  min-height: 30px;
+  margin-inline: -4px;
+  padding: 0 4px;
+  border-radius: var(--radius-s);
   color: var(--text-2);
   font-size: var(--size-text);
   white-space: nowrap;
-  transition: color var(--hover) ease, background-color var(--hover) ease;
+  transition: color var(--hover) var(--ease);
 }
 
 .assist-until:hover {
   color: var(--text);
-  background: var(--fill-strong);
 }
 
 .assist-until.none {
@@ -150,7 +158,6 @@
 .assist-row.editing .assist-until,
 .assist-window-line.editing .assist-until {
   color: var(--text-strong);
-  background: var(--accent-wash);
 }
 
 .assist-edit {

@@ -25,6 +25,14 @@ pub(super) struct Owner {
 }
 
 impl super::CodexHost {
+    /// Reads the complete account-validated response, including ordinaryUsageAllowed.
+    pub async fn rate_limits_now(self: &std::sync::Arc<Self>) -> Result<Value, String> {
+        let server = self.server().await?;
+        let answer = server.request("account/rateLimits/read", json!({})).await?;
+        self.limits_heard(Timestamp::now(), LimitsHow::Read(answer.clone()));
+        Ok(answer)
+    }
+
     pub async fn require_login(self: &std::sync::Arc<Self>) -> Result<(), String> {
         let server = self.server().await?;
         match account(&server).await {
@@ -76,6 +84,10 @@ pub(super) async fn account(server: &AppServer) -> Fact<AgentAccount> {
     };
     let account = &answer["account"];
     match account["type"].as_str() {
+        // A configured provider that needs no OpenAI login works with none.
+        None if account.is_null() && answer["requiresOpenaiAuth"].as_bool() == Some(false) => {
+            Fact::known(AgentAccount::default())
+        }
         None if account.is_null() => Fact::unavailable("no one is logged in to this Codex home"),
         Some("chatgpt") => Fact::known(AgentAccount {
             email: account["email"].as_str().map(str::to_string),
@@ -186,6 +198,7 @@ pub fn limits_of(buckets: &BTreeMap<String, Value>, observed_at: Timestamp) -> F
                 minutes: window["windowDurationMins"].as_u64().and_then(|minutes| u32::try_from(minutes).ok()),
                 used_tenths: used.saturating_mul(10),
                 resets_at,
+                since: None,
             });
         }
     }

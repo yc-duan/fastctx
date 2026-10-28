@@ -26,10 +26,12 @@ pub(crate) fn no_subject() -> Failure {
     Denial::new(DenialReason::NoSubject, "this request has no recognized account identity").into()
 }
 
-/// An account action waits while its hub cannot provide current authority.
+/// An account action waits while its hub cannot provide current authority:
+/// while the line is down, and on a new connection until the hub gave its
+/// view on it, as what an earlier one left may lack a machine come since.
 pub(crate) fn current_view(link: &Link) -> Result<Arc<View>, Failure> {
     let view = link.view();
-    if !matches!(link.status(), Status::Online { .. }) || view.me().is_none() {
+    if !matches!(link.status(), Status::Online { .. }) || !link.view_current() || view.me().is_none() {
         return Err(Denial::new(
             DenialReason::ViewUnavailable,
             "the hub's current account view is unavailable; the action waits for it",

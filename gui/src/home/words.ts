@@ -15,6 +15,8 @@ export interface HomeWords {
   aPage(name: string): string;
   /** Conversations waiting for the reader. */
   waiting: string;
+  /** What an urgent one is called where its mark is not seen. */
+  urgent: string;
   /** What an agent asks, said whole to a screen reader. */
   asks: Record<Asked["what"], string>;
   /** A conversation the host says waits on the reader, saying nothing more. */
@@ -23,7 +25,6 @@ export interface HomeWords {
    *  says it. */
   waitingFor: string;
   /** An answer given here, before its conversation takes it. */
-  answered(choice: string): string;
   /** Conversations at work, and the commands running. */
   now: string;
   jobs: string;
@@ -38,6 +39,10 @@ export interface HomeWords {
   /** What came back while the reader was away. */
   away: string;
   nothingAway: string;
+  /** The page's two views, and what now says when nothing needs the user. */
+  nowView: string;
+  latelyView: string;
+  nothingNeeds: string;
   /** The end of the line of the time away. */
   present: string;
   /** A turn that ended in an error, and why. */
@@ -108,11 +113,11 @@ const pad = (n: number) => String(n).padStart(2, "0");
 export const zhHome: HomeWords = {
   world: "世界",
   aPage: (name) => `页面「${name}」`,
-  waiting: "等待回复",
+  waiting: "要紧的事",
+  urgent: "要紧",
   asks: { answer: "问你", command: "想运行命令", change: "想改文件", tool: "想用工具", plan: "等你批准计划", form: "请你填写", other: "等你回复" },
   waitsUnsaid: "等你回复",
   waitingFor: "等待回复",
-  answered: (choice) => `已回答：${choice}`,
   now: "工作中",
   jobs: "后台命令",
   stopJob: "停止",
@@ -123,6 +128,9 @@ export const zhHome: HomeWords = {
   begin: "新对话",
   away: "离开期间",
   nothingAway: "没有新动态",
+  nowView: "此刻",
+  latelyView: "近况",
+  nothingNeeds: "没有在等你的事",
   present: "现在",
   failed: (reason) => `出错：${reason}`,
   compacted: "对话已压缩",
@@ -155,7 +163,8 @@ const enMonths = ["January", "February", "March", "April", "May", "June", "July"
 export const enHome: HomeWords = {
   world: "Home",
   aPage: (name) => `the page “${name}”`,
-  waiting: "Waiting for you",
+  waiting: "Needs you",
+  urgent: "Urgent",
   asks: {
     answer: "asks you",
     command: "wants to run a command",
@@ -167,7 +176,6 @@ export const enHome: HomeWords = {
   },
   waitsUnsaid: "Waiting for your reply",
   waitingFor: "Waiting for your reply",
-  answered: (choice) => `Answered: ${choice}`,
   now: "Working",
   jobs: "Background commands",
   stopJob: "Stop",
@@ -177,6 +185,9 @@ export const enHome: HomeWords = {
   nobodyWorking: "No agents working",
   begin: "New conversation",
   away: "While you were away",
+  nowView: "Now",
+  latelyView: "Lately",
+  nothingNeeds: "Nothing needs you",
   nothingAway: "Nothing new",
   present: "now",
   failed: (reason) => `Error: ${reason}`,

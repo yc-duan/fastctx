@@ -43,7 +43,8 @@ const WEEK_SECONDS: i64 = 7 * 24 * 60 * 60;
 pub(crate) struct Usage {
     books: Mutex<HashMap<PathBuf, Arc<Mutex<Book>>>>,
     failures: Mutex<HashMap<PathBuf, String>>,
-    enforcing: Mutex<()>,
+    /// One lock for each login's check of its holds, by its ledger's name.
+    enforcing: Mutex<HashMap<String, Arc<Mutex<()>>>>,
     stopping: Mutex<std::collections::HashSet<(ResidentId, String)>>,
     logins: Mutex<HashMap<ResidentId, PathBuf>>,
     legacy: Mutex<Option<HashMap<String, claude::Legacy>>>,
@@ -129,6 +130,7 @@ pub(crate) fn turn_ended(node: &Node, id: &ResidentId, about: &About, end: &Turn
             Entry::Tokens {
                 at,
                 who: who(about),
+                with: with(about),
                 model: facts.models.last().cloned().or_else(|| about.model.clone()).unwrap_or_default(),
                 tokens,
                 key: Some(format!("legacy:{}:{at}", id)),
@@ -179,6 +181,17 @@ fn who(about: &About) -> Option<HubAccount> {
     }
 }
 
+/// The other accounts a conversation works for alike, booked an even share
+/// each with the first.
+fn with(about: &About) -> Vec<HubAccount> {
+    let Acting::Accounts { accounts } = &about.acting else { return Vec::new() };
+    let mut rest: Vec<HubAccount> =
+        accounts.iter().skip(1).filter(|account| Some(*account) != accounts.first()).cloned().collect();
+    rest.sort();
+    rest.dedup();
+    rest
+}
+
 /// The login a conversation's usage counts under: the one it was started
 /// in, and for a Claude session the user opened, the one whose `projects`
 /// its transcript is in.
@@ -189,7 +202,7 @@ fn login_of(node: &Node, id: &ResidentId, about: &About) -> Option<PathBuf> {
             if let Some(home) = &about.home {
                 return Some(home.clone());
             }
-            if about.world_started {
+            if about.world_managed() {
                 return claude_default();
             }
             if let Some(known) = node.usage.logins.lock().expect("never poisoned").get(id) {
@@ -211,7 +224,7 @@ fn login_of(node: &Node, id: &ResidentId, about: &About) -> Option<PathBuf> {
 }
 
 /// Claude Code's default login: the one the user's environment names.
-fn claude_default() -> Option<PathBuf> {
+pub(crate) fn claude_default() -> Option<PathBuf> {
     let env = crate::claude::environment().ok()?;
     let home = fastctx_platform::user_home().ok()?;
     Some(crate::homes::claude_default(&env, &home))
