@@ -158,6 +158,8 @@ impl Device {
             checked_at: held.looked.at,
             checking: held.looked.checking,
             updates_view: true,
+            repair_supported: false,
+            repair: None,
         };
         drop(held);
         for session in self.sessions() {
@@ -190,6 +192,7 @@ impl Device {
                 kept: cache.kept(),
                 app: held.app.clone(),
                 open: true,
+                repair_routing: true,
                 ..State::default()
             },
             fastctx_update::state::Context {
@@ -255,6 +258,7 @@ impl Device {
                 }
             }
             UpdateCall::Fetch { version, target } => self.fetch_update(version, target)?,
+            UpdateCall::Repair { .. } => return Err(failed("this device does not support local installation repair")),
             UpdateCall::Kernel { .. } => return Err(failed("a device runs no World program of its own")),
             UpdateCall::Choose { version } => {
                 let chosen = match version {

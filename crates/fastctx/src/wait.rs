@@ -11,6 +11,7 @@ use fastctx_client::{CallError, Client, command_peer};
 use fastctx_types::layout::WorldDir;
 use fastctx_types::residents::Notice;
 use fastctx_types::run::{EndedHow, ExitStatus, JobRecord};
+use fastctx_types::run_facts::{StepDid, StepEnd, WaitedJob, clipped, tail_of};
 use fastctx_types::{Call, JobId, Reply};
 
 #[derive(Args)]
@@ -34,6 +35,7 @@ pub fn run(args: WaitArgs) -> anyhow::Result<ExitCode> {
     let mut client =
         runtime.block_on(Client::connect(&world, command_peer()?)).context("reaching this machine's node")?;
     let parent = std::env::var("FASTCTX_JOB").ok().map(|job| job.parse()).transpose()?;
+    let began = crate::steps::began();
     let records = match runtime.block_on(client.call(Call::Wait { jobs, receipt: true, parent })) {
         Ok(Reply::Waited { records }) => records,
         Ok(other) => anyhow::bail!("the node answered something else: {other:?}"),
@@ -50,7 +52,27 @@ pub fn run(args: WaitArgs) -> anyhow::Result<ExitCode> {
     out.flush()?;
     drop(out);
     runtime.block_on(client.take_wait()).context("acknowledging the jobs' ends")?;
+    if let Some(began) = began {
+        began.tell(StepDid::Wait { jobs: records.iter().filter_map(waited).collect() });
+    }
     Ok(records.last().map_or(ExitCode::SUCCESS, status))
+}
+
+/// A job's end as the wait's step tells it.
+fn waited(record: &JobRecord) -> Option<WaitedJob> {
+    let tail =
+        fastctx_hands::run::last::last_streams(Path::new(&record.output), record.stderr.as_deref().map(Path::new))
+            .ok()
+            .flatten()
+            .map(|last| tail_of(&last.text, 20));
+    Some(WaitedJob {
+        job: record.id.clone(),
+        machine: record.machine.clone(),
+        at: record.end.as_ref()?.at,
+        end: StepEnd::of_record(record)?,
+        tail: tail.filter(|tail| !tail.trim().is_empty()),
+        command: Some(clipped(record.script.trim())).filter(|command| !command.is_empty()),
+    })
 }
 
 /// A job's end as a notice tells it, so a wait reads like the word it took.
@@ -58,6 +80,8 @@ fn ended(record: &JobRecord) -> Notice {
     let end = record.end.as_ref().expect("a wait answers with ended jobs");
     Notice::JobEnded {
         taken: false,
+        consumed: Vec::new(),
+        follower_unconfirmed: false,
         job: record.id.clone(),
         machine: record.machine.clone(),
         request: record.on.as_ref().and_then(|on| on.request.clone()),
@@ -73,6 +97,7 @@ fn ended(record: &JobRecord) -> Notice {
         )
         .unwrap_or(None),
         stop: record.stop.as_ref().map(|stop| Box::new(stop.request.clone())),
+        scratch: Vec::new(),
     }
 }
 

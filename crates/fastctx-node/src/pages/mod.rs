@@ -28,7 +28,6 @@ pub async fn call(
         PageCall::Publish { town, page, base, draft } => {
             publisher(caller)?;
             let town = caller.town_or(node, town)?;
-            let _writing = node.writing.lock().await;
             refresh(node, &town).await?;
             let stored = stored(node, &town, &page)?;
             check_base(&page, base, stored.current().map(|v| v.version))?;
@@ -38,7 +37,6 @@ pub async fn call(
         PageCall::Withdraw { town, page, base } => {
             publisher(caller)?;
             let town = caller.town_or(node, town)?;
-            let _writing = node.writing.lock().await;
             refresh(node, &town).await?;
             let stored = stored(node, &town, &page)?;
             check_base(&page, Some(base), stored.current().map(|v| v.version))?;
@@ -54,7 +52,6 @@ pub async fn call(
         PageCall::Restore { town, page, base, version } => {
             publisher(caller)?;
             let town = caller.town_or(node, town)?;
-            let _writing = node.writing.lock().await;
             refresh(node, &town).await?;
             let stored = stored(node, &town, &page)?;
             check_base(&page, Some(base), stored.current().map(|v| v.version))?;
@@ -95,7 +92,6 @@ pub async fn call(
         PageCall::Consent { town, page, version, base, acts, account } => {
             user(caller)?;
             let town = caller.town_or(node, town)?;
-            let _writing = node.writing.lock().await;
             refresh(node, &town).await?;
             let stored = stored(node, &town, &page)?;
             check_base(&page, Some(version), stored.current().map(|v| v.version))?;
@@ -172,7 +168,6 @@ async fn current(node: &Arc<Node>, town: &TownName, required: bool) -> Result<()
     let Some((place, link)) = place.and_then(|place| node.link_of(&place.hub).map(|link| (place, link))) else {
         return require_town(node, town);
     };
-    let _syncing = node.syncing.lock().await;
     let offline = || {
         Failure::new(format!(
             "cannot verify the current page and consent for {town}: the hub connection ended; no action was admitted"
@@ -243,11 +238,7 @@ async fn validate_acts(node: &Arc<Node>, town: &TownName, acts: &[PageAct]) -> R
                 }
             }
             PageAct::Say { to } => actions::resident(node, town, to).await?,
-            PageAct::Journal { journal } => {
-                if !crate::town::read::journal_names(&node.world, town).map_err(io_failure)?.contains(journal) {
-                    return Err(Failure::new(format!("{town} has no journal {journal}")));
-                }
-            }
+            PageAct::Journal { .. } => return Err(Failure::not_run(fastctx_types::memory::LEGACY)),
         }
     }
     Ok(())

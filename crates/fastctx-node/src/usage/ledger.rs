@@ -23,6 +23,33 @@ pub(super) struct Use {
     pub call: Option<super::calls::Detail>,
 }
 
+impl Use {
+    /// The `index`th of `count` even shares of it, what does not divide
+    /// going to the first ones.
+    fn share(&self, index: u64, count: u64) -> Use {
+        let part = |value: u64| value / count + u64::from(index < value % count);
+        let usd = |usd: Usd| Usd(part(usd.0));
+        Use {
+            model: self.model.clone(),
+            usd: self.usd.map(usd),
+            tokens: Tokens {
+                input: part(self.tokens.input),
+                cache_read: part(self.tokens.cache_read),
+                cache_write: part(self.tokens.cache_write),
+                output: part(self.tokens.output),
+                reasoning: part(self.tokens.reasoning),
+            },
+            kinds: self.kinds.as_ref().map(|kinds| KindsUsd {
+                input: usd(kinds.input),
+                cache_read: usd(kinds.cache_read),
+                cache_write: usd(kinds.cache_write),
+                output: usd(kinds.output),
+            }),
+            call: self.call.clone(),
+        }
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub(super) enum Entry {
@@ -39,6 +66,10 @@ pub(super) enum Entry {
     Tokens {
         at: Timestamp,
         who: Option<HubAccount>,
+        /// The other accounts it was used for alike, each booked an even
+        /// share with `who`.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        with: Vec<HubAccount>,
         model: String,
         tokens: Tokens,
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -49,6 +80,10 @@ pub(super) enum Entry {
     Spent {
         at: Timestamp,
         who: Option<HubAccount>,
+        /// The other accounts it was used for alike, each booked an even
+        /// share with `who`.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        with: Vec<HubAccount>,
         session: String,
         process: Option<String>,
         total: Usd,
@@ -67,6 +102,10 @@ pub(super) enum Entry {
     Summary {
         at: Timestamp,
         who: Option<HubAccount>,
+        /// The other accounts it was used for alike, each booked an even
+        /// share with `who`.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        with: Vec<HubAccount>,
         #[serde(flatten)]
         usage: Use,
     },
@@ -123,6 +162,26 @@ impl Entry {
             Self::Meter { meter } => meter.usage.iter().map(|usage| (meter.who.clone(), usage.clone())).collect(),
             _ => Vec::new(),
         };
+        // Used for several accounts at once, each is booked an even share
+        // (`world-usage.md`, 替谁).
+        let with = match self {
+            Self::Tokens { with, .. } | Self::Spent { with, .. } | Self::Summary { with, .. } => with.as_slice(),
+            Self::Meter { meter } => meter.with.as_slice(),
+            _ => &[],
+        };
+        if !with.is_empty() {
+            let count = with.len() as u64 + 1;
+            uses = uses
+                .into_iter()
+                .flat_map(|(who, usage)| {
+                    std::iter::once(who)
+                        .chain(with.iter().cloned().map(Some))
+                        .enumerate()
+                        .map(|(index, who)| (who, usage.share(index as u64, count)))
+                        .collect::<Vec<_>>()
+                })
+                .collect();
+        }
         for (_, usage) in &mut uses {
             if usage
                 .call

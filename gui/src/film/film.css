@@ -38,7 +38,7 @@
 .film-caption.fresh {
   opacity: var(--shown);
   translate: var(--slide) var(--lift);
-  animation: film-say var(--say) ease-out both;
+  animation: film-say var(--say) var(--ease-out) both;
 }
 
 @keyframes film-say {

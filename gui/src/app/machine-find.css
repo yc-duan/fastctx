@@ -1,0 +1,28 @@
+/* Finding machines: the conversation's find bar, floating over the top right
+   of the drawing or the list, opened from a glass in the page's head. While
+   it is open the list leaves it room, so its first row is not under it. */
+
+.mf-toggle {
+  margin-right: var(--space-1);
+}
+
+.machines-canvas > .mf-bar {
+  top: var(--space-2);
+}
+
+.machines-canvas:has(> .mf-bar:not([hidden])) > .ml-list {
+  padding-top: calc(40px + var(--space-3));
+}
+
+/* A row gone to stands clear of the bar. */
+.machines-canvas:has(> .mf-bar:not([hidden])) > .ml-list [data-ml-row] {
+  scroll-margin-top: calc(40px + var(--space-3));
+}
+
+/* The list when nothing matches: one quiet line where the rows would be. */
+.ml-none {
+  margin: var(--space-5) 0 0;
+  padding: 0 var(--space-3);
+  color: var(--text-3);
+  font-size: var(--size-text);
+}

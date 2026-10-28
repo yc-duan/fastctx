@@ -51,6 +51,7 @@ struct State {
     held: HashMap<u64, Entry>,
     waiting: HashMap<u64, Entry>,
     outside: HashMap<u64, Outside>,
+    active: HashMap<u64, Active>,
     /// Out-of-order pairs already told, so each is told once.
     told: HashSet<(&'static str, &'static str)>,
 }
@@ -66,9 +67,11 @@ struct Entry {
     alone: bool,
     label: Arc<str>,
     since: Instant,
+    progress: Instant,
 }
 
 struct Outside {
+    task: Option<tokio::task::Id>,
     what: String,
     within: Duration,
     label: Arc<str>,
@@ -148,6 +151,7 @@ impl Wait {
                 alone,
                 label,
                 since: Instant::now(),
+                progress: Instant::now(),
             },
         );
         Self { token }
@@ -161,6 +165,7 @@ impl Wait {
         std::mem::forget(self);
         if let Some(mut entry) = state.waiting.remove(&token) {
             entry.since = Instant::now();
+            entry.progress = entry.since;
             state.held.insert(token, entry);
         }
         Hold { token }
@@ -188,6 +193,7 @@ pub(super) fn taken(lock: Lock<'_>, alone: bool) -> Hold {
             alone,
             label: super::label(),
             since: Instant::now(),
+            progress: Instant::now(),
         },
     );
     Hold { token }
@@ -213,9 +219,59 @@ pub(super) struct Hold {
     token: u64,
 }
 
+impl Hold {
+    pub(super) fn adopt(&self) {
+        let label = super::label();
+        if let Some(held) = state().held.get_mut(&self.token) {
+            held.who = tokio::task::try_id().map(Who::Task);
+            held.label = label;
+        }
+    }
+}
+
 impl Drop for Hold {
     fn drop(&mut self) {
         state().held.remove(&self.token);
+    }
+}
+
+/// A unit of work that prevents handover, including work without a total deadline.
+/// It is diagnostic state, not a mutex or an artificial time limit on long work.
+#[derive(Clone, Debug)]
+pub struct Active {
+    pub what: String,
+    pub doing: String,
+    pub since: Instant,
+}
+
+pub struct Work {
+    token: u64,
+}
+
+impl Work {
+    pub fn begin(what: impl Into<String>) -> Self {
+        let token = next();
+        state()
+            .active
+            .insert(token, Active { what: what.into(), doing: super::label().to_string(), since: Instant::now() });
+        Self { token }
+    }
+}
+
+impl Drop for Work {
+    fn drop(&mut self) {
+        state().active.remove(&self.token);
+    }
+}
+
+/// Reports completed application work by this task. Transport heartbeats must
+/// never call this: only actual bytes or a completed local write count.
+pub fn progress() {
+    let Some(who) = tokio::task::try_id().map(Who::Task) else { return };
+    let mut state = state();
+    let now = Instant::now();
+    for entry in state.held.values_mut().filter(|entry| entry.who == Some(who)) {
+        entry.progress = now;
     }
 }
 
@@ -227,7 +283,10 @@ pub struct OutsideWait {
 impl OutsideWait {
     pub(super) fn begin(what: String, within: Duration) -> Self {
         let token = next();
-        state().outside.insert(token, Outside { what, within, label: super::label(), since: Instant::now() });
+        state().outside.insert(
+            token,
+            Outside { task: tokio::task::try_id(), what, within, label: super::label(), since: Instant::now() },
+        );
         Self { token }
     }
 }
@@ -263,6 +322,35 @@ pub struct Cycle {
 pub struct Snapshot {
     pub stuck: Vec<Stuck>,
     pub cycles: Vec<Cycle>,
+    pub active: Vec<Active>,
+}
+
+/// Current task waits, including those that have not become late. A single
+/// pass lets a caller registry join diagnostics without scanning per call.
+pub fn task_waits() -> HashMap<tokio::task::Id, String> {
+    waits_of(&state())
+}
+
+/// A final diagnostic never waits for a possibly stalled registry owner.
+pub fn try_task_waits() -> Option<HashMap<tokio::task::Id, String>> {
+    STATE.try_lock().ok().map(|state| waits_of(&state))
+}
+
+fn waits_of(state: &State) -> HashMap<tokio::task::Id, String> {
+    let mut waits: HashMap<_, _> = state
+        .waiting
+        .values()
+        .filter_map(|entry| {
+            let Some(Who::Task(task)) = entry.who else { return None };
+            Some((task, format!("waiting for {}({})", entry.name, entry.subject)))
+        })
+        .collect();
+    for outside in state.outside.values() {
+        if let Some(task) = outside.task {
+            waits.insert(task, format!("waiting for {}", outside.what));
+        }
+    }
+    waits
 }
 
 /// What has gone on too long and who waits on whom in a circle, now.
@@ -290,12 +378,12 @@ pub fn snapshot(waits: Duration, holds: Duration) -> Snapshot {
         });
     }
     for held in state.held.values() {
-        let since = now.duration_since(held.since);
+        let since = now.duration_since(held.progress);
         if since >= holds {
             stuck.push(Stuck {
                 key: format!("holds {} {}({})", held.label, held.name, held.subject),
                 doing: held.label.to_string(),
-                what: format!("holds {}({})", held.name, held.subject),
+                what: format!("holds {}({}) without progress", held.name, held.subject),
                 since,
             });
         }
@@ -312,7 +400,7 @@ pub fn snapshot(waits: Duration, holds: Duration) -> Snapshot {
         }
     }
     let cycles = cycles(&state);
-    Snapshot { stuck, cycles }
+    Snapshot { stuck, cycles, active: state.active.values().cloned().collect() }
 }
 
 /// The circles of tasks and threads each waiting for a lock another of them

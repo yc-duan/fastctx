@@ -17,14 +17,13 @@ use tokio::task::JoinHandle;
 use tokio::time::Instant;
 use tokio_tungstenite::tungstenite::Message as WsMessage;
 
-use super::letters::{self, Outbox, Receipt};
+use super::letters::{self, Outbox};
 use super::outgoing::Outgoing;
 use super::{CallEvent, CallOn, Connection, Inner, Replier, Status};
 use crate::again::{STABLE, backoff};
 use crate::dial::{self, HubSocket, Upstream};
-use crate::envelope::{Envelope, Kind};
-use crate::message::LetterBody;
-use crate::sign::{Domain, sha256};
+use crate::envelope::Envelope;
+use crate::sign::Domain;
 use crate::wire::{self, Down, HEARTBEAT, Intent, Letters, Refusal, SILENCE, Up};
 
 /// How often a machine on a later way to the hub asks the earlier ones
@@ -221,6 +220,7 @@ async fn open(inner: &Inner, upstream: &Upstream) -> Result<Opened, Ended> {
     // from.
     let computer = membership.kind.is_computer();
     let interfaces = if computer { interface_addresses() } else { Vec::new() };
+    let acknowledged = position.taken;
     let hello = Up::Hello {
         protocol: wire::GREETING_PROTOCOL,
         version: env!("CARGO_PKG_VERSION").to_string(),
@@ -243,11 +243,15 @@ async fn open(inner: &Inner, upstream: &Upstream) -> Result<Opened, Ended> {
             project_entry: true,
             conversation_deletions: true,
             profiles: true,
+            account_records: true,
+            conversation_plans: true,
+            scratch_locations: true,
             left: None,
             cancels: true,
             presence: true,
             parts: true,
             call_details: true,
+            view_deltas: true,
         },
     };
     match tokio::time::timeout(SILENCE, dial::send(&mut socket, &hello)).await {
@@ -267,6 +271,13 @@ async fn open(inner: &Inner, upstream: &Upstream) -> Result<Opened, Ended> {
         Down::Welcome { hub, hub_name, name, taken, letters, afoot_pending, .. } => {
             if hub != membership.id {
                 return Err(Ended::Retry(format!("the hub is {hub}, not {}", membership.id)));
+            }
+            // Hello carries the durable receive position. A welcome proves that
+            // it reached this hub even if the previous session lost its final Ack.
+            if let Some((epoch, sequence)) = acknowledged {
+                letters::acknowledge(&inner.dir, epoch, sequence)
+                    .await
+                    .map_err(|error| Ended::Retry(format!("settling the prior receive position: {error}")))?;
             }
             if name != membership.name {
                 inner.follow_name(name);
@@ -581,6 +592,7 @@ async fn connected(
             Down::Told { id, answer } => inner.asks.told(generation, id, answer),
             Down::Part { id, index, total, text } => inner.asks.part(generation, id, index, total, text),
             Down::Presence { machine, presence, rev } => inner.heard_presence(machine, presence, rev),
+            Down::View { delta } => inner.heard_view(*delta),
             Down::DirectoryChanged => {
                 let inner = inner.clone();
                 tokio::spawn(async move {
@@ -591,6 +603,10 @@ async fn connected(
                 });
             }
             Down::LedgerChanged { town } => inner.node.ledger_changed(Some(town)),
+            Down::AccountRecordChanged { changed } => {
+                inner.node.account_record_changed(&changed);
+                let _ = inner.record_changes.send(Some(changed));
+            }
             Down::Afoot { machine, busy, change } => inner.heard_afoot(machine, busy, *change),
             Down::Forget { forgetting } => {
                 let (inner, up) = (inner.clone(), up.clone());
@@ -804,6 +820,7 @@ fn held(inner: &Inner, seq: u64) -> std::io::Result<()> {
 }
 
 fn refused_letter(inner: &Inner, seq: u64, reason: &str) -> std::io::Result<()> {
+    super::posting::refused(inner, seq, reason)?;
     let outbox = Outbox::new(&inner.dir);
     match outbox.get(seq)? {
         Some(message) => {
@@ -889,94 +906,19 @@ async fn take_letters(
                 Err(_) => break,
             }
         }
-        let mut last = None;
-        for (seq, message) in run {
-            let already = inner
-                .letters
-                .lock()
-                .expect("never poisoned")
-                .file
-                .taken
-                .is_some_and(|(epoch, taken)| epoch == hub_letters && seq <= taken);
-            if !already {
-                // Taken whole, its handling and its receipt, whatever becomes
-                // of this session, and one at a time with the next session's:
-                // a letter sent again meanwhile waits for it, and finds its
-                // receipt.
-                let taking = inner.taking.clone().lock_owned().await;
-                let taker = inner.clone();
-                let taken = tokio::spawn(async move {
-                    let _taking = taking;
-                    take_letter(&taker, &message).await
-                })
-                .await
-                .map_err(|error| std::io::Error::other(error.to_string()))
-                .and_then(|taken| taken);
-                if let Err(error) = taken {
-                    let _ = failed.send(format!("taking a letter: {error}"));
-                    return;
-                }
+        let seq = match letters::take(inner.clone(), hub_letters, run).await {
+            Ok(seq) => seq,
+            Err(error) => {
+                let _ = failed.send(format!("taking letters: {error}"));
+                return;
             }
-            last = Some(seq);
+        };
+        if up.write(Up::Ack { seq }).await.is_err() {
+            return;
         }
-        let Some(seq) = last else { continue };
-        // A stop before this is written has the hub send the run again; each
-        // letter's receipt keeps it from being taken twice.
-        {
-            let mut letters = inner.letters.lock().expect("never poisoned");
-            if !letters.file.taken.is_some_and(|(epoch, taken)| epoch == hub_letters && seq <= taken) {
-                letters.file.taken = Some((hub_letters, seq));
-                if let Err(error) = super::state::write(&inner.dir.letters(), &letters.file) {
-                    drop(letters);
-                    let _ = failed.send(format!("recording a letter taken: {error}"));
-                    return;
-                }
-            }
-        }
-        if up.send(Up::Ack { seq }).is_err() {
+        if let Err(error) = letters::acknowledge(&inner.dir, hub_letters, seq).await {
+            let _ = failed.send(format!("settling received letters: {error}"));
             return;
         }
     }
-}
-
-/// Checks one letter and hands it to the node. A letter that cannot be
-/// read or taken is set aside with the reason; only a failure of this
-/// machine's own disk is an error, and the hub sends the letter again.
-async fn take_letter(inner: &Inner, message: &Envelope) -> std::io::Result<()> {
-    let set_aside = |reason: String| -> std::io::Result<()> {
-        let path = letters::record_failure(&inner.dir, "in", &reason, message, |line| inner.node.log(line))?;
-        inner.node.log(format!("a letter was set aside: {reason}; kept in {}", path.display()));
-        Ok(())
-    };
-    if message.kind != Kind::Letter {
-        return set_aside(format!("from {}: it is not a letter", message.from));
-    }
-    let caller = match inner.admit(message).await {
-        Ok(caller) => caller,
-        Err(reason) => return set_aside(format!("from {}: {reason}", message.from)),
-    };
-    let purpose = message.purpose.expect("an admitted letter names its purpose");
-    let LetterBody { id, letter } = match message.body() {
-        Ok(body) => body,
-        Err(error) => return set_aside(format!("from {}: {error}", message.from)),
-    };
-    let digest = crate::sign::Digest(sha256(&serde_json::to_vec(&letter).expect("letters serialize")));
-    // Receipts and business delivery now share the admitted computer's identity.
-    let sender = caller.key;
-    match letters::receipt(&inner.dir, &sender, &caller.names, &id)? {
-        Some(receipt) if receipt.digest == digest => return Ok(()),
-        Some(_) => {
-            return set_aside(format!(
-                "from {}: the id {} was used before for another letter",
-                caller.machine,
-                id.as_str()
-            ));
-        }
-        None => {}
-    }
-    let from = caller.machine.clone();
-    if let Err(reason) = inner.node.letter(caller, purpose, id.clone(), letter).await? {
-        set_aside(format!("from {from}: {reason}"))?;
-    }
-    letters::keep_receipt(&inner.dir, &sender, &id, &Receipt { digest, at: Timestamp::now() })
 }

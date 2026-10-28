@@ -8,6 +8,8 @@ import { plain, proseBlocks, render } from "./prose";
 import { shownOutput } from "./run-output";
 import { htmlText } from "./find-text";
 import type { FindPart, FindTarget } from "./find-index";
+import type { Card } from "./cards/cards";
+import { givenLines } from "./printout";
 
 /** A diff line's displayed fields, without syntax coloring or DOM work. */
 export function displayedDiff(line: string, numbered: boolean, unchanged: (n: number) => string): string {
@@ -49,6 +51,8 @@ export interface FindRendering {
   entry(entry: Entry): string;
   /** The rows a run of members is drawn as: a run of thinking is one. */
   rows(run: Entry[]): Row[];
+  /** The rows a call is drawn as, as its stretch's heading counts them. */
+  cards?(tool: Extract<Entry, { kind: "tool" }>): Card[];
   /** The tokens a run of thinking took, where the host said. */
   tokens(run: readonly ProseEntry[]): number | null;
   /** The host's own agents its calls start or name. */
@@ -85,6 +89,10 @@ export class FindContent {
     const stamp = String(block.stamp);
     // Turns not held are found by the shell, not here.
     if (block.kind === "gap") return;
+    if (block.kind === "say") {
+      yield part("body", stamp, {}, () => htmlText(render(block.text)));
+      return;
+    }
     if (block.kind !== "activity-group") {
       yield part("body", stamp, {}, () => this.rendering.entry(block));
       if (block.kind === "heard" && this.rendering.notice(block)) {
@@ -99,7 +107,7 @@ export class FindContent {
       if (handed) yield part("answer", stamp, { row: block.key, selector: ".notice-answer" }, () => htmlText(render(handed)));
       return;
     }
-    const said = stretchSays(block, words, this.rendering.attachment, this.rendering.tokens, this.rendering.agents);
+    const said = stretchSays(block, words, this.rendering.attachment, this.rendering.tokens, this.rendering.agents, this.rendering.cards ? (tool) => this.rendering.cards!(tool) : undefined);
     yield part("heading", `${stamp}|${block.members.length}|${said.time}`, { selector: ".group-head" }, () =>
       `${said.title}${said.added || said.removed ? `\n+${said.added} −${said.removed}` : ""}${said.time ? `\n${said.time}` : ""}`);
     // A stretch that is only thinking holds its words where its rows would be.
@@ -138,10 +146,18 @@ export class FindContent {
             }
           } else {
             const { given, shown, output, ending } = toolText(member.tool, words);
+            // A run's card says its command above what it printed; it says
+            // how it ended where it did not end well.
+            const does = member.tool.does;
+            const run = does.as === "command";
             let index = 0;
-            if (given) yield part(`${row.key}/in`, rowStamp, { row: row.key, long: index++ }, () => given.replace(/\n$/, ""));
+            if (does.as === "command") {
+              const command = givenLines(does.command).join("\n");
+              yield part(`${row.key}/in`, rowStamp, { row: row.key, long: index++ }, () => command);
+            } else if (given) yield part(`${row.key}/in`, rowStamp, { row: row.key, long: index++ }, () => given.replace(/\n$/, ""));
             if (shown || output) yield part(`${row.key}/out`, rowStamp, { row: row.key, long: index }, () => shown ? shown.lines.join("\n") : output.replace(/\n$/, ""));
-            if (ending) yield part(`${row.key}/end`, rowStamp, { row: row.key, selector: ".io-end" }, () => ending);
+            const failed = does.as === "command" && !does.job && does.exit !== null && does.exit !== 0;
+            if (ending && (!run || failed)) yield part(`${row.key}/end`, rowStamp, { row: row.key, selector: run ? ".po-end, .dd-foot-line .io-end" : ".io-end" }, () => ending);
           }
         }
       }

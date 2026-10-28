@@ -52,6 +52,21 @@ pub struct MachineStats {
     pub lines: Vec<Line>,
     /// Its node: the program's version, and when this node started.
     pub node: NodeSeen,
+    /// The jobs running on it now, by the account each works for, with the
+    /// limit its owner set for that account; its own under none.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub jobs: Vec<AccountJobs>,
+}
+
+/// How many jobs one account runs on a machine now.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AccountJobs {
+    /// None for the machine's own, its owner's.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub account: Option<crate::access::HubAccount>,
+    pub running: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub most: Option<u16>,
 }
 
 /// The rates and shares in a reading are measured, never NaN, so a reading
@@ -213,6 +228,22 @@ pub struct NodeSeen {
     /// (`world-gui.md`, 设置).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub refused: Option<Refused>,
+}
+
+/// One call admitted by the local node, without its user's request contents.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CallWork {
+    pub id: u64,
+    pub account: String,
+    pub machine: String,
+    pub conversation: Option<String>,
+    pub kind: String,
+    pub pool: String,
+    pub phase: String,
+    pub seconds: u64,
+    pub within: Option<u64>,
+    pub overdue: bool,
+    pub waiting: String,
 }
 
 /// A place macOS kept private from a node.

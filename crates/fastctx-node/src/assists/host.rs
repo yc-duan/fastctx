@@ -60,7 +60,11 @@ pub(crate) fn require(node: &Node, resident: &ResidentId) -> Result<(), Failure>
     if kept(node, resident)? == Some(true) {
         return Ok(());
     }
-    Err(Failure::not_run(
+    Err(legacy())
+}
+
+pub(super) fn legacy() -> Failure {
+    Failure::not_run(
         "This assisted conversation predates host isolation. Start a new conversation to continue without the host owner's instructions and extensions.",
-    ))
+    )
 }

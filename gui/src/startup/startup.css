@@ -1,0 +1,141 @@
+/* The page that stands in until Fastctx has opened (`page.ts`): one column
+   on the paper, left aligned, a title in the display face over a ruled
+   stroke, a sentence, and its two acts; a repair's layers as rows. */
+
+.su-page {
+  position: fixed;
+  inset: 0;
+  z-index: 10;
+  display: grid;
+  place-items: center;
+  box-sizing: border-box;
+  padding: var(--space-6) var(--space-4) calc(var(--space-6) + var(--safe-bottom));
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-reading);
+  font-size: var(--size-text);
+}
+
+.su-column {
+  width: min(440px, 100%);
+}
+
+.su-title {
+  margin: 0;
+  font-family: var(--font-display);
+  font-weight: 400;
+  font-size: var(--size-title);
+  line-height: var(--leading-heading);
+  color: var(--text-strong);
+}
+
+.su-rule {
+  height: 8px;
+  margin: var(--space-2) 0 var(--space-5);
+}
+
+.su-rule-svg {
+  display: block;
+  height: 8px;
+  overflow: visible;
+}
+
+.su-said {
+  margin: 0 0 var(--space-6);
+  line-height: var(--leading-prose);
+}
+
+.su-acts {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.su-main,
+.su-quiet {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 34px;
+  border-radius: var(--radius-full);
+  font-size: var(--size-text);
+  white-space: nowrap;
+  scale: var(--press);
+  transition: background-color var(--hover) var(--ease), color var(--hover) var(--ease), --press var(--settle) var(--spring);
+}
+
+.su-main {
+  padding: 0 var(--space-5);
+  background: var(--accent);
+  color: var(--bg);
+}
+
+.su-main:hover {
+  background: var(--accent-bright);
+}
+
+.su-quiet {
+  padding: 0 var(--space-3);
+  color: var(--text-2);
+}
+
+.su-quiet:hover {
+  background: var(--hairline);
+  color: var(--text);
+}
+
+.su-main:active,
+.su-quiet:active {
+  --press: 0.97;
+  transition-duration: var(--hover), var(--hover), var(--quick);
+  transition-timing-function: var(--ease), var(--ease), var(--ease-out);
+}
+
+/* While it opens: three dots that breathe in turn, and the line. */
+.su-opening {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin: 0;
+  color: var(--text-2);
+}
+
+.su-dots {
+  display: inline-flex;
+  gap: 5px;
+}
+
+.su-dots > span {
+  width: 6px;
+  height: 6px;
+  border-radius: var(--radius-full);
+  background: var(--text-2);
+  transform: scale(var(--breath-scale));
+  opacity: var(--breath-alpha);
+  animation: pulse var(--breath) var(--ease-in-out) infinite;
+}
+
+.su-dots > span:nth-child(2) {
+  animation-delay: calc(var(--breath) / 6);
+}
+
+.su-dots > span:nth-child(3) {
+  animation-delay: calc(var(--breath) / 3);
+}
+
+/* A repair's layers (`app/repair-layers.ts`). */
+.su-layers {
+  margin: 0 0 var(--space-6);
+}
+
+:root[data-reduced] .su-dots > span {
+  animation: none;
+}
+
+@media (pointer: coarse) {
+  .su-main,
+  .su-quiet {
+    height: 44px;
+  }
+}

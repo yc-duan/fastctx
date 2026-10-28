@@ -28,7 +28,7 @@
   background: var(--fill-strong);
   color: var(--text-2);
   white-space: nowrap;
-  transition: color var(--hover) ease, background-color var(--hover) ease;
+  transition: color var(--hover) var(--ease), background-color var(--hover) var(--ease);
 }
 
 .uc-filter:hover {
@@ -131,7 +131,7 @@
 
 .uc-row.own {
   cursor: pointer;
-  transition: background-color var(--hover) ease;
+  transition: background-color var(--hover) var(--ease);
 }
 
 .uc-row.own:hover {
@@ -310,7 +310,7 @@
   background: var(--fill-strong);
   color: var(--text-2);
   white-space: nowrap;
-  transition: color var(--hover) ease;
+  transition: color var(--hover) var(--ease);
 }
 
 .uc-newest:hover {
@@ -388,7 +388,7 @@
   border-radius: var(--radius-full);
   color: var(--text-2);
   font-variant-numeric: tabular-nums;
-  transition: color var(--hover) ease, background-color var(--hover) ease;
+  transition: color var(--hover) var(--ease), background-color var(--hover) var(--ease);
 }
 
 .uc-num:hover {

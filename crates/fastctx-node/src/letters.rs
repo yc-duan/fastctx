@@ -3,6 +3,8 @@
 
 mod delivered;
 mod identity;
+mod migrate;
+pub(crate) use migrate::start as migrate;
 mod receiving;
 pub(crate) use delivered::Handoff;
 pub(crate) use identity::Identity;
@@ -27,10 +29,18 @@ static SENDING: Mutex<()> = Mutex::new(());
 /// (`admission::letters`, which checks the same on the other side).
 fn purpose(letter: &Letter) -> Purpose {
     match letter {
+        Letter::Control { .. } => Purpose::Hands,
+        Letter::ControlResult { .. } => Purpose::Echo,
         Letter::Speak { .. } => Purpose::Words,
+        Letter::Notice { notice, .. }
+            if notice.is_question() || matches!(**notice, Notice::Words { goal_report: Some(_), .. }) =>
+        {
+            Purpose::Echo
+        }
         Letter::Notice { notice, .. } if matches!(**notice, Notice::Words { .. } | Notice::Attached { .. }) => {
             Purpose::Words
         }
+        Letter::Notice { notice, .. } if matches!(**notice, Notice::Sentinel { .. }) => Purpose::Echo,
         Letter::Left { .. } | Letter::Fragment { .. } | Letter::Notice { .. } | Letter::JobFacts { .. } => {
             Purpose::Echo
         }
@@ -39,17 +49,51 @@ fn purpose(letter: &Letter) -> Purpose {
 
 /// Sends `letter` to `to` for whom `acting` works, in parts when it does
 /// not fit one message.
-pub fn send(node: &Node, acting: &Acting, to: &Written, id: NoticeId, mut letter: Letter) -> io::Result<()> {
+pub fn send(node: &Node, acting: &Acting, to: &Written, id: NoticeId, letter: Letter) -> io::Result<()> {
+    post(node, acting, to, id, letter).map(|_| ())
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+pub(crate) struct Posted {
+    hub: fastctx_types::access::HubId,
+    parts: Vec<fastctx_net::link::Posted>,
+}
+
+impl Posted {
+    pub(crate) fn state(&self, node: &Node) -> io::Result<fastctx_net::link::Posting> {
+        use fastctx_net::link::Posting;
+        let Some(link) = node.link_of(&self.hub) else {
+            return if crate::obligations::hub_left(node, &self.hub)? {
+                Ok(Posting::Refused("the posting's network was left or removed".into()))
+            } else {
+                Err(io::Error::other("the posting's hub is not connected"))
+            };
+        };
+        let mut pending = false;
+        for part in &self.parts {
+            match link.posting(*part)? {
+                Posting::Pending => pending = true,
+                Posting::Held => {}
+                terminal @ (Posting::Refused(_) | Posting::Replaced) => return Ok(terminal),
+            }
+        }
+        Ok(if pending { Posting::Pending } else { Posting::Held })
+    }
+}
+
+/// Returns a reference for checking when every fragment reached the hub.
+pub(crate) fn post(node: &Node, acting: &Acting, to: &Written, id: NoticeId, mut letter: Letter) -> io::Result<Posted> {
     let purpose = purpose(&letter);
-    let (link, account) =
-        node.speaking(acting, to, purpose).map_err(|failure| io::Error::other(failure.to_string()))?;
+    let (link, account) = node.mailbox(acting, to, purpose).map_err(|failure| io::Error::other(failure.to_string()))?;
     if let Letter::Speak { accounts, .. } = &mut letter {
         *accounts = node.accounts_on(&link, acting).into_iter().filter(|other| *other != account).collect();
     }
     let to = &to.name;
     let _sending = SENDING.lock().expect("never poisoned");
     if link.letter_size(to, &account, &letter) <= fastctx_net::wire::MAX_CONTROL_FRAME {
-        return link.send_letter(to, &account, purpose, LetterId::try_from(id.to_string()).expect("notice id"), letter);
+        let part =
+            link.post_letter(to, &account, purpose, LetterId::try_from(id.to_string()).expect("notice id"), letter)?;
+        return Ok(Posted { hub: link.membership().id.clone(), parts: vec![part] });
     }
     let text = serde_json::to_string(&letter).map_err(io::Error::other)?;
     if text.len() > receiving::MAX_BYTES {
@@ -88,15 +132,16 @@ pub fn send(node: &Node, acting: &Acting, to: &Written, id: NoticeId, mut letter
     if total > receiving::MAX_PARTS {
         return Err(io::Error::other(format!("the letter needs more than {} fragments", receiving::MAX_PARTS)));
     }
+    let mut posted = Vec::new();
     for (index, text) in parts.into_iter().enumerate() {
         let part = crate::speech::fixed_id("part", &[id.as_str(), &index.to_string()]);
-        link.send_letter(
+        posted.push(link.post_letter(
             to,
             &account,
             purpose,
             LetterId::try_from(part.to_string()).expect("notice id"),
             Letter::Fragment { id: id.clone(), index, total, text },
-        )?;
+        )?);
     }
-    Ok(())
+    Ok(Posted { hub: link.membership().id.clone(), parts: posted })
 }

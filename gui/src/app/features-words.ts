@@ -3,6 +3,8 @@
 
 import type { GlyphName } from "../conversation/glyphs";
 import type { CollaborationWords } from "../film/collaboration";
+import type { MemoryFilmWords } from "../film/memory";
+import type { SentinelFilmWords } from "../film/sentinel";
 import type { WorkbenchWords } from "../film/workbench";
 
 export interface FeaturesWords {
@@ -30,7 +32,8 @@ export interface FeaturesWords {
   /** While the settings are being read. */
   reading: string;
   retry: string;
-  memory: { name: string };
+  memory: { name: string; line: string; film: MemoryFilmWords; after: string; offWhat: string };
+  sentinels: SentinelWords;
   callers: string;
   callersSaid: string;
   callees: string;
@@ -61,6 +64,32 @@ export interface FeaturesWords {
   failed(why: string): string;
   noLogins: string;
   noCodex: string;
+}
+
+/** The sentinels' page: its film and its settings (`sentinel-form.ts`). */
+export interface SentinelWords {
+  name: string;
+  line: string;
+  film: SentinelFilmWords;
+  after: string;
+  offWhat: string;
+  home: string;
+  homeStatus: { forbidden: string; offline: string; too_old: string; unavailable: string };
+  model: string;
+  protocols: { open_ai: string; anthropic: string };
+  endpoint: string;
+  modelName: string;
+  key: string;
+  keySet: string;
+  keyMissing: string;
+  keyReplace: string;
+  /** Said when a key's field is pointed at: where the key goes. */
+  keyGoes(machine: string): string;
+  search: string;
+  searchEndpoint: string;
+  save: string;
+  notSaved: string;
+  changedElsewhere: string;
 }
 
 export const zhFeatures: FeaturesWords = {
@@ -107,7 +136,36 @@ export const zhFeatures: FeaturesWords = {
   },
   reading: "正在读取设置",
   retry: "重试",
-  memory: { name: "项目记忆" },
+  sentinels: {
+    name: "哨兵",
+    line: "要等一件事时，留个哨兵替会话盯着",
+    film: { captions: ["会话要等一件事，留下一个哨兵", "会话歇着，哨兵替它盯着那台机器", "那件事一成，哨兵叫醒会话接着干"] },
+    after: "替这个账号干活的会话都能留哨兵了",
+    offWhat: "会话不再能留哨兵，在盯的都撤掉；这里的设置与钥匙留着，再开时照旧。",
+    home: "住在哪台",
+    homeStatus: { forbidden: "这个账号用不了这台", offline: "这台不在线", too_old: "这台的 Fastctx 太旧", unavailable: "这台现在用不了" },
+    model: "模型",
+    protocols: { open_ai: "OpenAI 兼容", anthropic: "Anthropic 兼容" },
+    endpoint: "地址",
+    modelName: "模型名",
+    key: "钥匙",
+    keySet: "已设好",
+    keyMissing: "还没设",
+    keyReplace: "换一把",
+    keyGoes: (machine) => `只交给 ${machine}`,
+    search: "搜索（可选）",
+    searchEndpoint: "Tavily 地址",
+    save: "保存",
+    notSaved: "没存上",
+    changedElsewhere: "别处刚改过，已载入那一版",
+  },
+  memory: {
+    name: "项目记忆",
+    line: "项目里一路写下的手记与定下的定论",
+    film: { captions: ["对话里要紧的，写成一篇手记", "过些天，另一段对话一开头就读到它", "定下的规矩是定论，每改一次多一版"] },
+    after: "项目页里有了手记与定论，项目里的对话一开头就读到它们",
+    offWhat: "项目页里收起手记与定论，对话不再拿到它们；已经写下的都留着，再开时照旧。",
+  },
   callers: "调用方",
   callersSaid: "这些智能体的对话里会有请 GPT 的工具",
   callees: "被调用方",
@@ -183,7 +241,36 @@ export const enFeatures: FeaturesWords = {
   },
   reading: "Reading the settings",
   retry: "Retry",
-  memory: { name: "Project memory" },
+  sentinels: {
+    name: "Sentinels",
+    line: "When a conversation must wait, a sentinel watches for it",
+    film: { captions: ["A conversation that has to wait leaves a sentinel", "It rests while the sentinel watches that machine", "When the thing happens, the sentinel wakes it to go on"] },
+    after: "Conversations working for this account can leave sentinels",
+    offWhat: "Conversations can no longer leave sentinels, and those watching are taken down; the settings and keys here stay for next time.",
+    home: "Lives on",
+    homeStatus: { forbidden: "This account can't use that machine", offline: "That machine is offline", too_old: "Fastctx there is too old", unavailable: "That machine can't be used now" },
+    model: "Model",
+    protocols: { open_ai: "OpenAI compatible", anthropic: "Anthropic compatible" },
+    endpoint: "Address",
+    modelName: "Model name",
+    key: "Key",
+    keySet: "Set",
+    keyMissing: "Not set",
+    keyReplace: "Replace it",
+    keyGoes: (machine) => `Given to ${machine} only`,
+    search: "Search (optional)",
+    searchEndpoint: "Tavily address",
+    save: "Save",
+    notSaved: "Not saved",
+    changedElsewhere: "Changed elsewhere; that version is loaded",
+  },
+  memory: {
+    name: "Project memory",
+    line: "A project's journal and its decisions",
+    film: { captions: ["What mattered in a conversation is written as a journal", "Days later, another conversation reads it from its first line", "What was settled is a decision, one more version each change"] },
+    after: "Projects show their journal and decisions, and conversations in them start with both",
+    offWhat: "Projects fold their journal and decisions away and conversations no longer get them; all that was written stays, as it was, for next time.",
+  },
   callers: "Callers",
   callersSaid: "Conversations with these agents get the tools to ask a GPT",
   callees: "Callees",

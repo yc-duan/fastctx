@@ -9,6 +9,7 @@ repository.workspace = true
 publish = false
 
 [dependencies]
+base64 = "0.22"
 # Machine and hub names: NFKC, case folding, scripts and categories, from the Unicode data ICU4X carries.
 icu_casemap = { version = "2.3", default-features = false, features = ["compiled_data"] }
 icu_normalizer = { version = "2.3", default-features = false, features = ["compiled_data"] }

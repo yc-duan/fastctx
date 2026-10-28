@@ -221,6 +221,14 @@ pub(super) fn status(service: &Service) -> anyhow::Result<Status> {
     reg.status(reg.read()?.is_some())
 }
 
+pub(super) fn definition_current(service: &Service) -> anyhow::Result<bool> {
+    let reg = Registration::new(service);
+    let content = definition(service, &reg, manager_version()?)?;
+    Ok(reg.read()?.as_deref() == Some(content.as_bytes())
+        && read_link(&reg.executable)?.as_deref() == Some(service.executable.as_path())
+        && reg.watchdog.current(&reg.name, manager_version()?)?)
+}
+
 pub(super) fn main_pid(service: &Service) -> anyhow::Result<u64> {
     let pid = Registration::new(service).property("Service", "MainPID")?;
     pid.as_u64().context("systemd omitted the service's MainPID")
@@ -436,6 +444,12 @@ fn definition(service: &Service, reg: &Registration, version: u32) -> anyhow::Re
     unit.push_str(&format!("\n[Service]\nType={}\n", if version >= 240 { "exec" } else { "simple" }));
     if version < 230 {
         unit.push_str("StartLimitInterval=0\n");
+    }
+    // The node shares the processors among the accounts whose jobs run on
+    // it, in cgroups below its own, itself in a leaf systemd starts it in
+    // (`fastctx_platform::cpu_share`); older systemd has no such leaf.
+    if version >= 254 {
+        unit.push_str("Delegate=yes\nDelegateSubgroup=node\n");
     }
     unit.push_str(&format!(
         "User={}\nExecStart={start}{args}\nRestart=always\nRestartSec=0\nKillMode=process\nStandardInput=null\nStandardOutput=journal\nStandardError=journal\n\n[Install]\nWantedBy=multi-user.target\n",

@@ -40,7 +40,7 @@
   background: var(--bg-sunken);
   color: var(--text-2);
   text-decoration: none;
-  transition: background-color var(--hover) ease;
+  transition: background-color var(--hover) var(--ease);
 }
 
 .feature-card:hover {
@@ -73,6 +73,70 @@
 /* A card's state sits at its foot, under a line or with none. */
 .feature-card > .tag {
   margin-top: auto;
+}
+
+/* A phone: each feature a row, its first mark before its name and its
+   line, and of its state only "on", by its tick. */
+@media (max-width: 560px) {
+  .feature-cards {
+    gap: var(--space-2);
+  }
+
+  .feature-card {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    align-items: center;
+    column-gap: var(--space-4);
+    row-gap: 2px;
+    min-height: 0;
+    padding: var(--space-4);
+  }
+
+  .feature-card-art {
+    grid-row: 1 / span 2;
+    margin: 0;
+  }
+
+  .feature-card-art > .glyph + .glyph {
+    display: none;
+  }
+
+  .feature-card-name {
+    grid-column: 2;
+    grid-row: 1;
+  }
+
+  .feature-card-line {
+    grid-column: 2;
+    grid-row: 2;
+  }
+
+  .feature-card > .tag {
+    grid-column: 3;
+    grid-row: 1 / span 2;
+    margin: 0;
+  }
+
+  .feature-card > .tag.feature-tag-off {
+    display: none;
+  }
+
+  .feature-card > .tag.feature-tag-on {
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    padding: 0;
+    border-radius: var(--radius-full);
+  }
+
+  .feature-card > .tag.feature-tag-on > span {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
 }
 
 .feature-coming {
@@ -218,6 +282,12 @@
   animation: film-theater-in var(--fold) var(--fold-easing) both;
 }
 
+.feature-done.leaving,
+.film-theater.leaving {
+  pointer-events: none;
+  animation: film-theater-out var(--quick) var(--ease-out) both;
+}
+
 .feature-done-head {
   position: absolute;
   inset: 0 0 auto;
@@ -291,7 +361,7 @@
   background: var(--fill);
   color: var(--text-2);
   font-size: var(--size-fine);
-  transition: color var(--hover) ease, background-color var(--hover) ease;
+  transition: color var(--hover) var(--ease), background-color var(--hover) var(--ease);
 }
 
 .feature-chip:hover {
@@ -341,7 +411,8 @@
   flex: 1;
 }
 
-.callee-field {
+.callee-field,
+.feature-field {
   display: flex;
   flex-direction: column;
   gap: 4px;
@@ -351,6 +422,7 @@
 
 .callee-field input,
 .callee-field select,
+.feature-field input,
 .feature-text {
   width: 100%;
   min-height: 34px;
@@ -385,6 +457,11 @@
   color: var(--text-2);
 }
 
+.callee-switch input {
+  margin: 0;
+  accent-color: var(--accent);
+}
+
 .callee-add {
   display: flex;
   flex-direction: column;
@@ -398,7 +475,7 @@
   background: color-mix(in srgb, var(--bg-sunken) 55%, transparent);
   color: var(--text-3);
   font-size: var(--size-text);
-  transition: color var(--hover) ease, background-color var(--hover) ease;
+  transition: color var(--hover) var(--ease), background-color var(--hover) var(--ease);
 }
 
 .callee-add:hover:not(:disabled) {
@@ -441,7 +518,7 @@
   pointer-events: none;
   --lift: 6px;
   translate: var(--slide) var(--lift);
-  transition: --shown var(--hover) ease, --lift var(--hover) ease;
+  transition: --shown var(--hover) var(--ease), --lift var(--hover) var(--ease);
 }
 
 .feature-save-bar.shown {
@@ -624,7 +701,7 @@
 
 .feature-still .film-stage {
   opacity: var(--shown);
-  transition: --shown var(--hover) ease;
+  transition: --shown var(--hover) var(--ease);
 }
 
 .feature-still:hover .film-stage {
@@ -664,8 +741,45 @@
   color: var(--on-scrim-strong);
 }
 
+@keyframes film-theater-out {
+  to {
+    --shown: 0;
+  }
+}
+
 @keyframes film-theater-in {
   from {
     --shown: 0;
   }
+}
+
+/* The sentinels' settings (`sentinel-form.ts`): the fields of a part
+   stacked under its choices, a key's label saying whether it is set. */
+.sf-fields {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 300px), 1fr));
+  gap: var(--space-3);
+  margin-top: var(--space-4);
+}
+
+.sf-key-label {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.sf-key-said {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  color: var(--text-2);
+}
+
+.sf-key-said .glyph {
+  color: var(--accent);
+}
+
+.sf-home-said {
+  margin-top: var(--space-2);
+  color: var(--caution);
 }
