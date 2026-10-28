@@ -1,10 +1,11 @@
 // The World's front page: what the reader finds on coming back
-// (`world-gui.md`, 回来时). Above, the drawing of the World as it is, each
-// machine on it a way to its page. Under it, side by side where there is
-// room: what waits for the reader, each conversation by what it asks,
-// answered here where it offers its answers, and what came back while the
-// reader was away, a line a conversation by what it last said, along a line
-// of the time away; then what is at work now, the conversations and the
+// (`world-gui.md`, 回来时), in two views. Now: the drawing of the World as
+// it is, each machine on it a way to its page, and under it what needs the
+// reader, each conversation by what it asks, answered here where it offers
+// its answers, or by what it told them that they have not seen
+// (`world-voice.md`, 送到哪里). Lately: what came back while the reader was
+// away, a line a conversation by what it last said, along a line of the
+// time away, and beside it what is at work now, the conversations and the
 // commands running. A part with nothing in it is not drawn. Every line is a
 // fact the World holds; nothing is summarised by a model.
 
@@ -13,7 +14,6 @@ import { fileLink } from "../app/places";
 import { glyph } from "../conversation/glyphs";
 import { escape } from "../conversation/prose";
 import { redrawKeepingFocus } from "../app/focus";
-import { answerButtons } from "../app/presence";
 import type { Address } from "../world/events";
 import type { Asked, ResidentNow, RunningJob } from "../world/world";
 import { ownerResident } from "../world/world";
@@ -35,14 +35,14 @@ export interface HomeOptions {
   newTalk(): void;
   /** The drawing of the World, kept up by whoever made it. */
   drawing: HTMLElement;
-  /** Answers what an agent asked with one of the answers it offered, however
-   *  long the way to its machine is closed. */
-  answer(address: Address, asked: Asked, choice: number): Promise<unknown>;
   /** Stops a running command, on the machine it runs on, whoever started it. */
   stopJob?(job: string, machine: string): Promise<void>;
   /** Opens this device's updates, where the World's program here is put
    *  up to the interface's. */
   updates?(): void;
+  /** The last thing a conversation (`resident@machine`) told that this
+   *  device has shown the user. */
+  seenTold(key: string): string | null;
 }
 
 type Glyph = Parameters<typeof glyph>[0];
@@ -69,6 +69,29 @@ interface Came {
 }
 
 const keyOf = (address: Address) => `${address.machine}\n${address.resident}`;
+
+/** The page's two views: what needs the reader now, under the drawing; and
+ *  what came back lately and is at work. */
+type View = "now" | "lately";
+
+const VIEW_KEY = "front-view";
+
+function storedView(): View {
+  try {
+    return localStorage.getItem(VIEW_KEY) === "lately" ? "lately" : "now";
+  } catch {
+    return "now";
+  }
+}
+
+function keepView(view: View): void {
+  try {
+    if (view === "lately") localStorage.setItem(VIEW_KEY, view);
+    else localStorage.removeItem(VIEW_KEY);
+  } catch {
+    // Not kept: the page opens on now next time.
+  }
+}
 const addressOf = (r: ResidentNow): Address => ({ machine: r.about.machine, resident: r.about.id });
 
 export class HomePage {
@@ -77,25 +100,40 @@ export class HomePage {
   private now = new Date();
   private drawn = "";
   private readonly board: HTMLElement;
-  /** Answers given here, by the question they answer, until the World says
-   *  it was answered. */
-  private readonly answered = new Map<string, string>();
   /** The command whose stop is being asked once more, and what became of
    *  stops that did not go, by command. */
   private confirming: string | null = null;
   private stopping = new Set<string>();
   private readonly notStopped = new Map<string, string>();
+  private view: View = storedView();
+  /** Whether there is a network to draw. */
+  private drawable = true;
 
   /** Shows the drawing of the World, or leaves the page to the board where
    *  there is no network to draw. */
   showDrawing(shown: boolean): void {
-    this.element.querySelector<HTMLElement>(".front-map")!.hidden = !shown;
+    this.drawable = shown;
+    this.element.querySelector<HTMLElement>(".front-map")!.hidden = !shown || this.view !== "now";
   }
 
   constructor(private readonly options: HomeOptions) {
     this.element = document.createElement("div");
     this.element.className = "front-page";
     this.element.innerHTML = `${options.head}<div class="front-body"><div class="front-map"></div><div class="front-board arriving"></div></div>`;
+    // The two views are chosen in the head, where the page has no title.
+    const views = document.createElement("div");
+    views.className = "front-views";
+    views.setAttribute("role", "tablist");
+    views.innerHTML = `<button class="tab" type="button" role="tab" data-view="now">${escape(options.words.nowView)}</button><button class="tab" type="button" role="tab" data-view="lately">${escape(options.words.latelyView)}</button>`;
+    this.element.querySelector(".page-head-title")!.append(views);
+    views.addEventListener("click", (event) => {
+      const button = (event.target as HTMLElement).closest<HTMLElement>("[data-view]");
+      if (!button) return;
+      this.view = button.dataset.view as View;
+      keepView(this.view);
+      this.choose();
+      this.redraw();
+    });
     this.element.querySelector<HTMLElement>(".front-map")!.append(options.drawing);
     this.board = this.element.querySelector<HTMLElement>(".front-board")!;
     // On a phone the page scrolls whole: once it has, its head stands on the
@@ -112,8 +150,6 @@ export class HomePage {
         options.updates?.();
         return;
       }
-      const button = target.closest<HTMLButtonElement>(".front-answer");
-      if (button) this.answer(button);
       const stop = target.closest<HTMLElement>("[data-job]");
       if (stop) void this.stopJob(stop);
     });
@@ -131,6 +167,16 @@ export class HomePage {
     // What is on the board rises into place when the page opens, and only
     // then: later changes appear where they are.
     setTimeout(() => this.board.classList.remove("arriving"), 1600);
+    this.choose();
+  }
+
+  private choose(): void {
+    for (const button of this.element.querySelectorAll<HTMLElement>(".front-views [data-view]")) {
+      const chosen = button.dataset.view === this.view;
+      button.classList.toggle("chosen", chosen);
+      button.setAttribute("aria-selected", String(chosen));
+    }
+    this.element.querySelector<HTMLElement>(".front-map")!.hidden = !this.drawable || this.view !== "now";
   }
 
   /** Shows the World as it now stands; when nothing shown has changed, the
@@ -140,10 +186,12 @@ export class HomePage {
     this.now = now;
     const residents = this.residents();
     const asking = residents.filter((r) => r.now?.waiting_for_user || r.now?.asked).sort((a, b) => waited(a) - waited(b));
-    const asks = new Set(asking.map((r) => keyOf(addressOf(r))));
-    // Answers given here hold until their question goes.
-    const open = new Set(asking.map((r) => r.now?.asked?.id).filter(Boolean));
-    for (const id of this.answered.keys()) if (!open.has(id)) this.answered.delete(id);
+    // What the conversations the user began told them that they have not
+    // seen: the urgent first, then what can wait, the latest first.
+    const telling = residents
+      .filter((r) => r.about.origin.kind === "user" && this.unseen(r))
+      .sort((a, b) => Number(b.now!.told!.status === "urgent") - Number(a.now!.told!.status === "urgent") || Date.parse(b.now!.told!.at) - Date.parse(a.now!.told!.at));
+    const asks = new Set([...asking, ...telling].map((r) => keyOf(addressOf(r))));
     const busy = residents
       .filter((r) => r.now?.activity === "busy" && !asks.has(keyOf(addressOf(r))))
       .sort((a, b) => Date.parse(a.now!.since) - Date.parse(b.now!.since));
@@ -152,7 +200,13 @@ export class HomePage {
       .sort((a, b) => Date.parse(a.started_at) - Date.parse(b.started_at));
     const came = this.came(asks);
 
-    const first = [asking.length ? this.asks(asking) : "", this.away(came)].join("");
+    if (this.view === "now") {
+      // Nothing waits: the drawing alone, and a line that says so.
+      const needs = asking.length || telling.length ? this.asks(asking, telling) : `<p class="front-quiet front-calm">${escape(this.options.words.nothingNeeds)}</p>`;
+      this.draw(`<div class="front-column">${needs}</div>`, false);
+      return;
+    }
+    const first = this.away(came);
     const second = this.working(busy, jobs);
     const html = first ? `<div class="front-column">${first}</div><div class="front-column">${second}</div>` : `<div class="front-column">${second}</div>`;
     this.draw(html, !!first);
@@ -246,9 +300,39 @@ export class HomePage {
 
   // What waits for the reader --------------------------------------------
 
-  private asks(asking: ResidentNow[]): string {
+  private asks(asking: ResidentNow[], telling: ResidentNow[]): string {
     const { words } = this.options;
-    return `<section class="front-part front-asks"><h2 class="front-title"><span>${escape(words.waiting)}</span><span class="front-count">${asking.length}</span></h2><ul class="front-cards">${asking.map((r) => this.ask(r)).join("")}</ul></section>`;
+    return `<section class="front-part front-asks"><h2 class="front-title"><span>${escape(words.waiting)}</span><span class="front-count">${asking.length + telling.length}</span></h2><ul class="front-cards">${[
+      ...asking.map((r) => this.ask(r)),
+      ...telling.map((r) => this.told(r)),
+    ].join("")}</ul></section>`;
+  }
+
+  /** What a conversation told the user that this device has not shown
+   *  them: something urgent, or something that can wait. */
+  private unseen(r: ResidentNow): boolean {
+    const told = r.now?.told;
+    return !!told && told.status !== "reply" && this.options.seenTold(`${r.about.id}@${r.about.machine}`) !== told.id;
+  }
+
+  /** A card of what it told: who, when, and its words, an urgent one under
+   *  a clay ※. */
+  private told(r: ResidentNow): string {
+    const { words } = this.options;
+    const address = addressOf(r);
+    const name = this.name(r);
+    const told = r.now!.told!;
+    const at = new Date(told.at);
+    const urgent = told.status === "urgent";
+    // The card says the first paragraph; held or pointed at, the whole.
+    const shown = gist(told.text);
+    const whole = shown === told.text.trim() ? "" : ` title="${escape(told.text)}"`;
+    return `<li class="front-card" data-machine="${escape(address.machine)}" data-resident="${escape(address.resident)}">
+      <a class="front-card-link" href="${this.options.link(address)}">
+        <span class="front-card-head">${this.agent(r)}<span class="front-name" title="${escape(this.about(r, name))}">${escape(name)}</span>${this.device(r.about.machine)}<span class="front-for" title="${escape(this.when(at))}">${escape(words.ago(Math.max(0, this.now.getTime() - at.getTime())))}</span></span>
+        <span class="front-ask front-told${urgent ? " urgent" : ""}">${urgent ? `<span class="front-ask-glyph" aria-hidden="true">※</span><span class="spoken">${escape(words.urgent)}</span>` : `<span class="front-ask-glyph" aria-hidden="true"><span class="front-told-drop"></span></span>`}<span class="front-ask-text"${whole}>${escape(shown)}</span></span>
+      </a>
+    </li>`;
   }
 
   private ask(r: ResidentNow): string {
@@ -261,40 +345,12 @@ export class HomePage {
     const what = asked
       ? `<span class="front-ask${asked.what === "command" ? " code" : ""}"><span class="front-ask-glyph" aria-hidden="true">${glyph(ASK_GLYPHS[asked.what], 16)}</span><span class="spoken">${escape(words.asks[asked.what])}</span><span class="front-ask-text">${escape(asked.text)}</span></span>`
       : `<span class="front-ask quiet"><span class="front-ask-glyph" aria-hidden="true">${glyph("ask", 16)}</span><span class="front-ask-text">${escape(words.waitsUnsaid)}</span></span>`;
-    const choices = answerButtons(asked);
-    const chosen = asked ? this.answered.get(asked.id) : undefined;
-    const answers = chosen
-      ? `<p class="front-answers given">${glyph("check", 16)}<span>${escape(words.answered(chosen))}</span></p>`
-      : choices.length
-        ? `<div class="front-answers">${choices.map((choice, index) => `<button class="front-answer" type="button" data-choice="${index}">${escape(choice)}</button>`).join("")}</div>`
-        : "";
     return `<li class="front-card" data-machine="${escape(address.machine)}" data-resident="${escape(address.resident)}">
       <a class="front-card-link" href="${this.options.link(address)}">
         <span class="front-card-head">${this.agent(r)}<span class="front-name" title="${escape(this.about(r, name))}">${escape(name)}</span>${this.device(r.about.machine)}<span class="front-for" title="${escape(this.when(new Date(since)))}">${escape(waitedFor)}</span></span>
         ${what}
-      </a>${answers}
+      </a>
     </li>`;
-  }
-
-  /** Answers the question of a card with the choice its button carries; the
-   *  card says so at once and keeps saying it until the question goes. */
-  private answer(button: HTMLButtonElement): void {
-    const card = button.closest<HTMLElement>(".front-card");
-    const machine = card?.dataset.machine;
-    const resident = card?.dataset.resident;
-    if (!machine || !resident) return;
-    const r = this.residents().find((one) => one.about.machine === machine && one.about.id === resident);
-    const asked = r?.now?.asked;
-    const choice = Number(button.dataset.choice);
-    const said = asked?.options?.[choice];
-    if (!asked || said === undefined) return;
-    this.answered.set(asked.id, said);
-    this.redraw();
-    this.options.answer({ machine, resident }, asked, choice).catch((error: unknown) => {
-      console.error("answering from the front page", error);
-      this.answered.delete(asked.id);
-      this.redraw();
-    });
   }
 
   private redraw(): void {
@@ -469,6 +525,18 @@ export class HomePage {
 }
 
 /** How long a conversation has waited, as when it began: the oldest first. */
+/** What a conversation told, as a card says it: its first paragraph,
+ *  without the marks of Markdown. */
+function gist(text: string): string {
+  const first = text.split(/\n\s*\n/).find((paragraph) => paragraph.trim()) ?? "";
+  return first
+    .split("\n")
+    .map((line) => line.replace(/^\s*(?:[-*+]\s+|\d+[.)]\s+|#{1,6}\s+|>\s?)/, ""))
+    .join(" ")
+    .replace(/(\*\*|__|`)/g, "")
+    .trim();
+}
+
 function waited(r: ResidentNow): number {
   return Date.parse(r.now?.waiting_since ?? r.now?.asked?.at ?? r.now?.since ?? r.about.born_at);
 }

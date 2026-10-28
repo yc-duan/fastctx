@@ -9,7 +9,7 @@ use fastctx_types::access::Written;
 use fastctx_types::session::SessionEvent;
 use fastctx_types::{Address, ResidentId};
 use std::sync::{Arc, Mutex};
-use tauri::ipc::Channel;
+use crate::watch_delivery::Sender;
 
 use crate::transcript::Transcript;
 use crate::{NotWatched, Piece};
@@ -25,7 +25,7 @@ fn given(transcript: &Mutex<Transcript>, history: &[SessionEvent]) -> Option<Pie
 
 /// Sends the page what it is given next; false once the watch is over, as
 /// the page let go or what it holds could not be kept.
-fn deliver(pieces: &Channel<Piece>, piece: Option<Piece>) -> bool {
+fn deliver(pieces: &Sender<Piece>, piece: Option<Piece>) -> bool {
     let Some(piece) = piece else { return true };
     let ended = piece.last();
     pieces.send(piece).is_ok() && !ended
@@ -98,7 +98,7 @@ pub(crate) async fn stream(
     machine: Option<Written>,
     mut initial: Conversation,
     transcript: Arc<Mutex<Transcript>>,
-    pieces: Channel<Piece>,
+    pieces: Sender<Piece>,
 ) {
     if initial.has_cached_rest() {
         match initial.update().await {

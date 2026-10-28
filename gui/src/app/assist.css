@@ -41,6 +41,12 @@
   padding-bottom: var(--space-3);
 }
 
+/* The login's turns at once sit under its five-hour share, the two as one
+   group. */
+.assist-window-line + .assist-window-line {
+  margin-top: 2px;
+}
+
 .assist-window {
   position: relative;
   justify-self: end;
@@ -135,7 +141,7 @@
   color: var(--text-2);
   font-size: var(--size-text);
   white-space: nowrap;
-  transition: color var(--hover) ease, background-color var(--hover) ease;
+  transition: color var(--hover) var(--ease), background-color var(--hover) var(--ease);
 }
 
 .assist-until:hover {

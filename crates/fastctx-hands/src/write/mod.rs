@@ -10,6 +10,7 @@
 //! programs that write outside the World; such a program can race the final rename.
 
 mod blocks;
+pub mod candidate;
 mod document;
 mod edit;
 mod excerpts;
@@ -27,6 +28,27 @@ use fastctx_types::layout::WorldDir;
 pub use fastctx_types::write::*;
 use std::io;
 use std::path::PathBuf;
+
+/// Captures an already committed ledger write in the same format as ordinary file writes.
+pub fn capture_change(
+    directory: PathBuf,
+    machine: fastctx_types::MachineName,
+    path: &std::path::Path,
+    before: Option<&[u8]>,
+    after: &[u8],
+) -> Result<fastctx_types::run_facts::WriteFact, String> {
+    facts::Capture::new(directory, machine)
+        .map_err(|error| error.to_string())?
+        .prepare(path, before, Some(after), None, None, 0)
+        .map(|fact| *fact)
+}
+
+/// Applies the same protected-path policy to non-editor file operations.
+pub fn check_path_policy(world: &std::path::Path, path: &std::path::Path) -> Result<(), String> {
+    let writer =
+        Writer { world: canonical_path(world).map_err(|error| error.to_string())?, node: String::new(), capture: None };
+    storage::Target::new(path, &writer).map(|_| ())
+}
 
 /// All state is explicit: this core never reads the user's default fastctx home.
 pub struct Writer {

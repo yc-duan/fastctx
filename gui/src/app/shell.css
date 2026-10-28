@@ -99,7 +99,7 @@ body {
   border-radius: var(--radius-s);
   color: var(--text-3);
   scale: var(--press);
-  transition: color var(--hover) ease, background-color var(--hover) ease, --press var(--settle) var(--spring);
+  transition: color var(--hover) var(--ease), background-color var(--hover) var(--ease), --press var(--settle) var(--spring);
 }
 
 /* Pressed, a control gives a little at once and springs back as it is let
@@ -107,7 +107,7 @@ body {
 .icon-button:active:not(:disabled) {
   --press: 0.94;
   transition-duration: var(--hover), var(--hover), var(--quick);
-  transition-timing-function: ease, ease, var(--ease-out);
+  transition-timing-function: var(--ease), var(--ease), var(--ease-out);
 }
 
 .icon-button:hover {
@@ -134,7 +134,7 @@ body {
   box-shadow: var(--shadow-lift);
   color: var(--text);
   font-size: var(--body-size);
-  transition: box-shadow var(--hover) ease, background-color var(--hover) ease;
+  transition: box-shadow var(--hover) var(--ease), background-color var(--hover) var(--ease);
 }
 
 .new-talk:hover {
@@ -153,7 +153,7 @@ body {
   color: var(--text-3);
   --shown: 0;
   opacity: var(--shown);
-  transition: --shown var(--hover) ease;
+  transition: --shown var(--hover) var(--ease);
 }
 
 .new-talk:hover kbd {
@@ -180,7 +180,7 @@ body {
   font-size: var(--body-size);
   line-height: var(--leading-ui);
   text-decoration: none;
-  transition: color var(--hover) ease, background-color var(--hover) ease;
+  transition: color var(--hover) var(--ease), background-color var(--hover) var(--ease);
 }
 
 .place:hover {
@@ -262,7 +262,7 @@ body {
   color: var(--text-3);
   --shown: 0;
   opacity: var(--shown);
-  transition: --shown var(--hover) ease, color var(--hover) ease, background-color var(--hover) ease;
+  transition: --shown var(--hover) var(--ease), color var(--hover) var(--ease), background-color var(--hover) var(--ease);
 }
 
 .sidebar-group:hover .side-add,
@@ -284,7 +284,7 @@ body {
 .side-group-title a {
   color: inherit;
   text-decoration: none;
-  transition: color var(--hover) ease;
+  transition: color var(--hover) var(--ease);
 }
 
 .side-group-title a:hover {
@@ -302,14 +302,42 @@ body {
   min-width: 0;
 }
 
-/* A project is a folder: pressed, it opens and closes on its conversations.
+/* A project's name leads to its overview; its folder, at the head of the
+   line where any place has its mark, opens and closes on its conversations.
    Shut, the end of its line says whether something in it waits or works
    and how many are in it; under a pointer those give way to its "⋯", as a
    conversation's marks give way to its buttons. */
-.project-fold {
-  width: 100%;
-  text-align: left;
+.project-link {
+  padding-left: calc(var(--space-3) + 18px + 10px);
   padding-right: var(--space-2);
+}
+
+.project-row:hover .project-link {
+  color: var(--text);
+  background: var(--hairline);
+}
+
+.project-fold {
+  position: absolute;
+  z-index: 1;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 44px;
+  padding-right: 2px;
+  display: grid;
+  place-items: center;
+  border-radius: var(--radius-s);
+  color: var(--text-3);
+  transition: color var(--hover) var(--ease);
+}
+
+.project-row:has(.project-link.current) .project-fold {
+  color: var(--text-2);
+}
+
+.project-fold:hover {
+  color: var(--text);
 }
 
 .project-shut-marks {
@@ -335,7 +363,7 @@ body {
   --shown: 0;
   opacity: var(--shown);
   pointer-events: none;
-  transition: --shown var(--hover) ease, color var(--hover) ease, background-color var(--hover) ease;
+  transition: --shown var(--hover) var(--ease), color var(--hover) var(--ease), background-color var(--hover) var(--ease);
 }
 
 .project-row:hover .side-project-more,
@@ -360,7 +388,7 @@ body {
 /* Under a finger the "⋯" is always there, after the marks, a finger's
    width; a long press on the line opens it as well. */
 @media (hover: none) {
-  .project-fold {
+  .project-link {
     padding-right: 48px;
   }
 
@@ -433,7 +461,8 @@ body {
 
 @media (pointer: coarse) {
   .talk-row,
-  .talk-all {
+  .talk-all,
+  .project-link {
     min-height: 44px;
   }
 }
@@ -451,7 +480,7 @@ body {
   font-size: var(--body-size);
   line-height: var(--leading-ui);
   text-decoration: none;
-  transition: color var(--hover) ease, background-color var(--hover) ease;
+  transition: color var(--hover) var(--ease), background-color var(--hover) var(--ease);
 }
 
 /* A project's conversations stand under its name, a step in from its
@@ -554,7 +583,7 @@ body {
   box-shadow: inset 0 0 0 1.8px var(--accent);
   transform: scale(var(--breath-scale));
   opacity: var(--breath-alpha);
-  animation: pulse var(--breath) ease-in-out infinite;
+  animation: pulse var(--breath) var(--ease-in-out) infinite;
 }
 
 .mark.mark-away {
@@ -722,7 +751,7 @@ body {
     --shown: 0;
   opacity: var(--shown);
     pointer-events: none;
-    transition: --shown var(--fold) ease;
+    transition: --shown var(--fold) var(--ease);
   }
 
   .shell.drawer-open .scrim {
@@ -767,7 +796,7 @@ body {
   color: var(--text-2);
   font-family: "Segoe Fluent Icons", "Segoe MDL2 Assets", sans-serif;
   font-size: 10px;
-  transition: background-color var(--hover) ease, color var(--hover) ease;
+  transition: background-color var(--hover) var(--ease), color var(--hover) var(--ease);
 }
 
 .window-control:hover,
@@ -817,7 +846,7 @@ html.framed .page-head {
   box-shadow: var(--shadow-pop);
   opacity: var(--shown);
   translate: var(--slide) var(--lift);
-  animation: hint-rise var(--hover) ease-out;
+  animation: hint-rise var(--hover) var(--ease-out);
 }
 
 /* The pointer's hint stands in the top layer, over a modal sheet too; the
@@ -833,6 +862,17 @@ html.framed .page-head {
   from {
     --shown: 0;
     --lift: 3px;
+  }
+}
+
+/* The pointer gone from every mark, its hint fades where it stands. */
+.pointer-hint.leaving {
+  animation: hint-fall var(--quick) var(--ease-out) both;
+}
+
+@keyframes hint-fall {
+  to {
+    --shown: 0;
   }
 }
 
@@ -881,6 +921,12 @@ html.framed .page-head {
   font-size: var(--size-text);
 }
 
+/* The end of the rows of a long list drawn so far; more are drawn as it
+   comes near (`read-on.ts`). */
+.read-on {
+  height: 1px;
+}
+
 /* At the foot of every conversation, the way on to the archived ones. */
 .talks-archived {
   display: flex;
@@ -893,7 +939,7 @@ html.framed .page-head {
   color: var(--text-3);
   font-size: var(--size-text);
   text-decoration: none;
-  transition: color var(--hover) ease, background-color var(--hover) ease;
+  transition: color var(--hover) var(--ease), background-color var(--hover) var(--ease);
 }
 
 .talks-archived:hover,
@@ -930,7 +976,7 @@ html.framed .page-head {
   font-size: var(--size-h3);
   letter-spacing: 0.01em;
   color: var(--text-strong);
-  transition: background-color var(--hover) ease;
+  transition: background-color var(--hover) var(--ease);
 }
 
 .network-switch:hover,

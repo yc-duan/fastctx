@@ -1,5 +1,7 @@
 // What a session waits on the user for: a command or a change to approve, a
-// question, a form or a link from one of its tools. The host asks; the
+// form or a link from one of its tools. It asks the user in words through
+// `message_user`, which waits for nothing; the hosts' own asking tools are
+// off in the World's sessions. The host asks; the
 // World passes the request on as it came (`SessionChange::Request`) and
 // carries the user's answer back in the host's own shape. A card is drawn
 // where the request came, answered in place, and folds into a line once it
@@ -27,15 +29,7 @@ export interface AskWords {
   networkRule(allow: boolean, host: string): string;
   decline: string;
   cancel: string;
-  question: string;
-  questions(count: number): string;
-  /** Beside a question whose options may be chosen together. */
-  several: string;
-  otherAnswer: string;
-  secret: string;
-  submit: string;
   fill: string;
-  skip: string;
   form(server: string): string;
   link(server: string): string;
   openLink: string;
@@ -80,17 +74,6 @@ export interface Decision {
   tone: "yes" | "no";
 }
 
-export interface Question {
-  id: string;
-  header: string;
-  question: string;
-  other: boolean;
-  secret: boolean;
-  /** Several options may be chosen together. */
-  multi: boolean;
-  options: { label: string; description: string }[];
-}
-
 export type Field =
   | { name: string; title: string; description: string; required: boolean; kind: "text"; input: string; min?: number; max?: number; value: string }
   | { name: string; title: string; description: string; required: boolean; kind: "number"; integer: boolean; min?: number; max?: number; value: string }
@@ -111,8 +94,6 @@ export type Ask =
    *  when asked through the mod's tool check, which answers allow or deny
    *  with a reason. */
   | { kind: "plan"; plan: string; path: string | null; decisions: Decision[]; check?: boolean }
-  /** Claude's answer carries its questions back exactly as they came. */
-  | { kind: "questions"; questions: Question[]; asked: JsonValue | null }
   | { kind: "form"; server: string; message: string; fields: Field[] | null; host: Host }
   | { kind: "link"; server: string; message: string; url: string; host: Host }
   | { kind: "cannot"; what: string; detail: string | null }
@@ -167,47 +148,10 @@ export function readAsk(request: string, params: JsonValue, words: AskWords): As
         paths: Object.keys(object(p.fileChanges ?? null)),
         decisions: legacyDecisions(words),
       };
-    case "item/tool/requestUserInput": {
-      const questions = Array.isArray(p.questions) ? p.questions.map(object) : [];
-      return {
-        kind: "questions",
-        questions: questions.map((q) => ({
-          id: text(q.id) ?? "",
-          header: text(q.header) ?? "",
-          question: text(q.question) ?? "",
-          other: q.isOther === true,
-          secret: q.isSecret === true,
-          multi: false,
-          options: Array.isArray(q.options)
-            ? q.options.map(object).map((o) => ({ label: text(o.label) ?? "", description: text(o.description) ?? "" }))
-            : [],
-        })),
-        asked: null,
-      };
-    }
     case "classic.PermissionRequest":
       return claudePermission(p, words);
     case "tool.check":
       return claudeCheck(p, words);
-    case "AskUserQuestion": {
-      const questions = Array.isArray(p.questions) ? p.questions.map(object) : [];
-      return {
-        kind: "questions",
-        questions: questions.map((q) => ({
-          // Claude's answers are keyed by the whole question.
-          id: text(q.question) ?? "",
-          header: text(q.header) ?? "",
-          question: text(q.question) ?? "",
-          other: true,
-          secret: false,
-          multi: q.multiSelect === true,
-          options: Array.isArray(q.options)
-            ? q.options.map(object).map((o) => ({ label: text(o.label) ?? "", description: text(o.description) ?? "" }))
-            : [],
-        })),
-        asked: p.questions ?? null,
-      };
-    }
     case "Elicitation": {
       const server = text(p.mcp_server_name) ?? "";
       const message = text(p.message) ?? "";
@@ -344,9 +288,6 @@ function keptAs(s: Record<string, JsonValue>, words: AskWords): string | null {
   }
 }
 
-/** Said to Claude when the user turns its question away. */
-const QUESTION_DISMISSED = "The user dismissed the question without answering.";
-
 function simple(value: "accept" | "acceptForSession" | "decline" | "cancel", words: AskWords): Decision {
   switch (value) {
     case "accept":
@@ -474,6 +415,8 @@ export function drawAsk(key: string, ask: Ask, state: AskState, machine: string,
   }
   const head = (title: string) => `<div class="ask-head"><span class="ask-waiting">${escape(words.waiting)}</span><span class="ask-title">${escape(title)}</span></div>`;
   const reason = (why: string | null) => (why ? `<p class="ask-reason">${escape(words.reason(why))}</p>` : "");
+  // What is asked above, the answer below, one stroke of the pen between.
+  const rule = `<div class="ask-rule" aria-hidden="true"></div>`;
   const buttons = (decisions: Decision[]) =>
     `<div class="ask-actions">${decisions
       .map((d, index) => `<button type="button" class="ask-button ${index === 0 ? "ask-primary" : `ask-${d.tone}`}" data-ask="${escape(key)}" data-decision="${index}">${escape(d.label)}</button>`)
@@ -484,7 +427,7 @@ export function drawAsk(key: string, ask: Ask, state: AskState, machine: string,
       const title = ask.network ? words.network(ask.network.host, ask.network.protocol) : ask.stdin ? words.stdin(machine) : words.command(machine);
       const command = ask.command ? `<pre class="ask-command"><code>${escape(ask.command)}</code></pre>` : "";
       const where = ask.cwd ? `<p class="ask-where">${escape(words.inDir(ask.cwd))}</p>` : "";
-      body = `${head(title)}${command}${where}${reason(ask.reason)}${buttons(ask.decisions)}`;
+      body = `${head(title)}${command}${where}${reason(ask.reason)}${rule}${buttons(ask.decisions)}`;
       break;
     }
     case "files": {
@@ -492,50 +435,31 @@ export function drawAsk(key: string, ask: Ask, state: AskState, machine: string,
         ? `<ul class="ask-paths">${ask.paths.map((path) => `<li title="${escape(path)}">${escape(path)}</li>`).join("")}</ul>`
         : "";
       const root = ask.grantRoot ? `<p class="ask-reason">${escape(words.grantRoot(ask.grantRoot))}</p>` : "";
-      body = `${head(ask.paths.length ? words.filesNamed(ask.paths.length) : words.files)}${paths}${reason(ask.reason)}${root}${buttons(ask.decisions)}`;
+      body = `${head(ask.paths.length ? words.filesNamed(ask.paths.length) : words.files)}${paths}${reason(ask.reason)}${root}${rule}${buttons(ask.decisions)}`;
       break;
     }
     case "tool": {
       const input = ask.input !== "{}" ? `<pre class="ask-command ask-tool-input"><code>${escape(ask.input)}</code></pre>` : "";
-      body = `${head(words.tool(ask.tool))}${input}${buttons(ask.decisions)}`;
+      body = `${head(words.tool(ask.tool))}${input}${rule}${buttons(ask.decisions)}`;
       break;
     }
     case "plan": {
       const plan = ask.plan ? `<div class="ask-plan prose">${render(ask.plan)}</div>` : "";
       const where = ask.path ? `<p class="ask-where">${escape(words.planAt(ask.path))}</p>` : "";
       const note = `<textarea class="ask-input ask-plan-note" rows="2" aria-label="${escape(words.planNote)}" placeholder="${escape(words.planNote)}"></textarea>`;
-      body = `${head(words.plan)}${plan}${where}${note}${buttons(ask.decisions)}`;
-      break;
-    }
-    case "questions": {
-      const questions = ask.questions
-        .map((q, index) => {
-          const options = q.options
-            .map(
-              (option, n) =>
-                `<button type="button" class="ask-option" data-question="${index}" data-option="${n}"${q.multi ? ' data-many="1"' : ""} aria-pressed="false"><span class="ask-option-label">${escape(option.label)}</span>${option.description ? `<span class="ask-option-what">${escape(option.description)}</span>` : ""}</button>`,
-            )
-            .join("");
-          const free =
-            q.other || q.options.length === 0
-              ? `<input class="ask-input" data-question="${index}" type="${q.secret ? "password" : "text"}" autocomplete="off" aria-label="${escape(q.options.length ? words.otherAnswer : q.header || q.question)}" placeholder="${escape(q.options.length ? words.otherAnswer : q.secret ? words.secret : "")}">`
-              : "";
-          return `<div class="ask-question" role="group" aria-label="${escape(q.header || q.question)}">${q.header || q.multi ? `<div class="ask-question-head">${escape([q.header, q.multi ? words.several : ""].filter(Boolean).join(" "))}</div>` : ""}<div class="ask-question-text">${plain(q.question)}</div>${options ? `<div class="ask-options">${options}</div>` : ""}${free}</div>`;
-        })
-        .join("");
-      body = `${head(ask.questions.length > 1 ? words.questions(ask.questions.length) : words.question)}${questions}<div class="ask-actions"><button type="button" class="ask-button ask-primary" data-ask="${escape(key)}" data-submit="answer">${escape(words.submit)}</button><button type="button" class="ask-button ask-no" data-ask="${escape(key)}" data-submit="skip">${escape(words.skip)}</button></div>`;
+      body = `${head(words.plan)}${plan}${where}${rule}${note}${buttons(ask.decisions)}`;
       break;
     }
     case "form": {
       const message = ask.message ? `<div class="ask-message">${plain(ask.message)}</div>` : "";
       const fields = ask.fields ? `<div class="ask-fields">${ask.fields.map((field, index) => drawField(field, index, words)).join("")}</div>` : `<p class="ask-reason">${escape(words.formUnreadable)}</p>`;
       const submit = ask.fields ? `<button type="button" class="ask-button ask-primary" data-ask="${escape(key)}" data-submit="accept">${escape(words.fill)}</button>` : "";
-      body = `${head(words.form(ask.server))}${message}${fields}<div class="ask-actions">${submit}<button type="button" class="ask-button ask-no" data-ask="${escape(key)}" data-submit="decline">${escape(words.refuse)}</button><button type="button" class="ask-button ask-no" data-ask="${escape(key)}" data-submit="cancel">${escape(words.dismiss)}</button></div>`;
+      body = `${head(words.form(ask.server))}${message}${rule}${fields}<div class="ask-actions">${submit}<button type="button" class="ask-button ask-no" data-ask="${escape(key)}" data-submit="decline">${escape(words.refuse)}</button><button type="button" class="ask-button ask-no" data-ask="${escape(key)}" data-submit="cancel">${escape(words.dismiss)}</button></div>`;
       break;
     }
     case "link": {
       const message = ask.message ? `<div class="ask-message">${plain(ask.message)}</div>` : "";
-      body = `${head(words.link(ask.server))}${message}<p class="ask-url">${escape(ask.url)}</p><div class="ask-actions"><button type="button" class="ask-button ask-primary" data-ask="${escape(key)}" data-submit="open">${escape(words.openLink)}</button><button type="button" class="ask-button ask-no" data-ask="${escape(key)}" data-submit="decline">${escape(words.refuse)}</button><button type="button" class="ask-button ask-no" data-ask="${escape(key)}" data-submit="cancel">${escape(words.dismiss)}</button></div>`;
+      body = `${head(words.link(ask.server))}${message}<p class="ask-url">${escape(ask.url)}</p>${rule}<div class="ask-actions"><button type="button" class="ask-button ask-primary" data-ask="${escape(key)}" data-submit="open">${escape(words.openLink)}</button><button type="button" class="ask-button ask-no" data-ask="${escape(key)}" data-submit="decline">${escape(words.refuse)}</button><button type="button" class="ask-button ask-no" data-ask="${escape(key)}" data-submit="cancel">${escape(words.dismiss)}</button></div>`;
       break;
     }
     case "cannot":
@@ -589,23 +513,6 @@ export function answerOf(card: HTMLElement, ask: Ask, given: { decision?: number
       const answer = value.behavior === "deny" && value.interrupt === undefined && note ? { ...value, message: note } : value;
       return { answer: { decision: answer }, said: decision.settled };
     }
-    case "questions": {
-      const skip = given.submit === "skip";
-      if (ask.asked !== null) return claudeAnswers(card, ask, skip, words);
-      const answers: Record<string, JsonValue> = {};
-      for (const [index, q] of ask.questions.entries()) {
-        if (skip) {
-          answers[q.id] = { answers: [] };
-          continue;
-        }
-        const picked = [...card.querySelectorAll<HTMLElement>(`.ask-option[data-question="${index}"][aria-pressed="true"]`)].map(
-          (button) => q.options[Number(button.dataset.option)]!.label,
-        );
-        const typed = card.querySelector<HTMLInputElement>(`.ask-input[data-question="${index}"]`)?.value.trim() ?? "";
-        answers[q.id] = { answers: typed ? [...picked, typed] : picked };
-      }
-      return { answer: { answers }, said: skip ? words.settledBy.skipped : words.settledBy.answered };
-    }
     case "form": {
       if (given.submit !== "accept") return refusal(given.submit, words, ask.host);
       if (!ask.fields) return { missing: words.required };
@@ -641,29 +548,6 @@ function refusal(submit: string | undefined, words: AskWords, host: Host): { ans
     answer: host === "claude" ? { action } : { action, content: null, _meta: null },
     said: action === "cancel" ? words.settledBy.dismissed : words.settledBy.refused,
   };
-}
-
-/** Claude's answers: each question's chosen labels (and words of the
- *  user's own) joined as Claude joins them, keyed by the whole question,
- *  with the questions handed back exactly as asked. */
-function claudeAnswers(
-  card: HTMLElement,
-  ask: Extract<Ask, { kind: "questions" }>,
-  skip: boolean,
-  words: AskWords,
-): { answer: JsonValue; said: string } | { missing: string } {
-  if (skip) return { answer: { deny: QUESTION_DISMISSED }, said: words.settledBy.skipped };
-  const answers: Record<string, JsonValue> = {};
-  for (const [index, q] of ask.questions.entries()) {
-    const picked = [...card.querySelectorAll<HTMLElement>(`.ask-option[data-question="${index}"][aria-pressed="true"]`)].map(
-      (button) => q.options[Number(button.dataset.option)]!.label,
-    );
-    const typed = card.querySelector<HTMLInputElement>(`.ask-input[data-question="${index}"]`)?.value.trim() ?? "";
-    const given = typed ? [...picked, typed] : picked;
-    if (!given.length) return { missing: words.requiredOf(q.header || q.question) };
-    answers[q.id] = given.join(", ");
-  }
-  return { answer: { result: { questions: ask.asked, answers } }, said: words.settledBy.answered };
 }
 
 function fieldValue(card: HTMLElement, field: Field, index: number): JsonValue | null {

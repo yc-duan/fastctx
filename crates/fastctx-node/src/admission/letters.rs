@@ -20,7 +20,13 @@ use fastctx_types::{AccountName, MachineName, ResidentId};
 use crate::Node;
 
 /// Refuses a letter `caller` may not send, with why.
-pub fn admit(node: &Node, hub: &HubId, caller: &Caller, purpose: Purpose, letter: &Letter) -> Result<(), String> {
+pub fn admit(
+    node: &std::sync::Arc<Node>,
+    hub: &HubId,
+    caller: &Caller,
+    purpose: Purpose,
+    letter: &Letter,
+) -> Result<(), String> {
     let from = &caller.machine;
     // A letter written before its sender was renamed names it as it was.
     let view = node.link_of(hub).map(|link| link.view());
@@ -29,6 +35,11 @@ pub fn admit(node: &Node, hub: &HubId, caller: &Caller, purpose: Purpose, letter
     };
     let mut also: &[AccountName] = &[];
     let (to, carries) = match letter {
+        Letter::ControlResult { .. } => return expect(purpose, Purpose::Echo),
+        Letter::Control { command } => {
+            expect(purpose, Purpose::Hands)?;
+            return crate::control_letters::admit(node, hub, caller, command).map_err(|error| error.message);
+        }
         // A fragment is checked whole, once every part of it is here.
         Letter::Fragment { .. } => return Ok(()),
         // Whose resident left is the sender's own.
@@ -40,6 +51,34 @@ pub fn admit(node: &Node, hub: &HubId, caller: &Caller, purpose: Purpose, letter
             (to, Purpose::Words)
         }
         Letter::Notice { to, notice } => match notice.as_ref() {
+            Notice::Words {
+                from: Speaker::Resident { address },
+                goal_report: Some(report),
+                goal_question: None,
+                ..
+            } if *address == report.colleague
+                && sender(&address.machine)
+                && report.account.hub == *hub
+                && report.account.account == caller.account =>
+            {
+                (to, Purpose::Echo)
+            }
+            Notice::Words { goal_report: Some(_), .. } => {
+                return Err(format!("{from} sent a goal report of another machine or account"));
+            }
+            Notice::Words { from: Speaker::Resident { address }, goal_question: Some(question), .. }
+                if *address == question.colleague
+                    && sender(&address.machine)
+                    && question
+                        .account
+                        .as_ref()
+                        .is_none_or(|account| account.hub == *hub && account.account == caller.account) =>
+            {
+                (to, Purpose::Echo)
+            }
+            Notice::Words { goal_question: Some(_), .. } => {
+                return Err(format!("{from} sent a question of another machine or account"));
+            }
             Notice::Words { from: Speaker::Resident { address }, .. } if sender(&address.machine) => {
                 (to, Purpose::Words)
             }
@@ -49,15 +88,28 @@ pub fn admit(node: &Node, hub: &HubId, caller: &Caller, purpose: Purpose, letter
             Notice::Words { .. } | Notice::Attached { .. } | Notice::World { .. } => {
                 return Err(format!("{from} sent words as the user, a page or the World, which no letter carries"));
             }
-            Notice::Answer { colleague, .. } | Notice::Health { colleague, .. } if sender(&colleague.machine) => {
+            Notice::Answer { colleague, .. }
+            | Notice::Health { colleague, .. }
+            | Notice::Question { colleague, .. }
+                if sender(&colleague.machine) =>
+            {
                 (to, Purpose::Echo)
             }
+
             Notice::JobEnded { machine, .. } if sender(machine) => (to, Purpose::Echo),
-            Notice::Answer { .. } | Notice::Health { .. } | Notice::JobEnded { .. } => {
+            Notice::Sentinel { observation } if sender(&observation.machine) => (to, Purpose::Echo),
+            Notice::Answer { .. }
+            | Notice::Health { .. }
+            | Notice::Question { .. }
+            | Notice::JobEnded { .. }
+            | Notice::Sentinel { .. } => {
                 return Err(format!("{from} told of something that happened on another machine"));
             }
         },
     };
+    if carries == Purpose::Words && (node.residents.is_deleting(to) || node.residents.removed(to).is_some()) {
+        return Err(format!("{to} is being deleted or was removed"));
+    }
     expect(purpose, carries)?;
     serves(node, hub, caller, also, to)
 }

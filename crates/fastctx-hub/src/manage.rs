@@ -201,6 +201,7 @@ fn apply(
             let directory = &store.book.directory;
             let current = directory.account(account).expect("checked").profile.clone().unwrap_or_default();
             profile.subagents = current.subagents.clone();
+            profile.memory = current.memory;
             profile.validate()?;
             // A server a command starts is kept on a machine the account may
             // run commands on; one it was given before stays until removed.
@@ -230,6 +231,21 @@ fn apply(
             found.profile = Some(profile);
             Ok(Told::ProfileWritten { version })
         }
+        Change::MemorySettings { version, enabled } => {
+            let found = store.book.directory.accounts.iter_mut().find(|found| found.name == *account).expect("checked");
+            let mut profile = found.profile.clone().unwrap_or_default();
+            if version != profile.version {
+                return Err(format!(
+                    "the profile changed: version {version} was read, current version is {}",
+                    profile.version
+                ));
+            }
+            profile.memory = enabled;
+            profile.version = version.checked_add(1).ok_or("the profile version cannot be incremented")?;
+            let version = profile.version;
+            found.profile = Some(profile);
+            Ok(Told::ProfileWritten { version })
+        }
         Change::Subagents { version, subagents } => {
             if let Some(config) = &subagents {
                 config.validate()?;
@@ -248,25 +264,36 @@ fn apply(
             found.profile = Some(profile);
             Ok(Told::ProfileWritten { version })
         }
-        Change::Share { machine, to, shared } => {
+        Change::Share { machine, to, shared, jobs } => {
             let directory = &mut store.book.directory;
-            let owner = own_machine(directory, account, super_, &machine)?;
+            let owner = held_machine(directory, account, &machine)?;
             other_account(directory, &owner, &to, &machine)?;
-            // A visitor's machines are its alone (`world-network.md`, 一个中枢，几个账号).
-            if shared && directory.is_visitor(&owner) {
-                return Err(format!("{machine} is a visitor's machine, and a visitor shares no machine"));
+            if shared && (directory.is_visitor(account) || directory.is_visitor(&owner)) {
+                return Err(fastctx_types::sharing::VISITOR_GIVES_NOTHING.into());
             }
-            let share = Share { machine, account: to };
-            directory.shares.retain(|existing| *existing != share);
+            let machine = directory.canonical(&machine).clone();
+            if shared && crate::hub_machine::protected(hub, store, &machine) {
+                return Err(fastctx_types::sharing::HUB_NOT_SHARED.into());
+            }
+            let directory = &mut store.book.directory;
+            if shared && jobs == Some(0) {
+                return Err("the most jobs at once is a number above zero".to_string());
+            }
+            let share = Share { machine, account: to, jobs: jobs.filter(|_| shared) };
+            directory.shares.retain(|existing| existing.machine != share.machine || existing.account != share.account);
             if shared {
                 directory.shares.push(share);
             }
             Ok(Told::Done)
         }
-        Change::Assist { machine, to, agent, home, assisting, until, weekly, daily, five_hour } => {
+        Change::Assist { machine, to, agent, home, assisting, until, weekly, daily, five_hour, turns } => {
             let directory = &mut store.book.directory;
-            let owner = own_machine(directory, account, super_, &machine)?;
+            let owner = held_machine(directory, account, &machine)?;
             other_account(directory, &owner, &to, &machine)?;
+            if directory.is_visitor(account) {
+                return Err(fastctx_types::sharing::VISITOR_GIVES_NOTHING.into());
+            }
+            let machine = directory.canonical(&machine).clone();
             if assisting && directory.member(&machine).is_some_and(|member| member.managed) {
                 return Err(format!("{machine} is a managed machine: its agents work for no one"));
             }
@@ -282,6 +309,9 @@ fn apply(
             if assisting && daily.is_some_and(|daily| daily.0 == 0) {
                 return Err("the daily allowance is an amount above zero".to_string());
             }
+            if assisting && turns == Some(0) {
+                return Err("the most turns at once is a number above zero".to_string());
+            }
             let assist = Assist {
                 machine,
                 account: to,
@@ -291,6 +321,7 @@ fn apply(
                 weekly: weekly.filter(|_| assisting),
                 daily: daily.filter(|_| assisting),
                 five_hour: five_hour.filter(|_| assisting),
+                turns: turns.filter(|_| assisting),
             };
             directory.assists.retain(|existing| !existing.same(&assist));
             if assisting {
@@ -322,9 +353,10 @@ fn apply(
             let directory = &store.book.directory;
             let member = directory.member(&name).cloned().ok_or_else(|| format!("there is no member {name}"))?;
             if then.is_some() {
-                may_uninstall(hub, &member, account, super_)?;
+                may_uninstall(hub, store, &member, account, super_)?;
             }
-            if super_ || member.home.as_ref() == Some(account) {
+            let name = member.name.clone();
+            if super_ || directory.may_update(account, &name) {
                 remove_member(store, &name, Some(account), &reason, false, then, ended)?;
             } else if then.is_some() {
                 return Err(format!("only {name}'s owner takes it off the network to uninstall it"));
@@ -348,9 +380,8 @@ fn apply(
             Ok(Told::Done)
         }
         Change::RenameGroup { owner, from, to } => {
-            // Whose machines may be grouped is whose may be renamed: the
-            // account's own, and the super administrator's reach, which
-            // stops at a visitor's.
+            // A group may include machines not shared with the caller:
+            // only its owner or administrator renames it (`world-network.md`, 机器的分组).
             let directory = &store.book.directory;
             if owner != *account && (!super_ || directory.is_visitor(&owner)) {
                 return Err(format!("the machines of {owner} are not the account {account}'s to group"));
@@ -571,8 +602,8 @@ fn apply(
             store.save_hub().map_err(|error| format!("the hub could not keep its settings: {error}"))?;
             Ok(Told::Done)
         }
-        // Who may update a machine may have it update once it is back: its
-        // owner, and the super administrator but for a visitor's
+        // Who may manage a machine may have it update once it is back:
+        // holders, and the super administrator but for a visitor's
         // (`world-upgrade.md`, 谁来更新). The update is kept until the
         // machine runs that release or a newer one (`crate::updates`).
         Change::UpdateDue { machine, version, batch } => {
@@ -692,16 +723,15 @@ fn apply(
         }
         Change::Relay { machine, at } => {
             let directory = &mut store.book.directory;
+            held_machine(directory, account, &machine)?;
+            let machine = directory.canonical(&machine).clone();
             let member = directory.members.iter_mut().find(|member| member.name == machine);
             let member = member.ok_or_else(|| format!("there is no machine named {machine}"))?;
             if !member.is_machine() {
                 return Err(format!("{machine} is a device, not a machine; only machines relay"));
             }
-            // Its owner's to choose, a visitor's too: it carries the
-            // owner's own machines, and the hub checks who each one is.
-            if member.home.as_ref() != Some(account) {
-                return Err(format!("{machine} is not the account {account}'s; only its owner lets it relay"));
-            }
+            // Holders choose the relay (`world-network.md`, 共享机器与智能体协助).
+            // It still carries the owner's machines; the hub checks each one.
             if !at.iter().all(relay_reachable) {
                 return Err("a relay is at an address of its network, with a port".to_string());
             }
@@ -809,13 +839,18 @@ fn set_role(store: &mut Store, name: &AccountName, visitor: bool) -> Result<(), 
                 .collect();
             directory.shares.retain(|share| !machines.contains(&share.machine));
             directory.assists.retain(|assist| !machines.contains(&assist.machine));
+            // Nor does one carry others' connections, nor are its own
+            // machines' addresses anyone else's to dial.
+            for member in directory.members.iter_mut().filter(|member| member.home.as_ref() == Some(name)) {
+                member.direct.clear();
+                member.relay.clear();
+            }
             Ok(())
         }
     }
 }
 
-/// Checks `machine` is one of `account`'s machines, or that the super
-/// administrator asks; the account it is registered under.
+/// Checks management authority; returns the registered owner.
 fn own_machine(
     directory: &fastctx_net::directory::Directory,
     account: &AccountName,
@@ -833,8 +868,17 @@ fn own_machine(
     Ok(owner)
 }
 
-/// Renames `machine`, one of `account`'s own or, for the super
-/// administrator, any, to `to` (`world-network.md`, 机器的名字). The names it
+fn held_machine(
+    directory: &fastctx_net::directory::Directory,
+    account: &AccountName,
+    machine: &MachineName,
+) -> Result<AccountName, String> {
+    directory.authorize(account, fastctx_net::authorization::Action::Hold(machine)).map_err(|denial| denial.message)?;
+    Ok(directory.member(machine).and_then(|member| member.home.clone()).expect("holder has a machine"))
+}
+
+/// Renames a machine the account manages to `to`
+/// (`world-network.md`, 机器的名字). The names it
 /// had keep naming it, so nothing written under one is lost: a letter
 /// waiting, another machine's records, a script. It takes the new name the
 /// next time it connects: a session open now ends, and it connects again at
@@ -972,25 +1016,24 @@ fn remove_member(
 }
 
 /// Checks `account` may have `member` uninstall Fastctx as it is taken off
-/// (`world-network.md`, 移出网络与卸载): its own machine, or a managed
-/// machine of its own or, for the super administrator, any; never one an
+/// (`world-network.md`, 移出网络与卸载): a held machine, or a managed
+/// machine the super administrator may manage; never one an
 /// application carries Fastctx on, managed or not, which whoever sits at it
 /// uninstalls once it is off, nor the machine that runs this hub.
 fn may_uninstall(
     hub: &Hub,
+    store: &Store,
     member: &fastctx_net::directory::Member,
     account: &AccountName,
     super_: bool,
 ) -> Result<(), String> {
     let name = &member.name;
-    let own = member.home.as_ref() == Some(account);
-    if !(own || (super_ && member.managed)) {
-        return Err(format!(
-            "only {name}'s owner uninstalls Fastctx on it; a member's machine is the member's to uninstall"
-        ));
+    let directory = &store.book.directory;
+    if !(directory.holds(account, name) || (super_ && member.managed && directory.may_update(account, name))) {
+        return Err(fastctx_types::sharing::HOLDER_REQUIRED.into());
     }
     let running = crate::updates::running_of(hub, &member.key);
-    if running.as_ref().is_some_and(|running| running.hub_here) {
+    if crate::hub_machine::protected(hub, store, name) {
         return Err(format!("{name} runs this network's hub: move the hub elsewhere or dissolve the network first"));
     }
     if running.as_ref().is_some_and(|running| running.app.is_some()) {

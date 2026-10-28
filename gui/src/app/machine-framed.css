@@ -32,6 +32,18 @@
   }
 }
 
+.ms-bar.leaving {
+  pointer-events: none;
+  animation: ms-fall var(--quick) var(--ease-out) both;
+}
+
+@keyframes ms-fall {
+  to {
+    --shown: 0;
+    --lift: 10px;
+  }
+}
+
 :root[data-reduced] .ms-bar {
   animation: none;
 }
@@ -60,7 +72,7 @@
   border-radius: var(--radius-s);
   color: var(--text-2);
   white-space: nowrap;
-  transition: color var(--hover) ease, background-color var(--hover) ease;
+  transition: color var(--hover) var(--ease), background-color var(--hover) var(--ease);
 }
 
 .ms-act:hover {
@@ -88,16 +100,22 @@
   display: none;
 }
 
-/* While some are chosen the list scrolls its last rows clear of the bar. */
+/* While some are chosen the list scrolls its last rows clear of the bar, and
+   a row gone to stands clear of it. */
 .ml-list.picking {
   padding-bottom: 104px;
+}
+
+.ml-list.picking [data-ml-row] {
+  scroll-margin-bottom: 104px;
 }
 
 /* Pointed at, an action that does not reach every machine chosen: those
    it leaves stand back, on the list and the drawing. */
 .ms-left {
-  opacity: 0.35;
-  transition: opacity var(--hover) ease;
+  --shown: 0.35;
+  opacity: var(--shown);
+  transition: --shown var(--hover) var(--ease);
 }
 
 /* A phone: along the bottom, the acts in equal columns, a mark over a short

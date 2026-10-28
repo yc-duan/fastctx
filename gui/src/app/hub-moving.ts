@@ -14,7 +14,7 @@ import type { HubMove, HubMoveReply, HubMoveRequest, MoveStage, MoveTarget } fro
 import type { AccessWords, LoginWords, MachinesWords } from "./account-words";
 import { Sheet, type Confirm } from "./confirm";
 import { RemoteWorld, type RemoteSeams } from "./remote-world";
-import { mark } from "./removal";
+import { stepMark as mark } from "../pen/step-mark";
 import { holdUntilNamed, typedName } from "./typed-name";
 
 /** The steps of a move, in order. */

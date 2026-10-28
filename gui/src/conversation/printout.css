@@ -1,0 +1,142 @@
+/* What a command did, under its row (`printout.ts`): one card a shade deeper
+   than the page, with no line round it; the command above a drawn rule,
+   what it printed below, in the code face, each line going on to the next
+   rather than running off sideways. */
+.po {
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-m);
+  background: var(--surface-code);
+}
+
+/* The command's line, the copy and the reader at its end. */
+.po-in {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+}
+
+.po-given {
+  flex: 1;
+  min-width: 0;
+}
+
+.po-command {
+  color: var(--text);
+}
+
+.po-printed {
+  color: var(--text-2);
+}
+
+.po-given > .wrapped-more {
+  margin-top: var(--space-1);
+}
+
+/* Between what was given and what came back: one stroke of the pen. */
+.po-rule {
+  height: 8px;
+  margin: var(--space-2) 0;
+  background: var(--pen-rule);
+  -webkit-mask: var(--pen-rule-2) 0 50% / 100% 100% no-repeat;
+  mask: var(--pen-rule-2) 0 50% / 100% 100% no-repeat;
+}
+
+/* The World's word that nothing was printed: the quiet voice of its
+   notices, not the program's. */
+.po-nothing {
+  margin: 0;
+  font-family: var(--font-reading);
+  font-style: italic;
+  font-size: var(--size-code);
+  line-height: var(--leading-code);
+  color: var(--text-3);
+}
+
+.po-pictures .io-image:first-child {
+  margin-top: 0;
+}
+
+.wrapped-clip + .po-pictures {
+  margin-top: var(--space-2);
+}
+
+/* How many more lines there are, and how it ended where that is worth a
+   word: one quiet line at the card's foot. */
+.po-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin-top: var(--space-2);
+}
+
+.po-end {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--size-text);
+  line-height: var(--leading-ui);
+  color: var(--text-3);
+}
+
+.po-end.failed {
+  color: var(--wrong);
+}
+
+.po-stop {
+  flex: none;
+  width: 9px;
+  height: 9px;
+  border-radius: 2px;
+  background: currentColor;
+}
+
+/* At the end of the command's line, there while the pointer is on the
+   card; they take no more height than the line. */
+.po-tools {
+  flex: none;
+  display: flex;
+  gap: 2px;
+  margin: -4px -8px -4px 0;
+  --shown: 0;
+  opacity: var(--shown);
+  transition: --shown var(--hover) var(--ease);
+}
+
+.po:hover .po-tools,
+.po-tools:focus-within {
+  --shown: 1;
+}
+
+.po-tool {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius-s);
+  color: var(--text-3);
+  transition: color var(--hover) var(--ease), background-color var(--hover) var(--ease);
+}
+
+.po-tool:hover {
+  background: var(--surface-header);
+  color: var(--text);
+}
+
+/* Under a finger there is no pointer to wait for: the corner is there, and
+   as large as a finger. */
+@media (hover: none) {
+  .po {
+    padding: var(--space-3);
+  }
+
+  .po-tools {
+    --shown: 1;
+    margin: -10px -8px -10px 0;
+  }
+
+  .po-tool {
+    width: 40px;
+    height: 40px;
+  }
+}

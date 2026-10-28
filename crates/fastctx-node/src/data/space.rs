@@ -439,7 +439,7 @@ fn describe(
                 let busy = now.is_some_and(|now| now.activity == Activity::Busy || now.turn.is_some());
                 let held = if busy {
                     Some("it is working; stop it first".to_string())
-                } else if resident.here && !resident.about.world_started {
+                } else if resident.here && !resident.about.world_managed() {
                     Some(format!("it is open in {}; close it there first", host_name(&resident.about.host.agent)))
                 } else {
                     running
@@ -497,6 +497,11 @@ fn describe(
         Kind::Guest(owner) => {
             let town = one.job_town.take().and_then(|(_, town)| town);
             (Group::Elsewhere, owner.resident.agent(), None, town, Some(owner.machine.clone()), false, running)
+        }
+        // Its room does not name the machine it lives on, and neither does this.
+        Kind::Visiting { resident, .. } => {
+            let town = one.job_town.take().and_then(|(_, town)| town);
+            (Group::Elsewhere, resident.agent(), None, town, None, false, running)
         }
         Kind::Unplaced(id) => (Group::Elsewhere, id.agent(), None, None, None::<MachineName>, false, running),
     };
