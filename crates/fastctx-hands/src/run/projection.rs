@@ -1,5 +1,7 @@
 //! Attribute selected canonical text using a separate, byte-preserving provenance replay.
 
+mod unmarked;
+
 use super::terminal::{Lines, Part};
 use fastctx_types::run::{OutputPiece, OutputWindow};
 use fastctx_types::run_facts::{DisplayPiece, OutputNote, OutputSpan};
@@ -111,6 +113,12 @@ pub fn read_with_matches(
 ) -> io::Result<(Vec<OutputSpan>, Vec<fastctx_types::run_facts::OutputNoteMatch>)> {
     let projection = CapturedNotes::read(std::path::Path::new(&window.log), window.bytes, writes)?;
     let notes = projection.matches();
+    if notes.is_empty() {
+        // The window is the canonical rendering. With no attribution to add,
+        // replaying the full capture only repeats terminal layout work.
+        std::fs::File::open(&window.log)?;
+        return Ok((unmarked::spans(window), notes));
+    }
     let mut ranges = BTreeMap::<u64, Vec<(usize, usize)>>::new();
     let mut columns = BTreeMap::<u64, usize>::new();
     for piece in &window.pieces {
