@@ -30,6 +30,7 @@ mod sentinels;
 mod sentinel_controls;
 mod transcript;
 mod updates;
+mod world_delta;
 mod world_watch;
 
 #[cfg(desktop)]

@@ -97,6 +97,8 @@ export function worldNow(): Promise<WorldNow> {
 
 export type WorldPiece =
   | { kind: "world"; world: WorldNow }
+  /** What changed since the piece before (`world/change.ts`). */
+  | { kind: "changed"; change: import("./change").Change }
   | { kind: "interrupted"; error: string; since: number };
 
 /** Follows the World: first as it is, then after each change, nothing
