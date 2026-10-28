@@ -84,11 +84,14 @@ pub(crate) fn share_key(account: Option<&HubAccount>) -> String {
 /// Lets a job for `account` start when the owner's limit for it leaves room;
 /// it counts as running until it started or failed to.
 pub(crate) fn start(node: &Arc<Node>, account: Option<HubAccount>) -> Result<Starting, Failure> {
-    if let Some(account) = &account
-        && let Some(most) = most(node, account)
-    {
+    let most = account.as_ref().and_then(|account| most(node, account));
+    if let (Some(account), Some(_)) = (&account, most) {
         prune(node, Some(account));
-        let running = node.job_accounts.0.lock().expect("never poisoned");
+    }
+    // The count and the place taken are one step, so two starting at once
+    // cannot both see the last place free.
+    let mut running = node.job_accounts.0.lock().expect("never poisoned");
+    if let (Some(account), Some(most)) = (&account, most) {
         let count =
             running.jobs.values().chain(running.starting.values()).filter(|one| one.as_ref() == Some(account)).count();
         if count >= usize::from(most) {
@@ -99,7 +102,6 @@ pub(crate) fn start(node: &Arc<Node>, account: Option<HubAccount>) -> Result<Sta
             )));
         }
     }
-    let mut running = node.job_accounts.0.lock().expect("never poisoned");
     running.next += 1;
     let id = running.next;
     running.starting.insert(id, account);
@@ -117,6 +119,44 @@ pub(crate) fn seen(node: &Node, path: &Path, record: &JobRecord) {
         let sent_for = record.on.as_ref().and_then(|on| on.account.as_ref()).or(record.account.as_ref());
         let account = of(node, &record.owner, sent_for);
         node.job_accounts.0.lock().expect("never poisoned").jobs.insert(path.to_path_buf(), account);
+    }
+}
+
+/// Counts every job whose record says it still runs, as a node starting
+/// again finds them: its pages' long commands among them, whether or not
+/// anything is owed of them. A record that cannot be read now fails the
+/// pass, to be made again.
+pub(crate) fn recover(node: &Node) -> std::io::Result<()> {
+    // Conversations' jobs, and pages' under their projects.
+    let mut owners = Vec::new();
+    for residents in node.world.job_parents()? {
+        owners.extend(entries(&residents)?);
+    }
+    for town in entries(&node.world.path().join("towns"))? {
+        owners.extend(entries(&town.join("pages"))?);
+    }
+    let mut unread = None;
+    for owner in owners {
+        for path in entries(&owner.join("jobs"))? {
+            if path.extension().is_none_or(|extension| extension != "json") {
+                continue;
+            }
+            match fastctx_hands::run::record::read(&path) {
+                Ok(record) if record.end.is_none() => seen(node, &path, &record),
+                Ok(_) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => unread = Some(std::io::Error::new(error.kind(), format!("{}: {error}", path.display()))),
+            }
+        }
+    }
+    unread.map_or(Ok(()), Err)
+}
+
+fn entries(path: &Path) -> std::io::Result<Vec<PathBuf>> {
+    match std::fs::read_dir(path) {
+        Ok(entries) => entries.map(|entry| entry.map(|entry| entry.path())).collect(),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(Vec::new()),
+        Err(error) => Err(error),
     }
 }
 

@@ -62,6 +62,23 @@ pub(crate) fn start(node: &Arc<Node>, jobs_reconciled: bool) {
         }
     });
 
+    // Who runs how many: the jobs left running when the node started.
+    let counting = node.clone();
+    tokio::spawn(async move {
+        let mut again = crate::again::Again::default();
+        loop {
+            let scanning = counting.clone();
+            match tokio::task::spawn_blocking(move || crate::job_accounts::recover(&scanning)).await {
+                Ok(Ok(())) => break,
+                Ok(Err(error)) => {
+                    counting.log.line(format_args!("counting the jobs left running; will retry: {error}"))
+                }
+                Err(error) => counting.log.line(format_args!("counting the jobs left running; will retry: {error}")),
+            }
+            tokio::time::sleep(again.next().max(Duration::from_secs(1))).await;
+        }
+    });
+
     let jobs = node.clone();
     tokio::spawn(async move {
         let mut again = crate::again::Again::default();

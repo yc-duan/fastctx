@@ -288,10 +288,14 @@ pub(crate) async fn finish(node: &Arc<Node>, intent: &mut Intent) -> Result<Upda
     if node.is_me(&intent.resident.machine) && !node.residents.is_deleting(&intent.resident.resident) {
         apply(node, &intent.resident.resident, &current).await?;
     }
-    // A goal cleared or completed takes its sentinel with it; ending one
-    // already gone does nothing, so a replay is harmless.
+    // A goal cleared, completed or retired with its conversation (archived,
+    // removed) takes its sentinel with it; ending one already gone does
+    // nothing, so a replay is harmless.
     if node.is_me(&intent.resident.machine)
-        && current.goal.as_ref().is_none_or(|goal| goal.status == fastctx_types::goals::Status::Complete)
+        && current
+            .goal
+            .as_ref()
+            .is_none_or(|goal| goal.status == fastctx_types::goals::Status::Complete || goal.retired.is_some())
     {
         crate::sentinels::goal_seams::retire(node, intent.account.clone(), intent.resident.clone());
     }

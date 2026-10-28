@@ -40,24 +40,42 @@ pub(crate) async fn settle(hub: Weak<Hub>) {
 /// One whose leaving is not known (the hub stopped while it was connected)
 /// is not counted away.
 fn away(hub: &Hub) -> Vec<MachineName> {
-    let Ok(away) = jiff::SignedDuration::try_from(AWAY) else { return Vec::new() };
-    let Ok(before) = Timestamp::now().checked_sub(away) else { return Vec::new() };
+    let Some(before) = since() else { return Vec::new() };
     let store = hub.store();
     store
         .letters
-        .iter()
-        .filter(|(_, letters)| letters.connected_at.is_none() && letters.last_seen.is_some_and(|seen| seen < before))
-        .filter(|(name, _)| store.outbox_of(name).is_some())
-        .map(|(name, _)| name.clone())
+        .keys()
+        .filter(|name| still_away(&store, name, before))
+        .filter(|name| store.outbox_of(name).is_some())
+        .cloned()
         .collect()
+}
+
+/// The moment before which a machine last seen has been away too long.
+fn since() -> Option<Timestamp> {
+    Timestamp::now().checked_sub(jiff::SignedDuration::try_from(AWAY).ok()?).ok()
+}
+
+/// Whether `name` is not connected and was last seen before `before`: a
+/// machine that came back since it was found away, and left again, was seen
+/// just now, and keeps what waits for it.
+fn still_away(store: &crate::store::Store, name: &MachineName, before: Timestamp) -> bool {
+    store
+        .letters
+        .get(name)
+        .is_some_and(|letters| letters.connected_at.is_none() && letters.last_seen.is_some_and(|seen| seen < before))
 }
 
 /// Settles what waits for `name`: each letter is said in the log, by whom it
 /// was sent, and taken away once the records number past it, as a letter
 /// taken is (`crate::mailbox`).
 async fn settle_one(hub: &Arc<Hub>, name: &MachineName) -> std::io::Result<usize> {
+    let Some(before) = since() else { return Ok(0) };
     let (epoch, dir, records) = {
         let store = hub.store();
+        if !still_away(&store, name, before) {
+            return Ok(0);
+        }
         let Some((epoch, dir)) = store.outbox_of(name) else { return Ok(0) };
         (epoch, dir, store.records.clone())
     };
@@ -79,7 +97,7 @@ async fn settle_one(hub: &Arc<Hub>, name: &MachineName) -> std::io::Result<usize
     // Still away: one that came back meanwhile takes its letters.
     let revision = {
         let mut store = hub.store();
-        if store.letters.get(name).is_none_or(|letters| letters.connected_at.is_some()) {
+        if !still_away(&store, name, before) {
             return Ok(0);
         }
         store.save_letters()?;
@@ -88,7 +106,7 @@ async fn settle_one(hub: &Arc<Hub>, name: &MachineName) -> std::io::Result<usize
     records.written(revision).await;
     {
         let mut store = hub.store();
-        if store.letters.get(name).is_none_or(|letters| letters.connected_at.is_some()) {
+        if !still_away(&store, name, before) || store.outbox_of(name).is_none_or(|(now, _)| now != epoch) {
             return Ok(0);
         }
         crate::mailbox::settled(&mut store, name, epoch, found.iter().map(|(seq, _)| *seq));

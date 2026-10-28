@@ -120,6 +120,11 @@ pub(super) fn record(
             observed: false,
         },
     });
+    // Each request is for the accounts the conversation works for as it is
+    // made: a meter kept from before (an earlier release kept none of the
+    // others, `with`) or from before the accounts changed is brought to them.
+    meter.who = super::who(about);
+    meter.with = super::with(about);
     meter.at = at;
     if total > meter.total {
         meter.unidentified.push((at, total.saturating_sub(meter.total)));

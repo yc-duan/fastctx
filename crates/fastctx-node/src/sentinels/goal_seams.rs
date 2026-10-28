@@ -156,13 +156,23 @@ impl SentinelWaits for Waits {
     }
 }
 
-/// Ends the sentinel of a goal that was cleared or completed, in the
-/// background: a goal's sentinel lives only as long as its goal.
+/// Ends the sentinel of a goal that was cleared, completed or retired, in
+/// the background: a goal's sentinel lives only as long as its goal. Ending
+/// one already gone does nothing, so it is tried again until it is done.
 pub(crate) fn retire(node: &Arc<Node>, scope: HubAccount, owner: Address) {
     let node = node.clone();
     tokio::spawn(async move {
-        if let Err(error) = goal::retire(&node, &scope, &owner).await {
-            node.log.line(format_args!("ending the sentinel of {}'s goal: {}", owner.resident, error.message));
+        let mut again = crate::again::Again::default();
+        let mut told = None;
+        while let Err(error) = goal::retire(&node, &scope, &owner).await {
+            if told.as_ref() != Some(&error.message) {
+                node.log.line(format_args!(
+                    "ending the sentinel of {}'s goal; will retry: {}",
+                    owner.resident, error.message
+                ));
+                told = Some(error.message.clone());
+            }
+            tokio::time::sleep(again.next()).await;
         }
     });
 }

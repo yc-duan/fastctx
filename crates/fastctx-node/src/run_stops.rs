@@ -331,6 +331,16 @@ pub(crate) async fn serve(
         if record.end.is_some() {
             return Ok(());
         }
+        // A job's short id is used again once its files are gone: the job
+        // there now is this dispatch's only while it names the dispatch. One
+        // started by another has nothing to do with this stop, whose job
+        // ended long since.
+        match std::fs::read(path.with_extension("run-request")) {
+            Ok(named) if named == dispatch.as_str().as_bytes() => {}
+            Ok(_) => return Ok(()),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
+            Err(error) => return Err(Failure::new(format!("reading which dispatch started the job: {error}"))),
+        }
         crate::jobs::stop(node, &path, &request.by, &request.reason).await?;
         tokio::time::sleep(crate::on::LOOK_AGAIN).await;
     }
