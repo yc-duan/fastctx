@@ -200,8 +200,11 @@ fn apply(
         Change::Profile { mut profile } => {
             let directory = &store.book.directory;
             let current = directory.account(account).expect("checked").profile.clone().unwrap_or_default();
+            // Settings with their own change stay as they are: a client from
+            // before one of them knows no such field and would write it away.
             profile.subagents = current.subagents.clone();
             profile.memory = current.memory;
+            profile.layer = current.layer;
             profile.validate()?;
             // A server a command starts is kept on a machine the account may
             // run commands on; one it was given before stays until removed.

@@ -126,11 +126,14 @@ pub(crate) fn note(
 }
 
 fn row(node: &Node, record: &JobRecord, writes: &[WriteFact], steps: &[fastctx_types::run_facts::RunStep]) -> Row {
+    // A hop sent here works for the account that sent it, whose session has
+    // no record on this machine.
+    let sent_for = record.on.as_ref().and_then(|on| on.account.as_ref()).or(record.account.as_ref());
     let (session, from, agent, held, account) = match &record.owner {
         JobOwner::Resident(address) => {
             let here = node.is_me(&address.machine);
             let about = here.then(|| node.residents.about(&address.resident).map(|(about, _)| about)).flatten();
-            let account = match (&record.account, about.as_ref().map(|about| &about.acting)) {
+            let account = match (sent_for, about.as_ref().map(|about| &about.acting)) {
                 (Some(account), _) => account_key(account),
                 (None, Some(Acting::Accounts { accounts })) => accounts.first().map(account_key).unwrap_or_default(),
                 _ => String::new(),
@@ -143,7 +146,7 @@ fn row(node: &Node, record: &JobRecord, writes: &[WriteFact], steps: &[fastctx_t
                 account,
             )
         }
-        JobOwner::Page { .. } => (None, None, None, true, record.account.as_ref().map(account_key).unwrap_or_default()),
+        JobOwner::Page { .. } => (None, None, None, true, sent_for.map(account_key).unwrap_or_default()),
     };
     let outcome = match &record.end {
         None => Outcome::Running,

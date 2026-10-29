@@ -222,11 +222,17 @@ pub(crate) async fn save(node: &Arc<Node>, id: &ResidentId, markdown: String) ->
     if !link.view().conversation_plans {
         return Ok(None);
     }
-    let mut expected = previous.filter(|seen| seen.account == scope && seen.owner == *id).and_then(|seen| seen.version);
     for _ in 0..3 {
+        // The plan kept under this short name may be that of a conversation
+        // of the same one on another machine, and become so between two
+        // tries: each try looks, and writes only over the version it saw.
+        let current = link.plan_read(&scope.account, id.clone()).await.map_err(Failure::new)?;
+        if let Some(other) = link.plan_of_another(&current, &whose) {
+            return Err(Failure::not_run(words::elsewhere(other)));
+        }
         let author = Author::Resident { address: whose.clone() };
         match link
-            .plan_write(&scope.account, id.clone(), expected, markdown.clone(), author, None)
+            .plan_write(&scope.account, id.clone(), current.version(), markdown.clone(), author, None)
             .await
             .map_err(Failure::new)?
         {
@@ -241,7 +247,7 @@ pub(crate) async fn save(node: &Arc<Node>, id: &ResidentId, markdown: String) ->
                 remember(node, id, scope, &page)?;
                 return Ok(Some(page));
             }
-            plan::Result::Conflict { current } => expected = current.map(|current| current.version),
+            plan::Result::Conflict { .. } => {}
         }
     }
     Err(Failure::new(words::CONFLICT))
