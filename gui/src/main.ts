@@ -97,7 +97,7 @@ import { ActivityPage } from "./activity/page";
 import { enActivity, zhActivity } from "./activity/words";
 import { specimenBook, specimenBookMachines } from "./specimen/activity";
 import { bringIn, readBook } from "./world/book";
-import { setLanguage } from "./world/features";
+import { readFeatures, setLanguage } from "./world/features";
 import { untilAnswered, whyOf } from "./world/again";
 import { enFeatures, zhFeatures } from "./app/features-words";
 import { enHomes, zhHomes } from "./app/agent-homes";
@@ -2573,9 +2573,10 @@ function show(next: Place): void {
   backName = !inner(next) || onlyWayIn ? null : came ? came.title : placeName(parent);
   place = next;
   // A managed machine has one page, with nothing beside it (`world-gui.md`,
-  // 受管机器上的界面).
+  // 受管机器上的界面); so has the mode while it is asked, the whole window
+  // its question.
   const managed = !!managedOf(store.world.peek()?.accounts);
-  shell.alone(managed);
+  shell.alone(managed || (next.kind === "mode" && accountLayer.chosen.peek() === null));
   let page: Page;
   if (managed) page = managedPage();
   else switch (next.kind) {
@@ -3280,6 +3281,10 @@ if (live) {
 // again when the window comes to the front, and asked once when it was
 // never chosen.
 if (live) {
+  const loginKey = (world: WorldNow | null): string => {
+    const [first] = loginsOf(world?.accounts);
+    return first ? `${first.hubName}/${first.account}` : "";
+  };
   accountLayer.attach(
     liveLayer(() => {
       const [first] = loginsOf(store.world.peek()?.accounts);
@@ -3289,19 +3294,32 @@ if (live) {
   addEventListener("focus", () => void accountLayer.refresh());
   // Which account the mode is read for is known once the logins are: the
   // first read may have come before them.
-  let readFor = "";
+  let refreshedFor = "";
   effect(() => {
-    const [first] = loginsOf(store.world.get()?.accounts);
-    const login = first ? `${first.hubName}/${first.account}` : "";
-    if (login === readFor) return;
-    readFor = login;
+    const login = loginKey(store.world.get());
+    if (login === refreshedFor) return;
+    refreshedFor = login;
     void accountLayer.refresh();
   });
+  // Asked only of the account itself, once the logins are known and its
+  // own mode was read: a read made before them is this computer's.
   let asked = false;
   effect(() => {
-    if (!accountLayer.known.get() || accountLayer.chosen.get() !== null || asked) return;
+    const world = store.world.get();
+    if (!world || !accountLayer.known.get() || accountLayer.readFor.get() !== loginKey(world)) return;
+    if (accountLayer.chosen.get() !== null || asked) return;
     asked = true;
-    if (place.kind === "home" || place.kind === "activity") show({ kind: "mode" });
+    // A device that had the workbench on before there were modes keeps it
+    // without being asked.
+    void readFeatures()
+      .then(
+        (features) => features.conversations,
+        () => false,
+      )
+      .then((before) => {
+        if (before) return accountLayer.choose("workbench").catch((error: unknown) => console.error("keeping the workbench this device had", error));
+        if (accountLayer.chosen.peek() === null && (place.kind === "home" || place.kind === "activity")) show({ kind: "mode" });
+      });
   });
 }
 

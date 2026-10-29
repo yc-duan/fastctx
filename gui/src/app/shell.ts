@@ -239,7 +239,8 @@ export class Shell {
   }
 
   /** Shows the page alone, with no sidebar and no way to it: a managed
-   *  machine's one page (`world-gui.md`, 受管机器上的界面). */
+   *  machine's one page (`world-gui.md`, 受管机器上的界面), or the mode
+   *  while it is asked. */
   alone(on: boolean): void {
     if (this.element.classList.contains("alone") === on) return;
     this.element.classList.toggle("alone", on);

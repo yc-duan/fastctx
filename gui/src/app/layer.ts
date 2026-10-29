@@ -3,7 +3,8 @@
 // conversations. It is kept with the account, on its hub, and a computer
 // in no network keeps its own; this window keeps the last value read so its
 // first frame is already right. An account that never chose is asked once,
-// and meanwhile has the workbench it had before there were layers.
+// unless its device had the workbench on before there were layers, and
+// meanwhile has the workbench.
 
 import { invoke } from "@tauri-apps/api/core";
 import { signal, type Signal } from "./signals";
@@ -18,6 +19,8 @@ interface Chosen {
 
 /** Where the layer is read and kept: the node, or a device's hub. */
 export interface LayerSeam {
+  /** Whose layer it reads and keeps now: the account, or none. */
+  scope(): string;
   read(): Promise<LayerName | null>;
   write(layer: LayerName): Promise<LayerName | null>;
 }
@@ -30,6 +33,10 @@ export function liveLayer(scope: () => { hub: string; account: string } | null):
     return { hub: chosen?.hub ?? null, account: chosen?.account ?? null };
   };
   return {
+    scope: () => {
+      const { hub, account } = at();
+      return hub && account ? `${hub}/${account}` : "";
+    },
     read: () => invoke<Chosen>("layer_read", at()).then((chosen) => chosen.layer ?? null),
     write: (layer) => invoke<Chosen>("layer_set", { ...at(), layer }).then((chosen) => chosen.layer ?? null),
   };
@@ -43,6 +50,9 @@ class AccountLayer {
   readonly workbench: Signal<boolean> = signal(this.chosen.peek() !== "connect");
   /** Whether the layer was read at least once from where it is kept. */
   readonly known: Signal<boolean> = signal(false);
+  /** Whose layer was read last (`LayerSeam.scope`): one read before the
+   *  logins were known is this computer's own, not the account's. */
+  readonly readFor: Signal<string | null> = signal<string | null>(null);
   private seam: LayerSeam | null = null;
 
   attach(seam: LayerSeam): void {
@@ -53,9 +63,11 @@ class AccountLayer {
   /** Reads the layer again, as when another device may have changed it. */
   async refresh(): Promise<void> {
     if (!this.seam) return;
+    const scope = this.seam.scope();
     try {
       this.set(await this.seam.read());
       this.known.set(true);
+      this.readFor.set(scope);
     } catch (error) {
       console.error("reading the account's layer", error);
     }

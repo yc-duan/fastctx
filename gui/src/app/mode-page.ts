@@ -1,6 +1,7 @@
 // The mode (`world-layers.md`): Connect or the workbench, two paper cards
-// side by side, the one in use marked and the other a press away. Asked
-// once when the account has not chosen; changed here from Settings after.
+// side by side, the one in use on the clay wash and the other a press away.
+// Asked once when the account has not chosen, the question the whole window
+// and nothing beside it; changed here from Settings after.
 // The workbench's card plays its film, which tells what it adds; going back
 // to Connect asks once, saying that Fastctx's conversations wait.
 
@@ -32,13 +33,20 @@ export class ModePage implements Page {
   private film: Film | null = null;
   private readonly stop: () => void;
   private busy = false;
+  /** Whether it was opened as the question, the account not having chosen. */
+  private readonly asking = accountLayer.chosen.peek() === null;
 
   constructor(private readonly options: ModeOptions) {
     this.title = options.words.title;
-    this.element.className = "page md-page";
+    this.element.className = `page md-page${this.asking ? " md-asking" : ""}`;
     this.element.addEventListener("click", (event) => this.pressed(event));
     this.stop = effect(() => {
-      accountLayer.chosen.get();
+      const chosen = accountLayer.chosen.get();
+      // Chosen elsewhere meanwhile, the question is answered.
+      if (this.asking && chosen !== null && !this.busy) {
+        queueMicrotask(() => this.options.chosen(chosen));
+        return;
+      }
       this.draw();
     });
   }
@@ -54,17 +62,21 @@ export class ModePage implements Page {
     const card = (layer: LayerName, name: string, line: string, picture: string) => {
       const using = chosen === layer;
       const action = using
-        ? `<span class="choice chosen md-using">${escape(words.using)}</span>`
+        ? `<span class="md-using">${escape(words.using)}</span>`
         : `<button class="sheet-go md-go" type="button" data-mode="${layer}"${this.busy ? " disabled" : ""}>${escape(chosen === null ? words.choose : words.switchTo)}</button>`;
       return `<article class="md-card${using ? " using" : ""}"><div class="md-picture md-${layer}">${picture}</div><h2 class="md-name">${escape(name)}</h2><p class="md-line">${escape(line)}</p><div class="md-act">${action}</div></article>`;
     };
     this.film?.destroy();
     this.film = null;
-    this.element.innerHTML = `${this.options.head(escape(chosen === null ? words.ask : words.title))}
-      <div class="md-cards">
+    const cards = `<div class="md-cards">
         ${card("connect", words.connect.name, words.connect.line, connectPicture())}
         ${card("workbench", words.workbench.name, words.workbench.line, "")}
       </div>`;
+    // Asked, the page's head is only where the window is held; the question
+    // stands over the two cards in the middle of the window.
+    this.element.innerHTML = this.asking
+      ? `${this.options.head("")}<div class="md-ask"><h1 class="md-question">${escape(words.ask)}</h1>${cards}</div>`
+      : `${this.options.head(escape(words.title))}${cards}`;
     const holder = this.element.querySelector(".md-workbench");
     if (holder) {
       const make = (shape: Shape): Built => workbench(this.options.film, shape);
