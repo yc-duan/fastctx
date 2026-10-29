@@ -24,12 +24,14 @@ pub(super) fn capture(
             if draft.text.trim().is_empty() && draft.attachments.is_empty() {
                 return Err(failure("the shared draft is empty"));
             }
+            super::keeping::took(state);
             state.draft.take()?
         }
         Change::SendDocument { document, snapshot, attachments } => {
             if state.draft.id != *document {
                 return Err(failure("the shared document identity changed; synchronize it before sending"));
             }
+            super::keeping::took(state);
             state.draft.take_snapshot(&snapshot.0, attachments)?
         }
         _ => unreachable!("capture only sends draft text"),

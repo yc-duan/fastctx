@@ -82,6 +82,22 @@ pub(super) async fn upload(
     }
     Ok(record)
 }
+/// Whether the edit `operation` was taken by the draft's epoch `epoch`,
+/// sent since (`keeping::took`).
+pub(super) async fn taken(
+    node: &Node,
+    id: &ResidentId,
+    state: &Stored,
+    epoch: u64,
+    operation: &str,
+) -> Result<bool, Failure> {
+    let key = super::keeping::taken_key(&state.draft.id, epoch);
+    let operations = match state.taken.get(&key) {
+        Some(operations) => Some(operations.clone()),
+        None => get::<Vec<String>>(node, id, "taken", &key).await?,
+    };
+    Ok(operations.is_some_and(|operations| operations.iter().any(|taken| taken == operation)))
+}
 pub(super) async fn ended(node: &Node, id: &ResidentId, state: &Stored, turn: &str) -> Result<bool, Failure> {
     Ok(state.ended.contains(turn) || get::<bool>(node, id, "ended", turn).await?.unwrap_or(false))
 }

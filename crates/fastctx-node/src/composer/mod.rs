@@ -181,6 +181,15 @@ pub fn here<'a>(
                 delivery: receipt.delivery.clone(),
             });
         }
+        // An edit of an epoch of the draft sent since, from a device whose
+        // answer and receipt are gone, was done if that epoch took it: it is
+        // not done again in the new one (review 2.1).
+        if let Change::Edit { target: fastctx_types::composer::Target::Draft, epoch, .. } = &mutation.change
+            && *epoch < state.draft.epoch
+            && receipts::taken(node, id, state, *epoch, &mutation.operation).await?
+        {
+            return Ok(Updated { composer: state.view(), landed: None, delivery: None });
+        }
         if let Change::Attach { attachment, .. } = &mutation.change {
             crate::attachments::resolve(node, id, std::slice::from_ref(attachment)).await?;
         }

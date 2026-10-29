@@ -98,6 +98,10 @@ pub struct Stored {
     pub ended: HashSet<String>,
     pub receipts: HashMap<String, Receipt>,
     pub uploads: HashMap<String, super::uploads::UploadRecord>,
+    /// The edits each sent epoch of the draft took, by `keeping::taken_key`,
+    /// till they are written as records of their own.
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub taken: HashMap<String, Vec<String>>,
 }
 
 impl Stored {

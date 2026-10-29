@@ -256,6 +256,17 @@ impl Document {
         }
         Ok(document)
     }
+    /// The edits that inserted into this epoch of the document, by their
+    /// operations: what sending it takes (`keeping`, review 2.1).
+    pub fn inserting(&self) -> Vec<String> {
+        let mut operations: Vec<String> = Vec::new();
+        for alias in &self.aliases {
+            if !operations.contains(&alias.old.operation) {
+                operations.push(alias.old.operation.clone());
+            }
+        }
+        operations
+    }
     pub fn take(&mut self) -> Result<Self, Failure> {
         let view = self.view();
         let queued = Self::from_view(view)?;
