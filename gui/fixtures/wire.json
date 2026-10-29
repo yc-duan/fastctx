@@ -24500,7 +24500,29 @@
             "path": "/Users/me/Desktop",
             "at": "2026-10-01T08:00:00Z"
           }
-        }
+        },
+        "limits": [
+          {
+            "at": "2026-10-29T06:12:00Z",
+            "uses": [
+              {
+                "kind": "inotify_instances",
+                "used": 107,
+                "limit": 128
+              },
+              {
+                "kind": "inotify_watches",
+                "used": 9211,
+                "limit": 524288
+              },
+              {
+                "kind": "open_files",
+                "used": 412,
+                "limit": 65536
+              }
+            ]
+          }
+        ]
       }
     ]
   },

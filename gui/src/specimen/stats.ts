@@ -4,7 +4,7 @@
 // goings. studio is offline; gpu runs a fastctx too old to be asked.
 
 import { seeded } from "../pen/shapes";
-import type { Card, Disk, Gpu, LineChange, MachineStats, Trip } from "../world/stats";
+import type { Card, Disk, Gpu, LimitReading, LimitUse, LineChange, MachineStats, Trip } from "../world/stats";
 import { runningOn } from "./versions";
 
 const GB = 1024 ** 3;
@@ -26,6 +26,9 @@ interface Profile {
   service: boolean;
   /** Its nights off the network: a laptop asleep. */
   sleeps?: boolean;
+  /** How much of each of its system's limits it held a day ago and holds
+   *  now, against the limit. */
+  limits?: { kind: LimitUse["kind"]; from: number; to: number; limit: number }[];
 }
 
 const windows = (host: string): Pick<Profile, "system" | "host"> => ({ system: "Windows 11 Pro 24H2 (26200.6584)", host });
@@ -91,6 +94,11 @@ const profiles: Record<string, Profile> = {
     booted: 74,
     started: 300,
     service: true,
+    limits: [
+      { kind: "inotify_instances", from: 31, to: 118, limit: 128 },
+      { kind: "inotify_watches", from: 4_100, to: 9_211, limit: 524_288 },
+      { kind: "open_files", from: 120, to: 412, limit: 65_536 },
+    ],
   },
   build: {
     system: "Debian GNU/Linux 12 (bookworm)",
@@ -267,5 +275,28 @@ export async function specimenStats(machine: string | null, after: string | null
           ],
         }
       : {}),
+    ...(profile.limits ? { limits: limitsOf(name, profile.limits, now, since) } : {}),
   };
+}
+
+/** A day of readings of a machine's limits, one a minute after `since`:
+ *  each climbing from what it held a day ago, in steps as conversations
+ *  came and went. */
+function limitsOf(name: string, limits: NonNullable<Profile["limits"]>, now: number, since: number): LimitReading[] {
+  const minute = 60_000;
+  const end = Math.floor(now / minute) * minute;
+  const readings: LimitReading[] = [];
+  for (let at = end - DAY + minute; at <= end; at += minute) {
+    if (at <= since) continue;
+    const share = (at - (end - DAY)) / DAY;
+    readings.push({
+      at: new Date(at).toISOString(),
+      uses: limits.map(({ kind, from, to, limit }) => {
+        const step = Math.floor(share * 18) / 18;
+        const wobble = (seeded(`${name}:${kind}:${Math.floor(at / (40 * minute))}`)() - 0.5) * (to - from) * 0.08;
+        return { kind, used: Math.max(0, Math.round(from + (to - from) * step + wobble)), limit };
+      }),
+    });
+  }
+  return readings;
 }

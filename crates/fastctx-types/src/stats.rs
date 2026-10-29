@@ -56,6 +56,38 @@ pub struct MachineStats {
     /// limit its owner set for that account; its own under none.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub jobs: Vec<AccountJobs>,
+    /// How far it is toward its system's limits, a reading a minute over the
+    /// last day, oldest first; with `after`, only the readings since.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub limits: Vec<LimitReading>,
+}
+
+/// One reading of how far a machine is toward its system's limits.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LimitReading {
+    pub at: Timestamp,
+    pub uses: Vec<LimitUse>,
+}
+
+/// One limit and how much of it is used: by the user its node runs as, or
+/// for `OpenFiles`, by the node itself.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LimitUse {
+    pub kind: LimitKind,
+    pub used: u64,
+    pub limit: u64,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LimitKind {
+    InotifyInstances,
+    InotifyWatches,
+    OpenFiles,
+    Tasks,
+    /// One a newer node tells.
+    #[serde(other)]
+    Other,
 }
 
 /// How many jobs one account runs on a machine now.

@@ -18,15 +18,15 @@ import { escape } from "../conversation/prose";
 import { loginsOf, names, type AccountChange, type HubAccounts, type Login, type ShareSeen } from "../world/accounts";
 import type { NameProblem, WorldNow } from "../world/bridge";
 import { agentName, osName, titleOf } from "../world/names";
-import type { Card, MachineStats, StatsSeen } from "../world/stats";
+import type { Card, LimitUse, MachineStats, StatsSeen } from "../world/stats";
 import type { MachineFacts } from "../world/world";
 import type { AccessWords, MachinesWords } from "./account-words";
 import { AssistSheet, assistChange, assistancesIn, namesOn, type Assistance } from "./assist-sheet";
 import type { Confirm } from "./confirm";
 import { bytesSaid } from "./data-page";
 import { redrawKeepingFocus } from "./focus";
-import { diskBar, Ring, Spark, Strip, type LineMark, type LineSpan } from "./machine-draw";
-import { daysOf, heldOf, keptOf, seenOf, SPAN_MS, take, tripsHeld, type Sample } from "./machine-history";
+import { diskBar, levelOf, Ring, Spark, Strip, type LineMark, type LineSpan } from "./machine-draw";
+import { daysOf, heldOf, keptOf, LIMITS_MS, seenOf, SPAN_MS, take, tripsHeld, type Sample } from "./machine-history";
 import type { MachinePageWords } from "./machine-page-words";
 import { FastctxBlock, type FastctxSubject } from "./machine-fastctx";
 import type { ReadLog } from "./machine-log";
@@ -114,6 +114,8 @@ const RANGE_KEY = "machine.range";
 const EVERY_MS = 2_000;
 /** A trace breaks where readings are further apart than a few askings. */
 const READ_GAP_MS = 4.5 * EVERY_MS;
+/** A machine reads its limits once a minute; a few missed break the trace. */
+const LIMIT_GAP_MS = 3.5 * 60_000;
 /** A line's round trip is measured each heartbeat, every ten seconds. */
 const TRIP_GAP_MS = 35_000;
 /** How often the lines' strips move on with the clock; a change on a line
@@ -134,6 +136,12 @@ interface Vital {
   note: HTMLElement;
   sub: HTMLElement;
   ring: Ring;
+  spark: Spark;
+}
+
+interface LimitRow {
+  element: HTMLElement;
+  figure: HTMLElement;
   spark: Spark;
 }
 
@@ -166,6 +174,10 @@ export class MachinePage implements Page {
   private readonly vitalsSec: HTMLElement;
   private readonly vitalsBox: HTMLElement;
   private readonly disksBox: HTMLElement;
+  /** How far it is toward its system's limits: each limit's row by its
+   *  kind, its trace kept from one reading to the next. */
+  private readonly limitsBox: HTMLElement;
+  private limitRows = new Map<string, LimitRow>();
   private readonly presentBox: HTMLElement;
   private readonly whereBox: HTMLElement;
   private readonly linesBox: HTMLElement;
@@ -247,6 +259,7 @@ export class MachinePage implements Page {
             <section class="mp-sec mp-privacy" hidden></section>
             <section class="mp-sec mp-vitals-sec" hidden><div class="mp-vitals"></div></section>
             <section class="mp-sec mp-disks" hidden></section>
+            <section class="mp-sec mp-limits" hidden></section>
             <section class="mp-sec mp-present" hidden></section>
           </div>
           <div class="mp-pane" id="mp-pane-net" role="tabpanel" aria-labelledby="mp-tab-net" data-pane="net" hidden>
@@ -279,6 +292,7 @@ export class MachinePage implements Page {
     this.vitalsSec = part(".mp-vitals-sec");
     this.vitalsBox = part(".mp-vitals");
     this.disksBox = part(".mp-disks");
+    this.limitsBox = part(".mp-limits");
     this.presentBox = part(".mp-present");
     this.whereBox = part(".mp-where");
     this.linesBox = part(".mp-lines");
@@ -329,6 +343,7 @@ export class MachinePage implements Page {
       vital.ring.dispose();
       vital.spark.dispose();
     }
+    for (const row of this.limitRows.values()) row.spark.dispose();
     this.flow?.dispose();
     for (const line of this.lines) {
       line.strip.dispose();
@@ -437,10 +452,12 @@ export class MachinePage implements Page {
       this.drawVitals(stats, kept.samples);
       this.drawCards(stats, kept.samples);
       this.drawDisks(stats);
+      this.drawLimits(stats);
       this.drawLines();
     } else {
       this.cardsBox.hidden = true;
       this.disksBox.hidden = true;
+      this.limitsBox.hidden = true;
       this.linesBox.hidden = true;
     }
     this.drawPrivacy(machine, stats);
@@ -936,6 +953,43 @@ export class MachinePage implements Page {
       : machine.on.filter((on) => on.owner).map((on) => ({ label: on.hubName, value: machines.registeredUnder(on.owner!), title: "" }));
     this.whereBox.hidden = !networks.length;
     this.put("where", this.whereBox, `<h2 class="mp-sec-title">${escape(words.networks)}</h2>${factRows(networks)}`);
+  }
+
+  /** How far it is toward its system's limits over the last day: each
+   *  limit's name, how much of it is used now, and its trace with the limit
+   *  at the top. A machine whose system bounds none of them has no part. */
+  private drawLimits(stats: MachineStats): void {
+    const { words } = this.options;
+    const readings = stats.limits ?? [];
+    const last = readings[readings.length - 1];
+    const uses = (last?.uses ?? []).filter((use): use is LimitUse & { kind: keyof typeof words.limit } => use.kind in words.limit);
+    this.limitsBox.hidden = !uses.length;
+    if (!uses.length) return;
+    const shape = uses.map((use) => use.kind).join("|");
+    if (shape !== [...this.limitRows.keys()].join("|")) {
+      for (const row of this.limitRows.values()) row.spark.dispose();
+      this.limitRows = new Map(
+        uses.map((use) => {
+          const element = document.createElement("li");
+          element.className = "mp-limit";
+          element.innerHTML = `<div class="mp-limit-head"><span class="mp-limit-name" title="${escape(words.limit[use.kind].why)}">${escape(words.limit[use.kind].name)}</span><span class="mp-limit-figure"></span></div>`;
+          const spark = new Spark("mp-limit-trace");
+          element.append(spark.element);
+          return [use.kind, { element, figure: element.querySelector<HTMLElement>(".mp-limit-figure")!, spark }];
+        }),
+      );
+      this.limitsBox.innerHTML = `<header class="mp-sec-head"><h2 class="mp-sec-title">${escape(words.limits)}</h2><span class="mp-limits-span">${escape(words.limitsSpan)}</span></header><ul class="mp-list"></ul>`;
+      this.limitsBox.querySelector("ul")!.append(...[...this.limitRows.values()].map((row) => row.element));
+    }
+    const at = Date.parse(last!.at);
+    for (const use of uses) {
+      const row = this.limitRows.get(use.kind)!;
+      const share = use.limit ? use.used / use.limit : null;
+      row.element.dataset.level = levelOf(share);
+      set(row.figure, words.limitUsed(use.used.toLocaleString(), use.limit.toLocaleString()));
+      const points: [number, number | null][] = readings.map((reading) => [Date.parse(reading.at), reading.uses.find((one) => one.kind === use.kind)?.used ?? null]);
+      row.spark.draw([{ points, max: use.limit, kind: "clay", area: true, gap: LIMIT_GAP_MS }], at - LIMITS_MS, at, use.limit);
+    }
   }
 
   /** Its name and the group its owner put it in, on each hub that says so. */

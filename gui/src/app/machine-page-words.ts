@@ -55,6 +55,13 @@ export interface MachinePageWords {
   /** Turns waiting for that room now. */
   waitingMemory(count: number): string;
   roomFailed(why: string): string;
+  /** How far it is toward its system's limits over the last day: the
+   *  part's name, the span, each limit's name and why it matters, held,
+   *  and how much of it is used. */
+  limits: string;
+  limitsSpan: string;
+  limit: Record<"inotify_instances" | "inotify_watches" | "open_files" | "tasks", { name: string; why: string }>;
+  limitUsed(used: string, limit: string): string;
 
   threads(count: number): string;
   load(one: string, five: string, fifteen: string): string;
@@ -187,6 +194,15 @@ export const zhMachinePage: MachinePageWords = {
   roomKept: (size) => `为智能体留出 ${size}：可用内存低于它时，新的一轮排队等候`,
   waitingMemory: (count) => `${count} 轮在等内存`,
   roomFailed: failure(zhProblems, "没能更改"),
+  limits: "上限",
+  limitsSpan: "近 24 小时",
+  limit: {
+    inotify_instances: { name: "inotify 实例", why: "这个用户的程序合起来能开的 inotify 实例；用尽时开不出新的监视，对话的记录读不进来" },
+    inotify_watches: { name: "inotify 监视", why: "这个用户的程序合起来能监视的文件与文件夹" },
+    open_files: { name: "打开的文件", why: "节点自己能同时打开的文件与连接" },
+    tasks: { name: "线程", why: "这个用户能同时跑的线程" },
+  },
+  limitUsed: (used, limit) => `${used} / ${limit}`,
 
   threads: (count) => `${count} 线程`,
   load: (one, five, fifteen) => `负载 ${one}　${five}　${fifteen}`,
@@ -293,6 +309,15 @@ export const enMachinePage: MachinePageWords = {
   roomKept: (size) => `${size} kept for agents: below it, new turns wait their turn`,
   waitingMemory: (count) => `${count} turn${count === 1 ? "" : "s"} waiting for memory`,
   roomFailed: failure(enProblems, "Not changed"),
+  limits: "Limits",
+  limitsSpan: "Last 24 hours",
+  limit: {
+    inotify_instances: { name: "inotify instances", why: "What this user's programs may open together; used up, no new watch opens and conversations' records are not read" },
+    inotify_watches: { name: "inotify watches", why: "The files and folders this user's programs may watch together" },
+    open_files: { name: "Open files", why: "The files and connections the node itself may hold open" },
+    tasks: { name: "Threads", why: "The threads this user may run at once" },
+  },
+  limitUsed: (used, limit) => `${used} / ${limit}`,
 
   threads: (count) => `${count} threads`,
   load: (one, five, fifteen) => `load ${one}, ${five}, ${fifteen}`,

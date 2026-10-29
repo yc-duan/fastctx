@@ -30,6 +30,22 @@ export interface MachineStats {
   /** The jobs running on it now, by the account each works for; its own
    *  under none. */
   jobs?: AccountJobs[];
+  /** How far it is toward its system's limits, a reading a minute over the
+   *  last day, oldest first; asked with `after`, only the readings since. */
+  limits?: LimitReading[];
+}
+
+export interface LimitReading {
+  at: string;
+  uses: LimitUse[];
+}
+
+/** One limit and how much of it is used: by the user its node runs as, or
+ *  for `open_files`, by its node itself. */
+export interface LimitUse {
+  kind: "inotify_instances" | "inotify_watches" | "open_files" | "tasks" | "other";
+  used: number;
+  limit: number;
 }
 
 /** How many jobs one account runs on a machine now, and the most its owner

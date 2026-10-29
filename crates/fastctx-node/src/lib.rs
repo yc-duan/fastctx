@@ -87,6 +87,7 @@ mod ledger;
 mod letters;
 mod lifecycle;
 mod lifetime;
+mod limits;
 mod lines;
 mod log;
 mod login_identity;
@@ -237,6 +238,8 @@ pub(crate) struct Node {
     /// What the machine keeps free in memory for its agents, and the turns
     /// waiting for it (`memory_room`).
     memory_room: memory_room::Room,
+    /// How far the machine is toward its system's limits over the last day.
+    limits: limits::Readings,
     /// Whom each job running here works for (`job_accounts`).
     job_accounts: job_accounts::JobAccounts,
     /// Where each account's jobs share the processors, where they do.
@@ -669,6 +672,7 @@ pub async fn run_prepared(
         long_controls: Default::default(),
         turn_slots: Default::default(),
         memory_room,
+        limits: Default::default(),
         job_accounts: Default::default(),
         cpu_shares,
         file_searches: file_search::Searches::default(),
@@ -836,6 +840,7 @@ pub async fn run_prepared(
     ending::start(node.log.clone()).context("starting node stop diagnostics")?;
     stuck::start(&node);
     memory_room::start(&node);
+    limits::start(&node);
     let watchdog = watchdog::Watchdog::start().context("starting the control-loop watchdog")?;
     // Accepting fails over and over while no descriptor is left: it waits a
     // little longer each time, and says so once, until one is accepted.

@@ -106,6 +106,7 @@ pub fn fixtures() -> Fixtures {
                 most: Some(4),
             },
         ],
+        limits: Vec::new(),
     };
     let linux = MachineStats {
         run: None,
@@ -148,6 +149,14 @@ pub fn fixtures() -> Fixtures {
             }),
         },
         jobs: Vec::new(),
+        limits: vec![LimitReading {
+            at: at("2026-10-29T06:12:00Z"),
+            uses: vec![
+                LimitUse { kind: LimitKind::InotifyInstances, used: 107, limit: 128 },
+                LimitUse { kind: LimitKind::InotifyWatches, used: 9_211, limit: 524_288 },
+                LimitUse { kind: LimitKind::OpenFiles, used: 412, limit: 65_536 },
+            ],
+        }],
     };
     Fixtures { stats: vec![windows, linux] }
 }

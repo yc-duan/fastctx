@@ -777,6 +777,77 @@
   fill: var(--wrong);
 }
 
+/* How far it is toward its system's limits: each limit's name and how much
+   of it is used, over its trace of the day, the limit at the top. */
+.mp-limits-span {
+  font-size: var(--size-text);
+  color: var(--text-3);
+}
+
+/* One line each: the name, its trace with the limit dashed along the top,
+   and how much is used. */
+.mp-limit {
+  display: grid;
+  grid-template-columns: minmax(var(--mp-label), max-content) minmax(0, 1fr) minmax(10em, max-content);
+  align-items: center;
+  column-gap: var(--mp-gap);
+}
+
+.mp-limit-head {
+  display: contents;
+}
+
+.mp-limit-name {
+  grid-column: 1;
+  grid-row: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--size-text);
+  color: var(--text-2);
+  cursor: default;
+}
+
+.mp-limit-figure {
+  grid-column: 3;
+  grid-row: 1;
+  justify-self: end;
+  font-size: var(--size-text);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-2);
+}
+
+.mp-limit[data-level="high"] .mp-limit-figure {
+  color: var(--caution);
+}
+
+.mp-limit[data-level="full"] .mp-limit-figure {
+  color: var(--wrong);
+}
+
+.mp-spark.mp-limit-trace {
+  grid-column: 2;
+  grid-row: 1;
+  height: 30px;
+}
+
+.mp-limit[data-level="high"] .mp-spark-line.clay {
+  stroke: var(--caution);
+}
+
+.mp-limit[data-level="full"] .mp-spark-line.clay {
+  stroke: var(--wrong);
+}
+
+.mp-limit[data-level="high"] .mp-spark-area.clay {
+  fill: color-mix(in srgb, var(--caution) 16%, transparent);
+}
+
+.mp-limit[data-level="full"] .mp-spark-area.clay {
+  fill: color-mix(in srgb, var(--wrong) 16%, transparent);
+}
+
 /* The lines: the span they are drawn over, then each line's head, strip,
    marks of time and how it held. */
 .mp-ranges {
@@ -1124,6 +1195,20 @@
   /* A disk is where it is, what is free and its bar. */
   .mp-disk-kind {
     display: none;
+  }
+
+  .mp-limit {
+    grid-template-columns: minmax(0, 1fr) max-content;
+  }
+
+  .mp-limit-figure {
+    grid-column: 2;
+  }
+
+  .mp-spark.mp-limit-trace {
+    grid-column: 1 / -1;
+    grid-row: 2;
+    margin-top: 4px;
   }
 
   /* A network card is its name and what it receives and sends; one not
