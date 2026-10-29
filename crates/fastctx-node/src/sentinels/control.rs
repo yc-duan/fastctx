@@ -70,6 +70,22 @@ pub(crate) async fn list_all(
     .map_err(|_| Failure::new("listing sentinels across accounts timed out"))?
 }
 
+/// A sentinel's record, read for whichever of the caller's accounts it was
+/// left for: each keeps its own under its home.
+pub(crate) async fn record_any(node: &Arc<Node>, caller: &Caller, request: Request) -> Result<Reply, Failure> {
+    if matches!(caller, Caller::Page(_) | Caller::Session(_)) {
+        return Err(Failure::refused(words::NEED_CONVERSATION));
+    }
+    let mut failed = None;
+    for (link, account) in scopes(node, caller, None, None) {
+        match control(node, caller, &link, &account, request.clone()).await {
+            Ok(reply) => return Ok(reply),
+            Err(failure) => failed = Some(failure),
+        }
+    }
+    Err(failed.unwrap_or_else(|| Failure::not_run(words::CHOOSE_ACCOUNT)))
+}
+
 pub(crate) async fn control(
     node: &Arc<Node>,
     caller: &Caller,
@@ -90,6 +106,12 @@ pub(crate) async fn control(
                 None => format!("{}.\n\n{}", words::NO_HOME, words::HELP.replace("<machine>", "the machine the user chooses for them")),
             };
             Ok(Reply::Help { text })
+        }
+        Request::Record { id, home, generation, held } => {
+            match homes.send_to(&scope, &home, HomeRequest::Record { id, generation, held }).await.map_err(Failure::new)? {
+                HomeReply::Record { record } => Ok(Reply::Record { record }),
+                _ => Err(Failure::new("the sentinel home answered another kind of call")),
+            }
         }
         Request::Create { mut request } => {
             let Caller::Resident(owner) = caller else {

@@ -5,6 +5,7 @@
 // machine the sentinels live on alone.
 
 import { invoke } from "@tauri-apps/api/core";
+import type { SessionEvent } from "./events";
 
 export type ModelProtocol = "open_ai" | "anthropic";
 
@@ -67,6 +68,8 @@ export interface SentinelSummary {
     owner: { machine: string; resident: string };
     /** When it wakes its conversation, in milliseconds since the epoch. */
     at?: number[];
+    /** Which of its lives it is: its record is kept under it. */
+    generation: number;
   };
   phase: SentinelPhase;
   /** How it watches, in its own words. */
@@ -89,4 +92,23 @@ export function sentinelListAll(): Promise<SentinelSummary[]> {
 /** Withdraws one; its definition is gone even while its home has yet to confirm. */
 export function sentinelStop(id: string, home: string): Promise<void> {
   return invoke("sentinel_stop", { id, home }).then(() => undefined);
+}
+
+/** What a sentinel did, read from its home: each wake a turn. */
+export interface SentinelRecord {
+  version: string;
+  /** As the version held: nothing is sent. */
+  unchanged?: boolean;
+  events: SessionEvent[];
+  /** It woke more often than is sent; the earliest wakes are left out. */
+  earlier?: boolean;
+  /** How it stands as its home last kept it, ended or not. */
+  summary?: SentinelSummary;
+  /** When it next looks or is woken, in milliseconds since the epoch. */
+  next?: number;
+}
+
+/** Its record, unless it is still as the version `held`. */
+export function sentinelRecord(id: string, home: string, generation: number, held: string | null): Promise<SentinelRecord> {
+  return invoke<{ kind: "record"; record: SentinelRecord }>("sentinel_record", { id, home, generation, held }).then((reply) => reply.record);
 }

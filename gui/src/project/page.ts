@@ -50,6 +50,8 @@ export interface ProjectOptions {
   memory?: { words: MemoryWords; link(town: string, name: string): string; write(town: string): void; writer(author: MemoryAuthor): string };
   /** A machine's own page. */
   machineLink(machine: string): string;
+  /** A watcher's own page. */
+  senseLink(sense: SentinelSummary): string;
   /** How a sense stands, in a word. */
   phase(phase: SentinelPhase): string;
   /** The last thing a conversation (`resident@machine`) told that this
@@ -123,6 +125,12 @@ export class ProjectPage {
     });
     this.element.addEventListener("click", (event) => {
       if ((event.target as HTMLElement).closest("[data-write-journal]")) options.memory?.write(options.town);
+      // A watcher's mark, in its conversation's row, opens its own page.
+      const sense = (event.target as HTMLElement).closest<HTMLElement>("[data-sense]");
+      if (sense) {
+        event.preventDefault();
+        location.hash = sense.dataset.sense!;
+      }
     });
     this.tabs.addEventListener("click", (event) => {
       const button = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-view]");
@@ -216,8 +224,8 @@ export class ProjectPage {
   }
 
   private hubView(now: Date): HubViewOptions {
-    const { words, home, someone, link, machineLink, phase } = this.options;
-    return { words, home, someone, link, machineLink, phase, now };
+    const { words, home, someone, link, machineLink, senseLink, phase } = this.options;
+    return { words, home, someone, link, machineLink, senseLink, phase, now };
   }
 
   /** The project could not be asked: said under its name, with what was

@@ -1607,6 +1607,12 @@ export class ConversationView {
             said = focusSaid(fact.focus, words);
             more = "text";
             break;
+          case "woke":
+            // What its reflex saw opens under the line.
+            said = words.woke(fact.why);
+            ok = fact.why.kind !== "broken";
+            more = notice.text.trim() ? "text" : "";
+            break;
           case "desk_free":
             said = words.deskFree(fact.by.resident);
             break;
@@ -1633,7 +1639,8 @@ export class ConversationView {
     }
     const asks = notice.kind === "question" || (notice.kind === "words" && !notice.goal_report);
     const paused = notice.kind === "words" && notice.goal_report?.shown?.status === "paused";
-    const mark = asks ? glyph("ask", 14) : paused ? glyph("pause", 14) : ok ? glyph("check", 14) : glyph("cross", 14);
+    const woke = notice.kind === "world" && notice.fact.fact === "woke";
+    const mark = woke ? glyph("sentinel", 14) : asks ? glyph("ask", 14) : paused ? glyph("pause", 14) : ok ? glyph("check", 14) : glyph("cross", 14);
     const line = `<span class="notice-mark${ok ? "" : " wrong"}">${mark}</span><span class="notice-said">${escape(said)}</span>`;
     if (!more) return `<div class="notice-line${ok ? "" : " failed"}"${why ? ` title="${escape(why)}"` : ""}>${line}</div>`;
     const open = this.openRows.has(entry.key);

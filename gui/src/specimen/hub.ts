@@ -30,21 +30,21 @@ const owner = (resident: string, machine: string) => ({ machine, resident });
 export function specimenHubSenses(): SentinelSummary[] {
   return [
     {
-      definition: { id: "s-7f2c", home: "gpu", condition: "run3b 的 loss 再次发散或停住", kind: "local", owner: owner("claude-v01c", "laptop") },
+      definition: { id: "s-7f2c", home: "gpu", condition: "run3b 的 loss 再次发散或停住", kind: "local", owner: owner("claude-v01c", "laptop"), generation: 1 },
       phase: "watching",
       plan: "每 5 分钟读一次 /data/run3b/train.log 的最后 200 行",
       latest: { at: Date.parse("2026-10-04T16:50:00Z"), text: "step 12,400 loss 0.291，平稳" },
       reason: null,
     },
     {
-      definition: { id: "s-c14b", home: "lab", condition: "CI 跑完 ctrl 的整套测试", kind: "local", owner: owner("claude-2b1c", "laptop") },
+      definition: { id: "s-c14b", home: "lab", condition: "CI 跑完 ctrl 的整套测试", kind: "local", owner: owner("claude-2b1c", "laptop"), generation: 1 },
       phase: "watching",
       plan: "看 /srv/mark50-ci/runs 下最新一轮的结果文件",
       latest: null,
       reason: null,
     },
     {
-      definition: { id: "s-n8d1", home: "desktop", condition: "CAN 总线上出现时间戳倒退的帧", kind: "local", owner: owner("codex-4c1e", "desktop") },
+      definition: { id: "s-n8d1", home: "desktop", condition: "CAN 总线上出现时间戳倒退的帧", kind: "local", owner: owner("codex-4c1e", "desktop"), generation: 1 },
       phase: "watching",
       plan: "跟着 candump 的输出比相邻两帧的时间戳",
       latest: { at: Date.parse("2026-10-04T15:20:00Z"), text: "这一小时没有倒退的帧" },

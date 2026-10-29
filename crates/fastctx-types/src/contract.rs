@@ -139,7 +139,11 @@ impl RemoteCall {
             Self::SentinelControl {
                 request: crate::sentinel_control::Request::List { .. } | crate::sentinel_control::Request::Help,
             }
-            | Self::SentinelHome { request: crate::sentinel_control::HomeRequest::Inspect { .. } } => {
+            | Self::SentinelControl { request: crate::sentinel_control::Request::Record { .. } }
+            | Self::SentinelHome {
+                request:
+                    crate::sentinel_control::HomeRequest::Inspect { .. } | crate::sentinel_control::HomeRequest::Record { .. },
+            } => {
                 Contract { within: Some(Duration::from_secs(90)), ..Contract::QUERY }
             }
             Self::SentinelHome { request: crate::sentinel_control::HomeRequest::Withdraw { .. } } => Contract::CONTROL,

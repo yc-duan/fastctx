@@ -13,7 +13,7 @@ import { counts } from "./diff";
 import { writeNote } from "./run-output";
 import type { Card } from "./cards/cards";
 
-export type Glyph = "read" | "edit" | "command" | "search" | "image" | "colleague" | "delegate" | "web" | "tasks" | "tool";
+export type Glyph = "read" | "edit" | "command" | "search" | "image" | "colleague" | "delegate" | "web" | "tasks" | "tool" | "wake";
 
 export interface Headline {
   glyph: Glyph;
@@ -212,6 +212,12 @@ function call(tool: Tool, tense: Tense, say: (act: Act) => string, words: Words)
       return { glyph: "web", action: say("websearch"), object: input(tool, "query"), ...plain };
     case "TodoWrite":
       return { glyph: "tasks", action: say("tasks"), object: null, ...plain };
+    // A watcher's reflex, named by what it looks at.
+    case "install_reflex": {
+      const probe = tool.input && typeof tool.input === "object" && !Array.isArray(tool.input) ? (tool.input as Record<string, unknown>).probe : null;
+      const looks = probe && typeof probe === "object" ? ((probe as Record<string, unknown>).command ?? (probe as Record<string, unknown>).url) : null;
+      return { glyph: "wake", action: say("reflex"), object: typeof looks === "string" ? firstLine(looks) : input(tool, "id"), ...plain };
+    }
     default: {
       // Another server's tool keeps the name it acts by.
       const name = tool.server ? `${tool.server} ${tool.name}` : tool.name;

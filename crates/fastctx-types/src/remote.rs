@@ -586,7 +586,10 @@ impl RemoteCall {
             Self::EnterProject { .. } | Self::Plan { .. } => Purpose::Echo,
             Self::SentinelSettings { .. } | Self::SentinelControl { .. } | Self::SentinelKeys => Purpose::Look,
             Self::SentinelKey { .. } => Purpose::Hands,
-            Self::SentinelHome { request: crate::sentinel_control::HomeRequest::Inspect { .. } } => Purpose::Look,
+            Self::SentinelHome {
+                request:
+                    crate::sentinel_control::HomeRequest::Inspect { .. } | crate::sentinel_control::HomeRequest::Record { .. },
+            } => Purpose::Look,
             Self::SentinelHome { .. } => Purpose::Hands,
             RemoteCall::PageAction { action: crate::pages::PageInvocation::Say { .. }, .. } => Purpose::Words,
             RemoteCall::ReadAttachment { attachment: crate::attachments::AttachmentSource::Upload(file), .. }

@@ -265,6 +265,31 @@ impl ResidentHost for Host {
                         self.reconcile_locked(scope, id, None).await?.ok_or("sentinel is assigned to another home")?;
                     Ok(HomeReply::Summary { sentinel: Box::new(summary) })
                 }
+                // Only the asking account's own: its sentinels live under it.
+                HomeRequest::Record { id, generation, held } => {
+                    let directory = self
+                        .assignment(scope, id)
+                        .parent()
+                        .expect("assignment directory")
+                        .join(generation.to_string());
+                    let held = held.clone();
+                    let store = crate::state::Store::new(directory.clone());
+                    let mut record = tokio::task::spawn_blocking(move || crate::record::read(&directory, held.as_deref()))
+                        .await
+                        .map_err(|error| error.to_string())??;
+                    // How it stands, and when it next looks: the earliest of
+                    // its reflexes' times and of the times it wakes its
+                    // conversation that are still to come.
+                    if !record.unchanged
+                        && let Some(state) = store.load()?
+                    {
+                        let now = self.runtime.now();
+                        let due = state.definition.at.iter().copied().filter(|at| *at > now);
+                        record.next = state.reflexes.iter().map(|reflex| reflex.at).filter(|at| *at < i64::MAX).chain(due).min();
+                        record.summary = Some(Box::new(storage::summary(&state)));
+                    }
+                    Ok(HomeReply::Record { record: Box::new(record) })
+                }
                 HomeRequest::Withdraw { id } => {
                     self.reconcile(scope, id).await?;
                     if lifecycle::get(self.records.as_ref(), scope, id).await.map_err(|e| e.to_string())?.is_some() {

@@ -125,6 +125,16 @@
   color: var(--text);
 }
 
+.ph-sense {
+  border-radius: var(--radius-full);
+  cursor: pointer;
+  transition: background-color var(--hover) var(--ease);
+}
+
+.ph-sense:hover {
+  background: var(--hairline);
+}
+
 .ph-sense.trouble {
   color: var(--caution);
 }

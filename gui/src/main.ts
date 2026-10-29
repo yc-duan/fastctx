@@ -196,12 +196,14 @@ import { MemoryPage } from "./project/memory-page";
 import { enMemory, zhMemory } from "./project/memory-words";
 import { memory as memorySeam, type MemoryAuthor } from "./world/memory";
 import { specimenCatalog, specimenDocument } from "./specimen/memory";
-import { sentinelList, sentinelListAll, sentinelStop, sentinels as liveSentinels, type SentinelSummary } from "./world/sentinels";
+import { sentinelList, sentinelListAll, sentinelRecord, sentinelStop, sentinels as liveSentinels, type SentinelSummary } from "./world/sentinels";
 import { planRead } from "./world/plan";
 import { sawTold, toldSeen } from "./app/told-seen";
 import { specimenHubPlans, specimenHubSenses } from "./specimen/hub";
 import type { Job as PanelJob } from "./conversation/jobs-panel";
 import { specimenSentinels } from "./specimen/sentinels";
+import { specimenWatcherRecord, specimenWatchers } from "./specimen/watchers";
+import { enSentinel, zhSentinel } from "./sentinel/words";
 import { JournalForm } from "./project/journal-form";
 import { ProjectPage } from "./project/page";
 import { enProject, zhProject } from "./project/words";
@@ -437,7 +439,7 @@ const WORKBENCH_PLACES: Place["kind"][] = ["home", "new", "project", "talk", "ta
 /** The pages one comes into from another, which have a way back in their
  *  head (`world-gui.md`, 界面的结构); the sidebar's own pages have none. */
 function inner(at: Place): boolean {
-  return ["feature", "data", "memory", "page", "file", "login", "talks", "archived", "machine", "usage", "subagents"].includes(at.kind);
+  return ["feature", "data", "memory", "page", "file", "login", "talks", "archived", "machine", "usage", "subagents", "sentinel"].includes(at.kind);
 }
 
 /** Where a page's back goes when it was not come into from another page,
@@ -490,6 +492,8 @@ function placeName(at: Place): string {
       return at.town;
     case "talks":
       return at.town ?? (english ? enTalks : zhTalks).title;
+    case "sentinel":
+      return (english ? enSentinel : zhSentinel).title;
     default:
       return "";
   }
@@ -1451,6 +1455,72 @@ function home(): Page {
   };
 }
 
+/** The watchers last listed anywhere, by id: what a watcher's page draws
+ *  until its own record is read. */
+const knownSentinels = new Map<string, SentinelSummary>();
+
+function remembered(one: SentinelSummary): SentinelSummary {
+  knownSentinels.set(one.definition.id, one);
+  return one;
+}
+
+/** A watcher as a row among a conversation's jobs. */
+function sentinelRow(one: SentinelSummary): PanelJob {
+  return {
+    job: one.definition.id,
+    machine: one.definition.home,
+    started_at: "",
+    command: one.definition.condition || one.plan,
+    output: "",
+    sentinel: {
+      phase: words.sentinelPhase(one.phase),
+      plan: one.plan,
+      seen: one.latest?.text ?? one.reason,
+      wakes: one.definition.at ?? [],
+      generation: one.definition.generation,
+    },
+  };
+}
+
+/** A watcher's own page, from its row. */
+function watchLink(job: PanelJob): string {
+  return link({ kind: "sentinel", home: job.machine, id: job.job, generation: job.sentinel?.generation ?? 1 });
+}
+
+/** A watcher's own page: its record read from the machine it lives on, or
+ *  the specimen's. */
+function sentinelPage(at: Extract<Place, { kind: "sentinel" }>): Page {
+  const { home, id, generation } = at;
+  const own = english ? enSentinel : zhSentinel;
+  return deferredPage(own.title, async () => {
+    const { SentinelPage } = await import("./sentinel/page");
+    const found = params.has("found");
+    return new SentinelPage({
+      words: own,
+      talkWords: words,
+      english,
+      here: (live ? store.world.peek()?.here : specimen.world.here) ?? "",
+      head,
+      sentinel: { id, home, generation },
+      known: knownSentinels.get(id) ?? null,
+      read: (held) =>
+        live
+          ? sentinelRecord(id, home, generation, held)
+          : new Promise((resolve) => setTimeout(() => resolve(specimenWatcherRecord(english, Date.now(), id, found)), 300)),
+      withdraw: live ? () => sentinelStop(id, home) : async () => {},
+      confirm: accountConfirm,
+      form: (machine) => {
+        const world = live ? store.world.peek() : specimen.world;
+        const known = world ? machinesOf(world).find((one) => one.name === machine || one.written === machine) : undefined;
+        return known?.facts.Ok?.form ?? "desktop";
+      },
+      lines: live ? (machine, path, decoding) => RemoteLines.open(machine, path, decoding) : async (_machine, path) => specimenLines(path),
+      now: () => Date.now(),
+      detail: (error) => whyOf(error),
+    });
+  });
+}
+
 function specimenTalk(address: Address, inPanel = false): KeepablePage {
   let queuedHere: PendingControl[] = [];
   let toldHere = 0;
@@ -1633,45 +1703,15 @@ function specimenTalk(address: Address, inPanel = false): KeepablePage {
     stop: () => new Promise<boolean>(() => {}),
     stopJob: async () => {},
     jobOutput: async (job) => specimenOutput(job.command),
+    watchLink,
     lines: async (_machine, path) => specimenLines(path),
     agentRecord: (agent) => specimenAgentRecord(agent),
     calls: (turn) => void openCalls(known?.about ?? { machine: address.machine, host: { agent: sample.agent } }, address, turn),
   });
   // What it started that still runs, as the specimen World lists it.
-  // With `?sentinels`, a sentinel the conversation left stands beside them.
-  const specimenSentinels: PanelJob[] = params.has("sentinels")
-    ? [
-        {
-          job: "s-a1b2c3",
-          machine: "server",
-          started_at: "",
-          command: english ? "Wake me when the training loss falls below 0.3" : "训练的 loss 降到 0.3 以下时叫醒我",
-          output: "",
-          sentinel: {
-            phase: words.sentinelPhase("watching"),
-            plan: english ? "Reads the last lines of train.log every ten minutes" : "每十分钟读一次 train.log 的最后几行",
-            seen: "step 4200  loss 0.412",
-          },
-        },
-        {
-          job: "s-d4e5f6",
-          machine: "server",
-          started_at: "",
-          command: english ? "Wake me at eight tomorrow to read the night's regression" : "明早八点叫醒我看夜里的回归",
-          output: "",
-          sentinel: {
-            phase: words.sentinelPhase("watching"),
-            plan: english ? "Waits for the time; looks at nothing before it" : "只等时刻，之前什么都不看",
-            seen: null,
-            wakes: [8, 20].map((hour) => {
-              const at = new Date(store.clock.peek());
-              at.setDate(at.getDate() + 1);
-              at.setHours(hour, 0, 0, 0);
-              return at.getTime();
-            }),
-          },
-        },
-      ]
+  // With `?sentinels`, the watchers the conversation left stand beside them.
+  const watcherRows: PanelJob[] = params.has("sentinels")
+    ? specimenWatchers(english, store.clock.peek().getTime(), params.has("found")).map((one) => sentinelRow(remembered(one)))
     : [];
   const runningJobs = effect(() => {
     const now = store.clock.get();
@@ -1681,7 +1721,7 @@ function specimenTalk(address: Address, inPanel = false): KeepablePage {
           const owner = ownerResident(job.owner);
           return owner?.resident === address.resident && owner.machine === address.machine;
         }),
-        ...specimenSentinels,
+        ...watcherRows,
       ],
       now,
     );
@@ -1992,6 +2032,7 @@ function liveTalk(address: Address, inPanel = false): KeepablePage {
     // A sentinel's row withdraws it, then the list is asked again.
     stopJob: (job, machine) => (sentinelRows.peek().some((row) => row.job === job) ? sentinelStop(job, machine).then(() => readSentinels()) : stopJob(job, machine)),
     jobOutput: (job) => RemoteLines.open(job.machine, job.output, { kind: "output", job: job.job }),
+    watchLink,
     lines: (machine, path, decoding) => RemoteLines.open(machine, path, decoding),
     agentRecord: (agent) => agentActivity(address, agent),
     calls: (turn) => {
@@ -2003,18 +2044,10 @@ function liveTalk(address: Address, inPanel = false): KeepablePage {
   // The sentinels it left, as rows beside its jobs; the goal's own sentinel
   // goes with the goal and is not withdrawn by hand.
   const sentinelRows = signal<PanelJob[]>([]);
-  const sentinelRow = (one: SentinelSummary): PanelJob => ({
-    job: one.definition.id,
-    machine: one.definition.home,
-    started_at: "",
-    command: one.definition.condition || one.plan,
-    output: "",
-    sentinel: { phase: words.sentinelPhase(one.phase), plan: one.plan, seen: one.latest?.text ?? one.reason, wakes: one.definition.at ?? [] },
-  });
   const readSentinels = (): Promise<void> =>
     sentinelList(address).then(
       (listed) => {
-        if (!left) sentinelRows.set(listed.filter((one) => one.definition.kind !== "goal").map(sentinelRow));
+        if (!left) sentinelRows.set(listed.filter((one) => one.definition.kind !== "goal").map((one) => sentinelRow(remembered(one))));
       },
       // A home that cannot be asked now keeps the rows last seen.
       () => {},
@@ -2245,6 +2278,7 @@ function projectPage(town: string): Page {
       writer: (author) => memoryWriter(author).name,
     },
     machineLink: (name) => link({ kind: "machine", name }),
+    senseLink: (one) => link({ kind: "sentinel", home: one.definition.home, id: one.definition.id, generation: one.definition.generation }),
     phase: (phase) => words.sentinelPhase(phase),
     seenTold: toldSeen,
     more: {
@@ -2284,7 +2318,7 @@ function projectPage(town: string): Page {
   if (!live) {
     const map = specimenMap();
     page.showPlans(specimenHubPlans());
-    page.showSenses(specimenHubSenses());
+    page.showSenses(specimenHubSenses().map(remembered));
     page.update(map, { machine: specimen.world.here, scope: { kind: "town", town, record: null }, machines: specimen.world.who.machines.map((machine) => machine.kind === "answered" ? { ...machine, reply: { ...machine.reply, residents: machine.reply.residents.filter((r) => r.town === town) } } : machine) }, specimen.now);
     return { element: page.element, title: map.record.name };
   }
@@ -2316,7 +2350,7 @@ function projectPage(town: string): Page {
     if (left) return;
     if (document.visibilityState === "visible") {
       const listed = await sentinelListAll().catch(() => null);
-      if (listed && !left) page.showSenses(listed);
+      if (listed && !left) page.showSenses(listed.map(remembered));
     }
     if (!left) sensesTimer = window.setTimeout(readSenses, 30_000);
   };
@@ -2858,6 +2892,9 @@ function show(next: Place): void {
         say: (text, options) => talkToast.say(text, options),
       });
       });
+      break;
+    case "sentinel":
+      page = sentinelPage(next);
       break;
     case "file":
       page = new ReaderPage({

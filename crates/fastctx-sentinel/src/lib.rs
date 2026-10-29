@@ -2,6 +2,7 @@
 pub mod goal;
 pub mod ports;
 pub mod lifecycle;
+pub mod record;
 pub mod reflex;
 pub mod records;
 pub mod settings;

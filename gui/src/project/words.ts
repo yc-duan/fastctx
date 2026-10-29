@@ -94,7 +94,7 @@ export const zhProject: ProjectWords = {
   sense: (condition, machine, phase, seen) => [condition, `${machine}　${phase}`, seen].filter(Boolean).join("\n"),
   colleague: (label, who, doing) => [label, `${who}　${doing}`].filter(Boolean).join("\n"),
   ground: (agents, senses, jobs) =>
-    [agents ? `${agents} 段对话` : "", senses ? `${senses} 只眼睛` : "", jobs ? `${jobs} 件作业` : ""].filter(Boolean).join("　") || "这里暂时没有在做的事",
+    [agents ? `${agents} 段对话` : "", senses ? `${senses} 项观测` : "", jobs ? `${jobs} 件作业` : ""].filter(Boolean).join("　") || "这里暂时没有在做的事",
   opened: (by, on, day) => `${then(by)}创建于 ${on}，${day}`,
   you: "你",
   aPage: (name) => `页面「${name}」`,
@@ -148,7 +148,7 @@ export const enProject: ProjectWords = {
   sense: (condition, machine, phase, seen) => [condition, `${machine}, ${phase}`, seen].filter(Boolean).join("\n"),
   colleague: (label, who, doing) => [label, `${who}, ${doing}`].filter(Boolean).join("\n"),
   ground: (agents, senses, jobs) =>
-    [agents ? `${agents} conversation${agents === 1 ? "" : "s"}` : "", senses ? `${senses} sense${senses === 1 ? "" : "s"}` : "", jobs ? `${jobs} job${jobs === 1 ? "" : "s"}` : ""]
+    [agents ? `${agents} conversation${agents === 1 ? "" : "s"}` : "", senses ? `${senses} watcher${senses === 1 ? "" : "s"}` : "", jobs ? `${jobs} job${jobs === 1 ? "" : "s"}` : ""]
       .filter(Boolean)
       .join(", ") || "Nothing running here",
   opened: (by, on, day) => `Created by ${by} on ${on}, ${day}`,

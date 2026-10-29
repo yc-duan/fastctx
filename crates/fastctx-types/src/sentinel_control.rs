@@ -20,6 +20,8 @@ pub enum Request {
     List { owner: Option<Address> },
     Stop { id: SentinelId, home: Option<crate::MachineName> },
     Help,
+    /// What it did, read as a conversation, from the machine it lives on.
+    Record { id: SentinelId, home: crate::MachineName, generation: u64, held: Option<String> },
 }
 /// The account record owns assignment and lifetime; detailed state stays at home.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -53,6 +55,31 @@ pub enum Reply {
     Listed { sentinels: Vec<Summary>, unavailable: Vec<String> },
     Stopped { id: SentinelId, home_confirmed: bool, reason: Option<String> },
     Help { text: String },
+    Record { record: Box<Record> },
+}
+
+/// What a sentinel did, as a conversation reads (`world-senses.md`, 看它做了什么):
+/// each time it woke a turn, opened by why it woke, holding its thinking,
+/// its words, where it looked and how, and what it said of what it watches.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Record {
+    /// Names what was read; read again unchanged, it is the same.
+    pub version: String,
+    /// The same as the version the reader held: no events are sent.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub unchanged: bool,
+    /// Its latest wakes, oldest first.
+    pub events: Vec<crate::session::SessionEvent>,
+    /// It woke more often than is sent: the earliest wakes are left out.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub earlier: bool,
+    /// How it stands as its home last kept it, ended or not; none before
+    /// its home first kept anything of it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub summary: Option<Box<Summary>>,
+    /// When it next looks or is woken, in milliseconds since the epoch.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub next: Option<i64>,
 }
 impl Create {
     pub fn validate(&self, now: i64) -> Result<(), String> {
@@ -79,6 +106,7 @@ pub enum HomeRequest {
     Inspect { id: SentinelId },
     Judge { request: Box<GoalRequest> },
     Withdraw { id: SentinelId },
+    Record { id: SentinelId, generation: u64, held: Option<String> },
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
@@ -86,6 +114,7 @@ pub enum HomeReply {
     Judged { judgment: crate::sentinel::Judgment },
     Summary { sentinel: Box<Summary> },
     Withdrawn,
+    Record { record: Box<Record> },
 }
 
 /// A stable engine request ID is scoped by the sentinel generation.

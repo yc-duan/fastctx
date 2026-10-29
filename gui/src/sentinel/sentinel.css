@@ -1,0 +1,215 @@
+/* A watcher's own page (`page.ts`): at the top, in the conversation's
+   column, what it waits for in the display face, a quiet line beneath on
+   where it lives and how it stands, and its time drawn across; below, its
+   record, which alone scrolls. */
+
+@property --sn-drawn {
+  syntax: "<number>";
+  inherits: false;
+  initial-value: 1;
+}
+
+.sn-page {
+  --sn-column: calc(var(--column) + 2 * var(--gutter));
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+.sn-top {
+  position: relative;
+  z-index: 1;
+  flex: none;
+  width: 100%;
+  max-width: var(--sn-column);
+  margin: 0 auto;
+  padding: var(--space-6) var(--gutter) 0;
+}
+
+/* What scrolls up under the top fades into it, once the record has left
+   its start. */
+.sn-top::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 100%;
+  height: var(--edge);
+  background: linear-gradient(to bottom, var(--bg), transparent);
+  pointer-events: none;
+  transition: --edge var(--hover) var(--ease);
+}
+
+.sn-page.scrolled .sn-top::after {
+  --edge: var(--space-6);
+}
+
+.sn-condition {
+  display: -webkit-box;
+  margin: 0;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  font-family: var(--font-display);
+  font-weight: 400;
+  font-size: var(--size-title);
+  line-height: var(--leading-heading);
+  color: var(--text-strong);
+  text-wrap: balance;
+}
+
+.sn-facts {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1) var(--space-5);
+  min-height: calc(var(--size-text) * var(--leading-ui));
+  margin: var(--space-3) 0 0;
+  font-size: var(--size-text);
+  line-height: var(--leading-ui);
+  color: var(--text-2);
+}
+
+.sn-facts > span {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.sn-facts > span:empty {
+  display: none;
+}
+
+.sn-facts .glyph {
+  flex: none;
+  color: var(--text-3);
+}
+
+.sn-phase[data-phase="satisfied"] .glyph {
+  color: var(--accent);
+}
+
+.sn-phase:is([data-phase="unable"], [data-phase="unavailable"]) .glyph {
+  color: var(--caution);
+}
+
+/* Its time: ink on the page, and the one place a hand draws. */
+.sn-strip {
+  display: block;
+  width: 100%;
+  height: 56px;
+  margin: var(--space-4) 0 var(--space-1);
+  overflow: visible;
+}
+
+.sn-strip.sn-inking {
+  clip-path: inset(-16px calc((1 - var(--sn-drawn)) * 100%) -16px -16px);
+  animation: sn-ink var(--draw) var(--ease-out) both;
+}
+
+@keyframes sn-ink {
+  from {
+    --sn-drawn: 0;
+  }
+  to {
+    --sn-drawn: 1;
+  }
+}
+
+.sn-strip .sn-ahead {
+  fill: var(--pen-trace);
+}
+
+.sn-strip :is(.sn-sleep, .sn-beat, .sn-now, .sn-next, .sn-tremor) {
+  fill: var(--pen-graphite);
+}
+
+.sn-strip :is(.sn-wake, .sn-wake-open, .sn-here) {
+  fill: var(--text-2);
+}
+
+/* Awake: its ring breathes while it works. */
+.sn-strip .sn-wake-open {
+  opacity: var(--breath-alpha);
+  animation: ink-breathe var(--breath-slow) var(--ease-in-out) infinite;
+}
+
+:root[data-reduced] .sn-strip .sn-wake-open {
+  animation: none;
+}
+
+.sn-strip .sn-wake-wrong {
+  fill: var(--caution);
+}
+
+.sn-strip .sn-found {
+  fill: var(--pen-clay);
+}
+
+.sn-strip .sn-here {
+  display: none;
+}
+
+.sn-strip .sn-here.on {
+  display: inline;
+}
+
+.sn-strip :is(.sn-hit, .sn-hit-span) {
+  fill: transparent;
+  outline: none;
+}
+
+.sn-strip .sn-hit[data-turn] {
+  cursor: pointer;
+  transition: fill var(--hover) var(--ease);
+}
+
+.sn-strip .sn-hit[data-turn]:hover {
+  fill: var(--hairline);
+}
+
+.sn-strip .sn-hit:focus-visible {
+  stroke: var(--focus);
+  stroke-width: 2;
+}
+
+.sn-scroll {
+  flex: 1;
+}
+
+.sn-scroll > .transcript {
+  padding-top: var(--space-5);
+}
+
+.sn-note {
+  max-width: var(--sn-column);
+  margin: var(--space-4) auto 0;
+  padding: 0 var(--gutter);
+  font-size: var(--size-text);
+  color: var(--text-3);
+}
+
+/* Said in place of a record there is none of yet: in the middle of where
+   it will be. */
+.sn-note.sn-alone {
+  margin-top: var(--space-12);
+  text-align: center;
+}
+
+@media (max-width: 600px) {
+  .sn-top,
+  .sn-note {
+    --gutter: 22px;
+  }
+
+  .sn-top {
+    padding-top: var(--space-4);
+  }
+
+  .sn-condition {
+    -webkit-line-clamp: 3;
+    font-size: var(--size-figure);
+  }
+}

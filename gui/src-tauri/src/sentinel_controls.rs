@@ -1,4 +1,4 @@
-//! Conversation sentinel summaries and withdrawal, using the account-scoped node API.
+//! Conversation sentinel summaries, records and withdrawal, using the account-scoped node API.
 use crate::Shell;
 use fastctx_types::{
     Address, MachineName, SentinelId,
@@ -31,5 +31,29 @@ pub(crate) async fn sentinel_stop(
     match shell.world().sentinel(hub, account, Request::Stop { id, home }).await.map_err(|e| e.to_string())? {
         reply @ Reply::Stopped { .. } => Ok(reply),
         _ => Err("unexpected sentinel withdrawal reply".into()),
+    }
+}
+
+/// What a sentinel did, read from its home; `held` names the version the
+/// window already shows.
+#[fastctx_gui_command::command]
+pub(crate) async fn sentinel_record(
+    shell: tauri::State<'_, Shell>,
+    hub: Option<String>,
+    account: Option<String>,
+    id: SentinelId,
+    home: MachineName,
+    generation: u64,
+    held: Option<String>,
+) -> Result<Reply, String> {
+    let (hub, account) = crate::sentinels::names(hub, account)?;
+    match shell
+        .world()
+        .sentinel(hub, account, Request::Record { id, home, generation, held })
+        .await
+        .map_err(|e| e.to_string())?
+    {
+        reply @ Reply::Record { .. } => Ok(reply),
+        _ => Err("unexpected sentinel record reply".into()),
     }
 }

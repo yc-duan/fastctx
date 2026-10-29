@@ -55,7 +55,10 @@ export type Place =
   /** The user's own things in the network shown: 「我」. */
   | { kind: "account" }
   /** A file on a machine, read whole, or its end when it keeps growing. */
-  | { kind: "file"; machine: string; path: string; tail: boolean };
+  | { kind: "file"; machine: string; path: string; tail: boolean }
+  /** What one of a conversation's watchers did, read on the machine it
+   *  lives on: the life of it `generation` names. */
+  | { kind: "sentinel"; home: string; id: string; generation: number };
 
 const part = encodeURIComponent;
 
@@ -108,6 +111,8 @@ export function link(place: Place): string {
       return "#/account";
     case "file":
       return `#/file/${part(place.machine)}/${place.tail ? "tail" : "whole"}/${part(place.path)}`;
+    case "sentinel":
+      return `#/sentinel/${part(place.home)}/${part(place.id)}/${place.generation}`;
   }
 }
 
@@ -187,6 +192,11 @@ export function placeOf(hash: string): Place {
     case "file":
       if (parts[1] && parts[3]) return { kind: "file", machine: parts[1], path: parts.slice(3).join("/"), tail: parts[2] === "tail" };
       break;
+    case "sentinel": {
+      const generation = Number(parts[3]);
+      if (parts[1] && parts[2] && Number.isSafeInteger(generation) && generation >= 0) return { kind: "sentinel", home: parts[1], id: parts[2], generation };
+      break;
+    }
   }
   return { kind: "home" };
 }

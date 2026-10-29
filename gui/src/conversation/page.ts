@@ -187,6 +187,8 @@ export interface PageOptions {
   /** A job's output as lines from the machine running it, read as it
    *  grows. */
   jobOutput?: ((job: Job) => Promise<OutputLines>) | undefined;
+  /** The address of a watcher's own page, for its row among the jobs. */
+  watchLink?: ((job: Job) => string) | undefined;
   /** Lines of a file or a job's output on the machine holding them: what a
    *  write changed, a command's whole output. */
   lines?: ((machine: string, path: string, decoding: Decoding) => Promise<OutputLines>) | undefined;
@@ -2062,6 +2064,7 @@ export class ConversationPage {
       },
       stop: this.options.stopJob,
       output: this.options.jobOutput,
+      watch: this.options.watchLink,
       detail: detailOf,
     });
     this.jobs.update(jobs, now);

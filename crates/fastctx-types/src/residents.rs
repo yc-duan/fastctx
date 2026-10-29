@@ -258,6 +258,27 @@ pub enum WorldFact {
     },
     /// The user changed the machines and folders it is pointed to.
     Focus { focus: crate::focus::Focus },
+    /// A sentinel woke: the first line of each of its turns as its record
+    /// is read (`sentinel_control::Record`), the reflex's sight in `text`.
+    Woke { why: Woke },
+}
+
+/// Why a sentinel woke.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", tag = "kind")]
+pub enum Woke {
+    /// It was just left, and looks for the first time.
+    Started,
+    /// A time it set came.
+    Due,
+    /// A reflex it installed saw something, on `source`.
+    Reflex { source: String },
+    /// A reflex of its could not look any more.
+    Broken { reason: String },
+    /// Its conversation took it down.
+    Withdrawn,
+    /// Its goal's conversation stopped, and asks whether it may.
+    Review,
 }
 
 /// Who stops a job when the user does, from an interface: the job's end is

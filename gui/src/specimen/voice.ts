@@ -43,8 +43,8 @@ export function voice(): Specimen {
     ),
   );
   s.tool("t1", run("fastctx sense 'the training loss on gpu diverges or stalls' --tell 'look at run3'", "=== run on laptop (exited 0) ===", "=== sentinel s-7f2c on server watches it ===", { duration_ms: 900 }));
-  s.tool("t1", say("好。整套回归已经在 lab 上跑起来，大约四十分钟。训练那边挂了一个哨兵盯着 loss，发散或停住了它会叫醒我。有结果我再告诉你。", "reply"));
-  s.say("t1", "message", "回归 j-r4g7e2 在 lab 上跑着，哨兵 s-7f2c 在 gpu 上盯着 run3。它们叫醒我之前没有别的事。");
+  s.tool("t1", say("好。整套回归已经在 lab 上跑起来，大约四十分钟。训练那边留了一项观测盯着 loss，发散或停住了它会叫醒我。有结果我再告诉你。", "reply"));
+  s.say("t1", "message", "回归 j-r4g7e2 在 lab 上跑着，观测 s-7f2c 在 gpu 上盯着 run3。它们叫醒我之前没有别的事。");
   s.ended("t1", "completed");
 
   s.heard(

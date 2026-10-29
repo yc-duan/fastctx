@@ -41,20 +41,30 @@ impl Homes for Transport {
 }
 impl Transport {
     pub(super) async fn send(&self, registration: &Registration, request: HomeRequest) -> Result<HomeReply, String> {
-        let link = self.0.link_of(&registration.scope.hub).ok_or("the sentinel account's network is not connected")?;
-        let home = &registration.definition.home;
+        self.send_to(&registration.scope, &registration.definition.home, request).await
+    }
+
+    /// Sends `request` to the sentinel home `home` for the account `scope`:
+    /// as to a sentinel's, whose account record may be gone with its end.
+    pub(super) async fn send_to(
+        &self,
+        scope: &HubAccount,
+        home: &fastctx_types::MachineName,
+        request: HomeRequest,
+    ) -> Result<HomeReply, String> {
+        let link = self.0.link_of(&scope.hub).ok_or("the sentinel account's network is not connected")?;
         let view = crate::authorization::current_view(&link).map_err(|e| e.message)?;
-        if !view.call_rights(&view.me, &registration.scope.account, home).hands {
+        if !view.call_rights(&view.me, &scope.account, home).hands {
             return Err("this account may not use the sentinel home".into());
         }
         if view.is_me(home) {
-            return home_call(&self.0, &registration.scope, &request).await;
+            return home_call(&self.0, scope, &request).await;
         }
         if !view.member(home).is_some_and(|member| member.online) {
             return Err("the sentinel home is offline".into());
         }
         match link
-            .call(home, &registration.scope.account, fastctx_types::access::Purpose::Look, RemoteCall::Facts)
+            .call(home, &scope.account, fastctx_types::access::Purpose::Look, RemoteCall::Facts)
             .await
             .map_err(|e| e.to_string())?
             .map_err(|e| e.message)?
@@ -64,7 +74,7 @@ impl Transport {
         }
         let call = RemoteCall::SentinelHome { request };
         match link
-            .call(home, &registration.scope.account, call.purpose(), call)
+            .call(home, &scope.account, call.purpose(), call)
             .await
             .map_err(|e| e.to_string())?
             .map_err(|e| e.message)?

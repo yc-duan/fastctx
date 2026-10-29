@@ -327,7 +327,18 @@ export type WorldFact =
   | { fact: "desk_outside" }
   | { fact: "desk_free"; by: Address }
   | { fact: "moved"; to?: string }
-  | { fact: "focus"; focus: Focus };
+  | { fact: "focus"; focus: Focus }
+  /** A watcher woke: the first line of each of its turns. */
+  | { fact: "woke"; why: WokeWhy };
+
+/** Why a watcher woke. */
+export type WokeWhy =
+  | { kind: "started" }
+  | { kind: "due" }
+  | { kind: "reflex"; source: string }
+  | { kind: "broken"; reason: string }
+  | { kind: "withdrawn" }
+  | { kind: "review" };
 
 /** Who the World records as having stopped a job the user stopped. */
 export const STOPPED_BY_USER = "the user";

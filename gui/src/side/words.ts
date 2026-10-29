@@ -164,10 +164,10 @@ export const zhSide: SideWords = {
     separator: "，",
     done: "完成说明",
     blocked: "阻碍说明",
-    sentinel: "哨兵",
-    sentinelAt: (at) => `${at} 看过`,
-    looked: "看了",
-    saw: "看到",
+    sentinel: "观测",
+    sentinelAt: (at) => `${at} 查看`,
+    looked: "查看",
+    saw: "发现",
     thinks: "认为",
     worked: (ms) => {
       const minutes = Math.floor(ms / 60_000);
@@ -243,7 +243,7 @@ export const enSide: SideWords = {
     separator: ", ",
     done: "How it was done",
     blocked: "What blocks it",
-    sentinel: "Sentinel",
+    sentinel: "Watcher",
     sentinelAt: (at) => `Looked at ${at}`,
     looked: "Looked at",
     saw: "Saw",

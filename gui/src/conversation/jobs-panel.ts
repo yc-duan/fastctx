@@ -6,7 +6,8 @@
 // told the user stopped it, so it does not take it for a failure. A row
 // whose output is open stays until it is closed, also after its command
 // ends. The panel keeps the size it opened at, as tall as an output needs,
-// so turning to an output and back moves nothing (`../app/steady`).
+// so turning to an output and back moves nothing (`../app/steady`). A
+// watcher's row leads to its own page (`../sentinel/page.ts`).
 
 import { Popover } from "./popover";
 import { Steady } from "../app/steady";
@@ -22,7 +23,7 @@ export interface Job {
   output: string;
   /** A sentinel the conversation left, in place of a command: how it stands
    *  in a word, how it watches, and what it saw last. */
-  sentinel?: { phase: string; plan: string; seen: string | null; wakes?: number[] } | undefined;
+  sentinel?: { phase: string; plan: string; seen: string | null; wakes?: number[]; generation?: number } | undefined;
 }
 
 export interface JobsWords {
@@ -57,6 +58,8 @@ export interface JobsPanelOptions {
   stop?: ((job: string, machine: string) => Promise<void>) | undefined;
   /** Opens a job's output; absent where it cannot be read from here. */
   output?: ((job: Job) => Promise<OutputLines>) | undefined;
+  /** The address of a watcher's own page; absent where it has none. */
+  watch?: ((job: Job) => string) | undefined;
   /** The World's words for why a stop failed, for the pointer resting on
    *  it. */
   detail(error: unknown): string;
@@ -163,7 +166,10 @@ export class JobsPanel {
       const stop = this.options.stop
         ? `<button class="icon-button job-stop" type="button" data-stop title="${escape(words.withdraw)}" aria-label="${escape(words.withdraw)}">${glyph("stop", 14)}</button>`
         : "";
-      element.innerHTML = `<div class="job-row"><span class="job-mark" aria-hidden="true">${glyph("sentinel", 12)}</span><span class="job-what"><span class="job-sentence">${escape(job.command)}</span><span class="job-where"></span><span class="job-plan"></span></span>${stop}</div>`;
+      const what = `<span class="job-sentence">${escape(job.command)}</span><span class="job-where"></span><span class="job-plan"></span>`;
+      const page = this.options.watch?.(job);
+      const opens = page ? `<a class="job-what" href="${escape(page)}">${what}</a>` : `<span class="job-what">${what}</span>`;
+      element.innerHTML = `<div class="job-row"><span class="job-mark" aria-hidden="true">${glyph("sentinel", 12)}</span>${opens}${stop}</div>`;
       this.watching(element, job);
       return element;
     }
@@ -195,6 +201,8 @@ export class JobsPanel {
   }
 
   private async act(event: Event): Promise<void> {
+    // A watcher's page is gone to with the panel put away.
+    if ((event.target as HTMLElement).closest("a.job-what")) return this.show(false);
     const target = (event.target as HTMLElement).closest<HTMLButtonElement>("button");
     const element = target?.closest<HTMLElement>(".job-item");
     const row = element ? this.rows.get(element.dataset.job!) : undefined;

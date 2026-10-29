@@ -1,4 +1,4 @@
-import type { HealthKind } from "./world/events";
+import type { HealthKind, WokeWhy } from "./world/events";
 import { dollars, underCent } from "./world/money";
 import { enProblems, known, zhProblems, type Reached } from "./app/problem";
 import type { FileLinkWords } from "./conversation/file-links";
@@ -37,7 +37,9 @@ export type Act =
   | "wait"
   | "stop"
   | "resume"
-  | "list";
+  | "list"
+  /** A watcher sets a reflex to wake it. */
+  | "reflex";
 
 /** One kind of thing a stretch did, said: "修改 5 个文件". The files it
  *  changed carry the lines added and removed after them; a failure is
@@ -289,6 +291,8 @@ export interface Words {
   withdrawSentinel: string;
   withdrawSentinelAsk: string;
   sentinelPhase(phase: "starting" | "watching" | "satisfied" | "unable" | "withdrawn" | "unavailable"): string;
+  /** Why a watcher woke, the first line of one of its turns. */
+  woke(why: WokeWhy): string;
   /** When a sentinel next wakes its conversation, and every time it will. */
   sentinelWakeAt(at: number, now: number): string;
   sentinelWakes(times: string[]): string;
@@ -367,6 +371,7 @@ const zhActs: Record<Act, [string, string, string]> = {
   stop: ["停止", "停止中", "停止失败"],
   resume: ["唤回", "唤回中", "唤回失败"],
   list: ["查看", "查看中", "查看失败"],
+  reflex: ["设定巡检", "正在设定巡检", "巡检设定失败"],
 };
 
 const enActs: Record<Act, [string, string, string]> = {
@@ -390,6 +395,7 @@ const enActs: Record<Act, [string, string, string]> = {
   stop: ["Stopped", "Stopping", "Stop Failed"],
   resume: ["Resumed", "Resuming", "Resume Failed"],
   list: ["Listed", "Listing", "List Failed"],
+  reflex: ["Set a check", "Setting a check", "Check Failed"],
 };
 
 const index = (tense: Tense) => (tense === "done" ? 0 : tense === "running" ? 1 : 2);
@@ -678,12 +684,21 @@ export const zh: Words = {
   },
   stillRunning: "还在跑的",
   stopJobAsk: "停下这条命令？会告诉智能体是你停的。",
-  withdrawSentinel: "撤掉",
-  withdrawSentinelAsk: "撤掉这个哨兵？",
+  withdrawSentinel: "撤销",
+  withdrawSentinelAsk: "撤销这项观测？",
   sentinelPhase: (phase) =>
-    ({ starting: "刚开始", watching: "盯着", satisfied: "已成立", unable: "盯不成", withdrawn: "已撤掉", unavailable: "暂时问不到" })[phase],
+    ({ starting: "启动中", watching: "观测中", satisfied: "已成立", unable: "无法观测", withdrawn: "已撤销", unavailable: "暂不可达" })[phase],
   sentinelWakeAt: (at, now) => wakeTime(at, now, "zh-CN", "明天"),
-  sentinelWakes: (times) => `到点叫醒对话：${times.join("、")}`,
+  woke: (why) =>
+    ({
+      started: "首次观测",
+      due: "到达设定时刻",
+      reflex: "巡检发现变化",
+      broken: "巡检中断",
+      withdrawn: "观测已撤销",
+      review: "目标已停，复核一次",
+    })[why.kind],
+  sentinelWakes: (times) => `定时唤醒对话：${times.join("、")}`,
   notStopped: "没能停下",
   cancel: "取消",
   jobOutput: (command) => `${command} 的输出`,
@@ -1026,10 +1041,19 @@ export const en: Words = {
   stillRunning: "Still under way",
   stopJobAsk: "Stop this command? The agent will be told you stopped it.",
   withdrawSentinel: "Withdraw",
-  withdrawSentinelAsk: "Withdraw this sentinel?",
+  withdrawSentinelAsk: "Withdraw this watcher?",
   sentinelPhase: (phase) =>
-    ({ starting: "starting", watching: "watching", satisfied: "found it", unable: "can't watch", withdrawn: "withdrawn", unavailable: "can't be asked now" })[phase],
+    ({ starting: "starting", watching: "watching", satisfied: "found", unable: "unable to watch", withdrawn: "withdrawn", unavailable: "unreachable" })[phase],
   sentinelWakeAt: (at, now) => wakeTime(at, now, "en-US", "tomorrow"),
+  woke: (why) =>
+    ({
+      started: "First look",
+      due: "A set time came",
+      reflex: "A check saw a change",
+      broken: "A check broke off",
+      withdrawn: "Withdrawn",
+      review: "The goal stopped; a review",
+    })[why.kind],
   sentinelWakes: (times) => `Wakes the conversation at ${times.join(", ")}`,
   notStopped: "Couldn't stop it",
   cancel: "Cancel",

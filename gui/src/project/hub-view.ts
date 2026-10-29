@@ -23,6 +23,7 @@ export interface HubViewOptions {
   someone(r: ResidentNow): string;
   link(address: Address): string;
   machineLink(machine: string): string;
+  senseLink(sense: SentinelSummary): string;
   phase(phase: SentinelPhase): string;
   now: Date;
 }
@@ -105,7 +106,8 @@ function company(session: HubSession, options: HubViewOptions): string {
 function sense(one: SentinelSummary, options: HubViewOptions): string {
   const tone = one.phase === "satisfied" ? " found" : one.phase === "unable" || one.phase === "unavailable" ? " trouble" : "";
   const seen = one.latest?.text ?? one.reason ?? "";
-  return `<span class="ph-sense${tone}" title="${escape(options.words.sense(one.definition.condition, one.definition.home, options.phase(one.phase), seen))}">${glyph("sentinel", 16)}</span>`;
+  // Within its conversation's link, it leads to its own page as one would.
+  return `<span class="ph-sense${tone}" role="link" data-sense="${escape(options.senseLink(one))}" title="${escape(options.words.sense(one.definition.condition, one.definition.home, options.phase(one.phase), seen))}">${glyph("sentinel", 16)}</span>`;
 }
 
 /** The machines the work stands on, along one ruled line. */

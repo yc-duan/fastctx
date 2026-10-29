@@ -545,6 +545,19 @@ button.job-what:hover .job-command {
   color: var(--text-3);
 }
 
+/* A watcher's row leads to its own page. */
+a.job-what {
+  align-self: stretch;
+  justify-content: center;
+  color: inherit;
+  text-decoration: none;
+}
+
+a.job-what:hover .job-sentence {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
 /* Nothing in the panel is text to select: a drag on the slider must not
    paint the labels around it. */
 .model-panel {

@@ -1086,7 +1086,7 @@ export const zhMachines: MachinesWords = {
       case "allow_acting":
         return `${a.machine} 上的 ${agentName(a.agent)} 获准访问`;
       case "allow_sentinel_home":
-        return `${a.machine} 上的哨兵获准访问`;
+        return `${a.machine} 上的观测获准访问`;
       case "acting_stopped":
         return `${a.machine} 不再能替 ${a.account} 访问`;
       case "forget":
@@ -1423,7 +1423,7 @@ export const enMachines: MachinesWords = {
       case "allow_acting":
         return `${agentName(a.agent)} on ${a.machine} was allowed access`;
       case "allow_sentinel_home":
-        return `Sentinels on ${a.machine} were allowed access`;
+        return `Watchers on ${a.machine} were allowed access`;
       case "acting_stopped":
         return `${a.machine} no longer acts for ${a.account}`;
       case "forget":

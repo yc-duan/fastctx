@@ -1186,6 +1186,7 @@ pub fn run() {
             plan::plan_watch,
             sentinel_controls::sentinel_list,
             sentinel_controls::sentinel_stop,
+            sentinel_controls::sentinel_record,
             sentinels::sentinel_settings_read,
             sentinels::sentinel_settings_write,
             sentinels::sentinel_key_set,

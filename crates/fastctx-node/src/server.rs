@@ -1547,6 +1547,14 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
                     .await
                     .map(|reply| Reply::Sentinel(Box::new(reply)));
             }
+            if hub.is_none()
+                && account.is_none()
+                && matches!(request, fastctx_types::sentinel_control::Request::Record { .. })
+            {
+                return crate::sentinels::record_any(node, &caller, request)
+                    .await
+                    .map(|reply| Reply::Sentinel(Box::new(reply)));
+            }
             let (link, account) = crate::sentinels::scope(node, &caller, hub.as_ref(), account.as_ref())?;
             crate::sentinels::control(node, &caller, &link, &account, request)
                 .await
