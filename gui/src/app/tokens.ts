@@ -304,7 +304,7 @@ export class Tokens {
     const ssh = this.face === "server" && !!remote && this.way === "ssh";
     // How a Linux host or a managed machine comes in is a choice within its
     // face: a row of words under the ways of adding a device, the chosen
-    // one circled as theirs is.
+    // one on the wash as theirs is.
     const ways =
       this.face === "server" && remote
         ? `<div class="choice-options device-ways" role="radiogroup" aria-label="${escape(words.kinds.server)}">${(["ssh", "line"] as const)

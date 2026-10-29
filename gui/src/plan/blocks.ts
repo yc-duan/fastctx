@@ -4,7 +4,6 @@
 // own type; only the rails, the branches and the marks are drawn.
 
 import { Sketch } from "../pen/sketch";
-import type { Point } from "../pen/shapes";
 import { escape } from "../conversation/prose";
 import type { Ask, NoteTone, TimelineRow, TreeRow } from "./source";
 
@@ -88,9 +87,9 @@ export function drawTree(root: HTMLElement): void {
 }
 
 /** A decision for the user, set as a question on paper: the question with
- *  a marker's light sweep beneath it, each option with a ring drawn before
- *  it, the suggested one noted in the accent. Pressing one drops ink into
- *  its ring and tells the conversation, as the user's own words. */
+ *  a marker's light sweep beneath it, its options a column of lines, the
+ *  suggested one noted in the accent. Pressing one lays the clay wash under
+ *  it and tells the conversation, as the user's own words. */
 export function askElement(ask: Ask, words: BlockWords, seed: string, answer: (question: string, option: string) => Promise<void> | void): HTMLElement {
   const root = document.createElement("div");
   root.className = "pb-ask";
@@ -100,7 +99,7 @@ export function askElement(ask: Ask, words: BlockWords, seed: string, answer: (q
   root.innerHTML = `<div class="pb-ink" aria-hidden="true"></div><p class="pb-ask-question"><span>${escape(ask.question)}</span></p><div class="pb-ask-options">${ask.options
     .map(
       (option, at) =>
-        `<button class="pb-ask-option${option.suggested ? " suggested" : ""}" type="button" data-at="${at}"><span class="pb-ask-ring"></span><span class="pb-ask-text">${escape(option.text)}${
+        `<button class="pb-ask-option${option.suggested ? " suggested" : ""}" type="button" data-at="${at}"><span class="pb-ask-text">${escape(option.text)}${
           option.suggested ? `<span class="pb-ask-tag">${escape(words.suggested)}</span>` : ""
         }${option.note ? `<span class="pb-ask-note">${escape(option.note)}</span>` : ""}</span></button>`,
     )
@@ -112,20 +111,17 @@ export function askElement(ask: Ask, words: BlockWords, seed: string, answer: (q
     root.classList.add("answered");
     button.classList.add("chosen");
     root.setAttribute("aria-label", words.answered(option.text));
-    drawAsk(root);
     // Chosen once it went in; otherwise it can be picked again.
     void Promise.resolve(answer(ask.question, option.text)).catch(() => {
       root.classList.remove("answered");
       button.classList.remove("chosen");
       root.setAttribute("aria-label", words.decide);
-      drawAsk(root);
     });
   });
   return root;
 }
 
-/** The sweep beneath the question and the ring before each option, clay
- *  with a drop of ink in it for the one chosen. */
+/** The sweep beneath the question. */
 export function drawAsk(root: HTMLElement): void {
   const box = root.getBoundingClientRect();
   const sketch = new Sketch(`ask-${root.dataset.seed ?? ""}`);
@@ -134,12 +130,6 @@ export function drawAsk(root: HTMLElement): void {
     for (const line of question.getClientRects()) {
       sketch.wash(line.left - box.left - 4, line.top - box.top + line.height * 0.52, line.width + 8, line.height * 0.46, "accent", 3);
     }
-  }
-  for (const ring of root.querySelectorAll<HTMLElement>(".pb-ask-ring")) {
-    const r = ring.getBoundingClientRect();
-    const center: Point = [r.left - box.left + r.width / 2, r.top - box.top + r.height / 2];
-    if (ring.parentElement!.classList.contains("chosen")) sketch.ring(center, 7, 1.5, "clay").blot(center, 3.4, "clay");
-    else sketch.ring(center, 6.4, 1.15, "graphite");
   }
   root.querySelector<HTMLElement>(".pb-ink")!.innerHTML = sketch.svg(root.clientWidth, root.clientHeight, "pb-ink-svg");
 }

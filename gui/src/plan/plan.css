@@ -286,41 +286,47 @@
   margin: 0 0 var(--space-2);
 }
 
+/* Its answers a column of solid rows, the chosen one on the clay wash; once
+   answered, the others step back. */
 .pb-ask-options {
   display: flex;
   flex-direction: column;
+  gap: var(--space-1);
   margin-left: calc(var(--space-2) * -1);
 }
 
 .pb-ask-option {
-  display: grid;
-  grid-template-columns: 26px minmax(0, 1fr);
-  column-gap: var(--space-2);
-  align-items: start;
-  padding: 5px var(--space-2);
+  display: block;
+  padding: 6px var(--space-2);
   border-radius: var(--radius-m);
+  background-color: var(--fill);
   color: var(--text);
   font: inherit;
   text-align: left;
-  transition: background var(--hover) var(--ease);
+  transition:
+    background-color var(--hover) var(--ease),
+    color var(--hover) var(--ease);
 }
 
 .pb-ask-option:hover:not(:disabled) {
-  background: var(--fill);
+  background-color: var(--fill-strong);
 }
 
-.pb-ask-ring {
-  height: 24px;
+.pb-ask-option.chosen,
+.pb-ask-option.chosen:hover:not(:disabled) {
+  background-color: var(--accent-wash);
 }
 
 .pb-ask-text {
   line-height: 24px;
 }
 
-.pb-ask-tag,
-.pb-ask-note,
-.pb-ask.answered .pb-ask-option:not(.chosen) {
+.pb-ask-tag {
   color: var(--text);
+}
+
+.pb-ask-note {
+  color: var(--text-2);
 }
 
 .pb-ask-tag {
@@ -336,8 +342,14 @@
   cursor: default;
 }
 
-.pb-ask.answered .pb-ask-option:hover {
-  background: none;
+.pb-ask.answered .pb-ask-option:not(.chosen),
+.pb-ask.answered .pb-ask-option:not(.chosen):hover {
+  background-color: transparent;
+  color: var(--text-3);
+}
+
+.pb-ask.answered .pb-ask-option:not(.chosen) .pb-ask-note {
+  color: var(--text-3);
 }
 
 /* A note: the reference mark, then a sentence or two. */

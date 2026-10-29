@@ -1478,8 +1478,8 @@
 /* What waits on the user (`asks.ts`): one card a shade deeper than the
    page, with no line round it, what is asked above a drawn rule and the
    answer below it. The answer meant is the one solid button; the others are
-   words. A choice among a few is a row of words, the chosen one circled in
-   ink. Once settled the card folds into one quiet line. */
+   words. A choice among a few is a row of words, the chosen one on the clay
+   wash. Once settled the card folds into one quiet line. */
 
 .ask-card {
   padding: var(--space-3) var(--space-4);
@@ -1670,8 +1670,7 @@
   color: var(--wrong);
 }
 
-/* A choice among a few: a row of words, the chosen one circled in clay ink,
-   the loop drawn as it is chosen. */
+/* A choice among a few: a row of words, the chosen one on the clay wash. */
 .ask-options {
   display: flex;
   flex-wrap: wrap;
@@ -1687,7 +1686,9 @@
   font-size: var(--size-text);
   line-height: var(--leading-ui);
   color: var(--text-2);
-  transition: color var(--hover) var(--ease);
+  transition:
+    color var(--hover) var(--ease),
+    background-color var(--quick) var(--ease-out);
 }
 
 .ask-option:hover:not(:disabled) {
@@ -1696,25 +1697,7 @@
 
 .ask-option.chosen {
   color: var(--text-strong);
-}
-
-.ask-option::after {
-  content: "";
-  position: absolute;
-  inset: -5px -1px;
-  pointer-events: none;
-  background: var(--pen-clay);
-  -webkit-mask: var(--pen-ring) 50% 50% / 100% 100% no-repeat;
-  mask: var(--pen-ring) 50% 50% / 100% 100% no-repeat;
-  opacity: var(--ink-alpha);
-  scale: var(--ink-scale);
-  --ink-scale: 0.94;
-  transition: --ink-alpha var(--quick) var(--ease-out), --ink-scale var(--settle) var(--spring);
-}
-
-.ask-option.chosen::after {
-  --ink-alpha: 1;
-  --ink-scale: 1;
+  background-color: var(--accent-wash);
 }
 
 .ask-input {
@@ -1786,8 +1769,8 @@
   transform: translateY(2px);
 }
 
-/* Under a finger every answer is a full target; a choice keeps its loop
-   round the word and takes the finger in the room about it. */
+/* Under a finger every answer is a full target; a choice takes the finger
+   in the room about its word. */
 @media (pointer: coarse) {
   .ask-button {
     min-height: 44px;
