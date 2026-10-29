@@ -156,6 +156,9 @@ async fn install(node: &Arc<Node>, manifest: &Manifest, target: &str) -> Result<
     node.updates.held.lock().expect("never poisoned").fetching = None;
     let installer = brought?;
     let origin = node.updates.held.lock().expect("never poisoned").origin.clone();
+    if !signed_in(node, manifest, origin.as_ref()).await? {
+        return Ok(());
+    }
     if open() || super::schedule::withdrawn(node, &manifest.version, origin.as_ref()) {
         return Ok(());
     }
@@ -209,6 +212,52 @@ async fn install(node: &Arc<Node>, manifest: &Manifest, target: &str) -> Result<
         manifest.version
     ));
     Ok(())
+}
+
+/// How often a machine no one is signed in to is looked at again.
+#[cfg(windows)]
+const SIGN_IN_LOOK: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// Waits until this user is signed in: the installer runs in a session of
+/// theirs (`fastctx_install::interactive`), and with no one signed in it
+/// would only fail and wait hours for its next try (review 6.8). Asked every
+/// half minute, so it installs within one of their signing in; false when
+/// the application opened meanwhile, which updates itself, or the update
+/// was withdrawn.
+async fn signed_in(
+    node: &Arc<Node>,
+    manifest: &Manifest,
+    origin: Option<&super::schedule::Origin>,
+) -> Result<bool, Problem> {
+    #[cfg(windows)]
+    {
+        let mut waiting = false;
+        loop {
+            let signed_in = tokio::task::spawn_blocking(fastctx_install::interactive::signed_in)
+                .await
+                .map_err(|e| format!("joining the sign-in check: {e}"))?
+                .map_err(|e| Problem::new(FailureReason::Installer { code: None }, format!("{e:#}")))?;
+            if signed_in || open() || super::schedule::withdrawn(node, &manifest.version, origin) {
+                if waiting {
+                    node.updates.held.lock().expect("never poisoned").activity = None;
+                    super::report(node);
+                }
+                return Ok(signed_in && !open());
+            }
+            if !waiting {
+                waiting = true;
+                node.updates.held.lock().expect("never poisoned").activity =
+                    Some(fastctx_types::update::Stage::WaitingSignIn { version: manifest.version.clone() });
+                super::report(node);
+            }
+            tokio::time::sleep(SIGN_IN_LOOK).await;
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = (node, manifest, origin);
+        Ok(true)
+    }
 }
 
 /// Runs the installer silently, for this user alone, to its end.

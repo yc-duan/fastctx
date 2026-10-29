@@ -565,6 +565,77 @@
         },
         "kernel_target": "",
         "stage": {
+          "kind": "waiting_sign_in",
+          "version": "1.0.2"
+        },
+        "progress": true,
+        "preferences": true,
+        "repair_supported": false,
+        "repair_routing": false
+      },
+      {
+        "settings": {
+          "auto": false,
+          "relays": true
+        },
+        "channel": "stable",
+        "auto": false,
+        "looked": {
+          "at": "2026-10-20T12:00:00Z",
+          "checking": true,
+          "failure": {
+            "kind": "unreachable",
+            "reason": "dns"
+          },
+          "github_at": "2026-10-20T12:00:00Z",
+          "next": "2026-10-20T12:00:00Z",
+          "failures": 2
+        },
+        "network": {
+          "policy": {
+            "channel": "stable",
+            "managed_auto": true
+          },
+          "due": {
+            "server": {
+              "version": "1.0.2",
+              "by": "owner",
+              "at": "2026-10-20T12:00:00Z",
+              "manifest": {
+                "version": "1.0.2",
+                "notes": "An update.",
+                "pub_date": "2026-10-20T12:00:00Z",
+                "platforms": {}
+              },
+              "problem": {
+                "reason": {
+                  "kind": "signature"
+                },
+                "why": "the package does not match its signature"
+              }
+            }
+          },
+          "updates_view": true,
+          "repair_supported": false
+        },
+        "available": {
+          "version": "1.0.2",
+          "notes": "An update.",
+          "pub_date": "2026-10-20T12:00:00Z",
+          "platforms": {}
+        },
+        "automatic": "1.0.2",
+        "above_hub": true,
+        "failed": {
+          "version": "1.0.2",
+          "target": "linux-x86_64-appimage",
+          "why": "disk full",
+          "reason": {
+            "kind": "disk"
+          }
+        },
+        "kernel_target": "",
+        "stage": {
           "kind": "installing",
           "version": "1.0.2"
         },

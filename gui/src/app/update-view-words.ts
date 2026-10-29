@@ -15,6 +15,9 @@ export interface UpdateViewWords {
   ready(version: string): string;
   waitingIdle: string;
   waitingApp: string;
+  /** No one is signed in to that computer: the application installs once
+   *  someone is. */
+  waitingSignIn: string;
   installing(version: string): string;
   renewing(version: string): string;
   administrator: string;
@@ -76,6 +79,7 @@ export const zhUpdateView: UpdateViewWords = {
   ready: (version) => `${version} 已下好，等装上`,
   waitingIdle: "等手上的活告一段落",
   waitingApp: "下次在那台打开 Fastctx 时更新",
+  waitingSignIn: "等登录后更新",
   installing: (version) => `正在装上 ${version}`,
   renewing: (version) => `正在换上 ${version}`,
   administrator: "正在更新开机服务",
@@ -141,6 +145,7 @@ export const enUpdateView: UpdateViewWords = {
   ready: (version) => `${version} downloaded, waiting to install`,
   waitingIdle: "Waiting for the work under way to finish",
   waitingApp: "Updates when Fastctx is next opened there",
+  waitingSignIn: "Updates once someone signs in there",
   installing: (version) => `Installing ${version}`,
   renewing: (version) => `Switching to ${version}`,
   administrator: "Updating its startup service",

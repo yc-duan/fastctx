@@ -11,7 +11,26 @@ use windows_sys::Win32::System::RemoteDesktop::{
     WTSQuerySessionInformationW, WTSUserName,
 };
 
+/// This user's active interactive session, to run a program in.
 pub fn current() -> anyhow::Result<(String, u32)> {
+    match find()? {
+        Some(found) => Ok(found),
+        None => bail!(
+            "user {} has no active interactive Windows session; application repair will retry after sign-in",
+            fastctx_platform::current_user_sid().context("reading interactive repair user SID")?
+        ),
+    }
+}
+
+/// Whether this user is signed in with an active interactive session now:
+/// installing or repairing the application for them waits until they are.
+pub fn signed_in() -> anyhow::Result<bool> {
+    Ok(find()?.is_some())
+}
+
+/// This user's SID and active interactive session; none when they have
+/// none, and an error only when the sessions could not be told.
+fn find() -> anyhow::Result<Option<(String, u32)>> {
     let sid = fastctx_platform::current_user_sid().context("reading interactive repair user SID")?;
     let mut current = 0;
     if unsafe { ProcessIdToSessionId(std::process::id(), &mut current) } == 0 {
@@ -29,18 +48,18 @@ pub fn current() -> anyhow::Result<(String, u32)> {
         WTSFreeMemory(sessions.cast());
     }
     if candidates.contains(&current) {
-        return Ok((sid, current));
+        return Ok(Some((sid, current)));
     }
     let mut errors = Vec::new();
     for session in candidates {
         match user(session) {
-            Ok(Some(user)) if user == sid => return Ok((sid, session)),
+            Ok(Some(user)) if user == sid => return Ok(Some((sid, session))),
             Ok(_) => (),
             Err(error) => errors.push(format!("session {session}: {error:#}")),
         }
     }
     if errors.is_empty() {
-        bail!("user {sid} has no active interactive Windows session; application repair will retry after sign-in");
+        return Ok(None);
     }
     bail!("finding an interactive Windows session for {sid}: {}", errors.join("; "))
 }

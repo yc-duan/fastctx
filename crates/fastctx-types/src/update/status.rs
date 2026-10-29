@@ -85,6 +85,11 @@ pub enum Stage {
     WaitingApp {
         version: String,
     },
+    /// The application installs for its user, in a session of theirs: no
+    /// one is signed in, and it installs once they are.
+    WaitingSignIn {
+        version: String,
+    },
     Repairing {
         version: String,
         layer: String,
@@ -116,6 +121,7 @@ impl Stage {
             | Self::Ready { version }
             | Self::WaitingIdle { version }
             | Self::WaitingApp { version }
+            | Self::WaitingSignIn { version }
             | Self::Repairing { version, .. }
             | Self::Installing { version }
             | Self::Renewing { version, .. }

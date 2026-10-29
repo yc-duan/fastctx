@@ -8,6 +8,12 @@ use anyhow::{Context as _, ensure};
 use std::path::Path;
 use std::time::Duration;
 
+/// Whether this user is signed in with an active interactive session now:
+/// installing or repairing the application for them waits until they are.
+pub fn signed_in() -> anyhow::Result<bool> {
+    session::signed_in()
+}
+
 /// Copies and verifies the runnable installer immediately before scheduling it.
 /// Repair preserves /UPDATE and adds only the runtime-repair hook flag.
 pub fn install(root: &Path, archive: &Path, signature: &str, version: &str, repair: bool) -> anyhow::Result<()> {

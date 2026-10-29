@@ -33,6 +33,7 @@ pub fn fixtures() -> Fixtures {
         Stage::Ready { version: version.clone() },
         Stage::WaitingIdle { version: version.clone() },
         Stage::WaitingApp { version: version.clone() },
+        Stage::WaitingSignIn { version: version.clone() },
         Stage::Installing { version: version.clone() },
         Stage::Administrator { version: version.clone() },
         Stage::Renewing { version: version.clone(), phase: fastctx_types::renewal::Phase::ReturningToService },

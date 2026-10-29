@@ -183,7 +183,7 @@ export interface UpdateProblem { reason: FailureReason; why: string }
 export type UpdateStage =
   | { kind: "idle" | "unknown" }
   | { kind: "fetching"; version: string; via: "github" | "network" | null; received: number; total: number | null }
-  | { kind: "ready" | "waiting_idle" | "waiting_app" | "installing" | "administrator"; version: string }
+  | { kind: "ready" | "waiting_idle" | "waiting_app" | "waiting_sign_in" | "installing" | "administrator"; version: string }
   | { kind: "renewing"; version: string; phase: import("./renewal").RenewalPhase }
   | { kind: "repairing"; version: string; layer: string }
   | { kind: "failed"; version: string; problem: UpdateProblem };

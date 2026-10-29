@@ -60,6 +60,9 @@ export function stageMark(stage: UpdateStage, line: string | null, words: Update
       return with_("going", "clock", stage.version, words.waitingIdle);
     case "waiting_app":
       return with_("going", "sleep", stage.version, words.waitingApp);
+    // The application installs for its user, who is not signed in there.
+    case "waiting_sign_in":
+      return with_("going", "sleep", stage.version, words.waitingSignIn);
     case "ready":
       return with_("going", "clock", stage.version, words.ready(stage.version));
     case "installing":
