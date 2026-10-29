@@ -87,7 +87,14 @@ pub struct Claude {
     checked: oldest::Checked,
     /// Sessions whose turn is being settled from Claude Code's own facts.
     settling: Mutex<HashSet<String>>,
+    /// The session directories being looked at, each with whether it
+    /// changed again meanwhile; and room for how many are looked at at once.
+    looking: Mutex<HashMap<PathBuf, bool>>,
+    looks: Arc<tokio::sync::Semaphore>,
 }
+
+/// How many sessions' reports are read and applied at once.
+const LOOKS: usize = 8;
 
 struct State {
     sessions: HashMap<String, Session>,
@@ -128,6 +135,8 @@ impl Claude {
             handed: Default::default(),
             checked: Default::default(),
             settling: Default::default(),
+            looking: Default::default(),
+            looks: Arc::new(tokio::sync::Semaphore::new(LOOKS)),
         })
     }
 
@@ -237,16 +246,54 @@ pub fn start(node: &Arc<Node>) -> std::io::Result<()> {
             while let Ok(more) = changes.try_recv() {
                 directories.insert(more);
             }
+            // Each session is looked at beside the others: one waiting on
+            // its speech, as while its host is being woken, holds no other's
+            // reports back.
             for directory in directories {
                 if directory == sessions {
-                    look_all(&node, &sessions).await;
+                    for directory in session_directories(&node, &sessions) {
+                        look_soon(&node, directory);
+                    }
                 } else {
-                    look_alone(&node, directory).await;
+                    look_soon(&node, directory);
                 }
             }
         }
     });
     Ok(())
+}
+
+/// Looks at one session's directory soon, beside the others but never twice
+/// at once: a change while it is looked at has it looked at again after.
+fn look_soon(node: &Arc<Node>, directory: PathBuf) {
+    {
+        let mut looking = node.claude.looking.lock().expect("never poisoned");
+        if let Some(again) = looking.get_mut(&directory) {
+            *again = true;
+            return;
+        }
+        looking.insert(directory.clone(), false);
+    }
+    let node = node.clone();
+    tokio::spawn(async move {
+        loop {
+            {
+                let _room = node.claude.looks.clone().acquire_owned().await;
+                look_alone(&node, directory.clone()).await;
+            }
+            let mut looking = node.claude.looking.lock().expect("never poisoned");
+            match looking.get_mut(&directory) {
+                Some(again) if *again => *again = false,
+                _ => {
+                    looking.remove(&directory);
+                    if looking.is_empty() {
+                        *looking = HashMap::new();
+                    }
+                    return;
+                }
+            }
+        }
+    });
 }
 
 /// Looks at one session's directory in a task of its own: whatever goes
@@ -333,25 +380,34 @@ fn policy(node: &Node, resident: &ResidentId, directory: &Path) -> std::io::Resu
 }
 
 async fn look_all(node: &Arc<Node>, sessions: &Path) {
+    for directory in session_directories(node, sessions) {
+        look_alone(node, directory).await;
+    }
+}
+
+/// The sessions' directories under `sessions`.
+fn session_directories(node: &Node, sessions: &Path) -> Vec<PathBuf> {
     let entries = match std::fs::read_dir(sessions) {
         Ok(entries) => entries,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Vec::new(),
         Err(error) => {
             node.log.line(format_args!("looking at the Claude sessions: {error}"));
-            return;
+            return Vec::new();
         }
     };
+    let mut directories = Vec::new();
     for entry in entries {
         let directory = entry.and_then(|entry| {
             let path = entry.path();
             std::fs::metadata(&path).map(|metadata| metadata.is_dir().then_some(path))
         });
         match directory {
-            Ok(Some(directory)) => look_alone(node, directory).await,
+            Ok(Some(directory)) => directories.push(directory),
             Ok(None) => {}
             Err(error) => node.log.line(format_args!("listing a Claude session; will retry: {error}")),
         }
     }
+    directories
 }
 
 /// Takes what is new in one session's directory.

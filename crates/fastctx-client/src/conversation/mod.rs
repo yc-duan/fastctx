@@ -207,7 +207,13 @@ impl Conversation {
             return Self::watching(source).await;
         };
         let address = Address { machine: machine.name, resident };
-        let (mut keeping, latest) = kept::Keeping::open(cache, address.clone(), whole).await?;
+        let (mut keeping, latest) = match kept::Keeping::open(cache, address.clone(), whole).await {
+            Ok(opened) => opened,
+            // This device's copy cannot be opened for a passing reason: the
+            // conversation is read whole from its machine instead.
+            Err(Error::Kept(_)) => return Self::watching(source).await,
+            Err(error) => return Err(error),
+        };
         let watching = source.held(keeping.held());
         if let Some(latest) = latest {
             let mut conversation = Self::reading_after(watching, source);
@@ -225,8 +231,11 @@ impl Conversation {
                 Some(Ok(Some(watched))) => {
                     conversation.again.came();
                     let watched = conversation.pending_from(watched);
-                    if let Some(history) = keeping.take(watched).await? {
-                        break history;
+                    match keeping.take(watched).await {
+                        Ok(Some(history)) => break history,
+                        Ok(None) => {}
+                        Err(Error::Kept(_)) => return Self::watching(conversation.source.clone()).await,
+                        Err(error) => return Err(error),
                     }
                 }
                 Some(Ok(None)) | None => break Vec::new(),
@@ -308,6 +317,14 @@ impl Conversation {
                         let held = keeping.held();
                         self.keeping = Some(keeping);
                         self.pieces = Self::read(self.source.held(held));
+                    }
+                    // This device's copy could not be read or written for a
+                    // passing reason, as when no descriptor or no disk was
+                    // left: the conversation is read whole from its machine,
+                    // and kept no more while this reading lasts, rather than
+                    // its watch ending with the page left as it stood.
+                    Err(Error::Kept(_)) => {
+                        self.pieces = Self::read(self.source.whole());
                     }
                     Err(error) => {
                         self.keeping = Some(keeping);
