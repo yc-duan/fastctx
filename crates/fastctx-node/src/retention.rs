@@ -53,13 +53,12 @@ pub(crate) fn set_days(world: &fastctx_types::layout::WorldDir, days: u32) -> io
 }
 
 pub(crate) fn start(node: &Arc<Node>) -> io::Result<()> {
-    use notify::Watcher as _;
     let settings = node.world.retention();
     create(&settings, &Settings::default())?;
     let weak = Arc::downgrade(node);
     let settings_changed = Arc::new(tokio::sync::Notify::new());
     let changed = settings_changed.clone();
-    let mut watcher = notify::recommended_watcher(move |event: notify::Result<notify::Event>| {
+    let mut watcher = fastctx_watch::Watcher::new(move |event: notify::Result<notify::Event>| {
         if let Some(node) = weak.upgrade() {
             match event {
                 // Only a change of the settings counts: the maintenance pass
@@ -81,8 +80,7 @@ pub(crate) fn start(node: &Arc<Node>) -> io::Result<()> {
                 }
             }
         }
-    })
-    .map_err(io::Error::other)?;
+    });
     watcher.watch(node.world.path(), notify::RecursiveMode::NonRecursive).map_err(io::Error::other)?;
     let node = node.clone();
     tokio::spawn(async move {
@@ -96,13 +94,16 @@ pub(crate) fn start(node: &Arc<Node>) -> io::Result<()> {
                 () = settings_changed.notified() => true,
                 () = node.disk_changed.notified() => false,
             };
-            if let Err(error) = crate::job_receipts::forward(&node).await {
-                node.log.line(format_args!("forwarding job delivery receipts: {error}"));
-            }
             let collecting = node.clone();
             match tokio::task::spawn_blocking(move || {
                 let immediate = collect_immediate(&collecting);
-                let retained = if maintenance { collect(&collecting, Timestamp::now()) } else { Ok(()) };
+                let retained = if maintenance {
+                    let obligations = crate::obligations::collect(&collecting);
+                    let retained = collect(&collecting, Timestamp::now());
+                    obligations.and(retained)
+                } else {
+                    Ok(())
+                };
                 immediate.and(retained)
             })
             .await
@@ -126,6 +127,7 @@ pub(crate) fn start(node: &Arc<Node>) -> io::Result<()> {
                         crate::claude::garbage::untrust_departed(&retiring),
                     ),
                     ("collecting usage records", crate::usage::collect(&retiring)),
+                    ("folding the activity book", crate::activity_book::fold(&retiring)),
                     ("sweeping earlier conversation directories", crate::gather::sweep(&retiring.world)),
                 ]
                 .into_iter()
@@ -237,6 +239,17 @@ fn collect_records(
                     continue;
                 }
                 let job = record::read(&path)?;
+                if job.is_sentinel()
+                    && let Some(end) = &job.end
+                    && expired(now, end.at, lifetime)
+                    && !program::in_use(&job)?
+                    && unfollowed(&path)
+                {
+                    if !forget(&path)? {
+                        pending = true;
+                    }
+                    continue;
+                }
                 let marker = path.with_extension("delivered");
                 let delivery = match fs::read(&marker) {
                     Ok(bytes) => serde_json::from_slice::<JobDelivery>(&bytes).map_err(io::Error::other)?,

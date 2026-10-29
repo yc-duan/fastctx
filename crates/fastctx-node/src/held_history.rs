@@ -41,9 +41,11 @@ pub(crate) async fn opening(node: &Arc<Node>, resident: &ResidentId, held: &Held
     drop(subscribed);
     let read = crate::talk::history_here(node, resident).await?;
     // Never repeated: a viewer that holds it is sent the history next time.
+    // So is a reading some record was missing from, which is read again
+    // once it can be.
     let version = match version {
-        Some(version) => version,
-        None => format!("unstamped {:x}", u128::from_le_bytes(random()?)),
+        Some(version) if !read.unread => version,
+        _ => format!("unstamped {:x}", u128::from_le_bytes(random()?)),
     };
     let (history, held_now, slimmed_for) = (read.history, held.clone(), owner.clone());
     let mut history = tokio::task::spawn_blocking(move || {
@@ -129,7 +131,7 @@ async fn stamp(node: &Arc<Node>, resident: &ResidentId) -> Result<Option<String>
         // A thread the user opened in the Codex command line runs turns the
         // World does not see, so its record can grow under a stamp that
         // would not change.
-        ("codex", Some(_)) if !about.world_started => return Ok(None),
+        ("codex", Some(_)) if !about.world_managed() => return Ok(None),
         ("codex", Some(thread)) => {
             let codex = node.codex.of(node, &about)?;
             take(codex.stamp(thread).await.map_err(Failure::new)?.as_bytes());

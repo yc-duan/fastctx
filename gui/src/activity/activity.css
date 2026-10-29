@@ -1,0 +1,560 @@
+/* The activity page (`page.ts`): its head and the row of views stay where
+   they are; each view fills what is left, and only a list that grows
+   scrolls, in its own place. */
+
+.ay-page {
+  position: relative;
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr);
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.ay-views {
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 4px var(--space-6);
+  padding: var(--space-1) calc(var(--gutter) + 10px) var(--space-4);
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.ay-views::-webkit-scrollbar {
+  display: none;
+}
+
+/* A word of the row never breaks: the row scrolls instead, on a phone. */
+.ay-views .choice,
+.ay-spans .choice {
+  flex: none;
+  white-space: nowrap;
+}
+
+.ay-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  min-height: 0;
+  padding: 0 var(--gutter) var(--space-4);
+  overflow: hidden;
+}
+
+.ay-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.ay-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 var(--space-2);
+  color: var(--text-2);
+  font-family: var(--font-emphasis);
+  font-size: var(--size-text);
+  font-weight: normal;
+}
+
+.ay-count {
+  color: var(--text-3);
+  font-family: var(--font-reading);
+  font-variant-numeric: tabular-nums;
+}
+
+.ay-spans {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px var(--space-6);
+  padding-inline: 10px;
+}
+
+.ay-quiet,
+.ay-idle {
+  display: grid;
+  place-items: center;
+  flex: 1 1 auto;
+  min-height: 120px;
+  color: var(--text-3);
+}
+
+.ay-idle {
+  flex: 0 0 auto;
+  min-height: 140px;
+  border-radius: var(--radius-l);
+  background: var(--fill);
+}
+
+.ay-quiet p,
+.ay-idle p {
+  margin: 0;
+}
+
+.ay-away {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  color: var(--text-3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Now: a card for each machine with what runs on it, and what ended
+   lately under them. */
+.ay-now {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: var(--space-5);
+  min-height: 0;
+}
+
+.ay-desks {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 520px));
+  gap: var(--space-3);
+  max-height: 55%;
+  overflow-y: auto;
+}
+
+.ay-desk {
+  padding: var(--space-3) var(--space-3) var(--space-2);
+  border-radius: var(--radius-l);
+  background: var(--fill);
+}
+
+.ay-desk-name {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 var(--space-2);
+  padding-inline: 4px;
+  color: var(--text-strong);
+  font-family: var(--font-emphasis);
+  font-size: var(--size-text);
+  font-weight: normal;
+}
+
+.ay-desk-deeds,
+.ay-rows,
+.ay-folders,
+.ay-folder ul,
+.ay-sessions,
+.ay-card-files {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.ay-lately {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.ay-deed {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 34px;
+  padding: 4px 6px;
+  border-radius: var(--radius-s);
+  color: var(--text);
+  font-size: var(--size-text);
+  text-align: left;
+  transition: background-color var(--hover) var(--ease);
+}
+
+.ay-deed:hover {
+  background: var(--fill-strong);
+}
+
+.ay-row {
+  grid-template-columns: 16px minmax(0, 1fr) auto auto;
+}
+
+.ay-deed-line {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.ay-times {
+  margin-left: 8px;
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+
+.ay-where,
+.ay-when {
+  color: var(--text-3);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.ay-elapsed {
+  display: block;
+}
+
+/* How a deed went: a dot while it runs, a tick, a cross in clay, a bar. */
+.ay-mark {
+  display: inline-grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  color: var(--text-3);
+}
+
+.ay-mark-running::before {
+  content: "";
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--pen-graphite);
+  opacity: 0.75;
+}
+
+.ay-mark-failed {
+  color: var(--pen-clay);
+}
+
+.ay-mark-done {
+  color: var(--text-2);
+}
+
+/* The day's lanes, the year, the week's hours: a drawing with its own
+   room, scrolled when there are more machines than fit. */
+.ay-figure {
+  min-height: 0;
+}
+
+.ay-day {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.ay-day-name {
+  min-width: 9em;
+  color: var(--text-strong);
+  font-family: var(--font-emphasis);
+  text-align: center;
+}
+
+.ay-flip .glyph {
+  transform: scaleX(-1);
+}
+
+.ay-lane-name {
+  fill: var(--text-2);
+  font-family: var(--font-reading);
+  font-size: 13px;
+}
+
+.ay-lane-name.away {
+  fill: var(--text-3);
+}
+
+.ay-now-line {
+  fill: var(--text-3);
+}
+
+.ay-timeline .ledger-hit,
+.ay-year .ledger-hit {
+  cursor: pointer;
+}
+
+/* The spread: what went where, a felt bar of parts each. */
+.ay-spread {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+  max-width: 780px;
+  padding-top: var(--space-2);
+}
+
+.ay-spread-row .ay-label {
+  margin-bottom: var(--space-1);
+}
+
+.ay-keys {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px var(--space-4);
+  margin-top: var(--space-1);
+  color: var(--text-2);
+}
+
+.ay-key {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.ay-key i {
+  width: 9px;
+  height: 9px;
+  border-radius: 3px;
+}
+
+/* Files: machine, folder, file; what happened to each as a sign, its lines
+   as two short strokes. One seen changed in its repository is a shade
+   quieter. */
+.ay-files {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+  max-width: 760px;
+}
+
+.ay-folder + .ay-folder {
+  margin-top: var(--space-2);
+}
+
+.ay-folder-name {
+  margin: 0 0 2px;
+  padding-inline: 6px;
+  overflow: hidden;
+  color: var(--text-3);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.ay-file {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 30px;
+  padding: 2px 6px;
+  border-radius: var(--radius-s);
+  color: var(--text);
+  text-align: left;
+  transition: background-color var(--hover) var(--ease);
+}
+
+.ay-file:hover {
+  background: var(--fill-strong);
+}
+
+.ay-file.seen .ay-file-name {
+  color: var(--text-2);
+}
+
+.ay-file-name {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.ay-how {
+  display: inline-grid;
+  place-items: center;
+  width: 16px;
+  color: var(--text-2);
+  font-family: var(--font-reading);
+}
+
+.ay-how-added::before {
+  content: "+";
+  color: var(--add-fg);
+}
+
+.ay-how-changed::before {
+  content: "~";
+}
+
+.ay-how-removed::before {
+  content: "−";
+  color: var(--del-fg);
+}
+
+.ay-how-copied::before {
+  content: "→";
+}
+
+.ay-lines {
+  display: block;
+}
+
+/* What wants a look, kind by kind. */
+.ay-heeds {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+}
+
+/* Sessions: who, where it lives, its time within the span. */
+.ay-sessions {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.ay-session {
+  display: grid;
+  grid-template-columns: 18px minmax(6em, 12em) minmax(4em, 8em) minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--space-3);
+  min-height: 36px;
+  padding: 2px 6px;
+  border-radius: var(--radius-s);
+}
+
+.ay-session:hover {
+  background: var(--fill);
+}
+
+.ay-agent {
+  display: inline-grid;
+  place-items: center;
+  color: var(--text-2);
+}
+
+.ay-session.held .ay-agent {
+  color: var(--text-strong);
+}
+
+.ay-session-name {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.ay-span {
+  display: block;
+  min-width: 0;
+}
+
+.ay-runs {
+  display: block;
+  width: 100%;
+  height: 16px;
+}
+
+.ay-bring {
+  white-space: nowrap;
+}
+
+/* A deed pressed: a small card over the page's lower right, its command
+   whole. */
+.ay-card {
+  position: absolute;
+  right: var(--gutter);
+  bottom: var(--space-4);
+  z-index: 3;
+  display: flex;
+  flex-direction: column;
+  width: min(480px, calc(100% - 2 * var(--gutter)));
+  max-height: 62%;
+  padding: var(--space-3) var(--space-4);
+  overflow-y: auto;
+  border-radius: var(--radius-l);
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-float);
+}
+
+.ay-card[hidden] {
+  display: none;
+}
+
+.ay-card-head {
+  display: grid;
+  grid-template-columns: 16px auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+}
+
+.ay-card-state {
+  color: var(--text-strong);
+  font-family: var(--font-emphasis);
+}
+
+.ay-card-head .ay-when {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ay-script {
+  max-height: 180px;
+  margin: var(--space-2) 0;
+  padding: var(--space-2) var(--space-3);
+  overflow: auto;
+  border-radius: var(--radius-m);
+  background: var(--surface-code);
+  color: var(--text);
+  font-family: var(--font-code);
+  font-size: var(--size-code);
+  line-height: var(--leading-code);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.ay-card-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  color: var(--text-2);
+}
+
+.ay-card-size {
+  margin-left: auto;
+  color: var(--text-3);
+  white-space: nowrap;
+}
+
+.ay-card-files {
+  margin-top: var(--space-2);
+}
+
+.ay-card-files li {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr);
+  gap: 8px;
+  color: var(--text-2);
+}
+
+@media (max-width: 640px) {
+  .ay-views {
+    gap: 4px var(--space-4);
+    padding-inline: calc(var(--gutter) + 10px);
+  }
+
+  .ay-desks {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .ay-row {
+    grid-template-columns: 16px minmax(0, 1fr) auto;
+  }
+
+  .ay-row .ay-where {
+    display: none;
+  }
+
+  .ay-session {
+    grid-template-columns: 18px minmax(0, 1fr) minmax(0, 0.8fr) auto;
+  }
+
+  .ay-session .ay-where {
+    display: none;
+  }
+
+  .ay-card {
+    right: 0;
+    bottom: 0;
+    width: 100%;
+    max-height: 70%;
+    border-radius: var(--radius-l) var(--radius-l) 0 0;
+    padding-bottom: calc(var(--space-4) + var(--safe-bottom));
+  }
+}

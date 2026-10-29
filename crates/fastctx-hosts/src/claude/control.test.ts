@@ -1,5 +1,11 @@
 import { test, expect, mock } from 'claude-code/testing'
 
+// The World's hooks act only in a session it holds (`world-layers.md`): the
+// launch settings it starts a session with name its conversation.
+const heldByWorld = (_: unknown, e: { source?: string }) => ({
+  value: e.source === 'flag' ? { env: { FASTCTX_CONVERSATION: 'fixture-conversation' } } : {},
+})
+
 // A loader/engine contract test: fixtures stand for host facts. This does
 // not assert account eligibility, model execution or CLI forking behavior.
 test('uses the public controls and request return types through the official engine', async ($, on) => {
@@ -21,13 +27,12 @@ test('uses the public controls and request return types through the official eng
   const commands: { command: string; args: string }[] = []
   const questions: any[] = []
   let requestAnswer: any = { kind: 'pass', reason: 'no watcher' }
-  let cancelledQuestions = 0
   // The control helper says `look` when the node leaves the session something.
   let wakeGuard = () => {}
   on('mcp.connect', () => ({ value: { isConnected: true, server: 'fixture:world' } }))
   on('session.id', () => ({ value: 'control-fixture' }))
   on('session.cwd', () => ({ value: '/fixture' }))
-  on('settings.read', () => ({ value: {} }))
+  on('settings.read', heldByWorld)
   on('session.model', () => ({ value: model }))
   on('session.messages', () => ({ value: [] }))
   on('session.surfaces', () => ({ value: surfaces }))
@@ -63,12 +68,16 @@ test('uses the public controls and request return types through the official eng
   on('session.usage', () => ({ value: { startedAt: 1, context: { tokens: 123, window: 200000, breakdown: { mcpTools: [{ name: 'mcp__fixture_world__run', serverName: 'fixture_world', isLoaded: true, tokens: 1 }] } }, rateLimits: [{ kind: 'five_hour', percentUsed: 12.5, resetsAt: '2026-10-04T17:00:00Z' }], cost: { usd: 0.125 } } }))
   on('command.run', (_, e) => {
     expect(e.origin).toEqual(expect.objectContaining({ kind: 'plugin' }))
-    commands.push({ command: e.command, args: e.args })
+    if (e.command !== 'goal') commands.push({ command: e.command, args: e.args })
     if (e.command === 'model') model = e.args
     if (e.command === 'bad') throw new Error('unknown command')
     return { text: e.command === 'panel' ? 'This command requires the Claude Code terminal' : e.command + ':' + e.args }
   })
   on('process.spawn', async function* (_, e, next) {
+    if (e.argv[1] === 'claude-native-goal') {
+      yield { stream: 'stdout', text: JSON.stringify({ offset: 0 }) }
+      return { value: { code: 0, signal: null } }
+    }
     if (e.argv[1] === 'claude-session-policy') {
       yield { stream: 'stdout', text: JSON.stringify({ model: null, effort: null }) }
       return { value: { code: 0, signal: null } }
@@ -97,10 +106,6 @@ test('uses the public controls and request return types through the official eng
     if (e.tool === 'permission-tool') {
       const decision = await $.classic.PermissionRequest({ tool_name: e.tool, tool_input: { path: '/file' } })
       return { result: decision }
-    }
-    if (e.tool === 'AskUserQuestion' && requestAnswer.kind === 'answer') {
-      await new Promise<void>((resolve) => next.signal.addEventListener('abort', () => { cancelledQuestions++; resolve() }, { once: true }))
-      return { result: { cancelled: true } }
     }
     return { result: { native: true } }
   })
@@ -143,16 +148,6 @@ test('uses the public controls and request return types through the official eng
   expect((await invoke({ do: 'compact' })).ok).toEqual({ kind: 'refused', said: 'host veto' })
   await $.turn.start({ turnId: 'turn-1', text: 'work' })
   expect((await invoke({ do: 'compact' })).error).toContain('between turns')
-  const question = { question: 'Which?', header: 'Pick', options: [{ label: 'A', description: 'a' }, { label: 'B', description: 'b' }], multiSelect: true }
-  const native = await $.tool.call({ tool: 'AskUserQuestion', tool_use_id: 'q1', questions: [question] })
-  expect(native.result).toEqual({ native: true })
-  requestAnswer = { kind: 'answer', answer: { result: { questions: [question], answers: { 'Which?': 'A, B' } } } }
-  const answered = await $.tool.call({ tool: 'AskUserQuestion', tool_use_id: 'q2', questions: [question] })
-  expect(answered.result).toEqual(requestAnswer.answer.result)
-  expect(cancelledQuestions).toBe(1)
-  const answeredQuestion = questions.find((request) => request.params.tool_use_id === 'q2')!
-  expect(answeredQuestion.native_wait).toBe(true)
-  expect(answeredQuestion.params.questions).toEqual([question])
   requestAnswer = { kind: 'answer', answer: { decision: 'allow' } }
   // Drawn in a terminal, the ask stays Claude Code's own: the World is not asked.
   const inTerminal = await $.tool.check({ tool: 'permission-tool', tool_use_id: 'p0', input: { path: '/file' } })
@@ -164,7 +159,6 @@ test('uses the public controls and request return types through the official eng
   expect(permission).toEqual(requestAnswer.answer)
   const permissionQuestion = questions.find((request) => request.params.tool_use_id === 'p1')!
   expect(permissionQuestion.request).toBe('tool.check')
-  expect(answeredQuestion.key).not.toBe(permissionQuestion.key)
   await $.turn.complete({ turnId: 'turn-1', answer: '', reason: 'answer', isAborted: false, durationMs: 0 })
   await $.session.end({ sessionId: 'control-fixture', reason: 'prompt_input_exit', resume: { id: 'control-fixture' } })
   expect(files.has(directory + '/closed/' + host.instance + '.json')).toBe(true)

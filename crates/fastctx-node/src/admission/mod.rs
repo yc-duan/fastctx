@@ -41,7 +41,12 @@ pub struct Asker {
 /// The resident of this machine `call` is about, if it is about one.
 fn resident_of(call: &RemoteCall) -> Option<&ResidentId> {
     match call {
-        RemoteCall::EnterProject { resident: who, .. }
+        RemoteCall::GoalCommand { actor, request, .. } => Some(request.resident(actor)),
+        RemoteCall::Plan { resident: who, .. }
+        | RemoteCall::Goal { resident: who, .. }
+        | RemoteCall::ConversationDebt { resident: who, .. }
+        | RemoteCall::Collaboration { resident: who, .. }
+        | RemoteCall::EnterProject { resident: who, .. }
         | RemoteCall::Talk { to: who, .. }
         | RemoteCall::Composer { resident: who, .. }
         | RemoteCall::Watch { resident: who, .. }
@@ -65,7 +70,7 @@ fn resident_of(call: &RemoteCall) -> Option<&ResidentId> {
 /// The project `call` is about, if it names one.
 pub(crate) fn town_of(call: &RemoteCall) -> Option<&TownName> {
     match call {
-        RemoteCall::EnterProject { town, .. } => Some(town),
+        RemoteCall::EnterProject { town, .. } | RemoteCall::MemoryFolders { town } => Some(town),
         RemoteCall::Run { town, .. }
         | RemoteCall::Write { town, .. }
         | RemoteCall::Ask { town, .. }
@@ -104,6 +109,17 @@ pub fn admit(node: &Arc<Node>, link: &Arc<Link>, caller: &Caller, call: &RemoteC
         return Err(refuse("the attachment names a different holding machine".into()));
     }
     let view = crate::authorization::current_view(link)?;
+    if let RemoteCall::ConversationDebt { requester, .. } | RemoteCall::WaitingJobs { owner: requester } = call
+        && !view.same(&requester.machine, &caller.machine)
+    {
+        return Err(refuse("only a requester's own machine may query its outstanding deliveries".into()));
+    }
+    if let RemoteCall::GoalCommand { actor, .. } = call
+        && !view.same(&actor.machine, &caller.machine)
+        && !view.rights(&caller.account, &caller.machine).hands
+    {
+        return Err(refuse("a forwarded goal command requires work permission on its sending machine".into()));
+    }
     if let RemoteCall::AttachmentReferences { attachments, .. } = call
         && attachments.iter().any(|file| !view.same(&file.owner.machine, &caller.machine))
     {
@@ -126,27 +142,22 @@ pub fn admit(node: &Arc<Node>, link: &Arc<Link>, caller: &Caller, call: &RemoteC
             | RemoteCall::SetAgentTitle { .. }
             | RemoteCall::PreviewAgentChange { .. }
             | RemoteCall::ChangeAgentLogin { .. }
+            | RemoteCall::ClaudeConsent { .. }
+            | RemoteCall::Homes { .. }
     );
     // A managed machine's agents work for no one: nobody scans them or puts
     // the World's tools in them, its owner neither (`world-network.md`, 受管机器).
-    if (agents_here || matches!(call, RemoteCall::ClaudeConsent { .. })) && view.me().is_some_and(|me| me.managed) {
+    if agents_here && view.me().is_some_and(|me| me.managed) {
         return Err(refuse(format!("{here} is a managed machine, whose agents work for no one")));
     }
-    // Which logins this machine lists, and what is put into them, is its
-    // owner's alone (`world-agent-logins.md`): shared or administered, the
-    // machine is not another account's to scan or change.
-    if agents_here && view.member(&here).and_then(|member| member.home.as_ref()) != Some(&caller.account) {
-        return Err(refuse(format!(
-            "only {here}'s owner scans it or changes its agents, not the account {}",
-            caller.account
-        )));
+    // Login management belongs to holders (`world-network.md`, 共享机器与智能体协助).
+    if agents_here {
+        view.authorize(&caller.account, fastctx_net::authorization::Action::Hold(&here)).map_err(Failure::from)?;
     }
-    // Which version a machine runs is its owner's to choose, and the
-    // network's super administrator's but for a visitor's machine
-    // (`world-upgrade.md`, 谁来更新).
+    // Updates use general machine management authority (`world-upgrade.md`, 谁来更新).
     if matches!(call, RemoteCall::UpdateWorld | RemoteCall::Updates { .. }) && !view.may_update(&caller.account, &here)
     {
-        return Err(refuse(format!("only {here}'s owner updates it, not the account {}", caller.account)));
+        return Err(refuse(fastctx_types::sharing::MANAGER_REQUIRED.into()));
     }
     crate::devices::admit(&view, &caller.machine, call)?;
     let hub = link.membership().id.clone();

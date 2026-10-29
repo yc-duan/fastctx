@@ -41,6 +41,7 @@ pub(crate) fn write_job(
     let directory = world.owner(here, owner);
     let seen = load_seen(&directory.seen())?;
     let mut writer = Writer::new(world, here.me.as_str())?;
+    let mut turn = None;
     // A job an older program still runs keeps its record where that program
     // put it, and its scratch beside it.
     let record_path = job.map(|job| world.job_record(here, town, &owner.clone().into(), job));
@@ -51,22 +52,28 @@ pub(crate) fn write_job(
         if record.owner.resident() != Some(owner) || record.end.is_some() {
             return Err(io::Error::new(io::ErrorKind::PermissionDenied, "write does not belong to an active job"));
         }
+        turn = record.turn;
         if record.call_id.is_some() {
             writer = writer.with_facts(job_directory.job_scratch(job).join("diffs"), here.me.clone())?;
         }
     }
-    let outcome = match op {
+    let mut outcome = match op {
         WriteOp::Edit(request) => writer.edit(request, &seen),
         WriteOp::EditBlocks(request) => writer.edit_blocks(request, &seen),
         WriteOp::Write(request) => writer.write(request, &seen),
         WriteOp::ApplyPatch(request) => writer.apply_patch(request, &seen),
     };
-    let changes = match &outcome {
-        Ok(result) => &result.changes,
-        Err(error) => &error.changes,
+    let changes = match &mut outcome {
+        Ok(result) => &mut result.changes,
+        Err(error) => &mut error.changes,
     };
+    for change in changes.iter_mut() {
+        if let Some(fact) = &mut change.fact {
+            fact.turn = turn.clone();
+        }
+    }
     if let Some(path) = &record_path {
-        for change in changes {
+        for change in changes.iter() {
             if let Some(fact) = &change.fact {
                 crate::run_facts::write(&path.with_extension("writes"), fact)?;
             }
@@ -82,7 +89,7 @@ pub(crate) fn write_job(
 
 /// The latest of what a resident saw of each file, by the file's canonical
 /// path, as the writing core looks files up.
-fn load_seen(path: &Path) -> io::Result<SeenFiles> {
+pub(crate) fn load_seen(path: &Path) -> io::Result<SeenFiles> {
     let file = match std::fs::File::open(path) {
         Ok(file) => file,
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(SeenFiles::new()),
@@ -157,5 +164,5 @@ pub fn action(op: &WriteOp, outcome: &WriteOutcome, machine: &MachineName, at: T
             format!("failed after {counted}: {reason}")
         }
     };
-    Action { at, machine: machine.clone(), hand: op.tool().to_string(), what, result }
+    Action { turn: None, at, machine: machine.clone(), hand: op.tool().to_string(), what, result }
 }

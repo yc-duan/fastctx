@@ -133,6 +133,9 @@ pub enum AccountChange {
         machine: MachineName,
         to: AccountName,
         shared: bool,
+        /// The most jobs `to` runs on it at once; sharing again sets it anew.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        jobs: Option<u16>,
     },
     /// Lets one login of an agent on `machine`, one of the account's own,
     /// assist `to`; or no longer. `home` is the login's directory as
@@ -140,7 +143,8 @@ pub enum AccountChange {
     /// `until` is when the assistance ends by itself; `weekly` is what
     /// `to` may spend of a Claude Code login in a week of its own seven-day
     /// window, `daily` in any 24 hours; `five_hour` holds it to a share of
-    /// the login's own five-hour window; assisting again sets them all anew.
+    /// the login's own five-hour window; `turns` is the most turns the login
+    /// runs at once; assisting again sets them all anew.
     Assist {
         machine: MachineName,
         to: AccountName,
@@ -159,6 +163,10 @@ pub enum AccountChange {
         /// which it assists no one: the owner's own use counts too.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         five_hour: Option<u8>,
+        /// The most turns the login runs at once, the owner's own counted
+        /// too; the same on every assistance of the login.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        turns: Option<u16>,
     },
     /// The plan shown for one login of an agent on `machine`, set by the
     /// hub's super administrator on a login that names none (a Claude Code
@@ -359,6 +367,12 @@ pub struct HubAccounts {
     /// followed a rename yet. None from an older node.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub me: Option<MachineName>,
+    /// The current hub host, absent when unknown or outside this device's view.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hub_machine: Option<MachineName>,
+    /// Changes to held machines by other accounts, keyed by hub/account/id.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub machine_notices: Vec<crate::sharing::Notice>,
     /// Whether the hub renames machines.
     #[serde(default)]
     pub renames: bool,
@@ -631,6 +645,9 @@ pub fn group_name(text: &str) -> Result<Option<String>, String> {
 pub struct ShareSeen {
     pub machine: MachineName,
     pub account: AccountName,
+    /// The most jobs the account runs on it at once; none is no limit.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub jobs: Option<u16>,
 }
 
 /// One login of an agent on a machine, assisting an account.
@@ -655,6 +672,9 @@ pub struct AssistSeen {
     /// which the login assists no one; none is no limit.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub five_hour: Option<u8>,
+    /// The most turns the login runs at once; none is no limit.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub turns: Option<u16>,
 }
 
 /// A plan a login names none of, as the hub's super administrator set it

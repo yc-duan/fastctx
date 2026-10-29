@@ -31,8 +31,10 @@ pub(super) struct Page {
 /// Answers a ledger read on this session's queue, independently of its
 /// next frame and of every project's writer.
 pub(crate) fn ask(hub: &Arc<Hub>, name: &MachineName, out: &Outq, id: u64, town: TownId, after: u64) {
-    if !hub.store().book.directory.member_in_project(name, &town) {
-        let answer = Err(format!("{name} acts for no account that may read {town}"));
+    if !hub.store().book.directory.member_keeps_project(name, &town) {
+        let answer = Err(format!(
+            "{name} has no logged-in account that may keep the bodies of {town}; assisting hosts must use project indices (update older clients)"
+        ));
         let _ = out.send(Out::Frame(Down::Told { id, answer }));
         return;
     }
@@ -72,10 +74,12 @@ pub(crate) fn ask(hub: &Arc<Hub>, name: &MachineName, out: &Outq, id: u64, town:
         };
         drop(reader);
         // Permission may have been withdrawn while the disk was being read.
-        let answer = if hub.store().book.directory.member_in_project(&name, &town) {
+        let answer = if hub.store().book.directory.member_keeps_project(&name, &town) {
             answer
         } else {
-            Err(format!("{name} acts for no account that may read {town}"))
+            Err(format!(
+                "{name} has no logged-in account that may keep the bodies of {town}; assisting hosts must use project indices (update older clients)"
+            ))
         };
         let _ = out.send(Out::Frame(Down::Told { id, answer }));
     });
@@ -96,13 +100,13 @@ impl Page {
             let path = self.dir.join(format!("{seq:020}.json"));
             let signed = entry(&path).map_err(|error| format!("reading entry {seq} of {}: {error}", self.town))?;
             let cost = wire::encode(&(seq, &signed)).len() + usize::from(!entries.is_empty());
-            if size + cost > wire::MAX_CONTROL_FRAME {
+            if size + cost > wire::PARTS_AT_MOST || (!entries.is_empty() && size + cost > wire::MAX_CONTROL_FRAME) {
                 if entries.is_empty() {
                     return Err(format!(
-                        "entry {seq} of {} needs {} bytes in an answer, more than one message holds ({})",
+                        "entry {seq} of {} needs {} bytes in an answer, more than the multipart limit ({})",
                         self.town,
                         size + cost,
-                        wire::MAX_CONTROL_FRAME
+                        wire::PARTS_AT_MOST
                     ));
                 }
                 return Ok(Told::Entries { entries, more: true });
@@ -114,13 +118,12 @@ impl Page {
     }
 }
 
-/// Published entries use compact JSON and fit in a frame with their
-/// envelope. A damaged file must not make one read allocate without bound.
-fn entry(path: &Path) -> io::Result<Signed> {
+/// A damaged file must not make a read allocate beyond the multipart limit.
+pub(super) fn entry(path: &Path) -> io::Result<Signed> {
     let mut bytes = Vec::new();
-    std::fs::File::open(path)?.take(wire::MAX_CONTROL_FRAME as u64 + 1).read_to_end(&mut bytes)?;
-    if bytes.len() > wire::MAX_CONTROL_FRAME {
-        return Err(io::Error::new(io::ErrorKind::InvalidData, "the entry file is larger than one message"));
+    std::fs::File::open(path)?.take(wire::PARTS_AT_MOST as u64 + 1).read_to_end(&mut bytes)?;
+    if bytes.len() > wire::PARTS_AT_MOST {
+        return Err(io::Error::new(io::ErrorKind::InvalidData, "the entry file is larger than the multipart limit"));
     }
     serde_json::from_slice(&bytes).map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))
 }

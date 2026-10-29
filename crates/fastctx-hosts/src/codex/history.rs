@@ -50,13 +50,10 @@ pub(super) async fn read(
         let (mut timeline, active_voice) =
             match pages_with_voice(server, "thread/timeline/list", json!({"threadId": thread})).await {
                 Ok(timeline) => timeline,
-                // The 0.160 timeline RPC explicitly excludes archived threads.
-                // Its ordinary turns/items RPCs still include archived history.
-                Err(Unanswered::Rpc { code: -32600, message, data })
-                    if data.is_null() && message == format!("thread {thread} is archived") =>
-                {
-                    (ordinary_timeline(&turns, &entries), None)
-                }
+                // The 0.160 timeline RPC excludes archived threads, and a
+                // Codex may refuse it otherwise or not have it at all; its
+                // ordinary turns and items give the whole history but voice.
+                Err(Unanswered::Rpc { code: -32600 | -32601, .. }) => (ordinary_timeline(&turns, &entries), None),
                 Err(error) => return Err(error.to_string()),
             };
         // Timeline pages run newest to oldest, with each page ordered forward.
@@ -196,7 +193,7 @@ fn ordinary_timeline(turns: &[Value], entries: &[Value]) -> Vec<Value> {
     timeline
 }
 
-async fn pages(server: &AppServer, method: &str, params: Value) -> Result<Vec<Value>, Unanswered> {
+pub(super) async fn pages(server: &AppServer, method: &str, params: Value) -> Result<Vec<Value>, Unanswered> {
     pages_with_voice(server, method, params).await.map(|(entries, _)| entries)
 }
 

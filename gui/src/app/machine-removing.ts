@@ -12,8 +12,8 @@ import type { Running } from "../world/updates";
 import { cannotUninstall, removerLoginOf } from "./machine-logins";
 import type { ReadLog } from "./machine-log";
 import type { ManageWords } from "./machine-manage-words";
-import type { Following, RemoveMachineSheet } from "./machine-remove";
-import type { Machine } from "./reach";
+import { RemoveFailed, type Following, type RemoveMachineSheet } from "./machine-remove";
+import { owns, type Machine } from "./reach";
 
 export interface RemovingOptions {
   manage: ManageWords;
@@ -46,6 +46,7 @@ export function removeMachines(machines: Machine[], world: WorldNow, title: stri
     cannot,
     some: unable.length && unable.length < each.length ? manage.onlyLeave(unable.length, why) : null,
     offline: each.some((one) => one.machine.online === false),
+    others: each.some((one) => !owns(one.machine, one.login)) ? manage.othersLose(each.length) : null,
     remove: async (way) => {
       const uninstall = way === "leave" ? null : way;
       const told = uninstall ? each.filter((one) => one.cannot === null) : [];
@@ -58,7 +59,7 @@ export function removeMachines(machines: Machine[], world: WorldNow, title: stri
               return null;
             })
           : null;
-      const failed: string[] = [];
+      const failed: { machine: string; why: string }[] = [];
       const gone: typeof told = [];
       for (const one of each) {
         const then = uninstall && told.includes(one) ? { then: uninstall } : {};
@@ -66,7 +67,7 @@ export function removeMachines(machines: Machine[], world: WorldNow, title: stri
           await options.change(one.login, { change: "remove", name: one.machine.name, reason: options.access.reasonDefault, ...then });
           if (told.includes(one)) gone.push(one);
         } catch (error) {
-          failed.push(`${one.machine.written}: ${error instanceof Error ? error.message : String(error)}`);
+          failed.push({ machine: one.machine.written, why: error instanceof Error ? error.message : String(error) });
         }
       }
       options.done();
@@ -74,11 +75,11 @@ export function removeMachines(machines: Machine[], world: WorldNow, title: stri
       // Those taken off to uninstall are followed even when others could
       // not be taken off, which the sheet says beside them.
       if (!log || !since || !gone.length) {
-        if (failed.length) throw new Error(failed.join("; "));
+        if (failed.length) throw new RemoveFailed(failed.map((one) => one.machine), detailsOf(failed));
         return null;
       }
       const following: Following = {
-        ...(failed.length ? { failed: options.manage.removeFailed(failed.join("; ")) } : {}),
+        ...(failed.length ? { failed: { said: options.manage.removeFailed(failed.map((one) => one.machine)), detail: detailsOf(failed) } } : {}),
         machines: gone.map((one) => ({ written: one.machine.written, away: one.machine.online === false })),
         left: async () => {
           const left = new Map<string, string>();
@@ -123,4 +124,9 @@ async function newest(log: ReadLog, logins: Login[]): Promise<Map<string, { logi
     since.set(key, { login, after: Math.max(0, ...page.records.map((record) => record.id)) });
   }
   return since;
+}
+
+/** Why each machine could not be taken off, in the kernel's words. */
+function detailsOf(failed: { machine: string; why: string }[]): string {
+  return failed.map((one) => `${one.machine}: ${one.why}`).join("\n");
 }

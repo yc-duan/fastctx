@@ -1,9 +1,7 @@
-/* A project's overview and its journals, each on one screen: a head with
-   the name, a few lines on what it is, then what is long in regions that
-   scroll on their own. */
+/* A project's overview, on one screen: a head with the name, a few lines
+   on what it is, then what is long in regions that scroll on their own. */
 
-.project-page,
-.journal-page {
+.project-page {
   --board: min(100% - 2 * var(--gutter), var(--column));
   container-type: inline-size;
   display: flex;
@@ -35,13 +33,13 @@
   font-size: var(--size-text);
   white-space: nowrap;
   scale: var(--press);
-  transition: color var(--hover) ease, background-color var(--hover) ease, --press var(--settle) var(--spring);
+  transition: color var(--hover) var(--ease), background-color var(--hover) var(--ease), --press var(--settle) var(--spring);
 }
 
 .text-button:active:not(:disabled) {
   --press: 0.97;
   transition-duration: var(--hover), var(--hover), var(--quick);
-  transition-timing-function: ease, ease, var(--ease-out);
+  transition-timing-function: var(--ease), var(--ease), var(--ease-out);
 }
 
 .text-button:hover {
@@ -113,25 +111,26 @@
   color: var(--caution);
 }
 
-/* Tabs, on a narrow screen only: the sections one at a time. */
+/* The page's two views, chosen above the board: the work now, drawn
+   (`hub.css`), and what the project keeps. */
 .tabs {
   flex: none;
   display: flex;
   gap: var(--space-1);
   width: var(--board);
-  margin: var(--space-5) auto 0;
+  margin: var(--space-4) auto 0;
   overflow-x: auto;
   scrollbar-width: none;
 }
 
 .tab {
   flex: none;
-  height: 30px;
+  height: 32px;
   padding: 0 var(--space-3);
   border-radius: var(--radius-full);
   color: var(--text-3);
   font-size: var(--size-text);
-  transition: color var(--hover) ease, background-color var(--hover) ease;
+  transition: color var(--hover) var(--ease), background-color var(--hover) var(--ease);
 }
 
 .tab:hover {
@@ -143,12 +142,18 @@
   background: var(--hairline);
 }
 
+@media (pointer: coarse) {
+  .tab {
+    height: 44px;
+  }
+}
+
 .project-board {
   position: relative;
   flex: 1;
   min-height: 0;
   width: var(--board);
-  margin: var(--space-3) auto 0;
+  margin: var(--space-2) auto 0;
   overflow-y: auto;
   overscroll-behavior: contain;
   scrollbar-width: thin;
@@ -156,21 +161,31 @@
   mask-image: linear-gradient(to bottom, transparent, black var(--space-3), black calc(100% - var(--space-8)), transparent);
 }
 
-.project-board .board-column {
-  display: contents;
-}
-
-.project-board .home-section {
+.project-board[data-view="now"] .ph-reference,
+.project-board[data-view="reference"] .ph-now {
   display: none;
-  padding: var(--space-3) 0 var(--space-10);
 }
 
-.project-board .home-section.chosen {
-  display: block;
+/* What the project keeps: one column scrolling on a narrow screen, two
+   side by side where there is room, each scrolling on its own. */
+.ph-reference {
+  padding: var(--space-4) 0 var(--space-10);
 }
 
-.project-board .home-section .section-title {
-  display: none;
+.ph-reference .project-facts {
+  margin: 0 0 var(--space-5);
+}
+
+.ph-reference .home-section {
+  padding: 0 0 var(--space-8);
+}
+
+/* A decision, a journal or a page: its name and one line of what it is;
+   who wrote it and when, where the pointer rests. */
+.ph-reference .page-link-about {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 @container (min-width: 920px) {
@@ -178,20 +193,24 @@
     --board: min(100% - 2 * var(--gutter), 1080px);
   }
 
-  .tabs {
-    display: none;
-  }
-
-  .project-board {
-    margin-top: var(--space-6);
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-    column-gap: var(--space-12);
+  .project-board[data-view="reference"] {
     overflow: hidden;
   }
 
-  .project-board .board-column {
-    display: block;
+  .ph-reference {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr);
+    column-gap: var(--space-12);
+    height: 100%;
+    padding-bottom: 0;
+  }
+
+  .ph-reference .project-facts {
+    grid-column: 1 / -1;
+  }
+
+  .ph-reference .board-column {
     min-width: 0;
     margin: 0 calc(-1 * var(--space-3));
     padding: var(--space-3) var(--space-3) var(--space-10);
@@ -200,14 +219,8 @@
     scrollbar-width: thin;
   }
 
-  .project-board .home-section,
-  .project-board .home-section .section-title {
-    display: block;
+  .ph-reference .home-section {
     padding: 0;
-  }
-
-  .project-board .home-section .section-title {
-    display: flex;
   }
 }
 
@@ -250,7 +263,7 @@
   overflow-wrap: anywhere;
 }
 
-/* A journal's head: the project it belongs to, then its name. */
+/* An inner page's head: the project it belongs to, then its name. */
 .crumb {
   flex: none;
   max-width: 40%;
@@ -260,7 +273,7 @@
   color: var(--text-2);
   font-size: var(--size-text);
   text-decoration: none;
-  transition: color var(--hover) ease;
+  transition: color var(--hover) var(--ease);
 }
 
 .crumb:hover {
@@ -270,30 +283,6 @@
 .crumb-sep {
   flex: none;
   color: var(--text-3);
-}
-
-.journal-name-title {
-  font-family: var(--font-code);
-  font-variation-settings: var(--code-axes);
-  font-size: var(--size-text);
-}
-
-.journal-reading {
-  flex: 1;
-}
-
-.journal-reading > * {
-  width: var(--board);
-  margin-left: auto;
-  margin-right: auto;
-}
-
-.journal-intro {
-  padding-top: var(--space-4);
-}
-
-.journal-intro .project-facts {
-  margin: var(--space-2) 0 0;
 }
 
 .still {
@@ -306,156 +295,6 @@
 .quiet.caution {
   color: var(--caution);
 }
-
-/* Journals: a list of subjects, each with what it covers. */
-.journals li + li,
-.canon li + li {
-  position: relative;
-}
-
-.journals li + li::before,
-.canon li + li::before {
-  content: "";
-  position: absolute;
-  left: 0;
-  right: 0;
-  top: -4px;
-  height: 8px;
-  background: var(--pen-rule);
-  opacity: 0.7;
-  -webkit-mask: var(--pen-rule-2) 0 50% / 100% 100% no-repeat;
-  mask: var(--pen-rule-2) 0 50% / 100% 100% no-repeat;
-}
-
-.journal {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  padding: var(--space-3) 0;
-  color: inherit;
-  text-decoration: none;
-}
-
-.journal-name {
-  font-family: var(--font-code);
-  font-variation-settings: var(--code-axes);
-  font-size: var(--size-code);
-  color: var(--text-strong);
-  transition: color var(--hover) ease;
-}
-
-.journal:hover .journal-name {
-  color: var(--accent-bright);
-}
-
-.journal-about {
-  font-size: var(--size-text);
-  color: var(--text-2);
-  line-height: var(--leading-prose);
-}
-
-.journal-facts {
-  font-size: var(--size-text);
-  color: var(--text-3);
-}
-
-/* Decisions: titles and what each covers. */
-.canon-doc {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  padding: var(--space-3) 0;
-}
-
-.canon-title {
-  font-family: var(--font-emphasis);
-  color: var(--text-strong);
-}
-
-.canon-scope {
-  font-size: var(--size-text);
-  line-height: var(--leading-prose);
-  color: var(--text-2);
-}
-
-.canon-where {
-  margin: var(--space-2) 0 0;
-  font-family: var(--font-code);
-  font-variation-settings: var(--code-axes);
-  font-size: var(--size-text);
-  color: var(--text-3);
-  overflow-wrap: anywhere;
-}
-
-/* Entries: each under its stamp, the words as written. */
-/* Above the general rule that takes lists' margins away, which would
-   otherwise pull the entries off the reading column. */
-.journal-page .journal-reading > ol.entries {
-  list-style: none;
-  margin: var(--space-8) auto 0;
-  padding: 0 0 var(--space-12);
-}
-
-.entry + .entry {
-  position: relative;
-  margin-top: var(--space-8);
-  padding-top: var(--space-8);
-}
-
-.entry + .entry::before {
-  content: "";
-  position: absolute;
-  left: 0;
-  right: 0;
-  top: -4px;
-  height: 8px;
-  background: var(--pen-rule);
-  -webkit-mask: var(--pen-rule-3) 0 50% / 100% 100% no-repeat;
-  mask: var(--pen-rule-3) 0 50% / 100% 100% no-repeat;
-}
-
-.entry-stamp {
-  margin: 0 0 var(--space-3);
-  font-size: var(--size-fine);
-  color: var(--text-3);
-}
-
-.entry-text {
-  color: var(--text);
-}
-
-.entry-note,
-.entry-id {
-  margin: var(--space-3) 0 0;
-  font-size: var(--size-text);
-  color: var(--text-3);
-}
-
-.entry-note code,
-.entry-id code {
-  font-family: var(--font-code);
-  font-variation-settings: var(--code-axes);
-}
-
-.attachment .faint {
-  color: var(--text-3);
-}
-
-.earlier {
-  display: block;
-  margin-top: var(--space-6);
-  font-size: var(--size-text);
-  color: var(--text-2);
-  padding: var(--space-1) var(--space-3);
-  border-radius: var(--radius-full);
-  background: var(--hairline);
-  transition: color var(--hover) ease;
-}
-
-.earlier:hover {
-  color: var(--text);
-}
-
 
 /* Under who is here: what is still running in the town. */
 .project-subtitle {

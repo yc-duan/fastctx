@@ -28,6 +28,8 @@ impl Link {
             return Err(format!("upgrade hub {} to use user-level configuration", self.hub_name()));
         }
         profile.subagents = current.profile.subagents;
+        profile.memory = current.profile.memory;
+        profile.layer = current.profile.layer;
         profile.validate()?;
         let confirmed = profile.clone();
         let told =
@@ -39,7 +41,12 @@ impl Link {
         Ok(version)
     }
 
-    async fn confirm_profile(&self, account: &AccountName, mut confirmed: Profile, version: u64) -> Result<(), String> {
+    pub(super) async fn confirm_profile(
+        &self,
+        account: &AccountName,
+        mut confirmed: Profile,
+        version: u64,
+    ) -> Result<(), String> {
         confirmed.version = version;
         {
             let _one = self.inner.refreshing.lock().await;

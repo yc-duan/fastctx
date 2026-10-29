@@ -20,6 +20,94 @@ use crate::{Address, AgentName, EntryId, JobId, JournalName, MachineName, Notice
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "call")]
 pub enum Call {
+    /// Local operational diagnostics. Never relayed through another machine.
+    DoctorCalls,
+    Plan {
+        hub: Option<crate::HubName>,
+        account: Option<crate::AccountName>,
+        operation: crate::plan::Operation,
+    },
+    /// `machine` is the conversation's: a plan of another conversation of
+    /// the same short name is not its own. Older callers omit it.
+    PlanRead {
+        hub: Option<crate::HubName>,
+        account: Option<crate::AccountName>,
+        owner: ResidentId,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        machine: Option<MachineName>,
+    },
+    PlanWrite {
+        hub: Option<crate::HubName>,
+        account: Option<crate::AccountName>,
+        owner: ResidentId,
+        expected: Option<u64>,
+        markdown: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        machine: Option<MachineName>,
+    },
+    AccountRecords {
+        hub: Option<crate::HubName>,
+        account: Option<crate::AccountName>,
+        request: crate::account_records::Request,
+    },
+    WatchAccountRecords {
+        hub: Option<crate::HubName>,
+        account: Option<crate::AccountName>,
+        kind: String,
+    },
+    Collaboration {
+        resident: ResidentId,
+        machine: Option<crate::access::Written>,
+    },
+    Memory(crate::memory::MemoryCall),
+    WatchMemory {
+        town: TownName,
+    },
+    MemorySettings {
+        hub: Option<crate::HubName>,
+        account: Option<crate::AccountName>,
+        enabled: Option<bool>,
+    },
+    /// The activity book of `machine`, or of this computer
+    /// (`crate::activity_book`).
+    Book {
+        machine: Option<Written>,
+        query: crate::activity_book::BookQuery,
+    },
+    /// Brings a session of this machine the user opened on their own into
+    /// Fastctx (`world-layers.md`, 接进来).
+    BringIn {
+        resident: ResidentId,
+    },
+    /// The account's layer (`world-layers.md`), changed to `layer` when
+    /// given; a computer in no network keeps its own.
+    Layer {
+        hub: Option<crate::HubName>,
+        account: Option<crate::AccountName>,
+        layer: Option<crate::layers::Layer>,
+    },
+    Goal { resident: ResidentId, machine: Option<crate::access::Written>, account: Option<crate::access::HubAccount>, request: crate::goals::Request },
+    GoalCommand { hub: Option<crate::HubName>, account: Option<crate::AccountName>, job: Option<crate::JobId>, request: crate::goals::AgentRequest },
+    Timer { timer: crate::timers::TimerCall },
+    TurnEvidence { resident: ResidentId, turn: Option<String>, refresh_limits: bool },
+    CompactBetweenTurns { resident: ResidentId },
+    Sentinel {
+        hub: Option<crate::HubName>,
+        account: Option<crate::AccountName>,
+        request: crate::sentinel_control::Request,
+    },
+    SentinelSettings {
+        hub: Option<crate::HubName>,
+        account: Option<crate::AccountName>,
+        change: Option<crate::sentinel_settings::WriteSettings>,
+    },
+    /// Hands one sentinel key to the account's sentinel home; `None` removes it.
+    SentinelKey {
+        hub: Option<crate::HubName>,
+        account: Option<crate::AccountName>,
+        key: crate::sentinel_settings::KeyName,
+        value: Option<crate::sentinel_settings::Secret>,
+    },
     /// The selected account's machine changes, before a previous page's
     /// cursor when supplied. The hub checks visibility on every read.
     MachineLog {
@@ -139,6 +227,16 @@ pub enum Call {
         /// settings it was started with name it.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         conversation: Option<String>,
+        /// The login the session runs with: its `CLAUDE_CONFIG_DIR`, or
+        /// `.claude` in its user's home, as its environment says. Absent
+        /// from a program older than the one that says it.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        home: Option<String>,
+        /// Whether Claude Code's daemon runs the session in the background,
+        /// as its environment says (`CLAUDE_JOB_DIR`), rather than the user's
+        /// own terminal, app or editor. Absent from older programs.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        background: Option<bool>,
     },
     /// Run a script for a resident of this machine, on this machine or on
     /// the machine `node` names.
@@ -260,6 +358,13 @@ pub enum Call {
         machine: Option<Written>,
         path: Option<String>,
     },
+    /// What a machine, or this computer, keeps free in memory for its
+    /// agents; sets it first when `bytes` is given (`crate::stats::MEMORY_ROOMS`).
+    MemoryRoom {
+        machine: Option<crate::access::Written>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        bytes: Option<u64>,
+    },
     /// How a machine, or this computer, is doing, for its details page;
     /// with `after`, its lines bring only what came since then.
     Stats {
@@ -287,6 +392,28 @@ pub enum Call {
         text: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         login: Option<crate::collab::Caller>,
+    },
+    /// `message_user`: words of `resident` for the user (`world-voice.md`).
+    /// Older nodes do not list the tool, so no session calls it there.
+    Say {
+        resident: ResidentId,
+        message: String,
+        status: crate::residents::TellStatus,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        attachments: Vec<crate::voice::Attachment>,
+    },
+    /// Tells what one of the World's own commands did, from inside the job
+    /// whose script gave it (`run_facts::RunStep`); the node names the job's
+    /// machine. Older nodes do not know it, and the command goes on.
+    Stepped {
+        job: crate::JobId,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        town: Option<crate::TownName>,
+        id: String,
+        began: jiff::Timestamp,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        ended: Option<jiff::Timestamp>,
+        did: crate::run_facts::StepDid,
     },
     /// Records what a resident saw of files on this machine through
     /// `fastctx view`; the resident may live on another machine.
@@ -452,10 +579,15 @@ pub enum Call {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         composer: Option<crate::composer::UploadScope>,
     },
+    /// Negotiated by Welcome.watch_many. The connection then carries
+    /// watching::local commands and bounded, interleaved watch packets.
+    WatchMany,
     /// Watches a resident on any machine: the node answers with its history
     /// and then each event as it happens, for as long as the connection
     /// stays open.
     Watch {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        goal: Option<crate::access::HubAccount>,
         resident: ResidentId,
         machine: Option<Written>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -574,6 +706,11 @@ pub enum Call {
         /// answer says still run.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         answering: Option<JobId>,
+        /// The answer goes to one of the conversation's subagents: what
+        /// waits for the conversation, and its named context, wait for an
+        /// answer to the conversation's own agent. Older callers omit it.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        subagent: bool,
     },
     /// The named notices from `Collect`, and all its town notes, went out
     /// with the answer. Unnamed notices remain waiting; an empty list can
@@ -709,6 +846,9 @@ pub enum Call {
     /// is on more than one hub; for `resident`, the session's resident when
     /// it is known, also the collaboration its accounts offer it.
     Machines {
+        /// The adapter renders and retains the per-conversation scratch paths.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        scratch: bool,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         resident: Option<ResidentId>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -721,6 +861,26 @@ pub enum Call {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "reply")]
 pub enum Reply {
+    DoctorCalls {
+        calls: Vec<crate::stats::CallWork>,
+    },
+    Plan {
+        result: crate::plan::Result,
+    },
+    AccountRecords {
+        response: crate::account_records::Response,
+    },
+    Collaboration(Box<crate::collaboration::Tree>),
+    Memory(crate::memory::MemoryReply),
+    MemorySettings(crate::memory::Settings),
+    Layer(crate::layers::Chosen),
+    Book(Box<crate::activity_book::BookAnswer>),
+    Goal { updated: Box<crate::goals::Updated> },
+    Timers { timers: Vec<crate::timers::Timer> },
+    TurnEvidence { evidence: Box<crate::turn_evidence::TurnEvidence>, text: String },
+    Compacted { result: crate::turn_evidence::Compacted },
+    Sentinel(Box<crate::sentinel_control::Reply>),
+    SentinelSettings(Box<crate::sentinel_settings::SettingsReply>),
     /// The HTTP proxy chosen in Fastctx, if one is (`Call::HubProxy`).
     HubProxy {
         url: Option<String>,
@@ -767,6 +927,9 @@ pub enum Reply {
     FilesFound(crate::file_search::FileSearchReply),
     Folders(crate::focus::Folders),
     Stats(Box<crate::stats::MachineStats>),
+    MemoryRoom {
+        bytes: u64,
+    },
     /// What Claude Code on `machine` now records; `changed` is false when it
     /// already said so.
     ClaudeConsent {
@@ -798,6 +961,8 @@ pub enum Reply {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         delivery: Option<crate::NoticeId>,
     },
+    /// What `Say` asked to tell the user is kept for them.
+    Told,
     Opened {
         resident: Address,
         landed: Landed,
@@ -847,6 +1012,9 @@ pub enum Reply {
     Notices {
         notices: Vec<Delivery>,
         notes: Vec<String>,
+        /// Notes before this index precede command output; the rest follow it.
+        #[serde(default)]
+        leading_notes: usize,
     },
     Who(WorldWho),
     Since(crate::since::WorldSince),
@@ -925,6 +1093,12 @@ pub enum Reply {
         groups: Vec<crate::world::MachineGroup>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         collab: Option<crate::collab::Offered>,
+        #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+        scratch: crate::scratch::Descriptions,
+        /// Whether the session speaks to the user through `message_user`:
+        /// one the World started for them (`world-voice.md`).
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        speaks: bool,
     },
     /// A job stopped, or found already ended: on `machine`, as its record
     /// now stands.

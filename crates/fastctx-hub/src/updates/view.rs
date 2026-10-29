@@ -10,7 +10,7 @@ use fastctx_types::update::{
 use fastctx_types::{AccountName, MachineName};
 use std::sync::Arc;
 
-fn authenticate(directory: &Directory, asker: &MachineName, account: &AccountName) -> Result<(), String> {
+pub(super) fn authenticate(directory: &Directory, asker: &MachineName, account: &AccountName) -> Result<(), String> {
     if !directory.logged_in(asker, account) || directory.account(account).is_none_or(|a| a.locked) {
         return Err(format!("{asker} is not logged in to an unlocked account {account}"));
     }
@@ -36,9 +36,11 @@ fn actions(member: &Member, kernel: Option<&str>, online: bool, phone: bool, app
     // Old application nodes accepted a queued update but never executed it.
     // They still accept a direct update while online.
     let schedule = if choose.allowed && app && !modern { Permission::no(ActionReason::TooOld) } else { choose.clone() };
+    let repair = base.clone();
     let update = if !online && !schedule.allowed { Permission::no(ActionReason::Offline) } else { base };
     let _ = member;
     Actions {
+        repair: Some(repair),
         update,
         choose,
         settings,
@@ -135,6 +137,9 @@ pub(super) fn snapshot(hub: &Hub, asker: &MachineName, account: &AccountName) ->
             due: store.hub.due.iter().find(|d| d.key == member.key).map(|d| d.due.clone()),
             offer,
             actions,
+            repair_supported: report.is_some_and(|r| r.repair_supported),
+            repair_due: store.hub.repairs.iter().find(|d| d.key == member.key).map(|d| d.due.clone()),
+            repair: report.and_then(|r| r.repair.clone()),
         });
     }
     let available = machines.iter().filter(|m| m.offer.is_some() && m.actions.update.allowed).count();
@@ -148,6 +153,7 @@ pub(super) fn snapshot(hub: &Hub, asker: &MachineName, account: &AccountName) ->
         policy: directory.is_super(account).then(|| store.hub.updates.clone()),
         machines,
         available,
+        repair_supported: true,
     })
 }
 
@@ -157,6 +163,9 @@ pub(crate) async fn request(
     account: &AccountName,
     request: ViewCall,
 ) -> Result<Told, String> {
+    if matches!(request, ViewCall::Repair { .. } | ViewCall::CancelRepair { .. } | ViewCall::RepairResult { .. }) {
+        return super::repair::request(hub, asker, account, request).await;
+    }
     let mut view = snapshot(hub, asker, account)?;
     let needed = match &request {
         ViewCall::Release { version } | ViewCall::Schedule { version: Some(version), .. } => Some(version),
@@ -172,6 +181,7 @@ pub(crate) async fn request(
         view = snapshot(hub, asker, account)?;
     }
     let reply = match request {
+        ViewCall::Repair { .. } | ViewCall::CancelRepair { .. } | ViewCall::RepairResult { .. } => unreachable!("repair was dispatched above"),
         ViewCall::Release { version } => {
             let mut choice = view.versions.into_iter().find(|choice| choice.version == version).unwrap_or(
                 fastctx_types::update::VersionChoice {
@@ -308,13 +318,21 @@ pub(super) fn problem(hub: &Hub, version: &str, target: Option<&str>, why: Optio
             changed = true;
         }
     }
+    for repair in &mut store.hub.repairs {
+        if repair.due.version != version { continue; }
+        let needs = targets.get(&repair.key).cloned().unwrap_or_default();
+        let packages = repair.due.manifest.as_ref().map(|m| super::inventory::for_targets(m, &needs));
+        if target.is_some_and(|target| packages.as_ref().is_some_and(|packages| !packages.iter().any(|p| p.target == target))) { continue; }
+        if problem.is_none() && !packages.as_ref().is_some_and(|packages| packages.iter().all(|p| available.contains(p))) { continue; }
+        if repair.due.observed.is_none() && repair.due.problem != problem { repair.due.problem = problem.clone(); changed = true; }
+    }
     if changed && let Err(error) = store.save_hub() {
         hub.log.line(format_args!("keeping update preparation outcome: {error}"));
     }
 }
 
 /// Retrieves only the version explicitly selected, outside the hub's shared locks.
-async fn read_manifest(hub: &Hub, version: &str) -> Result<(), String> {
+pub(super) async fn read_manifest(hub: &Hub, version: &str) -> Result<(), String> {
     if release(version).is_none() {
         return Err(format!("{version} is not a release version"));
     }

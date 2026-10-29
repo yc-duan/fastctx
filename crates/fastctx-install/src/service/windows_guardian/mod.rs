@@ -139,6 +139,24 @@ pub(super) fn install(service: &Service) -> anyhow::Result<Status> {
     )
 }
 
+/// Stops the guardian and keeps it stopped: disabled, with no restart on
+/// failure, which its scheduled check leaves as it is.
+pub(super) fn hold(service: &Service) -> anyhow::Result<Status> {
+    let config = Config::new(service)?;
+    let _owner = owner::AdministratorOwner::enter()?;
+    scm::stop(&config.name)?;
+    inspect(&config)
+}
+
+/// Starts it again at boot and after a failure, and now.
+pub(super) fn release(service: &Service) -> anyhow::Result<Status> {
+    let config = Config::new(service)?;
+    let _owner = owner::AdministratorOwner::enter()?;
+    scm::enable(&config.name)?;
+    scm::start(&config.name)?;
+    inspect(&config)
+}
+
 pub(super) fn uninstall(service: &Service) -> anyhow::Result<Status> {
     let config = Config::new(service)?;
     let _owner = owner::AdministratorOwner::enter()?;
@@ -171,6 +189,13 @@ pub(super) fn uninstall(service: &Service) -> anyhow::Result<Status> {
         },
         |before| restore(&config, &checker, before),
     )
+}
+
+pub(super) fn definition_current(service: &Service) -> anyhow::Result<bool> {
+    let config = Config::new(service)?;
+    let path = config.root()?.join("config.json");
+    let Some(actual) = crate::renewal::read_json::<Config>(&path)? else { return Ok(false) };
+    Ok(serde_json::to_value(actual)? == serde_json::to_value(config)?)
 }
 
 pub(super) fn status(service: &Service) -> anyhow::Result<Status> {

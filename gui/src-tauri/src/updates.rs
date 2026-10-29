@@ -56,7 +56,16 @@ async fn ask(shell: &Shell, call: UpdateCall) -> Result<State, String> {
     if state.app.as_ref() == Some(&app()) {
         return Ok(state);
     }
-    once(shell, UpdateCall::App { app: app(), carried: CARRIED.get().cloned().flatten(), program: program() }).await
+    once(
+        shell,
+        UpdateCall::App {
+            app: app(),
+            carried: CARRIED.get().cloned().flatten(),
+            program: program(),
+            executable: executable(),
+        },
+    )
+    .await
 }
 
 async fn once(shell: &Shell, call: UpdateCall) -> Result<State, String> {
@@ -71,7 +80,7 @@ async fn once(shell: &Shell, call: UpdateCall) -> Result<State, String> {
 pub(crate) async fn introduce(shell: &Shell, carried: Option<std::path::PathBuf>) -> Result<(), String> {
     let carried = carried.filter(|dir| dir.is_dir()).map(|dir| dir.display().to_string());
     let _ = CARRIED.set(carried.clone());
-    once(shell, UpdateCall::App { app: app(), carried, program: program() }).await.map(|_| ())
+    once(shell, UpdateCall::App { app: app(), carried, program: program(), executable: executable() }).await.map(|_| ())
 }
 
 /// The World program this application carries, beside its own executable.
@@ -108,6 +117,16 @@ pub(crate) async fn update_progress(
         return Err("this World program does not accept update activity reports".into());
     }
     once(&shell, UpdateCall::Progress { stage }).await
+}
+
+/// Accepts repair without keeping the interface's request open through handover.
+#[fastctx_gui_command::command]
+pub(crate) async fn update_repair(shell: tauri::State<'_, Shell>, version: Option<String>) -> Result<State, String> {
+    let current = ask(&shell, UpdateCall::State).await?;
+    if !current.repair_supported {
+        return Err("this World program is too old or does not support local repair".into());
+    }
+    once(&shell, UpdateCall::Repair { version, id: None }).await
 }
 
 /// Brings this application's package of `version` here.
@@ -160,6 +179,9 @@ pub(crate) async fn machine_updates(
     let machine = fastctx_types::access::Written::try_from(machine_name).map_err(|error| error.to_string())?;
     if matches!(update, UpdateCall::App { .. } | UpdateCall::Fetch { .. } | UpdateCall::Progress { .. }) {
         return Err("only an interface on that machine says what it is or brings packages there".to_string());
+    }
+    if matches!(update, UpdateCall::Repair { .. }) && !once(&shell, UpdateCall::State).await?.repair_routing {
+        return Err("this device's World program is too old to route repair; update it first".into());
     }
     if let UpdateCall::Preferences { auto, relays } = update {
         let local = once(&shell, UpdateCall::State).await?;
@@ -285,7 +307,11 @@ mod desktop {
     }
 
     fn marker(app: &tauri::AppHandle) -> Result<PathBuf, String> {
-        Ok(app.path().app_data_dir().map_err(|error| error.to_string())?.join("updated.json"))
+        Ok(app
+            .path()
+            .app_data_dir()
+            .map_err(|error| format!("locating application update marker directory: {error}"))?
+            .join("updated.json"))
     }
 
     pub(super) async fn install(
@@ -295,7 +321,12 @@ mod desktop {
         package: &Package,
         path: &Path,
     ) -> Result<(), String> {
-        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0)).await.map_err(|error| error.to_string())?;
+        let root =
+            fastctx_platform::fastctx_root().map_err(|e| format!("locating application maintenance root: {e}"))?;
+        let _application = fastctx_install::repair::application::lock(&root).map_err(|e| format!("{e:#}"))?;
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .map_err(|error| format!("opening local installer source for {}: {error}", path.display()))?;
         let port = listener.local_addr().map_err(|error| error.to_string())?.port();
         let manifest = serde_json::json!({
             "version": version,
@@ -308,25 +339,34 @@ mod desktop {
             let updater = app
                 .updater_builder()
                 .endpoints(vec![endpoint])
-                .map_err(|error| error.to_string())?
+                .map_err(|error| format!("setting updater source for {}: {error}", path.display()))?
                 .target(target)
                 .build()
-                .map_err(|error| error.to_string())?;
+                .map_err(|error| {
+                    format!("constructing updater for {target} {version} from {}: {error}", path.display())
+                })?;
             let update = updater
                 .check()
                 .await
-                .map_err(|error| error.to_string())?
+                .map_err(|error| {
+                    format!("checking local update manifest for {version} from {}: {error}", path.display())
+                })?
                 .ok_or("the updater does not take this version as newer")?;
             // The updater checks the signature again as it reads the package.
-            let bytes = update.download(|_, _| {}, || {}).await.map_err(|error| error.to_string())?;
+            let bytes = update.download(|_, _| {}, || {}).await.map_err(|error| {
+                format!("reading and verifying installer {} for {version}: {error}", path.display())
+            })?;
             let marker = marker(app)?;
             if let Some(dir) = marker.parent() {
-                std::fs::create_dir_all(dir).map_err(|error| error.to_string())?;
+                std::fs::create_dir_all(dir)
+                    .map_err(|error| format!("creating update marker directory {}: {error}", dir.display()))?;
             }
             let updated = Updated { from: env!("CARGO_PKG_VERSION").to_string(), to: version.to_string() };
-            std::fs::write(&marker, serde_json::to_vec(&updated).map_err(|error| error.to_string())?)
-                .map_err(|error| error.to_string())?;
-            update.install(bytes).map_err(|error| error.to_string())
+            fastctx_install::renewal::write_json(&marker, &updated)
+                .map_err(|error| format!("saving update marker {}: {error}", marker.display()))?;
+            update
+                .install(bytes)
+                .map_err(|error| format!("installing application {version} from {}: {error}", path.display()))
         };
         let outcome: Result<(), String> = installed.await;
         serving.abort();
@@ -385,5 +425,37 @@ mod desktop {
             return;
         }
         crate::setup::take_carried();
+        forget_downloads(app);
+    }
+
+    /// The updater keeps each installer it downloaded in a folder of its own
+    /// under the temporary directory, named after the application and the
+    /// version it brought; once an update has started this version, none of
+    /// them is needed again. One still held by an installer finishing stays
+    /// until the next update.
+    fn forget_downloads(app: &tauri::AppHandle) {
+        let prefix = format!("{}-", app.package_info().name);
+        let Ok(entries) = std::fs::read_dir(std::env::temp_dir()) else { return };
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            let name = name.to_string_lossy();
+            if name.starts_with(&prefix) && name.contains("-updater-") && entry.path().is_dir() {
+                let _ = std::fs::remove_dir_all(entry.path());
+            }
+        }
+    }
+}
+
+fn executable() -> Option<String> {
+    #[cfg(desktop)]
+    {
+        std::env::var_os("APPIMAGE")
+            .map(std::path::PathBuf::from)
+            .or_else(|| std::env::current_exe().ok())
+            .map(|p| p.display().to_string())
+    }
+    #[cfg(mobile)]
+    {
+        None
     }
 }

@@ -85,6 +85,10 @@ pub fn cut(events: Vec<SessionEvent>) -> Cut {
 /// `version`: nothing when it holds every segment in order; otherwise the
 /// segments it lacks, the latest first when it holds none and asks for that.
 pub fn pieces(cut: Cut, held: &Held, version: String) -> Vec<Watched> {
+    bounded(collected(cut, held, version))
+}
+
+fn collected(cut: Cut, held: &Held, version: String) -> Vec<Watched> {
     let layout = cut.layout();
     if held.segments == layout {
         return vec![Watched::Unchanged { version }];
@@ -119,6 +123,42 @@ pub fn pieces(cut: Cut, held: &Held, version: String) -> Vec<Watched> {
         Watched::Segments { version: version.clone(), layout: layout.clone(), segments: latest, complete: false },
         Watched::Segments { version, layout, segments: missing, complete: true },
     ]
+}
+
+/// Splits a peer's older bundled segment response without changing its layout,
+/// segment identities or completion boundary. Other watch pieces stay whole.
+pub fn split(piece: Watched) -> Vec<Watched> {
+    bounded(vec![piece])
+}
+
+/// A history is transferred incrementally even when nearly every segment is
+/// missing. Complete remains false until the final piece of the original phase;
+/// the newest part of a large initial tail is delivered first.
+fn bounded(pieces: Vec<Watched>) -> Vec<Watched> {
+    const BYTES: usize = 4 * 1024 * 1024;
+    let mut result = Vec::new();
+    for piece in pieces {
+        let Watched::Segments { version, layout, segments, complete } = piece else { result.push(piece); continue; };
+        let mut groups = Vec::new();
+        let mut group = Vec::new();
+        let mut size = 0_usize;
+        for segment in segments {
+            let bytes = crate::watch_queue::size(&segment);
+            if !group.is_empty() && size.saturating_add(bytes) > BYTES {
+                groups.push(std::mem::take(&mut group));
+                size = 0;
+            }
+            size = size.saturating_add(bytes);
+            group.push(segment);
+        }
+        if !group.is_empty() || groups.is_empty() { groups.push(group); }
+        if !complete { groups.reverse(); }
+        let last = groups.len() - 1;
+        for (index, segments) in groups.into_iter().enumerate() {
+            result.push(Watched::Segments { version: version.clone(), layout: layout.clone(), segments, complete: complete && index == last });
+        }
+    }
+    result
 }
 
 /// Whether a segment begins before any words or items of its first turn.

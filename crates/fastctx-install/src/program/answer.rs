@@ -17,7 +17,7 @@ use std::os::windows::io::{AsRawHandle as _, OwnedHandle as OwnedPipe};
 /// run on a slow machine can wait while the system looks it over.
 const ANSWERS_WITHIN: Duration = Duration::from_secs(120);
 
-pub(super) fn answer(command: &mut Command, path: &Path) -> anyhow::Result<Output> {
+pub(crate) fn answer(command: &mut Command, path: &Path) -> anyhow::Result<Output> {
     let deadline = Instant::now() + ANSWERS_WITHIN;
     let mut child = command.stdout(Stdio::piped()).stderr(Stdio::piped()).spawn()?;
     let result = (|| {
