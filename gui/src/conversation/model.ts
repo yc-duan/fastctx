@@ -18,10 +18,9 @@
 import type { Health, HostAgentEnd, MachineName, Notice, SessionChange, SessionEvent, Speaker, Step, Tool, TurnEnd } from "../world/events";
 import type { Attachment, AttachmentSource } from "../world/attachments";
 import type { JsonValue } from "../world/wire";
-import type { JobFacts, RunFacts } from "../world/run-facts";
+import { mergeSteps, type JobFacts, type RunFacts } from "../world/run-facts";
 import { askKey, forPeople, type AskState } from "./ask-state";
 import { userWords } from "./told";
-import { readReply, type AsyncQuestion } from "./async-ask";
 import { Agents, type AgentRun } from "./agents";
 import { Requests } from "./requests";
 import type { PendingControl } from "../world/control";
@@ -38,6 +37,9 @@ export type SendState =
   /** In the World, not yet in a turn: `how` is the way they landed
    *  (`waiting`, `sent`, `uncertain`), as the node said. */
   | { state: "landed"; how: string; machine: MachineName; why?: string | null }
+  /** Kept for a turn their agent login, or their machine's memory, has no
+   *  room for yet: `ahead` turns go before it. */
+  | { state: "queued"; ahead: number; memory?: boolean }
   /** Its machine keeps them no more and no turn runs: they went in, and
    *  stand as said until the session's own telling of them comes. */
   | { state: "settled" }
@@ -51,6 +53,12 @@ export interface KeptWords {
   /** Present once their host has failed to start for a minute; they are
    *  still on their way (`world-lifecycle.md`, 用户看到的只是在发送). */
   host_retry?: { since: string; reason: string };
+  /** How many turns of their agent login go before the one they would
+   *  start, while it waits for room (`world-usage.md`, 一个登录同时开几轮). */
+  queued?: number;
+  /** Whether that room is in their machine's memory rather than in their
+   *  login (`world-lifecycle.md`, 内存). */
+  for_memory?: boolean;
 }
 
 /** Something the user attached to their words, as it is shown with them. */
@@ -92,10 +100,6 @@ export type Entry = {
       /** What the World told the session, as facts, when it was the World
        *  or another agent that spoke. */
       notice?: Notice;
-      /** The user's answers to a question the agent asked without waiting,
-       *  sent as the official client writes them: shown as answers, never
-       *  as the envelope. */
-      reply?: { item: string; answers: string[] };
     }
   | {
       kind: "prose";
@@ -111,6 +115,9 @@ export type Entry = {
       began?: number;
       /** Thinking: how long it took, where the host said. */
       took?: number;
+      /** Thinking whose words are not shown (GPT's): what it said, kept only
+       *  for the title of the section it is in while it thinks. */
+      heads?: string;
       /** Thinking: the model response it was part of, whose thinking
        *  tokens `Fold.thinkingTokens` knows where they were told. */
       response?: string;
@@ -127,10 +134,12 @@ export type Entry = {
   | { kind: "forked"; key: string; source: import("../world/wire").Address }
   /** A request the session waits on the user for, as its host made it. */
   | { kind: "ask"; key: string; id: JsonValue; turn: string | null; request: string; params: JsonValue; state: AskState; version: number }
-  /** Questions the agent asked without stopping its work (Codex's
-   *  `request_user_input_async`): answered whenever the user likes, or not
-   *  at all. `answers` holds what was answered, by question. */
-  | { kind: "question"; key: string; item: string; turn: string; questions: AsyncQuestion[]; answers: (string | null)[]; version: number }
+  /** What the agent asked the user without stopping its work, with Codex's
+   *  `request_user_input_async`, which a World thread cannot be without:
+   *  words to the user, as `message_user`'s are, the questions and the
+   *  answers they offer written out; the user answers in words of their
+   *  own, whenever they like. */
+  | { kind: "question"; key: string; stamp: number; at: number; item: string; turn: string; text: string }
   /** One of the host's own agents that went on in the background ended,
    *  and the conversation was told of it here: by the host's notice, or,
    *  in Codex, by an item of the turn. */
@@ -171,7 +180,43 @@ export interface Gap {
   loading: boolean;
 }
 
-export type Block = Entry | Activity | Gap;
+/** What the agent said to the user through the World's `message_user`
+ *  (`world-voice.md`): drawn as its answer, apart from the work around it. */
+export interface Say {
+  kind: "say";
+  key: string;
+  item: string;
+  turn: string;
+  stamp: number;
+  /** Where in its fold the call that said it was. */
+  at: number;
+  text: string;
+  status: "reply" | "info" | "urgent";
+  attachments: { machine: string; path: string }[];
+}
+
+export type Block = Entry | Activity | Gap | Say;
+
+/** Whether `server` names the World's own tools, as either host lists them:
+ *  Codex as they are served, Claude Code under its plugin. */
+function worldServer(server: string | null): boolean {
+  return server === "fastctx" || (server?.endsWith("_fastctx") ?? false);
+}
+
+/** The words for the user a `message_user` call carries; null for any other
+ *  tool, and for one that failed, which reached no one. */
+export function sayOf(entry: Extract<Entry, { kind: "tool" }>): Say | null {
+  const tool = entry.tool;
+  if (tool.name !== "message_user" || !worldServer(tool.server) || tool.status === "failed") return null;
+  const input = (tool.input && typeof tool.input === "object" && !Array.isArray(tool.input) ? tool.input : {}) as Record<string, JsonValue>;
+  const status = input.status === "info" || input.status === "urgent" ? input.status : "reply";
+  const attachments = Array.isArray(input.attachments)
+    ? input.attachments.flatMap((one) =>
+        one && typeof one === "object" && !Array.isArray(one) && typeof one.machine === "string" && typeof one.path === "string" ? [{ machine: one.machine, path: one.path }] : [],
+      )
+    : [];
+  return { kind: "say", key: entry.key, item: entry.item, turn: entry.turn, stamp: entry.stamp, at: entry.at, text: typeof input.message === "string" ? input.message : "", status, attachments };
+}
 
 type Keyed = Extract<Entry, { item: string; turn: string }>;
 type Heard = Extract<Entry, { kind: "heard" }>;
@@ -189,6 +234,9 @@ interface Derived {
   /** Whether anything of the agent's own has been shown: a turn's work or
    *  words, its end, a request. */
   heardFrom: boolean;
+  /** The turns in which it said something to the user through
+   *  `message_user`: the rest of their words are its working notes. */
+  spoke: Set<string>;
 }
 
 export class Fold {
@@ -248,6 +296,9 @@ export class Fold {
   /** How many of the user's heard words each turn holds, for their keys. */
   private heardIn = new Map<string, number>();
   private endedTurns = new Set<string>();
+  /** Items their host has told whole as they ended: a snapshot of one told
+   *  after that, as it began or ran, is behind it and changes nothing. */
+  private over = new Set<string>();
   /** Turns begun and not yet ended, as the World tells them, with when
    * each began. */
   private running = new Set<string>();
@@ -327,6 +378,7 @@ export class Fold {
     this.byTurn.clear();
     this.heardIn.clear();
     this.endedTurns.clear();
+    this.over.clear();
     this.stretches.clear();
     this.sequences.clear();
     this.stale = false;
@@ -473,8 +525,6 @@ export class Fold {
         const known =
           heard.turn !== null &&
           (this.byTurn.get(heard.turn) ?? []).some((entry) => entry.kind === "heard" && entry.text.trim() === heard.text.trim());
-        const reply = heard.from?.kind === "user" ? readReply(heard.text) : null;
-        if (reply) this.answered(reply.item, reply.answers);
         if (!known) {
           const attached = this.attachedOf(heard);
           const ordinal = this.heardIn.get(turnKey) ?? 0;
@@ -499,7 +549,6 @@ export class Fold {
             turn: heard.turn,
             ...(attached.length ? { attached, kept: heard.message?.attachments ?? [] } : {}),
             ...(event.event === "heard" && event.notice ? { notice: event.notice } : {}),
-            ...(reply ? { reply: { item: reply.item, answers: reply.answers.map((one) => one.answer) } } : {}),
           });
           if (!this.replaying && heard.from?.kind === "user") {
             this.unclaimed.push({ key: shown, text: heard.text.trim(), seq: ++this.heardSeq });
@@ -529,12 +578,18 @@ export class Fold {
         if (this.halted?.has(event.turn) && !this.replaying) return;
         const shown = this.find(event.turn, event.item);
         if (shown?.kind === "prose" && event.part === "text") {
-          if (shown.prose === "thinking" && !this.thoughtWords) return;
+          if (shown.prose === "thinking" && !this.thoughtWords) {
+            shown.heads = (shown.heads ?? "") + event.text;
+            shown.version += 1;
+            this.touch(shown);
+            return;
+          }
           shown.text += event.text;
           shown.version += 1;
           this.touch(shown);
         } else if (!shown && event.part === "text") {
           // A message's first words can come before any word of it.
+          this.overtaken(event.turn);
           this.add({
             kind: "prose",
             key: itemEntryKey(event.turn, event.item),
@@ -754,12 +809,16 @@ export class Fold {
     const id = native.id;
     if (id && native.draft) this.renamed(turn, native.draft, id);
     const key = id ? itemEntryKey(turn, id) : `n:${this.scope}@${this.current}`;
+    if (id && !finished && this.over.has(key)) return;
+    if (id && finished) this.over.add(key);
+    const said = native.kind === "message" || native.kind === "thinking" || native.kind === "plan" || native.kind === "tool" || native.kind === "compaction";
+    if (said && !(id && this.find(turn, id))) this.overtaken(turn);
     let fresh: Entry;
     const questions = native.kind === "message" ? questionsOf(native.detail) : null;
-    if (questions) {
+    if (questions && native.kind === "message") {
       const shown = id ? this.find(turn, id) : undefined;
       if (shown?.kind === "question") return;
-      const asked: Entry = { kind: "question", key, stamp: 0, at: 0, item: id, turn, questions, answers: questions.map(() => null), version: 0 };
+      const asked: Entry = { kind: "question", key, stamp: 0, at: 0, item: id, turn, text: askedText(native.text, questions) };
       if (shown) this.replace(shown, asked);
       else this.add(asked);
       return;
@@ -777,6 +836,7 @@ export class Fold {
           turn,
           prose: native.kind,
           text: native.kind === "thinking" && !this.thoughtWords ? "" : native.text,
+          ...(native.kind === "thinking" && !this.thoughtWords && native.text ? { heads: native.text } : {}),
           writing: !finished,
           version: 0,
           ...(native.kind === "thinking" ? { began: startedAt, ...(native.duration_ms !== undefined ? { took: native.duration_ms } : {}) } : {}),
@@ -833,12 +893,23 @@ export class Fold {
       return;
     }
     if (shown.kind === "prose" && fresh.kind === "prose") {
+      // Thinking whose words are not shown still says the section it is in.
+      const heads = fresh.heads;
+      const headed = heads !== undefined && heads !== shown.heads;
+      if (headed) {
+        shown.heads = heads;
+        shown.version += 1;
+      }
       // A message still being written keeps what it has until its whole
       // text comes.
-      if (shown.writing && !finished && fresh.text === "") return;
+      if (shown.writing && !finished && fresh.text === "") {
+        if (headed) this.touch(shown);
+        return;
+      }
       if (shown.text !== fresh.text) shown.version += 1;
       shown.text = fresh.text;
-      shown.writing = fresh.writing;
+      // What has stopped being written does not start again.
+      shown.writing = shown.writing && fresh.writing;
       if (fresh.took !== undefined) shown.took = fresh.took;
       if (shown.began === undefined && fresh.began !== undefined) shown.began = fresh.began;
       this.touch(shown);
@@ -847,11 +918,23 @@ export class Fold {
     if (shown.kind === "tool" && fresh.kind === "tool") {
       // Facts gathered while it ran stand until the item brings its own.
       shown.tool = fresh.tool.run || !shown.tool.run ? fresh.tool : { ...fresh.tool, run: shown.tool.run };
-      shown.ended = fresh.ended;
+      shown.ended = fresh.ended ?? shown.ended;
       this.touch(shown);
       return;
     }
     this.replace(shown, { ...fresh, key: shown.key } as Entry);
+  }
+
+  /** The model says one thing at a time: thinking still shown under way
+   *  when the next thing it says begins is over, whatever word of its end
+   *  is still to come. Agents' comings and goings are told beside the
+   *  model's words and end nothing of them. */
+  private overtaken(turn: string): void {
+    for (const entry of this.byTurn.get(turn) ?? []) {
+      if (entry.kind !== "prose" || entry.prose !== "thinking" || !entry.writing) continue;
+      entry.writing = false;
+      this.touch(entry);
+    }
   }
 
   /** Thinking tokens by model response, as the hosts told them. */
@@ -939,25 +1022,9 @@ export class Fold {
     }
     for (const visit of update.visited) if (!run.visited.some(([machine, job]) => machine === visit[0] && job === visit[1])) run.visited.push(visit);
     for (const write of update.writes) if (!run.writes.some((known) => known.id === write.id)) run.writes.push(write);
+    if (update.steps?.length) run.steps = mergeSteps(run.steps ?? [], update.steps);
     entry.tool = { ...entry.tool, run };
     this.touch(entry);
-  }
-
-  /** Answers the user sent to the questions of `item`, by question. */
-  private answered(item: string, answers: { index: number; answer: string }[]): void {
-    const question = this.entries.find((entry): entry is Extract<Entry, { kind: "question" }> => entry.kind === "question" && entry.item === item);
-    if (!question) return;
-    for (const { index, answer } of answers) if (index >= 0 && index < question.answers.length) question.answers[index] = answer;
-    question.version += 1;
-    this.touch(question);
-  }
-
-  /** Answers about to be sent: shown answered at once. */
-  answering(item: string, answers: (string | null)[]): void {
-    this.answered(
-      item,
-      answers.flatMap((answer, index) => (answer === null ? [] : [{ index, answer }])),
-    );
   }
 
   /** Whether a turn has ended, as far as is shown. */
@@ -1098,7 +1165,6 @@ export class Fold {
       sending: { state: "going" },
       ...(this.running.size > 0 ? { intoTurn: true } : {}),
       ...(attached.length ? { attached } : {}),
-      ...replyOf(text),
     });
     return key;
   }
@@ -1288,11 +1354,12 @@ export class Fold {
     const keeping = new Map(kept.map((words) => [words.id, words]));
     for (const entry of this.entries) {
       if (entry.kind !== "heard" || !entry.sending || entry.delivery === undefined) continue;
-      const settling = entry.sending.state === "going" || (entry.sending.state === "landed" && entry.sending.how === "kept");
+      const settling = entry.sending.state === "going" || entry.sending.state === "queued" || (entry.sending.state === "landed" && entry.sending.how === "kept");
       if (!settling) continue;
       const words = entry.delivery === null ? undefined : keeping.get(entry.delivery);
       let next: SendState | null = null;
-      if (words?.state === "waiting") next = { state: "landed", how: "kept", machine: entry.from?.kind === "user" ? entry.from.machine : "" };
+      if (words?.queued !== undefined) next = words.for_memory ? { state: "queued", ahead: words.queued, memory: true } : { state: "queued", ahead: words.queued };
+      else if (words?.state === "waiting") next = { state: "landed", how: "kept", machine: entry.from?.kind === "user" ? entry.from.machine : "" };
       else if (words === undefined && !busy) next = { state: "settled" };
       else if (words !== undefined) next = words.host_retry ? { state: "going", retry: words.host_retry.reason } : { state: "going" };
       if (next && JSON.stringify(next) !== JSON.stringify(entry.sending)) {
@@ -1350,6 +1417,7 @@ export class Fold {
   private derived(): Derived {
     if (this.derivedCache?.clock === this.clock) return this.derivedCache;
     const lastMessage = new Map<string, string>();
+    const spoke = new Set<string>();
     let latest: string | null = null;
     let moving = false;
     let waiting = false;
@@ -1363,6 +1431,7 @@ export class Fold {
           break;
         case "tool":
           if (entry.ended === null) moving = true;
+          if (sayOf(entry)) spoke.add(entry.turn);
           heardFrom = true;
           break;
         case "heard":
@@ -1393,8 +1462,14 @@ export class Fold {
           break;
       }
     }
-    this.derivedCache = { clock: this.clock, lastMessage, latest, moving, waiting, heardFrom };
+    this.derivedCache = { clock: this.clock, lastMessage, latest, moving, waiting, heardFrom, spoke };
     return this.derivedCache;
+  }
+
+  /** Whether the agent said something to the user in `turn` through
+   *  `message_user`. */
+  spokeIn(turn: string): boolean {
+    return this.derived().spoke.has(turn);
   }
 
   /** The entries as they are laid out: what a turn did between the things
@@ -1420,22 +1495,22 @@ export class Fold {
       this.stretches.set(turn, known);
       return `group-${turn}-${known[at]}`;
     };
-    // Questions asked without waiting show their answers in their own card.
-    const asked = new Set<string>();
-    for (const entry of this.entries) if (entry.kind === "question") asked.add(entry.item);
     for (const entry of this.entries) {
       if (entry.kind === "prose" && entry.prose === "message" && entry.writing && !entry.text.trim()) continue;
-      // The words that carry an answer are said by its card, not again
-      // below it; they still end the stretch before them, as words do.
-      if (entry.kind === "heard" && entry.reply && asked.has(entry.reply.item)) {
-        group = null;
-        continue;
-      }
       // A job's end is the World's word to the model alone; the jobs still
       // running are in the composer's panel (`world-gui.md`, 对话).
       if (entry.kind === "heard" && entry.notice?.kind === "job_ended" && entry.from?.kind !== "user") continue;
       if (entry.kind === "heard" && entry.sending !== undefined && entry.intoTurn) {
         below.push(entry);
+        continue;
+      }
+      // Words the agent said to the user stand on their own, as its answer,
+      // and divide its work as any words said do (`world-voice.md`); what it
+      // asked without stopping is said the same way.
+      const said = entry.kind === "tool" ? sayOf(entry) : entry.kind === "question" ? askedSay(entry) : null;
+      if (said) {
+        group = null;
+        blocks.push(said);
         continue;
       }
       const activity = entry.kind === "tool" || entry.kind === "activity" || (entry.kind === "prose" && entry.prose === "thinking");
@@ -1518,13 +1593,6 @@ function property(value: JsonValue, key: string): JsonValue | undefined {
   return value !== null && typeof value === "object" && !Array.isArray(value) ? value[key] : undefined;
 }
 
-/** Answers to questions asked without waiting, as the words that carry
- *  them are shown. */
-function replyOf(text: string): { reply?: { item: string; answers: string[] } } {
-  const reply = readReply(text);
-  return reply ? { reply: { item: reply.item, answers: reply.answers.map((one) => one.answer) } } : {};
-}
-
 /** The call an agent Codex tells of by an item started with: it names the
  *  agent, and the task its path names. */
 function startedTool(agent: string, path: string): Tool {
@@ -1576,17 +1644,36 @@ export function runsOf(members: readonly Entry[]): Entry[][] {
   return runs;
 }
 
-/** The questions of an agent's message asked without waiting, where it is
+/** A question of an agent's message asked without stopping: its words and
+ *  the answers it offers. */
+interface Asked {
+  title: string;
+  options: string[];
+}
+
+/** The questions of an agent's message asked without stopping, where it is
  *  one: Codex marks it with `questions` beside its words. */
-function questionsOf(detail: JsonValue | undefined): AsyncQuestion[] | null {
+function questionsOf(detail: JsonValue | undefined): Asked[] | null {
   const raw = property(detail ?? null, "questions");
   if (!Array.isArray(raw) || !raw.length) return null;
-  const questions: AsyncQuestion[] = [];
+  const questions: Asked[] = [];
   for (const one of raw) {
     const title = property(one, "title");
     if (typeof title !== "string" || !title.trim()) return null;
     const options = property(one, "options");
-    questions.push({ title, options: Array.isArray(options) ? options.filter((o): o is string => typeof o === "string") : null });
+    questions.push({ title, options: Array.isArray(options) ? options.filter((o): o is string => typeof o === "string") : [] });
   }
   return questions;
+}
+
+/** What was asked without stopping, written as words to the user: the
+ *  message's own words, then each question with the answers it offers. */
+function askedText(words: string, questions: Asked[]): string {
+  const asked = questions.map((question) => [`**${question.title.trim()}**`, ...question.options.map((option) => `- ${option}`)].join("\n"));
+  return [words.trim(), ...asked].filter(Boolean).join("\n\n");
+}
+
+/** What was asked without stopping, as words said to the user. */
+function askedSay(entry: Extract<Entry, { kind: "question" }>): Say {
+  return { kind: "say", key: entry.key, item: entry.item, turn: entry.turn, stamp: entry.stamp, at: entry.at, text: entry.text, status: "info", attachments: [] };
 }

@@ -68,6 +68,8 @@ fn targets(hub: &Hub, account: &AccountName) -> Result<HubMoveReply, String> {
             let hosts_hub = moved_here || seen.is_some_and(|ip| ip.is_loopback());
             let unavailable = if moved_here {
                 Some("the hub runs there now".to_string())
+            } else if store.book.directory.shares.iter().any(|share| share.machine == member.name) {
+                Some(fastctx_types::sharing::RECALL_BEFORE_MOVE.into())
             } else if session.is_none() {
                 Some("it is offline".to_string())
             } else {
@@ -131,6 +133,9 @@ fn start(
             return Err(format!(
                 "{to} is not one of {account}'s own machines: whoever holds the hub's machine holds the network, so it moves only to the super administrator's machines"
             ));
+        }
+        if store.book.directory.shares.iter().any(|share| store.book.directory.same(&share.machine, &to)) {
+            return Err(fastctx_types::sharing::RECALL_BEFORE_MOVE.into());
         }
         if !hub.sessions().contains_key(&to) {
             return Err(format!("{to} is offline"));

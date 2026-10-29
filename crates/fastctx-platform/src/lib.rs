@@ -11,6 +11,7 @@ pub mod awake;
 pub mod bounded;
 #[cfg(any(target_os = "linux", target_os = "macos", windows))]
 pub mod child;
+pub mod cpu_share;
 #[cfg(target_os = "macos")]
 pub mod darwin_proc;
 pub mod detach;
@@ -20,6 +21,7 @@ pub mod disks;
 pub mod doing;
 pub mod elevation;
 pub mod environment;
+pub mod event_queue;
 pub mod file_read;
 pub mod file_version;
 pub mod form;
@@ -31,6 +33,7 @@ pub mod image_usage;
 pub mod ipc;
 pub mod job_membership;
 pub mod legacy_text;
+pub mod limits;
 pub mod local_path;
 pub mod lock;
 pub mod memory;

@@ -1,0 +1,46 @@
+/* Things gathered, opened (`lines.ts`): their rows stand level with the
+   rows around them, under the row that gathered them, the rail going on
+   through them as through any rows. */
+.row-bunch > .fold-box {
+  grid-column: 1 / -1;
+}
+
+.row-bunch > .fold-box > .fold-content {
+  padding: 0;
+}
+
+.row-bunch > .fold-box > .fold-content > .row-bunched {
+  margin: 0;
+  padding-top: 0;
+}
+
+/* Open, the gathering row's rail reaches only its first row... */
+.row-bunch:has(> .row-line[aria-expanded="true"])::after {
+  bottom: auto;
+  height: calc(var(--row-line) - var(--rail-glyph) - 4px);
+}
+
+/* ...and the last of its rows goes on down to the row after it. */
+.rows > .row-bunch:not(:last-child) > .fold-box .row-bunched > .row:last-child::after {
+  content: "";
+  position: absolute;
+  left: calc(var(--rail-glyph) / 2 - 0.5px);
+  width: 1px;
+  top: calc(var(--row-line) / 2 + var(--rail-glyph) / 2 + 2px);
+  bottom: calc(-1 * (var(--row-line) / 2 - var(--rail-glyph) / 2 - 2px));
+  background: var(--rail-line);
+}
+
+/* Commands gathered on one row: the first few and how many more while it
+   is closed, every one of them once it is open. */
+.row-line[aria-expanded="true"] .row-few,
+.row-line:not([aria-expanded="true"]) .row-all {
+  display: none;
+}
+
+/* Open, a row says what it was done to whole, onto as many lines as that
+   takes, rather than cut. */
+.row-tool > .row-line[aria-expanded="true"] .row-object {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}

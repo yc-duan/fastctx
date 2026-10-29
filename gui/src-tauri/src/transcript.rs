@@ -150,7 +150,7 @@ pub(crate) struct Transcript {
     /// Moves whenever what is held is replaced: an answer about an earlier
     /// reading is no answer.
     generation: u64,
-    events: Vec<Box<RawValue>>,
+    events: crate::held_events::HeldEvents,
     hashes: Vec<u64>,
     /// Bytes of JSON before each event, and after the last.
     bytes: Vec<u64>,
@@ -196,7 +196,7 @@ impl Transcript {
             Update::Moment(moment) => {
                 let at = self.events.len();
                 self.admit(&moment.event)?;
-                Piece::Event { at, event: self.events[at].clone() }
+                Piece::Event { at, event: self.events.get(at) }
             }
             Update::History(history) => return self.history(&history),
             Update::Now { busy, turn, kept } => Piece::Now { busy, turn, kept },
@@ -261,7 +261,16 @@ impl Transcript {
             self.texts.clear();
             return Piece::Window { window: self.window() };
         }
-        Piece::Extended { start, events: self.events[start..].to_vec() }
+        Piece::Extended { start, events: self.events.range(start, end) }
+    }
+
+    /// Replaces the page after a delivery gap even if the stored history matches:
+    /// it may have missed a piece already admitted to this transcript.
+    pub(crate) fn recovered(&mut self, history: &[SessionEvent]) -> Result<Piece, String> {
+        self.history(history)?;
+        self.generation += 1;
+        self.texts.clear();
+        Ok(Piece::Window { window: self.window() })
     }
 
     fn window(&self) -> Window {
@@ -272,13 +281,13 @@ impl Transcript {
             .filter(|&at| at < start)
             .collect::<std::collections::BTreeSet<_>>()
             .into_iter()
-            .map(|at| self.events[at].clone())
+            .map(|at| self.events.get(at))
             .collect();
         Window {
             generation: self.generation,
             start,
             turns_before: self.turns_before(start),
-            events: self.events[start..].to_vec(),
+            events: self.events.range(start, self.events.len()),
             carry,
         }
     }
@@ -292,7 +301,7 @@ impl Transcript {
         let index = self.events.len();
         self.bytes.push(self.bytes[index] + text.len() as u64);
         self.hashes.push(hash);
-        self.events.push(RawValue::from_string(text).map_err(|error| error.to_string())?);
+        self.events.push(RawValue::from_string(text).map_err(|error| error.to_string())?)?;
         let mut fresh = true;
         let mut earliest: Option<usize> = None;
         for name in names(&event.happened) {
@@ -439,7 +448,7 @@ impl Transcript {
             end,
             turns_before: self.turns_before(start),
             turns: self.turns_before(end) - self.turns_before(start),
-            events: self.events[start..end].to_vec(),
+            events: self.events.range(start, end),
             late: self.late(start, end),
         })
     }
@@ -463,7 +472,7 @@ impl Transcript {
             .flat_map(|told| told.iter().copied().filter(|&at| at >= end))
             .collect();
         late.sort_unstable();
-        late.into_iter().map(|at| self.events[at].clone()).collect()
+        late.into_iter().map(|at| self.events.get(at)).collect()
     }
 
     /// Where a turn first appears.

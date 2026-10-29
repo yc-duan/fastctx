@@ -79,6 +79,9 @@ impl Options {
 pub struct Viewed {
     pub seen: Vec<Seen>,
     pub failed: bool,
+    /// The pictures shown, in the order the answer gives them: an image,
+    /// or a page of a document drawn as one.
+    pub pictures: Vec<fastctx_types::run_facts::StepPicture>,
 }
 
 /// Shows every requested path and records whether any could not be read.
@@ -216,6 +219,7 @@ fn write_answer(
     out: &mut impl Write,
 ) -> io::Result<Viewed> {
     let failed = sections.iter().any(|section| section.failed);
+    let pictures = sections.iter().flat_map(|section| section.pictures.iter().cloned()).collect();
     if options.in_run {
         out.write_all(VIEW_MARK.as_bytes())?;
     }
@@ -228,7 +232,7 @@ fn write_answer(
     if options.in_run {
         out.write_all(VIEW_END.as_bytes())?;
     }
-    Ok(Viewed { seen, failed })
+    Ok(Viewed { seen, failed, pictures })
 }
 
 /// One path's part of the answer.
@@ -244,12 +248,13 @@ struct Section {
     failed: bool,
     /// Whether all of the file is shown.
     whole: bool,
+    pictures: Vec<fastctx_types::run_facts::StepPicture>,
 }
 
 impl Section {
     fn note(path: &Path, options: &Options, facts: &str) -> Self {
         let text = format!("{}\n", head(path, options, facts));
-        Self { cost: text.len(), text, shown: false, partial: false, failed: false, whole: false }
+        Self { cost: text.len(), text, shown: false, partial: false, failed: false, whole: false, pictures: Vec::new() }
     }
 
     fn error(path: &Path, options: &Options, facts: &str) -> Self {
@@ -414,7 +419,14 @@ fn image(
         encoding_selection: None,
     };
     let text = format!("{note}\x1b]1337;File=inline=1;size={}:{}\x07\n", bytes.len(), STANDARD.encode(&bytes));
-    Ok((Section { text, cost, shown: true, partial: false, failed: false, whole: true }, Some(seen)))
+    let picture = fastctx_types::run_facts::StepPicture {
+        path: path.to_string_lossy().into_owned(),
+        page: None,
+        width,
+        height,
+        mime: mime.to_string(),
+    };
+    Ok((Section { text, cost, shown: true, partial: false, failed: false, whole: true, pictures: vec![picture] }, Some(seen)))
 }
 
 fn read_up_to(file: &mut File, buffer: &mut [u8]) -> io::Result<usize> {

@@ -35,10 +35,15 @@ type Went = (Written, Option<TownName>);
 /// it lists then must already be theirs, as Codex does not list them again
 /// (`world-colleagues.md`, 同事从哪里来、能去哪里).
 #[derive(Default)]
-pub struct Births(Mutex<HashMap<ResidentId, Acting>>);
+pub struct Births(Mutex<HashMap<ResidentId, Born>>);
 
-/// A resident being born, until its record is written: dropping it ends
-/// the birth, written or not.
+struct Born {
+    acting: Acting,
+    user_started: bool,
+}
+
+/// A resident whose initial setup is in progress; dropping it ends the birth,
+/// whether setup succeeded or failed.
 pub(crate) struct Birth {
     node: Arc<Node>,
     id: ResidentId,
@@ -47,13 +52,30 @@ pub(crate) struct Birth {
 impl Drop for Birth {
     fn drop(&mut self) {
         self.node.births.0.lock().expect("never poisoned").remove(&self.id);
+        crate::goals::engine::input_changed(&self.node, &self.id);
     }
 }
 
 /// `id` is being born here, working for `acting`.
-pub(crate) fn born(node: &Arc<Node>, id: &ResidentId, acting: Acting) -> Birth {
-    node.births.0.lock().expect("never poisoned").insert(id.clone(), acting);
+pub(crate) fn born(
+    node: &Arc<Node>,
+    id: &ResidentId,
+    acting: Acting,
+    origin: &fastctx_types::residents::Origin,
+) -> Birth {
+    let user_started = matches!(origin, fastctx_types::residents::Origin::User);
+    node.births.0.lock().expect("never poisoned").insert(id.clone(), Born { acting, user_started });
     Birth { node: node.clone(), id: id.clone() }
+}
+
+/// Initial setup may still be publishing the first input after the resident record exists.
+pub(crate) fn being_born(node: &Node, id: &ResidentId) -> bool {
+    node.births.0.lock().expect("never poisoned").contains_key(id)
+}
+
+/// Whether the World is starting this conversation for the user, before its host identifies it.
+pub(crate) fn born_for_user(node: &Node, id: &ResidentId) -> bool {
+    node.births.0.lock().expect("never poisoned").get(id).is_some_and(|born| born.user_started)
 }
 
 /// Whom `id` works for, as its record says, or as its birth does until the
@@ -61,7 +83,7 @@ pub(crate) fn born(node: &Arc<Node>, id: &ResidentId, acting: Acting) -> Birth {
 pub(crate) fn acting(node: &Node, id: &ResidentId) -> Option<Acting> {
     match node.residents.about(id) {
         Some((about, _)) => Some(about.acting),
-        None => node.births.0.lock().expect("never poisoned").get(id).cloned(),
+        None => node.births.0.lock().expect("never poisoned").get(id).map(|born| born.acting.clone()),
     }
 }
 
@@ -180,7 +202,14 @@ pub(crate) async fn run(
         Err(_) => town,
     };
     let (script, started_at) = (request.script.clone(), jiff::Timestamp::now());
-    let call = RemoteCall::Run { resident: resident.clone(), town: town.clone(), request };
+    let dispatch = crate::speech::new_id("run");
+    let call = RemoteCall::Run {
+        resident: resident.clone(),
+        town: town.clone(),
+        request,
+        answer_receipts: true,
+        dispatch: Some(dispatch.clone()),
+    };
     let source = crate::letters::Identity::at(node, to, "");
     let answer = node.call(&acting, to, Purpose::Hands, call);
     tokio::pin!(answer);
@@ -191,13 +220,8 @@ pub(crate) async fn run(
             // The job there stops with the turn; its answer comes as it ends.
             _ = interrupted.changed(), if !stopping => {
                 stopping = true;
-                let (node, acting, to, resident) = (node.clone(), acting.clone(), to.clone(), resident.clone());
-                tokio::spawn(async move {
-                    let stop = RemoteCall::TurnInterrupted { resident };
-                    if let Err(failure) = node.call(&acting, &to, Purpose::Hands, stop).await {
-                        node.log.line(format_args!("telling {} that the turn was interrupted: {failure}", to.name));
-                    }
-                });
+                crate::run_stops::keep(node, &here, &acting, to, &dispatch).await
+                    .map_err(|error| Failure::new(format!("keeping the turn's stop: {error}")))?;
             }
             // The node holds every sender, so the watch never closes.
             _ = words.changed(), if !told => {
@@ -214,6 +238,19 @@ pub(crate) async fn run(
             }
         }
     };
+    if stopping {
+        let outcome = match &answered {
+            Ok(Ok(RemoteReply::Run(reply))) => crate::run_stops::Answered::Job(reply.job.clone()),
+            Ok(Err(failure)) if failure.not_run => crate::run_stops::Answered::NotRun,
+            Err(failure) if never_started(failure) => crate::run_stops::Answered::NotRun,
+            _ => crate::run_stops::Answered::Unknown,
+        };
+        // The answer still goes to the model; only an older receiver's stop
+        // is left without the job it names.
+        if let Err(error) = crate::run_stops::answered(node, &here, &dispatch, outcome) {
+            node.log.line(format_args!("keeping the stopped run's answer on {}: {error}", to.name));
+        }
+    }
     let reply = match answered {
         Ok(Ok(RemoteReply::Run(reply))) => *reply,
         Ok(Ok(_)) => return Err(Failure::new(format!("{} answered something other than a run", to.name))),
@@ -222,8 +259,12 @@ pub(crate) async fn run(
         Ok(Err(failure)) => {
             return Err(Failure { message: format!("on {}: {}", to.name, failure.message), ..failure });
         }
-        Err(failure) => return Err(Failure::new(format!("the script starts on {}: {failure}", to.name))),
+        Err(failure) => {
+            let message = format!("the script starts on {}: {failure}", to.name);
+            return Err(if never_started(&failure) { Failure::not_run(message) } else { Failure::unanswered(message) });
+        }
     };
+    crate::run_receipts::remember(node, &here, &reply).map_err(|error| Failure::new(error.to_string()))?;
     if let Some(consumed) = &reply.consumed {
         crate::job_receipts::apply_consumed(&directory, consumed).map_err(|error| Failure::new(error.to_string()))?;
         if consumed.iter().any(|id| !id.as_str().starts_with("letter-")) {
@@ -252,6 +293,19 @@ pub(crate) async fn run(
         left_running(node, resident, &Elsewhere { machine: to.clone(), job: reply.job.clone(), command, started_at });
     }
     Ok(reply)
+}
+
+/// Whether a run's call failed before it could reach the machine it names.
+fn never_started(failure: &fastctx_net::link::CallFailure) -> bool {
+    matches!(
+        failure,
+        fastctx_net::link::CallFailure::NotConnected { .. }
+            | fastctx_net::link::CallFailure::NotMember { .. }
+            | fastctx_net::link::CallFailure::Offline { .. }
+            | fastctx_net::link::CallFailure::Refused { .. }
+            | fastctx_net::link::CallFailure::NotAllowed { .. }
+            | fastctx_net::link::CallFailure::Unreachable { .. }
+    )
 }
 
 /// The answer that showed `job` whole reached its host: where it ran, if
@@ -299,6 +353,7 @@ pub(crate) fn forget(node: &Arc<Node>, resident: &ResidentId, job: &JobId) -> bo
 }
 
 /// A run here for `resident` of `from`, handed here whole, for `account`.
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn serve(
     node: &Arc<Node>,
     from: MachineName,
@@ -306,9 +361,11 @@ pub(crate) async fn serve(
     resident: ResidentId,
     town: Option<TownName>,
     request: RunRequest,
+    answer_receipts: bool,
+    dispatch: Option<fastctx_types::NoticeId>,
 ) -> Result<RemoteReply, Failure> {
     let owner = Address { machine: from, resident };
-    let (reply, _) = node.jobs.run(node, owner.into(), town, request, Some(account)).await?;
+    let (reply, _) = node.jobs.run(node, owner.into(), town, request, Some(account), answer_receipts, dispatch).await?;
     Ok(RemoteReply::Run(Box::new(reply)))
 }
 

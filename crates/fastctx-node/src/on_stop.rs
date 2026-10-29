@@ -71,16 +71,21 @@ pub(crate) async fn send(node: &Arc<Node>, written: &crate::reach::Written, orig
         loop {
             match keep_stop(&pending, &path).await {
                 Ok(()) => return,
-                Err(error) => node.log.line(format_args!("keeping {} for after a restart: {error}", path.display())),
+                Err(error) => {
+                    let _ = crate::obligations::retry(node, &path, &format!("keeping the stop: {error}"));
+                }
             }
             tokio::time::sleep(again.next()).await;
         }
     };
     // Failure of local storage must neither lose the retry nor prevent an
     // otherwise reachable supervisor from being stopped promptly.
-    let ((), delivered) = tokio::join!(keeping, deliver_stop(node, &pending));
+    let ((), delivered) = tokio::join!(keeping, deliver_stop(node, &pending, &path));
     match delivered {
-        Ok(()) => settle_stop(node, &pending, &path).await,
+        Ok(()) => settle_stop(node, &pending, &path, None).await,
+        Err(error) if crate::obligations::permanent(&error) => {
+            settle_stop(node, &pending, &path, Some(error.message)).await
+        }
         Err(error) => node.log.line(format_args!("{} remains pending: {error}", path.display())),
     }
 }
@@ -97,54 +102,96 @@ async fn keep_stop(pending: &PendingStop, path: &Path) -> std::io::Result<()> {
     .map_err(std::io::Error::other)?
 }
 
-async fn settle_stop(node: &Node, pending: &PendingStop, path: &Path) {
+async fn settle_stop(node: &Arc<Node>, pending: &PendingStop, path: &Path, impossible: Option<String>) {
     let mut again = Again::default();
     loop {
-        let settled = crate::on_delivery::cancelled(node, &pending.origin, &pending.machine).and_then(|()| {
-            match std::fs::remove_file(path) {
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-                result => result,
+        let settled = (|| -> std::io::Result<()> {
+            if impossible.is_none() {
+                crate::on_delivery::cancelled(node, &pending.origin, &pending.machine)?;
             }
-        });
+            let bytes = match std::fs::read(path) {
+                Ok(bytes) => bytes,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+                Err(error) => return Err(error),
+            };
+            if let Some(reason) = &impossible {
+                crate::obligations::tell_failure(
+                    node,
+                    &pending.origin.resident,
+                    path,
+                    format!("The stop on {} could not be delivered: {reason}.", pending.machine),
+                )?;
+            }
+            let (outcome, reason) = match &impossible {
+                Some(reason) => (crate::obligations::Outcome::Impossible, reason.as_str()),
+                None => (crate::obligations::Outcome::Delivered, "the stop was applied or its job is already gone"),
+            };
+            crate::obligations::finish(node, path, &bytes, outcome, reason)?;
+            Ok(())
+        })();
         match settled {
             Ok(()) => return,
-            Err(error) => node.log.line(format_args!("settling {}: {error}", path.display())),
+            Err(error) => {
+                let _ = crate::obligations::retry(node, path, &format!("settling the stop: {error}"));
+            }
         }
         tokio::time::sleep(again.next()).await;
     }
 }
 
-async fn deliver_stop(node: &Arc<Node>, pending: &PendingStop) -> Result<(), Failure> {
-    if node.is_here(&pending.written()) {
-        let mut again = Again::default();
-        loop {
-            match serve(node, pending.origin.clone(), pending.job.clone()).await {
-                Ok(_) => return Ok(()),
-                Err(error) => {
-                    node.log.line(format_args!("the local stop of {:?} remains pending: {error}", pending.job))
-                }
-            }
-            tokio::time::sleep(again.next()).await;
-        }
-    }
+async fn deliver_stop(node: &Arc<Node>, pending: &PendingStop, path: &Path) -> Result<(), Failure> {
     let mut again = Again::default();
     let acting = crate::on::acting(node, &pending.origin);
+    let targets = [pending.written()];
     loop {
-        let call = RemoteCall::StopOn { origin: pending.origin.clone(), job: pending.job.clone() };
-        match node.call(&acting, &pending.written(), Purpose::Hands, call).await {
-            Ok(Ok(RemoteReply::OnDone)) => return Ok(()),
-            Ok(Ok(_)) => node.log.line(format_args!(
-                "{} answered the stop of {:?} with an unrelated reply",
-                pending.machine, pending.job
-            )),
-            Ok(Err(error)) => {
-                node.log.line(format_args!("{} has not stopped {:?}: {error}", pending.machine, pending.job))
-            }
-            Err(error) => node
-                .log
-                .line(format_args!("the stop of {:?} on {} remains pending: {error}", pending.job, pending.machine)),
+        let changed = node.control_letters.changed.notified();
+        tokio::pin!(changed);
+        changed.as_mut().enable();
+        if let Some(reason) = crate::obligations::control_impossible(node, &acting, &pending.written())
+            .map_err(|error| Failure::new(error.to_string()))?
+        {
+            return Err(Failure::refused(reason));
         }
-        again.pause(node, &[pending.written()]).await;
+        let result = if node.is_here(&pending.written()) {
+            serve(node, pending.origin.clone(), pending.job.clone()).await.map(|_| ())
+        } else if crate::facts::control_letters(node, &pending.written()) {
+            let bytes = serde_json::to_vec(pending).map_err(|error| Failure::new(error.to_string()))?;
+            let command = fastctx_types::delivery_control::ControlLetter::StopOn {
+                origin: pending.origin.clone(),
+                job: pending.job.clone(),
+            };
+            match crate::control_posts::send(node, path, &bytes, &acting, &pending.written(), command) {
+                Ok(Some(result)) => result,
+                Ok(None) => {
+                    tokio::select! {
+                        () = again.pause(node, &targets) => {}
+                        () = &mut changed => {}
+                    }
+                    continue;
+                }
+                Err(error) => Err(Failure::new(error.to_string())),
+            }
+        } else {
+            let call = RemoteCall::StopOn { origin: pending.origin.clone(), job: pending.job.clone() };
+            match node.call(&acting, &pending.written(), Purpose::Hands, call).await {
+                Ok(Ok(RemoteReply::OnDone)) => Ok(()),
+                Ok(Ok(_)) => Err(Failure::new("the stop received an unrelated reply")),
+                Ok(Err(error)) => Err(error),
+                Err(error) => Err(Failure::new(error.to_string())),
+            }
+        };
+        match result {
+            Ok(()) => return Ok(()),
+            Err(error) if crate::obligations::permanent(&error) => return Err(error),
+            Err(error) => {
+                crate::obligations::retry(node, path, &error.message)
+                    .map_err(|error| Failure::new(error.to_string()))?;
+            }
+        }
+        tokio::select! {
+            () = again.pause(node, &targets) => {}
+            () = &mut changed => {}
+        }
     }
 }
 
@@ -156,7 +203,13 @@ pub(crate) async fn resume(node: &Arc<Node>) {
         loop {
             match resume_local_stops(&recovering) {
                 Ok(()) => break,
-                Err(error) => recovering.log.line(format_args!("recovering local on stops: {error}")),
+                Err(error) => {
+                    let _ = crate::obligations::retry(
+                        &recovering,
+                        &recovering.world.path().join("local-stop-recovery"),
+                        &error.to_string(),
+                    );
+                }
             }
             tokio::time::sleep(again.next()).await;
         }
@@ -167,7 +220,13 @@ pub(crate) async fn resume(node: &Arc<Node>) {
         loop {
             match resume_pending_stops(&recovering).await {
                 Ok(()) => break,
-                Err(error) => recovering.log.line(format_args!("recovering outgoing on stops: {error}")),
+                Err(error) => {
+                    let _ = crate::obligations::retry(
+                        &recovering,
+                        &recovering.world.path().join("outgoing-stop-recovery"),
+                        &error.to_string(),
+                    );
+                }
             }
             tokio::time::sleep(again.next()).await;
         }
@@ -217,12 +276,13 @@ async fn resume_pending_stops(node: &Arc<Node>) -> std::io::Result<()> {
             }
             let node = node.clone();
             tokio::spawn(async move {
-                if let Err(error) = deliver_stop(&node, &pending).await {
-                    node.log.line(format_args!("{} remains pending: {error}", path.display()));
-                    node.on_delivering.lock().expect("never poisoned").remove(&path);
-                    return;
+                match deliver_stop(&node, &pending, &path).await {
+                    Ok(()) => settle_stop(&node, &pending, &path, None).await,
+                    Err(error) if crate::obligations::permanent(&error) => {
+                        settle_stop(&node, &pending, &path, Some(error.message)).await;
+                    }
+                    Err(error) => node.log.line(format_args!("{} remains pending: {error}", path.display())),
                 }
-                settle_stop(&node, &pending, &path).await;
                 node.on_delivering.lock().expect("never poisoned").remove(&path);
             });
         }
@@ -291,7 +351,13 @@ pub(crate) async fn serve(node: &Arc<Node>, origin: OnOrigin, job: Option<JobId>
     // before spawning its supervisor. If launch passed that check, its
     // record was already published and the scan above found the job.
     let Some(job) = job else { return Ok(RemoteReply::OnDone) };
-    let record_path = crate::on::on_job(node, &origin, &job)?;
+    let record_path = match crate::on::on_job(node, &origin, &job) {
+        Ok(path) => path,
+        Err(error) if error.code == Some(fastctx_types::ipc::FailureCode::OutputNotRetained) => {
+            return Ok(RemoteReply::OnDone);
+        }
+        Err(error) => return Err(error),
+    };
     let by = format!("{} on {}", origin.resident.resident, origin.resident.machine);
     let request = fastctx_types::run::StopRequest { by, reason: "the on that sent it stopped".to_string() };
     let bytes = serde_json::to_vec(&request).map_err(|error| Failure::new(error.to_string()))?;
@@ -321,12 +387,22 @@ fn stop_worker(node: &Arc<Node>, path: &Path, request: fastctx_types::run::StopR
     tokio::spawn(async move {
         let mut again = Again::default();
         loop {
+            if path.try_exists().is_ok_and(|exists| !exists) {
+                break;
+            }
             match crate::jobs::stop(&node, &path, &request.by, &request.reason).await {
                 Ok(record) => match stopped(&record) {
                     Ok(()) => break,
-                    Err(error) => node.log.line(format_args!("stopping {}: {error}", path.display())),
+                    Err(error) => {
+                        let _ = crate::obligations::retry(&node, &path.with_extension("on-stopped"), &error.message);
+                        if crate::obligations::permanent(&error) {
+                            break;
+                        }
+                    }
                 },
-                Err(error) => node.log.line(format_args!("stopping {}: {error}", path.display())),
+                Err(error) => {
+                    let _ = crate::obligations::retry(&node, &path.with_extension("on-stopped"), &error.message);
+                }
             }
             tokio::time::sleep(again.next()).await;
         }
@@ -338,9 +414,10 @@ fn stopped(record: &fastctx_types::run::JobRecord) -> Result<(), Failure> {
     use fastctx_types::run::EndedHow;
     match record.end.as_ref().map(|end| &end.how) {
         Some(EndedHow::Finished | EndedHow::Stopped) => Ok(()),
-        Some(how) => {
-            Err(Failure::new(format!("{} did not establish that its process tree stopped: {how:?}", record.id)))
-        }
+        Some(how) => Err(Failure::refused(format!(
+            "{} already ended without a confirmed stop ({how:?}); it is no longer a live stopping target",
+            record.id
+        ))),
         None => Err(Failure::new(format!("{} has not ended", record.id))),
     }
 }

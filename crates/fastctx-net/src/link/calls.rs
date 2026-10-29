@@ -125,6 +125,12 @@ impl Inner {
         // (`fastctx_types::contract`), from now, a connection to send it on
         // waited for included: past that it is given up, and the machine
         // answering it told so.
+        if matches!(call, RemoteCall::Scratch { .. }) && !self.view().scratch_locations {
+            return Err(CallFailure::NotAllowed {
+                name: to.clone(),
+                reason: fastctx_types::scratch::words::OLD_HUB.into(),
+            });
+        }
         let within = call.contract().within;
         let what = format!("{to}'s answer to {}", call.kind());
         let calling = self.calling(to, account, purpose, call, feed);
@@ -179,7 +185,11 @@ impl Inner {
                 reason: "upgrade the hub before sending calls too large for its control connection".into(),
             });
         }
-        let via = match if large { None } else { self.direct_link_for(to, account, &call) } {
+        let via = match if large || matches!(call, RemoteCall::Scratch { .. }) {
+            None
+        } else {
+            self.direct_link_for(to, account, &call)
+        } {
             Some(conn) => {
                 if let Some(resident) = crate::message::worked_for(&self.me(), &call) {
                     if self.view().project_entry && !self.view().may_act_for(account, to) {
@@ -262,9 +272,10 @@ impl Inner {
     ) -> Result<RemoteResult, CallFailure> {
         let broken = |reason: String| CallFailure::Unknown { name: to.clone(), reason };
         match reply.kind {
+            // A machine refuses a call before taking it in: nothing ran.
             Kind::Refused => {
                 let reason: String = reply.body().unwrap_or_else(|_| "it gave no reason".to_string());
-                Ok(Err(fastctx_types::ipc::Failure::new(format!("{to} refused the call: {reason}"))))
+                Ok(Err(fastctx_types::ipc::Failure::not_run(format!("{to} refused the call: {reason}"))))
             }
             Kind::Answer => match reply.body::<Body>() {
                 Ok(Body::Answer { result }) => Ok(result),
@@ -469,7 +480,7 @@ impl Inner {
         purpose: Purpose,
         id: LetterId,
         letter: Letter,
-    ) -> io::Result<()> {
+    ) -> io::Result<super::Posted> {
         let n = self.counter.next()?;
         let message = self.letter(to, account, purpose, n, id, letter);
         let frame = wire::encode(&Up::Send { seq: u64::MAX, message: message.clone() });
@@ -480,13 +491,15 @@ impl Inner {
                 wire::MAX_CONTROL_FRAME
             )));
         }
-        {
+        let posted = {
             let mut letters = self.letters();
             super::letters::Outbox::new(&self.dir).put(letters.next, &message)?;
+            let posted = super::Posted { epoch: letters.file.epoch, seq: letters.next };
             letters.next += 1;
-        }
+            posted
+        };
         self.outbox_changed.notify_one();
-        Ok(())
+        Ok(posted)
     }
 
     /// The most a letter to `to` takes as a control message, with the

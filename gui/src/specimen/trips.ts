@@ -1,12 +1,12 @@
 // A specimen conversation whose runs go about the network
-// (`conversation/trip.ts`): data read on one machine, fitted on another and
+// (`world/run-facts.ts`, `RunStep`): data read on one machine, fitted on another and
 // written back, the result copied to a third and tested there; a check sent
 // to a dozen computers of a lab, two of which did not end well; and a file
 // looked at and changed on a server through `on`. Each run carries the
 // steps the World recorded as it did them.
 
 import type { Content, Does, SessionEvent, Speaker, Tool } from "../world/events";
-import type { RunFacts, RunStep, WriteFact } from "../world/run-facts";
+import type { RunFacts, RunStep, StepDid, WriteFact } from "../world/run-facts";
 import { cut, hunk, put, same, wrote } from "./run-facts";
 import type { Specimen } from "./sessions";
 
@@ -54,7 +54,12 @@ export function trips(): Specimen {
     events.push({ at: at(seconds), event: "finished", turn, item: { id: item, kind: "tool", ...tool } });
   };
   // Steps' times, as seconds after now on the specimen's clock.
-  const when = (from: number, to: number | null) => ({ began: new Date(clock + from * 1000).toISOString(), ended: to === null ? null : new Date(clock + to * 1000).toISOString() });
+  const when = (from: number, to: number | null) => {
+    const began = new Date(clock + from * 1000).toISOString();
+    return to === null ? { began } : { began, ended: new Date(clock + to * 1000).toISOString() };
+  };
+  /** A step the job `job` on `machine` told. */
+  const step = (id: string, job: string, machine: string, from: number, to: number | null, did: StepDid): RunStep => ({ id, job, machine, ...when(from, to), ...did });
 
   run(
     [
@@ -66,22 +71,18 @@ export function trips(): Specimen {
       "on lab cargo test -p ctrl --release 2>&1 | tail -n 3",
     ].join("\n"),
     [
-      { kind: "on", id: "s1", within: null, ...when(1, 3), machine: "laptop", command: "cat /home/me/mark50/data/steps.csv", job: "j-a1", end: { kind: "exited", code: 0 }, fed: null, tail: null },
-      { kind: "on", id: "s2", within: null, ...when(1.2, 6), machine: "desktop", command: "python C:/work/fit.py --model q32", job: "j-a2", end: { kind: "exited", code: 0 }, fed: "s1", tail: "fit: kp=1.84 ki=0.37 kd=0.052  residual 0.0031" },
-      { kind: "on", id: "s3", within: null, ...when(1.4, 6.2), machine: "laptop", command: "tee /home/me/mark50/data/fit.csv", job: "j-a3", end: { kind: "exited", code: 0 }, fed: "s2", tail: null },
-      { kind: "copy", id: "s4", within: null, ...when(7, 8), from: [{ machine: "laptop", path: "/home/me/mark50/data/fit.csv" }], to: { machine: "lab", path: "/srv/mark50/data/" }, files: 1, bytes: 48_210, problems: [] },
-      {
+      step("s1", "j-r1", "desktop", 1, 3, { kind: "on", to: "laptop", command: "cat /home/me/mark50/data/steps.csv", sent: "j-a1", end: { kind: "exited", code: 0 }, pipes_to: "desktop" }),
+      step("s2", "j-r1", "desktop", 1.2, 6, { kind: "on", to: "desktop", command: "python C:/work/fit.py --model q32", sent: "j-a2", end: { kind: "exited", code: 0 }, fed_by: "j-a1", pipes_to: "laptop", tail: "fit: kp=1.84 ki=0.37 kd=0.052  residual 0.0031" }),
+      step("s3", "j-r1", "desktop", 1.4, 6.2, { kind: "on", to: "laptop", command: "tee /home/me/mark50/data/fit.csv > /dev/null", sent: "j-a3", end: { kind: "exited", code: 0 }, fed_by: "j-a2" }),
+      step("s4", "j-r1", "desktop", 7, 8, { kind: "copy", from: [{ machine: "laptop", path: "/home/me/mark50/data/fit.csv" }], to: { machine: "lab", path: "/srv/mark50/data/" }, files: 1, bytes: 48_210, unchanged: 0 }),
+      step("s5", "j-r1", "desktop", 8, 51, {
         kind: "on",
-        id: "s5",
-        within: null,
-        ...when(8, 51),
-        machine: "lab",
-        command: "cargo test -p ctrl --release",
-        job: "j-a5",
+        to: "lab",
+        command: "cargo test -p ctrl --release 2>&1",
+        sent: "j-a5",
         end: { kind: "exited", code: 0 },
-        fed: null,
         tail: "test fixed::tests::step_response ... ok\n\ntest result: ok. 42 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.12s",
-      },
+      }),
     ],
     [],
     "Already up to date.\ntest result: ok. 42 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.12s",
@@ -93,18 +94,16 @@ export function trips(): Specimen {
   const lab = Array.from({ length: 12 }, (_, n) => `实验楼3层-AG${String(n + 1).padStart(2, "0")}`);
   run(
     `for m in ${lab.join(" ")}; do\n  on "$m" git --version &\ndone\nwait`,
-    lab.map((machine, n): RunStep => ({
-      kind: "on",
-      id: `f${n + 1}`,
-      within: null,
-      ...when(1 + n * 0.05, n === 8 ? 21 : 3 + (n % 4) * 0.4),
-      machine,
-      command: "git --version",
-      job: `j-f${n + 1}`,
-      end: n === 4 ? { kind: "exited", code: 127 } : n === 8 ? { kind: "lost", why: "那台中途离线" } : { kind: "exited", code: 0 },
-      fed: null,
-      tail: n === 4 ? "bash: git: command not found" : n === 8 ? null : "git version 2.56.0.windows.2",
-    })),
+    lab.map((machine, n): RunStep =>
+      step(`f${n + 1}`, "j-r2", "desktop", 1 + n * 0.05, n === 8 ? 21 : 3 + (n % 4) * 0.4, {
+        kind: "on",
+        to: machine,
+        command: "git --version",
+        sent: `j-f${n + 1}`,
+        end: n === 4 ? { kind: "exited", code: 127 } : n === 8 ? { kind: "lost", why: "the machine went offline" } : { kind: "exited", code: 0 },
+        ...(n === 4 ? { tail: "bash: git: command not found" } : n === 8 ? {} : { tail: "git version 2.56.0.windows.2" }),
+      }),
+    ),
     [],
     "git version 2.56.0.windows.2\n…",
     22,
@@ -123,11 +122,11 @@ export function trips(): Specimen {
       "EOF",
     ].join("\n"),
     [
-      { kind: "on", id: "v1", within: null, ...when(1, 2), machine: "lab", command: "fastctx view /srv/mark50/src/ctrl/fixed.rs", job: "j-v1", end: { kind: "exited", code: 0 }, fed: null, tail: null },
-      { kind: "view", id: "v2", within: "v1", ...when(1.1, 1.2), machine: "lab", paths: ["/srv/mark50/src/ctrl/fixed.rs"] },
-      { kind: "on", id: "v3", within: null, ...when(3, 4), machine: "lab", command: "edit /srv/mark50/src/ctrl/fixed.rs", job: "j-v3", end: { kind: "exited", code: 0 }, fed: null, tail: null },
+      step("v1", "j-r3", "desktop", 1, 2, { kind: "on", to: "lab", command: "fastctx view /srv/mark50/src/ctrl/fixed.rs", sent: "j-v1", end: { kind: "exited", code: 0 } }),
+      step("v2", "j-v1", "lab", 1.1, 1.2, { kind: "view", paths: ["/srv/mark50/src/ctrl/fixed.rs"] }),
+      step("v3", "j-r3", "desktop", 3, 4, { kind: "on", to: "lab", command: "edit /srv/mark50/src/ctrl/fixed.rs <<'EOF'", sent: "j-v3", end: { kind: "exited", code: 0 } }),
     ],
-    [{ ...wrote("9e1f20aa", 0, "lab", "/srv/mark50/src/ctrl/fixed.rs", "modified", rows), step: "v3" }],
+    [wrote("9e1f20aa", 0, "lab", "/srv/mark50/src/ctrl/fixed.rs", "modified", rows)],
     "=== edit lab:/srv/mark50/src/ctrl/fixed.rs (+1 −1) ===",
     5,
   );
@@ -145,8 +144,8 @@ export function trips(): Specimen {
   const item = id();
   const began = at(2);
   const steps: RunStep[] = [
-    { kind: "on", id: "g1", within: null, ...when(0.5, 9), machine: lab[4]!, command: install, job: "j-g1", end: { kind: "exited", code: 0 }, fed: null, tail: "已成功安装" },
-    { kind: "on", id: "g2", within: null, ...when(0.6, null), machine: lab[8]!, command: install, job: "j-g2", end: null, fed: null, tail: null },
+    step("g1", "j-going", "desktop", 0.5, 9, { kind: "on", to: lab[4]!, command: install, sent: "j-g1", end: { kind: "exited", code: 0 }, tail: "Successfully installed" }),
+    step("g2", "j-going", "desktop", 0.6, null, { kind: "on", to: lab[8]!, command: install, sent: "j-g2" }),
   ];
   const command = `for m in ${lab[4]} ${lab[8]}; do\n  on "$m" ${install} &\ndone\nwait`;
   const facts: RunFacts = { machine: "desktop", state: { kind: "running" }, job: "j-going", output: null, visited: [], writes: [], steps, spans: [] };

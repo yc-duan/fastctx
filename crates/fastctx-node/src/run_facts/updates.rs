@@ -17,6 +17,72 @@ struct Emitted {
 }
 
 pub(crate) fn job(node: &Node, record_path: &Path, writes: Vec<WriteFact>) -> io::Result<()> {
+    job_with(node, record_path, writes, Vec::new())
+}
+
+/// An ended output's measures: its reference, and where the writes it
+/// tells of stand in it.
+type Measured = (OutputRef, Vec<fastctx_types::run_facts::OutputNoteMatch>);
+
+/// What an output that has ended is, measured whole: its fingerprint, its
+/// lines, the writes noted in it. The output no longer changes once it has
+/// ended, so this is done before the facts are put in order: a large one
+/// can take long enough that holding every job's facts behind it would
+/// keep the next job from confirming its start.
+fn measure(node: &Node, record_path: &Path, record: &JobRecord) -> io::Result<(Measured, Vec<u8>)> {
+    let content = fastctx_hands::files::content_fingerprint(Path::new(&record.output))?;
+    let index = fastctx_hands::lines::Index::open(
+        Path::new(&record.output),
+        node.world.path(),
+        true,
+        None,
+        std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+    )
+    .map_err(io::Error::other)?;
+    let writes = super::writes(record_path)?;
+    let notes = fastctx_hands::run::projection::CapturedNotes::read(Path::new(&record.output), content.size, &writes)?
+        .matches();
+    let output = OutputRef {
+        policy: Some(fastctx_hands::lines::output_policy()),
+        machine: record.machine.clone(),
+        path: record.output.clone(),
+        bytes: content.size,
+        lines: index.length,
+        cut: false,
+        content: Some(content),
+    };
+    Ok(((output, notes), serde_json::to_vec(&writes)?))
+}
+
+/// Whether the job's owner was last told it as it stands now.
+fn told(record_path: &Path, record: &JobRecord) -> io::Result<bool> {
+    let emitted: Emitted = match std::fs::read(record_path.with_extension("facts-state")) {
+        Ok(bytes) => serde_json::from_slice(&bytes)?,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(false),
+        Err(error) => return Err(error),
+    };
+    Ok(emitted.state.as_ref() == Some(&crate::jobs::state(record))
+        && emitted.output_ended == record.output_ended_at.is_some())
+}
+
+/// Tells the job's owner what changed of it, with the writes and steps
+/// just told.
+pub(crate) fn job_with(
+    node: &Node,
+    record_path: &Path,
+    writes: Vec<WriteFact>,
+    steps: Vec<fastctx_types::run_facts::RunStep>,
+) -> io::Result<()> {
+    let before = fastctx_hands::run::record::read(record_path)?;
+    let measured = if before.call_id.is_some()
+        && before.owner.resident().is_some()
+        && before.output_ended_at.is_some()
+        && !(writes.is_empty() && steps.is_empty() && told(record_path, &before)?)
+    {
+        Some(measure(node, record_path, &before)?)
+    } else {
+        None
+    };
     let _emitting = EMITTING.lock();
     let record = fastctx_hands::run::record::read(record_path)?;
     let Some(call_id) = record.call_id.clone() else {
@@ -44,7 +110,11 @@ pub(crate) fn job(node: &Node, record_path: &Path, writes: Vec<WriteFact>) -> io
     };
     let output_ended = record.output_ended_at.is_some();
     // A stopped capture can finish draining without changing its RunState.
-    if writes.is_empty() && emitted.state.as_ref() == Some(&state) && emitted.output_ended == output_ended {
+    if writes.is_empty()
+        && steps.is_empty()
+        && emitted.state.as_ref() == Some(&state)
+        && emitted.output_ended == output_ended
+    {
         return Ok(());
     }
     emitted.sequence =
@@ -52,37 +122,22 @@ pub(crate) fn job(node: &Node, record_path: &Path, writes: Vec<WriteFact>) -> io
     emitted.state = Some(state.clone());
     emitted.output_ended = output_ended;
     let (output, notes) = if record.output_ended_at.is_some() {
-        let content = fastctx_hands::files::content_fingerprint(Path::new(&record.output))?;
-        let index = fastctx_hands::lines::Index::open(
-            Path::new(&record.output),
-            node.world.path(),
-            true,
-            None,
-            std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
-        )
-        .map_err(io::Error::other)?;
-        let notes = fastctx_hands::run::projection::CapturedNotes::read(
-            Path::new(&record.output),
-            content.size,
-            &super::writes(record_path)?,
-        )?
-        .matches();
-        (
-            Some(OutputRef {
-                policy: Some(fastctx_hands::lines::output_policy()),
-                machine: record.machine.clone(),
-                path: record.output.clone(),
-                bytes: content.size,
-                lines: index.length,
-                cut: false,
-                content: Some(content),
-            }),
-            Some(notes),
-        )
+        // Measured before the lock, unless the output ended since or a
+        // write was noted since: then it is measured here.
+        let (output, notes) = match measured {
+            Some((measured, noted)) if noted == serde_json::to_vec(&super::writes(record_path)?)? => measured,
+            _ => measure(node, record_path, &record)?.0,
+        };
+        (Some(output), Some(notes))
     } else {
         (None, None)
     };
     let update = JobFacts {
+        record: Some(record_path.to_string_lossy().into_owned()),
+        script: Some(record.script.clone()),
+        started_at: Some(record.started_at),
+        finished_at: record.end.as_ref().map(|end| end.at),
+        turn: record.turn.clone(),
         call_id,
         primary: record.on.is_none(),
         output,
@@ -93,6 +148,7 @@ pub(crate) fn job(node: &Node, record_path: &Path, writes: Vec<WriteFact>) -> io
         sequence: emitted.sequence,
         state: Some(state),
         writes,
+        steps,
     };
     let pending = record_path.with_extension("facts-pending");
     publish(&pending, &serde_json::to_vec(&update)?, Permissions::Private)?;

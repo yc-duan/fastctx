@@ -11,7 +11,7 @@ import { reducedMotion } from "../motion";
 /** The switches whose chosen side slides: two or a few choices side by
  *  side, the chosen one washed. */
 const TRACKS =
-  ".segmented, .device-ways, .model-speeds, .picker-kinds, .ml-views, .map-roles, .mp-ranges, .logins-tabs, .data-tabs, .mp-tabs, .ledger-switch";
+  ".segmented, .model-speeds, .picker-kinds, .ml-views, .map-roles, .mp-ranges, .logins-tabs, .data-tabs, .mp-tabs, .ledger-switch";
 
 /** How a switch marks its chosen side. */
 const CHOSEN = ":scope > .chosen, :scope > .current, :scope > [aria-selected='true'], :scope > [aria-checked='true'], :scope > [aria-pressed='true']";

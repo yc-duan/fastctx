@@ -138,6 +138,18 @@ impl Known {
         self.jobs.clear();
     }
 
+    /// Lets go of what it knows of the files kept as the keys `gone`, no
+    /// longer kept, and of the outputs and jobs that led to them.
+    pub fn forget(&mut self, gone: &std::collections::HashSet<String>) {
+        self.files.retain(|_, frozen| {
+            !gone.contains(&frozen.key) && frozen.body.as_ref().is_none_or(|body| !gone.contains(body))
+        });
+        let files = &self.files;
+        self.projections.retain(|target, _| files.contains_key(target));
+        let projections = &self.projections;
+        self.jobs.retain(|_, target| projections.contains_key(target));
+    }
+
     fn learn_diff(&mut self, write: &fastctx_types::run_facts::WriteFact, keys: &mut Vec<String>) {
         if let Some(diff) = &write.diff
             && let Some(content) = &diff.content

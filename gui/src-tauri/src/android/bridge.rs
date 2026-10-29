@@ -124,8 +124,10 @@ pub extern "system" fn Java_dev_fastctx_world_WorldRuntime_startNative(
             vm: env.get_java_vm().map_err(|error| error.to_string())?,
             runtime: env.new_global_ref(object).map_err(|error| error.to_string())?,
         });
-        BRIDGE.set(bridge.clone()).map_err(|_| "Android bridge was already started")?;
-        super::start(directory.into(), bridge)
+        super::start(directory.into(), bridge.clone())?;
+        // Kept once started; one started before stays.
+        let _ = BRIDGE.set(bridge);
+        Ok::<(), String>(())
     })();
     result(&mut env, start.err())
 }
@@ -156,25 +158,6 @@ pub extern "system" fn Java_dev_fastctx_world_WorldRuntime_visibleNative(
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_dev_fastctx_world_WorldRuntime_wakePageNative(_: JNIEnv<'_>, _: JObject<'_>) {
     super::pending();
-}
-
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_dev_fastctx_world_WorldRuntime_sayNative(
-    mut env: JNIEnv<'_>,
-    _: JObject<'_>,
-    resident: JString<'_>,
-    machine: JString<'_>,
-    text: JString<'_>,
-    id: JString<'_>,
-) -> jstring {
-    let said = (|| {
-        let mut read = |value: &JString<'_>| -> Result<String, String> {
-            env.get_string(value).map(Into::into).map_err(|error| error.to_string())
-        };
-        let (resident, machine, text, id) = (read(&resident)?, read(&machine)?, read(&text)?, read(&id)?);
-        super::say(resident, machine, text, id)
-    })();
-    result(&mut env, said.err())
 }
 
 #[unsafe(no_mangle)]

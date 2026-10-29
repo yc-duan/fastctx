@@ -197,7 +197,11 @@ pub(crate) fn forgot(hub: &Hub, member: &MachineName, id: u64, outcome: Forgot) 
                 } else {
                     store.book.forgetting.pending[index].waiting.remove(&member);
                 }
-                (Some(Outcome::Done), finish(hub, &mut store, index))
+                // The log keeps that the machine it lived on deleted it, and
+                // where it could not be; that each other machine did its part
+                // as asked is the deletion going as it should, and only grew
+                // the directory, by a record a machine a deletion.
+                (at_home.then_some(Outcome::Done), finish(hub, &mut store, index))
             }
             // Only the machine it lives on refuses: then nothing of it is
             // deleted anywhere, and it is shown again.

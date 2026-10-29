@@ -30,6 +30,7 @@
 // there, and the agent starts in that place with all of them.
 
 import { AttachTray, type AttachSource, type AttachWords } from "../conversation/attach";
+import { wireAttach } from "../conversation/attach-way";
 import { layerOpened } from "./back";
 import { glyph } from "../conversation/glyphs";
 import { ModelPanel, type ModelPanelWords } from "../conversation/model-panel";
@@ -47,7 +48,7 @@ import type { WorldNow } from "../world/bridge";
 import type { Offers } from "../world/control";
 import type { Address } from "../world/events";
 import { accountOf, homeChoice, homeLabel, homesOf, installed, listed, loggedOut, type HomeWords } from "./agent-homes";
-import { agentKinds, agentPicker, foldInPicker, narrowPicker, type PickerKind, type PickerMachine, type PickerRow } from "./agent-picker";
+import { agentKinds, agentPicker, foldInPicker, type PickerKind, type PickerMachine, type PickerRow } from "./agent-picker";
 import { resizeUpward } from "./resize-upward";
 import { keepChoice, keptEffort, keptModel } from "./model-memory";
 import type { ProfileDefaults } from "./profile-defaults";
@@ -60,7 +61,9 @@ import {
   groupsOf,
   loginKey,
   loginLabel,
+  machineNamed,
   machinesOf,
+  machineWritten,
   openersOn,
   ownerOf,
   owns,
@@ -70,10 +73,15 @@ import {
   type Machine,
 } from "./reach";
 import { DraftFit } from "../conversation/fit-draft";
+import { whenNear } from "./read-on";
 import { Steady } from "./steady";
 import type { Store } from "./store";
 import type { FocusWords, NewTalkWords } from "./words";
 import { composing } from "../typing";
+
+/** How many of the table of agents' rows are drawn at first, and how many
+ *  more each time the end of those comes near. */
+const PICKER_ROWS = 120;
 
 export interface Begun {
   agent: string;
@@ -297,7 +305,7 @@ export class NewTalk {
           <div class="composer-tray"></div>
           <textarea rows="1" enterkeyhint="send"></textarea>
           <div class="composer-row">
-            <div class="composer-tools"><button class="icon-button composer-attach" type="button" hidden></button><input class="composer-pick" type="file" multiple hidden><button class="icon-button composer-photo" type="button" hidden></button><input class="composer-shot" type="file" accept="image/*" capture="environment" hidden><button class="composer-chip" type="button" hidden></button></div>
+            <div class="composer-tools"><button class="icon-button composer-attach" type="button" hidden></button><input class="composer-pick" type="file" multiple hidden><input class="composer-shot" type="file" accept="image/*" capture="environment" hidden><button class="composer-chip" type="button" hidden></button></div>
             <span class="composer-note" aria-live="polite"></span>
             <button class="composer-action" type="submit" aria-label="${escape(words.start)}" title="${escape(words.start)}">${glyph("send", 18)}</button>
           </div>
@@ -428,6 +436,7 @@ export class NewTalk {
     this.stopDrops = null;
     this.choose(null);
     this.models.hide();
+    this.pickerUnwatch();
   }
 
   /** The stage as it is before anything is begun. */
@@ -448,6 +457,12 @@ export class NewTalk {
   private readonly pickerFolds = rememberedFolds();
   /** The table as last drawn, so it is drawn again only when it differs. */
   private agentsDrawn = "";
+  /** How many of the table's rows are drawn, how many each person's opens
+   *  onto as last drawn, and what stops watching the end of those coming
+   *  near. */
+  private pickerReach = PICKER_ROWS;
+  private pickerInside = new Map<string, number>();
+  private pickerUnwatch = () => {};
   /** The reader chose an agent: the table changes within the panel's
    *  size, and the panel does not grow for it. */
   private keepSize = false;
@@ -487,30 +502,17 @@ export class NewTalk {
     tray.onlyImages(() => this.imagesOnly(), (why) => this.refuseFile(why));
     this.tray = tray;
     this.element.querySelector(".composer-tray")!.replaceWith(tray.element);
-    const button = this.element.querySelector<HTMLButtonElement>(".composer-attach")!;
     const pick = this.element.querySelector<HTMLInputElement>(".composer-pick")!;
-    button.hidden = false;
-    button.innerHTML = glyph("attach", 18);
-    button.setAttribute("aria-label", attach.words.attach);
-    button.title = attach.words.attach;
-    button.addEventListener("click", () => pick.click());
-    pick.addEventListener("change", () => {
-      if (pick.files) tray.addFiles(pick.files);
-      pick.value = "";
-      this.input.focus();
+    const shot = this.element.querySelector<HTMLInputElement>(".composer-shot")!;
+    // As in a conversation: the camera in the paperclip's menu on a phone.
+    wireAttach(this.element, this.element.querySelector<HTMLButtonElement>(".composer-attach")!, this.element.querySelector<HTMLElement>(".composer-menus")!, attach.words, {
+      files: () => pick.click(),
+      photo: () => shot.click(),
     });
-    // As in a conversation: the camera on a phone, nowhere else.
-    if (coarse()) {
-      const photo = this.element.querySelector<HTMLButtonElement>(".composer-photo")!;
-      const shot = this.element.querySelector<HTMLInputElement>(".composer-shot")!;
-      photo.hidden = false;
-      photo.innerHTML = glyph("camera", 18);
-      photo.setAttribute("aria-label", attach.words.photo);
-      photo.title = attach.words.photo;
-      photo.addEventListener("click", () => shot.click());
-      shot.addEventListener("change", () => {
-        if (shot.files) tray.addFiles(shot.files);
-        shot.value = "";
+    for (const input of [pick, shot]) {
+      input.addEventListener("change", () => {
+        if (input.files) tray.addFiles(input.files);
+        input.value = "";
         this.input.focus();
       });
     }
@@ -677,7 +679,7 @@ export class NewTalk {
    *  it. */
   private lives(world: WorldNow | null, option: Option | null): Machine | null {
     if (!option || option.assistant) return null;
-    return machinesOf(world).find((machine) => machine.name === option.machine) ?? null;
+    return machineNamed(world, option.machine);
   }
 
   /** The logins of `agent` on `machine` as choices: who is logged in to
@@ -762,7 +764,9 @@ export class NewTalk {
         rows: line.options.map((option) => this.row(option, line)),
       };
     });
-    return { machines, html: agentPicker(machines, this.pickerWords(), { kind: this.kind, open: (key, byDefault) => this.pickerFolds.get(key) ?? byDefault }) };
+    const drawn = agentPicker(machines, this.pickerWords(), { kind: this.kind, open: (key, byDefault) => this.pickerFolds.get(key) ?? byDefault, query: this.narrowed.trim().toLowerCase(), reach: this.pickerReach });
+    this.pickerInside = drawn.inside;
+    return { machines, html: drawn.html };
   }
 
   private pickerWords() {
@@ -781,7 +785,7 @@ export class NewTalk {
 
   /** What is known of a line's computer: its kind, for its icon. */
   private machineOf(line: Line) {
-    const machine = machinesOf(this.options.store.world.peek()).find((one) => one.written === line.written);
+    const machine = machineWritten(this.options.store.world.peek(), line.written);
     return machine && "Ok" in machine.facts && machine.facts.Ok ? machine.facts.Ok : null;
   }
 
@@ -821,6 +825,7 @@ export class NewTalk {
     }
     this.opened = pop;
     this.narrowed = "";
+    this.pickerReach = PICKER_ROWS;
     this.popSteady ??= new Steady(this.pop, true);
     this.popSteady.free();
     this.draw();
@@ -856,6 +861,7 @@ export class NewTalk {
         const kind: PickerKind = value === "claude" ? "claude" : "codex";
         if (kind !== this.kind) {
           this.kind = kind;
+          this.pickerReach = PICKER_ROWS;
           remember("agent", kind);
           resizeUpward(this.pop, this.popSteady, () => this.draw());
         }
@@ -867,8 +873,14 @@ export class NewTalk {
         const open = target.getAttribute("aria-expanded") !== "true";
         this.pickerFolds.set(value, open);
         remember("pickerFolds", JSON.stringify([...this.pickerFolds]));
+        // A person opened is drawn whole, the rows after it as they were.
+        if (open) this.pickerReach += this.pickerInside.get(value) ?? 0;
+        const html = this.agentsHtml(this.lines(this.options.store.world.peek()));
+        // A person folded has nothing drawn under it: what opens is put in
+        // first, then slides in.
+        if (open) fillFold(this.pop, value, html);
         foldInPicker(this.pop, value, open);
-        this.agentsDrawn = this.agentsHtml(this.lines(this.options.store.world.peek()));
+        this.agentsDrawn = html;
         return;
       }
       case "town":
@@ -1067,7 +1079,8 @@ ${words.assistantWorks(option.assistant.owner ?? "")}` : said,
       field.spellcheck = false;
       field.addEventListener("input", () => {
         this.narrowed = field.value;
-        resizeUpward(pop, this.popSteady, () => narrowPicker(list!, this.narrowed));
+        this.pickerReach = PICKER_ROWS;
+        resizeUpward(pop, this.popSteady, () => this.draw());
       });
       search.append(field);
       foot.append(search);
@@ -1084,8 +1097,13 @@ ${words.assistantWorks(option.assistant.owner ?? "")}` : said,
       list.innerHTML = html;
       this.agentsDrawn = html;
       pop.scrollTop = scroll;
+      this.pickerUnwatch();
+      this.pickerUnwatch = whenNear(list, pop, () => {
+        this.pickerReach += PICKER_ROWS;
+        this.keepSize = true;
+        this.draw();
+      });
     }
-    narrowPicker(list, this.narrowed);
   }
 
   /** The machines its account may use: where it lives and those the
@@ -1329,3 +1347,14 @@ ${words.assistantWorks(option.assistant.owner ?? "")}` : said,
 /** A file attached to the first words did not reach the machine; the tray
  *  says which, and why. */
 class NotSent extends Error {}
+
+/** Puts what is under the fold `key` in `html` under that fold as drawn in
+ *  `root`, where nothing was drawn while it was folded. */
+function fillFold(root: HTMLElement, key: string, html: string): void {
+  const inner = [...root.querySelectorAll<HTMLElement>(".agent-fold")].find((one) => one.dataset.fold === key)?.querySelector<HTMLElement>(":scope > .agent-fold-inner");
+  if (!inner || inner.childElementCount) return;
+  const drawn = document.createElement("template");
+  drawn.innerHTML = html;
+  const fresh = [...drawn.content.querySelectorAll<HTMLElement>(".agent-fold")].find((one) => one.dataset.fold === key)?.querySelector<HTMLElement>(":scope > .agent-fold-inner");
+  if (fresh) inner.replaceChildren(...fresh.childNodes);
+}

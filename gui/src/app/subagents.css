@@ -1,8 +1,39 @@
 /* The account's Claude subagents (`subagents-page.ts`): a solid row for each,
    its name, when it is handed work, and what it runs on; 「添加」 at the end
-   of the list's rule. Under them the instructions on a short sheet of the
-   prompt's writing paper, and, where the account changed them, the way
-   back to the defaults. */
+   of the list's rule. Under them the instructions on the prompt's writing
+   paper, and, where the account changed them, the way back to the
+   defaults. The page holds still: the list and the paper share its height,
+   each scrolling in its own place, and saving stays under the paper; only
+   a window too short for both scrolls the page. */
+
+.sa-body.host-prefs {
+  padding-bottom: 0;
+}
+
+.sa-board {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 480px;
+  padding-bottom: max(var(--space-6), var(--safe-bottom));
+}
+
+.sa-board > .sa-section:first-child {
+  flex: 0 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.sa-board > .sa-section + .sa-section {
+  flex: 1 0 280px;
+  display: flex;
+  flex-direction: column;
+}
+
+.sa-board > .sa-end {
+  flex: none;
+}
 
 .sa-title::after {
   order: 1;
@@ -22,10 +53,15 @@
 
 .sa-rows {
   display: grid;
+  align-content: start;
   gap: 6px;
+  min-height: 0;
   margin: 0;
   padding: 0;
   list-style: none;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
 }
 
 .sa-row {
@@ -40,7 +76,7 @@
   background: var(--fill);
   color: var(--text);
   text-align: left;
-  transition: background-color var(--hover) ease;
+  transition: background-color var(--hover) var(--ease);
 }
 
 .sa-row:hover,
@@ -70,12 +106,6 @@
 
 .sa-none {
   padding: var(--space-3) 0;
-}
-
-/* The instructions: the prompt's paper, as tall as a few paragraphs. */
-.sa-paper.prompt-paper {
-  flex: none;
-  height: clamp(200px, 34vh, 340px);
 }
 
 .sa-foot {
@@ -118,7 +148,7 @@
 .sa-more > summary .glyph {
   rotate: -90deg;
   color: var(--text-3);
-  transition: rotate var(--hover) ease;
+  transition: rotate var(--hover) var(--ease);
 }
 
 .sa-more[open] > summary .glyph {
@@ -144,9 +174,5 @@
     display: -webkit-box;
     -webkit-line-clamp: 2;
     -webkit-box-orient: vertical;
-  }
-
-  .sa-paper.prompt-paper {
-    height: clamp(220px, 40vh, 360px);
   }
 }

@@ -48,7 +48,7 @@ fn wake(parent: &ProcessIdentity, session: &Path, root: &Path) -> io::Result<()>
     let watched = crate::file_events::named(session)?;
     let marker = crate::file_events::named(root)?.join("uninstalled.json");
     let (inbox_seen, controls_seen) = (watched.join("inbox"), watched.join("control").join("inbox"));
-    let mut watcher = notify::recommended_watcher(move |event: notify::Result<notify::Event>| {
+    let mut watcher = fastctx_watch::Watcher::new(move |event: notify::Result<notify::Event>| {
         let event = match event {
             Ok(event) if !event.need_rescan() => event,
             _ => {
@@ -77,13 +77,12 @@ fn wake(parent: &ProcessIdentity, session: &Path, root: &Path) -> io::Result<()>
                 let _ = changes.send(woken);
             }
         }
-    })
-    .map_err(io::Error::other)?;
+    });
     // One watch over the whole session directory, opened on that directory
     // alone: the node may move it into its conversation, which Windows
     // refuses while a watch is open on anything inside it.
-    notify::Watcher::watch(&mut watcher, session, notify::RecursiveMode::Recursive).map_err(io::Error::other)?;
-    notify::Watcher::watch(&mut watcher, root, notify::RecursiveMode::NonRecursive).map_err(io::Error::other)?;
+    watcher.watch(session, notify::RecursiveMode::Recursive).map_err(io::Error::other)?;
+    watcher.watch(root, notify::RecursiveMode::NonRecursive).map_err(io::Error::other)?;
     let parent = parent.clone();
     std::thread::spawn(move || {
         let _ = sender.send(Woken::Exited(fastctx_platform::host_process::wait_for_exit(&parent)));
@@ -155,13 +154,12 @@ pub fn policy(world: &Path, session: &str, messages: Option<usize>, after_compac
         .ok_or_else(|| io::Error::other("the World node is not running"))?;
     let (sender, receiver) = mpsc::channel();
     let changes = sender.clone();
-    let mut watcher = notify::recommended_watcher(move |event: notify::Result<notify::Event>| {
+    let mut watcher = fastctx_watch::Watcher::new(move |event: notify::Result<notify::Event>| {
         if crate::file_events::may_change(&event) {
             let _ = changes.send(event.map(|_| false).map_err(io::Error::other));
         }
-    })
-    .map_err(io::Error::other)?;
-    notify::Watcher::watch(&mut watcher, &directory, notify::RecursiveMode::NonRecursive).map_err(io::Error::other)?;
+    });
+    watcher.watch(&directory, notify::RecursiveMode::NonRecursive).map_err(io::Error::other)?;
     std::thread::spawn(move || {
         let _ = sender.send(fastctx_platform::host_process::wait_for_exit(&controller).map(|()| true));
     });
@@ -179,12 +177,12 @@ pub fn policy(world: &Path, session: &str, messages: Option<usize>, after_compac
                 let path = fastctx_hosts::claude::exchange::transcript(&directory)?
                     .ok_or_else(|| io::Error::other("Claude did not report its transcript path"))?;
                 if !transcript_watched {
-                    notify::Watcher::watch(
-                        &mut watcher,
-                        path.parent().ok_or_else(|| io::Error::other("Claude transcript has no parent"))?,
-                        notify::RecursiveMode::NonRecursive,
-                    )
-                    .map_err(io::Error::other)?;
+                    watcher
+                        .watch(
+                            path.parent().ok_or_else(|| io::Error::other("Claude transcript has no parent"))?,
+                            notify::RecursiveMode::NonRecursive,
+                        )
+                        .map_err(io::Error::other)?;
                     transcript_watched = true;
                 }
                 match fastctx_hosts::claude::transcript::read(&path) {
@@ -281,7 +279,7 @@ pub fn run(directory: &Path, elicitation: bool) -> io::Result<()> {
         let mut random = [0u8; 16];
         getrandom::fill(&mut random).map_err(io::Error::other)?;
         let key = format!("elicitation-{}", random.iter().map(|byte| format!("{byte:02x}")).collect::<String>());
-        (directory, Question { key, host, turn, request: "Elicitation".into(), params, native_wait: false })
+        (directory, Question { key, host, turn, request: "Elicitation".into(), params })
     } else {
         (directory.to_path_buf(), serde_json::from_str::<Question>(&input).map_err(io::Error::other)?)
     };
@@ -328,17 +326,16 @@ fn wait(directory: &Path, question: Question) -> io::Result<Answer> {
     let waiting = Waiting { question, process: fastctx_platform::current_identity()?, at: Timestamp::now() };
     let (sender, receiver) = mpsc::channel();
     let changes = sender.clone();
-    let mut watcher = notify::recommended_watcher(move |event: notify::Result<notify::Event>| {
+    let mut watcher = fastctx_watch::Watcher::new(move |event: notify::Result<notify::Event>| {
         if crate::file_events::may_change(&event) {
             let _ = changes.send(event.map(|_| None).map_err(io::Error::other));
         }
-    })
-    .map_err(io::Error::other)?;
+    });
     // On the session's directory itself, as the control helper's watch is:
     // the node may move it, which Windows refuses while a watch is open on
     // anything inside it.
     let watched = directory.parent().unwrap_or(directory);
-    notify::Watcher::watch(&mut watcher, watched, notify::RecursiveMode::Recursive).map_err(io::Error::other)?;
+    watcher.watch(watched, notify::RecursiveMode::Recursive).map_err(io::Error::other)?;
     for (process, reason) in [
         (controller, "the World's node exited while the request waited"),
         (waiting.question.host.process.clone(), "the Claude control activation ended"),
