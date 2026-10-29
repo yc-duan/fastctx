@@ -2,6 +2,7 @@
 // conversation itself in a region that scrolls on its own, and the words
 // the user is about to send, always at the foot.
 
+import { leave, leaving, stay } from "../app/leave";
 import { keepChoice } from "../app/model-memory";
 import { layerOpened } from "../app/back";
 import { FocusPanel, type FocusServers, focusSummary, type FocusPlace } from "../app/focus-panel";
@@ -13,6 +14,7 @@ import type { Attachment } from "../world/attachments";
 import type { AttachmentSource } from "../world/files";
 import type { Decoding } from "../world/remote-lines";
 import { AttachTray, type AttachSeam, type AttachWords, type Attached } from "./attach";
+import { wireAttach } from "./attach-way";
 import { SendQueue, type Queued } from "./queue";
 import { bindComposer, type ComposerSession, type ComposerSessionState } from "./composer";
 import type { ComposerSnapshot, ComposerUpdated } from "../world/composer";
@@ -26,7 +28,11 @@ import { effortLabel } from "./effort-slider";
 import { fileRow, mentionAt, mentioned, type FileWords, type FoundFile } from "./mention";
 import { FileLinks } from "./file-links";
 import { JobsPanel, type Job, type OutputLines } from "./jobs-panel";
-import { AgentsPanel } from "./agents-panel";
+import { AgentBox } from "./agent-box";
+import { SideMount } from "../side/mount";
+import { holdColumn } from "./column-hold";
+import type { Address } from "../world/wire";
+import type { SideSeams } from "../side/seams";
 import type { AgentActivity, Tool } from "../world/events";
 import { Pictures, type PictureSeams } from "./pictures";
 import type { HeldRead } from "../world/reads";
@@ -144,6 +150,9 @@ export interface PageOptions {
   };
   /** Where the words being written are kept between visits. */
   draftKey?: string;
+  /** Where this device keeps which view the conversation was last read
+   *  in (`world-voice.md`, 两种看法). */
+  viewKey?: string;
   /** The input shared by every device with this conversation open, its
    *  words and queue kept by the node of the agent's machine; where it
    *  cannot be opened (a node of an older version), the page keeps its own. */
@@ -178,6 +187,8 @@ export interface PageOptions {
   /** A job's output as lines from the machine running it, read as it
    *  grows. */
   jobOutput?: ((job: Job) => Promise<OutputLines>) | undefined;
+  /** The address of a watcher's own page, for its row among the jobs. */
+  watchLink?: ((job: Job) => string) | undefined;
   /** Lines of a file or a job's output on the machine holding them: what a
    *  write changed, a command's whole output. */
   lines?: ((machine: string, path: string, decoding: Decoding) => Promise<OutputLines>) | undefined;
@@ -186,6 +197,9 @@ export interface PageOptions {
   agentRecord?: ((agent: string) => Promise<AgentActivity>) | undefined;
   /** A turn's requests one by one, on its login's usage page. */
   calls?: ((turn: string) => void) | undefined;
+  /** The panel beside the conversation: its plan, its goal, and who works
+   *  with it (`side/mount.ts`). */
+  side?: SideSeams | undefined;
 }
 
 /** How many times what a conversation offers is asked again after asking
@@ -296,10 +310,10 @@ export class ConversationPage {
         `<div class="who">
         <span class="who-seal" tabindex="0">${glyph(markOf(someone.agent), 16)}</span>
         <h1 class="who-name">${escape(someone.agent)}</h1>
-        <span class="who-home">${glyph("machine", 14)}<span>${escape(someone.assistFrom ? words.assistFrom(someone.assistFrom) : someone.machine)}</span></span>
+        ${someone.assistFrom ? `<span class="who-home">${glyph("machine", 14)}<span>${escape(words.assistFrom(someone.assistFrom))}</span></span>` : ""}
         <span class="who-state" hidden></span>
       </div>`,
-        `<button class="icon-button find-toggle" type="button" aria-label="${escape(words.find.find)}" title="${escape(words.find.find)}">${glyph("search", 18)}</button>${
+        `<button class="icon-button view-steps" type="button" aria-pressed="false" aria-label="${escape(words.viewSteps)}" title="${escape(words.viewSteps)}">${glyph("steps", 18)}</button><button class="icon-button find-toggle" type="button" aria-label="${escape(words.find.find)}" title="${escape(words.find.find)}">${glyph("search", 18)}</button>${
           options.manage
             ? `<button class="icon-button talk-menu-toggle" type="button" aria-haspopup="menu" aria-expanded="false" aria-label="${escape(options.manage.words.more)}">${glyph("more", 20)}</button>`
             : ""
@@ -312,12 +326,12 @@ export class ConversationPage {
         <p class="composer-gone" hidden></p>
         <div class="composer-queue"></div>
         <form class="composer">
-          <div class="composer-menus"><div class="composer-menu usage-pop" hidden></div><div class="composer-menu said-pop" role="dialog" hidden></div><div class="jobs-pop" role="dialog" hidden></div><div class="agents-pop" role="dialog" hidden></div></div>
+          <div class="composer-menus"><div class="composer-menu usage-pop" hidden></div><div class="composer-menu said-pop" role="dialog" hidden></div><div class="jobs-pop" role="dialog" hidden></div></div>
           <div class="composer-confirm" hidden></div>
           <div class="composer-tray"></div>
           <textarea rows="1" enterkeyhint="send" placeholder="${escape(words.sendPlaceholder(someone.agent))}" aria-label="${escape(words.sendPlaceholder(someone.agent))}"></textarea>
           <div class="composer-row">
-            <div class="composer-tools"><button class="icon-button composer-attach" type="button" hidden></button><input class="composer-pick" type="file" multiple hidden><button class="icon-button composer-photo" type="button" hidden></button><input class="composer-shot" type="file" accept="image/*" capture="environment" hidden><button class="composer-chip" type="button" hidden></button><button class="composer-agents" type="button" hidden></button><button class="composer-jobs" type="button" hidden></button></div>
+            <div class="composer-tools"><button class="icon-button composer-attach" type="button" hidden></button><input class="composer-pick" type="file" multiple hidden><input class="composer-shot" type="file" accept="image/*" capture="environment" hidden><button class="composer-chip" type="button" hidden></button><button class="composer-jobs" type="button" hidden></button></div>
             <span class="composer-note" aria-live="polite"></span>
             <button class="composer-context" type="button" hidden></button>
             <button class="composer-action" type="submit" aria-label="${escape(words.send)}"></button>
@@ -366,6 +380,7 @@ export class ConversationPage {
       this.drawFocus();
     }
     this.element.querySelector(".find-toggle")!.addEventListener("click", () => (this.finder.open ? this.finder.close() : this.finder.show()));
+    this.element.querySelector(".view-steps")!.addEventListener("click", () => this.toggleSteps());
     document.addEventListener("keydown", this.findKey);
     this.name = this.element.querySelector<HTMLElement>(".who-name")!;
     // Cut or whole again as the head narrows or widens, its hint follows.
@@ -454,15 +469,6 @@ export class ConversationPage {
       near: (gap, side) => void this.fillGap(gap, side),
       // Words being sent leave from where they were typed.
       departure: () => departureOf(this.input),
-      questions: {
-        words: words.questions,
-        // Answers go in at once, into the turn if one runs: they never wait
-        // in the queue.
-        answer: async (text) => {
-          const came = await this.options.send(text, { refs: [], shown: [] });
-          if (came === "failed") throw new Error(words.notSent(""));
-        },
-      },
       here: options.here,
       residentMachine: someone.machine,
       agent: someone.agent,
@@ -479,15 +485,37 @@ export class ConversationPage {
       lines: options.lines,
       agentRecord: options.agentRecord,
       turnCalls: options.calls,
+      openAgent: options.side && !options.side.bare ? (id) => this.side?.openAgent(id) ?? false : undefined,
     });
-    // The host's own agents as one picture (`agents-panel.ts`): a lane
-    // pressed brings the row of the call that started it into view.
-    this.agents = new AgentsPanel(this.element.querySelector<HTMLButtonElement>(".composer-agents")!, this.element.querySelector<HTMLElement>(".agents-pop")!, {
-      words,
-      show: (run) => {
-        if (this.view.openAgent(run.id)) this.following = false;
-      },
-    });
+    // The panel beside it (`side/mount.ts`): the plan, the goal, and who
+    // works with it, the host's own agents among them.
+    if (options.side) {
+      this.side = new SideMount(this.element, {
+        host: markOf(someone.agent) === "codex" ? "codex" : "claude",
+        seams: options.side,
+        say: (text, detail) => this.say(text, detail ?? ""),
+        // Answers go in at once, into the turn if one runs.
+        answer: async (text) => {
+          const came = await this.options.send(text, { refs: [], shown: [] });
+          if (came === "failed") throw new Error(words.notSent(""));
+        },
+        agentBox: (run) =>
+          new AgentBox(run, {
+            words,
+            english: words.english,
+            here: options.here,
+            residentMachine: someone.machine,
+            ...(options.lines ? { lines: options.lines } : {}),
+            ...(options.agentRecord ? { record: options.agentRecord } : {}),
+            reading: () => {},
+          }),
+        jump: (id) => {
+          if (this.view.openAgent(id)) this.following = false;
+        },
+        // What it is pointed at leaves the head for the side's first page.
+        env: this.element.querySelector<HTMLElement>(".focus-strip"),
+      });
+    }
     // For how long a way has been broken, and why, as the note says it.
     const broken = (since: number, why: string) => words.brokenFor(words.took(Date.now() - since), why);
     if (options.opening) {
@@ -520,6 +548,8 @@ export class ConversationPage {
       });
     }
 
+    // It opens in the view it was last read in here (`world-voice.md`).
+    this.viewing(this.storedView());
     // What was read of the conversation from the shell is drawn as it comes.
     options.conversation.changed = () => this.update({ read: true });
     this.latest = this.element.querySelector<HTMLButtonElement>(".to-latest")!;
@@ -803,7 +833,7 @@ export class ConversationPage {
     this.bound();
   }
 
-  private agents: AgentsPanel;
+  private side: SideMount | null = null;
   private agentsSeen = "";
 
   /** The host's own agents, as the conversation now knows them, to their
@@ -813,7 +843,7 @@ export class ConversationPage {
     const seen = `${conversation.agentStamp}|${conversation.bounds().join(";")}`;
     if (seen === this.agentsSeen) return;
     this.agentsSeen = seen;
-    this.agents.update(conversation.agents());
+    this.side?.agents(conversation.agents());
   }
 
   /** Where the reader was, kept while the page is out of view: following
@@ -919,6 +949,12 @@ export class ConversationPage {
     else row.insertBefore(this.context, row.querySelector(".composer-action"));
   };
 
+  /** The sidebar folds or comes back: the column is carried rather than
+   *  set again at every frame (`column-hold.ts`). */
+  roomWillChange(by: number): void {
+    holdColumn(this.element, this.side ? this.side.roomWillChange(by) : by);
+  }
+
   /** Stops what the page keeps asking for. */
   leave(): void {
     phoneWide.removeEventListener("change", this.placeDial);
@@ -927,7 +963,7 @@ export class ConversationPage {
     cancelAnimationFrame(this.frame);
     this.view.destroy();
     this.badge?.dispose();
-    this.agents.destroy();
+    this.side?.leave();
     this.finder.destroy();
     this.left = true;
     document.removeEventListener("keydown", this.findKey);
@@ -947,7 +983,10 @@ export class ConversationPage {
   private controlQueue: ControlQueue | null = null;
   /** The controls the node took to do once a turn ends, by their ids. */
   private readonly pendingControls = new Map<string, PendingControl>();
-  private offersAsked = 0;
+  /** The asking of what the conversation offers that is out, and the one
+   *  that follows it for every wish made meanwhile. */
+  private offersAsking: Promise<void> | null = null;
+  private offersWanted: Promise<void> | null = null;
   private nodeTray: NodeTray | null = null;
   /** This device's last send of the shared words, until the node answers. */
   private sendingShared: Promise<unknown> = Promise.resolve();
@@ -1308,6 +1347,36 @@ export class ConversationPage {
     pop.innerHTML = "";
   }
 
+  /** Which view this conversation was last read in on this device: only
+   *  what was said, unless every step was asked for. */
+  private storedView(): "said" | "steps" {
+    if (!this.options.viewKey) return "said";
+    try {
+      return localStorage.getItem(this.options.viewKey) === "steps" ? "steps" : "said";
+    } catch {
+      return "said";
+    }
+  }
+
+  /** Shows only what was said, or every step; `keep` remembers it here. */
+  private viewing(mode: "said" | "steps", keep = false): void {
+    const { words } = this.options;
+    const toggle = this.element.querySelector<HTMLButtonElement>(".view-steps")!;
+    const steps = mode === "steps";
+    const label = steps ? words.viewSaid : words.viewSteps;
+    toggle.setAttribute("aria-pressed", String(steps));
+    toggle.setAttribute("aria-label", label);
+    toggle.title = label;
+    this.view.showing(mode);
+    if (!keep || !this.options.viewKey) return;
+    try {
+      if (steps) localStorage.setItem(this.options.viewKey, "steps");
+      else localStorage.removeItem(this.options.viewKey);
+    } catch {
+      // Not kept: the conversation opens in its usual view next time.
+    }
+  }
+
   private draft(): string | null {
     if (!this.options.draftKey) return null;
     try {
@@ -1353,12 +1422,36 @@ export class ConversationPage {
 
   private renaming = false;
 
-  /** Renames the conversation in its title, as from its "⋯". */
   /** Finds in the conversation: from the head's "⋯" on a phone. */
   showFind(): void {
     this.finder.show();
   }
 
+  /** Whether every step is shown, not only what was said. */
+  stepsShown(): boolean {
+    return this.element.querySelector(".view-steps")!.getAttribute("aria-pressed") === "true";
+  }
+
+  /** The side of the conversation, opened from the head's "⋯" on a phone;
+   *  none where it has no side of its own. */
+  panel(): (() => void) | null {
+    const side = this.side;
+    return side?.shown ? () => side.pane.show() : null;
+  }
+
+  /** Another conversation, opened beside this one; false where it cannot
+   *  be, as on a phone or for this conversation itself. */
+  openBeside(address: Address): boolean {
+    return this.side?.openTalk(address) ?? false;
+  }
+
+  /** Shows every step, or only what was said again: by the head's button,
+   *  or from its "⋯" on a phone. */
+  toggleSteps(): void {
+    this.viewing(this.stepsShown() ? "said" : "steps", true);
+  }
+
+  /** Renames the conversation in its title, as from its "⋯". */
   startRename(): void {
     this.rename();
   }
@@ -1429,36 +1522,21 @@ export class ConversationPage {
     tray.onlyImages(() => this.imagesOnly(), (why) => this.say(why, "", true));
     this.tray = tray;
     this.element.querySelector(".composer-tray")!.replaceWith(tray.element);
-    const button = this.element.querySelector<HTMLButtonElement>(".composer-attach")!;
     const pick = this.element.querySelector<HTMLInputElement>(".composer-pick")!;
-    button.hidden = false;
-    button.innerHTML = glyph("attach", 18);
-    button.setAttribute("aria-label", attach.words.attach);
-    button.title = attach.words.attach;
-    // Where no machine of the user's can take a file, the picker offers
-    // images alone.
-    button.addEventListener("click", () => {
-      pick.accept = this.imagesOnly() ? "image/*" : "";
-      pick.click();
+    const shot = this.element.querySelector<HTMLInputElement>(".composer-shot")!;
+    wireAttach(this.element, this.element.querySelector<HTMLButtonElement>(".composer-attach")!, this.element.querySelector<HTMLElement>(".composer-menus")!, attach.words, {
+      // Where no machine of the user's can take a file, the picker offers
+      // images alone.
+      files: () => {
+        pick.accept = this.imagesOnly() ? "image/*" : "";
+        pick.click();
+      },
+      photo: () => shot.click(),
     });
-    pick.addEventListener("change", () => {
-      if (pick.files) this.attachFiles(pick.files);
-      pick.value = "";
-      this.input.focus();
-    });
-    // On a phone the camera is one tap away. Elsewhere an input that asks
-    // for a capture is only another file picker, so it is not offered.
-    if (matchMedia("(pointer: coarse)").matches) {
-      const photo = this.element.querySelector<HTMLButtonElement>(".composer-photo")!;
-      const shot = this.element.querySelector<HTMLInputElement>(".composer-shot")!;
-      photo.hidden = false;
-      photo.innerHTML = glyph("camera", 18);
-      photo.setAttribute("aria-label", attach.words.photo);
-      photo.title = attach.words.photo;
-      photo.addEventListener("click", () => shot.click());
-      shot.addEventListener("change", () => {
-        if (shot.files) this.attachFiles(shot.files);
-        shot.value = "";
+    for (const input of [pick, shot]) {
+      input.addEventListener("change", () => {
+        if (input.files) this.attachFiles(input.files);
+        input.value = "";
         this.input.focus();
       });
     }
@@ -1518,7 +1596,7 @@ export class ConversationPage {
     const space = text.indexOf(" ");
     const name = (space < 0 ? text.slice(1) : text.slice(1, space)).trim();
     const args = space < 0 ? "" : text.slice(space + 1).trim();
-    const find = (moving: boolean) => commandFor(commandsOf(this.offered, controls.words.commands, moving), name, args);
+    const find = (moving: boolean) => commandFor(commandsOf(this.offered, controls.words.commands, moving, this.side?.goals ?? false), name, args);
     if (!find(this.options.conversation.moving())) await this.askOffers();
     if (this.left) return;
     if (!this.offered) {
@@ -1540,20 +1618,37 @@ export class ConversationPage {
     this.say(waiting ? controls.words.afterTurn(name) : controls.words.unknown(name));
   }
 
-  private async askOffers(): Promise<void> {
+  /** Asks what the conversation offers, one asking at a time. Its commands
+   *  can change many times in a second (a host describing every command it
+   *  has), and each asking holds a place on its machine: wished for again
+   *  while one is out, it asks once more after that one, for every wish
+   *  made meanwhile, so whoever waits gets an answer begun after it asked. */
+  private askOffers(): Promise<void> {
+    if (!this.offersAsking) {
+      const asking = this.askOffersNow().finally(() => {
+        this.offersAsking = null;
+      });
+      this.offersAsking = asking;
+      return asking;
+    }
+    const next = () => {
+      this.offersWanted = null;
+      return this.askOffers();
+    };
+    this.offersWanted ??= this.offersAsking.then(next, next);
+    return this.offersWanted;
+  }
+
+  private async askOffersNow(): Promise<void> {
     const controls = this.options.controls;
     if (!controls || this.left) return;
     clearTimeout(this.offersAgain);
-    // An answer to an earlier asking that comes after a later one is set aside.
-    const asking = ++this.offersAsked;
     try {
       const offered = await controls.offers();
-      if (asking !== this.offersAsked) return;
       this.offered = offered;
       this.offersFailed = 0;
       this.syncControls(offered.pending_controls ?? []);
     } catch {
-      if (asking !== this.offersAsked) return;
       // The way to its machine broke for a moment: asked again a few times,
       // soon and then less often; after that, when a turn ends. Its machine
       // offers a model picker whatever its host answers, so only a machine
@@ -1732,7 +1827,7 @@ export class ConversationPage {
     const typed = /^\/(\S*)$/.exec(this.input.value);
     if (!typed) return menu.hide();
     const prefix = typed[1]!.toLowerCase();
-    const found = commandsOf(this.offered, this.options.controls.words.commands, this.options.conversation.moving()).filter((command) =>
+    const found = commandsOf(this.offered, this.options.controls.words.commands, this.options.conversation.moving(), this.side?.goals ?? false).filter((command) =>
       command.name.toLowerCase().startsWith(prefix),
     );
     menu.show(found, this.options.controls.words.commands.noCommands);
@@ -1833,6 +1928,10 @@ export class ConversationPage {
     const words = controls.words;
     if (command.control === "stop") {
       this.stop();
+      return true;
+    }
+    if (command.control === "goal") {
+      this.side?.setGoal(args);
       return true;
     }
     if (command.control === "model" && !given && !args) {
@@ -1950,8 +2049,12 @@ export class ConversationPage {
         title: words.stillRunning,
         stop: words.stop,
         stopAsk: words.stopJobAsk,
+        withdraw: words.withdrawSentinel,
+        withdrawAsk: words.withdrawSentinelAsk,
         notStopped: words.notStopped,
         cancel: this.options.controls?.words.never ?? words.cancel,
+        wakeAt: words.sentinelWakeAt,
+        wakes: words.sentinelWakes,
         output: words.jobOutput,
         loading: words.jobOutputLoading,
         failed: words.jobOutputFailed,
@@ -1961,6 +2064,7 @@ export class ConversationPage {
       },
       stop: this.options.stopJob,
       output: this.options.jobOutput,
+      watch: this.options.watchLink,
       detail: detailOf,
     });
     this.jobs.update(jobs, now);
@@ -2067,6 +2171,7 @@ export class ConversationPage {
     );
     this.focusPanel.set(current);
     pop.replaceChildren(this.focusPanel.element);
+    stay(pop);
     pop.hidden = false;
     strip.querySelector(".focus-chip")!.setAttribute("aria-expanded", "true");
     layerOpened({ isOpen: () => !pop.hidden && this.element.isConnected, close: () => this.closeFocus(focus) });
@@ -2075,8 +2180,8 @@ export class ConversationPage {
   private closeFocus(focus: NonNullable<PageOptions["focus"]>): void {
     const strip = this.element.querySelector<HTMLElement>(".focus-strip")!;
     const pop = strip.querySelector<HTMLElement>(".focus-pop")!;
-    if (pop.hidden) return;
-    pop.hidden = true;
+    if (pop.hidden || leaving(pop)) return;
+    leave(pop, () => (pop.hidden = true));
     strip.querySelector(".focus-chip")!.setAttribute("aria-expanded", "false");
     const before = this.options.someone.focus;
     const next = this.focusDraft;
@@ -2140,7 +2245,8 @@ export class ConversationPage {
     const summary = focusSummary(focus, words);
     // On a phone the chip is its machine and how many places it holds.
     const count = focus.machines.reduce((sum, chosen) => sum + Math.max(1, chosen.folders.length), 0);
-    const html = `${glyph("machine", 16)}${summary ? summary.html : `<span class="talk-chip-name">${escape(words.none)}</span>`}${count ? `<span class="focus-count">${count}</span>` : ""}${glyph("chevron", 12)}`;
+    const named = summary ? summary.html : `<span class="talk-chip-name">${escape(words.none)}</span>`;
+    const html = `${glyph("machine", 16)}${named}${count ? `<span class="focus-count">${count}</span>` : ""}${glyph("chevron", 12)}`;
     if (chip.innerHTML !== html) chip.innerHTML = html;
     chip.classList.toggle("quiet", !summary);
     chip.title = summary ? `${words.title}\n${summary.said}` : words.title;

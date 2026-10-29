@@ -106,11 +106,7 @@ pub(super) fn owns_here(node: &Node, acting: &Acting) -> Result<(), Failure> {
     }
     for link in node.links() {
         let view = link.view();
-        if node
-            .accounts_on(&link, acting)
-            .iter()
-            .any(|account| view.me().is_some_and(|member| member.home.as_ref() == Some(account)))
-        {
+        if node.accounts_on(&link, acting).iter().any(|account| view.holds(account, &view.me)) {
             return Ok(());
         }
     }
@@ -177,8 +173,7 @@ fn owned(
         if view.account(&identity.account).is_none_or(|account| account.locked) {
             return Err(Failure::refused("the upload account is absent or locked"));
         }
-        for member in view.machines().filter(|member| member.home.as_ref() == Some(&identity.account) && member.online)
-        {
+        for member in view.machines().filter(|member| view.holds(&identity.account, &member.name) && member.online) {
             if view.admits(from, &identity.account, &member.name, Purpose::Hands).is_err() {
                 continue;
             }
@@ -225,7 +220,7 @@ pub(super) fn validate_original(node: &Node, acting: &Acting, original: &Attachm
     for identity in accounts {
         let Some(link) = node.link_of(&identity.hub) else { continue };
         let view = link.view();
-        if view.member(&original.owner.machine).is_some_and(|member| member.home.as_ref() == Some(&identity.account))
+        if view.holds(&identity.account, &original.owner.machine)
             && view.admits(&view.me, &identity.account, &original.owner.machine, Purpose::Hands).is_ok()
         {
             return Ok(());

@@ -137,7 +137,7 @@ pub(super) fn recover(node: &Arc<Node>) {
         // A session that registered holds its whole id: its words wake it.
         let waking = about.session.as_ref().is_some_and(|session| session.len() != 8);
         if record.removed.is_some()
-            || !about.world_started
+            || (!about.world_started && !waking)
             || about.host.agent.as_str() != "claude"
             || (!waking && super::paired(node, &about.id))
         {
@@ -168,6 +168,12 @@ pub(super) fn recover(node: &Arc<Node>) {
                     node.log.line(format_args!("reconciling {}'s plugin handover: {error}", about.id));
                 }
             });
+        }
+        // A first turn that waited for its login when the node stopped waits
+        // on: no session was asked for.
+        if about.session.is_none() && super::queued::marked(&directory) {
+            super::queued::wait(node, about.id.clone());
+            continue;
         }
         let Some(first) = kept.into_iter().find(|pending| pending.state == PendingState::Waking) else {
             // Born and stopped before its first words were kept: no session

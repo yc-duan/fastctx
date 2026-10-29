@@ -26,13 +26,14 @@ impl Inner {
         }
         let changed = {
             let mut view = self.view.lock().expect("never poisoned");
-            let now = view.directory.members.iter().find(|member| member.name == machine).map(Presence::of);
+            let now =
+                view.directory.members.iter().find(|member| member.name == machine).map(|member| Presence::of(member));
             if rev <= view.presence || now.is_none_or(|now| now == presence) {
                 false
             } else {
                 let mut next = View::clone(&view);
                 if let Some(member) = next.directory.members.iter_mut().find(|member| member.name == machine) {
-                    presence.apply(member);
+                    presence.apply(Arc::make_mut(member));
                 }
                 *view = Arc::new(next);
                 true
@@ -51,7 +52,7 @@ impl Inner {
         presences.retain(|_, (rev, _)| *rev > view.presence);
         for (machine, (_, presence)) in presences.iter() {
             if let Some(member) = view.directory.members.iter_mut().find(|member| member.name == *machine) {
-                presence.apply(member);
+                presence.apply(Arc::make_mut(member));
             }
         }
     }

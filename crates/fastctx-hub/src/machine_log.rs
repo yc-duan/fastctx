@@ -59,6 +59,9 @@ struct Kept {
     accounts: BTreeMap<AccountName, Timestamp>,
     /// Device keys preserve visibility when a name is removed and reused.
     members: BTreeSet<PublicKey>,
+    /// Notification recipients fixed at commit time, including holders later removed.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    notified: BTreeMap<AccountName, Timestamp>,
 }
 
 impl History {
@@ -84,12 +87,39 @@ impl History {
     pub(crate) fn push(
         &mut self,
         directory: &Directory,
-        current_accounts: &[Account],
+        current_accounts: &[std::sync::Arc<Account>],
         actor: Actor,
         action: Action,
         outcome: Outcome,
     ) -> io::Result<()> {
+        let notified = if outcome == Outcome::Done {
+            notification(&actor, &action)
+                .map(|(machine, by, _)| {
+                    let machine = directory.canonical(machine);
+                    let owner = directory.member(machine).and_then(|member| member.home.as_ref());
+                    let mut recipients: BTreeSet<_> = owner.into_iter().cloned().collect();
+                    recipients.extend(
+                        directory
+                            .shares
+                            .iter()
+                            .filter(|share| share.machine == *machine)
+                            .map(|share| share.account.clone()),
+                    );
+                    if let Action::Share { to, .. } = &action {
+                        recipients.insert(to.clone());
+                    }
+                    recipients
+                        .into_iter()
+                        .filter(|account| Some(account) != by)
+                        .filter_map(|name| directory.account(&name).map(|account| (name, account.opened)))
+                        .collect()
+                })
+                .unwrap_or_default()
+        } else {
+            BTreeMap::new()
+        };
         let mut accounts: BTreeSet<AccountName> = actor.account.iter().cloned().collect();
+        accounts.extend(notified.keys().cloned());
         let mut names: BTreeSet<MachineName> = BTreeSet::new();
         match &action {
             Action::Share { machine, to, .. }
@@ -103,7 +133,8 @@ impl History {
             | Action::Relays { machine, .. }
             | Action::RelayAt { machine, .. }
             | Action::Direct { machine, .. }
-            | Action::AllowActing { machine, .. } => {
+            | Action::AllowActing { machine, .. }
+            | Action::AllowSentinelHome { machine } => {
                 names.insert(machine.clone());
             }
             Action::Remove { name, .. } => {
@@ -250,12 +281,48 @@ impl History {
             .filter_map(|name| {
                 directory
                     .account(&name)
-                    .or_else(|| current_accounts.iter().find(|account| account.name == name))
+                    .or_else(|| current_accounts.iter().find(|account| account.name == name).map(|account| &**account))
                     .map(|account| (name, account.opened))
             })
             .collect();
-        self.records.push(Kept { record: Record { id: self.next, at, actor, action, outcome }, accounts, members });
+        self.records.push(Kept {
+            record: Record { id: self.next, at, actor, action, outcome },
+            accounts,
+            members,
+            notified,
+        });
         Ok(())
+    }
+
+    /// Delivered on the ordinary directory push to all devices logged into each
+    /// recipient account, including after reconnect or the machine's removal.
+    pub(crate) fn notices(&self, directory: &Directory, me: &MachineName) -> Vec<fastctx_types::sharing::Notice> {
+        let Some(member) = directory.member(me) else { return Vec::new() };
+        let now = Timestamp::now();
+        let mut notices = Vec::new();
+        for kept in &self.records {
+            if kept.record.at.checked_add(RETENTION).expect("timestamp in range") <= now {
+                continue;
+            }
+            let Some((machine, by, action)) = notification(&kept.record.actor, &kept.record.action) else { continue };
+            for account in &member.logins {
+                if !directory
+                    .account(account)
+                    .is_some_and(|found| !found.locked && kept.notified.get(account) == Some(&found.opened))
+                {
+                    continue;
+                }
+                notices.push(fastctx_types::sharing::Notice {
+                    id: kept.record.id,
+                    at: kept.record.at,
+                    account: account.clone(),
+                    machine: machine.clone(),
+                    by: by.cloned(),
+                    action: action.clone(),
+                });
+            }
+        }
+        notices
     }
 
     /// The records `me` reads for `account`, newest first. A kind of record
@@ -315,6 +382,34 @@ impl History {
     }
 }
 
+fn notification<'a>(
+    actor: &'a Actor,
+    action: &'a Action,
+) -> Option<(&'a MachineName, Option<&'a AccountName>, fastctx_types::sharing::Change)> {
+    use fastctx_types::sharing::Change as Notice;
+    let by = actor.account.as_ref();
+    Some(match action {
+        Action::Rename { machine, to } => (machine, by, Notice::Rename { to: to.clone() }),
+        Action::Updated { machine, from, to, by } => {
+            (machine, Some(by), Notice::Updated { from: from.clone(), to: to.clone() })
+        }
+        Action::Remove { name, then, .. } => (name, by, Notice::Remove { then: *then }),
+        Action::Share { machine, to, shared, .. } => (machine, by, Notice::Share { to: to.clone(), shared: *shared }),
+        Action::Assist { machine, to, agent, home, assisting, until, .. } => (
+            machine,
+            by,
+            Notice::Assist {
+                to: to.clone(),
+                agent: agent.clone(),
+                home: home.clone(),
+                assisting: *assisting,
+                until: *until,
+            },
+        ),
+        _ => return None,
+    })
+}
+
 pub(crate) fn action(change: &Change, book: &Book, policy: &fastctx_types::update::Policy) -> Action {
     let project_name = |town| {
         book.directory
@@ -327,21 +422,26 @@ pub(crate) fn action(change: &Change, book: &Book, policy: &fastctx_types::updat
     match change {
         Change::Collab { collab } => Action::Collab { version: collab.version },
         Change::Profile { profile } => Action::Profile { version: profile.version },
-        Change::Subagents { version, .. } => Action::Profile { version: *version },
-        Change::Share { machine, to, shared } => {
-            Action::Share { machine: machine.clone(), to: to.clone(), shared: *shared }
+        Change::Subagents { version, .. } | Change::MemorySettings { version, .. } | Change::Layer { version, .. } => {
+            Action::Profile { version: *version }
         }
-        Change::Assist { machine, to, agent, home, assisting, until, weekly, daily, five_hour } => Action::Assist {
-            machine: machine.clone(),
-            to: to.clone(),
-            agent: agent.clone(),
-            home: home.clone(),
-            assisting: *assisting,
-            until: until.filter(|_| *assisting),
-            weekly: weekly.filter(|_| *assisting),
-            daily: daily.filter(|_| *assisting),
-            five_hour: five_hour.filter(|_| *assisting),
-        },
+        Change::Share { machine, to, shared, jobs } => {
+            Action::Share { machine: machine.clone(), to: to.clone(), shared: *shared, jobs: jobs.filter(|_| *shared) }
+        }
+        Change::Assist { machine, to, agent, home, assisting, until, weekly, daily, five_hour, turns } => {
+            Action::Assist {
+                machine: machine.clone(),
+                to: to.clone(),
+                agent: agent.clone(),
+                home: home.clone(),
+                assisting: *assisting,
+                until: until.filter(|_| *assisting),
+                weekly: weekly.filter(|_| *assisting),
+                daily: daily.filter(|_| *assisting),
+                five_hour: five_hour.filter(|_| *assisting),
+                turns: turns.filter(|_| *assisting),
+            }
+        }
         Change::Plan { machine, agent, home, plan } => {
             Action::Plan { machine: machine.clone(), agent: agent.clone(), home: home.clone(), plan: *plan }
         }
@@ -418,12 +518,18 @@ pub(crate) fn keep(
     action: Action,
     outcome: Outcome,
 ) -> Result<(), String> {
+    // An unrelated login can still remove just its login from a device. That
+    // does not remove the machine and must not tell its holders that it did.
+    let login_only = matches!(&action, Action::Remove { name, .. } if store.book.directory.member(name).is_some());
     store
         .book
         .machine_log
         .push(directory, &store.book.directory.accounts, actor, action, outcome)
-        .and_then(|()| store.save_book())
-        .map_err(|error| format!("the hub could not keep the machine log: {error}"))
+        .map_err(|error| format!("the hub could not keep the machine log: {error}"))?;
+    if login_only && let Some(kept) = store.book.machine_log.records.last_mut() {
+        kept.notified.clear();
+    }
+    store.save_book().map_err(|error| format!("the hub could not keep the machine log: {error}"))
 }
 
 pub(crate) fn effects(store: &mut Store, before: &Directory, actor: &Actor, action: &Action) -> Result<(), String> {

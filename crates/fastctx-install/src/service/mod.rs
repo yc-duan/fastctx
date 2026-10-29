@@ -187,6 +187,39 @@ impl Service {
         }
     }
 
+    /// Stops this registration and keeps it stopped for whoever maintains
+    /// the machine: nothing that keeps it running (a check that starts an
+    /// enabled service, a restart after a failure, a start at boot) starts it
+    /// again until it is released. Its registration and data stay, and a
+    /// client that finds the World kept by a service starts no node of its
+    /// own (`keep`).
+    pub fn hold(&self) -> anyhow::Result<Status> {
+        self.validate()?;
+        let normalized = self.normalized()?;
+        #[cfg(windows)]
+        return windows::hold(&normalized);
+        #[cfg(target_os = "linux")]
+        return linux::hold(&normalized);
+        #[cfg(target_os = "macos")]
+        return macos::hold(&normalized);
+        #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
+        bail!("fastctx services support Windows, Linux and macOS; this platform is not supported")
+    }
+
+    /// Lets a held registration run again: kept running, and started.
+    pub fn release(&self) -> anyhow::Result<Status> {
+        self.validate()?;
+        let normalized = self.normalized()?;
+        #[cfg(windows)]
+        return windows::release(&normalized);
+        #[cfg(target_os = "linux")]
+        return linux::release(&normalized);
+        #[cfg(target_os = "macos")]
+        return macos::release(&normalized);
+        #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
+        bail!("fastctx services support Windows, Linux and macOS; this platform is not supported")
+    }
+
     pub fn status(&self) -> anyhow::Result<Status> {
         self.validate()?;
         let normalized = self.normalized()?;
@@ -198,6 +231,19 @@ impl Service {
         return macos::status(&normalized);
         #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
         bail!("fastctx services support Windows, Linux and macOS; this platform is not supported")
+    }
+
+    /// Whether the manager's persisted definition still names this installation.
+    pub fn definition_current(&self) -> anyhow::Result<bool> {
+        let service = self.normalized()?;
+        #[cfg(windows)]
+        return windows::definition_current(&service);
+        #[cfg(target_os = "linux")]
+        return linux::definition_current(&service);
+        #[cfg(target_os = "macos")]
+        return macos::definition_current(&service);
+        #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
+        { let _ = service; Ok(false) }
     }
 
     /// The process systemd runs the service as, 0 when it runs none.

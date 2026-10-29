@@ -4,18 +4,47 @@
 //! Each is one block of its own whose first line is a head note saying who
 //! or what it is about and where (`world-colleagues.md`, 两个工具). A
 //! colleague's answer is its last message verbatim, between a head note
-//! saying how the turn ended and a last line pointing at what it did.
+//! saying how the turn ended and a last line pointing at what it did. A
+//! conversation of the machine the reader lives on is named without it:
+//! the reader need not know where it lives itself, and one assisting another
+//! account's user is not to (`world-run.md`, 每段对话在每台机器上的地方).
 
 use fastctx_types::residents::{Notice, STOPPED_BY_USER};
 use fastctx_types::run::EndedHow;
 use fastctx_types::session::{Speaker, TurnEnd, TurnHow};
+use fastctx_types::{Address, MachineName};
 
 use crate::run::present::{display_path, status_text};
 
-/// A notice as one block of text.
-pub fn told(notice: &Notice) -> String {
+/// `address` in a head note for a reader living on `here`.
+fn named(address: &Address, here: Option<&MachineName>) -> String {
+    if here == Some(&address.machine) {
+        address.resident.to_string()
+    } else {
+        format!("{} on {}", address.resident, address.machine)
+    }
+}
+
+/// A notice as one block of text, for a reader living on `here`.
+pub fn told(notice: &Notice, here: Option<&MachineName>) -> String {
     match notice {
-        Notice::JobEnded { job, machine, how, status, at, output, stderr, last, stop, .. } => {
+        Notice::Sentinel { observation } => {
+            fastctx_types::sentinel_words::notification(observation, jiff::Timestamp::now())
+        }
+        Notice::JobEnded {
+            job,
+            machine,
+            how,
+            status,
+            at,
+            output,
+            stderr,
+            last,
+            stop,
+            follower,
+            follower_unconfirmed,
+            ..
+        } => {
             let how = match (how, status) {
                 (EndedHow::Finished, Some(status)) => status_text(*status),
                 (EndedHow::Finished, None) => "finished".to_string(),
@@ -37,37 +66,63 @@ pub fn told(notice: &Notice) -> String {
                 "=== {job} on {machine} ended ({how}){ago}; its output is in {}{errors} ===",
                 display_path(output)
             );
-            match last {
+            let mut text = match last {
                 Some(last) if last.whole => format!("{head}\n{}", last.text),
                 Some(last) => format!("{head}\n=== its last lines ===\n{}", last.text),
                 None => head,
+            };
+            if *follower_unconfirmed && let Some(follower) = follower {
+                text.push_str(&format!("\nIts follower on {follower} could not be asked whether it took this end; the same end may also be in the output of the command that ran on {follower}."));
             }
+            text
         }
         Notice::Answer { colleague, end, .. } => {
             let how = turn_end(end);
             let message = end.last_message.as_deref().unwrap_or("(it ended the turn without a message)");
             format!(
-                "=== colleague {} on {} ({how}) ===\n{message}\n=== what it did: fastctx w {} ===",
-                colleague.resident, colleague.machine, colleague.resident
+                "=== colleague {} ({how}) ===\n{message}\n=== what it did: fastctx w {} ===",
+                named(colleague, here),
+                colleague.resident
             )
         }
         Notice::Health { colleague, health, .. } => format!(
-            "=== colleague {} on {} (in its turn) ===\n{}\n=== what it is doing: fastctx w {} ===",
-            colleague.resident, colleague.machine, health.text, colleague.resident
+            "=== colleague {} (in its turn) ===\n{}\n=== what it is doing: fastctx w {} ===",
+            named(colleague, here),
+            health.text,
+            colleague.resident
         ),
-        Notice::Words { from, text } => words(from, text),
+        Notice::Question { text, .. } => text.clone(),
+        Notice::Words { text, goal_report: Some(_), .. } | Notice::Words { text, goal_question: Some(_), .. } => {
+            text.clone()
+        }
+        Notice::Words { from, text, .. } => words(from, text, here),
         Notice::Attached { message, text } => message.render(text),
-        Notice::World { text, .. } => words(&Speaker::World, text),
+        Notice::World { text, .. } => words(&Speaker::World, text, here),
     }
+}
+
+/// The colleague's original conclusion, with only a factual envelope
+/// around it, for a reader living on `here`.
+pub fn goal_report(report: &fastctx_types::goals::Report, here: Option<&MachineName>) -> String {
+    let elapsed = report.ended_at.as_second().saturating_sub(report.started_at.as_second()).max(0) as u64;
+    let resume = report.resume_at.map(|at| format!(", resumes at {at}")).unwrap_or_default();
+    format!(
+        "=== colleague {} (goal {}, {}{resume}) ===\n{}\n=== what it did: fastctx w {} ===",
+        named(&report.colleague, here),
+        goal_status(report.status),
+        duration(elapsed),
+        report.text,
+        report.colleague.resident
+    )
 }
 
 /// Words for a session, under a head note saying who they are from, so the
 /// reader knows who is speaking (`world-colleagues.md`, 两个工具).
-pub fn words(from: &Speaker, text: &str) -> String {
+pub fn words(from: &Speaker, text: &str, here: Option<&MachineName>) -> String {
     let from = match from {
         Speaker::Page { page } => page.to_string(),
         Speaker::User { machine } => format!("the user, on {machine}"),
-        Speaker::Resident { address } => format!("{} on {}", address.resident, address.machine),
+        Speaker::Resident { address } => named(address, here),
         Speaker::World => "fastctx".to_string(),
     };
     format!("=== from {from} ===\n{text}")
@@ -93,6 +148,16 @@ pub fn turn_end(end: &TurnEnd) -> String {
         how.push_str(&duration(ms / 1000));
     }
     how
+}
+
+/// The goal's state as shown with its original report.
+pub fn goal_status(status: fastctx_types::goals::Status) -> &'static str {
+    match status {
+        fastctx_types::goals::Status::Active => "active",
+        fastctx_types::goals::Status::Complete => "complete",
+        fastctx_types::goals::Status::Blocked => "blocked",
+        fastctx_types::goals::Status::Paused => "paused",
+    }
 }
 
 /// A span of seconds as people say it: `35s`, `14m`, `2h10m`, `3d4h`.

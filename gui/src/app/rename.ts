@@ -10,7 +10,7 @@ import { loginsOf, type AccountChange, type Login } from "../world/accounts";
 import type { NameProblem, WorldNow } from "../world/bridge";
 import type { NameSaid } from "./name-words";
 import { detailOf } from "./problem";
-import { isSuper, owns, type Machine } from "./reach";
+import { holds, isSuper, type Machine } from "./reach";
 import { composing } from "../typing";
 
 /** Renames a machine `to`; `called` is what it is called now, when that is
@@ -19,7 +19,7 @@ export type Renamer = (to: string, called?: string) => Promise<void>;
 
 /** How `machine` is renamed from this device, where it may be: this
  *  computer by its own node, on no hub or through the one it is registered
- *  on; another by a login that owns it or administers its hub, on a hub
+ *  on; another by a login that holds it or administers its hub, on a hub
  *  that renames (`world-network.md`, 机器的名字). */
 export function renamerOf(
   machine: Machine,
@@ -35,7 +35,7 @@ export function renamerOf(
     (one) =>
       machine.on.some((on) => on.hub === one.hub) &&
       world.accounts.hubs.find((hub) => hub.hub === one.hub)?.renames &&
-      (owns(machine, one) || isSuper(world, one)),
+      (holds(machine, one, world) || isSuper(world, one)),
   );
   return login ? (to, called = machine.name) => change(login, { change: "rename", machine: called, to }) : null;
 }

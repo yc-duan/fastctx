@@ -211,7 +211,7 @@
   flex: none;
   color: var(--text-3);
   padding-top: 2px;
-  transition: color var(--hover) ease;
+  transition: color var(--hover) var(--ease);
 }
 
 .page-link:hover .page-link-glyph,
@@ -232,7 +232,7 @@
   gap: var(--space-2);
   color: var(--text-strong);
   font-size: var(--size-text);
-  transition: color var(--hover) ease;
+  transition: color var(--hover) var(--ease);
 }
 
 .page-link-about {

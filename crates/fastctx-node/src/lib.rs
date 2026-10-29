@@ -9,9 +9,12 @@
 //! it records what happened while it was away, such as jobs whose
 //! supervisor did not survive a restart of the machine.
 
+mod account_records;
 pub mod activity;
+mod activity_book;
 mod admission;
 mod admitted;
+mod adoption;
 mod afoot;
 mod again;
 mod agent_activity;
@@ -26,20 +29,28 @@ mod authorization;
 mod books;
 mod claude;
 pub mod claude_control_claim;
+pub mod claude_native_goal;
 pub mod claude_request;
 mod codex;
 mod codex_title;
 mod collab;
 mod colleagues;
+mod completion_debt;
+mod completion_delivery;
 mod composer;
 mod consent;
+pub mod context;
 mod control;
+mod control_letters;
+mod control_long;
+mod control_posts;
 mod control_queue;
 mod copy;
 mod data;
 mod delivery;
 mod desk;
 mod devices;
+mod ending;
 mod facts;
 mod features;
 mod file_events;
@@ -52,6 +63,7 @@ mod forks;
 mod gate_waits;
 mod gates;
 mod gather;
+mod goals;
 pub mod handoff;
 mod held_history;
 mod here;
@@ -61,17 +73,20 @@ mod hub_moving;
 mod inbox;
 mod initializing;
 mod intake;
+mod job_accounts;
 mod job_reader;
 mod job_receipts;
 mod job_watch;
 mod jobs;
 mod labels;
+mod layers;
 mod learned;
 mod leases;
 mod ledger;
 mod letters;
 mod lifecycle;
 mod lifetime;
+mod limits;
 mod lines;
 mod log;
 mod login_identity;
@@ -81,16 +96,24 @@ mod machine;
 mod managed;
 mod management;
 mod mcp;
+mod memory;
+mod memory_room;
+mod obligations;
 mod on;
 mod on_delivery;
+mod on_steps;
 mod on_stop;
+mod outbox;
 mod own_collab;
 mod pages;
+mod plan;
+mod plan_file;
 mod profile;
 mod program_collection;
 mod proxy_setting;
 mod ranked;
 mod reach;
+mod received;
 mod recovery;
 mod removed;
 mod renewal;
@@ -100,6 +123,10 @@ mod resident_storage;
 mod residents;
 mod retention;
 mod run_facts;
+mod run_receipts;
+mod run_stops;
+mod scratch;
+mod sentinels;
 mod server;
 mod server_invitation;
 mod session_live;
@@ -110,12 +137,16 @@ mod signals;
 mod since;
 mod speech;
 mod stats;
+mod step_command;
 mod stop;
 mod stops;
 mod stuck;
 mod talk;
 pub mod thumbnail;
+pub mod timers;
 mod town;
+mod turn_evidence;
+mod turn_slots;
 mod turns;
 mod uninstall;
 mod unpublished;
@@ -123,6 +154,7 @@ mod unstarted;
 mod updates;
 mod usage;
 mod user_images;
+mod voice;
 mod waiting;
 mod watch;
 mod watchdog;
@@ -150,6 +182,7 @@ pub(crate) struct Node {
     /// the programs the node starts.
     root: PathBuf,
     world: WorldDir,
+    database: fastctx_storage::Database,
     /// This program's own copy under the World, which everything the node
     /// starts from itself runs from (`own.rs`).
     fastctx: PathBuf,
@@ -158,8 +191,14 @@ pub(crate) struct Node {
     /// hub renames it (`world::follow_rename`).
     machine: RwLock<machine::MachineFile>,
     jobs: jobs::Jobs,
+    timers: std::sync::OnceLock<Arc<timers::store::Store>>,
+    turn_activity: turn_evidence::Activities,
+    goals: goals::Services,
+    sentinel_waits: Arc<dyn turn_evidence::waiting::SentinelWaits>,
+    sentinels: sentinels::Services,
     mcp_keeping: std::sync::Mutex<()>,
     job_watches: job_watch::Watches,
+    plan_files: plan_file::PlanFiles,
     disk: ranked::Disk,
     /// Each conversation's place here, deleted alone (`data::places`).
     places: data::places::Places,
@@ -167,6 +206,10 @@ pub(crate) struct Node {
     disk_due: std::sync::Mutex<std::collections::HashSet<PathBuf>>,
     job_readers: std::sync::Mutex<std::collections::HashMap<PathBuf, usize>>,
     residents: residents::Residents,
+    contexts: context::Updates,
+    context_deliveries: context::Deliveries,
+    scratch_deliveries: scratch::Deliveries,
+    native_context: codex::native_context::Observers,
     /// This machine's Codex app-server, holding the Codex residents the
     /// World started.
     codex: codex::hosts::CodexHosts,
@@ -182,9 +225,25 @@ pub(crate) struct Node {
     desk: desk::Desk,
     watchers: watch::Watchers,
     attached: lifecycle::attached::Attached,
+    idle_probes: lifecycle::cooldown::Cooldowns,
     retrying: lifecycle::retry::Retrying,
     composers: composer::Composers,
     actions: control_queue::Actions,
+    /// The controls running outside their conversation's action gate
+    /// (`control_long`).
+    long_controls: control_long::Running,
+    /// How many turns each agent login runs at once, and the turns waiting
+    /// for room (`turn_slots`).
+    turn_slots: turn_slots::Slots,
+    /// What the machine keeps free in memory for its agents, and the turns
+    /// waiting for it (`memory_room`).
+    memory_room: memory_room::Room,
+    /// How far the machine is toward its system's limits over the last day.
+    limits: limits::Readings,
+    /// Whom each job running here works for (`job_accounts`).
+    job_accounts: job_accounts::JobAccounts,
+    /// Where each account's jobs share the processors, where they do.
+    cpu_shares: Option<fastctx_platform::cpu_share::Shares>,
     file_searches: file_search::Searches,
     line_sources: lines::Sources,
     log: Arc<log::Log>,
@@ -199,6 +258,7 @@ pub(crate) struct Node {
     /// Moves whenever what an interface shows of the World may have changed,
     /// beyond the residents and jobs here (`shown`).
     shown: tokio::sync::watch::Sender<u64>,
+    memory_changes: tokio::sync::watch::Sender<u64>,
     /// What the other machines said of themselves (`facts`).
     facts: facts::Facts,
     /// Deletions of conversations still to be asked of hubs (`forget`).
@@ -209,8 +269,8 @@ pub(crate) struct Node {
     usage: usage::Usage,
     /// Held while the projects' ledgers are taken or written, one at a time.
     syncing: ranked::Syncing,
-    /// Held while a town's record or journals are written from here, from
-    /// reading what is there to writing what comes next.
+    ledger_updates: ledger::syncing::Updates,
+    /// Held while standalone settings are read and replaced.
     writing: ranked::Writing,
     /// What went out with an answer of a World tool and is not yet known to
     /// have been taken: no other answer hands it over meanwhile.
@@ -240,6 +300,10 @@ pub(crate) struct Node {
     /// The jobs `on` sent from here to other machines, by machine and id,
     /// as a letter telling one's end finds them (`on`).
     on_deliveries: on_delivery::Deliveries,
+    received: received::Received,
+    control_letters: control_letters::Receiving,
+    receipts_changed: tokio::sync::Notify,
+    outbox: outbox::Outbox,
     on_stopping: std::sync::Mutex<std::collections::HashSet<PathBuf>>,
     on_delivering: std::sync::Mutex<std::collections::HashSet<PathBuf>>,
     notifying_jobs: std::sync::Mutex<std::collections::HashSet<PathBuf>>,
@@ -282,6 +346,11 @@ impl Node {
     }
 
     /// What an interface shows of the World may have changed.
+    pub(crate) fn memory_changed(&self) {
+        self.memory_changes.send_modify(|value| *value = value.wrapping_add(1));
+        self.shown_changed();
+    }
+
     pub(crate) fn shown_changed(&self) {
         self.shown.send_modify(|changes| *changes = changes.wrapping_add(1));
     }
@@ -412,6 +481,13 @@ impl std::fmt::Display for AlreadyServed {
 
 impl std::error::Error for AlreadyServed {}
 
+/// The stack each thread of the node's runtime gets. Its calls run deep (one
+/// that opens a conversation goes through the server, the speech, the host
+/// and the login records), and an unoptimized build gives every temporary of
+/// a function a slot of its own, so the default 2 MiB leaves a debug build
+/// without room. Only the pages a thread touches are committed.
+pub const THREAD_STACK: usize = 8 * 1024 * 1024;
+
 pub async fn run_prepared(
     fastctx_root: &Path,
     supervision: Option<handoff::Supervision>,
@@ -517,6 +593,15 @@ pub async fn run_prepared(
     let endpoint = Endpoint::for_world(world.path())?;
     let mut listener = Listener::bind(&endpoint)?;
     log.line(format_args!("listening at {endpoint}"));
+    // The processors shared evenly among the accounts whose jobs run here,
+    // where the service was given its cgroup (`fastctx_platform::cpu_share`).
+    let cpu_shares = match fastctx_platform::cpu_share::Shares::take_up(world.path()) {
+        Ok(shares) => shares,
+        Err(error) => {
+            log.line(format_args!("sharing the processors among the accounts' jobs: {error}"));
+            None
+        }
+    };
     if waits {
         no_longer_waiting(&world);
     }
@@ -541,14 +626,31 @@ pub async fn run_prepared(
         Arc::new(move |line| codex_log.line(line)),
     );
     let claude = claude::Claude::new(&world)?;
-    let node = Arc::new(Node {
+    let memory_room = memory_room::Room::new(&world);
+    let schema = format!("{}{}", composer::SCHEMA, activity_book::SCHEMA);
+    let database = fastctx_storage::Database::open(&world.path().join("node.sqlite3"), &schema)
+        .context("opening the node database")?;
+    // Built cyclically so the goal services can hold a weak handle back to the
+    // node they reach account records and context through.
+    let node = Arc::new_cyclic(|weak: &std::sync::Weak<Node>| Node {
         root: fastctx_root.to_path_buf(),
         world,
+        database,
         fastctx,
         machine: RwLock::new(machine),
         jobs: jobs::Jobs::new(),
+        timers: Default::default(),
+        turn_activity: Default::default(),
+        goals: goals::connected(weak.clone()),
+        sentinel_waits: Arc::new(sentinels::goal_seams::Waits(weak.clone())),
+        sentinels: sentinels::connected(weak.clone()),
         mcp_keeping: std::sync::Mutex::new(()),
         job_watches: Default::default(),
+        plan_files: Default::default(),
+        contexts: Default::default(),
+        context_deliveries: Default::default(),
+        scratch_deliveries: Default::default(),
+        native_context: Default::default(),
         disk: Default::default(),
         places: Default::default(),
         disk_changed: Default::default(),
@@ -563,9 +665,16 @@ pub async fn run_prepared(
         desk: desk::Desk::default(),
         watchers: watch::Watchers::default(),
         attached: Default::default(),
+        idle_probes: Default::default(),
         retrying: Default::default(),
         composers: composer::Composers::default(),
         actions: Default::default(),
+        long_controls: Default::default(),
+        turn_slots: Default::default(),
+        memory_room,
+        limits: Default::default(),
+        job_accounts: Default::default(),
+        cpu_shares,
         file_searches: file_search::Searches::default(),
         line_sources: lines::Sources::default(),
         log,
@@ -573,11 +682,13 @@ pub async fn run_prepared(
         ways: tokio::sync::watch::channel(0).0,
         views: tokio::sync::watch::channel(0).0,
         shown: tokio::sync::watch::channel(0).0,
+        memory_changes: tokio::sync::watch::channel(0).0,
         facts: facts::Facts::default(),
         forget_asks: forget::Asks::default(),
         stuck: Default::default(),
         usage: usage::Usage::default(),
         syncing: Default::default(),
+        ledger_updates: Default::default(),
         writing: Default::default(),
         taking: Default::default(),
         stops: Default::default(),
@@ -590,6 +701,10 @@ pub async fn run_prepared(
         dispatched: Default::default(),
         births: Default::default(),
         on_deliveries: Default::default(),
+        received: Default::default(),
+        control_letters: Default::default(),
+        receipts_changed: Default::default(),
+        outbox: Default::default(),
         on_stopping: Default::default(),
         on_delivering: Default::default(),
         notifying_jobs: Default::default(),
@@ -607,6 +722,7 @@ pub async fn run_prepared(
         lifetime,
         started: jiff::Timestamp::now(),
     });
+    letters::migrate(&node);
     // The third version's projects are kept as this computer's own, to be
     // carried into its account at its hub.
     let (kept, problems) =
@@ -626,6 +742,7 @@ pub async fn run_prepared(
         world::start(&node, membership).context("starting a link to a hub")?;
     }
     on_stop::resume(&node).await;
+    run_stops::resume(&node);
     codex::adopt(&node).await;
     codex::listen(node.clone(), codex_heard.events);
     logins::limits::listen(node.clone(), codex_heard.limits);
@@ -652,11 +769,21 @@ pub async fn run_prepared(
     node.effects_changed.notify_waiters();
     stops::recover(&node);
     composer::resume(&node);
+    composer::keep(&node);
     lifecycle::start(&node);
     recovery::start(&node, jobs_reconciled);
+    timers::start(&node);
+    goals::start(&node);
+    sentinels::start(&node);
     on_delivery::resume(&node);
+    received::resume(&node);
+    control_letters::resume(&node);
+    job_receipts::start(&node);
+    obligations::start(&node);
     retention::start(&node).context("starting command artifact retention")?;
+    plan_file::start(&node);
     profile::session::start(&node);
+    context::start(&node);
     updates::start(&node);
     afoot::start(&node);
     usage::watch(&node);
@@ -710,8 +837,14 @@ pub async fn run_prepared(
 
     renewal::resume(&node);
 
+    ending::start(node.log.clone()).context("starting node stop diagnostics")?;
     stuck::start(&node);
-    let watchdog = watchdog::Watchdog::start(node.log.clone()).context("starting the control-loop watchdog")?;
+    memory_room::start(&node);
+    limits::start(&node);
+    let watchdog = watchdog::Watchdog::start().context("starting the control-loop watchdog")?;
+    // Accepting fails over and over while no descriptor is left: it waits a
+    // little longer each time, and says so once, until one is accepted.
+    let mut refused = 0u32;
     loop {
         let accepted = tokio::select! {
             // A ready watchdog request precedes a flood of new clients;
@@ -719,8 +852,7 @@ pub async fn run_prepared(
             biased;
             () = watchdog.requested() => {
                 if node.links().iter().any(|link| link.failed()) {
-                    node.log.line("a link task ended unexpectedly; exiting for the service to restart it");
-                    std::process::exit(1);
+                    crate::ending::with_reason(1, "a link task ended unexpectedly; exiting for the service to restart it".into());
                 }
                 continue;
             },
@@ -728,11 +860,23 @@ pub async fn run_prepared(
         };
         match accepted {
             Ok(connection) => {
+                refused = 0;
                 watchdog.progress();
                 tokio::spawn(server::serve(node.clone(), connection));
             }
             // One client failing to connect does not stop the others.
-            Err(error) => node.log.line(format_args!("accepting a connection: {error}")),
+            Err(error) => {
+                if refused == 0 {
+                    node.log.line(format_args!("accepting a connection: {error}"));
+                }
+                refused = refused.saturating_add(1);
+                let pause = std::time::Duration::from_millis(10u64 << refused.min(7));
+                tokio::select! {
+                    biased;
+                    () = watchdog.requested() => {}
+                    () = tokio::time::sleep(pause) => {}
+                }
+            }
         }
     }
 }

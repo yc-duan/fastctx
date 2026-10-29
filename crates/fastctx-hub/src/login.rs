@@ -200,7 +200,7 @@ pub(crate) async fn with_token(
         };
         let enrolled = Enrolled { register: record.register, managed: record.managed };
         let name = join(&hub, peer, &record.account, &joining, enrolled, Some(&token))?;
-        Ok((record.account, name))
+        Ok((record.account.clone(), name))
     })();
     match outcome {
         Ok((account, name)) => logged_in(&hub, &mut socket, peer, &account, Ok(name)).await,
@@ -320,7 +320,7 @@ pub(crate) async fn open_account(
         // Anyone who reaches the hub may open one, so what it opens is a
         // visitor's: its machines are its own, and it uses what is given
         // to it (`world-network.md`, 超级管理员管什么).
-        store.book.directory.accounts.push(Account {
+        store.book.directory.accounts.push(Arc::new(Account {
             name: account.clone(),
             level: fastctx_net::directory::Level::Visitor,
             locked: false,
@@ -328,8 +328,8 @@ pub(crate) async fn open_account(
             collab: None,
             profile: None,
             promotion: false,
-        });
-        store.book.passwords.insert(account.clone(), Bytes(record));
+        }));
+        Arc::make_mut(&mut store.book.passwords).insert(account.clone(), Bytes(record));
         let actor = Actor { account: None, authenticated: false, member: None, peer: Some(peer) };
         if let Err(reason) = crate::machine_log::keep(
             &mut store,
@@ -536,6 +536,7 @@ fn join(
                     ));
                 }
                 Some(member) => {
+                    let member = Arc::make_mut(member);
                     member.logins.insert(account.clone());
                     if register && member.home.is_none() && member.kind.is_computer() {
                         member.home = Some(account.clone());
@@ -549,7 +550,7 @@ fn join(
                     let home = (register && joining.kind.is_computer()).then(|| account.clone());
                     let group = group.filter(|_| home.is_some());
                     let logins = if managed { Default::default() } else { [account.clone()].into() };
-                    directory.members.push(Member {
+                    directory.members.push(Arc::new(Member {
                         name: joining.name.clone(),
                         was: Vec::new(),
                         key: joining.key,
@@ -567,13 +568,15 @@ fn join(
                         through: None,
                         reach: None,
                         paths: None,
-                    });
+                        settled: None,
+                    }));
                     joining.name.clone()
                 }
             };
             store.book.removed.retain(|removed| removed.key != joining.key);
             if let Some(token) = token
-                && let Some(record) = store.book.tokens.iter_mut().find(|record| record.key == *token)
+                && let Some(record) =
+                    store.book.tokens.iter_mut().find(|record| record.key == *token).map(Arc::make_mut)
             {
                 if record.used_by.is_none() {
                     record.used_by = Some(joining.key);
@@ -611,7 +614,7 @@ fn join(
             let mut scope = before.directory.clone();
             if let Some(member) = store.book.directory.member(&name) {
                 scope.members.retain(|current| current.key != member.key);
-                scope.members.push(member.clone());
+                scope.members.push(Arc::new(member.clone()));
             }
             if let Err(reason) = crate::machine_log::keep(&mut store, &scope, actor, action, outcome) {
                 store.book = before;

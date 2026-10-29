@@ -1,0 +1,21 @@
+[package]
+name = "fastctx-sentinel"
+description = "Read-only sentinels, their reflexes and goal judgments"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+fastctx-agent = { path = "../fastctx-agent" }
+fastctx-net = { path = "../fastctx-net" }
+fastctx-platform = { path = "../fastctx-platform" }
+fastctx-types = { path = "../fastctx-types" }
+jiff.workspace = true
+url = "2"
+serde.workspace = true
+serde_json.workspace = true
+tokio = { workspace = true, features = ["time", "sync"] }
+sha2 = "0.10"

@@ -29,6 +29,7 @@ use std::collections::BTreeMap;
 use std::io;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use fastctx_net::directory::{Directory, Kind, Project};
 use fastctx_net::envelope::Envelope;
@@ -67,6 +68,8 @@ pub struct HubFile {
     /// machine's key: a name it is renamed to keeps them.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub due: Vec<DueFor>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub repairs: Vec<RepairFor>,
     /// Package targets last reported by each device; retained while it is away.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub package_targets: BTreeMap<PublicKey, PackageTargets>,
@@ -80,6 +83,13 @@ pub struct DueFor {
     pub due: fastctx_types::update::Due,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub batch: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RepairFor {
+    pub key: PublicKey,
+    #[serde(flatten)]
+    pub due: fastctx_types::update::RepairDue,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -99,7 +109,8 @@ pub struct Dissolved {
 }
 
 /// The directory as the hub keeps it: what every member sees a cut of, and
-/// what only the hub holds.
+/// what only the hub holds. Like the directory's, its entries are shared by
+/// the copies made of it.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct Book {
     #[serde(default)]
@@ -108,19 +119,19 @@ pub struct Book {
     pub directory: Directory,
     /// What setting each account's password left with the hub.
     #[serde(default)]
-    pub passwords: BTreeMap<AccountName, Bytes>,
+    pub passwords: Arc<BTreeMap<AccountName, Bytes>>,
     #[serde(default)]
-    pub tokens: Vec<TokenRecord>,
+    pub tokens: Vec<Arc<TokenRecord>>,
     /// Members taken off the hub, by key, so one that connects again is
     /// told so.
     #[serde(default)]
-    pub removed: Vec<Removed>,
+    pub removed: Vec<Arc<Removed>>,
     /// Projects of accounts that were deleted, kept whole for the super
     /// administrator to hand to another account.
     #[serde(default)]
-    pub archived: Vec<Project>,
+    pub archived: Vec<Arc<Project>>,
     #[serde(default)]
-    pub(crate) project_deletions: Vec<crate::project_deletions::Pending>,
+    pub(crate) project_deletions: Vec<Arc<crate::project_deletions::Pending>>,
     /// Conversations being deleted from the members keeping something of
     /// them (`crate::forget`).
     #[serde(default)]
@@ -294,6 +305,11 @@ pub struct Letters {
     pub last_seen: Option<Timestamp>,
     /// Set while the member is connected.
     pub connected_at: Option<Timestamp>,
+    /// When what waited for the member was last set aside, it having been
+    /// away too long (`crate::expiry`): told in its view, so whoever waits
+    /// on an answer through those letters stops waiting.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub settled: Option<Timestamp>,
     /// The member's last session said it reads names of any language
     /// (`fastctx_net::wire::Intent::Session`).
     #[serde(default)]
@@ -349,6 +365,7 @@ impl Letters {
             next: 1,
             last_seen: None,
             connected_at: None,
+            settled: None,
             any_names: false,
             renames: false,
             forgets: false,
@@ -401,6 +418,12 @@ pub struct Store {
     /// The session of each member whose letters move its count now: one
     /// replaced keeps no more (`crate::control::intake`).
     pub(crate) intake: std::collections::HashMap<MachineName, u64>,
+    /// Moves each time the book is kept, so what is worked out from the
+    /// directory knows it may have changed (`crate::afoot`).
+    pub(crate) book_saves: std::sync::atomic::AtomicU64,
+    /// Counts the members' views made from it, in the order they read it,
+    /// which this lock keeps: one read later holds every change made before.
+    pub(crate) view_reads: std::sync::atomic::AtomicU64,
 }
 
 /// A sender's count of its own letters, the last of which the hub holds,
@@ -531,6 +554,8 @@ impl Store {
             records: std::sync::Arc::new(crate::records::Records::new()),
             counts: std::collections::HashMap::new(),
             intake: std::collections::HashMap::new(),
+            book_saves: std::sync::atomic::AtomicU64::new(0),
+            view_reads: std::sync::atomic::AtomicU64::new(0),
         };
         if changed {
             store.save_letters_now()?;
@@ -812,6 +837,7 @@ impl Store {
     }
 
     pub fn save_book(&self) -> io::Result<()> {
+        self.book_saves.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         publish(&Self::directory_file(&self.dir), &json(&self.book)?, Permissions::Private)
     }
 

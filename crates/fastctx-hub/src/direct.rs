@@ -145,6 +145,7 @@ async fn allow(
             .members
             .iter_mut()
             .find(|member| member.name == *machine)
+            .map(Arc::make_mut)
             .ok_or_else(|| format!("the machine {machine} was removed"))?;
         member.direct.clear();
         store.save_book().map_err(|error| format!("keeping the change: {error}"))?;
@@ -217,6 +218,7 @@ async fn allow(
         .members
         .iter_mut()
         .find(|member| member.name == *machine)
+        .map(Arc::make_mut)
         .ok_or_else(|| format!("the machine {machine} was removed"))?;
     member.direct = at.to_vec();
     store.save_book().map_err(|error| format!("keeping the change: {error}"))?;

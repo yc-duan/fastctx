@@ -23,8 +23,9 @@ pub fn fixtures() -> Fixtures {
             Control::Model { model: Some("example-model".into()), effort: Some("custom-effort".into()) },
             Control::Model { model: None, effort: None },
             Control::Rename { name: "对话".into() },
-            Control::Fork { through: None },
-            Control::Fork { through: Some("turn-1".into()) },
+            Control::Fork { through: None, side: false },
+            Control::Fork { through: Some("turn-1".into()), side: false },
+            Control::Fork { through: None, side: true },
             Control::Rewind { from: "turn-2".into() },
             Control::Answer {
                 request: json!({"server":"123:2026-10-04T12:00:00Z","id":0}),

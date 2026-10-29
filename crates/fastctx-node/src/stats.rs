@@ -221,6 +221,10 @@ pub(crate) async fn here(
             Line { hub, kept: Some(kept), since, up, through, trips, changes }
         })
         .collect();
+    let jobs = {
+        let node = node.clone();
+        tokio::task::spawn_blocking(move || crate::job_accounts::counts(&node)).await.unwrap_or_default()
+    };
     Ok(MachineStats {
         run: Some(run),
         machine: node.machine(),
@@ -231,14 +235,20 @@ pub(crate) async fn here(
         host: fastctx_platform::hostname().unwrap_or_default(),
         arch: std::env::consts::ARCH.to_string(),
         cpu: Cpu { model, threads: fastctx_platform::system::threads(), busy, load: fastctx_platform::system::load() },
-        memory: memory
-            .map(|memory| Memory {
-                total: memory.total,
-                used: memory.used,
-                swap_total: memory.swap_total,
-                swap_used: memory.swap_used,
-            })
-            .unwrap_or(Memory { total: 0, used: 0, swap_total: 0, swap_used: 0 }),
+        memory: Memory {
+            room: Some(node.memory_room.bytes()),
+            waiting: node.memory_room.waiting(),
+            ..memory
+                .map(|memory| Memory {
+                    total: memory.total,
+                    used: memory.used,
+                    swap_total: memory.swap_total,
+                    swap_used: memory.swap_used,
+                    room: None,
+                    waiting: 0,
+                })
+                .unwrap_or(Memory { total: 0, used: 0, swap_total: 0, swap_used: 0, room: None, waiting: 0 })
+        },
         disks: disks
             .into_iter()
             .map(|disk| Disk {
@@ -271,6 +281,8 @@ pub(crate) async fn here(
                 Some(fastctx_types::stats::Refused { path, at: jiff::Timestamp::try_from(at).ok()? })
             }),
         },
+        jobs,
+        limits: crate::limits::since(node, after),
     })
 }
 

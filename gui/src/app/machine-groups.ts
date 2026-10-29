@@ -6,9 +6,10 @@
 // administrator for a member's.
 
 import { escape } from "../conversation/prose";
-import { loginsOf, names, type AccountChange, type AccountName, type Login } from "../world/accounts";
+import { loginsOf, type AccountChange, type AccountName, type Login } from "../world/accounts";
 import type { WorldNow } from "../world/bridge";
-import { isSuper, owns, sameLogin, type Machine } from "./reach";
+import { holds, isSuper, sameLogin, type Machine } from "./reach";
+import { indexOf } from "./world-index";
 
 export interface GroupWords {
   /** The action beside a machine, and the title of its card. */
@@ -39,6 +40,30 @@ export interface GroupWords {
 
 /** What groups `machine` from this device: the login that may, the owner
  *  whose groups they are, the group it is in, and that owner's groups. */
+/** A group's box on the drawing: its name, its machines, and how each is
+ *  grouped from this device, in the same order. */
+export interface GroupBox {
+  group: string;
+  machines: Machine[];
+  groupings: Grouping[];
+}
+
+/** Renames a box's group for each owner it holds machines of, or ends it
+ *  where `to` is none. */
+export async function renameGroups(box: GroupBox, to: string | null, change: (login: Login, change: AccountChange) => Promise<void>): Promise<void> {
+  const done: Grouping[] = [];
+  for (const grouping of box.groupings) {
+    if (done.some((one) => sameLogin(one.login, grouping.login) && one.owner === grouping.owner)) continue;
+    done.push(grouping);
+    await change(grouping.login, { change: "rename_group", owner: grouping.owner, from: box.group, to });
+  }
+}
+
+/** Puts a box's machines back in its group, as they were before. */
+export async function regroup(box: GroupBox, change: (login: Login, change: AccountChange) => Promise<void>): Promise<void> {
+  for (const [at, machine] of box.machines.entries()) await change(box.groupings[at]!.login, groupChange(machine.name, box.group));
+}
+
 export interface Grouping {
   login: Login;
   owner: AccountName;
@@ -47,19 +72,21 @@ export interface Grouping {
 }
 
 /** How `machine` is grouped from this device, where it may be: by a login
- *  that owns it or administers its hub, on a hub that keeps groups, as the
+ *  that holds it or administers its hub, on a hub that keeps groups, as the
  *  hub refuses the administrator a visitor's machines. On `hub`, where one
  *  is named. */
 export function groupingOf(machine: Machine, world: WorldNow, hub?: string): Grouping | null {
+  const index = indexOf(world);
   for (const login of loginsOf(world.accounts)) {
     if (hub !== undefined && login.hub !== hub) continue;
-    const seen = world.accounts.hubs.find((one) => one.hub === login.hub);
-    if (!seen?.groups || !machine.on.some((on) => on.hub === login.hub)) continue;
-    const member = seen.members.find((one) => one.kind === "computer" && names(one, machine.name));
+    const seen = index.hubs.get(login.hub);
+    if (!seen?.hub.groups || !machine.on.some((on) => on.hub === login.hub)) continue;
+    // The computer by the name it goes by or had (`names`).
+    const member = seen.computer.get(machine.name);
     const owner = member?.home;
     if (!member || !owner) continue;
-    const own = owner === login.account || owns(machine, login);
-    const visitor = seen.accounts.find((account) => account.name === owner)?.level === "visitor";
+    const own = owner === login.account || holds(machine, login, world);
+    const visitor = seen.accounts.get(owner)?.level === "visitor";
     if (!own && !(isSuper(world, login) && !visitor)) continue;
     return { login, owner, now: member.group ?? null, groups: groupsOf(world, login.hub, owner) };
   }
@@ -78,8 +105,7 @@ export function groupingTogether(machines: Machine[], world: WorldNow): Grouping
 
 /** The groups `owner` has on `hub`, by name. */
 export function groupsOf(world: WorldNow, hub: string, owner: AccountName): string[] {
-  const members = world.accounts.hubs.find((one) => one.hub === hub)?.members ?? [];
-  return [...new Set(members.filter((member) => member.home === owner && member.group).map((member) => member.group!))].sort((a, b) => a.localeCompare(b));
+  return [...(indexOf(world).hubs.get(hub)?.groups.get(owner) ?? [])];
 }
 
 /** A group's name as given, made plain the way the hub makes it: spaces at
@@ -169,6 +195,19 @@ export function boxParts(key: string): { owner: string; group: string | null } {
   return at < 0 ? { owner: key, group: null } : { owner: key.slice(0, at), group: key.slice(at + 1) };
 }
 
+/** A machine's name in its group, where its name begins with the group's:
+ *  what follows, so a room's machines read "A1", "A2" under the room's name;
+ *  the whole name where nothing would be left. */
+export function nameInGroup(name: string, group: string | null): string {
+  if (!group || !name.startsWith(group)) return name;
+  return name.slice(group.length).replace(/^[\s\-_\u00b7.]+/, "") || name;
+}
+
+/** Two names compared as they are read, a number in them by its value: pc2
+ *  before pc10. One collator for every comparison; `localeCompare` with its
+ *  options makes one each time, which costs more than a sort of thousands. */
+export const naturally = new Intl.Collator(undefined, { numeric: true }).compare;
+
 /** The order of two boxes under a hub: by whose they are, as `rank` says
  *  and then by name; each owner's own box before their groups, and the
  *  groups by name. */
@@ -177,7 +216,7 @@ export function compareBoxes(a: string, b: string, rank: (owner: string) => numb
   if (rank(x.owner) !== rank(y.owner)) return rank(x.owner) - rank(y.owner);
   if (x.owner !== y.owner) return x.owner < y.owner ? -1 : 1;
   if (x.group === null || y.group === null) return x.group === y.group ? 0 : x.group === null ? -1 : 1;
-  return x.group.localeCompare(y.group, undefined, { numeric: true });
+  return naturally(x.group, y.group);
 }
 
 /** The change that puts `machine` in `group`. */

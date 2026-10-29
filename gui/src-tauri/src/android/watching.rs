@@ -1,15 +1,19 @@
 //! A hidden Android page releases its live stream. History replaces the
 //! page's previous reading when it returns, avoiding an unbounded JS backlog.
 //! What this phone keeps of a conversation is shown at once, connected or
-//! not; only what it lacks is read when it is connected again.
+//! not; only what it lacks is read when it is connected again. A reading
+//! that fails for a passing reason is opened again after a wait, paced as
+//! every stream is (`fastctx_client::Again`); only a deleted conversation,
+//! or one this account may not read, ends the watch.
 
-use fastctx_client::{Conversation, Update, World};
+use fastctx_client::{Again, Conversation, Update, World};
 use fastctx_net::link::Status;
 use fastctx_types::access::Written;
 use fastctx_types::session::SessionEvent;
 use fastctx_types::{Address, ResidentId};
 use std::sync::{Arc, Mutex};
-use tauri::ipc::Channel;
+use tokio::sync::watch;
+use crate::watch_delivery::Sender;
 
 use crate::transcript::Transcript;
 use crate::{NotWatched, Piece};
@@ -23,9 +27,63 @@ fn given(transcript: &Mutex<Transcript>, history: &[SessionEvent]) -> Option<Pie
         .unwrap_or_else(|error| Some(Piece::Ended { error: Some(error) }))
 }
 
+/// What the page is given for `update`, through what it holds.
+fn handed(transcript: &Mutex<Transcript>, update: Update) -> Option<Piece> {
+    transcript
+        .lock()
+        .expect("transcript")
+        .take(update)
+        .unwrap_or_else(|error| Some(Piece::Ended { error: Some(error) }))
+}
+
+/// Tells the page its reading broke for `why`; false once the page let go.
+fn interrupted(pieces: &Sender<Piece>, again: &mut Again, why: String) -> bool {
+    pieces.send(Piece::interrupted(&again.broke(why))).is_ok()
+}
+
+/// The wait before the conversation is opened again: as long as `again`
+/// says, or until the connection or the page changes; false once either is
+/// gone.
+async fn waited(
+    world: &World,
+    machine: Option<&Written>,
+    again: &Again,
+    connection: &mut watch::Receiver<Status>,
+    visible: &mut watch::Receiver<bool>,
+) -> bool {
+    tokio::select! {
+        changed = connection.changed() => changed.is_ok(),
+        changed = visible.changed() => changed.is_ok(),
+        () = again.pause(world, machine) => true,
+    }
+}
+
+/// Reads the rest of what this phone keeps of the conversation; false once
+/// the watch is over. A reading that failed for a passing reason lets the
+/// conversation go, to be opened again.
+async fn rest(
+    conversation: &mut Option<Conversation>,
+    transcript: &Mutex<Transcript>,
+    pieces: &Sender<Piece>,
+    again: &mut Again,
+) -> bool {
+    let Some(kept) = conversation.as_mut() else { return true };
+    match kept.update().await {
+        Ok(update) => deliver(pieces, handed(transcript, update)),
+        Err(error) if error.is_deleted() || error.is_refused() => {
+            let _ = pieces.send(Piece::failed(&error));
+            false
+        }
+        Err(error) => {
+            *conversation = None;
+            interrupted(pieces, again, error.to_string())
+        }
+    }
+}
+
 /// Sends the page what it is given next; false once the watch is over, as
 /// the page let go or what it holds could not be kept.
-fn deliver(pieces: &Channel<Piece>, piece: Option<Piece>) -> bool {
+fn deliver(pieces: &Sender<Piece>, piece: Option<Piece>) -> bool {
     let Some(piece) = piece else { return true };
     let ended = piece.last();
     pieces.send(piece).is_ok() && !ended
@@ -96,23 +154,16 @@ pub(crate) async fn stream(
     world: World,
     resident: ResidentId,
     machine: Option<Written>,
-    mut initial: Conversation,
+    initial: Conversation,
     transcript: Arc<Mutex<Transcript>>,
-    pieces: Channel<Piece>,
+    pieces: Sender<Piece>,
 ) {
-    if initial.has_cached_rest() {
-        match initial.update().await {
-            Ok(Update::History(history)) => {
-                if !deliver(&pieces, given(&transcript, &history)) {
-                    return;
-                }
-            }
-            Err(error) => {
-                let _ = pieces.send(Piece::failed(&error));
-                return;
-            }
-            _ => unreachable!("cached rest precedes network updates"),
-        }
+    let mut again = Again::default();
+    let mut conversation = Some(initial);
+    if conversation.as_ref().is_some_and(Conversation::has_cached_rest)
+        && !rest(&mut conversation, &transcript, &pieces, &mut again).await
+    {
+        return;
     }
     let mut connection = match world.device().expect("Android device").machine_changes(machine.as_ref()) {
         Ok((_, connection)) => connection,
@@ -122,7 +173,6 @@ pub(crate) async fn stream(
         }
     };
     let mut visible = super::visibility();
-    let mut conversation = Some(initial);
     loop {
         let online = matches!(*connection.borrow_and_update(), Status::Online { .. });
         let shown = *visible.borrow_and_update();
@@ -132,21 +182,10 @@ pub(crate) async fn stream(
         }
         if shown
             && !online
-            && let Some(kept) = conversation.as_mut()
-            && kept.has_cached_rest()
+            && conversation.as_ref().is_some_and(Conversation::has_cached_rest)
+            && !rest(&mut conversation, &transcript, &pieces, &mut again).await
         {
-            match kept.update().await {
-                Ok(Update::History(history)) => {
-                    if !deliver(&pieces, given(&transcript, &history)) {
-                        return;
-                    }
-                }
-                Err(error) => {
-                    let _ = pieces.send(Piece::failed(&error));
-                    return;
-                }
-                _ => unreachable!("cached rest precedes network updates"),
-            }
+            return;
         }
         if !online || !shown {
             if conversation.take().is_some() && pieces.send(paused()).is_err() {
@@ -160,14 +199,23 @@ pub(crate) async fn stream(
             };
             match read {
                 Ok((fresh, history)) => {
+                    again.came();
                     if !deliver(&pieces, given(&transcript, &history)) {
                         return;
                     }
                     conversation = Some(fresh);
                 }
-                Err(error) => {
+                Err(error) if error.deleted || error.refused => {
                     let _ = pieces.send(error.piece());
                     return;
+                }
+                Err(error) => {
+                    if !interrupted(&pieces, &mut again, error.message)
+                        || !waited(&world, machine.as_ref(), &again, &mut connection, &mut visible).await
+                    {
+                        return;
+                    }
+                    continue;
                 }
             }
         }
@@ -188,24 +236,21 @@ pub(crate) async fn stream(
                     // paces it; what it hands over goes through what the page
                     // holds (`crate::transcript`).
                     Ok(update) => {
-                        let piece = transcript.lock().expect("transcript").take(update).unwrap_or_else(|error| Some(Piece::Ended { error: Some(error) }));
-                        if !deliver(&pieces, piece) { return; }
+                        if !deliver(&pieces, handed(&transcript, update)) { return; }
                     }
                     Err(error) if error.is_deleted() || error.is_refused() => {
                         let _ = pieces.send(Piece::failed(&error));
                         return;
                     }
+                    // Opened again after the wait, or sooner when the
+                    // connection or the page changes.
                     Err(error) => {
                         conversation = None;
-                        let error = Some(error.to_string());
-                        if pieces.send(Piece::Interrupted { error, since: crate::epoch_ms(std::time::SystemTime::now()) }).is_err() { return; }
-                        // A failed live stream waits for an actual connection
-                        // or visibility change; it never replays a failed call.
-                        if !connection.has_changed().unwrap_or(false) {
-                            tokio::select! {
-                                changed = connection.changed() => if changed.is_err() { return; },
-                                changed = visible.changed() => if changed.is_err() { return; },
-                            }
+                        if !interrupted(&pieces, &mut again, error.to_string()) { return; }
+                        if !connection.has_changed().unwrap_or(false)
+                            && !waited(&world, machine.as_ref(), &again, &mut connection, &mut visible).await
+                        {
+                            return;
                         }
                     }
                 }

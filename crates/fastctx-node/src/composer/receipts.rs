@@ -1,39 +1,62 @@
-//! Idempotency outlives an interface. Only current operations belong in RAM;
-//! acknowledged checkpoints move their old receipts to individually addressed files.
+//! Indexed operation lookup, with dual reads while legacy files are migrating.
+//! Age alone never proves that a device cannot resend an operation.
 
 use super::*;
-use fastctx_types::layout::ConversationDir;
-use serde::{Serialize, de::DeserializeOwned};
+use fastctx_storage::rusqlite::{OptionalExtension, params};
+use serde::de::DeserializeOwned;
 
-fn path(directory: &ConversationDir, kind: &str, key: &str) -> std::path::PathBuf {
-    directory.composer_books(kind).join(format!("{}.json", crate::speech::fixed_id("operation", &[key])))
+pub(super) fn name(key: &str) -> String {
+    crate::speech::fixed_id("operation", &[key]).to_string()
 }
 
-fn put(directory: &ConversationDir, kind: &str, key: &str, value: &impl Serialize) -> Result<(), Failure> {
-    let path = path(directory, kind, key);
-    fastctx_platform::ensure_private_dir(path.parent().expect("receipt directory")).map_err(failure)?;
-    fastctx_platform::publish(
-        &path,
-        &serde_json::to_vec(value).map_err(failure)?,
-        fastctx_platform::Permissions::Private,
-    )
-    .map_err(failure)
-}
-
-fn get<T: DeserializeOwned>(node: &Node, id: &ResidentId, kind: &str, key: &str) -> Result<Option<T>, Failure> {
+async fn get<T: DeserializeOwned + Send + 'static>(
+    node: &Node,
+    id: &ResidentId,
+    kind: &'static str,
+    key: &str,
+) -> Result<Option<T>, Failure> {
     if !node.residents.knows(id) {
         return Err(failure("unknown resident"));
     }
+    let (owner, name) = (id.to_string(), name(key));
     let directory = node.world.conversation(id);
-    let _transition = crate::resident_storage::lock();
-    match std::fs::read(path(&directory, kind, key)) {
-        Ok(bytes) => serde_json::from_slice(&bytes).map(Some).map_err(failure),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
-        Err(error) => Err(failure(error)),
-    }
+    node.database
+        .read(move |connection| {
+            let query =
+                |connection: &fastctx_storage::rusqlite::Connection| -> fastctx_storage::Result<Option<Vec<u8>>> {
+                    Ok(connection
+                        .query_row(
+                            "SELECT content FROM composer_records WHERE owner=?1 AND kind=?2 AND name=?3",
+                            params![owner, kind, name],
+                            |row| row.get(0),
+                        )
+                        .optional()?)
+                };
+            let bytes = match query(connection)? {
+                Some(bytes) => Some(bytes),
+                None => {
+                    let legacy = {
+                        let _transition = crate::resident_storage::lock();
+                        std::fs::read(directory.composer_books(kind).join(format!("{name}.json")))
+                    };
+                    match legacy {
+                        Ok(bytes) => Some(bytes),
+                        Err(reason) if reason.kind() == std::io::ErrorKind::NotFound => query(connection)?,
+                        Err(reason) => return Err(fastctx_storage::Error::new(reason.to_string())),
+                    }
+                }
+            };
+            bytes
+                .map(|bytes| {
+                    serde_json::from_slice(&bytes).map_err(|reason| fastctx_storage::Error::new(reason.to_string()))
+                })
+                .transpose()
+        })
+        .await
+        .map_err(failure)
 }
 
-pub(super) fn receipt(
+pub(super) async fn receipt(
     node: &Node,
     id: &ResidentId,
     state: &Stored,
@@ -41,46 +64,40 @@ pub(super) fn receipt(
 ) -> Result<Option<Receipt>, Failure> {
     match state.receipts.get(operation) {
         Some(receipt) => Ok(Some(receipt.clone())),
-        None => get(node, id, "receipts", operation),
+        None => get(node, id, "receipts", operation).await,
     }
 }
-
-pub(super) fn upload(
+pub(super) async fn upload(
     node: &Node,
     id: &ResidentId,
     state: &Stored,
     operation: &str,
 ) -> Result<Option<uploads::UploadRecord>, Failure> {
-    match state.uploads.get(operation) {
-        Some(receipt) => Ok(Some(receipt.clone())),
-        None => get(node, id, "uploads", operation),
+    let mut record = match state.uploads.get(operation) {
+        Some(receipt) => Some(receipt.clone()),
+        None => get(node, id, "uploads", operation).await?,
+    };
+    if let Some(record) = &mut record {
+        uploads::interrupted(node, id, operation, record);
     }
+    Ok(record)
 }
-
-pub(super) fn ended(node: &Node, id: &ResidentId, state: &Stored, turn: &str) -> Result<bool, Failure> {
-    Ok(state.ended.contains(turn) || get::<bool>(node, id, "ended", turn)?.unwrap_or(false))
+/// Whether the edit `operation` was taken by the draft's epoch `epoch`,
+/// sent since (`keeping::took`).
+pub(super) async fn taken(
+    node: &Node,
+    id: &ResidentId,
+    state: &Stored,
+    epoch: u64,
+    operation: &str,
+) -> Result<bool, Failure> {
+    let key = super::keeping::taken_key(&state.draft.id, epoch);
+    let operations = match state.taken.get(&key) {
+        Some(operations) => Some(operations.clone()),
+        None => get::<Vec<String>>(node, id, "taken", &key).await?,
+    };
+    Ok(operations.is_some_and(|operations| operations.iter().any(|taken| taken == operation)))
 }
-
-/// `previous` already has a committed checkpoint. Archive it before removing
-/// identical entries from its successor; a failed successor never invents a receipt.
-pub(super) fn compact(root: &ConversationDir, previous: &Stored, next: &mut Stored) -> Result<(), Failure> {
-    for (key, receipt) in &previous.receipts {
-        put(root, "receipts", key, receipt)?;
-        if next.receipts.get(key) == Some(receipt) {
-            next.receipts.remove(key);
-        }
-    }
-    for turn in &previous.ended {
-        put(root, "ended", turn, &true)?;
-        next.ended.remove(turn);
-    }
-    for (key, record) in &previous.uploads {
-        if record.finished() {
-            put(root, "uploads", key, record)?;
-            if next.uploads.get(key) == Some(record) {
-                next.uploads.remove(key);
-            }
-        }
-    }
-    Ok(())
+pub(super) async fn ended(node: &Node, id: &ResidentId, state: &Stored, turn: &str) -> Result<bool, Failure> {
+    Ok(state.ended.contains(turn) || get::<bool>(node, id, "ended", turn).await?.unwrap_or(false))
 }

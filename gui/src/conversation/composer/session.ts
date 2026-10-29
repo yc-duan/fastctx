@@ -282,6 +282,8 @@ export class ComposerSession {
           this.receive(updated.composer);
           return updated;
         } catch (error) {
+          // The document sends it again by itself (`ComposerDocument`).
+          if (unanswered(error)) throw error;
           const failure = errorOf(error);
           if (["this draft was already sent; keep your local edit and apply it to the new epoch", "that queued message no longer exists", "that queued message is being delivered"].includes(failure.message)) {
             const updated = await this.transport.read();

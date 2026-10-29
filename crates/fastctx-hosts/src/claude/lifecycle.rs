@@ -12,8 +12,15 @@ pub struct IdleWorker {
 #[derive(Deserialize)]
 struct Job {
     #[serde(rename = "inFlight")]
-    in_flight: InFlight,
+    in_flight: Option<InFlight>,
+    tempo: Option<String>,
+    needs: Option<String>,
 }
+
+/// What Claude Code writes in a job's `needs` while it waits for its first
+/// prompt (2.1.303 and 2.1.310). Such a job is written without `inFlight`:
+/// nothing runs in it until a prompt comes.
+const WAITING_FOR_FIRST_PROMPT: &str = "send a prompt to start";
 
 #[derive(Deserialize)]
 struct InFlight {
@@ -25,6 +32,42 @@ struct InFlight {
 /// An absent pins file means no pins, as in the supervisor. `queued` is
 /// ignored because Claude can leave a stale queue snapshot after settling.
 pub fn idle_worker(home: &Path, session: &str, listed: &str) -> Result<Option<IdleWorker>, String> {
+    let Some((worker, job)) = idle_job(home, session, listed)? else { return Ok(None) };
+    let busy = match &job.in_flight {
+        Some(in_flight) => in_flight.tasks != 0 || in_flight.kinds.iter().any(|kind| kind == "session_cron"),
+        None if job.tempo.as_deref() == Some("blocked") && job.needs.as_deref() == Some(WAITING_FOR_FIRST_PROMPT) => {
+            false
+        }
+        None => return Err(format!("{} says nothing of the work in flight", state(home, &worker.id).display())),
+    };
+    let pins_path = home.join("jobs/pins.json");
+    let pins: Vec<String> = match std::fs::read(&pins_path) {
+        Ok(bytes) => {
+            serde_json::from_slice(&bytes).map_err(|error| format!("reading {}: {error}", pins_path.display()))?
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Vec::new(),
+        Err(error) => return Err(format!("reading {}: {error}", pins_path.display())),
+    };
+    if busy || pins.contains(&worker.id) {
+        return Ok(None);
+    }
+    Ok(Some(worker))
+}
+
+/// Whether Claude Code lists the session's worker waiting for its next
+/// prompt with no task of its own in flight: what it says of a turn that
+/// ended. A worker waiting for its first prompt has had no turn.
+pub fn resting(home: &Path, session: &str, listed: &str) -> Result<bool, String> {
+    let Some((worker, job)) = idle_job(home, session, listed)? else { return Ok(false) };
+    match job.in_flight {
+        Some(in_flight) => Ok(in_flight.tasks == 0),
+        None => Err(format!("{} says nothing of the work in flight", state(home, &worker.id).display())),
+    }
+}
+
+/// The session's worker, when Claude Code lists it idle and alive, and what
+/// it keeps of the worker's work.
+fn idle_job(home: &Path, session: &str, listed: &str) -> Result<Option<(IdleWorker, Job)>, String> {
     let rows: Vec<serde_json::Value> = serde_json::from_str(listed).map_err(|error| error.to_string())?;
     let mut matching =
         rows.iter().filter(|row| row["kind"] == "background" && (row["sessionId"] == session || row["id"] == session));
@@ -42,22 +85,12 @@ pub fn idle_worker(home: &Path, session: &str, listed: &str) -> Result<Option<Id
     let Some(pid) = row["pid"].as_u64().and_then(|pid| u32::try_from(pid).ok()).filter(|pid| *pid != 0) else {
         return Ok(None);
     };
-    let job: Job = read(&home.join("jobs").join(id).join("state.json"))?;
-    let pins_path = home.join("jobs/pins.json");
-    let pins: Vec<String> = match std::fs::read(&pins_path) {
-        Ok(bytes) => {
-            serde_json::from_slice(&bytes).map_err(|error| format!("reading {}: {error}", pins_path.display()))?
-        }
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Vec::new(),
-        Err(error) => return Err(format!("reading {}: {error}", pins_path.display())),
-    };
-    if job.in_flight.tasks != 0
-        || job.in_flight.kinds.iter().any(|kind| kind == "session_cron")
-        || pins.iter().any(|pin| pin == id)
-    {
-        return Ok(None);
-    }
-    Ok(Some(IdleWorker { id: id.into(), pid }))
+    let job: Job = read(&state(home, id))?;
+    Ok(Some((IdleWorker { id: id.into(), pid }, job)))
+}
+
+fn state(home: &Path, id: &str) -> std::path::PathBuf {
+    home.join("jobs").join(id).join("state.json")
 }
 
 fn read<T: serde::de::DeserializeOwned>(path: &Path) -> Result<T, String> {

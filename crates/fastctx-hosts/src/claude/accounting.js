@@ -220,6 +220,7 @@ async function* measuredStep($, context, shown, reported, input, next, held) {
       if (!held && response) phase = 'streaming'
       yield part.value
     }
+    await noteStepStop($, context, input, result)
     outcome = held ? 'held' : next.signal?.aborted ? 'interrupted' : result?.stopReason == null ? 'failed' : 'completed'
     if (held) phase = 'before_response'
     else if (outcome === 'completed') phase = 'finished'

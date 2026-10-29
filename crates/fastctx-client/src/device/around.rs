@@ -30,10 +30,9 @@ impl Device {
         let sessions = self.sessions();
         let links: Vec<_> = sessions.iter().map(|session| session.link.clone()).collect();
         for session in sessions {
-            if !matches!(session.link.status(), fastctx_net::link::Status::Online { .. }) {
-                continue;
-            }
-            let view = session.link.view();
+            // A hub this device cannot reach now leaves its machines
+            // unanswered, never unlisted (`Link::last_view`).
+            let Some(view) = session.link.last_view() else { continue };
             let logins: Vec<AccountName> = view.me().map(|me| me.logins.iter().cloned().collect()).unwrap_or_default();
             for machine in view.machines() {
                 for account in logins.iter().filter(|account| {
@@ -90,8 +89,15 @@ impl Device {
         let heard = around::ask_each(self.asked(&scope), |_| RemoteCall::Who { all, town: town.clone(), since }).await;
         let machines =
             around::answers::collect(heard).into_iter().map(|answers| answers.who(since.is_some())).collect();
-        let mut reply =
-            WorldWho { machine: self.here(), scope, machines, you: None, history: None, others: Vec::new() };
+        let mut reply = WorldWho {
+            machine: self.here(),
+            scope,
+            machines,
+            you: None,
+            history: None,
+            others: Vec::new(),
+            involved: Vec::new(),
+        };
         // This device works for the accounts it is logged in to, on each hub.
         let sessions = self.sessions();
         let logins = |session: &Session| -> Vec<AccountName> {
@@ -248,14 +254,14 @@ impl Device {
         let hubs = around::on_hubs(links, |link, fresh| async move {
             let view = link.view();
             let logins: Vec<AccountName> = view.me().map(|me| me.logins.iter().cloned().collect()).unwrap_or_default();
-            // The machines its accounts may work on; one whose agents only
+            // The machines its accounts may work on, as the view last had
+            // them while the hub cannot be asked; one whose agents only
             // assist them is no machine of theirs to list.
+            let listed = link.last_view().is_some();
             let reachable: Vec<Reachable> = view
                 .machines()
+                .filter(|_| listed)
                 .filter_map(|machine| {
-                    if !matches!(link.status(), fastctx_net::link::Status::Online { .. }) {
-                        return None;
-                    }
                     let account =
                         view.account_for(&logins, &view.me, &machine.name, fastctx_types::access::Purpose::Hands)?;
                     Some(Reachable {
@@ -285,7 +291,13 @@ impl Device {
                             Heard::Answered(RemoteReply::Facts(facts)) => Ok(facts),
                             Heard::Answered(_) => Err("it answered something else".to_string()),
                             Heard::Offline(_) => Err("it is offline".to_string()),
-                            Heard::NoAnswer(reason) => Err(reason),
+                            // With the hub not asked, none of its machines
+                            // was: what each said of itself when it last
+                            // connected.
+                            Heard::NoAnswer(reason) => match seen.filter(|_| !online_known) {
+                                Some(seen) => self.kept_facts(&link, seen),
+                                None => Err(reason),
+                            },
                         },
                         owner: seen.and_then(|seen| seen.home.clone()),
                         group: seen.and_then(|seen| seen.group.clone()),

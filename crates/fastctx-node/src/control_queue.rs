@@ -13,7 +13,7 @@ use std::time::Duration;
 /// How long a Codex compaction may take before what came of it is not known.
 pub(crate) const COMPACTING: Duration = Duration::from_secs(30 * 60);
 /// How long the turn of a Codex compaction may take to begin.
-const COMPACTION_BEGINS: Duration = Duration::from_secs(2 * 60);
+pub(crate) const COMPACTION_BEGINS: Duration = Duration::from_secs(2 * 60);
 
 pub(crate) type Actions = crate::leases::Registry<ResidentId, Mutex<()>>;
 
@@ -140,7 +140,7 @@ async fn ready(node: &Arc<Node>, id: &ResidentId, row: &PendingControl) -> Resul
     let _reading = crate::gate_waits::shared(node, id, &gate).await?;
     crate::lifecycle::wake::wake(node, id, crate::lifecycle::wake::Source::Control, None)
         .await
-        .map_err(|error| Failure::host_unavailable(error.failure.message))?;
+        .map_err(crate::lifecycle::wake::WakeFailure::control)?;
     let _transaction = crate::resident_storage::lock();
     let mut rows = read(node, id)?;
     if let Some(saved) = rows.iter_mut().find(|saved| saved.id == row.id) {
@@ -164,7 +164,13 @@ async fn defer_host(node: &Arc<Node>, id: &ResidentId, row: &PendingControl, why
         save(node, id, &rows)?;
     }
     crate::composer::place_command(node, id, &key).await?;
-    crate::lifecycle::retry::failed(node, id, &key, why)?;
+    // One waiting for a turn of its login asks again soon, to keep its
+    // place in line; a host that is not there is asked less and less often.
+    if why == crate::turn_slots::FULL {
+        crate::lifecycle::retry::queued(node, id, &key, why)?;
+    } else {
+        crate::lifecycle::retry::failed(node, id, &key, why)?;
+    }
     crate::lifecycle::retry::kick(node, id);
     Ok(())
 }
@@ -263,15 +269,15 @@ pub(crate) fn between_turns(control: &Control) -> bool {
             if matches!(name.as_str(), "compact" | "review" | "code-review" | "fork"))
 }
 
-fn busy(node: &Node, id: &ResidentId) -> Result<bool, Failure> {
-    if node.residents.now(id).is_some_and(|now| now.turn.is_some()) {
+pub(crate) fn busy(node: &Node, id: &ResidentId) -> Result<bool, Failure> {
+    if node.residents.now(id).is_some_and(|now| now.turn.is_some()) || node.long_controls.of(id) {
         return Ok(true);
     }
     let (about, _) = node.residents.about(id).ok_or_else(|| Failure::new("unknown conversation"))?;
     if about.host.agent.as_str() == "codex"
         && let Some(thread) = about.session.as_deref()
     {
-        return Ok(node.codex.of(node, &about)?.running_turn(thread).is_some());
+        return Ok(node.codex.of(node, &about)?.busy(thread));
     }
     Ok(false)
 }
@@ -282,7 +288,9 @@ pub(crate) async fn enqueue_if_busy(
     id: &ResidentId,
     control: &Control,
 ) -> Result<Option<Controlled>, Failure> {
-    if !between_turns(control) {
+    // While a long control runs, every control told in the conversation
+    // waits for it, not only those that wait for a turn.
+    if !(between_turns(control) || (told(control) && node.long_controls.of(id))) {
         return Ok(None);
     }
     // Ones still waiting behind queued words keep their place ahead of it;
@@ -347,7 +355,7 @@ pub(crate) fn drain<'a>(
     node: &'a Arc<Node>,
     id: &'a ResidentId,
 ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), Failure>> + Send + 'a>> {
-    Box::pin(async move {
+    Box::pin(crate::gate_waits::internal(Box::pin(async move {
         loop {
             node.residents.active(id)?;
             if busy(node, id)? {
@@ -394,6 +402,13 @@ pub(crate) fn drain<'a>(
             let mut row = first.clone();
             row.state = ControlState::Running;
             event(node, id, &row)?;
+            // A long one runs on its own as one given directly does: the
+            // gate let go, words and other controls waiting for it, the rest
+            // of the queue taken up as it ends (`crate::control_long`).
+            if crate::control_long::long(node, id, &row.control) {
+                crate::control_long::start(node, id, row);
+                return Ok(());
+            }
             let result = Box::pin(crate::control::execute(node, id, row.control.clone())).await;
             let deferred = result.as_ref().err().is_some_and(|error| error.code == Some(FailureCode::HostUnavailable));
             let _ = end(node, id, row, result).await?;
@@ -401,7 +416,7 @@ pub(crate) fn drain<'a>(
                 return Ok(());
             }
         }
-    })
+    })))
 }
 
 pub(crate) fn schedule(node: &Arc<Node>, id: &ResidentId) {

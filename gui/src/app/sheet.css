@@ -16,6 +16,28 @@
   background: var(--scrim);
 }
 
+/* The shade comes as the sheet does and goes with it. It holds no words, so
+   it moves its colour, not its opacity. */
+.sheet[open]::backdrop {
+  animation: scrim-in var(--enter) var(--ease-out) both;
+}
+
+.sheet.sheet-leaving::backdrop {
+  animation: scrim-out var(--quick) var(--ease-out) both;
+}
+
+@keyframes scrim-in {
+  from {
+    background-color: transparent;
+  }
+}
+
+@keyframes scrim-out {
+  to {
+    background-color: transparent;
+  }
+}
+
 .sheet[open] .sheet-body {
   opacity: var(--shown);
   translate: var(--slide) var(--lift);
@@ -27,6 +49,20 @@
   from {
     --shown: 0;
     --lift: 8px;
+    --grow: 0.99;
+  }
+}
+
+/* Closed, it goes back the way it came, quicker. */
+.sheet.sheet-leaving .sheet-body {
+  pointer-events: none;
+  animation: sheet-out var(--quick) var(--ease-out) both;
+}
+
+@keyframes sheet-out {
+  to {
+    --shown: 0;
+    --lift: 6px;
     --grow: 0.99;
   }
 }
@@ -64,8 +100,9 @@
   margin-right: -8px;
 }
 
-/* A choice among a few: the question on the left, its answers as quiet
-   solid pills, the chosen one washed in clay. */
+/* A choice among a few: the question on the left, its answers a row of
+   words, the chosen one circled in clay ink, the loop drawn as it is chosen
+   (AGENTS.md, 形状: no row of pills). */
 .choice-row {
   display: grid;
   grid-template-columns: 6.5em minmax(0, 1fr);
@@ -82,37 +119,55 @@
 .choice-options {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
+  gap: 4px var(--space-6);
 }
 
+/* Each word keeps room round it for its loop, and stands where its text
+   does: the row lines up with the words above and below it. */
 .choice {
+  position: relative;
   display: inline-flex;
   align-items: baseline;
   gap: 6px;
   min-height: 30px;
-  padding: 4px 12px;
-  border-radius: var(--radius-full);
-  background: var(--fill);
+  margin-inline: -10px;
+  padding: 4px 10px;
+  border-radius: var(--radius-s);
   color: var(--text-2);
   font-size: var(--size-text);
   line-height: var(--leading-ui);
-  transition: color var(--hover) ease, background-color var(--hover) ease;
+  transition: color var(--hover) var(--ease);
 }
 
 .choice:hover:not(:disabled) {
   color: var(--text);
-  background: var(--fill-strong);
 }
 
-.choice.chosen,
-.choice.chosen:hover:not(:disabled) {
+.choice.chosen {
   color: var(--text-strong);
-  background: var(--accent-wash);
+}
+
+.choice::after {
+  content: "";
+  position: absolute;
+  inset: -5px -1px;
+  pointer-events: none;
+  background: var(--pen-clay);
+  -webkit-mask: var(--pen-ring) 50% 50% / 100% 100% no-repeat;
+  mask: var(--pen-ring) 50% 50% / 100% 100% no-repeat;
+  opacity: var(--ink-alpha);
+  scale: var(--ink-scale);
+  --ink-scale: 0.94;
+  transition: --ink-alpha var(--quick) var(--ease-out), --ink-scale var(--settle) var(--spring);
+}
+
+.choice.chosen::after {
+  --ink-alpha: 1;
+  --ink-scale: 1;
 }
 
 .choice:disabled {
   color: var(--text-3);
-  background: color-mix(in srgb, var(--fill) 50%, transparent);
 }
 
 .choice-note {
@@ -146,6 +201,27 @@
   justify-content: space-between;
   gap: var(--space-3);
   margin-top: var(--space-4);
+}
+
+/* A sheet whose body runs longer than the screen scrolls only between its
+   head and its foot: both stay where they are, over its own fill, reaching
+   into the padding round them so nothing shows past them. */
+.sheet-body > .sheet-head {
+  position: sticky;
+  top: calc(-1 * var(--sheet-pad-top, var(--space-5)));
+  z-index: 2;
+  margin-top: calc(-1 * var(--sheet-pad-top, var(--space-5)));
+  padding-top: var(--sheet-pad-top, var(--space-5));
+  background: var(--bg-elevated);
+}
+
+.sheet-body > .sheet-foot {
+  position: sticky;
+  bottom: calc(-1 * var(--sheet-pad-bottom, var(--space-5)));
+  z-index: 2;
+  margin-bottom: calc(-1 * var(--sheet-pad-bottom, var(--space-5)));
+  padding-bottom: var(--sheet-pad-bottom, var(--space-5));
+  background: var(--bg-elevated);
 }
 
 /* A small head over a group of choices, ruled across. */
@@ -187,7 +263,7 @@
   color: var(--bg);
   font-size: var(--size-text);
   scale: var(--press);
-  transition: background-color var(--hover) ease, --press var(--settle) var(--spring);
+  transition: background-color var(--hover) var(--ease), --press var(--settle) var(--spring);
 }
 
 .sheet-go:hover:not(:disabled) {
@@ -197,7 +273,7 @@
 .sheet-go:active:not(:disabled) {
   --press: 0.97;
   transition-duration: var(--hover), var(--quick);
-  transition-timing-function: ease, var(--ease-out);
+  transition-timing-function: var(--ease), var(--ease-out);
 }
 
 .sheet-go:disabled {
@@ -206,22 +282,40 @@
 }
 
 @media (max-width: 760px) {
+  /* Under a finger, each word a full target: the row a little apart. */
+  .choice-options {
+    row-gap: var(--space-3);
+  }
+
+  .choice::before {
+    content: "";
+    position: absolute;
+    inset: -8px -4px;
+  }
+
   .sheet {
     margin: auto 0 0;
     width: 100%;
   }
 
   .sheet-body {
+    --sheet-pad-bottom: calc(var(--space-5) + var(--safe-bottom));
     width: 100%;
-    padding: var(--space-5) var(--space-5) calc(var(--space-5) + var(--safe-bottom));
+    padding: var(--space-5) var(--space-5) var(--sheet-pad-bottom);
     border-radius: var(--radius-l) var(--radius-l) 0 0;
   }
 
   /* It rises from the foot of the screen, as every sheet on a phone
-     (`turns.css`). */
+     (`turns.css`), edge to edge whatever width it takes on a wider
+     screen. */
   .sheet[open] .sheet-body {
+    width: 100%;
     translate: var(--slide) var(--lift);
     animation-name: sheet-rise;
+  }
+
+  .sheet.sheet-leaving .sheet-body {
+    animation: sheet-sink var(--fold) var(--fold-easing) both;
   }
 
   .choice-row {
@@ -467,7 +561,7 @@
 .field-tip:focus .field-tip-card {
   display: block;
   opacity: var(--shown);
-  animation: paper-in var(--quick) ease both;
+  animation: paper-in var(--quick) var(--ease) both;
 }
 
 .field input,
@@ -733,6 +827,24 @@
   margin-top: var(--space-4);
 }
 
+/* However many codes there are, only their list scrolls, the ways of
+   adding a device staying over it. */
+.token-sheet .device-body.codes-face {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.token-sheet .codes-face > .codes-rows {
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+}
+
+.token-sheet .codes-face > .codes-rows > li {
+  flex: none;
+}
+
 .codes-none {
   margin: var(--space-6) 0 0;
   color: var(--text-3);
@@ -760,4 +872,9 @@
   .give-sheet .sheet-body {
     width: 100%;
   }
+}
+
+/* A program's name can run long without a space to break at. */
+.program-sheet .sheet-title {
+  overflow-wrap: anywhere;
 }

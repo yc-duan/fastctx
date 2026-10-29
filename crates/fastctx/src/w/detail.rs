@@ -135,6 +135,16 @@ fn resident_detail(detail: &ResidentDetail, now: Timestamp) -> String {
             }
         }
     }
+    for report in &detail.goal_reports {
+        text.push_str(&format!(
+            "goal     {} {}, {}: {}\n         report: {machine} {}\n",
+            when(report.ended_at, now),
+            fastctx_hands::told::goal_status(report.status),
+            fastctx_hands::told::duration(report.elapsed_seconds),
+            report.preview,
+            shown(&report.path)
+        ));
+    }
     text
 }
 

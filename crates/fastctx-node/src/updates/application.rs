@@ -9,15 +9,11 @@
 use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::time::Duration;
 
 use fastctx_types::update::{Failed, FailureReason, Fetching, Manifest, Problem, Via};
 
 use super::{AskedFile, Asker, dir, keep};
 use crate::Node;
-
-/// How long the application's installer may run.
-const INSTALLING: Duration = Duration::from_secs(10 * 60);
 
 /// The interfaces open on this machine now.
 static OPEN: AtomicUsize = AtomicUsize::new(0);
@@ -160,13 +156,16 @@ async fn install(node: &Arc<Node>, manifest: &Manifest, target: &str) -> Result<
     node.updates.held.lock().expect("never poisoned").fetching = None;
     let installer = brought?;
     let origin = node.updates.held.lock().expect("never poisoned").origin.clone();
+    if !signed_in(node, manifest, origin.as_ref()).await? {
+        return Ok(());
+    }
     if open() || super::schedule::withdrawn(node, &manifest.version, origin.as_ref()) {
         return Ok(());
     }
     node.updates.held.lock().expect("never poisoned").activity =
         Some(fastctx_types::update::Stage::Installing { version: manifest.version.clone() });
     super::report(node);
-    let installed = run_installer(&installer, &dir(node)).await;
+    let installed = run_installer(&installer, &node.root, manifest, target).await;
     node.updates.held.lock().expect("never poisoned").activity = None;
     installed?;
     let inspecting = program.clone();
@@ -191,7 +190,12 @@ async fn install(node: &Arc<Node>, manifest: &Manifest, target: &str) -> Result<
         let mut held = node.updates.held.lock().expect("never poisoned");
         let mut app = held.app.clone().ok_or("the application's identity disappeared")?;
         app.version = manifest.version.clone();
-        let file = super::AppFile { app: app.clone(), carried: held.carried.clone(), program: held.program.clone() };
+        let file = super::AppFile {
+            app: app.clone(),
+            carried: held.carried.clone(),
+            program: held.program.clone(),
+            executable: held.app_executable.clone(),
+        };
         keep(node, "app.json", &file).map_err(|e| Problem::new(FailureReason::Disk, e.to_string()))?;
         held.app = Some(app);
     }
@@ -210,28 +214,69 @@ async fn install(node: &Arc<Node>, manifest: &Manifest, target: &str) -> Result<
     Ok(())
 }
 
-/// Runs the installer silently, for this user alone, to its end.
-async fn run_installer(installer: &Path, directory: &Path) -> Result<(), Problem> {
-    // The executable copy is private to this installation, outside the inventory.
-    let temporary = tempfile::Builder::new()
-        .prefix("installer-")
-        .tempdir_in(directory)
-        .map_err(|error| Problem::new(FailureReason::Disk, error.to_string()))?;
-    let runnable = temporary.path().join("installer.exe");
-    std::fs::copy(installer, &runnable)
-        .map_err(|error| Problem::new(FailureReason::Disk, format!("{}: {error}", runnable.display())))?;
-    let mut command = tokio::process::Command::new(&runnable);
-    command.arg("/S").stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).kill_on_drop(true);
-    let status = fastctx_platform::doing::outside("the application's installer", INSTALLING, command.status())
-        .await
-        .map_err(|_| format!("the installer did not finish within {} minutes", INSTALLING.as_secs() / 60))?
-        .map_err(|error| format!("running the installer: {error}"))?;
-    temporary.close().map_err(|error| Problem::new(FailureReason::Disk, format!("removing the installer: {error}")))?;
-    if !status.success() {
-        return Err(Problem::new(
-            FailureReason::Installer { code: status.code() },
-            format!("the installer exited {status}"),
-        ));
+/// How often a machine no one is signed in to is looked at again.
+#[cfg(windows)]
+const SIGN_IN_LOOK: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// Waits until this user is signed in: the installer runs in a session of
+/// theirs (`fastctx_install::interactive`), and with no one signed in it
+/// would only fail and wait hours for its next try (review 6.8). Asked every
+/// half minute, so it installs within one of their signing in; false when
+/// the application opened meanwhile, which updates itself, or the update
+/// was withdrawn.
+async fn signed_in(
+    node: &Arc<Node>,
+    manifest: &Manifest,
+    origin: Option<&super::schedule::Origin>,
+) -> Result<bool, Problem> {
+    #[cfg(windows)]
+    {
+        let mut waiting = false;
+        loop {
+            let signed_in = tokio::task::spawn_blocking(fastctx_install::interactive::signed_in)
+                .await
+                .map_err(|e| format!("joining the sign-in check: {e}"))?
+                .map_err(|e| Problem::new(FailureReason::Installer { code: None }, format!("{e:#}")))?;
+            if signed_in || open() || super::schedule::withdrawn(node, &manifest.version, origin) {
+                if waiting {
+                    node.updates.held.lock().expect("never poisoned").activity = None;
+                    super::report(node);
+                }
+                return Ok(signed_in && !open());
+            }
+            if !waiting {
+                waiting = true;
+                node.updates.held.lock().expect("never poisoned").activity =
+                    Some(fastctx_types::update::Stage::WaitingSignIn { version: manifest.version.clone() });
+                super::report(node);
+            }
+            tokio::time::sleep(SIGN_IN_LOOK).await;
+        }
     }
-    Ok(())
+    #[cfg(not(windows))]
+    {
+        let _ = (node, manifest, origin);
+        Ok(true)
+    }
+}
+
+/// Runs the installer silently, for this user alone, to its end.
+async fn run_installer(installer: &Path, root: &Path, manifest: &Manifest, target: &str) -> Result<(), Problem> {
+    #[cfg(windows)]
+    {
+        let signature = manifest.package(target).ok_or("manifest has no application installer")?.signature.clone();
+        let (root, installer, version) = (root.to_owned(), installer.to_owned(), manifest.version.clone());
+        tokio::task::spawn_blocking(move || {
+            let _application = fastctx_install::repair::application::lock(&root)?;
+            fastctx_install::interactive::install(&root, &installer, &signature, &version, false)
+        })
+        .await
+        .map_err(|e| format!("joining application installer worker: {e}"))?
+        .map_err(|e| Problem::new(FailureReason::Installer { code: None }, format!("{e:#}")))
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = (installer, root, manifest, target);
+        Err("closed-application installation is supported only on Windows".into())
+    }
 }
