@@ -27,6 +27,8 @@ pub fn fixtures() -> Fixtures {
             used: 30_064_771_072,
             swap_total: 78_383_153_152,
             swap_used: 41_875_931_136,
+            room: Some(fastctx_types::stats::MEMORY_ROOM),
+            waiting: 2,
         },
         disks: vec![
             Disk {
@@ -115,7 +117,7 @@ pub fn fixtures() -> Fixtures {
         host: "server".into(),
         arch: "x86_64".into(),
         cpu: Cpu { model: String::new(), threads: 2, busy: None, load: Some([0.12, 0.08, 0.05]) },
-        memory: Memory { total: 2_065_588_224, used: 912_000_000, swap_total: 0, swap_used: 0 },
+        memory: Memory { total: 2_065_588_224, used: 912_000_000, swap_total: 0, swap_used: 0, room: None, waiting: 0 },
         disks: vec![Disk {
             at: "/".into(),
             label: None,

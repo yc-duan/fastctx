@@ -183,6 +183,7 @@ impl RemoteCall {
             | Self::ItemDetail { .. }
             | Self::AgentActivity { .. }
             | Self::Stats { .. }
+            | Self::MemoryRoom { bytes: None }
             | Self::Book { .. }
             | Self::Interfaces
             | Self::OnReceipt { .. }
@@ -217,6 +218,7 @@ impl RemoteCall {
             | Self::AgentFolder { .. }
             | Self::SetAgentTitle { .. }
             | Self::ChangeAgentLogin { .. }
+            | Self::MemoryRoom { bytes: Some(_) }
             | Self::Open { .. }
             | Self::Control { .. }
             | Self::Manage { .. }
@@ -360,6 +362,7 @@ impl Call {
             | Self::FindFiles { request: FileSearchRequest::Open { .. }, .. }
             | Self::Folders { .. }
             | Self::Stats { .. }
+            | Self::MemoryRoom { bytes: None, .. }
             | Self::Book { .. }
             | Self::WatchTools { .. }
             | Self::HoldHost { .. }
@@ -395,6 +398,7 @@ impl Call {
             | Self::ClaudeSubagents { .. }
             | Self::Mcp { mcp: McpCall::Keep { .. } | McpCall::Remove { .. } | McpCall::Import { .. }, .. }
             | Self::SetFeature { .. }
+            | Self::MemoryRoom { bytes: Some(_), .. }
             | Self::SetLanguage { .. }
             | Self::Reopened { .. }
             | Self::Composer { .. }

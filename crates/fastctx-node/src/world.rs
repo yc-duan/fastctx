@@ -1172,6 +1172,9 @@ impl fastctx_net::link::Node for Handler {
                 RemoteCall::Stats { after, seen } => {
                     crate::stats::here(&node, after, seen).await.map(|stats| RemoteReply::Stats(Box::new(stats)))
                 }
+                RemoteCall::MemoryRoom { bytes } => {
+                    crate::memory_room::answer(&node, bytes).map(|bytes| RemoteReply::MemoryRoom { bytes })
+                }
                 RemoteCall::Interfaces => {
                     crate::hub_arrival::interfaces().map(|addresses| RemoteReply::Interfaces { addresses })
                 }

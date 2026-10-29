@@ -5,7 +5,7 @@
 // reading. Seeded, so the same value is always drawn the same way; text is
 // never drawn by the pen and stays sharp.
 
-import { blot, circle, outline, ruled, seeded, type Point } from "../pen/shapes";
+import { blot, circle, dashed, outline, ruled, seeded, type Point } from "../pen/shapes";
 
 const f = (n: number) => (Math.round(n * 10) / 10).toString();
 
@@ -29,6 +29,8 @@ const RING_RADIUS = 28;
 export class Ring {
   readonly element: HTMLElement;
   private readonly arc: SVGPathElement;
+  private readonly markPath: SVGPathElement;
+  private marked: number | null = null;
   private readonly number: HTMLElement;
   private shown = 0;
   private target = 0;
@@ -38,8 +40,9 @@ export class Ring {
     this.element = document.createElement("div");
     this.element.className = "mp-ring";
     const track = circle([RING_SIZE / 2, RING_SIZE / 2], RING_RADIUS, 1.3, seeded(`${seed}:track`));
-    this.element.innerHTML = `<svg viewBox="0 0 ${RING_SIZE} ${RING_SIZE}" aria-hidden="true"><path class="mp-ring-track" d="${track}"/><g filter="url(#pen-marker-lite)"><path class="mp-ring-arc"/></g></svg><span class="mp-ring-number"></span>`;
+    this.element.innerHTML = `<svg viewBox="0 0 ${RING_SIZE} ${RING_SIZE}" aria-hidden="true"><path class="mp-ring-track" d="${track}"/><g filter="url(#pen-marker-lite)"><path class="mp-ring-arc"/></g><path class="mp-ring-mark"/></svg><span class="mp-ring-number"></span>`;
     this.arc = this.element.querySelector<SVGPathElement>(".mp-ring-arc")!;
+    this.markPath = this.element.querySelector<SVGPathElement>(".mp-ring-mark")!;
     this.number = this.element.querySelector<HTMLElement>(".mp-ring-number")!;
   }
 
@@ -73,6 +76,20 @@ export class Ring {
 
   private draw(share: number): void {
     this.arc.setAttribute("d", ringArc(share, this.seed));
+  }
+
+  /** A pencil tick across the ring at `share`, where a line the share must
+   *  not pass stands; none with null. */
+  mark(share: number | null): void {
+    if (share === this.marked) return;
+    this.marked = share;
+    if (share === null) {
+      this.markPath.removeAttribute("d");
+      return;
+    }
+    const angle = -Math.PI / 2 + Math.max(0, Math.min(1, share)) * Math.PI * 2;
+    const at = (radius: number): Point => [RING_SIZE / 2 + Math.cos(angle) * radius, RING_SIZE / 2 + Math.sin(angle) * radius];
+    this.markPath.setAttribute("d", ruled(at(RING_RADIUS - 6), at(RING_RADIUS + 6), 1.4, seeded(`${this.seed}:mark`)));
   }
 
   dispose(): void {
@@ -118,6 +135,7 @@ export class Spark {
   private width = 0;
   private height = 0;
   private traces: Trace[] = [];
+  private limit: number | null = null;
   private from = 0;
   private to = 1;
   private readonly sized: ResizeObserver;
@@ -137,8 +155,12 @@ export class Spark {
     this.sized.observe(this.element);
   }
 
-  draw(traces: Trace[], from: number, to: number): void {
+  /** Draws `traces` from `from` to `to`, with a dashed line at `limit`, a
+   *  value on the first trace's scale that it should stay under, where one
+   *  stands. */
+  draw(traces: Trace[], from: number, to: number, limit: number | null = null): void {
     this.traces = traces;
+    this.limit = limit;
     this.from = from;
     this.to = to;
     this.render();
@@ -180,7 +202,11 @@ export class Spark {
       .join("");
     // A dotted rule along the foot: the paper the trace is drawn on, so a
     // trace just begun reads as begun, not as missing.
-    const base = `<line class="mp-spark-base" x1="0" y1="${f(height - pad)}" x2="${f(width)}" y2="${f(height - pad)}"/>`;
+    const first = this.traces[0];
+    const limitY = first && this.limit !== null ? height - pad - (Math.min(this.limit, first.max) / (first.max || 1)) * (height - 2 * pad) : null;
+    const base = `<line class="mp-spark-base" x1="0" y1="${f(height - pad)}" x2="${f(width)}" y2="${f(height - pad)}"/>${
+      limitY === null ? "" : `<path class="mp-spark-limit" d="${dashed([2, limitY], [width - 2, limitY], 1, seeded(`limit:${f(limitY)}`), 4, 4)}"/>`
+    }`;
     const ink = this.svg.firstElementChild!;
     if (ink.innerHTML !== html) ink.innerHTML = html;
     const rule = this.svg.querySelector(".mp-spark-rule")!;

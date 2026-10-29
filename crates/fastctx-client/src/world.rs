@@ -791,6 +791,19 @@ impl World {
         }
     }
 
+    /// What `machine`, or this computer, keeps free in memory for its
+    /// agents; sets it first when `bytes` is given.
+    pub async fn memory_room(
+        &self,
+        machine: Option<fastctx_types::access::Written>,
+        bytes: Option<u64>,
+    ) -> Result<u64, Error> {
+        match self.ask(Call::MemoryRoom { machine, bytes }).await? {
+            Reply::MemoryRoom { bytes } => Ok(bytes),
+            other => Err(unexpected(other)),
+        }
+    }
+
     /// The HTTP proxy this computer reaches its hubs through: read, or with
     /// `change`, set to `url`, none clearing it.
     pub async fn hub_proxy(&self, url: Option<String>, change: bool) -> Result<Option<String>, Error> {

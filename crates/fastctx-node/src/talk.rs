@@ -712,12 +712,17 @@ fn kept(node: &Node, resident: &ResidentId) -> Vec<fastctx_types::session::KeptW
     let managed = node.residents.about(resident).is_some_and(|(about, _)| about.world_started);
     let Ok(pending) = crate::inbox::pending(&directory) else { return Vec::new() };
     // The words that would start its next turn, while that waits for room
-    // in its login.
-    let mut queued = crate::turn_slots::ahead(node, resident);
+    // in its machine's memory or in its login.
+    let mut queued = crate::memory_room::ahead(node, resident)
+        .map(|ahead| (ahead, true))
+        .or_else(|| crate::turn_slots::ahead(node, resident).map(|ahead| (ahead, false)));
+    // A new conversation's first words wait for memory as they wake it.
+    let memory = queued.is_some_and(|(_, memory)| memory);
     pending
         .into_iter()
         .map(|pending| {
-            let first = pending.state == PendingState::Waiting && pending.delivery.notice.along().is_none();
+            let first = pending.delivery.notice.along().is_none()
+                && (pending.state == PendingState::Waiting || memory && pending.state == PendingState::Waking);
             let progress = crate::lifecycle::retry::progress(node, resident, &pending.delivery.id).ok().flatten();
             let retrying = progress.is_some();
             let host_retry = progress
@@ -725,6 +730,10 @@ fn kept(node: &Node, resident: &ResidentId) -> Vec<fastctx_types::session::KeptW
                 .and_then(|progress| {
                     progress.reason.map(|reason| fastctx_types::session::HostRetry { since: progress.began, reason })
                 });
+            let (queued, for_memory) = match first.then(|| queued.take()).flatten() {
+                Some((ahead, memory)) => (Some(ahead), memory),
+                None => (None, false),
+            };
             KeptWords {
                 id: pending.delivery.id,
                 state: match pending.state {
@@ -732,7 +741,8 @@ fn kept(node: &Node, resident: &ResidentId) -> Vec<fastctx_types::session::KeptW
                     _ => WordsState::Handing,
                 },
                 host_retry,
-                queued: if first { queued.take() } else { None },
+                queued,
+                for_memory,
             }
         })
         .collect()

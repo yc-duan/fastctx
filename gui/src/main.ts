@@ -308,6 +308,7 @@ import {
   serverCommand,
   machineLog,
   machineStats,
+  machineMemoryRoom,
   renameHere,
   agentActivity,
 } from "./world/bridge";
@@ -2569,6 +2570,7 @@ function show(next: Place): void {
         when,
         ago: (ms) => homeWords.ago(ms),
         stats: (machine, after, seen) => (live ? machineStats(machine, after, seen) : specimenStats(machine, after)),
+        memoryRoom: (machine, bytes) => (live ? machineMemoryRoom(machine, bytes) : Promise.resolve(bytes ?? 1.5 * 2 ** 30)),
         nameProblem: (text) => (live ? nameProblem("machine", text) : specimenNameProblem("machine", text)),
         change,
         log: live ? machineLog : specimenMachineLog,

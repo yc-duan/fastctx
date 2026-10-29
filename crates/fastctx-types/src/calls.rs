@@ -358,6 +358,13 @@ pub enum Call {
         machine: Option<Written>,
         path: Option<String>,
     },
+    /// What a machine, or this computer, keeps free in memory for its
+    /// agents; sets it first when `bytes` is given (`crate::stats::MEMORY_ROOMS`).
+    MemoryRoom {
+        machine: Option<crate::access::Written>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        bytes: Option<u64>,
+    },
     /// How a machine, or this computer, is doing, for its details page;
     /// with `after`, its lines bring only what came since then.
     Stats {
@@ -920,6 +927,9 @@ pub enum Reply {
     FilesFound(crate::file_search::FileSearchReply),
     Folders(crate::focus::Folders),
     Stats(Box<crate::stats::MachineStats>),
+    MemoryRoom {
+        bytes: u64,
+    },
     /// What Claude Code on `machine` now records; `changed` is false when it
     /// already said so.
     ClaudeConsent {

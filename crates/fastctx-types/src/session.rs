@@ -238,6 +238,10 @@ pub struct KeptWords {
     /// (`world-usage.md`, 一个登录同时开几轮).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub queued: Option<u32>,
+    /// Whether that turn waits for room in its machine's memory rather than
+    /// in its login (`world-lifecycle.md`, 内存).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub for_memory: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

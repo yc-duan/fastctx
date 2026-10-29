@@ -483,6 +483,12 @@ export function machineStats(machine: MachineName | null, after: string | null =
   return invoke("machine_stats", { machineName: machine, after, seen });
 }
 
+/** What `machine`, or this computer with none, keeps free in memory for its
+ *  agents; sets it first when `bytes` is given. */
+export function machineMemoryRoom(machine: MachineName | null, bytes: number | null = null): Promise<number> {
+  return invoke("machine_memory_room", { machineName: machine, bytes });
+}
+
 /** Renames this computer `name`: on no hub, here alone; on hubs, through
  *  the one it is registered on, which the others follow. */
 export function renameHere(name: string): Promise<void> {

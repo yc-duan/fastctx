@@ -97,6 +97,7 @@ mod managed;
 mod management;
 mod mcp;
 mod memory;
+mod memory_room;
 mod obligations;
 mod on;
 mod on_delivery;
@@ -233,6 +234,9 @@ pub(crate) struct Node {
     /// How many turns each agent login runs at once, and the turns waiting
     /// for room (`turn_slots`).
     turn_slots: turn_slots::Slots,
+    /// What the machine keeps free in memory for its agents, and the turns
+    /// waiting for it (`memory_room`).
+    memory_room: memory_room::Room,
     /// Whom each job running here works for (`job_accounts`).
     job_accounts: job_accounts::JobAccounts,
     /// Where each account's jobs share the processors, where they do.
@@ -619,6 +623,7 @@ pub async fn run_prepared(
         Arc::new(move |line| codex_log.line(line)),
     );
     let claude = claude::Claude::new(&world)?;
+    let memory_room = memory_room::Room::new(&world);
     let schema = format!("{}{}", composer::SCHEMA, activity_book::SCHEMA);
     let database = fastctx_storage::Database::open(&world.path().join("node.sqlite3"), &schema)
         .context("opening the node database")?;
@@ -663,6 +668,7 @@ pub async fn run_prepared(
         actions: Default::default(),
         long_controls: Default::default(),
         turn_slots: Default::default(),
+        memory_room,
         job_accounts: Default::default(),
         cpu_shares,
         file_searches: file_search::Searches::default(),
@@ -829,6 +835,7 @@ pub async fn run_prepared(
 
     ending::start(node.log.clone()).context("starting node stop diagnostics")?;
     stuck::start(&node);
+    memory_room::start(&node);
     let watchdog = watchdog::Watchdog::start().context("starting the control-loop watchdog")?;
     // Accepting fails over and over while no descriptor is left: it waits a
     // little longer each time, and says so once, until one is accepted.

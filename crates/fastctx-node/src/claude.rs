@@ -1671,6 +1671,9 @@ pub async fn open_here(
     let text = self::words(&first.delivery.notice, Some(&node.machine())).0;
     node.claude.handing(&id, &text);
     let world = node.world.path().to_path_buf();
+    // Its first turn starts with its session, and waits for memory first
+    // (`memory_room`), holding nothing anyone else waits on.
+    crate::memory_room::wait(node, &id).await;
     // Until the World knows which session this is, a Claude session's MCP
     // connection it cannot place waits, rather than becoming someone new.
     let _birth = node.claude.births.read().await;

@@ -530,6 +530,12 @@ pub enum RemoteCall {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         seen: Option<crate::stats::StatsSeen>,
     },
+    /// What that machine keeps free in memory for its agents; sets it first
+    /// when `bytes` is given. Only for an account that may work on it.
+    MemoryRoom {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        bytes: Option<u64>,
+    },
     /// That machine's network addresses, as a place for the hub
     /// (`crate::hub_move`). A machine that cannot take the hub does not
     /// know this call.
@@ -637,6 +643,7 @@ impl RemoteCall {
             | RemoteCall::UpdateWorld
             | RemoteCall::Updates { .. }
             | RemoteCall::Stats { .. }
+            | RemoteCall::MemoryRoom { .. }
             | RemoteCall::Book { .. } => Purpose::Hands,
             RemoteCall::Collaboration { .. }
             | RemoteCall::AttachmentPlaces { .. }
@@ -794,6 +801,9 @@ pub enum RemoteReply {
         used: Vec<bool>,
     },
     Stats(Box<crate::stats::MachineStats>),
+    MemoryRoom {
+        bytes: u64,
+    },
     Book(Box<crate::activity_book::BookAnswer>),
     /// How updates stand on that machine after it was asked to update.
     Update(Box<crate::update::State>),

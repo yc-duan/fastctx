@@ -1274,6 +1274,11 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
             let acting = crate::around::acting_of(node, &caller::of(node, peer)?);
             crate::stats::query(node, &acting, machine, after, seen).await.map(|stats| Reply::Stats(Box::new(stats)))
         }
+        Call::MemoryRoom { machine, bytes } => {
+            users_voice(node, peer)?;
+            let acting = crate::around::acting_of(node, &caller::of(node, peer)?);
+            crate::memory_room::query(node, &acting, machine, bytes).await.map(|bytes| Reply::MemoryRoom { bytes })
+        }
         Call::Open { agent, town, node: target, text, model, reasoning_effort, attachments, choices } => {
             users_voice(node, peer)?;
             crate::managed::refuse(node)?;

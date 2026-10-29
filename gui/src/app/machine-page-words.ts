@@ -47,6 +47,14 @@ export interface MachinePageWords {
    *  may run at once when its owner set one. */
   jobsOf(who: string, running: number, most: number | null): string;
   sharing: string;
+  /** What the machine keeps free in memory for its agents: the setting's
+   *  name, its choices, and the line on the memory's ring, held. */
+  room: string;
+  roomNone: string;
+  roomKept(size: string): string;
+  /** Turns waiting for that room now. */
+  waitingMemory(count: number): string;
+  roomFailed(why: string): string;
 
   threads(count: number): string;
   load(one: string, five: string, fifteen: string): string;
@@ -174,6 +182,11 @@ export const zhMachinePage: MachinePageWords = {
   ownJobs: "主人",
   jobsOf: (who, running, most) => `${who} 在跑 ${running} 条作业${most ? `，至多 ${most} 条` : ""}`,
   sharing: "共享与协助",
+  room: "内存余量",
+  roomNone: "不留",
+  roomKept: (size) => `为智能体留出 ${size}：可用内存低于它时，新的一轮排队等候`,
+  waitingMemory: (count) => `${count} 轮在等内存`,
+  roomFailed: failure(zhProblems, "没能更改"),
 
   threads: (count) => `${count} 线程`,
   load: (one, five, fifteen) => `负载 ${one}　${five}　${fifteen}`,
@@ -275,6 +288,11 @@ export const enMachinePage: MachinePageWords = {
   ownJobs: "Owner",
   jobsOf: (who, running, most) => `${who} runs ${running} job${running === 1 ? "" : "s"}${most ? `, at most ${most}` : ""}`,
   sharing: "Sharing",
+  room: "Memory reserve",
+  roomNone: "None",
+  roomKept: (size) => `${size} kept for agents: below it, new turns wait their turn`,
+  waitingMemory: (count) => `${count} turn${count === 1 ? "" : "s"} waiting for memory`,
+  roomFailed: failure(enProblems, "Not changed"),
 
   threads: (count) => `${count} threads`,
   load: (one, five, fifteen) => `load ${one}, ${five}, ${fifteen}`,

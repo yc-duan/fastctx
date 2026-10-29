@@ -668,6 +668,17 @@ async fn machine_stats(
     shell.world().stats(machine(machine_name)?, after, seen).await.map_err(|error| error.to_string())
 }
 
+/// What `machine_name` (this computer when absent) keeps free in memory for
+/// its agents; sets it first when `bytes` is given.
+#[fastctx_gui_command::command]
+async fn machine_memory_room(
+    shell: tauri::State<'_, Shell>,
+    machine_name: Option<String>,
+    bytes: Option<u64>,
+) -> Result<u64, String> {
+    shell.world().memory_room(machine(machine_name)?, bytes).await.map_err(|error| error.to_string())
+}
+
 /// Archives a conversation or brings it back, lets it sleep, wakes it or
 /// moves it to another project, or points it at machines and folders, as
 /// the user; each stage is answered as it went.
@@ -1274,6 +1285,7 @@ pub fn run() {
             find_files,
             folders,
             machine_stats,
+            machine_memory_room,
             accounts::rename_here,
             accounts::hub_proxy,
             pages::page_read,

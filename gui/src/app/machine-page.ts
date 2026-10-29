@@ -41,6 +41,7 @@ import type { NameSaid } from "./name-words";
 import { isManaged } from "./machine-list";
 import { link, talkLink, type Place } from "./places";
 import { detailOf } from "./problem";
+import { ActsMenu } from "./acts-menu";
 import { runsHub, holds, assistantsOn, groupsOf, inNoNetwork, isSuper, isVisitor, machineActsFor, machinesOf, ownerOf, owns, residentIn, sameLogin, type Machine } from "./reach";
 import { RenameField, renamerOf, type Renamer } from "./rename";
 import type { Page } from "./shell";
@@ -92,7 +93,13 @@ export interface MachinePageOptions {
   manage: ManageWords;
   /** On a Mac, where Fastctx is let into what macOS keeps private. */
   allowPrivacy?: () => void;
+  /** What the machine (this computer with none) keeps free in memory for
+   *  its agents; set first when `bytes` is given. */
+  memoryRoom?(machine: string | null, bytes: number | null): Promise<number>;
 }
+
+/** What a machine may keep free for its agents (`fastctx_types::stats`). */
+const ROOMS = [0, 2 ** 30, 1.5 * 2 ** 30, 2 * 2 ** 30, 3 * 2 ** 30];
 
 type Tab = "now" | "net" | "manage";
 const TABS: Tab[] = ["now", "net", "manage"];
@@ -166,6 +173,8 @@ export class MachinePage implements Page {
   private readonly directBox: HTMLElement;
   private readonly fastctxBox: HTMLElement;
   private readonly namingBox: HTMLElement;
+  private readonly roomBox: HTMLElement;
+  private roomMenu: ActsMenu | null = null;
   private readonly sharingBox: HTMLElement;
   private readonly factsBox: HTMLElement;
   private readonly dangerBox: HTMLElement;
@@ -249,6 +258,7 @@ export class MachinePage implements Page {
           <div class="mp-pane" id="mp-pane-manage" role="tabpanel" aria-labelledby="mp-tab-manage" data-pane="manage" hidden>
             <section class="mp-sec mp-fastctx" hidden></section>
             <section class="mp-sec mp-naming" hidden></section>
+            <section class="mp-sec mp-room" hidden></section>
             <section class="mp-sec mp-sharing" hidden></section>
             <section class="mp-sec mp-about" hidden></section>
             <section class="mp-sec mp-danger" hidden></section>
@@ -276,6 +286,7 @@ export class MachinePage implements Page {
     this.directBox = part(".mp-direct");
     this.fastctxBox = part(".mp-fastctx");
     this.namingBox = part(".mp-naming");
+    this.roomBox = part(".mp-room");
     this.sharingBox = part(".mp-sharing");
     this.factsBox = part(".mp-about");
     this.dangerBox = part(".mp-danger");
@@ -438,6 +449,7 @@ export class MachinePage implements Page {
     this.drawDirect(machine, world);
     this.drawFastctx(machine, stats, world);
     this.drawNaming(machine, world);
+    this.drawRoom(machine, stats, world);
     this.drawSharing(machine, world);
     this.drawFacts(machine, stats);
     this.drawDanger(machine, world);
@@ -644,12 +656,18 @@ export class MachinePage implements Page {
           break;
         }
         case "memory": {
-          const { total, used, swap_total, swap_used } = stats.memory;
+          const { total, used, swap_total, swap_used, room } = stats.memory;
           const share = total ? used / total : null;
           vital.ring.set(share, percentHtml(share));
+          // Past the line where what is left is the room kept for agents,
+          // new turns wait.
+          const line = room && total > room ? (total - room) / total : null;
+          vital.ring.mark(line);
+          if (room) vital.ring.element.title = words.roomKept(bytesSaid(room));
+          else vital.ring.element.removeAttribute("title");
           note(vital.note, swap_total ? words.swap(windows, bytesSaid(swap_used), bytesSaid(swap_total)) : "");
           set(vital.sub, words.of(bytesSaid(used), bytesSaid(total)));
-          vital.spark.draw([{ points: series((sample) => sample.memory), max: 1, kind: "clay", area: true, gap: READ_GAP_MS }], from, at);
+          vital.spark.draw([{ points: series((sample) => sample.memory), max: 1, kind: "clay", area: true, gap: READ_GAP_MS }], from, at, line);
           break;
         }
         case "gpu": {
@@ -935,6 +953,44 @@ export class MachinePage implements Page {
     this.put("naming", this.namingBox, `<dl class="mp-rows">${rows}</dl>`);
   }
 
+  /** What it keeps free in memory for its agents, for whoever holds it,
+   *  where its node keeps any. */
+  private drawRoom(machine: Machine, stats: MachineStats | null, world: WorldNow): void {
+    const { words } = this.options;
+    const room = stats?.memory.room;
+    const shown = room !== undefined && !!this.options.memoryRoom && (machine.here || !!this.holder(machine, world));
+    this.roomBox.hidden = !shown;
+    if (!shown) return;
+    const said = room ? bytesSaid(room) : words.roomNone;
+    this.put(
+      "room",
+      this.roomBox,
+      `<dl class="mp-rows"><dt>${escape(words.room)}</dt><dd><button class="text-button quiet-button mp-room-pick" type="button" data-act="room" data-menu-key="room" aria-haspopup="menu" aria-expanded="false"><span>${escape(said)}</span>${glyph("chevron", 13)}</button></dd></dl>`,
+    );
+  }
+
+  /** Chooses what the machine keeps free for its agents. */
+  private pickRoom(anchor: HTMLElement, machine: Machine): void {
+    const { words } = this.options;
+    const set = this.options.memoryRoom;
+    const now = keptOf(machine.name).last?.memory.room;
+    if (!set || now === undefined) return;
+    this.roomMenu ??= new ActsMenu();
+    const entries = ROOMS.map((bytes) => ({ act: String(bytes), label: bytes ? bytesSaid(bytes) : words.roomNone, checked: bytes === now }));
+    this.roomMenu.open(anchor, words.room, entries, (act) => {
+      const bytes = Number(act);
+      if (bytes === now) return;
+      void set(machine.here ? null : machine.written, bytes).then(
+        (kept) => {
+          const last = keptOf(machine.name).last;
+          if (last) last.memory.room = kept;
+          this.render();
+        },
+        (error: unknown) => this.say(words.roomFailed(detailOf(error)), null),
+      );
+    });
+  }
+
   /** The Fastctx on it: what it runs and can take, its update and choices. */
   private drawFastctx(machine: Machine, stats: MachineStats | null, world: WorldNow): void {
     const block = this.fastctx;
@@ -982,7 +1038,8 @@ export class MachinePage implements Page {
     const others = Math.max(0, busy - residents.length);
     const stuck = stats?.node.stuck ?? [];
     const health = stats?.node.health ?? [];
-    this.presentBox.hidden = !residents.length && !jobs.length && !others && !stuck.length && !health.length;
+    const waiting = stats?.memory.waiting ?? 0;
+    this.presentBox.hidden = !residents.length && !jobs.length && !others && !stuck.length && !health.length && !waiting;
     // Its own warnings in plain words, as it said them a hover away.
     const healthSaid = (text: string) => {
       const rows = /has (\d+) unreadable rows/.exec(text);
@@ -1024,7 +1081,9 @@ export class MachinePage implements Page {
     this.put(
       "present",
       this.presentBox,
-      `<h2 class="mp-sec-title">${escape(words.present)}</h2>${agents ? `<ul class="machine-agents">${agents}</ul>` : ""}${others ? `<p class="machine-jobs">${escape(words.othersAtWork(others))}</p>` : ""}${jobsSaid}${stuckSaid}`,
+      `<h2 class="mp-sec-title">${escape(words.present)}</h2>${agents ? `<ul class="machine-agents">${agents}</ul>` : ""}${others ? `<p class="machine-jobs">${escape(words.othersAtWork(others))}</p>` : ""}${
+        waiting ? `<p class="machine-jobs mp-waiting" title="${escape(words.roomKept(bytesSaid(stats?.memory.room ?? 0)))}">${escape(words.waitingMemory(waiting))}</p>` : ""
+      }${jobsSaid}${stuckSaid}`,
     );
   }
 
@@ -1175,6 +1234,8 @@ export class MachinePage implements Page {
     switch (target.dataset.act) {
       case "rename":
         return this.startRename();
+      case "room":
+        return this.pickRoom(target, machine);
       case "talk":
         return this.options.talk(machine.written);
       case "share": {

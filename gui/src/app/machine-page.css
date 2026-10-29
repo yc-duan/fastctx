@@ -337,6 +337,11 @@
   fill: var(--wrong);
 }
 
+/* Where the memory kept for agents begins: past it, new turns wait. */
+.mp-ring-mark {
+  fill: var(--pen-graphite);
+}
+
 .mp-ring-number {
   position: absolute;
   inset: 0;
@@ -400,6 +405,10 @@
   stroke-width: 1;
   stroke-dasharray: 1 4;
   stroke-linecap: round;
+}
+
+.mp-spark-limit {
+  fill: var(--pen-graphite);
 }
 
 .mp-spark-area.clay {

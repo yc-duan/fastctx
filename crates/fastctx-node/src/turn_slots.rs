@@ -66,14 +66,23 @@ struct Waiting {
 /// A turn waiting its place, with how many wait ahead of it.
 pub(crate) struct Queued {
     pub ahead: u32,
+    /// What its machine keeps free for agents and has available, when the
+    /// turn waits for memory rather than for its login (`memory_room`).
+    pub memory: Option<(u64, u64)>,
 }
 
 impl Queued {
     pub(crate) fn landed(&self) -> Landed {
-        Landed::Waiting {
-            why: Some(format!("its agent login runs as many turns at once as it may; {} wait ahead of it", self.ahead)),
-            answered: true,
-        }
+        let why = match self.memory {
+            Some((room, available)) => format!(
+                "this machine keeps {} free for its agents and has {} available; {} wait ahead of it",
+                crate::memory_room::size(room),
+                crate::memory_room::size(available),
+                self.ahead
+            ),
+            None => format!("its agent login runs as many turns at once as it may; {} wait ahead of it", self.ahead),
+        };
+        Landed::Waiting { why: Some(why), answered: true }
     }
 }
 
@@ -118,7 +127,7 @@ pub(crate) fn admit(node: &Arc<Node>, id: &ResidentId, about: &About) -> Result<
     login.prune(now, &running);
     let Some(limit) = login.limit(hard) else {
         login.leave(id);
-        return Ok(());
+        return machine(node, id);
     };
     match login.waiting.iter_mut().find(|waiting| waiting.id == *id) {
         Some(waiting) => {
@@ -131,8 +140,10 @@ pub(crate) fn admit(node: &Arc<Node>, id: &ResidentId, about: &About) -> Result<
     let place = order.iter().position(|waiting| waiting == id).expect("it waits in line");
     let free = (limit as usize).saturating_sub(running.len() + login.starting.len());
     if place >= free {
-        return Err(Queued { ahead: place as u32 });
+        return Err(Queued { ahead: place as u32, memory: None });
     }
+    // Its login has room for it; the machine's memory may still hold it.
+    machine(node, id)?;
     // Those ahead of it within the room go too, once they ask again.
     let others: Vec<ResidentId> = order.into_iter().take(free).filter(|waiting| waiting != id).collect();
     login.go(id, now);
@@ -157,6 +168,7 @@ pub(crate) fn ahead(node: &Node, id: &ResidentId) -> Option<u32> {
 /// limit, a turn that ended well widens it, and the turns that now have room
 /// are woken.
 pub(crate) fn ended(node: &Arc<Node>, id: &ResidentId, about: &About, end: &TurnEnd) {
+    crate::memory_room::ended(node, id);
     let defaults = Defaults::of(node);
     let Some((key, dir)) = defaults.login(about) else { return };
     let refused = refused_for_rate(node, about, &dir, end);
@@ -290,6 +302,14 @@ fn running(node: &Node, key: &str, defaults: &Defaults, except: Option<&Resident
         .filter(|record| defaults.login(&record.about).is_some_and(|(login, _)| login == key))
         .map(|record| record.id)
         .collect()
+}
+
+/// Whether the machine has memory for `id`'s turn while the others run
+/// (`memory_room`): read under the logins' lock, as `running` is.
+fn machine(node: &Node, id: &ResidentId) -> Result<(), Queued> {
+    let running = crate::memory_room::running(node, id);
+    crate::memory_room::admit(node, id, &running)
+        .map_err(|waits| Queued { ahead: waits.ahead, memory: Some((waits.room, waits.available)) })
 }
 
 /// The account a conversation works for when its login only assists it.

@@ -58,6 +58,11 @@ export interface Memory {
   /** The page file or swap. */
   swap_total: number;
   swap_used: number;
+  /** What the machine keeps free for its agents; absent where its node keeps
+   *  none, zero where it was turned off (`world-lifecycle.md`, 内存). */
+  room?: number;
+  /** How many turns wait for that room now. */
+  waiting?: number;
 }
 
 export interface Disk {

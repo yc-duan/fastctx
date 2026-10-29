@@ -99,7 +99,28 @@ pub struct Memory {
     pub swap_total: u64,
     #[serde(default)]
     pub swap_used: u64,
+    /// What the machine keeps free for its agents: a new turn waits while
+    /// turns run and less is available (`world-lifecycle.md`, 内存). None
+    /// where its node does not keep any, an older one; zero where it was
+    /// turned off.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub room: Option<u64>,
+    /// How many turns wait for that room now.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub waiting: u32,
 }
+
+fn is_zero(count: &u32) -> bool {
+    *count == 0
+}
+
+/// What a machine keeps free for its agents when no one chose: Claude Code
+/// retires idle sessions below a gigabyte available, and a turn that starts
+/// grows by about half of one.
+pub const MEMORY_ROOM: u64 = 1536 << 20;
+
+/// What the user chooses from for it; zero keeps none.
+pub const MEMORY_ROOMS: [u64; 5] = [0, 1 << 30, 1536 << 20, 2 << 30, 3 << 30];
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Disk {
