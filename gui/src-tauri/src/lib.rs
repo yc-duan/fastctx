@@ -41,6 +41,8 @@ mod founding;
 #[cfg(target_os = "linux")]
 mod linux_service;
 #[cfg(desktop)]
+mod programs;
+#[cfg(desktop)]
 mod remote_world;
 #[cfg(desktop)]
 mod removal;
@@ -885,16 +887,31 @@ async fn fetch_attachment(
         .unwrap_or_else(|| Err(attachment_files::Failure::failed(held_reads::LET_GO.into())))
 }
 
+/// What opening a file on this device came to: it opened, or it is a
+/// program, which runs when opened, and the page asks first (`programs`).
+#[derive(serde::Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+enum Opened {
+    Opened,
+    Program,
+}
+
+/// Opens a file on this device with the system's own handler; a program
+/// only when `run` says the user chose to run it.
 #[fastctx_gui_command::command]
-async fn open_local(app: tauri::AppHandle, path: String) -> Result<(), String> {
+async fn open_local(app: tauri::AppHandle, path: String, run: Option<bool>) -> Result<Opened, String> {
     #[cfg(target_os = "android")]
     {
-        android::open_file(&app, path).await
+        let _ = run;
+        android::open_file(&app, path).await.map(|()| Opened::Opened)
     }
     #[cfg(not(target_os = "android"))]
     {
         use tauri_plugin_opener::OpenerExt as _;
-        app.opener().open_path(path, None::<&str>).map_err(|error| error.to_string())
+        if run != Some(true) && programs::runs(std::path::Path::new(&path)) {
+            return Ok(Opened::Program);
+        }
+        app.opener().open_path(path, None::<&str>).map(|()| Opened::Opened).map_err(|error| error.to_string())
     }
 }
 

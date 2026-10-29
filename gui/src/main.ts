@@ -172,6 +172,8 @@ import type { FocusPlace } from "./app/focus-panel";
 import { folders as foldersOf, noFocus, type Focus, type Folders } from "./world/focus";
 import { ComposerSession } from "./conversation/composer";
 import { allowPrivacy, attachmentThumbnail, fetchAttachment, fetchFile, openLocal, reveal, saveAs, thumbnail, thumbnailUrl, type Saved, type Thumbnail } from "./world/files";
+import { askProgram } from "./app/program-sheet";
+import { enProgram, zhProgram } from "./app/program-words";
 import { specimenComposer, type SpecimenComposer } from "./specimen/composer";
 import { ClaudeConsent } from "./app/claude-consent";
 import { Conversation } from "./conversation/conversation";
@@ -345,6 +347,15 @@ const language: "zh" | "en" = (() => {
   }
 })();
 const english = language === "en";
+
+/** Opens a file on this device; a program only once the user chose to run
+ *  it, or shows it in its folder instead (`app/program-sheet.ts`). */
+async function openFile(path: string): Promise<void> {
+  const opened = await openLocal(path);
+  if (opened.kind === "program") {
+    askProgram(english ? enProgram : zhProgram, path, { show: reveal, run: (program) => openLocal(program, true).then(() => {}) });
+  }
+}
 const words = english ? en : zh;
 const homeWords = english ? enHome : zhHome;
 const agentHomeWords = english ? enHomes : zhHomes;
@@ -1978,10 +1989,10 @@ function liveTalk(address: Address, inPanel = false): KeepablePage {
       servers: conversationServers(address),
     },
     // A file elsewhere is brought to this device first; one here opens
-    // where it is.
+    // where it is. A program is not run at a click: the user chooses.
     opening: {
-      open: async (machine, path, held) => openLocal(await fetchFile(machine, path, held)),
-      openAttachment: async (attachment, held) => openLocal((await fetchAttachment(attachment, held)).path),
+      open: async (machine, path, held) => openFile(await fetchFile(machine, path, held)),
+      openAttachment: async (attachment, held) => openFile((await fetchAttachment(attachment, held)).path),
       reveal: onComputer() ? reveal : undefined,
     },
     pictures: {

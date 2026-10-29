@@ -80,9 +80,14 @@ export function fetchFile(machine: MachineName | null, path: string, held?: Held
   return invoke("fetch_file", { machineName: machine, path, ...held?.args });
 }
 
-/** Opens a file on this device with the program the system keeps for it. */
-export function openLocal(path: string): Promise<void> {
-  return invoke("open_local", { path });
+/** What opening a file on this device came to: it opened, or it is a
+ *  program, which runs when opened, and was left for the user to choose. */
+export type Opened = { kind: "opened" } | { kind: "program" };
+
+/** Opens a file on this device with the program the system keeps for it; a
+ *  program only when `run` says the user chose to run it. */
+export function openLocal(path: string, run = false): Promise<Opened> {
+  return invoke("open_local", { path, run });
 }
 
 /** Shows a file on this computer in its folder. */

@@ -873,3 +873,8 @@
     width: 100%;
   }
 }
+
+/* A program's name can run long without a space to break at. */
+.program-sheet .sheet-title {
+  overflow-wrap: anywhere;
+}
