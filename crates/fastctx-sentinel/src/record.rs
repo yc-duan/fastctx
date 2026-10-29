@@ -10,7 +10,7 @@ use fastctx_agent::Run;
 use fastctx_agent::model::{Message, ToolResult};
 use fastctx_types::residents::{Notice, Woke, WorldFact};
 use fastctx_types::sentinel::WakeReason;
-use fastctx_types::sentinel_control::Record;
+use fastctx_types::sentinel_control::{Record, Wake};
 use fastctx_types::session::{
     Content, Does, Happened, Item, SessionEvent, Speaker, Tool, ToolStatus, TurnEnd, TurnHow, What,
 };
@@ -61,6 +61,66 @@ pub fn read(directory: &Path, held: Option<&str>) -> Result<Record, String> {
         events.extend(wake(sequence, &run));
     }
     Ok(Record { version, unchanged: false, events, earlier, summary: None, next: None })
+}
+
+/// How many of its latest wakes the overview tells.
+const OVERVIEW_WAKES: usize = 400;
+
+/// When each wake recorded in the generation directory `directory` began
+/// at or after `since` (milliseconds since the epoch), why, and what it
+/// took, oldest first; and whether earlier wakes were left out. A wake
+/// still being written is read next time.
+pub fn wakes(directory: &Path, since: i64) -> Result<(Vec<Wake>, bool), String> {
+    let runs = directory.join("runs");
+    let mut files = match std::fs::read_dir(&runs) {
+        Ok(entries) => entries
+            .filter_map(|entry| entry.ok())
+            .filter_map(|entry| {
+                let name = entry.file_name().into_string().ok()?;
+                let sequence = name.strip_suffix(".json")?.parse::<u64>().ok()?;
+                Some((sequence, entry.path()))
+            })
+            .collect::<Vec<_>>(),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Vec::new(),
+        Err(error) => return Err(format!("reading {}: {error}", runs.display())),
+    };
+    files.sort();
+    // A wake is written when it ends, so a file last changed before `since`
+    // began before it.
+    let cutoff = std::time::UNIX_EPOCH + std::time::Duration::from_millis(u64::try_from(since).unwrap_or(0));
+    let mut earlier = false;
+    files.retain(|(_, path)| {
+        let recent = std::fs::metadata(path).and_then(|meta| meta.modified()).map_or(true, |at| at >= cutoff);
+        earlier |= !recent;
+        recent
+    });
+    earlier |= files.len() > OVERVIEW_WAKES;
+    let files = files.split_off(files.len().saturating_sub(OVERVIEW_WAKES));
+    let mut wakes = Vec::new();
+    for (_, path) in files {
+        let Ok(bytes) = std::fs::read(&path) else { continue };
+        let Ok(run) = serde_json::from_slice::<Run>(&bytes) else { continue };
+        let input = match run.messages.first() {
+            Some(Message::User { text }) => serde_json::from_str::<Value>(text).unwrap_or(Value::Null),
+            _ => Value::Null,
+        };
+        let Some(at) = input.get("now").and_then(Value::as_i64) else { continue };
+        if at < since {
+            earlier = true;
+            continue;
+        }
+        wakes.push(Wake {
+            at,
+            why: why(&input).0,
+            input: run.usage.input,
+            output: run.usage.output,
+            cached: run.usage.cache_read,
+            requests: run.requests,
+            elapsed_ms: run.elapsed_ms,
+            failed: run.error.is_some(),
+        });
+    }
+    Ok((wakes, earlier))
 }
 
 /// One wake, as a turn.

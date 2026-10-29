@@ -290,6 +290,16 @@ impl ResidentHost for Host {
                     }
                     Ok(HomeReply::Record { record: Box::new(record) })
                 }
+                // Every sentinel the asking account left here, ended or not,
+                // with the wakes of its last days.
+                HomeRequest::Overview => {
+                    let since = self.runtime.now() - OVERVIEW_DAYS * 86_400_000;
+                    let scope_dir = self.scope_dir(scope);
+                    let watched = tokio::task::spawn_blocking(move || overview(&scope_dir, since))
+                        .await
+                        .map_err(|error| error.to_string())??;
+                    Ok(HomeReply::Overview { watched })
+                }
                 HomeRequest::Withdraw { id } => {
                     self.reconcile(scope, id).await?;
                     if lifecycle::get(self.records.as_ref(), scope, id).await.map_err(|e| e.to_string())?.is_some() {
@@ -300,4 +310,32 @@ impl ResidentHost for Host {
             }
         })
     }
+}
+
+/// How many days of wakes the overview of an account's sentinels reads.
+const OVERVIEW_DAYS: i64 = 30;
+
+/// Each sentinel under `scope_dir`, every generation of it its home kept,
+/// with its wakes since `since`.
+fn overview(scope_dir: &std::path::Path, since: i64) -> Result<Vec<Watched>, String> {
+    let entries = match std::fs::read_dir(scope_dir) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => return Err(format!("reading {}: {error}", scope_dir.display())),
+    };
+    let mut watched = Vec::new();
+    for sentinel in entries.filter_map(Result::ok).filter(|entry| entry.path().is_dir()) {
+        let Ok(generations) = std::fs::read_dir(sentinel.path()) else { continue };
+        for generation in generations.filter_map(Result::ok) {
+            let directory = generation.path();
+            if !directory.is_dir() || generation.file_name().to_str().is_none_or(|name| name.parse::<u64>().is_err()) {
+                continue;
+            }
+            // One whose home has kept nothing of it yet has nothing to show.
+            let Some(state) = crate::state::Store::new(directory.clone()).load()? else { continue };
+            let (wakes, earlier) = crate::record::wakes(&directory, since)?;
+            watched.push(Watched { summary: storage::summary(&state), wakes, earlier });
+        }
+    }
+    Ok(watched)
 }

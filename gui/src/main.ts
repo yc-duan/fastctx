@@ -196,13 +196,13 @@ import { MemoryPage } from "./project/memory-page";
 import { enMemory, zhMemory } from "./project/memory-words";
 import { memory as memorySeam, type MemoryAuthor } from "./world/memory";
 import { specimenCatalog, specimenDocument } from "./specimen/memory";
-import { sentinelList, sentinelListAll, sentinelRecord, sentinelStop, sentinels as liveSentinels, type SentinelSummary } from "./world/sentinels";
+import { sentinelList, sentinelListAll, sentinelOverview, sentinelRecord, sentinelStop, sentinels as liveSentinels, type SentinelSummary } from "./world/sentinels";
 import { planRead } from "./world/plan";
 import { sawTold, toldSeen } from "./app/told-seen";
 import { specimenHubPlans, specimenHubSenses } from "./specimen/hub";
 import type { Job as PanelJob } from "./conversation/jobs-panel";
 import { specimenSentinels } from "./specimen/sentinels";
-import { specimenWatcherRecord, specimenWatchers } from "./specimen/watchers";
+import { specimenWatcherRecord, specimenWatchers, specimenWatchersOverview } from "./specimen/watchers";
 import { enSentinel, zhSentinel } from "./sentinel/words";
 import { JournalForm } from "./project/journal-form";
 import { ProjectPage } from "./project/page";
@@ -440,7 +440,7 @@ const WORKBENCH_PLACES: Place["kind"][] = ["home", "new", "project", "talk", "ta
 /** The pages one comes into from another, which have a way back in their
  *  head (`world-gui.md`, 界面的结构); the sidebar's own pages have none. */
 function inner(at: Place): boolean {
-  return ["feature", "data", "memory", "page", "file", "login", "talks", "archived", "machine", "usage", "subagents", "sentinel"].includes(at.kind);
+  return ["feature", "data", "memory", "page", "file", "login", "talks", "archived", "machine", "usage", "subagents", "sentinel", "sentinels"].includes(at.kind);
 }
 
 /** Where a page's back goes when it was not come into from another page,
@@ -462,6 +462,8 @@ function parentOf(at: Place): Place {
       return { kind: "project", town: at.town };
     case "archived":
       return { kind: "talks", town: null };
+    case "sentinel":
+      return { kind: "sentinels" };
     default:
       return { kind: "home" };
   }
@@ -495,6 +497,8 @@ function placeName(at: Place): string {
       return at.town ?? (english ? enTalks : zhTalks).title;
     case "sentinel":
       return (english ? enSentinel : zhSentinel).title;
+    case "sentinels":
+      return (english ? enSentinel : zhSentinel).overview.title;
     default:
       return "";
   }
@@ -1516,6 +1520,36 @@ function sentinelPage(at: Extract<Place, { kind: "sentinel" }>): Page {
         return known?.facts.Ok?.form ?? "desktop";
       },
       lines: live ? (machine, path, decoding) => RemoteLines.open(machine, path, decoding) : async (_machine, path) => specimenLines(path),
+      now: () => Date.now(),
+      detail: (error) => whyOf(error),
+    });
+  });
+}
+
+/** Every watcher of the user's accounts, read from the machines they live
+ *  on, or the specimen's. */
+function sentinelsPage(): Page {
+  const own = english ? enSentinel : zhSentinel;
+  return deferredPage(own.overview.title, async () => {
+    const { SentinelOverviewPage } = await import("./sentinel/overview");
+    return new SentinelOverviewPage({
+      words: own,
+      talkWords: words,
+      english,
+      head,
+      read: () =>
+        live
+          ? sentinelOverview().then((overview) => {
+              for (const one of overview.watched) remembered(one.summary);
+              return overview;
+            })
+          : new Promise((resolve) => setTimeout(() => resolve(specimenWatchersOverview(english, Date.now())), 200)),
+      link: (one) => link({ kind: "sentinel", home: one.summary.definition.home, id: one.summary.definition.id, generation: one.summary.definition.generation }),
+      form: (machine) => {
+        const world = live ? store.world.peek() : specimen.world;
+        const known = world ? machinesOf(world).find((one) => one.name === machine || one.written === machine) : undefined;
+        return known?.facts.Ok?.form ?? "desktop";
+      },
       now: () => Date.now(),
       detail: (error) => whyOf(error),
     });
@@ -2897,6 +2931,9 @@ function show(next: Place): void {
       break;
     case "sentinel":
       page = sentinelPage(next);
+      break;
+    case "sentinels":
+      page = sentinelsPage();
       break;
     case "file":
       page = new ReaderPage({

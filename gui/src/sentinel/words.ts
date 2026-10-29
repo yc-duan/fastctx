@@ -19,6 +19,20 @@ export interface SentinelWords {
   next(time: number, now: number): string;
   /** How often its reflex looks, for the stretch pointed at. */
   every(ms: number): string;
+  /** The page of every watcher (`overview.ts`): its name, its two parts,
+   *  the spans it is drawn over, what all of them took in that span, and
+   *  one's own, pointed at. */
+  overview: {
+    title: string;
+    watching: string;
+    ended: string;
+    span: Record<"week" | "month", string>;
+    wakes(count: number): string;
+    tokens(count: string): string;
+    took(wakes: number, tokens: string, time: string): string;
+    nothing: string;
+    unreachable: string;
+  };
 }
 
 const time = (locale: string, tomorrow: string) => (at: number, now: number) => {
@@ -48,6 +62,17 @@ export const zhSentinel: SentinelWords = {
   at: zhTime,
   next: (at, now) => `下次 ${zhTime(at, now)}`,
   every: (ms) => (ms < 60_000 ? `每 ${Math.round(ms / 1000)} 秒巡检一次` : ms < 3_600_000 ? `每 ${Math.round(ms / 60_000)} 分钟巡检一次` : `每 ${Math.round(ms / 3_600_000)} 小时巡检一次`),
+  overview: {
+    title: "全部观测",
+    watching: "观测中",
+    ended: "已结束",
+    span: { week: "7 天", month: "30 天" },
+    wakes: (count) => `醒来 ${count} 次`,
+    tokens: (count) => `${count} tokens`,
+    took: (wakes, tokens, time) => `醒来 ${wakes} 次，${tokens} tokens，共 ${time}`,
+    nothing: "尚无观测",
+    unreachable: "有观测所在的机器暂时读不到",
+  },
 };
 
 export const enSentinel: SentinelWords = {
@@ -64,4 +89,15 @@ export const enSentinel: SentinelWords = {
   next: (at, now) => `Next ${enTime(at, now)}`,
   every: (ms) =>
     ms < 60_000 ? `Checks every ${Math.round(ms / 1000)} s` : ms < 3_600_000 ? `Checks every ${Math.round(ms / 60_000)} min` : `Checks every ${Math.round(ms / 3_600_000)} h`,
+  overview: {
+    title: "All watchers",
+    watching: "Watching",
+    ended: "Ended",
+    span: { week: "7 days", month: "30 days" },
+    wakes: (count) => `${count} wake${count === 1 ? "" : "s"}`,
+    tokens: (count) => `${count} tokens`,
+    took: (wakes, tokens, time) => `${wakes} wake${wakes === 1 ? "" : "s"}, ${tokens} tokens, ${time} in all`,
+    nothing: "No watchers yet",
+    unreachable: "A machine some watchers live on can't be read now",
+  },
 };

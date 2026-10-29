@@ -34,6 +34,16 @@ pub(crate) async fn sentinel_stop(
     }
 }
 
+/// Every sentinel of the accounts this device acts for, ended or not, with
+/// when each woke and what each wake took.
+#[fastctx_gui_command::command]
+pub(crate) async fn sentinel_overview(shell: tauri::State<'_, Shell>) -> Result<Reply, String> {
+    match shell.world().sentinel(None, None, Request::Overview).await.map_err(|e| e.to_string())? {
+        reply @ Reply::Overview { .. } => Ok(reply),
+        _ => Err("unexpected sentinel overview reply".into()),
+    }
+}
+
 /// What a sentinel did, read from its home; `held` names the version the
 /// window already shows.
 #[fastctx_gui_command::command]

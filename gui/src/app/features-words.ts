@@ -70,6 +70,8 @@ export interface FeaturesWords {
 export interface SentinelWords {
   name: string;
   line: string;
+  /** The page of every watcher, from here. */
+  all: string;
   film: SentinelFilmWords;
   after: string;
   offWhat: string;
@@ -139,6 +141,7 @@ export const zhFeatures: FeaturesWords = {
   sentinels: {
     name: "观测",
     line: "会话等待时，由观测代为留意",
+    all: "全部观测",
     film: { captions: ["会话需要等待，留下一项观测", "会话休息，观测代为巡检那台机器", "条件成立，观测唤醒会话继续工作"] },
     after: "此账号下的会话均可留下观测",
     offWhat: "会话将不能留下观测，进行中的观测全部撤销；此处的设置与钥匙保留，重新开启后照旧。",
@@ -244,6 +247,7 @@ export const enFeatures: FeaturesWords = {
   sentinels: {
     name: "Watchers",
     line: "While a conversation waits, a watcher keeps an eye out",
+    all: "All watchers",
     film: { captions: ["A conversation that must wait leaves a watcher", "It rests while the watcher checks that machine", "When the condition holds, the watcher wakes it to go on"] },
     after: "Conversations working for this account can leave watchers",
     offWhat: "Conversations can no longer leave watchers, and those under way are withdrawn; the settings and keys here are kept for next time.",

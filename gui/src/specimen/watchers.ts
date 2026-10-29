@@ -5,7 +5,7 @@
 
 import type { SessionEvent } from "../world/events";
 import type { JsonValue } from "../world/wire";
-import type { SentinelPhase, SentinelRecord, SentinelSummary } from "../world/sentinels";
+import type { SentinelOverview, SentinelPhase, SentinelRecord, SentinelSummary, SentinelWake, SentinelWatched } from "../world/sentinels";
 
 const LOSS = "s-a1b2c3";
 const MORNING = "s-d4e5f6";
@@ -129,4 +129,52 @@ export function specimenWatcherRecord(english: boolean, now: number, id: string,
   message("w3", 0, say("连续三步低于 0.3（0.297、0.291、0.288），条件成立，唤醒对话。", "Three steps in a row under 0.3 (0.297, 0.291, 0.288): it holds, and the conversation is woken."));
   ended("w3", 0);
   return { version: "specimen", events, ...(summary ? { summary } : {}) };
+}
+
+/** Every watcher of the specimen's account (`?sentinels`), over its last
+ *  days: the three the conversation left still watching, and four that
+ *  ended, two of which found what they waited for. */
+export function specimenWatchersOverview(english: boolean, now: number): SentinelOverview {
+  const say = (zh: string, en: string) => (english ? en : zh);
+  const hour = 3_600_000;
+  const wake = (ago: number, kind: SentinelWake["why"]["kind"], tokens = 9_000, failed = false): SentinelWake => ({
+    at: now - ago * hour,
+    why: kind === "reflex" ? { kind, source: "server:tail -n3 train.log" } : kind === "broken" ? { kind, reason: "" } : ({ kind } as SentinelWake["why"]),
+    input: tokens,
+    output: Math.round(tokens / 12),
+    cached: Math.round(tokens * 0.7),
+    requests: 2,
+    elapsed_ms: 18_000 + (tokens % 7) * 3_000,
+    ...(failed ? { failed } : {}),
+  });
+  const summary = (id: string, condition: string, phase: SentinelPhase, home = "server"): SentinelSummary => ({
+    definition: { id, home, condition, kind: "local", owner: { machine: "laptop", resident: "claude-7a1c" }, generation: 1 },
+    phase,
+    plan: "",
+    latest: null,
+    reason: null,
+  });
+  const live = specimenWatchers(english, now, false);
+  const watched: SentinelWatched[] = [
+    { summary: live[0]!, wakes: [wake(70, "started", 12_000), wake(40, "reflex"), wake(22, "reflex"), wake(9, "reflex"), wake(2.5, "reflex", 14_000)] },
+    { summary: live[1]!, wakes: [wake(14, "started", 6_000)] },
+    { summary: live[2]!, wakes: [wake(0.2, "started", 5_000)] },
+    {
+      summary: summary("s-7c6b5a", say("CI 的夜间构建变绿时叫醒我", "Wake me when the nightly CI build goes green"), "satisfied"),
+      wakes: [wake(130, "started"), wake(118, "reflex"), wake(104, "reflex", 11_000)],
+    },
+    {
+      summary: summary("s-5a4b3c", say("磁盘用到九成时叫醒我", "Wake me when the disk is nine tenths full"), "satisfied", "lab"),
+      wakes: [wake(160, "started"), wake(96, "due"), wake(60, "reflex", 13_000)],
+    },
+    {
+      summary: summary("s-3c2d1e", say("对方的接口恢复时叫醒我", "Wake me when their API answers again"), "unable", "lab"),
+      wakes: [wake(52, "started"), wake(47, "reflex"), wake(45, "broken", 4_000, true)],
+    },
+    {
+      summary: summary("s-1e0f9a", say("周五下午提醒我交周报", "Remind me on Friday afternoon to send the weekly report"), "withdrawn"),
+      wakes: [wake(30, "started", 3_000), wake(28, "withdrawn", 2_000)],
+    },
+  ];
+  return { watched, unavailable: [] };
 }

@@ -1552,6 +1552,9 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
                     .await
                     .map(|reply| Reply::Sentinel(Box::new(reply)));
             }
+            if hub.is_none() && account.is_none() && matches!(request, fastctx_types::sentinel_control::Request::Overview) {
+                return crate::sentinels::overview_all(node, &caller).await.map(|reply| Reply::Sentinel(Box::new(reply)));
+            }
             if hub.is_none()
                 && account.is_none()
                 && matches!(request, fastctx_types::sentinel_control::Request::Record { .. })

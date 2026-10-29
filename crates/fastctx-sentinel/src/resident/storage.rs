@@ -81,7 +81,11 @@ fn scope_key(scope: &HubAccount) -> String {
 }
 impl Host {
     pub(super) fn assignment(&self, scope: &HubAccount, id: &SentinelId) -> PathBuf {
-        self.root.join(scope_key(scope)).join(id.as_str()).join("assignment.json")
+        self.scope_dir(scope).join(id.as_str()).join("assignment.json")
+    }
+    /// Where the account's sentinels living here keep what they do.
+    pub(super) fn scope_dir(&self, scope: &HubAccount) -> PathBuf {
+        self.root.join(scope_key(scope))
     }
     pub(super) fn store(&self, registration: &Registration) -> Store {
         Store::new(

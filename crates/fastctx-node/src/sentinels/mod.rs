@@ -13,7 +13,7 @@ pub(crate) mod look;
 mod records;
 pub(crate) mod timers;
 mod transport;
-pub(crate) use control::{control, list_all, record_any, scope};
+pub(crate) use control::{control, list_all, overview_all, record_any, scope};
 use fastctx_sentinel::{ports::Credentials, records::Records};
 use fastctx_types::ipc::Failure;
 pub(crate) use settings::settings;

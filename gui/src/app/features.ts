@@ -191,14 +191,14 @@ export class FeaturesPage implements Page {
    *  watched again over the page, beside what it gave; a feature with no
    *  settings (`solo`) holds them in the middle of the page, as its film is
    *  while it is off. */
-  private onTop(gained: string, solo = false): string {
+  private onTop(gained: string, solo = false, more = ""): string {
     const { words } = this.options;
     return `<div class="feature-on${solo ? " solo" : ""}">
       <button class="feature-still" type="button" data-act="replay" aria-label="${escape(words.replay)}"></button>
       <div class="feature-on-said">
         <span class="tag feature-tag-on">${glyph("check", 12)}<span>${escape(words.on)}</span></span>
         <p class="feature-on-gained">${escape(gained)}</p>
-        <button class="text-button quiet-button" type="button" data-act="replay">${glyph("regenerate", 14)}<span>${escape(words.replay)}</span></button>
+        <button class="text-button quiet-button" type="button" data-act="replay">${glyph("regenerate", 14)}<span>${escape(words.replay)}</span></button>${more}
       </div>
     </div>`;
   }
@@ -299,7 +299,7 @@ export class FeaturesPage implements Page {
       this.body.classList.toggle("features-on", on || starting);
       this.body.innerHTML =
         on || starting
-          ? `${on ? this.onTop(words.sentinels.after) : ""}<div class="sf-holder"></div>${on ? this.offWay(label) : ""}`
+          ? `${on ? this.onTop(words.sentinels.after, false, `<a class="text-button quiet-button" href="${link({ kind: "sentinels" })}">${glyph("sentinel", 14)}<span>${escape(words.sentinels.all)}</span></a>`) : ""}<div class="sf-holder"></div>${on ? this.offWay(label) : ""}`
           : `<div class="feature-intro"><div class="feature-film"></div><button class="sheet-go feature-turn" type="button" data-turn="1"${form ? "" : " disabled"}>${escape(words.turnOn)}</button></div>`;
       if (form && (on || starting)) {
         this.body.querySelector(".sf-holder")!.append(form.element);

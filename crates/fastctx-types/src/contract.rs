@@ -139,10 +139,14 @@ impl RemoteCall {
             Self::SentinelControl {
                 request: crate::sentinel_control::Request::List { .. } | crate::sentinel_control::Request::Help,
             }
-            | Self::SentinelControl { request: crate::sentinel_control::Request::Record { .. } }
+            | Self::SentinelControl {
+                request: crate::sentinel_control::Request::Record { .. } | crate::sentinel_control::Request::Overview,
+            }
             | Self::SentinelHome {
                 request:
-                    crate::sentinel_control::HomeRequest::Inspect { .. } | crate::sentinel_control::HomeRequest::Record { .. },
+                    crate::sentinel_control::HomeRequest::Inspect { .. }
+                    | crate::sentinel_control::HomeRequest::Record { .. }
+                    | crate::sentinel_control::HomeRequest::Overview,
             } => {
                 Contract { within: Some(Duration::from_secs(90)), ..Contract::QUERY }
             }
@@ -330,7 +334,10 @@ impl Call {
             | Self::Layer { layer: None, .. }
             | Self::Collaboration { .. } => Leaving::Stop,
             Self::Sentinel {
-                request: crate::sentinel_control::Request::List { .. } | crate::sentinel_control::Request::Help,
+                request:
+                    crate::sentinel_control::Request::List { .. }
+                    | crate::sentinel_control::Request::Help
+                    | crate::sentinel_control::Request::Overview,
                 ..
             } => Leaving::Stop,
             Self::Sentinel { .. } => Leaving::Finish,

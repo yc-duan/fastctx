@@ -5,7 +5,7 @@
 // machine the sentinels live on alone.
 
 import { invoke } from "@tauri-apps/api/core";
-import type { SessionEvent } from "./events";
+import type { SessionEvent, WokeWhy } from "./events";
 
 export type ModelProtocol = "open_ai" | "anthropic";
 
@@ -111,4 +111,39 @@ export interface SentinelRecord {
 /** Its record, unless it is still as the version `held`. */
 export function sentinelRecord(id: string, home: string, generation: number, held: string | null): Promise<SentinelRecord> {
   return invoke<{ kind: "record"; record: SentinelRecord }>("sentinel_record", { id, home, generation, held }).then((reply) => reply.record);
+}
+
+/** Why a sentinel woke (`fastctx_types::residents::Woke`). */
+export type SentinelWoke = WokeWhy;
+
+/** One time a sentinel woke, and what it took. */
+export interface SentinelWake {
+  /** In milliseconds since the epoch. */
+  at: number;
+  why: SentinelWoke;
+  /** Tokens it read (cached ones included), wrote, and read from the cache. */
+  input: number;
+  output: number;
+  cached: number;
+  requests: number;
+  elapsed_ms: number;
+  failed?: boolean;
+}
+
+/** One sentinel as its home keeps it, ended or not, with its last days' wakes. */
+export interface SentinelWatched {
+  summary: SentinelSummary;
+  wakes: SentinelWake[];
+  earlier?: boolean;
+}
+
+export interface SentinelOverview {
+  watched: SentinelWatched[];
+  /** The homes that could not be asked, with why, in the kernel's words. */
+  unavailable: string[];
+}
+
+/** Every sentinel of the accounts this device acts for, ended or not. */
+export function sentinelOverview(): Promise<SentinelOverview> {
+  return invoke<{ kind: "overview" } & SentinelOverview>("sentinel_overview").then(({ watched, unavailable }) => ({ watched, unavailable }));
 }

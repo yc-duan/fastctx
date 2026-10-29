@@ -70,6 +70,31 @@ pub(crate) async fn list_all(
     .map_err(|_| Failure::new("listing sentinels across accounts timed out"))?
 }
 
+/// Every sentinel of the accounts the caller acts for, ended or not, with
+/// their wakes (`world-senses.md`, 全部观测).
+pub(crate) async fn overview_all(node: &Arc<Node>, caller: &Caller) -> Result<Reply, Failure> {
+    if matches!(caller, Caller::Page(_) | Caller::Session(_)) {
+        return Err(Failure::refused(words::NEED_CONVERSATION));
+    }
+    tokio::time::timeout(std::time::Duration::from_secs(120), async {
+        let mut watched = Vec::new();
+        let mut unavailable = Vec::new();
+        for (link, account) in scopes(node, caller, None, None) {
+            match control(node, caller, &link, &account, Request::Overview).await {
+                Ok(Reply::Overview { watched: found, unavailable: errors }) => {
+                    watched.extend(found);
+                    unavailable.extend(errors);
+                }
+                Ok(_) => return Err(Failure::new("unexpected sentinel overview reply")),
+                Err(error) => unavailable.push(format!("{} at {}: {}", account, link.hub_name(), error.message)),
+            }
+        }
+        Ok(Reply::Overview { watched, unavailable })
+    })
+    .await
+    .map_err(|_| Failure::new("reading sentinels across accounts timed out"))?
+}
+
 /// A sentinel's record, read for whichever of the caller's accounts it was
 /// left for: each keeps its own under its home.
 pub(crate) async fn record_any(node: &Arc<Node>, caller: &Caller, request: Request) -> Result<Reply, Failure> {
@@ -111,6 +136,19 @@ pub(crate) async fn control(
             match homes.send_to(&scope, &home, HomeRequest::Record { id, generation, held }).await.map_err(Failure::new)? {
                 HomeReply::Record { record } => Ok(Reply::Record { record }),
                 _ => Err(Failure::new("the sentinel home answered another kind of call")),
+            }
+        }
+        // The account's sentinels live on the home it chose; a home that
+        // cannot be asked is said, and the rest is told.
+        Request::Overview => {
+            let (_, settings) = fastctx_sentinel::settings::read(records, &scope).await.map_err(fail)?;
+            let Some(home) = settings.home else {
+                return Ok(Reply::Overview { watched: Vec::new(), unavailable: Vec::new() });
+            };
+            match homes.send_to(&scope, &home, HomeRequest::Overview).await {
+                Ok(HomeReply::Overview { watched }) => Ok(Reply::Overview { watched, unavailable: Vec::new() }),
+                Ok(_) => Err(Failure::new("the sentinel home answered another kind of call")),
+                Err(error) => Ok(Reply::Overview { watched: Vec::new(), unavailable: vec![format!("{home}: {error}")] }),
             }
         }
         Request::Create { mut request } => {
