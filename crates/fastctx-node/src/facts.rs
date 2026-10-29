@@ -1,7 +1,8 @@
 //! What each other machine said of itself (`RemoteCall::Facts`), kept here
-//! for interfaces: asked once each time a machine connects anew, and kept
-//! on disk beside the hub's records so an interface opened later shows it
-//! at once, without asking (`world-network.md`, 近况).
+//! for interfaces: asked once each time a machine connects anew, and again
+//! a while after it could not answer, and kept on disk beside the hub's
+//! records so an interface opened later shows it at once, without asking
+//! (`world-network.md`, 近况).
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::{Arc, Mutex};
@@ -19,6 +20,9 @@ use crate::Node;
 
 const FILE: &str = "machine-facts.json";
 
+/// How soon a machine that could not say what it is like is asked again.
+const AGAIN: jiff::SignedDuration = jiff::SignedDuration::from_secs(30);
+
 #[derive(Default)]
 pub(crate) struct Facts {
     kept: Mutex<HashMap<HubId, BTreeMap<MachineName, Kept>>>,
@@ -30,6 +34,11 @@ pub(crate) struct Facts {
 struct Kept {
     since: Option<Timestamp>,
     facts: Result<MachineFacts, String>,
+    /// When asking it last failed: what it said before, or why it could
+    /// not say, is not taken for what it says on this connection, and it
+    /// is asked again a while after.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    failed: Option<Timestamp>,
 }
 
 /// What `member` of `link`'s hub said of itself, as kept here. When it is
@@ -47,9 +56,14 @@ pub(crate) fn of(
         let machines = kept.entry(hub.clone()).or_insert_with(|| read(node, &hub));
         machines.get(&member.name).cloned()
     };
-    let current = kept.as_ref().is_some_and(|kept| kept.since == member.since);
+    let current = kept.as_ref().is_some_and(|kept| kept.since == member.since && kept.failed.is_none());
+    let resting = kept
+        .as_ref()
+        .and_then(|kept| kept.failed)
+        .is_some_and(|failed| Timestamp::now().duration_since(failed) < AGAIN);
     if member.online
         && !current
+        && !resting
         && let Some(account) = account
         && node.facts.asking.lock().expect("never poisoned").insert((hub.clone(), member.name.clone()))
     {
@@ -79,8 +93,9 @@ fn ask(
             Ok(Err(failure)) => Err(failure.message),
             Err(failure) => Err(failure.to_string()),
         };
-        // What it said before stands when it could not say it again; it
-        // is asked again the next time it connects.
+        // What it said before stands when it could not say it again, until
+        // it is asked again a while after.
+        let failed = answer.is_err().then(Timestamp::now);
         let facts = match (answer, before) {
             (Err(_), Some(Ok(facts))) => Ok(facts),
             (answer, _) => answer,
@@ -88,7 +103,7 @@ fn ask(
         {
             let mut kept = node.facts.kept.lock().expect("never poisoned");
             let machines = kept.entry(hub.clone()).or_default();
-            machines.insert(name.clone(), Kept { since, facts });
+            machines.insert(name.clone(), Kept { since, facts, failed });
             write(&node, &hub, machines);
         }
         node.facts.asking.lock().expect("never poisoned").remove(&(hub, name));
