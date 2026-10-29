@@ -582,7 +582,12 @@ pub(super) fn collect_invocation(directory: &Path, key: &str) -> std::io::Result
             }
         }
     }
-    Ok(())
+    // Answered and collected, the control is taken by no one again: its
+    // claim only takes room.
+    match std::fs::remove_file(directory.join("claims").join(format!("{key}.json"))) {
+        Err(error) if error.kind() != std::io::ErrorKind::NotFound => Err(error),
+        _ => Ok(()),
+    }
 }
 
 fn observe_activation(node: &Arc<Node>, host: &Host, directory: &Path) {
