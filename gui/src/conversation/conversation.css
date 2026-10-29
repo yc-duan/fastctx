@@ -21,6 +21,58 @@
   padding: var(--space-6) var(--gutter) var(--space-12);
   display: flex;
   flex-direction: column;
+  opacity: calc(var(--shown) * var(--held-ink));
+  transition: --shown var(--enter) var(--ease-out);
+}
+
+/* Carried through a change of the room beside it (`column-hold.ts`): the
+   column at once at the width it will end with, its lines broken once, and
+   carried from where its words stood as the room changes round it; where
+   they break anew, the words dip and come back up. */
+@property --held-glide {
+  syntax: "<number>";
+  inherits: false;
+  initial-value: 0;
+}
+
+@property --held-ink {
+  syntax: "<number>";
+  inherits: false;
+  initial-value: 1;
+}
+
+/* The page's own column, not one shown in its side. */
+.column-held > .talk-scroller,
+.column-held > .sp-split > .talk-main > .talk-scroller {
+  overflow-x: hidden;
+}
+
+:is(.column-held > .talk-scroller, .column-held > .sp-split > .talk-main > .talk-scroller) > .transcript {
+  --held-glide: 1;
+  width: var(--held);
+  max-width: none;
+  translate: calc(var(--held-shift) * var(--held-glide)) 0;
+}
+
+:is(.column-held.column-moving > .talk-scroller, .column-held.column-moving > .sp-split > .talk-main > .talk-scroller) > .transcript {
+  --held-glide: 0;
+  transition:
+    --shown var(--enter) var(--ease-out),
+    --held-glide var(--glide) var(--glide-easing);
+}
+
+.transcript.column-dip {
+  animation: column-dip var(--glide) var(--ease-out);
+}
+
+@keyframes column-dip {
+  from {
+    --held-ink: 0.45;
+  }
+
+  to {
+    --held-ink: 1;
+  }
 }
 
 /* In whole pixels where the system can round. */
@@ -65,7 +117,7 @@
   background: none;
   border: 0;
   cursor: pointer;
-  transition: color var(--hover) ease;
+  transition: color var(--hover) var(--ease);
 }
 
 .rows-earlier:hover,
@@ -113,7 +165,7 @@
 
 .gap-said {
   flex: none;
-  transition: color var(--hover) ease;
+  transition: color var(--hover) var(--ease);
 }
 
 .gap-row:hover .gap-said,
@@ -148,7 +200,7 @@
   line-height: var(--leading-prose);
   overflow-wrap: anywhere;
   opacity: var(--shown);
-  transition: --shown var(--hover) ease;
+  transition: --shown var(--hover) var(--ease);
 }
 
 .bubble p {
@@ -173,19 +225,21 @@
   margin: var(--space-1) 0 -2px auto;
   font-size: var(--size-text);
   color: var(--on-bubble);
-  opacity: 0.7;
-  transition: opacity var(--hover) ease;
+  --shown: 0.7;
+  opacity: var(--shown);
+  transition: --shown var(--hover) var(--ease);
 }
 
 .bubble-more:hover {
-  opacity: 1;
+  --shown: 1;
 }
 
 .bubble p + p {
   margin-top: 0.7em;
 }
 
-.bubble.going {
+.bubble.going,
+.bubble.queued {
   --shown: 0.62;
 }
 
@@ -443,7 +497,7 @@
   line-height: var(--row-leading);
   color: var(--text-2);
   border-radius: var(--radius-s);
-  transition: color var(--hover) ease;
+  transition: color var(--hover) var(--ease);
 }
 
 .group-head:not([aria-disabled]):hover {
@@ -474,7 +528,7 @@
   color: var(--text-3);
   --turn: -90deg;
   rotate: var(--turn);
-  transition: --turn var(--fold) var(--fold-easing), color var(--hover) ease;
+  transition: --turn var(--fold) var(--fold-easing), color var(--hover) var(--ease);
 }
 
 .group-head[aria-expanded="true"] .glyph {
@@ -549,7 +603,7 @@
   font-size: var(--size-text);
   color: var(--text-2);
   text-decoration: none;
-  transition: color var(--hover) ease, background-color var(--hover) ease;
+  transition: color var(--hover) var(--ease), background-color var(--hover) var(--ease);
 }
 
 .row-link .glyph {
@@ -613,7 +667,7 @@
   color: var(--text-2);
   text-align: left;
   border-radius: var(--radius-s);
-  transition: color var(--hover) ease;
+  transition: color var(--hover) var(--ease);
 }
 
 .row-line:not([aria-disabled]):hover {
@@ -626,10 +680,13 @@
   cursor: default;
 }
 
+/* The verb is quiet: the glyph before it says the same. What it was done
+   to is what the eye reads. */
 .row-action {
   grid-column: 1;
   padding-right: var(--space-2);
   white-space: nowrap;
+  color: var(--text-3);
 }
 
 .row-rest {
@@ -646,12 +703,12 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  color: var(--text-3);
-  transition: color var(--hover) ease;
+  color: var(--text-2);
+  transition: color var(--hover) var(--ease);
 }
 
 .row-line:not([aria-disabled]):hover .row-object {
-  color: var(--text-2);
+  color: var(--text);
 }
 
 .row-line.static .row-object {
@@ -753,7 +810,7 @@
   color: var(--text-2);
   font-size: var(--size-text);
   text-align: left;
-  transition: background-color var(--hover) ease, color var(--hover) ease;
+  transition: background-color var(--hover) var(--ease), color var(--hover) var(--ease);
 }
 
 .fan-tile > .glyph,
@@ -762,11 +819,16 @@
   color: var(--text-3);
 }
 
+/* Machines of one place share a long name and differ at its end: a name
+   goes onto a second line before it is cut. */
 .fan-name {
+  display: -webkit-box;
   min-width: 0;
   overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
 }
 
 .fan-tile:hover {
@@ -860,7 +922,7 @@
   opacity: var(--shown);
   --turn: -90deg;
   rotate: var(--turn);
-  transition: --shown var(--hover) ease, --turn var(--fold) var(--fold-easing);
+  transition: --shown var(--hover) var(--ease), --turn var(--fold) var(--fold-easing);
 }
 
 .row-line:hover .row-chevron,
@@ -873,7 +935,8 @@
   --turn: 0deg;
 }
 
-.row-failed .rail {
+/* A row that failed marks its own glyph; the rows it gathers keep theirs. */
+.row-failed > .rail {
   color: var(--wrong);
 }
 
@@ -954,7 +1017,7 @@
   background: var(--text-2);
   transform: scale(var(--breath-scale));
   opacity: var(--breath-alpha);
-  animation: pulse var(--breath) ease-in-out infinite;
+  animation: pulse var(--breath) var(--ease-in-out) infinite;
 }
 
 /* A tool that arrives in a live conversation comes in once, quietly. */
@@ -1348,7 +1411,7 @@
 .io-more {
   font-size: var(--size-text);
   color: var(--text-3);
-  transition: color var(--hover) ease;
+  transition: color var(--hover) var(--ease);
 }
 
 .io-more:hover {
@@ -1405,35 +1468,25 @@
   vertical-align: 0.05em;
   transform: scale(var(--breath-scale));
   opacity: var(--breath-alpha);
-  animation: pulse var(--breath) ease-in-out infinite;
+  animation: pulse var(--breath) var(--ease-in-out) infinite;
 }
 
 :root[data-reduced] .prose.writing > :last-child::after {
   animation: none;
 }
 
-/* What it waits on the user for: set off from the column by a stroke of
-   clay down its edge, asked in plain words, answered in place. Once
-   settled it folds into one quiet line. */
+/* What waits on the user (`asks.ts`): one card a shade deeper than the
+   page, with no line round it, what is asked above a drawn rule and the
+   answer below it. The answer meant is the one solid button; the others are
+   words. A choice among a few is a row of words, the chosen one circled in
+   ink. Once settled the card folds into one quiet line. */
 
 .ask-card {
-  position: relative;
-  padding: 2px 0 2px var(--space-5);
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-m);
+  background: var(--surface-code);
   opacity: var(--shown);
-  transition: --shown var(--hover) ease;
-}
-
-.ask-card::before {
-  content: "";
-  position: absolute;
-  left: -3px;
-  top: 2px;
-  bottom: 2px;
-  width: 8px;
-  background: var(--pen-clay);
-  opacity: 0.85;
-  -webkit-mask: var(--pen-rule-down) 50% 0 / 100% 100% no-repeat;
-  mask: var(--pen-rule-down) 50% 0 / 100% 100% no-repeat;
+  transition: --shown var(--hover) var(--ease);
 }
 
 .ask-card.busy {
@@ -1454,17 +1507,6 @@
   color: var(--accent);
 }
 
-.ask-mark {
-  flex: none;
-  width: 8px;
-  height: 8px;
-  border-radius: var(--radius-full);
-  box-shadow: inset 0 0 0 2px var(--accent);
-  transform: scale(var(--breath-scale));
-  opacity: var(--breath-alpha);
-  animation: pulse var(--breath) ease-in-out infinite;
-}
-
 .ask-waiting::before {
   content: "";
   width: 8px;
@@ -1473,7 +1515,7 @@
   box-shadow: inset 0 0 0 2px var(--accent);
   transform: scale(var(--breath-scale));
   opacity: var(--breath-alpha);
-  animation: pulse var(--breath) ease-in-out infinite;
+  animation: pulse var(--breath) var(--ease-in-out) infinite;
 }
 
 .ask-title {
@@ -1481,15 +1523,16 @@
   line-height: var(--leading-ui);
 }
 
+/* A command, or a tool's input: in the code face on the card itself, as a
+   command's card has it. */
 .ask-command {
-  margin: var(--space-3) 0 0;
-  padding: var(--space-2) var(--space-3);
-  border-radius: var(--radius-s);
-  background: var(--surface-code);
+  margin: var(--space-2) 0 0;
+  padding: 0;
   font-family: var(--font-code);
   font-variation-settings: var(--code-axes);
   font-size: var(--size-code);
   line-height: var(--leading-code);
+  color: var(--text);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
@@ -1499,7 +1542,7 @@
   margin: var(--space-2) 0 0;
   font-family: var(--font-code);
   font-variation-settings: var(--code-axes);
-  font-size: var(--size-text);
+  font-size: var(--size-code);
   color: var(--text-3);
   overflow-wrap: anywhere;
 }
@@ -1520,23 +1563,14 @@
   margin: 0;
 }
 
-/* Claude's plan: read in the card like the conversation's own prose, in a
+/* Claude's plan: read in the card as the conversation's own prose, in a
    region of its own when it is long. */
-
 .ask-plan {
-  margin: var(--space-3) 0 0;
-  padding: var(--space-2) var(--space-3);
+  margin: var(--space-2) 0 0;
   max-height: min(60vh, 32rem);
   overflow-y: auto;
-  border-radius: var(--radius-s);
-  background: var(--bg);
-  background: var(--fill);
-}
-
-.ask-plan-note {
-  resize: vertical;
-  min-height: 2.6em;
-  line-height: var(--leading-ui);
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
 }
 
 .ask-paths {
@@ -1555,30 +1589,49 @@
   white-space: nowrap;
 }
 
+/* Between what is asked and the answer: one stroke of the pen. */
+.ask-rule {
+  height: 8px;
+  margin-top: var(--space-3);
+  background: var(--pen-rule);
+  -webkit-mask: var(--pen-rule-3) 0 50% / 100% 100% no-repeat;
+  mask: var(--pen-rule-3) 0 50% / 100% 100% no-repeat;
+}
+
+.ask-plan-note {
+  resize: vertical;
+  min-height: 2.6em;
+  line-height: var(--leading-ui);
+}
+
 .ask-actions {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: var(--space-2);
+  gap: var(--space-1) var(--space-4);
   margin-top: var(--space-3);
 }
 
+/* An answer: words, a shade beneath them only under the pointer; the one
+   meant is the solid button. The words keep the card's edge, their shade
+   reaching out into its margin. */
 .ask-button {
   min-height: 32px;
-  padding: 5px 14px;
+  margin-inline: -8px;
+  padding: 5px 8px;
   border-radius: var(--radius-full);
   font-size: var(--size-text);
   line-height: var(--leading-ui);
   text-align: left;
   color: var(--text-2);
-  background: var(--fill);
+  background: transparent;
   scale: var(--press);
-  transition: color var(--hover) ease, background-color var(--hover) ease, box-shadow var(--hover) ease, --press var(--settle) var(--spring);
+  transition: color var(--hover) var(--ease), background-color var(--hover) var(--ease), --press var(--settle) var(--spring);
 }
 
 .ask-button:hover:not(:disabled) {
   color: var(--text);
-  background: var(--fill-strong);
+  background: var(--fill);
 }
 
 .ask-button.ask-yes {
@@ -1586,21 +1639,21 @@
 }
 
 .ask-button.ask-primary {
+  margin-inline: 0;
+  padding: 5px 16px;
   background: var(--accent);
   color: var(--bg);
-  box-shadow: none;
 }
 
 .ask-button.ask-primary:hover:not(:disabled) {
   background: var(--accent-bright);
   color: var(--bg);
-  box-shadow: none;
 }
 
 .ask-button:active:not(:disabled) {
   --press: 0.97;
-  transition-duration: var(--hover), var(--hover), var(--hover), var(--quick);
-  transition-timing-function: ease, ease, ease, var(--ease-out);
+  transition-duration: var(--hover), var(--hover), var(--quick);
+  transition-timing-function: var(--ease), var(--ease), var(--ease-out);
 }
 
 .ask-status {
@@ -1617,75 +1670,51 @@
   color: var(--wrong);
 }
 
-/* Questions: each its own few lines, its answers stacked to choose one. */
-
-.ask-question {
-  margin-top: var(--space-4);
-  min-width: 0;
-}
-
-.ask-question-head {
-  font-size: var(--size-text);
-  color: var(--text-3);
-}
-
-.ask-question-text {
-  margin-top: 2px;
-  line-height: var(--leading-ui);
-}
-
-.ask-question-text p {
-  margin: 0;
-}
-
-.ask-question .ask-options {
+/* A choice among a few: a row of words, the chosen one circled in clay ink,
+   the loop drawn as it is chosen. */
+.ask-options {
   display: flex;
-  flex-direction: column;
-  gap: 4px;
-  margin-top: var(--space-2);
+  flex-wrap: wrap;
+  gap: 4px var(--space-6);
+  margin-top: 4px;
 }
 
 .ask-option {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 1px;
-  padding: 6px 12px;
+  position: relative;
+  margin-inline: -10px;
+  padding: 4px 10px;
   border-radius: var(--radius-s);
-  background: var(--fill);
-  text-align: left;
   font-size: var(--size-text);
   line-height: var(--leading-ui);
   color: var(--text-2);
-  transition: color var(--hover) ease, background-color var(--hover) ease, box-shadow var(--hover) ease;
+  transition: color var(--hover) var(--ease);
 }
 
 .ask-option:hover:not(:disabled) {
   color: var(--text);
-  background: var(--fill-strong);
 }
 
 .ask-option.chosen {
   color: var(--text-strong);
-  background: var(--accent-wash);
-  background: var(--accent-wash);
 }
 
-.ask-option-what {
-  font-size: var(--size-text);
-  color: var(--text-3);
+.ask-option::after {
+  content: "";
+  position: absolute;
+  inset: -5px -1px;
+  pointer-events: none;
+  background: var(--pen-clay);
+  -webkit-mask: var(--pen-ring) 50% 50% / 100% 100% no-repeat;
+  mask: var(--pen-ring) 50% 50% / 100% 100% no-repeat;
+  opacity: var(--ink-alpha);
+  scale: var(--ink-scale);
+  --ink-scale: 0.94;
+  transition: --ink-alpha var(--quick) var(--ease-out), --ink-scale var(--settle) var(--spring);
 }
 
-.ask-field .ask-options {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  margin-top: 4px;
-}
-
-.ask-field .ask-option {
-  border-radius: var(--radius-full);
-  padding: 4px 12px;
+.ask-option.chosen::after {
+  --ink-alpha: 1;
+  --ink-scale: 1;
 }
 
 .ask-input {
@@ -1757,6 +1786,24 @@
   transform: translateY(2px);
 }
 
+/* Under a finger every answer is a full target; a choice keeps its loop
+   round the word and takes the finger in the room about it. */
+@media (pointer: coarse) {
+  .ask-button {
+    min-height: 44px;
+  }
+
+  .ask-options {
+    row-gap: var(--space-3);
+  }
+
+  .ask-option::before {
+    content: "";
+    position: absolute;
+    inset: -8px -4px;
+  }
+}
+
 /* Settled: one line where the card was. */
 
 .ask-settled {
@@ -1777,7 +1824,6 @@
   color: var(--text-3);
 }
 
-:root[data-reduced] .ask-mark,
 :root[data-reduced] .ask-waiting::before {
   animation: none;
 }
@@ -1801,7 +1847,7 @@
   color: var(--text-3);
   --shown: 0;
   opacity: var(--shown);
-  transition: --shown var(--hover) ease, color var(--hover) ease, background-color var(--hover) ease;
+  transition: --shown var(--hover) var(--ease), color var(--hover) var(--ease), background-color var(--hover) var(--ease);
 }
 
 .block-prose:hover .prose-copy,
@@ -2225,7 +2271,7 @@ a.bubble-file:hover {
   font-size: var(--size-text);
   color: var(--text-3);
   opacity: var(--shown);
-  transition: color var(--hover) ease, background-color var(--hover) ease, --shown var(--hover) ease;
+  transition: color var(--hover) var(--ease), background-color var(--hover) var(--ease), --shown var(--hover) var(--ease);
 }
 
 .turn-act:hover {

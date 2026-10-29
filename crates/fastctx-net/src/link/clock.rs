@@ -59,6 +59,7 @@ impl Inner {
     pub(super) fn localize(&self, view: &mut View) {
         for member in &mut view.directory.members {
             member.since = member.since.map(|at| self.local(at));
+            member.settled = member.settled.map(|at| self.local(at));
         }
     }
 }

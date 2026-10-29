@@ -8,6 +8,8 @@
 //
 // The bubble is a popover, so it stands over a modal sheet as well.
 
+import { leave } from "./leave";
+
 /** How long a pointer rests on a mark before its hint comes. */
 const REST_MS = 200;
 /** After a hint went, the next one comes at once within this long. */
@@ -37,12 +39,16 @@ export function installPointerHints(): void {
     if (bubble) held ? show() : hide();
   });
 
-  const hide = () => {
+  /** `fade`: the pointer left every mark, and the hint goes softly; a
+   *  press, a key or a scroll takes it away at once. */
+  const hide = (fade = false) => {
     clearTimeout(timer);
     if (!bubble) return;
-    bubble.remove();
+    const going = bubble;
     bubble = null;
     warmUntil = performance.now() + WARM_MS;
+    if (fade) leave(going, () => going.remove());
+    else going.remove();
   };
 
   const show = () => {
@@ -84,7 +90,7 @@ export function installPointerHints(): void {
     pressed = false;
     clearTimeout(timer);
     if (!next) {
-      hide();
+      hide(true);
       return;
     }
     mark = next;
@@ -136,7 +142,7 @@ export function installPointerHints(): void {
     },
     { capture: true, passive: true },
   );
-  document.addEventListener("keydown", hide, { capture: true });
-  document.addEventListener("scroll", hide, { capture: true, passive: true });
+  document.addEventListener("keydown", () => hide(), { capture: true });
+  document.addEventListener("scroll", () => hide(), { capture: true, passive: true });
   addEventListener("blur", () => onto(null));
 }

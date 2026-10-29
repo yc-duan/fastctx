@@ -9,8 +9,8 @@
 //! call cuts its own end. Both ends keep the connection alive and take it
 //! for gone when the other falls silent (`line`).
 
-mod line;
 mod duplex;
+mod line;
 pub use duplex::{ReadHalf, WriteHalf};
 mod receipt;
 mod writing;
@@ -193,6 +193,7 @@ impl Stream {
             let (piece, after) = rest.split_at(rest.len().min(self.pace.chunk()));
             let began = std::time::Instant::now();
             self.put(WsMessage::Binary(piece.to_vec().into())).await?;
+            fastctx_platform::doing::progress();
             self.pace.wrote(piece.len(), began.elapsed());
             rest = after;
         }
@@ -217,6 +218,7 @@ impl Stream {
             }
             let here = (self.pending.len() as u64).min(count) as usize;
             take(&self.pending[..here])?;
+            fastctx_platform::doing::progress();
             self.pending.drain(..here);
             count -= here as u64;
         }
@@ -264,6 +266,29 @@ impl Stream {
             return Err(why);
         }
         self.line.send(message).await
+    }
+
+    /// Waits for the next file protocol step. Transport heartbeats are not
+    /// progress; the other end's report of local work toward the step is, as
+    /// reading what it already holds can take longer than `DUE_WITHIN`.
+    pub async fn hear_step<T: DeserializeOwned>(&mut self, step: &str) -> Result<T, String> {
+        let mut progress = self.line.receipt.subscribe();
+        let began = tokio::time::Instant::now();
+        loop {
+            let worked = (*progress.borrow_and_update()).unwrap_or(began).max(began);
+            tokio::select! {
+                heard = self.hear() => return heard,
+                changed = progress.changed() => {
+                    changed.map_err(|_| "the other end's work notifications ended".to_string())?;
+                },
+                () = tokio::time::sleep_until(worked + DUE_WITHIN) => {
+                    return Err(format!(
+                        "the file transfer's {step} did not come, and the other end reported no work toward it, for {} s",
+                        DUE_WITHIN.as_secs()
+                    ));
+                },
+            }
+        }
     }
 
     /// What the other end says next.
@@ -403,6 +428,9 @@ pub(crate) async fn sink_until(
     if Digest(sha256(&bytes)) != carried.sha256 {
         return Err("the bytes are not the ones the source said it sent".to_string());
     }
-    stream.done().await?;
+    // The bytes are whole and the ones the source said it sent: a receipt
+    // that cannot be said once the connection is already over leaves only
+    // the source unsure, which it says itself, and loses nothing here.
+    let _ = stream.done().await;
     Ok(bytes)
 }

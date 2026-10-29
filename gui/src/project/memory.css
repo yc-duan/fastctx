@@ -1,0 +1,256 @@
+/* A journal or decision read (`memory-page.ts`): the document in a column
+   of its own that scrolls, the name in the display face over a ruled
+   stroke, and beside a decision its versions down a hand-ruled line. */
+
+.mm-page {
+  --board: min(100% - 2 * var(--gutter), var(--column));
+  container-type: inline-size;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.mm-head-title {
+  font-size: var(--size-text);
+}
+
+.mm-body {
+  flex: 1;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  min-height: 0;
+}
+
+.mm-doc {
+  min-height: 0;
+  overflow: auto;
+  padding: var(--space-5) var(--gutter) var(--space-12);
+  overflow-wrap: anywhere;
+}
+
+.mm-doc > * {
+  max-width: var(--column);
+  margin-left: auto;
+  margin-right: auto;
+}
+
+.mm-title {
+  margin-top: 0;
+  margin-bottom: 0;
+  font-family: var(--font-display);
+  font-weight: 400;
+  font-size: var(--size-title);
+  line-height: var(--leading-heading);
+  color: var(--text-strong);
+}
+
+.mm-rule {
+  height: 8px;
+  margin-top: var(--space-2);
+  margin-bottom: var(--space-3);
+}
+
+.mm-rule-svg {
+  display: block;
+  height: 8px;
+  overflow: visible;
+}
+
+.mm-about {
+  margin-top: 0;
+  margin-bottom: var(--space-1);
+  line-height: var(--leading-prose);
+}
+
+.mm-facts {
+  margin-top: 0;
+  margin-bottom: var(--space-6);
+  color: var(--text-2);
+}
+
+.mm-facts a {
+  color: inherit;
+}
+
+/* An earlier version read: said on a field's shade above it, with the
+   way to the newest and to taking these words as the newest. */
+.mm-older {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1) var(--space-2);
+  margin-top: 0;
+  margin-bottom: var(--space-5);
+  padding: var(--space-1) var(--space-1) var(--space-1) var(--space-4);
+  border-radius: var(--radius-m);
+  background: var(--fill);
+}
+
+.mm-older > span {
+  flex: 1;
+}
+
+/* A decision edited: solid fields of the reading type that keep their
+   shade whether pointed at, pressed or typed in. */
+.mm-field {
+  display: block;
+  box-sizing: border-box;
+  width: 100%;
+  margin-top: 0;
+  margin-bottom: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border: 0;
+  border-radius: var(--radius-m);
+  outline: none;
+  background: var(--field);
+  color: var(--text);
+  font-family: var(--font-reading);
+  font-size: var(--size-text);
+  line-height: var(--leading-prose);
+}
+
+.mm-source {
+  min-height: 16em;
+  overflow: hidden;
+  resize: none;
+}
+
+.mm-acts {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
+}
+
+.mm-said {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: 0;
+  margin-bottom: var(--space-3);
+  color: var(--text-2);
+}
+
+.mm-said[hidden] {
+  display: none;
+}
+
+.mm-wrong {
+  color: var(--caution);
+}
+
+/* A decision's versions, the newest at the top. */
+.mm-rail {
+  width: 228px;
+  min-height: 0;
+  overflow: auto;
+  padding: var(--space-5) var(--space-4) var(--space-8) 0;
+}
+
+.mm-rail[hidden] {
+  display: none;
+}
+
+.mm-rail-title {
+  margin: 0 0 var(--space-3) var(--space-2);
+  font-family: var(--font-emphasis);
+  font-weight: 400;
+  font-size: var(--size-text);
+  color: var(--text);
+}
+
+.mm-rail-list {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+}
+
+.mm-rail-ink {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.mm-rail-svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+
+.mm-version {
+  position: relative;
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr);
+  column-gap: var(--space-3);
+  align-items: start;
+  padding: 6px var(--space-2);
+  border-radius: var(--radius-m);
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  transition: background-color var(--hover) var(--ease);
+}
+
+.mm-version:hover {
+  background: var(--fill);
+}
+
+.mm-dot {
+  width: 16px;
+  height: 22px;
+}
+
+.mm-version-lines {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  line-height: 22px;
+}
+
+.mm-version.current .mm-version-lines > span:first-child {
+  font-family: var(--font-emphasis);
+}
+
+.mm-version-who {
+  overflow: hidden;
+  color: var(--text-2);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+/* On a narrow screen the versions follow the text. */
+.mm-phone-versions {
+  display: none;
+  margin-top: var(--space-8);
+}
+
+.mm-version-row {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-3);
+  width: 100%;
+  min-height: 44px;
+  padding: 0 var(--space-3);
+  border-radius: var(--radius-m);
+  color: var(--text);
+  font: inherit;
+  align-items: center;
+}
+
+.mm-version-row.current {
+  background: var(--accent-wash);
+}
+
+@media (max-width: 760px) {
+  .mm-body {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .mm-rail {
+    display: none;
+  }
+
+  .mm-phone-versions {
+    display: block;
+  }
+}

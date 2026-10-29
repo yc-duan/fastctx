@@ -23,6 +23,7 @@ mod answers;
 mod cache;
 mod children;
 mod commands;
+mod compaction_history;
 #[cfg(test)]
 mod contract;
 pub mod control_error;
@@ -39,6 +40,7 @@ mod notifications;
 mod offers;
 mod presentation;
 mod server;
+mod steering;
 mod title;
 mod tool_images;
 mod transport;
@@ -70,6 +72,9 @@ pub type EventBarrier = Arc<Mutex<Option<oneshot::Sender<Result<(), String>>>>>;
 /// How long Codex waits for a thread's tool server to start; the World
 /// gives Codex this, and waits as long for word of how it went.
 pub const STARTUP_TIMEOUT: Duration = Duration::from_secs(120);
+/// A runtime the app-server really starts reports its tools starting within
+/// this; one it kept running says nothing of them, as they did not restart.
+const RESTART_REPORTED_WITHIN: Duration = Duration::from_secs(10);
 /// How long Codex waits for one call of a World tool: a minute above the
 /// longest wait a `run` may ask for (`fastctx_hands::run::LONGEST_WAIT`),
 /// for the answer that follows the wait.
@@ -141,6 +146,9 @@ pub const SERVER_NAME: &str = "fastctx";
 /// app-server.
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct ThreadSpec {
+    /// Resume a native thread with its own recorded settings, adding only MCP identity.
+    #[serde(default)]
+    pub native_resume: bool,
     #[serde(default)]
     pub user_mcp: std::collections::BTreeSet<String>,
     /// The resident whose user pictures this thread can address.
@@ -281,7 +289,6 @@ pub enum Desk {
 const COMPUTER_USE: &str = "node_repl";
 /// What the app's helper answers while another request is in flight.
 const HELPER_BUSY: &str = "Computer Use helper already has an active request";
-pub use fastctx_types::residents::ASYNC_REPLY_TAG;
 
 pub struct CodexHost {
     codex_home: PathBuf,
@@ -402,6 +409,11 @@ struct Thread {
     tools_revision: u64,
     /// Why the World's tools are not there in the thread's current load.
     tools_missing: Option<String>,
+    /// What was known of the World's tools when a resume was asked that may
+    /// load the thread again, and the report count it was known at: what
+    /// still holds when the app-server keeps the runtime it had.
+    #[serde(skip)]
+    tools_before: Option<(u64, Option<String>)>,
     #[serde(skip)]
     items: HashMap<(String, String), Value>,
     #[serde(skip)]
@@ -474,7 +486,7 @@ impl CodexHost {
         let mut state = self.lock();
         let entry = state.threads.entry(thread.to_string()).or_default();
         entry.configuration_changed |= entry.spec.as_ref().is_some_and(|old| {
-            old.config != spec.config
+            old.native_resume != spec.native_resume || old.config != spec.config
                 || old.cwd != spec.cwd
                 || old.developer_instructions != spec.developer_instructions
         });
@@ -561,6 +573,33 @@ impl CodexHost {
     pub async fn prepare(self: &Arc<Self>, thread: &str) -> Result<Option<String>, String> {
         let server = self.server().await?;
         self.ensure_loaded(&server, thread).await?;
+        // Resume may hand back the runtime the app-server already had, as it
+        // does for one not idle: its tools did not restart, so no word of
+        // them comes, and what was known of them still holds.
+        let reported = async {
+            loop {
+                let notified = self.tools_changed.notified();
+                tokio::pin!(notified);
+                notified.as_mut().enable();
+                if self.lock().threads.get(thread).is_none_or(|entry| {
+                    entry.tools_settled || entry.tools_before.as_ref().is_none_or(|(at, _)| entry.tools_revision != *at)
+                }) {
+                    return;
+                }
+                notified.await;
+            }
+        };
+        if tokio::time::timeout(RESTART_REPORTED_WITHIN, reported).await.is_err() {
+            let mut state = self.lock();
+            if let Some(entry) = state.threads.get_mut(thread)
+                && !entry.tools_settled
+                && let Some((at, missing)) = entry.tools_before.take()
+                && entry.tools_revision == at
+            {
+                entry.tools_settled = true;
+                entry.tools_missing = missing;
+            }
+        }
         let settled = async {
             loop {
                 let notified = self.tools_changed.notified();
@@ -607,21 +646,15 @@ impl CodexHost {
         let mut params = json!({
             "threadId": thread,
             "input": [],
-            // A remote client may have selected a local environment since
-            // our last turn. Restore the World's empty default for this turn.
-            "environments": [],
         });
+        if !self.lock().threads.get(thread).and_then(|entry|entry.spec.as_ref()).is_some_and(|spec|spec.native_resume) {
+            params["environments"] = json!([]);
+        }
         if let Some(client) = client {
             params["clientUserMessageId"] = json!(client);
         }
         match input {
             Input::Text(text) => {
-                // An answer to a question the model asked without waiting
-                // (`request_user_input_async`) goes in as the user's words in
-                // the envelope Codex's own clients write, marked as such.
-                if text.lines().any(|line| line == ASYNC_REPLY_TAG) {
-                    params["turnTrigger"] = json!("send_user_message_async_question");
-                }
                 params["input"] = json!([{ "type": "text", "text": text }]);
             }
             Input::Skill { name, path, text } => {
@@ -727,12 +760,13 @@ impl CodexHost {
         Ok(true)
     }
 
-    /// Stops exactly the turn that consumed an input carrying a durable stop.
-    /// A later turn is never substituted when the requested one has ended.
-    pub async fn interrupt_turn(self: &Arc<Self>, thread: &str, turn: &str) -> Result<(), String> {
-        let server = self.server().await?;
-        server.request("turn/interrupt", json!({ "threadId": thread, "turnId": turn })).await?;
-        Ok(())
+    /// Interrupts only the observed turn; a later turn must never inherit this request.
+    pub async fn interrupt_turn(self: &Arc<Self>, thread: &str, turn: &str) -> Result<bool, String> {
+        if self.running_turn(thread).as_deref() != Some(turn) {
+            return Ok(false);
+        }
+        self.server().await?.request("turn/interrupt", json!({"threadId":thread,"turnId":turn})).await?;
+        Ok(true)
     }
 
     /// The thread's history so far, as session events, its user pictures
@@ -828,8 +862,13 @@ impl CodexHost {
     /// No turn runs and every reported end has been retained or applied by
     /// the node. A host becoming idle alone does not make handoff safe.
     /// Whether this host started or adopted `thread`.
+    /// The exact OS lifetime this host controls, when its server is running.
+    pub fn process(&self) -> Option<fastctx_types::ProcessIdentity> {
+        self.lock().server.as_ref().and_then(|(server,_)|server.process())
+    }
+
     pub fn holds(&self, thread: &str) -> bool {
-        self.lock().threads.keys().any(|held| held == thread)
+        self.lock().threads.get(thread).is_some_and(|entry|entry.spec.is_some())
     }
 
     pub fn settled(&self) -> bool {
@@ -860,6 +899,11 @@ impl CodexHost {
 
     pub fn running_turn(&self, thread: &str) -> Option<String> {
         self.lock().threads.get(thread).and_then(|entry| entry.turn.clone())
+    }
+
+    /// A submission with no turn ID yet still owns the thread's next work boundary.
+    pub fn busy(&self, thread: &str) -> bool {
+        self.lock().threads.get(thread).is_some_and(|entry| entry.turn.is_some() || entry.submitted)
     }
 
     fn lock(&self) -> StateGuard<'_> {
@@ -908,6 +952,10 @@ impl CodexHost {
             // servers. Their previous startup receipt remains authoritative.
             // thread/closed is broadcast even to unsubscribed connections.
             if !entry.loaded || entry.configuration_changed {
+                // A runtime known to have settled keeps what it had if it is
+                // kept; one never seen settling is taken to have its tools.
+                let known = if entry.tools_settled { entry.tools_missing.clone() } else { None };
+                entry.tools_before = Some((entry.tools_revision, known));
                 entry.tools_settled = false;
                 entry.tools_missing = None;
                 entry.accounting.reloaded();
@@ -915,21 +963,14 @@ impl CodexHost {
             entry.spec.clone().ok_or_else(|| format!("how the Codex thread {thread} was started is not known"))?
         };
         let selection = controls::Selection::read(&spec.choices)?;
-        let effective = user_config::effective(server, &spec, self.assisted.is_some()).await?;
-        let answer = server
-            .request(
-                "thread/resume",
-                json!({
-                    "threadId": thread,
-                    "cwd": spec.cwd,
-                    "approvalPolicy": "never",
-                    "sandbox": "danger-full-access",
-                    "developerInstructions": effective.developer_instructions,
-                    "config": effective.config,
-                    "excludeTurns": true,
-                }),
-            )
-            .await?;
+        let params = if spec.native_resume {
+            json!({"threadId":thread,"excludeTurns":true,"config":spec.config})
+        } else {
+            let effective = user_config::effective(server, &spec, self.assisted.is_some()).await?;
+            json!({"threadId":thread,"cwd":spec.cwd,"approvalPolicy":"never","sandbox":"danger-full-access",
+                "developerInstructions":effective.developer_instructions,"config":effective.config,"excludeTurns":true})
+        };
+        let answer = server.request("thread/resume",params).await?;
         let mut state = self.lock();
         if !matches!(&state.server, Some((current, _)) if Arc::ptr_eq(current, server)) {
             return Err("the app-server stopped while loading the thread".to_string());
@@ -938,10 +979,14 @@ impl CodexHost {
         // Another client may have started a turn while resume's reply was
         // in flight. Preserve any turn already reported by a notification.
         entry.configuration_changed = entry.spec.as_ref().is_some_and(|current| {
-            current.config != spec.config
+            current.native_resume != spec.native_resume || current.config != spec.config
                 || current.developer_instructions != spec.developer_instructions
                 || current.cwd != spec.cwd
         });
+        if spec.native_resume && let Some(cwd) = answer.get("cwd").and_then(Value::as_str)
+            && let Some(stored) = entry.spec.as_mut() {
+            stored.cwd = PathBuf::from(cwd);
+        }
         entry.loaded = true;
         entry.subscribed = true;
         entry.selection = selection;
@@ -1082,18 +1127,6 @@ impl CodexHost {
     }
 
     /// Records that a turn ended and reports it with its last message.
-    fn end(
-        &self,
-        thread: &str,
-        turn: &str,
-        how: TurnHow,
-        reason: Option<String>,
-        duration_ms: Option<u64>,
-        at: Timestamp,
-    ) {
-        self.end_with(thread, turn, how, reason, duration_ms, at, None, None);
-    }
-
     #[allow(clippy::too_many_arguments)]
     fn end_with(
         &self,
@@ -1494,6 +1527,7 @@ impl CodexHost {
                         entry.tools_revision += 1;
                         entry.tools_settled = matches!(status.as_str(), "ready" | "failed" | "cancelled");
                         entry.tools_missing = missing;
+                        entry.tools_before = None;
                     }
                     self.tools_changed.notify_waiters();
                 }
@@ -1545,17 +1579,44 @@ impl CodexHost {
                 if entry.submitted {
                     entry.observed_submission = Some(turn.clone());
                     drop(state);
-                    self.end(thread, &turn, TurnHow::Failed, Some(message), None, at);
+                    self.end_with(
+                        thread,
+                        &turn,
+                        TurnHow::Failed,
+                        Some(message),
+                        None,
+                        at,
+                        None,
+                        params.get("error").cloned(),
+                    );
                 } else {
                     drop(state);
-                    self.end(thread, &turn, TurnHow::Failed, Some(message), None, at);
+                    self.end_with(
+                        thread,
+                        &turn,
+                        TurnHow::Failed,
+                        Some(message),
+                        None,
+                        at,
+                        None,
+                        params.get("error").cloned(),
+                    );
                 }
                 return;
             }
             (awaited, started)
         };
         match (awaited, started) {
-            (true, false) => self.end(thread, &turn, TurnHow::Failed, Some(message), None, at),
+            (true, false) => self.end_with(
+                thread,
+                &turn,
+                TurnHow::Failed,
+                Some(message),
+                None,
+                at,
+                None,
+                params.get("error").cloned(),
+            ),
             (true, true) => {}
             (false, _) => {}
         }
@@ -1657,7 +1718,6 @@ async fn pump(server: Arc<AppServer>, mut inbound: mpsc::UnboundedReceiver<Inbou
                     method.as_str(),
                     "item/commandExecution/requestApproval"
                         | "item/fileChange/requestApproval"
-                        | "item/tool/requestUserInput"
                         | "mcpServer/elicitation/request"
                         | "item/permissions/requestApproval"
                         | "applyPatchApproval"
@@ -1807,7 +1867,11 @@ pub fn world_tools(binary: &Path, env: &[(String, String)], tools: &[&str], budg
             "omit_app_server_notification_media": false,
             "shell_tool": false,
             "view_image": false,
+            "goals": false,
+            "send_message_to_user_async": false,
         },
+        // `message_user` speaks to the user, asking too, without stopping.
+        "tools": { "update_plan": { "enabled": false }, "experimental_request_user_input": { "enabled": false } },
         "tool_output_token_limit": limit,
         "mcp_servers": { SERVER_NAME: {
             "command": binary,
@@ -1823,4 +1887,11 @@ pub fn world_tools(binary: &Path, env: &[(String, String)], tools: &[&str], budg
             "tools": limits,
         }},
     })
+}
+
+/// The World MCP server's identity without overriding native model, permissions,
+/// instructions, environment selection or built-in tools.
+pub fn native_tools(binary: &Path, env: &[(String,String)], tools: &[&str], budget: usize) -> Value {
+    let mut config=world_tools(binary,env,tools,budget);
+    json!({"mcp_servers":config["mcp_servers"].take()})
 }

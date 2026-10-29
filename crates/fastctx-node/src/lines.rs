@@ -16,7 +16,6 @@ use fastctx_types::access::{Acting, Purpose};
 use fastctx_types::ipc::Failure;
 use fastctx_types::lines::{Decoding, Extent, Reply, Request, Result as Answer};
 use fastctx_types::remote::{RemoteCall, RemoteReply};
-use notify::Watcher as _;
 
 use crate::Node;
 
@@ -33,7 +32,7 @@ struct Source {
     changed: tokio::sync::watch::Sender<u64>,
     closed: tokio::sync::watch::Sender<bool>,
     events: tokio::sync::watch::Sender<std::result::Result<u64, String>>,
-    _watcher: Mutex<notify::RecommendedWatcher>,
+    _watcher: Mutex<fastctx_watch::Watcher>,
     cancelled: Arc<AtomicBool>,
     requests: Mutex<Vec<Weak<AtomicBool>>>,
 }
@@ -43,6 +42,8 @@ struct State {
     extent: Extent,
     first: u64,
     error: Option<String>,
+    /// The last look failed for a passing reason: it is looked at again soon.
+    stale: bool,
     projection: Option<fastctx_hands::run::projection::CapturedNotes>,
     writes: Vec<fastctx_types::run_facts::WriteFact>,
     writes_revision: Option<(u64, std::time::SystemTime)>,
@@ -131,20 +132,17 @@ pub(crate) async fn open(
     };
     let (events, event_rx) = tokio::sync::watch::channel(Ok(0u64));
     let notices = events.clone();
-    let mut watcher = notify::recommended_watcher(move |event: notify::Result<notify::Event>| {
+    let mut watcher = fastctx_watch::Watcher::new(move |event: notify::Result<notify::Event>| {
         if !crate::file_events::may_change(&event) {
             return;
         }
-        notices.send_modify(|state| match event {
-            Ok(_) => {
-                if let Ok(version) = state {
-                    *version += 1;
-                }
+        // A watch that failed may have missed a change: it counts as one.
+        notices.send_modify(|state| {
+            if let Ok(version) = state {
+                *version += 1;
             }
-            Err(error) => *state = Err(error.to_string()),
         });
-    })
-    .map_err(failed)?;
+    });
     watcher
         .watch(
             path.parent().ok_or_else(|| failed("the source has no parent directory"))?,
@@ -196,6 +194,7 @@ pub(crate) async fn open(
                 extent,
                 first: 0,
                 error: None,
+                stale: false,
                 projection,
                 writes,
                 writes_revision,
@@ -242,6 +241,9 @@ pub(crate) async fn open(
 /// it is closed.
 const RUNNING_LOOK: std::time::Duration = std::time::Duration::from_secs(1);
 
+/// How soon a source a look failed on for a passing reason is looked at again.
+const AGAIN: std::time::Duration = std::time::Duration::from_secs(2);
+
 async fn monitor(
     source: Weak<Source>,
     mut events: tokio::sync::watch::Receiver<std::result::Result<u64, String>>,
@@ -251,10 +253,12 @@ async fn monitor(
         let running = source.upgrade().is_some_and(|source| {
             source.job_record.is_some() && !source.state.lock().expect("line source").extent.complete
         });
+        let stale = source.upgrade().is_some_and(|source| source.state.lock().expect("line source").stale);
         tokio::select! {
             _ = closed.changed() => break,
             event = events.changed() => if event.is_err() { break; },
             () = tokio::time::sleep(RUNNING_LOOK), if running => {}
+            () = tokio::time::sleep(AGAIN), if stale => {}
         }
         let Some(source) = source.upgrade() else { break };
         if refresh(source, None).await.is_err() {
@@ -273,13 +277,22 @@ async fn refresh(
         if let Some(error) = &state.error {
             return Err(failed(error));
         }
+        // An error ends the source where what it shows can no longer be
+        // trusted; one that passes, as no descriptor left for a moment,
+        // leaves it as it was, to be looked at again.
+        let passing = |error: String| (error, true);
+        let ending = |error: String| (error, false);
         let update = (|| {
             if let Err(error) = &*source.events.borrow() {
-                return Err(error.clone());
+                return Err(ending(error.clone()));
             }
-            let snapshot = observe(&source.path).map_err(err)?;
-            let ended = complete(source.job_record.as_deref())?;
-            let revision = projection::revision(source.notes_record.as_deref())?;
+            let snapshot = match observe(&source.path) {
+                Ok(snapshot) => snapshot,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Err(ending(err(error))),
+                Err(error) => return Err(passing(err(error))),
+            };
+            let ended = complete(source.job_record.as_deref()).map_err(passing)?;
+            let revision = projection::revision(source.notes_record.as_deref()).map_err(passing)?;
             if state.snapshot == snapshot && state.extent.complete == ended && state.writes_revision == revision {
                 return Ok(None);
             }
@@ -288,13 +301,14 @@ async fn refresh(
                 || !state.snapshot.same_file(&snapshot)
                 || snapshot.size < state.snapshot.size
             {
-                return Err("the text source was changed, replaced or truncated".into());
+                return Err(ending("the text source was changed, replaced or truncated".into()));
             }
             let mut first = state
                 .index
                 .as_mut()
-                .ok_or_else(|| "the source is closed".to_string())?
-                .grow(snapshot.size, source.cancelled.clone())?;
+                .ok_or_else(|| ending("the source is closed".to_string()))?
+                .grow(snapshot.size, source.cancelled.clone())
+                .map_err(ending)?;
             if projection::refresh(
                 &mut state,
                 &source.path,
@@ -302,16 +316,19 @@ async fn refresh(
                 source.notes_record.as_deref(),
                 revision,
                 &source.cancelled,
-            )? {
+            )
+            .map_err(ending)?
+            {
                 first = 0;
             }
-            projection::verify(state.projection.as_ref(), source.annotation.as_deref())?;
+            projection::verify(state.projection.as_ref(), source.annotation.as_deref()).map_err(ending)?;
             state.snapshot = snapshot;
             let length = state.index.as_ref().expect("index").length;
             Ok(Some((length, ended, first)))
         })();
+        state.stale = matches!(update, Err((_, true)));
         match update {
-            Ok(None) => Ok(()),
+            Ok(None) | Err((_, true)) => Ok(()),
             Ok(Some((length, complete, first))) => {
                 state.extent.length = length;
                 state.extent.complete = complete;
@@ -320,7 +337,7 @@ async fn refresh(
                 source.changed.send_replace(state.extent.version);
                 Ok(())
             }
-            Err(error) => {
+            Err((error, _)) => {
                 state.index.take();
                 state.projection.take();
                 state.error = Some(error.clone());

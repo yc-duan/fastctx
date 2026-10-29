@@ -4,15 +4,16 @@
 // present, failed is its own word. Only what the tool says is shown; a
 // count that cannot be read from it is not guessed.
 
-import { tripItems } from "./trip";
+import { scriptCommands, scriptSaid } from "./deeds/script";
 import type { Change, Tool } from "../world/events";
 import type { WriteFact } from "../world/run-facts";
 import type { Act, Tally, TallyPart, Tense, Words } from "../words";
 import type { Use } from "./model";
 import { counts } from "./diff";
 import { writeNote } from "./run-output";
+import type { Card } from "./cards/cards";
 
-export type Glyph = "read" | "edit" | "command" | "search" | "image" | "colleague" | "delegate" | "web" | "tasks" | "tool";
+export type Glyph = "read" | "edit" | "command" | "search" | "image" | "colleague" | "delegate" | "web" | "tasks" | "tool" | "wake";
 
 export interface Headline {
   glyph: Glyph;
@@ -47,7 +48,7 @@ function firstLine(text: string): string {
  *  `fastctx view` of named files: the World's own way to read, so it reads
  *  as reading. Anything more (a pipe, a substitution, a second command, a
  *  range, a pattern) is a command and shown as one. */
-function viewing(command: string): string[] | null {
+export function viewing(command: string): string[] | null {
   const words = simpleWords(command.trim());
   if (!words || words[0] !== "fastctx" || words[1] !== "view") return null;
   const rest = words.slice(2);
@@ -111,7 +112,9 @@ export function headline(tool: Tool, ended: { use: Use } | null, words: Words, n
       return {
         glyph: "command",
         action: say("command"),
-        object: input(tool, "description") ?? firstLine(tool.does.command),
+        // A script is named by its first command that does work, what an
+        // `on` to its own machine wraps read as its own.
+        object: input(tool, "description") ?? scriptSaid(tool.does.command, tool.machine ?? null) ?? firstLine(tool.does.command),
         added: null,
         removed: null,
       };
@@ -209,6 +212,12 @@ function call(tool: Tool, tense: Tense, say: (act: Act) => string, words: Words)
       return { glyph: "web", action: say("websearch"), object: input(tool, "query"), ...plain };
     case "TodoWrite":
       return { glyph: "tasks", action: say("tasks"), object: null, ...plain };
+    // A watcher's reflex, named by what it looks at.
+    case "install_reflex": {
+      const probe = tool.input && typeof tool.input === "object" && !Array.isArray(tool.input) ? (tool.input as Record<string, unknown>).probe : null;
+      const looks = probe && typeof probe === "object" ? ((probe as Record<string, unknown>).command ?? (probe as Record<string, unknown>).url) : null;
+      return { glyph: "wake", action: say("reflex"), object: typeof looks === "string" ? firstLine(looks) : input(tool, "id"), ...plain };
+    }
     default: {
       // Another server's tool keeps the name it acts by.
       const name = tool.server ? `${tool.server} ${tool.name}` : tool.name;
@@ -219,31 +228,45 @@ function call(tool: Tool, tense: Tense, say: (act: Act) => string, words: Words)
 
 /** A group's heading, in its parts: while something runs, what it is
  *  doing; once done, what the group did, by kind. */
-export function groupHeading(
-  tools: { tool: Tool; ended: { use: Use } | null }[],
+export function groupHeading<T extends { tool: Tool; ended: { use: Use } | null }>(
+  tools: T[],
   thinking: number,
   words: Words,
+  cards?: (entry: T) => Card[],
 ): TallyPart[] {
   const running = tools.find((entry) => entry.ended === null);
   if (running) return [{ said: headline(running.tool, null, words).action, kind: "done" }];
   const tally: Tally = { read: 0, edited: 0, ran: 0, copied: 0, searched: 0, asked: 0, delegated: 0, coordinated: 0, other: 0, failed: 0, thinking };
-  for (const { tool, ended } of tools) {
+  // A file changed more than once is one file changed.
+  const changed = new Set<string>();
+  for (const entry of tools) {
+    const { tool, ended } = entry;
     if (ended && (ended.use === "failed" || ended.use === "declined")) tally.failed += 1;
+    // A run counts as its rows show it, where they are known.
+    const rows = tool.does.as === "command" ? cards?.(entry) : undefined;
+    if (rows) {
+      for (const card of rows) counted(card, tally, changed);
+      continue;
+    }
     switch (tool.does.as) {
       case "command": {
         // Each file a run wrote counts as a file changed; a run that did
         // nothing else is not also a command run.
-        tally.edited += tool.run?.writes.length ?? 0;
+        for (const write of tool.run?.writes ?? []) changed.add(`${write.machine}|${write.path}`);
         // A run that did things through the World counts each as its row
         // shows it: each command it sent, each machine one went to, each
         // file copied or looked at, and what it did on its own machine.
         const steps = tool.run?.steps ?? [];
         if (steps.length) {
-          for (const item of tripItems(tool.does.command, steps, tool.run?.writes ?? [])) {
-            if (item.kind === "own" || item.kind === "on") tally.ran += 1;
-            else if (item.kind === "fan") tally.ran += item.steps.length;
-            else if (item.kind === "copy") tally.copied += item.step.files;
-            else if (item.kind === "view") tally.read += item.step.paths.length;
+          // An `on` that only carried the World's own commands counts as
+          // what they did.
+          const carriers = new Set(steps.map((step) => step.job));
+          const own = scriptCommands(tool.does.command, tool.machine ?? null).some((command) => command.carrier === null && command.on === null && !command.world);
+          if (own) tally.ran += 1;
+          for (const step of steps) {
+            if (step.kind === "on" && !(step.sent && carriers.has(step.sent)) && !/^(?:fastctx\s+)?(?:edit|write|apply_patch)\b/.test(step.command)) tally.ran += 1;
+            else if (step.kind === "copy") tally.copied += step.files;
+            else if (step.kind === "view") tally.read += step.paths.length;
           }
           break;
         }
@@ -254,7 +277,7 @@ export function groupHeading(
         break;
       }
       case "edit":
-        tally.edited += Math.max(1, tool.does.changes.length);
+        for (const change of tool.does.changes) changed.add(`${tool.machine ?? ""}|${change.path}`);
         break;
       case "search":
         tally.searched += 1;
@@ -272,5 +295,43 @@ export function groupHeading(
         else tally.other += 1;
     }
   }
+  tally.edited = changed.size;
   return words.tally(tally);
+}
+
+/** What one row of a run adds to a heading's count. */
+function counted(card: Card, tally: Tally, changed: Set<string>): void {
+  switch (card.kind) {
+    case "change":
+      changed.add(`${card.machine ?? ""}|${card.path}`);
+      break;
+    case "read":
+      tally.read += 1;
+      break;
+    case "picture":
+      tally.read += card.deeds.length;
+      break;
+    case "search":
+      tally.searched += 1;
+      break;
+    case "copy":
+      tally.copied += card.deed?.files ?? card.from.length;
+      break;
+    case "command":
+      tally.ran += card.commands?.length ?? 1;
+      break;
+    case "fan":
+      tally.ran += card.deed.steps.length;
+      break;
+    case "web":
+      tally.searched += 1;
+      break;
+    case "tool":
+    case "image":
+    case "tasks":
+      tally.other += 1;
+      break;
+    default:
+      tally.ran += 1;
+  }
 }

@@ -24,6 +24,29 @@ impl crate::tolerant::Tolerant for Form {
 /// it (`world-run.md`, 路径与各个系统的不同).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MachineFacts {
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub goal_runtime: bool,
+    /// Opens a colleague's goal before its first input, without an ordinary initial-turn reply.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub goal_colleagues: bool,
+    /// Reports autonomous colleague goals and their outstanding completion promises.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub goal_waits: bool,
+    /// Receives colleague questions without waking an idle conversation.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub goal_questions: bool,
+    /// Recognizes nonblocking question metadata on ordinary resident words.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub goal_question_words: bool,
+    /// Routes resident goal commands to their home and supports requester controls.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub goal_commands: bool,
+    /// Receives immutable colleague goal reports and wakes closed requesters.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub goal_reports: bool,
+    /// Reports a requester's pending inputs, running turns and undelivered answers.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub turn_debts: bool,
     pub name: MachineName,
     /// `windows`, `linux` or `macos`.
     pub os: String,
@@ -39,6 +62,18 @@ pub struct MachineFacts {
     /// Accepts confirmed end delivery separately from CLI consumption.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub completion_receipts: bool,
+    /// Accepts durable completion receipts and intentional job stops as mail.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub control_letters: bool,
+    /// Stops only the dispatch named by a durable StopRun control.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub run_stops: bool,
+    /// Understands sentinel account settings and lifecycle calls.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub sentinels: bool,
+    /// Preserves internal observation identity through on and its supervisor.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub sentinel_look: bool,
     /// Keeps what arrived of a shared-input upload that broke, and takes it
     /// up again from there (`RemoteCall::Upload::resumes`).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
@@ -62,6 +97,16 @@ pub struct MachineFacts {
     /// Answers attachment destination queries before receiving any file bytes.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub attachment_places: bool,
+    /// Takes the attachments a script is sent with into its scratch before
+    /// it runs (`RemoteCall::On::attachments`).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub attachment_runs: bool,
+    /// Answers an account's replica-directory query without returning bodies.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub memory_folders: bool,
+    /// Reads collaboration trees, including native child-agent histories.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub collaboration_tree: bool,
     /// The bash `run` uses there, such as `bash 5.2.37 (Git for Windows,
     /// MSYS)`: on MSYS, arguments shaped like Unix paths are rewritten
     /// before a Windows program sees them (`world-run.md`). Empty when the

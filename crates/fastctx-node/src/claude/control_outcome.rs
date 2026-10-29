@@ -29,7 +29,8 @@ struct Boundary {
 }
 
 pub(super) fn compacts(control: &Value) -> bool {
-    matches!(control["do"].as_str(), Some("compact")) || (control["do"] == "command" && control["name"] == "compact")
+    matches!(control["do"].as_str(), Some("compact" | "goal_compact"))
+        || (control["do"] == "command" && control["name"] == "compact")
 }
 
 impl Evidence {

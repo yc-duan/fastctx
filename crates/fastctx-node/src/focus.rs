@@ -1,17 +1,7 @@
-//! The machines and folders the user points a conversation to (`world-gui.md`,
-//! 新对话 and 对话): kept in its record and told to the model apart from the
-//! user's words, each folder with what is in it as the machine holding it
-//! reads it then. A Codex thread is told in its instructions and a Claude
-//! session in a block of context its plugin adds to the first message; both
-//! hosts put those back after compacting the conversation, so neither is
-//! told again then (`world-colleagues.md`, 这段对话涉及的机器与文件夹). A
-//! change is told as the World's words. A Codex thread keeps the
-//! instructions it was started with, so once a change outdates them it is
-//! told the current ones again after each compaction; a Claude session's
-//! block is read anew at each compaction and is current then.
-//!
-//! Nothing here stops a conversation from starting or a change from being
-//! made: a machine or folder that cannot be read is told as such.
+//! The user's machine and folder selection, with outlines read by each
+//! machine holding those folders. Named context owns delivery and compaction
+//! recovery; these functions only maintain the current authorized selection.
+//! Unreadable machines or folders are described as such in that context.
 
 use fastctx_types::access::Written;
 use std::sync::Arc;
@@ -22,9 +12,8 @@ use fastctx_types::focus::{Focus, FocusedMachine, Folders, Outlined};
 use fastctx_types::ipc::Failure;
 use fastctx_types::layout::ConversationDir;
 use fastctx_types::remote::{RemoteCall, RemoteReply};
-use fastctx_types::residents::{About, Delivery, Notice, Origin, WorldFact};
+use fastctx_types::residents::{About, Origin};
 use fastctx_types::{MachineName, ResidentId};
-use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 
 use crate::Node;
@@ -223,22 +212,6 @@ pub(crate) fn opening(directory: &ConversationDir) -> Result<Option<Opening>, Fa
     }
 }
 
-/// Rechecks saved context when a host rebuilds its instructions.
-pub(crate) async fn opening_for(
-    node: &Arc<Node>,
-    id: &ResidentId,
-    acting: &Acting,
-) -> Result<Option<Opening>, Failure> {
-    let directory = node.world.conversation(id);
-    let Some(mut opening) = opening(&directory)? else { return Ok(None) };
-    let focus = allowed(node, acting, &opening.focus);
-    if focus != opening.focus {
-        opening.note = note(node, acting, &focus).await.unwrap_or_default();
-        opening.focus = focus;
-    }
-    Ok(Some(opening))
-}
-
 /// Replaces cached context when authority changes, without rewriting the user's selection.
 pub(crate) async fn refresh(node: &Arc<Node>, id: &ResidentId) -> Result<(), Failure> {
     let Some((about, _)) = node.residents.about(id) else { return Ok(()) };
@@ -259,14 +232,7 @@ pub(crate) async fn refresh(node: &Arc<Node>, id: &ResidentId) -> Result<(), Fai
     let note = note(node, &about.acting, &visible).await;
     keep(&directory, note.as_deref())?;
     write(&marker, &serde_json::to_vec(&visible).map_err(|error| Failure::new(error.to_string()))?)?;
-    if about.host.agent.as_str() == "claude"
-        && let Some(session) = &about.session
-    {
-        let exchange = fastctx_hosts::claude::exchange::sessions(node.world.path()).join(session);
-        if exchange.is_dir() {
-            hand_to_session(&directory, &exchange).map_err(|error| Failure::new(error.to_string()))?;
-        }
-    }
+    crate::context::refresh_local(node, id).map_err(|error| Failure::new(error.to_string()))?;
     Ok(())
 }
 
@@ -274,6 +240,11 @@ pub(crate) async fn refresh_all(node: &Arc<Node>) {
     let ids: Vec<_> =
         node.residents.everyone().filter(|resident| resident.removed.is_none()).map(|resident| resident.id).collect();
     for id in ids {
+        let Ok(gate) = node.residents.management(&id) else { continue };
+        let _reading = gate.read().await;
+        if node.residents.active(&id).is_err() {
+            continue;
+        }
         if let Err(failure) = refresh(node, &id).await {
             node.log.line(format_args!("updating {id}'s authorized folders: {failure}"));
         }
@@ -301,21 +272,6 @@ fn write(path: &std::path::Path, bytes: &[u8]) -> Result<(), Failure> {
         .map_err(|error| Failure::new(format!("keeping its folders: {error}")))
 }
 
-/// Puts what the model is told of the machines and folders now beside a
-/// Claude session's own files, where its plugin reads it into the first
-/// message's context: when the session is reserved, and when they change.
-pub(crate) fn hand_to_session(directory: &ConversationDir, session: &std::path::Path) -> std::io::Result<()> {
-    let target = session.join("focus.md");
-    match std::fs::read(directory.focus()) {
-        Ok(bytes) => fastctx_platform::publish(&target, &bytes, fastctx_platform::Permissions::Private),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => match std::fs::remove_file(&target) {
-            Err(error) if error.kind() != std::io::ErrorKind::NotFound => Err(error),
-            _ => Ok(()),
-        },
-        Err(error) => Err(error),
-    }
-}
-
 /// Whether the user may point this conversation at machines and folders:
 /// one they opened from fastctx.
 pub(crate) fn pointable(about: &About) -> Result<(), Failure> {
@@ -329,98 +285,20 @@ pub(crate) fn pointable(about: &About) -> Result<(), Failure> {
 
 /// The user pointed the conversation at `focus`, which is now in its
 /// record: what it is told of them is kept, and the change told to it.
-pub(crate) async fn changed(
-    node: &Arc<Node>,
-    id: &ResidentId,
-    about: &About,
-    focus: &Focus,
-) -> Result<Delivery, Failure> {
+pub(crate) async fn changed(node: &Arc<Node>, id: &ResidentId, about: &About, focus: &Focus) -> Result<(), Failure> {
     let directory = node.world.conversation(id);
-    let focus = allowed(node, &about.acting, focus);
-    let note = note(node, &about.acting, &focus).await;
+    let visible = allowed(node, &about.acting, focus);
+    let note = note(node, &about.acting, &visible).await;
     keep(&directory, note.as_deref())?;
-    if about.host.agent.as_str() == "claude"
-        && let Some(session) = &about.session
-    {
-        let exchange = fastctx_hosts::claude::exchange::sessions(node.world.path()).join(session);
-        if exchange.is_dir()
-            && let Err(error) = hand_to_session(&directory, &exchange)
-        {
-            node.log.line(format_args!("handing {id}'s folders to its session: {error}"));
-        }
-    }
-    let text = match note {
-        Some(note) => format!(
-            "The user changed the machines and folders of this conversation; this replaces what you were told of them before.\n\n{note}"
-        ),
-        None => "The user cleared the machines and folders of this conversation; what you were told of them before no longer holds.".to_string(),
-    };
-    Ok(Delivery {
-        id: crate::speech::new_id("focus"),
-        at: Timestamp::now(),
-        notice: Notice::World { fact: WorldFact::Focus { focus: focus.clone() }, text },
-    })
+    write(
+        &directory.path().join("focus-visible.json"),
+        &serde_json::to_vec(&visible).map_err(|error| Failure::new(error.to_string()))?,
+    )?;
+    crate::context::refresh_local(node, id).map_err(|error| Failure::new(error.to_string()))
 }
 
-/// A fork keeps context already injected into its source's history. Its own
-/// instructions apply on the next full context rebuild, so its current
-/// selection is also delivered once with the next turn, without waking it.
+/// A fork's inherited history may contain a different selection. Queue its
+/// current context for the next tool response without starting a turn.
 pub(crate) async fn forked(node: &Arc<Node>, id: &ResidentId) -> Result<(), Failure> {
-    let acting = crate::authorization::resident(node, id)?;
-    let opening = opening_for(node, id, &acting)
-        .await?
-        .ok_or_else(|| Failure::new("the fork has no saved machine and folder context"))?;
-    let text = if opening.note.is_empty() {
-        "No machines or folders are selected for this fork; this replaces any earlier selection in its inherited history and does not limit which machines it may use.".to_string()
-    } else {
-        format!(
-            "The machines and folders selected for this fork; this replaces any earlier selection in its inherited history.\n\n{}",
-            opening.note
-        )
-    };
-    let delivery = Delivery {
-        id: crate::speech::new_id("fork-focus"),
-        at: Timestamp::now(),
-        notice: Notice::World { fact: WorldFact::Focus { focus: opening.focus }, text },
-    };
-    crate::speech::tell_here(node, id, delivery, crate::speech::Owed::Nobody).await?;
-    Ok(())
-}
-
-/// A Codex thread compacted its conversation, `item` naming the compaction:
-/// it is told the machines and folders again where its instructions are
-/// out of date.
-pub(crate) async fn compacted(node: &Arc<Node>, id: &ResidentId, item: &str) {
-    let Some((about, _)) = node.residents.about(id) else { return };
-    let directory = node.world.conversation(id);
-    let opened = match opening(&directory) {
-        Ok(opened) => opened.map(|opened| opened.focus).unwrap_or_default(),
-        Err(failure) => {
-            node.log.line(format_args!("after {id} compacted: {}", failure.message));
-            return;
-        }
-    };
-    let focus = allowed(node, &about.acting, &about.focus);
-    if opened == focus {
-        return;
-    }
-    let note = note(node, &about.acting, &focus).await;
-    if let Err(failure) = keep(&directory, note.as_deref()) {
-        node.log.line(format_args!("after {id} compacted: {}", failure.message));
-    }
-    let text = match note {
-        Some(note) => format!(
-            "The machines and folders of this conversation, as the user last set them; this replaces what your instructions say of them.\n\n{note}"
-        ),
-        None => "No machines or folders are chosen for this conversation now; what your instructions say of them no longer holds.".to_string(),
-    };
-    let delivery = Delivery {
-        // The same compaction told twice is told once.
-        id: crate::speech::fixed_id("focus-compacted", &[item]),
-        at: Timestamp::now(),
-        notice: Notice::World { fact: WorldFact::Focus { focus }, text },
-    };
-    if let Err(failure) = crate::speech::tell_here(node, id, delivery, crate::speech::Owed::Nobody).await {
-        node.log.line(format_args!("telling {id} its folders after it compacted: {}", failure.message));
-    }
+    crate::context::forked(node, id).map_err(|error| Failure::new(error.to_string()))
 }

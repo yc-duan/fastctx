@@ -52,6 +52,53 @@ pub struct MachineStats {
     pub lines: Vec<Line>,
     /// Its node: the program's version, and when this node started.
     pub node: NodeSeen,
+    /// The jobs running on it now, by the account each works for, with the
+    /// limit its owner set for that account; its own under none.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub jobs: Vec<AccountJobs>,
+    /// How far it is toward its system's limits, a reading a minute over the
+    /// last day, oldest first; with `after`, only the readings since.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub limits: Vec<LimitReading>,
+}
+
+/// One reading of how far a machine is toward its system's limits.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LimitReading {
+    pub at: Timestamp,
+    pub uses: Vec<LimitUse>,
+}
+
+/// One limit and how much of it is used: by the user its node runs as, or
+/// for `OpenFiles`, by the node itself.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LimitUse {
+    pub kind: LimitKind,
+    pub used: u64,
+    pub limit: u64,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LimitKind {
+    InotifyInstances,
+    InotifyWatches,
+    OpenFiles,
+    Tasks,
+    /// One a newer node tells.
+    #[serde(other)]
+    Other,
+}
+
+/// How many jobs one account runs on a machine now.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AccountJobs {
+    /// None for the machine's own, its owner's.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub account: Option<crate::access::HubAccount>,
+    pub running: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub most: Option<u16>,
 }
 
 /// The rates and shares in a reading are measured, never NaN, so a reading
@@ -84,7 +131,28 @@ pub struct Memory {
     pub swap_total: u64,
     #[serde(default)]
     pub swap_used: u64,
+    /// What the machine keeps free for its agents: a new turn waits while
+    /// turns run and less is available (`world-lifecycle.md`, 内存). None
+    /// where its node does not keep any, an older one; zero where it was
+    /// turned off.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub room: Option<u64>,
+    /// How many turns wait for that room now.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub waiting: u32,
 }
+
+fn is_zero(count: &u32) -> bool {
+    *count == 0
+}
+
+/// What a machine keeps free for its agents when no one chose: Claude Code
+/// retires idle sessions below a gigabyte available, and a turn that starts
+/// grows by about half of one.
+pub const MEMORY_ROOM: u64 = 1536 << 20;
+
+/// What the user chooses from for it; zero keeps none.
+pub const MEMORY_ROOMS: [u64; 5] = [0, 1 << 30, 1536 << 20, 2 << 30, 3 << 30];
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Disk {
@@ -213,6 +281,22 @@ pub struct NodeSeen {
     /// (`world-gui.md`, 设置).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub refused: Option<Refused>,
+}
+
+/// One call admitted by the local node, without its user's request contents.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CallWork {
+    pub id: u64,
+    pub account: String,
+    pub machine: String,
+    pub conversation: Option<String>,
+    pub kind: String,
+    pub pool: String,
+    pub phase: String,
+    pub seconds: u64,
+    pub within: Option<u64>,
+    pub overdue: bool,
+    pub waiting: String,
 }
 
 /// A place macOS kept private from a node.

@@ -15,13 +15,24 @@ use crate::Node;
 
 pub async fn here(node: &Node, since: Timestamp, town: Option<TownName>) -> Result<SinceReply, Failure> {
     let (world, machine) = (node.world.clone(), node.machine());
+    let failure = |error: &dyn std::fmt::Display| Failure::new(format!("reading history: {error}"));
+    // The conversations' records are each published whole, and there may be
+    // many: they are read without holding up what syncs the ledgers.
+    let (reading, named) = (world.clone(), machine.clone());
+    let mut partial = tokio::task::spawn_blocking(move || records::conversations(&reading, &named, since))
+        .await
+        .map_err(|error| failure(&error))?
+        .map_err(|error| failure(&error))?;
     // Intake publishes the signed ledger before its readable files. Reading
     // signed records under the same lock also excludes carrying a town in.
     let _syncing = node.syncing.lock().await;
-    tokio::task::spawn_blocking(move || records::read(&world, &machine, since, town.as_ref()))
-        .await
-        .map_err(|error| Failure::new(format!("reading history: {error}")))?
-        .map_err(|error| Failure::new(format!("reading history: {error}")))
+    tokio::task::spawn_blocking(move || {
+        records::ledgers(&mut partial, &world, &machine, town.as_ref())?;
+        Ok(records::reply(partial, &machine, since, town.as_ref()))
+    })
+    .await
+    .map_err(|error| failure(&error))?
+    .map_err(|error: std::io::Error| failure(&error))
 }
 
 /// What happened since `since`, as each machine whoever asks (`acting`) may

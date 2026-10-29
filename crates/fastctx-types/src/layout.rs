@@ -3,9 +3,14 @@
 //! Everything lives under `<fastctx root>/world/`. Every conversation this
 //! machine keeps anything of has exactly one directory under
 //! `conversations/`: its home, named by its id (`codex-7f3a`), when it lives
-//! here; a guest room, named by its address (`codex-7f3a@laptop`), when it
-//! lives on another machine and worked here. The directory does not depend
-//! on the conversation's project, so changing projects moves nothing.
+//! here; a guest room, named by its id and a tag of the machine it lives on
+//! (`codex-7f3a_3e5f0c1d9a2b`), when it lives on another machine and worked
+//! here. A guest room does not name that machine: what the conversation does
+//! here, and whoever it works for here, sees its paths, and the machine it
+//! lives on is not theirs to know (`world-run.md`). Rooms made before were
+//! named by its address (`codex-7f3a@laptop`) and keep that name. The
+//! directory does not depend on the conversation's project, so changing
+//! projects moves nothing.
 //!
 //! Inside it, the conversation's own records and the originals of what the
 //! user attached stay for as long as the conversation does; the commands it
@@ -196,29 +201,35 @@ impl WorldDir {
     }
 
     /// The guest room of a conversation of another machine that worked
-    /// here: named with its machine, since a resident's id is only unique on
-    /// the machine it lives on.
+    /// here: its id with a tag of its machine, since a resident's id is only
+    /// unique on the machine it lives on.
     pub fn guest(&self, owner: &Address) -> ConversationDir {
+        ConversationDir { path: self.conversations().join(format!("{}_{}", owner.resident, room_tag(&owner.machine))) }
+    }
+
+    /// A guest room as rooms were named before they stopped naming the
+    /// machine their conversation lives on.
+    pub fn named_guest(&self, owner: &Address) -> ConversationDir {
         ConversationDir { path: self.conversations().join(owner.key()) }
     }
 
     /// The directory of `owner` on the machine `here`: its home or its guest
-    /// room. A machine renamed since its conversation first worked here
-    /// keeps the room it had: what is kept there is found under any of its
-    /// names.
+    /// room. A room made before keeps its name, and a machine renamed since
+    /// its conversation first worked here keeps the room it had: what is
+    /// kept there is found under any of its names.
     pub fn owner(&self, here: &impl Here, owner: &Address) -> ConversationDir {
         if here.is_here(&owner.machine) {
             return self.conversation(&owner.resident);
         }
-        let room = self.guest(owner);
-        if room.path.exists() {
-            return room;
-        }
-        here.names_of(&owner.machine)
-            .into_iter()
-            .map(|machine| self.guest(&Address { machine, resident: owner.resident.clone() }))
-            .find(|named| named.path.exists())
-            .unwrap_or(room)
+        let mut machines = vec![owner.machine.clone()];
+        machines.extend(here.names_of(&owner.machine).into_iter().filter(|machine| *machine != owner.machine));
+        let of = |machine: &MachineName| Address { machine: machine.clone(), resident: owner.resident.clone() };
+        machines
+            .iter()
+            .map(|machine| self.named_guest(&of(machine)))
+            .chain(machines.iter().map(|machine| self.guest(&of(machine))))
+            .find(|room| room.path.exists())
+            .unwrap_or_else(|| self.guest(owner))
     }
 
     /// Where a job of `owner` keeps its record and output. Page work has its
@@ -313,7 +324,7 @@ impl WorldDir {
         let mut towns = Vec::new();
         for path in self.town_directories()? {
             if let Some(town) = path.file_name().and_then(|name| TownName::try_from(name.to_str()?).ok())
-                && self.town(&town).signed().is_dir()
+                && (self.town(&town).signed().is_dir() || self.town(&town).path().join("index.json").is_file())
             {
                 towns.push(town);
             }
@@ -342,13 +353,28 @@ impl WorldDir {
     }
 }
 
+/// The tag a guest room carries of the machine its conversation lives on:
+/// the same for every room of that machine, and not its name.
+pub fn room_tag(machine: &MachineName) -> String {
+    use sha2::{Digest as _, Sha256};
+    let digest = Sha256::new().chain_update(b"fastctx guest room\0").chain_update(machine.key().as_bytes()).finalize();
+    digest.iter().take(ROOM_TAG / 2).map(|byte| format!("{byte:02x}")).collect()
+}
+
+/// How many hex digits a room tag has.
+const ROOM_TAG: usize = 12;
+
 /// What a conversation directory is, from its name.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Kind {
     /// A conversation that lives on this machine.
     Home(ResidentId),
-    /// A conversation of another machine that worked here.
+    /// A conversation of another machine that worked here, in a room made
+    /// before rooms stopped naming that machine.
     Guest(Address),
+    /// A conversation of another machine that worked here: `home` is the
+    /// tag of that machine (`room_tag`).
+    Visiting { resident: ResidentId, home: String },
     /// Copies of files attached in a conversation of another machine, from
     /// before the machine they came from was recorded: `<id>@~`.
     Unplaced(ResidentId),
@@ -361,6 +387,13 @@ impl Kind {
     /// The kind a directory named `name` holds; `None` for any other name,
     /// such as a directory being moved in, which starts with `.`.
     pub fn of(name: &str) -> Option<Self> {
+        if let Some((resident, home)) = name.split_once('_') {
+            let tag = home.len() == ROOM_TAG && home.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b));
+            return tag
+                .then(|| ResidentId::try_from(resident).ok())
+                .flatten()
+                .map(|resident| Self::Visiting { resident, home: home.to_string() });
+        }
         match name.split_once('@') {
             Some((resident, UNKNOWN_MACHINE)) => ResidentId::try_from(resident).ok().map(Self::Unplaced),
             Some(_) => name.parse().ok().map(Self::Guest),
@@ -370,8 +403,18 @@ impl Kind {
 
     pub fn resident(&self) -> &ResidentId {
         match self {
-            Self::Home(id) | Self::Unplaced(id) => id,
+            Self::Home(id) | Self::Unplaced(id) | Self::Visiting { resident: id, .. } => id,
             Self::Guest(address) => &address.resident,
+        }
+    }
+
+    /// Whether this is a guest room of the conversation `resident` of the
+    /// machine `machine` names, under that name or its tag.
+    pub fn is_room_of(&self, resident: &ResidentId, machine: &MachineName) -> bool {
+        match self {
+            Self::Guest(owner) => owner.resident == *resident && owner.machine == *machine,
+            Self::Visiting { resident: id, home } => id == resident && *home == room_tag(machine),
+            Self::Home(_) | Self::Unplaced(_) => false,
         }
     }
 }
@@ -399,6 +442,15 @@ impl TownDir {
     /// journals.
     pub fn ledger(&self) -> PathBuf {
         self.path.join("ledger")
+    }
+
+    /// Readable, read-only project-memory projections.
+    pub fn journals(&self) -> PathBuf {
+        self.path.join("journals")
+    }
+
+    pub fn specs(&self) -> PathBuf {
+        self.path.join("specs")
     }
 
     /// Each entry of the ledger as its author signed it, named by its

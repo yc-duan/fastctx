@@ -20,6 +20,28 @@ pub struct Bridge {
     calls: Mutex<HashSet<String>>,
     requests: Mutex<HashMap<String, Request>>,
     observed: Mutex<HashSet<(String, String, fastctx_types::ProcessIdentity)>>,
+    /// The conversations whose mod is being asked what it offers now.
+    offering: Mutex<HashSet<ResidentId>>,
+}
+
+/// The one asking out of what a conversation's mod offers, until it ends.
+struct Offering<'a> {
+    bridge: &'a Bridge,
+    resident: ResidentId,
+}
+
+impl Bridge {
+    /// Begins asking what `resident`'s mod offers, unless an asking is out already.
+    fn offering(&self, resident: &ResidentId) -> Option<Offering<'_>> {
+        let begun = self.offering.lock().expect("never poisoned").insert(resident.clone());
+        begun.then(|| Offering { bridge: self, resident: resident.clone() })
+    }
+}
+
+impl Drop for Offering<'_> {
+    fn drop(&mut self) {
+        self.bridge.offering.lock().expect("never poisoned").remove(&self.resident);
+    }
 }
 
 #[derive(Clone)]
@@ -43,7 +65,7 @@ pub async fn control(node: &Arc<Node>, resident: &ResidentId, control: Control) 
     }
     super::resume::ready(node, resident).await?;
     match control {
-        Control::Fork { through } => super::fork::fork(node, resident, through).await,
+        Control::Fork { through, side } => super::fork::fork(node, resident, through, side).await,
         Control::Answer { request, answer } => answer_request(node, resident, request, answer).await,
         Control::Rewind { .. } if !REWIND_SUPPORTED => Err(Failure::not_run(
             "Claude Code has no supported in-place rewind; fork through the selected turn instead",
@@ -71,6 +93,23 @@ pub async fn control(node: &Arc<Node>, resident: &ResidentId, control: Control) 
             serde_json::from_value(result).map_err(|error| Failure::new(format!("Claude control reply: {error}")))
         }
     }
+}
+
+/// Reads the running host's current local summary, without waking a closed session.
+pub(crate) async fn usage_now(node: &Arc<Node>, resident: &ResidentId) -> Result<Value, Failure> {
+    if !running(node, resident)? {
+        return Err(Failure::new("the Claude session is not running"));
+    }
+    tokio::time::timeout(std::time::Duration::from_secs(60), invoke(node, resident, json!({"do":"usage"})))
+        .await
+        .map_err(|_| Failure::new("Claude did not report current usage within 60 seconds"))?
+}
+
+/// The goal's compaction respects the host's automatic compaction setting.
+pub(crate) async fn goal_compact(node: &Arc<Node>, resident: &ResidentId) -> Result<Controlled, Failure> {
+    super::resume::ready(node, resident).await?;
+    let result = invoke_action(node, resident, json!({"do":"goal_compact"})).await?;
+    serde_json::from_value(result).map_err(|error| Failure::new(format!("Claude compaction reply: {error}")))
 }
 
 /// How long a running session's mod is given to say what it offers.
@@ -104,13 +143,23 @@ pub async fn offers(node: &Arc<Node>, resident: &ResidentId) -> Result<Offers, F
     // mod adds its commands and checkpoints, and names the aliases its
     // login offers; when it does not answer, or not soon, as in the middle
     // of a turn, the conversation is offered as a sleeping one is. A reply
-    // that comes later is cleared away by `look`.
+    // that comes later is cleared away by `look`. The mod is asked once at a
+    // time: pages and machines asking together while one asking is out are
+    // answered at once the sleeping way, from what the World keeps, and take
+    // nothing from the session: an interface asking dozens of times in a few
+    // seconds would otherwise hold every place a busy machine gives it.
     let asked = if running {
-        match tokio::time::timeout(OFFERS_WITHIN, invoke(node, resident, json!({"do":"offers"}))).await {
-            Ok(answer) => answer.and_then(|value| {
-                serde_json::from_value::<Offers>(value).map_err(|error| Failure::new(format!("Claude offers: {error}")))
-            }),
-            Err(_) => Err(Failure::new("Claude did not say what it offers in time")),
+        match node.claude.bridge.offering(resident) {
+            Some(_offering) => {
+                match tokio::time::timeout(OFFERS_WITHIN, invoke(node, resident, json!({"do":"offers"}))).await {
+                    Ok(answer) => answer.and_then(|value| {
+                        serde_json::from_value::<Offers>(value)
+                            .map_err(|error| Failure::new(format!("Claude offers: {error}")))
+                    }),
+                    Err(_) => Err(Failure::new("Claude did not say what it offers in time")),
+                }
+            }
+            None => Err(Failure::new("what it offers is being asked already")),
         }
     } else {
         Err(Failure::new("not running"))
@@ -231,7 +280,7 @@ pub async fn offers(node: &Arc<Node>, resident: &ResidentId) -> Result<Offers, F
 /// assistant's retained messages. Rewind is offered once one keeps it whole.
 const REWIND_SUPPORTED: bool = false;
 
-fn live_host(node: &Node, resident: &ResidentId) -> Result<(PathBuf, Host), Failure> {
+pub(super) fn live_host(node: &Node, resident: &ResidentId) -> Result<(PathBuf, Host), Failure> {
     let (about, _) = node.residents.about(resident).ok_or_else(|| Failure::new("unknown resident"))?;
     let session = about.session.ok_or_else(|| Failure::new("Claude has not identified this conversation yet"))?;
     let directory = files::directory(node.world.path(), &session);
@@ -463,6 +512,7 @@ pub async fn look(node: &Arc<Node>, resident: &ResidentId, session_directory: &P
             && let Some(key) = path.file_stem().and_then(|key| key.to_str())
             && !node.claude.bridge.calls.lock().expect("never poisoned").contains(key)
         {
+            super::goal_compaction::capture(node, resident, &directory, key)?;
             collect_invocation(&directory, key)?;
         }
     }
@@ -524,7 +574,7 @@ pub async fn look(node: &Arc<Node>, resident: &ResidentId, session_directory: &P
 }
 
 pub(super) fn collect_invocation(directory: &Path, key: &str) -> std::io::Result<()> {
-    for side in ["inbox", "replies", "started"] {
+    for side in ["inbox", "replies", "retained", "started"] {
         for extension in ["json", "done", "parts"] {
             match fastctx_platform::owned_directory::delete(&directory.join(side).join(format!("{key}.{extension}"))) {
                 Err(error) if error.kind() != std::io::ErrorKind::NotFound => return Err(error),
@@ -532,7 +582,12 @@ pub(super) fn collect_invocation(directory: &Path, key: &str) -> std::io::Result
             }
         }
     }
-    Ok(())
+    // Answered and collected, the control is taken by no one again: its
+    // claim only takes room.
+    match std::fs::remove_file(directory.join("claims").join(format!("{key}.json"))) {
+        Err(error) if error.kind() != std::io::ErrorKind::NotFound => Err(error),
+        _ => Ok(()),
+    }
 }
 
 fn observe_activation(node: &Arc<Node>, host: &Host, directory: &Path) {
@@ -597,7 +652,7 @@ fn supervise(node: &Arc<Node>, key: String, request: Request) {
         tokio::select! {
             _ = async { let _ = completed.wait_for(Option::is_some).await; } => return,
             () = &mut exited => {}
-            () = node.watchers.unwatched(&request.resident), if !request.waiting.question.native_wait => {
+            () = node.watchers.unwatched(&request.resident) => {
                 let pass = Answer::Pass { reason: "no one is watching this conversation in the World".into() };
                 if let Err(error) = files::answer(&request.directory, &pass)
                     && error.kind() != std::io::ErrorKind::AlreadyExists {

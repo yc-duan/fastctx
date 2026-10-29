@@ -46,6 +46,8 @@ fn legacy_queue() -> bool {
 
 pub fn begin(directory: &ConversationDir, inputs: Vec<Pending>) -> io::Result<Handover> {
     let _transaction = crate::resident_storage::lock();
+    // The host's record will name the files by id alone.
+    crate::attachments::delivered::record(directory, &inputs)?;
     let ids: Vec<&str> = inputs.iter().map(|input| input.delivery.id.as_str()).collect();
     let id = crate::speech::fixed_id("handover", &ids);
     let handover = Handover { id, inputs, turn: None, unresolved: None, attempting: true };
@@ -229,6 +231,13 @@ pub fn session(directory: &ConversationDir, turn: &str) -> io::Result<Option<Str
     let _transaction = crate::resident_storage::lock();
     let key = crate::speech::fixed_id("turn", &[turn]);
     optional(&directory.turn_sessions().join(format!("{key}.json")))
+}
+
+/// Whether this event identity has already been durably published.
+pub(crate) fn has_event(directory: &ConversationDir, key: &str) -> io::Result<bool> {
+    let _transaction = crate::resident_storage::lock();
+    let key = crate::speech::fixed_id("event", &[key]);
+    directory.session_events().join(format!("{key}.json")).try_exists()
 }
 
 pub fn event(directory: &ConversationDir, key: &str, event: &SessionEvent) -> io::Result<bool> {

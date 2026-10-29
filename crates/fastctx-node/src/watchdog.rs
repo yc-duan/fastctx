@@ -34,7 +34,7 @@ struct Progress {
 }
 
 impl Watchdog {
-    pub fn start(log: Arc<crate::log::Log>) -> io::Result<Self> {
+    pub fn start() -> io::Result<Self> {
         let initial = Sample::now()?;
         let progress =
             Arc::new(Progress { answered: AtomicU64::new(0), wake: Notify::new(), workers: AtomicU64::new(0) });
@@ -67,8 +67,7 @@ impl Watchdog {
                 let now = match Sample::now() {
                     Ok(now) => now,
                     Err(error) => {
-                        log.line(format_args!("watchdog cannot read the running-time clock: {error}"));
-                        std::process::exit(1);
+                        crate::ending::with_reason(1, format!("watchdog cannot read the running-time clock: {error}"));
                     }
                 };
                 // 2026-10-03: this detects a failed responsiveness contract,
@@ -97,10 +96,7 @@ impl Watchdog {
                     missed += 1;
                 }
                 if HEARTBEAT * missed >= SILENCE {
-                    log.line(format_args!("watchdog: the node control loop did not run for {missed} consecutive heartbeat observations; exiting for the service to restart it"));
-                    // Runtime shutdown can wait forever for its stuck workers.
-                    // Exit from this independent OS thread, without unwinding.
-                    std::process::exit(1);
+                    crate::ending::with_reason(1, format!("watchdog: the node control loop did not run for {missed} consecutive heartbeat observations; exiting for the service to restart it"));
                 }
                 // The worker threads, by the same observations: every one of
                 // them blocked in a synchronous wait leaves the tasks that
@@ -112,8 +108,7 @@ impl Watchdog {
                     silent += 1;
                 }
                 if HEARTBEAT * silent >= WORKERS_SILENT {
-                    log.line(format_args!("watchdog: no task ran on the node's worker threads for {silent} consecutive heartbeat observations; exiting for the service to restart it"));
-                    std::process::exit(1);
+                    crate::ending::with_reason(1, format!("watchdog: no task ran on the node's worker threads for {silent} consecutive heartbeat observations; exiting for the service to restart it"));
                 }
                 previous = now;
                 answered = current;

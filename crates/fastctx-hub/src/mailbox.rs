@@ -429,7 +429,10 @@ pub(crate) async fn drop_for(hub: &Arc<Hub>, conversation: &Address) -> std::io:
             let Ok(body) = message.body::<fastctx_net::message::LetterBody>() else { continue };
             let to = match &body.letter {
                 Letter::JobFacts { to, .. } | Letter::Notice { to, .. } | Letter::Speak { to, .. } => to,
-                Letter::Fragment { .. } | Letter::Left { .. } => continue,
+                Letter::Fragment { .. }
+                | Letter::Left { .. }
+                | Letter::Control { .. }
+                | Letter::ControlResult { .. } => continue,
             };
             if *to == resident {
                 found.push((seq, dir.join(format!("{seq:020}"))));
@@ -472,6 +475,16 @@ pub(crate) async fn drop_for(hub: &Arc<Hub>, conversation: &Address) -> std::io:
     .await
     .map_err(|error| std::io::Error::other(error.to_string()))??;
     Ok(dropped)
+}
+
+/// The letters `seqs` of `name`'s numbering `epoch` are settled
+/// (`crate::expiry`): they are no longer waiting.
+pub(crate) fn settled(store: &mut Store, name: &MachineName, epoch: u64, seqs: impl IntoIterator<Item = u64>) {
+    if let Some(mailbox) = numbered_as(store, name, epoch) {
+        for seq in seqs {
+            mailbox.held.remove(&seq);
+        }
+    }
 }
 
 /// Keeps the records of where every member's letters stand as they change,

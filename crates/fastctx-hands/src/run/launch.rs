@@ -20,6 +20,8 @@ use super::record;
 
 /// Who asks, where, and with what.
 pub struct Launch<'a> {
+    /// The owner confirms the foreground answer after its host accepts it.
+    pub answer_receipts: bool,
     pub world: &'a WorldDir,
     /// The names machines answer to here: this machine's, and every name
     /// of a machine renamed since, whose residents' jobs go on in the rooms
@@ -42,6 +44,20 @@ pub struct Launch<'a> {
     pub account: Option<&'a fastctx_types::access::HubAccount>,
 }
 
+/// A launch whose immutable source passed both pre-execution checks.
+pub struct CheckedLaunch<'launch, 'context> {
+    launch: &'launch Launch<'context>,
+}
+
+impl<'context> Launch<'context> {
+    /// Checks the complete source without reserving a job or writing its files.
+    /// The returned borrow keeps the checked request unchanged until launch.
+    pub fn check(&self) -> Result<CheckedLaunch<'_, 'context>, Failure> {
+        super::preread::check(&self.request.script).map_err(|failure| Failure::not_run(failure.message))?;
+        Ok(CheckedLaunch { launch: self })
+    }
+}
+
 /// A job whose supervisor has been started.
 pub struct Launched {
     pub job: JobId,
@@ -62,7 +78,7 @@ pub fn launch(launch: &Launch<'_>) -> Result<Launched, Failure> {
 /// `stdin` names an already complete, verified local file. The caller keeps
 /// it unchanged and present until the job ends. None connects null input.
 pub fn launch_with_io(launch: &Launch<'_>, mode: OutputMode, stdin: Option<&Path>) -> Result<Launched, Failure> {
-    launch_with_io_registered(launch, mode, stdin, |_| {})
+    launch_with_io_registered(launch, mode, stdin, |_| Ok(()))
 }
 
 /// Registers a consumer after preparation is durable and before a
@@ -71,47 +87,60 @@ pub fn launch_with_io_registered(
     launch: &Launch<'_>,
     mode: OutputMode,
     stdin: Option<&Path>,
-    register: impl FnOnce(&Path),
+    register: impl FnOnce(&Path) -> Result<(), Failure>,
 ) -> Result<Launched, Failure> {
-    let (job, output, stderr, record_path, resident) =
-        prepare(launch, mode, stdin).map_err(|failure| Failure::not_run(failure.message))?;
-    register(&record_path);
-    if let Some(request) = launch.on.and_then(|on| on.request.as_ref()) {
-        let stopped = resident.jobs().join(format!("request-{request}.stopped"));
-        if stopped
-            .try_exists()
-            .map_err(|error| Failure::not_run(format!("reading the request's cancellation: {error}")))?
-        {
-            let mut record = record::read(&record_path)
-                .map_err(|error| Failure::not_run(format!("reading the cancelled job: {error}")))?;
-            let at = jiff::Timestamp::now();
-            record.stop = Some(fastctx_types::run::StopRequested {
-                at,
-                request: fastctx_types::run::StopRequest {
-                    by: launch.owner.to_string(),
-                    reason: "the on that sent it stopped before its supervisor started".to_string(),
-                },
-            });
-            record.end = Some(fastctx_types::run::Ended { at, how: fastctx_types::run::EndedHow::Stopped });
-            record::write(&record_path, &record)
-                .map_err(|error| Failure::not_run(format!("recording the cancelled job: {error}")))?;
-            return Err(Failure::not_run("the on was stopped before its supervisor started"));
+    launch.check()?.launch_with_io_registered(mode, stdin, register)
+}
+
+impl CheckedLaunch<'_, '_> {
+    /// Prepares durable records, registers the consumer, then starts supervision.
+    /// The caller can hold its collection guard only for this filesystem phase.
+    pub fn launch_with_io_registered(
+        self,
+        mode: OutputMode,
+        stdin: Option<&Path>,
+        register: impl FnOnce(&Path) -> Result<(), Failure>,
+    ) -> Result<Launched, Failure> {
+        let launch = self.launch;
+        let (job, output, stderr, record_path, resident) =
+            prepare(launch, mode, stdin).map_err(|failure| Failure::not_run(failure.message))?;
+        register(&record_path)?;
+        if let Some(request) = launch.on.and_then(|on| on.request.as_ref()) {
+            let stopped = resident.jobs().join(format!("request-{request}.stopped"));
+            if stopped
+                .try_exists()
+                .map_err(|error| Failure::not_run(format!("reading the request's cancellation: {error}")))?
+            {
+                let mut record = record::read(&record_path)
+                    .map_err(|error| Failure::not_run(format!("reading the cancelled job: {error}")))?;
+                let at = jiff::Timestamp::now();
+                record.stop = Some(fastctx_types::run::StopRequested {
+                    at,
+                    request: fastctx_types::run::StopRequest {
+                        by: launch.owner.to_string(),
+                        reason: "the on that sent it stopped before its supervisor started".to_string(),
+                    },
+                });
+                record.end = Some(fastctx_types::run::Ended { at, how: fastctx_types::run::EndedHow::Stopped });
+                record::write(&record_path, &record)
+                    .map_err(|error| Failure::not_run(format!("recording the cancelled job: {error}")))?;
+                return Err(Failure::not_run("the on was stopped before its supervisor started"));
+            }
         }
+        let started = spawn_detached(
+            launch.executable,
+            &[OsStr::new("supervise"), launch.world.path().as_os_str(), record_path.as_os_str()],
+            resident.path(),
+            launch.environment,
+        )
+        .map_err(|error| failure("starting the job's supervisor (execution may have begun)", &error))?;
+        Ok(Launched { job, record: record_path, output, stderr, supervisor: started.identity })
     }
-    let started = spawn_detached(
-        launch.executable,
-        &[OsStr::new("supervise"), launch.world.path().as_os_str(), record_path.as_os_str()],
-        resident.path(),
-        launch.environment,
-    )
-    .map_err(|error| failure("starting the job's supervisor (execution may have begun)", &error))?;
-    Ok(Launched { job, record: record_path, output, stderr, supervisor: started.identity })
 }
 
 type Prepared = (JobId, PathBuf, Option<PathBuf>, PathBuf, ConversationDir);
 
 fn prepare(launch: &Launch<'_>, mode: OutputMode, stdin: Option<&Path>) -> Result<Prepared, Failure> {
-    super::preread::check(&launch.request.script)?;
     if let Some(path) = stdin {
         if !path.is_absolute() {
             return Err(Failure::new(format!("stdin must name an absolute path: {}", path.display())));
@@ -142,6 +171,7 @@ fn prepare(launch: &Launch<'_>, mode: OutputMode, stdin: Option<&Path>) -> Resul
     publish_new(&script, super::heredoc::mark_on_pipes(&launch.request.script).as_bytes(), Permissions::Private)
         .map_err(|error| failure("could not write the script", &error))?;
     let record = JobRecord {
+        turn: launch.request.turn.clone(),
         call_id: launch.request.call_id.clone(),
         id: job.clone(),
         machine: launch.names.me.clone(),
@@ -173,9 +203,14 @@ fn prepare(launch: &Launch<'_>, mode: OutputMode, stdin: Option<&Path>) -> Resul
         account: launch.account.cloned(),
     };
     record::write(&record_path, &record).map_err(|error| failure("could not write the job's record", &error))?;
-    if launch.on.is_some() {
+    if launch.owner.resident().is_some()
+        && launch.on.is_none_or(|on| on.sentinel.is_none())
+        && (launch.on.is_some() || launch.answer_receipts)
+    {
         // No supervisor can execute until its completion debt is durable.
-        publish_new(&resident.job_owed(&job), b"", Permissions::Private)
+        // Empty markers retain the pre-negotiation background/on behavior.
+        let debt: &[u8] = if launch.on.is_none() && launch.answer_receipts { b"answer" } else { b"" };
+        publish_new(&resident.job_owed(&job), debt, Permissions::Private)
             .map_err(|error| failure("could not keep the job's completion debt", &error))?;
     }
     Ok((job, output, stderr, record_path, resident))

@@ -7,6 +7,7 @@
 import type { Login } from "../world/accounts";
 import { layerOpened, leavePage, type Layer } from "./back";
 import { followDrawer } from "./drawer-swipe";
+import { makeGrip } from "./grip";
 import { glyph } from "../conversation/glyphs";
 import { escape } from "../conversation/prose";
 import type { Place } from "./places";
@@ -26,6 +27,9 @@ export interface Page {
   readonly title: string;
   /** Stops whatever the page keeps running: a refresh, a watch. */
   leave?(): void;
+  /** The page is about to have `by` pixels more room across, or fewer
+   *  where negative, over `--glide`: the sidebar folding or coming back. */
+  roomWillChange?(by: number): void;
 }
 
 export interface ShellOptions {
@@ -54,6 +58,22 @@ function keptFolded(): boolean {
     return localStorage.getItem("sidebar") === "folded";
   } catch {
     return false;
+  }
+}
+
+/** The width the sidebar was dragged to, kept on this device; the least
+ *  and most it may be, and the least it leaves the page. */
+const WIDTH_KEPT = "sidebar-width";
+const LEAST = 232;
+const MOST = 440;
+const ROOM = 560;
+
+function keptWidth(): number | null {
+  try {
+    const width = Number(localStorage.getItem(WIDTH_KEPT));
+    return Number.isFinite(width) && width > 0 ? width : null;
+  } catch {
+    return null;
   }
 }
 
@@ -114,10 +134,6 @@ export class Shell {
               this.closeDrawer();
               options.projects!.newTalk(town);
             },
-            overview: (town) => {
-              this.closeDrawer();
-              options.projects!.overview(town);
-            },
           }
         : undefined,
     });
@@ -128,6 +144,18 @@ export class Shell {
       });
     }
     this.element.querySelector(".sidebar-frame")!.append(this.sidebar.element);
+    this.element.append(
+      makeGrip("shell-grip", {
+        part: "left",
+        label: options.words.resizeSidebar,
+        width: () => this.sidebarWidth(),
+        least: () => LEAST,
+        most: () => Math.max(LEAST, Math.min(MOST, innerWidth - ROOM)),
+        set: (width) => this.resize(width),
+        moving: (moving) => this.element.classList.toggle("resizing", moving),
+      }),
+    );
+    this.resize(keptWidth(), false);
     this.element.querySelector(".scrim")!.addEventListener("click", () => this.closeDrawer());
     // On a phone the drawer follows the finger.
     followDrawer({
@@ -224,7 +252,32 @@ export class Shell {
     document.title = `${title} - ${this.options.words.app}`;
   }
 
+  /** The sidebar's width when it shows. */
+  private sidebarWidth(): number {
+    return parseFloat(getComputedStyle(this.element).getPropertyValue("--sidebar")) || 0;
+  }
+
+  /** Takes a width the sidebar was dragged to, or none to go back to the
+   *  first; kept on this device unless only being put back as it was. */
+  private resize(width: number | null, keep = true): void {
+    if (keep) {
+      try {
+        if (width === null) localStorage.removeItem(WIDTH_KEPT);
+        else localStorage.setItem(WIDTH_KEPT, String(width));
+      } catch {
+        // Not kept: the width holds while the window is open.
+      }
+    }
+    if (width === null) this.element.style.removeProperty("--sidebar");
+    else this.element.style.setProperty("--sidebar", `${Math.min(MOST, Math.max(LEAST, width))}px`);
+  }
+
   private fold(shut: boolean): void {
+    // The page is told first, so what it shows is carried rather than set
+    // again at every frame of the glide.
+    if (shut !== this.element.classList.contains("folded") && !narrow.matches) {
+      this.page?.roomWillChange?.(shut ? this.sidebarWidth() : -this.sidebarWidth());
+    }
     this.element.classList.toggle("folded", shut);
     try {
       localStorage.setItem("sidebar", shut ? "folded" : "open");

@@ -16,10 +16,16 @@ use jiff::Timestamp;
 use crate::Node;
 
 /// What Claude Code kept of the resident's sessions, oldest first, placed
-/// in the World's turns of `recorded` where the World saw them happen.
-pub async fn hosted(node: &Arc<Node>, resident: &ResidentId, recorded: &[SessionEvent]) -> Vec<SessionEvent> {
+/// in the World's turns of `recorded` where the World saw them happen; and
+/// whether some session or its record could not be read, so that this
+/// reading is not the history as its files hold it. A record that holds a
+/// line it cannot make out reads the same each time, and is no such failure.
+pub async fn hosted(node: &Arc<Node>, resident: &ResidentId, recorded: &[SessionEvent]) -> (Vec<SessionEvent>, bool) {
     let root = exchange::sessions(node.world.path());
     let (sessions, problems) = sessions(node, resident);
+    // A session that could not be told for a failed read may be one of its
+    // own, missing from this reading.
+    let mut unread = !problems.is_empty();
     let mut events: Vec<_> = problems.into_iter().map(|problem| note(Timestamp::now(), problem)).collect();
     for Session { id, began, process, kept } in sessions {
         match read_whole(root.join(&id), kept, process).await {
@@ -42,10 +48,13 @@ pub async fn hosted(node: &Arc<Node>, resident: &ResidentId, recorded: &[Session
                     events.push(note(began, text));
                 }
             }
-            Err(why) => events.push(note(began, format!("Claude Code's record of session {id}: {why}"))),
+            Err(why) => {
+                unread = true;
+                events.push(note(began, format!("Claude Code's record of session {id}: {why}")));
+            }
         }
     }
-    place(events, recorded)
+    (place(events, recorded), unread)
 }
 
 /// What `hosted` would read, as cheaply as it can be told: the sessions the
@@ -176,16 +185,16 @@ async fn read_whole(
         .ok_or("the World's plugin never said where Claude Code keeps it")?;
     let Some(kept) = kept else { return read_now(path, cuts).await };
     // Watched before it is read, so no change between the two goes unseen.
+    // The record is on disk whether or not its folder can be watched: one
+    // that cannot is read again every two seconds instead.
     let (changed, mut changes) = tokio::sync::mpsc::unbounded_channel();
-    let mut watcher = notify::recommended_watcher(move |event: notify::Result<notify::Event>| {
+    let mut watcher = fastctx_watch::Watcher::new(move |event: notify::Result<notify::Event>| {
         if crate::file_events::may_change(&event) {
             let _ = changed.send(());
         }
-    })
-    .map_err(|error| format!("watching {}: {error}", path.display()))?;
+    });
     let folder = path.parent().ok_or_else(|| format!("{} has no folder", path.display()))?;
-    notify::Watcher::watch(&mut watcher, folder, notify::RecursiveMode::NonRecursive)
-        .map_err(|error| format!("watching {}: {error}", folder.display()))?;
+    let watched = watcher.watch(folder, notify::RecursiveMode::NonRecursive).is_ok();
     let mut ended: std::pin::Pin<Box<dyn std::future::Future<Output = std::io::Result<()>> + Send>> = match process {
         Some(process) => Box::pin(async move { fastctx_platform::host_process::exited(&process).await }),
         None => Box::pin(std::future::pending()),
@@ -197,6 +206,7 @@ async fn read_whole(
         }
         tokio::select! {
             Some(()) = changes.recv() => {}
+            () = tokio::time::sleep(std::time::Duration::from_secs(2)), if !watched => {}
             result = &mut ended => {
                 result.map_err(|error| format!("observing Claude's process: {error}"))?;
                 let mut read = read_now(path.clone(), cuts.clone()).await?;
@@ -305,7 +315,7 @@ pub(super) fn place(mut events: Vec<SessionEvent>, recorded: &[SessionEvent]) ->
             let told = claude::is_framed(text)
                 || turn.as_deref().and_then(|turn| heard.get(turn)).is_some_and(|said| said.contains(&text.as_str()));
             if told
-                && fastctx_types::session::attachments::AttachedMessage::read(text).is_none()
+                && fastctx_types::session::attachments::Envelope::read(text).is_none()
                 && message.as_ref().is_none_or(|message| message.images.is_empty())
             {
                 continue;

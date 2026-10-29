@@ -24,6 +24,9 @@ export interface About {
   origin: Origin;
   session: string | null;
   world_started: boolean;
+  /** A Codex session the user opened on their own and brought in
+   *  (`world-layers.md`, 接进来). */
+  native_resumed?: boolean;
   model: string | null;
   /** Whom it works for: this computer's logins, or these accounts. */
   acting: Acting;
@@ -37,6 +40,8 @@ export interface About {
   home?: string;
   /** The conversation it was forked from, even after that one is deleted. */
   forked_from?: Address;
+  /** A side conversation, kept in its source's side panel rather than in the list. */
+  side?: boolean;
 }
 
 export type Activity = "busy" | "idle" | "asleep";
@@ -50,6 +55,8 @@ export interface Now {
   activity: Activity;
   since: Timestamp;
   turn: string | null;
+  /** The latest turn that ended. */
+  last_turn?: string;
   owed: Record<string, Address[]>;
   answering: Address[];
   trouble: Trouble | null;
@@ -69,8 +76,28 @@ export interface Now {
   /** The latest turn that ended compacted the context and said nothing
    *  after it: what a notification of that turn says. */
   last_compacted?: boolean;
+  /** Whether the latest turn that ended took words the user sent; absent
+   *  from a node that does not say (`world-voice.md`). */
+  last_heard_user?: boolean;
   /** What the agent asked the user and has not had answered. */
   asked?: Asked;
+  /** What the agent last told the user through `message_user`
+   *  (`world-voice.md`). */
+  told?: Told;
+}
+
+/** Something the agent told the user through `message_user`. */
+export interface Told {
+  /** A new one is something new said. */
+  id: string;
+  at: Timestamp;
+  /** An answer to the user's words, or the agent's own that can wait
+   *  until the user looks, or that they should know soon. */
+  status: "reply" | "info" | "urgent";
+  /** Its start, as the agent wrote it. */
+  text: string;
+  /** The turn it was said in. */
+  turn?: string;
 }
 
 /** Something the agent asked the user: a request its turn waits on, or a
@@ -178,6 +205,8 @@ export interface WhoFor {
 }
 
 export interface MachineFacts {
+  control_letters?: boolean;
+  run_stops?: boolean;
   node_lifetime?: {
     process: { pid: number; token: string };
     starter: { process: { pid: number; token: string }; session: Host | null } | null;
@@ -199,6 +228,21 @@ export interface MachineFacts {
   page_accounts?: boolean;
   /** It says where an attached file may be kept before any of it comes. */
   attachment_places?: boolean;
+  /** It takes the attachments a script is sent with into its scratch. */
+  attachment_runs?: boolean;
+  /** It takes a colleague's question without being woken by it. */
+  goal_questions?: boolean;
+  /** It reads such a question carried on a colleague's words. */
+  goal_question_words?: boolean;
+  /** It opens a colleague's goal before its first input. */
+  goal_colleagues?: boolean;
+  /** It says which colleague goals a conversation still waits on. */
+  goal_waits?: boolean;
+  /** It takes goal commands from runs elsewhere, and a requester's pause
+   *  and resume of its colleague. */
+  goal_commands?: boolean;
+  /** It takes a colleague's goal report and wakes a closed requester. */
+  goal_reports?: boolean;
   name: MachineName;
   os: string;
   arch: string;

@@ -9,6 +9,7 @@
 //! the same words in the same turn and the same item are shown once.
 
 use std::cell::RefCell;
+use std::sync::Arc;
 
 use fastctx_types::MachineName;
 use fastctx_types::residents::Landed;
@@ -34,6 +35,9 @@ pub struct Transcript {
     title: Option<String>,
     /// Each tool's input and output shown under its row.
     details: bool,
+    /// Its lines as last laid out, and for what width: drawn again and
+    /// again while nothing changes, they are laid out once.
+    drawn: RefCell<Option<(usize, Arc<Vec<Line<'static>>>)>>,
 }
 
 enum Item {
@@ -94,9 +98,7 @@ enum Item {
     },
     /// Words the World handed over without learning whether a turn took
     /// them.
-    Uncertain {
-        why: String,
-    },
+    Uncertain,
 }
 
 /// What the agent writes.
@@ -145,7 +147,7 @@ struct Sending {
 enum SendState {
     Going,
     Landed(Landed, MachineName),
-    Failed(String),
+    Failed,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -161,11 +163,25 @@ enum Use {
 
 impl Transcript {
     pub fn new(here: Option<MachineName>) -> Self {
-        Self { items: Vec::new(), next_local: 0, here, context: None, title: None, details: false }
+        Self {
+            items: Vec::new(),
+            next_local: 0,
+            here,
+            context: None,
+            title: None,
+            details: false,
+            drawn: RefCell::new(None),
+        }
+    }
+
+    /// Something shown changed: the lines are laid out again when next drawn.
+    fn changed(&self) {
+        self.drawn.borrow_mut().take();
     }
 
     /// Shows or hides what each tool was given and gave back.
     pub fn toggle_details(&mut self) {
+        self.changed();
         self.details = !self.details;
     }
 
@@ -191,6 +207,7 @@ impl Transcript {
     /// What came before, replacing what was shown; words being sent from
     /// here stay after it until the session says it heard them.
     pub fn history(&mut self, events: Vec<SessionEvent>) {
+        self.changed();
         let mut sending: Vec<Item> = Vec::new();
         for item in self.items.drain(..) {
             if matches!(item, Item::Heard { sending: Some(_), .. }) {
@@ -215,6 +232,7 @@ impl Transcript {
     }
 
     pub fn event(&mut self, event: SessionEvent) {
+        self.changed();
         let at = event.at;
         match event.happened {
             Happened::TurnStarted { .. } | Happened::Realtime { .. } | Happened::RealtimeGrew { .. } => {}
@@ -283,8 +301,8 @@ impl Transcript {
                 }
                 self.items.push(Item::Ended { turn, end });
             }
-            Happened::DeliveryUncertain { why, .. } => {
-                self.items.push(Item::Uncertain { why });
+            Happened::DeliveryUncertain { .. } => {
+                self.items.push(Item::Uncertain);
             }
             Happened::Health { health, .. } => self.health(health),
             Happened::Changed { change, .. } => {
@@ -439,6 +457,7 @@ impl Transcript {
     /// Words the user is sending; returns the number they are known by
     /// until the World answers.
     pub fn sending(&mut self, text: String, here: Option<MachineName>) -> u64 {
+        self.changed();
         let local = self.next_local;
         self.next_local += 1;
         let from = here.map(|machine| Speaker::User { machine });
@@ -453,14 +472,18 @@ impl Transcript {
 
     /// What became of words sent from here.
     pub fn landed(&mut self, local: u64, landed: Landed, machine: MachineName) {
+        self.changed();
         if let Some(sending) = self.sending_mut(local) {
             sending.state = SendState::Landed(landed, machine);
         }
     }
 
-    pub fn failed(&mut self, local: u64, why: String) {
+    /// Words that did not go; why is the kernel's, not the interface's to
+    /// show (`AGENTS.md`, 文案).
+    pub fn failed(&mut self, local: u64) {
+        self.changed();
         if let Some(sending) = self.sending_mut(local) {
-            sending.state = SendState::Failed(why);
+            sending.state = SendState::Failed;
         }
     }
 
@@ -472,6 +495,7 @@ impl Transcript {
     }
 
     pub fn note(&mut self, text: String, role: Role) {
+        self.changed();
         self.items.push(Item::Note { text, role });
     }
 
@@ -490,7 +514,24 @@ impl Transcript {
     /// line each, with a bar on the left whose colour says how each went. A
     /// blank line comes before each block. A turn that completed says
     /// nothing more; one that did not says how it ended.
-    pub fn lines(&self, ctx: &Ctx, width: usize) -> Vec<Line<'static>> {
+    pub fn lines(&self, ctx: &Ctx, width: usize) -> Arc<Vec<Line<'static>>> {
+        // Words still being written and tools still running breathe and
+        // count their seconds: they are laid out at every frame.
+        let moving = self.items.iter().any(|item| {
+            matches!(item, Item::Prose { writing: true, .. }) || matches!(item, Item::Tool { ended: None, .. })
+        });
+        if !moving
+            && let Some((at, lines)) = &*self.drawn.borrow()
+            && *at == width
+        {
+            return lines.clone();
+        }
+        let lines = Arc::new(self.lay_out(ctx, width));
+        *self.drawn.borrow_mut() = if moving { None } else { Some((width, lines.clone())) };
+        lines
+    }
+
+    fn lay_out(&self, ctx: &Ctx, width: usize) -> Vec<Line<'static>> {
         let look = &ctx.look;
         let mut out: Vec<Line<'static>> = Vec::new();
         let name_width = self
@@ -565,21 +606,21 @@ impl Transcript {
                     }
                 }
                 Item::Health { health, .. } => {
-                    let mut spans =
-                        vec![Span::styled(format!("▲ {}", ctx.words.health(health.kind)), look.text(Role::Caution))];
-                    let words = text::first_line(&health.text);
-                    if !words.is_empty() {
-                        spans.push(Span::styled(format!("  ·  {words}"), look.text(Role::Faint)));
-                    }
-                    out.push(paint::fit_line(&Line::from(spans), width));
+                    // Its kind in plain words: what it said is often the
+                    // kernel's, not the interface's to show (`AGENTS.md`, 文案).
+                    let line = Line::from(vec![Span::styled(
+                        format!("▲ {}", ctx.words.health(health.kind)),
+                        look.text(Role::Caution),
+                    )]);
+                    out.push(paint::fit_line(&line, width));
                 }
                 Item::Note { text, role } => {
                     blank(&mut out);
                     out.extend(text::wrap_plain(text, look.text(*role), width));
                 }
-                Item::Uncertain { why } => {
+                Item::Uncertain => {
                     blank(&mut out);
-                    out.extend(text::wrap_plain(&ctx.words.landing_unknown(why), look.text(Role::Caution), width));
+                    out.extend(text::wrap_plain(ctx.words.landing_unknown(), look.text(Role::Caution), width));
                 }
             }
             last_was_tool = is_tool;
@@ -729,16 +770,16 @@ fn sent(ctx: &Ctx, state: &SendState, width: usize) -> Vec<Line<'static>> {
     let words = &ctx.words;
     let (text, role) = match state {
         SendState::Going => (words.sending().to_string(), Role::Faint),
-        SendState::Failed(why) => (words.not_sent(&text::first_line(why)), Role::Wrong),
+        SendState::Failed => (words.not_sent().to_string(), Role::Wrong),
         SendState::Landed(landed, machine) => match landed {
             Landed::NewTurn { .. } => return Vec::new(),
             Landed::JoinedTurn { .. } => (words.joined_turn().to_string(), Role::Faint),
             Landed::Handed { .. } => (words.handed().to_string(), Role::Faint),
-            Landed::Uncertain { why } => (words.landing_unknown(why), Role::Caution),
+            Landed::Uncertain { .. } => (words.landing_unknown().to_string(), Role::Caution),
             Landed::Sent => (words.sent_to(machine.as_str()), Role::Faint),
             Landed::Waiting { why, answered } => {
                 let mut text = match why {
-                    Some(why) => words.waiting_because(why),
+                    Some(_) => words.waiting_to_deliver().to_string(),
                     None => words.waiting_for_call().to_string(),
                 };
                 if !answered {

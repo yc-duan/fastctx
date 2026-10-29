@@ -9,7 +9,8 @@ export type Control =
   | { do: "compact" }
   | { do: "model"; model: string | null; effort: string | null }
   | { do: "rename"; name: string }
-  | { do: "fork"; through: string | null }
+  /** `side`: a side conversation, kept in this one's side panel. */
+  | { do: "fork"; through: string | null; side?: boolean }
   | { do: "rewind"; from: string }
   | { do: "answer"; request: JsonValue; answer: JsonValue }
   /** Claude Code's own subagents, and the latest messages of one. */

@@ -625,8 +625,9 @@ fn hub_rows(
                 format!("{} {}  ·  home {}  ·  fastctx {}", facts.os, facts.arch, facts.home, facts.version),
                 look.text(Role::Faint),
             )),
-            // The first row already says it is offline, and since when.
-            Err(_) if node.online == Some(false) => None,
+            // The first row already says it is offline, and since when, or
+            // that how it is is not known while its hub is not reached.
+            Err(_) if node.online != Some(true) => None,
             Err(why) => Some(Span::styled(words.not_asked(&text::first_line(why)), look.text(Role::Caution))),
         };
         if let Some(second) = second {

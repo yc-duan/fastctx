@@ -19,6 +19,7 @@ const actions = (online: boolean): UpdateActions => ({
   settings: online ? allowed : { allowed: false, reason: "offline" },
   schedule: allowed,
   cancel: allowed,
+  repair: allowed,
 });
 
 export function specimenUpdateView(world: () => WorldNow | null): (hub: string, account: string, call: UpdatesViewCall) => Promise<UpdatesViewReply> {
@@ -103,7 +104,7 @@ export function specimenUpdateView(world: () => WorldNow | null): (hub: string, 
     }
     const releases = [8, 7, 6, 5].map((n) => manifest(v(n)));
     const versions = releases.map((one) => ({ version: one.version, published: one.pub_date ?? null, summary: one.notes ?? null, manifest: one, problem: null }));
-    return { hub: v(7), stable: null, beta: manifest(v(8)), releases, versions, policy: { ...policy }, machines, available: machines.filter((one) => one.offer && one.actions.schedule.allowed).length };
+    return { hub: v(7), stable: null, beta: manifest(v(8)), releases, versions, policy: { ...policy }, machines, available: machines.filter((one) => one.offer && one.actions.schedule.allowed).length, repair_supported: true };
   };
   return async (hub, _account, call) => {
     // A node knows its hubs by name, not by id: asked by anything else, the
@@ -120,6 +121,7 @@ export function specimenUpdateView(world: () => WorldNow | null): (hub: string, 
       policy.managed_auto = call.managed_auto;
       return { kind: "done" };
     }
+    if (call.do === "repair" || call.do === "cancel_repair") return { kind: "scheduled", results: call.machines.map((machine) => ({ machine, done: true, reason: null, why: null })) };
     for (const name of call.machines) {
       if (call.version) due.set(name, { version: call.version, by: "me", at: new Date().toISOString() });
       else due.delete(name);

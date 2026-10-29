@@ -9,7 +9,8 @@
 // came; any other is read from its own record when its box opens. What came
 // live is let go once it no longer works and no box shows it, as its record
 // holds it all. Only its steps and the step it takes now are kept apart, for
-// its row and the picture of them all (`agents-panel.ts`).
+// its row and the tree of who works with the conversation
+// (`side/collab-page.ts`).
 
 import type { HostAgent, HostAgentEnd, HostAgentStart, SessionEvent, Tool, TurnHow } from "../world/events";
 import type { Words } from "../words";
