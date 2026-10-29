@@ -29,6 +29,44 @@ pub fn read() -> Vec<Use> {
     imp::read()
 }
 
+/// The open files a node or a hub raises its own limit to, at most.
+#[cfg(unix)]
+const OPEN_FILES: u64 = 65_536;
+
+/// Raises this process's soft limit on open files toward its hard limit,
+/// to at most `OPEN_FILES`: a node or a hub holds a descriptor for every
+/// connection, watch and file it works with, and the soft limit a service
+/// starts with (1024 under systemd, 256 under launchd) is reached long
+/// before the machine runs short (`world-concurrency.md`: bounds follow the
+/// machine's resources). What it starts inherits it, which stays well under
+/// what a program that walks every descriptor finds slow.
+pub fn raise_open_files() -> std::io::Result<()> {
+    #[cfg(unix)]
+    {
+        // SAFETY: getrlimit writes one initialized structure.
+        let mut limit: libc::rlimit = unsafe { std::mem::zeroed() };
+        if unsafe { libc::getrlimit(libc::RLIMIT_NOFILE, &mut limit) } != 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+        let ceiling = OPEN_FILES as libc::rlim_t;
+        let wanted = if limit.rlim_max == libc::RLIM_INFINITY { ceiling } else { limit.rlim_max.min(ceiling) };
+        if limit.rlim_cur == libc::RLIM_INFINITY || limit.rlim_cur >= wanted {
+            return Ok(());
+        }
+        // macOS refuses more than OPEN_MAX (10240) whatever the hard limit.
+        for target in [wanted, wanted.min(10_240)] {
+            let raised = libc::rlimit { rlim_cur: target, rlim_max: limit.rlim_max };
+            // SAFETY: setrlimit reads one initialized structure.
+            if target > limit.rlim_cur && unsafe { libc::setrlimit(libc::RLIMIT_NOFILE, &raised) } == 0 {
+                return Ok(());
+            }
+        }
+        Err(std::io::Error::last_os_error())
+    }
+    #[cfg(not(unix))]
+    Ok(())
+}
+
 #[cfg(target_os = "linux")]
 mod imp {
     use super::{Kind, Use};

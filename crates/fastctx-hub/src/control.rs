@@ -108,29 +108,25 @@ impl Standing {
     }
 }
 
-/// The most calls one member has on their way through the hub at once.
-const MEMBER_CALLS: usize = 1024;
-/// The most one account has, across its machines.
-const ACCOUNT_CALLS: usize = 4096;
+mod in_flight;
+
+pub(crate) use in_flight::InFlight;
 
 /// Why `pending` may not go on its way now: its member, or its account,
-/// has as many calls on their way as it may. A member gone wrong fills
-/// only its own share, and the others are forwarded as before
-/// (`world-concurrency.md`, 别的机器来的调用按来者公平地分).
-fn crowded(calls: &std::collections::HashMap<u64, Pending>, pending: &Pending) -> Option<String> {
-    let (member, account) = calls.values().fold((0usize, 0usize), |(member, account), other| {
-        (
-            member + usize::from(other.caller == pending.caller),
-            account + usize::from(other.standing.account == pending.standing.account),
-        )
-    });
-    if member >= MEMBER_CALLS {
+/// has as many calls on their way as it may (`in_flight::shares`). A member
+/// gone wrong fills only its own share, and the others are forwarded as
+/// before (`world-concurrency.md`, 别的机器来的调用按来者公平地分).
+fn crowded(calls: &InFlight, pending: &Pending) -> Option<String> {
+    let (member_share, account_share) = in_flight::shares();
+    let member = calls.of_member(&pending.caller);
+    if member >= member_share {
         return Some(format!(
             "{} has {member} calls on their way through the hub already; one has to end first",
             pending.caller
         ));
     }
-    (account >= ACCOUNT_CALLS).then(|| {
+    let account = calls.of_account(&pending.standing.account);
+    (account >= account_share).then(|| {
         format!(
             "the account {} has {account} calls on their way through the hub already; one has to end first",
             pending.standing.account
@@ -851,14 +847,11 @@ fn handle(
         Up::Cancel { id } => {
             let given_up: Vec<(u64, Pending)> = {
                 let mut calls = hub.calls.lock().expect("never poisoned");
-                let keys: Vec<u64> = calls
-                    .iter()
-                    .filter(|(_, pending)| {
-                        pending.caller == *name && pending.caller_generation == generation && pending.id == id
-                    })
-                    .map(|(key, _)| *key)
-                    .collect();
-                keys.into_iter().filter_map(|key| calls.remove(&key).map(|pending| (key, pending))).collect()
+                calls
+                    .asked_by(name, generation, id)
+                    .and_then(|key| calls.remove(&key).map(|pending| (key, pending)))
+                    .into_iter()
+                    .collect()
             };
             for (key, pending) in given_up {
                 if let Some(stream) = pending.stream {

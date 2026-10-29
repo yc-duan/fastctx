@@ -5,7 +5,6 @@ use std::collections::{HashMap, VecDeque};
 
 pub(super) enum Decision {
     Run,
-    Refuse,
     Wait,
 }
 
@@ -60,15 +59,15 @@ impl PoolQueue {
         while self.all < limits.all && missed < self.order.len() {
             let Some(account) = self.order.pop_front() else { break };
             let queue = self.accounts.get_mut(&account).expect("queued account");
-            let mut chosen = None;
+            let mut chosen = false;
             if count(&self.running, &account) < limits.account {
                 for _ in 0..queue.order.len() {
                     let subject = queue.order.pop_front().expect("queued subject");
                     let pending = queue.subjects.get_mut(&subject).expect("subject");
                     let decision = admit(*pending.front().expect("pending call"));
-                    if !matches!(decision, Decision::Wait) {
+                    if matches!(decision, Decision::Run) {
                         pending.pop_front();
-                        chosen = Some(decision);
+                        chosen = true;
                         if pending.is_empty() {
                             queue.subjects.remove(&subject);
                         } else {
@@ -84,11 +83,9 @@ impl PoolQueue {
             } else {
                 self.order.push_back(account.clone());
             }
-            if let Some(decision) = chosen {
-                if matches!(decision, Decision::Run) {
-                    self.all += 1;
-                    *self.running.entry(account).or_default() += 1;
-                }
+            if chosen {
+                self.all += 1;
+                *self.running.entry(account).or_default() += 1;
                 missed = 0;
             } else {
                 missed += 1;

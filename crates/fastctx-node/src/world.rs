@@ -681,7 +681,7 @@ impl fastctx_net::link::Node for Handler {
         let hub = self.hub.clone();
         Box::pin(async move {
             let node = node.ok_or_else(|| Failure::not_run("the node is stopping"))?;
-            crate::intake::take(node.machine(), hub, request).await
+            crate::intake::take(&node, hub, request).await
         })
     }
 

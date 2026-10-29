@@ -230,7 +230,7 @@ pub(crate) struct Hub {
     given: Mutex<HashMap<MachineName, Given>>,
     /// The checks of machines' direct addresses under way (`direct`).
     trials: Mutex<direct::Trials>,
-    calls: Mutex<HashMap<u64, control::Pending>>,
+    calls: Mutex<control::InFlight>,
     data: Mutex<data::Pairing>,
     /// Taken after `store` when both are held.
     ledgers: Mutex<ledger::Ledgers>,
@@ -718,7 +718,7 @@ async fn serving(dir: &Path, kept: Option<Kept>, log: Arc<log::Log>) -> anyhow::
         sessions: Mutex::new(HashMap::new()),
         given: Mutex::new(HashMap::new()),
         trials: Mutex::new(direct::Trials::default()),
-        calls: Mutex::new(HashMap::new()),
+        calls: Mutex::new(control::InFlight::default()),
         data: Mutex::new(data::Pairing::default()),
         ledgers: Mutex::new(ledgers),
         limits: Mutex::new(login::Limits::default()),

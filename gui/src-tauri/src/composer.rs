@@ -34,9 +34,11 @@ pub enum Piece {
 }
 
 /// A request the page sent that came to nothing: `again` when no answer
-/// came, so it is sent again, as it was, once the shared input is back.
+/// came, or the machine had no place for it yet and did not start it, so
+/// it is sent again, as it was, once the shared input is back or a while
+/// later.
 fn not_done(error: fastctx_client::Error) -> crate::NotSaid {
-    crate::NotSaid { again: World::unanswered(&error), message: error.to_string() }
+    crate::NotSaid { again: World::unanswered(&error) || World::busy(&error), message: error.to_string() }
 }
 
 fn refused(message: String) -> crate::NotSaid {

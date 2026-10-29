@@ -2079,14 +2079,21 @@ function liveTalk(address: Address, inPanel = false): KeepablePage {
   // The sentinels it left, as rows beside its jobs; the goal's own sentinel
   // goes with the goal and is not withdrawn by hand.
   const sentinelRows = signal<PanelJob[]>([]);
+  // One question at a time: a reading still on its way is the one that
+  // answers.
+  let sentinelReading: Promise<void> | null = null;
   const readSentinels = (): Promise<void> =>
-    sentinelList(address).then(
-      (listed) => {
-        if (!left) sentinelRows.set(listed.filter((one) => one.definition.kind !== "goal").map((one) => sentinelRow(remembered(one))));
-      },
-      // A home that cannot be asked now keeps the rows last seen.
-      () => {},
-    );
+    (sentinelReading ??= sentinelList(address)
+      .then(
+        (listed) => {
+          if (!left) sentinelRows.set(listed.filter((one) => one.definition.kind !== "goal").map((one) => sentinelRow(remembered(one))));
+        },
+        // A home that cannot be asked now keeps the rows last seen.
+        () => {},
+      )
+      .finally(() => {
+        sentinelReading = null;
+      }));
   // What it started that still runs, as the World last answered, and the
   // sentinels it left.
   const running = effect(() => {

@@ -92,6 +92,9 @@ export class ActivityPage implements Page {
   private spanRead: Span | null = null;
   /** Another reading was wanted while one was under way. */
   private again = false;
+  /** The year is read one reading at a time: a slow machine is not asked
+   *  over again while it answers. */
+  private yearReading = false;
   private nextRead = 0;
   private left = false;
   private bringing = new Set<string>();
@@ -193,8 +196,12 @@ export class ActivityPage implements Page {
   }
 
   private async readYear(): Promise<void> {
+    if (this.yearReading) return;
+    this.yearReading = true;
     const now = this.now();
-    const { answers } = await this.askAll({ ask: "hours", from: iso(now - 366 * DAY_MS), to: iso(now + 60_000) });
+    const { answers } = await this.askAll({ ask: "hours", from: iso(now - 366 * DAY_MS), to: iso(now + 60_000) }).finally(() => {
+      this.yearReading = false;
+    });
     const hours: Counted[] = [];
     for (const answer of answers) if (answer.kind === "hours") for (const hour of answer.hours) hours.push({ ...hour, machine: answer.machine });
     this.yearHours = hours;

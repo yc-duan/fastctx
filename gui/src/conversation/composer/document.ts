@@ -1,6 +1,7 @@
 import type { Character, CharacterId, ComposerDraft, ComposerEdit, ComposerSnapshot, ComposerTarget, ComposerUpdated } from "../../world/composer";
 import { context, inserted, key, overlay, position, text, wellFormed } from "./characters";
 import type { Context } from "./characters";
+import { after, unanswered } from "../../world/again";
 
 interface Pending {
   readonly mutation: ComposerEdit;
@@ -72,6 +73,10 @@ export class ComposerDocument {
   private closing = false;
   private flight: Pending | undefined;
   private error: unknown = null;
+  /** An edit no answer came to, or a busy machine did not start, goes again
+   *  after this wait: how many times it went, and how to call the wait off. */
+  private tries = 0;
+  private waiting: (() => void) | undefined;
   private rejectedEpoch = false;
   private rejectedTarget = false;
   private disposed = false;
@@ -240,6 +245,8 @@ export class ComposerDocument {
     this.disposed = true;
     this.generation += 1;
     this.flight = undefined;
+    this.waiting?.();
+    this.waiting = undefined;
     this.emit();
     this.listeners.clear();
   }
@@ -360,7 +367,7 @@ export class ComposerDocument {
 
   private pump(): void {
     const entry = this.pending[0];
-    if (this.disposed || !this.connected || this.composing || this.flight || this.error !== null || !entry) return;
+    if (this.disposed || !this.connected || this.composing || this.flight || this.waiting || this.error !== null || !entry) return;
     // Receipts precede target validation on the authority. An exact retry can
     // resolve a lost reply even after its queued item disappeared or began sending.
     if ((!this.available || this.sending) && !entry.attempted) return;
@@ -391,6 +398,7 @@ export class ComposerDocument {
       }
       this.pending.shift();
       this.error = null;
+      this.tries = 0;
       this.rejectedEpoch = false;
       this.rejectedTarget = false;
       this.receive(updated.composer);
@@ -398,6 +406,16 @@ export class ComposerDocument {
     }, (error: unknown) => {
       if (generation !== this.generation) return;
       this.flight = undefined;
+      // No answer came, or the machine had no place for it yet: the same
+      // edit goes again a while later, and the node takes it once.
+      if (unanswered(error)) {
+        this.tries += 1;
+        this.waiting = after(this.tries + 1, () => {
+          this.waiting = undefined;
+          this.pump();
+        });
+        return;
+      }
       this.error = error;
       const message = error instanceof Error ? error.message : error;
       this.rejectedEpoch = message === staleEpoch;

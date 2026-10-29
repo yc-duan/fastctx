@@ -38,7 +38,14 @@ impl Pool {
         if let Some(shared) = slot.upgrade()
             && !shared.closed()
         {
-            return shared.subscribe(request).map(watching).map_err(Error::Call);
+            // One holding as many viewers as it may leaves the next one a
+            // connection of its own, as a node without shared watches does.
+            if !shared.full() {
+                return shared.subscribe(request).map(watching).map_err(Error::Call);
+            }
+            drop(slot);
+            let client = world.connect().await?;
+            return Ok(client.watch(request.call()).await?);
         }
         let mut client = world.connect().await?;
         if !client.watch_many {
@@ -94,6 +101,10 @@ struct Shared {
 impl Shared {
     fn closed(&self) -> bool {
         self.state.lock().expect("local watch state").closed
+    }
+
+    fn full(&self) -> bool {
+        self.state.lock().expect("local watch state").slots.len() >= watch_ipc::SUBSCRIPTIONS
     }
 
     fn subscribe(self: &Arc<Self>, request: Subscription) -> Result<Watching, CallError> {

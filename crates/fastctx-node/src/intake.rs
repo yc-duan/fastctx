@@ -1,7 +1,16 @@
-//! Bounded admission with equal-cost, two-level deficit round robin.
-//! Execution limits and settlement counts are independent for each kind.
+//! Admission of the calls this machine answers (`world-concurrency.md`, 别的
+//! 机器来的调用按来者公平地分): equal-cost, two-level deficit round robin
+//! within each kind, by account and then by conversation, execution limits
+//! and settlement counts independent for each kind.
+//!
+//! A call waits its turn for as long as half its own time allows, the other
+//! half left to do it. Nothing is refused for how many others wait: only an
+//! account holding more of the machine's memory in calls than its share,
+//! or the machine holding as much as it may, which no client working as it
+//! should brings about, and then only that account's calls.
 
 mod diagnostics;
+mod occupancy;
 mod queue;
 
 use std::collections::HashMap;
@@ -10,15 +19,16 @@ use std::time::Duration;
 
 use fastctx_net::ids::HubId;
 use fastctx_net::link::admission::{Admitted, Permit, Request};
+use fastctx_types::AccountName;
 use fastctx_types::contract::Pool;
 use fastctx_types::ipc::{CapacityReason, Failure};
-use fastctx_types::{AccountName, MachineName};
 use tokio::sync::oneshot;
 
 pub(crate) use diagnostics::{dump, snapshot, stuck};
 
+use crate::Node;
+
 type Account = (HubId, AccountName);
-type Machine = (Account, MachineName);
 type Subject = (Account, String);
 type Settlement = (Pool, Subject);
 
@@ -27,7 +37,6 @@ struct Bounds {
     all: usize,
     account: usize,
     conversation: usize,
-    waiting: Duration,
 }
 
 fn bounds(pool: Pool) -> Bounds {
@@ -36,18 +45,44 @@ fn bounds(pool: Pool) -> Bounds {
         let memory = fastctx_platform::memory::physical().unwrap_or(256 << 20) / (256 << 20);
         cpu.min(memory as usize).clamp(1, 64)
     });
-    let (all, conversation, seconds) = match pool {
-        Pool::Draft => ((*UNITS * 16).max(32), 8, 2),
-        Pool::Input => ((*UNITS * 16).max(32), 8, 2),
-        Pool::Stop => ((*UNITS * 8).max(32), 8, 2),
-        Pool::Short => ((*UNITS * 32).max(64), 8, 5),
-        Pool::Change => ((*UNITS * 16).max(32), 3, 10),
-        Pool::Long => ((*UNITS * 16).max(64), 16, 10),
-        Pool::Stream => ((*UNITS * 128).max(512), 32, 10),
-        Pool::Control => ((*UNITS * 8).max(16), 4, 2),
-        Pool::Receiving => ((*UNITS * 4).max(8), 2, 5),
+    // A stream mostly waits: what it holds is its buffers, bounded on their
+    // own (`fastctx_net::watch_queue`). Dozens of people may watch one
+    // conversation.
+    static STREAMS: LazyLock<usize> = LazyLock::new(|| {
+        (fastctx_platform::memory::physical().unwrap_or(1 << 30) / (256 << 10)).clamp(512, 65_536) as usize
+    });
+    let (all, conversation) = match pool {
+        Pool::Draft => ((*UNITS * 16).max(32), 8),
+        Pool::Input => ((*UNITS * 16).max(32), 8),
+        Pool::Stop => ((*UNITS * 8).max(32), 8),
+        Pool::Short => ((*UNITS * 32).max(64), 8),
+        Pool::Change => ((*UNITS * 16).max(32), 3),
+        Pool::Long => ((*UNITS * 16).max(64), 16),
+        Pool::Stream => (*STREAMS, *STREAMS),
+        Pool::Control => ((*UNITS * 8).max(16), 4),
+        Pool::Receiving => ((*UNITS * 4).max(8), 2),
     };
-    Bounds { all, account: (all / 4).max(conversation), conversation, waiting: Duration::from_secs(seconds) }
+    Bounds { all, account: (all / 4).max(conversation), conversation }
+}
+
+/// How long a call waits its turn: half its own time, the other half left
+/// to do it, and at least two seconds; a stream, which goes on for as long
+/// as it does, for as long as it has to say it is open.
+fn patience(request: &Request) -> Duration {
+    request.within.map_or(fastctx_types::contract::OPENED_WITHIN, |within| within / 2).max(Duration::from_secs(2))
+}
+
+/// What a waiting or running call is reckoned to hold besides its bytes.
+const HELD: usize = 2 << 10;
+
+/// The memory the calls of one account may hold here, and the calls of
+/// everyone: a small share of the machine's, and a larger one.
+fn budgets() -> (usize, usize) {
+    static BUDGETS: LazyLock<(usize, usize)> = LazyLock::new(|| {
+        let physical = fastctx_platform::memory::physical().unwrap_or(1 << 30);
+        ((physical / 64).clamp(8 << 20, 256 << 20) as usize, (physical / 16).clamp(64 << 20, 2 << 30) as usize)
+    });
+    *BUDGETS
 }
 
 #[derive(Default)]
@@ -55,21 +90,18 @@ struct State {
     next: u64,
     calls: HashMap<u64, Entry>,
     pools: HashMap<Pool, queue::PoolQueue>,
-    accounts: HashMap<(Pool, Account), usize>,
-    totals: HashMap<Pool, usize>,
-    bytes: HashMap<Pool, usize>,
-    machines: HashMap<(Pool, Machine), usize>,
-    subjects: HashMap<(Pool, Subject), usize>,
+    /// What each account's calls hold, of every kind, and everyone's.
+    held: HashMap<Account, usize>,
+    all_held: usize,
     running_subjects: HashMap<(Pool, Subject), usize>,
     settling: HashMap<Settlement, usize>,
 }
 
 struct Entry {
-    me: MachineName,
     request: Request,
     account: Account,
-    machine: Machine,
     subject: Subject,
+    cost: usize,
     phase: Phase,
     wake: Option<oneshot::Sender<Result<(), Failure>>>,
     task: Option<tokio::task::Id>,
@@ -100,65 +132,65 @@ fn decrease<K: Eq + std::hash::Hash>(map: &mut HashMap<K, usize>, key: K) {
     }
 }
 
-fn settling_failure(me: &MachineName, request: &Request, n: usize) -> Failure {
+fn settling_failure(me: &fastctx_types::MachineName, request: &Request, n: usize) -> Failure {
     let conversation = request.conversation.clone().unwrap_or_else(|| format!("calls from {}", request.machine));
     Failure::not_run(format!("{me} is still finishing {n} earlier changes to {conversation}; this one was not started"))
         .capacity(CapacityReason::Settling { unfinished: n })
 }
 
-/// Cancellation drops the same guard whether the call is queued or has just
-/// been admitted. Only work already settling can refuse another change.
-pub(crate) async fn take(me: MachineName, hub: HubId, request: Request) -> Result<Admitted, Failure> {
-    let limits = bounds(request.pool);
-    let deadline = request.received + limits.waiting;
+/// Admits `request` once its turn comes. Cancellation drops the same guard
+/// whether the call is queued or has just been admitted.
+pub(crate) async fn take(node: &Node, hub: HubId, request: Request) -> Result<Admitted, Failure> {
+    admit(node.machine(), hub, request, |told| node.log.line(told)).await
+}
+
+/// `take` for the machine `me`, telling `tell` who holds the places when
+/// the call cannot have one.
+async fn admit(
+    me: fastctx_types::MachineName,
+    hub: HubId,
+    request: Request,
+    tell: impl Fn(String),
+) -> Result<Admitted, Failure> {
+    let deadline = request.received + patience(&request);
     let account = (hub, request.account.clone());
-    let machine = (account.clone(), request.machine.clone());
     let subject =
         (account.clone(), request.conversation.clone().unwrap_or_else(|| format!("machine:{}", request.machine)));
     let (send, receive) = oneshot::channel();
     let id = {
         let mut state = state();
         let pool = request.pool;
-        let settling = count(&state.settling, &(pool, subject.clone()));
-        if request.finish && pool != Pool::Stop && settling >= limits.conversation {
-            return Err(settling_failure(&me, &request, settling));
+        let cost = request.bytes.saturating_add(HELD);
+        let (account_budget, budget) = budgets();
+        let mine = count(&state.held, &account).saturating_add(cost) > account_budget;
+        if mine || state.all_held.saturating_add(cost) > budget {
+            let failure = if mine {
+                let calls = state.calls.values().filter(|entry| entry.account == account).count();
+                Failure::not_run(format!(
+                    "{me} holds {calls} calls from {} already, as many as one account may; this one was not started",
+                    request.account
+                ))
+            } else {
+                Failure::not_run(format!(
+                    "{me} holds {} calls already, as many as it can; this one was not started",
+                    state.calls.len()
+                ))
+            };
+            let told = occupancy::describe(&state, pool, &request, &failure.message);
+            drop(state);
+            if let Some(told) = told {
+                tell(told);
+            }
+            return Err(failure.capacity(CapacityReason::Pending));
         }
-        static BYTE_LIMIT: LazyLock<usize> = LazyLock::new(|| {
-            (fastctx_platform::memory::physical().unwrap_or(256 << 20) / 32).clamp(4 << 20, 64 << 20) as usize
-        });
-        let full = count(&state.bytes, &pool).saturating_add(request.bytes) > *BYTE_LIMIT
-            || count(&state.totals, &pool) >= (limits.all * 8).clamp(2048, 16384)
-            || count(&state.accounts, &(pool, account.clone())) >= 256
-            || count(&state.machines, &(pool, machine.clone())) >= 128
-            || count(&state.subjects, &(pool, subject.clone())) >= 64;
-        if full {
-            return Err(Failure::not_run(format!(
-                "{me} has too many calls waiting from {} on {}; this one was not started",
-                request.account, request.machine
-            ))
-            .capacity(CapacityReason::Pending));
-        }
-        *state.bytes.entry(pool).or_default() += request.bytes;
-        *state.totals.entry(pool).or_default() += 1;
+        *state.held.entry(account.clone()).or_default() += cost;
+        state.all_held += cost;
         state.next += 1;
         let id = state.next;
-        *state.accounts.entry((pool, account.clone())).or_default() += 1;
-        *state.machines.entry((pool, machine.clone())).or_default() += 1;
-        *state.subjects.entry((pool, subject.clone())).or_default() += 1;
         state.pools.entry(pool).or_default().push(account.clone(), subject.clone(), id);
-        state.calls.insert(
-            id,
-            Entry {
-                me: me.clone(),
-                request,
-                account,
-                machine,
-                subject,
-                phase: Phase::Queued,
-                wake: Some(send),
-                task: None,
-            },
-        );
+        state
+            .calls
+            .insert(id, Entry { request, account, subject, cost, phase: Phase::Queued, wake: Some(send), task: None });
         state.pump(pool);
         id
     };
@@ -169,12 +201,24 @@ pub(crate) async fn take(me: MachineName, hub: HubId, request: Request) -> Resul
         Err(_) => {
             let state = state();
             let entry = &state.calls[&id];
-            return Err(Failure::not_run(format!(
-                "{me} was too busy to start {} within {} s; it was not started",
-                entry.request.kind,
-                limits.waiting.as_secs()
-            ))
-            .capacity(CapacityReason::Waiting { seconds: limits.waiting.as_secs() }));
+            let pool = entry.request.pool;
+            let settling = count(&state.settling, &(pool, entry.subject.clone()));
+            let failure = if entry.request.finish && pool != Pool::Stop && settling >= bounds(pool).conversation {
+                settling_failure(&me, &entry.request, settling)
+            } else {
+                let waited = patience(&entry.request).as_secs();
+                Failure::not_run(format!(
+                    "{me} was too busy to start {} within {waited} s; it was not started",
+                    entry.request.kind
+                ))
+                .capacity(CapacityReason::Waiting { seconds: waited })
+            };
+            let told = occupancy::describe(&state, pool, &entry.request, &failure.message);
+            drop(state);
+            if let Some(told) = told {
+                tell(told);
+            }
+            return Err(failure);
         }
     }
     Ok(permit)
@@ -221,13 +265,13 @@ impl Drop for Place {
         if entry.phase == Phase::Settling && entry.request.finish {
             decrease(&mut state.settling, (pool, entry.subject.clone()));
         }
-        if let Some(bytes) = state.bytes.get_mut(&pool) {
-            *bytes -= entry.request.bytes;
+        if let Some(held) = state.held.get_mut(&entry.account) {
+            *held -= entry.cost;
+            if *held == 0 {
+                state.held.remove(&entry.account);
+            }
         }
-        decrease(&mut state.totals, pool);
-        decrease(&mut state.accounts, (pool, entry.account));
-        decrease(&mut state.machines, (pool, entry.machine));
-        decrease(&mut state.subjects, (pool, entry.subject));
+        state.all_held -= entry.cost;
         state.pump(pool);
     }
 }
@@ -242,14 +286,11 @@ impl State {
         queue.pump(limits, |id| {
             let entry = calls.get_mut(&id).expect("queued call");
             let subject = (pool, entry.subject.clone());
-            let n = count(settling, &subject);
-            if entry.request.finish && pool != Pool::Stop && n >= limits.conversation {
-                if let Some(wake) = entry.wake.take() {
-                    let _ = wake.send(Err(settling_failure(&entry.me, &entry.request, n)));
-                }
-                return queue::Decision::Refuse;
-            }
-            if count(running, &subject) >= limits.conversation {
+            // A change waits while its conversation finishes as many earlier
+            // ones as it may, or runs as many of its kind.
+            if entry.request.finish && pool != Pool::Stop && count(settling, &subject) >= limits.conversation
+                || count(running, &subject) >= limits.conversation
+            {
                 return queue::Decision::Wait;
             }
             *running.entry(subject).or_default() += 1;

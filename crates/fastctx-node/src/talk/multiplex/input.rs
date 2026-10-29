@@ -33,7 +33,7 @@ pub(super) async fn run(
         let admission = fastctx_net::link::admission::Request::call(caller.machine.clone(), caller.account.clone(), incoming.received, &call, &node.machine());
         let deadline = incoming.received + call.contract().within.expect("document changes have a deadline");
         let permit = tokio::select! {
-            permit = crate::intake::take(node.machine(), link.hub().clone(), admission) => permit?,
+            permit = crate::intake::take(&node, link.hub().clone(), admission) => permit?,
             _ = closed.changed() => return Err(Failure::not_run("the document subscription closed before this update began")),
         };
         crate::admission::admit(&node, &link, &caller, &call)?;

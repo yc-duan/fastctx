@@ -685,6 +685,11 @@ fn node(
     // A node SYSTEM runs lives in the home Fastctx gives SYSTEM, and so does
     // everything it starts.
     fastctx_platform::system_home::prepare()?;
+    // As many files as the system lets it hold: a lower limit only leaves
+    // the node short sooner, and it goes on with whatever it has.
+    if let Err(error) = fastctx_platform::limits::raise_open_files() {
+        eprintln!("fastctx node: the limit on open files stays as it was: {error}");
+    }
     let root = match dir {
         Some(root) => root,
         None => fastctx_platform::fastctx_root()?,

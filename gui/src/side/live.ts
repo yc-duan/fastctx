@@ -232,16 +232,25 @@ export function liveSide(options: LiveSide): SideSeams {
             })
             .catch((error) => console.error("the plan could not be read", error));
         };
-        // A sentinel the plan names says how it stands as its home last answered.
-        const ask = () =>
-          sentinelList(options.address).then(
-            (listed) => {
-              const changed = JSON.stringify(listed.map((one) => [one.definition.id, one.phase])) !== JSON.stringify(sentinels.map((one) => [one.definition.id, one.phase]));
-              sentinels = listed;
-              if (alive && changed && shown && /\bs-[0-9a-z]{6,16}\b/.test(shown.source ?? "")) show(shown);
-            },
-            () => {},
-          );
+        // A sentinel the plan names says how it stands as its home last
+        // answered, asked one question at a time.
+        let reading = false;
+        const ask = () => {
+          if (reading) return;
+          reading = true;
+          void sentinelList(options.address)
+            .then(
+              (listed) => {
+                const changed = JSON.stringify(listed.map((one) => [one.definition.id, one.phase])) !== JSON.stringify(sentinels.map((one) => [one.definition.id, one.phase]));
+                sentinels = listed;
+                if (alive && changed && shown && /\bs-[0-9a-z]{6,16}\b/.test(shown.source ?? "")) show(shown);
+              },
+              () => {},
+            )
+            .finally(() => {
+              reading = false;
+            });
+        };
         void ask();
         const asking = window.setInterval(() => void ask(), 30_000);
         refresh();

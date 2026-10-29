@@ -38,18 +38,26 @@ pub(crate) fn ask(hub: &Arc<Hub>, name: &MachineName, out: &Outq, id: u64, town:
         let _ = out.send(Out::Frame(Down::Told { id, answer }));
         return;
     }
-    let place = match READERS.clone().try_acquire_owned() {
-        Ok(place) => place,
-        Err(_) => {
-            let answer = Err("the hub is busy reading ledgers; try again".to_string());
-            let _ = out.send(Out::Frame(Down::Told { id, answer }));
-            return;
-        }
-    };
     let deadline = tokio::time::Instant::now() + READ_WITHIN;
     let page = hub.ledgers.lock().expect("never poisoned").page(town.clone(), after);
     let (hub, name, out) = (hub.clone(), name.clone(), out.clone());
     tokio::spawn(async move {
+        // A read waits its turn among the others, within its own time.
+        let place = tokio::select! {
+            biased;
+            () = out.closed() => return,
+            place = tokio::time::timeout_at(deadline, READERS.clone().acquire_owned()) => match place {
+                Ok(Ok(place)) => place,
+                _ => {
+                    let answer = Err(format!(
+                        "the hub was too busy reading ledgers to read {town}'s within {} seconds",
+                        READ_WITHIN.as_secs()
+                    ));
+                    let _ = out.send(Out::Frame(Down::Told { id, answer }));
+                    return;
+                }
+            },
+        };
         // Dropping the receiver stops a running read between files. Aborting
         // its task also stops a read still waiting for a blocking thread.
         let (wanted, reader) = oneshot::channel::<()>();

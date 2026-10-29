@@ -341,6 +341,12 @@ impl Failure {
         self.code == Some(FailureCode::Unanswered)
     }
 
+    /// Whether the machine had no place for it yet and did not start it:
+    /// asking again a while later, as it was asked, is how it goes on.
+    pub fn is_busy(&self) -> bool {
+        self.not_run && self.capacity.is_some()
+    }
+
     pub fn deleted(message: impl Into<String>) -> Self {
         Self { capacity: None, denial: None, message: message.into(), not_run: true, code: Some(FailureCode::Deleted) }
     }

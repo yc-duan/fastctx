@@ -100,12 +100,7 @@ pub(crate) fn ask(hub: &Arc<Hub>, from: &MachineName, out: &Outq, id: u64, quest
         };
         Ok::<_, String>((plan, store.hub.id.clone()))
     };
-    let prepared = prepare().and_then(|(plan, hub_id)| {
-        let permit =
-            READERS.clone().try_acquire_owned().map_err(|_| fastctx_types::memory::words::BUSY_READING.to_string())?;
-        Ok((plan, hub_id, permit))
-    });
-    let (plan, hub_id, permit) = match prepared {
+    let (plan, hub_id) = match prepare() {
         Ok(prepared) => prepared,
         Err(why) => {
             let _ = out.send(Out::Frame(Down::Told { id, answer: Err(why) }));
@@ -114,12 +109,26 @@ pub(crate) fn ask(hub: &Arc<Hub>, from: &MachineName, out: &Outq, id: u64, quest
     };
     let (hub, from, out) = (hub.clone(), from.clone(), out.clone());
     tokio::spawn(async move {
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(55);
+        // A read waits its turn among the others, within its own time.
+        let permit = tokio::select! {
+            biased;
+            () = out.closed() => return,
+            permit = tokio::time::timeout_at(deadline, READERS.clone().acquire_owned()) => match permit {
+                Ok(Ok(permit)) => permit,
+                _ => {
+                    let answer = Err(fastctx_types::memory::words::BUSY_READING.to_string());
+                    let _ = out.send(Out::Frame(Down::Told { id, answer }));
+                    return;
+                }
+            },
+        };
         let project = town.clone();
         let reading = tokio::task::spawn_blocking(move || {
             let _permit = permit;
             plan.read(&hub_id, &project)
         });
-        let answer = match tokio::time::timeout(Duration::from_secs(55), reading).await {
+        let answer = match tokio::time::timeout_at(deadline, reading).await {
             Ok(Ok(answer)) => answer,
             Ok(Err(error)) => Err(format!("reading project memory: {error}")),
             Err(_) => Err(fastctx_types::memory::words::READ_DEADLINE.into()),

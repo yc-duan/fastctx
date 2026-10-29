@@ -41,8 +41,10 @@ use crate::{Hub, Socket, refuse, send};
 /// How long a registration or an end waits for pairing.
 const PAIRING: Duration = Duration::from_secs(60);
 
-/// How many ends of one member may wait for the other at once.
-const WAITING_FOR_ONE: usize = 256;
+/// How many ends of one member may wait for the other at once: a screen
+/// reading hundreds of files through the hub opens as many, and an end
+/// pairs in moments; the totals below are what bound the hub's connections.
+const WAITING_FOR_ONE: usize = 1024;
 /// How many ends may wait at once in all.
 const WAITING: usize = 8192;
 /// How many pairs the hub relays at once.

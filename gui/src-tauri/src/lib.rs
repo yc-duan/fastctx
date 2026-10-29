@@ -453,7 +453,12 @@ async fn talk(
             id,
         )
         .await
-        .map_err(|error| NotSaid { message: error.to_string(), again: World::unanswered(&error) })?;
+        // Words a busy machine did not take go in once it has room, as words
+        // no answer came to do.
+        .map_err(|error| NotSaid {
+            message: error.to_string(),
+            again: World::unanswered(&error) || World::busy(&error),
+        })?;
     Ok(Spoken { to: said.to, landed: said.landed, delivery: said.delivery })
 }
 

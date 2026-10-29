@@ -270,7 +270,7 @@ async fn run(
         consumed,
     )
     .await?;
-    let permit = crate::intake::take(node.machine(), link.hub().clone(), admission).await?;
+    let permit = crate::intake::take(node, link.hub().clone(), admission).await?;
     permit.started();
     if let Some(subscription) = request.documents.take() {
         if request.goal {

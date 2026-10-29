@@ -163,6 +163,12 @@ impl World {
         }
     }
 
+    /// Whether the machine that was to do it had no place for it yet, and
+    /// did not start it: asked again a while later, it goes in.
+    pub fn busy(error: &Error) -> bool {
+        matches!(error, Error::Call(CallError::Failed(failure)) if failure.is_busy())
+    }
+
     /// Everything that broke is tried again now, not after its wait: this
     /// device's network changed, it woke, or an interface came to the
     /// front. A device dials its hubs again too.

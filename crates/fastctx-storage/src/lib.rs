@@ -45,6 +45,9 @@ const QUEUED: usize = 1024;
 const BYTES: u32 = 64 << 20;
 const ADMISSION: Duration = Duration::from_secs(5);
 const ANSWER: Duration = Duration::from_secs(30);
+/// How long a read or a write waits for its place in a full queue before it
+/// is given up: a busy database is waited for, not refused.
+const QUEUE_WAIT: Duration = Duration::from_secs(30);
 
 #[derive(Clone)]
 pub struct Database(Arc<Inner>);
@@ -109,11 +112,13 @@ impl Database {
         &self,
         read: impl FnOnce(&rusqlite::Connection) -> Result<T> + Send + 'static,
     ) -> Result<T> {
-        let queued =
-            self.0.reads.clone().try_acquire_owned().map_err(|_| Error::new("the database read queue is full"))?;
-        let permit = tokio::time::timeout(ADMISSION, self.0.reading.clone().acquire_owned())
+        let queued = tokio::time::timeout(QUEUE_WAIT, self.0.reads.clone().acquire_owned())
             .await
-            .map_err(|_| Error::new("the database readers stayed busy for 5 s"))?
+            .map_err(|_| Error::new("the database read queue stayed full for 30 s"))?
+            .map_err(|_| Error::new("the database reader stopped"))?;
+        let permit = tokio::time::timeout(QUEUE_WAIT, self.0.reading.clone().acquire_owned())
+            .await
+            .map_err(|_| Error::new("the database readers stayed busy for 30 s"))?
             .map_err(|_| Error::new("the database reader stopped"))?;
         let database = self.clone();
         let work = tokio::task::spawn_blocking(move || {
@@ -172,17 +177,18 @@ impl Database {
             .ok()
             .filter(|n| *n <= BYTES)
             .ok_or_else(|| Error::new("the database operation exceeds its input budget"))?;
-        let permit = self
-            .0
-            .bytes
-            .clone()
-            .try_acquire_many_owned(amount)
-            .map_err(|_| Error::new("the database input budget is full"))?;
+        let permit = tokio::time::timeout(QUEUE_WAIT, self.0.bytes.clone().acquire_many_owned(amount))
+            .await
+            .map_err(|_| Error::new("the database input budget stayed full for 30 s"))?
+            .map_err(|_| Error::new("the database writer stopped"))?;
         let (send, receive) = oneshot::channel();
         let job = writer::job(permit, write, committed, move |result| {
             let _ = send.send(result);
         });
-        self.0.writes.try_send(job).map_err(|_| Error::new("the database write queue is unavailable"))?;
+        tokio::time::timeout(QUEUE_WAIT, self.0.writes.send(job))
+            .await
+            .map_err(|_| Error::new("the database write queue stayed full for 30 s"))?
+            .map_err(|_| Error::new("the database write queue is unavailable"))?;
         tokio::time::timeout(ANSWER, receive)
             .await
             .map_err(|_| Error::new("the database write did not answer within 30 s; whether it committed is unknown"))?
@@ -200,12 +206,19 @@ impl Database {
             .ok()
             .filter(|n| *n <= BYTES)
             .ok_or_else(|| Error::new("the database operation exceeds its input budget"))?;
-        let permit = self
-            .0
-            .bytes
-            .clone()
-            .try_acquire_many_owned(amount)
-            .map_err(|_| Error::new("the database input budget is full"))?;
+        // Synchronous callers wait for a place the way `read_now` waits for
+        // a reader.
+        let deadline = std::time::Instant::now() + QUEUE_WAIT;
+        let permit = loop {
+            match self.0.bytes.clone().try_acquire_many_owned(amount) {
+                Ok(permit) => break permit,
+                Err(tokio::sync::TryAcquireError::Closed) => return Err(Error::new("the database writer stopped")),
+                Err(tokio::sync::TryAcquireError::NoPermits) if std::time::Instant::now() >= deadline => {
+                    return Err(Error::new("the database input budget stayed full for 30 s"));
+                }
+                Err(tokio::sync::TryAcquireError::NoPermits) => std::thread::sleep(Duration::from_millis(1)),
+            }
+        };
         let (send, receive) = std::sync::mpsc::channel();
         let job = writer::job(
             permit,
@@ -215,7 +228,22 @@ impl Database {
                 let _ = send.send(result);
             },
         );
-        self.0.writes.try_send(job).map_err(|_| Error::new("the database write queue is unavailable"))?;
+        let mut job = job;
+        loop {
+            match self.0.writes.try_send(job) {
+                Ok(()) => break,
+                Err(mpsc::error::TrySendError::Closed(_)) => {
+                    return Err(Error::new("the database write queue is unavailable"));
+                }
+                Err(mpsc::error::TrySendError::Full(_)) if std::time::Instant::now() >= deadline => {
+                    return Err(Error::new("the database write queue stayed full for 30 s"));
+                }
+                Err(mpsc::error::TrySendError::Full(back)) => {
+                    job = back;
+                    std::thread::sleep(Duration::from_millis(1));
+                }
+            }
+        }
         receive
             .recv_timeout(ANSWER)
             .map_err(|_| Error::new("the database write did not answer within 30 s; whether it committed is unknown"))?

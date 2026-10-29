@@ -839,6 +839,11 @@ pub fn hub(command: HubCommand) -> anyhow::Result<()> {
         }
         HubCommand::Serve { dir: chosen } => {
             let dir = dir(chosen);
+            // A hub holds a connection for every machine and transfer: as
+            // many as the system lets it, and it goes on with whatever it has.
+            if let Err(error) = fastctx_platform::limits::raise_open_files() {
+                eprintln!("fastctx hub: the limit on open files stays as it was: {error}");
+            }
             let leave = fastctx_hub::Leave { remove_service: Box::new(remove_hub_service) };
             tokio::runtime::Builder::new_multi_thread()
                 .enable_all()

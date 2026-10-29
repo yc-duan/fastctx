@@ -102,7 +102,7 @@ pub(crate) async fn open(
         let (reply, lease) = fastctx_net::lines::open(link, machine.name, account, path, decoding).await?;
         return Ok((reply, Lease::Remote(lease)));
     }
-    let initializing = crate::initializing::take()?;
+    let initializing = crate::initializing::take().await?;
     let (decoding, expected, policy, annotation) = match decoding {
         Decoding::Immutable { content, policy, annotation, decoding } => {
             if matches!(*decoding, Decoding::Immutable { .. }) {

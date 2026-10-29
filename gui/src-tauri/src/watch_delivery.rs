@@ -20,7 +20,9 @@ pub(crate) struct Deliveries(Mutex<HashMap<u64, Arc<Mailbox>>>);
 impl Deliveries {
     pub fn open(&self, id: u64, wake: Channel<Wake>) -> Result<Arc<Mailbox>, String> {
         let mut entries = self.0.lock().expect("WebView deliveries");
-        if entries.len() >= 1024 {
+        // What the streams hold is bounded on its own (`watch_queue`); this
+        // only stops a page gone wrong.
+        if entries.len() >= 16_384 {
             return Err("this page has too many open observation streams".into());
         }
         let mailbox = Mailbox::new(id, wake);
