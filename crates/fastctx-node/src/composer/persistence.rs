@@ -68,7 +68,8 @@ pub(super) async fn read(node: &Node, id: &ResidentId) -> Result<Stored, Failure
                 state.persisted = true;
                 state
             } else {
-                let _transition = crate::resident_storage::lock();
+                // Only the old node wrote this file; the conversation's cell
+                // serializes its migration with edits and deletion now.
                 match std::fs::read(directory.composer()) {
                     Ok(bytes) => serde_json::from_slice(&bytes).map_err(error)?,
                     Err(reason) if reason.kind() == std::io::ErrorKind::NotFound => Stored::default(),
@@ -94,7 +95,7 @@ struct Record {
     name: String,
     content: Vec<u8>,
     /// When it may go, in milliseconds (`keeping`).
-    expires: i64,
+    expires: Option<i64>,
 }
 pub(super) struct Prepared {
     owner: String,
@@ -110,6 +111,10 @@ pub(super) struct Prepared {
 pub(super) fn prepare(id: &ResidentId, state: &mut Stored) -> Result<Prepared, Failure> {
     let owner = id.to_string();
     let previous = state.persisted.then_some(state.revision);
+    // Old draft files contain receipts without a retirement proof. Importing
+    // them does not establish that their devices can no longer replay them.
+    let persisted = state.persisted;
+    let expires = |kind| persisted.then(|| super::keeping::expires(kind));
     state.revision = state.revision.checked_add(1).ok_or_else(|| failure("revision overflow"))?;
     i64::try_from(state.revision).map_err(failure)?;
     let mut texts = Vec::new();
@@ -128,7 +133,7 @@ pub(super) fn prepare(id: &ResidentId, state: &mut Stored) -> Result<Prepared, F
             kind: "receipts",
             name: receipts::name(&name),
             content: serde_json::to_vec(&receipt).map_err(failure)?,
-            expires: super::keeping::expires("receipts"),
+            expires: expires("receipts"),
         });
     }
     for (name, operations) in std::mem::take(&mut state.taken) {
@@ -136,7 +141,7 @@ pub(super) fn prepare(id: &ResidentId, state: &mut Stored) -> Result<Prepared, F
             kind: "taken",
             name: receipts::name(&name),
             content: serde_json::to_vec(&operations).map_err(failure)?,
-            expires: super::keeping::expires("taken"),
+            expires: expires("taken"),
         });
     }
     for name in std::mem::take(&mut state.ended) {
@@ -144,7 +149,7 @@ pub(super) fn prepare(id: &ResidentId, state: &mut Stored) -> Result<Prepared, F
             kind: "ended",
             name: receipts::name(&name),
             content: b"true".to_vec(),
-            expires: super::keeping::expires("ended"),
+            expires: expires("ended"),
         });
     }
     let finished: Vec<_> =
@@ -155,7 +160,7 @@ pub(super) fn prepare(id: &ResidentId, state: &mut Stored) -> Result<Prepared, F
             kind: "uploads",
             name: receipts::name(&name),
             content: serde_json::to_vec(&record).map_err(failure)?,
-            expires: super::keeping::expires("uploads"),
+            expires: expires("uploads"),
         });
     }
     state.persisted = true;

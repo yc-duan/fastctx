@@ -8,10 +8,10 @@
 //! kept a month (`took`), so what was said is not put back in the input
 //! (review 2.1). The turns whose end the composer has seen are kept a week.
 //! Rows past their time go in batches; the files an older node kept them in
-//! go once past the same time.
+//! migrate without expiring unproven legacy operation identities.
 
 use std::sync::Arc;
-use std::time::{Duration, SystemTime};
+use std::time::Duration;
 
 use fastctx_storage::rusqlite::params;
 
@@ -77,9 +77,9 @@ pub(crate) fn start(node: &Arc<Node>) {
                 match tokio::task::spawn_blocking(move || sweep(&sweeping)).await {
                     Ok(Ok(())) => {}
                     Ok(Err(error)) => {
-                        node.log.line(format_args!("taking away an older node's composer files: {error}"))
+                        node.log.line(format_args!("migrating an older node's composer receipts: {error}"))
                     }
-                    Err(error) => node.log.line(format_args!("taking away an older node's composer files: {error}")),
+                    Err(error) => node.log.line(format_args!("migrating an older node's composer receipts: {error}")),
                 }
             }
             tokio::time::sleep(PRUNING.saturating_sub(Duration::from_secs(60))).await;
@@ -107,38 +107,22 @@ async fn prune(node: &Node) -> fastctx_storage::Result<()> {
     }
 }
 
-/// Takes away the composer's books an older node kept in files, once past
-/// the time the same records are kept here.
+/// Imports the legacy books after their parent draft has been migrated.
 fn sweep(node: &Node) -> std::io::Result<()> {
-    let now = SystemTime::now();
+    let mut count = 0;
+    let mut failures = Vec::new();
     for resident in node.residents.everyone() {
+        if resident.removed.is_some() {
+            continue;
+        }
         let directory = node.world.conversation(&resident.id);
-        for kind in ["receipts", "uploads", "ended"] {
-            let books = directory.composer_books(kind);
-            let entries = match std::fs::read_dir(&books) {
-                Ok(entries) => entries,
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
-                Err(error) => return Err(error),
-            };
-            let mut left = false;
-            for entry in entries {
-                let entry = entry?;
-                let modified = entry.metadata()?.modified()?;
-                if now.duration_since(modified).unwrap_or_default() < keep(kind) {
-                    left = true;
-                    continue;
-                }
-                let _transition = crate::resident_storage::lock();
-                match std::fs::remove_file(entry.path()) {
-                    Ok(()) => {}
-                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-                    Err(error) => return Err(error),
-                }
-            }
-            if !left {
-                let _ = std::fs::remove_dir(&books);
-            }
+        match super::legacy_records::migrate(&node.database, resident.id.as_str(), &directory) {
+            Ok(moved) => count += moved,
+            Err(error) => failures.push(format!("{}: {error}", resident.id)),
         }
     }
-    Ok(())
+    if count > 0 {
+        node.log.line(format_args!("moved {count} legacy composer receipts into the database"));
+    }
+    if failures.is_empty() { Ok(()) } else { Err(std::io::Error::other(failures.join("; "))) }
 }
