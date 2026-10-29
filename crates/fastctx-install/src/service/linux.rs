@@ -221,6 +221,14 @@ pub(super) fn status(service: &Service) -> anyhow::Result<Status> {
     reg.status(reg.read()?.is_some())
 }
 
+pub(super) fn definition_current(service: &Service) -> anyhow::Result<bool> {
+    let reg = Registration::new(service);
+    let content = definition(service, &reg, manager_version()?)?;
+    Ok(reg.read()?.as_deref() == Some(content.as_bytes())
+        && read_link(&reg.executable)?.as_deref() == Some(service.executable.as_path())
+        && reg.watchdog.current(&reg.name, manager_version()?)?)
+}
+
 pub(super) fn main_pid(service: &Service) -> anyhow::Result<u64> {
     let pid = Registration::new(service).property("Service", "MainPID")?;
     pid.as_u64().context("systemd omitted the service's MainPID")
@@ -408,6 +416,26 @@ pub(super) fn uninstall(service: &Service) -> anyhow::Result<Status> {
     )
 }
 
+/// Stops the service and keeps it stopped: its check starts it only while it
+/// is enabled, so it is disabled first.
+pub(super) fn hold(service: &Service) -> anyhow::Result<Status> {
+    let reg = Registration::new(service);
+    let _lock = FileLock::acquire(&PathBuf::from("/run/lock").join(format!("{}.lock", reg.name)))?;
+    anyhow::ensure!(reg.read()?.is_some(), "{} is not installed", reg.name);
+    systemctl(&["disable", &reg.name])?;
+    systemctl(&["stop", &reg.name])?;
+    reg.status(true)
+}
+
+pub(super) fn release(service: &Service) -> anyhow::Result<Status> {
+    let reg = Registration::new(service);
+    let _lock = FileLock::acquire(&PathBuf::from("/run/lock").join(format!("{}.lock", reg.name)))?;
+    anyhow::ensure!(reg.read()?.is_some(), "{} is not installed", reg.name);
+    systemctl(&["enable", &reg.name])?;
+    systemctl(&["start", &reg.name])?;
+    reg.status(true)
+}
+
 pub(super) fn systemctl(args: &[&str]) -> anyhow::Result<String> {
     checked(Command::new("systemctl").arg("--system").args(args))
 }
@@ -436,6 +464,13 @@ fn definition(service: &Service, reg: &Registration, version: u32) -> anyhow::Re
     unit.push_str(&format!("\n[Service]\nType={}\n", if version >= 240 { "exec" } else { "simple" }));
     if version < 230 {
         unit.push_str("StartLimitInterval=0\n");
+    }
+    // The node shares the processors among the accounts whose jobs run on
+    // it, in cgroups below its own, itself in a leaf systemd starts it in
+    // (`fastctx_platform::cpu_share`); older systemd has no such leaf. A hub
+    // runs no jobs.
+    if version >= 254 && service.kind == super::Kind::Node {
+        unit.push_str("Delegate=yes\nDelegateSubgroup=node\n");
     }
     unit.push_str(&format!(
         "User={}\nExecStart={start}{args}\nRestart=always\nRestartSec=0\nKillMode=process\nStandardInput=null\nStandardOutput=journal\nStandardError=journal\n\n[Install]\nWantedBy=multi-user.target\n",

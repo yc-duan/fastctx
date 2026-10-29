@@ -40,12 +40,35 @@ function offerAccountAgent(context, event) {
   return null
 }
 
+// What the model last heard of the account's subagents, kept beside the
+// session: a resumed process's first message still says what an earlier one
+// was told, and only a change since is told again. A compaction's first
+// message carries the revision of the read it was built from.
+async function agentsHeard($, context, revision = context.accountAgentRevision) {
+  context.heardAccountAgents = revision
+  try {
+    await $.fs.write(context.dir + '/agents-heard.json', JSON.stringify({ revision: revision ?? null }))
+  } catch (error) {
+    worldFailure($, 'account subagents', error)
+  }
+}
+
+// At a process's start: what an earlier process of this session told the
+// model. Without a receipt, no revision is known to have reached it.
+async function agentsHeardBefore($, context) {
+  try {
+    context.heardAccountAgents = JSON.parse(await $.fs.read(context.dir + '/agents-heard.json')).revision ?? undefined
+  } catch (error) {
+    context.heardAccountAgents = undefined
+  }
+}
+
 // A plugin's own submit skips its prompt hooks, and Claude Code lists a type
 // again only when one comes or goes: a change since the model last heard is
 // told in a note ahead of the World's words.
 async function accountAgentsBeforeSubmit($, context) {
   await refreshAccountAgents($, context)
-  if (context.accountAgentRevision === undefined || context.heardAccountAgents === context.accountAgentRevision) return
+  if (context.contextFresh === true || context.accountAgentRevision === undefined || context.heardAccountAgents === context.accountAgentRevision) return
   const rows = [...(context.accountAgents?.values() ?? [])].map((entry) => '- ' + entry.full + ': ' + JSON.parse(entry.encoded).description)
   const listing = rows.length ? rows.join('\n') : '(none)'
   const text = "The account's Claude subagents now listed below replace its previous subagent list:\n" + listing
@@ -53,7 +76,7 @@ async function accountAgentsBeforeSubmit($, context) {
   try {
     const result = await $.session.append({ message: { type: 'user', content: [{ type: 'text', text }] } })
     if (result.deny !== undefined) throw new Error(result.deny)
-    context.heardAccountAgents = context.accountAgentRevision
+    await agentsHeard($, context)
   } catch (error) {
     worldFailure($, 'account subagents', error)
   }

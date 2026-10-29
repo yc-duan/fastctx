@@ -13,9 +13,13 @@ pub(super) struct Stored {
     origin: Origin,
     #[serde(default)]
     forked_from: Option<Address>,
+    #[serde(default)]
+    side: bool,
     session: Option<String>,
     #[serde(default)]
     world_started: bool,
+    #[serde(default)]
+    native_resumed: bool,
     #[serde(default)]
     model: Option<String>,
     #[serde(default)]
@@ -34,6 +38,9 @@ impl TryFrom<Stored> for About {
     type Error = &'static str;
 
     fn try_from(stored: Stored) -> Result<Self, Self::Error> {
+        if stored.native_resumed && stored.host.agent.as_str() != "codex" {
+            return Err("native resumption belongs to a Codex thread");
+        }
         let acting = match stored.acting {
             Some(acting) => acting,
             None if stored.origin == Origin::User => crate::access::Acting::Here,
@@ -46,8 +53,10 @@ impl TryFrom<Stored> for About {
             born_at: stored.born_at,
             origin: stored.origin,
             forked_from: stored.forked_from,
+            side: stored.side,
             session: stored.session,
             world_started: stored.world_started,
+            native_resumed: stored.native_resumed,
             model: stored.model,
             acting,
             focus: stored.focus,

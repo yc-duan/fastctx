@@ -1,6 +1,7 @@
 //! One World API for local-node interfaces and devices without a node.
-//! Local calls use independent IPC connections; device calls share one
-//! persistent link and are addressed to their machine or a relay.
+//! Local calls use independent IPC connections, except that negotiated watches
+//! share an observation connection. Device calls share one persistent link and
+//! are addressed to their machine or a relay.
 
 use fastctx_types::access::Written;
 use fastctx_types::accounts::{AccountChange, AccountsReply};
@@ -69,6 +70,7 @@ pub struct World {
     device: Option<std::sync::Arc<crate::device::Device>>,
     pub(crate) searches: std::sync::Arc<std::sync::Mutex<crate::file_search::Searches>>,
     pub(crate) line_sources: std::sync::Arc<std::sync::Mutex<crate::lines::Sources>>,
+    pub(crate) local_watches: std::sync::Arc<crate::local_watch::Pool>,
     /// What this device keeps of the conversations it views, when it keeps
     /// them (`crate::cache`).
     cache: Option<std::sync::Arc<crate::cache::Cache>>,
@@ -104,6 +106,7 @@ impl World {
             device: None,
             searches: Default::default(),
             line_sources: Default::default(),
+            local_watches: Default::default(),
             cache: None,
             retry: Default::default(),
         }
@@ -119,6 +122,7 @@ impl World {
             device: Some(device),
             searches: Default::default(),
             line_sources: Default::default(),
+            local_watches: Default::default(),
             cache: None,
             retry: Default::default(),
         }
@@ -681,9 +685,14 @@ impl World {
         now: bool,
     ) -> Result<Watching, Error> {
         if let Some(device) = &self.device {
-            return Ok(Watching::device(device.watch(resident, machine, composer, held, now).await?));
+            return Ok(Watching::device(device.watch(resident, machine, composer, held, now, None).await?));
         }
-        Ok(self.connect().await?.watch(Call::Watch { resident, machine, composer, held, now }).await?)
+        self.local_watches
+            .watch(
+                self,
+                fastctx_types::watching::local::Subscription { resident, machine, composer, held, now, goal: None },
+            )
+            .await
     }
 
     pub async fn copy(&self, from: Place, to: Place) -> Result<CopyReport, Error> {
@@ -778,6 +787,19 @@ impl World {
     ) -> Result<fastctx_types::stats::MachineStats, Error> {
         match self.ask(Call::Stats { machine, after, seen }).await? {
             Reply::Stats(stats) => Ok(*stats),
+            other => Err(unexpected(other)),
+        }
+    }
+
+    /// What `machine`, or this computer, keeps free in memory for its
+    /// agents; sets it first when `bytes` is given.
+    pub async fn memory_room(
+        &self,
+        machine: Option<fastctx_types::access::Written>,
+        bytes: Option<u64>,
+    ) -> Result<u64, Error> {
+        match self.ask(Call::MemoryRoom { machine, bytes }).await? {
+            Reply::MemoryRoom { bytes } => Ok(bytes),
             other => Err(unexpected(other)),
         }
     }

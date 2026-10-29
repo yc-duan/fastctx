@@ -844,11 +844,10 @@ impl Words {
         self.pick("发送中…", "sending…")
     }
 
-    pub fn not_sent(&self, why: &str) -> String {
-        match self.lang {
-            Lang::Zh => format!("发送失败：{why}"),
-            Lang::En => format!("couldn't send: {why}"),
-        }
+    /// Words that did not go: the kernel's reason is not the interface's to
+    /// show (`AGENTS.md`, 文案).
+    pub fn not_sent(&self) -> &'static str {
+        self.pick("发送失败", "couldn't send")
     }
 
     pub fn joined_turn(&self) -> &'static str {
@@ -859,11 +858,8 @@ impl Words {
         self.pick("已送达", "delivered")
     }
 
-    pub fn landing_unknown(&self, why: &str) -> String {
-        match self.lang {
-            Lang::Zh => format!("送达状态未知：{why}"),
-            Lang::En => format!("delivery unknown: {why}"),
-        }
+    pub fn landing_unknown(&self) -> &'static str {
+        self.pick("送达状态未知", "delivery unknown")
     }
 
     pub fn sent_to(&self, machine: &str) -> String {
@@ -873,11 +869,8 @@ impl Words {
         }
     }
 
-    pub fn waiting_because(&self, why: &str) -> String {
-        match self.lang {
-            Lang::Zh => format!("等待投递：{why}"),
-            Lang::En => format!("waiting to deliver: {why}"),
-        }
+    pub fn waiting_to_deliver(&self) -> &'static str {
+        self.pick("等待投递", "waiting to deliver")
     }
 
     pub fn waiting_for_call(&self) -> &'static str {
@@ -1071,11 +1064,13 @@ impl Words {
         self.pick("当前没有运行", "not running")
     }
 
-    pub fn not_stopped(&self, why: &str) -> String {
-        match self.lang {
-            Lang::Zh => format!("停止失败：{why}"),
-            Lang::En => format!("couldn't stop: {why}"),
-        }
+    pub fn not_stopped(&self) -> &'static str {
+        self.pick("停止失败", "couldn't stop")
+    }
+
+    /// A conversation whose last turn went wrong, in the list of who works.
+    pub fn troubled(&self) -> &'static str {
+        self.pick("上一轮没有完成", "last turn did not finish")
     }
 
     pub fn opening_session(&self) -> &'static str {

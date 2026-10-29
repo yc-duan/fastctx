@@ -27,6 +27,8 @@ pub fn fixtures() -> Fixtures {
             used: 30_064_771_072,
             swap_total: 78_383_153_152,
             swap_used: 41_875_931_136,
+            room: Some(fastctx_types::stats::MEMORY_ROOM),
+            waiting: 2,
         },
         disks: vec![
             Disk {
@@ -93,6 +95,18 @@ pub fn fixtures() -> Fixtures {
             health: Vec::new(),
             refused: None,
         },
+        jobs: vec![
+            AccountJobs { account: None, running: 3, most: None },
+            AccountJobs {
+                account: Some(fastctx_types::access::HubAccount {
+                    hub: "w-0123456789abcdef".parse().unwrap(),
+                    account: "bo".parse().unwrap(),
+                }),
+                running: 2,
+                most: Some(4),
+            },
+        ],
+        limits: Vec::new(),
     };
     let linux = MachineStats {
         run: None,
@@ -104,7 +118,7 @@ pub fn fixtures() -> Fixtures {
         host: "server".into(),
         arch: "x86_64".into(),
         cpu: Cpu { model: String::new(), threads: 2, busy: None, load: Some([0.12, 0.08, 0.05]) },
-        memory: Memory { total: 2_065_588_224, used: 912_000_000, swap_total: 0, swap_used: 0 },
+        memory: Memory { total: 2_065_588_224, used: 912_000_000, swap_total: 0, swap_used: 0, room: None, waiting: 0 },
         disks: vec![Disk {
             at: "/".into(),
             label: None,
@@ -134,6 +148,15 @@ pub fn fixtures() -> Fixtures {
                 at: at("2026-10-01T08:00:00Z"),
             }),
         },
+        jobs: Vec::new(),
+        limits: vec![LimitReading {
+            at: at("2026-10-29T06:12:00Z"),
+            uses: vec![
+                LimitUse { kind: LimitKind::InotifyInstances, used: 107, limit: 128 },
+                LimitUse { kind: LimitKind::InotifyWatches, used: 9_211, limit: 524_288 },
+                LimitUse { kind: LimitKind::OpenFiles, used: 412, limit: 65_536 },
+            ],
+        }],
     };
     Fixtures { stats: vec![windows, linux] }
 }

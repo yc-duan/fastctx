@@ -97,8 +97,7 @@ pub fn sign(key: &SecretKey, entry: &Entry) -> Signed {
     Signed::new(key, Domain::Ledger, entry)
 }
 
-/// The size of the answer that hands `signed` to a machine; an entry must
-/// fit in one message, so this must not exceed `wire::MAX_CONTROL_FRAME`.
+/// The encoded size of the answer that hands `signed` to a machine.
 pub fn handed_size(signed: &Signed) -> usize {
     crate::wire::encode(&crate::wire::Down::Told {
         id: u64::MAX,
@@ -107,9 +106,7 @@ pub fn handed_size(signed: &Signed) -> usize {
     .len()
 }
 
-/// How far an entry is from fitting in one message, signed by anyone: a
-/// signature is the same size whoever makes it. `Ok` with the bytes to
-/// spare, or `Err` with the bytes too many.
+/// Space left in the multipart envelope, including its signature and encoding.
 pub fn fits(entry: &Entry) -> Result<usize, usize> {
     let signed = sign(&SecretKey::from_seed(&[0; 32]), entry);
     let sent = crate::wire::encode(&crate::wire::Up::Ask {
@@ -118,6 +115,6 @@ pub fn fits(entry: &Entry) -> Result<usize, usize> {
     })
     .len();
     let size = handed_size(&signed).max(sent);
-    let limit = crate::wire::MAX_CONTROL_FRAME;
+    let limit = crate::wire::PARTS_AT_MOST;
     if size <= limit { Ok(limit - size) } else { Err(size - limit) }
 }

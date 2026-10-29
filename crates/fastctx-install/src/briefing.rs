@@ -1,13 +1,14 @@
 //! What a session the user opens is told about its working environment, in
 //! its host's guidance file (`world-run.md`, 模型怎样知道): that `run` is its
-//! shell and its way to look at and change files, on this machine too, since
-//! the host's own shell and image viewer are off; that each script is one
-//! `on MACHINE` naming a machine `run`'s description lists; and the one rule a
-//! session needs before it touches anything, that it enters a project only
-//! when the user says. It is written once, when fastctx is applied, and many
-//! users have only this one computer, so it never says the user has several
-//! machines: what is true at the moment of a call is in `run`'s description,
-//! written when the session lists its tools.
+//! shell, on this machine too, since the host's own shell is off, and works
+//! on files on every machine it reaches; and that each script is one
+//! `on MACHINE` naming a machine `run`'s description lists. Nothing else of
+//! the World is said there: the user's own sessions are given `run` and
+//! nothing more (`world-layers.md`), and the World's own sessions are told the
+//! rest in their own instructions. It is written once, when fastctx is
+//! applied, and many users have only this one computer, so it never says the
+//! user has several machines: what is true at the moment of a call is in
+//! `run`'s description, written when the session lists its tools.
 //!
 //! A host may list a server's tools by name only until they are used, so
 //! these words alone must lead a model to the tools and give the commands it
@@ -41,7 +42,7 @@ pub fn guidance(codex: bool) -> String {
         "\
 ## Your shell and tools
 
-You work through fastctx's `run` tool. `run` is your shell: bash with the GNU tools and `rg`, Windows included. Do all shell work with it, and all work on files, on this machine too:
+You work through fastctx's `run` tool. `run` is your shell: bash with the GNU tools and `rg`, Windows included. Do all shell work with it, on this machine too. On every machine it reaches, it also works on files:
 - `fastctx view PATH...` shows files: text with line numbers (`--lines 120-180` for part of one); an image as the image itself, for you to see; a PDF as its text by page (`--pages 3-5`, and `--image` to see the pages); Word, PowerPoint and Excel as their content. Without a range, a large file comes back as its first lines and an outline, or its beginning and its end, and several files together get what one would; with a range, that range in full. When you are unsure what a file holds, look at it without a range first.
 - `edit PATH` and `write PATH` change a file and keep its encoding and line endings.
 - `rg` searches.
@@ -51,8 +52,6 @@ You work through fastctx's `run` tool. `run` is your shell: bash with the GNU to
 `run` runs each script on one of the machines its description lists, this computer among them, the whole script written as one `on MACHINE`; its description says how. When the user speaks of one of those machines, work on it.
 
 Inside a script, these commands are ordinary programs: give them several files, pipe into and out of them, loop over machines, as with any command. Calls to `run` share nothing: make several at once, or call `run` from your scripts and subagents, as with any tool.
-
-fastctx also keeps the user's ongoing work as projects. A fastctx project is not a folder or a repository: it is a named piece of work that can span several machines. Its record says what it is for and where its code and data are on each machine. `fastctx project list` lists them. Enter one with `fastctx project enter NAME` only when the user tells you which project to work on; entering gives you its record.
 {exec}"
     )
 }

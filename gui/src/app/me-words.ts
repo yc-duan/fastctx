@@ -9,6 +9,9 @@ import { enProblems, failure, zhProblems } from "./problem";
 
 export interface MeWords {
   title: string;
+  /** The page's tabs: what of the user's others use, their devices, and
+   *  the codes that let devices in. */
+  tabs: { given: string; devices: string; codes: string };
   level: Record<"super" | "member" | "visitor", string>;
   /** On a member's page: who the administrator is, and what they may do. */
   adminIs(admin: string): string;
@@ -64,6 +67,8 @@ export interface MeWords {
   /** What an account may spend of a login in a week and a day, short. */
   weeklyShort(amount: string): string;
   dailyShort(amount: string): string;
+  /** Until when something given lasts. */
+  untilShort(at: string): string;
   takeBack(what: string): string;
   tookBack(what: string): string;
   sharedLabel(machine: string, account: string): string;
@@ -108,6 +113,7 @@ export interface MeWords {
 
 export const zhMe: MeWords = {
   title: "我",
+  tabs: { given: "共享", devices: "设备", codes: "入网码" },
   level: { super: "管理员", member: "成员", visitor: "访客" },
   adminIs: (admin) => `管理员 ${admin}`,
   superNote: (admin) => `管理员 ${admin} 可以访问你的所有机器`,
@@ -151,6 +157,7 @@ export const zhMe: MeWords = {
   assisting: "协助",
   weeklyShort: (amount) => `${amount}/周`,
   dailyShort: (amount) => `${amount}/天`,
+  untilShort: (at) => `到 ${at}`,
   takeBack: (what) => `收回${what}`,
   tookBack: (what) => `已收回${what}`,
   sharedLabel: (machine, account) => ` ${account} 对 ${machine} 的使用`,
@@ -193,6 +200,7 @@ export const zhMe: MeWords = {
 
 export const enMe: MeWords = {
   title: "Me",
+  tabs: { given: "Sharing", devices: "Devices", codes: "Codes" },
   level: { super: "administrator", member: "member", visitor: "visitor" },
   adminIs: (admin) => `administrator ${admin}`,
   superNote: (admin) => `Administrator ${admin} can access all your machines`,
@@ -236,6 +244,7 @@ export const enMe: MeWords = {
   assisting: "assisting",
   weeklyShort: (amount) => `${amount}/wk`,
   dailyShort: (amount) => `${amount}/day`,
+  untilShort: (at) => `until ${at}`,
   takeBack: (what) => `Take back${what}`,
   tookBack: (what) => `Took back${what}`,
   sharedLabel: (machine, account) => ` ${machine} from ${account}`,

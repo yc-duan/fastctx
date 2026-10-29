@@ -53,7 +53,7 @@ fn target(
             machine.name
         }
         None => {
-            let own: Vec<_> = view.machines().filter(|m| m.home.as_ref() == Some(account)).collect();
+            let own: Vec<_> = view.machines().filter(|m| view.holds(account, &m.name)).collect();
             if session && own.iter().any(|m| view.is_me(&m.name)) {
                 view.me.clone()
             } else if own.len() == 1 {

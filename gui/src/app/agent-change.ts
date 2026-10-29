@@ -23,7 +23,8 @@ import type { ChangePreview, ChangeStep, LoginChange, OutputLimit, Step } from "
 import { previewDiff, shortPath } from "./change-diff";
 import { Sheet } from "./confirm";
 import { detailOf, enProblems, known, zhProblems } from "./problem";
-import { mark } from "./removal";
+import { stepMark as mark } from "../pen/step-mark";
+import { accountLayer } from "./layer";
 
 export interface AgentChangeWords {
   applyTitle(who: string, machine: string): string;
@@ -78,11 +79,11 @@ export const zhAgentChange: AgentChangeWords = {
   putInWhat: "Fastctx 的 run：跑命令、看文件与图片、改文件、去别的机器",
   putInTags: ["run"],
   turnOff: "关掉",
-  turnOffWhat: (agent) => (agent === "claude" ? "它自带的 Bash、Grep、Glob（Windows 上连同 PowerShell）" : "它自带的 shell 与看图"),
-  turnOffTags: (agent) => (agent === "claude" ? ["Bash", "Grep", "Glob", "PowerShell"] : ["shell", "看图"]),
+  turnOffWhat: (agent) => (agent === "claude" ? "它自带的 Bash（Windows 上连同 PowerShell）" : "它自带的 shell"),
+  turnOffTags: (agent) => (agent === "claude" ? ["Bash", "PowerShell"] : ["shell"]),
   leave: "不动",
-  leaveWhat: "其余一切：写文件的工具、子代理、插件、联网搜索、你的设置与说明",
-  leaveTags: ["写文件", "子代理", "插件", "联网搜索", "你的设置"],
+  leaveWhat: "其余一切：读写文件、看图、待办、子代理、插件、联网搜索",
+  leaveTags: ["写文件", "待办", "子代理", "联网搜索"],
   restore: "还原",
   restoreWhat: "接入时改的，照记录还原",
   kept: "留着",
@@ -125,11 +126,11 @@ export const enAgentChange: AgentChangeWords = {
   putInWhat: "Fastctx's run: commands, files and images, edits, other machines",
   putInTags: ["run"],
   turnOff: "Turns off",
-  turnOffWhat: (agent) => (agent === "claude" ? "Its own Bash, Grep and Glob (and PowerShell on Windows)" : "Its own shell and image viewer"),
-  turnOffTags: (agent) => (agent === "claude" ? ["Bash", "Grep", "Glob", "PowerShell"] : ["shell", "image viewer"]),
+  turnOffWhat: (agent) => (agent === "claude" ? "Its own Bash (and PowerShell on Windows)" : "Its own shell"),
+  turnOffTags: (agent) => (agent === "claude" ? ["Bash", "PowerShell"] : ["shell"]),
   leave: "Leaves",
-  leaveWhat: "Everything else: its write tools, subagents, plugins, web search, your settings and guidance",
-  leaveTags: ["Write tools", "Subagents", "Plugins", "Web search", "Your settings"],
+  leaveWhat: "Everything else: reading and writing files, images, to-dos, subagents, plugins, web search",
+  leaveTags: ["Write tools", "To-dos", "Subagents", "Web search"],
   restore: "Puts back",
   restoreWhat: "What hooking up changed, from its record",
   kept: "Keeps",
@@ -318,7 +319,8 @@ export class AgentChangeSheet {
     const lines = [
       ...(target.takeBack ? [words.takeBack] : []),
       words.openSessions(target.agent, target.into),
-      ...(target.into && target.agent === "claude" ? [words.permission] : []),
+      // Only the workbench opens Claude conversations of its own.
+      ...(target.into && target.agent === "claude" && accountLayer.workbench.peek() ? [words.permission] : []),
       ...(target.here ? [] : [words.elsewhere(target.machine)]),
     ];
     const head = `${handsDrawing(target.into)}

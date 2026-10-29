@@ -11,7 +11,7 @@ use std::io;
 use std::path::Path;
 
 use fastctx_types::access::Acting;
-use fastctx_types::project::Stamp;
+
 use fastctx_types::{ResidentId, TownName};
 
 use crate::Node;
@@ -19,37 +19,24 @@ use crate::Node;
 /// The record of `town` as a session working for `acting` reads it, from
 /// this machine's copy of its ledger, naming only the machines it may work
 /// on; none when this machine has no record of it.
-pub(crate) fn text(node: &Node, town: &TownName, acting: &Acting) -> io::Result<Option<String>> {
+pub(crate) fn current(
+    node: &Node,
+    town: &TownName,
+    acting: &Acting,
+) -> io::Result<Option<(String, fastctx_types::project::Record)>> {
     if !super::access::permits(node, acting, town).map_err(io::Error::other)? {
         return Ok(None);
     }
-    let records = super::read::records(&node.world, town)?;
-    let (Some(first), Some(record)) = (records.first(), records.last()) else { return Ok(None) };
-    let opened = Stamp { by: first.by.clone(), on: first.on.clone(), at: first.at };
-    let mut record = record.clone();
+    let Some((mut record, opened)) = super::read::current(&node.world, town)? else { return Ok(None) };
     crate::ledger::query::seen(node, acting, town, &mut record)?;
-    Ok(Some(fastctx_hands::town::record_of(town, &record, &opened)))
+    Ok(Some((fastctx_hands::town::record_of(town, &record, &opened), record)))
 }
 
-/// Puts the record of the project the resident `id` works in beside the
-/// files of its Claude session in `session` (`project.md`), where its
-/// plugin reads it; takes it away when it works in none.
+/// Refreshes named project context and gives the plugin its canonical location.
+/// Leaving a project clears the block through the same replacement path.
 pub(crate) fn hand_to_session(node: &Node, id: &ResidentId, session: &Path) -> io::Result<()> {
-    let target = session.join("project.md");
-    let text = match node.residents.town_of(id).flatten() {
-        Some(town) => text(node, &town, &acting(node, id))?,
-        None => None,
-    };
-    match text {
-        Some(text) => match std::fs::read(&target) {
-            Ok(held) if held == text.as_bytes() => Ok(()),
-            _ => fastctx_platform::publish(&target, text.as_bytes(), fastctx_platform::Permissions::Private),
-        },
-        None => match std::fs::remove_file(&target) {
-            Err(error) if error.kind() != io::ErrorKind::NotFound => Err(error),
-            _ => Ok(()),
-        },
-    }
+    crate::context::refresh_local(node, id)?;
+    crate::context::hand_to_session(node, id, session)
 }
 
 /// Whom the resident `id` works for.
@@ -61,6 +48,7 @@ pub(crate) fn acting(node: &Node, id: &ResidentId) -> Acting {
 /// after it moved. A failed write is returned to the operation that moved it.
 pub(crate) fn hand_to_current(node: &Node, id: &ResidentId) -> io::Result<()> {
     let Some((about, _)) = node.residents.about(id) else { return Ok(()) };
+    crate::context::refresh_local(node, id)?;
     let Some(session) = about.session.filter(|_| about.host.agent.as_str() == "claude") else { return Ok(()) };
     let directory = fastctx_hosts::claude::exchange::sessions(node.world.path()).join(session);
     if directory.is_dir() {

@@ -41,34 +41,6 @@ impl Request {
                     return Err("that decision was not offered for this command approval".into());
                 }
             }
-            "item/tool/requestUserInput" => {
-                let questions = self.params["questions"].as_array().ok_or("Codex supplied no questions")?;
-                let answers = answer["answers"].as_object().expect("validated answers map");
-                for id in answers.keys() {
-                    if !questions.iter().any(|q| q["id"].as_str() == Some(id)) {
-                        return Err(format!("there is no question {id} in this request"));
-                    }
-                }
-                for question in questions {
-                    let id = question["id"].as_str().ok_or("Codex supplied a question without an ID")?;
-                    let Some(response) = answers.get(id) else {
-                        continue;
-                    };
-                    if question["isOther"] == false
-                        && let Some(options) = question["options"].as_array().filter(|options| !options.is_empty())
-                    {
-                        for text in response["answers"].as_array().expect("validated answer strings") {
-                            // The official TUI appends this textual note even
-                            // when its question has isOther=false (0.160).
-                            if !options.iter().any(|option| option["label"] == *text)
-                                && !text.as_str().is_some_and(|text| text.starts_with("user_note: "))
-                            {
-                                return Err(format!("question {id} does not offer that answer"));
-                            }
-                        }
-                    }
-                }
-            }
             "mcpServer/elicitation/request" => {
                 if answer["action"] == "accept" {
                     match self.params["mode"].as_str() {
@@ -108,7 +80,6 @@ fn schema(method: &str) -> Option<&'static str> {
         "item/permissions/requestApproval" => {
             include_str!("fixtures/answers-0.160/PermissionsRequestApprovalResponse.json")
         }
-        "item/tool/requestUserInput" => include_str!("fixtures/answers-0.160/ToolRequestUserInputResponse.json"),
         "mcpServer/elicitation/request" => {
             include_str!("fixtures/answers-0.160/McpServerElicitationRequestResponse.json")
         }
@@ -250,15 +221,6 @@ mod tests {
         let permissions = request("item/permissions/requestApproval", json!({}));
         assert!(permissions.validate(&json!({"permissions":{},"scope":"turn"})).is_ok());
         assert!(permissions.validate(&json!({"permissions":{"network":{"enabled":"yes"}}})).is_err());
-        let question = request(
-            "item/tool/requestUserInput",
-            json!({"questions":[{"id":"q","isOther":false,"options":[{"label":"A"}]}]}),
-        );
-        assert!(question.validate(&json!({"answers":{}})).is_ok());
-        assert!(question.validate(&json!({"answers":{"q":{"answers":["A","user_note: explain"]}}})).is_ok());
-        let free =
-            request("item/tool/requestUserInput", json!({"questions":[{"id":"q","isOther":false,"options":[]}]}));
-        assert!(free.validate(&json!({"answers":{"q":{"answers":["free text"]}}})).is_ok());
         let form = request(
             "mcpServer/elicitation/request",
             json!({"mode":"form","requestedSchema":{"type":"object","required":["count"],"properties":{"count":{"type":"integer","minimum":1}}}}),

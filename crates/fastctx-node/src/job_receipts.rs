@@ -10,7 +10,7 @@ use fastctx_hands::run::record;
 use fastctx_platform::{Permissions, ensure_private_dir, publish_new};
 use fastctx_types::access::{Acting, HubAccount, Written};
 use fastctx_types::on::OnOrigin;
-use fastctx_types::remote::{RemoteCall, RemoteReply};
+use fastctx_types::remote::RemoteReply;
 use fastctx_types::residents::{Delivery, Notice};
 use fastctx_types::run::{CompletedJob, JobDelivery};
 use fastctx_types::{Address, HubName, JobId, MachineName, NoticeId};
@@ -85,6 +85,7 @@ pub(crate) fn confirmed_under(
     delivery: JobDelivery,
     acting: Option<&Acting>,
 ) -> io::Result<()> {
+    crate::run_receipts::confirmed(node, &owner, &machine, &delivery)?;
     let dispatched = crate::here::get_dispatched(node, &owner.resident, &delivery.job);
     let destination = dispatched.map(|(destination, _)| destination).unwrap_or_else(|| machine.clone().into());
     if node.is_here(&destination) {
@@ -135,7 +136,9 @@ fn enqueue(node: &Node, sending: Sending) -> io::Result<()> {
     );
     let directory = node.world.owner(&node.names(), &sending.owner).book("job-deliveries");
     ensure_private_dir(&directory)?;
-    queue(&directory.join(format!("{key}.json")), sending)
+    queue(&directory.join(format!("{key}.json")), sending)?;
+    node.receipts_changed.notify_one();
+    Ok(())
 }
 
 fn queue(path: &Path, sending: Sending) -> io::Result<()> {
@@ -161,18 +164,6 @@ fn queue(path: &Path, sending: Sending) -> io::Result<()> {
         fastctx_install::renewal::write_json(path, &prior)
     } else {
         create(path, &sending)
-    }
-}
-
-fn take_sent(path: &Path, sent: &[u8]) -> io::Result<bool> {
-    match fs::read(path) {
-        Ok(current) if current == sent => {
-            fs::remove_file(path)?;
-            Ok(true)
-        }
-        Ok(_) => Ok(false),
-        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(true),
-        Err(error) => Err(error),
     }
 }
 
@@ -302,6 +293,7 @@ fn received_here(
         } else {
             create(&marker, &confirmed)?;
         }
+        crate::completion_debt::paid(&path)?;
         if confirmed.shown_whole {
             node.disk_due.lock().expect("never poisoned").insert(path.clone());
         }
@@ -437,7 +429,14 @@ pub(crate) fn on_taken(
             return Err(io::Error::other("the on belongs to another enclosing job"));
         }
         bind(parent, child)?;
-        inherit_consumed(parent, completion.consumed)?;
+        let mut consumed = completion.consumed.to_vec();
+        if !completion.through_exit {
+            let id = crate::inbox::end_id(&origin.resident, &destination.name, completion.job, origin.request.as_ref());
+            let identity = crate::letters::Identity::at(node, destination, id.as_str())?;
+            consumed.extend(identity.ids().cloned());
+            consumed.push(id);
+        }
+        inherit_consumed(parent, &consumed)?;
     } else {
         let receipt = JobDelivery {
             job: completion.job.clone(),
@@ -588,13 +587,6 @@ fn snapshot_here(
     Ok(())
 }
 
-pub(crate) async fn supports(node: &Node, acting: &Acting, destination: &Written) -> Result<bool, String> {
-    match node.call(acting, destination, fastctx_types::access::Purpose::Look, RemoteCall::Facts).await {
-        Ok(Ok(RemoteReply::Facts(facts))) => Ok(facts.completion_receipts),
-        other => Err(format!("checking {}'s end-receipt support: {other:?}", destination.name)),
-    }
-}
-
 /// A consumed end is durable even while its owner is offline. This phase
 /// suppresses notification; it contains no retention timestamp.
 pub(crate) fn consumed(node: &Node, owner: &Address, acting: &Acting, id: NoticeId, notice: Notice) -> io::Result<()> {
@@ -616,83 +608,190 @@ pub(crate) fn consumed(node: &Node, owner: &Address, acting: &Acting, id: Notice
     Ok(())
 }
 
-pub(crate) async fn forward(node: &std::sync::Arc<Node>) -> io::Result<()> {
-    let mut capabilities = Vec::<(Written, Acting, bool)>::new();
-    let paths = node
-        .world
-        .book_directories("job-deliveries")?
-        .into_iter()
-        .map(|directory| crate::retention::entries(&directory))
-        .collect::<io::Result<Vec<_>>>()?;
-    for path in paths.into_iter().flatten() {
-        if path.extension().is_none_or(|extension| extension != "json") {
-            continue;
-        }
-        let bytes = fs::read(&path)?;
-        let sending: Sending = serde_json::from_slice(&bytes).map_err(io::Error::other)?;
-        let destination = Written { name: sending.machine.clone(), hub: sending.hub.clone() };
-        let capable =
-            match capabilities.iter().find(|(target, acting, _)| *target == destination && *acting == sending.acting) {
-                Some((_, _, capable)) => *capable,
-                None => {
-                    let capable = match supports(node, &sending.acting, &destination).await {
-                        Ok(capable) => capable,
-                        Err(error) => {
-                            node.log.line(format_args!("job receipt remains pending: {error}"));
-                            continue;
-                        }
-                    };
-                    capabilities.push((destination.clone(), sending.acting.clone(), capable));
-                    capable
+/// Receipt forwarding has its own retry loop; artifact maintenance neither
+/// paces it nor waits behind a remote receipt.
+pub(crate) fn start(node: &std::sync::Arc<Node>) {
+    let node = node.clone();
+    tokio::spawn(async move {
+        let mut again = crate::again::Again::default();
+        let mut ways = node.ways.subscribe();
+        let mut previous = None;
+        loop {
+            let changed = node.receipts_changed.notified();
+            tokio::pin!(changed);
+            changed.as_mut().enable();
+            ways.borrow_and_update();
+            let pending = match forward(&node).await {
+                Ok(pending) => {
+                    previous = None;
+                    pending
                 }
-            };
-        if !capable {
-            continue;
-        }
-        let sent = if let Some(delivery) = sending.delivery {
-            let call = RemoteCall::Forget {
-                resident: sending.owner.resident,
-                town: sending.origin.as_ref().and_then(|origin| origin.town.clone()),
-                job: delivery.job.clone(),
-                delivery: Some(delivery),
-                origin: sending.origin,
-                through_exit: sending.through_exit,
-            };
-            match node.call(&sending.acting, &destination, fastctx_types::access::Purpose::Hands, call).await {
-                Ok(Ok(RemoteReply::Set)) => true,
-                result => {
-                    node.log.line(format_args!("job delivery to {} remains pending: {result:?}", sending.machine));
-                    false
-                }
-            }
-        } else if let Some(consumption) = sending.consumption {
-            match crate::speech::tell(
-                node,
-                &sending.acting,
-                &sending.owner,
-                consumption.id,
-                consumption.notice,
-                crate::speech::Owed::Working,
-            )
-            .await
-            {
-                Ok(_) => true,
                 Err(error) => {
-                    node.log.line(format_args!("job consumption to {} remains pending: {error}", sending.machine));
-                    false
+                    let reason = error.to_string();
+                    if previous.as_ref() != Some(&reason) {
+                        node.log.line(format_args!("forwarding job receipts: {reason}"));
+                        previous = Some(reason);
+                    }
+                    true
                 }
+            };
+            if !pending {
+                again.reset();
             }
-        } else {
-            return Err(io::Error::other("invalid completion receipt phase"));
+            let pause = if pending { again.next() } else { std::time::Duration::from_secs(3600) };
+            tokio::select! {
+                () = tokio::time::sleep(pause) => {}
+                () = &mut changed => {}
+                _ = ways.changed() => {}
+            }
+        }
+    });
+}
+
+async fn forward(node: &std::sync::Arc<Node>) -> io::Result<bool> {
+    let mut pending = false;
+    for directory in node.world.book_directories("job-deliveries")? {
+        let paths = match crate::retention::entries(&directory) {
+            Ok(paths) => paths,
+            Err(error) => {
+                pending = true;
+                crate::obligations::retry(node, &directory.join("directory"), &error.to_string())?;
+                continue;
+            }
         };
-        if sent {
-            let _gate = node.disk.lock();
-            if !take_sent(&path, &bytes)? {
-                node.disk_changed.notify_one();
+        for path in paths {
+            if path.extension().is_none_or(|extension| extension != "json")
+                || path.file_name().is_some_and(|name| name.to_string_lossy().starts_with('.'))
+            {
+                continue;
+            }
+            match forward_one(node, &path).await {
+                Ok(done) => pending |= !done,
+                Err(error) => {
+                    pending = true;
+                    crate::obligations::retry(node, &path, &error.to_string())?;
+                }
             }
         }
     }
-    Ok(())
+    Ok(pending)
+}
+
+async fn forward_one(node: &std::sync::Arc<Node>, path: &Path) -> io::Result<bool> {
+    let bytes = match fs::read(path) {
+        Ok(bytes) => bytes,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(true),
+        Err(error) => return Err(error),
+    };
+    let sending: Sending = serde_json::from_slice(&bytes).map_err(io::Error::other)?;
+    let destination = Written { name: sending.machine.clone(), hub: sending.hub.clone() };
+    if crate::obligations::finished(path, &bytes)? {
+        let _gate = node.disk.lock();
+        return crate::obligations::finish(
+            node,
+            path,
+            &bytes,
+            crate::obligations::Outcome::Superseded,
+            "duplicate of an already settled receipt",
+        );
+    }
+    let impossible = if sending.delivery.is_some() {
+        crate::obligations::control_impossible(node, &sending.acting, &destination)?
+    } else {
+        crate::obligations::impossible(node, &sending.acting, &destination)?
+    };
+    if let Some(reason) = impossible {
+        let _gate = node.disk.lock();
+        return crate::obligations::finish(node, path, &bytes, crate::obligations::Outcome::Impossible, &reason);
+    }
+    if !crate::facts::completion_receipts(node, &destination) {
+        let whole = sending
+            .delivery
+            .as_ref()
+            .filter(|delivery| delivery.shown_whole)
+            .filter(|_| !sending.through_exit && sending.origin.is_none());
+        if let Some(delivery) = whole {
+            let call = fastctx_types::remote::RemoteCall::Forget {
+                resident: sending.owner.resident.clone(),
+                town: None,
+                job: delivery.job.clone(),
+                delivery: None,
+                origin: None,
+                through_exit: false,
+            };
+            match node.call(&sending.acting, &destination, fastctx_types::access::Purpose::Hands, call).await {
+                Ok(Ok(RemoteReply::Set)) => {}
+                other => {
+                    crate::obligations::retry(node, path, &format!("legacy whole-answer cleanup: {other:?}"))?;
+                    return Ok(false);
+                }
+            }
+        }
+        let _gate = node.disk.lock();
+        return crate::obligations::finish(
+            node,
+            path,
+            &bytes,
+            crate::obligations::Outcome::Superseded,
+            "the legacy peer does not use separate completion receipts",
+        );
+    }
+    let result = if let Some(delivery) = sending.delivery {
+        let command = fastctx_types::delivery_control::ControlLetter::CompletionReceipt {
+            owner: sending.owner,
+            delivery,
+            origin: sending.origin,
+            through_exit: sending.through_exit,
+        };
+        if crate::facts::control_letters(node, &destination) {
+            let Some(result) = crate::control_posts::send(node, path, &bytes, &sending.acting, &destination, command)?
+            else {
+                return Ok(false);
+            };
+            result
+        } else {
+            // An old peer has no receipt-letter format. Keep its existing
+            // call durable here without a capability preflight.
+            match tokio::time::timeout(
+                std::time::Duration::from_secs(10),
+                node.call(&sending.acting, &destination, fastctx_types::access::Purpose::Hands, command.call()),
+            )
+            .await
+            {
+                Ok(Ok(Ok(RemoteReply::Set))) => Ok(()),
+                Ok(Ok(Err(error))) => Err(error),
+                Ok(other) => Err(fastctx_types::ipc::Failure::new(format!("legacy receipt is unanswered: {other:?}"))),
+                Err(_) => Err(fastctx_types::ipc::Failure::new("legacy receipt did not answer within 10 seconds")),
+            }
+        }
+    } else if let Some(consumption) = sending.consumption {
+        crate::speech::tell(
+            node,
+            &sending.acting,
+            &sending.owner,
+            consumption.id,
+            consumption.notice,
+            crate::speech::Owed::Working,
+        )
+        .await
+        .map(|_| ())
+    } else {
+        return Err(io::Error::other("invalid completion receipt phase"));
+    };
+    let (outcome, reason) = match result {
+        Ok(()) => (crate::obligations::Outcome::Delivered, "receipt delivered".to_string()),
+        Err(error) if crate::obligations::permanent(&error) => (crate::obligations::Outcome::Impossible, error.message),
+        Err(error) => {
+            crate::obligations::retry(node, path, &error.message)?;
+            return Ok(false);
+        }
+    };
+    let _gate = node.disk.lock();
+    let done = crate::obligations::finish(node, path, &bytes, outcome, &reason)?;
+    if !done {
+        node.receipts_changed.notify_one();
+    }
+    Ok(done)
 }
 
 fn create(path: &Path, value: &impl Serialize) -> io::Result<()> {

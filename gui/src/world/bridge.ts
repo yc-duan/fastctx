@@ -5,6 +5,7 @@ import type { UsageCallsQuery, UsageCallsPage } from "./usage-calls";
 // `inShell` says so.
 
 import { Channel, invoke } from "@tauri-apps/api/core";
+import { closeDelivery, observe, retryDeliveries } from "./delivery";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import type { HomeChange, WorldAgents } from "./agents";
 import type { ChangePreview, FolderChange, LoginChange, MachineLogins, WorldLogins } from "./logins";
@@ -23,7 +24,7 @@ import type { UsageReport } from "./usage";
 import type { HubMoveReply, HubMoveRequest } from "./hub-move";
 import type { MachineStats, StatsSeen } from "./stats";
 import type { Looked, RemoteHub, RemoteKey, RemoteServer, RemoteStep } from "../app/remote-world";
-import type { JournalSummary, JournalView, LookedUp, MapView, NodesReply, ProjectRecord, Stamp, TownSummary, WorldWho } from "./world";
+import type { LookedUp, MapView, NodesReply, ProjectRecord, Stamp, TownSummary, WorldWho } from "./world";
 
 /** A development build asked for its specimen (`?specimen`) draws it even
  *  inside the app's shell, so a phone's own WebView can be tried with real
@@ -96,22 +97,15 @@ export function worldNow(): Promise<WorldNow> {
 
 export type WorldPiece =
   | { kind: "world"; world: WorldNow }
+  /** What changed since the piece before (`world/change.ts`). */
+  | { kind: "changed"; change: import("./change").Change }
   | { kind: "interrupted"; error: string; since: number };
 
 /** Follows the World: first as it is, then after each change, nothing
  *  asked of any machine meanwhile (`world-network.md`, 近况). Resolves to
  *  the id `unwatch` takes. */
 export function watchWorld(onPiece: (piece: WorldPiece) => void): Promise<number> {
-  const pieces = new Channel<WorldPiece>();
-  // A channel whose handler throws once never delivers again.
-  pieces.onmessage = (piece) => {
-    try {
-      onPiece(piece);
-    } catch (error) {
-      console.error(error);
-    }
-  };
-  return invoke("world_watch", { pieces });
+  return observe<WorldPiece, number>("world_watch", {}, onPiece);
 }
 
 /** Watches a resident: the part it opens on, then each piece as it
@@ -120,21 +114,11 @@ export async function watch(
   who: Address,
   onPiece: (piece: Piece) => void,
 ): Promise<{ id: number; window: Window }> {
-  const pieces = new Channel<Piece>();
-  // A handler that throws stops the channel for good: Tauri delivers
-  // pieces in order and never moves past one that failed. A piece the page
-  // cannot show is reported and passed over, so the conversation goes on.
-  pieces.onmessage = (piece) => {
-    try {
-      onPiece(piece);
-    } catch (error) {
-      console.error("a piece of the conversation could not be shown", piece, error);
-    }
-  };
-  return invoke("watch", { residentId: who.resident, machineName: who.machine, pieces });
+  return observe<Piece, { id: number; window: Window }>("watch", { residentId: who.resident, machineName: who.machine }, onPiece);
 }
 
 export function unwatch(id: number): Promise<void> {
+  closeDelivery(id);
   return invoke("unwatch", { id });
 }
 
@@ -215,6 +199,7 @@ export function pause(tries: number, machine: MachineName | null, done: () => vo
 /** Everything that broke is tried again now: the window came to the front,
  *  or the system says the network is back. */
 export function retryNow(): Promise<void> {
+  retryDeliveries();
   return invoke("reconnect");
 }
 
@@ -302,11 +287,6 @@ export function stop(who: Address): Promise<boolean> {
 /** A project's overview: its map, and who is in its town now. */
 export function project(town: string): Promise<{ map: MapView; who: WorldWho }> {
   return invoke("project", { town });
-}
-
-/** A journal's latest entries that fit, or those before an entry. */
-export function journal(town: string, name: string, before: string | null): Promise<JournalView> {
-  return invoke("journal", { town, journal: name, before });
 }
 
 /** A text file on a machine, or a piece of it, read for the user; `held`
@@ -445,15 +425,6 @@ export function projectEdit(name: string, fields: RecordFields): Promise<TownRec
   return invoke("project_edit", { name, fields });
 }
 
-export function journals(name: string): Promise<JournalSummary[]> {
-  return invoke("journals", { name });
-}
-
-/** An entry the user writes; returns its id. */
-export function journalAdd(name: string, journal: string, text: string, description: string | null): Promise<string> {
-  return invoke("journal_add", { name, journal, text, description });
-}
-
 /** A login, and on a computer what came of keeping it connected. */
 export interface LoggedIn {
   hub: string;
@@ -510,6 +481,12 @@ export function openAccount(hub: string, account: string, password: string, regi
  *  only after `after`, when given (`fastctx_types::stats`). */
 export function machineStats(machine: MachineName | null, after: string | null = null, seen: StatsSeen | null = null): Promise<MachineStats> {
   return invoke("machine_stats", { machineName: machine, after, seen });
+}
+
+/** What `machine`, or this computer with none, keeps free in memory for its
+ *  agents; sets it first when `bytes` is given. */
+export function machineMemoryRoom(machine: MachineName | null, bytes: number | null = null): Promise<number> {
+  return invoke("machine_memory_room", { machineName: machine, bytes });
 }
 
 /** Renames this computer `name`: on no hub, here alone; on hubs, through

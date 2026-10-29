@@ -66,9 +66,19 @@ export class MapPeople {
       if (locked === person.locked) this.locks.delete(keyOf(person.hub, person.account));
       return locked === undefined ? person : { ...person, locked };
     });
-    const coming = this.adding.filter((one) => !people.some((person) => person.hub === one.hub && person.account === one.account));
-    return [...known, ...coming];
+    const there = new Set(people.map((person) => keyOf(person.hub, person.account)));
+    const coming = this.adding.filter((one) => !there.has(keyOf(one.hub, one.account)));
+    const shown = [...known, ...coming];
+    // The same people are the same list: the drawing lays itself out again
+    // only when what it is laid out from changed, and it asks every time
+    // it draws.
+    const last = this.last;
+    if (last && last.length === shown.length && last.every((one, at) => one === shown[at])) return last;
+    this.last = shown;
+    return shown;
   }
+
+  private last: MapPerson[] | null = null;
 
   /** The hubs whose administrator this device is logged in as. */
   hubs(world: WorldNow): string[] {

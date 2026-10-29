@@ -196,7 +196,7 @@ fn ordinary_timeline(turns: &[Value], entries: &[Value]) -> Vec<Value> {
     timeline
 }
 
-async fn pages(server: &AppServer, method: &str, params: Value) -> Result<Vec<Value>, Unanswered> {
+pub(super) async fn pages(server: &AppServer, method: &str, params: Value) -> Result<Vec<Value>, Unanswered> {
     pages_with_voice(server, method, params).await.map(|(entries, _)| entries)
 }
 

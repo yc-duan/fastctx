@@ -15,6 +15,10 @@ use super::exchange::Registration;
 pub struct Proof {
     pub tool_use_id: String,
     pub registration: Registration,
+    /// The session's subagent that made the call; none for the session's
+    /// own agent, and from an earlier mod.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent: Option<String>,
 }
 
 pub fn directory(world: &Path) -> PathBuf {
@@ -31,15 +35,15 @@ fn path(world: &Path, id: &str) -> io::Result<PathBuf> {
     Ok(directory(world).join(name).with_extension("json"))
 }
 
-/// The registration of the session that made call `id`, removing its
-/// proof. The mod finished writing it before the call left the host, so a
-/// proof read here is whole.
-pub fn take(world: &Path, id: &str) -> io::Result<Registration> {
+/// The proof of call `id`, naming the session that made it, removed. The
+/// mod finished writing it before the call left the host, so a proof read
+/// here is whole.
+pub fn take(world: &Path, id: &str) -> io::Result<Proof> {
     take_from(world, id, std::iter::empty::<PathBuf>())
 }
 
 /// Looks in the known sessions before the older shared proof directory.
-pub fn take_from(world: &Path, id: &str, sessions: impl IntoIterator<Item = PathBuf>) -> io::Result<Registration> {
+pub fn take_from(world: &Path, id: &str, sessions: impl IntoIterator<Item = PathBuf>) -> io::Result<Proof> {
     let legacy = path(world, id)?;
     let mut paths: Vec<_> = sessions
         .into_iter()
@@ -59,7 +63,7 @@ pub fn take_from(world: &Path, id: &str, sessions: impl IntoIterator<Item = Path
             return Err(io::Error::other(format!("the proof for Claude call {id} names another call")));
         }
         remove(&path)?;
-        return Ok(proof.registration);
+        return Ok(proof);
     }
     Err(io::Error::other(format!(
         "the World's mod left no proof for Claude call {id}; the session that made it is unknown"

@@ -10,8 +10,20 @@ use fastctx_types::copy::CopyReport;
 
 /// Hashes the source first, then verifies and publishes each destination file.
 pub fn copy(from: &Path, to: &str, machine: &MachineName) -> io::Result<CopyReport> {
+    copy_in(from, to, machine, None)
+}
+
+pub fn copy_protected(from: &Path, to: &str, machine: &MachineName, world: &Path) -> io::Result<CopyReport> {
+    copy_in(from, to, machine, Some(world))
+}
+
+fn copy_in(from: &Path, to: &str, machine: &MachineName, world: Option<&Path>) -> io::Result<CopyReport> {
     let walked = walk(from)?;
-    let mut receiver = Receiver::new(to, walked.manifest).map_err(io::Error::other)?;
+    let receiver = Receiver::new(to, walked.manifest).map_err(io::Error::other)?;
+    let mut receiver = match world {
+        Some(world) => receiver.protect(world).map_err(io::Error::other)?,
+        None => receiver,
+    };
     let source = crate::files::canonical_path(from)?;
     let destination = crate::files::canonical_path(receiver.destination())?;
     if source == destination || (source.is_dir() && destination.starts_with(&source)) {

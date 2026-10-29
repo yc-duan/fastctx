@@ -61,6 +61,17 @@ fn start_attachment(
     attachment: fastctx_types::attachments::AttachmentSource,
     range: FileRange,
 ) -> Receiver {
+    attachment_for(node, None, attachment, range)
+}
+
+/// Reads the attachment `attachment` names from wherever it is kept: for
+/// `acting`, or, without one, for whom this machine acts as itself.
+pub(crate) fn attachment_for(
+    node: Arc<Node>,
+    acting: Option<Acting>,
+    attachment: fastctx_types::attachments::AttachmentSource,
+    range: FileRange,
+) -> mpsc::Receiver<Result<Part, Failure>> {
     let (sender, receiver) = mpsc::channel(1);
     tokio::spawn(async move {
         let cancel = Cancel(Arc::new(std::sync::atomic::AtomicBool::new(false)));
@@ -71,9 +82,9 @@ fn start_attachment(
                     fastctx_types::attachments::AttachmentSource::Upload(receipt) =>
                         match crate::attachments::forwarded::original(&node, receipt)? {
                             Some((original, acting)) => (original.into(), acting),
-                            None => (attachment, Acting::Here),
+                            None => (attachment, acting.clone().unwrap_or(Acting::Here)),
                         },
-                    _ => (attachment, Acting::Here),
+                    _ => (attachment, acting.clone().unwrap_or(Acting::Here)),
                 };
                 let machine = attachment.owner().machine.clone();
                 if !node.is_here(&machine.clone().into()) {

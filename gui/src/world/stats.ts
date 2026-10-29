@@ -27,6 +27,33 @@ export interface MachineStats {
   /** Its lines to the hubs it is on. */
   lines: Line[];
   node: NodeSeen;
+  /** The jobs running on it now, by the account each works for; its own
+   *  under none. */
+  jobs?: AccountJobs[];
+  /** How far it is toward its system's limits, a reading a minute over the
+   *  last day, oldest first; asked with `after`, only the readings since. */
+  limits?: LimitReading[];
+}
+
+export interface LimitReading {
+  at: string;
+  uses: LimitUse[];
+}
+
+/** One limit and how much of it is used: by the user its node runs as, or
+ *  for `open_files`, by its node itself. */
+export interface LimitUse {
+  kind: "inotify_instances" | "inotify_watches" | "open_files" | "tasks" | "other";
+  used: number;
+  limit: number;
+}
+
+/** How many jobs one account runs on a machine now, and the most its owner
+ *  lets it run at once. */
+export interface AccountJobs {
+  account?: { hub: string; account: string };
+  running: number;
+  most?: number;
 }
 
 export interface Cpu {
@@ -47,6 +74,11 @@ export interface Memory {
   /** The page file or swap. */
   swap_total: number;
   swap_used: number;
+  /** What the machine keeps free for its agents; absent where its node keeps
+   *  none, zero where it was turned off (`world-lifecycle.md`, 内存). */
+  room?: number;
+  /** How many turns wait for that room now. */
+  waiting?: number;
 }
 
 export interface Disk {

@@ -10,7 +10,9 @@ export type Motion = "system" | "always" | "off";
 export const motions: Motion[] = ["system", "always", "off"];
 
 const KEPT = "motion";
-const asked = matchMedia("(prefers-reduced-motion: reduce)");
+// Asked of the system in a page; none where there is no page, as when the
+// wire checks load this in Node.
+const asked = typeof matchMedia === "function" ? matchMedia("(prefers-reduced-motion: reduce)") : null;
 const listeners = new Set<() => void>();
 
 /** The choice kept on this device; following the system when none is. */
@@ -23,10 +25,17 @@ export function chosenMotion(): Motion {
   }
 }
 
+/** A CSS time, as a token holds it, in milliseconds. */
+export function msOf(time: string): number {
+  const value = parseFloat(time);
+  if (!Number.isFinite(value)) return 0;
+  return time.trim().endsWith("ms") ? value : value * 1000;
+}
+
 /** Whether the interface moves less now. */
 export function reducedMotion(): boolean {
   const motion = chosenMotion();
-  return motion === "off" || (motion === "system" && asked.matches);
+  return motion === "off" || (motion === "system" && !!asked?.matches);
 }
 
 export function chooseMotion(motion: Motion): void {
@@ -47,6 +56,7 @@ export function onMotion(listener: () => void): () => void {
 }
 
 function apply(): void {
+  if (typeof document === "undefined") return;
   const reduced = reducedMotion();
   const root = document.documentElement;
   if (root.hasAttribute("data-reduced") === reduced) return;
@@ -54,5 +64,5 @@ function apply(): void {
   for (const listener of listeners) listener();
 }
 
-asked.addEventListener("change", apply);
+asked?.addEventListener("change", apply);
 apply();

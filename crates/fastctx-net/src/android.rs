@@ -3,7 +3,7 @@
 
 use std::net::SocketAddr;
 use std::os::fd::AsRawFd;
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 
 use serde::Deserialize;
 
@@ -33,7 +33,9 @@ pub trait Platform: Send + Sync {
     fn choices(&self, target: SocketAddr) -> Result<Choices, String>;
 }
 
-static PLATFORM: OnceLock<Arc<dyn Platform>> = OnceLock::new();
+/// The bridge last installed: a start that failed after installing it is
+/// tried again with a new one.
+static PLATFORM: std::sync::RwLock<Option<Arc<dyn Platform>>> = std::sync::RwLock::new(None);
 static CHANGES: std::sync::LazyLock<tokio::sync::watch::Sender<u64>> =
     std::sync::LazyLock::new(|| tokio::sync::watch::channel(0).0);
 
@@ -48,12 +50,13 @@ pub(crate) fn changes() -> tokio::sync::watch::Receiver<u64> {
     CHANGES.subscribe()
 }
 
-pub fn install(platform: Arc<dyn Platform>) -> Result<(), String> {
-    PLATFORM.set(platform).map_err(|_| "Android networking was already installed".to_string())
+pub fn install(platform: Arc<dyn Platform>) {
+    *PLATFORM.write().unwrap_or_else(std::sync::PoisonError::into_inner) = Some(platform);
 }
 
 pub(crate) fn choices(target: SocketAddr) -> Result<Choices, String> {
-    PLATFORM.get().ok_or("the Android network bridge has not started")?.choices(target)
+    let platform = PLATFORM.read().unwrap_or_else(std::sync::PoisonError::into_inner).clone();
+    platform.ok_or("the Android network bridge has not started")?.choices(target)
 }
 
 pub(crate) fn socket(network: &Network, target: SocketAddr) -> Result<tokio::net::TcpSocket, String> {

@@ -3,6 +3,7 @@
 // the network's update policy, and what is done to the machines chosen.
 
 import type { ActionReason, FailureReason } from "../world/updates";
+import { enRepair, zhRepair, type RepairWords } from "./repair-words";
 
 export interface UpdateViewWords {
   /** The view's name in the page's head. */
@@ -47,7 +48,18 @@ export interface UpdateViewWords {
   updateTo: string;
   ways: string;
   cancel: string;
-  bar: { updateTo: string; ways: string; cancel: string };
+  /** Repairing machines, and calling off a repair kept for one away. */
+  repair: string;
+  cancelRepair: string;
+  bar: { updateTo: string; ways: string; cancel: string; repair: string; cancelRepair: string };
+  /** A repair under way on it, at which layer. */
+  repairing(layer: string): string;
+  /** A repair kept for it until it is back, and who asked for it. */
+  repairDue(by: string): string;
+  repairDueBlocked(why: string): string;
+  /** Its last repair stopped short. */
+  repairFailed: string;
+  repairWords: RepairWords;
   /** Machines a scheduling did not reach. */
   notScheduled(why: string): string;
   /** Why something cannot be done to a machine. */
@@ -87,7 +99,14 @@ export const zhUpdateView: UpdateViewWords = {
   updateTo: "更新到…",
   ways: "更新方式",
   cancel: "撤销安排",
-  bar: { updateTo: "更新到…", ways: "方式", cancel: "撤销" },
+  repair: "修复",
+  cancelRepair: "撤销修复",
+  bar: { updateTo: "更新到…", ways: "方式", cancel: "撤销", repair: "修复", cancelRepair: "撤销修复" },
+  repairing: (layer) => `正在修复：${layer}`,
+  repairDue: (by) => `已安排：上线后修复（${by} 安排的）`,
+  repairDueBlocked: (why) => `安排了修复，但${why}`,
+  repairFailed: "上次修复没修好",
+  repairWords: zhRepair,
   notScheduled: (why) => `没安排上：${why}`,
   reasons: {
     not_owner: "不是你能管的机器",
@@ -145,7 +164,14 @@ export const enUpdateView: UpdateViewWords = {
   updateTo: "Update to…",
   ways: "Update settings",
   cancel: "Cancel scheduled",
-  bar: { updateTo: "Update", ways: "Settings", cancel: "Cancel" },
+  repair: "Repair",
+  cancelRepair: "Cancel repair",
+  bar: { updateTo: "Update", ways: "Settings", cancel: "Cancel", repair: "Repair", cancelRepair: "Cancel repair" },
+  repairing: (layer) => `Repairing: ${layer}`,
+  repairDue: (by) => `Scheduled: repairs when back (by ${by})`,
+  repairDueBlocked: (why) => `A repair is scheduled, but ${why}`,
+  repairFailed: "Its last repair didn't finish",
+  repairWords: enRepair,
   notScheduled: (why) => `Not scheduled: ${why}`,
   reasons: {
     not_owner: "Not a machine you manage",
