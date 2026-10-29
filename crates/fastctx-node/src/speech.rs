@@ -958,88 +958,129 @@ pub async fn restore(node: &Arc<Node>) {
 }
 
 /// Classifies interrupted submissions before new submissions are enabled.
-/// Delivery itself waits for the node to open, in separate tasks.
+/// Delivery itself waits for the node to open, in separate tasks. A
+/// conversation whose records could not be read for a passing reason, as
+/// when no descriptor was left, is tried again each minute, as of what the
+/// node before this one left: the records last written before this one
+/// started, never a submission begun since.
 pub async fn recover(node: &Arc<Node>) {
+    let mut failed = Vec::new();
     for resident in node.residents.everyone() {
-        let directory = node.world.conversation(&resident.id);
-        let result = async {
-            if resident.removed.is_some() {
-                return Ok(None);
-            }
-            let Some(speaking) = node.residents.speaking(&resident.id) else { return Ok(None) };
-            let _guard = speaking.lock().await;
-            let handovers = crate::delivery::handovers(&directory)?;
-            let covered: std::collections::BTreeSet<NoticeId> = handovers
-                .iter()
-                .flat_map(|handover| handover.inputs.iter().map(|input| input.delivery.id.clone()))
-                .collect();
-            for mut handover in handovers {
-                if handover.turn.is_none() && (handover.attempting || handover.unresolved.is_some()) {
-                    let why = format!(
-                        "the node on {} restarted during a submission; whether {} read it is unknown; \
-                         its exact contents remain in its handovers record",
-                        node.machine(),
-                        resident.id
-                    );
-                    crate::turns::unresolved(
-                        node,
-                        &resident.id,
-                        &directory,
-                        &mut handover,
-                        TurnHow::Interrupted,
-                        why,
-                        Some(serde_json::json!({"world":"node_restarted"})),
-                    )
-                    .await?;
-                }
-            }
-            // Sending entries from versions without batch records are
-            // retained and settled as one legacy attempt per resident.
-            let kept = crate::inbox::pending(&directory)?;
-            let legacy: Vec<Pending> = kept
-                .iter()
-                .filter(|input| input.state == PendingState::Sending && !covered.contains(&input.delivery.id))
-                .cloned()
-                .collect();
-            if !legacy.is_empty() {
-                let mut handover = crate::delivery::begin(&directory, legacy)?;
-                crate::turns::unresolved(
-                    node,
-                    &resident.id,
-                    &directory,
-                    &mut handover,
-                    TurnHow::Interrupted,
-                    "the prior node stopped during a submission; acceptance was not recorded".to_string(),
-                    Some(serde_json::json!({"world":"node_restarted"})),
-                )
-                .await?;
-            }
-            // What can open a turn first, a sentinel's finding before the rest.
-            let waiting = crate::inbox::pending(&directory)?
-                .into_iter()
-                .filter(|input| input.state == PendingState::Waiting)
-                .min_by_key(|input| {
-                    (input.delivery.notice.along().is_some(), !matches!(input.delivery.notice, Notice::Sentinel { .. }))
-                });
-            Ok::<_, std::io::Error>(waiting)
-        }
-        .await;
-        match result {
-            Err(error) => node.log.line(format_args!(
-                "recovering deliveries for {}; records retained for the next start: {error}",
-                resident.id
-            )),
-            Ok(waiting) => {
-                let node = node.clone();
-                tokio::spawn(async move {
-                    if waiting.is_some() && resident.about.world_managed() {
-                        crate::lifecycle::retry::kick(&node, &resident.id);
-                    }
-                    crate::turns::pay(&node, &resident.id, &directory).await;
-                });
+        match recover_one(node, &resident, None).await {
+            Ok(waiting) => recovered(node, resident, waiting),
+            Err(error) => {
+                node.log
+                    .line(format_args!("recovering deliveries for {}; tried again in a minute: {error}", resident.id));
+                failed.push(resident.id);
             }
         }
     }
+    if !failed.is_empty() {
+        let (node, before) = (node.clone(), std::time::SystemTime::from(node.started));
+        tokio::spawn(async move { recover_later(node, failed, before).await });
+    }
+}
+
+/// How long a conversation whose deliveries could not be recovered waits
+/// before they are tried again.
+const RECOVER_AGAIN: std::time::Duration = std::time::Duration::from_secs(60);
+
+async fn recover_later(node: Arc<Node>, mut failed: Vec<ResidentId>, before: std::time::SystemTime) {
+    while !failed.is_empty() {
+        tokio::time::sleep(RECOVER_AGAIN).await;
+        let mut still = Vec::new();
+        for id in failed {
+            // One deleted meanwhile has nothing left to recover.
+            let Some(resident) = node.residents.everyone().find(|resident| resident.id == id) else { continue };
+            match recover_one(&node, &resident, Some(before)).await {
+                Ok(waiting) => {
+                    node.log.line(format_args!("recovered deliveries for {id}"));
+                    recovered(&node, resident, waiting);
+                }
+                Err(_) => still.push(id),
+            }
+        }
+        failed = still;
+    }
+}
+
+/// Settles what the node before this one left half done for `resident`,
+/// and finds what waits first. With `before`, only a submission recorded
+/// before then is taken for interrupted.
+async fn recover_one(
+    node: &Arc<Node>,
+    resident: &crate::residents::OnRecord,
+    before: Option<std::time::SystemTime>,
+) -> std::io::Result<Option<Pending>> {
+    if resident.removed.is_some() {
+        return Ok(None);
+    }
+    let directory = node.world.conversation(&resident.id);
+    let Some(speaking) = node.residents.speaking(&resident.id) else { return Ok(None) };
+    let _guard = speaking.lock().await;
+    let handovers = crate::delivery::handovers(&directory)?;
+    let covered: std::collections::BTreeSet<NoticeId> =
+        handovers.iter().flat_map(|handover| handover.inputs.iter().map(|input| input.delivery.id.clone())).collect();
+    for mut handover in handovers {
+        if handover.turn.is_none()
+            && (handover.attempting || handover.unresolved.is_some())
+            && crate::delivery::written_before(&directory, &handover.id, before)?
+        {
+            let why = format!(
+                "the node on {} restarted during a submission; whether {} read it is unknown;                  its exact contents remain in its handovers record",
+                node.machine(),
+                resident.id
+            );
+            crate::turns::unresolved(
+                node,
+                &resident.id,
+                &directory,
+                &mut handover,
+                TurnHow::Interrupted,
+                why,
+                Some(serde_json::json!({"world":"node_restarted"})),
+            )
+            .await?;
+        }
+    }
+    // Sending entries from versions without batch records are retained and
+    // settled as one legacy attempt per resident, at the start alone.
+    let kept = crate::inbox::pending(&directory)?;
+    let legacy: Vec<Pending> = kept
+        .iter()
+        .filter(|input| input.state == PendingState::Sending && !covered.contains(&input.delivery.id))
+        .cloned()
+        .collect();
+    if before.is_none() && !legacy.is_empty() {
+        let mut handover = crate::delivery::begin(&directory, legacy)?;
+        crate::turns::unresolved(
+            node,
+            &resident.id,
+            &directory,
+            &mut handover,
+            TurnHow::Interrupted,
+            "the prior node stopped during a submission; acceptance was not recorded".to_string(),
+            Some(serde_json::json!({"world":"node_restarted"})),
+        )
+        .await?;
+    }
+    // What can open a turn first, a sentinel's finding before the rest.
+    Ok(crate::inbox::pending(&directory)?.into_iter().filter(|input| input.state == PendingState::Waiting).min_by_key(
+        |input| (input.delivery.notice.along().is_some(), !matches!(input.delivery.notice, Notice::Sentinel { .. })),
+    ))
+}
+
+/// What was recovered goes on: the words waiting first ask to be delivered,
+/// and what the conversation owes is paid.
+fn recovered(node: &Arc<Node>, resident: crate::residents::OnRecord, waiting: Option<Pending>) {
+    let node = node.clone();
+    let directory = node.world.conversation(&resident.id);
+    tokio::spawn(async move {
+        if waiting.is_some() && resident.about.world_managed() {
+            crate::lifecycle::retry::kick(&node, &resident.id);
+        }
+        crate::turns::pay(&node, &resident.id, &directory).await;
+    });
 }
 
 /// A cancelled handoff reopens delivery of waiting words. Unlike startup

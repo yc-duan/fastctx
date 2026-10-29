@@ -255,6 +255,22 @@ fn handover_path(directory: &ConversationDir, id: &NoticeId) -> PathBuf {
     directory.handovers().join(format!("{id}.json"))
 }
 
+/// Whether the handover `id` was last written before `before`, any time
+/// with none: a node recovering what the one before it left takes only
+/// what that one wrote.
+pub fn written_before(
+    directory: &ConversationDir,
+    id: &NoticeId,
+    before: Option<std::time::SystemTime>,
+) -> io::Result<bool> {
+    let Some(before) = before else { return Ok(true) };
+    match std::fs::metadata(handover_path(directory, id)) {
+        Ok(metadata) => Ok(metadata.modified()? < before),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(error),
+    }
+}
+
 fn terminal_path(directory: &ConversationDir, turn: &str) -> PathBuf {
     let id = crate::speech::fixed_id("turn", &[turn]);
     directory.turns().join(format!("{id}.json"))
