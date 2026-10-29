@@ -22,6 +22,40 @@ pub fn output_policy() -> String {
     format!("terminal-v1:{pages:?}")
 }
 
+/// Why an output's index did not grow (`Index::grow`).
+#[derive(Debug)]
+pub enum NotGrown {
+    /// The index is as it was before: the same growth can be tried again.
+    Passing(String),
+    /// What the index shows can no longer be trusted: the output was
+    /// rewritten or truncated, or the index could not be put back.
+    Ended(String),
+}
+
+/// The rows' file under their buffer. Told to drop, it takes what the
+/// buffer hands it without writing it, so a reparse that failed leaves
+/// none of its rows behind.
+struct RowsFile {
+    file: File,
+    dropping: bool,
+}
+
+impl Write for RowsFile {
+    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+        if self.dropping { Ok(bytes.len()) } else { self.file.write(bytes) }
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        if self.dropping { Ok(()) } else { self.file.flush() }
+    }
+}
+
+impl Seek for RowsFile {
+    fn seek(&mut self, to: SeekFrom) -> io::Result<u64> {
+        self.file.seek(to)
+    }
+}
+
 struct Row {
     start: u64,
     end: u64,
@@ -36,7 +70,7 @@ pub struct Index {
     path: PathBuf,
     file: std::io::BufReader<File>,
     file_cursor: Option<u64>,
-    rows: std::io::BufWriter<File>,
+    rows: std::io::BufWriter<RowsFile>,
     row_cursor: u64,
     row_cache: Vec<u8>,
     row_cache_start: Option<u64>,
@@ -67,7 +101,10 @@ impl Index {
             path: path.to_path_buf(),
             file: std::io::BufReader::with_capacity(BLOCK, file),
             file_cursor: None,
-            rows: std::io::BufWriter::with_capacity(BLOCK, tempfile::tempfile_in(directory).map_err(err)?),
+            rows: std::io::BufWriter::with_capacity(
+                BLOCK,
+                RowsFile { file: tempfile::tempfile_in(directory).map_err(err)?, dropping: false },
+            ),
             row_cursor: 0,
             row_cache: Vec::new(),
             row_cache_start: None,
@@ -186,34 +223,84 @@ impl Index {
         Ok(())
     }
 
-    /// Only job outputs are append-only. Reparse the final unfinished group.
-    pub fn grow(&mut self, bytes: u64, cancelled: Arc<AtomicBool>) -> Result<u64, String> {
+    /// Only job outputs are append-only. Reparse the final unfinished group;
+    /// a reparse that fails puts the index back as it was.
+    pub fn grow(&mut self, bytes: u64, cancelled: Arc<AtomicBool>) -> Result<u64, NotGrown> {
         if !self.output || bytes < self.bytes {
-            return Err("the source was rewritten or truncated".into());
+            return Err(NotGrown::Ended("the source was rewritten or truncated".into()));
         }
         if bytes == self.bytes {
             return Ok(self.length);
         }
+        let (length, before) = (self.length, self.bytes);
         let mut first = self.length;
         let mut start = self.bytes;
         let mut literal = false;
         if self.length > 0 {
-            let last = self.row(self.length - 1)?;
+            let last = self.row(self.length - 1).map_err(NotGrown::Passing)?;
             start = last.start;
             literal = last.literal;
             first -= 1;
-            while first > 0 && self.row(first - 1)?.start == start {
+            while first > 0 && self.row(first - 1).map_err(NotGrown::Passing)?.start == start {
                 first -= 1;
             }
         }
+        let kept = self.records(first, length).map_err(NotGrown::Passing)?;
+        match self.reparse(first, start, literal, bytes, cancelled) {
+            Ok(()) => Ok(first),
+            Err(error) => match self.put_back(first, length, before, &kept) {
+                Ok(()) => Err(NotGrown::Passing(error)),
+                Err(lost) => Err(NotGrown::Ended(format!("{error}; the index could not be put back: {lost}"))),
+            },
+        }
+    }
+
+    /// Indexes the output again from `start` up to `bytes`, the rows from
+    /// `first` on being those it gives.
+    fn reparse(
+        &mut self,
+        first: u64,
+        start: u64,
+        literal: bool,
+        bytes: u64,
+        cancelled: Arc<AtomicBool>,
+    ) -> Result<(), String> {
         self.rows.flush().map_err(err)?;
-        self.rows.get_mut().set_len(first * RECORD).map_err(err)?;
+        self.rows.get_mut().file.set_len(first * RECORD).map_err(err)?;
         self.row_cache_start = None;
         self.file_cursor = None;
         self.length = first;
         self.bytes = bytes;
-        self.append(start, literal, cancelled)?;
-        Ok(first)
+        self.append(start, literal, cancelled)
+    }
+
+    /// The records of rows `from..to` as they lie on disk.
+    fn records(&mut self, from: u64, to: u64) -> Result<Vec<u8>, String> {
+        self.rows.seek(SeekFrom::Start(from * RECORD)).map_err(err)?;
+        let mut records = vec![0; ((to - from) * RECORD) as usize];
+        self.rows.get_mut().file.read_exact(&mut records).map_err(err)?;
+        self.row_cursor = to * RECORD;
+        Ok(records)
+    }
+
+    /// Puts the index back as it was before a reparse that failed: `length`
+    /// rows over `bytes` of the output, those from `first` on being `kept`.
+    fn put_back(&mut self, first: u64, length: u64, bytes: u64, kept: &[u8]) -> Result<(), String> {
+        // What the reparse left in the buffer is dropped, never written.
+        self.rows.get_mut().dropping = true;
+        let dropped = self.rows.flush();
+        self.rows.get_mut().dropping = false;
+        dropped.map_err(err)?;
+        let file = &mut self.rows.get_mut().file;
+        file.seek(SeekFrom::Start(first * RECORD)).map_err(err)?;
+        file.write_all(kept).map_err(err)?;
+        file.set_len(length * RECORD).map_err(err)?;
+        self.row_cursor = length * RECORD;
+        self.row_cache_start = None;
+        self.file_cursor = None;
+        self.length = length;
+        self.bytes = bytes;
+        Ok(())
     }
 
     pub fn read(&mut self, start: u64, count: u64, cancelled: &AtomicBool) -> Result<Vec<String>, String> {
@@ -440,7 +527,7 @@ impl Index {
             self.rows.seek(SeekFrom::Start(start * RECORD)).map_err(err)?;
             let count = (self.length - start).min(per_block);
             self.row_cache.resize((count * RECORD) as usize, 0);
-            self.rows.get_mut().read_exact(&mut self.row_cache).map_err(err)?;
+            self.rows.get_mut().file.read_exact(&mut self.row_cache).map_err(err)?;
             self.row_cursor = (start + count) * RECORD;
             self.row_cache_start = Some(start);
         }

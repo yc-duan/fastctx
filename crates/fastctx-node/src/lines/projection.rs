@@ -4,6 +4,7 @@ use super::State;
 use fastctx_hands::run::projection::CapturedNotes;
 use fastctx_types::run_facts::WriteFact;
 use sha2::{Digest as _, Sha256};
+use std::io;
 use std::path::Path;
 use std::sync::atomic::AtomicBool;
 use std::time::SystemTime;
@@ -39,6 +40,10 @@ pub(super) fn open(path: &Path, bytes: u64, record: Option<&Path>, cancelled: &A
     Ok((Some(projection), writes, revision))
 }
 
+/// Brings the notes up to `bytes` of the output; whether what they mark
+/// changed. A refresh that fails part way leaves the occurrences it was
+/// adding half written: the notes are then read afresh at the next look,
+/// and until then show what they showed.
 pub(super) fn refresh(
     state: &mut State,
     path: &Path,
@@ -46,16 +51,22 @@ pub(super) fn refresh(
     record: Option<&Path>,
     revision: Revision,
     cancelled: &AtomicBool,
-) -> Result<bool, String> {
+) -> io::Result<bool> {
     let Some(record) = record else { return Ok(false) };
-    if state.writes_revision != revision {
-        state.writes = crate::run_facts::writes(record).map_err(|error| error.to_string())?;
+    if state.writes_revision != revision || state.notes_broken {
+        state.writes = crate::run_facts::writes(record)?;
         state.writes_revision = revision;
     }
-    state
+    if state.notes_broken {
+        state.projection = Some(CapturedNotes::read_cancellable(path, bytes, &state.writes, Some(cancelled))?);
+        state.notes_broken = false;
+        return Ok(true);
+    }
+    let refreshed = state
         .projection
         .as_mut()
-        .ok_or_else(|| "output projection is closed".to_string())?
-        .refresh_cancellable(path, bytes, &state.writes, Some(cancelled))
-        .map_err(|error| error.to_string())
+        .ok_or_else(|| io::Error::other("output projection is closed"))?
+        .refresh_cancellable(path, bytes, &state.writes, Some(cancelled));
+    state.notes_broken = refreshed.is_err();
+    refreshed
 }

@@ -11,6 +11,7 @@ use std::sync::{
     atomic::{AtomicBool, Ordering},
 };
 
+use fastctx_hands::lines::NotGrown;
 use fastctx_types::MachineName;
 use fastctx_types::access::{Acting, Purpose};
 use fastctx_types::ipc::Failure;
@@ -44,7 +45,13 @@ struct State {
     error: Option<String>,
     /// The last look failed for a passing reason: it is looked at again soon.
     stale: bool,
+    /// The first line a growth changed that no change has told yet: one
+    /// whose later steps failed is told with the next.
+    unsaid: Option<u64>,
     projection: Option<fastctx_hands::run::projection::CapturedNotes>,
+    /// A refresh of the notes failed part way: they are read afresh at the
+    /// next look, and shown as they were until then.
+    notes_broken: bool,
     writes: Vec<fastctx_types::run_facts::WriteFact>,
     writes_revision: Option<(u64, std::time::SystemTime)>,
 }
@@ -195,9 +202,11 @@ pub(crate) async fn open(
                 first: 0,
                 error: None,
                 stale: false,
+                unsaid: None,
                 projection,
                 writes,
                 writes_revision,
+                notes_broken: false,
             })
         })
         .await
@@ -293,7 +302,11 @@ async fn refresh(
             };
             let ended = complete(source.job_record.as_deref()).map_err(passing)?;
             let revision = projection::revision(source.notes_record.as_deref()).map_err(passing)?;
-            if state.snapshot == snapshot && state.extent.complete == ended && state.writes_revision == revision {
+            if state.snapshot == snapshot
+                && state.extent.complete == ended
+                && state.writes_revision == revision
+                && !state.notes_broken
+            {
                 return Ok(None);
             }
             if source.job_record.is_none()
@@ -303,26 +316,39 @@ async fn refresh(
             {
                 return Err(ending("the text source was changed, replaced or truncated".into()));
             }
-            let mut first = state
+            let grown = match state
                 .index
                 .as_mut()
                 .ok_or_else(|| ending("the source is closed".to_string()))?
                 .grow(snapshot.size, source.cancelled.clone())
-                .map_err(ending)?;
-            if projection::refresh(
+            {
+                Ok(first) => first,
+                Err(NotGrown::Passing(error)) => return Err(passing(error)),
+                Err(NotGrown::Ended(error)) => return Err(ending(error)),
+            };
+            let mut first = state.unsaid.map_or(grown, |unsaid| unsaid.min(grown));
+            state.unsaid = Some(first);
+            match projection::refresh(
                 &mut state,
                 &source.path,
                 snapshot.size,
                 source.notes_record.as_deref(),
                 revision,
                 &source.cancelled,
-            )
-            .map_err(ending)?
-            {
-                first = 0;
+            ) {
+                Ok(changed) => {
+                    if changed {
+                        first = 0;
+                    }
+                }
+                // The system's own failures pass, as no descriptor or no disk
+                // left for a moment; one about what was read ends the source.
+                Err(error) if error.raw_os_error().is_some() => return Err(passing(error.to_string())),
+                Err(error) => return Err(ending(error.to_string())),
             }
             projection::verify(state.projection.as_ref(), source.annotation.as_deref()).map_err(ending)?;
             state.snapshot = snapshot;
+            state.unsaid = None;
             let length = state.index.as_ref().expect("index").length;
             Ok(Some((length, ended, first)))
         })();
