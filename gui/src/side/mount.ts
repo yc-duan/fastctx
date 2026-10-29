@@ -17,7 +17,7 @@
 // itself as it goes.
 
 import { makeGrip } from "../app/grip";
-import { TALK_DRAG } from "../app/talk-row";
+import { type Carried, placeForDrops } from "../app/talk-drag";
 import { glyph } from "../conversation/glyphs";
 import type { AgentRun } from "../conversation/agents";
 import { holdColumn } from "../conversation/column-hold";
@@ -482,51 +482,48 @@ export class SideMount {
    *  for it there. While one is dragged over the page, where it would open
    *  is shown. */
   private dropping(split: HTMLElement): void {
-    const carries = (event: DragEvent) => !!event.dataTransfer?.types.includes(TALK_DRAG);
     const mark = split.querySelector<HTMLElement>(".sp-drop-mark")!;
     const done = () => {
       this.page.classList.remove("sp-dropping");
       delete this.page.dataset.dropping;
     };
-    const zone = (event: DragEvent): Dock => {
+    const zone = (x: number, y: number): Dock => {
       const box = split.getBoundingClientRect();
-      const x = (event.clientX - box.left) / Math.max(1, box.width);
-      const y = (event.clientY - box.top) / Math.max(1, box.height);
-      return y > 0.62 ? "bottom" : x < 0.38 ? "left" : "right";
+      const across = (x - box.left) / Math.max(1, box.width);
+      const down = (y - box.top) / Math.max(1, box.height);
+      return down > 0.62 ? "bottom" : across < 0.38 ? "left" : "right";
     };
-    split.addEventListener("dragover", (event) => {
-      if (!carries(event) || OVER.matches) return;
-      event.preventDefault();
-      event.dataTransfer!.dropEffect = "copy";
-      this.page.classList.add("sp-dropping");
-      const at = this.placement(zone(event));
-      if (this.page.dataset.dropping === at) return;
-      this.page.dataset.dropping = at;
-      mark.innerHTML = glyph(`dock-${at === "over" ? this.dock : at}`, 18);
-    });
-    split.addEventListener("dragleave", (event) => {
-      if (!split.contains(event.relatedTarget as Node | null)) done();
-    });
-    split.addEventListener("drop", (event) => {
-      done();
-      const carried = event.dataTransfer?.getData(TALK_DRAG);
-      if (!carried) return;
-      event.preventDefault();
-      try {
-        const address = JSON.parse(carried) as Address;
-        if (!address?.resident || !address.machine) return;
-        const self = this.context.seams.self;
-        if (address.resident === self.resident && address.machine === self.machine) return;
-        // Kept where it is seen to stand, not where it had no room.
-        const at = this.placement(zone(event));
-        if (at !== "over") this.setDock(at);
-        this.openTalk(address);
-      } catch {
-        // Not a conversation: nothing to open.
-      }
-    });
-    document.addEventListener("dragend", done);
-    this.stops.push(() => document.removeEventListener("dragend", done));
+    /** Whether `carried` is another conversation, carried over this page. */
+    const takes = (carried: Carried, under: Element | null) => {
+      const self = this.context.seams.self;
+      return !OVER.matches && !!under && split.contains(under) && !(carried.resident === self.resident && carried.machine === self.machine);
+    };
+    this.stops.push(
+      placeForDrops({
+        over: (carried, x, y, under) => {
+          if (!takes(carried, under)) {
+            done();
+            return false;
+          }
+          this.page.classList.add("sp-dropping");
+          const at = this.placement(zone(x, y));
+          if (this.page.dataset.dropping !== at) {
+            this.page.dataset.dropping = at;
+            mark.innerHTML = glyph(`dock-${at === "over" ? this.dock : at}`, 18);
+          }
+          return true;
+        },
+        out: done,
+        take: (carried, x, y, under) => {
+          done();
+          if (!takes(carried, under)) return;
+          // Kept where it is seen to stand, not where it had no room.
+          const at = this.placement(zone(x, y));
+          if (at !== "over") this.setDock(at);
+          this.openTalk({ resident: carried.resident, machine: carried.machine });
+        },
+      }),
+    );
   }
 
   /** A conversation's tab, its page made when the tab is first shown; false
