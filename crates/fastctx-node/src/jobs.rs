@@ -59,9 +59,17 @@ impl Jobs {
         } else {
             (Vec::new(), Vec::new())
         };
-        crate::activity_book::note(node, &record, &writes, &steps);
-        crate::run_facts::update_job_with(node, &path, writes, steps)
-            .map_err(|error| failure("updating call facts", error))?;
+        // Noting it and measuring an ended output read whole files: they
+        // run beside the runtime, which others share.
+        let noting = node.clone();
+        let (noted, at) = (record.clone(), path.clone());
+        tokio::task::spawn_blocking(move || {
+            crate::activity_book::note(&noting, &noted, &writes, &steps);
+            crate::run_facts::update_job_with(&noting, &at, writes, steps)
+        })
+        .await
+        .map_err(|error| failure("updating call facts", std::io::Error::other(error)))?
+        .map_err(|error| failure("updating call facts", error))?;
         match crate::inbox::tell_if_ended(node, &path, &record).await {
             Ok(()) => Ok(()),
             Err(error) => {
