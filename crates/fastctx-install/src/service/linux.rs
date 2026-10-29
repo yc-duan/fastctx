@@ -416,6 +416,26 @@ pub(super) fn uninstall(service: &Service) -> anyhow::Result<Status> {
     )
 }
 
+/// Stops the service and keeps it stopped: its check starts it only while it
+/// is enabled, so it is disabled first.
+pub(super) fn hold(service: &Service) -> anyhow::Result<Status> {
+    let reg = Registration::new(service);
+    let _lock = FileLock::acquire(&PathBuf::from("/run/lock").join(format!("{}.lock", reg.name)))?;
+    anyhow::ensure!(reg.read()?.is_some(), "{} is not installed", reg.name);
+    systemctl(&["disable", &reg.name])?;
+    systemctl(&["stop", &reg.name])?;
+    reg.status(true)
+}
+
+pub(super) fn release(service: &Service) -> anyhow::Result<Status> {
+    let reg = Registration::new(service);
+    let _lock = FileLock::acquire(&PathBuf::from("/run/lock").join(format!("{}.lock", reg.name)))?;
+    anyhow::ensure!(reg.read()?.is_some(), "{} is not installed", reg.name);
+    systemctl(&["enable", &reg.name])?;
+    systemctl(&["start", &reg.name])?;
+    reg.status(true)
+}
+
 pub(super) fn systemctl(args: &[&str]) -> anyhow::Result<String> {
     checked(Command::new("systemctl").arg("--system").args(args))
 }

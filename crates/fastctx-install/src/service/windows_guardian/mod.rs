@@ -139,6 +139,24 @@ pub(super) fn install(service: &Service) -> anyhow::Result<Status> {
     )
 }
 
+/// Stops the guardian and keeps it stopped: disabled, with no restart on
+/// failure, which its scheduled check leaves as it is.
+pub(super) fn hold(service: &Service) -> anyhow::Result<Status> {
+    let config = Config::new(service)?;
+    let _owner = owner::AdministratorOwner::enter()?;
+    scm::stop(&config.name)?;
+    inspect(&config)
+}
+
+/// Starts it again at boot and after a failure, and now.
+pub(super) fn release(service: &Service) -> anyhow::Result<Status> {
+    let config = Config::new(service)?;
+    let _owner = owner::AdministratorOwner::enter()?;
+    scm::enable(&config.name)?;
+    scm::start(&config.name)?;
+    inspect(&config)
+}
+
 pub(super) fn uninstall(service: &Service) -> anyhow::Result<Status> {
     let config = Config::new(service)?;
     let _owner = owner::AdministratorOwner::enter()?;

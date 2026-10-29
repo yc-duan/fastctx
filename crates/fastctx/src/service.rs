@@ -17,6 +17,11 @@ enum Action {
     Install,
     Uninstall,
     Status,
+    /// Stops the service and keeps it stopped, for maintenance, until it is
+    /// released: nothing that keeps it running starts it meanwhile.
+    Hold,
+    /// Lets a held service run again, and starts it.
+    Release,
 }
 
 #[derive(Args)]
@@ -76,7 +81,9 @@ pub fn run(args: ServiceArgs) -> anyhow::Result<()> {
                     }
                     fastctx_install::executable::installed_path(&root)
                 }
-                Action::Uninstall | Action::Status => fastctx_install::executable::installed_path(&root),
+                Action::Uninstall | Action::Status | Action::Hold | Action::Release => {
+                    fastctx_install::executable::installed_path(&root)
+                }
             }
         }
     };
@@ -90,6 +97,8 @@ pub fn run(args: ServiceArgs) -> anyhow::Result<()> {
         Action::Install => service.install()?,
         Action::Uninstall => service.uninstall()?,
         Action::Status => service.status()?,
+        Action::Hold => service.hold()?,
+        Action::Release => service.release()?,
     };
     // As when this computer joins a World (`crate::keep`): the node that
     // served until now hands the World to the service's.

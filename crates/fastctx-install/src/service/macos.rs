@@ -78,6 +78,23 @@ pub(super) fn uninstall(service: &Service) -> anyhow::Result<Status> {
     observed(service, false)
 }
 
+/// Stops the service and keeps it stopped: unloaded, launchd no longer keeps
+/// it alive, and disabled, it is not loaded at the next login or boot. Its
+/// definition stays.
+pub(super) fn hold(service: &Service) -> anyhow::Result<Status> {
+    let target = target(service);
+    launchctl(&["disable", &target])?;
+    if loaded(&target) {
+        launchctl(&["bootout", &target])?;
+    }
+    observed(service, true)
+}
+
+/// Loads, enables and starts it again, as installing it does.
+pub(super) fn release(service: &Service) -> anyhow::Result<Status> {
+    install(service)
+}
+
 /// Whether this process may start the service again: a user's own agent
 /// by that user, a daemon of the machine by root alone. A daemon a user may
 /// not restart starts again by itself on a newer World program
