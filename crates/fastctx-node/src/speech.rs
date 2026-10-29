@@ -1026,8 +1026,16 @@ async fn recover_one(
             && (handover.attempting || handover.unresolved.is_some())
             && crate::delivery::written_before(&directory, &handover.id, before)?
         {
+            // Codex keeps words with the id they were sent under: found in
+            // the thread, they are bound to the turn that took them.
+            if handover.unresolved.is_none()
+                && crate::codex::submitted::found(node, resident, &directory, &mut handover).await?
+            {
+                continue;
+            }
             let why = format!(
-                "the node on {} restarted during a submission; whether {} read it is unknown;                  its exact contents remain in its handovers record",
+                "the node on {} restarted during a submission; whether {} read it is unknown; \
+                 its exact contents remain in its handovers record",
                 node.machine(),
                 resident.id
             );

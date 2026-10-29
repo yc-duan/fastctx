@@ -24,6 +24,7 @@ pub(crate) mod native;
 pub(crate) mod native_context;
 pub(crate) mod native_lifetime;
 pub mod spawned;
+pub(crate) mod submitted;
 pub mod watch;
 
 /// Makes the World's own Codex threads known to the host again. Idle
