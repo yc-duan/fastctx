@@ -81,15 +81,13 @@ impl Node {
             .iter()
             .filter_map(|link| link.view().member(&machine.name).map(|member| (link.clone(), member.key)))
             .collect();
+        // The hubs are not named: whoever asks may not be on all of them
+        // (`world-network.md`, 共享机器与智能体协助). The machines they may
+        // use are listed to them as they are to be written.
         if self.is_me(&machine.name) && holding.iter().any(|(link, _)| !link.view().is_me(&machine.name)) {
             return Err(Failure::not_run(format!(
-                "{} also names this computer; identify a network machine as {}",
-                machine.name,
-                holding
-                    .iter()
-                    .map(|(link, _)| format!("{}.{}", machine.name, link.hub_name()))
-                    .collect::<Vec<_>>()
-                    .join(" or ")
+                "{} also names this computer; write a network machine with its hub, as `fastctx nodes` lists it",
+                machine.name
             )));
         }
         match holding.first() {
@@ -103,13 +101,8 @@ impl Node {
                 Ok(holding.into_iter().map(|(link, _)| link).collect())
             }
             Some(_) => Err(Failure::not_run(format!(
-                "{} names different computers on different hubs; write it as {}",
-                machine.name,
-                holding
-                    .iter()
-                    .map(|(link, _)| format!("{}.{}", machine.name, link.membership().hub_name))
-                    .collect::<Vec<_>>()
-                    .join(" or ")
+                "{} names different computers on different hubs; write it with its hub, as `fastctx nodes` lists it",
+                machine.name
             ))),
         }
     }

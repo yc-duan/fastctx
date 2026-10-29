@@ -183,9 +183,9 @@ fn show(title: &str, record: &Record, opened: &Stamp) -> String {
             text.push_str(&format!("  {}: {} {}\n", place.what, place.location.machine, place.location.path));
         }
     }
-    text.push_str(&format!("Opened by {}\n", stamped(opened)));
+    text.push_str(&format!("Opened by {}\n", stamped(opened, &record.machines)));
     if record.version > 1 {
-        text.push_str(&format!("Version {} by {}\n", record.version, stamped(&record_stamp(record))));
+        text.push_str(&format!("Version {} by {}\n", record.version, stamped(&record_stamp(record), &record.machines)));
     }
     text
 }

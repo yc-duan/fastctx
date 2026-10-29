@@ -36,18 +36,31 @@ pub fn record_of(town: &TownName, record: &Record, opened: &Stamp) -> String {
     text.push_str(
         "Other conversations may work in this project too, each on its own line of work; `fastctx w` shows what each is doing. Where your work would change theirs, ask them first.\n",
     );
-    text.push_str(&format!("Opened by {} on {}, {}", writer(&opened.by, &opened.on), opened.on, day(opened.at)));
+    text.push_str(&format!("Opened by {}", placed(opened, &record.machines, day)));
     if record.version > 1 {
         text.push_str(&format!(
-            "; version {} by {} on {}, {}",
+            "; version {} by {}",
             record.version,
-            writer(&record.by, &record.on),
-            record.on,
-            day(record.at)
+            placed(&record_stamp(record), &record.machines, day)
         ));
     }
     text.push_str(".\n");
     text
+}
+
+/// Who wrote a version and where, and when; the place is named only when
+/// it is one of `machines`, those whoever reads it may work on: of a
+/// machine they may not, they are not told even the name (`world-network.md`,
+/// 共享机器与智能体协助).
+fn placed(stamp: &Stamp, machines: &[MachineName], when: fn(Timestamp) -> String) -> String {
+    if machines.contains(&stamp.on) {
+        return format!("{} on {}, {}", writer(&stamp.by, &stamp.on), stamp.on, when(stamp.at));
+    }
+    let by = match &stamp.by {
+        Writer::Resident { .. } => "a conversation".to_string(),
+        by => writer(by, &stamp.on),
+    };
+    format!("{by}, {}", when(stamp.at))
 }
 
 /// Attributes followed by the account's optional memory index.
@@ -75,9 +88,10 @@ pub fn writer(by: &Writer, on: &MachineName) -> String {
     }
 }
 
-/// A version of a record, in a line.
-pub fn stamped(stamp: &Stamp) -> String {
-    format!("{} on {}, {}", writer(&stamp.by, &stamp.on), stamp.on, minute(stamp.at))
+/// A version of a record, in a line, its place named only when it is one
+/// of `machines` (`placed`).
+pub fn stamped(stamp: &Stamp, machines: &[MachineName]) -> String {
+    placed(stamp, machines, minute)
 }
 
 pub fn record_stamp(record: &Record) -> Stamp {
