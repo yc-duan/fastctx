@@ -73,6 +73,7 @@ pub(crate) fn view_for_in(
     // administrator's own included.
     for account in &mut directory.accounts {
         if !mine.contains(&account.name) {
+            let account = std::sync::Arc::make_mut(account);
             account.collab = None;
             account.profile = account.profile.as_ref().map(|profile| profile.located(|machine| x.same(machine, me)));
         }
@@ -83,6 +84,7 @@ pub(crate) fn view_for_in(
         // Where a machine may be reached is the super administrator's to
         // choose from, and the machine's own to know; a visitor's is its own.
         let reach = (whole && !others) || member.name == *me;
+        let member = std::sync::Arc::make_mut(member);
         present(store, online, member, reach);
         if others {
             member.direct.clear();
@@ -96,7 +98,7 @@ pub(crate) fn view_for_in(
     if !store.letters.get(me).is_some_and(|letters| letters.roles) {
         for account in &mut directory.accounts {
             if account.level == fastctx_net::directory::Level::Visitor {
-                account.level = fastctx_net::directory::Level::Member;
+                std::sync::Arc::make_mut(account).level = fastctx_net::directory::Level::Member;
             }
         }
     }
@@ -215,7 +217,7 @@ pub(crate) fn presence_for(
     let others = member.name != *reader
         && member.home.as_ref().is_some_and(|owner| x.is_visitor(owner) && !mine.contains(owner));
     let reach = (whole && !others) || member.name == *reader;
-    let mut member = member.clone();
+    let mut member = Member::clone(member);
     present(store, online, &mut member, reach);
     if others {
         member.through = None;
@@ -315,7 +317,7 @@ fn cut_in(x: &Indexed<'_>, me: &MachineName, mine: &BTreeSet<AccountName>, users
         }
         ordered(at)
     };
-    let members: Vec<Member> = candidates
+    let members: Vec<std::sync::Arc<Member>> = candidates
         .into_iter()
         .map(|at| &all.members[at])
         .filter(|member| sees_in(x, me, mine, users, member))
@@ -400,7 +402,7 @@ fn projects_for(
     all: &Directory,
     me: &MachineName,
     mine: &BTreeSet<AccountName>,
-) -> Vec<fastctx_net::directory::Project> {
+) -> Vec<std::sync::Arc<fastctx_net::directory::Project>> {
     let index = Index::new(all);
     let x = Indexed::new(all, &index);
     let users = users_in(&x, me);
@@ -411,7 +413,7 @@ fn projects_in(
     x: &Indexed<'_>,
     mine: &BTreeSet<AccountName>,
     users: &BTreeSet<AccountName>,
-) -> Vec<fastctx_net::directory::Project> {
+) -> Vec<std::sync::Arc<fastctx_net::directory::Project>> {
     ordered(mine.iter().chain(users).flat_map(|account| x.projects_by_account(account)).copied())
         .into_iter()
         .map(|at| x.all.projects[at].clone())

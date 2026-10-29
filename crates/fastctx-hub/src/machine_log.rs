@@ -87,7 +87,7 @@ impl History {
     pub(crate) fn push(
         &mut self,
         directory: &Directory,
-        current_accounts: &[Account],
+        current_accounts: &[std::sync::Arc<Account>],
         actor: Actor,
         action: Action,
         outcome: Outcome,
@@ -281,7 +281,7 @@ impl History {
             .filter_map(|name| {
                 directory
                     .account(&name)
-                    .or_else(|| current_accounts.iter().find(|account| account.name == name))
+                    .or_else(|| current_accounts.iter().find(|account| account.name == name).map(|account| &**account))
                     .map(|account| (name, account.opened))
             })
             .collect();

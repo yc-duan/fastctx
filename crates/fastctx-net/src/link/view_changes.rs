@@ -32,6 +32,7 @@ impl Inner {
                 for member in
                     view.directory.members.iter_mut().filter(|member| members.contains(&member.name.to_string()))
                 {
+                    let member = std::sync::Arc::make_mut(member);
                     member.since = member.since.map(|at| self.local(at));
                     member.settled = member.settled.map(|at| self.local(at));
                 }

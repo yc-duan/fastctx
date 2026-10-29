@@ -14,6 +14,7 @@
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use fastctx_types::access::{Purpose, Rights, TownId, Use};
 use fastctx_types::{AccountName, AgentName, HubName, MachineName, TownName};
@@ -275,34 +276,37 @@ impl Account {
 }
 
 /// Accounts, members and what each may do: all of it on the hub, a cut of
-/// it on each member.
+/// it on each member. Each entry is shared by the copies made of it, so a
+/// copy costs a pointer an entry, and a change makes a new entry of only
+/// what it changes (`Arc::make_mut`): what is the same in two copies is one
+/// entry, which the hub's store needs not write again.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Directory {
-    pub accounts: Vec<Account>,
-    pub members: Vec<Member>,
+    pub accounts: Vec<Arc<Account>>,
+    pub members: Vec<Arc<Member>>,
     #[serde(default)]
-    pub shares: Vec<Share>,
+    pub shares: Vec<Arc<Share>>,
     /// Written `lends`, the name hubs and members of every version read.
     #[serde(default, rename = "lends")]
-    pub assists: Vec<Assist>,
+    pub assists: Vec<Arc<Assist>>,
     /// Plans set by hand on logins that name none.
     #[serde(default)]
-    pub plans: Vec<LoginPlan>,
+    pub plans: Vec<Arc<LoginPlan>>,
     #[serde(default)]
-    pub acting: Vec<ActsFor>,
-    pub projects: Vec<Project>,
+    pub acting: Vec<Arc<ActsFor>>,
+    pub projects: Vec<Arc<Project>>,
 }
 
 impl Directory {
     /// The member `name` names: its name now, or one it had. No two members
     /// have a name in common, now or before, so at most one does.
     pub fn member(&self, name: &MachineName) -> Option<&Member> {
-        self.members.iter().find(|member| member.name == *name).or_else(|| self.formerly(name))
+        self.members.iter().find(|member| member.name == *name).map(|member| &**member).or_else(|| self.formerly(name))
     }
 
     /// The member that had `name` before it was renamed.
     pub fn formerly(&self, name: &MachineName) -> Option<&Member> {
-        self.members.iter().find(|member| member.was.contains(name))
+        self.members.iter().find(|member| member.was.contains(name)).map(|member| &**member)
     }
 
     /// The name `name` stands for now: the current name of the member it
@@ -322,7 +326,7 @@ impl Directory {
     /// own former names, which it takes back. The caller checks that no
     /// other member has or had `to`.
     pub fn rename(&mut self, from: &MachineName, to: &MachineName) -> Option<MachineName> {
-        let member = self.members.iter_mut().find(|member| member.named(from))?;
+        let member = Arc::make_mut(self.members.iter_mut().find(|member| member.named(from))?);
         let old = std::mem::replace(&mut member.name, to.clone());
         member.was.retain(|name| name != to);
         if !member.was.contains(&old) && old != *to {
@@ -330,38 +334,38 @@ impl Directory {
         }
         for share in &mut self.shares {
             if share.machine == old {
-                share.machine = to.clone();
+                Arc::make_mut(share).machine = to.clone();
             }
         }
         for assist in &mut self.assists {
             if assist.machine == old {
-                assist.machine = to.clone();
+                Arc::make_mut(assist).machine = to.clone();
             }
         }
         for plan in &mut self.plans {
             if plan.machine == old {
-                plan.machine = to.clone();
+                Arc::make_mut(plan).machine = to.clone();
             }
         }
         for acting in &mut self.acting {
             if acting.machine == old {
-                acting.machine = to.clone();
+                Arc::make_mut(acting).machine = to.clone();
             }
         }
         Some(old)
     }
 
     pub fn by_key(&self, key: &PublicKey) -> Option<&Member> {
-        self.members.iter().find(|member| member.key == *key)
+        self.members.iter().find(|member| member.key == *key).map(|member| &**member)
     }
 
     /// The registered machines.
     pub fn machines(&self) -> impl Iterator<Item = &Member> {
-        self.members.iter().filter(|member| member.is_machine())
+        self.members.iter().filter(|member| member.is_machine()).map(|member| &**member)
     }
 
     pub fn account(&self, name: &AccountName) -> Option<&Account> {
-        self.accounts.iter().find(|account| account.name == *name)
+        self.accounts.iter().find(|account| account.name == *name).map(|account| &**account)
     }
 
     /// Whether `account` is the hub's super administrator, and not locked.
@@ -388,7 +392,7 @@ impl Directory {
 
     /// The hub's super administrator.
     pub fn super_account(&self) -> Option<&Account> {
-        self.accounts.iter().find(|account| account.level == Level::Super)
+        self.accounts.iter().find(|account| account.level == Level::Super).map(|account| &**account)
     }
 
     /// Whether `account` is logged in on `member`.
@@ -416,6 +420,7 @@ impl Directory {
         self.assists
             .iter()
             .filter(move |assist| assist.account == *account && assist.machine == *machine && assist.live(now))
+            .map(|assist| &**assist)
     }
 
     /// What `account` may do on `machine`: everything on its own machines,
@@ -544,12 +549,15 @@ impl Directory {
     }
 
     pub fn project(&self, town: &TownId) -> Option<&Project> {
-        self.projects.iter().find(|project| project.town == *town)
+        self.projects.iter().find(|project| project.town == *town).map(|project| &**project)
     }
 
     /// The project named `name` that `account` may use.
     pub fn project_named(&self, account: &AccountName, name: &TownName) -> Option<&Project> {
-        self.projects.iter().find(|project| project.name == *name && self.in_project(account, &project.town))
+        self.projects
+            .iter()
+            .find(|project| project.name == *name && self.in_project(account, &project.town))
+            .map(|project| &**project)
     }
 
     /// Whether `account` may read and write the records of `town`.

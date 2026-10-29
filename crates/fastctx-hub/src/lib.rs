@@ -48,8 +48,8 @@ mod project_entry;
 mod question_parts;
 mod records;
 mod releases;
-mod sentinel_home;
 mod renewal;
+mod sentinel_home;
 mod store;
 pub mod third;
 mod updates;
@@ -124,7 +124,7 @@ pub fn init(dir: &Path, new: New) -> anyhow::Result<CertPin> {
     let secrets = HubSecrets::generate();
     let record = password_record(&secrets, &new.admin, &new.password)?;
     let mut book = Book::default();
-    book.directory.accounts.push(Account {
+    book.directory.accounts.push(Arc::new(Account {
         name: new.admin.clone(),
         level: fastctx_net::directory::Level::Super,
         locked: false,
@@ -132,8 +132,8 @@ pub fn init(dir: &Path, new: New) -> anyhow::Result<CertPin> {
         collab: None,
         profile: None,
         promotion: false,
-    });
-    book.passwords.insert(new.admin.clone(), Bytes(record));
+    }));
+    Arc::make_mut(&mut book.passwords).insert(new.admin.clone(), Bytes(record));
     book.machine_log.push(
         &book.directory,
         &[],
@@ -166,7 +166,8 @@ pub fn reset_password(dir: &Path, account: &AccountName, password: &str) -> anyh
         anyhow::bail!("there is no account {account} on this hub");
     }
     let secrets = HubSecrets::from_bytes(&std::fs::read(Store::secrets_file(dir))?).map_err(anyhow::Error::msg)?;
-    store.book.passwords.insert(account.clone(), Bytes(password_record(&secrets, account, password)?));
+    Arc::make_mut(&mut store.book.passwords)
+        .insert(account.clone(), Bytes(password_record(&secrets, account, password)?));
     let directory = store.book.directory.clone();
     store.book.machine_log.push(
         &directory,

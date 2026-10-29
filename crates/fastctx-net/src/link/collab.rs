@@ -35,7 +35,7 @@ impl Link {
                 format!("the hub committed collaboration version {version}, but this account left the view")
             })?;
             if found.collab.as_ref().is_none_or(|current| current.version < version) {
-                found.collab = Some(confirmed);
+                std::sync::Arc::make_mut(found).collab = Some(confirmed);
                 super::state::write(&self.inner.dir.view(), &view).map_err(|error| {
                     format!("the hub committed collaboration version {version}, but keeping its view failed: {error}")
                 })?;

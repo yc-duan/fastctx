@@ -22,11 +22,11 @@ pub(crate) fn chosen(hub: &Hub, by: &MachineName, account: &AccountName, body: &
             return;
         }
         let before = store.book.clone();
-        store.book.directory.acting.push(fastctx_net::directory::ActsFor {
+        store.book.directory.acting.push(std::sync::Arc::new(fastctx_net::directory::ActsFor {
             machine: machine.clone(),
             account: account.clone(),
             since: Timestamp::now(),
-        });
+        }));
         let actor = fastctx_types::machine_log::Actor {
             account: Some(account.clone()),
             authenticated: true,

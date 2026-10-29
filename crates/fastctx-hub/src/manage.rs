@@ -10,6 +10,8 @@
 //! Opening a project is the one change a machine acting for an account may
 //! make for it, as a resident working there opens one.
 
+use std::sync::Arc;
+
 use fastctx_net::directory::{Account, Assist, Level, LoginPlan, Project, Share};
 use fastctx_net::login::HubSecrets;
 use fastctx_net::sign::{Bytes, PublicKey};
@@ -184,7 +186,14 @@ fn apply(
     match change {
         Change::Collab { mut collab } => {
             collab.validate()?;
-            let found = store.book.directory.accounts.iter_mut().find(|found| found.name == *account).expect("checked");
+            let found = store
+                .book
+                .directory
+                .accounts
+                .iter_mut()
+                .find(|found| found.name == *account)
+                .map(Arc::make_mut)
+                .expect("checked");
             let version = found.collab.as_ref().map_or(0, |current| current.version);
             if collab.version != version {
                 return Err(format!(
@@ -230,12 +239,26 @@ fn apply(
             }
             profile.version = current.version.checked_add(1).ok_or("the profile version cannot be incremented")?;
             let version = profile.version;
-            let found = store.book.directory.accounts.iter_mut().find(|found| found.name == *account).expect("checked");
+            let found = store
+                .book
+                .directory
+                .accounts
+                .iter_mut()
+                .find(|found| found.name == *account)
+                .map(Arc::make_mut)
+                .expect("checked");
             found.profile = Some(profile);
             Ok(Told::ProfileWritten { version })
         }
         Change::MemorySettings { version, enabled } => {
-            let found = store.book.directory.accounts.iter_mut().find(|found| found.name == *account).expect("checked");
+            let found = store
+                .book
+                .directory
+                .accounts
+                .iter_mut()
+                .find(|found| found.name == *account)
+                .map(Arc::make_mut)
+                .expect("checked");
             let mut profile = found.profile.clone().unwrap_or_default();
             if version != profile.version {
                 return Err(format!(
@@ -250,7 +273,14 @@ fn apply(
             Ok(Told::ProfileWritten { version })
         }
         Change::Layer { version, layer } => {
-            let found = store.book.directory.accounts.iter_mut().find(|found| found.name == *account).expect("checked");
+            let found = store
+                .book
+                .directory
+                .accounts
+                .iter_mut()
+                .find(|found| found.name == *account)
+                .map(Arc::make_mut)
+                .expect("checked");
             let mut profile = found.profile.clone().unwrap_or_default();
             if version != profile.version {
                 return Err(format!(
@@ -268,7 +298,14 @@ fn apply(
             if let Some(config) = &subagents {
                 config.validate()?;
             }
-            let found = store.book.directory.accounts.iter_mut().find(|found| found.name == *account).expect("checked");
+            let found = store
+                .book
+                .directory
+                .accounts
+                .iter_mut()
+                .find(|found| found.name == *account)
+                .map(Arc::make_mut)
+                .expect("checked");
             let mut profile = found.profile.clone().unwrap_or_default();
             if version != profile.version {
                 return Err(format!(
@@ -300,7 +337,7 @@ fn apply(
             let share = Share { machine, account: to, jobs: jobs.filter(|_| shared) };
             directory.shares.retain(|existing| existing.machine != share.machine || existing.account != share.account);
             if shared {
-                directory.shares.push(share);
+                directory.shares.push(Arc::new(share));
             }
             Ok(Told::Done)
         }
@@ -343,7 +380,7 @@ fn apply(
             };
             directory.assists.retain(|existing| !existing.same(&assist));
             if assisting {
-                directory.assists.push(assist);
+                directory.assists.push(Arc::new(assist));
             }
             Ok(Told::Done)
         }
@@ -355,7 +392,7 @@ fn apply(
             }
             directory.plans.retain(|known| !(known.machine == machine && known.agent == agent && known.home == home));
             if let Some(plan) = plan {
-                directory.plans.push(LoginPlan { machine, agent, home, plan });
+                directory.plans.push(Arc::new(LoginPlan { machine, agent, home, plan }));
             }
             Ok(Told::Done)
         }
@@ -393,7 +430,14 @@ fn apply(
             let group = group.as_deref().map(fastctx_types::accounts::group_name).transpose()?.flatten();
             own_machine(&store.book.directory, account, super_, &machine)?;
             let key = store.book.directory.member(&machine).expect("own_machine found it").key;
-            let member = store.book.directory.members.iter_mut().find(|member| member.key == key).expect("found");
+            let member = store
+                .book
+                .directory
+                .members
+                .iter_mut()
+                .find(|member| member.key == key)
+                .map(Arc::make_mut)
+                .expect("found");
             member.group = group;
             Ok(Told::Done)
         }
@@ -408,7 +452,7 @@ fn apply(
             let mut grouped = 0;
             for member in store.book.directory.members.iter_mut() {
                 if member.home.as_ref() == Some(&owner) && member.group.as_deref() == Some(from.as_str()) {
-                    member.group = to.clone();
+                    Arc::make_mut(member).group = to.clone();
                     grouped += 1;
                 }
             }
@@ -450,7 +494,7 @@ fn apply(
             }
             let secret = TokenSecret::generate().map_err(|error| format!("making the token: {error}"))?;
             store.book.tokens.retain(|record| !record.spent(now));
-            store.book.tokens.push(TokenRecord {
+            store.book.tokens.push(Arc::new(TokenRecord {
                 key: secret.key().public(),
                 account: account.clone(),
                 register,
@@ -466,7 +510,7 @@ fn apply(
                 used_by: None,
                 used: Vec::new(),
                 way,
-            });
+            }));
             // A machine of the account that relays on a network takes one
             // joining there that reaches no further (`world-network.md`,
             // 替局域网里的机器连中枢).
@@ -499,7 +543,7 @@ fn apply(
                 return Err(format!("there is no account {target}"));
             }
             let record = HubSecrets::register_finish(&upload)?;
-            store.book.passwords.insert(target, Bytes(record));
+            Arc::make_mut(&mut store.book.passwords).insert(target, Bytes(record));
             Ok(Told::Done)
         }
         Change::OpenAccount { name, visitor } => {
@@ -507,7 +551,7 @@ fn apply(
             if store.book.directory.account(&name).is_some() {
                 return Err(format!("the account {name} exists already"));
             }
-            store.book.directory.accounts.push(Account {
+            store.book.directory.accounts.push(Arc::new(Account {
                 name,
                 level: if visitor { Level::Visitor } else { Level::Member },
                 locked: false,
@@ -515,7 +559,7 @@ fn apply(
                 collab: None,
                 profile: None,
                 promotion: false,
-            });
+            }));
             Ok(Told::Done)
         }
         Change::SetRole { name, visitor } => {
@@ -524,7 +568,14 @@ fn apply(
             Ok(Told::Done)
         }
         Change::AcceptRole { accept } => {
-            let found = store.book.directory.accounts.iter_mut().find(|found| found.name == *account).expect("checked");
+            let found = store
+                .book
+                .directory
+                .accounts
+                .iter_mut()
+                .find(|found| found.name == *account)
+                .map(Arc::make_mut)
+                .expect("checked");
             if !found.promotion {
                 return Err(format!("the account {account} was not made a member"));
             }
@@ -535,7 +586,7 @@ fn apply(
             Ok(Told::Done)
         }
         Change::RevokeToken { token } => {
-            let record = store.book.tokens.iter_mut().find(|record| record.key == token);
+            let record = store.book.tokens.iter_mut().find(|record| record.key == token).map(Arc::make_mut);
             let record = record.ok_or("the hub knows no such token")?;
             if record.account != *account && !super_ {
                 return Err(format!("the token was made for the account {}", record.account));
@@ -548,7 +599,7 @@ fn apply(
         Change::SetAccount { name, locked } => {
             need_super()?;
             let directory = &mut store.book.directory;
-            let found = directory.accounts.iter_mut().find(|found| found.name == name);
+            let found = directory.accounts.iter_mut().find(|found| found.name == name).map(Arc::make_mut);
             let found = found.ok_or_else(|| format!("there is no account {name}"))?;
             if locked && found.level == Level::Super {
                 return Err(format!(
@@ -573,9 +624,9 @@ fn apply(
             }
             for found in &mut directory.accounts {
                 if found.name == to {
-                    found.level = Level::Super;
+                    Arc::make_mut(found).level = Level::Super;
                 } else if found.name == *account {
-                    found.level = Level::Member;
+                    Arc::make_mut(found).level = Level::Member;
                 }
             }
             Ok(Told::Done)
@@ -694,7 +745,12 @@ fn apply(
             if book.directory.projects.iter().chain(&book.archived).any(|project| project.name == name) {
                 return Err(format!("a project named {name} exists on this hub already"));
             }
-            book.directory.projects.push(Project { town, name, owner: account.clone(), granted: Default::default() });
+            book.directory.projects.push(Arc::new(Project {
+                town,
+                name,
+                owner: account.clone(),
+                granted: Default::default(),
+            }));
             Ok(Told::Done)
         }
         Change::ShareProject { town, with, shared } => {
@@ -702,7 +758,7 @@ fn apply(
             if directory.account(&with).is_none() {
                 return Err(format!("there is no account {with}"));
             }
-            let project = directory.projects.iter_mut().find(|project| project.town == town);
+            let project = directory.projects.iter_mut().find(|project| project.town == town).map(Arc::make_mut);
             let project = project.ok_or_else(|| format!("there is no project {town}"))?;
             // A project is its owner's to share, the super administrator's
             // no more than anyone's (`world-network.md`, 项目也照同一个规矩).
@@ -726,10 +782,11 @@ fn apply(
                 // administrator's to hand on.
                 need_super()?;
                 let mut project = book.archived.remove(position);
-                project.owner = to;
+                Arc::make_mut(&mut project).owner = to;
                 book.directory.projects.push(project);
             } else {
-                let project = book.directory.projects.iter_mut().find(|project| project.town == town);
+                let project =
+                    book.directory.projects.iter_mut().find(|project| project.town == town).map(Arc::make_mut);
                 let project = project.ok_or_else(|| format!("there is no project {town}"))?;
                 if project.owner != *account {
                     return Err(format!("the project {} is the account {}'s", project.name, project.owner));
@@ -743,7 +800,7 @@ fn apply(
             let directory = &mut store.book.directory;
             held_machine(directory, account, &machine)?;
             let machine = directory.canonical(&machine).clone();
-            let member = directory.members.iter_mut().find(|member| member.name == machine);
+            let member = directory.members.iter_mut().find(|member| member.name == machine).map(Arc::make_mut);
             let member = member.ok_or_else(|| format!("there is no machine named {machine}"))?;
             if !member.is_machine() {
                 return Err(format!("{machine} is a device, not a machine; only machines relay"));
@@ -777,7 +834,7 @@ fn apply(
             }
             // Its ledger goes once the directory without it is kept
             // (`change`).
-            let project = projects[position].clone();
+            let project = Project::clone(&projects[position]);
             crate::project_deletions::begin(store, project)?;
             store.book.directory.projects.remove(position);
             Ok(Told::Done)
@@ -833,7 +890,7 @@ fn may_change(
 /// unasked (`world-network.md`, 超级管理员管什么).
 fn set_role(store: &mut Store, name: &AccountName, visitor: bool) -> Result<(), String> {
     let directory = &mut store.book.directory;
-    let found = directory.accounts.iter_mut().find(|found| found.name == *name);
+    let found = directory.accounts.iter_mut().find(|found| found.name == *name).map(Arc::make_mut);
     let found = found.ok_or_else(|| format!("there is no account {name}"))?;
     match (found.level, visitor) {
         (Level::Super, _) => Err(format!("{name} is the hub's super administrator; hand that to a member first")),
@@ -859,7 +916,14 @@ fn set_role(store: &mut Store, name: &AccountName, visitor: bool) -> Result<(), 
             directory.assists.retain(|assist| !machines.contains(&assist.machine));
             // Nor does one carry others' connections, nor are its own
             // machines' addresses anyone else's to dial.
-            for member in directory.members.iter_mut().filter(|member| member.home.as_ref() == Some(name)) {
+            for member in directory
+                .members
+                .iter_mut()
+                .filter(|member| {
+                    member.home.as_ref() == Some(name) && !(member.direct.is_empty() && member.relay.is_empty())
+                })
+                .map(Arc::make_mut)
+            {
                 member.direct.clear();
                 member.relay.clear();
             }
@@ -962,7 +1026,7 @@ fn log_out(
     ended: &mut Vec<(MachineName, Refusal)>,
 ) -> Result<(), String> {
     let directory = &mut store.book.directory;
-    let member = directory.members.iter_mut().find(|member| member.name == *name);
+    let member = directory.members.iter_mut().find(|member| member.name == *name).map(Arc::make_mut);
     let member = member.ok_or_else(|| format!("there is no member {name}"))?;
     member.logins.remove(account);
     let unregistered = member.home.as_ref() == Some(account);
@@ -1016,7 +1080,7 @@ fn remove_member(
     store.save_hub().map_err(|e| format!("removing update arrangements: {e}"))?;
     let at = Timestamp::now();
     store.book.removed.retain(|removed| removed.key != member.key);
-    store.book.removed.push(Removed {
+    store.book.removed.push(Arc::new(Removed {
         key: member.key,
         name: name.clone(),
         by: by.cloned(),
@@ -1026,7 +1090,7 @@ fn remove_member(
         home: member.home.clone(),
         then,
         left: None,
-    });
+    }));
     // Its letters go once the change is kept (`made`).
     let refusal = Refusal::Removed { by: by.cloned(), at, reason: reason.to_string(), dissolved, then };
     ended.push((name.clone(), refusal));
@@ -1067,7 +1131,10 @@ fn may_uninstall(
 /// once for each thing it says.
 pub(crate) fn left(hub: &Hub, key: &PublicKey, left: &str) {
     let mut store = hub.store();
-    let Some(removed) = store.book.removed.iter_mut().rev().find(|removed| removed.key == *key) else { return };
+    let Some(removed) = store.book.removed.iter_mut().rev().find(|removed| removed.key == *key).map(Arc::make_mut)
+    else {
+        return;
+    };
     if removed.left.as_deref() == Some(left) {
         return;
     }
@@ -1129,14 +1196,16 @@ fn delete_account(
     book.directory.shares.retain(|share| share.account != *name);
     book.directory.assists.retain(|assist| assist.account != *name);
     book.directory.acting.retain(|acting| acting.account != *name);
-    let (archived, kept): (Vec<Project>, Vec<Project>) =
+    let (archived, kept): (Vec<Arc<Project>>, Vec<Arc<Project>>) =
         std::mem::take(&mut book.directory.projects).into_iter().partition(|project| project.owner == *name);
     book.directory.projects = kept;
-    for project in &mut book.directory.projects {
-        project.granted.remove(name);
+    for project in book.directory.projects.iter_mut().filter(|project| project.granted.contains(name)) {
+        Arc::make_mut(project).granted.remove(name);
     }
     book.archived.extend(archived);
-    book.passwords.remove(name);
+    if book.passwords.contains_key(name) {
+        Arc::make_mut(&mut book.passwords).remove(name);
+    }
     book.tokens.retain(|token| token.account != *name);
     Ok(())
 }

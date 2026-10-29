@@ -75,7 +75,8 @@ pub(crate) fn heard(hub: &Hub) {
 /// Ends the assistance due at `now`, each recorded as the hub's own doing;
 /// whether there was any.
 pub(crate) fn end_due(store: &mut Store, now: Timestamp) -> io::Result<bool> {
-    let due: Vec<Assist> = store.book.directory.assists.iter().filter(|assist| !assist.live(now)).cloned().collect();
+    let due: Vec<std::sync::Arc<Assist>> =
+        store.book.directory.assists.iter().filter(|assist| !assist.live(now)).cloned().collect();
     let hub = Actor { account: None, authenticated: true, member: None, peer: None };
     for assist in &due {
         let before = store.book.directory.clone();

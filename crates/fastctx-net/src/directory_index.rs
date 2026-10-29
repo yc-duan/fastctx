@@ -195,11 +195,11 @@ impl<'a> Indexed<'a> {
     // The same questions `Directory` answers, by key.
 
     pub fn member(&self, name: &MachineName) -> Option<&'a Member> {
-        self.position(name).map(|at| &self.all.members[at])
+        self.position(name).map(|at| &*self.all.members[at])
     }
 
     pub fn account(&self, name: &AccountName) -> Option<&'a Account> {
-        self.accounts_named(name).first().map(|&at| &self.all.accounts[at])
+        self.accounts_named(name).first().map(|&at| &*self.all.accounts[at])
     }
 
     pub fn canonical<'n>(&self, name: &'n MachineName) -> &'n MachineName
@@ -222,7 +222,7 @@ impl<'a> Indexed<'a> {
     }
 
     pub fn super_account(&self) -> Option<&'a Account> {
-        self.supers().first().map(|&at| &self.all.accounts[at])
+        self.supers().first().map(|&at| &*self.all.accounts[at])
     }
 
     pub fn logged_in(&self, member: &MachineName, account: &AccountName) -> bool {
@@ -272,7 +272,7 @@ impl Lookup for Indexed<'_> {
     }
 
     fn find_project(&self, town: &TownId) -> Option<&Project> {
-        self.index.projects.get(town).map(|&at| &self.all.projects[at])
+        self.index.projects.get(town).map(|&at| &*self.all.projects[at])
     }
 
     fn is_shared(&self, account: &AccountName, machine: &MachineName) -> bool {

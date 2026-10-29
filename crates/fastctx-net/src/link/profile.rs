@@ -61,7 +61,7 @@ impl Link {
                     format!("the hub committed profile version {version}, but the account left the view")
                 })?;
             if found.profile.as_ref().is_none_or(|current| current.version < version) {
-                found.profile = Some(confirmed);
+                std::sync::Arc::make_mut(found).profile = Some(confirmed);
                 super::state::write(&self.inner.dir.view(), &view).map_err(|error| {
                     format!("the hub committed profile version {version}, but keeping its view failed: {error}")
                 })?;

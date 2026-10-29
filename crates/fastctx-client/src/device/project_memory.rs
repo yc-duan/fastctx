@@ -88,7 +88,11 @@ impl Device {
                         let index = session.link.project_index(&account, &project.town).await.map_err(failed)?;
                         let mut record = index.record;
                         visible(&session.link, &account, &mut record);
-                        towns.push(TownSummary { town: project.name, record, journals: index.catalog.journals.len() });
+                        towns.push(TownSummary {
+                            town: project.name.clone(),
+                            record,
+                            journals: index.catalog.journals.len(),
+                        });
                     }
                 }
                 towns.sort_by(|a, b| a.town.cmp(&b.town));

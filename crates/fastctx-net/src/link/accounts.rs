@@ -215,7 +215,7 @@ impl Link {
                     && super::login_identity::canonical(entry.home.as_deref(), &homes) == assist.home
                     && (!assisting || entry.home != assist.home)
             })
-            .cloned()
+            .map(|entry| entry.as_ref().clone())
             .collect();
         for entry in aliases {
             self.manage(

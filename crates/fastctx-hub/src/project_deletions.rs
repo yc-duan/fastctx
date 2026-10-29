@@ -32,7 +32,7 @@ pub(crate) fn begin(store: &mut Store, project: Project) -> Result<(), String> {
         .filter(|member| member.is_machine() && directory.member_in_project(&member.name, &project.town))
         .map(|member| member.key)
         .collect();
-    store.book.project_deletions.push(Pending { project, waiting });
+    store.book.project_deletions.push(std::sync::Arc::new(Pending { project, waiting }));
     Ok(())
 }
 
@@ -53,7 +53,7 @@ pub(crate) fn finished(hub: &Hub, member: &MachineName, town: &TownId) -> Result
         let key =
             store.book.directory.member(member).ok_or_else(|| "the member is no longer on the hub".to_string())?.key;
         if let Some(pending) = store.book.project_deletions.iter_mut().find(|pending| pending.project.town == *town) {
-            pending.waiting.retain(|waiting| *waiting != key);
+            std::sync::Arc::make_mut(pending).waiting.retain(|waiting| *waiting != key);
         }
         store.book.project_deletions.retain(|pending| !pending.waiting.is_empty());
         store.save_book().map_err(|error| error.to_string())?;

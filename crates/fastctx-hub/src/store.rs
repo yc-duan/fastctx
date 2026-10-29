@@ -29,6 +29,7 @@ use std::collections::BTreeMap;
 use std::io;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use fastctx_net::directory::{Directory, Kind, Project};
 use fastctx_net::envelope::Envelope;
@@ -108,7 +109,8 @@ pub struct Dissolved {
 }
 
 /// The directory as the hub keeps it: what every member sees a cut of, and
-/// what only the hub holds.
+/// what only the hub holds. Like the directory's, its entries are shared by
+/// the copies made of it.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct Book {
     #[serde(default)]
@@ -117,19 +119,19 @@ pub struct Book {
     pub directory: Directory,
     /// What setting each account's password left with the hub.
     #[serde(default)]
-    pub passwords: BTreeMap<AccountName, Bytes>,
+    pub passwords: Arc<BTreeMap<AccountName, Bytes>>,
     #[serde(default)]
-    pub tokens: Vec<TokenRecord>,
+    pub tokens: Vec<Arc<TokenRecord>>,
     /// Members taken off the hub, by key, so one that connects again is
     /// told so.
     #[serde(default)]
-    pub removed: Vec<Removed>,
+    pub removed: Vec<Arc<Removed>>,
     /// Projects of accounts that were deleted, kept whole for the super
     /// administrator to hand to another account.
     #[serde(default)]
-    pub archived: Vec<Project>,
+    pub archived: Vec<Arc<Project>>,
     #[serde(default)]
-    pub(crate) project_deletions: Vec<crate::project_deletions::Pending>,
+    pub(crate) project_deletions: Vec<Arc<crate::project_deletions::Pending>>,
     /// Conversations being deleted from the members keeping something of
     /// them (`crate::forget`).
     #[serde(default)]

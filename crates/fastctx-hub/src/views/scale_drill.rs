@@ -71,7 +71,7 @@ fn network() -> Directory {
     let at = jiff::Timestamp::from_second(1_700_000_000).expect("a time");
     let mut all = Directory::default();
     for i in 0..ACCOUNTS {
-        all.accounts.push(Account {
+        all.accounts.push(std::sync::Arc::new(Account {
             name: account(i),
             level: if i == 0 {
                 Level::Super
@@ -85,7 +85,7 @@ fn network() -> Directory {
             collab: None,
             profile: None,
             promotion: false,
-        });
+        }));
     }
     for i in 0..MACHINES {
         let owner = account(i % ACCOUNTS);
@@ -93,22 +93,22 @@ fn network() -> Directory {
         if i % 100 == 0 {
             one.direct = vec!["203.0.113.1:7444".parse().expect("an address")];
         }
-        all.members.push(one);
+        all.members.push(std::sync::Arc::new(one));
     }
     for i in 0..1000 {
         let logins = [account(rng(&mut seed) as usize % ACCOUNTS)].into_iter().collect();
         let name = format!("phone{i}").parse().expect("a machine name");
-        all.members.push(member(name, Kind::Phone, logins, None, (MACHINES + i) as u64));
+        all.members.push(std::sync::Arc::new(member(name, Kind::Phone, logins, None, (MACHINES + i) as u64)));
     }
     for _ in 0..3000 {
-        all.shares.push(Share {
+        all.shares.push(std::sync::Arc::new(Share {
             machine: machine(rng(&mut seed) as usize % MACHINES),
             account: account(rng(&mut seed) as usize % ACCOUNTS),
             jobs: None,
-        });
+        }));
     }
     for _ in 0..2000 {
-        all.assists.push(Assist {
+        all.assists.push(std::sync::Arc::new(Assist {
             machine: machine(rng(&mut seed) as usize % MACHINES),
             account: account(rng(&mut seed) as usize % ACCOUNTS),
             agent: "codex".parse().expect("an agent"),
@@ -118,30 +118,30 @@ fn network() -> Directory {
             daily: None,
             five_hour: None,
             turns: None,
-        });
+        }));
     }
     for _ in 0..1000 {
-        all.acting.push(ActsFor {
+        all.acting.push(std::sync::Arc::new(ActsFor {
             machine: machine(rng(&mut seed) as usize % MACHINES),
             account: account(rng(&mut seed) as usize % ACCOUNTS),
             since: at,
-        });
+        }));
     }
     for i in 0..2000 {
         let owner = account(rng(&mut seed) as usize % ACCOUNTS);
         let granted = (0..3).map(|_| account(rng(&mut seed) as usize % ACCOUNTS)).collect();
-        all.projects.push(Project {
+        all.projects.push(std::sync::Arc::new(Project {
             town: fastctx_types::access::TownId::from_bytes((i as u64 + 1).to_le_bytes()),
             name: format!("p{i}").parse().expect("a project name"),
             owner,
             granted,
-        });
+        }));
     }
     all
 }
 
 /// The members a view holds as the full scan finds them.
-fn scanned(all: &Directory, me: &MachineName, mine: &BTreeSet<AccountName>) -> Vec<Member> {
+fn scanned(all: &Directory, me: &MachineName, mine: &BTreeSet<AccountName>) -> Vec<std::sync::Arc<Member>> {
     let users: BTreeSet<AccountName> = all
         .accounts
         .iter()
@@ -194,7 +194,7 @@ fn views_at_scale() {
     drop(index);
 
     // One more share: only the views it touches change, and by little.
-    all.shares.push(Share { machine: machine(4242), account: account(17), jobs: None });
+    all.shares.push(std::sync::Arc::new(Share { machine: machine(4242), account: account(17), jobs: None }));
     let index = Index::new(&all);
     let x = Indexed::new(&all, &index);
     let mut told = 0;
