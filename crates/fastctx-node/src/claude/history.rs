@@ -4,7 +4,7 @@
 //! placed in the turns the World saw. The World's own record says who spoke
 //! and how each turn ended; it keeps no copy of the conversation.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -27,8 +27,15 @@ pub async fn hosted(node: &Arc<Node>, resident: &ResidentId, recorded: &[Session
     // own, missing from this reading.
     let mut unread = !problems.is_empty();
     let mut events: Vec<_> = problems.into_iter().map(|problem| note(Timestamp::now(), problem)).collect();
+    // A session the conversation continued in shows what it copied from an
+    // earlier one only there (`continuing`): by the ids of their records.
+    let mut earlier = HashSet::new();
     for Session { id, began, process, kept } in sessions {
-        match read_whole(root.join(&id), kept, process).await {
+        let read = read_whole(root.join(&id), kept, process, earlier.clone()).await;
+        if let Ok(read) = &read {
+            earlier.extend(read.uuids.iter().cloned());
+        }
+        match read {
             Ok(read) => {
                 // The title belongs to the session, so it takes the session's
                 // time: read again, the history reads the same.
@@ -108,7 +115,7 @@ pub(super) async fn wait_stored(node: &Arc<Node>, session: &str) -> Result<(), S
     if kept.is_none() {
         return Ok(());
     }
-    let read = read_whole(exchange::sessions(node.world.path()).join(session), kept, process).await?;
+    let read = read_whole(exchange::sessions(node.world.path()).join(session), kept, process, HashSet::new()).await?;
     if read.problems.is_empty() { Ok(()) } else { Err(read.problems.join("; ")) }
 }
 
@@ -178,12 +185,13 @@ async fn read_whole(
     directory: PathBuf,
     kept: Option<String>,
     process: Option<ProcessIdentity>,
+    earlier: HashSet<String>,
 ) -> Result<transcript::Transcript, String> {
     let cuts = super::rewind::cuts(&directory).map_err(|error| error.to_string())?;
     let path = exchange::transcript(&directory)
         .map_err(|error| format!("where it is kept could not be read: {error}"))?
         .ok_or("the World's plugin never said where Claude Code keeps it")?;
-    let Some(kept) = kept else { return read_now(path, cuts).await };
+    let Some(kept) = kept else { return read_now(path, cuts, earlier).await };
     // Watched before it is read, so no change between the two goes unseen.
     // The record is on disk whether or not its folder can be watched: one
     // that cannot is read again every two seconds instead.
@@ -200,7 +208,7 @@ async fn read_whole(
         None => Box::pin(std::future::pending()),
     };
     loop {
-        let read = read_now(path.clone(), cuts.clone()).await?;
+        let read = read_now(path.clone(), cuts.clone(), earlier.clone()).await?;
         if read.uuids.contains(&kept) {
             return Ok(read);
         }
@@ -209,7 +217,7 @@ async fn read_whole(
             () = tokio::time::sleep(std::time::Duration::from_secs(2)), if !watched => {}
             result = &mut ended => {
                 result.map_err(|error| format!("observing Claude's process: {error}"))?;
-                let mut read = read_now(path.clone(), cuts.clone()).await?;
+                let mut read = read_now(path.clone(), cuts.clone(), earlier.clone()).await?;
                 if !read.uuids.contains(&kept) {
                     read.problems.push("its process ended before its file held the last of what it kept".to_string());
                 }
@@ -221,11 +229,16 @@ async fn read_whole(
 
 /// The record as the file holds it now. A session at work adds to its file
 /// as it goes; a read it overtook is read again, until one sees it whole.
-async fn read_now(path: PathBuf, cuts: Vec<transcript::HistoryCut>) -> Result<transcript::Transcript, String> {
+async fn read_now(
+    path: PathBuf,
+    cuts: Vec<transcript::HistoryCut>,
+    earlier: HashSet<String>,
+) -> Result<transcript::Transcript, String> {
     loop {
         let reading = path.clone();
         let cuts = cuts.clone();
-        let read = tokio::task::spawn_blocking(move || transcript::read_with_cuts(&reading, &cuts))
+        let earlier = earlier.clone();
+        let read = tokio::task::spawn_blocking(move || transcript::read_continuing(&reading, &cuts, &earlier))
             .await
             .map_err(|error| format!("reading it: {error}"))?;
         match read {

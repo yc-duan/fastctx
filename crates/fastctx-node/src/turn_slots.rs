@@ -63,6 +63,18 @@ struct Waiting {
     asked: Instant,
 }
 
+/// Why a control that starts a turn waits: its login runs as many turns at
+/// once as it may, or its machine has no room for one more. It is done once
+/// one of them ends, as words are delivered (`control_queue`).
+pub(crate) const FULL: &str =
+    "its agent login, or its machine, runs as many turns at once as it may; it is done once one of them ends";
+
+/// The failure a control that would start a turn now gives, to wait in its
+/// conversation's queue of controls for a turn of its login.
+pub(crate) fn full() -> fastctx_types::ipc::Failure {
+    fastctx_types::ipc::Failure::host_unavailable(FULL)
+}
+
 /// A turn waiting its place, with how many wait ahead of it.
 pub(crate) struct Queued {
     pub ahead: u32,

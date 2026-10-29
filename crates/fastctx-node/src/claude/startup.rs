@@ -169,6 +169,12 @@ pub(super) fn recover(node: &Arc<Node>) {
                 }
             });
         }
+        // A first turn that waited for its login when the node stopped waits
+        // on: no session was asked for.
+        if about.session.is_none() && super::queued::marked(&directory) {
+            super::queued::wait(node, about.id.clone());
+            continue;
+        }
         let Some(first) = kept.into_iter().find(|pending| pending.state == PendingState::Waking) else {
             // Born and stopped before its first words were kept: no session
             // was asked for, and nothing will end the work it was shown at.

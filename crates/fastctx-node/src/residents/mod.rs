@@ -1075,14 +1075,17 @@ pub fn idle(since: Timestamp) -> Now {
     }
 }
 
-/// A fresh id for a resident of `agent`: its name and four hex digits,
+/// A fresh id for a resident of `agent`: its name and eight hex digits,
 /// unused on this machine, and by no conversation deleted from it lately.
+/// Ids are unique on their machine alone; eight digits keep two machines'
+/// from meeting where a record names a conversation by its id only, as
+/// four did one time in fifteen among a hundred conversations.
 fn new_id(agent: &AgentName, state: &State) -> Result<ResidentId, Failure> {
     loop {
-        let mut bytes = [0u8; 2];
+        let mut bytes = [0u8; 4];
         getrandom::fill(&mut bytes).map_err(|error| Failure::new(format!("choosing a resident id: {error}")))?;
-        let id = ResidentId::try_from(format!("{agent}-{:02x}{:02x}", bytes[0], bytes[1]))
-            .expect("an agent name and four hex digits");
+        let digits: String = bytes.iter().map(|byte| format!("{byte:02x}")).collect();
+        let id = ResidentId::try_from(format!("{agent}-{digits}")).expect("an agent name and eight hex digits");
         if !state.live.contains_key(&id) && state.tombstones.of(&id).is_none() {
             return Ok(id);
         }

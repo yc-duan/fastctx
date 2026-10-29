@@ -128,9 +128,39 @@ pub fn set_state(directory: &ConversationDir, id: &NoticeId, state: PendingState
 pub fn target(directory: &ConversationDir, id: &NoticeId, session: &str) -> io::Result<()> {
     let _transaction = crate::resident_storage::lock();
     let Some(mut pending) = read_here(directory, id)? else { return Ok(()) };
-    if pending.session.as_deref().is_some_and(|prior| prior != session) {
+    if pending.session.as_deref().is_some_and(|prior| !same_session(prior, session)) {
         return Err(io::Error::other("these words belong to the prior conversation"));
     }
+    // The whole id, once known, rather than the start of it.
+    if pending.session.as_deref().is_none_or(|prior| prior.len() < session.len()) {
+        pending.session = Some(session.to_string());
+    }
+    publish(&path(directory, id), &json(&pending)?, Permissions::Private)
+}
+
+/// Whether the session words are bound to is `session`: a Claude session is
+/// known by the start of its id until its mod reports the whole of it.
+pub(crate) fn same_session(bound: &str, session: &str) -> bool {
+    let (short, long) = if bound.len() <= session.len() { (bound, session) } else { (session, bound) };
+    bound == session || (short.len() == 8 && long.starts_with(short))
+}
+
+/// Frees words being woken with from the session they were bound to, while
+/// the conversation goes on in another (`claude::continuing`); `rebind`
+/// gives them to that one once it is known.
+pub fn unbind(directory: &ConversationDir, id: &NoticeId) -> io::Result<()> {
+    let _transaction = crate::resident_storage::lock();
+    let Some(mut pending) = read_here(directory, id)? else { return Ok(()) };
+    pending.session = None;
+    publish(&path(directory, id), &json(&pending)?, Permissions::Private)
+}
+
+/// Gives words to the session the conversation went on in, whatever
+/// session took them meanwhile: one the conversation left may still report
+/// once before it is gone.
+pub fn rebind(directory: &ConversationDir, id: &NoticeId, session: &str) -> io::Result<()> {
+    let _transaction = crate::resident_storage::lock();
+    let Some(mut pending) = read_here(directory, id)? else { return Ok(()) };
     pending.session = Some(session.to_string());
     publish(&path(directory, id), &json(&pending)?, Permissions::Private)
 }

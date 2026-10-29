@@ -63,6 +63,14 @@ pub async fn control(node: &Arc<Node>, resident: &ResidentId, control: Control) 
     {
         return Err(Failure::not_run(fastctx_hosts::claude::assisted::COMMAND_REFUSED));
     }
+    // What has the model work in a session between turns, a compaction or a
+    // skill, takes a turn of its login, as words do (`turn_slots`), before
+    // the session is woken for it.
+    let prompts = matches!(&control, Control::Compact)
+        || matches!(&control, Control::Command { name, path, .. } if path.is_some() || name == "compact");
+    if prompts && node.residents.now(resident).is_some_and(|now| now.turn.is_none()) {
+        crate::turn_slots::admit(node, resident, &about).map_err(|_| crate::turn_slots::full())?;
+    }
     super::resume::ready(node, resident).await?;
     match control {
         Control::Fork { through, side } => super::fork::fork(node, resident, through, side).await,

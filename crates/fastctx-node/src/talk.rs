@@ -716,13 +716,14 @@ fn kept(node: &Node, resident: &ResidentId) -> Vec<fastctx_types::session::KeptW
     let mut queued = crate::memory_room::ahead(node, resident)
         .map(|ahead| (ahead, true))
         .or_else(|| crate::turn_slots::ahead(node, resident).map(|ahead| (ahead, false)));
-    // A new conversation's first words wait for memory as they wake it.
-    let memory = queued.is_some_and(|(_, memory)| memory);
+    // A new conversation's first words wait for memory, or for its login's
+    // turn, as they wake it.
+    let waits = queued.is_some();
     pending
         .into_iter()
         .map(|pending| {
             let first = pending.delivery.notice.along().is_none()
-                && (pending.state == PendingState::Waiting || memory && pending.state == PendingState::Waking);
+                && (pending.state == PendingState::Waiting || waits && pending.state == PendingState::Waking);
             let progress = crate::lifecycle::retry::progress(node, resident, &pending.delivery.id).ok().flatten();
             let retrying = progress.is_some();
             let host_retry = progress

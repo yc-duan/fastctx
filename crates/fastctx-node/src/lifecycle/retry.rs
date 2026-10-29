@@ -165,6 +165,19 @@ pub(crate) fn failed(node: &Arc<Node>, id: &ResidentId, input: &NoticeId, reason
     Ok(())
 }
 
+/// Like `failed`, for something that waits its place in its login's line
+/// (`turn_slots`): asked again in two seconds, however often it waited.
+pub(crate) fn queued(node: &Arc<Node>, id: &ResidentId, input: &NoticeId, reason: &str) -> Result<(), Failure> {
+    begin(node, id, input)?;
+    let _transaction = crate::resident_storage::lock();
+    let mut kept = progress(node, id, input).map_err(failure)?.ok_or_else(|| failure("missing host progress"))?;
+    kept.reason = Some(reason.into());
+    kept.attempted = false;
+    kept.accepted = false;
+    kept.next = Timestamp::now().checked_add(Duration::from_secs(2)).map_err(failure)?;
+    keep(node, id, input, &kept).map_err(failure)
+}
+
 /// Records a startup observation without granting permission to resubmit.
 pub(crate) fn observing(node: &Node, id: &ResidentId, input: &NoticeId, reason: String) -> Result<(), Failure> {
     begin(node, id, input)?;

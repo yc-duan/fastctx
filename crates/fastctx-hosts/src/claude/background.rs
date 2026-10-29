@@ -10,7 +10,11 @@
 //! which is that of whichever `claude --bg` started the daemon, the World's
 //! or the user's own (Claude Code 2.1.289). One the supervisor stopped is woken with
 //! `claude --resume <id> --bg "<words>"` and nothing else: any other flag,
-//! or a session still running, starts a copy instead. On Windows an npm
+//! or a session still running, starts a copy instead, with none of the
+//! World's settings. So does a session Claude Code cannot tell is not open
+//! elsewhere, as when its records of open sessions name a process of
+//! another machine, which it takes for running (2.1.303): such a session
+//! the World continues in a new one of its own (`continue_args`). On Windows an npm
 //! install may give only `claude.cmd`; the standard library runs it through
 //! the command interpreter with its arguments escaped, and refuses any it
 //! cannot escape.
@@ -55,6 +59,26 @@ pub fn fork_args(session: &str, start: &Start) -> Vec<OsString> {
     let mut args = settings_args(start);
     args.extend(["--resume".into(), session.into(), "--fork-session".into()]);
     args
+}
+
+/// Continues the saved conversation `session` in a new background session
+/// with the World's settings, given its first words when there are any:
+/// for a session Claude Code will not wake as itself, which it would only
+/// ever copy without them.
+pub fn continue_args(session: &str, start: &Start) -> Vec<OsString> {
+    let mut args = fork_args(session, start);
+    if !start.first_words.is_empty() {
+        args.extend(["--".into(), start.first_words.into()]);
+    }
+    args
+}
+
+/// Why Claude Code started a copy instead of waking the session it was
+/// asked for, as it tells it on its error stream (`Printed::told`):
+/// `note: session 1dec4134 is open in another Claude Code process, so this
+/// started a copy as 9b0e2f11. …` (2.1.303).
+pub fn copy_note(told: &str) -> Option<&str> {
+    told.lines().map(str::trim).find(|line| line.starts_with("note:") && line.contains("started a copy"))
 }
 
 fn settings_args(start: &Start) -> Vec<OsString> {
@@ -114,6 +138,16 @@ pub fn claude(program: &Path, args: &[OsString], cwd: &Path, env: &[(OsString, O
     invoke(program, args, cwd, env, within(args)).map_err(|failure| failure.message)
 }
 
+/// `claude`, keeping what the command told on its error stream.
+pub fn claude_telling(
+    program: &Path,
+    args: &[OsString],
+    cwd: &Path,
+    env: &[(OsString, OsString)],
+) -> Result<Printed, String> {
+    invoke_telling(program, args, cwd, env, within(args)).map_err(|failure| failure.message)
+}
+
 /// A CLI error is retryable only when the process was never started.
 /// A nonzero exit can follow an accepted prompt, including a trust refusal.
 #[derive(Debug)]
@@ -131,6 +165,25 @@ pub fn invoke(
     env: &[(OsString, OsString)],
     deadline: std::time::Duration,
 ) -> Result<String, CommandFailure> {
+    invoke_telling(program, args, cwd, env, deadline).map(|printed| printed.out)
+}
+
+/// What a command that succeeded printed: its output, and what it told on
+/// its error stream, where Claude Code says why it started a copy
+/// (`copy_note`).
+pub struct Printed {
+    pub out: String,
+    pub told: String,
+}
+
+/// `invoke`, keeping what the command told on its error stream.
+pub fn invoke_telling(
+    program: &Path,
+    args: &[OsString],
+    cwd: &Path,
+    env: &[(OsString, OsString)],
+    deadline: std::time::Duration,
+) -> Result<Printed, CommandFailure> {
     let mut command = Command::new(program);
     command.args(args).current_dir(cwd).env_clear().envs(env.iter().map(|(name, value)| (name, value)));
     command.stdin(Stdio::null());
@@ -151,7 +204,7 @@ pub fn invoke(
     })?;
     let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
     if output.status.success() {
-        Ok(stdout)
+        Ok(Printed { out: stdout, told: String::from_utf8_lossy(&output.stderr).into_owned() })
     } else {
         let stderr = String::from_utf8_lossy(&output.stderr);
         Err(CommandFailure {
@@ -176,6 +229,25 @@ fn within(args: &[OsString]) -> std::time::Duration {
 
 /// Whether the background session `session` has a running process, from
 /// `claude agents --json --all`.
+/// Whether the session rests: nothing `claude agents --json --all` lists
+/// for it has a process, and Claude Code is not starting or working its
+/// background session (2.1.303 names a job's state `starting`, `working`,
+/// `blocked`, `done`, `failed` or `stopped`). A process is listed from the
+/// records of open sessions, of this machine only.
+pub fn resting(agents_json: &str, session: &str) -> Result<bool, String> {
+    let list: Vec<serde_json::Value> =
+        serde_json::from_str(agents_json).map_err(|error| format!("reading `claude agents --json`: {error}"))?;
+    let named =
+        |agent: &serde_json::Value, field: &str| agent.get(field).and_then(serde_json::Value::as_str) == Some(session);
+    Ok(list.iter().filter(|agent| named(agent, "sessionId") || named(agent, "id")).all(|agent| {
+        agent.get("pid").and_then(serde_json::Value::as_u64).is_none()
+            && matches!(
+                agent.get("state").and_then(serde_json::Value::as_str),
+                None | Some("blocked" | "done" | "failed" | "stopped")
+            )
+    }))
+}
+
 pub fn running(agents_json: &str, session: &str) -> Result<bool, String> {
     let list: Vec<serde_json::Value> =
         serde_json::from_str(agents_json).map_err(|error| format!("reading `claude agents --json`: {error}"))?;

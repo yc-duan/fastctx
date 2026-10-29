@@ -165,8 +165,17 @@ pub async fn control(node: &Arc<Node>, resident: &ResidentId, mut control: Contr
     let speaking = speaking.lock().await;
     let _starting =
         node.handoff.start_turn().ok_or_else(|| Failure::new(crate::handoff::Handoff::waiting_why(node)))?;
+    // What starts a turn takes a turn of its login, as words do; joining
+    // the turn that runs takes none.
+    let admit = || {
+        if codex.running_turn(&thread).is_some() {
+            return Ok(());
+        }
+        crate::turn_slots::admit(node, resident, &about).map_err(|_| crate::turn_slots::full())
+    };
     match control {
         Control::Compact => {
+            admit()?;
             codex.compact(&thread).await.map_err(|error| error.failure())?;
             done("Compaction started; its completion appears in the conversation.")
         }
@@ -192,6 +201,7 @@ pub async fn control(node: &Arc<Node>, resident: &ResidentId, mut control: Contr
             done("Conversation rewound. Files changed by discarded turns have not been restored.")
         }
         Control::Command { name, args, path: None } if name == "review" => {
+            admit()?;
             let answer = codex.review(&thread, &args).await.map_err(|error| error.failure())?;
             done(&format!(
                 "Review started using Codex's current review/default settings. Pending model choices apply to the next ordinary turn. {answer}"
@@ -241,6 +251,7 @@ pub async fn control(node: &Arc<Node>, resident: &ResidentId, mut control: Contr
                     return done(&format!("Service tier {selected} saved for the next World turn."));
                 }
             }
+            admit()?;
             let sent = codex.skill(&thread, &name, path.as_deref(), &args).await.map_err(Failure::new)?;
             done(&format!("Skill input {} turn {}", if sent.joined { "joined" } else { "started" }, sent.turn))
         }

@@ -164,7 +164,13 @@ async fn defer_host(node: &Arc<Node>, id: &ResidentId, row: &PendingControl, why
         save(node, id, &rows)?;
     }
     crate::composer::place_command(node, id, &key).await?;
-    crate::lifecycle::retry::failed(node, id, &key, why)?;
+    // One waiting for a turn of its login asks again soon, to keep its
+    // place in line; a host that is not there is asked less and less often.
+    if why == crate::turn_slots::FULL {
+        crate::lifecycle::retry::queued(node, id, &key, why)?;
+    } else {
+        crate::lifecycle::retry::failed(node, id, &key, why)?;
+    }
     crate::lifecycle::retry::kick(node, id);
     Ok(())
 }

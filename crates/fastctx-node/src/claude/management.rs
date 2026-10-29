@@ -21,6 +21,17 @@ pub(super) async fn run(node: &Arc<Node>, home: Option<&Path>, args: Vec<OsStrin
     run_command(command, args).await
 }
 
+/// `run_command`, keeping what Claude Code told on its error stream.
+async fn run_telling(command: super::Command, args: Vec<OsString>) -> Result<background::Printed, Failure> {
+    let super::Command { program, cwd, env } = command;
+    tokio::task::spawn_blocking(fastctx_platform::doing::carried(move || {
+        background::claude_telling(&program, &args, &cwd, &env)
+    }))
+    .await
+    .map_err(|error| Failure::new(error.to_string()))?
+    .map_err(Failure::new)
+}
+
 async fn run_command(command: super::Command, args: Vec<OsString>) -> Result<String, Failure> {
     let super::Command { program, cwd, env } = command;
     tokio::task::spawn_blocking(fastctx_platform::doing::carried(move || {
@@ -161,20 +172,38 @@ pub async fn wake(node: &Arc<Node>, home: Option<&Path>, session: &str) -> Resul
     super::trust(&[command.cwd.as_path()], &command.env).map_err(Failure::new)?;
     // A session that reports while this runs waits to learn whether it is a copy.
     let waking = node.claude.copies.waking();
-    let output = run_command(command, vec!["--resume".into(), session.into(), "--bg".into()]).await?;
-    let started = background::started(&output).ok_or_else(|| {
-        Failure::new(format!("Claude Code did not identify the resumed background session: {output}"))
+    let printed = run_telling(command, vec!["--resume".into(), session.into(), "--bg".into()]).await?;
+    let started = background::started(&printed.out).ok_or_else(|| {
+        Failure::new(format!("Claude Code did not identify the resumed background session: {}", printed.out))
     })?;
-    // Still running, it was copied instead: the copy goes at once, and the
-    // session it copied, running, takes what this wake was for.
+    // Copied instead of woken, the copy goes at once. A session still
+    // running takes what this wake was for; one that does not run Claude
+    // Code would copy at every wake, so its conversation goes on in a
+    // session of the World's (`continuing`).
     if !session.starts_with(&started) {
         super::copies::discard(node, home, &started).await;
-        if super::running(node, home, session).await? {
-            return Ok(());
+        if !super::resting(node, home, session).await? {
+            if super::running(node, home, session).await? {
+                return Ok(());
+            }
+            return Err(Failure::new(format!(
+                "{session} was starting; Claude Code started a copy of it instead, which was stopped"
+            )));
         }
-        return Err(Failure::new(format!(
-            "{session} was still running; Claude Code started a copy of it instead, which was stopped"
-        )));
+        let resident = node
+            .residents
+            .resident_of_thread(session)
+            .or_else(|| session.get(..8).and_then(|short| node.residents.resident_of_thread(short)))
+            .ok_or_else(|| {
+                Failure::new(format!(
+                    "Claude Code copied {session} instead of waking it, and it is no conversation here"
+                ))
+            })?;
+        let why = background::copy_note(&printed.told).unwrap_or("it said nothing of why");
+        let continued = super::continuing::start(node, &resident, home, session, "", why).await;
+        drop(waking);
+        continued.map_err(|error| Failure::new(error.message))?;
+        return Ok(());
     }
     drop(waking);
     if !super::running(node, home, session).await? {

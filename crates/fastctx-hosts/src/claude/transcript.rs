@@ -129,17 +129,31 @@ pub fn read(path: &Path) -> io::Result<Transcript> {
 }
 
 pub fn read_with_cuts(path: &Path, cuts: &[HistoryCut]) -> io::Result<Transcript> {
-    read_rows(path, cuts, None)
+    read_rows(path, cuts, None, &HashSet::new())
+}
+
+/// Reads a session that continues its conversation (`background::continue_args`):
+/// the records Claude Code copied there, which keep their ids, give no
+/// events when one of `earlier`, the ids the conversation's sessions before
+/// it hold, names them, as that session's own record shows them already.
+/// They are still the session's context.
+pub fn read_continuing(path: &Path, cuts: &[HistoryCut], earlier: &HashSet<String>) -> io::Result<Transcript> {
+    read_rows(path, cuts, None, earlier)
 }
 
 /// Reads the record of one agent the session started (`subagents::record`):
 /// the agent's own rows, as a conversation of its own whose first words are
 /// what it was asked.
 pub fn read_agent(path: &Path, agent: &str) -> io::Result<Transcript> {
-    read_rows(path, &[], Some(agent))
+    read_rows(path, &[], Some(agent), &HashSet::new())
 }
 
-fn read_rows(path: &Path, cuts: &[HistoryCut], agent: Option<&str>) -> io::Result<Transcript> {
+fn read_rows(
+    path: &Path,
+    cuts: &[HistoryCut],
+    agent: Option<&str>,
+    earlier: &HashSet<String>,
+) -> io::Result<Transcript> {
     let file = File::open(path)?;
     let before = file.metadata()?;
     let mut reader = BufReader::new(file);
@@ -423,6 +437,9 @@ fn read_rows(path: &Path, cuts: &[HistoryCut], agent: Option<&str>) -> io::Resul
     for (index, row) in rows.iter().enumerate() {
         let Some(at) = times[index] else { continue };
         if !visible(row) || attached.contains(&index) {
+            continue;
+        }
+        if row.value.get("uuid").and_then(Value::as_str).is_some_and(|uuid| earlier.contains(uuid)) {
             continue;
         }
         if let Some(problem) = row.message_problem() {
