@@ -1362,6 +1362,7 @@ version = "1.0.1-beta.12"
 dependencies = [
  "fastctx-platform",
  "fastctx-types",
+ "fastctx-watch",
  "ignore",
  "notify",
  "nucleo-matcher",
@@ -1547,6 +1548,7 @@ dependencies = [
  "fastctx-types",
  "fastctx-uninstall",
  "fastctx-update",
+ "fastctx-watch",
  "getrandom 0.3.4",
  "image",
  "jiff",
@@ -1733,6 +1735,14 @@ dependencies = [
  "tar",
  "tokio",
  "zip",
+]
+
+[[package]]
+name = "fastctx-watch"
+version = "1.0.1-beta.12"
+dependencies = [
+ "inotify",
+ "notify",
 ]
 
 [[package]]

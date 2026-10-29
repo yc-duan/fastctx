@@ -4,7 +4,7 @@ use std::fs::File;
 use std::io::{self, Write};
 use std::os::fd::AsRawFd as _;
 use std::path::Path;
-use std::sync::OnceLock;
+use std::sync::{Mutex, PoisonError};
 
 use flate2::Compression;
 use flate2::write::GzEncoder;
@@ -14,7 +14,15 @@ use fastctx_types::kernel::{AARCH64_ARCHIVE, X86_64_ARCHIVE};
 
 pub(super) struct Own {
     executable: File,
-    archive: OnceLock<Result<Archive, String>>,
+    archive: Mutex<Packed>,
+}
+
+/// A packing that failed is not kept: what failed it, a full disk or no
+/// descriptor left, may have passed by the next asking, which packs again.
+enum Packed {
+    Not,
+    Packed(Archive),
+    Failed(String),
 }
 
 struct Archive {
@@ -34,22 +42,32 @@ pub(super) fn name() -> Option<&'static str> {
 impl Own {
     pub fn new() -> io::Result<Self> {
         // /proc/self/exe retains the running inode even after an upgrade replaces its path.
-        Ok(Self { executable: File::open("/proc/self/exe")?, archive: OnceLock::new() })
+        Ok(Self { executable: File::open("/proc/self/exe")?, archive: Mutex::new(Packed::Not) })
     }
 
     pub fn digest(&self, directory: &Path) -> Result<String, String> {
-        self.archive
-            .get_or_init(|| self.pack(directory).map_err(|error| error.to_string()))
-            .as_ref()
-            .map(|archive| archive.digest.clone())
-            .map_err(Clone::clone)
+        let mut archive = self.archive.lock().unwrap_or_else(PoisonError::into_inner);
+        if let Packed::Packed(archive) = &*archive {
+            return Ok(archive.digest.clone());
+        }
+        match self.pack(directory) {
+            Ok(packed) => {
+                let digest = packed.digest.clone();
+                *archive = Packed::Packed(packed);
+                Ok(digest)
+            }
+            Err(error) => {
+                *archive = Packed::Failed(error.to_string());
+                Err(error.to_string())
+            }
+        }
     }
 
     pub fn file(&self, sums: bool) -> io::Result<File> {
-        match self.archive.get() {
-            Some(Ok(archive)) => reopen(if sums { &archive.sums } else { &archive.file }),
-            Some(Err(error)) => Err(io::Error::other(error.clone())),
-            None => Err(io::Error::new(io::ErrorKind::NotFound, "the running kernel has not been offered yet")),
+        match &*self.archive.lock().unwrap_or_else(PoisonError::into_inner) {
+            Packed::Packed(archive) => reopen(if sums { &archive.sums } else { &archive.file }),
+            Packed::Failed(error) => Err(io::Error::other(error.clone())),
+            Packed::Not => Err(io::Error::new(io::ErrorKind::NotFound, "the running kernel has not been offered yet")),
         }
     }
 

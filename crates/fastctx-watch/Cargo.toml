@@ -1,0 +1,15 @@
+[package]
+name = "fastctx-watch"
+description = "File watches that share one inotify instance per process on Linux"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+notify = "8"
+
+[target.'cfg(any(target_os = "linux", target_os = "android"))'.dependencies]
+inotify = { version = "0.11", default-features = false }

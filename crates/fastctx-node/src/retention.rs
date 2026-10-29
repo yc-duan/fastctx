@@ -53,13 +53,12 @@ pub(crate) fn set_days(world: &fastctx_types::layout::WorldDir, days: u32) -> io
 }
 
 pub(crate) fn start(node: &Arc<Node>) -> io::Result<()> {
-    use notify::Watcher as _;
     let settings = node.world.retention();
     create(&settings, &Settings::default())?;
     let weak = Arc::downgrade(node);
     let settings_changed = Arc::new(tokio::sync::Notify::new());
     let changed = settings_changed.clone();
-    let mut watcher = notify::recommended_watcher(move |event: notify::Result<notify::Event>| {
+    let mut watcher = fastctx_watch::Watcher::new(move |event: notify::Result<notify::Event>| {
         if let Some(node) = weak.upgrade() {
             match event {
                 // Only a change of the settings counts: the maintenance pass
@@ -81,8 +80,7 @@ pub(crate) fn start(node: &Arc<Node>) -> io::Result<()> {
                 }
             }
         }
-    })
-    .map_err(io::Error::other)?;
+    });
     watcher.watch(node.world.path(), notify::RecursiveMode::NonRecursive).map_err(io::Error::other)?;
     let node = node.clone();
     tokio::spawn(async move {

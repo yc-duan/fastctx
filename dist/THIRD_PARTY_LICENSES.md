@@ -9943,6 +9943,7 @@ Used by:
 - fastctx-types 1.0.1-beta.12 (https://github.com/yc-duan/fastctx)
 - fastctx-uninstall 1.0.1-beta.12
 - fastctx-update 1.0.1-beta.12 (https://github.com/yc-duan/fastctx)
+- fastctx-watch 1.0.1-beta.12 (https://github.com/yc-duan/fastctx)
 - pdf_oxide 0.3.78 (https://github.com/yfedoseev/pdf_oxide)
 - allocator-api2 0.2.21 (https://github.com/zakarumych/allocator-api2)
 - anyhow 1.0.104 (https://github.com/dtolnay/anyhow)
@@ -87032,4 +87033,4 @@ Source archives for the crates.io dependencies recorded by this build follow. Ea
 - zvariant_derive 5.15.0: https://static.crates.io/crates/zvariant_derive/zvariant_derive-5.15.0.crate
 - zvariant_utils 4.2.0: https://static.crates.io/crates/zvariant_utils/zvariant_utils-4.2.0.crate
 
-<!-- fastctx-notices-inputs: 95452262ed6040296400ce7b6def793d78654e0eaff2ed5a626baf4959789554 -->
+<!-- fastctx-notices-inputs: a1ab1590bccc1ee653598bdf44a04440bcd8c1250a2cca9a925e88ae1b3d4192 -->

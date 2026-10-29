@@ -14,6 +14,10 @@ use jiff::Timestamp;
 
 use crate::Node;
 
+/// How long a follower waits without news before it looks whether its
+/// conversation is still here.
+const LOOK_AGAIN: std::time::Duration = std::time::Duration::from_secs(600);
+
 pub(super) async fn start(node: &Arc<Node>, resident: &ResidentId, directory: &Path) -> std::io::Result<()> {
     let Some(path) = exchange::transcript(directory)? else { return Ok(()) };
     if node.claude.title_files.lock().expect("never poisoned").contains(&path) {
@@ -30,15 +34,14 @@ pub(super) async fn start(node: &Arc<Node>, resident: &ResidentId, directory: &P
         Some(name) => crate::file_events::named(folder)?.join(name),
         None => path.clone(),
     };
-    let mut watcher = notify::recommended_watcher(move |event: notify::Result<notify::Event>| {
+    let mut watcher = fastctx_watch::Watcher::new(move |event: notify::Result<notify::Event>| {
         if event.as_ref().map_or(true, |event| {
             event.need_rescan() || crate::file_events::changes(event) && event.paths.iter().any(|path| path == &watched)
         }) {
             let _ = changed.try_send(());
         }
-    })
-    .map_err(std::io::Error::other)?;
-    notify::Watcher::watch(&mut watcher, folder, notify::RecursiveMode::NonRecursive).map_err(std::io::Error::other)?;
+    });
+    watcher.watch(folder, notify::RecursiveMode::NonRecursive).map_err(std::io::Error::other)?;
     if !node.claude.title_files.lock().expect("never poisoned").insert(path.clone()) {
         return Ok(());
     }
@@ -53,6 +56,12 @@ pub(super) async fn start(node: &Arc<Node>, resident: &ResidentId, directory: &P
         let mut followed = false;
         loop {
             let Some(node) = node.upgrade() else { return };
+            // A conversation removed or deleted is followed no longer; one
+            // brought back is followed again from its session's next report.
+            if !node.residents.knows(&resident) || node.residents.removed(&resident).is_some() {
+                node.claude.title_files.lock().expect("never poisoned").remove(&path);
+                return;
+            }
             let mut restarted = false;
             let mut thoughts = Vec::new();
             let read = tail.read(&path, |found| {
@@ -98,7 +107,9 @@ pub(super) async fn start(node: &Arc<Node>, resident: &ResidentId, directory: &P
                 Err(error) => node.log.line(format_args!("following Claude's record in {}: {error}", path.display())),
             }
             drop(node);
-            if changes.recv().await.is_none() {
+            // Removal changes nothing in the file: it is noticed at the
+            // latest after a while.
+            if let Ok(None) = tokio::time::timeout(LOOK_AGAIN, changes.recv()).await {
                 return;
             }
         }

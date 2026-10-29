@@ -16,7 +16,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, Weak, mpsc};
 
 use fastctx_types::file_search::FileSearchResult;
-use notify::{EventKind, RecursiveMode, Watcher};
+use notify::{EventKind, RecursiveMode};
 
 #[derive(Default)]
 struct State {
@@ -300,21 +300,22 @@ fn watch_and_index(shared: &Arc<Shared>, receiver: mpsc::Receiver<()>) -> io::Re
     }
 }
 
-fn new_watcher(shared: &Arc<Shared>) -> io::Result<notify::RecommendedWatcher> {
+/// A watcher for this search's places. One the system has no watch for is
+/// a failed scan, said to whoever searches, not a place looked at again and
+/// again: a tree is too many places for that.
+fn new_watcher(shared: &Arc<Shared>) -> io::Result<fastctx_watch::Watcher> {
     let weak: Weak<Shared> = Arc::downgrade(shared);
-    notify::RecommendedWatcher::new(
-        move |event| {
-            if let Some(shared) = weak.upgrade() {
-                shared.event(event);
-            }
-        },
-        notify::Config::default().with_follow_symlinks(false),
-    )
-    .map_err(io::Error::other)
+    Ok(fastctx_watch::Watcher::new(move |event| {
+        if let Some(shared) = weak.upgrade() {
+            shared.event(event);
+        }
+    })
+    .following_links(false)
+    .polling(false))
 }
 
 struct Watches {
-    watcher: notify::RecommendedWatcher,
+    watcher: fastctx_watch::Watcher,
     paths: HashSet<PathBuf>,
     recursive: Vec<PathBuf>,
 }

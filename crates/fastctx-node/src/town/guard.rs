@@ -38,7 +38,7 @@ pub fn start(node: &Arc<Node>) -> io::Result<()> {
     ensure_private_dir(&towns)?;
     let (changed, mut changes) = mpsc::unbounded_channel::<Option<TownName>>();
     let root = crate::file_events::named(&towns)?;
-    let mut watcher = notify::recommended_watcher(move |event: notify::Result<notify::Event>| match event {
+    let mut watcher = fastctx_watch::Watcher::new(move |event: notify::Result<notify::Event>| match event {
         Ok(event) if !crate::file_events::changes(&event) => {}
         Ok(event) if !event.need_rescan() => {
             for path in event.paths {
@@ -62,9 +62,8 @@ pub fn start(node: &Arc<Node>) -> io::Result<()> {
         _ => {
             let _ = changed.send(None);
         }
-    })
-    .map_err(io::Error::other)?;
-    notify::Watcher::watch(&mut watcher, &towns, notify::RecursiveMode::Recursive).map_err(io::Error::other)?;
+    });
+    watcher.watch(&towns, notify::RecursiveMode::Recursive).map_err(io::Error::other)?;
     let node = node.clone();
     tokio::spawn(async move {
         let _watcher = watcher;

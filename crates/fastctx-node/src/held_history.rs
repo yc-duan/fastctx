@@ -41,9 +41,11 @@ pub(crate) async fn opening(node: &Arc<Node>, resident: &ResidentId, held: &Held
     drop(subscribed);
     let read = crate::talk::history_here(node, resident).await?;
     // Never repeated: a viewer that holds it is sent the history next time.
+    // So is a reading some record was missing from, which is read again
+    // once it can be.
     let version = match version {
-        Some(version) => version,
-        None => format!("unstamped {:x}", u128::from_le_bytes(random()?)),
+        Some(version) if !read.unread => version,
+        _ => format!("unstamped {:x}", u128::from_le_bytes(random()?)),
     };
     let (history, held_now, slimmed_for) = (read.history, held.clone(), owner.clone());
     let mut history = tokio::task::spawn_blocking(move || {

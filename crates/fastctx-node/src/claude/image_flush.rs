@@ -10,15 +10,13 @@ use std::io::{Read as _, Seek as _};
 pub(crate) async fn wait_for_image(node: &crate::Node, resident: &ResidentId, message: &str) -> std::io::Result<()> {
     let paths = paths(node, resident).map_err(|error| std::io::Error::other(error.message))?;
     let (changed, mut changes) = tokio::sync::mpsc::unbounded_channel();
-    let mut watcher = notify::recommended_watcher(move |event: notify::Result<notify::Event>| {
+    let mut watcher = fastctx_watch::Watcher::new(move |event: notify::Result<notify::Event>| {
         if crate::file_events::may_change(&event) {
             let _ = changed.send(event.map(|_| ()));
         }
-    })
-    .map_err(std::io::Error::other)?;
+    });
     for parent in paths.iter().filter_map(|path| path.parent()) {
-        notify::Watcher::watch(&mut watcher, parent, notify::RecursiveMode::NonRecursive)
-            .map_err(std::io::Error::other)?;
+        watcher.watch(parent, notify::RecursiveMode::NonRecursive).map_err(std::io::Error::other)?;
     }
     let process = node
         .residents

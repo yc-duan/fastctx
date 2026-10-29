@@ -16,7 +16,6 @@ use fastctx_types::access::{Acting, Purpose};
 use fastctx_types::ipc::Failure;
 use fastctx_types::lines::{Decoding, Extent, Reply, Request, Result as Answer};
 use fastctx_types::remote::{RemoteCall, RemoteReply};
-use notify::Watcher as _;
 
 use crate::Node;
 
@@ -33,7 +32,7 @@ struct Source {
     changed: tokio::sync::watch::Sender<u64>,
     closed: tokio::sync::watch::Sender<bool>,
     events: tokio::sync::watch::Sender<std::result::Result<u64, String>>,
-    _watcher: Mutex<notify::RecommendedWatcher>,
+    _watcher: Mutex<fastctx_watch::Watcher>,
     cancelled: Arc<AtomicBool>,
     requests: Mutex<Vec<Weak<AtomicBool>>>,
 }
@@ -131,7 +130,7 @@ pub(crate) async fn open(
     };
     let (events, event_rx) = tokio::sync::watch::channel(Ok(0u64));
     let notices = events.clone();
-    let mut watcher = notify::recommended_watcher(move |event: notify::Result<notify::Event>| {
+    let mut watcher = fastctx_watch::Watcher::new(move |event: notify::Result<notify::Event>| {
         if !crate::file_events::may_change(&event) {
             return;
         }
@@ -143,8 +142,7 @@ pub(crate) async fn open(
             }
             Err(error) => *state = Err(error.to_string()),
         });
-    })
-    .map_err(failed)?;
+    });
     watcher
         .watch(
             path.parent().ok_or_else(|| failed("the source has no parent directory"))?,

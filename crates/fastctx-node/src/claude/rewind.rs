@@ -46,18 +46,17 @@ pub(super) async fn finish(
         .ok_or_else(|| Failure::new("Claude has not identified its history file"))?;
     let registration = exchange::registration(&directory).map_err(failure)?;
     let (changed, mut changes) = tokio::sync::mpsc::channel(1);
-    let mut watcher = notify::recommended_watcher(move |event: notify::Result<notify::Event>| {
+    let mut watcher = fastctx_watch::Watcher::new(move |event: notify::Result<notify::Event>| {
         if crate::file_events::may_change(&event) {
             let _ = changed.try_send(());
         }
-    })
-    .map_err(|error| Failure::new(error.to_string()))?;
-    notify::Watcher::watch(
-        &mut watcher,
-        transcript.parent().ok_or_else(|| Failure::new("Claude transcript has no parent"))?,
-        notify::RecursiveMode::NonRecursive,
-    )
-    .map_err(|error| Failure::new(error.to_string()))?;
+    });
+    watcher
+        .watch(
+            transcript.parent().ok_or_else(|| Failure::new("Claude transcript has no parent"))?,
+            notify::RecursiveMode::NonRecursive,
+        )
+        .map_err(|error| Failure::new(error.to_string()))?;
     let process = registration
         .and_then(|registration| registration.process)
         .ok_or_else(|| Failure::new("Claude has not identified its process"))?;

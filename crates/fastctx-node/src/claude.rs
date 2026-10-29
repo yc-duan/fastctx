@@ -175,7 +175,7 @@ pub fn start(node: &Arc<Node>) -> std::io::Result<()> {
     let conversations = node.world.conversations();
     fastctx_platform::ensure_private_dir(&conversations)?;
     let homes = crate::file_events::named(&conversations)?;
-    let mut watcher = notify::recommended_watcher(move |event: notify::Result<notify::Event>| {
+    let mut watcher = fastctx_watch::Watcher::new(move |event: notify::Result<notify::Event>| {
         match event {
             Ok(event) if !crate::file_events::changes(&event) => {}
             Ok(event) if !event.need_rescan() => {
@@ -202,11 +202,9 @@ pub fn start(node: &Arc<Node>) -> std::io::Result<()> {
                 let _ = changed.send(root.clone());
             }
         }
-    })
-    .map_err(std::io::Error::other)?;
-    notify::Watcher::watch(&mut watcher, &sessions, notify::RecursiveMode::Recursive).map_err(std::io::Error::other)?;
-    notify::Watcher::watch(&mut watcher, &conversations, notify::RecursiveMode::Recursive)
-        .map_err(std::io::Error::other)?;
+    });
+    watcher.watch(&sessions, notify::RecursiveMode::Recursive).map_err(std::io::Error::other)?;
+    watcher.watch(&conversations, notify::RecursiveMode::Recursive).map_err(std::io::Error::other)?;
     let node = node.clone();
     tokio::spawn(async move {
         // Kept for as long as the node watches.

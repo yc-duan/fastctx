@@ -27,17 +27,19 @@ pub(crate) fn start(node: &Arc<Node>) {
     let node = Arc::downgrade(node);
     tokio::spawn(async move {
         loop {
+            // Held here as well as by the watch, so that where nothing can
+            // be watched the hourly look still waits its hour.
             let (changed, mut changes) = mpsc::channel(1);
             let watcher = {
                 let Some(node) = node.upgrade() else { return };
-                watch(&node, changed)
+                watch(&node, changed.clone())
             };
             tokio::select! {
                 _ = changes.recv() => {}
                 _ = tokio::time::sleep(EVERY) => {}
             }
             while tokio::time::timeout(SETTLED, changes.recv()).await.is_ok_and(|change| change.is_some()) {}
-            drop(watcher);
+            drop((watcher, changed));
             let Some(node) = node.upgrade() else { return };
             super::refresh::all(&node).await;
         }
@@ -47,7 +49,7 @@ pub(crate) fn start(node: &Arc<Node>) {
 /// A watch on the folders of every login the World's tools are in, telling
 /// `changed` when one of the files the World writes there changes; none
 /// where they cannot be watched, which the hourly look stands in for.
-fn watch(node: &Node, changed: mpsc::Sender<()>) -> Option<notify::RecommendedWatcher> {
+fn watch(node: &Node, changed: mpsc::Sender<()>) -> Option<fastctx_watch::Watcher> {
     let places = Context::of(node).map(|context| context.places).ok()?;
     let integrations = match apply::integrations(&places) {
         Ok(integrations) => integrations,
@@ -73,20 +75,18 @@ fn watch(node: &Node, changed: mpsc::Sender<()>) -> Option<notify::RecommendedWa
             folders.push(folder);
         }
     }
-    let mut watcher = notify::recommended_watcher(move |event: notify::Result<notify::Event>| {
+    let mut watcher = fastctx_watch::Watcher::new(move |event: notify::Result<notify::Event>| {
         if event.as_ref().map_or(true, |event| {
             event.need_rescan()
                 || crate::file_events::changes(event) && event.paths.iter().any(|path| watched.contains(path))
         }) {
             let _ = changed.try_send(());
         }
-    })
-    .map_err(|error| node.log.line(format_args!("watching the logins the World's tools are in: {error}")))
-    .ok()?;
+    });
     for folder in folders {
         // A folder not made yet, as Claude Code's plugins before any, is
         // looked at hourly instead.
-        let _ = notify::Watcher::watch(&mut watcher, &folder, notify::RecursiveMode::NonRecursive);
+        let _ = watcher.watch(&folder, notify::RecursiveMode::NonRecursive);
     }
     Some(watcher)
 }

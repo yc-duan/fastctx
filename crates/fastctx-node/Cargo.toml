@@ -30,6 +30,7 @@ fastctx-storage = { path = "../fastctx-storage" }
 fastctx-draft = { path = "../fastctx-draft" }
 fastctx-ripgrep = { path = "../fastctx-ripgrep" }
 fastctx-types = { path = "../fastctx-types" }
+fastctx-watch = { path = "../fastctx-watch" }
 fastctx-uninstall = { path = "../fastctx-uninstall" }
 fastctx-update = { path = "../fastctx-update" }
 getrandom = { version = "0.3", features = ["std"] }
