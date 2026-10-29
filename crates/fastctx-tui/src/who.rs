@@ -114,7 +114,7 @@ pub fn second_line(ctx: &Ctx, resident: &ResidentNow, job: Option<&RunningJob>) 
     }
     if let Some(trouble) = resident.now.as_ref().and_then(|now| now.trouble.as_ref()) {
         spans.push(Span::styled(
-            format!("    ▲ {}{}", text::first_line(&trouble.text), words.aside(&words.ago(trouble.at, ctx.now))),
+            format!("    ▲ {}{}", words.troubled(), words.aside(&words.ago(trouble.at, ctx.now))),
             look.text(Role::Caution),
         ));
     }

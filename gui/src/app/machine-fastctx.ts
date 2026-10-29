@@ -11,6 +11,7 @@ import { escape } from "../conversation/prose";
 import type { Login } from "../world/accounts";
 import { compareVersions, newestKnown, type UpdateCall, type UpdateState } from "../world/updates";
 import { link } from "./places";
+import { detailOf } from "./problem";
 import { lineOf, stageMark } from "./update-marks";
 import type { UpdateViewWords } from "./update-view-words";
 import type { ManageWords } from "./machine-manage-words";
@@ -63,6 +64,8 @@ export class FastctxBlock {
   private state: UpdateState | null = null;
   private problem: string | null = null;
   private said: string | null = null;
+  /** What the kernel said of the last thing done, for the pointer. */
+  private saidWhy = "";
   private timer = 0;
   private asking = false;
   /** The machine was away when last asked: it is asked as soon as it is back. */
@@ -80,6 +83,8 @@ export class FastctxBlock {
       this.state = null;
       this.problem = null;
       this.said = null;
+    this.saidWhy = "";
+      this.saidWhy = "";
     }
     const was = this.shown;
     this.shown = shown;
@@ -106,7 +111,7 @@ export class FastctxBlock {
       this.state = await this.options.remote(machine.written, { do: "state" });
       this.problem = null;
     } catch (error) {
-      this.problem = error instanceof Error ? error.message : String(error);
+      this.problem = detailOf(error);
     } finally {
       this.asking = false;
     }
@@ -162,7 +167,7 @@ export class FastctxBlock {
     }
     const local = this.options.local.peek();
     const newest = this.newest(local, running);
-    if (this.said) return `<span class="fx-said">${escape(this.said)}</span>`;
+    if (this.said) return `<span class="fx-said"${this.saidWhy ? ` title="${escape(this.saidWhy)}"` : ""}>${escape(this.said)}</span>`;
     if (this.older(subject)) {
       if (!newest) return `<span>${escape(words.upToDate)}</span>`;
       // A release before 1.0.1 beta 3 changes only its World program from
@@ -176,7 +181,7 @@ export class FastctxBlock {
       return `<span class="fx-quiet">${escape(due ? words.due(due.version, due.by) : words.away)}</span>${go}`;
     }
     if (!manages) return newest ? `<span>${escape(words.canTake(newest))}</span>` : `<span>${escape(words.upToDate)}</span>`;
-    if (!state) return `<span class="fx-quiet">${escape(this.problem ?? words.asking)}</span>${go}`;
+    if (!state) return `${this.problem ? wrong(words.unread(this.problem), this.problem) : `<span class="fx-quiet">${escape(words.asking)}</span>`}${go}`;
     if (staged && state.stage) {
       const stage = state.stage;
       const said = staged.kind === "failed" ? wrong(staged.said, staged.why) : `<span>${escape(staged.said)}</span>`;
@@ -191,8 +196,8 @@ export class FastctxBlock {
     }
     if (state.renewing) {
       const { version, phase, error } = state.renewing;
-      const said = `${version} ${phase === "failed" ? words.failed(error ?? words.phase.failed) : words.phase[phase]}`;
-      return phase === "failed" ? `${wrong(said)}${go}` : `<span>${escape(said)}</span>`;
+      const said = `${version} ${phase === "failed" ? (error ? words.failed(error) : words.phase.failed) : words.phase[phase]}`;
+      return phase === "failed" ? `${wrong(said, error ?? "")}${go}` : `<span>${escape(said)}</span>`;
     }
     if (state.failed) return `${wrong(words.failed(state.failed.why), state.failed.why)}${go}`;
     if (state.take && state.app) {
@@ -234,7 +239,8 @@ export class FastctxBlock {
         void this.ask();
       },
       (error: unknown) => {
-        this.said = this.options.words.failed(error instanceof Error ? error.message : String(error));
+        this.saidWhy = detailOf(error);
+        this.said = this.options.words.failed(this.saidWhy);
         this.options.changed();
       },
     );

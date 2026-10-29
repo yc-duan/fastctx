@@ -3,6 +3,7 @@
 // three ways.
 
 import type { RenewalPhase } from "../world/renewal";
+import { enProblems, failure, zhProblems } from "./problem";
 
 export interface ManageWords {
   close: string;
@@ -18,7 +19,11 @@ export interface ManageWords {
   /** A package on its way there: what came of how much, and from where. */
   fetching(received: string, total: string | null, network: boolean): string;
   phase: Record<RenewalPhase, string>;
+  /** An update that did not take: a known reason in plain words, else
+   *  that it failed; the kernel's words go in the hover. */
   failed(why: string): string;
+  /** Its update could not be asked about. */
+  unread(why: string): string;
   /** An update asked of a computer an application carries Fastctx on. */
   appTakes(version: string): string;
   appClosed(version: string): string;
@@ -54,7 +59,8 @@ export interface ManageWords {
   hubOlder: string;
   removeOffline: string;
   removeGo: string;
-  removeFailed(why: string): string;
+  /** Machines that could not be taken off, by name; why is a hover away. */
+  removeFailed(machines: string[]): string;
   /** Once taken off, how the uninstall goes on each machine told to: under
    *  way, waiting for one offline, quiet till the end, or not all done, said
    *  in its own words with the line to run there. */
@@ -93,7 +99,8 @@ export const zhManage: ManageWords = {
     complete: "已更新",
     failed: "更新失败",
   },
-  failed: (why) => `更新失败：${why}`,
+  failed: failure(zhProblems, "更新失败"),
+  unread: failure(zhProblems, "读不到它的更新"),
   appTakes: (version) => `应用开着，由应用自己更新到 ${version}`,
   appClosed: (version) => `应用没开，由本机服务装上 ${version}`,
   appOpenThere: (version) => `下次在那台打开 Fastctx 时更新到 ${version}`,
@@ -122,7 +129,7 @@ export const zhManage: ManageWords = {
   hubOlder: "这个网络的中枢版本较旧，还不能替它卸载",
   removeOffline: "不在线：移出立即生效，卸载在它下次连上时进行",
   removeGo: "移除",
-  removeFailed: (why) => `没能移除：${why}`,
+  removeFailed: (machines) => (machines.length ? `没能移除 ${machines.join("、")}` : "没能移除"),
   removedTitle: "已移出",
   uninstalling: "正在那台上卸载…",
   uninstallAway: "不在线：下次连上时卸载",
@@ -156,7 +163,8 @@ export const enManage: ManageWords = {
     complete: "Updated",
     failed: "Update failed",
   },
-  failed: (why) => `Update failed: ${why}`,
+  failed: failure(enProblems, "Update failed"),
+  unread: failure(enProblems, "Its update can't be read"),
   appTakes: (version) => `Its app is open and updates itself to ${version}`,
   appClosed: (version) => `Its app is closed; the local service installs ${version}`,
   appOpenThere: (version) => `Updates to ${version} when Fastctx next opens there`,
@@ -185,7 +193,7 @@ export const enManage: ManageWords = {
   hubOlder: "This network's hub is older and cannot uninstall it yet",
   removeOffline: "Offline: it is taken off at once, and uninstalls when it next connects",
   removeGo: "Remove",
-  removeFailed: (why) => `Couldn't remove it: ${why}`,
+  removeFailed: (machines) => (machines.length ? `Couldn't remove ${machines.join(", ")}` : "Couldn't remove it"),
   removedTitle: "Taken off",
   uninstalling: "Uninstalling there…",
   uninstallAway: "Offline: uninstalls once it is back",

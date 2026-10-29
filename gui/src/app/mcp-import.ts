@@ -42,6 +42,8 @@ export class McpImport {
   private machine: string | null = null;
   private reading: Reading = { kind: "reading" };
   private problem: string | null = null;
+  /** What the kernel said of it, for the pointer. */
+  private problemWhy = "";
 
   constructor(
     private readonly words: ProfileWords,
@@ -136,7 +138,7 @@ export class McpImport {
     this.sheet.body.innerHTML = `${this.sheet.head(words.import.title, this.close)}
       <div class="field mcp-on"><span class="field-label">${escape(words.import.from)}</span><div class="choice-options">${machines}</div></div>
       <div class="mcp-import-list">${list}</div>
-      <p class="sheet-note" role="alert"${this.problem ? "" : " hidden"}>${escape(this.problem ?? "")}</p>
+      <p class="sheet-note" role="alert"${this.problem ? "" : " hidden"} title="${escape(this.problemWhy)}">${escape(this.problem ?? "")}</p>
       <footer class="sheet-foot"><span></span><button class="sheet-go" type="submit"${count ? "" : " disabled"}>${escape(words.import.go(count))}</button></footer>`;
   }
 
@@ -181,7 +183,8 @@ export class McpImport {
       opening.done();
     } catch (error) {
       this.sheet.busy = false;
-      this.problem = `${this.words.import.failed}: ${detailOf(error)}`;
+      this.problem = this.words.import.failed;
+      this.problemWhy = detailOf(error);
       if (kept) opening.done();
       this.draw();
     }

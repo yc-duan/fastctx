@@ -241,10 +241,11 @@ export class JobsPanel {
         await this.options.stop(row.job.job, row.job.machine);
         confirm.remove();
       } catch (error) {
-        // Why, in its own words, beside it: the user decides what next.
+        // That it did not stop beside it, why in the kernel's own words a
+        // hover away: the user decides what next.
         const why = this.options.detail(error);
         const said = confirm.querySelector("span")!;
-        said.textContent = `${words.notStopped}: ${why}`;
+        said.textContent = words.notStopped;
         said.title = why;
         target.disabled = false;
       }

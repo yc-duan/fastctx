@@ -302,7 +302,10 @@ export class MachineCards {
           const said = error instanceof Error ? error.message : String(error);
           const wrong = card.querySelector<HTMLElement>(".map-card-wrong");
           if (wrong) {
-            wrong.textContent = said;
+            // A known reason in plain words, else that it did not take;
+            // the kernel's own words a hover away.
+            wrong.textContent = this.host.access.failed(said);
+            wrong.title = said;
             wrong.hidden = false;
           } else this.host.failed(key, said);
         },

@@ -228,9 +228,9 @@ impl TalkPage {
                         self.transcript.landed(local, said.landed, said.to.machine);
                     }
                 }
-                (Job::Talk { .. }, Err(why)) => {
+                (Job::Talk { .. }, Err(_)) => {
                     if let Some(local) = self.pending.pop_front() {
-                        self.transcript.failed(local, why);
+                        self.transcript.failed(local);
                     }
                 }
                 (Job::Stop { .. }, Ok(Done::Stopped(false))) => {
@@ -238,9 +238,9 @@ impl TalkPage {
                     self.note = Some(quiet(ctx, ctx.words.no_turn_running()));
                 }
                 (Job::Stop { .. }, Ok(_)) => {}
-                (Job::Stop { .. }, Err(why)) => {
+                (Job::Stop { .. }, Err(_)) => {
                     self.stopping = false;
-                    self.note = Some(wrong(ctx, ctx.words.not_stopped(&text::first_line(&why))));
+                    self.note = Some(wrong(ctx, ctx.words.not_stopped().to_string()));
                 }
                 (Job::Attach { .. }, Ok(Done::Attachable(command))) => return Act::HandOver(command),
                 (Job::Attach { .. }, Err(why)) => {

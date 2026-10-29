@@ -2,6 +2,8 @@
 // `machine-ways.ts`): what is done to how many of them, choosing them, what
 // several run as the window of versions says it, and setting how they update.
 
+import { enProblems, failure, zhProblems } from "./problem";
+
 export interface BatchWords {
   /** An action that does not reach every machine chosen, with how many it reaches. */
   some(label: string, count: number): string;
@@ -27,6 +29,9 @@ export interface BatchWords {
 
   /** Setting how several update. */
   waysTitle(count: number): string;
+  /** Setting how they update did not take: a known reason in plain words,
+   *  else that it did not. */
+  waysFailed(why: string): string;
   auto: string;
   relays: string;
   on: string;
@@ -54,6 +59,7 @@ export const zhBatch: BatchWords = {
   oldestRuns: (count, version) => `这 ${count} 台里最旧的在跑 ${version}`,
 
   waysTitle: (count) => `这 ${count} 台怎样更新`,
+  waysFailed: failure(zhProblems, "没能更改"),
   auto: "自动更新",
   relays: "帮网络传包",
   on: "开",
@@ -81,6 +87,7 @@ export const enBatch: BatchWords = {
   oldestRuns: (count, version) => `The oldest of these ${count} runs ${version}`,
 
   waysTitle: (count) => `How these ${count} update`,
+  waysFailed: failure(enProblems, "Not changed"),
   auto: "Automatic updates",
   relays: "Pass packages on",
   on: "On",

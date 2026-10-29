@@ -98,9 +98,7 @@ enum Item {
     },
     /// Words the World handed over without learning whether a turn took
     /// them.
-    Uncertain {
-        why: String,
-    },
+    Uncertain,
 }
 
 /// What the agent writes.
@@ -149,7 +147,7 @@ struct Sending {
 enum SendState {
     Going,
     Landed(Landed, MachineName),
-    Failed(String),
+    Failed,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -303,8 +301,8 @@ impl Transcript {
                 }
                 self.items.push(Item::Ended { turn, end });
             }
-            Happened::DeliveryUncertain { why, .. } => {
-                self.items.push(Item::Uncertain { why });
+            Happened::DeliveryUncertain { .. } => {
+                self.items.push(Item::Uncertain);
             }
             Happened::Health { health, .. } => self.health(health),
             Happened::Changed { change, .. } => {
@@ -480,10 +478,12 @@ impl Transcript {
         }
     }
 
-    pub fn failed(&mut self, local: u64, why: String) {
+    /// Words that did not go; why is the kernel's, not the interface's to
+    /// show (`AGENTS.md`, 文案).
+    pub fn failed(&mut self, local: u64) {
         self.changed();
         if let Some(sending) = self.sending_mut(local) {
-            sending.state = SendState::Failed(why);
+            sending.state = SendState::Failed;
         }
     }
 
@@ -606,21 +606,21 @@ impl Transcript {
                     }
                 }
                 Item::Health { health, .. } => {
-                    let mut spans =
-                        vec![Span::styled(format!("▲ {}", ctx.words.health(health.kind)), look.text(Role::Caution))];
-                    let words = text::first_line(&health.text);
-                    if !words.is_empty() {
-                        spans.push(Span::styled(format!("  ·  {words}"), look.text(Role::Faint)));
-                    }
-                    out.push(paint::fit_line(&Line::from(spans), width));
+                    // Its kind in plain words: what it said is often the
+                    // kernel's, not the interface's to show (`AGENTS.md`, 文案).
+                    let line = Line::from(vec![Span::styled(
+                        format!("▲ {}", ctx.words.health(health.kind)),
+                        look.text(Role::Caution),
+                    )]);
+                    out.push(paint::fit_line(&line, width));
                 }
                 Item::Note { text, role } => {
                     blank(&mut out);
                     out.extend(text::wrap_plain(text, look.text(*role), width));
                 }
-                Item::Uncertain { why } => {
+                Item::Uncertain => {
                     blank(&mut out);
-                    out.extend(text::wrap_plain(&ctx.words.landing_unknown(why), look.text(Role::Caution), width));
+                    out.extend(text::wrap_plain(ctx.words.landing_unknown(), look.text(Role::Caution), width));
                 }
             }
             last_was_tool = is_tool;
@@ -770,16 +770,16 @@ fn sent(ctx: &Ctx, state: &SendState, width: usize) -> Vec<Line<'static>> {
     let words = &ctx.words;
     let (text, role) = match state {
         SendState::Going => (words.sending().to_string(), Role::Faint),
-        SendState::Failed(why) => (words.not_sent(&text::first_line(why)), Role::Wrong),
+        SendState::Failed => (words.not_sent().to_string(), Role::Wrong),
         SendState::Landed(landed, machine) => match landed {
             Landed::NewTurn { .. } => return Vec::new(),
             Landed::JoinedTurn { .. } => (words.joined_turn().to_string(), Role::Faint),
             Landed::Handed { .. } => (words.handed().to_string(), Role::Faint),
-            Landed::Uncertain { why } => (words.landing_unknown(why), Role::Caution),
+            Landed::Uncertain { .. } => (words.landing_unknown().to_string(), Role::Caution),
             Landed::Sent => (words.sent_to(machine.as_str()), Role::Faint),
             Landed::Waiting { why, answered } => {
                 let mut text = match why {
-                    Some(why) => words.waiting_because(why),
+                    Some(_) => words.waiting_to_deliver().to_string(),
                     None => words.waiting_for_call().to_string(),
                 };
                 if !answered {
