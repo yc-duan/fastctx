@@ -176,7 +176,17 @@ fn enter(path: &Path, follow_links: bool, followed: &mut HashSet<PathBuf>) -> bo
 #[cfg_attr(not(any(target_os = "linux", target_os = "android")), allow(dead_code))]
 fn directories(directory: &Path, follow_links: bool, followed: &mut HashSet<PathBuf>) -> Vec<PathBuf> {
     let Ok(entries) = std::fs::read_dir(directory) else { return Vec::new() };
-    entries.flatten().map(|entry| entry.path()).filter(|path| enter(path, follow_links, followed)).collect()
+    entries
+        .flatten()
+        .filter_map(|entry| {
+            let kind = entry.file_type().ok()?;
+            let path = entry.path();
+            // Directory entries already identify ordinary files. Stat only
+            // links that must be resolved, not every file below a watch root.
+            let directory = if kind.is_symlink() { enter(&path, follow_links, followed) } else { kind.is_dir() };
+            directory.then_some(path)
+        })
+        .collect()
 }
 
 /// Whether `error` says the system has no more watches, descriptors or
