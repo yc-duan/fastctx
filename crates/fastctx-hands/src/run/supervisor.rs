@@ -129,10 +129,13 @@ impl Job {
         prepare: impl FnOnce(&WorldDir, &JobRecord) -> io::Result<shell::Prepared>,
         #[cfg(unix)] stop_signals: libc::sigset_t,
     ) -> io::Result<()> {
+        // On Windows, still in the node's job object when leaving it was
+        // refused: the job then ends when the node ends, and joins no share.
+        let ends_with_node = in_job()?;
         // Its account's share of the processors, where the node gave one:
         // joined before anything of the job starts.
-        if let Some(dir) = std::env::var_os(fastctx_platform::cpu_share::VARIABLE) {
-            let _ = fastctx_platform::cpu_share::join(Path::new(&dir));
+        if !ends_with_node && let Some(share) = std::env::var_os(fastctx_platform::cpu_share::VARIABLE) {
+            let _ = fastctx_platform::cpu_share::join(&share);
         }
         let mut server = control::Server::bind(&self.world, &self.record)?;
         let shell = prepare(&self.world, &self.record)?;
@@ -141,7 +144,7 @@ impl Job {
         let stderr = self.record.stderr.as_ref().map(|path| OpenOptions::new().append(true).open(path)).transpose()?;
         let mode = if stderr.is_some() { OutputMode::Separate } else { OutputMode::Merged };
         self.record.supervisor = Some(current_identity()?);
-        self.record.ends_with_node = in_job()?;
+        self.record.ends_with_node = ends_with_node;
         // The control endpoint exists before this identity is published.
         // A node stopping a just-started job can therefore address it even
         // before the shell has been spawned.

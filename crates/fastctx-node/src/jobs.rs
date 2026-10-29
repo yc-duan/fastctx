@@ -132,7 +132,7 @@ impl Jobs {
             // Its supervisor joins its account's share of the processors.
             if let Some(shares) = &registering.cpu_shares {
                 match shares.of(&share) {
-                    Ok(dir) => environment.push((fastctx_platform::cpu_share::VARIABLE.into(), dir.into())),
+                    Ok(share) => environment.push((fastctx_platform::cpu_share::VARIABLE.into(), share)),
                     Err(error) => {
                         registering.log.line(format_args!("sharing the processors with job of {share}: {error}"))
                     }

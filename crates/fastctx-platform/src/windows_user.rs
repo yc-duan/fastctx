@@ -12,7 +12,8 @@ use windows_sys::Win32::Security::Authorization::{
     SE_KERNEL_OBJECT,
 };
 use windows_sys::Win32::Security::{
-    GetTokenInformation, OWNER_SECURITY_INFORMATION, PSECURITY_DESCRIPTOR, PSID, TOKEN_QUERY, TOKEN_USER, TokenUser,
+    GetTokenInformation, OWNER_SECURITY_INFORMATION, PSECURITY_DESCRIPTOR, PSID, TOKEN_OWNER, TOKEN_QUERY, TOKEN_USER,
+    TokenOwner, TokenUser,
 };
 use windows_sys::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
 
@@ -46,6 +47,24 @@ pub(crate) fn token_user_sid(token: HANDLE) -> io::Result<String> {
     // SAFETY: GetTokenInformation filled a TOKEN_USER.
     let user = unsafe { &*buffer.as_ptr().cast::<TOKEN_USER>() };
     sid_text(user.User.Sid)
+}
+
+/// The owner this process gives the objects it creates: its user, or the
+/// administrators' group for an elevated administrator.
+pub(crate) fn current_owner_sid() -> io::Result<String> {
+    with_current_token(|token| {
+        let mut needed = 0u32;
+        // SAFETY: a size query with no buffer.
+        unsafe { GetTokenInformation(token, TokenOwner, ptr::null_mut(), 0, &mut needed) };
+        let mut buffer = vec![0u64; (needed as usize).div_ceil(8)];
+        // SAFETY: the buffer is at least `needed` bytes and aligned.
+        if unsafe { GetTokenInformation(token, TokenOwner, buffer.as_mut_ptr().cast(), needed, &mut needed) } == 0 {
+            return Err(io::Error::last_os_error());
+        }
+        // SAFETY: GetTokenInformation filled a TOKEN_OWNER.
+        let owner = unsafe { &*buffer.as_ptr().cast::<TOKEN_OWNER>() };
+        sid_text(owner.Owner)
+    })
 }
 
 /// The owner of a kernel object, such as a pipe, given a handle with read

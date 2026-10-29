@@ -1,56 +1,100 @@
 //! The processors shared evenly among the accounts whose jobs run on a
-//! machine (`world-network.md`, 共享机器与智能体协助). On Linux, under a
-//! service systemd delegated its cgroup to and started in a leaf of it
-//! (`Delegate=yes`, `DelegateSubgroup=node`, systemd 254 and later), each
-//! account's jobs go in a cgroup of their own below the service's, all of
-//! the same weight: a busy machine gives each account an even share, an
-//! idle one lets any use it all. The node, and what it starts for its
-//! conversations, share the machine with the jobs as one more. Elsewhere
-//! nothing is done.
+//! machine (`world-network.md`, 共享机器与智能体协助): a busy machine gives
+//! each account an even share, an idle one lets any use it all.
+//!
+//! On Linux, under a service systemd delegated its cgroup to and started in
+//! a leaf of it (`Delegate=yes`, `DelegateSubgroup=node`, systemd 254 and
+//! later), each account's jobs go in a cgroup of their own below the
+//! service's, all of the same weight. The node, and what it starts for its
+//! conversations, share the machine with the jobs as one more.
+//!
+//! On Windows each account's jobs go in a job object of their own, all of
+//! the same weight under the processor's weight-based rate control; the job
+//! object each job's processes are ended by nests inside its account's.
+//!
+//! Elsewhere nothing is done.
 
+use std::ffi::{OsStr, OsString};
 use std::io;
-use std::path::{Path, PathBuf};
+use std::path::Path;
+#[cfg(target_os = "linux")]
+use std::path::PathBuf;
 
-/// The variable that tells a job's supervisor the cgroup it joins.
+/// The variable that tells a job's supervisor the share it joins: a cgroup
+/// on Linux, a job object's name on Windows.
 pub const VARIABLE: &str = "FASTCTX_JOB_CGROUP";
 
-/// The service's cgroup, taken up for the jobs.
+/// What the accounts' jobs are shared out in: the service's cgroup, or the
+/// accounts' job objects.
 pub struct Shares {
+    #[cfg(target_os = "linux")]
     jobs: PathBuf,
+    #[cfg(windows)]
+    jobs: windows::Jobs,
+    #[cfg(not(any(target_os = "linux", windows)))]
+    never: std::convert::Infallible,
 }
 
 impl Shares {
-    /// Takes up the cgroup systemd delegated to this process's service:
-    /// what else runs at its top (jobs an earlier version of the service
-    /// left running there) moves to a leaf of its own, and the processors
-    /// are shared among what is below. None where this is no such service.
-    pub fn take_up() -> io::Result<Option<Shares>> {
+    /// Takes up what the accounts' jobs of the world at `world` share the
+    /// processors in. On Linux it is the cgroup systemd delegated to this
+    /// process's service: what else runs at its top (jobs an earlier
+    /// version of the service left running there) moves to a leaf of its
+    /// own, and the processors are shared among what is below; none where
+    /// this is no such service.
+    pub fn take_up(world: &Path) -> io::Result<Option<Shares>> {
         #[cfg(target_os = "linux")]
         {
+            let _ = world;
             linux::take_up()
         }
-        #[cfg(not(target_os = "linux"))]
+        #[cfg(windows)]
         {
+            Ok(Some(Shares { jobs: windows::Jobs::new(world) }))
+        }
+        #[cfg(not(any(target_os = "linux", windows)))]
+        {
+            let _ = world;
             Ok(None)
         }
     }
 
-    /// The cgroup of the jobs of the account `key` names, made when missing;
-    /// `key` is safe as a file name.
-    pub fn of(&self, key: &str) -> io::Result<PathBuf> {
-        let dir = self.jobs.join(key);
-        match std::fs::create_dir(&dir) {
-            Ok(()) => Ok(dir),
-            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => Ok(dir),
-            Err(error) => Err(error),
+    /// The share of the jobs of the account `key` names, made when missing,
+    /// as the job's supervisor is told it (`VARIABLE`); `key` is safe as a
+    /// file name.
+    pub fn of(&self, key: &str) -> io::Result<OsString> {
+        #[cfg(target_os = "linux")]
+        {
+            let dir = self.jobs.join(key);
+            match std::fs::create_dir(&dir) {
+                Ok(()) => Ok(dir.into_os_string()),
+                Err(error) if error.kind() == io::ErrorKind::AlreadyExists => Ok(dir.into_os_string()),
+                Err(error) => Err(error),
+            }
+        }
+        #[cfg(windows)]
+        {
+            self.jobs.of(key)
+        }
+        #[cfg(not(any(target_os = "linux", windows)))]
+        {
+            let _ = key;
+            match self.never {}
         }
     }
 }
 
-/// Moves this process into the cgroup `dir`, as a job's supervisor does
-/// before its job starts; what it starts then is in it too.
-pub fn join(dir: &Path) -> io::Result<()> {
-    std::fs::write(dir.join("cgroup.procs"), std::process::id().to_string())
+/// Moves this process into the share `share` names, as a job's supervisor
+/// does before its job starts; what it starts then is in it too.
+pub fn join(share: &OsStr) -> io::Result<()> {
+    #[cfg(windows)]
+    {
+        windows::join(share)
+    }
+    #[cfg(not(windows))]
+    {
+        std::fs::write(Path::new(share).join("cgroup.procs"), std::process::id().to_string())
+    }
 }
 
 #[cfg(target_os = "linux")]
@@ -113,5 +157,118 @@ mod linux {
             Err(error) if error.kind() == io::ErrorKind::AlreadyExists => Ok(dir.to_path_buf()),
             Err(error) => Err(error),
         }
+    }
+}
+
+#[cfg(windows)]
+mod windows {
+    use std::collections::HashMap;
+    use std::ffi::{OsStr, OsString};
+    use std::io;
+    use std::mem::zeroed;
+    use std::os::windows::ffi::OsStrExt as _;
+    use std::os::windows::io::{AsRawHandle as _, FromRawHandle as _, OwnedHandle};
+    use std::path::Path;
+    use std::ptr;
+    use std::sync::{Mutex, PoisonError};
+
+    use windows_sys::Win32::Foundation::{ERROR_ALREADY_EXISTS, GetLastError};
+    use windows_sys::Win32::Storage::FileSystem::READ_CONTROL;
+    use windows_sys::Win32::System::JobObjects::{
+        AssignProcessToJobObject, CreateJobObjectW, JOB_OBJECT_CPU_RATE_CONTROL_ENABLE,
+        JOB_OBJECT_CPU_RATE_CONTROL_WEIGHT_BASED, JOBOBJECT_CPU_RATE_CONTROL_INFORMATION,
+        JobObjectCpuRateControlInformation, OpenJobObjectW,
+    };
+    use windows_sys::Win32::System::SystemServices::JOB_OBJECT_ASSIGN_PROCESS;
+    use windows_sys::Win32::System::Threading::GetCurrentProcess;
+
+    use crate::windows_job::set;
+    use crate::windows_user::{current_owner_sid, object_owner_sid};
+
+    /// Every account's job object has this weight, the one Windows gives
+    /// a job by default: what matters is that all are the same.
+    const WEIGHT: u32 = 5;
+
+    /// The job objects of the accounts' jobs of one world, by account, held
+    /// while the node runs.
+    pub(super) struct Jobs {
+        /// The names begin with it: one world's are not another's, so a
+        /// development world beside the released one shares nothing with it.
+        prefix: String,
+        held: Mutex<HashMap<String, OwnedHandle>>,
+    }
+
+    impl Jobs {
+        pub(super) fn new(world: &Path) -> Self {
+            // FNV-1a: the same world gives the same names in every release.
+            let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+            for unit in world.as_os_str().encode_wide() {
+                for byte in unit.to_le_bytes() {
+                    hash = (hash ^ u64::from(byte)).wrapping_mul(0x0000_0100_0000_01b3);
+                }
+            }
+            Self { prefix: format!("Local\\fastctx-cpu-{hash:016x}-"), held: Mutex::default() }
+        }
+
+        pub(super) fn of(&self, key: &str) -> io::Result<OsString> {
+            let name = format!("{}{key}", self.prefix);
+            let mut held = self.held.lock().unwrap_or_else(PoisonError::into_inner);
+            if !held.contains_key(key) {
+                held.insert(key.to_string(), account_job(&name)?);
+            }
+            Ok(name.into())
+        }
+    }
+
+    /// The account's job object named `name`, made when missing, of the
+    /// common weight. One by that name made by someone else is refused.
+    fn account_job(name: &str) -> io::Result<OwnedHandle> {
+        let wide: Vec<u16> = OsStr::new(name).encode_wide().chain([0]).collect();
+        // SAFETY: a NUL-terminated name and default security.
+        let raw = unsafe { CreateJobObjectW(ptr::null(), wide.as_ptr()) };
+        if raw.is_null() {
+            return Err(io::Error::last_os_error());
+        }
+        // SAFETY: read right after the call that set it.
+        let existed = unsafe { GetLastError() } == ERROR_ALREADY_EXISTS;
+        // SAFETY: a new handle, owned from here.
+        let job = unsafe { OwnedHandle::from_raw_handle(raw) };
+        if existed {
+            ours(&job)?;
+        }
+        // SAFETY: zeroed is a valid empty rate control structure.
+        let mut rate: JOBOBJECT_CPU_RATE_CONTROL_INFORMATION = unsafe { zeroed() };
+        rate.ControlFlags = JOB_OBJECT_CPU_RATE_CONTROL_ENABLE | JOB_OBJECT_CPU_RATE_CONTROL_WEIGHT_BASED;
+        rate.Anonymous.Weight = WEIGHT;
+        set(&job, JobObjectCpuRateControlInformation, &rate)?;
+        Ok(job)
+    }
+
+    /// Refuses a job object this process's user did not make.
+    fn ours(job: &OwnedHandle) -> io::Result<()> {
+        if object_owner_sid(job.as_raw_handle())? != current_owner_sid()? {
+            return Err(io::Error::new(io::ErrorKind::PermissionDenied, "the account's job object is not this user's"));
+        }
+        Ok(())
+    }
+
+    pub(super) fn join(name: &OsStr) -> io::Result<()> {
+        let wide: Vec<u16> = name.encode_wide().chain([0]).collect();
+        // SAFETY: a NUL-terminated name.
+        let raw = unsafe { OpenJobObjectW(JOB_OBJECT_ASSIGN_PROCESS | READ_CONTROL, 0, wide.as_ptr()) };
+        if raw.is_null() {
+            return Err(io::Error::last_os_error());
+        }
+        // SAFETY: a new handle, owned from here.
+        let job = unsafe { OwnedHandle::from_raw_handle(raw) };
+        ours(&job)?;
+        // SAFETY: both handles are live.
+        if unsafe { AssignProcessToJobObject(job.as_raw_handle(), GetCurrentProcess()) } == 0 {
+            return Err(io::Error::last_os_error());
+        }
+        // Held while this process lives: the name lasts as long as anything
+        // holds it, so a node started again meanwhile finds the same job.
+        std::mem::forget(job);
+        Ok(())
     }
 }

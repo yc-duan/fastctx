@@ -11,6 +11,7 @@
 
 mod account_records;
 pub mod activity;
+mod activity_book;
 mod admission;
 mod admitted;
 mod adoption;
@@ -78,11 +79,9 @@ mod job_receipts;
 mod job_watch;
 mod jobs;
 mod labels;
+mod layers;
 mod learned;
 mod leases;
-mod activity_book;
-mod plan_file;
-mod layers;
 mod ledger;
 mod letters;
 mod lifecycle;
@@ -108,6 +107,7 @@ mod outbox;
 mod own_collab;
 mod pages;
 mod plan;
+mod plan_file;
 mod profile;
 mod program_collection;
 mod proxy_setting;
@@ -595,7 +595,7 @@ pub async fn run_prepared(
     log.line(format_args!("listening at {endpoint}"));
     // The processors shared evenly among the accounts whose jobs run here,
     // where the service was given its cgroup (`fastctx_platform::cpu_share`).
-    let cpu_shares = match fastctx_platform::cpu_share::Shares::take_up() {
+    let cpu_shares = match fastctx_platform::cpu_share::Shares::take_up(world.path()) {
         Ok(shares) => shares,
         Err(error) => {
             log.line(format_args!("sharing the processors among the accounts' jobs: {error}"));
