@@ -4,10 +4,11 @@ Requires git history for the pinned revisions: the development history, which
 the public repository does not carry, so this runs in a clone that has it. Sources
 are materialized only under target; no historical production program is run.
 A protocol that ships adds its revision to REVISIONS, and a reply shape that
-changes adds a case to scripts/ipc-contract/samples.py. A release that speaks
-the protocol this one does adds its revision to SHIPPED: its tool processes
-outlive their node's change of program, and read the new node's replies with
-the types they were built with (`world-versions.md`).
+changes adds a case to scripts/ipc-contract/samples.py. A release adds its
+revision to SHIPPED, at least the first and the last of each protocol: its tool
+processes outlive their node's change of program, and read the new node's
+replies, in the shapes they read, with the types they were built with
+(`world-versions.md`).
 """
 
 import json
@@ -30,6 +31,7 @@ REVISIONS = {
 SHIPPED = {
     "v13_beta1": "e297a8acb7428bf8b81e2ddbad1be4f4ab579831",
     "v13_beta2": "6ba482b78ebcf9789a07a2087db75ec4f917f90d",
+    "v13_beta11": "dfa5ca6929b7f91fcd46ec5fd47d9e3028bd20d4",
 }
 
 
@@ -98,6 +100,7 @@ edition = "2024"
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+jiff = { version = "0.2", features = ["serde"] }
 '''
     manifest += f'fastctx-types = {{ path = {json.dumps((ROOT / "crates/fastctx-types").as_posix())} }}\n'
     manifest += "\n".join(dependencies) + "\n"
@@ -149,7 +152,11 @@ def verify(reader):
                 for encoding in case["encodings"]:
                     assert encoding in json.dumps(answer["read"]), (case, answer)
             # Protocols 7 and 8 read today's replies as they are, but for those said as text.
-            if case.get("world"):
+            if case.get("sentinel"):
+                told = wire["reply"]["Ok"]["notices"][0]["notice"]
+                assert told["kind"] == "words" and told["from"] == {"kind": "world"}, (case, answer)
+                assert "sentinel s-0123456789abcdef on desktop" in told["text"], (case, answer)
+            elif case.get("world"):
                 told = wire["reply"]["Ok"]["notices"][0]["notice"]
                 assert told == {"kind": "words", "from": {"kind": "world"}, "text": "the World's words"}, (case, answer)
             elif case["protocol"] >= 7 and not case.get("text_result"):

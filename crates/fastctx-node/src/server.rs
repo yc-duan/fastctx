@@ -630,8 +630,11 @@ async fn converse(node: &Arc<Node>, connection: Connection) -> std::io::Result<(
                 },
             ));
         }
-        if legacy && let Ok(reply) = &mut reply {
-            crate::renewal_legacy::reply(hello.protocol, reply);
+        if let Ok(reply) = &mut reply {
+            if legacy {
+                crate::renewal_legacy::reply(hello.protocol, reply);
+            }
+            crate::renewal_legacy::notices(hello.notices, reply);
         }
         if arriving && let Ok(Reply::Arrived(whereabouts)) = &reply {
             arrived.residents.push(whereabouts.resident.clone());

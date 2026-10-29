@@ -24,6 +24,13 @@ use crate::{Address, JobId, MachineName};
 /// replies with the readers of the protocols released so far.
 pub const PROTOCOL: u32 = 13;
 
+/// The generation of notices this build reads beyond those protocol 13
+/// shipped with: 1 added a sentinel's finding, and the World's facts of a
+/// delivery that failed and of a sentinel that woke. A client that says
+/// none is sent each later notice in a shape it reads (`fastctx-node`'s
+/// `renewal_legacy::notices`).
+pub const NOTICES: u32 = 1;
+
 /// The first frame on every connection.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Hello {
@@ -31,6 +38,9 @@ pub struct Hello {
     /// The client binary's version, shown when versions differ.
     pub version: String,
     pub peer: Peer,
+    /// The generation of notices the client reads (`NOTICES`).
+    #[serde(default)]
+    pub notices: u32,
 }
 
 /// What is on the other end of a connection.

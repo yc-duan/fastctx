@@ -59,7 +59,7 @@ pub use town::TownView;
 pub use world::{Error, Said, TownRecord, World};
 
 use fastctx_platform::ipc::{self, Connection, Endpoint};
-use fastctx_types::ipc::{ClientFrame, Failure, Hello, NodeFrame, PROTOCOL, Peer, SessionHint, Welcome};
+use fastctx_types::ipc::{ClientFrame, Failure, Hello, NOTICES, NodeFrame, PROTOCOL, Peer, SessionHint, Welcome};
 use fastctx_types::layout::WorldDir;
 use fastctx_types::session::Watched;
 use fastctx_types::{Call, MachineName, Reply};
@@ -155,7 +155,7 @@ impl Client {
             }
             Err(error) => return Err(io_error(error)),
         };
-        let hello = Hello { protocol: PROTOCOL, version: env!("CARGO_PKG_VERSION").to_string(), peer };
+        let hello = Hello { protocol: PROTOCOL, version: env!("CARGO_PKG_VERSION").to_string(), peer, notices: NOTICES };
         connection.send(&to_json(&hello)).await.map_err(io_error)?;
         let welcome = connection
             .recv()
