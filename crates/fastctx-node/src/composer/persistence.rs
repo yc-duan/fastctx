@@ -9,12 +9,14 @@ use super::*;
 use fastctx_storage::rusqlite::{Connection, OptionalExtension, params};
 use fastctx_storage::{Error, Result as StoredResult, documents};
 
+// Keep the owner index separate from large legacy character-alias payloads:
+// WITHOUT ROWID key comparisons can read overflow records even for existence checks.
 pub(crate) const SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS composers (
     owner TEXT PRIMARY KEY NOT NULL,
     revision INTEGER NOT NULL CHECK(revision >= 0),
     content BLOB NOT NULL
-) WITHOUT ROWID;
+);
 CREATE TABLE IF NOT EXISTS composer_records (
     owner TEXT NOT NULL,
     kind TEXT NOT NULL,
