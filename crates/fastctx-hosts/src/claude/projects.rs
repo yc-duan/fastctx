@@ -2,8 +2,56 @@
 //! the sessions under its home's `projects`, and its caches and task output
 //! outside it, each in a folder named by the directory's path.
 
-use std::io;
-use std::path::Path;
+use std::io::{self, BufRead, Read};
+use std::path::{Path, PathBuf};
+
+/// How much of a record's start is read to learn whose it is.
+const HEAD: u64 = 256 * 1024;
+
+/// Where Claude Code under `home` keeps the record of session `session`, as
+/// it names it: `<session>.jsonl` in the folder of the directory the session
+/// runs in, or failing that in any folder of `projects`. A file is the
+/// session's only when its records say so.
+pub fn record(home: &Path, cwd: Option<&Path>, session: &str) -> io::Result<Option<PathBuf>> {
+    let file = format!("{session}.jsonl");
+    let projects = home.join("projects");
+    let named = cwd.and_then(|cwd| cwd_text(cwd).ok()).map(|cwd| projects.join(slug(&cwd)).join(&file));
+    if let Some(path) = named.filter(|path| path.is_file())
+        && says_session(&path, session)?
+    {
+        return Ok(Some(path));
+    }
+    let entries = match std::fs::read_dir(&projects) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error),
+    };
+    for entry in entries {
+        let path = entry?.path().join(&file);
+        if path.is_file() && says_session(&path, session)? {
+            return Ok(Some(path));
+        }
+    }
+    Ok(None)
+}
+
+/// Whether the first of the record's rows that names a session names
+/// `session`.
+fn says_session(path: &Path, session: &str) -> io::Result<bool> {
+    let file = match std::fs::File::open(path) {
+        Ok(file) => file,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(false),
+        Err(error) => return Err(error),
+    };
+    for line in io::BufReader::new(file.take(HEAD)).split(b'\n') {
+        // A row cut short by the end of what is read is not one.
+        let Ok(row) = serde_json::from_slice::<serde_json::Value>(&line?) else { continue };
+        if let Some(named) = row["sessionId"].as_str() {
+            return Ok(named == session);
+        }
+    }
+    Ok(false)
+}
 
 /// The working directory's path as Claude Code holds it.
 pub fn cwd_text(directory: &Path) -> io::Result<String> {

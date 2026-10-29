@@ -21,6 +21,7 @@ pub mod catalog;
 mod content;
 mod context;
 pub mod control;
+pub mod ending;
 pub mod exchange;
 pub mod lifecycle;
 pub mod models;

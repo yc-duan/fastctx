@@ -104,6 +104,13 @@ pub fn transcript(directory: &Path) -> io::Result<Option<PathBuf>> {
     }
 }
 
+/// Says where Claude Code keeps the session's own record, as the mod does
+/// when its hooks tell it; for a session whose mod never could.
+pub fn name_transcript(directory: &Path, path: &Path) -> io::Result<()> {
+    let bytes = serde_json::to_vec(&serde_json::json!({ "path": path })).map_err(io::Error::other)?;
+    publish(&directory.join("transcript.json"), &bytes, Permissions::Private)
+}
+
 /// The models a session's mod last observed its login to offer.
 #[derive(Deserialize)]
 struct Reading {

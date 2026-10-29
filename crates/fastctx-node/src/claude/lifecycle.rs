@@ -20,6 +20,15 @@ pub(crate) async fn idle(node: &Arc<Node>, about: &About) -> Result<Option<IdleW
     fastctx_hosts::claude::lifecycle::idle_worker(&home, session, &listed).map_err(Failure::new)
 }
 
+/// Whether Claude Code lists the resident's session waiting for its next
+/// prompt with nothing of its own in flight.
+pub(crate) async fn resting(node: &Arc<Node>, about: &About) -> Result<bool, Failure> {
+    let Some(session) = &about.session else { return Ok(false) };
+    let (command, home) = command_home(node, about)?;
+    let listed = list(command, Duration::from_secs(30)).await?;
+    fastctx_hosts::claude::lifecycle::resting(&home, session, &listed).map_err(Failure::new)
+}
+
 fn command_home(node: &Node, about: &About) -> Result<(super::Command, PathBuf), Failure> {
     let command = super::command(node, about.home.as_deref())?;
     let home = command

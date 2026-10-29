@@ -123,7 +123,11 @@ function conversation(sessionId, previous) {
     writing: Promise.resolve(),
     streamBatch: null,
     unwritten: new Map(),
-    failedReports: new Set()
+    failedReports: new Set(),
+    // Where Claude Code keeps the session's record, and the one the node was
+    // last told of.
+    transcriptPath: null,
+    transcriptTold: null
   }
   context.shown = presentation(() => reserved(context), () => context.turn)
   return context
@@ -530,6 +534,7 @@ async function look($, context) {
       context.again = false
       context.unsettled = false
       await settle($, context)
+      await transcript($, context, null)
       const written = context.writing.then(async () => {
         for (const name of context.failedReports) {
           await writePending($, context, name)
@@ -549,7 +554,7 @@ async function look($, context) {
   } finally {
     context.looking = false
   }
-  if (context.unsettled || context.failedReports.size > 0 || context.owed.length > 0) retry($, context)
+  if (context.unsettled || context.failedReports.size > 0 || context.owed.length > 0 || context.transcriptTold !== context.transcriptPath) retry($, context)
 }
 
 // Stops the running turn when the node asks for it. Only the turn that is
@@ -866,7 +871,14 @@ async function startTurn($, context, e, next) {
 }
 
 async function completeTurn($, context, e, next) {
-  await completeControlTurn($, e)
+  // The turn's end is told whatever else fails here: what goes with it is
+  // told again later, and an end never told leaves the turn running in the
+  // World, with what waits for it held behind it.
+  try {
+    await completeControlTurn($, e)
+  } catch (error) {
+    worldFailure($, 'turn.complete controls', error)
+  }
   if (e.agentId !== undefined) {
     const reported = agentReports(reports($, context), e.agentId)
     const how = e.isAborted ? 'interrupted' : e.reason === 'error' || e.reason === 'refusal' ? 'failed' : 'completed'
@@ -885,7 +897,11 @@ async function completeTurn($, context, e, next) {
     return next(e)
   }
   await readGoal($, context)
-  await context.shown.end(reports($, context), e.turnId)
+  try {
+    await context.shown.end(reports($, context), e.turnId)
+  } catch (error) {
+    worldFailure($, 'turn.complete presentation', error)
+  }
   // The session's figures as the turn ends reach the node ahead of the end
   // itself, so its ledger and the account's windows stand as the turn left
   // them; what the cost total rose by since the turn began is the turn's.
@@ -999,13 +1015,19 @@ async function endSession($, context, e, next) {
 
 // Where Claude Code keeps this session's own record, as its hooks are told
 // (`transcript_path`): the World reads the session's past there. Without
-// this file the node says it does not know where that record is.
+// this file the node says it does not know where that record is. Each
+// prompt's hook says it again, and a write that failed is made again by a
+// later look.
 async function transcript($, context, path) {
-  if (typeof path !== 'string' || path === '' || !context.dir) return
+  if (typeof path === 'string' && path !== '') context.transcriptPath = path
+  const told = context.transcriptPath
+  if (told === null || told === context.transcriptTold || !context.dir) return
   try {
-    await $.fs.write(context.dir + '/transcript.json', JSON.stringify({ path }))
+    await $.fs.write(context.dir + '/transcript.json', JSON.stringify({ path: told }))
+    context.transcriptTold = told
   } catch (error) {
-    // A session start must not fail for the World's sake.
+    // A hook must not fail for the World's sake.
+    retry($, context)
   }
 }
 
@@ -1355,6 +1377,7 @@ export function register(on) {
     if (await aside($)) return next(e)
     const context = await session($, registry, await $.session.id())
     notePrompt(context, e)
+    await transcript($, context, e.transcript_path)
     await observeTitle($, context, e)
     return next(e)
   }).catch(($, e, next) => continueWithoutWorld($, 'classic.UserPromptSubmit', e, next))
@@ -1389,6 +1412,7 @@ export function register(on) {
     if (await aside($)) return next(e)
     await worldTools($, registry)
     const context = await session($, registry, await $.session.id(), e.source === 'clear' || e.source === 'resume')
+    await transcript($, context, e.transcript_path)
     // A start and a /clear begin a first message read afresh, and so does a
     // compaction the World asked for, at the request after it; one Claude
     // Code makes by itself builds it from the last read, which a later read
@@ -1397,7 +1421,6 @@ export function register(on) {
     context.contextFresh = e.source !== 'resume' && (e.source !== 'compact' || ownCompaction)
     if (e.source === 'compact') await contextCompacted($, context)
     await startControls($)
-    await transcript($, context, e.transcript_path)
     await observeTitle($, context, e)
     return next(e)
   }).catch(($, e, next) => continueWithoutWorld($, 'classic.SessionStart', e, next))

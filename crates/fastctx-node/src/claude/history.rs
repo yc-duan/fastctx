@@ -17,13 +17,16 @@ use crate::Node;
 
 /// What Claude Code kept of the resident's sessions, oldest first, placed
 /// in the World's turns of `recorded` where the World saw them happen; and
-/// whether some session's record could not be read, so that this reading
-/// is not the history as its files hold it.
+/// whether some session or its record could not be read, so that this
+/// reading is not the history as its files hold it. A record that holds a
+/// line it cannot make out reads the same each time, and is no such failure.
 pub async fn hosted(node: &Arc<Node>, resident: &ResidentId, recorded: &[SessionEvent]) -> (Vec<SessionEvent>, bool) {
     let root = exchange::sessions(node.world.path());
     let (sessions, problems) = sessions(node, resident);
+    // A session that could not be told for a failed read may be one of its
+    // own, missing from this reading.
+    let mut unread = !problems.is_empty();
     let mut events: Vec<_> = problems.into_iter().map(|problem| note(Timestamp::now(), problem)).collect();
-    let mut unread = false;
     for Session { id, began, process, kept } in sessions {
         match read_whole(root.join(&id), kept, process).await {
             Ok(read) => {

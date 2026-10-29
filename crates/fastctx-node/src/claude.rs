@@ -43,6 +43,7 @@ pub(crate) mod pairing;
 mod plugin_check;
 mod process;
 mod rewind;
+mod settle;
 mod startup;
 mod thoughts;
 mod titles;
@@ -84,6 +85,8 @@ pub struct Claude {
     handed: Mutex<HashMap<ResidentId, Vec<String>>>,
     /// The Claude Code last found new enough to start sessions in.
     checked: oldest::Checked,
+    /// Sessions whose turn is being settled from Claude Code's own facts.
+    settling: Mutex<HashSet<String>>,
 }
 
 struct State {
@@ -124,6 +127,7 @@ impl Claude {
             changed: Default::default(),
             handed: Default::default(),
             checked: Default::default(),
+            settling: Default::default(),
         })
     }
 
@@ -402,6 +406,9 @@ async fn look(node: &Arc<Node>, directory: &Path) {
     if node.residents.about(&resident).is_none_or(|(about, _)| !about.world_managed()) {
         return;
     }
+    if let Err(error) = settle::name_record(node, &resident, directory, &session) {
+        node.log.line(format_args!("finding where Claude Code keeps {session}'s record: {error}"));
+    }
     if let Err(error) = titles::start(node, &resident, directory).await {
         node.log.line(format_args!("watching Claude's title: {error}"));
     }
@@ -555,6 +562,7 @@ async fn look(node: &Arc<Node>, directory: &Path) {
     if let Err(error) = exchange::handed_over(directory) {
         node.log.line(format_args!("clearing what {session}'s mod handed over: {error}"));
     }
+    settle::consider(node, &resident, &session, directory);
     // Births come before the session's own lock: it is let go and taken
     // again behind them (`fastctx_platform::doing::Rank`).
     drop(_reading);
