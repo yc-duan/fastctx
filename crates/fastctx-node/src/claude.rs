@@ -19,6 +19,7 @@
 
 pub(crate) mod calls;
 mod catalog;
+pub(crate) mod claim_cleanup;
 mod continuing;
 pub(crate) mod control;
 pub(crate) mod control_outcome;
