@@ -1,6 +1,6 @@
 //! Executable identity without opening a World or an agent's configuration.
 
-mod answer;
+pub(crate) mod answer;
 
 use answer::answer;
 use std::path::{Path, PathBuf};

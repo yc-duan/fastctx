@@ -72,7 +72,7 @@ pub async fn live(node: &Node, resident: &ResidentId, mut event: SessionEvent) -
             node.log.line(format_args!("Claude's user picture record for {}: {error}", message.id));
         }
     }
-    let restored = attachments::restore(event);
+    let restored = attachments::restore(event, &crate::attachments::delivered::of(node, resident));
     for event in restored {
         let Happened::Heard { text, message: Some(message), delivery, .. } = &event.happened else { continue };
         // The durable delivery already supplied the kept attachments. A
@@ -86,7 +86,7 @@ pub async fn live(node: &Node, resident: &ResidentId, mut event: SessionEvent) -
         // already shown (`claude::history::place` drops them the same way).
         if claude_session
             && message.images.is_empty()
-            && attachments::AttachedMessage::read(text).is_none()
+            && attachments::Envelope::read(text).is_none()
             && node.claude.said_by_world(&node.world.conversation(resident), resident, text)
         {
             continue;

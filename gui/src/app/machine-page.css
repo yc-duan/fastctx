@@ -1,7 +1,9 @@
 /* A machine's own page (`machine-page.ts`): what it is and how long it has
    been up across the top, then three tabs like a folder's on one solid
    sheet: a tab not chosen is a word, the chosen one a small block of the
-   sheet's own fill, its top corners round, grown out of the sheet. On the
+   sheet's own fill, its top corners round, grown out of the sheet. What it
+   is and the tabs stay where they are; the sheet is as tall as what it
+   holds, no taller than the room left, and scrolls inside itself. On the
    sheet the parts follow one another down, set apart by space and a line
    ruled by hand; its vitals are a row of rings the pen draws round, each
    with the trace of the last minutes. On a phone the vitals sit two by
@@ -19,16 +21,21 @@
 
 .mp-body {
   flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
 }
 
 .mp-board {
   --gap: var(--space-4);
+  flex: 1;
+  min-height: 0;
   display: flex;
   flex-direction: column;
   gap: var(--gap);
   width: min(100% - 2 * var(--gutter), 1240px);
   margin: 0 auto;
-  padding: var(--space-1) 0 calc(var(--space-12) + var(--safe-bottom));
+  padding: var(--space-1) 0 calc(var(--space-6) + var(--safe-bottom));
 }
 
 /* The head: a dot for whether it is online, the name, the pencil that
@@ -430,7 +437,7 @@
   border-radius: var(--radius-m) var(--radius-m) 0 0;
   color: var(--text-3);
   font-size: var(--size-text);
-  transition: color var(--hover) ease;
+  transition: color var(--hover) var(--ease);
 }
 
 .mp-tab:hover {
@@ -453,6 +460,7 @@
   --mp-label: 6.5rem;
   --mp-gap: var(--space-6);
   container: mp-sheet / inline-size;
+  flex: 0 1 auto;
   min-width: 0;
   padding: var(--space-5) var(--space-6) var(--space-6);
   border-radius: var(--radius-l);
@@ -783,7 +791,7 @@
   font: inherit;
   font-size: var(--size-text);
   line-height: 1.6;
-  transition: color var(--hover) ease, background-color var(--hover) ease;
+  transition: color var(--hover) var(--ease), background-color var(--hover) var(--ease);
 }
 
 .mp-range:hover {
@@ -882,7 +890,7 @@
   top: 0;
   bottom: 0;
   border-radius: 3px;
-  transition: background-color var(--hover) ease;
+  transition: background-color var(--hover) var(--ease);
 }
 
 .mp-strip-hit.mark {
@@ -922,6 +930,54 @@
 
 .mp-present .machine-agents {
   margin-top: 0;
+}
+
+/* Who runs how many jobs on it: a name, then an inked dot for each job
+   running and a faint one for each its owner still lets it run. */
+.mp-jobs {
+  list-style: none;
+  margin: var(--space-2) 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.mp-jobs li {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-height: 24px;
+}
+
+.mp-jobs-who {
+  flex: none;
+  min-width: var(--mp-label);
+  font-size: var(--size-text);
+  color: var(--text-2);
+}
+
+.mp-jobs-dots {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.mp-jobs-dots i {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--hairline);
+}
+
+.mp-jobs-dots i.on {
+  background: var(--text-2);
+}
+
+.mp-jobs-n {
+  font-size: var(--size-fine);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-3);
 }
 
 .mp-sharing .given-row:first-of-type {
@@ -1007,78 +1063,111 @@
     font-size: var(--size-h2);
   }
 
+  /* What it is, in one line: the system's name and how long it has been
+     up; its build, its hardware and its Fastctx when the name is held. */
   .mp-id {
-    flex-wrap: wrap;
-    row-gap: var(--space-2);
+    align-items: baseline;
   }
 
-  .mp-id-mark {
+  .mp-id-mark,
+  .mp-id-build,
+  .mp-id-hardware {
     display: none;
   }
 
+  .mp-id-system {
+    overflow: hidden;
+    font-size: var(--size-text);
+    line-height: var(--leading-ui);
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+
   .mp-uptime {
-    flex-basis: 100%;
     flex-direction: row;
     align-items: baseline;
     gap: var(--space-2);
   }
+
+  /* The vitals are a row of rings, each named under it; held, one says
+     its figures. */
+  .mp-sheet .mp-vitals {
+    grid-auto-flow: row;
+    grid-template-columns: repeat(auto-fit, minmax(72px, 1fr));
+    gap: var(--space-4) var(--space-2);
+  }
+
+  .mp-vital {
+    align-items: center;
+    gap: var(--space-2);
+  }
+
+  .mp-vital-head {
+    order: 1;
+  }
+
+  .mp-vital-note,
+  .mp-vital-sub,
+  .mp-vital .mp-spark {
+    display: none;
+  }
+
+  /* A disk is where it is, what is free and its bar. */
+  .mp-disk-kind {
+    display: none;
+  }
+
+  /* A network card is its name and what it receives and sends; one not
+     connected is left out. */
+  .mp-net.off,
+  .mp-net .tag,
+  .mp-net-at,
+  .mp-net-moved,
+  .mp-spark.mp-spark-flow {
+    display: none;
+  }
+
+  .mp-net-rates {
+    gap: var(--space-3);
+  }
+
+  .mp-net-rates .mp-rate {
+    min-width: 5.5em;
+  }
+
+  /* A name over its value, the value the sheet's width. */
+  .mp-rows {
+    grid-template-columns: minmax(0, 1fr);
+    row-gap: 2px;
+  }
+
+  .mp-rows dd + dt {
+    margin-top: var(--space-3);
+  }
+
+  .mp-sharing .given-label {
+    flex-basis: 100%;
+    min-width: 0;
+  }
+
+  .mp-sharing .given-label + .text-button {
+    margin-left: calc(-1 * var(--space-2));
+  }
 }
 
-/* A phone: the vitals two by two, each a ring over its trace; what a
-   vital notes goes under its name in the fine size, every head two lines
-   so the rings stand level, and its figures wrap rather than being cut
-   short. */
+/* A phone: the sheet and its parts closer together. */
 @container machine-page (max-width: 560px) {
   .mp-board {
     --gap: var(--space-3);
   }
 
-  .mp-vitals {
-    gap: var(--space-4);
-  }
-
-  .mp-vital-head {
-    flex-direction: column;
-    align-items: stretch;
-    gap: 0;
-    min-height: calc(var(--size-text) * 1.5 + var(--size-fine) * 1.5);
-  }
-
-  .mp-vital-note {
-    flex: none;
-    text-align: left;
-    font-size: var(--size-fine);
-  }
-
-  .mp-vital-sub {
-    white-space: normal;
-  }
-
-  .mp-vital-body {
-    flex-direction: column;
-    align-items: stretch;
-    gap: var(--space-2);
-  }
-
   .mp-ring {
-    align-self: center;
     width: 64px;
     height: 64px;
   }
 
-  .mp-vital .mp-spark {
-    flex: none;
-    height: 34px;
-  }
-
   .mp-net.mp-net-followed {
     grid-template-columns: minmax(0, 1fr);
-  }
-
-  .mp-spark.mp-spark-flow {
-    grid-column: 1;
-    grid-row: auto;
-    height: 40px;
   }
 
   .mp-sheet {
@@ -1096,7 +1185,8 @@
   }
 
   .mp-uptime-value {
-    font-size: var(--size-h2);
+    font-size: var(--size-text);
+    line-height: var(--leading-ui);
   }
 
   .mp-spark.mp-spark-trip {

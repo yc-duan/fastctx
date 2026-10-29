@@ -64,10 +64,13 @@ struct ReceiptContext {
     parent: Option<PathBuf>,
     origin: OnOrigin,
     destination: crate::reach::Written,
+    scratch_hub: Option<fastctx_types::access::HubId>,
     acting: Acting,
     job: Option<JobId>,
     consumed: Vec<fastctx_types::NoticeId>,
     through_exit: bool,
+    /// The step of the run that gave it, told as it goes.
+    steps: Option<crate::on_steps::Steps>,
 }
 
 pub(crate) struct OnFollowing {
@@ -81,6 +84,32 @@ impl Pieces {
         context.consumed = consumed;
         context.through_exit = through_exit;
         Self(self.0.clone(), self.1.clone(), Arc::new(Mutex::new(context)))
+    }
+
+    fn scratch(&self, mut locations: Vec<fastctx_types::scratch::Location>) -> Result<(), String> {
+        if locations.is_empty() {
+            return Ok(());
+        }
+        let context = self.2.lock().expect("never poisoned").clone();
+        for location in &mut locations {
+            if location.hub.is_none() {
+                location.hub = context.scratch_hub.clone();
+                location.machine = context.destination.name.clone();
+            }
+        }
+        if let Some(parent) = &context.parent {
+            crate::scratch::jobs::add(parent, locations.clone()).map_err(|error| error.to_string())?;
+        }
+        if context.node.is_me(&context.origin.resident.machine) {
+            crate::scratch::observed(
+                &context.node,
+                &context.origin.resident.resident,
+                &context.destination,
+                &locations,
+            )
+            .map_err(|error| error.to_string())?;
+        }
+        Ok(())
     }
 
     fn fact(&self, fact: &fastctx_types::run_facts::WriteFact) -> Result<(), String> {
@@ -98,7 +127,26 @@ impl Pieces {
         if let Ok(OnPiece::Started { job, .. }) = &piece {
             self.2.lock().expect("never poisoned").job = Some(job.clone());
         }
+        if let Some(steps) = self.steps() {
+            let mut step = steps.lock().expect("never poisoned");
+            match &piece {
+                Ok(OnPiece::Started { job, .. }) => step.started(job),
+                Err(failure) => step.failed(failure),
+                Ok(_) => {}
+            }
+        }
         self.0.send(Piece::Value(piece)).await.map_err(|_| "the on that sent it left".to_string())
+    }
+
+    fn steps(&self) -> Option<crate::on_steps::Steps> {
+        self.2.lock().expect("never poisoned").steps.clone()
+    }
+
+    /// Output on its way back, kept for the step's last lines.
+    fn kept(&self, base64: &str) {
+        if let Some(steps) = self.steps() {
+            steps.lock().expect("never poisoned").output(base64);
+        }
     }
 
     fn is_closed(&self) -> bool {
@@ -114,12 +162,17 @@ impl Pieces {
     }
 
     async fn ended(&self, end: OnEnd) -> Result<bool, String> {
+        // The step ends before the `on` that gave it is told, so the run
+        // never ends ahead of it.
+        if let Some(steps) = self.steps() {
+            steps.lock().expect("never poisoned").ended(&end);
+        }
         let (node, origin, consumed, through_exit) = {
             let context = self.2.lock().expect("never poisoned");
             (context.node.clone(), context.origin.clone(), context.consumed.clone(), context.through_exit)
         };
         let complete = !through_exit && !matches!(&end, OnEnd::Exited { remaining, .. } if *remaining > 0);
-        if node.is_me(&origin.resident.machine) && !consumed.is_empty() {
+        if origin.sentinel.is_none() && node.is_me(&origin.resident.machine) && !consumed.is_empty() {
             let directory = node.world.conversation(&origin.resident.resident);
             tokio::task::spawn_blocking(move || crate::job_receipts::apply_consumed(&directory, &consumed))
                 .await
@@ -129,7 +182,7 @@ impl Pieces {
         let (taken, receipt) = oneshot::channel();
         self.0.send(Piece::End { end, taken }).await.map_err(|_| "the on that sent it left".to_string())?;
         let received = receipt.await.is_ok();
-        if received {
+        if received && origin.sentinel.is_none() {
             let context = self.2.lock().expect("never poisoned");
             let job = context.job.as_ref().expect("started before end");
             crate::job_receipts::on_taken(
@@ -175,14 +228,15 @@ pub(crate) fn sent_for(node: &Node, job: Option<&JobId>) -> Option<fastctx_types
 /// the returned channel until its end or a failure; dropping the channel
 /// before the end stops the job.
 pub async fn send(node: &Arc<Node>, mut origin: OnOrigin, request: OnRequest) -> Result<OnFollowing, Failure> {
-    origin.call_id = if let Some(job) = &request.job {
+    if let Some(job) = &request.job {
         let path = node.world.owner(&node.names(), &origin.resident).job_record(job);
-        fastctx_hands::run::record::read(&path)
-            .map_err(|error| Failure::new(format!("reading the on's job: {error}")))?
-            .call_id
-    } else {
-        None
-    };
+        let record = fastctx_hands::run::record::read(&path)
+            .map_err(|error| Failure::new(format!("reading the on's job: {error}")))?;
+        origin.call_id = record.call_id;
+        origin.turn = record.turn;
+    } else if node.is_me(&origin.resident.machine) {
+        origin.turn = node.residents.now(&origin.resident.resident).and_then(|now| now.turn);
+    }
     origin.request = Some(crate::speech::new_id("on"));
     origin.follower = Some(node.machine());
     let (pieces, receiver) = mpsc::channel(QUEUED_PIECES);
@@ -191,8 +245,11 @@ pub async fn send(node: &Arc<Node>, mut origin: OnOrigin, request: OnRequest) ->
         .job
         .as_ref()
         .map(|job| node.world.job_owner(&node.names(), &origin.resident.clone().into()).job_record(job));
+    let steps = if origin.sentinel.is_none() { crate::on_steps::begin(node, parent.as_ref(), &request) } else { None };
     let context = ReceiptContext {
+        scratch_hub: None,
         node: node.clone(),
+        steps,
         parent,
         acting: acting(node, &origin),
         origin: origin.clone(),
@@ -341,7 +398,21 @@ async fn there(
     // Recorded here under its project; there, under it only on its hub.
     let local_origin = origin;
     let origin = &OnOrigin { town: node.town_across(&link, origin.town.as_ref())?, ..origin.clone() };
-    pieces.2.lock().expect("never poisoned").origin = origin.clone();
+    {
+        let mut context = pieces.2.lock().expect("never poisoned");
+        context.origin = origin.clone();
+        context.scratch_hub = Some(link.membership().id);
+    }
+    if origin.sentinel.is_some() {
+        match link
+            .call(&machine, &account, Purpose::Look, RemoteCall::Facts)
+            .await
+            .map_err(crate::authorization::call_failure)??
+        {
+            RemoteReply::Facts(facts) if facts.sentinel_look => {}
+            _ => return Err(Failure::not_run("upgrade the observed machine to run sentinel observations")),
+        }
+    }
     let sizes = sizes(&request.package).await.map_err(|failure| Failure::not_run(failure.message))?;
     requested(node, local_origin, request).await?;
     let followed = Arc::new(Mutex::new(Followed::default()));
@@ -358,12 +429,18 @@ async fn there(
     // Its output goes straight to the `on` the script pipes it into when
     // that machine may take it from there (`world-run.md`, 数据跟着命令走).
     let piped = request.pipe_to.as_ref().is_some_and(|to| straight(node, &link, &account, &machine, to));
+    // A sentinel's look is no script of the conversation.
+    let attachments = match origin.sentinel {
+        None => crate::attachments::follow::known(node, &origin.resident),
+        Some(_) => Vec::new(),
+    };
     let call = RemoteCall::On {
         origin: origin.clone(),
         sizes,
         writes_off: request.package.writes_off,
         piped,
         source: request.package.source.clone(),
+        attachments,
     };
     let piping = origin.request.clone().filter(|_| piped);
     let sending = feed(
@@ -554,7 +631,12 @@ fn feed(
                         followed.lock().expect("never poisoned").refused = Some(failure);
                         return stream.say(&TAKEN).await;
                     }
-                    OnWord::Started { job } => {
+                    OnWord::Started { job, scratch } => {
+                        pieces.scratch(vec![fastctx_types::scratch::Location {
+                            hub: None,
+                            machine: machine.clone(),
+                            path: scratch.ok_or_else(|| fastctx_types::scratch::words::OLD_NODE.into()),
+                        }])?;
                         followed.lock().expect("never poisoned").job = Some(job.clone());
                         if let Some(started) = &started
                             && let Err(error) = started(job.clone()).await
@@ -583,6 +665,7 @@ fn feed(
                                 })
                                 .await?;
                             let base64 = STANDARD.encode(&taken);
+                            pieces.kept(&base64);
                             let piece = if error { OnPiece::Err { base64 } } else { OnPiece::Out { base64 } };
                             // A cancelled feed must either leave both unchanged
                             // or retain the bytes and advance their resume offset.
@@ -597,8 +680,11 @@ fn feed(
                             bytes -= count;
                         }
                     }
-                    OnWord::Still => {}
-                    OnWord::Ended { end, consumed, through_exit, .. } => {
+                    OnWord::Still { scratch } => {
+                        pieces.scratch(scratch)?;
+                    }
+                    OnWord::Ended { end, consumed, through_exit, scratch, .. } => {
+                        pieces.scratch(scratch)?;
                         let handed = pieces.receipt(consumed, through_exit);
                         let mut receipt = offer_end(&followed, &handed, &waiting, end);
                         let taken = loop {
@@ -669,10 +755,11 @@ async fn sizes(package: &OnPackage) -> Result<OnSizes, Failure> {
 /// it lives here, so the machine it went to may write back about it; and
 /// beside the job whose script it is part of, for that job's answer.
 async fn requested(node: &Arc<Node>, origin: &OnOrigin, request: &OnRequest) -> Result<(), Failure> {
-    if !node.is_me(&origin.resident.machine) {
+    if origin.sentinel.is_some() || !node.is_me(&origin.resident.machine) {
         return Ok(());
     }
     let action = Action {
+        turn: origin.turn.clone(),
         at: jiff::Timestamp::now(),
         machine: request.machine.clone(),
         hand: "on".to_string(),
@@ -703,8 +790,12 @@ async fn requested(node: &Arc<Node>, origin: &OnOrigin, request: &OnRequest) -> 
 }
 
 async fn noted(node: &Arc<Node>, origin: &OnOrigin, request: &OnRequest, job: &JobId) -> Result<(), Failure> {
+    if origin.sentinel.is_some() {
+        return Ok(());
+    }
     let here = node.names();
     let action = Action {
+        turn: origin.turn.clone(),
         at: jiff::Timestamp::now(),
         machine: request.machine.clone(),
         hand: "on".to_string(),
@@ -742,6 +833,7 @@ pub(crate) struct Sent {
     pub(crate) writes_off: bool,
     pub(crate) piped: bool,
     pub(crate) source: Option<OnSource>,
+    pub(crate) attachments: Vec<fastctx_types::attachments::Attachment>,
 }
 
 /// Runs the package an `On` call from `from` brings, and hands over the
@@ -754,6 +846,11 @@ pub async fn serve_on(
     mut stream: Stream,
 ) -> Result<RemoteReply, Failure> {
     let starting = async {
+        if origin.sentinel.is_some()
+            && (sizes.state != 0 || sizes.input != 0 || sizes.script > 8192 || how.piped || how.source.is_some())
+        {
+            return Err(Failure::not_run("invalid internal observation package"));
+        }
         let mut staged = Staged::receive(node, &origin, &sizes, &mut stream)
             .await
             .map_err(|failure| Failure::not_run(failure.message))?;
@@ -761,6 +858,9 @@ pub async fn serve_on(
             let path = staged.state.with_extension("in");
             take_piped(node, &origin, source, &path, &mut stream).await?;
             staged.input = Some(path);
+        }
+        if origin.sentinel.is_none() {
+            bring_files(node, &origin, how.attachments, &mut stream).await?;
         }
         start(node, &origin, staged, how.writes_off, how.piped).await
     }
@@ -787,13 +887,46 @@ pub async fn serve_on(
         }
     };
     let handed = async {
-        stream.say(&OnWord::Started { job: job.clone() }).await?;
+        let room = fastctx_hands::run::supervisor::room(&record_path).map_err(|error| error.to_string())?;
+        stream
+            .say(&OnWord::Started {
+                job: job.clone(),
+                scratch: Some(fastctx_hands::run::present::display_path(&room.scratch().to_string_lossy())),
+            })
+            .await?;
         let mut sink = Sink::Stream(&mut stream);
         hand_over(node, &job, &record_path, 0, 0, &mut sink).await
     }
     .await;
     follower.finish(handed).await?;
     Ok(RemoteReply::OnDone)
+}
+
+/// Brings the files the user attached in the conversation into its scratch
+/// here before its job starts, saying `Still` to whoever sent it while they
+/// come. A file not to be had leaves the job to start without it.
+async fn bring_files(
+    node: &Arc<Node>,
+    origin: &OnOrigin,
+    files: Vec<fastctx_types::attachments::Attachment>,
+    stream: &mut Stream,
+) -> Result<(), Failure> {
+    if files.is_empty() {
+        return Ok(());
+    }
+    let acting = acting(node, origin);
+    let mut bringing = Box::pin(crate::attachments::follow::bring(node, &origin.resident, &acting, files, None));
+    loop {
+        tokio::select! {
+            _ = &mut bringing => return Ok(()),
+            () = tokio::time::sleep(STILL_EVERY) => {
+                stream
+                    .say(&OnWord::Still { scratch: Vec::new() })
+                    .await
+                    .map_err(|error| Failure::new(format!("telling the sender its files are coming: {error}")))?;
+            }
+        }
+    }
 }
 
 /// Takes the output of the `on` `source` names, which went straight on to
@@ -821,7 +954,7 @@ async fn take_piped(
             }
             () = tokio::time::sleep(STILL_EVERY) => {
                 stream
-                    .say(&OnWord::Still)
+                    .say(&OnWord::Still { scratch: Vec::new() })
                     .await
                     .map_err(|error| Failure::new(format!("telling the sender its input is coming: {error}")))?;
             }
@@ -1031,12 +1164,24 @@ pub(crate) fn on_job(node: &Arc<Node>, origin: &OnOrigin, job: &JobId) -> Result
                 .and_then(|on| on.request.as_ref())
                 .is_some_and(|request| origin.request.as_ref() != Some(request)) =>
         {
-            Err(Failure::new(format!("{job} belongs to a different on request")))
+            Err(Failure::refused(format!("{job} belongs to a different on request")))
+        }
+        Ok(record)
+            if record.on.as_ref().is_some_and(|on| {
+                on.sentinel != origin.sentinel || (on.sentinel.is_some() && on.account != origin.account)
+            }) =>
+        {
+            Err(Failure::refused("the observation identity or account does not match"))
         }
         Ok(record) if record.on.is_some() => Ok(path),
-        Ok(_) => Err(Failure::new(format!("{job} on {} was not sent by an on", node.machine()))),
+        Ok(_) => Err(Failure::refused(format!("{job} on {} was not sent by an on", node.machine()))),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Err(Failure::output_not_retained(format!(
+            "on job {job} of {} is no longer retained on {}",
+            origin.resident,
+            node.machine()
+        ))),
         Err(error) => {
-            Err(Failure::new(format!("no on job {job} of {} on {}: {error}", origin.resident, node.machine())))
+            Err(Failure::new(format!("reading on job {job} of {} on {}: {error}", origin.resident, node.machine())))
         }
     }
 }
@@ -1127,20 +1272,42 @@ async fn start(
     writes_off: bool,
     piped: bool,
 ) -> Result<(JobId, PathBuf, Follower), Failure> {
+    if origin.sentinel.is_some() {
+        crate::sentinels::look::admit(node, origin).await?;
+    }
     let script = staged.script;
     let on = OnJob {
+        sentinel: origin.sentinel.clone(),
         state: staged.state.to_string_lossy().into_owned(),
         request: origin.request.clone(),
         follower: origin.follower.clone(),
         account: origin.account.clone(),
         piped,
     };
-    let request = RunRequest { call_id: origin.call_id.clone(), script, cwd: None, writes_off, wait: None };
+    let request = RunRequest {
+        turn: origin.turn.clone(),
+        call_id: origin.call_id.clone(),
+        script,
+        cwd: None,
+        writes_off,
+        wait: None,
+        attachments: Vec::new(),
+    };
     let owner = JobOwner::Resident(origin.resident.clone());
     let registration = Arc::new(Mutex::new(None));
     let launched = node
         .jobs
-        .launch(node, owner, origin.town.clone(), request, Some((on, staged.input)), Some(registration.clone()), None)
+        .launch(
+            node,
+            owner,
+            origin.town.clone(),
+            request,
+            Some((on, staged.input)),
+            Some(registration.clone()),
+            None,
+            false,
+            None,
+        )
         .await?;
     let follower = registration.lock().expect("never poisoned").take().expect("registered before spawn");
     Ok((launched.job, launched.record, follower))
@@ -1152,26 +1319,42 @@ pub(crate) struct Follower {
     node: Arc<Node>,
     path: PathBuf,
     _reader: crate::job_reader::Lease,
+    internal: bool,
 }
 
 impl Follower {
-    pub(crate) fn reserved(node: &Arc<Node>, path: &Path) -> Self {
+    pub(crate) fn reserved(node: &Arc<Node>, path: &Path, internal: bool) -> Self {
         *node.following.lock().expect("never poisoned").entry(path.to_path_buf()).or_default() += 1;
-        Self { node: node.clone(), path: path.to_path_buf(), _reader: crate::job_reader::hold(node, path) }
+        Self { node: node.clone(), path: path.to_path_buf(), _reader: crate::job_reader::hold(node, path), internal }
     }
 
     async fn new(node: &Arc<Node>, path: &Path) -> Result<Self, Failure> {
         let (node, path) = (node.clone(), path.to_path_buf());
         tokio::task::spawn_blocking(move || {
             let _gate = node.disk.lock();
-            fastctx_hands::run::record::read(&path).map_err(|error| Failure::new(error.to_string()))?;
-            Ok(Self::reserved(&node, &path))
+            let record = fastctx_hands::run::record::read(&path).map_err(|error| Failure::new(error.to_string()))?;
+            Ok(Self::reserved(&node, &path, record.is_sentinel()))
         })
         .await
         .map_err(|error| Failure::new(error.to_string()))?
     }
 
     async fn finish(self, handed: Result<Handed, String>) -> Result<(), Failure> {
+        if self.internal {
+            if matches!(handed, Ok(Handed { taken: true, complete: true })) {
+                let record = fastctx_hands::run::record::read(&self.path).map_err(|e| Failure::new(e.to_string()))?;
+                let receipt = fastctx_types::run::JobDelivery {
+                    job: record.id,
+                    output: record.output,
+                    at: jiff::Timestamp::now(),
+                    shown_whole: true,
+                };
+                fastctx_agent::state::save(&self.path.with_extension("delivered"), &receipt).map_err(Failure::new)?;
+                self.node.disk_due.lock().expect("never poisoned").insert(self.path.clone());
+                self.node.disk_changed.notify_one();
+            }
+            return Ok(());
+        }
         // A shell's background children still owe their eventual end,
         // even if they finished while the shell's receipt was in flight.
         if matches!(handed, Ok(Handed { taken: true, complete: true })) {
@@ -1196,7 +1379,9 @@ impl Drop for Follower {
                 following.remove(&self.path);
             }
         }
-        crate::inbox::retry_job(&self.node, &self.path);
+        if !self.internal {
+            crate::inbox::retry_job(&self.node, &self.path);
+        }
     }
 }
 
@@ -1237,6 +1422,7 @@ impl Sink<'_> {
             Sink::Local(pieces) => {
                 let slot = pieces.0.reserve().await.map_err(|_| "the on that sent it left".to_string())?;
                 let base64 = STANDARD.encode(bytes);
+                pieces.kept(&base64);
                 let piece = if error { OnPiece::Err { base64 } } else { OnPiece::Out { base64 } };
                 slot.send(Piece::Value(Ok(piece)));
                 Ok(())
@@ -1244,9 +1430,16 @@ impl Sink<'_> {
         }
     }
 
+    async fn scratch(&mut self, scratch: Vec<fastctx_types::scratch::Location>) -> Result<(), String> {
+        match self {
+            Sink::Stream(stream) => stream.say(&OnWord::Still { scratch }).await,
+            Sink::Local(pieces) => pieces.scratch(scratch),
+        }
+    }
+
     async fn still(&mut self) -> Result<(), String> {
         match self {
-            Sink::Stream(stream) => stream.say(&OnWord::Still).await,
+            Sink::Stream(stream) => stream.say(&OnWord::Still { scratch: Vec::new() }).await,
             Sink::Local(_) => Ok(()),
         }
     }
@@ -1258,10 +1451,11 @@ impl Sink<'_> {
         lettered: bool,
         consumed: Vec<fastctx_types::NoticeId>,
         through_exit: bool,
+        scratch: Vec<fastctx_types::scratch::Location>,
     ) -> Result<bool, String> {
         match self {
             Sink::Stream(stream) => {
-                stream.say(&OnWord::Ended { end, lettered, consumed, through_exit }).await?;
+                stream.say(&OnWord::Ended { end, lettered, consumed, through_exit, scratch }).await?;
                 loop {
                     match tokio::time::timeout(SILENT_FOR, stream.hear::<String>()).await {
                         Ok(Ok(word)) if word == WAITING => continue,
@@ -1271,7 +1465,10 @@ impl Sink<'_> {
                     }
                 }
             }
-            Sink::Local(pieces) => pieces.receipt(consumed, through_exit).ended(end).await,
+            Sink::Local(pieces) => {
+                pieces.scratch(scratch)?;
+                pieces.receipt(consumed, through_exit).ended(end).await
+            }
         }
     }
 
@@ -1296,13 +1493,24 @@ async fn hand_over(
 ) -> Result<Handed, String> {
     let mut changes = node.jobs.subscribe();
     let mut facts_cursor = 0;
+    let mut known_scratch = Vec::new();
     let mut quiet_since = Instant::now();
     loop {
         // The record first: whatever it says has ended had written its
         // last byte before, so reading the logs after it misses nothing.
         let record = crate::jobs::read(record_path).await.map_err(|failure| failure.message)?;
-        sink.facts(crate::run_facts::read_since(record_path, &mut facts_cursor).map_err(|error| error.to_string())?)
+        let scratch =
+            crate::scratch::jobs::locations(record_path, &record.machine).map_err(|error| error.to_string())?;
+        if known_scratch != scratch {
+            sink.scratch(scratch.clone()).await?;
+            known_scratch = scratch;
+        }
+        if !record.is_sentinel() {
+            sink.facts(
+                crate::run_facts::read_since(record_path, &mut facts_cursor).map_err(|error| error.to_string())?,
+            )
             .await?;
+        }
         let errors = record.stderr.clone();
         let boundary = record.output_drained.filter(|_| record.end.is_none() && through(&record).is_some());
         // Output that went straight on is taken from here by another
@@ -1327,6 +1535,12 @@ async fn hand_over(
             continue;
         }
         if let Some(end) = through(&record) {
+            if record.is_sentinel() {
+                return sink
+                    .ended(end, false, Vec::new(), record.end.is_none(), known_scratch)
+                    .await
+                    .map(|taken| Handed { taken, complete: record.end.is_some() });
+            }
             sink.facts(crate::run_facts::writes(record_path).map_err(|error| error.to_string())?).await?;
             // A letter goes only for an end nobody followed, and takes the
             // marker that it is owed: without one, the letter went.
@@ -1339,7 +1553,10 @@ async fn hand_over(
                     .await
                     .map_err(|error| error.to_string())?
                     .map_err(|error| error.to_string())?;
-            return sink.ended(end, lettered, consumed, !complete).await.map(|taken| Handed { taken, complete });
+            return sink
+                .ended(end, lettered, consumed, !complete, known_scratch)
+                .await
+                .map(|taken| Handed { taken, complete });
         }
         if quiet_since.elapsed() >= STILL_EVERY {
             sink.still().await?;

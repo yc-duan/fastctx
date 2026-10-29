@@ -38,6 +38,18 @@ pub(crate) fn prepare(world: &WorldDir, log: &Log) {
 /// Each worker finishes a pass before waiting. A successful deletion scan
 /// does not retire its worker: a later request can leave a new intent.
 pub(crate) fn start(node: &Arc<Node>, jobs_reconciled: bool) {
+    let sentinels = node.clone();
+    tokio::spawn(async move {
+        let mut previous = Vec::new();
+        loop {
+            let errors = crate::sentinels::deletion::recover(&sentinels).await;
+            for error in &errors {
+                if !previous.contains(error) { sentinels.log.line(error); }
+            }
+            previous = errors;
+            tokio::time::sleep(Duration::from_secs(30)).await;
+        }
+    });
     let deleting = node.clone();
     tokio::spawn(async move {
         loop {
@@ -47,6 +59,23 @@ pub(crate) fn start(node: &Arc<Node>, jobs_reconciled: bool) {
                 crate::ledger::letgo::let_go(&deleting, &link).await;
             }
             tokio::time::sleep(RETRY).await;
+        }
+    });
+
+    // Who runs how many: the jobs left running when the node started.
+    let counting = node.clone();
+    tokio::spawn(async move {
+        let mut again = crate::again::Again::default();
+        loop {
+            let scanning = counting.clone();
+            match tokio::task::spawn_blocking(move || crate::job_accounts::recover(&scanning)).await {
+                Ok(Ok(())) => break,
+                Ok(Err(error)) => {
+                    counting.log.line(format_args!("counting the jobs left running; will retry: {error}"))
+                }
+                Err(error) => counting.log.line(format_args!("counting the jobs left running; will retry: {error}")),
+            }
+            tokio::time::sleep(again.next().max(Duration::from_secs(1))).await;
         }
     });
 

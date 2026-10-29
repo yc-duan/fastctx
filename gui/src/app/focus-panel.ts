@@ -26,6 +26,11 @@ import { FolderPicker } from "./folder-picker";
 import { foldChoice, keptFolds, machineChoice } from "./machine-choice";
 import type { FocusWords } from "./words";
 import { redrawKeepingFocus } from "./focus";
+import { whenNear } from "./read-on";
+
+/** How many of the machines' rows are drawn at first, and how many more
+ *  each time the end of those comes near. */
+const CHOICE_ROWS = 120;
 
 /** A machine the conversation's account may use. */
 export interface FocusPlace {
@@ -95,6 +100,12 @@ export class FocusPanel {
   private readonly picker: FolderPicker;
   /** What the list was last drawn as. */
   private drawn = "";
+  /** How many of the machines' rows are drawn, how many each person's
+   *  opens onto as last drawn, and what stops watching the end of those
+   *  coming near. */
+  private reach = CHOICE_ROWS;
+  private inside = new Map<string, number>();
+  private unwatch = () => {};
 
   constructor(
     private readonly options: FocusPanelOptions,
@@ -110,6 +121,7 @@ export class FocusPanel {
     this.field = this.element.querySelector(".focus-filter")!;
     this.field.addEventListener("input", () => {
       this.query = this.field.value.trim().toLowerCase();
+      this.reach = CHOICE_ROWS;
       const draw = () => this.draw();
       if (this.options.resize) this.options.resize(draw);
       else draw();
@@ -132,6 +144,7 @@ export class FocusPanel {
     this.focus = structuredClone(focus);
     this.query = "";
     this.field.value = "";
+    this.reach = CHOICE_ROWS;
     this.draw();
   }
 
@@ -145,6 +158,7 @@ export class FocusPanel {
     if (!this.query) return;
     this.query = "";
     this.field.value = "";
+    this.reach = CHOICE_ROWS;
     this.draw();
   }
 
@@ -180,8 +194,10 @@ export class FocusPanel {
         break;
       }
       case "fold":
-        // Opened or closed where it is, what is under it sliding in or out.
-        foldChoice(this.body, target, this.folds);
+        // Opened or closed where it is, what is under it sliding in or out;
+        // a person opened is drawn whole, the rows after it as they were.
+        if (target.getAttribute("aria-expanded") !== "true") this.reach += this.inside.get(target.dataset.key ?? "") ?? 0;
+        foldChoice(this.body, target, this.folds, () => this.html());
         this.drawn = this.html();
         break;
       case "done":
@@ -244,6 +260,13 @@ export class FocusPanel {
     redrawKeepingFocus(this.body, () => {
       this.body.innerHTML = html;
     });
+    this.unwatch();
+    // The panel stands in the panel that scrolls it, risen over the input
+    // or opened down from the head.
+    this.unwatch = whenNear(this.body, this.element.parentElement, () => {
+      this.reach += CHOICE_ROWS;
+      this.draw();
+    });
   }
 
   private html(): string {
@@ -298,7 +321,9 @@ export class FocusPanel {
   /** Every machine it may use, narrowed to what is typed. */
   private machinesPart(places: FocusPlace[]): string {
     const chosen = new Set(this.focus.machines.map((one) => one.machine));
-    return machineChoice(places, chosen, this.query, this.folds, this.options.words);
+    const drawn = machineChoice(places, chosen, this.query, this.folds, this.options.words, this.reach);
+    this.inside = drawn.inside;
+    return drawn.html;
   }
 }
 

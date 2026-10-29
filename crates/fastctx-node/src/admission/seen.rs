@@ -36,7 +36,7 @@ pub enum Looker<'a> {
 
 impl Looker<'_> {
     /// Whether what works for `account` is the looker's to see.
-    fn sees_account(self, node: &Node, account: &HubAccount) -> bool {
+    pub(crate) fn sees_account(self, node: &Node, account: &HubAccount) -> bool {
         match self {
             Looker::Asker(asker) => account.hub == asker.hub && account.account == asker.account,
             Looker::Here(acting) => node.serves(acting, &account.hub, &account.account),
@@ -140,7 +140,8 @@ pub fn who_here(node: &Node, acting: &Acting, mut reply: WhoReply) -> WhoReply {
 /// What this machine's own caller, who may work here, finds looking up an
 /// id here: a conversation working for its accounts; a job running here,
 /// whosever it is.
-pub fn looked_here(node: &Node, acting: &Acting, looked: Option<Looked>) -> Option<Looked> {
+pub fn looked_here(node: &Node, acting: &Acting, mut looked: Option<Looked>) -> Option<Looked> {
+    goal_reports(node, Looker::Here(acting), &mut looked);
     match &looked {
         Some(Looked::Resident(detail)) => {
             let at =
@@ -260,8 +261,9 @@ pub fn offers(asker: &Asker, mut offers: Offers) -> Offers {
     offers
 }
 
-pub fn looked(node: &Node, asker: &Asker, looked: Option<Looked>) -> Option<Looked> {
+pub fn looked(node: &Node, asker: &Asker, mut looked: Option<Looked>) -> Option<Looked> {
     let looker = Looker::Asker(asker);
+    goal_reports(node, looker, &mut looked);
     let seen = match &looked {
         None => true,
         Some(Looked::Resident(detail)) => address(
@@ -275,6 +277,12 @@ pub fn looked(node: &Node, asker: &Asker, looked: Option<Looked>) -> Option<Look
         }
     };
     if seen { looked } else { None }
+}
+
+fn goal_reports(node: &Node, looker: Looker<'_>, looked: &mut Option<Looked>) {
+    if let Some(Looked::Resident(detail)) = looked {
+        detail.goal_reports.retain(|report| looker.sees_account(node, &report.account));
+    }
 }
 
 pub fn job(node: &Node, asker: &Asker, job: &fastctx_types::town::RunningJob) -> bool {

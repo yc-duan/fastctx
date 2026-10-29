@@ -12,12 +12,14 @@
 //! that runs no node, keeping its identity and network connection in the
 //! application's own directory.
 
+pub mod account_records;
 mod address;
 pub mod again;
 mod artifact_sink;
 pub mod attachments;
 pub mod cache;
 mod collab;
+mod collaboration;
 pub mod composer;
 pub mod conversation;
 mod data;
@@ -27,15 +29,21 @@ pub mod file_read;
 mod file_search;
 mod frozen_lines;
 mod frozen_output;
+pub mod goals;
 pub mod host;
+mod layers;
 mod line_rows;
 mod lines;
 mod lines_read;
+mod local_watch;
 mod management;
 pub mod mcp_relay;
+pub mod memory;
 mod originals;
 pub mod pages;
+pub mod plans;
 mod profile;
+mod sentinels;
 pub mod renewal;
 pub mod shown;
 mod thumbnail;
@@ -114,6 +122,13 @@ pub struct Client {
     /// The node binary's version.
     pub node_version: String,
     pub profiles: bool,
+    pub account_records: bool,
+    pub conversation_plans: bool,
+    pub goal_runtime: bool,
+    pub watch_many: bool,
+    pub scratch_locations: bool,
+    pub sentinels: bool,
+    pub goal_commands: bool,
     /// The connected node's facts, including when another starter won.
     pub node_lifetime: Option<Box<fastctx_types::node_lifetime::NodeLifetime>>,
 }
@@ -148,9 +163,33 @@ impl Client {
             .map_err(io_error)?
             .ok_or_else(|| io_error(std::io::ErrorKind::UnexpectedEof.into()))?;
         match serde_json::from_slice::<Welcome>(&welcome).map_err(|error| io_error(std::io::Error::other(error)))? {
-            Welcome::Accepted { machine, version, node_lifetime, profiles } => {
-                Ok(Self { connection, next: 0, machine, node_version: version, node_lifetime, profiles })
-            }
+            Welcome::Accepted {
+                machine,
+                version,
+                node_lifetime,
+                profiles,
+                account_records,
+                conversation_plans,
+                goal_runtime,
+                watch_many,
+                scratch_locations,
+                sentinels,
+                goal_commands,
+            } => Ok(Self {
+                connection,
+                next: 0,
+                machine,
+                node_version: version,
+                node_lifetime,
+                profiles,
+                account_records,
+                conversation_plans,
+                goal_runtime,
+                watch_many,
+                scratch_locations,
+                sentinels,
+                goal_commands,
+            }),
             Welcome::Refused { reason, mismatch } => {
                 let mismatch = mismatch.or_else(|| renewal::legacy_mismatch(&reason));
                 Err(ConnectError::Refused { reason, mismatch })
@@ -260,6 +299,28 @@ impl Client {
 
     /// Sends `call` and waits for its answer.
     pub async fn call(&mut self, call: Call) -> Result<Reply, CallError> {
+        if !self.conversation_plans
+            && matches!(call, Call::Plan { .. } | Call::PlanRead { .. } | Call::PlanWrite { .. })
+        {
+            return Err(CallError::Failed(Failure::not_run(fastctx_types::plan::words::OLDER)));
+        }
+        if !self.account_records && matches!(call, Call::AccountRecords { .. } | Call::WatchAccountRecords { .. }) {
+            return Err(CallError::Failed(Failure::not_run(fastctx_types::account_records::words::NODE_OLD)));
+        }
+        if !self.goal_runtime && matches!(call, Call::Goal { .. } | Call::GoalCommand { .. }) {
+            return Err(CallError::Failed(Failure::not_run(fastctx_types::goals::words::OLDER_NODE)));
+        }
+        if !self.sentinels && matches!(call, Call::SentinelSettings { .. } | Call::SentinelKey { .. } | Call::Sentinel { .. }) {
+            return Err(CallError::Failed(Failure::not_run(format!("upgrade {} to use sentinels", self.machine))));
+        }
+        if !self.goal_commands
+            && matches!(
+                call,
+                Call::GoalCommand { request: fastctx_types::goals::AgentRequest::ControlColleague { .. }, .. }
+            )
+        {
+            return Err(CallError::Failed(Failure::not_run(fastctx_types::goals::words::OLDER_COMMAND_NODE)));
+        }
         if !self.profiles
             && matches!(
                 call,
@@ -288,7 +349,8 @@ impl Client {
             NodeFrame::Reply { id: answered, .. } => {
                 Err(broken(format!("the node answered call {answered}, not {id}")))
             }
-            NodeFrame::McpOpened { .. }
+            NodeFrame::AccountRecords { .. }
+            | NodeFrame::McpOpened { .. }
             | NodeFrame::McpLine { .. }
             | NodeFrame::Watched { .. }
             | NodeFrame::On { .. }
@@ -331,6 +393,9 @@ impl Client {
 
     /// Sends a `Watch` call; the connection carries the watch from then on.
     pub async fn watch(mut self, call: Call) -> Result<Watching, CallError> {
+        if !self.goal_runtime && matches!(call, Call::Watch { goal: Some(_), .. }) {
+            return Err(CallError::Failed(Failure::not_run(fastctx_types::goals::words::OLDER_NODE)));
+        }
         self.next += 1;
         let id = self.next;
         self.connection.send(&to_json(&ClientFrame::Call { id, call })).await.map_err(CallError::Broken)?;
@@ -356,6 +421,16 @@ impl Client {
         let id = self.next;
         self.connection
             .send(&to_json(&ClientFrame::Call { id, call: Call::WatchWorld }))
+            .await
+            .map_err(CallError::Broken)?;
+        Ok((self, id))
+    }
+
+    pub(crate) async fn watch_memory(mut self, town: fastctx_types::TownName) -> Result<(Client, u64), CallError> {
+        self.next += 1;
+        let id = self.next;
+        self.connection
+            .send(&to_json(&ClientFrame::Call { id, call: Call::WatchMemory { town } }))
             .await
             .map_err(CallError::Broken)?;
         Ok((self, id))
@@ -458,6 +533,7 @@ pub struct Watching {
 
 enum WatchingTransport {
     Local { client: Client, id: u64 },
+    LocalMany(local_watch::Watching),
     Device(device::watch::Watching),
 }
 
@@ -471,6 +547,7 @@ impl Watching {
         let (client, expected) = match &mut self.transport {
             WatchingTransport::Local { client, id } => (client, id),
             WatchingTransport::Device(watching) => return watching.next().await,
+            WatchingTransport::LocalMany(watching) => return watching.next().await,
         };
         let frame = client
             .connection

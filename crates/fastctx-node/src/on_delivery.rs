@@ -7,7 +7,7 @@ use std::io;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
-use fastctx_platform::{Permissions, ensure_private_dir, publish, publish_new};
+use fastctx_platform::{Permissions, ensure_private_dir, publish};
 use fastctx_types::on::OnOrigin;
 use fastctx_types::residents::{Delivery, Notice};
 use fastctx_types::{Address, JobId, MachineName, NoticeId, ResidentId};
@@ -23,7 +23,6 @@ type Job = (Address, MachineName, JobId, Option<NoticeId>);
 #[derive(Default)]
 pub(crate) struct Deliveries {
     state: Mutex<State>,
-    pub(crate) draining: crate::ranked::Draining,
 }
 
 #[derive(Default)]
@@ -33,6 +32,7 @@ struct State {
 }
 
 pub(crate) struct Following {
+    internal: bool,
     node: Arc<Node>,
     source: Source,
     request: Option<NoticeId>,
@@ -45,11 +45,16 @@ impl Following {
         let source = (origin.resident.clone(), machine.clone());
         let request = origin.request.clone();
         let dispatch = (source.0.clone(), source.1.clone(), request.clone());
-        *node.on_deliveries.state.lock().expect("never poisoned").starting.entry(dispatch).or_default() += 1;
-        Self { node: node.clone(), source, request, job: None }
+        if origin.sentinel.is_none() {
+            *node.on_deliveries.state.lock().expect("never poisoned").starting.entry(dispatch).or_default() += 1;
+        }
+        Self { internal: origin.sentinel.is_some(), node: node.clone(), source, request, job: None }
     }
 
     pub(crate) fn started(&mut self, job: &JobId) {
+        if self.internal {
+            return;
+        }
         if self.job.as_ref() == Some(job) {
             return;
         }
@@ -62,6 +67,9 @@ impl Following {
     }
 
     pub(crate) fn taken(&self, job: &JobId) -> io::Result<()> {
+        if self.internal {
+            return Ok(());
+        }
         let _state = self.node.on_deliveries.state.lock().expect("never poisoned");
         let path = receipt(
             &self.node,
@@ -78,6 +86,9 @@ impl Following {
 
 impl Drop for Following {
     fn drop(&mut self) {
+        if self.internal {
+            return;
+        }
         {
             let mut state = self.node.on_deliveries.state.lock().expect("never poisoned");
             match &self.job {
@@ -90,7 +101,9 @@ impl Drop for Following {
                 }
             }
         }
-        resume(&self.node);
+        if self.node.is_me(&self.source.0.machine) {
+            crate::received::wake(&self.node, &self.source.0.resident);
+        }
     }
 }
 
@@ -143,6 +156,9 @@ fn cancellation(
 }
 
 pub(crate) fn cancelled(node: &Node, origin: &OnOrigin, machine: &MachineName) -> io::Result<()> {
+    if origin.sentinel.is_some() {
+        return Ok(());
+    }
     let Some(request) = &origin.request else { return Ok(()) };
     let _state = node.on_deliveries.state.lock().expect("never poisoned");
     let path = cancellation(node, &origin.resident.machine, &origin.resident.resident, machine, request);
@@ -165,7 +181,12 @@ fn receipt_exists(node: &Node, path: &std::path::Path) -> io::Result<bool> {
         || node.world.path().join("on-deliveries").join(path.file_name().expect("receipt name")).try_exists()?)
 }
 
-fn stopped(node: &Node, to: &ResidentId, machine: &MachineName, request: Option<&NoticeId>) -> io::Result<bool> {
+pub(crate) fn stopped(
+    node: &Node,
+    to: &ResidentId,
+    machine: &MachineName,
+    request: Option<&NoticeId>,
+) -> io::Result<bool> {
     request
         .map(|request| {
             Ok(receipt_exists(node, &cancellation(node, &node.machine(), to, machine, request))?
@@ -204,8 +225,8 @@ pub(crate) fn park_from(
     delivery: &Delivery,
     sender: Option<&crate::letters::Identity>,
 ) -> io::Result<bool> {
-    let Notice::JobEnded { job, machine, request, follower, taken, .. } = &delivery.notice else { return Ok(false) };
-    let state = node.on_deliveries.state.lock().expect("never poisoned");
+    let Notice::JobEnded { job, machine, request, taken, .. } = &delivery.notice else { return Ok(false) };
+    let _state = node.on_deliveries.state.lock().expect("never poisoned");
     let path = receipt(node, &node.machine(), to, machine, job, request.as_ref());
     if *taken {
         ensure_private_dir(path.parent().expect("receipt directory"))?;
@@ -254,21 +275,7 @@ pub(crate) fn park_from(
             return Ok(true);
         }
     }
-    let owner = Address { machine: node.machine(), resident: to.clone() };
-    let nested = follower.as_ref().is_some_and(|follower| !node.is_me(follower));
-    if !nested && !held(&state, &owner, machine, job, request.as_ref()) {
-        return Ok(false);
-    }
-    ensure_private_dir(path.parent().expect("receipt directory"))?;
-    let parked = Parked { to: to.clone(), delivery: delivery.clone() };
-    let bytes = serde_json::to_vec(&parked).map_err(io::Error::other)?;
-    match publish_new(&path.with_extension("json"), &bytes, Permissions::Private) {
-        Err(error) if error.kind() != io::ErrorKind::AlreadyExists => return Err(error),
-        _ => {}
-    }
-    if nested {
-        resume(node);
-    }
+    crate::received::keep(node, to, delivery.clone(), crate::speech::Owed::Working)?;
     Ok(true)
 }
 
@@ -277,132 +284,50 @@ fn local_owners(node: &Node, to: &ResidentId) -> Vec<Address> {
     std::iter::once(names.name).chain(names.was).map(|machine| Address { machine, resident: to.clone() }).collect()
 }
 
-/// Startup and follower departure both release durable, unclaimed letters.
-/// What is still held goes again as everything that reconnects does, and at
-/// once when a way opens to a follower that was not reached.
+/// Moves pre-upgrade held letters into the recoverable conversation queues.
 pub(crate) fn resume(node: &Arc<Node>) {
-    let node = node.clone();
-    tokio::spawn(async move {
-        let _draining = node.on_deliveries.draining.lock().await;
-        let mut again = crate::again::Again::default();
-        loop {
-            let unreached = match drain(&node).await {
-                Ok(()) => return,
-                Err(unreached) => unreached,
-            };
-            node.log.line("delivering held on completions: some remain held; see the errors above");
-            again.pause(&node, &unreached).await;
-        }
-    });
-}
-
-/// A held completion not delivered: why, and the follower that was to be
-/// asked about it, when it was not reached.
-struct Held {
-    error: io::Error,
-    unreached: Option<crate::reach::Written>,
-}
-
-impl From<io::Error> for Held {
-    fn from(error: io::Error) -> Self {
-        Self { error, unreached: None }
-    }
-}
-
-/// Delivers what is held; when some remain, says which followers were not
-/// reached.
-async fn drain(node: &Arc<Node>) -> Result<(), Vec<crate::reach::Written>> {
-    let directories = match node.world.book_directories("on-deliveries") {
-        Ok(directories) => directories,
-        Err(error) => {
-            node.log.line(format_args!("reading held on completions: {error}"));
-            return Err(Vec::new());
-        }
-    };
-    let entries = directories.into_iter().flat_map(|directory| match std::fs::read_dir(directory) {
-        Ok(entries) => entries.map(|entry| entry.map(|entry| entry.path())).collect::<Vec<_>>(),
-        Err(error) if error.kind() == io::ErrorKind::NotFound => Vec::new(),
-        Err(error) => vec![Err(error)],
-    });
-    let mut failed = false;
-    let mut unreached = Vec::new();
-    for entry in entries {
-        let path = match entry {
-            Ok(path) => path,
-            Err(error) => {
-                failed = true;
-                node.log.line(format_args!("reading held on completions: {error}"));
-                continue;
-            }
-        };
-        if path.extension().is_none_or(|extension| extension != "json")
-            || path.file_name().is_some_and(|name| name.to_string_lossy().starts_with('.'))
-        {
-            continue;
-        }
-        if let Err(held) = drain_one(node, &path).await {
-            failed = true;
-            node.log.line(format_args!("{}: {}", path.display(), held.error));
-            if let Some(machine) = held.unreached
-                && !unreached.contains(&machine)
-            {
-                unreached.push(machine);
-            }
-        }
-    }
-    if failed { Err(unreached) } else { Ok(()) }
-}
-
-async fn drain_one(node: &Arc<Node>, path: &std::path::Path) -> Result<(), Held> {
-    let parked: Parked = serde_json::from_slice(&std::fs::read(path)?).map_err(io::Error::other)?;
-    let Notice::JobEnded { job, machine, request, follower, .. } = &parked.delivery.notice else {
-        return Err(io::Error::other(format!("{} is not a completion", path.display())).into());
-    };
-    let owner = Address { machine: node.machine(), resident: parked.to.clone() };
-    let mut taken = {
-        let state = node.on_deliveries.state.lock().expect("never poisoned");
-        if held(&state, &owner, machine, job, request.as_ref()) {
-            return Ok(());
-        }
-        receipt_exists(node, &receipt(node, &node.machine(), &parked.to, machine, job, request.as_ref()))?
-            || stopped(node, &parked.to, machine, request.as_ref())?
-    };
-    if !taken && let Some(follower) = follower.as_ref().filter(|follower| !node.is_me(follower)) {
-        let acting = node.residents.about(&parked.to).map(|(about, _)| about.acting).unwrap_or_default();
-        let call = fastctx_types::remote::RemoteCall::OnReceipt {
-            owner: owner.clone(),
-            machine: machine.clone(),
-            job: job.clone(),
-            request: request.clone(),
-        };
-        let purpose = fastctx_types::access::Purpose::Hands;
-        match node.call(&acting, &follower.into(), purpose, call).await {
-            Ok(Ok(fastctx_types::remote::RemoteReply::OnReceipt { taken: claimed, following })) => {
-                if following && !claimed {
-                    return Err(io::Error::other("the nested hop is still handing its end to its CLI").into());
+    let result = (|| -> io::Result<()> {
+        for directory in node.world.book_directories("on-deliveries")? {
+            for path in crate::retention::entries(&directory)? {
+                if path.extension().is_none_or(|extension| extension != "json")
+                    || path.file_name().is_some_and(|name| name.to_string_lossy().starts_with('.'))
+                {
+                    continue;
                 }
-                taken = claimed;
-            }
-            Ok(Ok(_)) => return Err(io::Error::other("the nested follower answered without a receipt decision").into()),
-            Ok(Err(error)) => return Err(io::Error::other(error.message).into()),
-            Err(error) => {
-                let error = io::Error::other(error.to_string());
-                return Err(Held { error, unreached: Some(follower.into()) });
+                let result = (|| -> io::Result<()> {
+                    let Some(parked) = fastctx_install::renewal::read_json::<Parked>(&path)? else { return Ok(()) };
+                    crate::received::keep(node, &parked.to, parked.delivery, crate::speech::Owed::Working)?;
+                    std::fs::remove_file(&path)
+                })();
+                if let Err(error) = result {
+                    node.log.line(format_args!("migrating held completion {}: {error}", path.display()));
+                }
             }
         }
+        Ok(())
+    })();
+    if let Err(error) = result {
+        node.log.line(format_args!("finding held completions: {error}"));
     }
-    if !taken {
-        // The inbox takes custody before the parked copy is removed.
-        crate::speech::tell_here(node, &parked.to, parked.delivery.clone(), crate::speech::Owed::Working)
-            .await
-            .map_err(|failure| io::Error::other(failure.message))?;
+}
+
+/// Both the original completion id and its authenticated delivery aliases
+/// identify the same end, including records written before machine renaming.
+pub(crate) fn completion_ids(node: &Node, to: &ResidentId, delivery: &Delivery) -> io::Result<Vec<NoticeId>> {
+    let Notice::JobEnded { machine, job, request, .. } = &delivery.notice else {
+        return Err(io::Error::other("a completion identity requires a job end"));
+    };
+    let mut ids = vec![delivery.id.clone()];
+    for owner in local_owners(node, to) {
+        let id = crate::inbox::end_id(&owner, machine, job, request.as_ref());
+        if let Ok(identity) = crate::letters::Identity::at(node, &machine.into(), id.as_str()) {
+            ids.extend(identity.ids().cloned());
+        }
+        ids.push(id);
     }
-    let state = node.on_deliveries.state.lock().expect("never poisoned");
-    if held(&state, &owner, machine, job, request.as_ref()) {
-        return Ok(());
-    }
-    std::fs::remove_file(path)?;
-    Ok(())
+    ids.sort();
+    ids.dedup();
+    Ok(ids)
 }
 
 /// A snapshot taken under the same gate that publishes receipts and registers

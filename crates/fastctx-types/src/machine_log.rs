@@ -40,6 +40,8 @@ pub enum Action {
         machine: MachineName,
         to: AccountName,
         shared: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        jobs: Option<u16>,
     },
     /// Written under the name it was first written under, so hubs and
     /// nodes of every version read one another's records.
@@ -59,6 +61,8 @@ pub enum Action {
         daily: Option<crate::usage::Usd>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         five_hour: Option<u8>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        turns: Option<u16>,
     },
     /// An assistance reached its deadline and the hub ended it.
     #[serde(rename = "lend_ended")]
@@ -241,6 +245,10 @@ pub enum Action {
         agent: AgentName,
         home: Option<PathBuf>,
     },
+    /// Choosing a machine as the account's sentinel home allows it to act for the account.
+    AllowSentinelHome {
+        machine: MachineName,
+    },
     /// A permission removed implicitly by a share, an assistance, or an
     /// account change.
     ActingStopped {
@@ -345,6 +353,7 @@ impl Action {
             | Self::MoveProject { .. }
             | Self::Joined { .. }
             | Self::AllowActing { .. }
+            | Self::AllowSentinelHome { .. }
             | Self::ActingStopped { .. }
             | Self::Group { .. }
             | Self::RenameGroup { .. }

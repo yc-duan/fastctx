@@ -1,17 +1,16 @@
 //! Binding the first named-pipe instance elects the GUI process atomically.
 //! The listening endpoint exists before any WebView or World connection.
 
-use std::io::{BufRead, BufReader, Write};
 use std::os::windows::io::AsRawHandle;
 
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
-use tokio::net::windows::named_pipe::{NamedPipeServer, ServerOptions};
+use tokio::net::windows::named_pipe::{ClientOptions, NamedPipeServer, ServerOptions};
 use windows::Win32::Foundation::{HANDLE, HLOCAL, LocalFree};
 use windows::Win32::Security::Authorization::{ConvertStringSecurityDescriptorToSecurityDescriptorW, SDDL_REVISION_1};
 use windows::Win32::Security::{PSECURITY_DESCRIPTOR, SECURITY_ATTRIBUTES};
 use windows::Win32::Storage::FileSystem::FlushFileBuffers;
-use windows::Win32::System::Pipes::{GetNamedPipeServerProcessId, WaitNamedPipeW};
+use windows::Win32::System::Pipes::GetNamedPipeServerProcessId;
 use windows::Win32::UI::WindowsAndMessaging::AllowSetForegroundWindow;
 use windows::core::HSTRING;
 
@@ -59,8 +58,19 @@ pub fn enter(launch: Launch) -> Result<Option<Instance>, String> {
     match bound {
         Ok(pipe) => Ok(Some(Instance { pipe, name, launch })),
         Err(error) if error.raw_os_error() == Some(5) => {
-            forward(&name, &launch)?;
-            Ok(None)
+            let (owner, result, timed_out) = forward(&name, &launch);
+            match result {
+                Ok(()) => Ok(None),
+                Err(error) if timed_out => {
+                    let owner = owner
+                        .ok_or_else(|| format!("{error}; the busy endpoint did not expose its process identity"))?;
+                    super::takeover::retire(&owner).map_err(|why| format!("{error}; {why}"))?;
+                    let pipe = tauri::async_runtime::block_on(async { pipe(&name, true) })
+                        .map_err(|e| format!("binding Fastctx endpoint after {} exited: {e}", owner.pid))?;
+                    Ok(Some(Instance { pipe, name, launch }))
+                }
+                Err(error) => Err(error),
+            }
         }
         Err(error) => Err(format!("binding the Fastctx instance endpoint: {error}")),
     }
@@ -72,30 +82,27 @@ pub fn enter(launch: Launch) -> Result<Option<Instance>, String> {
 pub fn quit_running() -> Result<(), String> {
     let sid = fastctx_platform::current_user_sid().map_err(|e| e.to_string())?;
     let name = format!(r"\\.\pipe\{APP_ID}.{sid}");
-    let mut pipe = loop {
-        match std::fs::OpenOptions::new().read(true).write(true).open(&name) {
-            Ok(pipe) => break pipe,
-            // ERROR_FILE_NOT_FOUND: no World is listening.
-            Err(error) if error.raw_os_error() == Some(2) => return Ok(()),
-            Err(error) if error.raw_os_error() == Some(231) => {
-                unsafe { WaitNamedPipeW(&HSTRING::from(name.as_str()), u32::MAX).ok() }.map_err(|e| e.to_string())?;
-            }
-            Err(error) => return Err(format!("contacting the running Fastctx: {error}")),
-        }
+    let (owner, result, _) = forward(&name, &Launch::Quit);
+    let Some(world) = owner else {
+        return match result {
+            Err(error) if error.contains("os error 2") => Ok(()),
+            other => other,
+        };
     };
-    let mut pid = 0;
-    unsafe { GetNamedPipeServerProcessId(HANDLE(pipe.as_raw_handle()), &mut pid) }.map_err(|e| e.to_string())?;
-    let Some(world) = fastctx_platform::identity_of(pid).map_err(|e| e.to_string())? else { return Ok(()) };
     let mut waited = vec![world.clone()];
     waited.extend(started_by(&world)?);
-    let mut request = serde_json::to_vec(&Launch::Quit).map_err(|e| e.to_string())?;
-    request.push(b'\n');
-    pipe.write_all(&request).map_err(|e| format!("asking Fastctx to exit: {e}"))?;
-    // World may be gone before its acknowledgement is written; its exit is
-    // what is waited for.
-    let _ = BufReader::new(pipe).read_line(&mut String::new());
+    let began = std::time::Instant::now();
     for identity in &waited {
-        fastctx_platform::host_process::wait_for_exit(identity).map_err(|e| e.to_string())?;
+        while fastctx_platform::is_alive(identity).map_err(|e| e.to_string())? {
+            if began.elapsed() >= std::time::Duration::from_secs(30) {
+                return Err(format!(
+                    "waiting for Fastctx process {} to exit: {}",
+                    identity.pid,
+                    result.err().unwrap_or_else(|| "exit was acknowledged but the process remains".into())
+                ));
+            }
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
     }
     Ok(())
 }
@@ -136,36 +143,48 @@ fn started_by(world: &fastctx_types::ProcessIdentity) -> Result<Vec<fastctx_type
     Ok(tree)
 }
 
-fn forward(name: &str, launch: &Launch) -> Result<(), String> {
-    let mut pipe = loop {
-        match std::fs::OpenOptions::new().read(true).write(true).open(name) {
-            Ok(pipe) => break pipe,
-            Err(error) if error.raw_os_error() == Some(231) => {
-                // Wait for actual endpoint availability, not a guessed startup delay.
-                unsafe { WaitNamedPipeW(&HSTRING::from(name), u32::MAX).ok() }.map_err(|e| e.to_string())?;
-            }
-            Err(error) => return Err(format!("contacting the running Fastctx: {error}")),
-        }
-    };
-    let foreground_permission = unsafe {
-        let mut pid = 0;
-        GetNamedPipeServerProcessId(HANDLE(pipe.as_raw_handle()), &mut pid).map_err(|e| e.to_string())?;
-        // A launcher without foreground rights cannot grant them, but the
-        // primary may already qualify itself. Always deliver the launch;
-        // the primary's checked SetForegroundWindow is the final authority.
-        AllowSetForegroundWindow(pid)
-    };
-    let mut request = serde_json::to_vec(launch).map_err(|e| e.to_string())?;
-    request.push(b'\n');
-    pipe.write_all(&request).map_err(|e| e.to_string())?;
-    let mut response = String::new();
-    BufReader::new(pipe).read_line(&mut response).map_err(|e| e.to_string())?;
-    serde_json::from_str::<Result<(), String>>(&response)
-        .map_err(|e| format!("Fastctx did not acknowledge the launch: {e}"))?
-        .map_err(|error| match foreground_permission {
-            Ok(()) => error,
-            Err(permission) => format!("{error}; transferring foreground permission: {permission}"),
+fn forward(name: &str, launch: &Launch) -> (Option<fastctx_types::ProcessIdentity>, Result<(), String>, bool) {
+    let mut owner = None;
+    let result = tauri::async_runtime::block_on(async {
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            let mut pipe = loop {
+                match ClientOptions::new().open(name) {
+                    Ok(pipe) => break pipe,
+                    Err(error) if error.raw_os_error() == Some(231) => {
+                        tokio::time::sleep(std::time::Duration::from_millis(25)).await
+                    }
+                    Err(error) => return Err(format!("opening Fastctx instance endpoint {name}: {error}")),
+                }
+            };
+            let mut pid = 0;
+            unsafe { GetNamedPipeServerProcessId(HANDLE(pipe.as_raw_handle()), &mut pid) }
+                .map_err(|e| e.to_string())?;
+            owner =
+                fastctx_platform::identity_of(pid).map_err(|e| format!("identifying Fastctx pipe owner {pid}: {e}"))?;
+            let permission = unsafe { AllowSetForegroundWindow(pid) };
+            let mut request = serde_json::to_vec(launch).map_err(|e| e.to_string())?;
+            request.push(b'\n');
+            pipe.write_all(&request).await.map_err(|e| format!("sending launch to Fastctx {pid}: {e}"))?;
+            let mut response = String::new();
+            tokio::io::BufReader::new(pipe)
+                .read_line(&mut response)
+                .await
+                .map_err(|e| format!("reading Fastctx {pid} acknowledgement: {e}"))?;
+            serde_json::from_str::<Result<(), String>>(&response)
+                .map_err(|e| format!("Fastctx {pid} did not acknowledge launch: {e}"))?
+                .map_err(|error| match permission {
+                    Ok(()) => error,
+                    Err(why) => format!("{error}; transferring foreground permission: {why}"),
+                })
         })
+        .await
+    });
+    match result {
+        Ok(result) => (owner, result, false),
+        Err(_) => {
+            (owner, Err(format!("Fastctx instance endpoint {name} did not acknowledge within five seconds")), true)
+        }
+    }
 }
 
 impl Instance {

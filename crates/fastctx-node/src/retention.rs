@@ -96,13 +96,16 @@ pub(crate) fn start(node: &Arc<Node>) -> io::Result<()> {
                 () = settings_changed.notified() => true,
                 () = node.disk_changed.notified() => false,
             };
-            if let Err(error) = crate::job_receipts::forward(&node).await {
-                node.log.line(format_args!("forwarding job delivery receipts: {error}"));
-            }
             let collecting = node.clone();
             match tokio::task::spawn_blocking(move || {
                 let immediate = collect_immediate(&collecting);
-                let retained = if maintenance { collect(&collecting, Timestamp::now()) } else { Ok(()) };
+                let retained = if maintenance {
+                    let obligations = crate::obligations::collect(&collecting);
+                    let retained = collect(&collecting, Timestamp::now());
+                    obligations.and(retained)
+                } else {
+                    Ok(())
+                };
                 immediate.and(retained)
             })
             .await
@@ -126,6 +129,7 @@ pub(crate) fn start(node: &Arc<Node>) -> io::Result<()> {
                         crate::claude::garbage::untrust_departed(&retiring),
                     ),
                     ("collecting usage records", crate::usage::collect(&retiring)),
+                    ("folding the activity book", crate::activity_book::fold(&retiring)),
                     ("sweeping earlier conversation directories", crate::gather::sweep(&retiring.world)),
                 ]
                 .into_iter()
@@ -237,6 +241,17 @@ fn collect_records(
                     continue;
                 }
                 let job = record::read(&path)?;
+                if job.is_sentinel()
+                    && let Some(end) = &job.end
+                    && expired(now, end.at, lifetime)
+                    && !program::in_use(&job)?
+                    && unfollowed(&path)
+                {
+                    if !forget(&path)? {
+                        pending = true;
+                    }
+                    continue;
+                }
                 let marker = path.with_extension("delivered");
                 let delivery = match fs::read(&marker) {
                     Ok(bytes) => serde_json::from_slice::<JobDelivery>(&bytes).map_err(io::Error::other)?,

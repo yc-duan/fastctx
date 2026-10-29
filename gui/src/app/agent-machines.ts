@@ -9,11 +9,12 @@
 import { glyph } from "../conversation/glyphs";
 import { escape } from "../conversation/prose";
 import type { Login as AccountLogin } from "../world/accounts";
-import { loginsOf, names } from "../world/accounts";
+import { loginsOf } from "../world/accounts";
 import type { WorldNow } from "../world/bridge";
 import type { Timestamp } from "../world/wire";
 import { isManaged } from "./machine-list";
 import { assistantsOf, machinesOf, ownerOf, owns } from "./reach";
+import { indexOf, pair } from "./world-index";
 
 export type Hold = "mine" | "shared" | "others" | "assist";
 const HOLDS: Hold[] = ["mine", "shared", "others", "assist"];
@@ -31,8 +32,9 @@ export interface Pickable {
   owner: string | null;
   /** The group its owner put it in. */
   group: string | null;
-  /** The login of this device that owns it, which lets its agents assist
-   *  others and sets their plans. */
+  /** The login of this device that holds it, its owner's or one it is
+   *  shared with whole, which lets its agents assist others and sets their
+   *  plans. */
   ownerLogin: AccountLogin | null;
   /** What kind of computer it is, for its icon. */
   form: "desktop" | "laptop" | "server";
@@ -48,20 +50,33 @@ export interface MachinePickWords {
   pickMachine: string;
 }
 
-/** Every machine the page can show, this computer first. */
+/** Every machine the page can show, this computer first; made once for
+ *  each World, and nothing changes what it returns. */
 export function pickables(world: WorldNow | null): Pickable[] {
-  const logins = loginsOf(world?.accounts);
+  if (!world) return [];
+  const kept = made.get(world);
+  if (kept) return kept;
+  const picked = pickablesOf(world);
+  made.set(world, picked);
+  return picked;
+}
+
+const made = new WeakMap<WorldNow, Pickable[]>();
+
+function pickablesOf(world: WorldNow): Pickable[] {
+  const logins = loginsOf(world.accounts);
+  const index = indexOf(world);
   const picked: Pickable[] = [];
   for (const machine of machinesOf(world)) {
     // A managed machine's agents work for no one: the page has nothing of
     // it (`world-network.md`, 受管机器).
-    if (world && isManaged(world, machine.name)) continue;
+    if (isManaged(world, machine.name)) continue;
     const ownerLogin = machine.here
-      ? (logins.find((login) => world?.nodes.hubs.some((hub) => hub.hub === login.hub && hub.home === login.account)) ?? null)
+      ? (logins.find((login) => world.nodes.hubs.some((hub) => hub.hub === login.hub && hub.home === login.account)) ?? null)
       : (logins.find((login) => owns(machine, login)) ?? null);
-    const shared = logins.some((login) => world?.accounts.hubs.some((hub) => hub.hub === login.hub && hub.shares.some((share) => share.machine === machine.name && share.account === login.account)));
-    const hold: Hold = machine.here || ownerLogin ? "mine" : shared ? "shared" : "others";
-    const group = world?.accounts.hubs.flatMap((hub) => hub.members).find((member) => member.kind === "computer" && names(member, machine.name) && member.group)?.group ?? null;
+    const sharedLogin = logins.find((login) => index.hubs.get(login.hub)?.shares.has(pair(machine.name, login.account))) ?? null;
+    const hold: Hold = machine.here || ownerLogin ? "mine" : sharedLogin ? "shared" : "others";
+    const group = index.grouped.get(machine.name) ?? null;
     const facts = "Ok" in machine.facts && machine.facts.Ok ? machine.facts.Ok : null;
     picked.push({
       name: machine.name,
@@ -72,12 +87,15 @@ export function pickables(world: WorldNow | null): Pickable[] {
       hold,
       owner: hold === "mine" ? null : (logins.map((login) => ownerOf(machine, login)).find(Boolean) ?? null),
       group,
-      ownerLogin,
+      // Shared whole, it is managed by the login it is shared with as by
+      // its owner (`world-network.md`, 共享机器与智能体协助).
+      ownerLogin: ownerLogin ?? sharedLogin,
       form: facts?.form === "laptop" ? "laptop" : facts?.form === "server" ? "server" : "desktop",
     });
   }
+  const written = new Set(picked.map((one) => one.written));
   for (const assistant of assistantsOf(world)) {
-    if (picked.some((one) => one.written === assistant.written)) continue;
+    if (written.has(assistant.written)) continue;
     picked.push({ name: assistant.machine, written: assistant.written, here: false, online: assistant.online, since: assistant.since, hold: "assist", owner: assistant.owner, group: null, ownerLogin: null, form: "desktop" });
   }
   // Within a hold, those in no group first, then each group by its name.

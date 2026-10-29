@@ -2,7 +2,7 @@
 
 use fastctx_types::attachments::{AttachmentFile, AttachmentFileSource, AttachmentSource, HostImage, ToolImage};
 use fastctx_types::ipc::{Failure, FailureCode};
-use fastctx_types::session::attachments::AttachedMessage;
+use fastctx_types::session::attachments::Envelope;
 use serde_json::Value;
 use sha2::{Digest as _, Sha256};
 use std::io::{self, BufReader, Read as _};
@@ -530,8 +530,8 @@ fn codex_image<'a>(blocks: &'a [Value], source: &AttachmentSource) -> Option<(&'
             let mut labelled = false;
             for block in blocks {
                 if let Some(text) = block["text"].as_str() {
-                    if let Some((message, _)) = AttachedMessage::read(text) {
-                        matched = message.attachments.contains(wanted);
+                    if let Some((envelope, _)) = Envelope::read(text) {
+                        matched = envelope.tells(&wanted.id);
                     }
                     labelled = image_label(text, &wanted.path);
                 }

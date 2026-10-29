@@ -1,6 +1,6 @@
 /* Taking fastctx off this computer (removal.ts), in three steps: the two
    ways as the welcome page's slips; the way chosen, small, over what goes
-   and what stays as solid chips; the list ticked off in pencil as the steps
+   and what stays as words under their headings; the list ticked off in pencil as the steps
    are done. Each step takes the place of the one before, in a dialog of
    one height: what may run long is in a frame of its own that scrolls. */
 
@@ -151,27 +151,17 @@
 .removal-chips {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
+  gap: 2px var(--space-4);
   margin: 0;
   padding: 0;
   list-style: none;
 }
 
 .removal-chip {
-  padding: 4px 10px;
-  border-radius: var(--radius-full);
-  background: var(--fill);
-  font-size: var(--size-fine);
+  font-size: var(--size-text);
+  line-height: var(--leading-ui);
   color: var(--text);
   cursor: default;
-}
-
-.removal-column.goes .removal-chip {
-  background: color-mix(in srgb, var(--wrong) 12%, var(--fill));
-}
-
-.removal-column.stays .removal-chip {
-  background: var(--accent-wash);
 }
 
 .removal-warn,
@@ -267,7 +257,18 @@
   color: var(--text-3);
 }
 
+/* What was left behind keeps its name and why on one line each, the path
+   between them giving way: a narrow screen shortens the path, never the
+   words. */
+.removal-left li > span:first-child {
+  flex: none;
+  white-space: nowrap;
+}
+
 .removal-why {
+  flex: none;
+  margin-left: auto;
+  white-space: nowrap;
   color: var(--wrong);
 }
 
@@ -312,7 +313,7 @@
   color: var(--bg);
   font-size: var(--size-text);
   scale: var(--press);
-  transition: background-color var(--hover) ease, --press var(--settle) var(--spring);
+  transition: background-color var(--hover) var(--ease), --press var(--settle) var(--spring);
 }
 
 .removal-button:hover:not(:disabled) {
@@ -321,7 +322,7 @@
 
 .removal-button.armed {
   translate: 0 var(--lift);
-  animation: removal-armed var(--armed) ease-in-out infinite;
+  animation: removal-armed var(--armed) var(--ease-in-out) infinite;
 }
 
 @keyframes removal-armed {
@@ -334,7 +335,7 @@
 .removal-button:active:not(:disabled) {
   --press: 0.97;
   transition-duration: var(--hover), var(--quick);
-  transition-timing-function: ease, var(--ease-out);
+  transition-timing-function: var(--ease), var(--ease-out);
 }
 
 .removal-button:disabled {

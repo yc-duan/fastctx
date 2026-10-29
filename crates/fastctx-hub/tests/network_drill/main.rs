@@ -56,7 +56,7 @@ const SCENARIOS: [&str; 15] = [
 
 /// The longest a scenario may take.
 const LONGEST: Duration = Duration::from_secs(8 * 60);
-pub const EXPECTED_EARLIER: &str = "1.0.1-beta.10";
+pub const EXPECTED_EARLIER: &str = "1.0.1-beta.11";
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();

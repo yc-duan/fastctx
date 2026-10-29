@@ -6,6 +6,7 @@
 // away only deleting goes ahead, the rest grey until the machine is back.
 // Moving lists in place of the acts the projects spanning its machine.
 
+import { leave, leaving, stay } from "./leave";
 import { glyph } from "../conversation/glyphs";
 import { escape } from "../conversation/prose";
 import { titleOf } from "../world/names";
@@ -40,6 +41,10 @@ export interface MenuOpening {
   rename(): void;
   /** Finds in it, where its page is the one shown. */
   find?: () => void;
+  /** Its page's choice between every step and only what was said. */
+  steps?: { shown(): boolean; toggle(): void };
+  /** Opens the panel beside it, where it holds anything. */
+  panel?: (() => void) | null;
   /** Once its deletion is asked for: a page of it goes. */
   deleted?: () => void;
   /** Copies the whole conversation as Markdown, from its own page. */
@@ -94,11 +99,18 @@ export class TalkMenu {
     return !this.element.hidden && this.opened?.r.about.id === r.about.id && this.opened.r.about.machine === r.about.machine;
   }
 
+  /** Asks before deleting `r`, as its menu's delete does. */
+  askDelete(r: ResidentNow): void {
+    this.options.askDelete(r);
+  }
+
   open(r: ResidentNow, how: MenuOpening): void {
     if (this.isOpenFor(r) && how.anchor) {
       this.close();
       return;
     }
+    stay(this.element);
+    stay(this.shade);
     this.opened = { r, how };
     this.towns = false;
     this.draw();
@@ -135,10 +147,12 @@ export class TalkMenu {
   }
 
   close(): void {
-    if (this.element.hidden) return;
-    this.element.style.height = this.element.style.width = "";
-    this.element.hidden = true;
-    this.shade.hidden = true;
+    if (this.element.hidden || leaving(this.element)) return;
+    leave(this.element, () => {
+      this.element.hidden = true;
+      this.element.style.height = this.element.style.width = "";
+    });
+    if (!this.shade.hidden) leave(this.shade, () => (this.shade.hidden = true));
     const anchor = this.opened?.how.anchor;
     anchor?.setAttribute("aria-expanded", "false");
     anchor?.closest(".talk-item")?.classList.remove("menu-open");
@@ -174,8 +188,16 @@ export class TalkMenu {
     const body = r.removed
       ? [item("restore", "unarchive", words.restore, away), rule, item("delete", "trash", words.delete, false)]
       : [
-          // On a phone the head has no room for finding: it is here.
-          ...(narrow.matches && this.opened.how.find ? [item("find", "search", words.find, false), rule] : []),
+          // On a phone the head has no room for finding or for the choice
+          // of view: they are here.
+          ...(narrow.matches && (this.opened.how.find || this.opened.how.steps || this.opened.how.panel)
+            ? [
+                ...(this.opened.how.panel ? [item("panel", "panel", words.panel, false)] : []),
+                ...(this.opened.how.steps ? [item("steps", "steps", this.opened.how.steps.shown() ? words.viewSaid : words.viewSteps, false)] : []),
+                ...(this.opened.how.find ? [item("find", "search", words.find, false)] : []),
+                rule,
+              ]
+            : []),
           item("move", "move", words.move, away, `<span class="talk-menu-more">${glyph("chevron", 14)}</span>`),
           item("rename", "edit", words.rename, away),
           item("archive", "archive", words.archive, away),
@@ -246,6 +268,18 @@ export class TalkMenu {
         const find = opened.how.find;
         this.close();
         find?.();
+        return;
+      }
+      case "steps": {
+        const steps = opened.how.steps;
+        this.close();
+        steps?.toggle();
+        return;
+      }
+      case "panel": {
+        const panel = opened.how.panel;
+        this.close();
+        panel?.();
         return;
       }
       case "archive":

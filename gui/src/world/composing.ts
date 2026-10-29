@@ -1,4 +1,5 @@
 import { Channel, invoke } from "@tauri-apps/api/core";
+import { closeDelivery, observe } from "./delivery";
 import type { Address } from "./wire";
 import type { ComposerAttachmentAdded, ComposerMutation, ComposerPiece, ComposerUpdated, ComposerUploadScope, ComposerWatching } from "./composer";
 
@@ -17,12 +18,8 @@ export function composing(who: Address): ComposerTransport {
   return {
     read: () => invoke("composer_read", address),
     update: (mutation) => invoke("composer_update", { ...address, mutation }),
-    watch: (onPiece) => {
-      const pieces = new Channel<ComposerPiece>();
-      pieces.onmessage = onPiece;
-      return invoke("composer_watch", { ...address, pieces });
-    },
-    unwatch: (id) => invoke("unwatch", { id }),
+    watch: (onPiece) => observe<ComposerPiece, ComposerWatching>("composer_watch", address, onPiece),
+    unwatch: (id) => { closeDelivery(id); return invoke("unwatch", { id }); },
     attachFile: async (scope, file) => invoke("composer_attach_bytes", new Uint8Array(await file.arrayBuffer()), {
       headers: {
         resident: encodeURIComponent(who.resident), machine: encodeURIComponent(who.machine),

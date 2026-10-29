@@ -318,12 +318,14 @@ pub fn worker(path: &Path, max: u32, budget: u64) -> Result<(), String> {
     let mut bytes = Vec::new();
     let mime = if small.pixels().any(|pixel| pixel[3] != 255) {
         use image::ImageEncoder as _;
-        // An uncompressed PNG preserves alpha without a DEFLATE encoder's
-        // fixed dictionary and hash tables overwhelming a tiny image budget.
+        // The fast encoder keeps alpha with a few kilobytes of state, well
+        // inside the allowance's fixed share, where a full DEFLATE encoder's
+        // dictionary and hash tables would not be; the filters let it fold
+        // flat and smooth areas to almost nothing.
         image::codecs::png::PngEncoder::new_with_quality(
             &mut bytes,
-            image::codecs::png::CompressionType::Uncompressed,
-            image::codecs::png::FilterType::NoFilter,
+            image::codecs::png::CompressionType::Fast,
+            image::codecs::png::FilterType::Adaptive,
         )
         .write_image(small.as_raw(), width, height, image::ExtendedColorType::Rgba8)
         .map_err(|error| error.to_string())?;

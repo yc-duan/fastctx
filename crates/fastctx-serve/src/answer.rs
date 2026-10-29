@@ -63,7 +63,15 @@ impl Answer {
 
 impl Answer {
     pub fn text(text: String, is_error: bool) -> Self {
-        Self { facts: None, content: vec![Content::Text(text)], is_error, receipt: None, source: None, shown: None, completed: None }
+        Self {
+            facts: None,
+            content: vec![Content::Text(text)],
+            is_error,
+            receipt: None,
+            source: None,
+            shown: None,
+            completed: None,
+        }
     }
 
     pub fn error(text: String) -> Self {
@@ -162,9 +170,14 @@ impl Source {
 pub fn assemble(
     world: &WorldDir,
     answer: &mut Answer,
-    notes: Vec<String>,
+    mut notes: Vec<String>,
+    leading_notes: usize,
     messages: impl IntoIterator<Item = (NoticeId, String)>,
 ) -> io::Result<Vec<NoticeId>> {
+    if leading_notes > notes.len() {
+        return Err(io::Error::other("the node's leading note count exceeds its notes"));
+    }
+    let trailing = notes.split_off(leading_notes);
     let source = Source::for_answer(world, answer);
     let note_cost = units(&source.note);
     let header = first_line_cost(&answer.content);
@@ -179,6 +192,12 @@ pub fn assemble(
         let text = ended(notes.join("\n"));
         additions.extend(shorten_text(world, text, left)?);
         left -= cost(&additions);
+    }
+    let note_blocks = additions.len();
+    if !trailing.is_empty() {
+        let blocks = shorten_text(world, ended(trailing.join("\n")), left)?;
+        left -= cost(&blocks);
+        additions.extend(blocks);
     }
     let mut ids = Vec::new();
     for (id, text) in messages {
@@ -206,14 +225,60 @@ pub fn assemble(
         source.keep()?;
         answer.fit(budget, &source.note);
     }
-    if !additions.is_empty() {
+    let messages = additions.split_off(note_blocks);
+    insert_notes(answer, additions);
+    if !messages.is_empty() {
         end_line(&mut answer.content);
     }
-    answer.content.extend(additions);
+    answer.content.extend(messages);
     Ok(ids)
 }
 
-const SEPARATOR: usize = 1;
+// One unit for splitting the header's text block, one for a separating newline.
+const SEPARATOR: usize = 2;
+
+fn insert_notes(answer: &mut Answer, notes: Vec<Content>) {
+    if notes.is_empty() {
+        return;
+    }
+    let count = notes.len();
+    let split = match answer.content.first() {
+        Some(Content::Text(text)) if text.starts_with("=== ") => Some(text.find('\n').map_or(text.len(), |at| at + 1)),
+        _ => None,
+    };
+    let Some(split) = split else {
+        if let Some(facts) = &mut answer.facts {
+            for region in &mut facts.regions {
+                region.block += count;
+            }
+        }
+        answer.content.splice(0..0, notes);
+        return;
+    };
+    let Content::Text(first) = &mut answer.content[0] else { unreachable!("text header") };
+    let rest = first.split_off(split);
+    let extra = usize::from(!rest.is_empty());
+    if let Some(facts) = &mut answer.facts {
+        for region in &mut facts.regions {
+            if region.block == 0 {
+                // Output spans exclude the run header; only their presentation moves.
+                if let Some(bytes) = &mut region.bytes {
+                    debug_assert!(bytes.start >= split);
+                    bytes.start -= split;
+                    bytes.end -= split;
+                    region.block = count + 1;
+                }
+            } else {
+                region.block += count + extra;
+            }
+        }
+    }
+    let mut inserted = notes;
+    if extra != 0 {
+        inserted.push(Content::Text(rest));
+    }
+    answer.content.splice(1..1, inserted);
+}
 
 /// Hosts show text blocks back to back, with nothing between them.
 fn end_line(content: &mut [Content]) {
@@ -268,6 +333,7 @@ mod tests {
             &world,
             &mut answer,
             vec!["=== you are codex-1234 on desk ===".into()],
+            1,
             [(first.clone(), words.clone()), (second.clone(), next.clone())],
         )
         .unwrap();
@@ -285,13 +351,13 @@ mod tests {
         assert_eq!(IMAGE_COST, 5_200);
 
         let mut reply = Answer::text("written".into(), false);
-        assert_eq!(assemble(&world, &mut reply, Vec::new(), [(second.clone(), next.clone())]).unwrap(), [second]);
+        assert_eq!(assemble(&world, &mut reply, Vec::new(), 0, [(second.clone(), next.clone())]).unwrap(), [second]);
         assert!(reply.content.contains(&Content::Text(format!("{next}\n"))));
 
         let huge = "=== colleague codex-5678 on desk ===\n".to_string() + &"😀中文".repeat(100_000);
         let id = NoticeId::try_from("huge").unwrap();
         let mut reply = Answer::text("written".into(), false);
-        assert_eq!(assemble(&world, &mut reply, Vec::new(), [(id.clone(), huge.clone())]).unwrap(), [id]);
+        assert_eq!(assemble(&world, &mut reply, Vec::new(), 0, [(id.clone(), huge.clone())]).unwrap(), [id]);
         assert!(cost(&reply.content) <= BUDGET);
         let huge = format!("{huge}\n");
         let Source { file: Some((path, _)), .. } = Source::text(&world, &huge) else { unreachable!() };
@@ -301,7 +367,9 @@ mod tests {
         let mut reply = Answer::text(format!("{header}done"), false);
         let waiting = NoticeId::try_from("waiting").unwrap();
         assert!(
-            assemble(&world, &mut reply, vec![news.clone()], [(waiting, "still waiting".into())]).unwrap().is_empty()
+            assemble(&world, &mut reply, vec![news.clone()], 1, [(waiting, "still waiting".into())])
+                .unwrap()
+                .is_empty()
         );
         assert!(cost(&reply.content) <= BUDGET);
         let news = format!("{news}\n");

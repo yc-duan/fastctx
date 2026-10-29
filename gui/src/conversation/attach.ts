@@ -5,6 +5,7 @@
 // words go once everything attached has; what the agent is told of each,
 // and where it was put, is the World's to say.
 
+import { leave } from "../app/leave";
 import { viewAttached } from "./attached-pictures";
 import { glyph } from "./glyphs";
 import { escape } from "./prose";
@@ -63,6 +64,8 @@ let serial = 0;
 export class AttachTray {
   readonly element: HTMLElement;
   private items: Attached[] = [];
+  /** The cards drawn last time, which rise in no more. */
+  private drawn = new Set<string>();
   private sent = new Map<string, number>();
   /** Whether files other than images are taken now: why not, when not. */
   private refusing: (() => string | null) | null = null;
@@ -244,10 +247,17 @@ export class AttachTray {
   }
 
   private remove(key: string): void {
-    const item = this.items.find((candidate) => candidate.key === key);
-    if (item?.preview) URL.revokeObjectURL(item.preview);
-    this.items = this.items.filter((candidate) => candidate.key !== key);
-    this.draw();
+    const gone = () => {
+      const item = this.items.find((candidate) => candidate.key === key);
+      if (!item) return;
+      if (item.preview) URL.revokeObjectURL(item.preview);
+      this.items = this.items.filter((candidate) => candidate !== item);
+      this.draw();
+    };
+    // It sinks out of the tray before it goes.
+    const card = this.element.querySelector<HTMLElement>(`[data-item="${key}"]`);
+    if (card) leave(card, gone);
+    else gone();
   }
 
   private progress(item: Attached): void {
@@ -258,6 +268,9 @@ export class AttachTray {
   private draw(): void {
     const { words } = this;
     this.element.hidden = this.items.length === 0;
+    // A card rises into the tray the first time it is drawn, never again.
+    const drawn = this.drawn;
+    this.drawn = new Set(this.items.map((item) => item.key));
     this.element.innerHTML = this.items
       .map((item) => {
         const picture = item.preview
@@ -273,7 +286,7 @@ export class AttachTray {
                 : "";
         const retry =
           item.state === "failed" ? `<button class="attach-act" type="button" data-retry="${item.key}">${escape(words.retry)}</button>` : "";
-        return `<li class="attach-item ${item.state}" data-item="${item.key}">${picture}<span class="attach-text"><span class="attach-name" title="${escape(item.name)}">${escape(item.name)}</span>${fact}</span>${retry}<button class="attach-remove" type="button" data-remove="${item.key}" aria-label="${escape(words.remove)}" title="${escape(words.remove)}">${glyph("close", 14)}</button>${item.state === "sending" && item.size ? `<span class="attach-progress"></span>` : ""}</li>`;
+        return `<li class="attach-item ${item.state}${drawn.has(item.key) ? "" : " fresh"}" data-item="${item.key}">${picture}<span class="attach-text"><span class="attach-name" title="${escape(item.name)}">${escape(item.name)}</span>${fact}</span>${retry}<button class="attach-remove" type="button" data-remove="${item.key}" aria-label="${escape(words.remove)}" title="${escape(words.remove)}">${glyph("close", 14)}</button>${item.state === "sending" && item.size ? `<span class="attach-progress"></span>` : ""}</li>`;
       })
       .join("");
     for (const item of this.items) this.progress(item);
