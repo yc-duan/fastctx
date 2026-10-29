@@ -167,8 +167,12 @@ impl Cache {
                 held_blobs.extend(index.blobs);
             }
         }
-        pictures::forget(&self.root, &gone.difference(&shown).cloned().collect())?;
-        for key in blobs.difference(&held_blobs) {
+        let unshown: HashSet<String> = gone.difference(&shown).cloned().collect();
+        pictures::forget(&self.root, &unshown)?;
+        self.pictures.lock().expect("never poisoned").forget(&unshown);
+        let unheld: HashSet<String> = blobs.difference(&held_blobs).cloned().collect();
+        self.lines.lock().expect("known lines").forget(&unheld);
+        for key in &unheld {
             if !lines::valid_key(key) {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidData,

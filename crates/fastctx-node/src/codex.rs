@@ -27,56 +27,98 @@ pub mod spawned;
 pub mod watch;
 
 /// Makes the World's own Codex threads known to the host again. Idle
-/// sessions start asleep: this node has not loaded their runtimes yet.
+/// sessions start asleep: this node has not loaded their runtimes yet. One
+/// whose preparation failed, as when its town could not be read for a
+/// moment, is tried again each minute for an hour.
 pub async fn adopt(node: &Arc<Node>) {
+    let mut failed = Vec::new();
     for resident in node.residents.everyone() {
-        let about = &resident.about;
-        if about.native_resumed && resident.removed.is_none() {
-            if let Some(thread) = &about.session {
-                match node.codex.of(node, about) {
-                    Ok(host) => host.adopt(thread, native::spec(node, about)),
-                    Err(error) => node.log.line(format_args!("{} cannot be resumed: {error}", about.id)),
+        if !adopt_one(node, &resident, true).await {
+            failed.push(resident.about.id.clone());
+        }
+    }
+    if failed.is_empty() {
+        return;
+    }
+    let node = Arc::downgrade(node);
+    tokio::spawn(async move {
+        for _ in 0..60 {
+            tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+            let Some(node) = node.upgrade() else { return };
+            let mut left = Vec::new();
+            for id in failed {
+                let Some(resident) = node.residents.everyone().find(|resident| resident.about.id == id) else { continue };
+                if !adopt_one(&node, &resident, false).await {
+                    left.push(id);
                 }
             }
-            crate::lifecycle::observed(node, &about.id, false, "node restarted");
-            continue;
+            if left.is_empty() {
+                return;
+            }
+            failed = left;
         }
-        if !about.world_started || resident.removed.is_some() {
-            continue;
+    });
+}
+
+/// Makes one resident's Codex thread known to its host again; false where
+/// that failed and may succeed later. A failure is said only on the first
+/// try.
+async fn adopt_one(node: &Arc<Node>, resident: &crate::residents::OnRecord, first: bool) -> bool {
+    let about = &resident.about;
+    let say = |what: std::fmt::Arguments| {
+        if first {
+            node.log.line(what);
         }
-        // What it was told of its town when it was started, it still has.
-        match crate::colleagues::heard_now(node, resident.town.as_ref()) {
-            Ok(heard) => node.residents.set_instructed(&about.id, heard),
-            Err(error) => node.log.line(format_args!("reading {}'s town: {error}", about.id)),
-        }
-        if about.host.agent.as_str() != "codex" {
-            continue;
-        }
-        let Some(thread) = &about.session else { continue };
-        match crate::colleagues::thread_spec(
-            node,
-            &about.id,
-            &about.origin,
-            resident.town.as_ref(),
-            &about.acting,
-            about.home.as_deref(),
-        )
-        .await
-        {
-            Ok((spec, _)) => match node.codex.of(node, about) {
-                Ok(codex) => codex.adopt(thread, spec),
-                Err(failure) => {
-                    node.log.line(format_args!("{} cannot be resumed: {failure}", about.id));
-                    continue;
+    };
+    if about.native_resumed && resident.removed.is_none() {
+        if let Some(thread) = &about.session {
+            match node.codex.of(node, about) {
+                Ok(host) => host.adopt(thread, native::spec(node, about)),
+                Err(error) => {
+                    say(format_args!("{} cannot be resumed: {error}", about.id));
+                    return false;
                 }
-            },
-            Err(failure) => {
-                node.log.line(format_args!("{} cannot be resumed: {failure}", about.id));
-                continue;
             }
         }
         crate::lifecycle::observed(node, &about.id, false, "node restarted");
+        return true;
     }
+    if !about.world_started || resident.removed.is_some() {
+        return true;
+    }
+    // What it was told of its town when it was started, it still has.
+    match crate::colleagues::heard_now(node, resident.town.as_ref()) {
+        Ok(heard) => node.residents.set_instructed(&about.id, heard),
+        Err(error) => say(format_args!("reading {}'s town: {error}", about.id)),
+    }
+    if about.host.agent.as_str() != "codex" {
+        return true;
+    }
+    let Some(thread) = &about.session else { return true };
+    match crate::colleagues::thread_spec(
+        node,
+        &about.id,
+        &about.origin,
+        resident.town.as_ref(),
+        &about.acting,
+        about.home.as_deref(),
+    )
+    .await
+    {
+        Ok((spec, _)) => match node.codex.of(node, about) {
+            Ok(codex) => codex.adopt(thread, spec),
+            Err(failure) => {
+                say(format_args!("{} cannot be resumed: {failure}", about.id));
+                return false;
+            }
+        },
+        Err(failure) => {
+            say(format_args!("{} cannot be resumed: {failure}", about.id));
+            return false;
+        }
+    }
+    crate::lifecycle::observed(node, &about.id, false, "node restarted");
+    true
 }
 
 /// Reports are queued before dispatch, including Desk and Gone before a

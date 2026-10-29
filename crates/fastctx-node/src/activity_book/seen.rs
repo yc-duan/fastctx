@@ -31,7 +31,7 @@ pub(super) fn look(node: &Arc<Node>, record: &JobRecord) {
     if places.is_empty() {
         return;
     }
-    let (node, job, began) = (node.clone(), record.id.to_string(), record.started_at);
+    let (node, deed, began) = (node.clone(), super::deed(record), record.started_at);
     tokio::spawn(async move {
         let Ok(_one) = ONE_AT_A_TIME.acquire().await else { return };
         let mut tops = Vec::new();
@@ -56,9 +56,9 @@ pub(super) fn look(node: &Arc<Node>, record: &JobRecord) {
             .write(size, move |connection| {
                 for (path, how, added, removed) in &noted {
                     connection.execute(
-                        "INSERT OR IGNORE INTO book_touched (job, path, how, added, removed, seen)
+                        "INSERT OR IGNORE INTO book_touches (deed, path, how, added, removed, seen)
                          VALUES (?1, ?2, ?3, ?4, ?5, 1)",
-                        params![job, path, how, added, removed],
+                        params![deed, path, how, added, removed],
                     )?;
                 }
                 Ok(())

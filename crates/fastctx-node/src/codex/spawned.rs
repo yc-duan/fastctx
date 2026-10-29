@@ -35,6 +35,24 @@ enum Thread {
     Agent { root: String, model: Option<String> },
     /// No resident's agent.
     Other,
+    /// Asking failed, as when its app-server did not answer: asked again
+    /// once a while has passed, what it reports meanwhile going the way of
+    /// any thread nobody claims.
+    Unknown { asked: std::time::Instant },
+}
+
+/// How long a thread asking about failed waits before it is asked again.
+const ASK_AGAIN: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// What asking about a thread found.
+enum Found {
+    /// An agent of the resident whose thread is the first, below the agent
+    /// that is the second where another agent spawned it.
+    Agent(String, Option<String>, Spawned),
+    /// No resident's agent.
+    Other,
+    /// No answer to be had now.
+    Unknown,
 }
 
 /// Takes what a thread nobody claims reported, when the thread is, or may
@@ -49,6 +67,7 @@ pub(super) fn took(
     let mut threads = node.codex_agents.threads.lock().expect("never poisoned");
     match threads.get_mut(thread) {
         Some(Thread::Other) => Some(event),
+        Some(Thread::Unknown { asked }) if asked.elapsed() < ASK_AGAIN => Some(event),
         Some(Thread::Asking(waiting)) => {
             waiting.push(event);
             None
@@ -58,7 +77,7 @@ pub(super) fn took(
             tell(node, &root, thread, model.as_deref(), event, plain);
             None
         }
-        None => {
+        Some(Thread::Unknown { .. }) | None => {
             threads.insert(thread.to_string(), Thread::Asking(vec![event]));
             let (node, thread) = (node.clone(), thread.to_string());
             tokio::spawn(async move {
@@ -75,13 +94,13 @@ pub(super) fn took(
 fn settle(
     node: &Arc<Node>,
     thread: &str,
-    found: Option<(String, Option<String>, Spawned)>,
+    found: Found,
     plain: fn(&Arc<Node>, String, HostEvent) -> std::io::Result<()>,
 ) {
     let mut threads = node.codex_agents.threads.lock().expect("never poisoned");
     let Some(Thread::Asking(waiting)) = threads.remove(thread) else { return };
     match found {
-        Some((root, parent, spawned)) => {
+        Found::Agent(root, parent, spawned) => {
             threads.insert(thread.to_string(), Thread::Agent { root: root.clone(), model: spawned.model.clone() });
             let at = waiting.iter().find_map(|event| match event {
                 HostEvent::Happened { event, .. } => Some(event.at),
@@ -113,8 +132,12 @@ fn settle(
                 tell(node, &root, thread, spawned.model.as_deref(), event, plain);
             }
         }
-        None => {
-            threads.insert(thread.to_string(), Thread::Other);
+        Found::Other | Found::Unknown => {
+            let settled = match found {
+                Found::Unknown => Thread::Unknown { asked: std::time::Instant::now() },
+                _ => Thread::Other,
+            };
+            threads.insert(thread.to_string(), settled);
             for event in waiting {
                 if let Err(error) = plain(node, thread.to_string(), event) {
                     node.log.line(format_args!("retaining a Codex report: {error}"));
@@ -184,31 +207,40 @@ fn tell(
 }
 
 /// The resident's thread `thread` is an agent of, and the agent above it
-/// where another agent spawned it; none for a thread no resident's thread
-/// spawned. The app-server that spawned it answers; the others do not know
-/// it.
-async fn whose(node: &Arc<Node>, thread: &str) -> Option<(String, Option<String>, Spawned)> {
+/// where another agent spawned it. The app-server that spawned it answers;
+/// the others do not know it. One that could not be asked leaves it unknown,
+/// not another's.
+async fn whose(node: &Arc<Node>, thread: &str) -> Found {
+    let mut unanswered = false;
     for host in node.codex.all() {
-        let Ok(Some(spawned)) = host.spawned_by(thread).await else { continue };
+        let spawned = match host.spawned_by(thread).await {
+            Ok(Some(spawned)) => spawned,
+            Ok(None) => continue,
+            Err(_) => {
+                unanswered = true;
+                continue;
+            }
+        };
         let mut above = spawned.parent.clone();
         for _ in 0..DEEPEST {
             if node.residents.resident_of_thread(&above).is_some() {
                 let parent = (above != spawned.parent).then(|| spawned.parent.clone());
-                return Some((above, parent, spawned));
+                return Found::Agent(above, parent, spawned);
             }
             let known = match node.codex_agents.threads.lock().expect("never poisoned").get(&above) {
                 Some(Thread::Agent { root, .. }) => Some(root.clone()),
                 _ => None,
             };
             if let Some(root) = known {
-                return Some((root, Some(spawned.parent.clone()), spawned));
+                return Found::Agent(root, Some(spawned.parent.clone()), spawned);
             }
             match host.spawned_by(&above).await {
                 Ok(Some(up)) => above = up.parent,
-                _ => return None,
+                Ok(None) => return Found::Other,
+                Err(_) => return Found::Unknown,
             }
         }
-        return None;
+        return Found::Other;
     }
-    None
+    if unanswered { Found::Unknown } else { Found::Other }
 }

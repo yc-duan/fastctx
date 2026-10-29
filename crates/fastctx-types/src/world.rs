@@ -97,6 +97,10 @@ pub struct MachineFacts {
     /// Answers attachment destination queries before receiving any file bytes.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub attachment_places: bool,
+    /// Takes the attachments a script is sent with into its scratch before
+    /// it runs (`RemoteCall::On::attachments`).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub attachment_runs: bool,
     /// Answers an account's replica-directory query without returning bodies.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub memory_folders: bool,

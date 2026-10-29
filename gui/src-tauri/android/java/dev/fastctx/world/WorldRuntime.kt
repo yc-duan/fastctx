@@ -47,8 +47,9 @@ object WorldRuntime {
         network = WorldNetwork(this.context)
         val error = startNative(this.context.noBackupFilesDir.resolve("world").absolutePath)
         if (error != null) throw IllegalStateException(error)
-        started = true
+        // Started only once the network is followed too: a failure here is tried again whole.
         network.start()
+        started = true
     }
 
     fun reconnect() { if (started) reconnectNative() }

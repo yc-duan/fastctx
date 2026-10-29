@@ -88,6 +88,12 @@ export class ActivityPage implements Page {
   private height = 0;
   private stopWatch: () => void;
   private reading = 0;
+  /** The span a reading is under way for. */
+  private spanRead: Span | null = null;
+  /** Another reading was wanted while one was under way. */
+  private again = false;
+  private nextRead = 0;
+  private left = false;
   private bringing = new Set<string>();
 
   constructor(private readonly options: ActivityOptions) {
@@ -120,11 +126,12 @@ export class ActivityPage implements Page {
     });
     void this.readYear();
     void this.readSpan();
-    this.timers.push(window.setInterval(() => void this.readSpan(), NOW_MS));
     this.timers.push(window.setInterval(() => void this.readYear(), YEAR_MS));
   }
 
   leave(): void {
+    this.left = true;
+    window.clearTimeout(this.nextRead);
     for (const timer of this.timers) window.clearInterval(timer);
     this.timers = [];
     this.resize.disconnect();
@@ -150,13 +157,24 @@ export class ActivityPage implements Page {
     return { answers, away };
   }
 
+  /** Reads what ran over the span, then again a few seconds after it is
+   *  drawn. One reading at a time: a machine slower than that still has its
+   *  answer drawn. One wanted meanwhile follows when it ends; only a reading
+   *  of a span no longer chosen is let go. */
   private async readSpan(): Promise<void> {
+    if (this.spanRead === this.span) {
+      this.again = true;
+      return;
+    }
+    window.clearTimeout(this.nextRead);
     const reading = ++this.reading;
+    const span = (this.spanRead = this.span);
     const now = this.now();
-    const days = Math.max(SPAN_DAYS[this.span], 2);
+    const days = Math.max(SPAN_DAYS[span], 2);
     const from = dayOf(now) - (days - 1) * DAY_MS;
     const { answers, away } = await this.askAll({ ask: "deeds", from: iso(from), to: iso(now + 60_000), limit: LIMIT });
-    if (reading !== this.reading) return;
+    if (reading !== this.reading || this.left) return;
+    this.spanRead = null;
     const deeds: Placed[] = [];
     let more = false;
     for (const answer of answers) {
@@ -166,6 +184,12 @@ export class ActivityPage implements Page {
     }
     this.gathered = { ...this.gathered, deeds, away, more };
     this.draw();
+    if (this.again) {
+      this.again = false;
+      void this.readSpan();
+      return;
+    }
+    this.nextRead = window.setTimeout(() => void this.readSpan(), NOW_MS);
   }
 
   private async readYear(): Promise<void> {

@@ -493,6 +493,30 @@ impl Keeping {
         Ok(())
     }
 
+    /// A moment could not be kept, as when the disk was full or no file
+    /// could be opened: the copy here lacks it, so it is not taken for the
+    /// history again, and the history comes whole next time. Where even that
+    /// cannot be written, the copy goes.
+    pub fn missed(&mut self) {
+        let marked = (|| -> std::io::Result<()> {
+            if let Some(mut index) = self.entry.index()? {
+                index.stale = true;
+                index.revision = index
+                    .revision
+                    .checked_add(1)
+                    .ok_or_else(|| std::io::Error::other("conversation cache revision overflow"))?;
+                self.entry.write_index(&index)?;
+            }
+            Ok(())
+        })();
+        if marked.is_err() {
+            let _ = self.entry.remove();
+        }
+        self.index = None;
+        self.whole = false;
+        self.rest = false;
+    }
+
     pub fn discard_damage(&mut self, error: &Error) -> Result<(), Error> {
         if matches!(error, Error::Kept(error) if error.kind() == std::io::ErrorKind::InvalidData) {
             let mut turn = self.cache.turn().map_err(Error::Kept)?;

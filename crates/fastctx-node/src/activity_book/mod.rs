@@ -21,8 +21,11 @@ use crate::Node;
 
 /// The book's tables; idempotent, installed with the node's database.
 pub(crate) const SCHEMA: &str = "
-CREATE TABLE IF NOT EXISTS book_deed (
-    job TEXT PRIMARY KEY,
+DROP TABLE IF EXISTS book_touched;
+DROP TABLE IF EXISTS book_deed;
+CREATE TABLE IF NOT EXISTS book_deeds (
+    deed TEXT PRIMARY KEY,
+    job TEXT NOT NULL,
     began INTEGER NOT NULL,
     ended INTEGER,
     from_machine TEXT,
@@ -39,15 +42,15 @@ CREATE TABLE IF NOT EXISTS book_deed (
     looked INTEGER NOT NULL DEFAULT 0,
     copied INTEGER NOT NULL DEFAULT 0
 ) WITHOUT ROWID;
-CREATE INDEX IF NOT EXISTS book_deed_began ON book_deed(began);
-CREATE TABLE IF NOT EXISTS book_touched (
-    job TEXT NOT NULL,
+CREATE INDEX IF NOT EXISTS book_deeds_began ON book_deeds(began);
+CREATE TABLE IF NOT EXISTS book_touches (
+    deed TEXT NOT NULL,
     path TEXT NOT NULL,
     how TEXT NOT NULL,
     added INTEGER,
     removed INTEGER,
     seen INTEGER NOT NULL DEFAULT 0,
-    PRIMARY KEY (job, path)
+    PRIMARY KEY (deed, path)
 ) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS book_hour (
     at INTEGER NOT NULL,
@@ -72,6 +75,7 @@ const SCRIPT: usize = 2000;
 
 /// One deed as a job's record stands now.
 struct Row {
+    deed: String,
     job: String,
     began: i64,
     ended: Option<i64>,
@@ -209,6 +213,7 @@ fn row(node: &Node, record: &JobRecord, writes: &[WriteFact], steps: &[fastctx_t
         script.push('…');
     }
     Row {
+        deed: deed(record),
         job: record.id.to_string(),
         began: record.started_at.as_millisecond(),
         ended: record.end.as_ref().map(|end| end.at.as_millisecond()),
@@ -227,6 +232,13 @@ fn row(node: &Node, record: &JobRecord, writes: &[WriteFact], steps: &[fastctx_t
         copied,
         touched,
     }
+}
+
+/// Which deed a job is. A job's short name is its conversation's only, and
+/// comes again once its files are gone: the deed is the job of that owner
+/// begun at that time.
+pub(super) fn deed(record: &JobRecord) -> String {
+    format!("{} {} {}", record.owner, record.id, record.started_at.as_millisecond())
 }
 
 /// How a deed's account is kept: empty for this computer's own user.
@@ -257,17 +269,17 @@ pub(super) fn how_word(how: TouchHow) -> &'static str {
 /// is never taken back by an earlier telling.
 fn keep(connection: &rusqlite::Connection, row: &Row) -> fastctx_storage::Result<()> {
     connection.execute(
-        "INSERT INTO book_deed (job, began, ended, from_machine, session, agent, held, project, account,
+        "INSERT INTO book_deeds (deed, job, began, ended, from_machine, session, agent, held, project, account,
              script, outcome, code, output, went, looked, copied)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)
-         ON CONFLICT(job) DO UPDATE SET
-             ended = COALESCE(excluded.ended, book_deed.ended),
-             outcome = CASE WHEN excluded.outcome = 'running' THEN book_deed.outcome ELSE excluded.outcome END,
-             code = COALESCE(excluded.code, book_deed.code),
-             output = MAX(excluded.output, book_deed.output),
-             went = CASE WHEN length(excluded.went) >= length(book_deed.went) THEN excluded.went ELSE book_deed.went END,
-             looked = MAX(excluded.looked, book_deed.looked),
-             copied = MAX(excluded.copied, book_deed.copied)",
+         VALUES (?17, ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)
+         ON CONFLICT(deed) DO UPDATE SET
+             ended = COALESCE(excluded.ended, book_deeds.ended),
+             outcome = CASE WHEN excluded.outcome = 'running' THEN book_deeds.outcome ELSE excluded.outcome END,
+             code = COALESCE(excluded.code, book_deeds.code),
+             output = MAX(excluded.output, book_deeds.output),
+             went = CASE WHEN length(excluded.went) >= length(book_deeds.went) THEN excluded.went ELSE book_deeds.went END,
+             looked = MAX(excluded.looked, book_deeds.looked),
+             copied = MAX(excluded.copied, book_deeds.copied)",
         params![
             row.job,
             row.began,
@@ -285,12 +297,13 @@ fn keep(connection: &rusqlite::Connection, row: &Row) -> fastctx_storage::Result
             row.went,
             row.looked,
             row.copied,
+            row.deed,
         ],
     )?;
     for touch in &row.touched {
         connection.execute(
-            "INSERT OR REPLACE INTO book_touched (job, path, how, added, removed, seen) VALUES (?1, ?2, ?3, ?4, ?5, 0)",
-            params![row.job, touch.path, how_word(touch.how), touch.added, touch.removed],
+            "INSERT OR REPLACE INTO book_touches (deed, path, how, added, removed, seen) VALUES (?1, ?2, ?3, ?4, ?5, 0)",
+            params![row.deed, touch.path, how_word(touch.how), touch.added, touch.removed],
         )?;
     }
     Ok(())
@@ -310,8 +323,8 @@ pub(crate) fn fold(node: &Node) -> std::io::Result<()> {
                         COUNT(*),
                         SUM(CASE WHEN outcome IN ('failed', 'lost') THEN 1 ELSE 0 END),
                         SUM(MAX(COALESCE(ended, began) - began, 0)),
-                        SUM((SELECT COUNT(*) FROM book_touched WHERE book_touched.job = book_deed.job))
-                 FROM book_deed WHERE began < ?1 AND ended IS NOT NULL
+                        SUM((SELECT COUNT(*) FROM book_touches WHERE book_touches.deed = book_deeds.deed))
+                 FROM book_deeds WHERE began < ?1 AND ended IS NOT NULL
                  GROUP BY 1, 2, 3, 4, 5
                  ON CONFLICT(at, session, agent, held, account) DO UPDATE SET
                      runs = book_hour.runs + excluded.runs,
@@ -321,11 +334,11 @@ pub(crate) fn fold(node: &Node) -> std::io::Result<()> {
                 params![deeds_before],
             )?;
             connection.execute(
-                "DELETE FROM book_touched WHERE job IN (SELECT job FROM book_deed WHERE began < ?1 AND ended IS NOT NULL)",
+                "DELETE FROM book_touches WHERE deed IN (SELECT deed FROM book_deeds WHERE began < ?1 AND ended IS NOT NULL)",
                 params![deeds_before],
             )?;
             connection
-                .execute("DELETE FROM book_deed WHERE began < ?1 AND ended IS NOT NULL", params![deeds_before])?;
+                .execute("DELETE FROM book_deeds WHERE began < ?1 AND ended IS NOT NULL", params![deeds_before])?;
             connection.execute("DELETE FROM book_hour WHERE at < ?1", params![hours_before])?;
             Ok(())
         })

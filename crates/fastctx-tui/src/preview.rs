@@ -390,6 +390,7 @@ fn nodes(now: Timestamp) -> NodesReply {
         mcp_import: false,
         page_accounts: false,
         attachment_places: false,
+        attachment_runs: false,
         memory_folders: false,
         collaboration_tree: false,
         completion_receipts: false,

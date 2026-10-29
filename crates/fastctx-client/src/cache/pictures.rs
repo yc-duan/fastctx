@@ -25,6 +25,11 @@ impl Pictures {
         self.prints.clear();
     }
 
+    /// Lets go of what it knows of the pictures `gone`, no longer kept.
+    pub fn forget(&mut self, gone: &HashSet<String>) {
+        self.prints.retain(|_, print| !gone.contains(print));
+    }
+
     /// Learns what the pictures `events` show are; returns their keys.
     pub fn learn(&mut self, events: &[SessionEvent]) -> Vec<String> {
         let mut keys = Vec::new();

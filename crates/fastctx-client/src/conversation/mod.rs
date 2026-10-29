@@ -265,7 +265,13 @@ impl Conversation {
                     recording.await.map_err(|error| Error::Kept(std::io::Error::other(error)))?;
                 self.recording = None;
                 self.keeping = Some(keeping);
-                saved?;
+                // What happened is shown whether or not this device could
+                // keep it; a copy that lacks it is read whole next time.
+                if saved.is_err()
+                    && let Some(keeping) = self.keeping.as_mut()
+                {
+                    keeping.missed();
+                }
                 self.refresh_due = matches!(
                     moment.event.happened,
                     Happened::Changed { change: SessionChange::HistoryChanged | SessionChange::HistoryCut { .. }, .. }

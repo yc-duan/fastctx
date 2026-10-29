@@ -830,6 +830,9 @@ pub async fn run_prepared(
     ending::start(node.log.clone()).context("starting node stop diagnostics")?;
     stuck::start(&node);
     let watchdog = watchdog::Watchdog::start().context("starting the control-loop watchdog")?;
+    // Accepting fails over and over while no descriptor is left: it waits a
+    // little longer each time, and says so once, until one is accepted.
+    let mut refused = 0u32;
     loop {
         let accepted = tokio::select! {
             // A ready watchdog request precedes a flood of new clients;
@@ -845,11 +848,23 @@ pub async fn run_prepared(
         };
         match accepted {
             Ok(connection) => {
+                refused = 0;
                 watchdog.progress();
                 tokio::spawn(server::serve(node.clone(), connection));
             }
             // One client failing to connect does not stop the others.
-            Err(error) => node.log.line(format_args!("accepting a connection: {error}")),
+            Err(error) => {
+                if refused == 0 {
+                    node.log.line(format_args!("accepting a connection: {error}"));
+                }
+                refused = refused.saturating_add(1);
+                let pause = std::time::Duration::from_millis(10u64 << refused.min(7));
+                tokio::select! {
+                    biased;
+                    () = watchdog.requested() => {}
+                    () = tokio::time::sleep(pause) => {}
+                }
+            }
         }
     }
 }

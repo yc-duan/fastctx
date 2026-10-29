@@ -99,8 +99,8 @@ fn deeds(
 ) -> fastctx_storage::Result<(Vec<Deed>, bool)> {
     let sql = format!(
         "SELECT job, began, ended, from_machine, session, agent, held, project, script, outcome, code, output,
-                went, looked, copied
-         FROM book_deed WHERE began >= ?1 AND began < ?2{} ORDER BY began DESC LIMIT {}",
+                went, looked, copied, deed
+         FROM book_deeds WHERE began >= ?1 AND began < ?2{} ORDER BY began DESC LIMIT {}",
         filter(visible, 3),
         limit + 1
     );
@@ -110,7 +110,8 @@ fn deeds(
             let at = |millisecond: i64| jiff::Timestamp::from_millisecond(millisecond).unwrap_or_default();
             // A row this release cannot read is left out, not the answer.
             let Ok(job) = row.get::<_, String>(0)?.parse() else { return Ok(None) };
-            Ok(Some(Deed {
+            let key: String = row.get(15)?;
+            Ok(Some((key, Deed {
                 job,
                 began: at(row.get(1)?),
                 ended: row.get::<_, Option<i64>>(2)?.map(at),
@@ -127,7 +128,7 @@ fn deeds(
                 looked: row.get::<_, i64>(13)?.max(0) as u32,
                 copied: row.get::<_, i64>(14)?.max(0) as u32,
                 touched: Vec::new(),
-            }))
+            })))
         })?
         .filter_map(Result::transpose)
         .collect::<Result<Vec<_>, _>>()?;
@@ -136,12 +137,12 @@ fn deeds(
     if !deeds.is_empty() {
         let marks: Vec<String> = (1..=deeds.len()).map(|index| format!("?{index}")).collect();
         let sql = format!(
-            "SELECT job, path, how, added, removed, seen FROM book_touched WHERE job IN ({}) ORDER BY path",
+            "SELECT deed, path, how, added, removed, seen FROM book_touches WHERE deed IN ({}) ORDER BY path",
             marks.join(", ")
         );
         let mut statement = connection.prepare(&sql)?;
-        let jobs = deeds.iter().map(|deed| Value::Text(deed.job.to_string()));
-        let rows = statement.query_map(params_from_iter(jobs), |row| {
+        let keys = deeds.iter().map(|(key, _)| Value::Text(key.clone()));
+        let rows = statement.query_map(params_from_iter(keys), |row| {
             Ok((
                 row.get::<_, String>(0)?,
                 Touched {
@@ -153,16 +154,16 @@ fn deeds(
                 },
             ))
         })?;
-        let mut by_job: std::collections::HashMap<String, Vec<Touched>> = std::collections::HashMap::new();
+        let mut by_deed: std::collections::HashMap<String, Vec<Touched>> = std::collections::HashMap::new();
         for row in rows {
-            let (job, touched) = row?;
-            by_job.entry(job).or_default().push(touched);
+            let (key, touched) = row?;
+            by_deed.entry(key).or_default().push(touched);
         }
-        for deed in &mut deeds {
-            deed.touched = by_job.remove(deed.job.as_str()).unwrap_or_default();
+        for (key, deed) in &mut deeds {
+            deed.touched = by_deed.remove(key.as_str()).unwrap_or_default();
         }
     }
-    Ok((deeds, more))
+    Ok((deeds.into_iter().map(|(_, deed)| deed).collect(), more))
 }
 
 fn hours(
@@ -177,8 +178,8 @@ fn hours(
                 COUNT(*),
                 SUM(CASE WHEN outcome IN ('failed', 'lost') THEN 1 ELSE 0 END),
                 SUM(MAX(COALESCE(ended, began) - began, 0)),
-                SUM((SELECT COUNT(*) FROM book_touched WHERE book_touched.job = book_deed.job))
-         FROM book_deed WHERE began >= ?1 AND began < ?2{accounts}
+                SUM((SELECT COUNT(*) FROM book_touches WHERE book_touches.deed = book_deeds.deed))
+         FROM book_deeds WHERE began >= ?1 AND began < ?2{accounts}
          GROUP BY 1, 2, 3, 4
          UNION ALL
          SELECT at, session, agent, held, SUM(runs), SUM(failed), SUM(busy), SUM(files)

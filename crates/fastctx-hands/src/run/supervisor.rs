@@ -179,43 +179,57 @@ impl Job {
         let mut resume = Some(resume);
         let mut checkpoints = vec![output.stdout.checkpoint()];
         let mut workers = Vec::new();
-        {
-            let (tree, sender) = (tree.clone(), sender.clone());
-            workers.push(std::thread::spawn(move || {
-                let _ = sender.send(Event::Main(tree.wait_main()));
+        let output_limit = self.record.is_sentinel().then_some(65_536);
+        let mut streams = 1;
+        // A thread the system will not start leaves the shell running with
+        // no one to wait for it: what started is stopped, and the job fails.
+        let started = (|| -> io::Result<()> {
+            let (waiting, reaped) = (tree.clone(), sender.clone());
+            workers.push(spawn("fastctx-job-wait", move || {
+                let _ = reaped.send(Event::Main(waiting.wait_main()));
                 // Keep reaping and counting on one thread. Dropping the gate
                 // also resumes reaping, including during stop/error cleanup.
                 if after_drain.recv().is_ok() {
-                    let _ = sender.send(Event::Remaining(tree.remaining()));
+                    let _ = reaped.send(Event::Remaining(waiting.remaining()));
                 }
-                let _ = sender.send(Event::Empty(tree.wait_empty()));
-            }));
-        }
-        let output_limit = self.record.is_sentinel().then_some(65_536);
-        let mut streams = 1;
-        if let (Some(reader), Some(log)) = (output.stderr, stderr) {
-            streams += 1;
-            checkpoints.push(reader.checkpoint());
-            let sender = sender.clone();
-            workers.push(std::thread::spawn(move || {
-                let result = output::copy(reader, log, output_limit, |bytes, lost| {
-                    let _ = sender.send(Event::Drained { stderr: true, bytes, lost });
-                });
-                let _ = sender.send(Event::Output { stderr: true, result });
-            }));
-        }
-        {
-            let sender = sender.clone();
-            workers.push(std::thread::spawn(move || {
+                let _ = reaped.send(Event::Empty(waiting.wait_empty()));
+            })?);
+            if let (Some(reader), Some(log)) = (output.stderr, stderr) {
+                streams += 1;
+                checkpoints.push(reader.checkpoint());
+                let sender = sender.clone();
+                workers.push(spawn("fastctx-job-stderr", move || {
+                    let result = output::copy(reader, log, output_limit, |bytes, lost| {
+                        let _ = sender.send(Event::Drained { stderr: true, bytes, lost });
+                    });
+                    let _ = sender.send(Event::Output { stderr: true, result });
+                })?);
+            }
+            let sender_out = sender.clone();
+            workers.push(spawn("fastctx-job-stdout", move || {
                 let result = output::copy(output.stdout, log, output_limit, |bytes, lost| {
-                    let _ = sender.send(Event::Drained { stderr: false, bytes, lost });
+                    let _ = sender_out.send(Event::Drained { stderr: false, bytes, lost });
                 });
-                let _ = sender.send(Event::Output { stderr: false, result });
-            }));
-        }
-        #[cfg(unix)]
-        signals::stop_on_signal(stop_signals, sender.clone());
+                let _ = sender_out.send(Event::Output { stderr: false, result });
+            })?);
+            #[cfg(unix)]
+            signals::stop_on_signal(stop_signals, sender.clone())?;
+            Ok(())
+        })();
         drop(sender);
+        if let Err(error) = started {
+            drop(resume);
+            let cleanup = tree.kill();
+            for worker in workers {
+                let _ = worker.join();
+            }
+            return Err(match cleanup {
+                Ok(()) => io::Error::other(format!("starting the job's supervision: {error}")),
+                Err(cleanup) => io::Error::other(format!(
+                    "starting the job's supervision: {error}; stopping its processes also failed: {cleanup}"
+                )),
+            });
+        }
         let result = self.observe(&tree, &mut server, &mut events, streams, &checkpoints, &mut resume).await;
         drop(resume);
         if let Err(error) = &result {
@@ -363,6 +377,12 @@ async fn tell_node(world: &WorldDir, record: &JobRecord) {
     }
 }
 
+/// Starts a named thread, saying so when the system will not, rather than
+/// failing the supervisor.
+fn spawn(name: &str, work: impl FnOnce() + Send + 'static) -> io::Result<std::thread::JoinHandle<()>> {
+    std::thread::Builder::new().name(name.into()).spawn(work)
+}
+
 #[cfg(unix)]
 mod signals {
     use std::io;
@@ -395,8 +415,11 @@ mod signals {
         Ok(())
     }
 
-    pub fn stop_on_signal(set: libc::sigset_t, sender: tokio::sync::mpsc::UnboundedSender<super::Event>) {
-        std::thread::spawn(move || {
+    pub fn stop_on_signal(
+        set: libc::sigset_t,
+        sender: tokio::sync::mpsc::UnboundedSender<super::Event>,
+    ) -> std::io::Result<()> {
+        super::spawn("fastctx-job-signal", move || {
             let result = wait(&set).map(|info| {
                 // SAFETY: the kernel filled in who sent the signal.
                 let (pid, uid) = unsafe { (info.si_pid(), info.si_uid()) };
@@ -406,7 +429,8 @@ mod signals {
                 }
             });
             let _ = sender.send(super::Event::Stop(result));
-        });
+        })
+        .map(drop)
     }
 
     /// One of the blocked signals, as the kernel describes it.

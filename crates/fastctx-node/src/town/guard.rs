@@ -63,7 +63,15 @@ pub fn start(node: &Arc<Node>) -> io::Result<()> {
             let _ = changed.send(None);
         }
     });
-    watcher.watch(&towns, notify::RecursiveMode::Recursive).map_err(io::Error::other)?;
+    // Only the ledger's own folders: whatever else a town holds spends no
+    // watches.
+    watcher
+        .watch_within(&towns, |relative| {
+            let mut parts = relative.components();
+            parts.next();
+            parts.next().is_none_or(|part| matches!(part.as_os_str().to_str(), Some("ledger" | "journals" | "specs")))
+        })
+        .map_err(io::Error::other)?;
     let node = node.clone();
     tokio::spawn(async move {
         let _watcher = watcher;

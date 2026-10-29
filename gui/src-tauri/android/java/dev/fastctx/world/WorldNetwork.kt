@@ -72,13 +72,22 @@ class WorldNetwork(private val context: Context) {
         override fun onReceive(context: Context, intent: Intent) = changed()
     }
 
+    /** Follows the phone's networks. Should a step fail, what was followed is let go, so trying
+     *  again does not leave a second set of callbacks behind. */
     fun start() {
-        manager.registerNetworkCallback(NetworkRequest.Builder()
-            .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
-            .addCapability(NetworkCapabilities.NET_CAPABILITY_NOT_VPN).build(), physical)
-        manager.registerDefaultNetworkCallback(defaults)
-        if (Build.VERSION.SDK_INT >= 33) context.registerReceiver(proxy, IntentFilter(Proxy.PROXY_CHANGE_ACTION), Context.RECEIVER_NOT_EXPORTED)
-        else context.registerReceiver(proxy, IntentFilter(Proxy.PROXY_CHANGE_ACTION))
+        try {
+            manager.registerNetworkCallback(NetworkRequest.Builder()
+                .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+                .addCapability(NetworkCapabilities.NET_CAPABILITY_NOT_VPN).build(), physical)
+            manager.registerDefaultNetworkCallback(defaults)
+            if (Build.VERSION.SDK_INT >= 33) context.registerReceiver(proxy, IntentFilter(Proxy.PROXY_CHANGE_ACTION), Context.RECEIVER_NOT_EXPORTED)
+            else context.registerReceiver(proxy, IntentFilter(Proxy.PROXY_CHANGE_ACTION))
+        } catch (error: RuntimeException) {
+            runCatching { manager.unregisterNetworkCallback(physical) }
+            runCatching { manager.unregisterNetworkCallback(defaults) }
+            runCatching { context.unregisterReceiver(proxy) }
+            throw error
+        }
     }
 
     fun choices(target: String): String {

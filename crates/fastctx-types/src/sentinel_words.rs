@@ -33,6 +33,8 @@ pub const NO_MODEL: &str =
 pub const NO_KEY: &str =
     "the sentinels' model has no key yet; the user enters it in the Fastctx app, under Features > Sentinels";
 pub const NEED_CONVERSATION: &str = "a conversation registers a sentinel for itself";
+pub const ON_ITS_MACHINE: &str =
+    "a sentinel is registered on the machine the conversation lives on; run fastctx sense there, not inside on";
 pub const CHOOSE_ACCOUNT: &str = "choose the sentinel account with --as and its hub with --hub";
 pub fn home_unavailable(status: &crate::sentinel_settings::HomeStatus) -> String {
     use crate::sentinel_settings::HomeStatus;

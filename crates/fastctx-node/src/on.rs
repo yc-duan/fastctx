@@ -434,6 +434,25 @@ async fn there(
         None => crate::attachments::follow::known(node, &origin.resident),
         Some(_) => Vec::new(),
     };
+    // A machine from before attachments went with a script runs it and
+    // leaves them behind, saying nothing: one the script reaches for them
+    // on is asked to upgrade instead.
+    if !attachments.is_empty()
+        && tokio::fs::read_to_string(&request.package.script).await.is_ok_and(|script| script.contains("attachments"))
+    {
+        match link
+            .call(&machine, &account, Purpose::Look, RemoteCall::Facts)
+            .await
+            .map_err(crate::authorization::call_failure)??
+        {
+            RemoteReply::Facts(facts) if facts.attachment_runs => {}
+            _ => {
+                return Err(Failure::not_run(format!(
+                    "upgrade {machine} to have the conversation's attachments go with a script there"
+                )));
+            }
+        }
+    }
     let call = RemoteCall::On {
         origin: origin.clone(),
         sizes,

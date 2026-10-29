@@ -25,9 +25,15 @@ static ACTIVITY_READY: AtomicBool = AtomicBool::new(false);
 static VISIBLE: std::sync::LazyLock<tokio::sync::watch::Sender<bool>> =
     std::sync::LazyLock::new(|| tokio::sync::watch::channel(false).0);
 
+/// Starts the device connection, once: what is published for the rest of
+/// the process is published only when all of it started, so a start that
+/// failed, as on a full disk, can be tried again.
 fn start(directory: PathBuf, bridge: Arc<bridge::Bridge>) -> Result<(), String> {
+    if WORLD.get().is_some() {
+        return Ok(());
+    }
     fastctx_platform::ensure_private_dir(&directory).map_err(|error| error.to_string())?;
-    fastctx_net::android::install(bridge.clone())?;
+    fastctx_net::android::install(bridge.clone());
     let runtime = tokio::runtime::Runtime::new().map_err(|error| error.to_string())?;
     let world = {
         let _entered = runtime.enter();

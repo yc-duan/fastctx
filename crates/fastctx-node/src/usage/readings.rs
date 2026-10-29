@@ -43,8 +43,16 @@ pub(super) fn merge(
             known.push(incoming);
             continue;
         };
+        // A lower reading held from another period is no second word on
+        // this one.
+        let mut forget = |name: &str| {
+            if let Some(lowered) = lowered.as_deref_mut() {
+                lowered.remove(name);
+            }
+        };
         match (old.resets_at, incoming.resets_at) {
             (Some(a), Some(b)) if same(a, b) && incoming.since.is_some() && incoming.since != old.since => {
+                forget(&old.name);
                 *old = incoming;
             }
             (Some(a), Some(b))
@@ -65,9 +73,11 @@ pub(super) fn merge(
                 }
             }
             (Some(a), Some(b)) if b < a => {}
-            (_, Some(_)) => *old = incoming,
             // Without a reset identifier, only a newer observation can establish recovery.
-            (_, None) => *old = incoming,
+            (_, Some(_)) | (_, None) => {
+                forget(&old.name);
+                *old = incoming;
+            }
         }
     }
     known.sort_by(|a, b| a.name.cmp(&b.name).then(a.minutes.cmp(&b.minutes)));

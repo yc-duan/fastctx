@@ -598,6 +598,7 @@ pub fn facts(node: &Node) -> MachineFacts {
         mcp_import: true,
         page_accounts: true,
         attachment_places: true,
+        attachment_runs: true,
         memory_folders: true,
         collaboration_tree: true,
         shell: shell(),

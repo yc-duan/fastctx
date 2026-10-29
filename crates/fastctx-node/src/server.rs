@@ -17,6 +17,9 @@ use fastctx_types::{Address, Call, MachineName, NoticeId, Reply, ResidentId, Tow
 use crate::Node;
 use crate::town::caller::{self, Caller};
 
+/// How long a new connection may wait before it says hello.
+const HELLO: std::time::Duration = std::time::Duration::from_secs(60);
+
 pub async fn serve(node: Arc<Node>, connection: Connection) {
     if let Err(error) = converse(&node, connection).await {
         node.log.line(format_args!("a connection ended in error: {error}"));
@@ -25,7 +28,12 @@ pub async fn serve(node: Arc<Node>, connection: Connection) {
 
 async fn converse(node: &Arc<Node>, connection: Connection) -> std::io::Result<()> {
     let (mut reader, mut writer) = connection.split();
-    let Some(hello) = reader.recv().await? else {
+    // A client that connects and says nothing holds a descriptor for as long
+    // as it is let: it has a minute to say who it is.
+    let hello = tokio::time::timeout(HELLO, reader.recv())
+        .await
+        .map_err(|_| std::io::Error::new(std::io::ErrorKind::TimedOut, "the client said nothing for a minute"))?;
+    let Some(hello) = hello? else {
         return Ok(());
     };
     let envelope: serde_json::Value = parse(&hello)?;

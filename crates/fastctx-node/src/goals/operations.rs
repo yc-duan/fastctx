@@ -183,9 +183,12 @@ pub(crate) async fn call_held(
                             _ => None,
                         })
                         .unwrap_or(Owner::User);
+                    // The goal it serves. A read that failed is not taken for
+                    // no goal: the opening fails and is asked again, since a
+                    // goal opened without its parent would stay without it.
                     let parent = match &owner {
                         Owner::Conversation { address } => {
-                            read(node, address, &account).await.ok().and_then(|view| view.goal).map(|goal| goal.id)
+                            read(node, address, &account).await?.goal.map(|goal| goal.id)
                         }
                         Owner::User => None,
                     };

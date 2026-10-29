@@ -3186,8 +3186,23 @@ if (live) {
 // again when the window comes to the front, and asked once when it was
 // never chosen.
 if (live) {
-  accountLayer.attach(liveLayer);
+  accountLayer.attach(
+    liveLayer(() => {
+      const [first] = loginsOf(store.world.peek()?.accounts);
+      return first ? { hub: first.hubName, account: first.account } : null;
+    }),
+  );
   addEventListener("focus", () => void accountLayer.refresh());
+  // Which account the mode is read for is known once the logins are: the
+  // first read may have come before them.
+  let readFor = "";
+  effect(() => {
+    const [first] = loginsOf(store.world.get()?.accounts);
+    const login = first ? `${first.hubName}/${first.account}` : "";
+    if (login === readFor) return;
+    readFor = login;
+    void accountLayer.refresh();
+  });
   let asked = false;
   effect(() => {
     if (!accountLayer.known.get() || accountLayer.chosen.get() !== null || asked) return;

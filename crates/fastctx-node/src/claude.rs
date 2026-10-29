@@ -204,7 +204,15 @@ pub fn start(node: &Arc<Node>) -> std::io::Result<()> {
         }
     });
     watcher.watch(&sessions, notify::RecursiveMode::Recursive).map_err(std::io::Error::other)?;
-    watcher.watch(&conversations, notify::RecursiveMode::Recursive).map_err(std::io::Error::other)?;
+    // A conversation's own folder holds its jobs' scratch, where a build can
+    // make thousands of directories: only its Claude sessions are gone into.
+    watcher
+        .watch_within(&conversations, |relative| {
+            let mut parts = relative.components();
+            parts.next();
+            parts.next().is_none_or(|part| part.as_os_str() == "claude")
+        })
+        .map_err(std::io::Error::other)?;
     let node = node.clone();
     tokio::spawn(async move {
         // Kept for as long as the node watches.
@@ -386,6 +394,12 @@ async fn look(node: &Arc<Node>, directory: &Path) {
     };
     if let Err(error) = policy(node, &resident, directory) {
         node.log.line(format_args!("publishing Claude session policy for {session}: {error}"));
+        return;
+    }
+    // A session the user opened on their own, as one registered before the
+    // World kept to that line, is known for its run and nothing more: its
+    // record and controls are not the World's to read (`world-layers.md`).
+    if node.residents.about(&resident).is_none_or(|(about, _)| !about.world_managed()) {
         return;
     }
     if let Err(error) = titles::start(node, &resident, directory).await {

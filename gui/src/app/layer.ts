@@ -22,10 +22,18 @@ export interface LayerSeam {
   write(layer: LayerName): Promise<LayerName | null>;
 }
 
-export const liveLayer: LayerSeam = {
-  read: () => invoke<Chosen>("layer_read", {}).then((chosen) => chosen.layer ?? null),
-  write: (layer) => invoke<Chosen>("layer_set", { layer }).then((chosen) => chosen.layer ?? null),
-};
+/** The layer as the node keeps it, for the account `scope` names: with
+ *  several logged in, the one the settings are kept for. */
+export function liveLayer(scope: () => { hub: string; account: string } | null): LayerSeam {
+  const at = () => {
+    const chosen = scope();
+    return { hub: chosen?.hub ?? null, account: chosen?.account ?? null };
+  };
+  return {
+    read: () => invoke<Chosen>("layer_read", at()).then((chosen) => chosen.layer ?? null),
+    write: (layer) => invoke<Chosen>("layer_set", { ...at(), layer }).then((chosen) => chosen.layer ?? null),
+  };
+}
 
 class AccountLayer {
   /** None until the account chooses. */

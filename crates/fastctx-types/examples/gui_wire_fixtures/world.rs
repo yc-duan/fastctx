@@ -324,6 +324,7 @@ fn nodes() -> Vec<NodesReply> {
         mcp_import: true,
         page_accounts: true,
         attachment_places: true,
+        attachment_runs: true,
         memory_folders: false,
         collaboration_tree: false,
         completion_receipts: false,

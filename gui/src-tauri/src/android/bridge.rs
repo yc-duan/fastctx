@@ -124,8 +124,10 @@ pub extern "system" fn Java_dev_fastctx_world_WorldRuntime_startNative(
             vm: env.get_java_vm().map_err(|error| error.to_string())?,
             runtime: env.new_global_ref(object).map_err(|error| error.to_string())?,
         });
-        BRIDGE.set(bridge.clone()).map_err(|_| "Android bridge was already started")?;
-        super::start(directory.into(), bridge)
+        super::start(directory.into(), bridge.clone())?;
+        // Kept once started; one started before stays.
+        let _ = BRIDGE.set(bridge);
+        Ok::<(), String>(())
     })();
     result(&mut env, start.err())
 }
