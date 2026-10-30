@@ -76,6 +76,15 @@ export class ActivityPage implements Page {
   private day: number;
   private gathered: Gathered = empty();
   private yearHours: Counted[] = [];
+  /** Which reading of the year `yearHours` is. */
+  private yearRead = 0;
+  /** The year's figures as last drawn, and what they were drawn from: the
+   *  hand-drawn calendar and rhythm are drawn again only when that changes,
+   *  not each time the page is (every few seconds, and on every change in
+   *  the World). */
+  private figures = new Map<string, { from: string; svg: string }>();
+  /** What the page shows, as last written. */
+  private written = "";
   /** Deeds of days older than the span read, read for the timeline. */
   private daysRead = new Map<number, Gathered>();
   private picked: { job: string; machine: string } | null = null;
@@ -224,6 +233,7 @@ export class ActivityPage implements Page {
     const hours: Counted[] = [];
     for (const answer of answers) if (answer.kind === "hours") for (const hour of answer.hours) hours.push({ ...hour, machine: answer.machine });
     this.yearHours = hours;
+    this.yearRead += 1;
     if (this.view === "calendar" || this.view === "rhythm" || this.view === "spread") this.draw();
   }
 
@@ -300,7 +310,13 @@ export class ActivityPage implements Page {
         break;
     }
     const away = this.gathered.away.length ? `<p class="ay-away" title="${escape(this.options.words.unanswered(this.gathered.away.join(", ")))}">${glyph("info", 14)}<span>${escape(this.options.words.unanswered(this.gathered.away.join(", ")))}</span></p>` : "";
-    this.body.innerHTML = html + away;
+    // The same page again is left as it stands, its figures unlaid.
+    if (html + away === this.written && this.body.firstChild) {
+      this.drawCard();
+      return;
+    }
+    this.written = html + away;
+    this.body.innerHTML = this.written;
     const scroller = this.body.querySelector<HTMLElement>(".ay-scroll");
     if (scroller) scroller.scrollTop = scroll;
     this.drawCard();
@@ -367,16 +383,29 @@ export class ActivityPage implements Page {
   private drawCalendar(): string {
     const { words } = this.options;
     const today = dayOf(this.now());
-    const days = byDay(this.yearHours);
-    const drawn = year({ width: Math.min(this.width, 1100), height: this.height - 24, days, today, words, date: words.date, month: words.month, seed: "year" });
-    return `<div class="ay-figure ay-calendar">${drawn.svg}</div>`;
+    const width = Math.min(this.width, 1100);
+    const svg = this.figure("calendar", `${width}|${this.height}|${today}|${this.yearRead}`, () => {
+      const days = byDay(this.yearHours);
+      return year({ width, height: this.height - 24, days, today, words, date: words.date, month: words.month, seed: "year" }).svg;
+    });
+    return `<div class="ay-figure ay-calendar">${svg}</div>`;
   }
 
   private drawRhythm(): string {
-    const grid = byHourOfWeek(this.yearHours, this.now());
     const width = Math.min(this.width, 1100);
     const height = Math.max(200, Math.min(this.height - 24, Math.round(width * 0.42)));
-    return `<div class="ay-figure ay-rhythm-box">${rhythm(width, height, grid, this.options.words, "week")}</div>`;
+    const svg = this.figure("rhythm", `${width}|${height}|${dayOf(this.now())}|${this.yearRead}`, () => rhythm(width, height, byHourOfWeek(this.yearHours, this.now()), this.options.words, "week"));
+    return `<div class="ay-figure ay-rhythm-box">${svg}</div>`;
+  }
+
+  /** A year's figure, drawn again only where what it is drawn `from` has
+   *  changed since it was last. */
+  private figure(name: string, from: string, draw: () => string): string {
+    const kept = this.figures.get(name);
+    if (kept?.from === from) return kept.svg;
+    const svg = draw();
+    this.figures.set(name, { from, svg });
+    return svg;
   }
 
   private drawSpread(): string {
