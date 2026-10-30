@@ -61,10 +61,11 @@ pub(super) struct KeptAgent {
     /// Codex's limits as last read or pushed, for each login.
     #[serde(default)]
     pub limits: Vec<KeptLimits>,
-    /// Codex login directories the World names new conversations in; kept
-    /// apart from the login list, which a rescan rebuilds.
+    /// Codex login directories the World does not name new conversations
+    /// in: naming is on unless turned off there (2026-10-30). Kept apart from
+    /// the login list, which a rescan rebuilds.
     #[serde(default)]
-    pub titled: Vec<PathBuf>,
+    pub untitled: Vec<PathBuf>,
 }
 
 /// What a login's agent said when last asked. Which program the login

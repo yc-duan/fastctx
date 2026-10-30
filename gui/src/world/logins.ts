@@ -61,7 +61,7 @@ export interface Login {
    *  for approvals; granted with the tools. Read for listed logins only. */
   unattended?: boolean;
   /** Codex: whether the World names new conversations in it the way the
-   *  official client does. Off unless turned on. */
+   *  official client does. On unless turned off. */
   auto_title?: boolean;
   /** The program the World starts for it. */
   launcher?: Launcher;
