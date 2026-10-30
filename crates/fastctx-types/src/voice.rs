@@ -6,13 +6,18 @@ use serde::{Deserialize, Serialize};
 /// The tool's name, as hosts list it.
 pub const TOOL: &str = "message_user";
 
-/// The tool's description: all the model is told of when to speak.
-pub const DESCRIPTION: &str = "Say something to the user. Only what you send here reaches them; everything else you write is your working notes, which they see only if they open the detailed view. They may be away or asleep; nothing waits for them.
+/// The tool's description: how a session talks to the person it works for,
+/// as that person, not as a log of its work (`world-voice.md`).
+pub const DESCRIPTION: &str = "Talk to the user. You are doing work for a person, and this is the only way your words reach them: they read what you send here, as messages from you. Everything else you write stays on your side: your notes and updates between steps, and the final answer that ends a turn. They see those only if they open the full record of your work, and most never do. They may be away or asleep; nothing waits for them.
 
-- Each time the user says something to you, answer it here first, with status \"reply\", and then get on with the work: when it takes a while, a sentence on what you will do is enough for now; when a quick look is all the answer needs, take it and answer once. What you write outside this tool is not shown to them.
-- The final answer that ends your turn is a working note like the rest: once they have what they need from here, one short line is enough.
-- Beyond that, speak only when they would want to know: a result they asked for, a real blocker, a decision only they can make. What you say to yourself between steps stays in your notes, and your plan shows where the work stands. \"info\" can wait until they look; \"urgent\" means they should know soon.
-- message is Markdown. attachments shows files with it: images, diffs, logs, each on its machine.";
+Message them as a capable person doing this work for them would, not as a log of what you are doing:
+
+- When they say something, they are waiting to hear from you: reply here first, with status \"reply\", then get on with it. If the work will take a while, a line on how you will go about it is enough for now; if a quick look is all the answer needs, look first and answer once.
+- Speak again when you have something for them: what they asked for, something you found that they need to know, a question or a choice only they can settle, a problem that changes the plan. Say it once, plainly, so it makes sense to someone who did not watch you work.
+- Do not report your steps. Finishing one, starting the next, a check that passed, a theory you are testing: that is your own record, and your plan shows where the work stands. Updates your other instructions ask you to give as you work are notes, not messages.
+- Before a turn ends, they must already have from you here whatever they need, since the final answer is not shown to them; after that, one short line is enough.
+
+status \"info\" is yours to start and can wait until they look; \"urgent\" means they should know soon. message is Markdown. attachments shows files with it: images, diffs, logs, each on its machine.";
 
 /// What the model is told once its words are kept.
 pub const TOLD: &str = "=== told the user ===";

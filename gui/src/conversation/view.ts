@@ -1340,7 +1340,7 @@ export class ConversationView {
     if (slot.acts!.innerHTML !== acts) slot.acts!.innerHTML = acts;
     // In a turn that said something to the user, its other words are its
     // working notes, in the quieter ink (`world-voice.md`).
-    slot.element.classList.toggle("say-notes", this.conversation.spokeIn(entry.turn));
+    slot.element.classList.toggle("say-notes", this.conversation.spokeIn(entry.turn) && !this.answers(entry));
   }
 
   /** Words the agent said to the user: its answer, set as its words are,
@@ -1366,7 +1366,7 @@ export class ConversationView {
             .map((file) => `<li><a class="say-file" href="#" data-file="${escape(file.path)}" data-file-machine="${escape(file.machine)}">${glyph("file", 16)}<span class="say-file-name">${escape(nameOf(file))}</span></a></li>`)
             .join("")}</ul>`
         : "");
-    const last = !this.context.nested && this.conversation.lastSayOf(say.turn) === say.key && this.conversation.turnEnded(say.turn);
+    const last = !this.context.nested && this.conversation.lastSayOf(say.turn) === say.key && this.conversation.turnEnded(say.turn) && !this.conversation.answersAfterSaying(say.turn);
     // The mark opens the first line, where it is read first.
     const body = render(say.text);
     const marked = mark && body.startsWith("<p>") ? `<p>${mark}${body.slice(3)}` : `${mark}${body}`;
@@ -1564,7 +1564,14 @@ export class ConversationView {
   /** Whether a message is the last its turn said, where what was done to
    *  the turn is offered. */
   private lastOfTurn(entry: ProseEntry): boolean {
-    return entry.prose === "message" && this.conversation.lastMessageOf(entry.turn) === entry.key && !this.conversation.spokeIn(entry.turn);
+    return entry.prose === "message" && this.conversation.lastMessageOf(entry.turn) === entry.key && (!this.conversation.spokeIn(entry.turn) || this.conversation.answersAfterSaying(entry.turn));
+  }
+
+  /** Whether a message answers the user though its turn spoke through
+   *  `message_user`: the final words of a turn that went on working after
+   *  it last spoke (`Conversation.answersAfterSaying`). */
+  private answers(entry: ProseEntry): boolean {
+    return entry.prose === "message" && this.conversation.lastMessageOf(entry.turn) === entry.key && this.conversation.answersAfterSaying(entry.turn);
   }
 
   /** The turn whose actions stay shown: the last that ended. */

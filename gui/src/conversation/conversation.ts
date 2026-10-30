@@ -434,7 +434,7 @@ export class Conversation {
         case "heard":
           return !block.notice && (!block.from || block.from.kind === "user");
         case "prose":
-          return block.prose === "message" && asked.has(block.turn) && !spoke.has(block.turn) && this.turnEnded(block.turn) && this.lastMessageOf(block.turn) === block.key;
+          return block.prose === "message" && asked.has(block.turn) && (!spoke.has(block.turn) || this.answersAfterSaying(block.turn)) && this.turnEnded(block.turn) && this.lastMessageOf(block.turn) === block.key;
         case "ended":
           return block.end.how === "failed" && asked.has(block.turn);
         default:
@@ -490,6 +490,18 @@ export class Conversation {
    *  `message_user`: the rest of that turn's words are its working notes. */
   spokeIn(turn: string): boolean {
     return this.foldOf(turn)?.spokeIn(turn) ?? false;
+  }
+
+  /** Whether `turn` went on working after the last thing it said to the
+   *  user and ended in words of its own: those words are its answer too,
+   *  said after it, as a model's that said it would look and then wrote
+   *  what it found as its final words (`world-voice.md`, 漏了怎么办). */
+  answersAfterSaying(turn: string): boolean {
+    const fold = this.foldOf(turn);
+    if (!fold?.spokeIn(turn) || !this.turnEnded(turn)) return false;
+    const mine = fold.entries.filter((entry) => "turn" in entry && entry.turn === turn);
+    const after = mine.slice(mine.findLastIndex((entry) => entry.kind === "tool" && !!sayOf(entry)) + 1);
+    return after.some((entry) => entry.kind === "tool") && after.some((entry) => entry.kind === "prose" && entry.prose === "message");
   }
 
   // What the page asks, as of one conversation.
@@ -656,12 +668,16 @@ export class Conversation {
   /** All a turn said, as it was written. */
   turnAnswer(turn: string): string {
     const fold = this.foldOf(turn);
-    // A turn that said something to the user answered with that.
+    // A turn that said something to the user answered with that, and with
+    // its final words where it went on working after the last of it.
     if (fold?.spokeIn(turn)) {
-      return fold.entries
+      const said = fold.entries
         .flatMap((entry) => (entry.kind === "tool" && entry.turn === turn ? [sayOf(entry)] : []))
-        .flatMap((say) => (say ? [say.text] : []))
-        .join("\n\n");
+        .flatMap((say) => (say ? [say.text] : []));
+      const final = this.lastMessageOf(turn);
+      const words = this.answersAfterSaying(turn) ? fold.entries.find((entry): entry is ProseEntry => entry.kind === "prose" && entry.key === final) : undefined;
+      if (words) said.push(words.text);
+      return said.join("\n\n");
     }
     return (fold?.entries ?? [])
       .filter((entry): entry is ProseEntry => entry.kind === "prose" && entry.prose === "message" && entry.turn === turn)
