@@ -466,6 +466,53 @@ pre code {
   font-style: normal;
 }
 
+/* A check box, the interface's own rather than the system's: a small solid
+   square a shade deeper than what it sits on, no line round it; checked,
+   filled with the accent and ticked in the page's colour, as a switch that
+   is on. One hidden to make a whole row the control stays hidden. */
+input[type="checkbox"] {
+  appearance: none;
+  flex: none;
+  display: inline-grid;
+  place-content: center;
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  border-radius: 4px;
+  background: var(--fill-strong);
+  vertical-align: -3px;
+  cursor: pointer;
+  transition: background-color var(--quick) var(--ease-out);
+}
+
+input[type="checkbox"]::after {
+  content: "";
+  width: 10px;
+  height: 10px;
+  background: var(--bg);
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 10'%3E%3Cpath d='M1.6 5.3 4 7.6 8.6 2.4' fill='none' stroke='black' stroke-width='1.7' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center / contain no-repeat;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 10'%3E%3Cpath d='M1.6 5.3 4 7.6 8.6 2.4' fill='none' stroke='black' stroke-width='1.7' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center / contain no-repeat;
+  visibility: hidden;
+}
+
+input[type="checkbox"]:checked {
+  background: var(--accent);
+}
+
+input[type="checkbox"]:checked::after {
+  visibility: visible;
+}
+
+input[type="checkbox"]:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+input[type="checkbox"]:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
 /* A switch: a track the knob slides along, filled with the accent when on.
    It sits inside the control that carries role="switch" and aria-checked. */
 .switch-track {

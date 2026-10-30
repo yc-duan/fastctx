@@ -183,12 +183,14 @@ export class ProjectActs {
     confirm.ask({
       title: words.transferTitle(name),
       what: words.transferWhat,
-      fields: `<label class="field"><span class="field-label">${escape(words.transferTo)}</span><select name="to" required>${others
-        .map((account) => `<option value="${escape(account.name)}">${escape(account.name)}</option>`)
-        .join("")}</select></label>`,
+      // The accounts it can go to, one of them chosen: a column of rows,
+      // the chosen one washed, scrolling in itself where there are many.
+      fields: `<fieldset class="field transfer-field"><legend class="field-label">${escape(words.transferTo)}</legend><div class="transfer-choices">${others
+        .map((account, index) => `<label class="choice map-card-choice"><input type="radio" name="to" value="${escape(account.name)}"${index === 0 ? " checked" : ""}><span>${escape(account.name)}</span></label>`)
+        .join("")}</div></fieldset>`,
       go: words.transferGo,
       act: async () => {
-        const to = document.querySelector<HTMLSelectElement>("dialog[open].confirm-sheet select[name=to]")?.value;
+        const to = document.querySelector<HTMLInputElement>("dialog[open].confirm-sheet input[name=to]:checked")?.value;
         if (to) await change(hold.login, { change: "move_project", town, to });
       },
       done: () => void store.refresh(),

@@ -27,6 +27,7 @@ import { agentName, titleOf } from "../world/names";
 import { accountOf, homeChoice, homeLabel, homesOf, listed, usableHome, type HomeWords } from "./agent-homes";
 import type { FeaturesWords } from "./features-words";
 import { layerOpened } from "./back";
+import { ActsMenu } from "./acts-menu";
 import type { Confirm } from "./confirm";
 import { link, type Feature } from "./places";
 import { detailOf } from "./problem";
@@ -46,6 +47,10 @@ import type { Built, Shape } from "../film/reel";
  *  only as `collab.rs` lets it. */
 const COLLABORATION_READY = true;
 import { watchFilm } from "../film/theater";
+
+/** The menu a callee's choices open in, one for every page. */
+let shared: ActsMenu | null = null;
+const menuOf = (): ActsMenu => (shared ??= new ActsMenu());
 
 export interface FeaturesOptions {
   store: Store;
@@ -447,6 +452,18 @@ export class FeaturesPage implements Page {
         this.draw();
         return;
       }
+      case "pick":
+        this.pick(button);
+        return;
+      case "screen": {
+        const callee = draft?.callees[Number(button.dataset.index)];
+        if (!callee) return;
+        callee.screen = !callee.screen;
+        button.setAttribute("aria-checked", String(callee.screen));
+        this.saved = false;
+        this.drawSave();
+        return;
+      }
       case "remove-callee":
         if (!draft) return;
         draft.callees.splice(Number(button.dataset.index), 1);
@@ -468,10 +485,44 @@ export class FeaturesPage implements Page {
     for (let n = 1; ; n += 1) if (!taken.has(n === 1 ? "gpt" : `gpt-${n}`)) return n === 1 ? "gpt" : `gpt-${n}`;
   }
 
+  /** The menu of a callee's logins or of its login's models, from its
+   *  button; what is picked changes the draft as typing does. */
+  private pick(button: HTMLElement): void {
+    const { words } = this.options;
+    const index = Number(button.dataset.index);
+    const callee = this.draft?.callees[index];
+    if (!callee) return;
+    const field = button.dataset.field;
+    if (field === "login") {
+      const entries = this.known
+        .map((known, at) => ({ known, at }))
+        .filter(({ known }) => known.login.agent === "codex")
+        .map(({ known, at }) => ({ act: String(at), label: known.label, checked: sameAgentLogin(known.login, callee.login) }));
+      menuOf().open(button, words.login, entries, (act) => {
+        const known = this.known[Number(act)];
+        if (!known || sameAgentLogin(known.login, callee.login)) return;
+        callee.login = known.login;
+        callee.model = null;
+        callee.effort = null;
+        this.saved = false;
+        this.draw();
+      });
+      return;
+    }
+    const models = this.known.find((one) => sameAgentLogin(one.login, callee.login))?.models ?? [];
+    const entries = [{ act: "", label: words.modelDefault, checked: !callee.model }, ...models.map((model) => ({ act: model.model, label: model.display_name, checked: callee.model === model.model }))];
+    menuOf().open(button, words.model, entries, (act) => {
+      if ((act || null) === callee.model) return;
+      callee.model = act || null;
+      this.saved = false;
+      this.draw();
+    });
+  }
+
   /** Text typed and choices made change the draft only; the page is drawn
    *  again for what depends on them (a login's models, the save button). */
   private input(event: Event): void {
-    const field = event.target as HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement;
+    const field = event.target as HTMLInputElement | HTMLTextAreaElement;
     const draft = this.draft;
     if (!draft || !field.dataset.field) return;
     const callee = field.dataset.index !== undefined ? draft.callees[Number(field.dataset.index)] : undefined;
@@ -481,24 +532,6 @@ export class FeaturesPage implements Page {
         break;
       case "use":
         if (callee) callee.use_when = field.value;
-        break;
-      case "login":
-        if (callee) {
-          const known = this.known[Number(field.value)];
-          if (known) callee.login = known.login;
-          callee.model = null;
-          callee.effort = null;
-          this.draw();
-        }
-        break;
-      case "model":
-        if (callee) {
-          callee.model = field.value || null;
-          this.draw();
-        }
-        break;
-      case "screen":
-        if (callee) callee.screen = (field as HTMLInputElement).checked;
         break;
       case "prompt":
         draft.prompt = field.value === this.view?.default_prompt ? null : field.value;
@@ -607,6 +640,10 @@ export class FeaturesPage implements Page {
           .join("")
       : `<p class="feature-quiet">${escape(words.noLogins)}</p>`;
     const codex = this.known.map((known, index) => ({ known, index })).filter(({ known }) => known.login.agent === "codex");
+    // A choice of several: what is chosen, pressed for the others in the
+    // interface's own menu.
+    const pick = (field: "login" | "model", index: number, value: string) =>
+      `<button class="callee-pick" type="button" data-act="pick" data-field="${field}" data-index="${index}" data-menu-key="callee-${field}-${index}" data-menu-align="start" aria-haspopup="menu" aria-expanded="false"><span class="callee-pick-value">${escape(value)}</span>${glyph("chevron", 12)}</button>`;
     const callees = collab.callees
       .map((callee, index) => {
         const at = codex.find(({ known }) => sameAgentLogin(known.login, callee.login));
@@ -615,14 +652,10 @@ export class FeaturesPage implements Page {
           <div class="callee-row"><label class="callee-field callee-name"><span>${escape(words.name)}</span><input type="text" value="${escape(callee.name)}" data-field="name" data-index="${index}" pattern="[a-z0-9-]+" title="${escape(words.namePattern)}" spellcheck="false" autocomplete="off" autocapitalize="off"></label>
             <button class="icon-button callee-remove" type="button" data-act="remove-callee" data-index="${index}" title="${escape(words.removeCallee)}" aria-label="${escape(words.removeCallee)}">${glyph("close", 16)}</button></div>
           <label class="callee-field"><span>${escape(words.useWhen)}</span><input type="text" value="${escape(callee.use_when)}" data-field="use" data-index="${index}"></label>
-          <label class="callee-field"><span>${escape(words.login)}</span><select data-field="login" data-index="${index}">${codex
-            .map(({ known, index: i }) => `<option value="${i}"${at?.index === i ? " selected" : ""}>${escape(known.label)}</option>`)
-            .join("")}${at ? "" : `<option selected disabled>${escape(`${callee.login.machine} ${callee.login.home ?? ""}`)}</option>`}</select></label>
-          <label class="callee-field"><span>${escape(words.model)}</span><select data-field="model" data-index="${index}"><option value=""${callee.model ? "" : " selected"}>${escape(words.modelDefault)}</option>${models
-            .map((model) => `<option value="${escape(model.model)}"${callee.model === model.model ? " selected" : ""}>${escape(model.display_name)}</option>`)
-            .join("")}</select></label>
+          <div class="callee-field"><span>${escape(words.login)}</span>${pick("login", index, at ? at.known.label : `${callee.login.machine} ${callee.login.home ?? ""}`)}</div>
+          <div class="callee-field"><span>${escape(words.model)}</span>${pick("model", index, models.find((model) => model.model === callee.model)?.display_name ?? (callee.model || words.modelDefault))}</div>
           <div class="callee-field"><span>${escape(words.effort)}</span><div class="callee-effort" data-index="${index}"></div></div>
-          <label class="callee-switch" title="${escape(words.screenSaid)}"><input type="checkbox" data-field="screen" data-index="${index}"${callee.screen ? " checked" : ""}><span>${escape(words.screen)}</span></label>
+          <button class="callee-switch" type="button" role="switch" aria-checked="${callee.screen}" data-act="screen" data-index="${index}" title="${escape(words.screenSaid)}"><span>${escape(words.screen)}</span><span class="switch-track" aria-hidden="true"><span class="switch-knob"></span></span></button>
         </li>`;
       })
       .join("");

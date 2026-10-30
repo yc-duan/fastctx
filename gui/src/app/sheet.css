@@ -871,3 +871,30 @@
 .program-sheet .sheet-title {
   overflow-wrap: anywhere;
 }
+
+/* Which account a project goes to: a column of the accounts, the chosen one
+   washed; many of them scroll in the column, the dialog's head and buttons
+   staying where they are. */
+.transfer-field {
+  min-width: 0;
+  margin-inline: 0;
+  margin-bottom: 0;
+  padding: 0;
+  border: 0;
+}
+
+.transfer-field > .field-label {
+  padding: 0;
+  margin-bottom: 6px;
+}
+
+.transfer-choices {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  max-height: min(40vh, 320px);
+  overflow-y: auto;
+  padding-inline: 10px;
+  scrollbar-width: thin;
+}
