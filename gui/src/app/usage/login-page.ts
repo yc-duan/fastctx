@@ -107,7 +107,7 @@ export class LoginUsagePage implements Page {
   private everyone = false;
   private width = 0;
   private height = 0;
-  private refitting = false;
+
   private drawn = "";
   /** The requests' panel, kept across drawings once it is first shown. */
   private calls: CallsList | null = null;
@@ -209,6 +209,7 @@ export class LoginUsagePage implements Page {
     this.head(login);
     let html: string;
     let context: CallsContext | null = null;
+    let panel: { html: string; draw(): string } | null = null;
     if (!options.workbench.peek()) {
       html = `<p class="feature-quiet">${escape(words.workbenchOff)}</p>`;
     } else if (!this.report) {
@@ -233,9 +234,12 @@ export class LoginUsagePage implements Page {
       const calls = tab === "calls";
       if (calls) context = this.callsContext(usage, mine, only, now);
       const foot = calls && !mine ? "" : `${this.where(went, unit)}${this.models(went, unit, amounts, only?.ink)}`;
+      const drawPanel = () => `<section class="ledger-panel">${this.narrow() ? this.panel(usage, tab, only, looked, caps, unit, amounts, now).replace('<div class="ledger-panel-head">', `<div class="ledger-panel-head">${this.unitSwitch(usage, tab)}`) : this.panel(usage, tab, only, looked, caps, unit, amounts, now)}</section>`;
+      const panelHtml = calls ? `<section class="ledger-panel" data-calls></section>` : drawPanel();
+      if (!calls) panel = { html: panelHtml, draw: drawPanel };
       html = `<div class="ledger-sheet${mine ? " alone" : ""}${calls ? " calls" : ""}">${this.strip(usage, login?.limits ?? null, unit, amounts, mine, only, caps, now)}
         ${this.tabs(usage, tab, mine, caps)}
-        ${calls ? `<section class="ledger-panel" data-calls></section>` : `<section class="ledger-panel">${this.narrow() ? this.panel(usage, tab, only, looked, caps, unit, amounts, now).replace('<div class="ledger-panel-head">', `<div class="ledger-panel-head">${this.unitSwitch(usage, tab)}`) : this.panel(usage, tab, only, looked, caps, unit, amounts, now)}</section>`}
+        ${panelHtml}
         ${foot}
         ${this.problem ? `<p class="feature-note ledger-problem" title="${escape(this.problem)}">${escape(words.failed)}</p>` : ""}</div>`;
     }
@@ -265,10 +269,12 @@ export class LoginUsagePage implements Page {
     // The figure's size is known once it is laid out: a first drawing at a
     // guess is drawn again, once, at the size it has.
     const figure = this.body.querySelector<HTMLElement>(".ledger-figure");
-    if (!this.refitting && figure && (Math.abs(figure.clientWidth - this.width) >= 1 || Math.abs(figure.clientHeight - this.height) >= 1)) {
-      this.refitting = true;
-      this.draw();
-      this.refitting = false;
+    if (panel && figure && (Math.abs(figure.clientWidth - this.width) >= 1 || Math.abs(figure.clientHeight - this.height) >= 1)) {
+      this.width = figure.clientWidth;
+      this.height = figure.clientHeight;
+      const fitted = panel.draw();
+      this.body.querySelector(".ledger-panel")!.outerHTML = fitted;
+      this.drawn = html.replace(panel.html, fitted);
     }
   }
 
