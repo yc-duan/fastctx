@@ -90,6 +90,11 @@ html.gripping-y * {
   background: var(--bg-sunken);
 }
 
+.shell > .sidebar-frame,
+.sidebar-frame::after {
+  --grip-ink: inherit;
+}
+
 .sidebar-frame::after {
   content: "";
   position: absolute;

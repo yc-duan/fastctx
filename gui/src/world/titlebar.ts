@@ -185,7 +185,20 @@ export async function connectTitlebar(options: {
     sizes.observe(document.documentElement);
     for (const element of document.querySelectorAll(selector)) sizes.observe(element);
   };
-  const mutations = new MutationObserver(() => {
+  // Only a change that can add, remove, hide or move a region asks for the
+  // geometry again: words streaming into a conversation and rows drawn in it
+  // hold no region, and following them kept the shell measuring every frame.
+  const touchesRegion = (record: MutationRecord) => {
+    if (record.type === "attributes") {
+      return record.attributeName === "data-world-titlebar" || (record.target instanceof Element && holdsRegion(record.target));
+    }
+    for (const nodes of [record.addedNodes, record.removedNodes]) {
+      for (const node of nodes) if (node instanceof Element && holdsRegion(node)) return true;
+    }
+    return false;
+  };
+  const mutations = new MutationObserver((records) => {
+    if (!records.some(touchesRegion)) return;
     observeSizes();
     schedule();
   });

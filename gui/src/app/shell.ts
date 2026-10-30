@@ -232,6 +232,9 @@ export class Shell {
       });
     }
     this.main.append(page.element);
+    // Where the page is the desk, the window's buttons stand on its paper
+    // (`side.css`): said once here rather than asked of the whole document.
+    document.documentElement.classList.toggle("on-desk", page.element.classList.contains("sp-host"));
     document.title = page.title ? `${page.title} - ${this.options.words.app}` : this.options.words.app;
     this.sidebar.draw();
   }

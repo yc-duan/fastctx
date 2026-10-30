@@ -143,10 +143,11 @@
 }
 
 /* How darkly a line between two parts of the window is drawn while it is
-   pointed at or dragged (`app/grip.ts`). */
+   pointed at or dragged (`app/grip.ts`). Not inherited: it is passed down
+   only to the line drawn, so its coming up restyles the line alone. */
 @property --grip-ink {
   syntax: "<number>";
-  inherits: true;
+  inherits: false;
   initial-value: 0;
 }
 
