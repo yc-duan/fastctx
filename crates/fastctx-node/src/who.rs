@@ -138,7 +138,13 @@ pub(crate) fn running_jobs(jobs: &Path, running: &mut Vec<RunningJob>) -> io::Re
         if path.extension().is_none_or(|extension| extension != "json") {
             continue;
         }
-        let job = record::read(&path)?;
+        let job = match record::read(&path) {
+            Ok(job) => job,
+            // Let go of since it was listed, as an ended job's record is: it
+            // runs no more, and the others are still read.
+            Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
+            Err(error) => return Err(error),
+        };
         if job.end.is_none() && !job.is_sentinel() {
             let account = job.on.and_then(|on| on.account).or(job.account);
             running.push(RunningJob {
