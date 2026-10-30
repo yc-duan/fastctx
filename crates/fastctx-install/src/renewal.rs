@@ -203,11 +203,18 @@ fn handed_over(root: &Path, entry: &Path) -> anyhow::Result<Option<FileLock>> {
         return Ok(None);
     }
     let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build()?;
-    if let Ok(fastctx_client::renewal::Probe::Running(node)) = runtime.block_on(fastctx_client::renewal::probe(&world))
+    if let Ok(fastctx_client::renewal::Probe::Running(node)) =
+        runtime.block_on(async { tokio::time::timeout(HANDOVER, fastctx_client::renewal::probe(&world)).await? })
         && !node.yielding
     {
         // Not answered, the successor still waits: the wait below says so.
-        let _ = runtime.block_on(fastctx_client::renewal::request(&world, fastctx_types::renewal::Action::Yield));
+        let _ = runtime.block_on(async {
+            tokio::time::timeout(
+                HANDOVER,
+                fastctx_client::renewal::request(&world, fastctx_types::renewal::Action::Yield),
+            )
+            .await
+        });
     }
     let began = std::time::Instant::now();
     while began.elapsed() < HANDOVER {
@@ -244,13 +251,8 @@ pub(crate) fn superseded(
     mut ending: impl FnMut(&fastctx_types::ProcessIdentity) -> anyhow::Result<()>,
 ) -> anyhow::Result<Option<FileLock>> {
     let plan = read(root)?;
-    let stuck = plan.as_ref().is_none_or(|plan| {
-        matches!(plan.phase, Phase::Complete | Phase::AwaitingAdministrator | Phase::Failed)
-            || (plan.phase == Phase::UpdatingGuardian && plan.error.is_some())
-    });
-    if !stuck {
-        return Ok(None);
-    }
+    // The caller owns the worker gate. A surviving coordinator can have been
+    // abandoned in any phase, including while returning to the boot service.
     let offered = crate::program::inspect(source)?;
     if let Some(plan) = &plan
         && plan.candidate.build != offered
@@ -377,7 +379,7 @@ fn stage_inner(root: &Path, source: &Path, repair: bool) -> anyhow::Result<Plan>
             Some(lock) => lock,
             // A handover still under way is left to finish (`world-upgrade.md`,
             // 没成的，自己再试): the program it hands over is joined.
-            None => match superseded(root, &entry, source, false, |_| Ok(()))? {
+            None => match superseded(root, &entry, source, repair, |_| Ok(()))? {
                 Some(lock) => lock,
                 None => {
                     return joined(
