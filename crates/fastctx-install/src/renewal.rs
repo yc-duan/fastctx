@@ -318,15 +318,21 @@ pub fn stage_repair(root: &Path, source: &Path) -> anyhow::Result<Plan> {
         .with_context(|| format!("staging repair {} for {}", source.display(), root.display()))
 }
 
-/// Asked for while a renewal is under way: one placing this same program is
-/// joined, as asking for it again is no failure; any other is left as it is.
-fn joined(root: &Path, source: &Path) -> anyhow::Result<Plan> {
+/// A renewal held the gate this one asked at: nothing was changed, and the
+/// same asked for again once that renewal lets go goes on.
+#[derive(Debug, thiserror::Error)]
+#[error("{0}")]
+pub struct Busy(&'static str);
+
+/// Asked for while a renewal holds a gate: one placing this same program is
+/// joined, whether it is under way, being tried again after a failure or
+/// done, as asking for it again is no failure; any other is left as it is,
+/// `busy` saying why.
+fn joined(root: &Path, source: &Path, busy: &'static str) -> anyhow::Result<Plan> {
     let offered = crate::program::inspect(source)?;
     match read(root)? {
-        Some(plan) if plan.candidate.build == offered && !matches!(plan.phase, Phase::Complete | Phase::Failed) => {
-            Ok(plan)
-        }
-        _ => anyhow::bail!("the World program is already being replaced; its plan was left unchanged"),
+        Some(plan) if plan.candidate.build == offered => Ok(plan),
+        _ => Err(Busy(busy).into()),
     }
 }
 
@@ -352,25 +358,39 @@ fn stage_inner(root: &Path, source: &Path, repair: bool) -> anyhow::Result<Plan>
                 .with_context(|| format!("opening renewal worker gate {}", worker.display()))?
             {
                 Some(lock) => lock,
-                None => return joined(root, source),
+                None => {
+                    return joined(
+                        root,
+                        source,
+                        "the World program is already being replaced; its plan was left unchanged",
+                    );
+                }
             }
         }
     };
     let entry = directory(root).join("node-entry.lock");
-    let _node_entry = match FileLock::try_acquire(&entry).with_context(|| format!("opening node entry gate {}", entry.display()))? {
+    let _node_entry = match FileLock::try_acquire(&entry)
+        .with_context(|| format!("opening node entry gate {}", entry.display()))?
+    {
         Some(lock) => lock,
         None => match handed_over(root, &entry)? {
             Some(lock) => lock,
-            None => superseded(root, &entry, source, false, |_| Ok(()))?.ok_or_else(|| {
-                anyhow::anyhow!(
-                    "the node is completing its program handover; it was asked to finish it, and its plan was left unchanged"
-                )
-            })?,
+            // A handover still under way is left to finish (`world-upgrade.md`,
+            // 没成的，自己再试): the program it hands over is joined.
+            None => match superseded(root, &entry, source, false, |_| Ok(()))? {
+                Some(lock) => lock,
+                None => {
+                    return joined(
+                        root,
+                        source,
+                        "the node is completing its program handover; it was asked to finish it, and its plan was left unchanged",
+                    );
+                }
+            },
         },
     };
-    let _activation = FileLock::try_acquire(&directory(root).join("activation.lock"))?.ok_or_else(|| {
-        anyhow::anyhow!("the World program is starting or being published; its plan was left unchanged")
-    })?;
+    let _activation = FileLock::try_acquire(&directory(root).join("activation.lock"))?
+        .ok_or(Busy("the World program is starting or being published; its plan was left unchanged"))?;
     let world = fastctx_types::layout::WorldDir::under(root);
     ensure_private_dir(world.path())
         .with_context(|| format!("preparing World directory {}", world.path().display()))?;

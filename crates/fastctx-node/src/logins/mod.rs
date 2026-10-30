@@ -58,6 +58,9 @@ pub(crate) struct Logins {
     /// The listed logins whose tools were not brought up to date by
     /// themselves, and why (`refresh`).
     drift: Mutex<Vec<(AgentName, PathBuf, fastctx_types::logins::Drift)>>,
+    /// Whether bringing them up to date waits for the World program's
+    /// replacement to be done (`refresh::replaced`).
+    after_replacement: AtomicBool,
     /// Asking again the logins whose sign-in changed, one round at a time
     /// (`sign_in`).
     asking: crate::ranked::LoginAsking,
