@@ -158,6 +158,11 @@ pub trait Node: Send + Sync + 'static {
     /// This machine's view of the directory may have changed: the link has
     /// just asked the hub.
     fn directory_changed(&self) {}
+    /// Only how a member is connected changed; the directory's authority and
+    /// project contents are unchanged. Implementations may retain a full refresh.
+    fn presence_changed(&self) {
+        self.directory_changed();
+    }
     /// An account record changed; consumers fetch the authoritative body as needed.
     fn account_record_changed(&self, _change: &fastctx_types::account_records::Changed) {}
     /// The hub calls this machine `to` now, no longer `from`.

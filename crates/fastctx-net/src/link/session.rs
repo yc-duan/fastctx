@@ -427,6 +427,9 @@ async fn connected(
                 }
             }
             inner.view_synced.store(generation, std::sync::atomic::Ordering::Release);
+            // Records may have changed while disconnected even when the directory
+            // itself is identical. Readers reconcile once this view is current.
+            let _ = inner.record_changes.send(None);
             // The directory and the initial status snapshot complete independently.
             inner.afoot_synced(generation);
             inner.versions_synced(generation);

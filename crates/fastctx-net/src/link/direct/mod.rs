@@ -209,7 +209,6 @@ impl Inner {
     /// Brings listening, linking and the calls being answered over links in
     /// line with the roster: run at the start and whenever the view changes.
     pub(crate) fn follow_view(self: &Arc<Self>) {
-        let _ = self.record_changes.send(None);
         let view = self.view();
         self.follow_listening(&view);
         self.follow_keepers(&view);
