@@ -148,6 +148,10 @@ pub(crate) async fn here(
         // it whole is told where the file is.
         Operation::Write { .. } => {
             let _ = (previous, scope);
+            // One assisting an account is not told the computer it runs on.
+            if crate::assists::host::kept(node, id)?.unwrap_or_else(|| crate::assists::assisting(node, &about.acting)) {
+                return Err(Failure::not_run(words::ASSISTED));
+            }
             return Err(Failure::not_run(words::file(&crate::plan_file::path(node, id), &node.machine())));
         }
     };
@@ -344,6 +348,13 @@ pub(crate) fn records_allowed(
         && matches!(caller, Caller::Resident(_) | Caller::Page(_))
     {
         return Err(Failure::refused(fastctx_sentinel::words::DIRECT_RECORD));
+    }
+    // Skills are the user's to write: a session reads them, never changes them.
+    if [fastctx_types::skills::KIND, fastctx_types::skills::INDEX_KIND].contains(&request.kind())
+        && matches!(request, Request::Write { .. } | Request::Delete { .. })
+        && matches!(caller, Caller::Resident(_) | Caller::Page(_))
+    {
+        return Err(Failure::refused(fastctx_types::skills::words::USER_ONLY));
     }
     if request.kind() != plan::KIND || matches!(request, Request::Read { .. } | Request::List { .. }) {
         return Ok(());

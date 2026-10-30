@@ -49,6 +49,9 @@ struct Sub {
     /// The last place it saw something moved away from, to pair with where
     /// it arrives.
     moving: Option<(u32, PathBuf)>,
+    /// The parts of its trees the system had no watches left for, looked at
+    /// every so often instead (`crate::poll`), for as long as it lives.
+    scanned: Option<crate::poll::Polling>,
 }
 
 /// A watched inode and every root it is watched for.
@@ -101,7 +104,7 @@ impl Subscription {
         static NEXT: AtomicU64 = AtomicU64::new(0);
         let hub = hub().map_err(notify::Error::io)?;
         let id = NEXT.fetch_add(1, Ordering::Relaxed);
-        hub.state().subscriptions.insert(id, Sub { handler, roots: Vec::new(), moving: None });
+        hub.state().subscriptions.insert(id, Sub { handler, roots: Vec::new(), moving: None, scanned: None });
         Ok(Self { hub, id })
     }
 
@@ -159,6 +162,21 @@ fn grow(state: &mut State, subscription: u64, index: usize, directory: &Path) ->
     Ok(())
 }
 
+/// Looks every so often at the tree under `path` of the root `index` of
+/// `subscription`, which the system had no watches left for as it grew or
+/// after it lost events: the watches it holds there go, and the looking
+/// tells of what changes under it, so nothing there goes unseen.
+fn scan_instead(state: &mut State, subscription: u64, index: usize, path: &Path) -> notify::Result<()> {
+    prune(state, |user| user.subscription == subscription && user.root == index && user.path.starts_with(path));
+    let sub = state.subscriptions.get_mut(&subscription).expect("a live subscription");
+    let root = sub.roots[index].clone();
+    let scanned = match &mut sub.scanned {
+        Some(scanned) => scanned,
+        None => sub.scanned.insert(crate::poll::Polling::new(sub.handler.clone())?),
+    };
+    scanned.watch(Root { path: path.to_path_buf(), ..root })
+}
+
 /// Stops the watches of the users `drop` picks, and every watch no one is
 /// left on.
 fn prune(state: &mut State, drop: impl Fn(&User) -> bool) {
@@ -206,9 +224,11 @@ fn route<'a>(state: &mut State, events: impl Iterator<Item = inotify::Event<&'a 
     let mut told = Told::new();
     let mut grown = Vec::new();
     let mut gone = Vec::new();
+    let mut overflowed = false;
     for event in events {
         if event.mask.contains(EventMask::Q_OVERFLOW) {
             told.extend(everyone(state, || Ok(Event::new(EventKind::Other).set_flag(Flag::Rescan))));
+            overflowed = true;
             continue;
         }
         if event.mask.contains(EventMask::IGNORED) {
@@ -294,8 +314,37 @@ fn route<'a>(state: &mut State, events: impl Iterator<Item = inotify::Event<&'a 
         let added = add(state, subscription, index, &path).and_then(|()| grow(state, subscription, index, &path));
         if let Err(error) = added {
             // What could not be watched is said, so the watcher looks again
-            // at what it holds.
-            told.push((state.subscriptions[&subscription].handler.clone(), Err(error)));
+            // at what it holds, and is looked at every so often from now on.
+            let handler = state.subscriptions[&subscription].handler.clone();
+            told.push((handler.clone(), Err(error)));
+            if let Err(error) = scan_instead(state, subscription, index, &path) {
+                told.push((handler, Err(error)));
+            }
+        }
+    }
+    // Events were lost: directories made meanwhile may have no watch yet.
+    // Each tree is followed again from its root; one the system has no
+    // watches left for is looked at instead.
+    if overflowed {
+        let trees: Vec<(u64, usize, PathBuf)> = state
+            .subscriptions
+            .iter()
+            .flat_map(|(id, sub)| {
+                sub.roots
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, root)| root.recursive)
+                    .map(|(index, root)| (*id, index, root.path.clone()))
+            })
+            .collect();
+        for (subscription, index, path) in trees {
+            if let Err(error) = grow(state, subscription, index, &path) {
+                let handler = state.subscriptions[&subscription].handler.clone();
+                told.push((handler.clone(), Err(error)));
+                if let Err(error) = scan_instead(state, subscription, index, &path) {
+                    told.push((handler, Err(error)));
+                }
+            }
         }
     }
     told

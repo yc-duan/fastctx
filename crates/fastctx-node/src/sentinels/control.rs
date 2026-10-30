@@ -118,6 +118,10 @@ pub(crate) async fn control(
     account: &AccountName,
     request: Request,
 ) -> Result<Reply, Failure> {
+    // Not offered in a release yet (`fastctx_platform::preview`).
+    if !fastctx_platform::preview() {
+        return Err(Failure::not_run(fastctx_types::sentinel_words::UNOFFERED));
+    }
     let scope = HubAccount { hub: link.membership().id.clone(), account: account.clone() };
     let records = node.sentinels.records()?;
     let homes = Transport(node.clone());
@@ -128,12 +132,20 @@ pub(crate) async fn control(
             // Without a home the help still reads true, and says what is missing first.
             let text = match settings.home {
                 Some(home) => words::HELP.replace("<machine>", home.as_str()),
-                None => format!("{}.\n\n{}", words::NO_HOME, words::HELP.replace("<machine>", "the machine the user chooses for them")),
+                None => format!(
+                    "{}.\n\n{}",
+                    words::NO_HOME,
+                    words::HELP.replace("<machine>", "the machine the user chooses for them")
+                ),
             };
             Ok(Reply::Help { text })
         }
         Request::Record { id, home, generation, held } => {
-            match homes.send_to(&scope, &home, HomeRequest::Record { id, generation, held }).await.map_err(Failure::new)? {
+            match homes
+                .send_to(&scope, &home, HomeRequest::Record { id, generation, held })
+                .await
+                .map_err(Failure::new)?
+            {
                 HomeReply::Record { record } => Ok(Reply::Record { record }),
                 _ => Err(Failure::new("the sentinel home answered another kind of call")),
             }
@@ -148,7 +160,9 @@ pub(crate) async fn control(
             match homes.send_to(&scope, &home, HomeRequest::Overview).await {
                 Ok(HomeReply::Overview { watched }) => Ok(Reply::Overview { watched, unavailable: Vec::new() }),
                 Ok(_) => Err(Failure::new("the sentinel home answered another kind of call")),
-                Err(error) => Ok(Reply::Overview { watched: Vec::new(), unavailable: vec![format!("{home}: {error}")] }),
+                Err(error) => {
+                    Ok(Reply::Overview { watched: Vec::new(), unavailable: vec![format!("{home}: {error}")] })
+                }
             }
         }
         Request::Create { mut request } => {

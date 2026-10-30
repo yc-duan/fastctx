@@ -5,8 +5,8 @@ use std::collections::HashSet;
 use std::sync::Arc;
 
 use fastctx_hosts::codex::CodexHost;
-use fastctx_types::session::{Happened, SessionChange, SessionEvent};
 use fastctx_net::watch_queue::{self, Events};
+use fastctx_types::session::{Happened, SessionChange, SessionEvent};
 
 pub fn recorded(recorded: Vec<SessionEvent>, hosted: &[SessionEvent]) -> Vec<SessionEvent> {
     let turns: HashSet<_> = hosted.iter().filter_map(|event| crate::talk::turn_of(&event.happened)).collect();
@@ -34,11 +34,7 @@ pub fn recorded(recorded: Vec<SessionEvent>, hosted: &[SessionEvent]) -> Vec<Ses
         .collect()
 }
 
-pub fn requests(
-    host: Arc<CodexHost>,
-    thread: String,
-    mut events: Events,
-) -> Events {
+pub fn requests(host: Arc<CodexHost>, thread: String, mut events: Events) -> Events {
     let (sender, receiver) = watch_queue::events();
     tokio::spawn(async move {
         loop {

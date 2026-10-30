@@ -263,10 +263,14 @@ fn after_compaction(node: Arc<Node>, id: ResidentId, mut row: PendingControl) {
     });
 }
 
+/// Controls done only between turns, waiting for the one under way: those
+/// that change what the session is, and a new name, which reaches into the
+/// host's own record of the session and is never written while the host
+/// writes it too.
 pub(crate) fn between_turns(control: &Control) -> bool {
-    matches!(control, Control::Compact | Control::Rewind { .. } | Control::Fork { .. })
+    matches!(control, Control::Compact | Control::Rewind { .. } | Control::Fork { .. } | Control::Rename { .. })
         || matches!(control, Control::Command { name, path: None, .. }
-            if matches!(name.as_str(), "compact" | "review" | "code-review" | "fork"))
+            if matches!(name.as_str(), "compact" | "review" | "code-review" | "fork" | "rename"))
 }
 
 pub(crate) fn busy(node: &Node, id: &ResidentId) -> Result<bool, Failure> {

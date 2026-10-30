@@ -11,6 +11,14 @@ use std::path::{Path, PathBuf};
 /// runs: in `.fastctx-dev`, off the PATH, looking for no new versions.
 pub const RELEASED: bool = option_env!("FASTCTX_RELEASE").is_some();
 
+/// Whether the features not offered in a release yet run here: sentinels,
+/// project memory and goals. Their code is kept and a development build
+/// runs them; a release offers none of them to the user or the model, and
+/// runs them only where `FASTCTX_PREVIEW` is set (`world.md`, 这一版不发的).
+pub fn preview() -> bool {
+    !RELEASED || std::env::var_os("FASTCTX_PREVIEW").is_some()
+}
+
 /// Whether this program takes part in its networks' versions, looking for
 /// new releases and telling its hubs what it runs: a release does, and a
 /// development build only in a drill whose `FASTCTX_UPDATE_RELEASES` names

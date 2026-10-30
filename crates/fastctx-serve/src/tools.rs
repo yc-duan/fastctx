@@ -107,6 +107,7 @@ fn run_definition(writes_off: bool, woken: bool, codex: bool, machines: Option<&
     // A session the World holds keeps its projects, pages, plan and
     // sentinels; one the user opened on their own is given `run` alone
     // (`world-layers.md`).
+    let sense = if woken && fastctx_platform::preview() { RUN_COMMANDS_SENSE } else { "" };
     let held = if woken { RUN_COMMANDS_HELD } else { "" };
     let ends = if woken { RUN_ENDS_WOKEN } else { RUN_ENDS_ASKED };
     let exec = if codex { RUN_EXEC } else { "" };
@@ -126,7 +127,7 @@ fn run_definition(writes_off: bool, woken: bool, codex: bool, machines: Option<&
     json!({
         "name": "run",
         "description": format!(
-            "{exec}{}\n\n{RUN_SHELL}{RUN_START}\n{RUN_SHELL_REST}{ends}\n\nFiles:\n{paths}{RUN_FILES}{writing}{RUN_COPY}\n\n{}\n\n{}\n\n{RUN_COMMANDS}{held}",
+            "{exec}{}\n\n{RUN_SHELL}{RUN_START}\n{RUN_SHELL_REST}{ends}\n\nFiles:\n{paths}{RUN_FILES}{writing}{RUN_COPY}\n\n{}\n\n{}\n\n{RUN_COMMANDS}{held}{sense}",
             opening(machines),
             run_on(writes_off),
             run_together(writes_off),
@@ -275,7 +276,10 @@ More commands (`--help` on each gives all its options):
 const RUN_COMMANDS_HELD: &str = "
 - `fastctx project` lists the user's projects and shows their records. A fastctx project is not a folder or a repository but a named piece of work that can span several machines; its record says what it is for and where its code and data are on each. `fastctx project enter NAME` makes you work in one; enter one only when the user tells you which project to work on.
 - `fastctx page` publishes an HTML page the user opens in the World app.
-- `fastctx plan` shows this conversation's plan, which is a Markdown file your instructions name: change it as any file.
+- `fastctx plan` shows this conversation's plan, which is a Markdown file your instructions name: change it as any file.";
+
+/// Sentinels, not offered in a release yet (`fastctx_platform::preview`).
+const RUN_COMMANDS_SENSE: &str = "
 - `fastctx sense` leaves a sentinel to wait for something and wake you when it happens.";
 
 fn ask_colleague_definition(collab: &fastctx_types::collab::Offered) -> Value {

@@ -188,6 +188,7 @@ pub async fn control(node: &Arc<Node>, resident: &ResidentId, mut control: Contr
                 return Err(Failure::new("a conversation name cannot be empty"));
             }
             codex.rename(&thread, &name).await.map_err(|error| error.failure())?;
+            crate::codex::titled(node, resident, name).await;
             Ok(Controlled::Done { said: None })
         }
         Control::Fork { through, side } => {
@@ -208,6 +209,9 @@ pub async fn control(node: &Arc<Node>, resident: &ResidentId, mut control: Contr
             ))
         }
         Control::Command { name, args, path: None } if name == "goal" => {
+            if !fastctx_platform::preview() {
+                return Err(Failure::not_run(fastctx_types::goals::words::UNOFFERED));
+            }
             done(&codex.goal(&thread, &args).await.map_err(Failure::new)?.to_string())
         }
         Control::Command { name, args, path: None } if name == "debug-config" => {

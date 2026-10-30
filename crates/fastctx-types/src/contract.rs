@@ -147,9 +147,7 @@ impl RemoteCall {
                     crate::sentinel_control::HomeRequest::Inspect { .. }
                     | crate::sentinel_control::HomeRequest::Record { .. }
                     | crate::sentinel_control::HomeRequest::Overview,
-            } => {
-                Contract { within: Some(Duration::from_secs(90)), ..Contract::QUERY }
-            }
+            } => Contract { within: Some(Duration::from_secs(90)), ..Contract::QUERY },
             Self::SentinelHome { request: crate::sentinel_control::HomeRequest::Withdraw { .. } } => Contract::CONTROL,
             Self::SentinelControl { .. } | Self::SentinelHome { .. } => Contract::START,
             Self::SentinelSettings { change: None } => {
@@ -312,7 +310,7 @@ impl Call {
     pub fn on_leaving(&self) -> Leaving {
         match self {
             Self::Composer { request: crate::composer::Request::Read, .. } => Leaving::Stop,
-            Self::DoctorCalls | Self::PlanRead { .. } => Leaving::Stop,
+            Self::DoctorCalls | Self::PlanRead { .. } | Self::Skill { .. } => Leaving::Stop,
             Self::Plan { .. } | Self::PlanWrite { .. } => Leaving::Finish,
             Self::AccountRecords {
                 request: crate::account_records::Request::Read { .. } | crate::account_records::Request::List { .. },

@@ -26,12 +26,11 @@ no sentence, it is a plain alarm.
 
 Your sentinels are in `fastctx w`; `fastctx stop <id>` removes one.
 "#;
+pub const UNOFFERED: &str = "Sentinels are not available in this version of Fastctx.";
 pub const NO_HOME: &str =
-    "sentinels are not turned on for this account; the user turns them on in the Fastctx app, under Features > Sentinels";
-pub const NO_MODEL: &str =
-    "sentinels have no model yet; the user chooses one in the Fastctx app, under Features > Sentinels";
-pub const NO_KEY: &str =
-    "the sentinels' model has no key yet; the user enters it in the Fastctx app, under Features > Sentinels";
+    "sentinels are not turned on for this account; the user turns them on in the Fastctx app's settings";
+pub const NO_MODEL: &str = "sentinels have no model yet; the user chooses one in the Fastctx app's settings";
+pub const NO_KEY: &str = "the sentinels' model has no key yet; the user enters it in the Fastctx app's settings";
 pub const NEED_CONVERSATION: &str = "a conversation registers a sentinel for itself";
 pub const ON_ITS_MACHINE: &str =
     "a sentinel is registered on the machine the conversation lives on; run fastctx sense there, not inside on";
@@ -40,7 +39,7 @@ pub fn home_unavailable(status: &crate::sentinel_settings::HomeStatus) -> String
     use crate::sentinel_settings::HomeStatus;
     match status {
         HomeStatus::Unset | HomeStatus::Ready => NO_HOME.to_string(),
-        HomeStatus::Forbidden => "this account may no longer use the machine its sentinels live on; the user chooses another in the Fastctx app, under Features > Sentinels".into(),
+        HomeStatus::Forbidden => "this account may no longer use the machine its sentinels live on; the user chooses another in the Fastctx app's settings".into(),
         HomeStatus::Offline => "the machine the sentinels live on is offline; a sentinel can be left once it is back".into(),
         HomeStatus::TooOld => "the machine the sentinels live on runs an earlier release; update it to leave a sentinel".into(),
         HomeStatus::Unavailable { reason } => format!("the machine the sentinels live on cannot be asked now: {reason}"),
@@ -87,18 +86,30 @@ pub fn notification(observation: &crate::sentinel_notice::SentinelNotice, now: j
     use crate::sentinel_notice::Event;
     let (what, reason, evidence) = match &observation.event {
         Event::Alarm { .. } => ("alarm time reached", "", &[][..]),
-        Event::Satisfied {reason,evidence} => ("condition satisfied", reason.as_str(), evidence.as_slice()),
-        Event::Unable {reason} => ("unable to watch",reason.as_str(), &[][..]),
+        Event::Satisfied { reason, evidence } => ("condition satisfied", reason.as_str(), evidence.as_slice()),
+        Event::Unable { reason } => ("unable to watch", reason.as_str(), &[][..]),
     };
-    let late=now.as_millisecond().saturating_sub(observation.due.as_millisecond()).max(0)/1000;
-    let mut text=format!("=== sentinel {} on {}: {what} at {}; {late}s late ===\n",observation.sentinel,observation.machine,observation.at);
-    if !observation.condition.is_empty() {text.push_str(&format!("Watching: {}\n",observation.condition));}
-    if !observation.tell.is_empty() {text.push_str(&format!("Your note: {}\n",observation.tell));}
-    if !reason.is_empty() {text.push_str(reason);text.push('\n');}
+    let late = now.as_millisecond().saturating_sub(observation.due.as_millisecond()).max(0) / 1000;
+    let mut text = format!(
+        "=== sentinel {} on {}: {what} at {}; {late}s late ===\n",
+        observation.sentinel, observation.machine, observation.at
+    );
+    if !observation.condition.is_empty() {
+        text.push_str(&format!("Watching: {}\n", observation.condition));
+    }
+    if !observation.tell.is_empty() {
+        text.push_str(&format!("Your note: {}\n", observation.tell));
+    }
+    if !reason.is_empty() {
+        text.push_str(reason);
+        text.push('\n');
+    }
     for seen in evidence {
         let at = jiff::Timestamp::from_millisecond(seen.at).map_or_else(|_| seen.at.to_string(), |at| at.to_string());
-        text.push_str(&format!("{} at {at}: {}\n",seen.source,seen.text.chars().take(2048).collect::<String>()));
-        if let Some(path)=&seen.full_path {text.push_str(&format!("Full observation on {}: {path}\n",observation.machine));}
+        text.push_str(&format!("{} at {at}: {}\n", seen.source, seen.text.chars().take(2048).collect::<String>()));
+        if let Some(path) = &seen.full_path {
+            text.push_str(&format!("Full observation on {}: {path}\n", observation.machine));
+        }
     }
     text
 }

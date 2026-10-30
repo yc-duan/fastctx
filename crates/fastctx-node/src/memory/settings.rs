@@ -9,6 +9,10 @@ pub(crate) fn enabled_for(
     acting: &fastctx_types::access::Acting,
     town: &fastctx_types::TownName,
 ) -> Result<bool, Failure> {
+    // Not offered in a release yet, it is off whatever the account chose.
+    if !fastctx_platform::preview() {
+        return Ok(false);
+    }
     let place = crate::ledger::names::place(&node.world, town).map_err(|error| Failure::new(error.to_string()))?;
     let Some(link) = place.and_then(|place| node.link_of(&place.hub)) else {
         return fastctx_net::link::state::read_or::<Settings>(

@@ -3,7 +3,7 @@
 
 use std::sync::Arc;
 
-use fastctx_types::access::{HubAccount, HubId};
+use fastctx_types::access::{Acting, HubAccount, HubId};
 use fastctx_types::ipc::Failure;
 use fastctx_types::project::{Record, RecordFields, Stamp, record_path};
 use fastctx_types::{AccountName, HubName, MachineName, ProjectCall, Reply, TownName};
@@ -33,12 +33,7 @@ pub async fn call(node: &Arc<Node>, caller: &Caller, call: ProjectCall) -> Resul
         }
         ProjectCall::Show { town } => {
             let town = caller.town_or(node, town)?;
-            map::query(node, &town).await?;
-            let Some((mut record, opened)) = blocking(node, &town, read::current).await? else {
-                return Err(map::no_ledger(node, &town));
-            };
-            seen(node, caller, &town, &mut record)?;
-            Ok(Reply::Record { town, record: Box::new(record), opened })
+            show_for(node, &town, &crate::around::acting_of(node, caller)).await
         }
         ProjectCall::Map { town } => {
             let town = caller.town_or(node, town)?;
@@ -50,6 +45,17 @@ pub async fn call(node: &Arc<Node>, caller: &Caller, call: ProjectCall) -> Resul
         }
         ProjectCall::Enter { town } => super::enter::call(node, caller, town).await,
     }
+}
+
+/// The current record of `town`, as whoever works for `acting` may know it.
+pub(crate) async fn show_for(node: &Arc<Node>, town: &TownName, acting: &Acting) -> Result<Reply, Failure> {
+    map::query(node, town).await?;
+    let Some((mut record, opened)) = blocking(node, town, read::current).await? else {
+        return Err(map::no_ledger(node, town));
+    };
+    crate::ledger::query::seen(node, acting, town, &mut record)
+        .map_err(|error| Failure::new(format!("reading the project {town}: {error}")))?;
+    Ok(Reply::Record { town: town.clone(), record: Box::new(record), opened })
 }
 
 /// Opens a town: the first version of its record, in the account it is

@@ -1078,8 +1078,13 @@ async fn locate(node: &Arc<Node>, id: &ResidentId) -> Result<Written, Failure> {
     if node.residents.about(id).is_some() {
         return Ok(node.machine().into());
     }
+    // Not here and no hub to ask: where it is cannot be known now, which
+    // says nothing of its being deleted unless it was deleted here.
     if !node.connected_anywhere() {
-        return Err(crate::forget::gone(node, id));
+        if node.residents.deleted(id).is_some() {
+            return Err(crate::forget::gone(node, id));
+        }
+        return Err(Failure::unanswered(format!("{id} is not on {} and no network is there to ask", node.machine())));
     }
     crate::colleagues::find_for(node, &Acting::Here, id).await
 }

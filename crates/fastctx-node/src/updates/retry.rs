@@ -45,6 +45,17 @@ pub(super) fn begin(node: &Node, version: &str) -> Option<u32> {
     Some(held.attempt.delay.attempts)
 }
 
+/// Gives back the attempt reserved for `version`, as while it waits for
+/// someone to sign in: a node started again meanwhile begins it at once and
+/// waits again, rather than an hour on.
+pub(super) fn give_back(node: &Node, version: &str) {
+    let mut held = node.updates.held.lock().expect("never poisoned");
+    if held.attempt.version.as_deref() == Some(version) && held.attempt.failed.is_none() {
+        held.attempt.delay.next = None;
+        save(node, &held.attempt);
+    }
+}
+
 pub(super) fn complete(node: &Node, version: &str) {
     let mut held = node.updates.held.lock().expect("never poisoned");
     let taken = |candidate: &str| release(version).is_some() && release(version) >= release(candidate);

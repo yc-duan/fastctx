@@ -4,6 +4,7 @@
 /// only through the goal command's own restricted state transitions.
 pub const DIRECT_RECORD: &str = "A goal is changed through the goal command, not by writing its account record.";
 pub const NO_GOAL: &str = "This conversation has no goal.";
+pub const UNOFFERED: &str = "Goals are not available in this version of Fastctx.";
 pub const BLANK_GOAL: &str = "The goal cannot be empty.";
 pub const BLANK_STATEMENT: &str = "Complete and blocked require a nonempty statement file.";
 pub const RETIRED: &str = "This conversation's goal ended when the conversation left the World.";

@@ -243,10 +243,14 @@ fn rank_work(group: &Path) -> io::Result<()> {
                 .and_then(|value| value.trim().parse::<i32>().ok())
                 .is_some_and(|score| score < 300)
             {
+                // One gone meanwhile, or one this account may not rank (another
+                // user's, or one that is not dumpable), is passed over: it
+                // holds back neither the rest nor the reclaiming after them.
                 match fs::write(path, "300") {
                     Ok(()) => {}
                     Err(error)
-                        if matches!(error.kind(), io::ErrorKind::NotFound) || error.raw_os_error() == Some(3) => {}
+                        if matches!(error.kind(), io::ErrorKind::NotFound | io::ErrorKind::PermissionDenied)
+                            || matches!(error.raw_os_error(), Some(1 | 3)) => {}
                     Err(error) => return Err(error),
                 }
             }

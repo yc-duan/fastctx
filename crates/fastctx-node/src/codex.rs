@@ -48,7 +48,9 @@ pub async fn adopt(node: &Arc<Node>) {
             let Some(node) = node.upgrade() else { return };
             let mut left = Vec::new();
             for id in failed {
-                let Some(resident) = node.residents.everyone().find(|resident| resident.about.id == id) else { continue };
+                let Some(resident) = node.residents.everyone().find(|resident| resident.about.id == id) else {
+                    continue;
+                };
                 if !adopt_one(&node, &resident, false).await {
                     left.push(id);
                 }
@@ -611,6 +613,18 @@ pub fn listen(node: Arc<Node>, mut events: mpsc::UnboundedReceiver<HostEvent>) {
 
 /// A resident whose thread the World holds moved to another town: when its
 /// thread is next resumed, it is told it lives there.
+/// A name given to a conversation's thread, kept at once: Codex tells of it
+/// only to a thread it is following, which one at rest after its turn is not.
+pub(crate) async fn titled(node: &Arc<Node>, id: &ResidentId, title: String) {
+    let event = fastctx_types::session::SessionEvent {
+        at: jiff::Timestamp::now(),
+        happened: fastctx_types::session::Happened::Titled { title },
+    };
+    if let Err(error) = crate::turns::apply(node, id, event).await {
+        node.log.line(format_args!("keeping {id}'s new name: {error}"));
+    }
+}
+
 pub async fn moved(node: &Arc<Node>, id: &ResidentId) {
     let Some((about, town)) = node.residents.about(id) else { return };
     if !about.world_started || about.host.agent.as_str() != "codex" {

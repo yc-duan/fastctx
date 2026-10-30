@@ -88,7 +88,6 @@ pub enum FieldName {
     Machine,
     Project,
     FirstWords,
-    Slug,
     Name,
     What,
     Machines,
@@ -1571,7 +1570,6 @@ impl Words {
             FieldName::Machine => self.pick("机器", "Machine"),
             FieldName::Project => self.pick("项目", "Project"),
             FieldName::FirstWords => self.pick("第一条消息", "First message"),
-            FieldName::Slug => self.pick("短名", "Short name"),
             FieldName::Name => self.pick("名称", "Name"),
             FieldName::What => self.pick("须知", "Instructions"),
             FieldName::Machines => self.pick("机器", "Machines"),
@@ -1590,7 +1588,6 @@ impl Words {
     pub fn hint(&self, field: FieldName) -> Option<&'static str> {
         Some(match field {
             FieldName::FirstWords => self.pick("Ctrl+J 换行", "Ctrl+J for a new line"),
-            FieldName::Slug => self.pick("例如 mark50", "e.g. mark50"),
             FieldName::Machines => self.pick("← → 移动 · Space 勾选", "← → move · Space tick"),
             FieldName::Places => self.pick("名称 | 机器 | 路径，每行一项", "name | machine | path, one per line"),
             FieldName::Canon => self.pick("机器 | 路径", "machine | path"),

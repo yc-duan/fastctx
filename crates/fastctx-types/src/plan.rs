@@ -87,6 +87,7 @@ pub mod words {
     }
     pub const RESIDENT: &str = "this command needs a resident conversation";
     pub const READ_ONLY: &str = "a colleague may read its requester's plan but cannot write a plan";
+    pub const ASSISTED: &str = "this conversation keeps no plan it can change";
     pub const READ_FIRST: &str = "read the plan with fastctx plan before writing it";
     pub const CONFLICT: &str = "the plan changed; read it with fastctx plan before writing again";
     pub const DELETED: &str = "this conversation's plan was deleted";

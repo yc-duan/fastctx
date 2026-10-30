@@ -127,6 +127,7 @@ mod run_receipts;
 mod run_stops;
 mod scratch;
 mod sentinels;
+mod skills;
 mod server;
 mod server_invitation;
 mod session_live;
@@ -773,8 +774,13 @@ pub async fn run_prepared(
     lifecycle::start(&node);
     recovery::start(&node, jobs_reconciled);
     timers::start(&node);
-    goals::start(&node);
-    sentinels::start(&node);
+    // Goals and sentinels are not offered in a release yet: what of them is
+    // kept stays as it is, driven by nothing.
+    if fastctx_platform::preview() {
+        goals::start(&node);
+        sentinels::start(&node);
+    }
+    skills::follow(&node);
     on_delivery::resume(&node);
     received::resume(&node);
     control_letters::resume(&node);

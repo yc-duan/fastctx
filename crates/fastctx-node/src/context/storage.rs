@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use super::{Change, Receipt, words};
 
 pub(super) const BLOCK_BYTES: usize = 16 * 1024;
-const BLOCK_COUNT: usize = 8;
+const BLOCK_COUNT: usize = 12;
 const FACT_BYTES: usize = 1024;
 
 #[derive(Serialize, Deserialize)]

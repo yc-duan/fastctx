@@ -23,6 +23,20 @@ pub(crate) fn assisting(node: &Node, acting: &Acting) -> bool {
     node.works_here(acting).is_err()
 }
 
+/// Whether a session here working for `acting` works only for this
+/// computer's own logins. What a host keeps across a login's sessions, such
+/// as Claude Code's memory of the folder they work in or Codex's memories,
+/// is shared by every session of the login: it is kept only for these, and
+/// never carried from one account's conversations into another's, as when a
+/// machine shared whole runs another account's (`world-network.md`).
+pub(crate) fn own_accounts(node: &Node, acting: &Acting) -> bool {
+    let Acting::Accounts { accounts } = acting else { return true };
+    accounts.iter().all(|account| {
+        node.link_of(&account.hub)
+            .is_some_and(|link| link.view().me().is_some_and(|me| me.logins.contains(&account.account)))
+    })
+}
+
 /// Whether this account may still use the conversation's login, without applying usage limits.
 pub(crate) fn permitted(
     node: &Node,

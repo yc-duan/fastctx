@@ -31,8 +31,11 @@ pub(super) fn plan_guide(path: &str, machine: &str) -> String {
 
 Your plan is the Markdown file {path} on {machine}. Plan your own work in it:
 what the work is, its steps in the order you will take them, what has been
-decided. Write it yourself, unasked, before you start anything that takes
-real effort, then work through it in that order. Change it as you change
+decided. Unless the user set the order, choose it yourself rather than
+taking things as they were mentioned: first what later steps depend on and
+what could lose data or carries the most risk, polish last. Write it
+yourself, unasked, before you start anything that takes real effort, then
+work through it in that order. Change it as you change
 any file, with `edit`, `write` or anything else, on {machine}; each change
 you save is its next version, which the user sees in a panel beside the
 conversation and can change too. The colleagues you ask can read it.
@@ -83,7 +86,7 @@ pub(super) const USER: &str = "The user";
 pub(super) const UNKNOWN: &str = "unknown conversation";
 pub(super) const UNAVAILABLE: &str = "the conversation is unavailable";
 pub(super) const INVALID_NAME: &str = "invalid context block name";
-pub(super) const TOO_MANY: &str = "a conversation can keep at most eight context blocks";
+pub(super) const TOO_MANY: &str = "a conversation can keep at most twelve context blocks";
 pub(crate) const REVISION_EXHAUSTED: &str = "context revision exhausted";
 pub(super) const EPOCH_EXHAUSTED: &str = "context epoch exhausted";
 pub(crate) const CODEX_PENDING: &str = "Codex has not made this thread's persisted context available";

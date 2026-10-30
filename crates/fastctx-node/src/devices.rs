@@ -176,11 +176,28 @@ pub async fn relay(node: &Arc<Node>, asker: &Asker, call: serde_json::Value) -> 
         view.admits(from, account, target, purpose).map_err(refuse)?;
     }
     let user = Peer::Command { resident: None, session: None };
+    // What a device is shown of a project is what its account may know of
+    // it, never what this machine's own accounts may (`world-network.md`,
+    // 项目也照同一个规矩).
+    let acting = fastctx_types::access::Acting::one(asker.hub.clone(), account.clone());
     let reply = match call {
         Call::Project(ProjectCall::Map { town: Some(town) }) => {
-            let acting = fastctx_types::access::Acting::one(asker.hub.clone(), account.clone());
             let map = crate::town::map::view(node, &town, &acting).await?;
             Reply::Map { map: Box::new(map) }
+        }
+        Call::Project(ProjectCall::List) => {
+            let towns = crate::ledger::query::list_for(node, &acting).await?;
+            Reply::Towns { towns: towns.into_iter().filter(|summary| may_use(&summary.town)).collect() }
+        }
+        Call::Project(ProjectCall::Show { town: Some(town) }) => {
+            crate::town::project::show_for(node, &town, &acting).await?
+        }
+        // Who changed a record is written into it: a device changes one
+        // through its hub, where it is known as itself.
+        Call::Project(ProjectCall::Edit { .. }) => {
+            return Err(refuse(
+                "a device changes a project through its hub; this version of the app is too old to".into(),
+            ));
         }
         Call::Page(mut call) => {
             if call.account().is_some_and(|selected| selected != account) {

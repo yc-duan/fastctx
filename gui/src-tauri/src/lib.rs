@@ -30,6 +30,7 @@ mod profile;
 mod repair_probe;
 mod startup;
 mod sentinels;
+mod skills;
 mod sentinel_controls;
 mod transcript;
 mod updates;
@@ -1222,6 +1223,10 @@ pub fn run() {
             sentinel_controls::sentinel_record,
             sentinel_controls::sentinel_overview,
             sentinels::sentinel_settings_read,
+            skills::skills_list,
+            skills::skill_read,
+            skills::skill_save,
+            skills::skill_delete,
             sentinels::sentinel_settings_write,
             sentinels::sentinel_key_set,
             profile::profile_read,

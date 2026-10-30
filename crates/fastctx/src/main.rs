@@ -41,6 +41,7 @@ mod repair;
 mod secret;
 mod self_update;
 mod sense;
+mod skill;
 mod server_install;
 mod service;
 #[cfg(windows)]
@@ -93,6 +94,8 @@ enum Command {
     Records(records::RecordsArgs),
     /// Leave a sentinel to wait for something.
     Sense(sense::SenseArgs),
+    /// Read one of the account's skills, by its name.
+    Skill(skill::SkillArgs),
     #[command(hide = true)]
     McpRelay { name: String },
     #[command(hide = true)]
@@ -437,6 +440,7 @@ fn main() -> ExitCode {
             | Command::Mcp(_)
             | Command::Profile(_)
             | Command::Plan(_)
+            | Command::Skill(_)
             | Command::Records(_)
             | Command::McpRelay { .. }
             | Command::McpChild { .. }
@@ -540,6 +544,7 @@ fn main() -> ExitCode {
         Command::Plan(args) => plan::run(args),
         Command::Records(args) => records::run(args),
         Command::Sense(args) => sense::run(args),
+        Command::Skill(args) => skill::run(args),
         Command::McpRelay { name } => mcp_relay::run(name),
         Command::McpChild { args } => mcp_child::run(args),
         Command::Serve { writer: _, writes } => serve(writes == "off"),

@@ -77,18 +77,41 @@ pub(crate) async fn prepare(
         crate::focus::refresh(node, id).await?;
     }
     local(node, id, town, acting).map_err(|error| Failure::new(error.to_string()))?;
-    plan_guide(node, id, origin).map_err(|error| Failure::new(error.to_string()))?;
+    // Skills are the account's; one whose hub cannot be asked now keeps what
+    // it was told, and the conversation goes on without waiting for it.
+    if let Err(failure) = skills(node, id, acting).await {
+        node.log.line(format_args!("telling {id} its skills: {}", failure.message));
+    }
+    plan_guide(node, id, origin, acting).map_err(|error| Failure::new(error.to_string()))?;
     crate::plan::context(node, id, origin, acting).await?;
     map(node, id, town, origin, acting).await?;
     storage::opening(&node.world, id).map_err(|error| Failure::new(error.to_string()))
 }
 
+/// The names and sentences of the skills of the account the conversation
+/// works for, as the "skills" block (`crate::skills`); kept as it was where
+/// the hub cannot be asked now.
+pub(crate) async fn skills(node: &Node, id: &ResidentId, acting: &Acting) -> Result<(), Failure> {
+    let Some(text) = crate::skills::context(node, acting).await else { return Ok(()) };
+    let change = Change { by: None, version: "", fact: &words::changed("skills", words::USER), full: true };
+    let set = if node.residents.about(id).is_some() {
+        super::set(node, id, "skills", &text, change)
+    } else {
+        storage::set(&node.world, id, "skills", &text, change)
+    };
+    set.map_err(|error| Failure::new(error.to_string()))
+}
+
 /// How to keep a plan, for a conversation that keeps its own; a colleague
 /// only reads the plan of the conversation that asked it, and a session the
-/// user opened outside Fastctx keeps none (`world-layers.md`).
-fn plan_guide(node: &Node, id: &ResidentId, origin: &Origin) -> io::Result<()> {
+/// user opened outside Fastctx keeps none (`world-layers.md`). Nor does one
+/// assisting an account: its plan file would be on the computer it runs on,
+/// which it has no hands on and is told nothing of (`world-plan.md`).
+fn plan_guide(node: &Node, id: &ResidentId, origin: &Origin, acting: &Acting) -> io::Result<()> {
     let own = node.residents.about(id).is_some_and(|(about, _)| !about.world_managed());
-    let text = if matches!(origin, Origin::Colleague { .. }) || own {
+    let assisted =
+        crate::assists::host::kept(node, id).ok().flatten().unwrap_or_else(|| crate::assists::assisting(node, acting));
+    let text = if matches!(origin, Origin::Colleague { .. }) || own || assisted {
         String::new()
     } else {
         let path = crate::plan_file::path(node, id).to_string_lossy().replace('\\', "/");

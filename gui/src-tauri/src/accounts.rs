@@ -172,7 +172,21 @@ pub(crate) async fn account_change(
     account_name: String,
     change: AccountChange,
 ) -> Result<Option<String>, String> {
-    shell.world().account(hub(hub_name)?, account(account_name)?, change).await.map_err(|error| error.to_string())
+    let logout = matches!(change, AccountChange::Logout);
+    let made = shell
+        .world()
+        .account(hub(hub_name)?, account(account_name)?, change)
+        .await
+        .map_err(|error| error.to_string())?;
+    // What this device kept of the conversations it showed was shown to the
+    // account it leaves as well: none of it is left for whoever logs in next.
+    if logout && let Some(cache) = shell.world().cache().cloned() {
+        tauri::async_runtime::spawn_blocking(move || cache.clear())
+            .await
+            .map_err(|error| error.to_string())?
+            .map_err(|error| format!("logged out; letting go of what this device kept: {error}"))?;
+    }
+    Ok(made)
 }
 
 /// Renames this computer `name`: on no hub here, on hubs through the one it

@@ -1,6 +1,6 @@
 //! Named context shared by both hosts. Setting a block never starts a turn.
 
-mod sources;
+pub(crate) mod sources;
 mod storage;
 mod updates;
 pub(crate) mod words;

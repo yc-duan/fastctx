@@ -248,6 +248,7 @@ async fn signed_in(
                 waiting = true;
                 node.updates.held.lock().expect("never poisoned").activity =
                     Some(fastctx_types::update::Stage::WaitingSignIn { version: manifest.version.clone() });
+                super::retry::give_back(node, &manifest.version);
                 super::report(node);
             }
             tokio::time::sleep(SIGN_IN_LOOK).await;

@@ -43,6 +43,24 @@ const RUNS: &[&str] = &[
     "url",
     "inf",
     "settingcontent-ms",
+    // Scripts an installed interpreter runs when opened: Python's own
+    // launcher, Git's bash and the like register these to run, not to show.
+    "py",
+    "pyw",
+    "pyc",
+    "pyo",
+    "pyz",
+    "pyzw",
+    "sh",
+    "bash",
+    "rb",
+    "rbw",
+    "pl",
+    "scf",
+    "jnlp",
+    "msu",
+    "diagcab",
+    "chm",
 ];
 
 /// Kinds macOS runs, or installs, when opened.

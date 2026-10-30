@@ -1786,22 +1786,49 @@ pub async fn open_here(
 /// its first turn having its login's turn: at once, or once one is free
 /// (`queued`).
 async fn launch(node: &Arc<Node>, id: &ResidentId) -> Result<Landed, Failure> {
+    let prepared = prepare_launch(node, id)?;
+    begin_launch(node, id, prepared).await
+}
+
+/// What starting a new conversation's session needs, read before anything is
+/// asked of Claude Code: a failure here has reached no host, and the first
+/// turn can be started again later as it stands.
+pub(super) struct Prepared {
+    program: PathBuf,
+    env: Vec<(OsString, OsString)>,
+    assisting: bool,
+    options: fastctx_types::agents::SessionOptions,
+    directory: ConversationDir,
+    mcp: PathBuf,
+    cwd: PathBuf,
+    first: Pending,
+    text: String,
+}
+
+pub(super) fn prepare_launch(node: &Arc<Node>, id: &ResidentId) -> Result<Prepared, Failure> {
     let (about, town) = node.residents.about(id).ok_or_else(|| Failure::new(format!("{id} was deleted")))?;
     let Command { program, env, .. } = command(node, about.home.as_deref())?;
     let assisting = crate::assists::host::starting(node, id, &about.acting)?;
     let options = crate::session_options::read(node, id)?;
     let directory = node.world.conversation(id);
-    let settings = directory.claude_settings();
-    let instructions = directory.claude_instructions();
     let mcp = crate::profile::session::claude(node, id, true)?;
     let cwd = crate::colleagues::standing(node, town.as_ref())?;
-    let plugin = claude::plugin_dir(node.world.path());
     let first = crate::inbox::pending(&directory)
         .map_err(|error| Failure::new(format!("reading {id}'s first words: {error}")))?
         .into_iter()
         .find(|pending| pending.state == PendingState::Waking)
         .ok_or_else(|| Failure::new(format!("{id}'s first words are no longer kept")))?;
     let text = self::words(&first.delivery.notice, Some(&node.machine())).0;
+    Ok(Prepared { program, env, assisting, options, directory, mcp, cwd, first, text })
+}
+
+/// Starts a prepared session with its first words: from here Claude Code is
+/// asked, and a failure is settled with the first words.
+pub(super) async fn begin_launch(node: &Arc<Node>, id: &ResidentId, prepared: Prepared) -> Result<Landed, Failure> {
+    let Prepared { program, env, assisting, options, directory, mcp, cwd, first, text } = prepared;
+    let settings = directory.claude_settings();
+    let instructions = directory.claude_instructions();
+    let plugin = claude::plugin_dir(node.world.path());
     node.claude.handing(id, &text);
     let world = node.world.path().to_path_buf();
     // Its first turn starts with its session, and waits for memory first

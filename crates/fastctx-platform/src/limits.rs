@@ -120,13 +120,22 @@ mod imp {
             }
             held.tasks += field("Threads:").and_then(|count| count.parse::<u64>().ok()).unwrap_or(1);
             let Ok(files) = std::fs::read_dir(format!("/proc/{pid}/fd")) else { continue };
+            // An instance is charged once however many descriptors a process
+            // holds of it: duplicates show the same position, flags and
+            // watches, so each distinct account of them is one instance.
+            // Distinct instances with no watches look alike and count once,
+            // which errs low only where nothing is watched.
+            let mut seen = std::collections::HashSet::new();
             for file in files.filter_map(Result::ok) {
                 if std::fs::read_link(file.path()).is_ok_and(|target| target.as_os_str() == "anon_inode:inotify") {
-                    held.instances += 1;
                     let info =
-                        std::fs::read_to_string(format!("/proc/{pid}/fdinfo/{}", file.file_name().to_string_lossy()));
-                    held.watches += info
-                        .map_or(0, |info| info.lines().filter(|line| line.starts_with("inotify wd:")).count() as u64);
+                        std::fs::read_to_string(format!("/proc/{pid}/fdinfo/{}", file.file_name().to_string_lossy()))
+                            .unwrap_or_default();
+                    if !seen.insert(info.clone()) {
+                        continue;
+                    }
+                    held.instances += 1;
+                    held.watches += info.lines().filter(|line| line.starts_with("inotify wd:")).count() as u64;
                 }
             }
         }

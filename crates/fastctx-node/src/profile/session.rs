@@ -150,6 +150,10 @@ pub(crate) fn claude(node: &Node, id: &ResidentId, creating: bool) -> Result<std
             settings[&key] = value;
         }
     }
+    if !crate::assists::own_accounts(node, &about.acting) {
+        settings["env"]["CLAUDE_CODE_DISABLE_AUTO_MEMORY"] = "1".into();
+        settings["autoMemoryEnabled"] = false.into();
+    }
     let assisting = crate::assists::host::starting(node, id, &about.acting)?;
     if assisting {
         let env = crate::claude::environment()?;

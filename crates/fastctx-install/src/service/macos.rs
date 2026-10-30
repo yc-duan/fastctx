@@ -45,6 +45,9 @@ pub(super) fn install(service: &Service) -> anyhow::Result<Status> {
         Err(error) => return Err(error.into()),
     };
     let target = target(service);
+    // Enabled first: launchd loads no service it holds disabled, as a held
+    // one is (`hold`), and enabling one not loaded only clears that mark.
+    launchctl(&["enable", &target])?;
     if before.as_deref() != Some(content.as_bytes()) {
         // A changed definition is loaded again; an unloaded one is not an
         // error here.
@@ -59,7 +62,6 @@ pub(super) fn install(service: &Service) -> anyhow::Result<Status> {
     } else if !loaded(&target) {
         bootstrap(service, &path)?;
     }
-    launchctl(&["enable", &target])?;
     // Started if it is not running; one that runs is left alone.
     launchctl(&["kickstart", &target])?;
     observed(service, true)

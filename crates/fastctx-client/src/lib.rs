@@ -44,6 +44,7 @@ pub mod pages;
 pub mod plans;
 mod profile;
 mod sentinels;
+mod skills;
 pub mod renewal;
 pub mod shown;
 mod thumbnail;

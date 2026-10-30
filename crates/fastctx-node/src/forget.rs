@@ -46,13 +46,16 @@ struct Ask {
     after: Option<ResidentId>,
 }
 
-/// What whoever asks about `resident`, which lives here no more, is told:
-/// that it was deleted, which asking again will not change.
+/// What whoever asks about `resident`, which is not here, is told: that it
+/// was deleted, which asking again will not change, only when its tombstone
+/// says so. Not found without one, it is only not here: the asker may have
+/// the wrong machine, or this one may have lost track of it, and neither is
+/// a deletion (`world-gui.md`, 对话什么时候算删了).
 pub(crate) fn gone(node: &Node, resident: &ResidentId) -> Failure {
-    Failure::deleted(match node.residents.deleted(resident) {
-        Some(at) => format!("{resident} was deleted from {} at {at}", node.machine()),
-        None => format!("no conversation {resident} is on {}", node.machine()),
-    })
+    match node.residents.deleted(resident) {
+        Some(at) => Failure::deleted(format!("{resident} was deleted from {} at {at}", node.machine())),
+        None => Failure::not_run(format!("no conversation {resident} is on {}", node.machine())),
+    }
 }
 
 /// The user asks, on this computer, that the conversation of `resident` on

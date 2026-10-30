@@ -875,7 +875,9 @@ pub fn heard(node: &Arc<Node>, id: &ResidentId, delivery: &Delivery, turn: &str)
             return;
         }
     }
-    // The user's first words name the conversation where its host does not.
+    // The user's first words name the conversation where its host does not,
+    // and a Codex conversation's login may make its title from them now,
+    // beside its first turn (`codex_title`).
     if matches!(from, Speaker::User { .. }) {
         let words = crate::turns::opening(&text, FIRST_WORDS_CHARS);
         if !words.is_empty()
@@ -884,6 +886,9 @@ pub fn heard(node: &Arc<Node>, id: &ResidentId, delivery: &Delivery, turn: &str)
             })
         {
             node.log.line(format_args!("recording {id}'s first words: {error}"));
+        }
+        if let Some((about, _)) = node.residents.about(id) {
+            crate::codex_title::maybe(node, id, &about);
         }
     }
     if let Some((about, _)) = node.residents.about(id)
@@ -974,6 +979,40 @@ pub async fn restore(node: &Arc<Node>) {
 pub async fn recover(node: &Arc<Node>) {
     let mut failed = Vec::new();
     for resident in node.residents.everyone() {
+        // What a Codex conversation was handed is settled from its thread,
+        // which its host may be slow to read: that waits for no other
+        // conversation and never holds the node from opening
+        // (`world-concurrency.md`, 收尾从不挡节点起来). Its own words wait
+        // meanwhile, its speaking held from now until it is settled.
+        if resident.about.host.agent.as_str() == "codex"
+            && resident.removed.is_none()
+            && crate::delivery::handovers(&node.world.conversation(&resident.id))
+                .is_ok_and(|handovers| !handovers.is_empty())
+            && let Some(speaking) = node.residents.speaking(&resident.id)
+        {
+            let held = speaking.lock_owned().await;
+            let node = node.clone();
+            tokio::spawn(async move {
+                // A few threads are read at once, however many wait.
+                let result = match SETTLING.acquire().await {
+                    Ok(_permit) => recover_held(&node, &resident, None).await,
+                    Err(error) => Err(std::io::Error::other(error.to_string())),
+                };
+                drop((held, speaking));
+                match result {
+                    Ok(waiting) => recovered(&node, resident, waiting),
+                    Err(error) => {
+                        node.log.line(format_args!(
+                            "recovering deliveries for {}; tried again in a minute: {error}",
+                            resident.id
+                        ));
+                        let before = std::time::SystemTime::from(node.started);
+                        recover_later(node, vec![resident.id], before).await;
+                    }
+                }
+            });
+            continue;
+        }
         match recover_one(node, &resident, None).await {
             Ok(waiting) => recovered(node, resident, waiting),
             Err(error) => {
@@ -988,6 +1027,10 @@ pub async fn recover(node: &Arc<Node>) {
         tokio::spawn(async move { recover_later(node, failed, before).await });
     }
 }
+
+/// How many Codex conversations are settled from their threads at once
+/// after a restart.
+static SETTLING: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(8);
 
 /// How long a conversation whose deliveries could not be recovered waits
 /// before they are tried again.
@@ -1023,13 +1066,50 @@ async fn recover_one(
     if resident.removed.is_some() {
         return Ok(None);
     }
-    let directory = node.world.conversation(&resident.id);
     let Some(speaking) = node.residents.speaking(&resident.id) else { return Ok(None) };
     let _guard = speaking.lock().await;
+    recover_held(node, resident, before).await
+}
+
+/// As `recover_one`, with the conversation's speaking held already.
+async fn recover_held(
+    node: &Arc<Node>,
+    resident: &crate::residents::OnRecord,
+    before: Option<std::time::SystemTime>,
+) -> std::io::Result<Option<Pending>> {
+    if resident.removed.is_some() {
+        return Ok(None);
+    }
+    let directory = node.world.conversation(&resident.id);
     let handovers = crate::delivery::handovers(&directory)?;
     let covered: std::collections::BTreeSet<NoticeId> =
         handovers.iter().flat_map(|handover| handover.inputs.iter().map(|input| input.delivery.id.clone())).collect();
     for mut handover in handovers {
+        // Tried again, what binding left half done before is finished: a
+        // submission the node before this one began, its turn found but its
+        // settling cut short. Binding again changes nothing done already; a
+        // Codex turn found in its thread, which nothing runs since the
+        // restart, is ended as its thread says.
+        if let Some(turn) = handover.turn.clone()
+            && before.is_some()
+            && handover.unresolved.is_none()
+            && crate::delivery::written_before(&directory, &handover.id, before)?
+        {
+            if resident.about.host.agent.as_str() == "codex" && crate::delivery::terminal(&directory, &turn)?.is_none()
+            {
+                // Its thread unread this time, it is tried again later.
+                if !crate::codex::submitted::found(node, resident, &directory, &mut handover).await? {
+                    return Err(std::io::Error::other(format!(
+                        "the Codex thread holding turn {turn} could not be read"
+                    )));
+                }
+            } else {
+                bind(node, &resident.id, &directory, &mut handover, &turn)
+                    .await
+                    .map_err(|error| std::io::Error::other(error.message))?;
+            }
+            continue;
+        }
         if handover.turn.is_none()
             && (handover.attempting || handover.unresolved.is_some())
             && crate::delivery::written_before(&directory, &handover.id, before)?

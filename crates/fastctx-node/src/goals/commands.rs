@@ -60,6 +60,9 @@ pub(crate) async fn route(
     turn: Option<String>,
     request: AgentRequest,
 ) -> Result<Updated, Failure> {
+    if !fastctx_platform::preview() {
+        return Err(Failure::not_run(words::UNOFFERED));
+    }
     if node.is_me(&target.machine) {
         return here(node, actor, account, turn, request).await;
     }

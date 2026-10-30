@@ -571,12 +571,12 @@ pub fn facts(node: &Node) -> MachineFacts {
     };
     MachineFacts {
         turn_debts: true,
-        goal_runtime: node.goals.available(),
+        goal_runtime: fastctx_platform::preview() && node.goals.available(),
         goal_colleagues: true,
         goal_waits: true,
         goal_questions: true,
         goal_question_words: true,
-        goal_commands: true,
+        goal_commands: fastctx_platform::preview(),
         goal_reports: true,
         name: node.machine(),
         os: std::env::consts::OS.to_string(),
@@ -899,12 +899,20 @@ impl fastctx_net::link::Node for Handler {
                     let stream = stream
                         .ok_or_else(|| Failure::new("a watch comes with a data connection, and this one had none"))?;
                     if multiplex {
-                        crate::talk::multiplex::serve(node.clone(), link.clone(), caller.clone(),
-                            fastctx_types::watching::Subscription { resident, composer, documents, held, now, goal }, watch, stream).await
+                        crate::talk::multiplex::serve(
+                            node.clone(),
+                            link.clone(),
+                            caller.clone(),
+                            fastctx_types::watching::Subscription { resident, composer, documents, held, now, goal },
+                            watch,
+                            stream,
+                        )
+                        .await
                     } else {
                         crate::talk::serve_watch(
                             &node, &asker, &link, &from, resident, watch, composer, held, now, goal, stream,
-                        ).await
+                        )
+                        .await
                     }
                 }
                 RemoteCall::Agents => crate::agents::here(&node)

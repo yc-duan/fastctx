@@ -62,10 +62,10 @@ async fn converse(node: &Arc<Node>, connection: Connection) -> std::io::Result<(
         return Ok(());
     }
     let welcome = Welcome::Accepted {
-        goal_runtime: node.goals.available(),
+        goal_runtime: fastctx_platform::preview() && node.goals.available(),
         watch_many: true,
-        sentinels: true,
-        goal_commands: true,
+        sentinels: fastctx_platform::preview(),
+        goal_commands: fastctx_platform::preview(),
         profiles: true,
         account_records: true,
         conversation_plans: true,
@@ -125,13 +125,17 @@ async fn converse(node: &Arc<Node>, connection: Connection) -> std::io::Result<(
             }
             return watching::serve(node.clone(), hello.peer, reader, writer).await;
         }
-        if let Call::Watch { resident, machine, composer, held, now, goal } = call {
+        if let Call::Watch { resident, machine, composer, held, now, goal } = call.clone() {
             // Watching a conversation anywhere is the user's, with this
             // computer's logins.
             if let Err(failure) = users_voice(node, &hello.peer) {
                 writer.send(&json(&NodeFrame::Reply { id, reply: Err(failure) })).await?;
                 continue;
             }
+            // Admitted as it opens, and again whenever what this computer's
+            // accounts may see changes: one logged out of meanwhile sees
+            // nothing more of it, as with `WatchMany`.
+            let mut views = node.views.subscribe();
             // A watch keeps the connection until one end leaves.
             let opening = tokio::select! {
                 result = crate::talk::watch(node, resident, machine, composer, held, now, goal) => result,
@@ -147,6 +151,14 @@ async fn converse(node: &Arc<Node>, connection: Connection) -> std::io::Result<(
                             Err(error) => break Err(Failure::new(error.to_string())),
                             Ok(None) => break Ok(Reply::Done),
                         },
+                        changed = views.changed() => {
+                            if changed.is_err() { return Ok(()); }
+                            let admitted = users_voice(node, &hello.peer)
+                                .and_then(|()| crate::admission::local::admit(node, &hello.peer, &call));
+                            if let Err(failure) = admitted.and(Ok(())).err().filter(crate::obligations::permanent).map_or(Ok(()), Err) {
+                                break Err(failure);
+                            }
+                        }
                         // The client says nothing more on a watch; whatever
                         // comes, or the end, is it leaving.
                         _ = reader.recv() => return Ok(()),
@@ -1431,7 +1443,9 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
         Call::Book { machine, query } => {
             users_voice(node, peer)?;
             let acting = crate::around::acting_of(node, &caller::of(node, peer)?);
-            crate::activity_book::answer(node, &acting, machine, query).await.map(|answer| Reply::Book(Box::new(answer)))
+            crate::activity_book::answer(node, &acting, machine, query)
+                .await
+                .map(|answer| Reply::Book(Box::new(answer)))
         }
         Call::BringIn { resident } => {
             users_voice(node, peer)?;
@@ -1555,8 +1569,13 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
                     .await
                     .map(|reply| Reply::Sentinel(Box::new(reply)));
             }
-            if hub.is_none() && account.is_none() && matches!(request, fastctx_types::sentinel_control::Request::Overview) {
-                return crate::sentinels::overview_all(node, &caller).await.map(|reply| Reply::Sentinel(Box::new(reply)));
+            if hub.is_none()
+                && account.is_none()
+                && matches!(request, fastctx_types::sentinel_control::Request::Overview)
+            {
+                return crate::sentinels::overview_all(node, &caller)
+                    .await
+                    .map(|reply| Reply::Sentinel(Box::new(reply)));
             }
             if hub.is_none()
                 && account.is_none()
@@ -1660,6 +1679,10 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
                 .await
                 .map(|result| Reply::Plan { result })
                 .map_err(Failure::new)
+        }
+        Call::Skill { name } => {
+            let caller = caller::of(node, peer)?;
+            crate::skills::read(node, &caller, &name).await.map(|skill| Reply::Skill { skill })
         }
         Call::AccountRecords { hub, account, request } => {
             let caller = caller::of(node, peer)?;
