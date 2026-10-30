@@ -33,6 +33,7 @@ pub(crate) mod garbage;
 pub(crate) mod goal_compaction;
 pub(crate) mod history;
 mod image_records;
+pub(crate) mod isolation;
 pub(crate) mod resume;
 mod retire_command;
 pub(crate) use image_records::paths as image_records;
@@ -1279,6 +1280,10 @@ pub async fn deliver(
     if let Err(error) = crate::lifecycle::wake::check(node, to, &current) {
         return Some(crate::lifecycle::retry::unavailable(node, to, &pending.delivery.id, error).await);
     }
+    let alive = match isolation::prepare(node, to, alive).await {
+        Ok(alive) => alive,
+        Err(error) => return Some(crate::lifecycle::retry::defer(node, to, &pending.delivery.id, &error.message)),
+    };
     let user_action =
         matches!(pending.delivery.notice, Notice::Words { from: Speaker::User { .. }, .. } | Notice::Attached { .. });
     if !about.world_started && !stopped_background && !user_action && !pending.delivery.notice.wakes_closed() {
@@ -1553,6 +1558,30 @@ pub(crate) async fn wake(
     words: String,
     id: fastctx_types::NoticeId,
 ) -> Result<Landed, crate::lifecycle::wake::WakeFailure> {
+    if let Some(source) = isolation::source(node, resident)? {
+        let _waking = node.claude.copies.waking();
+        crate::inbox::unbind(&node.world.conversation(resident), &id)
+            .map_err(|error| Failure::new(error.to_string()))?;
+        crate::lifecycle::retry::attempting(node, resident, &id)?;
+        let short = isolation::continue_in(node, resident, &source, &words).await.map_err(|error| {
+            crate::lifecycle::wake::WakeFailure {
+                failure: Failure::new(error.message),
+                attempted: error.started,
+                permanent: false,
+            }
+        })?;
+        crate::inbox::rebind(&node.world.conversation(resident), &id, &short).map_err(|error| {
+            crate::lifecycle::wake::WakeFailure {
+                failure: Failure::new(error.to_string()),
+                attempted: true,
+                permanent: false,
+            }
+        })?;
+        crate::lifecycle::retry::accepted(node, resident, &id)
+            .map_err(|failure| crate::lifecycle::wake::WakeFailure { failure, attempted: true, permanent: false })?;
+        startup::observe(node, resident, id.clone(), true);
+        return Ok(Landed::Handed { id });
+    }
     let mut launching = command(node, home)?;
     launching.cwd = resume_dir(node, session);
     oldest::check(node, &launching).await?;

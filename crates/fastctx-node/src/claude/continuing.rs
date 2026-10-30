@@ -27,8 +27,8 @@ const WITHIN: Duration = Duration::from_secs(120);
 
 /// Starts the session `resident` continues in from `session`, given `words`
 /// when there are any, and records it as the conversation's; returns the
-/// short id Claude Code printed for it. `why` is what Claude Code said when
-/// it copied `session` instead of waking it. The caller counts a wake in
+/// short id Claude Code printed for it. `why` explains why its saved startup
+/// options cannot be used again. The caller counts a wake in
 /// flight until this returns (`copies::Copies::waking`): a session reporting
 /// meanwhile without naming its conversation, as the copy stopped before
 /// this, waits for it. The new session names its conversation itself.
@@ -91,8 +91,7 @@ pub(super) async fn start(
     node.residents
         .set_session(&node.world, resident, &short, None, None)
         .map_err(|error| started(format!("recording that {resident} continues in {short}: {error}")))?;
-    node.log.line(format_args!(
-        "Claude Code would not wake {session} as itself ({why}); {resident} continues in the new session {short}"
-    ));
+    node.log
+        .line(format_args!("Claude conversation {resident} continues from {session} in new session {short}: {why}"));
     Ok(short)
 }
