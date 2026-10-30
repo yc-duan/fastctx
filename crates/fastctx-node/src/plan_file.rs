@@ -6,6 +6,8 @@
 //! file, unless the file holds changes not taken yet: then the file wins. The
 //! node looks at the files of the conversations it holds every two seconds.
 
+mod legacy;
+
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 use std::path::PathBuf;
@@ -59,9 +61,10 @@ pub(crate) fn start(node: &Arc<Node>) {
     let node = Arc::downgrade(node);
     tokio::spawn(async move {
         loop {
-            tokio::time::sleep(EVERY).await;
             let Some(node) = node.upgrade() else { return };
             look(&node).await;
+            drop(node);
+            tokio::time::sleep(EVERY).await;
         }
     });
 }
@@ -83,6 +86,30 @@ async fn look(node: &Arc<Node>) {
         let path = path(node, &id);
         let now = stamp(&path);
         let before = node.plan_files.0.lock().expect("never poisoned").get(&id).copied();
+        match allowed(node, &id) {
+            Ok(true) => {}
+            result => {
+                if before.and_then(|before| before.retry).is_some_and(|at| Instant::now() < at) {
+                    continue;
+                }
+                let result = match result {
+                    Ok(false) => legacy::retire(node, &id).await,
+                    Err(failure) => Err(failure),
+                    Ok(true) => unreachable!(),
+                };
+                if let Err(failure) = result
+                    && before.is_none()
+                {
+                    node.log.line(format_args!("retiring the legacy plan of {id}: {}", failure.message));
+                }
+                node.plan_files
+                    .0
+                    .lock()
+                    .expect("never poisoned")
+                    .insert(id.clone(), Synced { stamp: now, text: None, retry: Some(Instant::now() + RETRY) });
+                continue;
+            }
+        }
         // First looked at: the plan as the hub keeps it comes into the file
         // (`pulled`). Where the hub could not be read, a file left from
         // before is the plan's latest word and is offered on the next look;
@@ -139,7 +166,7 @@ async fn look(node: &Arc<Node>) {
 /// what the file was last seen to hold.
 pub(crate) fn pulled(node: &Node, id: &ResidentId, page: &Page) {
     let Some((about, _)) = node.residents.about(id) else { return };
-    if !about.world_managed() || !matches!(about.origin, Origin::User) {
+    if !about.world_managed() || !matches!(about.origin, Origin::User) || allowed(node, id) != Ok(true) {
         return;
     }
     let path = path(node, id);
@@ -168,4 +195,14 @@ pub(crate) fn pulled(node: &Node, id: &ResidentId, page: &Page) {
         return;
     }
     files.insert(id.clone(), Synced { stamp: stamp(&path), text: Some(hash(markdown)), retry: None });
+}
+
+/// File synchronization requires current work authority. A persisted isolated
+/// host never acquires a local plan during a directory reconnect.
+pub(crate) fn allowed(node: &Node, id: &ResidentId) -> Result<bool, fastctx_types::ipc::Failure> {
+    let Some((about, _)) = node.residents.about(id) else { return Ok(false) };
+    if crate::assists::host::kept(node, id)? == Some(true) {
+        return Ok(false);
+    }
+    node.may_work_here(&about.acting)
 }
