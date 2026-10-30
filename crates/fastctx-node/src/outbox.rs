@@ -91,7 +91,7 @@ fn pay_once<'a>(
     directory: &'a ConversationDir,
 ) -> std::pin::Pin<Box<dyn std::future::Future<Output = bool> + Send + 'a>> {
     Box::pin(async move {
-        node.ready().await;
+        node.ready_for(id).await;
         let Some(paying) = node.residents.paying(id) else { return false };
         // The lock is held only to take what is owed: telling another
         // conversation takes its locks, never while this one's is held

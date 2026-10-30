@@ -103,7 +103,7 @@ pub fn watch_documents<'a>(
 /// accepted, its owner continues this future even when that stream disconnects.
 pub fn update_document<'a>(node: &'a Arc<Node>, id: &'a ResidentId, input: Input) -> Future<'a, Frame> {
     Box::pin(async move {
-        node.ready().await;
+        node.ready_for(id).await;
         let Input::Update { number, document, update } = input;
         let gate = node.residents.management(id)?;
         let _reading = crate::gate_waits::shared(node, id, &gate).await?;

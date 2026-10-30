@@ -148,6 +148,13 @@ pub async fn retire(
 }
 
 pub async fn wake(node: &Arc<Node>, home: Option<&Path>, session: &str) -> Result<(), Failure> {
+    if let Some(id) = node.residents.resident_of_thread(session)
+        && let Some(source) = super::isolation::source(node, &id)?
+    {
+        let _waking = node.claude.copies.waking();
+        super::isolation::continue_in(node, &id, &source, "").await.map_err(|error| Failure::new(error.message))?;
+        return Ok(());
+    }
     let record = background_session(node, home, session).await?;
     let session = match record.as_ref() {
         Some(record) => record["sessionId"]

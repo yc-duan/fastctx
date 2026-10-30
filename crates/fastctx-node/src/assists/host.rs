@@ -58,9 +58,12 @@ pub(crate) fn assisted(node: &Node, resident: &ResidentId) -> Result<Option<bool
     if !claude {
         return Ok(None);
     }
+    if let Some(session) = node.residents.about(resident).and_then(|(about, _)| about.session) {
+        crate::claude::isolation::begin(node, resident, &session)?;
+    }
     record(node, resident, true)
         .map_err(|error| Failure::new(format!("recording conversation host isolation: {error}")))?;
-    node.log.line(format_args!("{resident} began before host isolation; it goes on isolated"));
+    node.log.line(format_args!("{resident} began before host isolation; preparing an isolated continuation"));
     Ok(Some(true))
 }
 

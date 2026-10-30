@@ -79,8 +79,8 @@ pub(super) async fn finish(node: &Arc<Node>, resident: &ResidentId) -> Result<()
     Ok(())
 }
 
-pub(super) fn recover(node: &Arc<Node>) {
-    for record in node.residents.everyone() {
+pub(super) fn recover(node: &Arc<Node>, records: &[crate::residents::OnRecord]) {
+    for record in records {
         if record.removed.is_some() || record.about.host.agent.as_str() != "claude" {
             continue;
         }

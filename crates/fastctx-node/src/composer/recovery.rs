@@ -44,8 +44,7 @@ pub(super) async fn needed(node: &Node, id: &ResidentId) -> Result<bool, Failure
 
 /// Local reconciliation is enabled only after startup has restored host facts.
 pub(super) fn pending(node: &Node, id: &ResidentId) -> bool {
-    node.effects_ready.load(std::sync::atomic::Ordering::Acquire)
-        && node.composers.recovering.lock().expect("composer recovery").contains(id)
+    node.startup.is_ready(id) && node.composers.recovering.lock().expect("composer recovery").contains(id)
 }
 
 pub(super) fn finished(node: &Node, id: &ResidentId) {
