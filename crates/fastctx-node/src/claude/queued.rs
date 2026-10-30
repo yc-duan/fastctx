@@ -49,7 +49,7 @@ fn unmark(directory: &ConversationDir) -> std::io::Result<()> {
 pub(super) fn wait(node: &Arc<Node>, id: ResidentId) {
     let node = node.clone();
     tokio::spawn(async move {
-        node.ready().await;
+        node.ready_for(&id).await;
         let directory = node.world.conversation(&id);
         let mut again = ASK_AGAIN;
         loop {

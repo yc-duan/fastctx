@@ -75,6 +75,7 @@ pub async fn offers(
 /// Does `control` to a resident of this machine, through its host. Sessions
 /// the World does not hold (the user's own Codex in an app) take nothing.
 pub async fn control_here(node: &Arc<Node>, resident: &ResidentId, control: Control) -> Result<Controlled, Failure> {
+    node.ready_for(resident).await;
     let host = host_of(node, resident)?;
     let (about, _) = node.residents.about(resident).ok_or_else(|| Failure::new("unknown conversation"))?;
     // Each control is told in its conversation as it begins and ends

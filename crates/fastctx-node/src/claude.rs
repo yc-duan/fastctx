@@ -331,9 +331,34 @@ pub async fn replay(node: &Arc<Node>) {
     look_all(node, &directory).await;
 }
 
-pub(crate) fn recover_startups(node: &Arc<Node>) {
-    fork_ready::recover(node);
-    startup::recover(node);
+pub(crate) async fn replay_session(node: &Arc<Node>, session: &str) {
+    let sessions = exchange::sessions(node.world.path());
+    let directories = if session.len() == 8 {
+        // A launch interrupted before registration kept only Claude's short id.
+        // Replay its full registration before judging whether its turn survived.
+        session_directories(node, &sessions)
+            .into_iter()
+            .filter(|path| {
+                path.file_name().and_then(|name| name.to_str()).is_some_and(|name| name.starts_with(session))
+            })
+            .collect()
+    } else {
+        vec![sessions.join(session)]
+    };
+    for directory in directories {
+        match exchange::recover_readable(&directory) {
+            Ok(0) => {}
+            Ok(count) => node.log.line(format_args!("recovered {count} Claude reports the current decoder can read")),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => node.log.line(format_args!("reconsidering retained Claude reports: {error}")),
+        }
+        look_alone(node, directory).await;
+    }
+}
+
+pub(crate) fn recover_startups(node: &Arc<Node>, record: &crate::residents::OnRecord) {
+    fork_ready::recover(node, std::slice::from_ref(record));
+    startup::recover(node, std::slice::from_ref(record));
 }
 
 /// Publishes what the session's mod waits for before its system prompt and
