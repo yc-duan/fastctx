@@ -144,6 +144,12 @@ impl Device {
                     .map_err(failed)?;
                 return Ok((Reply::Plan { result }, here()));
             }
+            Call::SkillFiles { hub, account, request } => {
+                let session = self.on_hub(hub.as_ref())?;
+                let account = profile_account(&session, account)?;
+                let result = session.link.skill_files(&account, request).await.map_err(failed)?;
+                return Ok((Reply::SkillFiles { result: Box::new(result) }, here()));
+            }
             Call::AccountRecords { hub, account, request } => {
                 let session = self.on_hub(hub.as_ref())?;
                 let account = profile_account(&session, account)?;

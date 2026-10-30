@@ -77,7 +77,12 @@ impl Request {
         }
         if let Self::Write { body, .. } = self {
             let size = serde_json::to_vec(body).map_err(|error| error.to_string())?.len();
-            if size > MAX_BODY_BYTES {
+            let limit = if self.kind() == crate::skills::KIND || self.kind() == crate::skills::INDEX_KIND {
+                crate::skill_files::ENCODED_LIMIT
+            } else {
+                MAX_BODY_BYTES
+            };
+            if size > limit {
                 return Err(words::body_limit(size));
             }
         }

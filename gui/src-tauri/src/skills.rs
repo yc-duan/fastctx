@@ -5,6 +5,18 @@ use fastctx_types::skills::{Listed, Skill};
 use crate::Shell;
 use crate::sentinels::names;
 
+/// Atomic file-folder reads and edits; writes carry the revision from the editor's read.
+#[fastctx_gui_command::command]
+pub(crate) async fn skill_files(
+    shell: tauri::State<'_, Shell>,
+    hub: Option<String>,
+    account: Option<String>,
+    request: fastctx_types::skill_files::Request,
+) -> Result<fastctx_types::skill_files::Reply, String> {
+    let (hub, account) = names(hub, account)?;
+    shell.world().skill_files(hub, account, request).await.map_err(|error| error.to_string())
+}
+
 /// The names and sentences of the account's skills.
 #[fastctx_gui_command::command]
 pub(crate) async fn skills_list(

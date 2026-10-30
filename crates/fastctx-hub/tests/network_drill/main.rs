@@ -26,6 +26,7 @@ mod process;
 mod proxy;
 mod report;
 mod scenarios;
+mod skill_folders;
 mod world;
 
 use std::path::{Path, PathBuf};
@@ -37,7 +38,8 @@ use report::Report;
 use world::{Program, World};
 
 /// Every scenario, in the order they run.
-const SCENARIOS: [&str; 16] = [
+const SCENARIOS: [&str; 17] = [
+    "skill-folders",
     "plan-copies",
     "answers",
     "backlog",
@@ -251,6 +253,7 @@ async fn scenario(name: &'static str, dir: &Path, earlier: Option<&Path>) -> Rep
     let ran = tokio::time::timeout(LONGEST, async {
         match name {
             "plan-copies" => plan_copies::exercise(&world, &mut report).await,
+            "skill-folders" => skill_folders::exercise(&world, &mut report).await,
             "answers" => scenarios::answers(&world, &mut report).await,
             "backlog" => scenarios::backlog(&world, &mut report).await,
             "cuts" => scenarios::cuts(&world, &mut report).await,

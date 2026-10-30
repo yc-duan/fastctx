@@ -59,6 +59,15 @@ pub(crate) fn submitted(current: Option<&Record>, directory: &Path, id: &str) ->
     }
 }
 
+/// A tombstone is committed first; startup retries removal after a crash.
+pub(crate) fn delete(directory: &Path) -> io::Result<()> {
+    match std::fs::remove_dir_all(location(directory)?) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error),
+    }
+}
+
 pub(crate) fn receipt(directory: &Path, id: &str, record: &Record) -> io::Result<()> {
     immutable(
         &location(directory)?.join("submissions").join(format!("{id}.json")),

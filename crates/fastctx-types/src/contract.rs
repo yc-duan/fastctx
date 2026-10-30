@@ -310,6 +310,13 @@ impl Call {
     pub fn on_leaving(&self) -> Leaving {
         match self {
             Self::Composer { request: crate::composer::Request::Read, .. } => Leaving::Stop,
+            Self::SkillFiles { request, .. } => {
+                if request.writes() {
+                    Leaving::Finish
+                } else {
+                    Leaving::Stop
+                }
+            }
             Self::DoctorCalls | Self::PlanRead { .. } | Self::Skill { .. } => Leaving::Stop,
             Self::Plan { .. } | Self::PlanWrite { .. } => Leaving::Finish,
             Self::AccountRecords {

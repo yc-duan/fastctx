@@ -70,6 +70,7 @@ pub mod sentinel_words;
 pub mod session;
 pub mod sharing;
 pub mod since;
+pub mod skill_files;
 pub mod skills;
 pub mod stats;
 pub mod thumbnail;

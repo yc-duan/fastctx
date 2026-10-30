@@ -44,6 +44,7 @@ mod presence;
 mod profile;
 mod questions;
 mod session;
+mod skill_files;
 pub mod state;
 mod update_policy;
 mod version_parts;

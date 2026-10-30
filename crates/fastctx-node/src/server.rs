@@ -1686,6 +1686,17 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
             let caller = caller::of(node, peer)?;
             crate::skills::read(node, &caller, &name).await.map(|skill| Reply::Skill { skill })
         }
+        Call::SkillFiles { hub, account, request } => {
+            if request.writes() {
+                users_voice(node, peer)?;
+            }
+            let caller = caller::of(node, peer)?;
+            let (link, account) = crate::profile::scope(node, &caller, hub.as_ref(), account.as_ref())?;
+            link.skill_files(&account, request)
+                .await
+                .map(|result| Reply::SkillFiles { result: Box::new(result) })
+                .map_err(Failure::new)
+        }
         Call::AccountRecords { hub, account, request } => {
             let caller = caller::of(node, peer)?;
             crate::plan::records_allowed(node, &caller, &request)?;

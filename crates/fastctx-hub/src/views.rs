@@ -183,6 +183,7 @@ pub(crate) fn view_for_in(
         account_records: true,
         conversation_plans: true,
         plan_copies: true,
+        skill_files: true,
         goal_control: true,
         scratch_locations: true,
         goal_commands: true,

@@ -712,6 +712,9 @@ pub struct View {
     /// Versioned plan history and working-copy merges.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub plan_copies: bool,
+    /// Atomic, versioned multi-file skill folders.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub skill_files: bool,
     /// The hub understands the account-scoped goal control call.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub goal_control: bool,
@@ -812,6 +815,7 @@ impl View {
             account_records: false,
             conversation_plans: false,
             plan_copies: false,
+            skill_files: false,
             goal_control: false,
             scratch_locations: false,
             goal_commands: false,

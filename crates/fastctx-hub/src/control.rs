@@ -57,6 +57,7 @@ pub(crate) struct Said {
     /// Whether it reads the records of profiles written.
     pub profiles: bool,
     pub account_records: bool,
+    pub skill_files: bool,
     pub conversation_plans: bool,
     pub scratch_locations: bool,
     /// What a machine taken off could not do of the uninstall it was asked.
@@ -625,6 +626,7 @@ fn open(
     let session = Session {
         key,
         account_records: said.account_records,
+        skill_files: said.skill_files,
         conversation_plans: said.conversation_plans,
         scratch_locations: said.scratch_locations,
         call_details: said.call_details,
@@ -884,6 +886,7 @@ fn handle(
             let held = crate::moving::Moving::hold(&hub);
             tokio::spawn(async move {
                 let _held = held;
+                let _reservation = reservation;
                 let answer = crate::account_records::ask(&hub, from, key, account, opened, request).await;
                 let _ = out.send(Out::Frame(Down::Told { id, answer }));
             });
@@ -913,6 +916,35 @@ fn handle(
             tokio::spawn(async move {
                 let _held = held;
                 let answer = crate::plan_copies::ask(&hub, from, key, account, opened, request).await;
+                let _ = out.send(Out::Frame(Down::Told { id, answer }));
+            });
+        }
+        Up::Ask { id, question: Question::SkillFiles { account, request } } => {
+            let opened = request.validate().and_then(|()| {
+                crate::account_records::begin(
+                    hub,
+                    name,
+                    &key,
+                    &account,
+                    &fastctx_types::account_records::Request::Read {
+                        kind: fastctx_types::skills::KIND.into(),
+                        key: request.name().unwrap_or("index").into(),
+                    },
+                )
+            });
+            let opened = match opened {
+                Ok(opened) => opened,
+                Err(why) => {
+                    reply(Down::Told { id, answer: Err(why) });
+                    return Ok(());
+                }
+            };
+            let (hub, from, out) = (hub.clone(), name.clone(), out.clone());
+            let held = crate::moving::Moving::hold(&hub);
+            tokio::spawn(async move {
+                let _held = held;
+                let _reservation = reservation;
+                let answer = crate::skill_files::ask(&hub, from, key, account, opened, request).await;
                 let _ = out.send(Out::Frame(Down::Told { id, answer }));
             });
         }
@@ -1466,7 +1498,7 @@ fn answer(hub: &Hub, name: &MachineName, generation: u64, call: u64, message: En
 
 fn ask(hub: &Arc<Hub>, name: &MachineName, question: Question) -> Result<Told, String> {
     match question {
-        Question::AccountRecords { .. } | Question::PlanCopies { .. } => {
+        Question::AccountRecords { .. } | Question::PlanCopies { .. } | Question::SkillFiles { .. } => {
             Err("account records are dispatched asynchronously".into())
         }
         Question::NetworkUpdates { .. } => Err("update management is dispatched asynchronously".into()),
