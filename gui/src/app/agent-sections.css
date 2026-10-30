@@ -8,7 +8,7 @@
 }
 
 .asec-fold.opening {
-  animation: asec-open var(--fold) var(--fold-easing) both;
+  animation: asec-open var(--expand) var(--expand-easing) both;
 }
 
 @keyframes asec-open {
@@ -24,8 +24,8 @@
 
 .asec-list {
   display: grid;
-  gap: 1px;
-  margin: 1px 0 var(--space-1);
+  gap: var(--row-gap);
+  margin: var(--row-gap) 0 var(--space-1);
   padding: 0;
   list-style: none;
 }

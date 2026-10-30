@@ -29,13 +29,13 @@ use crate::{Hub, Out};
 pub(crate) struct Forgettings {
     /// The number the last deletion took.
     #[serde(default)]
-    last: u64,
+    pub(crate) last: u64,
     #[serde(default)]
-    pending: Vec<Pending>,
+    pub(crate) pending: Vec<std::sync::Arc<Pending>>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-struct Pending {
+pub(crate) struct Pending {
     forgetting: Forgetting,
     asked_by: MachineName,
     at: Timestamp,
@@ -123,7 +123,7 @@ pub(crate) fn ask(
                     peer: None,
                 };
                 let forgetting = pending.forgetting.clone();
-                store.book.forgetting.pending.push(pending);
+                store.book.forgetting.pending.push(std::sync::Arc::new(pending));
                 let directory = store.book.directory.clone();
                 if let Err(reason) = crate::machine_log::keep(
                     &mut store,
@@ -190,14 +190,18 @@ pub(crate) fn forgot(hub: &Hub, member: &MachineName, id: u64, outcome: Forgot) 
         let mut tell = Vec::new();
         let (recorded, ended) = match outcome {
             Forgot::Done => {
-                store.book.forgetting.pending[index].failed.remove(&member);
+                std::sync::Arc::make_mut(&mut store.book.forgetting.pending[index]).failed.remove(&member);
                 if at_home {
                     done_at_home(&mut store, index);
                     tell = told_now(&store.book.forgetting.pending[index]);
                 } else {
-                    store.book.forgetting.pending[index].waiting.remove(&member);
+                    std::sync::Arc::make_mut(&mut store.book.forgetting.pending[index]).waiting.remove(&member);
                 }
-                (Some(Outcome::Done), finish(hub, &mut store, index))
+                // The log keeps that the machine it lived on deleted it, and
+                // where it could not be; that each other machine did its part
+                // as asked is the deletion going as it should, and only grew
+                // the directory, by a record a machine a deletion.
+                (at_home.then_some(Outcome::Done), finish(hub, &mut store, index))
             }
             // Only the machine it lives on refuses: then nothing of it is
             // deleted anywhere, and it is shown again.
@@ -206,7 +210,7 @@ pub(crate) fn forgot(hub: &Hub, member: &MachineName, id: u64, outcome: Forgot) 
                 (Some(Outcome::Refused { reason }), true)
             }
             Forgot::Refused { reason } | Forgot::Failed { reason } => {
-                let failed = &mut store.book.forgetting.pending[index].failed;
+                let failed = &mut std::sync::Arc::make_mut(&mut store.book.forgetting.pending[index]).failed;
                 let new = failed.get(&member) != Some(&reason);
                 failed.insert(member.clone(), reason.clone());
                 (new.then_some(Outcome::Refused { reason }), false)
@@ -241,7 +245,7 @@ pub(crate) fn opened(hub: &Hub, name: &MachineName) {
             .forgetting
             .pending
             .iter()
-            .flat_map(told_now)
+            .flat_map(|pending| told_now(pending))
             .filter(|(member, _)| store.book.directory.same(member, name))
             .collect()
     };
@@ -258,9 +262,10 @@ pub(crate) fn prune(hub: &Hub) {
         let before = book.forgetting.pending.len();
         let mut changed = false;
         book.forgetting.pending.retain_mut(|pending| {
-            let waiting = pending.waiting.len();
-            pending.waiting.retain(|member| directory.member(member).is_some());
-            changed |= waiting != pending.waiting.len();
+            if pending.waiting.iter().any(|member| directory.member(member).is_none()) {
+                std::sync::Arc::make_mut(pending).waiting.retain(|member| directory.member(member).is_some());
+                changed = true;
+            }
             let gone = pending.home && directory.member(&pending.forgetting.conversation.machine).is_none();
             !gone && (pending.home || !pending.waiting.is_empty())
         });
@@ -308,7 +313,7 @@ fn deleted_by_asker(store: &mut Store, asker: &MachineName, forgetting: &Forgett
 /// something of it is to delete that now.
 fn done_at_home(store: &mut Store, index: usize) {
     let waiting = targets(store, &store.book.forgetting.pending[index].forgetting);
-    let pending = &mut store.book.forgetting.pending[index];
+    let pending = std::sync::Arc::make_mut(&mut store.book.forgetting.pending[index]);
     pending.home = false;
     pending.waiting = waiting;
 }

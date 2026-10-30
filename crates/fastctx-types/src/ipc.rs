@@ -3,7 +3,8 @@
 //! A client connects to the node's endpoint, says who it is, and is welcomed
 //! or refused. After that it sends calls, one at a time, each with an id it
 //! chose, and the node answers each call once. A client with several calls
-//! to make at once opens several connections. Control frames are these
+//! to make at once opens several connections; negotiated WatchMany subscriptions
+//! share one dedicated observation connection. Control frames are these
 //! types in their JSON form. A file-read chunk header is followed by one
 //! binary payload frame, as described by `file_read::FileReadPart`; an
 //! Upload's dedicated connection carries raw byte frames through an empty
@@ -23,6 +24,21 @@ use crate::{Address, JobId, MachineName};
 /// replies with the readers of the protocols released so far.
 pub const PROTOCOL: u32 = 13;
 
+/// The generation of notices this build reads beyond those protocol 13
+/// shipped with: 1 added a sentinel's finding, and the World's facts of a
+/// delivery that failed and of a sentinel that woke. A client that says
+/// none is sent each later notice in a shape it reads (`fastctx-node`'s
+/// `renewal_legacy::notices`).
+pub const NOTICES: u32 = 1;
+
+/// The generation of reply shapes this build reads beyond those protocol 13
+/// shipped with: 1 added a stamp told without the machine it was written on
+/// and a writer told only as a conversation or a page elsewhere, what
+/// whoever may not work on that machine is told (`project::Writer`). A
+/// client that says none is told such a reply as text instead
+/// (`fastctx-node`'s `renewal_legacy`).
+pub const SHAPES: u32 = 1;
+
 /// The first frame on every connection.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Hello {
@@ -30,6 +46,12 @@ pub struct Hello {
     /// The client binary's version, shown when versions differ.
     pub version: String,
     pub peer: Peer,
+    /// The generation of notices the client reads (`NOTICES`).
+    #[serde(default)]
+    pub notices: u32,
+    /// The generation of reply shapes the client reads (`SHAPES`).
+    #[serde(default)]
+    pub shapes: u32,
 }
 
 /// What is on the other end of a connection.
@@ -74,7 +96,23 @@ pub enum SessionHint {
 pub enum Welcome {
     Accepted {
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        goal_runtime: bool,
+        /// Several conversation subscriptions share a dedicated IPC connection.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        watch_many: bool,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        goal_commands: bool,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         profiles: bool,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        account_records: bool,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        conversation_plans: bool,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        scratch_locations: bool,
+        /// An older node says nothing of sentinels, and keeps none.
+        #[serde(default)]
+        sentinels: bool,
         machine: MachineName,
         version: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -101,6 +139,10 @@ pub enum ClientFrame {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "kind")]
 pub enum NodeFrame {
+    AccountRecords {
+        id: u64,
+        event: crate::account_records::Watched,
+    },
     McpOpened {
         id: u64,
     },
@@ -167,6 +209,18 @@ pub struct Failure {
     /// the caller must not infer that nothing ran.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub not_run: bool,
+    /// Resource admission failures, independent of authorization and host errors.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub capacity: Option<CapacityReason>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "reason", rename_all = "snake_case")]
+pub enum CapacityReason {
+    Settling { unfinished: usize },
+    Pending,
+    Waiting { seconds: u64 },
+    Expired,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -205,12 +259,23 @@ pub enum FailureCode {
 }
 
 impl Failure {
+    pub fn capacity(mut self, reason: CapacityReason) -> Self {
+        self.capacity = Some(reason);
+        self
+    }
+
     pub fn new(message: impl Into<String>) -> Self {
-        Self { denial: None, message: message.into(), not_run: false, code: None }
+        Self { capacity: None, denial: None, message: message.into(), not_run: false, code: None }
     }
 
     pub fn control_uncertain(message: impl Into<String>) -> Self {
-        Self { denial: None, message: message.into(), not_run: false, code: Some(FailureCode::ControlUncertain) }
+        Self {
+            capacity: None,
+            denial: None,
+            message: message.into(),
+            not_run: false,
+            code: Some(FailureCode::ControlUncertain),
+        }
     }
 
     pub fn is_control_uncertain(&self) -> bool {
@@ -218,16 +283,23 @@ impl Failure {
     }
 
     pub fn host_unavailable(message: impl Into<String>) -> Self {
-        Self { denial: None, message: message.into(), not_run: true, code: Some(FailureCode::HostUnavailable) }
+        Self {
+            capacity: None,
+            denial: None,
+            message: message.into(),
+            not_run: true,
+            code: Some(FailureCode::HostUnavailable),
+        }
     }
 
     pub fn not_run(message: impl Into<String>) -> Self {
-        Self { denial: None, message: message.into(), not_run: true, code: None }
+        Self { capacity: None, denial: None, message: message.into(), not_run: true, code: None }
     }
 
     pub fn original_gone() -> Self {
         Self {
             denial: None,
+            capacity: None,
             message: "the original is gone and its host record holds no recoverable copy".into(),
             not_run: false,
             code: Some(FailureCode::OriginalGone),
@@ -236,19 +308,43 @@ impl Failure {
 
     /// A place macOS keeps private from Fastctx, refused before anything ran.
     pub fn mac_privacy(message: impl Into<String>) -> Self {
-        Self { denial: None, message: message.into(), not_run: true, code: Some(FailureCode::MacPrivacy) }
+        Self {
+            capacity: None,
+            denial: None,
+            message: message.into(),
+            not_run: true,
+            code: Some(FailureCode::MacPrivacy),
+        }
     }
 
     pub fn output_not_retained(message: impl Into<String>) -> Self {
-        Self { denial: None, message: message.into(), not_run: false, code: Some(FailureCode::OutputNotRetained) }
+        Self {
+            capacity: None,
+            denial: None,
+            message: message.into(),
+            not_run: false,
+            code: Some(FailureCode::OutputNotRetained),
+        }
     }
 
     pub fn source_missing(message: impl Into<String>) -> Self {
-        Self { denial: None, message: message.into(), not_run: false, code: Some(FailureCode::SourceMissing) }
+        Self {
+            capacity: None,
+            denial: None,
+            message: message.into(),
+            not_run: false,
+            code: Some(FailureCode::SourceMissing),
+        }
     }
 
     pub fn unanswered(message: impl Into<String>) -> Self {
-        Self { denial: None, message: message.into(), not_run: false, code: Some(FailureCode::Unanswered) }
+        Self {
+            capacity: None,
+            denial: None,
+            message: message.into(),
+            not_run: false,
+            code: Some(FailureCode::Unanswered),
+        }
     }
 
     /// Whether no answer came: worth asking again, as it was asked.
@@ -256,8 +352,14 @@ impl Failure {
         self.code == Some(FailureCode::Unanswered)
     }
 
+    /// Whether the machine had no place for it yet and did not start it:
+    /// asking again a while later, as it was asked, is how it goes on.
+    pub fn is_busy(&self) -> bool {
+        self.not_run && self.capacity.is_some()
+    }
+
     pub fn deleted(message: impl Into<String>) -> Self {
-        Self { denial: None, message: message.into(), not_run: true, code: Some(FailureCode::Deleted) }
+        Self { capacity: None, denial: None, message: message.into(), not_run: true, code: Some(FailureCode::Deleted) }
     }
 
     /// Whether the conversation asked about was deleted: nothing more will
@@ -267,7 +369,7 @@ impl Failure {
     }
 
     pub fn refused(message: impl Into<String>) -> Self {
-        Self { denial: None, message: message.into(), not_run: true, code: Some(FailureCode::Refused) }
+        Self { capacity: None, denial: None, message: message.into(), not_run: true, code: Some(FailureCode::Refused) }
     }
 
     /// Whether the machine refused the caller's account: asking again on

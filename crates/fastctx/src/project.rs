@@ -14,17 +14,8 @@ use crate::ask;
 pub enum ProjectCommand {
     /// The projects this machine is part of.
     List,
-    /// A project's record: the user's instructions for it, its machines,
-    /// where things are.
+    #[command(about = fastctx_types::memory::words::SHOW_HELP)]
     Show {
-        /// The project; without it, the one you work in.
-        #[arg(value_name = "NAME")]
-        town: Option<String>,
-    },
-    /// A project's map: its record, then each journal, page and decision
-    /// document in a line.
-    #[command(hide = true)]
-    Map {
         /// The project; without it, the one you work in.
         #[arg(value_name = "NAME")]
         town: Option<String>,
@@ -81,10 +72,6 @@ pub struct Fields {
     /// absolute path. Given once or more, it replaces the whole book.
     #[arg(long, num_args = 3, value_names = ["WHAT", "MACHINE", "PATH"], action = ArgAction::Append)]
     place: Vec<String>,
-    /// Where the documents of decisions settled with the user are: the
-    /// machine and its directory.
-    #[arg(long, num_args = 2, value_names = ["MACHINE", "PATH"], hide = true)]
-    canon: Vec<String>,
 }
 
 pub fn run(command: ProjectCommand) -> anyhow::Result<()> {
@@ -96,8 +83,7 @@ pub fn run(command: ProjectCommand) -> anyhow::Result<()> {
     };
     let call = match command {
         ProjectCommand::List => ProjectCall::List,
-        ProjectCommand::Show { town: given } => ProjectCall::Show { town: town(given)? },
-        ProjectCommand::Map { town: given } => ProjectCall::Map { town: town(given)? },
+        ProjectCommand::Show { town: given } => ProjectCall::Map { town: town(given)? },
         ProjectCommand::Enter { town } => ProjectCall::Enter { town: TownName::try_from(town)? },
         ProjectCommand::New { town, fields, account, hub } => {
             ProjectCall::New { town: TownName::try_from(town)?, fields: fields.into_fields()?, account, hub }
@@ -108,6 +94,7 @@ pub fn run(command: ProjectCommand) -> anyhow::Result<()> {
     };
     let opening = matches!(call, ProjectCall::New { .. });
     let editing = matches!(call, ProjectCall::Edit { .. });
+    let began = matches!(call, ProjectCall::Enter { .. }).then(crate::steps::began).flatten();
     let (reply, here) = ask::call(Call::Project(call))?;
     let text = match reply {
         Reply::Towns { towns } => list(&here, &towns),
@@ -123,6 +110,9 @@ pub fn run(command: ProjectCommand) -> anyhow::Result<()> {
         }
         Reply::Map { map: view } => map(&view),
         Reply::Entered { town, map: view } => {
+            if let Some(began) = began {
+                began.tell(fastctx_types::run_facts::StepDid::Project { town: town.clone() });
+            }
             format!("=== you work in the project {town} from now on ===\n{}", brief(&view))
         }
         other => anyhow::bail!("the node answered something else: {other:?}"),
@@ -155,11 +145,7 @@ impl Fields {
                 .collect();
             Some(places?)
         };
-        let canon = match self.canon.as_slice() {
-            [machine, path] => Some(Location { machine: MachineName::try_from(machine.as_str())?, path: path.clone() }),
-            _ => None,
-        };
-        Ok(RecordFields { name: self.name, what: self.what, machines, places, canon })
+        Ok(RecordFields { name: self.name, what: self.what, machines, places, canon: None })
     }
 }
 
@@ -197,9 +183,9 @@ fn show(title: &str, record: &Record, opened: &Stamp) -> String {
             text.push_str(&format!("  {}: {} {}\n", place.what, place.location.machine, place.location.path));
         }
     }
-    text.push_str(&format!("Opened by {}\n", stamped(opened)));
+    text.push_str(&format!("Opened by {}\n", stamped(opened, &record.machines)));
     if record.version > 1 {
-        text.push_str(&format!("Version {} by {}\n", record.version, stamped(&record_stamp(record))));
+        text.push_str(&format!("Version {} by {}\n", record.version, stamped(&record_stamp(record), &record.machines)));
     }
     text
 }

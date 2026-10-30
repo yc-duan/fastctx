@@ -24,6 +24,15 @@ pub(super) fn status(service: &Service) -> anyhow::Result<Status> {
     observed(service, installed)
 }
 
+pub(super) fn definition_current(service: &Service) -> anyhow::Result<bool> {
+    let path = definition_path(service)?;
+    match std::fs::read(&path) {
+        Ok(bytes) => Ok(bytes == definition(service)?.as_bytes()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(error).with_context(|| format!("reading LaunchAgent {}", path.display())),
+    }
+}
+
 pub(super) fn install(service: &Service) -> anyhow::Result<Status> {
     if !service.executable.is_file() || !service.directory.is_dir() {
         bail!("the executable and service data directory must exist before installation");
@@ -36,6 +45,9 @@ pub(super) fn install(service: &Service) -> anyhow::Result<Status> {
         Err(error) => return Err(error.into()),
     };
     let target = target(service);
+    // Enabled first: launchd loads no service it holds disabled, as a held
+    // one is (`hold`), and enabling one not loaded only clears that mark.
+    launchctl(&["enable", &target])?;
     if before.as_deref() != Some(content.as_bytes()) {
         // A changed definition is loaded again; an unloaded one is not an
         // error here.
@@ -50,7 +62,6 @@ pub(super) fn install(service: &Service) -> anyhow::Result<Status> {
     } else if !loaded(&target) {
         bootstrap(service, &path)?;
     }
-    launchctl(&["enable", &target])?;
     // Started if it is not running; one that runs is left alone.
     launchctl(&["kickstart", &target])?;
     observed(service, true)
@@ -67,6 +78,23 @@ pub(super) fn uninstall(service: &Service) -> anyhow::Result<Status> {
         _ => {}
     }
     observed(service, false)
+}
+
+/// Stops the service and keeps it stopped: unloaded, launchd no longer keeps
+/// it alive, and disabled, it is not loaded at the next login or boot. Its
+/// definition stays.
+pub(super) fn hold(service: &Service) -> anyhow::Result<Status> {
+    let target = target(service);
+    launchctl(&["disable", &target])?;
+    if loaded(&target) {
+        launchctl(&["bootout", &target])?;
+    }
+    observed(service, true)
+}
+
+/// Loads, enables and starts it again, as installing it does.
+pub(super) fn release(service: &Service) -> anyhow::Result<Status> {
+    install(service)
 }
 
 /// Whether this process may start the service again: a user's own agent
@@ -239,5 +267,8 @@ fn observed(service: &Service, installed: bool) -> anyhow::Result<Status> {
     };
     let last_exit = field("last exit code = ").and_then(|code| code.parse().ok());
     let logs = service.directory.join(format!("service-{}.log", service.role())).display().to_string();
-    Ok(Status { name: label(service), installed, enabled: installed, state, last_exit, logs, recovery: None })
+    let disabled = launchctl(&["print-disabled", &domain(service)])?;
+    let entry = format!("\"{}\" => true", label(service));
+    let enabled = installed && !disabled.lines().any(|line| line.trim().trim_end_matches(',') == entry);
+    Ok(Status { name: label(service), installed, enabled, state, last_exit, logs, recovery: None })
 }

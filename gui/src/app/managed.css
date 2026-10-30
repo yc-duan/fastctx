@@ -71,7 +71,7 @@
   font: inherit;
   font-size: var(--size-text);
   text-align: left;
-  transition: background-color var(--hover) ease;
+  transition: background-color var(--hover) var(--ease);
 }
 
 .device-managed:hover:not(:disabled) {
@@ -409,11 +409,11 @@
   opacity: 0.6;
 }
 
-.map-names .box-role {
-  fill: var(--accent);
-  font-size: 11.5px;
+.mw-role {
+  flex: none;
+  color: var(--accent);
+  font-size: calc(var(--size-fine) * var(--grow));
   font-family: var(--font-emphasis);
-  font-weight: 400;
 }
 
 /* Adding a person: a member or a visitor, side by side, each a solid tile
@@ -434,7 +434,7 @@
   background: var(--fill);
   color: var(--text-2);
   text-align: left;
-  transition: background-color var(--hover) ease, color var(--hover) ease;
+  transition: background-color var(--hover) var(--ease), color var(--hover) var(--ease);
 }
 
 .map-role:hover:not(.chosen) {

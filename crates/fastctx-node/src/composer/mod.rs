@@ -1,20 +1,37 @@
 //! The only writer and release coordinator of each conversation's composer.
 
 mod commands;
+mod document;
+mod failures;
+mod idle;
+mod keeping;
+mod legacy_records;
+pub(crate) use idle::input_busy;
+pub(crate) use keeping::start as keep;
+mod persistence;
+mod publication;
 mod receipts;
+mod recovery;
+pub(crate) use persistence::SCHEMA;
+mod rejected;
+pub(crate) use rejected::rejected;
+mod sending;
 mod state;
 mod storage;
 mod submissions;
+mod synchronizing;
+pub use synchronizing::{update_document, watch_documents};
 pub(crate) mod uploads;
 mod watching;
 
+pub use commands::{forget_command, next_command, place_command};
 use fastctx_types::access::Written;
-pub use storage::recover;
+pub use storage::prepare_recovery;
+pub(crate) use storage::restore_before_delivery;
 use storage::{event, load, publish};
 pub use submissions::resume;
-pub use commands::{forget_command, next_command, place_command};
+use submissions::schedule;
 pub use submissions::{awaits_turn, bound, turn_ended, uncertain};
-use submissions::{dispatch, schedule};
 pub use watching::{Lease, snapshot, watch};
 
 use std::collections::{HashMap, HashSet};
@@ -32,26 +49,43 @@ use crate::Node;
 use state::{Entry, Flight, Receipt, Stored};
 
 type Cell = crate::leases::Lease<ResidentId, fastctx_platform::doing::Mutex<Option<Stored>>>;
+// These entry points also sit deep in host-report and lifecycle futures.
+// Keep their transaction state off those callers' stacks.
+type Future<'a, T> = std::pin::Pin<Box<dyn std::future::Future<Output = Result<T, Failure>> + Send + 'a>>;
 
 #[derive(Default)]
 pub struct Composers {
+    recovering: Mutex<HashSet<ResidentId>>,
     cells: crate::leases::Registry<ResidentId, fastctx_platform::doing::Mutex<Option<Stored>>>,
     watches: Mutex<HashMap<String, ResidentId>>,
-    failed: Mutex<HashMap<ResidentId, Cell>>,
+    legacy_watchers: Mutex<HashMap<ResidentId, usize>>,
+    streams: synchronizing::Sources,
+    editors: Mutex<HashMap<ResidentId, HashMap<String, HashSet<fastctx_types::NoticeId>>>>,
+    publications: publication::Publications,
+    holds: failures::Holds,
+    releases: Mutex<HashMap<ResidentId, bool>>,
+    upload_failures: Arc<Mutex<HashMap<ResidentId, HashMap<String, String>>>>,
+    snapshots: publication::Snapshots,
 }
 
 pub fn removed(node: &Node, id: &ResidentId) {
-    node.composers.failed.lock().expect("failed composer checkpoints").remove(id);
+    node.composers.snapshots.lock().expect("composer snapshots").remove(id);
 }
 
 /// Forgets everything held in memory of the composer of `id`, whose
 /// conversation is deleted: its state, and the watches registered for it.
-pub fn deleted(node: &Node, id: &ResidentId) {
+pub async fn deleted(node: &Node, id: &ResidentId) -> Result<(), Failure> {
+    let cell = node.composers.cell(id);
+    let mut cell = cell.lock().await;
+    persistence::delete(node, id).await?;
+    *cell = None;
     removed(node, id);
+    recovery::finished(node, id);
     node.composers.watches.lock().expect("composer watches").retain(|_, watched| watched != id);
-    if let Some(cell) = node.composers.cells.get(id) {
-        tokio::spawn(async move { *cell.lock().await = None });
-    }
+    node.composers.editors.lock().expect("composer editors").remove(id);
+    node.composers.upload_failures.lock().expect("composer upload failures").remove(id);
+    node.composers.holds.lock().expect("composer checkpoint failures").remove(id);
+    Ok(())
 }
 
 impl Composers {
@@ -91,121 +125,143 @@ pub async fn request(
     }
 }
 
-pub async fn here(node: &Arc<Node>, from: &MachineName, id: &ResidentId, request: Request) -> Result<Updated, Failure> {
-    node.ready().await;
-    let gate = node.residents.management(id)?;
-    let _reading = crate::gate_waits::shared(node, id, &gate).await?;
-    node.residents.active(id)?;
-    let cell = node.composers.cell(id);
-    let mut cell = cell.lock().await;
-    load(node, id, &mut cell)?;
-    if matches!(request, Request::Read) {
-        return Ok(Updated { composer: cell.as_ref().expect("loaded").view(), landed: None, delivery: None });
-    }
-    let Request::Mutate { mutation } = request else { unreachable!() };
-    let mutation = *mutation;
-    if mutation.operation.is_empty() {
-        return Err(failure("an operation ID is required"));
-    }
-    let state = cell.as_ref().expect("loaded");
-    if receipts::upload(node, id, state, &mutation.operation)?.is_some() {
-        return Err(failure("that operation ID already belongs to an upload"));
-    }
-    if let Some(receipt) = receipts::receipt(node, id, state, &mutation.operation)? {
-        if receipt.from != *from || receipt.mutation != mutation {
-            return Err(failure("an operation ID was reused for different content or a different device"));
+pub fn here<'a>(
+    node: &'a Arc<Node>,
+    from: &'a MachineName,
+    id: &'a ResidentId,
+    request: Request,
+) -> Future<'a, Updated> {
+    Box::pin(async move {
+        node.ready().await;
+        if let Request::Sync { input } = request {
+            update_document(node, id, *input).await?;
+            return here(node, from, id, Request::Read).await;
         }
-        if let Some(error) = &receipt.failure {
-            return Err(Failure::new(error.clone()));
+        if matches!(request, Request::Read) {
+            node.residents.active(id)?;
+            let snapshot = node
+                .composers
+                .snapshots
+                .lock()
+                .expect("composer snapshots")
+                .get(id)
+                .and_then(|snapshot| snapshot.view.clone());
+            if let Some(composer) = snapshot.filter(|_| !recovery::pending(node, id)) {
+                return Ok(Updated { composer: (*composer).clone(), landed: None, delivery: None });
+            }
+            let gate = node.residents.management(id)?;
+            let _reading = crate::gate_waits::shared(node, id, &gate).await?;
+            node.residents.active(id)?;
+            let cell = node.composers.cell(id);
+            let mut cell = cell.lock().await;
+            load(node, id, &mut cell).await?;
+            return Ok(Updated { composer: cell.as_ref().expect("loaded").view(), landed: None, delivery: None });
         }
-        return Ok(Updated { composer: state.view(), landed: receipt.landed.clone(), delivery: receipt.delivery.clone() });
-    }
-    if let Change::Attach { attachment, .. } = &mutation.change {
-        crate::attachments::resolve(node, id, std::slice::from_ref(attachment)).await?;
-    }
-    let mut next = state.clone();
-    let mut flight = None;
-    match &mutation.change {
-        Change::Send { epoch } => {
-            if next.draft.epoch != *epoch {
-                return Err(failure("this draft was already sent"));
+        let gate = node.residents.management(id)?;
+        let _reading = crate::gate_waits::shared(node, id, &gate).await?;
+        node.residents.active(id)?;
+        let cell = node.composers.cell(id);
+        let mut cell = cell.lock().await;
+        load(node, id, &mut cell).await?;
+
+        let Request::Mutate { mutation } = request else { unreachable!() };
+        let mutation = *mutation;
+        if mutation.operation.is_empty() {
+            return Err(failure("an operation ID is required"));
+        }
+        let state = cell.as_ref().expect("loaded");
+        if receipts::upload(node, id, state, &mutation.operation).await?.is_some() {
+            return Err(failure("that operation ID already belongs to an upload"));
+        }
+        if let Some(receipt) = receipts::receipt(node, id, state, &mutation.operation).await? {
+            if receipt.from != *from || receipt.mutation != mutation {
+                return Err(failure("an operation ID was reused for different content or a different device"));
             }
-            let draft = next.draft.view();
-            if !draft.uploads.is_empty() {
-                return Err(failure(
-                    "the shared draft has unfinished attachment uploads; wait for them or remove them",
-                ));
+            if let Some(error) = &receipt.failure {
+                return Err(Failure::new(error.clone()));
             }
-            if draft.text.trim().is_empty() && draft.attachments.is_empty() {
-                return Err(failure("the shared draft is empty"));
-            }
-            let entry = crate::speech::new_id("queued");
-            let document = std::mem::take(&mut next.draft);
-            next.draft.epoch = epoch.checked_add(1).ok_or_else(|| failure("draft epoch overflow"))?;
-            next.queue.push(Entry {
-                id: entry.clone(),
-                from: from.clone(),
-                document,
-                editors: HashSet::new(),
-                error: None,
-                submitted: None,
-                command: false,
+            return Ok(Updated {
+                composer: state.view(),
+                landed: receipt.landed.clone(),
+                delivery: receipt.delivery.clone(),
             });
-            let now = node.residents.now(id).ok_or_else(|| failure("unknown resident"))?;
-            if now.activity != Activity::Busy
-                && next.awaiting_turn.is_none()
-                && next.sending.is_none()
-                && next.pending.is_empty()
-            {
-                flight = Some(next.reserve(&entry, false, true)?);
-            }
         }
-        Change::SendQueued { id } => flight = Some(next.reserve(id, false, false)?),
-        Change::Editing { id: entry, watch, editing } => {
-            if node.composers.watches.lock().expect("composer watches").get(watch) != Some(id) {
-                return Err(failure("the composer watch is no longer open"));
-            }
-            let entry = next.entry(entry)?;
-            if *editing {
-                entry.editors.insert(watch.clone());
-            } else {
-                entry.editors.remove(watch);
-            }
+        // An edit of an epoch of the draft sent since, from a device whose
+        // answer and receipt are gone, was done if that epoch took it: it is
+        // not done again in the new one (review 2.1).
+        if let Change::Edit { target: fastctx_types::composer::Target::Draft, epoch, .. } = &mutation.change
+            && *epoch < state.draft.epoch
+            && receipts::taken(node, id, state, *epoch, &mutation.operation).await?
+        {
+            return Ok(Updated { composer: state.view(), landed: None, delivery: None });
         }
-        _ => next.edit(&mutation)?,
-    }
-    next.receipts.insert(
-        mutation.operation.clone(),
-        Receipt { from: from.clone(), mutation: mutation.clone(), landed: None, delivery: None, failure: None },
-    );
-    let forsaken = uploads::forsaken(state, &next);
-    publish(node, id, &mut cell, next)?;
-    crate::attachments::forsake(node, id, &forsaken);
-    let view = cell.as_ref().expect("loaded").view();
-    drop(cell);
-    drop(_reading);
-    let Some(flight) = flight else {
-        schedule(node, id);
-        return Ok(Updated { composer: view, landed: None, delivery: None });
-    };
-    let delivery = flight.delivery.id.clone();
-    let (sending_node, sending_id) = (node.clone(), id.clone());
-    let delivered =
-        tokio::spawn(async move { dispatch(&sending_node, &sending_id, flight).await }).await.map_err(failure)?;
-    let cell = node.composers.cell(id);
-    let mut cell = cell.lock().await;
-    load(node, id, &mut cell)?;
-    let mut next = cell.as_ref().expect("loaded").clone();
-    let receipt = receipts::receipt(node, id, &next, &mutation.operation)?.expect("kept receipt");
-    let receipt = next.receipts.entry(mutation.operation.clone()).or_insert(receipt);
-    receipt.landed = delivered.as_ref().ok().cloned().flatten();
-    receipt.delivery = Some(delivery.clone());
-    receipt.failure = delivered.as_ref().err().map(|error| error.message.clone());
-    publish(node, id, &mut cell, next)?;
-    let composer = cell.as_ref().expect("loaded").view();
-    drop(cell);
-    schedule(node, id);
-    delivered.map(|landed| Updated { composer, landed, delivery: Some(delivery) })
+        if let Change::Attach { attachment, .. } = &mutation.change {
+            crate::attachments::resolve(node, id, std::slice::from_ref(attachment)).await?;
+        }
+        let was_uploaded = uploads::listed(state);
+        let mut next = cell.take().expect("loaded");
+        let mut flight = None;
+        match &mutation.change {
+            Change::Send { .. } | Change::SendDocument { .. } => {
+                flight = sending::capture(node, id, &mut next, from, &mutation.change)?;
+            }
+            Change::SendQueued { id } => flight = Some(next.reserve(id, false, false)?),
+            Change::Editing { id: entry, watch, editing } => {
+                if node.composers.watches.lock().expect("composer watches").get(watch) != Some(id) {
+                    return Err(failure("the composer watch is no longer open"));
+                }
+                let entry = next.entry(entry)?;
+                watching::editing(node, id, watch, &entry.id, *editing);
+                if *editing {
+                    entry.editors.insert(watch.clone());
+                } else {
+                    entry.editors.remove(watch);
+                }
+            }
+            _ => next.edit(&mutation)?,
+        }
+        next.receipts.insert(
+            mutation.operation.clone(),
+            Receipt { from: from.clone(), mutation: mutation.clone(), landed: None, delivery: None, failure: None },
+        );
+        let forsaken = uploads::forsaken(was_uploaded, &next);
+        let sending = flight.map(|mut flight| {
+            flight.operation = Some(mutation.operation.clone());
+            next.sending = Some(flight.clone());
+            let delivery = flight.delivery.id.clone();
+            let (reply, answer) = tokio::sync::oneshot::channel();
+            (flight, delivery, reply, answer)
+        });
+        let (callback, answer) = match sending {
+            Some((flight, delivery, reply, answer)) => {
+                (Some(submissions::after_commit(node, id, flight, Some(reply))), Some((delivery, answer)))
+            }
+            None => (None, None),
+        };
+        let (committed_node, committed_id, runtime) = (node.clone(), id.clone(), tokio::runtime::Handle::current());
+        storage::publish_then(node, id, &mut cell, next, move || {
+            if let Some(callback) = callback {
+                callback();
+            }
+            runtime.spawn(async move {
+                crate::attachments::forsake(&committed_node, &committed_id, &forsaken);
+            });
+        })
+        .await?;
+        let view = cell.as_ref().expect("loaded").view();
+        drop(cell);
+        drop(_reading);
+        let Some((delivery, answer)) = answer else {
+            schedule(node, id);
+            return Ok(Updated { composer: view, landed: None, delivery: None });
+        };
+        let delivered = answer.await.map_err(failure)?;
+        let cell = node.composers.cell(id);
+        let mut cell = cell.lock().await;
+        load(node, id, &mut cell).await?;
+        let composer = cell.as_ref().expect("loaded").view();
+        delivered.map(|landed| Updated { composer, landed, delivery: Some(delivery) })
+    })
 }
 
 pub fn changed(node: &Arc<Node>, id: &ResidentId) {

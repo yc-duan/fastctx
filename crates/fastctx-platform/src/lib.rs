@@ -11,6 +11,7 @@ pub mod awake;
 pub mod bounded;
 #[cfg(any(target_os = "linux", target_os = "macos", windows))]
 pub mod child;
+pub mod cpu_share;
 #[cfg(target_os = "macos")]
 pub mod darwin_proc;
 pub mod detach;
@@ -20,6 +21,7 @@ pub mod disks;
 pub mod doing;
 pub mod elevation;
 pub mod environment;
+pub mod event_queue;
 pub mod file_read;
 pub mod file_version;
 pub mod form;
@@ -31,6 +33,7 @@ pub mod image_usage;
 pub mod ipc;
 pub mod job_membership;
 pub mod legacy_text;
+pub mod limits;
 pub mod local_path;
 pub mod lock;
 pub mod memory;
@@ -83,7 +86,7 @@ pub use atomic::{Permissions, PublishFailure, Staged, publish, publish_checked, 
 pub use child::Child;
 pub use detach::{DetachedProcess, spawn_detached};
 pub use environment::{in_job, user_environment, world_process_environment};
-pub use home::{RELEASED, fastctx_root, fastctx_root_in, follows_releases, temp_dir, user_home, user_id};
+pub use home::{RELEASED, fastctx_root, fastctx_root_in, follows_releases, preview, temp_dir, user_home, user_id};
 pub use hostname::hostname;
 pub use identity::{current_identity, has_ended, identity_of, is_alive};
 pub use legacy_text::decode_legacy;

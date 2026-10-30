@@ -101,6 +101,10 @@ pub enum Up {
     Ack { seq: u64 },
     /// A question for the hub itself.
     Ask { id: u64, question: Question },
+    /// A ledger question in ordered JSON parts, only for hubs advertising ledger_parts.
+    QuestionPart { id: u64, index: u32, total: u32, text: String },
+    /// Abandons only an incomplete question; an accepted append still finishes.
+    CancelQuestion { id: u64 },
     /// How what is afoot on this machine changed since it last told this
     /// session (`world-network.md`, 近况); sent only to a hub whose view
     /// says it takes it.
@@ -177,6 +181,9 @@ pub enum Intent {
         /// they cannot read.
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         versions: bool,
+        /// Reads a version snapshot in bounded parts, published only when complete.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        version_parts: bool,
         /// The member reads the records of updates kept for machines away
         /// and of updates made as another asked. Earlier releases do not say
         /// so, and could read nothing of a machine log page with one.
@@ -198,6 +205,13 @@ pub enum Intent {
         /// page with one.
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         profiles: bool,
+        /// Reads account record invalidations independently of the directory.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        account_records: bool,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        conversation_plans: bool,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        scratch_locations: bool,
         /// A machine taken off the hub that was to uninstall Fastctx then,
         /// and could not do all of it: what was left, and why. The hub
         /// keeps it for its machine log, and refuses the session as before.
@@ -218,6 +232,10 @@ pub enum Intent {
         /// The receiver verifies a large call's control-frame authorization facts against its body.
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         call_details: bool,
+        /// The member reads `Down::View`: what changed in its view, in
+        /// place of being told to ask for the whole view again.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        view_deltas: bool,
     },
     /// A password login to `account`: the first OPAQUE message. The hub
     /// answers `Down::LoginResponse`; the device finishes with
@@ -337,7 +355,9 @@ pub enum Down {
         afoot_pending: Option<bool>,
     },
     /// The hub's half of a password login.
-    LoginResponse { response: Bytes },
+    LoginResponse {
+        response: Bytes,
+    },
     /// What a token lets a device into, asked before it is used
     /// (`Intent::Peek`): whose, and whether as a managed machine.
     TokenInfo {
@@ -350,16 +370,25 @@ pub enum Down {
         expires: Timestamp,
     },
     /// The hub's half of opening an account, or of setting a password.
-    RegisterResponse { response: Bytes },
+    RegisterResponse {
+        response: Bytes,
+    },
     /// The login was taken: this computer or phone is the member `name` of
     /// the hub, logged in to `account`.
-    LoggedIn { hub: HubId, hub_name: HubName, name: MachineName, account: AccountName },
+    LoggedIn {
+        hub: HubId,
+        hub_name: HubName,
+        name: MachineName,
+        account: AccountName,
+    },
     /// The account is open; log in to it.
     Registered,
     /// The data connection is paired; bytes follow.
     Paired,
     /// The connection is refused or ended, and why.
-    Refused { reason: Refusal },
+    Refused {
+        reason: Refusal,
+    },
     Pong {
         n: u64,
         /// The hub's time as it answered, by its clock (`crate::link`'s
@@ -376,23 +405,46 @@ pub enum Down {
     },
     /// The hub holds this machine's letter `seq` and all before it; when
     /// the hub cannot deliver it, `refused` says why and the letter is gone.
-    Ack { seq: u64, refused: Option<String> },
+    Ack {
+        seq: u64,
+        refused: Option<String>,
+    },
     /// A letter for this machine, numbered `seq` in the hub's numbering.
-    Deliver { seq: u64, message: Envelope },
+    Deliver {
+        seq: u64,
+        message: Envelope,
+    },
     /// A call for this machine, numbered `call` by the hub.
-    Incoming { call: u64, message: Envelope },
+    Incoming {
+        call: u64,
+        message: Envelope,
+    },
     /// How the call `id` this machine made is going.
-    Status { id: u64, status: CallStatus },
+    Status {
+        id: u64,
+        status: CallStatus,
+    },
     /// The answer to the call `id` this machine made.
-    Answered { id: u64, message: Envelope },
+    Answered {
+        id: u64,
+        message: Envelope,
+    },
     /// The answer to the question `id`.
-    Told { id: u64, answer: Result<Told, String> },
+    Told {
+        id: u64,
+        answer: Result<Told, String>,
+    },
     /// The directory changed in what this member sees of it.
     DirectoryChanged,
     /// The hub takes sessions now (`Intent::Probe`).
     Ready,
     /// A project this member may use has new entries in its ledger.
-    LedgerChanged { town: TownId },
+    LedgerChanged {
+        town: TownId,
+    },
+    AccountRecordChanged {
+        changed: fastctx_types::account_records::Changed,
+    },
     /// How what is afoot on `machine` changed as this member may see it,
     /// since this session was last told of it; and, to the machine's owner
     /// alone, how many agents are at work or waiting there now.
@@ -405,34 +457,69 @@ pub enum Down {
     /// Delete what this member keeps of a conversation, and say how that
     /// went (`Up::Forgot`). Sent only to a member whose session says it
     /// forgets: now, and at each session it opens until it says it is done.
-    Forget { forgetting: Forgetting },
+    Forget {
+        forgetting: Forgetting,
+    },
     /// The versions of the network as the hub knows them, sent when the
     /// session opens and whenever they change, only to a member whose
     /// session says it reads them.
-    Versions { network: Box<fastctx_types::update::Network> },
+    Versions {
+        network: Box<fastctx_types::update::Network>,
+    },
+    /// A version snapshot, starting at index zero. A new zero supersedes an
+    /// incomplete snapshot; no part becomes visible before the last one.
+    VersionPart {
+        index: u32,
+        last: bool,
+        network: Box<fastctx_types::update::Network>,
+    },
     /// Fetch this package for the network, and deliver it
     /// (`Intent::Deliver`) or say why not (`Up::Unfetched`). Sent only to a
     /// member that reads versions and said it fetches for others, or holds
     /// the package.
-    Fetch { fetch: Box<fastctx_types::update::Fetch> },
+    Fetch {
+        fetch: Box<fastctx_types::update::Fetch>,
+    },
     /// Sent only to a helper that advertised package progress.
-    FetchCancelled { id: u64 },
+    FetchCancelled {
+        id: u64,
+    },
     /// Sent only for a package question that requested progress.
-    PackageProgress { id: u64, progress: fastctx_types::update::PackageProgress },
+    PackageProgress {
+        id: u64,
+        progress: fastctx_types::update::PackageProgress,
+    },
     /// The call `call` the hub passed on (`Incoming`) is over for its
     /// caller, who gave it up, left the hub, or lost the right it was made
     /// under: one that only reads stops (`fastctx_types::contract`). Sent
     /// only to a member whose session says it reads this.
-    Cancelled { call: u64 },
+    Cancelled {
+        call: u64,
+    },
     /// How `machine` is connected now, as the member may see it, the
     /// hub's `rev`th change in who is online (`crate::directory::View::presence`).
     /// Sent only to a member whose session says it reads this.
-    Presence { machine: MachineName, presence: crate::directory::Presence, rev: u64 },
+    Presence {
+        machine: MachineName,
+        presence: crate::directory::Presence,
+        rev: u64,
+    },
     /// The part `index` of `total` of the answer to the question `id`, as
     /// JSON text, when the whole is too large for one frame: put together,
     /// they are what `Told` would carry. Sent only to a member whose session
     /// says it reads this.
-    Part { id: u64, index: u32, total: u32, text: String },
+    Part {
+        id: u64,
+        index: u32,
+        total: u32,
+        text: String,
+    },
+    /// What changed in this member's view (`crate::view_delta`). Sent only
+    /// to a member whose session says it reads this; one too large for a
+    /// frame goes as `DirectoryChanged`.
+    View {
+        delta: Box<crate::view_delta::ViewDelta>,
+    },
 }
 
 /// The most bytes of text one `Down::Part` carries.
@@ -537,6 +624,10 @@ pub enum CallStatus {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "kind")]
 pub enum Question {
+    AccountRecords {
+        account: AccountName,
+        request: fastctx_types::account_records::Request,
+    },
     NetworkUpdates {
         account: AccountName,
         request: fastctx_types::update::ViewCall,
@@ -567,6 +658,24 @@ pub enum Question {
     Manage {
         account: AccountName,
         change: Change,
+    },
+    /// Metadata only, including for an account whose agent this member hosts.
+    ProjectIndex {
+        town: TownId,
+        account: AccountName,
+    },
+    /// Signed document bytes, only on a device logged into the account.
+    MemoryRead {
+        town: TownId,
+        account: AccountName,
+        name: String,
+        version: Option<u32>,
+    },
+    /// Append project memory explicitly for one account.
+    MemoryWrite {
+        town: TownId,
+        account: AccountName,
+        entry: Signed,
     },
     /// Keep this entry in the ledger of `town`.
     LedgerWrite {
@@ -664,6 +773,18 @@ pub enum Change {
     Collab {
         collab: fastctx_types::collab::Collab,
     },
+    /// Changes only the account's project-memory switch, preserving its other configuration.
+    MemorySettings {
+        version: u64,
+        enabled: bool,
+    },
+    /// Changes only the account's layer (`world-layers.md`), over the
+    /// profile version it was read at. Sent only to a hub whose view says
+    /// it keeps layers.
+    Layer {
+        version: u64,
+        layer: fastctx_types::layers::Layer,
+    },
     /// Writes the account's profile over the version it was read at; a
     /// machine that works for the account may (`world-user-config.md`).
     Profile {
@@ -679,6 +800,8 @@ pub enum Change {
         machine: MachineName,
         to: AccountName,
         shared: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        jobs: Option<u16>,
     },
     /// Lets `agent`'s login `home` on `machine`, one of the account's own,
     /// assist `to`, or no longer; none is that agent's default login there.
@@ -703,6 +826,8 @@ pub enum Change {
         daily: Option<fastctx_types::usage::Usd>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         five_hour: Option<u8>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        turns: Option<u16>,
     },
     /// The super administrator sets the plan shown for `agent`'s login
     /// `home` on `machine`, or takes it away.
@@ -899,6 +1024,17 @@ pub enum Change {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "kind")]
 pub enum Told {
+    AccountRecords {
+        response: fastctx_types::account_records::Response,
+    },
+    ProjectIndex {
+        index: Box<fastctx_types::memory::ProjectIndex>,
+    },
+    MemoryDocument {
+        entry: Signed,
+        versions: Vec<fastctx_types::memory::Revision>,
+        evidence: Vec<fastctx_types::memory::Evidence>,
+    },
     NetworkUpdates {
         reply: fastctx_types::update::ViewReply,
     },

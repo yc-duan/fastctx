@@ -21,6 +21,8 @@
 //! the cursor budget. Letters are bounded by the mailbox's window.
 
 mod afoot;
+mod versions;
+pub(crate) use versions::Snapshot as VersionSnapshot;
 
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
@@ -109,6 +111,7 @@ struct State {
 enum Notice {
     Directory,
     Ledger(TownId),
+    AccountRecord(fastctx_types::AccountName, String, String),
     Versions,
     Afoot(MachineName),
     Presence(MachineName),
@@ -120,6 +123,7 @@ enum Notice {
 enum Pending {
     Frame(Down),
     Afoot(afoot::Pending),
+    Versions(versions::Pending),
 }
 
 impl Outq {
@@ -171,6 +175,27 @@ impl Outq {
         }
         self.0.ready.notify_one();
         queued
+    }
+
+    /// Publishes the latest version snapshot, one frame per turn in the notice lane.
+    pub(crate) fn versions(&self, snapshot: VersionSnapshot, parts: bool) -> Result<(), ()> {
+        let mut state = self.0.state.lock().expect("never poisoned");
+        if state.shut || state.overflowed.is_some() {
+            return Err(());
+        }
+        let pending = Pending::Versions(versions::Pending::new(snapshot, parts));
+        if let Some(at) = state.notices.iter().position(|(kind, _)| *kind == Notice::Versions) {
+            state.notices[at].1 = pending;
+        } else if state.notices.len() < NOTICES {
+            state.notices.push_back((Notice::Versions, pending));
+        } else {
+            let _ = state.overflow("too many pending notices".into());
+            self.0.over.send_replace(state.overflowed.clone());
+            self.0.ready.notify_one();
+            return Err(());
+        }
+        self.0.ready.notify_one();
+        Ok(())
     }
 
     /// Shares a status snapshot and only materializes a frame when its writer asks.
@@ -349,6 +374,15 @@ impl State {
             if state.spilled.is_none() {
                 match state.notices.pop_front()?.1 {
                     Pending::Frame(frame) => return Some(frame),
+                    Pending::Versions(mut pending) => match pending.take() {
+                        Ok((frame, done)) => {
+                            if !done {
+                                state.notices.push_back((Notice::Versions, Pending::Versions(pending)));
+                            }
+                            return Some(frame);
+                        }
+                        Err(reason) => return Some(Down::Refused { reason: Refusal::Broken { reason } }),
+                    },
                     Pending::Afoot(pending) => state.spilled = Some(pending),
                 }
             }
@@ -392,6 +426,9 @@ fn notice(frame: &Down) -> Option<Notice> {
     Some(match frame {
         Down::DirectoryChanged => Notice::Directory,
         Down::LedgerChanged { town } => Notice::Ledger(town.clone()),
+        Down::AccountRecordChanged { changed } => {
+            Notice::AccountRecord(changed.account.clone(), changed.metadata.kind.clone(), changed.metadata.key.clone())
+        }
         Down::Versions { .. } => Notice::Versions,
         Down::Afoot { machine, .. } => Notice::Afoot(machine.clone()),
         Down::Presence { machine, .. } => Notice::Presence(machine.clone()),

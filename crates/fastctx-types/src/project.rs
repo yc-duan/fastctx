@@ -36,6 +36,47 @@ pub enum Writer {
     Session {
         agent: AgentName,
     },
+    /// A conversation, or a page, on a machine whoever reads this may not
+    /// work on: they are told no more than which (`world-network.md`,
+    /// 共享机器与智能体协助). Never written down; only what a reader is shown.
+    Elsewhere {
+        page: bool,
+    },
+}
+
+impl Writer {
+    /// This writer as told to someone who may work only on the machines
+    /// `usable` admits: a conversation or a page on any other machine is
+    /// told as no more than `Elsewhere`.
+    pub fn for_reader(&mut self, usable: &dyn Fn(&MachineName) -> bool) {
+        let hidden = match self {
+            Writer::Resident { address } => !usable(&address.machine),
+            Writer::Page { page } => {
+                let mut by = (*page.by).clone();
+                by.for_reader(usable);
+                !usable(&page.on)
+                    || !usable(&page.opened_on)
+                    || matches!(&page.identity, Some(crate::pages::PageIdentity::Local { machine }) if !usable(machine))
+                    || by != *page.by
+            }
+            Writer::User | Writer::Session { .. } | Writer::Elsewhere { .. } => false,
+        };
+        if hidden {
+            *self = Writer::Elsewhere { page: matches!(self, Writer::Page { .. }) };
+        }
+    }
+}
+
+impl Stamp {
+    /// This stamp as told to someone who may work only on the machines
+    /// `usable` admits: the machine it was written on is named only when it
+    /// is one of them (`Writer::for_reader`).
+    pub fn for_reader(&mut self, usable: &dyn Fn(&MachineName) -> bool) {
+        if self.on.as_ref().is_some_and(|on| !usable(on)) {
+            self.on = None;
+        }
+        self.by.for_reader(usable);
+    }
 }
 
 /// One version of a town's record: what a resident coming in must know.
@@ -53,8 +94,29 @@ pub struct Record {
     /// Where the town's canon is: a directory of documents.
     pub canon: Option<Location>,
     pub by: Writer,
-    pub on: MachineName,
+    /// The machine it was written on; left out where whoever reads it may
+    /// not work on that machine. Always written down.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub on: Option<MachineName>,
     pub at: Timestamp,
+}
+
+impl Record {
+    /// This version as told to someone who may work only on the machines
+    /// `usable` admits: of its machines, the places in its address book and
+    /// its canon, only those on such machines, and its stamp as
+    /// `Stamp::for_reader` tells it (`world-network.md`, 共享机器与智能体协助).
+    pub fn for_reader(&mut self, usable: &dyn Fn(&MachineName) -> bool) {
+        self.machines.retain(|machine| usable(machine));
+        self.places.retain(|place| usable(&place.location.machine));
+        if self.canon.as_ref().is_some_and(|canon| !usable(&canon.machine)) {
+            self.canon = None;
+        }
+        if self.on.as_ref().is_some_and(|on| !usable(on)) {
+            self.on = None;
+        }
+        self.by.for_reader(usable);
+    }
 }
 
 /// A path on a machine, written the way that machine writes it.
@@ -76,7 +138,9 @@ pub struct Listing {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Stamp {
     pub by: Writer,
-    pub on: MachineName,
+    /// As a record's `on`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub on: Option<MachineName>,
     pub at: Timestamp,
 }
 
@@ -188,6 +252,9 @@ pub struct CanonHead {
 /// What a town's map is made of (`world-map.md`).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MapView {
+    /// Generated project-memory block. Absent when the account has disabled it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub memory: Option<String>,
     pub town: TownName,
     /// The town's ledger on the machine that made the map.
     pub ledger: String,

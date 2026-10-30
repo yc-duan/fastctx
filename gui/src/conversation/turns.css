@@ -76,7 +76,7 @@
   color: var(--text-3);
   --shown: 0;
   opacity: var(--shown);
-  transition: --shown var(--hover) ease, color var(--hover) ease;
+  transition: --shown var(--hover) var(--ease), color var(--hover) var(--ease);
 }
 
 .long-text-box:hover .long-text-full,
@@ -108,7 +108,7 @@
   margin-top: var(--space-1);
   --shown: 0;
   opacity: var(--shown);
-  transition: --shown var(--hover) ease;
+  transition: --shown var(--hover) var(--ease);
 }
 
 .turn-acts.latest,
@@ -141,7 +141,7 @@
   height: 28px;
   border-radius: var(--radius-s);
   color: var(--text-3);
-  transition: color var(--hover) ease, background-color var(--hover) ease;
+  transition: color var(--hover) var(--ease), background-color var(--hover) var(--ease);
 }
 
 .turn-icon:hover,
@@ -188,7 +188,7 @@
 .turn-info:focus .turn-info-card {
   display: grid;
   opacity: var(--shown);
-  animation: paper-in var(--quick) ease both;
+  animation: paper-in var(--quick) var(--ease) both;
 }
 
 /* The gap between the mark and the card is the card's: the pointer
@@ -214,7 +214,7 @@
   padding: 3px var(--space-2);
   border-radius: var(--radius-s);
   color: var(--text-2);
-  transition: color var(--hover) ease, background-color var(--hover) ease;
+  transition: color var(--hover) var(--ease), background-color var(--hover) var(--ease);
 }
 
 .turn-info-calls:hover {
@@ -280,14 +280,16 @@
   display: none;
 }
 
-/* On a touch screen every answer keeps its actions under it; the user's
-   own words carry none, and held, theirs float up beside them. */
+/* On a touch screen the latest answer keeps its actions under it; an
+   earlier answer and the user's own words carry none, and held, theirs
+   float up beside them. */
 @media (hover: none) {
   .turn-acts {
     --shown: 1;
   }
 
-  .user-acts {
+  .user-acts,
+  .answer-acts:not(.latest) {
     display: none;
   }
 
@@ -365,7 +367,7 @@
   font: inherit;
   text-align: left;
   border-radius: var(--radius-s);
-  transition: color var(--hover) ease;
+  transition: color var(--hover) var(--ease);
 }
 
 .notice-open:hover {
@@ -402,6 +404,38 @@
   width: 14px;
 }
 
+/* A colleague's questions, opened: each, then its choices, what each
+   means in a quieter ink beneath it. */
+.gq-asked {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.gq-ask {
+  margin: 0;
+  color: var(--text);
+}
+
+.gq-options {
+  display: grid;
+  gap: var(--space-1);
+  margin: var(--space-1) 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.gq-options li {
+  display: grid;
+}
+
+.gq-label {
+  color: var(--text-2);
+}
+
+.gq-note {
+  color: var(--text-3);
+}
+
 /* A question asked on the side, answered: the answer, read as an answer. */
 .command-answer {
   margin: var(--space-1) 0;
@@ -411,7 +445,7 @@
   color: var(--text-3);
   --turn: -90deg;
   rotate: var(--turn);
-  transition: --turn var(--fold) var(--fold-easing);
+  transition: --turn var(--expand) var(--expand-easing);
 }
 
 .notice-open[aria-expanded="true"] > .glyph:last-child {
@@ -453,109 +487,6 @@
 
 .notice-box .prose pre {
   font-style: normal;
-}
-
-/* Answers to questions asked without waiting: what was answered, on the
-   user's side, small. */
-.block-heard.from-reply {
-  display: flex;
-  justify-content: flex-end;
-}
-
-.reply-line {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  margin: 0;
-  font-size: var(--size-text);
-  color: var(--text-2);
-}
-
-.reply-line .glyph {
-  color: var(--alive);
-}
-
-/* Questions asked without waiting: a card in the conversation. */
-.question-card {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-3);
-  padding: var(--space-4) var(--space-5);
-  border-radius: var(--radius-m);
-  background: var(--bg-sunken);
-}
-
-.question-one {
-  margin: 0;
-  padding: 0;
-  border: 0;
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-}
-
-.question-title {
-  padding: 0;
-  font-size: var(--size-text);
-  line-height: var(--leading-prose);
-  color: var(--text);
-}
-
-.question-title p {
-  margin: 0;
-}
-
-.question-card .ask-options {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-2);
-}
-
-.question-card .ask-option[aria-pressed="true"] {
-  background: var(--accent-wash);
-  color: var(--text-strong);
-}
-
-.question-foot {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: var(--space-2);
-}
-
-.question-state {
-  flex: 1;
-  font-size: var(--size-text);
-  color: var(--text-3);
-}
-
-.question-state.wrong {
-  color: var(--wrong);
-}
-
-.question-card.answered {
-  gap: var(--space-2);
-}
-
-.question-pair {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  margin: 0;
-}
-
-.question-pair .question-title {
-  font-size: var(--size-text);
-  color: var(--text-2);
-}
-
-.question-answer {
-  color: var(--text-strong);
-}
-
-.question-card.skipped .question-title {
-  font-size: var(--size-text);
-  color: var(--text-3);
 }
 
 :root[data-reduced] .turn-acts,
@@ -696,7 +627,7 @@
 /* What came with the words comes up quietly once they have landed. */
 .bubble-landing {
   opacity: var(--rise);
-  animation: rise var(--enter) ease-out both;
+  animation: rise var(--enter) var(--ease-out) both;
 }
 
 :root[data-reduced] .bubble-landing {

@@ -255,5 +255,6 @@ pub fn writer_name(ctx: &Ctx, writer: &Writer) -> String {
         Writer::User => ctx.words.you().to_string(),
         Writer::Resident { address } => who::address_name(ctx, address),
         Writer::Session { agent } => ctx.words.agent(agent.as_str()),
+        Writer::Elsewhere { page } => ctx.words.elsewhere(*page).to_string(),
     }
 }

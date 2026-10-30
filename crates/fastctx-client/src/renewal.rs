@@ -135,7 +135,13 @@ pub fn legacy_mismatch(reason: &str) -> Option<Mismatch> {
 }
 
 fn hello(protocol: u32) -> Hello {
-    Hello { protocol, version: env!("CARGO_PKG_VERSION").into(), peer: Peer::Command { resident: None, session: None } }
+    Hello {
+        protocol,
+        version: env!("CARGO_PKG_VERSION").into(),
+        peer: Peer::Command { resident: None, session: None },
+        notices: fastctx_types::ipc::NOTICES,
+        shapes: fastctx_types::ipc::SHAPES,
+    }
 }
 
 async fn connect(world: &WorldDir) -> io::Result<Connection> {

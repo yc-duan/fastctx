@@ -1,5 +1,5 @@
 //! Compiled against unchanged type sources from pinned git revisions: one for each older protocol,
-//! and the readers of the releases that speak today's.
+//! and the readers of the releases that shipped since.
 
 use serde_json::{Value, json};
 use std::io::{self, BufRead};
@@ -22,6 +22,7 @@ fn decode(reader: &str, value: Value, request: bool) -> Value {
         "v10" => read!(v10),
         "v13_beta1" => read!(v13_beta1),
         "v13_beta2" => read!(v13_beta2),
+        "v13_beta11" => read!(v13_beta11),
         _ => panic!("no frozen reader {reader}"),
     }
 }
@@ -51,6 +52,7 @@ fn main() {
                     "v10" => welcome!(v10),
                     "v13_beta1" => welcome!(v13_beta1),
                     "v13_beta2" => welcome!(v13_beta2),
+                    "v13_beta11" => welcome!(v13_beta11),
                     _ => panic!("no frozen reader {reader}"),
                 };
                 json!({"read": read})
@@ -81,7 +83,11 @@ fn main() {
                 let fastctx_types::ipc::NodeFrame::Reply { id, mut reply } = frame else { panic!("expected reply") };
                 if let Ok(reply) = &mut reply {
                     compat::reply(protocol as u32, reply);
+                    // No historical reader says which notices it reads.
+                    compat::notices(0, reply);
                 }
+                // Nor which reply shapes.
+                compat::shapes(0, &mut reply);
                 let wire: Value = serde_json::from_slice(&compat::frame(protocol as u32, id, &reply)).unwrap();
                 json!({"read": decode(reader, wire.clone(), false), "wire": wire, "current": current})
             }

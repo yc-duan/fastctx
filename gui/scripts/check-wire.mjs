@@ -46,6 +46,7 @@ import type { AccountChange, AccountsReply, TokenPeek } from "../src/world/accou
 import type { ConnectionState } from "../src/world/device";
 import type { Choices } from "../src/world/bridge";
 import type { ComposerSnapshot, ComposerMutation, ComposerUpdated } from "../src/world/composer";
+import type { DocumentSubscription, DocumentInput, DocumentFrame, DocumentSend } from "../src/world/composer-sync";
 import type { MachineLogPage } from "../src/world/machine-log";
 import type { MachineStats } from "../src/world/stats";
 import type { UsageCallsPage, UsageCallsQuery } from "../src/world/usage-calls";
@@ -58,6 +59,7 @@ export const fixture = ${json.trimEnd()} satisfies {
   profile: { calls: unknown; replies: (({ reply: "profile" } & ProfileView) | { reply: "profile_written"; version: number } | { reply: "mcp"; result: McpReply })[] };
   machine_log: MachineLogPage[];
   composer: { snapshots: ComposerSnapshot[]; mutations: ComposerMutation[]; updated: ComposerUpdated };
+  composer_sync: { subscription: DocumentSubscription; inputs: DocumentInput[]; frames: DocumentFrame[]; sends: DocumentSend[] };
   // Accounts as the interface reads and changes them, the device's
   // standing, and what the user chose for a new conversation.
   run_facts: { calls: RunFacts[]; diff: DiffLine[]; updates: JobFacts[]; projected_reads: ProjectedLines[]; parts: LinePart[]; open_errors: LineOpenError[] };
@@ -198,11 +200,11 @@ assert(conversation.entries.some((entry) => entry.kind === "uncertain"));
 assert.equal(conversation.moving(), false);
 
 // Claude's requests become cards, and the cards answer in the shape its
-// hooks take: allowing once, the questions chosen, a form filled in.
+// hooks take: allowing once, a form filled in.
 const asking = new Fold();
 asking.history(fixture.claude.events.filter((event) => event.change?.kind !== "resolved"));
 const asks = asking.entries.filter((entry) => entry.kind === "ask");
-assert.equal(asks.length, 3, "each Claude request is a card");
+assert.equal(asks.length, 2, "each Claude request is a card");
 const cards = await build({
   stdin: {
     contents: `export { readAsk, answerOf } from "./src/conversation/asks"; export { zhComposer } from "./src/app/words";`,
@@ -217,11 +219,9 @@ const cards = await build({
   logLevel: "silent",
 });
 const { readAsk, answerOf, zhComposer } = await import(`data:text/javascript;base64,${Buffer.from(cards.outputFiles[0].text).toString("base64")}`);
-/** A card as answerOf reads it: which options are pressed, what is typed. */
-const card = ({ pressed = [], fields = {} }) => {
+/** A card as answerOf reads it: what is typed in its fields. */
+const card = ({ fields = {} }) => {
   const find = (selector) => {
-    const option = /\.ask-option\[data-question="(\d+)"\]\[aria-pressed="true"\]/.exec(selector);
-    if (option) return pressed.filter(([q]) => q === Number(option[1])).map(([, n]) => ({ dataset: { option: String(n) } }));
     const field = /\.ask-input\[data-field="(\d+)"\]/.exec(selector);
     return field && fields[field[1]] !== undefined ? [{ value: fields[field[1]] }] : [];
   };
@@ -229,7 +229,6 @@ const card = ({ pressed = [], fields = {} }) => {
 };
 const given = [
   [{}, { decision: 0 }],
-  [{ pressed: [[0, 0], [0, 1]] }, { submit: "answer" }],
   [{ fields: { 0: "Hangzhou" } }, { submit: "accept" }],
 ];
 for (const [index, ask] of asks.entries()) {

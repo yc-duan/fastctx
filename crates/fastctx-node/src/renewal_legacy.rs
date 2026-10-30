@@ -4,12 +4,15 @@
 
 use fastctx_types::ipc::Peer;
 use fastctx_types::pages::PageCall;
-use fastctx_types::residents::Notice;
+use fastctx_types::residents::{Notice, WorldFact};
 use fastctx_types::run::{LegacyLines, OutputWindow, RunReply};
+use fastctx_types::session::control::Controlled;
 use fastctx_types::{Call, Reply};
 use serde::{Serialize, Serializer};
 use std::borrow::Cow;
 
+#[path = "renewal_legacy/elsewhere.rs"]
+mod elsewhere;
 #[path = "renewal_legacy/page_identity.rs"]
 mod page_identity;
 
@@ -115,7 +118,12 @@ pub(crate) fn reply(protocol: u32, reply: &mut Reply) {
     {
         for delivery in notices {
             if let Notice::World { text, .. } = &delivery.notice {
-                delivery.notice = Notice::Words { from: fastctx_types::session::Speaker::World, text: text.clone() };
+                delivery.notice = Notice::Words {
+                    from: fastctx_types::session::Speaker::World,
+                    text: text.clone(),
+                    goal_report: None,
+                    goal_question: None,
+                };
             }
         }
     }
@@ -131,15 +139,70 @@ pub(crate) fn reply(protocol: u32, reply: &mut Reply) {
         for delivery in notices {
             let text = match &delivery.notice {
                 Notice::Attached { message, text } => Some(message.render(text)),
-                Notice::Words { from: fastctx_types::session::Speaker::Page { page }, text } => {
+                Notice::Words { from: fastctx_types::session::Speaker::Page { page }, text, .. } => {
                     Some(format!("=== from {page} ===\n{text}"))
                 }
                 _ => None,
             };
             if let Some(text) = text {
-                delivery.notice = Notice::Words { from: fastctx_types::session::Speaker::World, text };
+                delivery.notice = Notice::Words {
+                    from: fastctx_types::session::Speaker::World,
+                    text,
+                    goal_report: None,
+                    goal_question: None,
+                };
             }
         }
+    }
+}
+
+/// Tells a client of notice generation `generation` (`ipc::NOTICES`) each
+/// later notice as the World's words, which is what its model reads of it:
+/// every client before 1.0.1-beta.12 says none, and its types reject a
+/// notice they do not know, with every other in the same answer.
+pub(crate) fn notices(generation: u32, reply: &mut Reply) {
+    if generation >= 1 {
+        return;
+    }
+    let Reply::Notices { notices, .. } = reply else { return };
+    for delivery in notices {
+        let text = match &delivery.notice {
+            Notice::Sentinel { observation } => {
+                fastctx_types::sentinel_words::notification(observation, jiff::Timestamp::now())
+            }
+            Notice::World { fact: WorldFact::DeliveryFailed { .. } | WorldFact::Woke { .. }, text } => text.clone(),
+            _ => continue,
+        };
+        delivery.notice = Notice::Words {
+            from: fastctx_types::session::Speaker::World,
+            text,
+            goal_report: None,
+            goal_question: None,
+        };
+    }
+}
+
+/// A reply that tells a stamp or a writer as whoever may not work on its
+/// machine is told them, said as text to a client that reads no such
+/// shape (`ipc::SHAPES`): truthful, and nothing more named than it says.
+pub(crate) fn shapes(generation: u32, reply: &mut Result<Reply, fastctx_types::ipc::Failure>) {
+    if generation >= 1 || !reply.as_ref().is_ok_and(elsewhere::present) {
+        return;
+    }
+    let Ok(answer) = reply else { return };
+    let failure = fastctx_types::ipc::Failure::new(format!(
+        "The call completed. This fastctx cannot display who wrote something on a machine it may not work on. The complete result follows as JSON (do not repeat the call):
+{}",
+        serde_json::to_string_pretty(answer).expect("JSON serializes")
+    ));
+    *reply = Err(failure);
+}
+
+/// The World an interface keeps open, for one that reads no reply shapes
+/// beyond protocol 13's (`shapes`).
+pub(crate) fn world(generation: u32, world: &mut fastctx_types::world::WorldNow) {
+    if generation < 1 {
+        elsewhere::leave_out(world);
     }
 }
 
@@ -209,6 +272,21 @@ impl Serialize for Answer<'_> {
     }
 }
 
+/// Whether a reader of `protocol` knows the kind of a host control's result:
+/// two came with control itself, three with protocol 10, the rest with 13.
+fn known(protocol: u32, controlled: &Controlled) -> bool {
+    match controlled {
+        Controlled::Done { .. } | Controlled::Forked { .. } => true,
+        Controlled::Reported { .. } | Controlled::Refused { .. } | Controlled::ModelMenu { .. } => protocol >= 10,
+        Controlled::Selected { .. }
+        | Controlled::Rewound { .. }
+        | Controlled::Agents { .. }
+        | Controlled::AgentMessages { .. }
+        | Controlled::SideAnswer { .. }
+        | Controlled::ForkIncomplete { .. } => protocol >= 13,
+    }
+}
+
 pub(crate) fn frame(protocol: u32, id: u64, reply: &Result<Reply, fastctx_types::ipc::Failure>) -> Vec<u8> {
     #[derive(Serialize)]
     struct Frame<'a> {
@@ -218,19 +296,9 @@ pub(crate) fn frame(protocol: u32, id: u64, reply: &Result<Reply, fastctx_types:
     }
     let reply = reply.as_ref().map(|reply| Answer { protocol, reply });
     let frame = Frame { kind: "reply", id, reply };
-    if protocol < 10
-        && frame.reply.as_ref().is_ok_and(|answer| {
-            matches!(
-                answer.reply,
-                Reply::Controlled {
-                    controlled: fastctx_types::session::control::Controlled::Reported { .. }
-                        | fastctx_types::session::control::Controlled::Refused { .. }
-                        | fastctx_types::session::control::Controlled::ModelMenu { .. },
-                    ..
-                }
-            )
-        })
-    {
+    if frame.reply.as_ref().is_ok_and(
+        |answer| matches!(answer.reply, Reply::Controlled { controlled, .. } if !known(protocol, controlled)),
+    ) {
         let value = serde_json::to_value(&frame).expect("the World's types always serialize");
         let failure = fastctx_types::ipc::Failure::new(format!(
             "The call completed. This fastctx cannot display the host's control result. The complete result follows as JSON (do not repeat the call):\n{}",

@@ -2,14 +2,17 @@
 
 pub fn line(page: &fastctx_types::pages::PageSummary) -> String {
     let current = &page.current;
+    let by = crate::town::writer(&current.by, current.on.as_ref());
     format!(
-        "{}: {} (version {}{}; {} on {}, {})",
+        "{}: {} (version {}{}; {}, {})",
         page.page,
         current.description,
         current.version,
         if current.withdrawn { "; withdrawn" } else { "" },
-        crate::town::writer(&current.by, &current.on),
-        current.on,
+        match &current.on {
+            Some(on) => format!("{by} on {on}"),
+            None => by,
+        },
         current.at
     )
 }

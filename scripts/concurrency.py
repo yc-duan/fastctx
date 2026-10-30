@@ -383,7 +383,7 @@ class Drill:
     def delete_working(self, talk):
         """Deletes a conversation that may be working, stopping what it runs, within two minutes."""
         deadline = time.monotonic() + 120
-        state = json.loads((self.lab.conversations() / talk / "now").read_text(encoding="utf-8"))
+        state = record(self.lab.conversations() / talk / "now")
         if state.get("activity") == "busy" or state.get("turn"):
             with self.lock:
                 self.deleted_while_busy += 1
@@ -487,6 +487,18 @@ def present(path):
     return True
 
 
+def record(path):
+    """A record the node keeps, as JSON. On Windows a file being replaced at
+    that moment refuses to open for a few milliseconds, so it is read again."""
+    for attempt in range(50):
+        try:
+            return json.loads(path.read_text(encoding="utf-8"))
+        except PermissionError:
+            if attempt == 49:
+                raise
+            time.sleep(0.05)
+
+
 def entries(directory, missing_ok=False):
     try:
         return list(directory.iterdir())
@@ -506,7 +518,7 @@ def settled(lab, talks):
         # Codex 对话出生): nothing of it is listed, working or waiting.
         if talk not in talks and not (directory / "about").exists():
             continue
-        state = json.loads((directory / "now").read_text(encoding="utf-8"))
+        state = record(directory / "now")
         if (not isinstance(state, dict) or state.get("activity") not in ("busy", "idle", "asleep")
                 or "turn" not in state or (state["turn"] is not None and not isinstance(state["turn"], str))):
             raise ValueError(f"{talk}: invalid activity record: {state!r}")
@@ -519,7 +531,7 @@ def settled(lab, talks):
 
 def thread_of(lab, talk):
     """The recorded Codex thread, before anything of the conversation can be deleted."""
-    about = json.loads((lab.conversations() / talk / "about").read_text(encoding="utf-8"))
+    about = record(lab.conversations() / talk / "about")
     if not isinstance(about, dict) or not isinstance(about.get("session"), str) or not about["session"]:
         raise ValueError(f"{talk}: no Codex thread in its identity record")
     if about.get("home") is not None and Path(about["home"]).resolve() != lab.codex_home.resolve():

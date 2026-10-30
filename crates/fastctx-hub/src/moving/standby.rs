@@ -27,7 +27,7 @@ use tokio::sync::oneshot;
 use super::files::{self, Entry};
 use super::frames::{self, Got, ToNew, ToOld};
 use super::{ARRIVING, Arriving, Incoming, MOVES};
-use crate::store::{Book, HubFile, Store, json, read, read_or_default};
+use crate::store::{HubFile, Store, json, read, read_or_default};
 use crate::{Kept, Leave, Next, Socket, log::Log, refuse};
 
 /// Makes the directory of a hub arriving here from `identity`, for the move
@@ -80,6 +80,7 @@ pub fn prepare(dir: &Path, id: &str, to: &MachineName, identity: &Identity) -> a
         dissolved: None,
         updates: Default::default(),
         due: Vec::new(),
+        repairs: Vec::new(),
         package_targets: Default::default(),
     };
     let arriving = Arriving {
@@ -277,9 +278,16 @@ async fn sync(standby: &Standby, socket: &mut Socket) -> Result<(), String> {
     let dir = standby.dir.clone();
     loop {
         match frames::frame::<_, ToNew>(socket).await? {
-            ToNew::Holds => {
+            ToNew::Holds { sqlite } => {
+                if !sqlite {
+                    let reason =
+                        "update the sending hub before moving: this version does not transfer all hub settings"
+                            .to_string();
+                    frames::send(socket, &ToOld::Refused { reason: reason.clone() }).await?;
+                    return Err(reason);
+                }
                 let entries = listing(socket, &dir).await?;
-                frames::send(socket, &ToOld::Holds { committed: standby.arriving().committed }).await?;
+                frames::send(socket, &ToOld::Holds { committed: standby.arriving().committed, sqlite: true }).await?;
                 frames::send_listing(socket, entries).await?;
             }
             ToNew::Put { path, bytes } => receive(socket, &dir, &path, bytes).await?,
@@ -385,8 +393,8 @@ async fn listing(socket: &mut Socket, dir: &Path) -> Result<Vec<Entry>, String> 
 fn commit(standby: &Standby, self_registration: bool, record: &frames::Record) -> Result<(), String> {
     let dir = &standby.dir;
     let mut arriving = standby.arriving();
-    let book: Book = read(&Store::directory_file(dir)).map_err(|error| format!("reading the directory: {error}"))?;
-    let members = book.directory.members.iter().map(|member| (member.name.clone(), member.is_machine())).collect();
+    let directory = Store::read_directory(dir).map_err(|error| format!("reading the directory: {error}"))?;
+    let members = directory.members.iter().map(|member| (member.name.clone(), member.is_machine())).collect();
     let mut moves: Vec<Incoming> =
         read_or_default(&dir.join(MOVES)).map_err(|error| format!("reading the moves: {error}"))?;
     moves.retain(|incoming| incoming.id != arriving.id);

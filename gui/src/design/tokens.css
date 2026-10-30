@@ -59,6 +59,10 @@
      the size. Gutters close in on a phone and open out on a wide screen. */
   --column: calc(var(--body-size) * 48);
   --gutter: clamp(16px, 4.5vw, 36px);
+  /* The panel beside a conversation, opened: its plan, goal and who works
+     with it; a width the user dragged it to stands in its place on the
+     conversation's page (`side/mount.ts`). */
+  --side-width: clamp(340px, 30vw, 440px);
 
   /* Space, on a 4px step. */
   --space-1: 4px;
@@ -70,6 +74,10 @@
   --space-8: 32px;
   --space-10: 40px;
   --space-12: 48px;
+  /* Rows that may be filled at once, the current one and the one under the
+     pointer, stand this far apart, so two filled rows never run together
+     into one shape. */
+  --row-gap: 2px;
 
   --radius-s: 6px;
   --radius-m: 10px;
@@ -91,6 +99,17 @@
   --hover: 180ms;
   --fold: 220ms;
   --fold-easing: cubic-bezier(0.2, 0, 0, 1);
+  /* A side of the window coming or going, the sidebar or the panel beside
+     a conversation, and the page giving way to it: slow enough to follow,
+     easing in and settling long. */
+  --glide: 520ms;
+  --glide-easing: cubic-bezier(0.45, 0, 0.2, 1);
+  /* What opens and closes in place, a tool's row, a command's output, a
+     project's folder, a fold in a picker, and the chevron turning with it:
+     the sidebar's own rhythm, the one the user holds the rest to (user
+     2026-10-29). What pops up over the page keeps `--fold`. */
+  --expand: 520ms;
+  --expand-easing: cubic-bezier(0.45, 0, 0.2, 1);
   --enter: 220ms;
   /* A turn's line comes in softly, and goes at once. */
   --line-in: 240ms;
@@ -104,10 +123,14 @@
   --settle: 380ms;
   --slow: 700ms;
   --linger: 1.4s;
+  /* A thing carried from one place to another in a drawing, once. */
+  --travel: 900ms;
   --say: 480ms;
   --draw: 1100ms;
   --stagger: 60ms;
   --breath: 1.6s;
+  /* One turn of a mark at work, slow enough to be calm (`app/shell.css`). */
+  --turning: 3.2s;
   --breath-slow: 2.6s;
   --flow: 2.8s;
   --flow-slow: 3.4s;
@@ -116,6 +139,14 @@
   --armed: 1.2s;
   /* Coming to rest: fast, then easing in. */
   --ease-out: cubic-bezier(0.33, 1, 0.68, 1);
+  /* A change under the pointer, a colour or a shade: the plain curve. */
+  --ease: cubic-bezier(0.25, 0.1, 0.25, 1);
+  /* Leaving: slow at first, then gone. */
+  --ease-in: cubic-bezier(0.42, 0, 1, 1);
+  /* What goes and comes back again, a breath. */
+  --ease-in-out: cubic-bezier(0.42, 0, 0.58, 1);
+  /* What moves at one pace for as long as it moves: a pen along a line. */
+  --linear: linear;
   /* A damped spring (damping ratio 0.55): a press let go comes back a
      little past where it was and settles. */
   --spring: linear(0, 0.18, 0.526, 0.839, 1.038, 1.119, 1.119, 1.081, 1.038, 1.005, 0.988, 0.984, 0.987, 0.993, 0.998, 1.001, 1);
@@ -347,6 +378,8 @@
 :root[data-reduced] {
   --hover: 0ms;
   --fold: 0ms;
+  --expand: 0ms;
+  --glide: 0ms;
   --enter: 0ms;
   --line-in: 0ms;
   --send: 0ms;
@@ -354,6 +387,7 @@
   --settle: 0ms;
   --slow: 0ms;
   --linger: 0ms;
+  --travel: 0ms;
   --say: 0ms;
   --draw: 0ms;
   --stagger: 0ms;

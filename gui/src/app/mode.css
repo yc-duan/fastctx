@@ -1,0 +1,122 @@
+/* The mode page (`mode-page.ts`): two paper cards side by side, the one in
+   use on the clay wash with its quiet word, the other with its one button.
+   Asked, the question and the cards stand in the middle of the window. */
+
+.md-page {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.md-cards {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-4);
+  align-content: start;
+  max-width: 980px;
+  min-height: 0;
+  padding: var(--space-2) var(--gutter) var(--space-6);
+  overflow-y: auto;
+}
+
+.md-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-4);
+  border-radius: var(--radius-l);
+  background: var(--fill);
+}
+
+.md-card.using {
+  background: linear-gradient(var(--accent-wash), var(--accent-wash)), var(--fill);
+}
+
+/* Asked: the question over the two cards, the pair in the middle of what
+   the window has below its head; a window too short for them scrolls them
+   here alone. */
+.md-ask {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 0 var(--gutter) var(--space-8);
+}
+
+.md-ask::before,
+.md-ask::after {
+  content: "";
+  flex: 1 1 0;
+}
+
+.md-question {
+  margin: 0 0 var(--space-6);
+  color: var(--text-strong);
+  font-family: var(--font-display);
+  font-size: var(--size-h1);
+  font-weight: normal;
+  text-align: center;
+}
+
+.md-asking .md-cards {
+  width: min(980px, 100%);
+  max-width: none;
+  padding: 0;
+  overflow: visible;
+}
+
+.md-picture {
+  display: grid;
+  place-items: center;
+  aspect-ratio: 16 / 9;
+  overflow: hidden;
+  border-radius: var(--radius-m);
+  background: var(--bg);
+}
+
+.md-picture .film {
+  width: 100%;
+  margin: 0;
+}
+
+.md-sketch {
+  width: 80%;
+  height: auto;
+}
+
+.md-name {
+  margin: var(--space-2) 0 0;
+  color: var(--text-strong);
+  font-family: var(--font-display);
+  font-size: var(--size-h3);
+  font-weight: normal;
+}
+
+.md-line {
+  flex: 1 1 auto;
+  margin: 0;
+  color: var(--text-2);
+  line-height: var(--leading-prose);
+}
+
+.md-act {
+  display: flex;
+  justify-content: flex-end;
+  min-height: 40px;
+  align-items: center;
+}
+
+.md-using {
+  color: var(--text-2);
+  font-size: var(--size-text);
+  line-height: var(--leading-ui);
+}
+
+@media (max-width: 640px) {
+  .md-cards {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

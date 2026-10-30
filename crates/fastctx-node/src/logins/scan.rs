@@ -101,8 +101,9 @@ async fn usual(node: &Arc<Node>, started_at: Timestamp) -> Result<(), Failure> {
         for agent in AGENTS {
             let mut dirs = super::dirs(node, &context, &kept, agent)?;
             // A scan finds afresh what is in the usual places: what it found
-            // before and is gone is not carried on.
-            dirs.retain(|(dir, found)| *found != Found::Home || dir.is_dir());
+            // before and is gone is not carried on. One that cannot be looked
+            // at now may be there still: it is kept, and said unreadable.
+            dirs.retain(|(dir, found)| *found != Found::Home || still_there(dir, &mut programs.unreadable));
             for dir in in_home(&context.user_home, agent, &mut programs.unreadable) {
                 if !dirs.iter().any(|(known, _)| crate::homes::same_dir(known, &dir)) {
                     dirs.push((dir, Found::Home));
@@ -168,6 +169,19 @@ fn failed(reason: String) -> identify::Asked {
         launcher: None,
         models: Vec::new(),
         limits: None,
+    }
+}
+
+/// Whether `dir`, found in the user's home before, may be there still: it
+/// is a directory, or it cannot be looked at now, which `unreadable` is told.
+fn still_there(dir: &Path, unreadable: &mut Vec<String>) -> bool {
+    match std::fs::metadata(dir) {
+        Ok(metadata) => metadata.is_dir(),
+        Err(error) if matches!(error.kind(), std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory) => false,
+        Err(error) => {
+            unreadable.push(format!("{}: {error}", dir.display()));
+            true
+        }
     }
 }
 

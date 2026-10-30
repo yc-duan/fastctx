@@ -95,10 +95,10 @@ export class AnchoredHeight {
     let from = this.box.getBoundingClientRect().height;
     const held = this.layout.hold(anchor);
     const style = getComputedStyle(this.box);
-    const token = style.getPropertyValue("--fold").trim();
+    const token = style.getPropertyValue("--expand").trim();
     const duration = parseFloat(token) * (token.endsWith("ms") ? 1 : 1000);
     const reduced = reducedMotion();
-    if (!Number.isFinite(duration)) throw new Error("--fold must be a CSS time");
+    if (!Number.isFinite(duration)) throw new Error("--expand must be a CSS time");
     if (reduced || duration === 0 || height === from) {
       this.box.style.height = `${height}px`;
       this.frame?.({ time: performance.now(), height, anchorError: held.correct() });
@@ -106,7 +106,7 @@ export class AnchoredHeight {
       return Promise.resolve({ cancelled: false, reduced });
     }
     const animation = this.box.animate([], {
-      duration, easing: style.getPropertyValue("--fold-easing").trim(), fill: "both",
+      duration, easing: style.getPropertyValue("--expand-easing").trim(), fill: "both",
     });
     // The motion's clock starts with its first frame: what opening the box
     // took (its rows made, laid out) is not spent from the motion.

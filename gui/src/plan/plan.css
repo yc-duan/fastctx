@@ -1,0 +1,464 @@
+/* A conversation's plan (`panel.ts`, `render.ts`), set as one page in one
+   voice (`world-plan.md`): one face at one size in one ink, the title and
+   what heads a part only in the semibold face, the title over a ruled
+   stroke. Which step was walked, which is now and which is a suggestion is
+   said by where it stands and the marks a hand adds, never by a lighter
+   ink. The accent never colours a word; it is kept for those marks: the
+   dots under the step the work stands at, the circle round its stop, the
+   drop in the ring of the option chosen, the reference mark before a
+   warning, and the light sweep beneath a question. */
+
+/* The page's head: its version and when it was written, and its act. */
+.pb-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-height: 36px;
+  margin: 0 0 var(--space-3);
+}
+
+.pb-meta {
+  display: flex;
+  gap: var(--space-3);
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+/* The head's few acts, words that press like the interface's text
+   buttons: a field's shade on hover, the saving one in the text's ink. */
+.pb-acts {
+  display: flex;
+  gap: var(--space-1);
+}
+
+.pb-act {
+  display: inline-grid;
+  place-items: center;
+  box-sizing: border-box;
+  min-height: 32px;
+  padding: 0 var(--space-3);
+  border-radius: var(--radius-full);
+  color: var(--text-2);
+  font: inherit;
+  line-height: 1.2;
+  transition: background-color var(--hover) var(--ease), color var(--hover) var(--ease);
+}
+
+.pb-act:hover {
+  background: var(--fill);
+  color: var(--text);
+}
+
+.pb-act-main {
+  color: var(--text);
+  background: var(--fill);
+}
+
+.pb-act-main:hover {
+  background: var(--fill-strong);
+}
+
+/* The plan's own text, edited on the same sheet in the same type: a solid
+   field that does not change as it is pointed at, pressed or typed in. */
+.pb-source {
+  display: block;
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 12em;
+  margin: 0;
+  padding: var(--space-3) var(--space-4);
+  border: 0;
+  border-radius: var(--radius-m);
+  outline: none;
+  resize: none;
+  overflow: hidden;
+  background: var(--field);
+  color: var(--text);
+  font-family: var(--font-reading);
+  font-size: var(--size-text);
+  line-height: var(--leading-prose);
+}
+
+@media (pointer: coarse) {
+  .pb-act {
+    min-height: 44px;
+  }
+}
+
+.pb-empty {
+  margin: var(--space-4) 0;
+}
+
+/* One face, one size, one ink. */
+.pb-plan {
+  color: var(--text);
+  font-family: var(--font-reading);
+  font-size: var(--size-text);
+  line-height: var(--leading-prose);
+}
+
+.pb-plan > h1 {
+  margin: 0 0 var(--space-1);
+  font-family: var(--font-emphasis);
+  font-weight: 400;
+  font-size: var(--size-text);
+  line-height: var(--leading-prose);
+  color: var(--text);
+}
+
+.pb-title-rule {
+  height: 6px;
+  margin: 0 0 var(--space-5);
+}
+
+.pb-plan > h2,
+.pb-plan > h3,
+.pb-plan > h4 {
+  margin: var(--space-6) 0 var(--space-2);
+  font-family: var(--font-emphasis);
+  font-weight: 400;
+  font-size: var(--size-text);
+  line-height: var(--leading-prose);
+  color: var(--text);
+}
+
+/* The user's words under the title, as an epigraph. */
+.pb-plan > blockquote {
+  margin: 0 0 var(--space-5);
+  padding: 0 0 0 2em;
+  color: var(--text);
+}
+
+.pb-plan > blockquote::before {
+  content: none;
+}
+
+.pb-plan table {
+  font-size: var(--size-text);
+}
+
+/* Drawn ink sits under the words it belongs to. */
+.pb-ink {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.pb-ink-svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+
+.pb-route > :not(.pb-ink),
+.pb-tree > :not(.pb-ink),
+.pb-tl-row > *,
+.pb-ask > :not(.pb-ink) {
+  position: relative;
+}
+
+/* The one mark a step gets when the work stands there. */
+.pb-stop.here .pb-stop-name,
+.pb-tl-row.strong .pb-tl-title {
+  padding-bottom: 3px;
+  text-emphasis: filled dot var(--pen-clay);
+  text-emphasis-position: under right;
+}
+
+/* An itinerary: a step a line, the stops on an ink line down the left, the
+   steps that may follow a fork set in under it. */
+.pb-route {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  margin: var(--space-5) 0;
+}
+
+.pb-stop {
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr);
+  column-gap: var(--space-3);
+}
+
+.pb-stop.branch {
+  margin-left: 26px;
+}
+
+.pb-stop-dot {
+  min-height: 24px;
+}
+
+.pb-stop-body {
+  line-height: 24px;
+}
+
+.pb-stop-note {
+  color: var(--text);
+}
+
+.pb-stop-note {
+  margin-left: 1px;
+  white-space: nowrap;
+}
+
+.pb-stop-note::before {
+  content: "〔";
+}
+
+.pb-stop-note::after {
+  content: "〕";
+}
+
+:lang(en) .pb-stop-note::before {
+  content: " (";
+}
+
+:lang(en) .pb-stop-note::after {
+  content: ")";
+}
+
+/* A timeline: the dates in the margin, the rail, and what happens. */
+.pb-timeline {
+  position: relative;
+  display: grid;
+  grid-template-columns: max-content 18px minmax(0, 1fr);
+  column-gap: var(--space-3);
+  row-gap: var(--space-3);
+  margin: var(--space-5) 0;
+}
+
+.pb-tl-row {
+  display: contents;
+}
+
+.pb-tl-when,
+.pb-tl-detail {
+  color: var(--text);
+}
+
+.pb-tl-when {
+  line-height: 24px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.pb-tl-dot {
+  min-height: 24px;
+}
+
+.pb-tl-body {
+  display: flex;
+  flex-direction: column;
+  line-height: 24px;
+}
+
+/* A tree: parts under their whole, branches in ink. */
+.pb-tree {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin: var(--space-5) 0;
+}
+
+.pb-tree-row {
+  padding-left: calc(var(--depth) * 22px);
+  line-height: var(--leading-ui);
+}
+
+.pb-tree-note {
+  margin-left: var(--space-2);
+}
+
+/* A question on paper. */
+.pb-ask {
+  position: relative;
+  margin: var(--space-6) 0 var(--space-5);
+}
+
+.pb-ask-question {
+  margin: 0 0 var(--space-2);
+}
+
+/* Its answers a column of solid rows, the chosen one on the clay wash; once
+   answered, the others step back. */
+.pb-ask-options {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  margin-left: calc(var(--space-2) * -1);
+}
+
+.pb-ask-option {
+  display: block;
+  padding: 6px var(--space-2);
+  border-radius: var(--radius-m);
+  background-color: var(--fill);
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  transition:
+    background-color var(--hover) var(--ease),
+    color var(--hover) var(--ease);
+}
+
+.pb-ask-option:hover:not(:disabled) {
+  background-color: var(--fill-strong);
+}
+
+.pb-ask-option.chosen,
+.pb-ask-option.chosen:hover:not(:disabled) {
+  background-color: var(--accent-wash);
+}
+
+.pb-ask-text {
+  line-height: 24px;
+}
+
+.pb-ask-tag {
+  color: var(--text);
+}
+
+.pb-ask-note {
+  color: var(--text-2);
+}
+
+.pb-ask-tag {
+  margin-left: var(--space-1);
+}
+
+.pb-ask-note {
+  display: block;
+  line-height: var(--leading-ui);
+}
+
+.pb-ask.answered .pb-ask-option {
+  cursor: default;
+}
+
+.pb-ask.answered .pb-ask-option:not(.chosen),
+.pb-ask.answered .pb-ask-option:not(.chosen):hover {
+  background-color: transparent;
+  color: var(--text-3);
+}
+
+.pb-ask.answered .pb-ask-option:not(.chosen) .pb-ask-note {
+  color: var(--text-3);
+}
+
+/* A note: the reference mark, then a sentence or two. */
+.pb-note {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr);
+  column-gap: var(--space-3);
+  margin: var(--space-5) 0;
+}
+
+.pb-note-mark {
+  padding-top: 6px;
+}
+
+.pb-note-svg {
+  display: block;
+  width: 16px;
+  height: 16px;
+}
+
+.pb-note-body > :first-child {
+  margin-top: 0;
+}
+
+.pb-note-body > :last-child {
+  margin-bottom: 0;
+}
+
+/* The world's ids: the name with a proper-noun rule beneath it, and how it
+   stands after it. */
+.pb-chip {
+  border-radius: var(--radius-s);
+  cursor: pointer;
+}
+
+.pb-chip .glyph {
+  margin-right: 3px;
+  vertical-align: -1px;
+  color: var(--text-2);
+}
+
+.pb-chip-name {
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-decoration-color: var(--pen-graphite);
+  text-underline-offset: 5px;
+}
+
+.pb-chip:hover .pb-chip-name {
+  text-decoration-color: currentColor;
+}
+
+.pb-chip-state {
+  margin-left: 1px;
+  white-space: nowrap;
+}
+
+.pb-chip-state::before,
+.pb-ask-tag::before {
+  content: "〔";
+}
+
+.pb-chip-state::after,
+.pb-ask-tag::after {
+  content: "〕";
+}
+
+:lang(en) .pb-chip-state::before,
+:lang(en) .pb-ask-tag::before {
+  content: " (";
+}
+
+:lang(en) .pb-chip-state::after,
+:lang(en) .pb-ask-tag::after {
+  content: ")";
+}
+
+@media (pointer: coarse) {
+  .pb-ask-option {
+    min-height: 44px;
+  }
+}
+
+/* A checklist: no bullets, each item a small box ruled by hand, ticked where
+   done; the words stay in the page's one ink. */
+.pb-plan ul.pb-checklist {
+  padding-left: 0;
+  list-style: none;
+}
+
+.pb-check {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  column-gap: 10px;
+  align-items: start;
+}
+
+.pb-check > :not(.pb-box) {
+  grid-column: 2;
+}
+
+.pb-box {
+  display: inline-grid;
+  width: 18px;
+  height: 18px;
+  margin-top: 0.2em;
+}
+
+.pb-box-svg {
+  width: 18px;
+  height: 18px;
+}

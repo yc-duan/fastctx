@@ -4,7 +4,7 @@
 // MCP servers and an agent's preferences, and the servers' switches in a
 // conversation's 「机器与文件夹」.
 
-export type AgentSection = "claude" | "codex" | "prompt" | "mcp";
+export type AgentSection = "claude" | "codex" | "prompt" | "skills" | "mcp";
 
 /** What an agent's page shows: its logins, or the account's preferences
  *  for it. */
@@ -208,10 +208,35 @@ export interface ProfileWords {
     /** Said on hover over it. */
     when: string;
   };
+  /** The account's skills (`world-user-config.md`, 技能). */
+  skills: {
+    add: string;
+    /** The account keeps none yet. */
+    none: string;
+    newTitle: string;
+    editTitle(name: string): string;
+    name: string;
+    nameRule: string;
+    taken: string;
+    /** When it applies, in a sentence. */
+    when: string;
+    whenNeeded: string;
+    instructions: string;
+    instructionsNeeded: string;
+    /** Fills the sheet from a SKILL.md file. */
+    fromFile: string;
+    fileUnread: string;
+    save: string;
+    remove: string;
+    removeTitle(name: string): string;
+    removeWhat: string;
+    /** When a change reaches the conversations, said on hover. */
+    takesEffect: string;
+  };
 }
 
 export const zhProfile: ProfileWords = {
-  sections: { claude: "Claude Code", codex: "Codex", prompt: "提示词", mcp: "MCP" },
+  sections: { claude: "Claude Code", codex: "Codex", prompt: "提示词", skills: "技能", mcp: "MCP" },
   tabs: { logins: "登录", prefs: "偏好" },
   account: "账号",
   olderHub: "这个网络的中枢服务器要先升级",
@@ -377,10 +402,30 @@ export const zhProfile: ProfileWords = {
     removeWhat: "之后的对话不再派它，已经在跑的照旧跑完。",
   },
   focus: { title: "MCP", when: "开关在这段对话下次被唤醒时生效" },
+  skills: {
+    add: "新建",
+    none: "还没有技能",
+    newTitle: "新技能",
+    editTitle: (name) => `编辑「${name}」`,
+    name: "名称",
+    nameRule: "小写字母开头，可含数字和连字符，至多 64 个字符",
+    taken: "已有同名的技能",
+    when: "什么时候用",
+    whenNeeded: "写一句什么时候用它，一行之内",
+    instructions: "内容",
+    instructionsNeeded: "写下它的内容",
+    fromFile: "从文件读入",
+    fileUnread: "这个文件读不出来",
+    save: "保存",
+    remove: "删除",
+    removeTitle: (name) => `删除「${name}」？`,
+    removeWhat: "替这个账号干活的对话不再看到它。",
+    takesEffect: "替这个账号干活的对话随即看到改动",
+  },
 };
 
 export const enProfile: ProfileWords = {
-  sections: { claude: "Claude Code", codex: "Codex", prompt: "Prompt", mcp: "MCP" },
+  sections: { claude: "Claude Code", codex: "Codex", prompt: "Prompt", skills: "Skills", mcp: "MCP" },
   tabs: { logins: "Logins", prefs: "Preferences" },
   account: "Account",
   olderHub: "This network's server needs updating first",
@@ -546,4 +591,24 @@ export const enProfile: ProfileWords = {
     removeWhat: "Conversations stop handing it work; one already running finishes.",
   },
   focus: { title: "MCP", when: "Switches take effect at this conversation's next wake" },
+  skills: {
+    add: "New",
+    none: "No skills yet",
+    newTitle: "New skill",
+    editTitle: (name) => `Edit “${name}”`,
+    name: "Name",
+    nameRule: "Starts with a lowercase letter; digits and hyphens allowed; at most 64 characters",
+    taken: "There's a skill with this name already",
+    when: "When to use",
+    whenNeeded: "Say in one line when to use it",
+    instructions: "Instructions",
+    instructionsNeeded: "Write its instructions",
+    fromFile: "Read from a file",
+    fileUnread: "This file couldn't be read",
+    save: "Save",
+    remove: "Delete",
+    removeTitle: (name) => `Delete “${name}”?`,
+    removeWhat: "Conversations working for this account no longer see it.",
+    takesEffect: "Conversations working for this account see the change at once",
+  },
 };

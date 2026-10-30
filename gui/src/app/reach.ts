@@ -10,6 +10,7 @@ import { loginsOf, type AccountName, type HubAccounts, type HubId, type HubName,
 import type { WorldNow } from "../world/bridge";
 import type { MachineFacts, ResidentNow } from "../world/world";
 import type { MachineName, Result, Timestamp } from "../world/wire";
+import { indexOf, pair } from "./world-index";
 
 /** One machine as this computer or device reaches it. */
 export interface Machine {
@@ -83,8 +84,48 @@ export function inNoNetwork(world: WorldNow | null): boolean {
   return isComputer(world) && !world!.nodes.hubs.length;
 }
 
+/** Each machine once, made once for each World the store holds; nothing
+ *  changes what it returns. */
 export function machinesOf(world: WorldNow | null): Machine[] {
   if (!world) return [];
+  return once(machinesMade, world, () => machinesFrom(world));
+}
+
+const machinesMade = new WeakMap<WorldNow, Machine[]>();
+
+/** The machine written `written`, or the first named `name`, looked up
+ *  once for each World. */
+export function machineWritten(world: WorldNow | null, written: string): Machine | null {
+  return world ? (lookedUp(world).written.get(written) ?? null) : null;
+}
+
+export function machineNamed(world: WorldNow | null, name: MachineName): Machine | null {
+  return world ? (lookedUp(world).named.get(name) ?? null) : null;
+}
+
+const lookUps = new WeakMap<WorldNow, { written: Map<string, Machine>; named: Map<string, Machine> }>();
+
+function lookedUp(world: WorldNow): { written: Map<string, Machine>; named: Map<string, Machine> } {
+  return once(lookUps, world, () => {
+    const written = new Map<string, Machine>();
+    const named = new Map<string, Machine>();
+    for (const machine of machinesOf(world)) {
+      if (!written.has(machine.written)) written.set(machine.written, machine);
+      if (!named.has(machine.name)) named.set(machine.name, machine);
+    }
+    return { written, named };
+  });
+}
+
+/** What `make` makes of `world`, made once for each World. */
+function once<T>(made: WeakMap<WorldNow, T>, world: WorldNow, make: () => T): T {
+  if (made.has(world)) return made.get(world)!;
+  const value = make();
+  made.set(world, value);
+  return value;
+}
+
+function machinesFrom(world: WorldNow): Machine[] {
   const { nodes } = world;
   const machines: Machine[] = [];
   const byWritten = new Map<string, Machine>();
@@ -109,37 +150,47 @@ export function machinesOf(world: WorldNow | null): Machine[] {
     machines.push(here);
     byWritten.set(here.written, here);
   }
+  // While the line to a hub is down, its view says who was online then,
+  // not now, and the node leaves that unsaid. Such a machine stands as it
+  // last was, under a hub that says it is reconnecting, unless another hub
+  // says how it is now (`world-network.md`, 隔着网络也要顺手).
+  const lastSeen = new Map<Machine, boolean>();
+  const index = indexOf(world);
   for (const hub of nodes.hubs) {
+    const members = index.hubs.get(hub.hub)?.named;
     // A machine none of the logins may work on is not theirs to list,
     // whatever agents on it assist them.
     for (const node of hub.machines.filter((node) => node.rights.some(([, rights]) => rights.hands))) {
       const on: MachineOn = { hub: hub.hub, hubName: hub.name, owner: node.owner, rights: node.rights };
-      const known = byWritten.get(node.written);
+      let machine = byWritten.get(node.written);
       // One computer on two hubs: online when either hub says so.
-      if (known) {
-        known.on.push(on);
-        if (node.online === true && known.online !== true) {
-          known.online = true;
-          known.since = node.since;
-          known.through = node.through ?? null;
-        } else if (known.online === null) known.online = node.online;
-        if (!("Ok" in known.facts) && "Ok" in node.facts) known.facts = node.facts;
-        continue;
+      if (machine) {
+        machine.on.push(on);
+        if (node.online === true && machine.online !== true) {
+          machine.online = true;
+          machine.since = node.since;
+          machine.through = node.through ?? null;
+        } else if (machine.online === null) machine.online = node.online;
+        if (!("Ok" in machine.facts) && "Ok" in node.facts) machine.facts = node.facts;
+      } else {
+        machine = {
+          name: node.name,
+          written: node.written,
+          here: false,
+          online: node.online,
+          since: node.since,
+          through: node.through ?? null,
+          facts: node.facts,
+          on: [on],
+        };
+        machines.push(machine);
+        byWritten.set(machine.written, machine);
       }
-      const machine: Machine = {
-        name: node.name,
-        written: node.written,
-        here: false,
-        online: node.online,
-        since: node.since,
-        through: node.through ?? null,
-        facts: node.facts,
-        on: [on],
-      };
-      machines.push(machine);
-      byWritten.set(machine.written, machine);
+      const seen = node.online === null ? members?.get(node.name)?.find((member) => member.kind === "computer") : undefined;
+      if (seen && !lastSeen.get(machine)) lastSeen.set(machine, seen.online);
     }
   }
+  for (const [machine, online] of lastSeen) if (machine.online === null) machine.online = online;
   return machines;
 }
 
@@ -154,6 +205,21 @@ export function owns(machine: Machine, login: Login): boolean {
   return machine.on.some((on) => on.hub === login.hub && on.owner === login.account);
 }
 
+/** Whether `machine` is in `login`'s hands: its own, or shared whole with
+ *  its account, whose holders all manage it alike (`world-network.md`,
+ *  共享机器与智能体协助). */
+export function holds(machine: Machine, login: Login, world: WorldNow): boolean {
+  if (owns(machine, login)) return true;
+  if (!machine.on.some((on) => on.hub === login.hub)) return false;
+  return !!indexOf(world).hubs.get(login.hub)?.shares.has(pair(machine.name, login.account));
+}
+
+/** Whether `machine` runs the network's hub `login` is on, which is shared
+ *  with no one. */
+export function runsHub(machine: Machine, login: Login, world: WorldNow): boolean {
+  return world.accounts.hubs.find((one) => one.hub === login.hub)?.hub_machine === machine.name;
+}
+
 /** Whose `machine` is on `login`'s hub; none where it is registered under
  *  nobody there. */
 export function ownerOf(machine: Machine, login: Login): AccountName | null {
@@ -165,20 +231,41 @@ export function ownerOf(machine: Machine, login: Login): AccountName | null {
  *  anyway. */
 export function assistantsOf(world: WorldNow | null): Assistant[] {
   if (!world) return [];
-  const machines = machinesOf(world);
-  const named = new Map<string, number>();
-  for (const hub of world.accounts.hubs) for (const assist of hub.assists) named.set(assist.machine, (named.get(assist.machine) ?? 0) + 1);
+  return once(assistantsMade, world, () => assistantsFrom(world));
+}
+
+const assistantsMade = new WeakMap<WorldNow, Assistant[]>();
+
+function assistantsFrom(world: WorldNow): Assistant[] {
+  const index = indexOf(world);
+  const byName = new Map<string, Machine[]>();
+  for (const machine of machinesOf(world)) {
+    const same = byName.get(machine.name);
+    if (same) same.push(machine);
+    else byName.set(machine.name, [machine]);
+  }
+  // The hubs where a computer of each name is, or assists.
+  const hubsOf = new Map<string, Set<string>>();
+  const note = (name: string, hub: string) => {
+    const known = hubsOf.get(name);
+    if (known) known.add(hub);
+    else hubsOf.set(name, new Set([hub]));
+  };
+  for (const hub of world.accounts.hubs) {
+    for (const member of hub.members) note(member.name, hub.hub);
+    for (const assist of hub.assists) note(assist.machine, hub.hub);
+  }
   const assistants: Assistant[] = [];
   for (const hub of world.accounts.hubs) {
     for (const assist of hub.assists) {
       if (!hub.logins.includes(assist.account)) continue;
       const login: Login = { hub: hub.hub, hubName: hub.name, account: assist.account };
-      const workable = machines.some((machine) => machine.name === assist.machine && machine.on.some((on) => on.hub === hub.hub) && rightsOn(machine, login).hands);
+      const workable = (byName.get(assist.machine) ?? []).some((machine) => machine.on.some((on) => on.hub === hub.hub) && rightsOn(machine, login).hands);
       if (workable) continue;
-      const member = hub.members.find((member) => member.name === assist.machine);
+      const member = index.hubs.get(hub.hub)?.named.get(assist.machine)?.[0];
       // Two hubs each with a computer of this name assisting: written
       // with its hub, as `on` writes it.
-      const elsewhere = world.accounts.hubs.some((other) => other.hub !== hub.hub && (other.members.some((m) => m.name === assist.machine) || other.assists.some((a) => a.machine === assist.machine)));
+      const elsewhere = [...(hubsOf.get(assist.machine) ?? [])].some((other) => other !== hub.hub);
       assistants.push({
         login,
         machine: assist.machine,
@@ -211,6 +298,12 @@ export function assistantsOn(world: WorldNow | null, machine: string): Assistant
 
 export function groupsOf(world: WorldNow | null): Group[] {
   if (!world) return [];
+  return once(groupsMade, world, () => groupsFrom(world));
+}
+
+const groupsMade = new WeakMap<WorldNow, Group[]>();
+
+function groupsFrom(world: WorldNow): Group[] {
   const machines = machinesOf(world);
   const assistants = assistantsOf(world);
   const logins = loginsOf(world.accounts);
@@ -324,16 +417,15 @@ export function sameLogin(a: Login, b: { hub: HubId; account: AccountName }): bo
  *  logged in on it, or used an agent there; otherwise the first use of an
  *  agent there lets it reach the account's machines (`world-network.md`). */
 export function machineActsFor(world: WorldNow | null, machine: MachineName, login: Login): boolean {
-  const hub = world?.accounts.hubs.find((hub) => hub.hub === login.hub);
+  const hub = world ? indexOf(world).hubs.get(login.hub) : undefined;
   if (!hub) return false;
-  if (hub.members.some((member) => member.name === machine && member.logins.includes(login.account))) return true;
-  return hub.acting.some((acting) => acting.machine === machine && acting.account === login.account);
+  if (hub.named.get(machine)?.some((member) => member.logins.includes(login.account))) return true;
+  return hub.acting.has(pair(machine, login.account));
 }
 
 /** Whether `login`'s account is its hub's super administrator. */
 export function isSuper(world: WorldNow | null, login: Login): boolean {
-  const hub = world?.accounts.hubs.find((hub) => hub.hub === login.hub);
-  const me = hub?.accounts.find((account) => account.name === login.account);
+  const me = world ? indexOf(world).hubs.get(login.hub)?.accounts.get(login.account) : undefined;
   return me?.level === "super" && !me.locked;
 }
 
@@ -341,8 +433,7 @@ export function isSuper(world: WorldNow | null, login: Login): boolean {
  *  几个账号): its machines are its alone, and it shares none of them and
  *  lets none of its agents assist anyone. */
 export function isVisitor(world: WorldNow | null, login: Login): boolean {
-  const hub = world?.accounts.hubs.find((hub) => hub.hub === login.hub);
-  return hub?.accounts.find((account) => account.name === login.account)?.level === "visitor";
+  return (world ? indexOf(world).hubs.get(login.hub)?.accounts.get(login.account)?.level : undefined) === "visitor";
 }
 
 /** The hub's super administrator, as `login` sees it. */

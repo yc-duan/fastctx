@@ -14,17 +14,25 @@ use crate::store::PackageTargets;
 
 pub(super) fn targets(hub: &Hub, name: &MachineName, report: &Report) {
     let mut store = hub.store();
-    let Some(member) = store.book.directory.member(name) else { return };
+    let index = hub.index_of(&store);
+    let directory = fastctx_net::directory_index::Indexed::new(&store.book.directory, &index);
+    let Some(member) = directory.member(name) else { return };
     let key = member.key;
     let kernel = report.target.clone().or_else(|| store.hub.package_targets.get(&key).and_then(|t| t.kernel.clone()));
     let targets = PackageTargets { kernel, app: report.app.as_ref().map(|app| app.target.clone()) };
     if store.hub.package_targets.get(&key) == Some(&targets) {
         return;
     }
-    store.hub.package_targets.insert(key, targets);
-    let current: BTreeSet<_> = store.book.directory.members.iter().map(|member| member.key).collect();
-    store.hub.package_targets.retain(|key, _| current.contains(key));
-    if let Err(error) = store.save_hub() {
+    let before = store.hub.package_targets.insert(key, targets);
+    if let Err(error) = store.save_package_target(&key) {
+        match before {
+            Some(before) => {
+                store.hub.package_targets.insert(key, before);
+            }
+            None => {
+                store.hub.package_targets.remove(&key);
+            }
+        }
         hub.log.line(format_args!("keeping the network's package targets: {error}"));
     }
 }
@@ -48,33 +56,54 @@ fn needs_network(hub: &Hub, name: &MachineName) -> bool {
     hub.updates.lock().expect("never poisoned").last.get(&key).is_some_and(|last| last.report.needs_network())
 }
 
-pub(super) fn offer_to(hub: &Hub, name: &MachineName, network: &mut Network) {
-    if !needs_network(hub, name) {
-        return;
-    }
-    let targets = {
+pub(super) struct Offers {
+    through: BTreeMap<MachineName, PackageTargets>,
+    known: Vec<Manifest>,
+    held: BTreeSet<Held>,
+}
+
+impl Offers {
+    pub(super) fn new(hub: &Hub, directory: &fastctx_net::directory_index::Indexed<'_>) -> Self {
         let store = hub.store();
-        store
-            .book
-            .directory
-            .member(name)
-            .and_then(|m| store.hub.package_targets.get(&m.key))
-            .cloned()
-            .unwrap_or_default()
-    };
-    let (cache, known) = {
         let updates = hub.updates.lock().expect("never poisoned");
-        (updates.cache.clone(), updates.manifests().collect::<Vec<_>>())
-    };
-    let held = held(hub, &cache);
-    network.stable = network.stable.take().and_then(|newest| standing(&known, &newest, &targets, &held));
-    network.beta = network.beta.take().and_then(|newest| standing(&known, &newest, &targets, &held));
+        let through: BTreeMap<_, _> = updates
+            .last
+            .iter()
+            .filter(|(_, last)| last.report.needs_network())
+            .filter_map(|(key, _)| {
+                directory.by_key(key).map(|member| {
+                    (member.name.clone(), store.hub.package_targets.get(key).cloned().unwrap_or_default())
+                })
+            })
+            .collect();
+        let known = updates.manifests().collect();
+        let cache = updates.cache.clone();
+        drop(updates);
+        drop(store);
+        let held = if through.is_empty() { BTreeSet::new() } else { held(hub, &cache) };
+        Self { through, known, held }
+    }
+
+    pub(super) fn scope(&self, name: &MachineName) -> Option<(Option<String>, Option<String>)> {
+        self.through.get(name).map(|targets| (targets.kernel.clone(), targets.app.clone()))
+    }
+
+    pub(super) fn offer_to(&self, name: &MachineName, network: &mut Network) {
+        let Some(targets) = self.through.get(name) else { return };
+        network.stable = network.stable.take().and_then(|newest| standing(&self.known, &newest, targets, &self.held));
+        network.beta = network.beta.take().and_then(|newest| standing(&self.known, &newest, targets, &self.held));
+    }
 }
 
 /// The release of `newest`'s line a machine updating through the network is
 /// offered: `newest` once the hub holds its packages for `targets` whole, and
 /// until then, or if one of them never comes, the newest it does hold whole.
-fn standing(known: &[Manifest], newest: &Manifest, targets: &PackageTargets, held: &BTreeSet<Held>) -> Option<Manifest> {
+fn standing(
+    known: &[Manifest],
+    newest: &Manifest,
+    targets: &PackageTargets,
+    held: &BTreeSet<Held>,
+) -> Option<Manifest> {
     let ready = |m: &Manifest| {
         let wanted = for_targets(m, targets);
         !wanted.is_empty() && wanted.iter().all(|p| held.contains(p))
@@ -223,6 +252,14 @@ pub(crate) fn prune(hub: &Hub) {
             .filter(|due| store.book.directory.by_key(&due.key).is_some())
             .map(|due| due.due.version.clone()),
     );
+    keep.extend(
+        store
+            .hub
+            .repairs
+            .iter()
+            .filter(|due| store.book.directory.by_key(&due.key).is_some())
+            .map(|due| due.due.version.clone()),
+    );
     keep.extend(updates.obtaining.keys().map(|held| held.version.clone()));
     keep.extend(updates.requests.values().map(|(held, _)| held.version.clone()));
     keep.extend(updates.serving.keys().map(|held| held.version.clone()));
@@ -252,9 +289,21 @@ pub(crate) fn prune(hub: &Hub) {
 /// Prepares both release lines and explicitly queued versions before telling
 /// machines to update. The retry interval limits failed prefetches, not retention.
 pub(crate) fn prefetch(hub: &Arc<Hub>) {
+    if hub.moving.frozen() {
+        return;
+    }
     let (policy, due) = {
         let store = hub.store();
-        (store.hub.updates.clone(), store.hub.due.iter().map(|due| due.due.version.clone()).collect::<BTreeSet<_>>())
+        (
+            store.hub.updates.clone(),
+            store
+                .hub
+                .due
+                .iter()
+                .map(|due| due.due.version.clone())
+                .chain(store.hub.repairs.iter().map(|due| due.due.version.clone()))
+                .collect::<BTreeSet<_>>(),
+        )
     };
     let (network, manifests, cache) = {
         let updates = hub.updates.lock().expect("never poisoned");
@@ -283,10 +332,22 @@ pub(crate) fn prefetch(hub: &Arc<Hub>) {
                 .find(|due| due.due.version == version)
                 .and_then(|due| store.book.directory.by_key(&due.key))
                 .map(|member| member.name.clone())
+                .or_else(|| {
+                    store
+                        .hub
+                        .repairs
+                        .iter()
+                        .find(|r| r.due.version == version)
+                        .and_then(|r| store.book.directory.by_key(&r.key))
+                        .map(|m| m.name.clone())
+                })
         };
         if start && let Some(machine) = machine {
             let hub = hub.clone();
             tokio::spawn(async move {
+                if hub.moving.frozen() {
+                    return;
+                }
                 let failed = match prepare_update(&hub, &machine, &version).await {
                     Ok(()) => false,
                     Err(why) => {
@@ -341,6 +402,9 @@ pub(crate) fn prefetch(hub: &Arc<Hub>) {
     tokio::spawn(async move {
         let mut failed = false;
         for (package, _) in wanted {
+            if hub.moving.frozen() {
+                break;
+            }
             hub.log.line(format_args!("preparing {} of {} before announcing it", package.target, package.version));
             let version = package.version.clone();
             let target = package.target.clone();
@@ -370,8 +434,13 @@ const PREFETCH_AGAIN: Duration = Duration::from_secs(5 * 60);
 pub(crate) async fn prepare_update(hub: &Arc<Hub>, name: &MachineName, version: &str) -> Result<(), String> {
     let targets = {
         let store = hub.store();
+        if hub.moving.frozen() {
+            return Err("the hub is handing its records over; prepare this update at its new place".into());
+        }
         let member = store.book.directory.member(name).ok_or_else(|| format!("there is no machine {name}"))?;
-        if !store.hub.due.iter().any(|due| due.key == member.key && due.due.version == version) {
+        if !store.hub.due.iter().any(|due| due.key == member.key && due.due.version == version)
+            && !store.hub.repairs.iter().any(|due| due.key == member.key && due.due.version == version)
+        {
             return Err(format!("no update to {version} is queued for {name}"));
         }
         store.hub.package_targets.get(&member.key).cloned().unwrap_or_default()
@@ -397,15 +466,7 @@ pub(crate) async fn prepare_update(hub: &Arc<Hub>, name: &MachineName, version: 
     };
     cache.keep_manifest(&manifest)?;
     hub.updates.lock().expect("never poisoned").catalog.insert(manifest.version.clone(), manifest.clone());
-    {
-        let mut store = hub.store();
-        for due in &mut store.hub.due {
-            if due.due.version == version {
-                due.due.manifest = Some(manifest.clone());
-            }
-        }
-        store.save_hub().map_err(|e| e.to_string())?;
-    }
+    keep_prepared_manifest(hub, &manifest)?;
     if !needs_network(hub, name) {
         return Ok(());
     }
@@ -413,6 +474,26 @@ pub(crate) async fn prepare_update(hub: &Arc<Hub>, name: &MachineName, version: 
         super::obtain::obtain(hub, package, None).await?;
     }
     Ok(())
+}
+
+fn keep_prepared_manifest(hub: &Hub, manifest: &Manifest) -> Result<(), String> {
+    let mut store = hub.store();
+    // A fetch begun before the move can finish after its final snapshot
+    // (2026-10-29). The store lock also orders this check with freeze's flush.
+    if hub.moving.frozen() {
+        return Err("the hub is handing its records over; prepare this update at its new place".into());
+    }
+    for due in &mut store.hub.due {
+        if due.due.version == manifest.version {
+            std::sync::Arc::make_mut(due).due.manifest = Some(manifest.clone());
+        }
+    }
+    for due in &mut store.hub.repairs {
+        if due.due.version == manifest.version {
+            std::sync::Arc::make_mut(due).due.manifest = Some(manifest.clone());
+        }
+    }
+    store.save_hub().map_err(|e| e.to_string())
 }
 
 pub(crate) fn done(hub: &Hub, name: &MachineName, generation: u64, id: u64) {

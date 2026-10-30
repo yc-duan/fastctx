@@ -13,11 +13,10 @@ use fastctx_types::remote::{RemoteCall, RemoteReply};
 use fastctx_types::residents::{Delivery, Notice};
 use fastctx_types::session::Speaker;
 use fastctx_types::town::Looked;
-use fastctx_types::{Address, JournalCall, MachineName, NoticeId, PageName, Reply, TownName};
+use fastctx_types::{Address, MachineName, NoticeId, PageName, TownName};
 
 use crate::Node;
 use crate::speech::Owed;
-use crate::town::caller::Caller;
 
 pub async fn relay(
     node: &Arc<Node>,
@@ -72,8 +71,8 @@ async fn admitted(
     // Consent and publication changes affect subsequent admissions. A run
     // already admitted continues, and must not hold up revocation while
     // its normal fifteen-second wait is in progress.
-    let _writing = node.writing.lock().await;
     super::refresh(node, &town).await?;
+    let _syncing = node.syncing.lock().await;
     let stored = super::stored(node, &town, &page)?;
     super::check_base(&page, Some(version), stored.current().map(|v| v.version))?;
     let publication = stored.current().expect("checked current version");
@@ -96,7 +95,11 @@ async fn admitted(
         page,
         version,
         by: Box::new(publication.by.clone()),
-        on: publication.on.clone(),
+        // A publication is written down with the machine it was published on.
+        on: publication
+            .on
+            .clone()
+            .ok_or_else(|| Failure::refused("the page's publication does not say where it was published"))?,
         opened_on,
     };
     super::identity::acting(node, &source)?;
@@ -114,7 +117,8 @@ fn consenter_may(
     town: &TownName,
 ) -> Result<(), Failure> {
     let PageIdentity::Account { hub, account } = identity else {
-        return if node.is_me(by) && node.is_me(&consent.stamp.on) {
+        // A consent is written down with the machine it was given on.
+        return if node.is_me(by) && consent.stamp.on.as_ref().is_some_and(|on| node.is_me(on)) {
             Ok(())
         } else {
             Err(Failure::refused("local page consent was not given here"))
@@ -129,7 +133,7 @@ fn consenter_may(
         || view.account(account).is_none_or(|account| account.locked)
         || !view.in_project(account, &place.town)
         || !view.may_act_for(account, by)
-        || !view.logged_in(&consent.stamp.on, account)
+        || consent.stamp.on.as_ref().is_none_or(|on| !view.logged_in(on, account))
     {
         return Err(Failure::refused("the account's page consent is no longer authorized"));
     }
@@ -173,9 +177,16 @@ async fn execute(node: &Arc<Node>, source: PageSource, action: PageInvocation) -
             let town = Some(source.town.clone());
             let account = source.identity.as_ref().and_then(super::identity::account);
             let owner = fastctx_types::run::JobOwner::Page { page: source };
-            let request =
-                fastctx_types::run::RunRequest { call_id: None, script, cwd: None, writes_off: false, wait: None };
-            let (reply, _) = node.jobs.run(node, owner, town, request, account).await?;
+            let request = fastctx_types::run::RunRequest {
+                turn: None,
+                call_id: None,
+                script,
+                cwd: None,
+                writes_off: false,
+                wait: None,
+                attachments: Vec::new(),
+            };
+            let (reply, _) = node.jobs.run(node, owner, town, request, account, false, None).await?;
             Ok(PageResult::Run(Box::new(reply)))
         }
         PageInvocation::Say { to, text } => {
@@ -198,29 +209,17 @@ async fn execute(node: &Arc<Node>, source: PageSource, action: PageInvocation) -
             let delivery = Delivery {
                 id: NoticeId::try_from(format!("page-{suffix}")).expect("hex notice id"),
                 at: jiff::Timestamp::now(),
-                notice: Notice::Words { from: Speaker::Page { page: Box::new(source) }, text },
+                notice: Notice::Words {
+                    from: Speaker::Page { page: Box::new(source) },
+                    text,
+                    goal_report: None,
+                    goal_question: None,
+                },
             };
             let landed = crate::speech::tell_here(node, &to.resident, delivery, Owed::Nobody).await?;
             Ok(PageResult::Said { to, landed })
         }
-        PageInvocation::Journal { journal, text } => {
-            let town = source.town.clone();
-            let caller = Caller::Page(Box::new(source));
-            let call = JournalCall::Add {
-                town: Some(town),
-                journal,
-                text,
-                description: None,
-                cites: Vec::new(),
-                attach: Vec::new(),
-                model: None,
-            };
-            let reply = crate::town::journal::call(node, &caller, call).await?;
-            match reply {
-                Reply::EntryAdded { journal, id, .. } => Ok(PageResult::EntryAdded { journal, id }),
-                _ => unreachable!("journal add returns the written entry"),
-            }
-        }
+        PageInvocation::Journal { .. } => Err(Failure::not_run(fastctx_types::memory::LEGACY)),
     }
 }
 

@@ -13,7 +13,7 @@ pub(super) async fn ready(node: &Arc<Node>, id: &ResidentId) -> Result<(), Failu
     crate::lifecycle::wake::wake(node, id, crate::lifecycle::wake::Source::Control, None)
         .await
         .map(|_| ())
-        .map_err(|error| Failure::host_unavailable(error.failure.message))
+        .map_err(crate::lifecycle::wake::WakeFailure::control)
 }
 
 pub(crate) async fn connect(node: &Arc<Node>, id: &ResidentId) -> Result<(), Failure> {
@@ -59,11 +59,17 @@ pub(crate) async fn connect(node: &Arc<Node>, id: &ResidentId) -> Result<(), Fai
         // A host can still be exiting at the first liveness check, or end
         // during plugin startup. Recheck until the ready receipt arrives.
         if tokio::time::Instant::now() >= probe {
-            if !super::alive(node, about.home.as_deref(), session).await? {
-                let (current, _) = node.residents.about(id).ok_or_else(crate::authorization::no_subject)?;
+            // The session the conversation is in now: one Claude Code would
+            // not wake as itself it went on in another (`continuing`).
+            let (current, _) = node.residents.about(id).ok_or_else(crate::authorization::no_subject)?;
+            let session = current
+                .session
+                .as_deref()
+                .ok_or_else(|| Failure::new("Claude has not identified this conversation yet"))?;
+            if !super::alive(node, current.home.as_deref(), session).await? {
                 crate::homes::listed(node, current.host.agent.as_str(), current.home.as_deref())?;
                 crate::assists::may_turn(node, id, &current)?;
-                super::management::wake(node, about.home.as_deref(), session).await?;
+                super::management::wake(node, current.home.as_deref(), session).await?;
             }
             probe = tokio::time::Instant::now() + Duration::from_secs(1);
         }

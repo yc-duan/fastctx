@@ -44,7 +44,7 @@
   border-radius: var(--radius-m);
   text-align: left;
   color: var(--text-2);
-  transition: color var(--hover) ease, background-color var(--hover) ease;
+  transition: color var(--hover) var(--ease), background-color var(--hover) var(--ease);
 }
 
 .focus-toggle:hover,
@@ -71,6 +71,20 @@
 
 .focus-toggle.offline .focus-mark {
   opacity: 0.6;
+}
+
+/* A person's mark, where each other person is a row: the first letter of
+   their name in a small round fill. */
+.focus-face {
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  border-radius: var(--radius-full);
+  background: var(--fill-strong);
+  color: var(--text-2);
+  font-size: var(--size-fine);
+  line-height: 1;
 }
 
 .focus-name {
@@ -106,7 +120,7 @@
   color: var(--text-3);
   --turn: -90deg;
   rotate: var(--turn);
-  transition: --turn var(--fold) var(--fold-easing);
+  transition: --turn var(--expand) var(--expand-easing);
 }
 
 .focus-group.open > .focus-arrow {
@@ -118,7 +132,7 @@
 .focus-fold {
   display: grid;
   grid-template-rows: 1fr;
-  transition: grid-template-rows var(--fold) var(--fold-easing);
+  transition: grid-template-rows var(--expand) var(--expand-easing);
 }
 
 .focus-fold.shut {
@@ -161,7 +175,7 @@
   color: var(--text-3);
   --shown: 0;
   opacity: var(--shown);
-  transition: --shown var(--hover) ease, color var(--hover) ease, background-color var(--hover) ease;
+  transition: --shown var(--hover) var(--ease), color var(--hover) var(--ease), background-color var(--hover) var(--ease);
 }
 
 .focus-held:hover .focus-unpick,
@@ -228,7 +242,7 @@
   padding: 0 10px 0 8px;
   background: color-mix(in srgb, var(--fill) 55%, transparent);
   color: var(--text-2);
-  transition: color var(--hover) ease, background-color var(--hover) ease;
+  transition: color var(--hover) var(--ease), background-color var(--hover) var(--ease);
 }
 
 .focus-add:hover:not(:disabled) {
@@ -353,8 +367,8 @@
   left: var(--gutter);
   display: flex;
   flex-direction: column;
-  width: min(460px, calc(100% - 2 * var(--gutter)));
-  max-height: min(64dvh, 540px);
+  width: min(440px, calc(100% - 2 * var(--gutter)));
+  max-height: min(64dvh, 520px);
   overflow-y: auto;
   overscroll-behavior: contain;
   scrollbar-width: thin;
@@ -440,24 +454,6 @@
   color: var(--wrong);
 }
 
-.focus-pop {
-  position: absolute;
-  top: 100%;
-  left: var(--gutter);
-  width: min(440px, calc(100% - 2 * var(--gutter)));
-  max-height: min(64dvh, 520px);
-  overflow-y: auto;
-  overscroll-behavior: contain;
-  scrollbar-width: thin;
-  padding: var(--space-3) var(--space-4);
-  border-radius: var(--radius-l);
-  background: var(--bg-elevated);
-  box-shadow: var(--shadow-pop);
-  opacity: var(--shown);
-  translate: var(--slide) var(--lift);
-  animation: panel-rise var(--fold) var(--fold-easing) both;
-}
-
 @media (max-width: 760px) {
   /* A phone's head has room for the way back alone, beside the chip that
      shows nothing is chosen. */
@@ -529,7 +525,7 @@
     z-index: -1;
     background: var(--scrim);
     opacity: var(--shown);
-    animation: sheet-scrim var(--fold) ease both;
+    animation: sheet-scrim var(--fold) var(--ease) both;
   }
 }
 
@@ -554,7 +550,7 @@
   border-radius: var(--radius-m);
   text-align: left;
   color: var(--text-2);
-  transition: color var(--hover) ease, background-color var(--hover) ease;
+  transition: color var(--hover) var(--ease), background-color var(--hover) var(--ease);
 }
 
 .focus-mcp:hover {
@@ -585,4 +581,21 @@
    kept for what the user changed elsewhere in the panel. */
 .focus-mcp[aria-checked="true"] .switch-track {
   background: var(--text-2);
+}
+
+/* Put away, it settles where it stood, or sinks back down as a sheet, its
+   shade going with it. */
+.focus-pop.leaving {
+  pointer-events: none;
+  animation: panel-settle var(--quick) var(--ease-out) both;
+}
+
+@media (max-width: 760px) {
+  .focus-pop.leaving {
+    animation: sheet-sink var(--fold) var(--fold-easing) both;
+  }
+
+  .focus-strip:has(.focus-pop.leaving)::after {
+    animation: sheet-scrim-out var(--fold) var(--ease-out) both;
+  }
 }

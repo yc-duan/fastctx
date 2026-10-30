@@ -5,6 +5,7 @@
 // starts the new version.
 
 import { invoke } from "@tauri-apps/api/core";
+import type { RepairReport } from "./repair";
 
 export type Channel = "stable" | "beta";
 
@@ -70,6 +71,8 @@ export interface UpdateNetwork {
   /** The version the hub runs; none from a hub before 1.0.1 beta 3. */
   hub?: string;
   due?: Record<string, Due>;
+  /** Whether the hub arranges a repair for a machine that asks for one. */
+  repair_supported?: boolean;
 }
 
 /** A release as GitHub lists it. */
@@ -148,6 +151,11 @@ export interface UpdateState {
   take?: string;
   /** Whether an interface is open on that machine now. */
   open?: boolean;
+  /** Its World program can repair it (`repair` names the last repair). */
+  repair_supported?: boolean;
+  /** It can ask another machine to repair itself. */
+  repair_routing?: boolean;
+  repair?: RepairReport;
 }
 
 /** What an interface asks a machine's node about updates. */
@@ -158,7 +166,8 @@ export type UpdateCall =
   | { do: "look" }
   | { do: "set"; settings: UpdateSettings }
   | { do: "kernel"; version?: string }
-  | { do: "choose"; version?: string };
+  | { do: "choose"; version?: string }
+  | { do: "repair"; version: string | null; id: string | null };
 
 export type ReachFailure = "dns" | "connect" | "tls" | "timeout" | "interrupted" | "proxy" | "other";
 export type CheckFailure =
@@ -174,8 +183,9 @@ export interface UpdateProblem { reason: FailureReason; why: string }
 export type UpdateStage =
   | { kind: "idle" | "unknown" }
   | { kind: "fetching"; version: string; via: "github" | "network" | null; received: number; total: number | null }
-  | { kind: "ready" | "waiting_idle" | "waiting_app" | "installing" | "administrator"; version: string }
+  | { kind: "ready" | "waiting_idle" | "waiting_app" | "waiting_sign_in" | "installing" | "administrator"; version: string }
   | { kind: "renewing"; version: string; phase: import("./renewal").RenewalPhase }
+  | { kind: "repairing"; version: string; layer: string }
   | { kind: "failed"; version: string; problem: UpdateProblem };
 export type UpdateKind = "app" | "headless" | "managed" | "phone";
 export type ActionReason = "not_owner" | "visitor" | "phone" | "too_old" | "development" | "offline" | "unknown_version" | "missing_machine" | "no_package" | "not_newer" | "unavailable" | "other";
@@ -186,6 +196,8 @@ export interface UpdateActions {
   settings: UpdatePermission;
   schedule: UpdatePermission;
   cancel: UpdatePermission;
+  /** Absent from a hub before repairs. */
+  repair?: UpdatePermission;
 }
 export interface MachineUpdate {
   machine: string;
@@ -209,6 +221,23 @@ export interface MachineUpdate {
   due: Due | null;
   offer: Manifest | null;
   actions: UpdateActions;
+  repair_supported?: boolean;
+  /** A repair the hub keeps for it until it has been made. */
+  repair_due?: RepairDue;
+  repair?: RepairReport;
+}
+
+/** A repair the hub keeps for a machine until it has been made. */
+export interface RepairDue {
+  id: string;
+  version: string;
+  by: string;
+  at: string;
+  manifest?: Manifest;
+  problem?: UpdateProblem;
+  attempts?: number;
+  retry_at?: string;
+  observed?: string;
 }
 export interface UpdateVersionChoice {
   version: string;
@@ -226,11 +255,15 @@ export interface UpdatesView {
   policy: Policy | null;
   machines: MachineUpdate[];
   available: number;
+  /** The hub keeps repairs for machines. */
+  repair_supported?: boolean;
 }
 export type UpdatesViewCall =
   | { do: "view" }
   | { do: "release"; version: string }
   | { do: "schedule"; machines: string[]; version: string | null }
+  | { do: "repair"; machines: string[]; version: string | null }
+  | { do: "cancel_repair"; machines: string[] }
   | { do: "policy"; minimum: string | null; managed_auto: boolean };
 export type UpdatesViewReply =
   | { kind: "release"; choice: UpdateVersionChoice }
@@ -258,6 +291,9 @@ export interface UpdateSeam {
   /** Tells this device's node what only the interface knows of its update,
    *  as waiting for the work under way; `idle` clears it. */
   progress(stage: UpdateStage): Promise<UpdateState>;
+  /** Repairs this device's Fastctx, layer by layer; answers as soon as the
+   *  repair is under way. */
+  repair(): Promise<UpdateState>;
 }
 
 export const updates: UpdateSeam = {
@@ -270,6 +306,7 @@ export const updates: UpdateSeam = {
   install: (version) => invoke<boolean>("update_install", { version }),
   machine: (name) => invoke<UpdateState>("update_machine", { machineName: name }),
   remote: (name, call) => invoke<UpdateState>("machine_updates", { machineName: name, update: call }),
+  repair: () => invoke<UpdateState>("update_repair", { version: null }),
 };
 
 /** Whether `version` is a test release. */

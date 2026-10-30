@@ -6,6 +6,7 @@
 
 import { escape } from "../conversation/prose";
 import { Sheet } from "./confirm";
+import { detailOf } from "./problem";
 import type { BatchWords } from "./machine-batch-words";
 
 /** On, off, or as each one has it. */
@@ -24,6 +25,8 @@ export class WaysSheet {
   private auto: Way = null;
   private relays: Way = null;
   private said = "";
+  /** What the kernel said of it, for the pointer. */
+  private detail = "";
 
   constructor(
     private readonly words: BatchWords,
@@ -35,6 +38,7 @@ export class WaysSheet {
     this.auto = null;
     this.relays = null;
     this.said = "";
+    this.detail = "";
     const sheet = this.sheet ?? this.make();
     this.draw();
     sheet.show();
@@ -70,7 +74,8 @@ export class WaysSheet {
       },
       (error: unknown) => {
         sheet.busy = false;
-        this.said = error instanceof Error ? error.message : String(error);
+        this.detail = detailOf(error);
+        this.said = this.words.waysFailed(this.detail);
         this.draw();
       },
     );
@@ -92,7 +97,7 @@ export class WaysSheet {
     sheet.body.innerHTML = `${sheet.head(words.waysTitle(ways.count), this.close)}
       ${row("auto", words.auto, this.auto)}${row("relays", words.relays, this.relays)}
       ${skipped}
-      <p class="sheet-note" role="alert"${this.said ? "" : " hidden"}>${escape(this.said)}</p>
-      <div class="mr-go"><button class="sheet-go" type="button" data-ways-go${sheet.busy || !ready ? " disabled" : ""}>${escape(words.apply(ways.count))}</button></div>`;
+      <p class="sheet-note" role="alert"${this.said ? "" : " hidden"} title="${escape(this.detail)}">${escape(this.said)}</p>
+      <div class="sheet-foot mr-go"><button class="sheet-go" type="button" data-ways-go${sheet.busy || !ready ? " disabled" : ""}>${escape(words.apply(ways.count))}</button></div>`;
   }
 }

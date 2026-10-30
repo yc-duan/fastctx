@@ -1,0 +1,621 @@
+/* What a run did (`draw.ts`): each deed one solid card of one ground, as a
+   change is, its head saying what it is and, under a stroke of the pen, its
+   body what came of it; a command named alone on a quiet line between them;
+   the run's own words folded at the foot, the same sheet going on. One size
+   throughout, the reading face, monospace for what is code. */
+
+.dd-deeds {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.dd-card {
+  border-radius: var(--radius-m);
+  background: var(--surface-header);
+  overflow: hidden;
+}
+
+.dd-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 34px;
+  padding: 0 var(--space-3);
+  font-size: var(--size-text);
+  line-height: var(--leading-ui);
+  color: var(--text-3);
+}
+
+.dd-mark {
+  flex: none;
+  display: grid;
+  place-items: center;
+  color: var(--text-3);
+}
+
+.dd-mark.wrong {
+  color: var(--wrong);
+}
+
+.dd-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-2);
+}
+
+.dd-quiet {
+  color: var(--text-3);
+}
+
+.dd-title .dd-quiet {
+  margin-left: var(--space-2);
+}
+
+.dd-figures {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-3);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.dd-wrong {
+  color: var(--wrong);
+}
+
+.dd-hash,
+.dd-pattern,
+.dd-name {
+  font-family: var(--font-code);
+  font-variation-settings: var(--code-axes);
+  font-size: var(--size-code);
+}
+
+/* A card that opens on a drawing of how it came out: the drawing at the
+   left, its figures beside it, the first of them in the text's own ink. */
+.dd-scene {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  padding: var(--space-3) var(--space-4);
+}
+
+.dd-art {
+  flex: none;
+  display: grid;
+  place-items: center;
+  max-width: 55%;
+  overflow: hidden;
+}
+
+.dd-said {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  font-size: var(--size-text);
+  line-height: var(--leading-ui);
+  color: var(--text-3);
+}
+
+.dd-said > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dd-big {
+  color: var(--text);
+}
+
+.dd-said .dd-wrong {
+  color: var(--wrong);
+}
+
+.dd-caution {
+  color: var(--caution);
+}
+
+.dd-line {
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--space-3);
+}
+
+.dd-body {
+  padding: var(--space-2) 0;
+}
+
+/* The head and what came of it, parted by a stroke of the pen. */
+:is(.dd-head, .dd-scene) + .dd-body::before {
+  content: "";
+  display: block;
+  height: 8px;
+  margin: calc(-1 * var(--space-2)) var(--space-3) var(--space-1);
+  background: var(--pen-rule);
+  -webkit-mask: var(--pen-rule-1) 0 50% / 100% 100% no-repeat;
+  mask: var(--pen-rule-1) 0 50% / 100% 100% no-repeat;
+}
+
+/* A failed test, a diagnostic: a line that opens what it holds. */
+.dd-opener-line {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  min-height: 32px;
+  padding: 0 var(--space-3);
+  font: inherit;
+  font-size: var(--size-text);
+  line-height: var(--leading-ui);
+  text-align: left;
+  color: var(--text-2);
+  transition: color var(--hover) var(--ease);
+}
+
+button.dd-opener-line:hover {
+  color: var(--text);
+}
+
+.dd-opener-line > .glyph {
+  flex: none;
+  color: var(--wrong);
+}
+
+.dd-name,
+.dd-message {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dd-message {
+  color: var(--text);
+}
+
+.dd-place {
+  flex: none;
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+
+.dd-chevron {
+  flex: none;
+  display: grid;
+  place-items: center;
+  margin-left: auto;
+  color: var(--text-3);
+  --turn: -90deg;
+  rotate: var(--turn);
+  transition: --turn var(--expand) var(--expand-easing);
+}
+
+[aria-expanded="true"] > .dd-chevron {
+  --turn: 0deg;
+}
+
+.dd-said-text {
+  margin: 0 var(--space-3) var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  max-height: 40vh;
+  overflow: auto;
+  border-radius: var(--radius-s);
+  background: var(--surface-code-2);
+  font-family: var(--font-code);
+  font-variation-settings: var(--code-axes);
+  font-size: var(--size-code);
+  line-height: var(--leading-code);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--text-2);
+}
+
+.dd-count {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.dd-stats {
+  display: inline-flex;
+  gap: 0.4em;
+}
+
+.dd-stats .add {
+  color: var(--add-fg);
+}
+
+.dd-stats .del {
+  color: var(--del-fg);
+}
+
+.dd-body > .dd-subject {
+  margin: 0;
+  padding: var(--space-1) var(--space-3);
+  line-height: var(--leading-ui);
+  color: var(--text);
+}
+
+.dd-list,
+.dd-groups,
+.dd-hits {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.dd-file,
+.dd-commit,
+.dd-ref {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 30px;
+  padding: 0 var(--space-3);
+  font-size: var(--size-text);
+  line-height: var(--leading-ui);
+  color: var(--text-2);
+}
+
+/* A file's state: a small solid chip, coloured by what happened to it. */
+.dd-state {
+  flex: none;
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-full);
+  background: var(--fill-strong);
+  font-size: var(--size-fine);
+  line-height: 1.6;
+  color: var(--text-2);
+}
+
+.dd-state.added {
+  color: var(--add-fg);
+}
+
+.dd-state.deleted {
+  color: var(--del-fg);
+}
+
+.dd-state.conflict {
+  color: var(--wrong);
+}
+
+.dd-state.untracked {
+  color: var(--text-3);
+}
+
+/* A path: its folders give way from the front, the file's name stays. */
+.dd-path {
+  display: flex;
+  min-width: 0;
+  white-space: nowrap;
+}
+
+.dd-folder {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  direction: rtl;
+  color: var(--text-3);
+}
+
+.dd-folder > bdi {
+  direction: ltr;
+}
+
+.dd-leaf {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text);
+}
+
+.dd-commit .dd-hash {
+  flex: none;
+  color: var(--text-3);
+}
+
+.dd-commit .dd-subject {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text);
+}
+
+.dd-ref > .glyph {
+  flex: none;
+  color: var(--text-3);
+}
+
+.dd-ref.wrong > .glyph,
+.dd-why {
+  color: var(--wrong);
+}
+
+.dd-none {
+  margin: 0;
+  padding: var(--space-1) var(--space-3);
+  color: var(--text-3);
+}
+
+/* A search: file by file, each hit its line's number and the line, what
+   was looked for marked. */
+.dd-group + .dd-group {
+  margin-top: var(--space-2);
+}
+
+.dd-group > .dd-path {
+  align-items: center;
+  min-height: 28px;
+  padding: 0 var(--space-3);
+}
+
+.dd-hit {
+  display: grid;
+  grid-template-columns: 4ch minmax(0, 1fr);
+  gap: var(--space-3);
+  padding: 0 var(--space-3);
+  font-family: var(--font-code);
+  font-variation-settings: var(--code-axes);
+  font-size: var(--size-code);
+  line-height: var(--leading-code);
+  color: var(--text-2);
+}
+
+.dd-line {
+  text-align: right;
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+
+.dd-hit code {
+  font: inherit;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: pre;
+}
+
+.dd-hit mark {
+  border-radius: 2px;
+  background: var(--accent-wash);
+  color: var(--text-strong);
+}
+
+.dd-more {
+  margin: var(--space-2) var(--space-3) 0;
+  font: inherit;
+  font-size: var(--size-text);
+  color: var(--text-3);
+  transition: color var(--hover) var(--ease);
+}
+
+.dd-more:hover {
+  color: var(--text-2);
+}
+
+/* A command named alone, quiet, between the cards. */
+.dd-plain {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 28px;
+  padding: 0 var(--space-3);
+  font-size: var(--size-text);
+  line-height: var(--leading-ui);
+  color: var(--text-3);
+}
+
+.dd-plain > .glyph {
+  flex: none;
+}
+
+.dd-plain > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The run's own words, at the foot of what was drawn of it: the sheet of
+   the card above goes on, a stroke of the pen between; opened, the command
+   and what it printed come in below, on the same sheet. */
+.dd-foot {
+  border-radius: var(--radius-m);
+  background: var(--surface-header);
+}
+
+.dd-card:has(+ .dd-foot) {
+  border-bottom-left-radius: 0;
+  border-bottom-right-radius: 0;
+}
+
+.dd-card + .dd-foot {
+  margin-top: calc(-1 * var(--space-2));
+  border-top-left-radius: 0;
+  border-top-right-radius: 0;
+}
+
+.dd-card + .dd-foot::before {
+  content: "";
+  display: block;
+  height: 8px;
+  margin: 0 var(--space-3);
+  background: var(--pen-rule);
+  -webkit-mask: var(--pen-rule-2) 0 50% / 100% 100% no-repeat;
+  mask: var(--pen-rule-2) 0 50% / 100% 100% no-repeat;
+}
+
+.dd-foot-line {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-height: 34px;
+  padding: 0 var(--space-3);
+}
+
+.dd-foot .po {
+  padding: var(--space-1) var(--space-3) var(--space-3);
+  border-radius: 0;
+  background: none;
+}
+
+.dd-raw {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  font: inherit;
+  font-size: var(--size-text);
+  color: var(--text-3);
+  transition: color var(--hover) var(--ease);
+}
+
+.dd-raw:hover {
+  color: var(--text-2);
+}
+
+.dd-raw > .dd-chevron {
+  margin-left: 0;
+}
+
+.dd-foot-line > .io-end {
+  margin-left: auto;
+}
+
+.dd-foot .fold-inner > .surface {
+  margin-top: var(--space-1);
+}
+
+@media (hover: none) {
+  .dd-opener-line,
+  .dd-foot-line {
+    min-height: 44px;
+  }
+}
+
+/* How a deed came out, as the pen marks it on its row (`marks.ts`): a
+   graphite tick, drops of the colour of what went wrong, sage and rose
+   strokes for lines added and taken away, graphite dots and rules, a seal
+   for a commit. */
+.dm-marks {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.dm {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.dm-pen {
+  display: block;
+  overflow: visible;
+}
+
+.dm-tick {
+  color: var(--pen-graphite);
+}
+
+.dm-drops.wrong {
+  color: var(--wrong);
+}
+
+.dm-drops.caution {
+  color: var(--caution);
+}
+
+.dm-more {
+  font-size: var(--size-fine);
+  font-variant-numeric: tabular-nums;
+}
+
+/* A path said beside a copy's machines, cut from its start. */
+.dd-path-said {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  direction: rtl;
+  text-align: left;
+}
+
+/* Pictures a call gave, as themselves: a row of them, each as tall as a
+   few lines, named under it; opened whole as any picture is. */
+.dd-pictures {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  padding: var(--space-3);
+}
+
+.dd-picture {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0;
+  max-width: 100%;
+}
+
+.dd-picture img {
+  display: block;
+  max-width: 100%;
+  max-height: 180px;
+  border-radius: var(--radius-s);
+}
+
+.dd-picture-none {
+  display: block;
+  width: 120px;
+  height: 80px;
+  border-radius: var(--radius-s);
+  background: var(--fill-strong);
+}
+
+.dd-picture figcaption {
+  display: flex;
+  gap: var(--space-2);
+  font-size: var(--size-text);
+  color: var(--text-2);
+}
+
+/* One command sent to many machines, opened: its grid of machines on the
+   card, the one pressed beneath it. */
+.dd-fan {
+  padding: var(--space-2);
+}
+
+.dd-fan .fan {
+  margin: 0;
+}
+
+.dd-fan .fan-tile:not(.troubled):not([aria-pressed="true"]) {
+  background: var(--surface-code-2);
+}
+
+/* A command sent elsewhere, opened: the command, its last lines, and how
+   it ended where that went wrong. */
+.dd-sent {
+  display: grid;
+  padding: var(--space-1) 0 var(--space-2);
+}
+
+.dd-sent > .dd-said-text {
+  margin-bottom: 0;
+}
+
+.dd-sent > .dd-wrong {
+  padding: var(--space-2) var(--space-3) 0;
+  font-size: var(--size-text);
+}

@@ -10,7 +10,8 @@
   width: min(760px, 100vw - 32px);
   height: min(540px, 100dvh - 96px);
   overflow: hidden;
-  padding: var(--space-4) var(--space-5) var(--space-4);
+  --sheet-pad-top: var(--space-4);
+  padding: var(--sheet-pad-top) var(--space-5) var(--space-4);
   font-size: var(--body-size);
 }
 
@@ -84,7 +85,7 @@
   color: var(--text-2);
   white-space: nowrap;
   cursor: pointer;
-  transition: color var(--hover) ease, background-color var(--hover) ease;
+  transition: color var(--hover) var(--ease), background-color var(--hover) var(--ease);
 }
 
 .fp-crumb:hover {
@@ -149,7 +150,7 @@
   border-radius: var(--radius-m);
   color: var(--text-2);
   text-align: left;
-  transition: color var(--hover) ease, background-color var(--hover) ease;
+  transition: color var(--hover) var(--ease), background-color var(--hover) var(--ease);
 }
 
 .fp-start > span {
@@ -177,7 +178,7 @@
 .fp-list {
   display: flex;
   flex-direction: column;
-  gap: 1px;
+  gap: var(--row-gap);
   min-height: 0;
   padding: var(--space-1);
   overflow-y: auto;
@@ -198,7 +199,7 @@
   border-radius: var(--radius-s);
   color: var(--text);
   text-align: left;
-  transition: background-color var(--hover) ease;
+  transition: background-color var(--hover) var(--ease);
 }
 
 .fp-row > .glyph {
@@ -282,7 +283,8 @@
     width: 100%;
     height: 100%;
     max-height: none;
-    padding: calc(var(--space-3) + var(--safe-top)) var(--space-4) calc(var(--space-3) + var(--safe-bottom));
+    --sheet-pad-top: calc(var(--space-3) + var(--safe-top));
+    padding: var(--sheet-pad-top) var(--space-4) calc(var(--space-3) + var(--safe-bottom));
     border-radius: 0;
   }
 

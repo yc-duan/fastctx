@@ -480,10 +480,12 @@ impl<R: Read> Lines<R> {
         self.pending_content = false;
         let mut raw = Spool::default();
         let mut literal = false;
+        let mut tagged = false;
         for record in Records::new(pending.clone()) {
             let record = record?;
             if matches!(record.kind, TEXT | LITERAL) {
                 literal |= record.kind == LITERAL;
+                tagged |= record.a != 0;
                 io::copy(&mut record.payload.reader(), &mut raw)?;
             } else {
                 raw.write_all(b"\x1b")?;
@@ -516,7 +518,9 @@ impl<R: Read> Lines<R> {
                 }
             }
         }
-        if self.matches.is_some() {
+        // An attributed capture can still contain rows with no source tags.
+        // Only tagged rows need cell layout to carry attribution through edits.
+        if tagged {
             plain = false;
             linear = false;
         }

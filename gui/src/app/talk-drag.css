@@ -1,0 +1,32 @@
+/* A conversation carried by the pointer (`talk-drag.ts`): a small solid card
+   with its name just below and right of the pointer, above everything, the
+   pointer a closed hand wherever it goes. */
+
+.td-card {
+  position: fixed;
+  z-index: 80;
+  max-width: 240px;
+  margin: 10px 0 0 12px;
+  padding: var(--space-2) var(--space-3);
+  overflow: hidden;
+  border-radius: var(--radius-m);
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-float);
+  color: var(--text-strong);
+  font-size: var(--size-text);
+  line-height: var(--leading-ui);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  pointer-events: none;
+}
+
+.td-carrying,
+.td-carrying * {
+  cursor: grabbing !important;
+  user-select: none;
+}
+
+/* Over a place that would not take it, the card steps back. */
+.td-card.td-nowhere {
+  color: var(--text-3);
+}

@@ -61,6 +61,48 @@ fn collect_session(session: &Path) -> io::Result<()> {
             fastctx_platform::owned_directory::delete(&path)?;
         }
     }
+    readies(&directory)
+}
+
+/// How long what a control left stays once nothing may take it again, for
+/// a taking that raced its collection.
+const SETTLED: std::time::Duration = std::time::Duration::from_secs(60 * 60);
+
+/// Whether the file at `path` was last written longer ago than `SETTLED`.
+fn settled(entry: &std::fs::DirEntry, now: std::time::SystemTime) -> io::Result<bool> {
+    let modified = entry.metadata()?.modified()?;
+    Ok(now.duration_since(modified).is_ok_and(|age| age >= SETTLED))
+}
+
+/// Each activation of the session's mod says it is ready once; only the
+/// activation it runs as now is read.
+fn readies(control: &Path) -> io::Result<()> {
+    // Without its present activation known, none is taken for a past one.
+    let Some(current) = control::host(control)?.map(|host| host.instance) else { return Ok(()) };
+    let entries = match std::fs::read_dir(control) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error),
+    };
+    let now = std::time::SystemTime::now();
+    for entry in entries {
+        let entry = entry?;
+        let name = entry.file_name();
+        let Some(instance) = name
+            .to_str()
+            .and_then(|name| name.strip_prefix("ready-"))
+            .and_then(|rest| rest.strip_suffix(".json").or_else(|| rest.strip_suffix(".done")))
+        else {
+            continue;
+        };
+        if instance == current || !settled(&entry, now)? {
+            continue;
+        }
+        match std::fs::remove_file(entry.path()) {
+            Err(error) if error.kind() != io::ErrorKind::NotFound => return Err(error),
+            _ => {}
+        }
+    }
     Ok(())
 }
 

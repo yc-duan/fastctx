@@ -39,6 +39,9 @@ pub struct FormPage {
     towns: Vec<TownSummary>,
     assisting: Vec<Assisting>,
     top: usize,
+    /// How many times a new project was asked for: after the first, its
+    /// short name takes an ending of its own, the one tried being taken.
+    tries: u32,
 }
 
 enum Kind {
@@ -111,6 +114,7 @@ impl FormPage {
             towns: Vec::new(),
             assisting: Vec::new(),
             top: 0,
+            tries: 0,
         }
     }
 
@@ -131,7 +135,6 @@ impl FormPage {
         Self::new(
             Kind::NewProject,
             vec![
-                Field::text(Key::Slug, Editor::single()),
                 Field::text(Key::Name, Editor::single()),
                 Field::text(Key::What, Editor::multi()),
                 Field::ticks(Key::Machines),
@@ -512,7 +515,11 @@ impl FormPage {
     }
 
     fn submit(&mut self, ctx: &Ctx) -> Act {
-        match self.job(ctx) {
+        let job = self.job(ctx);
+        if matches!(self.kind, Kind::NewProject) {
+            self.tries += 1;
+        }
+        match job {
             Ok(job) => {
                 self.working = true;
                 self.note = Some(quiet(ctx, ctx.words.working()));
@@ -569,7 +576,7 @@ impl FormPage {
                 Job::Open { agent, town, node, text, choices: Default::default() }
             }
             Kind::NewProject => {
-                let town = TownName::try_from(self.value(Key::Slug)).map_err(|error| error.to_string())?;
+                let town = short_name(&self.value(Key::Name), self.tries);
                 Job::OpenTown { town, fields: self.record_fields(ctx)? }
             }
             Kind::EditProject { town, .. } => Job::EditTown { town: town.clone(), fields: self.record_fields(ctx)? },
@@ -843,4 +850,40 @@ fn hub_account(value: &str) -> Result<(HubName, AccountName), String> {
     let hub = HubName::try_from(hub).map_err(|error| error.to_string())?;
     let account = AccountName::try_from(account).map_err(|error| error.to_string())?;
     Ok((hub, account))
+}
+
+/// A new project's short name, which commands and each machine's folders
+/// know it by and the user never types: its name's own words where it is
+/// written in Latin letters, else `project`; with an ending of its own once
+/// a try found the name taken. At most 32 characters, as every release
+/// reads them.
+fn short_name(name: &str, tries: u32) -> TownName {
+    let mut words = String::new();
+    for c in name.to_lowercase().chars() {
+        if c.is_ascii_lowercase() || (c.is_ascii_digit() && !words.is_empty()) {
+            words.push(c);
+        } else if !words.is_empty() && !words.ends_with('-') {
+            words.push('-');
+        }
+        if words.len() >= 24 {
+            break;
+        }
+    }
+    let words = words.trim_end_matches('-');
+    let base = if words.is_empty() { "project" } else { words };
+    if tries == 0
+        && base != "project"
+        && let Ok(town) = TownName::try_from(base)
+    {
+        return town;
+    }
+    const LETTERS: &[u8] = b"abcdefghijkmnpqrstuvwxyz23456789";
+    let mut seed = jiff::Timestamp::now().as_nanosecond().unsigned_abs() as u64 ^ u64::from(tries).rotate_left(17);
+    let ending: String = (0..4)
+        .map(|_| {
+            seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            LETTERS[(seed >> 59) as usize] as char
+        })
+        .collect();
+    TownName::try_from(format!("{base}-{ending}")).expect("letters, digits and hyphens make a short name")
 }

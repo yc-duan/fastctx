@@ -16,7 +16,7 @@ import type { AskState } from "./ask-state";
 import { inOrder, type ModelRequest } from "./requests";
 import type { SessionEvent, TurnEnd } from "../world/events";
 import type { MachineName } from "../world/events";
-import { Fold, type Block, type Entry, type Gap, type KeptWords, type SendState, type ShownAttachment } from "./model";
+import { Fold, sayOf, type Block, type Entry, type Gap, type KeptWords, type SendState, type ShownAttachment } from "./model";
 import type { AgentRun } from "./agents";
 import type { PendingControl } from "../world/control";
 
@@ -94,6 +94,9 @@ type Heard = Extract<Entry, { kind: "heard" }>;
 type ProseEntry = Extract<Entry, { kind: "prose" }>;
 type ToolEntry = Extract<Entry, { kind: "tool" }>;
 
+
+/** How long after one bubble the next has its moment said above it. */
+const CHAT_GAP_MS = 5 * 60_000;
 export class Conversation {
   /** The parts held, in order; the last is the latest, and live. */
   private parts: Held[];
@@ -103,6 +106,7 @@ export class Conversation {
   private structure = 0;
   private folds = 0;
   private cache: { version: string; blocks: Block[] } | null = null;
+  private chatCache: { version: string; blocks: Block[] } | null = null;
   /** Gaps being read, by key. */
   private reading = new Set<string>();
   /** Folds read aside, as finding reads what the page does not hold:
@@ -360,15 +364,23 @@ export class Conversation {
     return this.blocks().filter((block): block is Gap => block.kind === "gap");
   }
 
-  /** What is laid out: each part's blocks, gaps where turns are not held. */
+  /** What is laid out: each part's blocks, gaps where turns are not held.
+   *  A fork's record begins with what it carried over: from the part that
+   *  holds the point it was made at, the card there stands for all before. */
   blocks(): Block[] {
     const version = `${this.structure}|${this.parts.map((part) => part.fold.clock).join(",")}`;
     if (this.cache?.version === version) return this.cache.blocks;
     const blocks: Block[] = [];
     let end = 0;
     let turns = 0;
-    for (const part of this.parts) {
-      if (part.start > end) {
+    const forkAt = this.parts.findIndex((part) => part.fold.holdsFork);
+    for (const [index, part] of this.parts.entries()) {
+      if (index < forkAt) {
+        end = part.end;
+        turns = part.turnsBefore + part.turns;
+        continue;
+      }
+      if (part.start > end && index !== forkAt) {
         const key = `gap:${part.start}`;
         const loading = this.reading.has(key);
         const count = Math.max(0, part.turnsBefore - turns);
@@ -380,6 +392,104 @@ export class Conversation {
     }
     this.cache = { version, blocks };
     return blocks;
+  }
+
+  /** What the conversation's own view shows (`world-voice.md`, 两种看法):
+   *  the user's words, what the agent said to them, what waits on them,
+   *  and a failure of what they asked. A turn the user began that ended
+   *  with nothing said to them shows its last words instead, as the answer
+   *  they were. */
+  chatBlocks(): Block[] {
+    const blocks = this.blocks();
+    const version = this.cache!.version;
+    if (this.chatCache?.version === version) return this.chatCache.blocks;
+    const asked = new Set<string>();
+    const spoke = new Set<string>();
+    // A command the user gave begins the next turn, unless words do: the
+    // host keeps its own line for the command out of the conversation.
+    let commanded = false;
+    for (const block of blocks) {
+      if (block.kind === "command") {
+        commanded ||= block.row.control.do === "command";
+        continue;
+      }
+      if (block.kind === "heard" && block.turn && !block.notice && (!block.from || block.from.kind === "user")) asked.add(block.turn);
+      if (block.kind === "say") spoke.add(block.turn);
+      const turn = "turn" in block ? block.turn : null;
+      if (commanded && turn) {
+        if (block.kind !== "heard") asked.add(turn);
+        commanded = false;
+      }
+    }
+    const shown = blocks.filter((block) => {
+      switch (block.kind) {
+        case "say":
+        case "gap":
+        case "ask":
+        case "question":
+        case "command":
+        case "forked":
+        case "uncertain":
+          return true;
+        case "heard":
+          return !block.notice && (!block.from || block.from.kind === "user");
+        case "prose":
+          return block.prose === "message" && asked.has(block.turn) && !spoke.has(block.turn) && this.turnEnded(block.turn) && this.lastMessageOf(block.turn) === block.key;
+        case "ended":
+          return block.end.how === "failed" && asked.has(block.turn);
+        default:
+          return false;
+      }
+    });
+    // A moment stands above the first bubble, and above any said a while
+    // after the one before it, as a chat says when (user 2026-10-29).
+    const times = new Map<string, number>();
+    const before = new Map<string, Block | null>();
+    let last: number | null = null;
+    shown.forEach((block, index) => {
+      before.set(block.key, shown[index - 1] ?? null);
+      const time = block.kind === "heard" || block.kind === "say" ? (block.time ?? null) : null;
+      if (time === null) return;
+      if (last === null || time - last >= CHAT_GAP_MS) times.set(block.key, time);
+      last = time;
+    });
+    this.chatTimes = times;
+    this.chatBefore = before;
+    this.chatCache = { version, blocks: shown };
+    return shown;
+  }
+
+  /** The moment the chat view says above the bubble `key`, where it says
+   *  one (`chatBlocks`). */
+  chatTime(key: string): number | null {
+    this.chatBlocks();
+    return this.chatTimes.get(key) ?? null;
+  }
+  private chatTimes = new Map<string, number>();
+
+  /** What the chat view shows before `key`: null for its first, undefined
+   *  where it does not show `key` at all. */
+  chatPrevious(key: string): Block | null | undefined {
+    this.chatBlocks();
+    return this.chatBefore.get(key);
+  }
+  private chatBefore = new Map<string, Block | null>();
+
+  /** The key of the last thing the agent said to the user in `turn`. */
+  lastSayOf(turn: string): string | null {
+    const fold = this.foldOf(turn);
+    if (!fold?.spokeIn(turn)) return null;
+    for (let at = fold.entries.length - 1; at >= 0; at -= 1) {
+      const entry = fold.entries[at]!;
+      if (entry.kind === "tool" && entry.turn === turn && sayOf(entry)) return entry.key;
+    }
+    return null;
+  }
+
+  /** Whether the agent said something to the user in `turn` through
+   *  `message_user`: the rest of that turn's words are its working notes. */
+  spokeIn(turn: string): boolean {
+    return this.foldOf(turn)?.spokeIn(turn) ?? false;
   }
 
   // What the page asks, as of one conversation.
@@ -509,6 +619,21 @@ export class Conversation {
     return this.foldOf(turn)?.lastMessageOf(turn) ?? null;
   }
 
+  /** Where a fork from `turn`, or from where the conversation is now, would
+   *  begin: the user's words that asked, the answer to them, and the key of
+   *  the block the answer is drawn in. */
+  excerpt(turn: string | null): { said: string | null; answer: string | null; key: string | null } {
+    const blocks = this.blocks();
+    let answer: Extract<Block, { kind: "prose" | "say" }> | null = null;
+    for (const block of blocks) {
+      if (!((block.kind === "prose" && block.prose === "message") || block.kind === "say")) continue;
+      if (turn === null || block.turn === turn) answer = block;
+    }
+    const at = answer?.turn ?? turn;
+    const said = blocks.find((block): block is Extract<Block, { kind: "heard" }> => block.kind === "heard" && !block.notice && (!block.from || block.from.kind === "user") && block.turn === at) ?? null;
+    return { said: said?.text ?? null, answer: answer?.text ?? null, key: answer?.key ?? said?.key ?? null };
+  }
+
   turnEnded(turn: string): boolean {
     return this.foldOf(turn)?.turnEnded(turn) ?? false;
   }
@@ -531,6 +656,13 @@ export class Conversation {
   /** All a turn said, as it was written. */
   turnAnswer(turn: string): string {
     const fold = this.foldOf(turn);
+    // A turn that said something to the user answered with that.
+    if (fold?.spokeIn(turn)) {
+      return fold.entries
+        .flatMap((entry) => (entry.kind === "tool" && entry.turn === turn ? [sayOf(entry)] : []))
+        .flatMap((say) => (say ? [say.text] : []))
+        .join("\n\n");
+    }
     return (fold?.entries ?? [])
       .filter((entry): entry is ProseEntry => entry.kind === "prose" && entry.prose === "message" && entry.turn === turn)
       .map((entry) => entry.text)
@@ -621,9 +753,6 @@ export class Conversation {
   }
   settle(ask: Extract<Entry, { kind: "ask" }>, state: AskState): void {
     (this.parts.find((part) => part.fold.get(ask.key) === ask)?.fold ?? this.live).settle(ask, state);
-  }
-  answering(item: string, answers: (string | null)[]): void {
-    for (const part of this.parts) part.fold.answering(item, answers);
   }
 
   // Read whole, where nothing else holds it (a specimen, a conversation

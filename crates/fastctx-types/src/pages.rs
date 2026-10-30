@@ -36,8 +36,22 @@ pub struct PageVersion {
     /// Restoring copies that publication into this new version.
     pub restored_from: Option<u32>,
     pub by: Writer,
-    pub on: MachineName,
+    /// As a project record's `on`: left out for whoever may not work on
+    /// the machine it was published on.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub on: Option<MachineName>,
     pub at: Timestamp,
+}
+
+impl PageVersion {
+    /// As told to someone who may work only on the machines `usable`
+    /// admits (`Stamp::for_reader`).
+    pub fn for_reader(&mut self, usable: &dyn Fn(&MachineName) -> bool) {
+        if self.on.as_ref().is_some_and(|on| !usable(on)) {
+            self.on = None;
+        }
+        self.by.for_reader(usable);
+    }
 }
 
 /// The account that consented, or the user of a project kept only locally.
@@ -76,6 +90,17 @@ pub struct PageView {
     pub consent: Option<PageConsent>,
 }
 
+impl PageView {
+    /// As told to someone who may work only on the machines `usable`
+    /// admits: who published it and who consented, and where.
+    pub fn for_reader(&mut self, usable: &dyn Fn(&MachineName) -> bool) {
+        self.publication.for_reader(usable);
+        if let Some(consent) = &mut self.consent {
+            consent.stamp.for_reader(usable);
+        }
+    }
+}
+
 /// Attribution stamped by the core, never supplied by the embedded HTML.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct PageSource {
@@ -99,6 +124,8 @@ impl std::fmt::Display for PageSource {
             Writer::Resident { address } => write!(f, "{address}")?,
             Writer::Session { agent } => write!(f, "a {agent} session")?,
             Writer::Page { page } => write!(f, "{page}")?,
+            Writer::Elsewhere { page: true } => f.write_str("a page")?,
+            Writer::Elsewhere { page: false } => f.write_str("a conversation")?,
         }
         write!(f, " on {}; open on {})", self.on, self.opened_on)
     }

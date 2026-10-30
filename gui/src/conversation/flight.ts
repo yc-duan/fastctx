@@ -8,6 +8,7 @@
 // travels on a curve. Where the system asks for less motion the words are
 // simply there.
 
+import { curve } from "../design/curve";
 import { time } from "./turn-line";
 
 /** Where words leave from: the top left of the first line of the input they
@@ -79,7 +80,7 @@ export function fly(find: () => HTMLElement | null, from: Departure, done: () =>
       { backgroundColor: "transparent", color: from.color, boxShadow: "none" },
       { backgroundColor: style.backgroundColor, color: style.color },
     ],
-    { duration: duration * 0.25, easing: "ease-out", fill: "backwards" },
+    { duration: duration * 0.25, easing: curve("--ease-out"), fill: "backwards" },
   );
   const began = performance.now();
   const hidden = new Set<HTMLElement>([bubble]);
@@ -120,7 +121,7 @@ function settle(bubble: HTMLElement): void {
 }
 
 /** A CSS `cubic-bezier()` as a function of progress. */
-function bezier(easing: string): (t: number) => number {
+export function bezier(easing: string): (t: number) => number {
   const numbers = /cubic-bezier\(([^)]+)\)/.exec(easing)?.[1]?.split(",").map(Number);
   if (!numbers || numbers.length !== 4 || numbers.some((n) => !Number.isFinite(n))) throw new Error(`not a cubic-bezier easing: ${easing}`);
   const [x1, y1, x2, y2] = numbers as [number, number, number, number];

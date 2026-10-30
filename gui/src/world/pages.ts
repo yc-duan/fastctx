@@ -29,7 +29,8 @@ export interface PageVersion {
   /** Brought back: this version is a copy of that one. */
   restored_from: number | null;
   by: PageWriter;
-  on: MachineName;
+  /** Left out as a project record's is. */
+  on?: MachineName;
   at: string;
 }
 

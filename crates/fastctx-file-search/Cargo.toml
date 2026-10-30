@@ -11,6 +11,7 @@ publish = false
 [dependencies]
 fastctx-platform = { path = "../fastctx-platform" }
 fastctx-types = { path = "../fastctx-types" }
+fastctx-watch = { path = "../fastctx-watch" }
 ignore = "0.4.28"
 notify = "8"
 nucleo-matcher = "0.3.1"

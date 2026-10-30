@@ -15,14 +15,70 @@ body {
 
 .shell {
   --sidebar: 292px;
+  position: relative;
   display: grid;
   grid-template-columns: var(--sidebar) minmax(0, 1fr);
   height: 100dvh;
-  transition: grid-template-columns var(--fold) var(--fold-easing);
+  transition:
+    grid-template-columns var(--glide) var(--glide-easing),
+    --grip-ink var(--hover) var(--ease);
 }
 
 .shell.folded {
   grid-template-columns: 0 minmax(0, 1fr);
+}
+
+/* The line between the sidebar and the page, to drag (`grip.ts`): the
+   sidebar wider or narrower, kept on this device; pressed twice, back to
+   its first width. Its drawn line darkens while it is held or pointed at. */
+.shell-grip {
+  position: absolute;
+  z-index: 3;
+  top: 0;
+  bottom: 0;
+  left: calc(var(--sidebar) - 5px);
+  width: 10px;
+  cursor: col-resize;
+  touch-action: none;
+}
+
+.shell-grip:focus-visible {
+  outline: none;
+}
+
+.shell.folded > .shell-grip,
+.shell.alone > .shell-grip {
+  display: none;
+}
+
+.shell.resizing {
+  transition: --grip-ink var(--hover) var(--ease);
+}
+
+.shell:has(> .shell-grip:hover),
+.shell:has(> .shell-grip:focus-visible),
+.shell.resizing {
+  --grip-ink: 1;
+}
+
+@media (max-width: 760px) {
+  .shell-grip {
+    display: none;
+  }
+}
+
+/* While a line is dragged, the pointer is the line's wherever it goes, and
+   no words are picked up on the way. */
+html.gripping,
+html.gripping * {
+  cursor: col-resize !important;
+  user-select: none !important;
+}
+
+html.gripping-y,
+html.gripping-y * {
+  cursor: row-resize !important;
+  user-select: none !important;
 }
 
 /* The sidebar is the book's contents, on a sheet a shade under the page,
@@ -42,7 +98,7 @@ body {
   right: -3px;
   width: 6px;
   background: var(--pen-rule);
-  opacity: 0.55;
+  opacity: calc(0.55 + 0.45 * var(--grip-ink));
   -webkit-mask: var(--pen-rule-down) 50% 0 / 100% 100% no-repeat;
   mask: var(--pen-rule-down) 50% 0 / 100% 100% no-repeat;
   pointer-events: none;
@@ -99,7 +155,7 @@ body {
   border-radius: var(--radius-s);
   color: var(--text-3);
   scale: var(--press);
-  transition: color var(--hover) ease, background-color var(--hover) ease, --press var(--settle) var(--spring);
+  transition: color var(--hover) var(--ease), background-color var(--hover) var(--ease), --press var(--settle) var(--spring);
 }
 
 /* Pressed, a control gives a little at once and springs back as it is let
@@ -107,7 +163,7 @@ body {
 .icon-button:active:not(:disabled) {
   --press: 0.94;
   transition-duration: var(--hover), var(--hover), var(--quick);
-  transition-timing-function: ease, ease, var(--ease-out);
+  transition-timing-function: var(--ease), var(--ease), var(--ease-out);
 }
 
 .icon-button:hover {
@@ -134,7 +190,7 @@ body {
   box-shadow: var(--shadow-lift);
   color: var(--text);
   font-size: var(--body-size);
-  transition: box-shadow var(--hover) ease, background-color var(--hover) ease;
+  transition: box-shadow var(--hover) var(--ease), background-color var(--hover) var(--ease);
 }
 
 .new-talk:hover {
@@ -153,7 +209,7 @@ body {
   color: var(--text-3);
   --shown: 0;
   opacity: var(--shown);
-  transition: --shown var(--hover) ease;
+  transition: --shown var(--hover) var(--ease);
 }
 
 .new-talk:hover kbd {
@@ -180,7 +236,7 @@ body {
   font-size: var(--body-size);
   line-height: var(--leading-ui);
   text-decoration: none;
-  transition: color var(--hover) ease, background-color var(--hover) ease;
+  transition: color var(--hover) var(--ease), background-color var(--hover) var(--ease);
 }
 
 .place:hover {
@@ -262,7 +318,7 @@ body {
   color: var(--text-3);
   --shown: 0;
   opacity: var(--shown);
-  transition: --shown var(--hover) ease, color var(--hover) ease, background-color var(--hover) ease;
+  transition: --shown var(--hover) var(--ease), color var(--hover) var(--ease), background-color var(--hover) var(--ease);
 }
 
 .sidebar-group:hover .side-add,
@@ -284,7 +340,7 @@ body {
 .side-group-title a {
   color: inherit;
   text-decoration: none;
-  transition: color var(--hover) ease;
+  transition: color var(--hover) var(--ease);
 }
 
 .side-group-title a:hover {
@@ -302,14 +358,44 @@ body {
   min-width: 0;
 }
 
-/* A project is a folder: pressed, it opens and closes on its conversations.
+/* A project's name leads to its overview; its folder, at the head of the
+   line where any place has its mark, opens and closes on its conversations.
    Shut, the end of its line says whether something in it waits or works
    and how many are in it; under a pointer those give way to its "⋯", as a
    conversation's marks give way to its buttons. */
-.project-fold {
+.project-link {
   width: 100%;
-  text-align: left;
+  padding-left: calc(var(--space-3) + 18px + 10px);
   padding-right: var(--space-2);
+  text-align: left;
+}
+
+.project-row:hover .project-link {
+  color: var(--text);
+  background: var(--hairline);
+}
+
+.project-fold {
+  position: absolute;
+  z-index: 1;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 44px;
+  padding-right: 2px;
+  display: grid;
+  place-items: center;
+  border-radius: var(--radius-s);
+  color: var(--text-3);
+  transition: color var(--hover) var(--ease);
+}
+
+.project-row:has(.project-link.current) .project-fold {
+  color: var(--text-2);
+}
+
+.project-fold:hover {
+  color: var(--text);
 }
 
 .project-shut-marks {
@@ -335,18 +421,18 @@ body {
   --shown: 0;
   opacity: var(--shown);
   pointer-events: none;
-  transition: --shown var(--hover) ease, color var(--hover) ease, background-color var(--hover) ease;
+  transition: --shown var(--hover) var(--ease), color var(--hover) var(--ease), background-color var(--hover) var(--ease);
 }
 
 .project-row:hover .side-project-more,
-.project-row:focus-within .side-project-more,
+.project-row:has(:focus-visible) .side-project-more,
 .side-project-more[aria-expanded="true"] {
   --shown: 1;
   pointer-events: auto;
 }
 
 .project-row:hover .project-shut-marks,
-.project-row:focus-within .project-shut-marks,
+.project-row:has(:focus-visible) .project-shut-marks,
 .project-row:has(.side-project-more[aria-expanded="true"]) .project-shut-marks {
   visibility: hidden;
 }
@@ -360,7 +446,7 @@ body {
 /* Under a finger the "⋯" is always there, after the marks, a finger's
    width; a long press on the line opens it as well. */
 @media (hover: none) {
-  .project-fold {
+  .project-link {
     padding-right: 48px;
   }
 
@@ -373,7 +459,7 @@ body {
   }
 
   .project-row:hover .project-shut-marks,
-  .project-row:focus-within .project-shut-marks {
+  .project-row:has(:focus-visible) .project-shut-marks {
     visibility: visible;
   }
 }
@@ -384,7 +470,7 @@ body {
 .project-talks {
   display: grid;
   grid-template-rows: 1fr;
-  transition: grid-template-rows var(--fold) var(--fold-easing);
+  transition: grid-template-rows var(--expand) var(--expand-easing);
 }
 
 .project-talks.shut {
@@ -417,33 +503,45 @@ body {
 }
 
 /* Conversations: one line each, in fixed columns so a long name never moves
-   the marks: which agent, the name cut short, a dot for what it is doing,
-   the kind of device it lives on. Waiting on the reader is a filled clay
-   dot; working, a clay ring that breathes; idle, nothing, the place kept. */
-.side-places {
+   the marks: which agent, the name cut short, the kind of device it lives
+   on. Every name in the sidebar begins on one line, a project's
+   conversations under its own name, not a step in. How one stands is its
+   agent's mark: turning slowly while it works, in clay while it waits on
+   the reader, as it is at rest otherwise. */
+.side-places,
+.projects-places {
   display: grid;
-  gap: 1px;
+  gap: var(--row-gap);
 }
 
 .talks {
-  margin: 1px 0 var(--space-1);
+  display: grid;
+  gap: var(--row-gap);
+  margin: var(--row-gap) 0 var(--space-1);
   padding: 0;
   list-style: none;
 }
 
 @media (pointer: coarse) {
   .talk-row,
-  .talk-all {
+  .talk-all,
+  .project-link {
     min-height: 44px;
   }
+}
+
+@property --talk-turn {
+  syntax: "<angle>";
+  inherits: false;
+  initial-value: 0deg;
 }
 
 .talk-row,
 .talk-all {
   display: grid;
-  grid-template-columns: 16px minmax(0, 1fr) 10px 16px;
+  grid-template-columns: 18px minmax(0, 1fr) auto;
   align-items: center;
-  column-gap: 9px;
+  column-gap: 10px;
   min-height: 34px;
   padding: 4px var(--space-3);
   border-radius: var(--radius-s);
@@ -451,14 +549,7 @@ body {
   font-size: var(--body-size);
   line-height: var(--leading-ui);
   text-decoration: none;
-  transition: color var(--hover) ease, background-color var(--hover) ease;
-}
-
-/* A project's conversations stand under its name, a step in from its
-   folder. */
-.talks.in-project .talk-row,
-.talks.in-project .talk-all {
-  padding-left: calc(var(--space-3) + 18px);
+  transition: color var(--hover) var(--ease), background-color var(--hover) var(--ease);
 }
 
 .talk-row:hover,
@@ -510,6 +601,33 @@ body {
   color: var(--text-strong);
 }
 
+.talk-row.mark-ask .talk-host {
+  color: var(--accent);
+}
+
+.talk-row.mark-busy .talk-host {
+  color: var(--text-2);
+}
+
+.talk-row.mark-busy .talk-host .glyph {
+  rotate: var(--talk-turn);
+  animation: talk-turning var(--turning) linear infinite;
+}
+
+@keyframes talk-turning {
+  to {
+    --talk-turn: 360deg;
+  }
+}
+
+:root[data-reduced] .talk-row.mark-busy .talk-host .glyph {
+  animation: none;
+}
+
+:root[data-reduced] .talk-row.mark-busy .talk-host {
+  color: var(--text);
+}
+
 /* A conversation whose machine is away: listed as it last was, quieter. */
 .talk-row.mark-away .talk-name,
 .talk-row.mark-away .talk-host,
@@ -517,9 +635,15 @@ body {
   color: var(--text-3);
 }
 
+/* Being deleted is said where the device's mark stands. */
 .talk-state {
-  display: grid;
-  place-items: center;
+  color: var(--text-3);
+  font-size: var(--size-text);
+  white-space: nowrap;
+}
+
+.talk-row.deleting .talk-device {
+  display: none;
 }
 
 .talk-all {
@@ -528,7 +652,7 @@ body {
 }
 
 .talk-all .count {
-  grid-column: 3 / 5;
+  grid-column: 3;
   justify-self: end;
 }
 
@@ -554,7 +678,7 @@ body {
   box-shadow: inset 0 0 0 1.8px var(--accent);
   transform: scale(var(--breath-scale));
   opacity: var(--breath-alpha);
-  animation: pulse var(--breath) ease-in-out infinite;
+  animation: pulse var(--breath) var(--ease-in-out) infinite;
 }
 
 .mark.mark-away {
@@ -573,6 +697,8 @@ body {
 
 .sidebar-foot {
   flex: none;
+  display: grid;
+  gap: var(--row-gap);
   padding-top: var(--space-2);
 }
 
@@ -587,6 +713,17 @@ body {
 }
 
 .main > * {
+  flex: 1;
+  min-height: 0;
+}
+
+/* A page whose code is on its way holds its place as the page will. */
+.deferred-page {
+  display: flex;
+  flex-direction: column;
+}
+
+.deferred-page > * {
   flex: 1;
   min-height: 0;
 }
@@ -722,7 +859,7 @@ body {
     --shown: 0;
   opacity: var(--shown);
     pointer-events: none;
-    transition: --shown var(--fold) ease;
+    transition: --shown var(--fold) var(--ease);
   }
 
   .shell.drawer-open .scrim {
@@ -767,7 +904,7 @@ body {
   color: var(--text-2);
   font-family: "Segoe Fluent Icons", "Segoe MDL2 Assets", sans-serif;
   font-size: 10px;
-  transition: background-color var(--hover) ease, color var(--hover) ease;
+  transition: background-color var(--hover) var(--ease), color var(--hover) var(--ease);
 }
 
 .window-control:hover,
@@ -800,6 +937,12 @@ html.framed .page-head {
   padding-right: calc(3 * 46px + var(--space-2));
 }
 
+/* On the desk the window's buttons stand over the top row's last pane
+   alone: the others' heads end at their own edge (`desk/desk.css`). */
+html.framed .desk-pane:not(.dk-corner) > :is(.conversation-page, .dk-fork-page) > .page-head {
+  padding-right: var(--space-4);
+}
+
 /* What a pointer shows on hover, raised by a long press on a touch screen. */
 .touch-hint,
 .pointer-hint {
@@ -817,7 +960,7 @@ html.framed .page-head {
   box-shadow: var(--shadow-pop);
   opacity: var(--shown);
   translate: var(--slide) var(--lift);
-  animation: hint-rise var(--hover) ease-out;
+  animation: hint-rise var(--hover) var(--ease-out);
 }
 
 /* The pointer's hint stands in the top layer, over a modal sheet too; the
@@ -836,23 +979,51 @@ html.framed .page-head {
   }
 }
 
+/* The pointer gone from every mark, its hint fades where it stands. */
+.pointer-hint.leaving {
+  animation: hint-fall var(--quick) var(--ease-out) both;
+}
+
+@keyframes hint-fall {
+  to {
+    --shown: 0;
+  }
+}
+
 :root[data-reduced] .touch-hint,
 :root[data-reduced] .pointer-hint {
   animation: none;
 }
 
-/* Every conversation: the sidebar's lines, wider, with a search above. */
+/* Every conversation: the sidebar's lines, wider, with a search above that
+   holds still while the rows scroll under it. */
 .talks-page {
   display: flex;
   flex-direction: column;
   min-height: 0;
 }
 
-.talks-body {
-  flex: 1;
+.talks-find {
+  flex: none;
   width: min(100%, 720px);
   margin: 0 auto;
-  padding: var(--space-2) var(--gutter) var(--space-10);
+  padding: var(--space-2) var(--gutter) var(--space-3);
+}
+
+.talks-body {
+  flex: 1;
+  min-height: 0;
+  width: min(100%, 720px);
+  margin: 0 auto;
+  padding: 0 var(--gutter) var(--space-10);
+}
+
+/* When one was archived, quiet at the row's end where its machine would be. */
+.talk-when {
+  justify-self: end;
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 
 .talks-search {
@@ -881,6 +1052,12 @@ html.framed .page-head {
   font-size: var(--size-text);
 }
 
+/* The end of the rows of a long list drawn so far; more are drawn as it
+   comes near (`read-on.ts`). */
+.read-on {
+  height: 1px;
+}
+
 /* At the foot of every conversation, the way on to the archived ones. */
 .talks-archived {
   display: flex;
@@ -893,7 +1070,7 @@ html.framed .page-head {
   color: var(--text-3);
   font-size: var(--size-text);
   text-decoration: none;
-  transition: color var(--hover) ease, background-color var(--hover) ease;
+  transition: color var(--hover) var(--ease), background-color var(--hover) var(--ease);
 }
 
 .talks-archived:hover,
@@ -930,7 +1107,7 @@ html.framed .page-head {
   font-size: var(--size-h3);
   letter-spacing: 0.01em;
   color: var(--text-strong);
-  transition: background-color var(--hover) ease;
+  transition: background-color var(--hover) var(--ease);
 }
 
 .network-switch:hover,

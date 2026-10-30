@@ -15,13 +15,24 @@ use crate::Node;
 
 pub async fn here(node: &Node, since: Timestamp, town: Option<TownName>) -> Result<SinceReply, Failure> {
     let (world, machine) = (node.world.clone(), node.machine());
+    let failure = |error: &dyn std::fmt::Display| Failure::new(format!("reading history: {error}"));
+    // The conversations' records are each published whole, and there may be
+    // many: they are read without holding up what syncs the ledgers.
+    let (reading, named) = (world.clone(), machine.clone());
+    let mut partial = tokio::task::spawn_blocking(move || records::conversations(&reading, &named, since))
+        .await
+        .map_err(|error| failure(&error))?
+        .map_err(|error| failure(&error))?;
     // Intake publishes the signed ledger before its readable files. Reading
     // signed records under the same lock also excludes carrying a town in.
     let _syncing = node.syncing.lock().await;
-    tokio::task::spawn_blocking(move || records::read(&world, &machine, since, town.as_ref()))
-        .await
-        .map_err(|error| Failure::new(format!("reading history: {error}")))?
-        .map_err(|error| Failure::new(format!("reading history: {error}")))
+    tokio::task::spawn_blocking(move || {
+        records::ledgers(&mut partial, &world, &machine, town.as_ref())?;
+        Ok(records::reply(partial, &machine, since, town.as_ref()))
+    })
+    .await
+    .map_err(|error| failure(&error))?
+    .map_err(|error: std::io::Error| failure(&error))
 }
 
 /// What happened since `since`, as each machine whoever asks (`acting`) may
@@ -87,8 +98,34 @@ pub async fn query(
         answers.push(status);
     }
     answers.sort_by(|a, b| a.machine().cmp(b.machine()));
+    told(node, acting, &mut events);
     let events = merge_events(events, &mut issues);
     Ok(WorldSince { machine, since, town, machines: answers, events, undated, issues, limitations: limitations() })
+}
+
+/// Who wrote a project's version, or a journal's entry or description, and
+/// where, as whoever asks (`acting`) may know them (`ledger::query::usable`):
+/// one written on a machine they may not work on is not told at all.
+fn told(node: &Node, acting: &Acting, events: &mut Vec<SinceEvent>) {
+    let mut readers = std::collections::BTreeMap::new();
+    events.retain_mut(|event| {
+        let (SinceKind::ProjectVersion { by, .. }
+        | SinceKind::JournalEntry { by, .. }
+        | SinceKind::JournalDescription { by, .. }) = &mut event.what
+        else {
+            return true;
+        };
+        let SinceTown::Known { town: Some(town) } = &event.town else { return true };
+        let usable = readers
+            .entry(town.clone())
+            .or_insert_with(|| crate::ledger::query::usable(node, acting, town).ok().flatten());
+        let Some(usable) = usable else { return true };
+        if !usable(&event.machine) {
+            return false;
+        }
+        by.for_reader(&**usable);
+        true
+    });
 }
 
 async fn ledger_events(

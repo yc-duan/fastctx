@@ -6,16 +6,12 @@
 //! conversation holds back nothing of another.
 
 use std::path::Path;
-use std::time::Duration;
 
 use fastctx_platform::doing;
 use fastctx_types::Address;
 
 use crate::Node;
 use crate::leases::{Lease, Registry};
-
-/// How long a deletion waits for what uses its place to finish.
-const DELETING_WAITS: Duration = Duration::from_secs(30);
 
 #[derive(Default)]
 pub(crate) struct Places {
@@ -51,7 +47,10 @@ impl Places {
     /// lets go; `None` when that takes longer than a deletion waits.
     pub(crate) async fn deleting(&self, name: &str) -> Option<Deleting> {
         let gate = self.gate(name);
-        let guard = tokio::time::timeout(DELETING_WAITS, gate.write_owned()).await.ok()?;
+        let guard = match crate::gate_waits::remaining() {
+            Some(within) => tokio::time::timeout(within, gate.write_owned()).await.ok()?,
+            None => gate.write_owned().await,
+        };
         Some(Deleting { _guard: guard, _gate: gate })
     }
 }

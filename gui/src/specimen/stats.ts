@@ -4,7 +4,7 @@
 // goings. studio is offline; gpu runs a fastctx too old to be asked.
 
 import { seeded } from "../pen/shapes";
-import type { Card, Disk, Gpu, LineChange, MachineStats, Trip } from "../world/stats";
+import type { Card, Disk, Gpu, LimitReading, LimitUse, LineChange, MachineStats, Trip } from "../world/stats";
 import { runningOn } from "./versions";
 
 const GB = 1024 ** 3;
@@ -15,7 +15,7 @@ interface Profile {
   kernel?: string;
   host: string;
   cpu: { model: string; threads: number; load?: boolean; base: number; swing: number };
-  memory: { total: number; used: number; swing: number; swap: number; swapUsed: number };
+  memory: { total: number; used: number; swing: number; swap: number; swapUsed: number; waiting?: number };
   disks: Disk[];
   cards: { name: string; hardware: boolean; up: boolean; speed?: number; down: number; up_: number; addresses: string[] }[];
   gpus?: { name: string; memory: number; used: number; busy: number }[];
@@ -26,6 +26,9 @@ interface Profile {
   service: boolean;
   /** Its nights off the network: a laptop asleep. */
   sleeps?: boolean;
+  /** How much of each of its system's limits it held a day ago and holds
+   *  now, against the limit. */
+  limits?: { kind: LimitUse["kind"]; from: number; to: number; limit: number }[];
 }
 
 const windows = (host: string): Pick<Profile, "system" | "host"> => ({ system: "Windows 11 Pro 24H2 (26200.6584)", host });
@@ -84,13 +87,18 @@ const profiles: Record<string, Profile> = {
     kernel: "Linux 6.8.0-45-generic",
     host: "server",
     cpu: { model: "", threads: 2, load: true, base: 0.06, swing: 0.05 },
-    memory: { total: 1.92 * GB, used: 0.86 * GB, swing: 0.05 * GB, swap: 0, swapUsed: 0 },
+    memory: { total: 3.9 * GB, used: 2.62 * GB, swing: 0.12 * GB, swap: 6 * GB, swapUsed: 1.6 * GB, waiting: 2 },
     disks: [{ at: "/", fs: "ext4", total: 39 * GB, free: 21.4 * GB }],
     cards: [{ name: "eth0", hardware: true, up: true, down: 310e3, up_: 290e3, addresses: ["203.0.113.20"] }],
     hubs: [{ hub: "home", ms: 3 }],
     booted: 74,
     started: 300,
     service: true,
+    limits: [
+      { kind: "inotify_instances", from: 31, to: 118, limit: 128 },
+      { kind: "inotify_watches", from: 4_100, to: 9_211, limit: 524_288 },
+      { kind: "open_files", from: 120, to: 412, limit: 65_536 },
+    ],
   },
   build: {
     system: "Debian GNU/Linux 12 (bookworm)",
@@ -217,7 +225,14 @@ export async function specimenStats(machine: string | null, after: string | null
       busy,
       ...(profile.cpu.load ? { load: [load(1), load(5), load(15)].map((value) => Math.round(value * 100) / 100) as [number, number, number] } : {}),
     },
-    memory: { total: profile.memory.total, used: Math.round(used), swap_total: profile.memory.swap, swap_used: profile.memory.swapUsed },
+    memory: {
+      total: profile.memory.total,
+      used: Math.round(used),
+      swap_total: profile.memory.swap,
+      swap_used: profile.memory.swapUsed,
+      room: 1.5 * GB,
+      ...(profile.memory.waiting ? { waiting: profile.memory.waiting } : {}),
+    },
     disks: profile.disks,
     cards,
     ...(gpus.length ? { gpus } : {}),
@@ -245,6 +260,43 @@ export async function specimenStats(machine: string | null, after: string | null
       ...(name === "desktop" && new URLSearchParams(location.search).has("ledger")
         ? { health: [{ kind: "warning", text: "usage ledger /home/me/.fastctx/world/usage/claude-1 has 3 unreadable rows preserved in quarantine; totals omit these rows" }] }
         : {}),
+      // `?stuck=1`: some of its own work has gone on too long.
+      ...(name === "desktop" && new URLSearchParams(location.search).has("stuck")
+        ? { stuck: [{ doing: "task 128037", what: "holds draining(this machine)", seconds: 4_740 }] }
+        : {}),
     },
+    // Who runs how many jobs there: the lab is shared with ada, up to four.
+    ...(name === "lab"
+      ? {
+          jobs: [
+            { account: { hub: "w-0123456789abcdef", account: "ada" }, running: 3, most: 4 },
+            { running: 2 },
+            { account: { hub: "w-0123456789abcdef", account: "bo" }, running: 1 },
+          ],
+        }
+      : {}),
+    ...(profile.limits ? { limits: limitsOf(name, profile.limits, now, since) } : {}),
   };
+}
+
+/** A day of readings of a machine's limits, one a minute after `since`:
+ *  each climbing from what it held a day ago, in steps as conversations
+ *  came and went. */
+function limitsOf(name: string, limits: NonNullable<Profile["limits"]>, now: number, since: number): LimitReading[] {
+  const minute = 60_000;
+  const end = Math.floor(now / minute) * minute;
+  const readings: LimitReading[] = [];
+  for (let at = end - DAY + minute; at <= end; at += minute) {
+    if (at <= since) continue;
+    const share = (at - (end - DAY)) / DAY;
+    readings.push({
+      at: new Date(at).toISOString(),
+      uses: limits.map(({ kind, from, to, limit }) => {
+        const step = Math.floor(share * 18) / 18;
+        const wobble = (seeded(`${name}:${kind}:${Math.floor(at / (40 * minute))}`)() - 0.5) * (to - from) * 0.08;
+        return { kind, used: Math.max(0, Math.round(from + (to - from) * step + wobble)), limit };
+      }),
+    });
+  }
+  return readings;
 }

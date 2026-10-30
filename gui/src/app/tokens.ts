@@ -302,16 +302,17 @@ export class Tokens {
     this.ssh = null;
     const remote = this.options.remote;
     const ssh = this.face === "server" && !!remote && this.way === "ssh";
-    // How a Linux host comes in is a choice within its face: one switch of
-    // two, under the ways of adding a device, not a row like theirs.
+    // How a Linux host or a managed machine comes in is a choice within its
+    // face: a row of words under the ways of adding a device, the chosen
+    // one on the wash as theirs is.
     const ways =
       this.face === "server" && remote
-        ? `<div class="segmented device-ways" role="radiogroup" aria-label="${escape(words.kinds.server)}">${(["ssh", "line"] as const)
-            .map((way) => `<button class="segment${way === this.way ? " chosen" : ""}" type="button" role="radio" aria-checked="${way === this.way}" data-server-way="${way}">${escape(words.ways[way])}</button>`)
+        ? `<div class="choice-options device-ways" role="radiogroup" aria-label="${escape(words.kinds.server)}">${(["ssh", "line"] as const)
+            .map((way) => `<button class="choice${way === this.way ? " chosen" : ""}" type="button" role="radio" aria-checked="${way === this.way}" data-server-way="${way}">${escape(words.ways[way])}</button>`)
             .join("")}</div>`
         : this.face === "managed"
-          ? `<div class="segmented device-ways" role="radiogroup" aria-label="${escape(words.kinds.managed)}">${MANAGED_WAYS.map(
-              (way) => `<button class="segment${way === this.managedWay ? " chosen" : ""}" type="button" role="radio" aria-checked="${way === this.managedWay}" data-managed-way="${way}">${escape(words.managedWays[way])}</button>`,
+          ? `<div class="choice-options device-ways" role="radiogroup" aria-label="${escape(words.kinds.managed)}">${MANAGED_WAYS.map(
+              (way) => `<button class="choice${way === this.managedWay ? " chosen" : ""}" type="button" role="radio" aria-checked="${way === this.managedWay}" data-managed-way="${way}">${escape(words.managedWays[way])}</button>`,
             ).join("")}</div>`
           : "";
     // A Linux host may come in as a managed machine, over SSH or by its line.
@@ -367,7 +368,7 @@ export class Tokens {
     this.sheet.body.innerHTML = `
       <header class="sheet-head"><h2 class="sheet-title">${escape(words.title)}</h2><span class="sheet-head-end">${pill}<button class="icon-button sheet-close" type="button" aria-label="${escape(words.close)}">${glyph("close", 18)}</button></span></header>
       ${choices(words.title, "data-face", kinds, this.face, (kind) => words.kinds[kind as TokenKind], (kind) => (kind === "managed" && !manages ? words.managedOld : ""))}
-      <div class="device-body">${ways}${managed}${body}</div>`;
+      <div class="device-body${shown ? " codes-face" : ""}">${ways}${managed}${body}</div>`;
     this.nameLine();
     const place = this.sheet.body.querySelector<HTMLElement>(".device-remote");
     if (ssh && remote && place) {

@@ -9,6 +9,7 @@
 import { Sheet } from "./confirm";
 import { copyButton, copyFrom } from "./copy-button";
 import { escape } from "../conversation/prose";
+import { detailOf } from "./problem";
 import type { ManageWords } from "./machine-manage-words";
 
 export type RemoveWay = "uninstall" | "everything" | "leave";
@@ -30,8 +31,16 @@ export interface Uninstalling {
 export interface Following {
   machines: Uninstalling[];
   left(): Promise<Map<string, string>>;
-  /** Those of the rest that could not be taken off, and why. */
-  failed?: string;
+  /** Those of the rest that could not be taken off, as said, and why in
+   *  the kernel's words, for the pointer. */
+  failed?: { said: string; detail: string };
+}
+
+/** Machines that could not be taken off, with why in the kernel's words. */
+export class RemoveFailed extends Error {
+  constructor(readonly machines: string[], detail: string) {
+    super(detail);
+  }
 }
 
 export interface Removing {
@@ -42,6 +51,8 @@ export interface Removing {
   /** Of several, those that only leave and why, when some do. */
   some: string | null;
   offline: boolean;
+  /** Said when the one taking them off is not their owner. */
+  others: string | null;
   /** Takes them off; resolves to those told to uninstall, to follow. */
   remove(way: RemoveWay): Promise<Following | null>;
 }
@@ -51,6 +62,8 @@ export class RemoveMachineSheet {
   private removing: Removing | null = null;
   private way: RemoveWay = "uninstall";
   private said = "";
+  /** What the kernel said of it, for the pointer. */
+  private detail = "";
   private following: Following | null = null;
   private left = new Map<string, string>();
   /** The following ended without word from those still quiet. */
@@ -64,6 +77,7 @@ export class RemoveMachineSheet {
     this.removing = removing;
     this.way = removing.cannot ? "leave" : "uninstall";
     this.said = "";
+    this.detail = "";
     const sheet = this.sheet ?? this.make();
     this.draw();
     sheet.show();
@@ -105,7 +119,8 @@ export class RemoveMachineSheet {
       },
       (error: unknown) => {
         sheet.busy = false;
-        this.said = this.words.removeFailed(error instanceof Error ? error.message : String(error));
+        this.said = this.words.removeFailed(error instanceof RemoveFailed ? error.machines : []);
+        this.detail = detailOf(error);
         this.draw();
       },
     );
@@ -148,11 +163,11 @@ export class RemoveMachineSheet {
     const { sheet, removing, words } = this;
     if (!sheet || !removing) return;
     if (this.following) {
-      const failed = this.following.failed ? `<p class="sheet-note" role="alert">${escape(this.following.failed)}</p>` : "";
+      const failed = this.following.failed ? `<p class="sheet-note" role="alert" title="${escape(this.following.failed.detail)}">${escape(this.following.failed.said)}</p>` : "";
       sheet.body.innerHTML = `${sheet.head(words.removedTitle, words.close)}
         <div class="mr-follow">${this.following.machines.map((one) => this.row(one)).join("")}</div>
         ${failed}
-        <div class="mr-go"><button class="sheet-go" type="button" data-mr-done>${escape(words.done)}</button></div>`;
+        <div class="sheet-foot mr-go"><button class="sheet-go" type="button" data-mr-done>${escape(words.done)}</button></div>`;
       return;
     }
     const way = (kind: RemoveWay) => {
@@ -165,12 +180,14 @@ export class RemoveMachineSheet {
         <span class="mr-way-what">${escape(blocked ? removing.cannot! : what)}</span>${some}
       </button>`;
     };
-    const note = removing.offline && this.way !== "leave" ? `<p class="mr-note">${escape(words.removeOffline)}</p>` : "";
+    const note =
+      (removing.others ? `<p class="mr-note">${escape(removing.others)}</p>` : "") +
+      (removing.offline && this.way !== "leave" ? `<p class="mr-note">${escape(words.removeOffline)}</p>` : "");
     sheet.body.innerHTML = `${sheet.head(removing.title, words.close)}
       <div class="mr-ways" role="radiogroup" aria-label="${escape(removing.title)}">${way("uninstall")}${way("everything")}${way("leave")}</div>
       ${note}
-      <p class="sheet-note" role="alert"${this.said ? "" : " hidden"}>${escape(this.said)}</p>
-      <div class="mr-go"><button class="sheet-go danger" type="button" data-mr-go${sheet.busy ? " disabled" : ""}>${escape(words.removeGo)}</button></div>`;
+      <p class="sheet-note" role="alert"${this.said ? "" : " hidden"} title="${escape(this.detail)}">${escape(this.said)}</p>
+      <div class="sheet-foot mr-go"><button class="sheet-go danger" type="button" data-mr-go${sheet.busy ? " disabled" : ""}>${escape(words.removeGo)}</button></div>`;
   }
 
   /** One machine taken off to uninstall, and how that goes as it said. */

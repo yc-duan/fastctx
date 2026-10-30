@@ -1,0 +1,263 @@
+/* What the agent said to the user (`world-voice.md`): set as an answer is,
+   in the reading ink. An urgent one opens with a terracotta ※, the mark
+   the plan uses for what must not be missed. In a turn that said
+   something, the agent's other words are its working notes, in the
+   quieter ink: one face, one size, told apart by ink alone. */
+
+.say-mark {
+  margin-right: 0.3em;
+  color: var(--accent);
+}
+
+.say-notes .prose {
+  color: var(--text-2);
+}
+
+/* The pictures it showed, drawn from the machines holding them, and the
+   other files, each opened from its machine when pressed. */
+.say-pictures {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+}
+
+.say-pictures .prose-picture img {
+  max-width: min(100%, 420px);
+}
+
+.say-files {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin: var(--space-3) 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.say-file {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  max-width: 280px;
+  min-height: 32px;
+  padding: 4px 12px;
+  border-radius: var(--radius-m);
+  background: var(--fill);
+  color: var(--text);
+  font-size: var(--size-text);
+  text-decoration: none;
+}
+
+.say-file:hover {
+  background: color-mix(in srgb, var(--fill) 80%, var(--text-strong));
+}
+
+.say-file-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media (pointer: coarse) {
+  .say-file {
+    min-height: 44px;
+  }
+}
+
+/* The page's switch between what was said and every step: pressed, every
+   step is shown, and the button stands in the chosen wash. */
+.view-steps[aria-pressed="true"] {
+  background: var(--accent-wash);
+  color: var(--text-strong);
+}
+
+/* The two views of a conversation (`world-voice.md`, 两种看法). In the
+   view of what was said, the agent's words to the user stand on a ground
+   of their own facing the user's: the ground hangs out round the words,
+   so the words stand where they stand in every step's view and only the
+   ground comes and goes, and the user's words slide out as far to face
+   them. An urgent one stands on the accent's wash. The ground fits the
+   words in the view of what was said; in every step's view it is gone. */
+@property --said {
+  syntax: "<number>";
+  inherits: false;
+  initial-value: 0;
+}
+
+.transcript {
+  --hang-x: min(var(--space-4), calc(var(--gutter) - var(--space-3)));
+  --hang-y: var(--space-2);
+}
+
+.transcript > .block-say > .say,
+.transcript > .block-prose.prose-message > .prose {
+  margin: calc(-1 * var(--hang-y)) calc(-1 * var(--hang-x));
+  padding: var(--hang-y) var(--hang-x);
+  border-radius: var(--radius-l);
+  background: color-mix(in srgb, var(--ground, var(--fill)) calc(var(--said) * 100%), transparent);
+  transition: --said var(--glide) var(--glide-easing);
+}
+
+.transcript > .block-say > .say-urgent {
+  --ground: var(--accent-wash);
+}
+
+.transcript[data-view="said"] > .block-say > .say,
+.transcript[data-view="said"] > .block-prose.prose-message > .prose {
+  width: fit-content;
+}
+
+.transcript > .block.from-user {
+  translate: calc(var(--said) * var(--hang-x)) 0;
+  transition: --said var(--glide) var(--glide-easing);
+}
+
+.transcript[data-view="said"]:not(.view-leaving) > .block-say > .say,
+.transcript[data-view="said"]:not(.view-leaving) > .block-prose.prose-message > .prose,
+.transcript[data-view="said"]:not(.view-leaving) > .block.from-user {
+  --said: 1;
+}
+
+/* The view of what was said reads as a chat: each bubble on its own with
+   room round its ground, those one side says in a row closer together, and
+   more where the other side begins (user 2026-10-29: they ran into one).
+   The room goes from one view's to the other's over the change of view,
+   with `--chat`, as the grounds do with `--said`: a room changed at once
+   would move every block under the reader at the start or the end. */
+@property --chat {
+  syntax: "<number>";
+  inherits: false;
+  initial-value: 0;
+}
+
+.transcript > .block {
+  --steps-room: var(--block-gap);
+  --chat-room: calc(var(--space-2) + 2 * var(--hang-y));
+  transition: --chat var(--glide) var(--glide-easing);
+}
+
+.transcript > .block.turn-start {
+  --steps-room: var(--turn-gap);
+}
+
+.transcript > .block.first {
+  --steps-room: 0px;
+}
+
+.transcript > .block.chat-answer {
+  --chat-room: calc(var(--space-5) + 2 * var(--hang-y));
+}
+
+.transcript > .block.chat-turn {
+  --chat-room: var(--turn-gap);
+}
+
+.transcript > .block.chat-first {
+  --chat-room: 0px;
+}
+
+.transcript[data-view="said"] > .block,
+.transcript.view-leaving > .block {
+  padding-top: calc(var(--steps-room) + var(--chat) * (var(--chat-room) - var(--steps-room)));
+}
+
+.transcript > .block.from-user {
+  transition: --said var(--glide) var(--glide-easing), --chat var(--glide) var(--glide-easing);
+}
+
+.transcript[data-view="said"]:not(.view-leaving) > .block,
+.transcript[data-view="said"]:not(.view-leaving) > .block > .chat-moment {
+  --chat: 1;
+}
+
+/* When it was said, above the bubble said a while after the one before:
+   quiet, small, in the middle, as a chat says it. In every step's view it
+   is folded away, and opens and closes with the change of view. */
+.chat-moment {
+  --moment-line: calc(var(--size-fine) * var(--leading-ui));
+  --moment-room: calc(var(--space-3) + var(--hang-y));
+  align-self: stretch;
+  width: 100%;
+  height: calc(var(--chat) * var(--moment-line));
+  margin: 0 0 calc(var(--chat) * var(--moment-room));
+  overflow: clip;
+  color: var(--text-3);
+  opacity: clamp(0, calc(var(--chat) * 2 - 1), 1);
+  font-size: var(--size-fine);
+  line-height: var(--moment-line);
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+  cursor: default;
+  transition: --chat var(--glide) var(--glide-easing);
+}
+
+/* The user's words hang out to the right in this view; their moment stays
+   in the middle of the column all the same. */
+.transcript > .block.from-user > .chat-moment {
+  translate: calc(-1 * var(--chat) * var(--hang-x)) 0;
+}
+
+/* What follows the words keeps clear of their ground. */
+.transcript > .block-say > .say + .turn-acts,
+.transcript > .block-prose > .prose + .message-acts > .turn-acts {
+  margin-top: calc(var(--space-1) + var(--hang-y));
+}
+
+@media (hover: none) {
+  .transcript > .block-say > .say + .turn-acts,
+  .transcript > .block-prose > .prose + .message-acts > .turn-acts {
+    margin-top: calc(var(--hang-y) - 6px);
+  }
+}
+
+/* What a change of view brings in near the reader unfolds round what
+   stays, its room opening and its ink coming up in the second half; what
+   it takes away folds the other way, and goes once it has (`view.ts`,
+   showing). */
+@property --unfold {
+  syntax: "<number>";
+  inherits: false;
+  initial-value: 1;
+}
+
+.transcript > .block.view-fold {
+  box-sizing: border-box;
+  height: calc(var(--full) * var(--unfold));
+  padding-top: calc(var(--gap) * var(--unfold));
+  overflow: clip;
+  opacity: clamp(0, calc(var(--unfold) * 2 - 1), 1);
+  transition: --unfold var(--glide) var(--glide-easing);
+}
+
+.transcript > .block.view-folded {
+  --unfold: 0;
+}
+
+/* Shut at once, to unfold from nothing. */
+.transcript > .block.view-shut {
+  --unfold: 0;
+  transition: none;
+}
+
+/* What changes room over a change of view does so in whole pixels where
+   the system can round: the view keeps the reader's block still by
+   scrolling as much as the room above it changed, and scrolls in whole
+   pixels, so a fraction left over would shake everything a pixel back and
+   forth as it moves. */
+@supports (width: round(nearest, 1px, 1px)) {
+  .transcript[data-view="said"] > .block,
+  .transcript.view-leaving > .block {
+    padding-top: round(nearest, calc(var(--steps-room) + var(--chat) * (var(--chat-room) - var(--steps-room))), 1px);
+  }
+
+  .chat-moment {
+    height: round(nearest, calc(var(--chat) * var(--moment-line)), 1px);
+    margin-bottom: round(nearest, calc(var(--chat) * var(--moment-room)), 1px);
+  }
+
+  .transcript > .block.view-fold {
+    height: round(nearest, calc(var(--full) * var(--unfold)), 1px);
+    padding-top: round(nearest, calc(var(--gap) * var(--unfold)), 1px);
+  }
+}

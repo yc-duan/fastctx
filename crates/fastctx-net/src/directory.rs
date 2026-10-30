@@ -14,6 +14,7 @@
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use fastctx_types::access::{Purpose, Rights, TownId, Use};
 use fastctx_types::{AccountName, AgentName, HubName, MachineName, TownName};
@@ -90,6 +91,11 @@ pub struct Member {
     /// How its lines go, as it last told the hub, while online.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub paths: Option<Paths>,
+    /// When the hub last set aside what waited for it, it having been away
+    /// more than 30 days: a letter to it from before then that was not
+    /// answered never will be, nor one from it to a machine away as long.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub settled: Option<Timestamp>,
 }
 
 /// How a member is connected, as the hub sees it now, as one member's view
@@ -147,6 +153,10 @@ impl Member {
 pub struct Share {
     pub machine: MachineName,
     pub account: AccountName,
+    /// The most jobs the account runs on the machine at once, as its owner
+    /// set; none is no limit (`world-network.md`, 共享机器与智能体协助).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub jobs: Option<u16>,
 }
 
 /// One login of an agent on a machine, assisting an account that is not the
@@ -176,6 +186,11 @@ pub struct Assist {
     /// which the login assists no one; none is no limit.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub five_hour: Option<u8>,
+    /// The most turns the login runs at once, its owner's and those it
+    /// assists together; none is no limit of the owner's (`world-usage.md`,
+    /// 一个登录同时开几轮).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub turns: Option<u16>,
 }
 
 impl Assist {
@@ -261,34 +276,37 @@ impl Account {
 }
 
 /// Accounts, members and what each may do: all of it on the hub, a cut of
-/// it on each member.
+/// it on each member. Each entry is shared by the copies made of it, so a
+/// copy costs a pointer an entry, and a change makes a new entry of only
+/// what it changes (`Arc::make_mut`): what is the same in two copies is one
+/// entry, which the hub's store needs not write again.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Directory {
-    pub accounts: Vec<Account>,
-    pub members: Vec<Member>,
+    pub accounts: Vec<Arc<Account>>,
+    pub members: Vec<Arc<Member>>,
     #[serde(default)]
-    pub shares: Vec<Share>,
+    pub shares: Vec<Arc<Share>>,
     /// Written `lends`, the name hubs and members of every version read.
     #[serde(default, rename = "lends")]
-    pub assists: Vec<Assist>,
+    pub assists: Vec<Arc<Assist>>,
     /// Plans set by hand on logins that name none.
     #[serde(default)]
-    pub plans: Vec<LoginPlan>,
+    pub plans: Vec<Arc<LoginPlan>>,
     #[serde(default)]
-    pub acting: Vec<ActsFor>,
-    pub projects: Vec<Project>,
+    pub acting: Vec<Arc<ActsFor>>,
+    pub projects: Vec<Arc<Project>>,
 }
 
 impl Directory {
     /// The member `name` names: its name now, or one it had. No two members
     /// have a name in common, now or before, so at most one does.
     pub fn member(&self, name: &MachineName) -> Option<&Member> {
-        self.members.iter().find(|member| member.name == *name).or_else(|| self.formerly(name))
+        self.members.iter().find(|member| member.name == *name).map(|member| &**member).or_else(|| self.formerly(name))
     }
 
     /// The member that had `name` before it was renamed.
     pub fn formerly(&self, name: &MachineName) -> Option<&Member> {
-        self.members.iter().find(|member| member.was.contains(name))
+        self.members.iter().find(|member| member.was.contains(name)).map(|member| &**member)
     }
 
     /// The name `name` stands for now: the current name of the member it
@@ -308,7 +326,7 @@ impl Directory {
     /// own former names, which it takes back. The caller checks that no
     /// other member has or had `to`.
     pub fn rename(&mut self, from: &MachineName, to: &MachineName) -> Option<MachineName> {
-        let member = self.members.iter_mut().find(|member| member.named(from))?;
+        let member = Arc::make_mut(self.members.iter_mut().find(|member| member.named(from))?);
         let old = std::mem::replace(&mut member.name, to.clone());
         member.was.retain(|name| name != to);
         if !member.was.contains(&old) && old != *to {
@@ -316,38 +334,38 @@ impl Directory {
         }
         for share in &mut self.shares {
             if share.machine == old {
-                share.machine = to.clone();
+                Arc::make_mut(share).machine = to.clone();
             }
         }
         for assist in &mut self.assists {
             if assist.machine == old {
-                assist.machine = to.clone();
+                Arc::make_mut(assist).machine = to.clone();
             }
         }
         for plan in &mut self.plans {
             if plan.machine == old {
-                plan.machine = to.clone();
+                Arc::make_mut(plan).machine = to.clone();
             }
         }
         for acting in &mut self.acting {
             if acting.machine == old {
-                acting.machine = to.clone();
+                Arc::make_mut(acting).machine = to.clone();
             }
         }
         Some(old)
     }
 
     pub fn by_key(&self, key: &PublicKey) -> Option<&Member> {
-        self.members.iter().find(|member| member.key == *key)
+        self.members.iter().find(|member| member.key == *key).map(|member| &**member)
     }
 
     /// The registered machines.
     pub fn machines(&self) -> impl Iterator<Item = &Member> {
-        self.members.iter().filter(|member| member.is_machine())
+        self.members.iter().filter(|member| member.is_machine()).map(|member| &**member)
     }
 
     pub fn account(&self, name: &AccountName) -> Option<&Account> {
-        self.accounts.iter().find(|account| account.name == *name)
+        self.accounts.iter().find(|account| account.name == *name).map(|account| &**account)
     }
 
     /// Whether `account` is the hub's super administrator, and not locked.
@@ -355,10 +373,15 @@ impl Directory {
         self.account(account).is_some_and(Account::is_super)
     }
 
-    /// Whether an account may manage a machine's updates: its owner or the
-    /// super administrator, except for another account's visitor machines.
+    /// Managing a machine has the same authority as working on it
+    /// (`world-network.md`, 共享机器与智能体协助).
     pub fn may_update(&self, account: &AccountName, machine: &MachineName) -> bool {
         self.authorize(account, crate::authorization::Action::Manage(machine)).is_ok()
+    }
+
+    /// Whether this account holds a machine, rather than merely administering it.
+    pub fn holds(&self, account: &AccountName, machine: &MachineName) -> bool {
+        self.authorize(account, crate::authorization::Action::Hold(machine)).is_ok()
     }
 
     /// Whether `account` is a visitor: its machines are its alone, and it
@@ -369,7 +392,7 @@ impl Directory {
 
     /// The hub's super administrator.
     pub fn super_account(&self) -> Option<&Account> {
-        self.accounts.iter().find(|account| account.level == Level::Super)
+        self.accounts.iter().find(|account| account.level == Level::Super).map(|account| &**account)
     }
 
     /// Whether `account` is logged in on `member`.
@@ -397,12 +420,13 @@ impl Directory {
         self.assists
             .iter()
             .filter(move |assist| assist.account == *account && assist.machine == *machine && assist.live(now))
+            .map(|assist| &**assist)
     }
 
     /// What `account` may do on `machine`: everything on its own machines,
     /// on those shared with it and, for the super administrator, on every
-    /// machine; the logins assisting it alone on another's; nothing on what
-    /// is no machine.
+    /// member's machine, a visitor's being its own alone; the logins
+    /// assisting it alone on another's; nothing on what is no machine.
     pub fn rights(&self, account: &AccountName, machine: &MachineName) -> Rights {
         use crate::authorization::Action;
         Rights {
@@ -525,12 +549,15 @@ impl Directory {
     }
 
     pub fn project(&self, town: &TownId) -> Option<&Project> {
-        self.projects.iter().find(|project| project.town == *town)
+        self.projects.iter().find(|project| project.town == *town).map(|project| &**project)
     }
 
     /// The project named `name` that `account` may use.
     pub fn project_named(&self, account: &AccountName, name: &TownName) -> Option<&Project> {
-        self.projects.iter().find(|project| project.name == *name && self.in_project(account, &project.town))
+        self.projects
+            .iter()
+            .find(|project| project.name == *name && self.in_project(account, &project.town))
+            .map(|project| &**project)
     }
 
     /// Whether `account` may read and write the records of `town`.
@@ -543,19 +570,49 @@ impl Directory {
     pub fn member_in_project(&self, member: &MachineName, town: &TownId) -> bool {
         self.acts_for(member).iter().any(|account| self.in_project(account, town))
     }
+
+    /// Full project bodies belong only on devices logged into a project account.
+    /// Hosting an assisting agent grants access to the index, not replication.
+    pub fn member_keeps_project(&self, member: &MachineName, town: &TownId) -> bool {
+        self.member(member).is_some_and(|member| {
+            !member.managed
+                && member
+                    .logins
+                    .iter()
+                    .any(|account| self.may_act_for(account, &member.name) && self.in_project(account, town))
+        })
+    }
 }
 
 /// One member's view of its hub's directory.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct View {
+    /// The hub takes ledger questions in parts and serves large ledger entries.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub ledger_parts: bool,
+    /// Account-scoped project indices and signed memory reads/writes.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub project_memory: bool,
+    /// Relays collaboration-tree calls with their authorization facts.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub collaboration_tree: bool,
     /// The hub authorizes large calls from control-frame facts and requires a verifying receiver.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub call_details: bool,
     /// Whether this hub supports `Question::MachineLog`. Older hubs omit it.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub machine_log: bool,
+    /// The hub keeps each account's layer (`Change::Layer`).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub layers: bool,
     pub hub: HubId,
     pub hub_name: HubName,
+    /// Current hub host, only when visible to this member.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hub_machine: Option<MachineName>,
+    /// Committed changes delivered to accounts logged in on this device.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub machine_notices: Vec<fastctx_types::sharing::Notice>,
     /// The member this view is for.
     pub me: MachineName,
     /// Whether accounts may be opened by anyone who reaches the hub.
@@ -646,6 +703,20 @@ pub struct View {
     /// would end the session of a member that sent one.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub profiles: bool,
+    /// Account-scoped records, fetched separately from this view.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub account_records: bool,
+    /// Plan operations and their authorized return from remote jobs.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub conversation_plans: bool,
+    /// The hub understands the account-scoped goal control call.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub goal_control: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub scratch_locations: bool,
+    /// The hub relays resident goal commands and requester controls.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub goal_commands: bool,
     /// The hub accepts account-level Claude subagent changes.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub subagents: bool,
@@ -688,6 +759,11 @@ pub struct View {
     /// past this. An older hub gives none.
     #[serde(default, skip_serializing_if = "is_zero")]
     pub presence: u64,
+    /// The hub's number of this view among those it gave this member's
+    /// session, which a change to it starts from (`crate::view_delta`).
+    /// A hub that sends no changes gives none.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub revision: u64,
     #[serde(flatten)]
     pub directory: Directory,
 }
@@ -700,10 +776,16 @@ impl View {
     /// An empty view, before the hub has given one.
     pub fn empty(hub: HubId, hub_name: HubName, me: MachineName) -> Self {
         Self {
+            ledger_parts: false,
+            project_memory: false,
+            collaboration_tree: false,
             call_details: false,
             machine_log: false,
+            layers: false,
             hub,
             hub_name,
+            hub_machine: None,
+            machine_notices: Vec::new(),
             me,
             self_registration: false,
             direct_links: false,
@@ -724,6 +806,11 @@ impl View {
             lan_relays: false,
             paced_intake: false,
             profiles: false,
+            account_records: false,
+            conversation_plans: false,
+            goal_control: false,
+            scratch_locations: false,
+            goal_commands: false,
             subagents: false,
             versions: false,
             package_progress: false,
@@ -733,6 +820,7 @@ impl View {
             hub_addresses: Vec::new(),
             hub_moves: Vec::new(),
             presence: 0,
+            revision: 0,
             directory: Directory::default(),
         }
     }

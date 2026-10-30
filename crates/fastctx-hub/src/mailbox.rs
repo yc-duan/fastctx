@@ -429,7 +429,10 @@ pub(crate) async fn drop_for(hub: &Arc<Hub>, conversation: &Address) -> std::io:
             let Ok(body) = message.body::<fastctx_net::message::LetterBody>() else { continue };
             let to = match &body.letter {
                 Letter::JobFacts { to, .. } | Letter::Notice { to, .. } | Letter::Speak { to, .. } => to,
-                Letter::Fragment { .. } | Letter::Left { .. } => continue,
+                Letter::Fragment { .. }
+                | Letter::Left { .. }
+                | Letter::Control { .. }
+                | Letter::ControlResult { .. } => continue,
             };
             if *to == resident {
                 found.push((seq, dir.join(format!("{seq:020}"))));
@@ -474,6 +477,16 @@ pub(crate) async fn drop_for(hub: &Arc<Hub>, conversation: &Address) -> std::io:
     Ok(dropped)
 }
 
+/// The letters `seqs` of `name`'s numbering `epoch` are settled
+/// (`crate::expiry`): they are no longer waiting.
+pub(crate) fn settled(store: &mut Store, name: &MachineName, epoch: u64, seqs: impl IntoIterator<Item = u64>) {
+    if let Some(mailbox) = numbered_as(store, name, epoch) {
+        for seq in seqs {
+            mailbox.held.remove(&seq);
+        }
+    }
+}
+
 /// Keeps the records of where every member's letters stand as they change,
 /// one write for a burst of changes, off the store's lock.
 pub(crate) async fn keep_records(hub: Weak<Hub>, changed: Arc<Notify>) {
@@ -482,15 +495,11 @@ pub(crate) async fn keep_records(hub: Weak<Hub>, changed: Arc<Notify>) {
         // A burst of changes goes in one write.
         tokio::time::sleep(Duration::from_millis(20)).await;
         let Some(hub) = hub.upgrade() else { return };
-        let ((revision, letters, path), records) = {
-            let store = hub.store();
+        let ((revision, letters, shelf), records) = {
+            let mut store = hub.store();
             (store.letters_record(), store.records.clone())
         };
-        let written = tokio::task::spawn_blocking(move || {
-            let bytes = crate::store::json(&letters)?;
-            records.write(revision, &path, &bytes)
-        })
-        .await;
+        let written = tokio::task::spawn_blocking(move || records.write(revision, &shelf, &letters)).await;
         match written {
             Ok(Ok(())) => {}
             Ok(Err(error)) => {

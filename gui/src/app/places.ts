@@ -5,22 +5,29 @@ import type { Address } from "../world/events";
 import type { AgentSection, AgentTab } from "./profile-words";
 
 /** The features a World can turn on (`world-gui.md`, 功能). */
-export type Feature = "conversations" | "collaboration" | "memory";
-const features: Feature[] = ["conversations", "collaboration", "memory"];
-const sections: AgentSection[] = ["claude", "codex", "prompt", "mcp"];
+export type Feature = "conversations" | "collaboration" | "memory" | "sentinels";
+const features: Feature[] = ["conversations", "collaboration", "memory", "sentinels"];
+const sections: AgentSection[] = ["claude", "codex", "prompt", "skills", "mcp"];
 
 export type Place =
   | { kind: "home" }
+  /** What agents did with run on the user's machines (`world-layers.md`). */
+  | { kind: "activity" }
+  /** Connect or the workbench (`world-layers.md`). */
+  | { kind: "mode" }
   | { kind: "talk"; address: Address }
   /** Beginning a conversation, in a project or outside any. */
   | { kind: "new"; town: string | null }
   | { kind: "project"; town: string }
-  | { kind: "journal"; town: string; journal: string }
+  /** One of a project's journals or decisions. */
+  | { kind: "memory"; town: string; name: string }
   /** A page of a project: a version of it, or the current one. */
   | { kind: "page"; town: string; page: string; version: number | null }
   /** The drawing of the machines, with one chosen when `focus` names it;
    *  or their update view, with that one ticked. */
   | { kind: "machines"; focus?: string; updates?: boolean }
+  /** Every project of the user's accounts, managed as a whole. */
+  | { kind: "projects" }
   /** A machine's own page: how it is doing, and what is done to it. */
   | { kind: "machine"; name: string }
   /** The agents: a section of them, the one last shown when none is
@@ -50,7 +57,13 @@ export type Place =
   /** The user's own things in the network shown: 「我」. */
   | { kind: "account" }
   /** A file on a machine, read whole, or its end when it keeps growing. */
-  | { kind: "file"; machine: string; path: string; tail: boolean };
+  | { kind: "file"; machine: string; path: string; tail: boolean }
+  /** What one of a conversation's watchers did, read on the machine it
+   *  lives on: the life of it `generation` names. */
+  | { kind: "sentinel"; home: string; id: string; generation: number }
+  /** Every watcher of the user's accounts, ended or not: what each did
+   *  over the last days, and what it took. */
+  | { kind: "sentinels" };
 
 const part = encodeURIComponent;
 
@@ -58,16 +71,22 @@ export function link(place: Place): string {
   switch (place.kind) {
     case "home":
       return "#/";
+    case "activity":
+      return "#/activity";
+    case "mode":
+      return "#/mode";
     case "talk":
       return `#/talk/${part(`${place.address.resident}@${place.address.machine}`)}`;
     case "new":
       return place.town === null ? "#/new" : `#/new/${part(place.town)}`;
     case "project":
       return `#/project/${part(place.town)}`;
-    case "journal":
-      return `#/journal/${part(place.town)}/${part(place.journal)}`;
+    case "memory":
+      return `#/memory/${part(place.town)}/${part(place.name)}`;
     case "page":
       return `#/page/${part(place.town)}/${part(place.page)}${place.version === null ? "" : `/${place.version}`}`;
+    case "projects":
+      return "#/projects";
     case "machines":
       if (place.updates) return place.focus ? `#/updates/${part(place.focus)}` : "#/updates";
       return place.focus ? `#/machines/${part(place.focus)}` : "#/machines";
@@ -99,6 +118,10 @@ export function link(place: Place): string {
       return "#/account";
     case "file":
       return `#/file/${part(place.machine)}/${place.tail ? "tail" : "whole"}/${part(place.path)}`;
+    case "sentinel":
+      return `#/sentinel/${part(place.home)}/${part(place.id)}/${place.generation}`;
+    case "sentinels":
+      return "#/sentinels";
   }
 }
 
@@ -117,8 +140,8 @@ export function placeOf(hash: string): Place {
     case "project":
       if (parts[1]) return { kind: "project", town: parts[1] };
       break;
-    case "journal":
-      if (parts[1] && parts[2]) return { kind: "journal", town: parts[1], journal: parts[2] };
+    case "memory":
+      if (parts[1] && parts[2]) return { kind: "memory", town: parts[1], name: parts[2] };
       break;
     case "page":
       if (parts[1] && parts[2]) {
@@ -126,6 +149,8 @@ export function placeOf(hash: string): Place {
         return { kind: "page", town: parts[1], page: parts[2], version: version !== null && Number.isInteger(version) && version > 0 ? version : null };
       }
       break;
+    case "projects":
+      return { kind: "projects" };
     case "machines":
       return parts[1] ? { kind: "machines", focus: parts[1] } : { kind: "machines" };
     case "updates":
@@ -144,11 +169,18 @@ export function placeOf(hash: string): Place {
       if (parts[1] === "subagents") return { kind: "subagents" };
       if (sections.includes(parts[1] as AgentSection)) return { kind: "agents", section: parts[1] as AgentSection, machine: parts[2] || null };
       return { kind: "agents", machine: parts[1] || null };
+    case "activity":
+      return { kind: "activity" };
+    case "mode":
+      return { kind: "mode" };
+    // The features page is gone: the workbench is a mode, and the other
+    // features' settings stand where they are used.
     case "features":
-      return { kind: "features" };
+      return { kind: "mode" };
     case "feature":
+      if (parts[1] === "conversations") return { kind: "mode" };
       if (features.includes(parts[1] as Feature)) return { kind: "feature", feature: parts[1] as Feature };
-      return { kind: "features" };
+      return { kind: "mode" };
     case "talks":
       return { kind: "talks", town: parts[1] || null };
     case "archived":
@@ -171,6 +203,13 @@ export function placeOf(hash: string): Place {
     case "file":
       if (parts[1] && parts[3]) return { kind: "file", machine: parts[1], path: parts.slice(3).join("/"), tail: parts[2] === "tail" };
       break;
+    case "sentinel": {
+      const generation = Number(parts[3]);
+      if (parts[1] && parts[2] && Number.isSafeInteger(generation) && generation >= 0) return { kind: "sentinel", home: parts[1], id: parts[2], generation };
+      break;
+    }
+    case "sentinels":
+      return { kind: "sentinels" };
   }
   return { kind: "home" };
 }

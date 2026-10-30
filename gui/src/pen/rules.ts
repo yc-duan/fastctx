@@ -1,6 +1,7 @@
 // Drawn marks for the page itself, made once as SVG images and used as
 // masks, so CSS gives them the theme's colour: hairlines ruled with the
-// ruling pen, across and down, and a marker's swash for what is set off.
+// ruling pen, across and down, a marker's swash for what is set off, and
+// its underline.
 // Several rules are drawn from different seeds, so the rules on one page
 // are not copies of each other.
 

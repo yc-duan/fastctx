@@ -23,6 +23,20 @@ pub(crate) fn assisting(node: &Node, acting: &Acting) -> bool {
     node.works_here(acting).is_err()
 }
 
+/// Whether a session here working for `acting` works only for this
+/// computer's own logins. What a host keeps across a login's sessions, such
+/// as Claude Code's memory of the folder they work in or Codex's memories,
+/// is shared by every session of the login: it is kept only for these, and
+/// never carried from one account's conversations into another's, as when a
+/// machine shared whole runs another account's (`world-network.md`).
+pub(crate) fn own_accounts(node: &Node, acting: &Acting) -> bool {
+    let Acting::Accounts { accounts } = acting else { return true };
+    accounts.iter().all(|account| {
+        node.link_of(&account.hub)
+            .is_some_and(|link| link.view().me().is_some_and(|me| me.logins.contains(&account.account)))
+    })
+}
+
 /// Whether this account may still use the conversation's login, without applying usage limits.
 pub(crate) fn permitted(
     node: &Node,
@@ -38,8 +52,9 @@ pub(crate) fn permitted(
     let view = crate::authorization::current_view(&link)?;
     // The login as the directory writes it: a default directory written out
     // and one left unwritten are the same login (`crate::homes::assistance`).
-    let home = crate::homes::assistance(node, &view, &account.account, &view.me, &about.host.agent, about.home.as_deref())?
-        .map_or_else(|| about.home.clone(), |assist| assist.home.clone());
+    let home =
+        crate::homes::assistance(node, &view, &account.account, &view.me, &about.host.agent, about.home.as_deref())?
+            .map_or_else(|| about.home.clone(), |assist| assist.home.clone());
     view.authorize(
         &account.account,
         fastctx_net::authorization::Action::Login {
@@ -53,9 +68,25 @@ pub(crate) fn permitted(
 
 /// Whether the session may start a turn under current account authority and usage allowances.
 pub(crate) fn may_turn(node: &Node, id: &fastctx_types::ResidentId, about: &About) -> Result<(), Failure> {
+    check_turn(node, id, about).map_err(|error| error.failure)
+}
+
+pub(crate) struct TurnRefusal {
+    pub failure: Failure,
+    pub permanent: bool,
+}
+
+impl From<Failure> for TurnRefusal {
+    fn from(failure: Failure) -> Self {
+        Self { failure, permanent: false }
+    }
+}
+
+/// Only immutable birth properties justify abandoning an unsubmitted input.
+pub(crate) fn check_turn(node: &Node, id: &fastctx_types::ResidentId, about: &About) -> Result<(), TurnRefusal> {
     let Acting::Accounts { accounts } = &about.acting else { return Ok(()) };
     if accounts.is_empty() {
-        return Err(crate::authorization::no_subject());
+        return Err(crate::authorization::no_subject().into());
     }
     let options = crate::session_options::read(node, id)?;
     let model = options.model.as_deref().or(about.model.as_deref());
@@ -66,8 +97,8 @@ pub(crate) fn may_turn(node: &Node, id: &fastctx_types::ResidentId, about: &Abou
             refused = Some(failure);
             continue;
         }
-        if assisting(node, &about.acting) {
-            host::require(node, id)?;
+        if assisting(node, &about.acting) && host::kept(node, id)? != Some(true) {
+            return Err(TurnRefusal { failure: host::legacy(), permanent: true });
         }
         match crate::usage::used_up(node, about, account, model) {
             None => return Ok(()),
@@ -77,7 +108,7 @@ pub(crate) fn may_turn(node: &Node, id: &fastctx_types::ResidentId, about: &Abou
         }
     }
     if let Some(said) = spent {
-        return Err(Failure::not_run(said));
+        return Err(Failure::not_run(said).into());
     }
-    Err(refused.unwrap_or_else(crate::authorization::no_subject))
+    Err(refused.unwrap_or_else(crate::authorization::no_subject).into())
 }

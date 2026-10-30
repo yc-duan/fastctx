@@ -2,7 +2,7 @@
 // its own, its logins and, beside them on a tab, the account's preferences
 // for it, Claude Code's leading on to its subagents; then the rest of the
 // account's own layer of configuration
-// (`world-user-config.md`): its prompt and its MCP servers. While one of
+// (`world-user-config.md`): its prompt, its skills and its MCP servers. While one of
 // them is open they stand under 「智能体」 in the sidebar, a step in, as a
 // project's conversations stand under it; the one last open, and the tab, are
 // kept on this device, and 「智能体」 opens them again.
@@ -13,7 +13,7 @@ import { link, type Place } from "./places";
 import type { AgentSection, AgentTab, ProfileWords } from "./profile-words";
 
 export const HOSTS = ["claude", "codex"] as const satisfies readonly AgentSection[];
-export const OWN = ["prompt", "mcp"] as const satisfies readonly AgentSection[];
+export const OWN = ["prompt", "skills", "mcp"] as const satisfies readonly AgentSection[];
 
 const SECTION = "agents.section";
 const VIEW = "agents.view";
@@ -107,6 +107,8 @@ export function sectionMark(section: AgentSection, size = 16): string {
       return glyph("codex", size);
     case "prompt":
       return glyph("note", size);
+    case "skills":
+      return glyph("skill", size);
     case "mcp":
       return glyph("plug", size);
   }
@@ -114,8 +116,9 @@ export function sectionMark(section: AgentSection, size = 16): string {
 
 /** The sections under 「智能体」 in the sidebar, `current` among them; the
  *  account's own only where the device is logged in to one. A host's row
- *  opens the tab last shown. */
-export function sectionRows(current: AgentSection | null, own: boolean, words: ProfileWords): string {
+ *  opens the tab last shown. On the workbench, model collaboration's
+ *  settings stand last among them (`collab`), the kernels' own. */
+export function sectionRows(current: AgentSection | null, own: boolean, words: ProfileWords, collab: { name: string; current: boolean } | null = null): string {
   const shown: AgentSection[] = own ? [...HOSTS, ...OWN] : [...HOSTS];
   const tab = own ? keptTab() : "logins";
   return `<ul class="asec-list">${shown
@@ -124,5 +127,9 @@ export function sectionRows(current: AgentSection | null, own: boolean, words: P
       const place: Place = isHost(section) && tab !== "logins" ? { kind: "agents", machine: null, section, tab } : { kind: "agents", machine: null, section };
       return `<li><a class="place asec-row${on ? " current" : ""}" href="${link(place)}"${on ? ' aria-current="page"' : ""}><span class="place-mark">${sectionMark(section)}</span><span class="place-name">${escape(words.sections[section])}</span></a></li>`;
     })
-    .join("")}</ul>`;
+    .join("")}${
+    collab
+      ? `<li><a class="place asec-row${collab.current ? " current" : ""}" href="${link({ kind: "feature", feature: "collaboration" })}"${collab.current ? ' aria-current="page"' : ""}><span class="place-mark">${glyph("colleague", 16)}</span><span class="place-name">${escape(collab.name)}</span></a></li>`
+      : ""
+  }</ul>`;
 }

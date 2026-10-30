@@ -68,6 +68,8 @@ fn targets(hub: &Hub, account: &AccountName) -> Result<HubMoveReply, String> {
             let hosts_hub = moved_here || seen.is_some_and(|ip| ip.is_loopback());
             let unavailable = if moved_here {
                 Some("the hub runs there now".to_string())
+            } else if store.book.directory.shares.iter().any(|share| share.machine == member.name) {
+                Some(fastctx_types::sharing::RECALL_BEFORE_MOVE.into())
             } else if session.is_none() {
                 Some("it is offline".to_string())
             } else {
@@ -132,8 +134,18 @@ fn start(
                 "{to} is not one of {account}'s own machines: whoever holds the hub's machine holds the network, so it moves only to the super administrator's machines"
             ));
         }
+        if store.book.directory.shares.iter().any(|share| store.book.directory.same(&share.machine, &to)) {
+            return Err(fastctx_types::sharing::RECALL_BEFORE_MOVE.into());
+        }
         if !hub.sessions().contains_key(&to) {
             return Err(format!("{to} is offline"));
+        }
+        let version =
+            crate::updates::running_of(hub, &member.key).and_then(|r| fastctx_types::update::release(&r.kernel));
+        if version.is_none_or(|v| Some(v) < fastctx_types::update::release("1.0.1-beta.12")) {
+            return Err(format!(
+                "update {to} to 1.0.1-beta.12 or later before moving the hub: its older version cannot read the hub database"
+            ));
         }
         // A machine connecting from the hub's own loopback is likely where
         // it runs, but only the targets say so: what is sure is where a move

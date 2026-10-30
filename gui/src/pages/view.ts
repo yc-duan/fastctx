@@ -203,6 +203,8 @@ export class PageScreen {
         return agentName(by.agent);
       case "page":
         return by.page.page;
+      case "elsewhere":
+        return this.options.words.elsewhere(by.page);
     }
   }
 

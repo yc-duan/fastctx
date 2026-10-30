@@ -33,6 +33,7 @@ pub fn fixtures() -> Fixtures {
         Stage::Ready { version: version.clone() },
         Stage::WaitingIdle { version: version.clone() },
         Stage::WaitingApp { version: version.clone() },
+        Stage::WaitingSignIn { version: version.clone() },
         Stage::Installing { version: version.clone() },
         Stage::Administrator { version: version.clone() },
         Stage::Renewing { version: version.clone(), phase: fastctx_types::renewal::Phase::ReturningToService },
@@ -98,6 +99,9 @@ pub fn fixtures() -> Fixtures {
         })
         .collect();
     let machine = MachineUpdate {
+        repair_supported: true,
+        repair_due: None,
+        repair: None,
         machine: "server".parse().unwrap(),
         owner: "owner".parse().unwrap(),
         group: None,
@@ -119,6 +123,7 @@ pub fn fixtures() -> Fixtures {
         due: Some(due),
         offer: Some(manifest.clone()),
         actions: Actions {
+            repair: None,
             update: Permission::yes(),
             choose: Permission::yes(),
             settings: Permission::no(ActionReason::Offline),
@@ -145,6 +150,7 @@ pub fn fixtures() -> Fixtures {
         replies: vec![
             ViewReply::View {
                 view: Box::new(View {
+                    repair_supported: true,
                     hub: "1.0.1".into(),
                     stable: Some(manifest.clone()),
                     beta: None,

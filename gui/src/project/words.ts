@@ -6,10 +6,7 @@ import { enProblems, failure, zhProblems } from "../app/problem";
 
 export interface ProjectWords {
   overview: string;
-  here: string;
   nobodyHere: string;
-  running: string;
-  ownerLeft: string;
   journals: string;
   noJournals: string;
   decisions: string;
@@ -20,11 +17,30 @@ export interface ProjectWords {
   /** What the user wrote for every agent working in the project. */
   instructions: string;
   noInstructions: string;
-  /** Shorter names for the tabs a narrow screen shows the sections behind. */
-  hereTab: string;
-  placesTab: string;
-  opened(by: string, on: string, day: string): string;
+  /** What each mark of what waits for the user means, where the pointer
+   *  rests on it. */
+  needAsked: string;
+  needUrgent: string;
+  needInfo: string;
+  /** A conversation's way, on its drawing: its stops in order. */
+  way(stops: string[]): string;
+  /** A sense on a conversation's line: what it watches, where, how it
+   *  stands and what it saw last. */
+  sense(condition: string, machine: string, phase: string, seen: string): string;
+  /** A colleague on a conversation's line. */
+  colleague(label: string, who: string, doing: string): string;
+  /** A machine on the ground: what stands on it. */
+  ground(agents: number, senses: number, jobs: number): string;
+  /** The page's two views: the work now, and what the project keeps. */
+  nowTab: string;
+  referenceTab: string;
+  /** Who opened the project, where (unless it was on a machine this
+   *  device's account may not use), and when. */
+  opened(by: string, on: string | undefined, day: string): string;
   you: string;
+  /** A conversation, or a page, on a machine this device's account may
+   *  not use, as who wrote something. */
+  elsewhere(page: boolean): string;
   /** An open page, as who wrote an entry. */
   aPage(name: string): string;
   entries(n: number): string;
@@ -64,10 +80,7 @@ const then = (name: string) => (/[A-Za-z0-9)]$/.test(name) ? `${name} ` : name);
 
 export const zhProject: ProjectWords = {
   overview: "概览",
-  here: "对话",
   nobodyHere: "暂无对话",
-  running: "运行中的作业",
-  ownerLeft: "启动者已离开",
   journals: "手记",
   noJournals: "暂无手记",
   decisions: "定论",
@@ -77,10 +90,19 @@ export const zhProject: ProjectWords = {
   noPlaces: "暂无位置",
   instructions: "须知",
   noInstructions: "还没有写须知",
-  hereTab: "对话",
-  placesTab: "位置",
-  opened: (by, on, day) => `${then(by)}创建于 ${on}，${day}`,
+  nowTab: "此刻",
+  referenceTab: "资料",
+  needAsked: "在问你",
+  needUrgent: "要紧",
+  needInfo: "说了一句",
+  way: (stops) => stops.join(" → "),
+  sense: (condition, machine, phase, seen) => [condition, `${machine}　${phase}`, seen].filter(Boolean).join("\n"),
+  colleague: (label, who, doing) => [label, `${who}　${doing}`].filter(Boolean).join("\n"),
+  ground: (agents, senses, jobs) =>
+    [agents ? `${agents} 段对话` : "", senses ? `${senses} 项观测` : "", jobs ? `${jobs} 件作业` : ""].filter(Boolean).join("　") || "这里暂时没有在做的事",
+  opened: (by, on, day) => (on ? `${then(by)}创建于 ${on}，${day}` : `${then(by)}创建，${day}`),
   you: "你",
+  elsewhere: (page) => (page ? "一个页面" : "一段对话"),
   aPage: (name) => `页面「${name}」`,
   entries: (n) => `${n} 条`,
   writers: (n) => `${n} 位作者`,
@@ -113,10 +135,7 @@ export const zhProject: ProjectWords = {
 
 export const enProject: ProjectWords = {
   overview: "Overview",
-  here: "Conversations",
   nobodyHere: "No conversations",
-  running: "Running jobs",
-  ownerLeft: "starter has left",
   journals: "Journals",
   noJournals: "No journals yet",
   decisions: "Decisions",
@@ -126,10 +145,21 @@ export const enProject: ProjectWords = {
   noPlaces: "No locations yet",
   instructions: "Instructions",
   noInstructions: "No instructions yet",
-  hereTab: "Conversations",
-  placesTab: "Places",
-  opened: (by, on, day) => `Created by ${by} on ${on}, ${day}`,
+  nowTab: "Now",
+  referenceTab: "Reference",
+  needAsked: "Asks you",
+  needUrgent: "Urgent",
+  needInfo: "Said something",
+  way: (stops) => stops.join(" → "),
+  sense: (condition, machine, phase, seen) => [condition, `${machine}, ${phase}`, seen].filter(Boolean).join("\n"),
+  colleague: (label, who, doing) => [label, `${who}, ${doing}`].filter(Boolean).join("\n"),
+  ground: (agents, senses, jobs) =>
+    [agents ? `${agents} conversation${agents === 1 ? "" : "s"}` : "", senses ? `${senses} watcher${senses === 1 ? "" : "s"}` : "", jobs ? `${jobs} job${jobs === 1 ? "" : "s"}` : ""]
+      .filter(Boolean)
+      .join(", ") || "Nothing running here",
+  opened: (by, on, day) => (on ? `Created by ${by} on ${on}, ${day}` : `Created by ${by}, ${day}`),
   you: "you",
+  elsewhere: (page) => (page ? "a page" : "a conversation"),
   aPage: (name) => `the page “${name}”`,
   entries: (n) => `${n} entr${n === 1 ? "y" : "ies"}`,
   writers: (n) => `${n} writer${n === 1 ? "" : "s"}`,

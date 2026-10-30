@@ -5,8 +5,17 @@ use crate::write::ChangeKind;
 use crate::{JobId, MachineName};
 use serde::{Deserialize, Serialize};
 
+mod steps;
+pub use steps::*;
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RunFacts {
+    /// The executor's complete job record, including the original script.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub record: Option<String>,
+    /// The initiating conversation turn, captured before the work starts.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub turn: Option<String>,
     pub machine: MachineName,
     pub state: RunState,
     pub job: Option<JobId>,
@@ -18,6 +27,9 @@ pub struct RunFacts {
     /// All exact matches in the retained capture, including the model's omitted middle.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub notes: Vec<OutputNoteMatch>,
+    /// What it did through the World's own commands, in the order told.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub steps: Vec<RunStep>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -35,6 +47,9 @@ pub struct OutputRef {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WriteFact {
+    /// The initiating conversation turn, captured before the work starts.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub turn: Option<String>,
     pub id: String,
     pub machine: MachineName,
     pub path: String,
@@ -183,6 +198,17 @@ pub enum NoteCommand {
 /// An executor's incremental facts; original model output is never replaced.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct JobFacts {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub record: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub script: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub started_at: Option<jiff::Timestamp>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub finished_at: Option<jiff::Timestamp>,
+    /// The initiating conversation turn, captured before the work starts.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub turn: Option<String>,
     pub call_id: String,
     pub primary: bool,
     pub output: Option<OutputRef>,
@@ -194,4 +220,6 @@ pub struct JobFacts {
     pub sequence: u64,
     pub state: Option<RunState>,
     pub writes: Vec<WriteFact>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub steps: Vec<RunStep>,
 }

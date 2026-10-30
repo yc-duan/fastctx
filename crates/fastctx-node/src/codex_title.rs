@@ -58,7 +58,10 @@ pub(crate) fn maybe(node: &Arc<Node>, id: &ResidentId, about: &About) {
                 node.log.line(format_args!("{id} was named while its title was made; the title is not used"));
             }
             Ok(Some(title)) => match codex.rename(&thread, &title).await {
-                Ok(()) => node.log.line(format_args!("named {id} {title:?}")),
+                Ok(()) => {
+                    node.log.line(format_args!("named {id} {title:?}"));
+                    super::codex::titled(&node, &id, title).await;
+                }
                 Err(error) => {
                     STARTED.lock().expect("never poisoned").remove(&id);
                     node.log.line(format_args!("naming {id} {title:?} failed: {error}"));

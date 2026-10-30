@@ -31,7 +31,7 @@
   color: var(--text-3);
   font: inherit;
   font-size: var(--size-text);
-  transition: color var(--hover) ease, background-color var(--hover) ease;
+  transition: color var(--hover) var(--ease), background-color var(--hover) var(--ease);
 }
 
 .ml-view:hover {
@@ -128,7 +128,7 @@
   cursor: pointer;
   --shown: 0;
   opacity: var(--shown);
-  transition: --shown var(--hover) ease, background-color var(--hover) ease;
+  transition: --shown var(--hover) var(--ease), background-color var(--hover) var(--ease);
 }
 
 .ml-pick.none {
@@ -195,7 +195,7 @@
   text-align: left;
   text-decoration: none;
   cursor: pointer;
-  transition: color var(--hover) ease, background-color var(--hover) ease;
+  transition: color var(--hover) var(--ease), background-color var(--hover) var(--ease);
 }
 
 .ml-row:hover,
@@ -217,6 +217,16 @@
   left: calc(var(--space-3) * 2 + 16px + (var(--depth) - 1) * var(--ml-step) + var(--ml-twisty) + var(--space-2) + var(--ml-icon) / 2);
   width: 1px;
   background: var(--rule);
+}
+
+/* Rows stand apart, so the chosen one and the one under the pointer never
+   run together; a level's hairline reaches across the room between them. */
+.ml-row + .ml-row {
+  margin-top: var(--row-gap);
+}
+
+.ml-row + .ml-row[data-depth]::before {
+  top: calc(-1 * var(--row-gap));
 }
 
 .ml-name {
@@ -391,7 +401,7 @@
   --shown: 0;
   opacity: var(--shown);
   transform: rotate(-90deg);
-  transition: --shown var(--hover) ease;
+  transition: --shown var(--hover) var(--ease);
 }
 
 .ml-row:hover .ml-go,
@@ -538,85 +548,5 @@
 
   .ml-views {
     margin-right: var(--space-1);
-  }
-}
-
-/* Beside the list nothing floats over a drawing: on a wide page the
-   details carry the actions themselves, a row of small fills, a setting
-   with its switch and what cannot be taken back each a row of their own. */
-@container machines (min-width: 861px) {
-  .machines-canvas.listing + .machine-panel .sheet-acts {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 6px;
-    margin: var(--space-3) 0 var(--space-2);
-  }
-
-  .machines-canvas.listing + .machine-panel .sheet-act {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    min-height: 30px;
-    padding: 0 12px 0 9px;
-    border: 0;
-    border-radius: var(--radius-full);
-    background: var(--fill);
-    color: var(--text-2);
-    font: inherit;
-    font-size: var(--size-text);
-    white-space: nowrap;
-    transition: color var(--hover) ease, background-color var(--hover) ease;
-  }
-
-  .machines-canvas.listing + .machine-panel .sheet-act:hover {
-    background: var(--fill-strong);
-    color: var(--text);
-  }
-
-  .machines-canvas.listing + .machine-panel .sheet-act .glyph {
-    width: calc(15px * var(--icon-scale, 1));
-    height: calc(15px * var(--icon-scale, 1));
-  }
-
-  .machines-canvas.listing + .machine-panel .sheet-rows {
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-    margin: 0 0 var(--space-3);
-  }
-
-  .machines-canvas.listing + .machine-panel .sheet-row {
-    display: flex;
-    align-items: center;
-    gap: var(--space-2);
-    min-height: 36px;
-    padding: 0 var(--space-3);
-    border: 0;
-    border-radius: var(--radius-m);
-    background: var(--fill);
-    color: var(--text-2);
-    font: inherit;
-    font-size: var(--size-text);
-    text-align: left;
-  }
-
-  .machines-canvas.listing + .machine-panel .sheet-row:hover {
-    background: var(--fill-strong);
-  }
-
-  .machines-canvas.listing + .machine-panel .sheet-row .glyph {
-    width: calc(15px * var(--icon-scale, 1));
-    height: calc(15px * var(--icon-scale, 1));
-    color: var(--text-3);
-  }
-
-  .machines-canvas.listing + .machine-panel .sheet-row-label {
-    flex: 1;
-    min-width: 0;
-  }
-
-  .machines-canvas.listing + .machine-panel .sheet-row.danger,
-  .machines-canvas.listing + .machine-panel .sheet-row.danger .glyph {
-    color: var(--wrong);
   }
 }

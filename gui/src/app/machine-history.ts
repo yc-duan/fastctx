@@ -4,7 +4,7 @@
 // machine sends whole once and then only adds to. Nothing is read or kept
 // for a machine whose page was not opened.
 
-import type { Line, LineChange, MachineStats, StatsSeen, Trip } from "../world/stats";
+import type { LimitReading, Line, LineChange, MachineStats, StatsSeen, Trip } from "../world/stats";
 
 /** One reading's rates, for the drawings. */
 export interface Sample {
@@ -38,6 +38,8 @@ const KEEP_MS = 15 * 60_000;
 /** The machine keeps an hour of round trips and a month of changes. */
 const TRIPS_MS = 3_600_000;
 const CHANGES_MS = 30 * 86_400_000;
+/** It keeps a day of readings of its limits. */
+export const LIMITS_MS = 86_400_000;
 
 const kept = new Map<string, Kept>();
 
@@ -71,7 +73,9 @@ export function take(machine: string, stats: MachineStats, added: boolean, asked
   one.taken = asked;
   const at = time(stats.at);
   const lines = added && one.last ? stats.lines.map((line) => merged(line, one.last!.lines.find((before) => before.hub === line.hub), at)) : stats.lines.map((line) => merged(line, undefined, at));
-  const whole: MachineStats = { ...stats, lines };
+  const limits = new Map<string, LimitReading>();
+  for (const reading of [...(added && one.last ? (one.last.limits ?? []) : []), ...(stats.limits ?? [])]) if (time(reading.at) > at - LIMITS_MS) limits.set(reading.at, reading);
+  const whole: MachineStats = { ...stats, lines, limits: [...limits.values()].sort((a, b) => time(a.at) - time(b.at)) };
   one.last = whole;
   one.heard = Date.now();
   one.samples.push(sampleOf(whole, at));

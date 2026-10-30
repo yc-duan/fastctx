@@ -88,7 +88,6 @@ pub enum FieldName {
     Machine,
     Project,
     FirstWords,
-    Slug,
     Name,
     What,
     Machines,
@@ -187,6 +186,11 @@ impl Words {
 
     pub fn you(&self) -> &'static str {
         self.pick("你", "You")
+    }
+
+    /// Who wrote something, on a machine the reader may not work on.
+    pub fn elsewhere(&self, page: bool) -> &'static str {
+        if page { self.pick("一个页面", "A page") } else { self.pick("一段对话", "A conversation") }
     }
 
     pub fn the_world(&self) -> &'static str {
@@ -844,11 +848,10 @@ impl Words {
         self.pick("发送中…", "sending…")
     }
 
-    pub fn not_sent(&self, why: &str) -> String {
-        match self.lang {
-            Lang::Zh => format!("发送失败：{why}"),
-            Lang::En => format!("couldn't send: {why}"),
-        }
+    /// Words that did not go: the kernel's reason is not the interface's to
+    /// show (`AGENTS.md`, 文案).
+    pub fn not_sent(&self) -> &'static str {
+        self.pick("发送失败", "couldn't send")
     }
 
     pub fn joined_turn(&self) -> &'static str {
@@ -859,11 +862,8 @@ impl Words {
         self.pick("已送达", "delivered")
     }
 
-    pub fn landing_unknown(&self, why: &str) -> String {
-        match self.lang {
-            Lang::Zh => format!("送达状态未知：{why}"),
-            Lang::En => format!("delivery unknown: {why}"),
-        }
+    pub fn landing_unknown(&self) -> &'static str {
+        self.pick("送达状态未知", "delivery unknown")
     }
 
     pub fn sent_to(&self, machine: &str) -> String {
@@ -873,11 +873,8 @@ impl Words {
         }
     }
 
-    pub fn waiting_because(&self, why: &str) -> String {
-        match self.lang {
-            Lang::Zh => format!("等待投递：{why}"),
-            Lang::En => format!("waiting to deliver: {why}"),
-        }
+    pub fn waiting_to_deliver(&self) -> &'static str {
+        self.pick("等待投递", "waiting to deliver")
     }
 
     pub fn waiting_for_call(&self) -> &'static str {
@@ -1071,11 +1068,13 @@ impl Words {
         self.pick("当前没有运行", "not running")
     }
 
-    pub fn not_stopped(&self, why: &str) -> String {
-        match self.lang {
-            Lang::Zh => format!("停止失败：{why}"),
-            Lang::En => format!("couldn't stop: {why}"),
-        }
+    pub fn not_stopped(&self) -> &'static str {
+        self.pick("停止失败", "couldn't stop")
+    }
+
+    /// A conversation whose last turn went wrong, in the list of who works.
+    pub fn troubled(&self) -> &'static str {
+        self.pick("上一轮没有完成", "last turn did not finish")
     }
 
     pub fn opening_session(&self) -> &'static str {
@@ -1576,7 +1575,6 @@ impl Words {
             FieldName::Machine => self.pick("机器", "Machine"),
             FieldName::Project => self.pick("项目", "Project"),
             FieldName::FirstWords => self.pick("第一条消息", "First message"),
-            FieldName::Slug => self.pick("短名", "Short name"),
             FieldName::Name => self.pick("名称", "Name"),
             FieldName::What => self.pick("须知", "Instructions"),
             FieldName::Machines => self.pick("机器", "Machines"),
@@ -1595,7 +1593,6 @@ impl Words {
     pub fn hint(&self, field: FieldName) -> Option<&'static str> {
         Some(match field {
             FieldName::FirstWords => self.pick("Ctrl+J 换行", "Ctrl+J for a new line"),
-            FieldName::Slug => self.pick("例如 mark50", "e.g. mark50"),
             FieldName::Machines => self.pick("← → 移动 · Space 勾选", "← → move · Space tick"),
             FieldName::Places => self.pick("名称 | 机器 | 路径，每行一项", "name | machine | path, one per line"),
             FieldName::Canon => self.pick("机器 | 路径", "machine | path"),

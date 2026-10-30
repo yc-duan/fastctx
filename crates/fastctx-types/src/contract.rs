@@ -49,8 +49,16 @@ pub struct Contract {
 /// answers questions, and always takes a stop.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Pool {
-    /// Questions and changes, answered at once.
+    /// Read-only questions.
     Short,
+    /// Changes other than direct human input.
+    Change,
+    /// Local draft edits, independent of submitting words or asking the host.
+    Draft,
+    /// Sending words and answering a host's question.
+    Input,
+    /// Stopping and interrupting, independent of every other kind of work.
+    Stop,
     /// Work that runs a while before it answers: a script, a colleague.
     Long,
     /// A stream that stays open: a watch, a job's output, a copy, a read.
@@ -72,7 +80,7 @@ impl Contract {
     const ASKS_AGENT: Self = Self { within: Some(Duration::from_secs(150)), ..Self::QUERY };
     /// A change, which may start or stop an agent's session first.
     const CHANGE: Self =
-        Self { within: Some(Duration::from_secs(300)), pool: Pool::Short, cancellable: false, held: true };
+        Self { within: Some(Duration::from_secs(300)), pool: Pool::Change, cancellable: false, held: true };
     /// Work that answers once it is done, however long that takes.
     const LONG: Self = Self { within: None, pool: Pool::Long, cancellable: false, held: true };
     /// Running a script there, which answers within the longest a run
@@ -102,6 +110,52 @@ impl RemoteCall {
     /// What this call is (`Contract`).
     pub fn contract(&self) -> Contract {
         match self {
+            Self::Composer { request: crate::composer::Request::Read, .. } => Contract::QUERY,
+            Self::Composer { request: crate::composer::Request::Mutate { mutation }, .. }
+                if matches!(
+                    mutation.change,
+                    crate::composer::Change::Send { .. }
+                        | crate::composer::Change::SendDocument { .. }
+                        | crate::composer::Change::SendQueued { .. }
+                ) =>
+            {
+                Contract { pool: Pool::Input, ..Contract::CHANGE }
+            }
+            Self::Composer { .. } => Contract { pool: Pool::Draft, ..Contract::CHANGE },
+            Self::Talk { .. } | Self::Control { control: crate::session::control::Control::Answer { .. }, .. } => {
+                Contract { pool: Pool::Input, ..Contract::CHANGE }
+            }
+
+            Self::Stop { .. } | Self::TurnInterrupted { .. } | Self::StopJob { .. } | Self::StopOn { .. } => {
+                Contract { pool: Pool::Stop, ..Contract::CONTROL }
+            }
+            Self::Goal {
+                request:
+                    crate::goals::Request::Read | crate::goals::Request::History { .. } | crate::goals::Request::Past,
+                ..
+            } => Contract::QUERY,
+            Self::GoalCommand { request: crate::goals::AgentRequest::Read, .. } => Contract::QUERY,
+            Self::Goal { .. } | Self::GoalCommand { .. } => Contract::CHANGE,
+            Self::SentinelControl {
+                request: crate::sentinel_control::Request::List { .. } | crate::sentinel_control::Request::Help,
+            }
+            | Self::SentinelControl {
+                request: crate::sentinel_control::Request::Record { .. } | crate::sentinel_control::Request::Overview,
+            }
+            | Self::SentinelHome {
+                request:
+                    crate::sentinel_control::HomeRequest::Inspect { .. }
+                    | crate::sentinel_control::HomeRequest::Record { .. }
+                    | crate::sentinel_control::HomeRequest::Overview,
+            } => Contract { within: Some(Duration::from_secs(90)), ..Contract::QUERY },
+            Self::SentinelHome { request: crate::sentinel_control::HomeRequest::Withdraw { .. } } => Contract::CONTROL,
+            Self::SentinelControl { .. } | Self::SentinelHome { .. } => Contract::START,
+            Self::SentinelSettings { change: None } => {
+                Contract { within: Some(Duration::from_secs(180)), ..Contract::QUERY }
+            }
+            Self::SentinelSettings { change: Some(_) } => Contract::CHANGE,
+            Self::SentinelKeys => Contract { within: Some(Duration::from_secs(30)), ..Contract::QUERY },
+            Self::SentinelKey { .. } => Contract::CHANGE,
             Self::Mcp {
                 mcp:
                     crate::mcp::MachineCall::Status { .. }
@@ -114,7 +168,10 @@ impl RemoteCall {
             }
             Self::Mcp { mcp: crate::mcp::MachineCall::Test { .. } } => Contract::ASKS_AGENT,
             Self::McpServe { .. } => Contract { cancellable: true, ..Contract::STREAM },
-            Self::AttachmentPlaces { .. }
+            Self::Collaboration { .. } => Contract { cancellable: true, ..Contract::ASKS_AGENT },
+            Self::MemoryFolders { .. }
+            | Self::Scratch { .. }
+            | Self::AttachmentPlaces { .. }
             | Self::Who { .. }
             | Self::Since { .. }
             | Self::Folders { .. }
@@ -123,9 +180,13 @@ impl RemoteCall {
             | Self::Canon { .. }
             | Self::Find { .. }
             | Self::Look { .. }
+            | Self::ConversationDebt { .. }
+            | Self::WaitingJobs { .. }
             | Self::ItemDetail { .. }
             | Self::AgentActivity { .. }
             | Self::Stats { .. }
+            | Self::MemoryRoom { bytes: None }
+            | Self::Book { .. }
             | Self::Interfaces
             | Self::OnReceipt { .. }
             | Self::Thumbnail { .. }
@@ -144,10 +205,10 @@ impl RemoteCall {
             | Self::AgentCalls { .. }
             | Self::Offers { .. }
             | Self::Lines { request: Lines::Find { .. } } => Contract::ASKS_AGENT,
-            Self::EnterProject { .. }
+            Self::Plan { .. }
+            | Self::EnterProject { .. }
             | Self::ReserveAttachment { .. }
             | Self::CommitAttachment { .. }
-            | Self::Composer { .. }
             | Self::PageAction { .. }
             | Self::Relay { .. }
             | Self::Forget { .. }
@@ -159,7 +220,7 @@ impl RemoteCall {
             | Self::AgentFolder { .. }
             | Self::SetAgentTitle { .. }
             | Self::ChangeAgentLogin { .. }
-            | Self::Talk { .. }
+            | Self::MemoryRoom { bytes: Some(_) }
             | Self::Open { .. }
             | Self::Control { .. }
             | Self::Manage { .. }
@@ -172,7 +233,8 @@ impl RemoteCall {
                     | UpdateCall::Progress { .. }
                     | UpdateCall::App { .. }
                     | UpdateCall::Fetch { .. }
-                    | UpdateCall::Choose { .. },
+                    | UpdateCall::Choose { .. }
+                    | UpdateCall::Repair { .. },
             } => Contract::CHANGE,
             Self::UpdateWorld | Self::Updates { update: UpdateCall::Kernel { .. } } => Contract::UPDATE,
             Self::Run { .. } => Contract::RUN,
@@ -191,11 +253,7 @@ impl RemoteCall {
             | Self::CopyFetch { .. } => Contract::READ,
             Self::Place { .. } | Self::Upload { .. } | Self::CopyReceive { .. } => Contract::TRANSFER,
             Self::AttachmentReferences { .. } | Self::Facts => Contract { cancellable: true, ..Contract::CONTROL },
-            Self::StopJob { .. }
-            | Self::StopOn { .. }
-            | Self::Stop { .. }
-            | Self::WordsCame { .. }
-            | Self::TurnInterrupted { .. } => Contract::CONTROL,
+            Self::WordsCame { .. } => Contract::CONTROL,
         }
     }
 }
@@ -251,6 +309,39 @@ impl Call {
     /// (`Leaving`).
     pub fn on_leaving(&self) -> Leaving {
         match self {
+            Self::Composer { request: crate::composer::Request::Read, .. } => Leaving::Stop,
+            Self::DoctorCalls | Self::PlanRead { .. } | Self::Skill { .. } => Leaving::Stop,
+            Self::Plan { .. } | Self::PlanWrite { .. } => Leaving::Finish,
+            Self::AccountRecords {
+                request: crate::account_records::Request::Read { .. } | crate::account_records::Request::List { .. },
+                ..
+            }
+            | Self::WatchAccountRecords { .. } => Leaving::Stop,
+            Self::AccountRecords {
+                request: crate::account_records::Request::Write { .. } | crate::account_records::Request::Delete { .. },
+                ..
+            } => Leaving::Finish,
+            Self::Memory(crate::memory::MemoryCall::List { .. } | crate::memory::MemoryCall::Read { .. }) => {
+                Leaving::Stop
+            }
+            Self::Memory(crate::memory::MemoryCall::Save { .. })
+            | Self::MemorySettings { enabled: Some(_), .. }
+            | Self::Layer { layer: Some(_), .. } => Leaving::Finish,
+            Self::WatchMemory { .. }
+            | Self::MemorySettings { enabled: None, .. }
+            | Self::Layer { layer: None, .. }
+            | Self::Collaboration { .. } => Leaving::Stop,
+            Self::Sentinel {
+                request:
+                    crate::sentinel_control::Request::List { .. }
+                    | crate::sentinel_control::Request::Help
+                    | crate::sentinel_control::Request::Overview,
+                ..
+            } => Leaving::Stop,
+            Self::Sentinel { .. } => Leaving::Finish,
+            Self::SentinelSettings { change: None, .. } => Leaving::Stop,
+            Self::SentinelSettings { change: Some(_), .. } => Leaving::Finish,
+            Self::SentinelKey { .. } => Leaving::Finish,
             Self::AttachmentPlaces { .. }
             | Self::McpRelay { .. }
             | Self::MachineLog { .. }
@@ -276,6 +367,8 @@ impl Call {
             | Self::FindFiles { request: FileSearchRequest::Open { .. }, .. }
             | Self::Folders { .. }
             | Self::Stats { .. }
+            | Self::MemoryRoom { bytes: None, .. }
+            | Self::Book { .. }
             | Self::WatchTools { .. }
             | Self::HoldHost { .. }
             | Self::Who { .. }
@@ -287,6 +380,7 @@ impl Call {
             | Self::AgentUsage { .. }
             | Self::AgentCalls { .. }
             | Self::Look { .. }
+            | Self::WatchMany
             | Self::Watch { .. }
             | Self::Offers { .. }
             | Self::ItemDetail { .. }
@@ -298,12 +392,18 @@ impl Call {
                     FileSearchRequest::Start { .. } | FileSearchRequest::Query { .. } | FileSearchRequest::Close { .. },
                 ..
             }
+            | Self::Goal { .. }
+            | Self::GoalCommand { .. }
+            | Self::Timer { .. }
+            | Self::TurnEvidence { .. }
+            | Self::CompactBetweenTurns { .. }
             | Self::CollabWrite { .. }
             | Self::ProfileWrite { .. }
             | Self::ProfileSubagents { .. }
             | Self::ClaudeSubagents { .. }
             | Self::Mcp { mcp: McpCall::Keep { .. } | McpCall::Remove { .. } | McpCall::Import { .. }, .. }
             | Self::SetFeature { .. }
+            | Self::MemoryRoom { bytes: Some(_), .. }
             | Self::SetLanguage { .. }
             | Self::Reopened { .. }
             | Self::Composer { .. }
@@ -317,7 +417,9 @@ impl Call {
             | Self::StopJob { .. }
             | Self::Ask { .. }
             | Self::Message { .. }
+            | Self::Say { .. }
             | Self::Saw { .. }
+            | Self::Stepped { .. }
             | Self::ClaudeConsent { .. }
             | Self::Homes { .. }
             | Self::ScanAgents { .. }
@@ -357,7 +459,8 @@ impl Call {
             | Self::HubArrived { .. }
             | Self::HandOver { .. }
             | Self::SeenDissolved { .. }
-            | Self::UninstallPrepare { .. } => Leaving::Finish,
+            | Self::UninstallPrepare { .. }
+            | Self::BringIn { .. } => Leaving::Finish,
         }
     }
 }

@@ -3,6 +3,7 @@
 
 import type { FolderPickerWords } from "./folder-picker";
 import { dollars, underCent } from "../world/money";
+import { agentName } from "../world/names";
 import type { AskWords } from "../conversation/asks";
 import type { SaidWords } from "../conversation/said";
 import type { CommandWords } from "../conversation/commands";
@@ -25,6 +26,12 @@ export interface ShellWords {
   outside: string;
   machines: string;
   agents: string;
+  /** The agents as the workbench names them: its kernels (`world-layers.md`). */
+  kernels: string;
+  /** What the agents did with run (`world-layers.md`). */
+  activity: string;
+  /** Model collaboration's settings, among the kernels'. */
+  collaboration: string;
   features: string;
   /** The way to every conversation of a list. */
   all: string;
@@ -36,6 +43,8 @@ export interface ShellWords {
   edit: string;
   openSidebar: string;
   foldSidebar: string;
+  /** The line between the sidebar and the page, dragged. */
+  resizeSidebar: string;
   /** A page head's way back, for a screen reader: to the page named. */
   backTo(page: string): string;
   /** "laptop 上的 Claude". */
@@ -77,8 +86,8 @@ export interface ShellWords {
   agentsIn(project: string): string;
   /** A project's "⋯" in the sidebar, and what is in it before its sharing. */
   projectMore: string;
-  projectNewTalk: string;
   projectOverview: string;
+  projectNewTalk: string;
   projectEdit: string;
   /** A project opened with no conversation in it yet. */
   noTalks: string;
@@ -99,9 +108,11 @@ export interface FocusWords {
   noMachine: string;
   /** Over the machines chosen. */
   chosen: string;
-  /** Over the user's own machines, and another person's. */
+  /** Over the user's own machines, another person's, and every other
+   *  person's where each is a row of their own. */
   mine: string;
   theirs(owner: string): string;
+  others: string;
   /** The field that narrows the machines, and when none is left. */
   search: string;
   noMatch: string;
@@ -157,6 +168,7 @@ export const zhFocus: FocusWords = {
   chosen: "已选",
   mine: "我的机器",
   theirs: (owner) => `${owner} 的机器`,
+  others: "其他人的机器",
   search: "搜索机器",
   noMatch: "没有对得上的机器",
   done: "完成",
@@ -179,6 +191,7 @@ export const enFocus: FocusWords = {
   chosen: "Chosen",
   mine: "My machines",
   theirs: (owner) => `${owner}'s machines`,
+  others: "Others' machines",
   search: "Search machines",
   noMatch: "No machine matches",
   done: "Done",
@@ -355,6 +368,7 @@ export const zhPresence: PresenceWords = {
   asked: (who, what) =>
     `${who} ${{ answer: "问你", command: "想运行命令", change: "想改文件", tool: "想用工具", plan: "想按计划动手", form: "等你填写", other: "等你允许", waiting: "等你回复" }[what]}`,
   finished: (who) => `${who} 回复了`,
+  urgent: (who) => `${who} 有要紧的事`,
   compacted: "对话已压缩",
   open: "打开",
   stop: "停止",
@@ -363,12 +377,29 @@ export const zhPresence: PresenceWords = {
   arrivedBody: "如果不是你添加的，请在账号页移除",
   dissolved: (hubs) => `${hubs.join("、")} 已解散`,
   dissolvedBody: "这台电脑已离开，Fastctx 和数据都还在",
+  machineNotice: ({ machine, by, account, action: a }) => {
+    const who = by ?? "中枢";
+    switch (a.kind) {
+      case "rename":
+        return `${who} 把 ${machine} 改名为 ${a.to}`;
+      case "updated":
+        return `${who} 把 ${machine} 更新到 ${a.to}`;
+      case "remove":
+        return `${who} 把 ${machine} 移出了网络${a.then === "uninstall" ? "并卸载了 Fastctx" : a.then === "everything" ? "并彻底移除了 Fastctx" : ""}`;
+      case "share":
+        if (!a.shared && a.to === account) return by ? `${by} 收回了 ${machine} 给你的共享` : `${machine} 跑着中枢，不再共享给你`;
+        return a.shared ? `${who} 把 ${machine} 共享给了 ${a.to}` : `${who} 收回了 ${machine} 给 ${a.to} 的共享`;
+      case "assist":
+        return a.assisting ? `${who} 让 ${machine} 上的 ${agentName(a.agent)} 协助 ${a.to}` : `${who} 结束了 ${machine} 上的 ${agentName(a.agent)} 对 ${a.to} 的协助`;
+    }
+  },
 };
 
 export const enPresence: PresenceWords = {
   asked: (who, what) =>
     `${who} ${{ answer: "asks", command: "wants to run a command", change: "wants to change files", tool: "wants to use a tool", plan: "wants to start on its plan", form: "needs a form filled in", other: "needs your OK", waiting: "is waiting for your reply" }[what]}`,
   finished: (who) => `${who} replied`,
+  urgent: (who) => `${who} has something urgent`,
   compacted: "Conversation compacted",
   open: "Open",
   stop: "Stop",
@@ -377,6 +408,22 @@ export const enPresence: PresenceWords = {
   arrivedBody: "If you didn't add it, remove it on the Account page",
   dissolved: (hubs) => `${hubs.join(", ")} ${hubs.length > 1 ? "were" : "was"} dissolved`,
   dissolvedBody: "This computer has left; Fastctx and your data are untouched",
+  machineNotice: ({ machine, by, account, action: a }) => {
+    const who = by ?? "The hub";
+    switch (a.kind) {
+      case "rename":
+        return `${who} renamed ${machine} to ${a.to}`;
+      case "updated":
+        return `${who} updated ${machine} to ${a.to}`;
+      case "remove":
+        return `${who} took ${machine} off the network${a.then === "uninstall" ? " and uninstalled Fastctx" : a.then === "everything" ? " and removed Fastctx entirely" : ""}`;
+      case "share":
+        if (!a.shared && a.to === account) return by ? `${by} took back ${machine}'s share with you` : `${machine} runs the hub and is no longer shared with you`;
+        return a.shared ? `${who} shared ${machine} with ${a.to}` : `${who} took back ${machine}'s share with ${a.to}`;
+      case "assist":
+        return a.assisting ? `${who} let ${agentName(a.agent)} on ${machine} assist ${a.to}` : `${who} stopped ${agentName(a.agent)} on ${machine} assisting ${a.to}`;
+    }
+  },
 };
 
 export interface SettingsWords {
@@ -392,6 +439,8 @@ export interface SettingsWords {
   data: string;
   dataOpen: string;
   proxy: string;
+  /** The proxy's label among this computer's facts. */
+  proxyShort: string;
   proxyWhat: string;
   proxySystem: string;
   proxyChange: string;
@@ -465,6 +514,8 @@ export interface SettingsWords {
   phoneVendor: Record<"honor" | "xiaomi" | "other", string[]>;
   phoneOpenApp: string;
   serviceOn: string;
+  /** What a startup service does, when its state is pointed at. */
+  serviceWhat: string;
   serviceOff: string;
   keep: string;
   keepAsks: string;
@@ -473,6 +524,9 @@ export interface SettingsWords {
   legacy: string;
   legacyCleaned(tidied: number, archived: number, place: string, waiting: number): string;
   legacyUnreadable(why: string): string;
+  /** What became of an old fastctx, in a word; the sentence is said when pointed at. */
+  legacyDone: string;
+  legacyBusy(waiting: number): string;
 }
 
 export const zhSettings: SettingsWords = {
@@ -495,6 +549,7 @@ export const zhSettings: SettingsWords = {
   data: "本机数据",
   dataOpen: "查看与管理",
   proxy: "连中枢的代理",
+  proxyShort: "代理",
   proxyWhat: "这台电脑要经 HTTP 代理才连得上中枢服务器时填，比如 http://127.0.0.1:7890；清空就跟随系统",
   proxySystem: "跟随系统",
   proxyChange: "修改",
@@ -573,7 +628,8 @@ export const zhSettings: SettingsWords = {
     other: [],
   },
   phoneOpenApp: "应用详情",
-  serviceOn: "已开启，断网后自动重连",
+  serviceOn: "已开启",
+  serviceWhat: "断网后自动重连",
   serviceOff: "未开启",
   keep: "开启",
   keepAsks: "需要管理员确认",
@@ -590,6 +646,8 @@ export const zhSettings: SettingsWords = {
   legacyCleaned: (tidied, archived, place, waiting) =>
     `已清理 ${tidied} 项，归档 ${archived} 项到 ${place}${waiting > 0 ? `，${waiting} 项使用中` : ""}`,
   legacyUnreadable: () => "无法读取清理记录",
+  legacyDone: "已整理",
+  legacyBusy: (waiting) => `${waiting} 项在用`,
 };
 
 export const enSettings: SettingsWords = {
@@ -609,9 +667,10 @@ export const enSettings: SettingsWords = {
   notifyOn: "Notify when waiting or replied",
   notifyOff: "Off",
   retention: "Keep command output",
-  data: "Data on this computer",
+  data: "Data",
   dataOpen: "View and manage",
   proxy: "Proxy to the hub",
+  proxyShort: "Proxy",
   proxyWhat: "Where this computer reaches the hub only through an HTTP proxy, as http://127.0.0.1:7890; emptied, the system's settings again",
   proxySystem: "The system's",
   proxyChange: "Change",
@@ -630,7 +689,7 @@ export const enSettings: SettingsWords = {
   sizeDefault: "Default",
   sizes: { "14": "Small", "15": "Standard", "16": "Large", "17": "Extra large" },
   device: "This device",
-  machine: "Machine name",
+  machine: "Name",
   phoneName: "Phone name",
   alone: "Not in a network",
   link: "Hub",
@@ -690,7 +749,8 @@ export const enSettings: SettingsWords = {
     other: [],
   },
   phoneOpenApp: "App details",
-  serviceOn: "On; reconnects automatically",
+  serviceOn: "On",
+  serviceWhat: "Reconnects by itself after the network drops",
   serviceOff: "Off",
   keep: "Turn on",
   keepAsks: "Needs administrator approval",
@@ -707,6 +767,8 @@ export const enSettings: SettingsWords = {
   legacyCleaned: (tidied, archived, place, waiting) =>
     `Cleaned ${tidied}, archived ${archived} to ${place}${waiting > 0 ? `, ${waiting} in use` : ""}`,
   legacyUnreadable: () => "Couldn't read the cleanup record",
+  legacyDone: "Tidied",
+  legacyBusy: (waiting) => `${waiting} in use`,
 };
 
 export interface ReaderWordsSet {
@@ -724,7 +786,7 @@ export const readerWords: ReaderWordsSet = {
     interrupted: conversationZh.watchInterrupted(null),
     brokenFor: (took, why) => conversationZh.brokenFor(took, why),
     took: (ms) => conversationZh.took(ms),
-    tail: (shown, size) => `显示最后 ${shown}，共 ${size}`,
+    tail: (shown) => `显示最后 ${shown}`,
     notText: (size) => `非 UTF-8 文本（${size}）`,
     page: (page, count) => `${page} / ${count}`,
     fitWidth: "适应宽度",
@@ -743,7 +805,7 @@ export const readerWords: ReaderWordsSet = {
     interrupted: conversationEn.watchInterrupted(null),
     brokenFor: (took, why) => conversationEn.brokenFor(took, why),
     took: (ms) => conversationEn.took(ms),
-    tail: (shown, size) => `Last ${shown} of ${size}`,
+    tail: (shown) => `Showing the last ${shown}`,
     notText: (size) => `Not UTF-8 text (${size})`,
     page: (page, count) => `${page} / ${count}`,
     fitWidth: "Fit width",
@@ -896,8 +958,6 @@ export interface ProjectFormWords {
   editTitle(name: string): string;
   name: string;
   namePlaceholder: string;
-  slug: string;
-  slugHint: string;
   what: string;
   whatPlaceholder: string;
   /** What the instructions are and how agents are given them. */
@@ -930,8 +990,6 @@ export const zhProjectForm: ProjectFormWords = {
   editTitle: (name) => `编辑「${name}」`,
   name: "名称",
   namePlaceholder: "例如 mark50 研发",
-  slug: "短名",
-  slugHint: "小写字母开头，可含数字和连字符；创建后不可修改",
   what: "须知",
   whatPlaceholder: "这个项目里的智能体每次都会读到：它是做什么的、怎么做、要注意什么",
   whatTip: "写给在这个项目里干活的智能体：要照做的规矩，要知道的事。从 Fastctx 开的对话一开始就带着它，压缩之后也还在；改了以后，正在干活的对话下一次调用世界的工具时，会收到新的全文。",
@@ -961,8 +1019,6 @@ export const enProjectForm: ProjectFormWords = {
   editTitle: (name) => `Edit “${name}”`,
   name: "Name",
   namePlaceholder: "e.g. Mark 50 research",
-  slug: "Short name",
-  slugHint: "Starts with a lowercase letter; digits and hyphens allowed; can't be changed later",
   what: "Instructions",
   whatPlaceholder: "What every agent here reads each time: what this project is for, how to work in it, what to watch out for",
   whatTip: "For every agent working in this project: what to follow and what to know. Conversations opened from Fastctx start with them and keep them after compacting; once they change, a conversation at work gets the new text with its next call of a World tool.",
@@ -1208,14 +1264,7 @@ export const zhComposer: ComposerWords = {
     networkRule: (allow, host) => (allow ? `始终允许连接 ${host}` : `始终禁止连接 ${host}`),
     decline: "拒绝，继续",
     cancel: "拒绝并停止",
-    question: "提问",
-    questions: (count) => `${count} 个问题`,
-    several: "可多选",
-    otherAnswer: "其他回答",
-    secret: "输入内容不会显示",
-    submit: "回答",
     fill: "提交",
-    skip: "跳过",
     form: (server) => `${server} 请求填写表单`,
     link: (server) => `${server} 请求打开链接`,
     openLink: "打开链接",
@@ -1273,6 +1322,8 @@ export const zhComposer: ComposerWords = {
     rename: "重命名",
     fork: "分叉对话",
     stop: "停止",
+    goal: "设为目标",
+    goalArgs: "<要它做成什么>",
     noCommands: "无匹配命令",
     effort: "推理强度",
     current: "当前",
@@ -1426,14 +1477,7 @@ export const enComposer: ComposerWords = {
     networkRule: (allow, host) => (allow ? `Always allow ${host}` : `Always block ${host}`),
     decline: "Deny and continue",
     cancel: "Deny and stop",
-    question: "Question",
-    questions: (count) => `${count} questions`,
-    several: "Select all that apply",
-    otherAnswer: "Other answer",
-    secret: "Input is hidden",
-    submit: "Answer",
     fill: "Submit",
-    skip: "Skip",
     form: (server) => `${server} requests a form`,
     link: (server) => `${server} requests to open a link`,
     openLink: "Open link",
@@ -1491,6 +1535,8 @@ export const enComposer: ComposerWords = {
     rename: "Rename",
     fork: "Fork conversation",
     stop: "Stop",
+    goal: "Set a goal",
+    goalArgs: "<what it should get done>",
     noCommands: "No matching commands",
     effort: "Reasoning",
     current: "current",
@@ -1652,6 +1698,9 @@ export const zhShell: ShellWords = {
   outside: "对话",
   machines: "机器",
   agents: "智能体",
+  kernels: "内核",
+  activity: "活动",
+  collaboration: "模型协作",
   features: "功能",
   all: "全部",
   device: (form) => ({ desktop: "台式机", laptop: "笔记本", server: "服务器" })[form],
@@ -1661,6 +1710,7 @@ export const zhShell: ShellWords = {
   edit: "编辑",
   openSidebar: "显示侧栏",
   foldSidebar: "隐藏侧栏",
+  resizeSidebar: "调整侧栏宽度",
   backTo: (page) => `返回${page}`,
   someone: (agent, machine) => `${machine} 上的 ${agent}`,
   someoneAssisting: (agent, owner) => `${owner} 的 ${agent}`,
@@ -1691,8 +1741,8 @@ export const zhShell: ShellWords = {
   span: zhSpan,
   agentsIn: (project) => `${project} 中的对话`,
   projectMore: "项目操作",
+  projectOverview: "项目概览",
   projectNewTalk: "新对话",
-  projectOverview: "概览",
   projectEdit: "编辑项目…",
   noTalks: "暂无对话",
   frame: { minimize: "最小化", maximize: "最大化", restore: "还原", close: "关闭" },
@@ -1705,6 +1755,9 @@ export const enShell: ShellWords = {
   outside: "Conversations",
   machines: "Machines",
   agents: "Agents",
+  kernels: "Kernels",
+  activity: "Activity",
+  collaboration: "Model collaboration",
   features: "Features",
   all: "All",
   device: (form) => form,
@@ -1714,6 +1767,7 @@ export const enShell: ShellWords = {
   edit: "Edit",
   openSidebar: "Show sidebar",
   foldSidebar: "Hide sidebar",
+  resizeSidebar: "Resize the sidebar",
   backTo: (page) => `Back to ${page}`,
   someone: (agent, machine) => `${agent} on ${machine}`,
   someoneAssisting: (agent, owner) => `${owner}'s ${agent}`,
@@ -1744,8 +1798,8 @@ export const enShell: ShellWords = {
   span: enSpan,
   agentsIn: (project) => `Conversations in ${project}`,
   projectMore: "Project actions",
-  projectNewTalk: "New conversation",
   projectOverview: "Overview",
+  projectNewTalk: "New conversation",
   projectEdit: "Edit project…",
   noTalks: "No conversations yet",
   frame: { minimize: "Minimize", maximize: "Maximize", restore: "Restore", close: "Close" },

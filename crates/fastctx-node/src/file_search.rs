@@ -46,7 +46,7 @@ pub(crate) async fn open(
         return Ok((reply, Lease::Remote(lease)));
     }
     node.authorize_here(acting)?;
-    let initializing = crate::initializing::take()?;
+    let initializing = crate::initializing::take().await?;
     let roots = roots(node, &scope, Some(&initializing)).await?;
     let session = initializing.run(move || Session::new(scope, roots)).await?.map_err(failed)?;
     let mut bytes = [0u8; 16];

@@ -11,6 +11,15 @@ AT = "2026-10-04T12:00:00Z"
 ADDRESS = {"machine": "desktop", "resident": "codex-ab12"}
 HOST = {"agent": "codex", "client": "ipc-contract", "version": "1"}
 PEER = {"kind": "session", "host": HOST}
+SENTINEL = {"sentinel": "s-0123456789abcdef", "generation": 1, "machine": "desktop", "at": AT, "due": AT,
+            "condition": "the build finishes", "tell": "read its log",
+            "event": {"kind": "satisfied", "reason": "it finished", "evidence": [
+                {"id": "o-1", "at": 1790000000000, "source": "C:/build.log", "text": "done",
+                 "exit_code": None, "full_path": None}]}}
+# The World's facts after the five protocol 13 shipped with.
+LATER_FACTS = ["delivery_failed", "woke"]
+# The protocol each kind of host control's result came with; the rest came with 13.
+CONTROLLED_SINCE = {"done": 5, "forked": 5, "reported": 10, "refused": 10, "model_menu": 10}
 
 
 def frame(reply):
@@ -96,8 +105,11 @@ def replies(fixtures):
     for speaker in [{"kind": "user", "machine": "desktop"}, {"kind": "resident", "address": ADDRESS},
                     {"kind": "world"}, fixtures["pages"]["speaker"]]:
         notices.append({"kind": "words", "from": speaker, "text": "verbatim words"})
-    for fact in [{"fact": "desk_taken", "by": ADDRESS}, {"fact": "desk_outside"}, {"fact": "desk_free", "by": ADDRESS}, {"fact": "moved", "to": "project"}]:
+    for fact in [{"fact": "desk_taken", "by": ADDRESS}, {"fact": "desk_outside"}, {"fact": "desk_free", "by": ADDRESS},
+                 {"fact": "moved", "to": "project"}, {"fact": "delivery_failed", "id": "notice-ab12"},
+                 {"fact": "woke", "why": {"kind": "due"}}]:
         notices.append({"kind": "world", "fact": fact, "text": "the World's words"})
+    notices.append({"kind": "sentinel", "observation": SENTINEL})
     for i, notice in enumerate(notices):
         yield {"reply": "notices", "notices": [{"id": f"notice-{i}", "at": AT, "notice": notice}], "notes": ["town note"]}
     yield next(r for r in fixtures["attachments"]["replies"] if r["reply"] == "notices")
@@ -109,9 +121,14 @@ def replies(fixtures):
     yield {"reply": "journals", "town": "project", "journals": fixtures["world"]["journals"]}
     page_map = fixtures["pages"]["map"]
     for writer in [{"kind": "user"}, {"kind": "resident", "address": ADDRESS},
-                   {"kind": "session", "agent": "claude"}, fixtures["pages"]["writer"]]:
+                   {"kind": "session", "agent": "claude"}, fixtures["pages"]["writer"],
+                   {"kind": "elsewhere", "page": False}, {"kind": "elsewhere", "page": True}]:
         record = {**page_map["record"], "by": writer}
         stamp = {"by": writer, "on": "desktop", "at": AT}
+        # As told to whoever may not work on the machine it was written on.
+        if writer["kind"] == "elsewhere":
+            record.pop("on", None)
+            stamp.pop("on")
         yield {"reply": "record", "town": "project", "record": record, "opened": stamp}
         for canon in [None, {"Ok": [{"file": "design.md", "title": "Design", "scope": "system"}]}, {"Err": "missing"}]:
             mapping = {**page_map, "record": record, "opened": stamp, "canon": canon}
@@ -125,7 +142,7 @@ def replies(fixtures):
                  "cites": ["20261003T120000Z-desktop"], "attachments": attachments}
         yield {"reply": "entry_added", "town": "project", "journal": "notes", "id": entry["id"], "attachments": attachments}
         yield {"reply": "journal", "view": {"town": "project", "journal": "notes", "directory": "C:/notes",
-               "description": {"version": 1, "text": "notes", **stamp}, "first": 1,
+               "description": {"version": 1, "text": "notes", "by": writer, "on": "desktop", "at": AT}, "first": 1,
                "entries": [{"stamp": entry, "text": "entry", "mentioned_by": []}], "total": 1, "writers": 1}}
     for reply in fixtures["pages"]["replies"]:
         if reply["reply"] in ["page", "pages"]:
@@ -198,6 +215,17 @@ def page_identity(value):
     return isinstance(value, list) and any(map(page_identity, value))
 
 
+def elsewhere(value):
+    """Whether a reply tells a writer as no more than a conversation or a
+    page elsewhere, or a stamp without its machine: shapes no historical
+    reader knows, said to them as text."""
+    if isinstance(value, dict):
+        if value.get("kind") == "elsewhere" and "page" in value:
+            return True
+        return any(map(elsewhere, value.values()))
+    return isinstance(value, list) and any(map(elsewhere, value))
+
+
 def samples(root):
     fixtures = json.loads((root / "gui/fixtures/wire.json").read_text(encoding="utf-8"))
     for protocol in [5, 6, 7, 8, 9, 10]:
@@ -230,11 +258,13 @@ def samples(root):
                 case["encodings"] = [part["encoding"] for part in reply["output"]["legacy"]]
                 case["receipts"] = bool(reply.get("consumed"))
             case["attached"] = reply["reply"] == "notices" and reply["notices"][0]["notice"]["kind"] == "attached"
-            # The World's facts are its words before protocol 11.
+            # The World's facts are its words before protocol 11, and a
+            # sentinel's finding to every reader that says no later notices.
             case["world"] = reply["reply"] == "notices" and reply["notices"][0]["notice"]["kind"] == "world"
+            case["sentinel"] = reply["reply"] == "notices" and reply["notices"][0]["notice"]["kind"] == "sentinel"
             case["turn_facts"] = reply["reply"] == "notices" and reply["notices"][0]["notice"]["kind"] == "answer"
             # Hub-by-hub nodes have no shape before protocol 8 and are said as text.
-            case["text_result"] = (protocol == 5 and reply["reply"] != "notices" and page_identity(reply)) or (reply["reply"] == "nodes" and protocol < 8) or (reply["reply"] == "controlled" and reply["controlled"]["kind"] in ["reported", "refused", "model_menu"] and protocol < 10)
+            case["text_result"] = (protocol == 5 and reply["reply"] != "notices" and page_identity(reply)) or (reply["reply"] == "nodes" and protocol < 8) or (reply["reply"] == "controlled" and protocol < CONTROLLED_SINCE.get(reply["controlled"]["kind"], 13)) or elsewhere(reply)
             yield case
         yield {"mode": "reply", "protocol": protocol, "value": {"kind": "reply", "id": 37, "reply": {"Err": {"message": "not executed"}}}}
         if protocol >= 8:
@@ -251,16 +281,22 @@ def samples(root):
                 continue
             yield {"mode": "request", "protocol": protocol, "peer": peer, "admitted": admitted,
                    "value": {"kind": "call", "id": 37, "call": call}}
-    # Releases that speak today's protocol read today's replies with the
-    # types they shipped: a tool process outlives its node's change of
-    # program, so a beta 1 or 2 tool reads a later node's answers as it is.
-    for reader in ["v13_beta1", "v13_beta2"]:
+    # The releases of protocol 13 read today's replies with the types they
+    # shipped: a tool process outlives its node's change of program, so a
+    # beta 1, 2 or 11 tool reads a later node's answers as it is. It says no
+    # later notices, so a sentinel's finding and the later World facts are
+    # words to it.
+    for reader in ["v13_beta1", "v13_beta2", "v13_beta11"]:
         for lifetime in [None, fixtures["world"]["nodes"][0]["facts"]["node_lifetime"]]:
             welcome = {"kind": "accepted", "machine": "desktop", "version": "1.0.0"}
             if lifetime is not None:
                 welcome["node_lifetime"] = lifetime
             yield {"mode": "welcome", "protocol": 13, "reader": reader, "value": welcome}
         for reply in replies(fixtures):
-            yield {"mode": "reply", "protocol": 13, "reader": reader, "value": frame(reply)}
+            notice = reply["notices"][0]["notice"] if reply["reply"] == "notices" else {}
+            yield {"mode": "reply", "protocol": 13, "reader": reader, "value": frame(reply),
+                   "sentinel": notice.get("kind") == "sentinel",
+                   "world": notice.get("kind") == "world" and notice["fact"]["fact"] in LATER_FACTS,
+                   "text_result": elsewhere(reply)}
         yield {"mode": "reply", "protocol": 13, "reader": reader,
                "value": {"kind": "reply", "id": 37, "reply": {"Err": {"message": "not executed"}}}}

@@ -22,7 +22,7 @@ use fastctx_types::ipc::{Failure, Peer};
 use fastctx_types::management::Management;
 use fastctx_types::pages::{PageCall, PageInvocation};
 use fastctx_types::remote::{RemoteCall, RemoteReply, RemoteResult};
-use fastctx_types::{JournalCall, MachineName, ProjectCall, Reply, TownName};
+use fastctx_types::{MachineName, ProjectCall, Reply, TownName};
 
 use crate::Node;
 use crate::admission::Asker;
@@ -33,7 +33,14 @@ pub fn admit(view: &View, from: &MachineName, call: &RemoteCall) -> Result<(), F
     let device = view.member(from).is_some_and(|member| !member.is_machine());
     let users_own = matches!(
         call,
-        RemoteCall::Mcp { .. } | RemoteCall::Talk { .. }
+        RemoteCall::Collaboration { .. }
+            | RemoteCall::SentinelSettings { .. }
+            | RemoteCall::SentinelControl { .. }
+            // The user's own key, handed straight to the sentinel home.
+            | RemoteCall::SentinelKey { .. }
+            | RemoteCall::Mcp { .. }
+            | RemoteCall::Talk { .. }
+            | RemoteCall::Goal { .. }
             | RemoteCall::Composer { .. }
             | RemoteCall::Open { .. }
             | RemoteCall::Stop { .. }
@@ -117,7 +124,7 @@ pub fn admit(view: &View, from: &MachineName, call: &RemoteCall) -> Result<(), F
 pub async fn relay(node: &Arc<Node>, asker: &Asker, call: serde_json::Value) -> RemoteResult {
     let from = &asker.machine;
     let here = node.machine();
-    let mut call: Call = serde_json::from_value(call)
+    let call: Call = serde_json::from_value(call)
         .map_err(|error| Failure::new(format!("{from} asked an unreadable call: {error}")))?;
     let refuse = |why: String| Failure::not_run(format!("{here} refused {from}: {why}"));
     let link = node.link_of(&asker.hub).ok_or_else(|| Failure::new("the link that brought the call is gone"))?;
@@ -133,12 +140,7 @@ pub async fn relay(node: &Arc<Node>, asker: &Asker, call: serde_json::Value) -> 
         Call::Project(ProjectCall::New { .. }) => {
             return Err(refuse("a project is opened in an account from a computer logged in to it".into()));
         }
-        Call::Journal(
-            JournalCall::Read { town, .. }
-            | JournalCall::List { town }
-            | JournalCall::Add { town, .. }
-            | JournalCall::Describe { town, .. },
-        ) => Some(town.as_ref()),
+        Call::Journal(_) => return Err(Failure::not_run(fastctx_types::memory::LEGACY)),
         Call::Page(
             PageCall::Read { town, .. }
             | PageCall::List { town }
@@ -165,44 +167,37 @@ pub async fn relay(node: &Arc<Node>, asker: &Asker, call: serde_json::Value) -> 
     }
     // What the call reaches on other machines, the account must reach too:
     // this machine reaches them as itself.
-    match &call {
-        Call::Page(PageCall::Act { action, .. }) => {
-            let (target, purpose) = match action {
-                PageInvocation::Run { machine, .. } => (machine, Purpose::Hands),
-                PageInvocation::Say { to, .. } => (&to.machine, Purpose::Words),
-                PageInvocation::Journal { .. } => (&view.me, Purpose::Look),
-            };
-            view.admits(from, account, target, purpose).map_err(refuse)?;
-        }
-        Call::Journal(JournalCall::Add { attach, .. }) => {
-            for attached in attach {
-                if attached.machine.as_ref().is_some_and(|machine| {
-                    machine.hub.as_ref().is_some_and(|hub| *hub != view.hub_name) || !view.is_me(&machine.name)
-                }) {
-                    return Err(Failure::new(format!(
-                        "{from} attached a file of another machine; a device attaches what it uploads to this one"
-                    )));
-                }
-            }
-            if !attach.is_empty() {
-                view.admits(from, account, &view.me, Purpose::Hands).map_err(refuse)?;
-            }
-        }
-        _ => {}
-    }
-    if let Call::Journal(JournalCall::Add { attach, .. }) = &mut call {
-        for attached in attach {
-            if let Some(machine) = &mut attached.machine {
-                machine.hub = Some(view.hub_name.clone());
-            }
-        }
+    if let Call::Page(PageCall::Act { action, .. }) = &call {
+        let (target, purpose) = match action {
+            PageInvocation::Run { machine, .. } => (machine, Purpose::Hands),
+            PageInvocation::Say { to, .. } => (&to.machine, Purpose::Words),
+            PageInvocation::Journal { .. } => return Err(Failure::not_run(fastctx_types::memory::LEGACY)),
+        };
+        view.admits(from, account, target, purpose).map_err(refuse)?;
     }
     let user = Peer::Command { resident: None, session: None };
+    // What a device is shown of a project is what its account may know of
+    // it, never what this machine's own accounts may (`world-network.md`,
+    // 项目也照同一个规矩).
+    let acting = fastctx_types::access::Acting::one(asker.hub.clone(), account.clone());
     let reply = match call {
         Call::Project(ProjectCall::Map { town: Some(town) }) => {
-            let acting = fastctx_types::access::Acting::one(asker.hub.clone(), account.clone());
             let map = crate::town::map::view(node, &town, &acting).await?;
             Reply::Map { map: Box::new(map) }
+        }
+        Call::Project(ProjectCall::List) => {
+            let towns = crate::ledger::query::list_for(node, &acting).await?;
+            Reply::Towns { towns: towns.into_iter().filter(|summary| may_use(&summary.town)).collect() }
+        }
+        Call::Project(ProjectCall::Show { town: Some(town) }) => {
+            crate::town::project::show_for(node, &town, &acting).await?
+        }
+        // Who changed a record is written into it: a device changes one
+        // through its hub, where it is known as itself.
+        Call::Project(ProjectCall::Edit { .. }) => {
+            return Err(refuse(
+                "a device changes a project through its hub; this version of the app is too old to".into(),
+            ));
         }
         Call::Page(mut call) => {
             if call.account().is_some_and(|selected| selected != account) {

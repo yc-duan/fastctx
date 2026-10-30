@@ -97,8 +97,15 @@ pub(crate) async fn here(
             Failure::new(format!("membership changed, but refreshing project instructions failed: {error}"))
         })?;
     }
-    let map = super::map::view(node, town, requesting_actor.as_ref().unwrap_or(acting)).await?;
+    let map = super::map::view_for(
+        node,
+        town,
+        requesting_actor.as_ref().unwrap_or(acting),
+        matches!(about.origin, fastctx_types::residents::Origin::Colleague { .. }),
+    )
+    .await?;
     let ledger = crate::ledger::seq(&node.world, town).map_err(|error| Failure::new(error.to_string()))?;
-    node.residents.set_heard(id, Heard { user_prompt: None, town: Some(town.clone()), ledger });
+    node.residents
+        .set_heard(id, Heard { scratch: None, context: None, user_prompt: None, town: Some(town.clone()), ledger });
     Ok(map)
 }

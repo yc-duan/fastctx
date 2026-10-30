@@ -15,6 +15,7 @@ base64 = "0.22"
 bytes = "1"
 ed25519-dalek = "3.0.0"
 fastctx-platform = { path = "../fastctx-platform" }
+fastctx-storage = { path = "../fastctx-storage" }
 fastctx-types = { path = "../fastctx-types" }
 futures-util = { version = "0.3", default-features = false, features = ["sink", "std"] }
 getrandom = { version = "0.3", features = ["std"] }
@@ -33,7 +34,8 @@ rcgen = { version = "0.14.10", default-features = false, features = ["ring", "cr
 # TLS 1.2 only for a hub's release downloads, to the Windows tools that stop
 # there (`HubCertificate::download_config`); every session is TLS 1.3.
 rustls = { version = "0.23.43", default-features = false, features = ["ring", "std", "tls12"] }
-serde.workspace = true
+# Entries of the directory are shared between its copies (`directory::Directory`).
+serde = { workspace = true, features = ["rc"] }
 serde_json.workspace = true
 sha2 = "0.10"
 socket2 = { version = "0.6.5", features = ["all"] }

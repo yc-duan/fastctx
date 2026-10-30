@@ -86,7 +86,7 @@ pub fn migrate(from: &Path, to: &Path, new: Migrated) -> anyhow::Result<Report> 
         .collect();
     let secrets = HubSecrets::generate();
     let mut book = Book::default();
-    book.directory.accounts.push(Account {
+    book.directory.accounts.push(std::sync::Arc::new(Account {
         name: new.admin.clone(),
         level: fastctx_net::directory::Level::Super,
         locked: false,
@@ -94,8 +94,9 @@ pub fn migrate(from: &Path, to: &Path, new: Migrated) -> anyhow::Result<Report> 
         collab: None,
         profile: None,
         promotion: false,
-    });
-    book.passwords.insert(new.admin.clone(), Bytes(crate::password_record(&secrets, &new.admin, &new.password)?));
+    }));
+    std::sync::Arc::make_mut(&mut book.passwords)
+        .insert(new.admin.clone(), Bytes(crate::password_record(&secrets, &new.admin, &new.password)?));
     let mut report = Report::default();
     for admitted in members.records {
         let name = admitted.name.clone();
@@ -114,7 +115,7 @@ pub fn migrate(from: &Path, to: &Path, new: Migrated) -> anyhow::Result<Report> 
             report.left.push((name, "a member of this name or key came first".to_string()));
             continue;
         }
-        book.directory.members.push(Member {
+        book.directory.members.push(std::sync::Arc::new(Member {
             name: name.clone(),
             was: Vec::new(),
             key,
@@ -132,7 +133,8 @@ pub fn migrate(from: &Path, to: &Path, new: Migrated) -> anyhow::Result<Report> 
             through: None,
             reach: None,
             paths: None,
-        });
+            settled: None,
+        }));
         if machine { report.machines.push(name) } else { report.devices.push(name) }
     }
     report.letters = count_files(&from.join("outbox"))? + count_files(&from.join("outboxes"))?;
@@ -145,6 +147,7 @@ pub fn migrate(from: &Path, to: &Path, new: Migrated) -> anyhow::Result<Report> 
         dissolved: None,
         updates: Default::default(),
         due: Vec::new(),
+        repairs: Vec::new(),
         package_targets: Default::default(),
     };
     Store::create(to, &hub, &certificate, &secrets.to_bytes(), &book)?;

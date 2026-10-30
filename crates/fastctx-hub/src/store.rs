@@ -5,10 +5,9 @@
 //! <hub>/tls/certificate.der   the hub's certificate, pinned by every member
 //! <hub>/tls/key.der
 //! <hub>/login.secret          the hub's OPAQUE secrets (`fastctx_net::login::HubSecrets`)
-//! <hub>/directory.json        accounts and their password records, members, shares, assistance,
-//!                             acting, projects, enrollment tokens, removed members
-//!                             and 90 days of machine-layer change records
-//! <hub>/letters.json          where each member's letters stand
+//! <hub>/hub.sqlite3           directory, machine log, update arrangements and reports,
+//!                             letter counters and records of work for conversations
+//! <hub>/*.before-sqlite.json  verified legacy records retained after the one-time import
 //! <hub>/outboxes/<epoch>/<seq> letters waiting for a member, one file each
 //! <hub>/outbox-trash/         the letters of members taken off, set aside to be deleted
 //! <hub>/counts/<epoch>        a member's count of its own letters, the last of which the hub holds
@@ -18,8 +17,8 @@
 //! <hub>/called-off.json       moves called off whose new place may still hold the hub
 //! ```
 //!
-//! Every file is replaced whole, so a crash leaves the old state or the new
-//! one. Letters are written before the numbers that count them; a hub that
+//! Mutable records commit as SQLite rows; the remaining files are replaced
+//! whole, so a crash leaves the old state or the new one. Letters are written before the numbers that count them; a hub that
 //! stops in between finds the letter files and counts from the highest. A
 //! member taken off loses its letters only once the directory without it is
 //! kept; a hub that stops in between deletes them when it opens, as it does
@@ -29,6 +28,7 @@ use std::collections::BTreeMap;
 use std::io;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use fastctx_net::directory::{Directory, Kind, Project};
 use fastctx_net::envelope::Envelope;
@@ -37,8 +37,19 @@ use fastctx_net::sign::{Bytes, PublicKey};
 use fastctx_platform::{Permissions, ensure_private_dir, publish, publish_new};
 use fastctx_types::{AccountName, HubName, MachineName};
 use jiff::Timestamp;
+mod book_rows;
 mod conflicts;
 mod counts;
+mod hub_rows;
+mod legacy;
+pub(crate) mod letter_rows;
+pub(crate) mod log_store;
+mod migrate;
+mod reading;
+pub(crate) mod rows;
+pub(crate) mod shelf;
+mod validate;
+pub use letter_rows::LetterRows;
 
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -66,7 +77,9 @@ pub struct HubFile {
     /// The updates machines away are to make once they are back, by the
     /// machine's key: a name it is renamed to keeps them.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub due: Vec<DueFor>,
+    pub due: Vec<Arc<DueFor>>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub repairs: Vec<Arc<RepairFor>>,
     /// Package targets last reported by each device; retained while it is away.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub package_targets: BTreeMap<PublicKey, PackageTargets>,
@@ -80,6 +93,13 @@ pub struct DueFor {
     pub due: fastctx_types::update::Due,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub batch: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RepairFor {
+    pub key: PublicKey,
+    #[serde(flatten)]
+    pub due: fastctx_types::update::RepairDue,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -99,7 +119,8 @@ pub struct Dissolved {
 }
 
 /// The directory as the hub keeps it: what every member sees a cut of, and
-/// what only the hub holds.
+/// what only the hub holds. Like the directory's, its entries are shared by
+/// the copies made of it.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct Book {
     #[serde(default)]
@@ -108,19 +129,19 @@ pub struct Book {
     pub directory: Directory,
     /// What setting each account's password left with the hub.
     #[serde(default)]
-    pub passwords: BTreeMap<AccountName, Bytes>,
+    pub passwords: Arc<BTreeMap<AccountName, Bytes>>,
     #[serde(default)]
-    pub tokens: Vec<TokenRecord>,
+    pub tokens: Vec<Arc<TokenRecord>>,
     /// Members taken off the hub, by key, so one that connects again is
     /// told so.
     #[serde(default)]
-    pub removed: Vec<Removed>,
+    pub removed: Vec<Arc<Removed>>,
     /// Projects of accounts that were deleted, kept whole for the super
     /// administrator to hand to another account.
     #[serde(default)]
-    pub archived: Vec<Project>,
+    pub archived: Vec<Arc<Project>>,
     #[serde(default)]
-    pub(crate) project_deletions: Vec<crate::project_deletions::Pending>,
+    pub(crate) project_deletions: Vec<Arc<crate::project_deletions::Pending>>,
     /// Conversations being deleted from the members keeping something of
     /// them (`crate::forget`).
     #[serde(default)]
@@ -294,6 +315,11 @@ pub struct Letters {
     pub last_seen: Option<Timestamp>,
     /// Set while the member is connected.
     pub connected_at: Option<Timestamp>,
+    /// When what waited for the member was last set aside, it having been
+    /// away too long (`crate::expiry`): told in its view, so whoever waits
+    /// on an answer through those letters stops waiting.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub settled: Option<Timestamp>,
     /// The member's last session said it reads names of any language
     /// (`fastctx_net::wire::Intent::Session`).
     #[serde(default)]
@@ -349,6 +375,7 @@ impl Letters {
             next: 1,
             last_seen: None,
             connected_at: None,
+            settled: None,
             any_names: false,
             renames: false,
             forgets: false,
@@ -367,7 +394,10 @@ pub struct Store {
     dir: PathBuf,
     pub hub: HubFile,
     pub book: Book,
-    pub letters: BTreeMap<MachineName, Letters>,
+    pub letters: LetterRows,
+    pub(crate) shelf: shelf::Shelf,
+    book_rows: book_rows::BookRows,
+    hub_rows: hub_rows::HubRows,
     /// Which machine was called to work for which resident: what it tells
     /// that resident of the work goes on after the account's right on the
     /// machine is taken back (`world-network.md`, 收回立刻生效).
@@ -401,6 +431,12 @@ pub struct Store {
     /// The session of each member whose letters move its count now: one
     /// replaced keeps no more (`crate::control::intake`).
     pub(crate) intake: std::collections::HashMap<MachineName, u64>,
+    /// Moves each time the book is kept, so what is worked out from the
+    /// directory knows it may have changed (`crate::afoot`).
+    pub(crate) book_saves: std::sync::atomic::AtomicU64,
+    /// Counts the members' views made from it, in the order they read it,
+    /// which this lock keeps: one read later holds every change made before.
+    pub(crate) view_reads: std::sync::atomic::AtomicU64,
 }
 
 /// A sender's count of its own letters, the last of which the hub holds,
@@ -435,6 +471,15 @@ pub(crate) struct Numbered {
 }
 
 impl Store {
+    /// Reads settings without starting recovery or changing presence records.
+    pub fn read_hub(dir: &Path) -> io::Result<HubFile> {
+        reading::hub(dir)
+    }
+
+    pub(crate) fn read_directory(dir: &Path) -> io::Result<Directory> {
+        reading::directory(dir)
+    }
+
     pub fn hub_file(dir: &Path) -> PathBuf {
         dir.join("hub.json")
     }
@@ -463,6 +508,9 @@ impl Store {
         secrets: &[u8],
         book: &Book,
     ) -> io::Result<()> {
+        if dir.join(shelf::FILE).try_exists()? {
+            return Err(io::Error::new(io::ErrorKind::AlreadyExists, "the directory already holds a hub database"));
+        }
         ensure_private_dir(dir)?;
         ensure_private_dir(&dir.join("tls"))?;
         publish_new(&Self::certificate_file(dir), &certificate.certificate, Permissions::Private)?;
@@ -474,11 +522,16 @@ impl Store {
     }
 
     pub fn open(dir: &Path) -> io::Result<Self> {
-        let hub: HubFile = read(&Self::hub_file(dir))?;
-        let (book, mut upgraded) = Self::read_book(dir)?;
-        let mut letters: BTreeMap<MachineName, Letters> = read_or_default(&dir.join("letters.json"))?;
-        let mut changed = counts::migrate(dir, &book.directory, &mut letters)?;
-        let (rehoused, conflicts) = rehouse(dir, &book.directory, &mut letters)?;
+        let shelf = shelf::Shelf::open(dir)?;
+        let (hub, hub_rows) = hub_rows::HubRows::load(&shelf, read(&Self::hub_file(dir))?)?;
+        let (book, book_rows) = book_rows::BookRows::load(&shelf)?;
+        let mut upgraded: Vec<String> = shelf.meta("upgraded")?.unwrap_or_default();
+        let mut letters = BTreeMap::new();
+        for (name, _, entry) in shelf.rows("letters")? {
+            letters.insert(name.parse().map_err(io::Error::other)?, entry);
+        }
+        let mut changed = counts::migrate(dir, &book.directory, &mut letters, &shelf)?;
+        let (rehoused, conflicts) = rehouse(dir, &book.directory, &mut letters, &shelf)?;
         changed |= rehoused;
         upgraded.extend(conflicts);
         for entry in letters.values_mut() {
@@ -506,7 +559,7 @@ impl Store {
                 entry.refused = kept.refused;
             }
         }
-        let worked = read_or_default(&dir.join("worked.json"))?;
+        let worked = shelf.rows("worked")?.into_iter().map(|(_, _, row)| row).collect();
         let outgoing = match read(&dir.join(crate::moving::OUTGOING)) {
             Ok(outgoing) => Some(outgoing),
             Err(error) if error.kind() == io::ErrorKind::NotFound => None,
@@ -518,7 +571,10 @@ impl Store {
             dir: dir.to_path_buf(),
             hub,
             book,
-            letters,
+            letters: LetterRows::new(letters, changed),
+            shelf,
+            book_rows,
+            hub_rows,
             worked,
             upgraded,
             tidied: Vec::new(),
@@ -531,6 +587,8 @@ impl Store {
             records: std::sync::Arc::new(crate::records::Records::new()),
             counts: std::collections::HashMap::new(),
             intake: std::collections::HashMap::new(),
+            book_saves: std::sync::atomic::AtomicU64::new(0),
+            view_reads: std::sync::atomic::AtomicU64::new(0),
         };
         if changed {
             store.save_letters_now()?;
@@ -748,40 +806,36 @@ impl Store {
             self.save_letters_now()?;
         }
         if worked_moved {
+            let mut changes = rows::Changes::default();
+            for before in &self.worked {
+                let now = worked.get(before);
+                let spelling_changed = now.is_some_and(|now| {
+                    before.0.as_str() != now.0.as_str() || before.1.machine.as_str() != now.1.machine.as_str()
+                });
+                if now.is_none() || spelling_changed {
+                    changes.deleted.push(("worked", rows::composite(before).into()));
+                }
+                if let Some(now) = now.filter(|_| spelling_changed) {
+                    changes.put.push(rows::Put {
+                        kind: "worked",
+                        key: rows::composite(now).into(),
+                        position: 0,
+                        body: rows::body(now)?,
+                    });
+                }
+            }
+            for added in worked.difference(&self.worked) {
+                changes.put.push(rows::Put {
+                    kind: "worked",
+                    key: rows::composite(added).into(),
+                    position: 0,
+                    body: rows::body(added)?,
+                });
+            }
+            self.shelf.write(changes)?;
             self.worked = worked;
-            publish(&self.dir.join("worked.json"), &json(&self.worked)?, Permissions::Private)?;
         }
         Ok(said)
-    }
-
-    /// The directory as kept; one kept in the shape before sharing and
-    /// assistance (`crate::upgrade`) is kept again in today's, after a copy of
-    /// it as it was is left beside it, which going back to the earlier
-    /// fastctx needs. What changed is said too, and kept beside it. The
-    /// relays a directory kept before direct connections replaced them are
-    /// taken out, and the directory kept again without them.
-    fn read_book(dir: &Path) -> io::Result<(Book, Vec<String>)> {
-        let path = Self::directory_file(dir);
-        let raw: serde_json::Value = read(&path)?;
-        let (mut upgraded, mut said) = crate::upgrade::upgrade(raw);
-        let shaped = !said.is_empty();
-        let relays = crate::upgrade::drop_relays(&mut upgraded);
-        let book: Book = serde_json::from_value(upgraded)
-            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, format!("{}: {error}", path.display())))?;
-        if shaped {
-            let before = dir.join("directory.before-sharing.json");
-            if !before.exists() {
-                publish_new(&before, &std::fs::read(&path)?, Permissions::Private)?;
-            }
-        }
-        said.extend(relays);
-        if !said.is_empty() {
-            publish(&path, &json(&book)?, Permissions::Private)?;
-            let mut notes = said.join("\n");
-            notes.push('\n');
-            publish(&dir.join("directory.upgraded.txt"), notes.as_bytes(), Permissions::Private)?;
-        }
-        Ok((book, said))
     }
 
     pub fn dir(&self) -> &Path {
@@ -807,18 +861,48 @@ impl Store {
         publish(&self.dir.join(crate::moving::MOVES), &json(&self.moves)?, Permissions::Private)
     }
 
-    pub fn save_hub(&self) -> io::Result<()> {
-        publish(&Self::hub_file(&self.dir), &json(&self.hub)?, Permissions::Private)
+    /// Keeps the one package target changed by a device's version report.
+    pub(crate) fn save_package_target(&mut self, key: &PublicKey) -> io::Result<()> {
+        self.hub_rows.save_target(&self.shelf, &self.hub, key)
     }
 
-    pub fn save_book(&self) -> io::Result<()> {
-        publish(&Self::directory_file(&self.dir), &json(&self.book)?, Permissions::Private)
+    pub fn save_hub(&mut self) -> io::Result<()> {
+        self.hub_rows.save(&self.shelf, &self.hub)
+    }
+
+    pub fn save_book(&mut self) -> io::Result<()> {
+        self.book_rows.save(&self.shelf, &mut self.book)?;
+        self.book_saves.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Ok(())
+    }
+
+    /// Commits settings and their audit records together, including a batch
+    /// of arrangements. Neither durable baseline advances on failure.
+    pub(crate) fn save_hub_and_book(&mut self) -> io::Result<()> {
+        let mut changes = rows::Changes::default();
+        let next = self.hub_rows.stage(&self.hub, &mut changes)?;
+        if let Err(error) = self.book_rows.save_with(&self.shelf, &mut self.book, changes) {
+            self.hub_rows.lost();
+            return Err(error);
+        }
+        self.hub_rows.committed(next);
+        self.book_saves.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Ok(())
     }
 
     /// Notes that `machine` was called to work for `resident`.
     pub fn note_worked(&mut self, machine: &MachineName, resident: fastctx_types::Address) -> io::Result<()> {
-        if self.worked.insert((machine.clone(), resident)) {
-            publish(&self.dir.join("worked.json"), &json(&self.worked)?, Permissions::Private)?;
+        let entry = (machine.clone(), resident);
+        if !self.worked.contains(&entry) {
+            let mut changes = rows::Changes::default();
+            changes.put.push(rows::Put {
+                kind: "worked",
+                key: rows::composite(&entry).into(),
+                position: 0,
+                body: rows::body(&entry)?,
+            });
+            self.shelf.write(changes)?;
+            self.worked.insert(entry);
         }
         Ok(())
     }
@@ -836,13 +920,14 @@ impl Store {
     /// over, and before deleting letters only the records then number past.
     pub fn save_letters_now(&mut self) -> io::Result<()> {
         self.revision += 1;
-        self.records.write(self.revision, &self.dir.join("letters.json"), &json(&self.letters)?)
+        let letters = self.letters.snapshot(self.records.written_changes());
+        self.records.write(self.revision, &self.shelf, &letters)
     }
 
     /// The records of where the letters stand as they are now, to be
     /// written off this lock: their revision, what they say, and where.
-    pub(crate) fn letters_record(&self) -> (u64, BTreeMap<MachineName, Letters>, PathBuf) {
-        (self.revision, self.letters.clone(), self.dir.join("letters.json"))
+    pub(crate) fn letters_record(&mut self) -> (u64, letter_rows::Snapshot, shelf::Shelf) {
+        (self.revision, self.letters.snapshot(self.records.written_changes()), self.shelf.clone())
     }
 
     /// The revision of what is kept of the letters now (`crate::records`).
@@ -922,10 +1007,14 @@ impl Store {
     /// Forgets which machines were called to work for the conversation at
     /// `conversation`, deleted.
     pub fn forget_worked(&mut self, conversation: &fastctx_types::Address) -> io::Result<()> {
-        let before = self.worked.len();
-        self.worked.retain(|(_, worked)| worked != conversation);
-        if before != self.worked.len() {
-            publish(&self.dir.join("worked.json"), &json(&self.worked)?, Permissions::Private)?;
+        let gone: Vec<_> = self.worked.iter().filter(|(_, worked)| worked == conversation).cloned().collect();
+        let mut changes = rows::Changes::default();
+        for entry in &gone {
+            changes.deleted.push(("worked", rows::composite(entry).into()));
+        }
+        self.shelf.write(changes)?;
+        for entry in gone {
+            self.worked.remove(&entry);
         }
         Ok(())
     }
@@ -955,6 +1044,20 @@ impl Store {
         }
         Ok(())
     }
+}
+
+/// Writes numberings allocated by a legacy import before it moves letters.
+fn keep_legacy_letters(shelf: &shelf::Shelf, letters: &BTreeMap<MachineName, Letters>) -> io::Result<()> {
+    let mut changes = rows::Changes::default();
+    for (name, entry) in letters {
+        changes.put.push(rows::Put {
+            kind: "letters",
+            key: name.to_string().into(),
+            position: 0,
+            body: rows::body(entry)?,
+        });
+    }
+    shelf.write(changes)
 }
 
 /// Where the counts of each sender's letters are kept (`Store::write_taken`).
@@ -1036,6 +1139,7 @@ fn rehouse(
     dir: &Path,
     directory: &Directory,
     letters: &mut BTreeMap<MachineName, Letters>,
+    shelf: &shelf::Shelf,
 ) -> io::Result<(bool, Vec<String>)> {
     let outbox = dir.join(OUTBOX);
     if !std::fs::exists(&outbox)? {
@@ -1059,7 +1163,7 @@ fn rehouse(
     }
     if changed {
         // A moved directory must already have a durable owner on the next start.
-        publish(&dir.join("letters.json"), &json(letters)?, Permissions::Private)?;
+        keep_legacy_letters(shelf, letters)?;
     }
     for (name, entry) in letters.iter() {
         let names: std::collections::BTreeSet<&MachineName> = std::iter::once(name)

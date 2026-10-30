@@ -44,7 +44,7 @@ pub fn fixtures() -> Fixtures {
         withdrawn: false,
         restored_from: None,
         by: Writer::Resident { address: to.clone() },
-        on: machine.clone(),
+        on: Some(machine.clone()),
         at,
     };
     let mut withdrawn = publication.clone();
@@ -71,7 +71,7 @@ pub fn fixtures() -> Fixtures {
         base: None,
         page_version: 1,
         acts: acts.clone(),
-        stamp: Stamp { by: Writer::User, on: "phone".parse().unwrap(), at },
+        stamp: Stamp { by: Writer::User, on: Some("phone".parse().unwrap()), at },
     };
     let html = "<!doctype html><title>Training</title><p>Loss</p>".to_string();
     let draft = PageDraft {
@@ -124,9 +124,11 @@ pub fn fixtures() -> Fixtures {
         .collect();
     let results = vec![
         PageResult::Run(Box::new(RunReply {
+            scratch: Vec::new(),
             run: None,
             consumed: None,
             privacy: Vec::new(),
+            missing: Vec::new(),
             machine: machine.clone(),
             job: "j-abc123".parse().unwrap(),
             state: RunState::Ended { status: ExitStatus::Code(0) },
@@ -146,6 +148,7 @@ pub fn fixtures() -> Fixtures {
         PageResult::EntryAdded { journal, id: "20261004T120000Z-desktop".parse().unwrap() },
     ];
     let map = fastctx_types::project::MapView {
+        memory: None,
         town: town.clone(),
         ledger: "C:/world/towns/mark50/ledger".into(),
         record: fastctx_types::project::Record {
@@ -156,10 +159,10 @@ pub fn fixtures() -> Fixtures {
             places: Vec::new(),
             canon: None,
             by: Writer::User,
-            on: machine.clone(),
+            on: Some(machine.clone()),
             at,
         },
-        opened: Stamp { by: Writer::User, on: machine.clone(), at },
+        opened: Stamp { by: Writer::User, on: Some(machine.clone()), at },
         journals: Vec::new(),
         pages: vec![PageSummary { page: page.clone(), current: restored.clone() }],
         canon: None,

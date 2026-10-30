@@ -25,9 +25,15 @@ static ACTIVITY_READY: AtomicBool = AtomicBool::new(false);
 static VISIBLE: std::sync::LazyLock<tokio::sync::watch::Sender<bool>> =
     std::sync::LazyLock::new(|| tokio::sync::watch::channel(false).0);
 
+/// Starts the device connection, once: what is published for the rest of
+/// the process is published only when all of it started, so a start that
+/// failed, as on a full disk, can be tried again.
 fn start(directory: PathBuf, bridge: Arc<bridge::Bridge>) -> Result<(), String> {
+    if WORLD.get().is_some() {
+        return Ok(());
+    }
     fastctx_platform::ensure_private_dir(&directory).map_err(|error| error.to_string())?;
-    fastctx_net::android::install(bridge.clone())?;
+    fastctx_net::android::install(bridge.clone());
     let runtime = tokio::runtime::Runtime::new().map_err(|error| error.to_string())?;
     let world = {
         let _entered = runtime.enter();
@@ -47,20 +53,6 @@ fn start(directory: PathBuf, bridge: Arc<bridge::Bridge>) -> Result<(), String> 
 
 pub fn world() -> Result<World, String> {
     WORLD.get().cloned().ok_or_else(|| "Android has not started the device connection".into())
-}
-
-/// The user's words to a conversation, from a notification's button; the
-/// caller's thread, not the runtime's, waits for how it went. Said again under
-/// the same `id`, they go in once.
-fn say(resident: String, machine: String, text: String, id: String) -> Result<(), String> {
-    let world = world()?;
-    let runtime = RUNTIME.get().ok_or("Android has not started the device connection")?;
-    let resident = resident.parse().map_err(|error| format!("{error}"))?;
-    let machine = machine.parse().map_err(|error| format!("{error}"))?;
-    runtime
-        .block_on(world.talk_with_attachments(resident, Some(machine), text, vec![], None, Some(id)))
-        .map(drop)
-        .map_err(|error| error.to_string())
 }
 
 fn reconnect() {
@@ -187,6 +179,20 @@ command!(notify, "notify", notice);
 command!(dismiss, "dismiss", id);
 command!(settings, "settings", destination);
 
+/// The conversation the page shows, `resident@machine`; empty on another
+/// page (`observer::in_view`).
+static VIEWING: std::sync::Mutex<String> = std::sync::Mutex::new(String::new());
+
+#[fastctx_gui_command::command]
+async fn viewing(conversation: String) -> Result<(), String> {
+    *VIEWING.lock().expect("never poisoned") = conversation;
+    Ok(())
+}
+
+pub(super) fn viewing_now() -> String {
+    VIEWING.lock().expect("never poisoned").clone()
+}
+
 pub fn plugin() -> TauriPlugin<tauri::Wry> {
     Builder::new("android-world")
         .invoke_handler(tauri::generate_handler![
@@ -198,7 +204,8 @@ pub fn plugin() -> TauriPlugin<tauri::Wry> {
             acknowledge,
             notify,
             dismiss,
-            settings
+            settings,
+            viewing
         ])
         .setup(|app, api| {
             let plugin = api.register_android_plugin("dev.fastctx.world", "WorldPlugin")?;

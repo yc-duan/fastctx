@@ -14,7 +14,7 @@ import type { HubMove, HubMoveReply, HubMoveRequest, MoveStage, MoveTarget } fro
 import type { AccessWords, LoginWords, MachinesWords } from "./account-words";
 import { Sheet, type Confirm } from "./confirm";
 import { RemoteWorld, type RemoteSeams } from "./remote-world";
-import { mark } from "./removal";
+import { stepMark as mark } from "../pen/step-mark";
 import { holdUntilNamed, typedName } from "./typed-name";
 
 /** The steps of a move, in order. */
@@ -211,7 +211,11 @@ export class HubMoving {
   watch(login: Login, hub: string, now = false): void {
     if (this.watching?.hub === hub && !now) return;
     this.unwatch();
+    // One question at a time: a slow answer is not asked over again.
+    let asking = false;
     const look = () => {
+      if (asking) return;
+      asking = true;
       this.options.move(login, { request: "status" }).then(
         (reply) => {
           if (reply.kind !== "moves") return;
@@ -220,7 +224,9 @@ export class HubMoving {
           if (JSON.stringify(reply.moves) !== before) this.options.changed();
         },
         (error: unknown) => console.warn("the hub's move could not be read", error),
-      );
+      ).finally(() => {
+        asking = false;
+      });
     };
     look();
     this.watching = { hub, login, timer: window.setInterval(look, LOOK_MS) };

@@ -1,0 +1,14 @@
+[package]
+name = "fastctx-storage"
+description = "Bounded SQLite transactions and indexed durable receipts"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+fastctx-platform = { path = "../fastctx-platform" }
+rusqlite = { version = "0.41", features = ["bundled", "backup"] }
+tokio = { workspace = true, features = ["rt", "sync", "time"] }

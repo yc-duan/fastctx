@@ -1,0 +1,1070 @@
+/* The side of the desk (`frame.ts`, `pane.ts`) and what it holds of the
+   conversation in focus: the goal's page (`goal-page.ts`), the plan, who
+   works with it (`collab-page.ts`) and one of the host's agents read over
+   them; and the goal's bar above the input (`goal-bar.ts`). Every page is
+   set in one voice: the reading face at the text size, in the text's ink,
+   the semibold face for what heads a part; the accent is kept for the marks
+   a hand adds and the one act that matters. */
+
+/* The desk in two columns: the conversations, and the side as tall as the
+   window. --sp-open goes from nothing to one as the side opens: the side
+   widens by it from the right, the conversations giving way beside it, and
+   back as it shuts. */
+@property --sp-open {
+  syntax: "<number>";
+  inherits: true;
+  initial-value: 0;
+}
+
+/* Registered so its width is a length where it is read, as the corner's
+   room that the side takes over. */
+@property --side-width {
+  syntax: "<length>";
+  inherits: true;
+  initial-value: 0px;
+}
+
+@property --side-height {
+  syntax: "<length>";
+  inherits: true;
+  initial-value: 0px;
+}
+
+.sp-host {
+  --sp-open: 0;
+  transition: --sp-open var(--glide) var(--glide-easing);
+}
+
+.sp-host.sp-shown {
+  --sp-open: 1;
+}
+
+.sp-split {
+  position: relative;
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+
+/* The desk's top right corner: the side's one switch. On Windows the
+   window's own buttons hold the corner's first line and the switch stands
+   under them; elsewhere it holds the corner itself. A head in that line
+   keeps clear of what stands in it (`--sp-corner`). */
+.sp-host {
+  --sp-switch-top: calc(var(--safe-top) + 10px);
+  --sp-switch-right: var(--space-3);
+  --sp-corner: calc(var(--sp-switch-right) + 32px + var(--space-2));
+}
+
+html.framed .sp-host {
+  --sp-switch-top: calc(52px + var(--space-1));
+  --sp-corner: calc(3 * 46px + var(--space-2));
+}
+
+.sp-panel {
+  --grip-ink: 0;
+  position: relative;
+  display: flex;
+  justify-content: flex-start;
+  min-width: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-reading);
+  font-size: var(--size-text);
+  transition: --grip-ink var(--hover) var(--ease);
+}
+
+.sp-panel[hidden] {
+  display: none;
+}
+
+.sp-split > .sp-panel:not(.sp-over) {
+  flex: none;
+  width: calc(var(--side-width) * var(--sp-open));
+  overflow: hidden;
+}
+
+/* The sheet keeps its width while the side widens, so nothing in it is set
+   again as it comes: it rides in on the side's edge, pushing the
+   conversation aside, its words coming up as it does. */
+.sp-sheet {
+  position: relative;
+  flex: none;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr);
+  width: var(--side-width);
+  min-height: 0;
+  opacity: var(--sp-open);
+}
+
+/* The margin ruled down the side's left edge from the window's top to its
+   foot: all that sets it apart from the conversation. */
+.sp-margin {
+  position: absolute;
+  z-index: 1;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 4px;
+  pointer-events: none;
+}
+
+.sp-margin-svg {
+  display: block;
+  width: 4px;
+  height: 100%;
+}
+
+/* The same stroke in ink over it, coming up while the line is held or
+   pointed at: it can be dragged. */
+.sp-margin-ink {
+  position: absolute;
+  inset: 0;
+  color: var(--text-2);
+  opacity: var(--grip-ink);
+}
+
+/* The line between the side and the conversation, to drag
+   (`app/grip.ts`): the side wider or narrower, kept on this device as its
+   share of the page; pressed twice, back to half. */
+.sp-grip {
+  position: absolute;
+  z-index: 3;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 10px;
+  cursor: col-resize;
+  touch-action: none;
+}
+
+.sp-grip:focus-visible {
+  outline: none;
+}
+
+.sp-panel:has(> .sp-grip:hover),
+.sp-panel:has(> .sp-grip:focus-visible),
+.sp-resizing .sp-panel {
+  --grip-ink: 1;
+}
+
+.sp-panel.sp-over .sp-grip {
+  display: none;
+}
+
+/* The side's head: one line as high as a conversation's head and dragged
+   as a head is, the conversation's parts as marks and the side's "⋯". At
+   the desk's right it keeps the corner clear: on Windows of the window's
+   own buttons, the switch standing under them over the side's first words;
+   elsewhere of the switch. Its words begin as far from the margin as the
+   conversations' end before it, so the margin stands midway. */
+.sp-head {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  container-type: inline-size;
+}
+
+.sp-line {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-height: 52px;
+  padding: var(--safe-top) var(--space-3) 0 var(--gutter);
+}
+
+.sp-split[data-dock="right"] .sp-line {
+  padding-right: var(--sp-corner);
+}
+
+/* Under the window's own buttons the switch stands over the side's first
+   line of words: the pages there keep their ends clear of it. */
+html.framed .sp-split[data-dock="right"] > .sp-panel:not(.sp-over) .sp-page > :first-child {
+  margin-right: calc(32px + var(--space-2));
+}
+
+html.framed .sp-panel.sp-over .sp-line {
+  padding-right: calc(3 * 46px + var(--space-2));
+}
+
+/* The parts' marks: each with its figures after it, in clay while
+   something there waits on the user, the one shown on the clay wash. Where
+   the line is short the figures give way first; shorter still, the marks
+   scroll across. */
+.sp-parts {
+  flex: 1 1 auto;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+  margin-left: calc(-1 * var(--space-2));
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.sp-part {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 34px;
+  height: 32px;
+  padding: 0 var(--space-2);
+  justify-content: center;
+  border-radius: var(--radius-m);
+  color: var(--text-2);
+  transition: background-color var(--hover) var(--ease), color var(--hover) var(--ease);
+}
+
+.sp-part:hover {
+  background: var(--hairline);
+  color: var(--text);
+}
+
+.sp-part.chosen {
+  background: var(--accent-wash);
+  color: var(--text-strong);
+}
+
+.sp-part.waiting {
+  color: var(--accent);
+}
+
+.sp-part-count {
+  color: var(--text-3);
+  font-size: var(--size-fine);
+  font-variant-numeric: tabular-nums;
+}
+
+.sp-part.chosen .sp-part-count {
+  color: var(--text-2);
+}
+
+@container (max-width: 400px) {
+  .sp-part-count {
+    display: none;
+  }
+}
+
+.sp-acts {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: auto;
+}
+
+/* Over the whole page the side is shut by its own cross and stands nowhere
+   else; beside the conversation the switch in the corner shuts it. */
+.sp-panel:not(.sp-over) .sp-shut,
+.sp-panel.sp-over .sp-more {
+  display: none;
+}
+
+.sp-acts > [hidden] {
+  display: none;
+}
+
+.sp-body {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  min-height: 0;
+}
+
+.sp-page {
+  grid-area: 1 / 1;
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  overflow-wrap: anywhere;
+  padding: var(--space-2) var(--gutter) var(--space-12);
+  line-height: var(--leading-prose);
+}
+
+.sp-page[hidden] {
+  display: none;
+}
+
+/* What the conversation is pointed at, at the foot under its parts, its
+   panel opening above it. */
+.sp-foot {
+  min-width: 0;
+  padding: var(--space-2) var(--gutter) var(--space-3);
+}
+
+.sp-foot[hidden] {
+  display: none;
+}
+
+.sp-foot .focus-strip {
+  padding: 0;
+}
+
+@media (min-width: 761px) {
+  .sp-foot .focus-pop {
+    top: auto;
+    bottom: calc(100% + var(--space-1));
+    right: auto;
+    left: 0;
+    width: min(440px, calc(var(--side-width) - 2 * var(--space-4)));
+  }
+}
+
+/* Who works with the conversation. */
+.sp-team {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+}
+
+/* The side's one switch, in the desk's top right corner whether the side
+   is open or shut, drawn as the place it opens at, with a dot while
+   something new waits there. Over the whole desk the side's own cross shuts
+   it; on a phone the head's "⋯" opens it. */
+.sp-toggle {
+  position: absolute;
+  z-index: 41;
+  top: var(--sp-switch-top);
+  right: var(--sp-switch-right);
+  background: var(--bg);
+}
+
+.sp-toggle[aria-pressed="true"] {
+  color: var(--text);
+}
+
+/* On the desk the window's buttons stand on the paper's own ground too, so
+   the side slides in beneath them. */
+html:has(.sp-host) .window-controls {
+  background: var(--bg);
+}
+
+.sp-host:has(> .sp-split > .sp-panel.sp-over:not([hidden])) .sp-toggle {
+  display: none;
+}
+
+@media (max-width: 760px) {
+  .sp-toggle {
+    display: none;
+  }
+}
+
+.sp-toggle-dot {
+  position: absolute;
+  top: 5px;
+  right: 5px;
+  display: none;
+  width: 6px;
+  height: 6px;
+  border-radius: var(--radius-full);
+  background: var(--accent);
+}
+
+.sp-toggle.news .sp-toggle-dot {
+  display: block;
+}
+
+/* The side at the conversations' left, or along their foot as wide as the
+   desk (`frame.ts`): its margin and the line to drag along the edge it
+   shares with them; the sheet held against the window's edge as the side
+   opens from it. */
+.sp-split[data-dock="left"] {
+  flex-direction: row-reverse;
+}
+
+.sp-split[data-dock="bottom"] {
+  flex-direction: column;
+}
+
+.sp-split[data-dock="left"] > .sp-panel:not(.sp-over) {
+  justify-content: flex-end;
+}
+
+.sp-split[data-dock="bottom"] > .sp-panel:not(.sp-over) {
+  flex-direction: column;
+  justify-content: flex-start;
+  width: auto;
+  height: calc(var(--side-height) * var(--sp-open));
+}
+
+.sp-split[data-dock="bottom"] > .sp-panel:not(.sp-over) > .sp-sheet {
+  width: 100%;
+  height: var(--side-height);
+}
+
+.sp-split[data-dock="left"] .sp-margin,
+.sp-split[data-dock="left"] .sp-grip {
+  left: auto;
+  right: 0;
+}
+
+.sp-split[data-dock="bottom"] .sp-margin {
+  right: 0;
+  bottom: auto;
+  width: auto;
+  height: 4px;
+}
+
+.sp-split[data-dock="bottom"] .sp-margin-svg {
+  width: 100%;
+  height: 4px;
+}
+
+.sp-split[data-dock="bottom"] .sp-grip {
+  right: 0;
+  bottom: auto;
+  width: auto;
+  height: 10px;
+  cursor: row-resize;
+}
+
+
+/* The side's "⋯": where the side stands, in a small menu under its
+   button. */
+.sp-acts {
+  position: relative;
+}
+
+.sp-menu {
+  position: absolute;
+  z-index: 8;
+  top: calc(100% + var(--space-1));
+  right: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--row-gap);
+  min-width: 160px;
+  padding: var(--space-1);
+  border-radius: var(--radius-m);
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-pop);
+}
+
+.sp-menu[hidden],
+.sp-menu-row[hidden] {
+  display: none;
+}
+
+.sp-menu-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  height: 34px;
+  padding: 0 var(--space-3);
+  border-radius: var(--radius-s);
+  color: var(--text-2);
+  white-space: nowrap;
+}
+
+.sp-menu-row:hover:enabled {
+  background: var(--hairline);
+  color: var(--text);
+}
+
+.sp-menu-row:disabled {
+  color: var(--text-3);
+}
+
+.sp-menu-row[aria-checked="true"] {
+  background: var(--accent-wash);
+  color: var(--text-strong);
+}
+
+/* On a phone the side lies over the whole page, coming up as it opens and
+   going down as it shuts. */
+.sp-panel.sp-over {
+  position: absolute;
+  inset: 0;
+  z-index: 40;
+  padding-bottom: var(--safe-bottom);
+  opacity: var(--sp-open);
+  translate: 0 calc((1 - var(--sp-open)) * 24px);
+}
+
+.sp-panel.sp-over > .sp-sheet {
+  width: 100%;
+  opacity: 1;
+}
+
+.sp-panel.sp-over .sp-margin {
+  display: none;
+}
+
+
+
+/* The goal's bar, among the words waiting above the input. */
+.gb-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  max-width: var(--column);
+  min-height: 38px;
+  margin: 0 auto var(--space-2);
+  padding: 0 var(--space-1) 0 var(--space-3);
+  box-sizing: border-box;
+  border-radius: var(--radius-m);
+  background: var(--fill);
+  font-size: var(--size-text);
+}
+
+/* A conversation nothing more is heard of keeps no goal bar: its acts would
+   reach nothing. */
+.conversation-page[data-unheard] .gb-bar {
+  display: none;
+}
+
+.gb-bar[hidden] {
+  display: none;
+}
+
+.gb-mark {
+  flex: none;
+  display: grid;
+  place-items: center;
+  color: var(--text-2);
+}
+
+.gb-bar[data-status="blocked"] .gb-mark {
+  color: var(--caution);
+}
+
+.gb-bar[data-status="complete"] .gb-mark {
+  color: var(--accent);
+}
+
+.gb-state {
+  flex: none;
+  color: var(--text);
+  font-family: var(--font-emphasis);
+  white-space: nowrap;
+}
+
+.gb-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--text);
+}
+
+.gb-when {
+  flex: none;
+  color: var(--text-2);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.gb-acts {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.gb-act {
+  width: 28px;
+  height: 28px;
+  color: var(--text-3);
+}
+
+.gb-act:hover {
+  background: var(--hairline);
+  color: var(--text);
+}
+
+.gb-undo {
+  height: 28px;
+  padding: 0 var(--space-3);
+  border-radius: var(--radius-full);
+  color: var(--text);
+  font-size: var(--size-text);
+  transition: background-color var(--hover) var(--ease);
+}
+
+.gb-undo:hover {
+  background: var(--hairline);
+}
+
+/* On a phone the bar is one press: it opens the goal, where its acts are.
+   A goal going on is its mark and its words. */
+@media (max-width: 760px) {
+  .gb-bar:not([data-status="paused"]) .gb-when,
+  .gb-bar .gb-act:not([data-act="expand"]),
+  .gb-bar[data-status="active"] .gb-state {
+    display: none;
+  }
+}
+
+/* So in a narrow place on the desk. */
+@container talk (max-width: 560px) {
+  .gb-bar:not([data-status="paused"]) .gb-when,
+  .gb-bar .gb-act:not([data-act="expand"]),
+  .gb-bar[data-status="active"] .gb-state {
+    display: none;
+  }
+}
+
+@media (pointer: coarse) {
+  .gb-bar {
+    min-height: 44px;
+  }
+
+  .gb-act,
+  .gb-undo {
+    min-width: 44px;
+    min-height: 44px;
+  }
+}
+
+/* The goal's page. */
+.gp-state {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 36px;
+  margin: 0 0 var(--space-3);
+}
+
+.gp-mark {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 16px;
+  height: 18px;
+}
+
+.gp-mark-svg {
+  display: block;
+  overflow: visible;
+}
+
+/* The drop of ink breathes while the goal is worked at. */
+.gp-state[data-status="active"] .gp-mark-svg {
+  transform: scale(var(--breath-scale));
+  opacity: var(--breath-alpha);
+  animation: ink-breathe var(--breath-slow) var(--ease-in-out) infinite;
+}
+
+:root[data-reduced] .gp-state .gp-mark-svg {
+  animation: none;
+}
+
+.gp-word {
+  font-family: var(--font-emphasis);
+}
+
+.gp-when {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-variant-numeric: tabular-nums;
+}
+
+.gp-acts {
+  flex: none;
+  display: flex;
+  gap: 2px;
+  margin-left: auto;
+}
+
+.gp-act {
+  display: inline-grid;
+  place-items: center;
+  min-height: 32px;
+  padding: 0 var(--space-3);
+  border-radius: var(--radius-full);
+  color: var(--text-2);
+  font-size: var(--size-text);
+  transition: background-color var(--hover) var(--ease), color var(--hover) var(--ease);
+}
+
+.gp-act:hover {
+  background: var(--fill);
+  color: var(--text);
+}
+
+/* The user's words, edited where they stand: a solid field that keeps its
+   shade whether pointed at, pressed or typed in. */
+.gp-field {
+  display: block;
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 5.5em;
+  margin: 0;
+  padding: var(--space-3) var(--space-4);
+  border: 0;
+  border-radius: var(--radius-m);
+  outline: none;
+  resize: none;
+  overflow: hidden;
+  background: var(--field);
+  color: var(--text);
+  font-family: var(--font-reading);
+  font-size: var(--size-text);
+  line-height: var(--leading-prose);
+}
+
+.gp-field::placeholder {
+  color: var(--text-3);
+}
+
+.gp-save {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-3);
+  margin-top: var(--space-2);
+}
+
+/* A goal about to be set may stand: a box ruled by hand and its word, on
+   the left of the act that sets it, inked when chosen. */
+.gp-standing {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 34px;
+  margin-right: auto;
+  padding: 0 var(--space-3) 0 var(--space-2);
+  border-radius: var(--radius-full);
+  color: var(--text-2);
+  font-size: var(--size-text);
+  transition: background-color var(--hover) var(--ease), color var(--hover) var(--ease);
+}
+
+.gp-standing:hover,
+.gp-standing[aria-pressed="true"] {
+  color: var(--text);
+}
+
+.gp-standing:hover {
+  background: var(--fill);
+}
+
+.gp-standing-box {
+  display: inline-grid;
+  width: 18px;
+  height: 18px;
+}
+
+.gp-save[hidden] {
+  display: none;
+}
+
+.gp-main {
+  height: 34px;
+  padding: 0 var(--space-5);
+  border-radius: var(--radius-full);
+  background: var(--accent);
+  color: var(--bg);
+  font-size: var(--size-text);
+  scale: var(--press);
+  transition: background-color var(--hover) var(--ease), --press var(--settle) var(--spring);
+}
+
+.gp-main:hover {
+  background: var(--accent-bright);
+}
+
+.gp-main:active {
+  --press: 0.97;
+}
+
+.gp-part {
+  margin-top: var(--space-8);
+}
+
+.gp-label {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-3);
+  margin: 0 0 var(--space-2);
+  font-family: var(--font-emphasis);
+  font-weight: 400;
+  font-size: var(--size-text);
+  line-height: var(--leading-ui);
+  color: var(--text);
+}
+
+.gp-label-when {
+  font-family: var(--font-reading);
+}
+
+.gp-statement > :first-child {
+  margin-top: 0;
+}
+
+.gp-statement > :last-child {
+  margin-bottom: 0;
+}
+
+.gp-said {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  column-gap: var(--space-4);
+  row-gap: var(--space-2);
+  margin: 0;
+}
+
+.gp-said dt {
+  font-family: var(--font-emphasis);
+}
+
+.gp-said dd {
+  margin: 0;
+}
+
+/* The goals before this one: stations on an ink line down the margin, the
+   colleagues a goal asked hanging from it on a branch. */
+.gh-line {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  margin: 0 calc(var(--space-2) * -1);
+}
+
+.gh-ink {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.gh-ink-svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+
+.gh-line > :not(.gh-ink) {
+  position: relative;
+}
+
+.gh-goal,
+.gh-branch {
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr);
+  column-gap: var(--space-3);
+  align-items: center;
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 32px;
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-s);
+  color: var(--text);
+  font-size: var(--size-text);
+  line-height: var(--leading-ui);
+  text-align: left;
+}
+
+.gh-branch {
+  grid-template-columns: 22px auto minmax(0, 1fr);
+  column-gap: var(--space-2);
+  width: calc(100% - 26px);
+  margin-left: 26px;
+}
+
+button.gh-goal,
+.gh-branch {
+  transition: background-color var(--hover) var(--ease);
+}
+
+button.gh-goal:hover,
+.gh-branch:hover {
+  background: var(--fill);
+}
+
+.gh-dot {
+  width: 22px;
+  height: 24px;
+}
+
+.gh-words {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.gh-said {
+  margin: var(--space-1) var(--space-2) var(--space-3) calc(22px + var(--space-3) + var(--space-2));
+}
+
+.gh-said > :first-child {
+  margin-top: 0;
+}
+
+.gh-said > :last-child {
+  margin-bottom: 0;
+}
+
+@media (pointer: coarse) {
+  .gp-act,
+  .gp-main,
+  .gp-standing,
+  .gh-goal,
+  .gh-branch {
+    min-height: 44px;
+  }
+}
+
+/* Who works with the conversation, as a tree drawn by hand. */
+.cp-tree {
+  position: relative;
+  margin: var(--space-1) calc(var(--space-2) * -1) 0;
+}
+
+.cp-ink {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.cp-ink-svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+
+.cp-node {
+  position: relative;
+  display: grid;
+  grid-template-columns: 26px minmax(0, 1fr);
+  column-gap: var(--space-3);
+  align-items: start;
+  box-sizing: border-box;
+  width: 100%;
+  padding: 7px var(--space-2) 7px calc(var(--space-2) + var(--depth) * 30px);
+  border-radius: var(--radius-m);
+  color: var(--text);
+  font: inherit;
+  line-height: 26px;
+  text-align: left;
+  transition: background-color var(--hover) var(--ease);
+}
+
+button.cp-node:hover {
+  background: var(--fill);
+}
+
+.cp-seal {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border-radius: var(--radius-full);
+  background: var(--fill-strong);
+  color: var(--text-2);
+}
+
+.cp-lines {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.cp-top {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.cp-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-family: var(--font-emphasis);
+}
+
+.cp-meta {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--text-2);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.cp-meta .glyph {
+  margin-right: -4px;
+}
+
+.cp-end {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  color: var(--text-2);
+}
+
+.cp-node.failed .cp-end {
+  color: var(--wrong);
+}
+
+.cp-pulse {
+  width: 7px;
+  height: 7px;
+  border-radius: var(--radius-full);
+  background: var(--text-2);
+  transform: scale(var(--breath-scale));
+  opacity: var(--breath-alpha);
+  animation: pulse var(--breath) var(--ease-in-out) infinite;
+}
+
+:root[data-reduced] .cp-pulse {
+  animation: none;
+}
+
+.cp-stopped {
+  width: 10px;
+  height: 1.5px;
+  border-radius: 1px;
+  background: var(--text-2);
+}
+
+.cp-task {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.cp-empty {
+  margin: var(--space-3) 0 0 calc(var(--space-2) + 26px + var(--space-3));
+  color: var(--text-2);
+}
+
+@media (pointer: coarse) {
+  .cp-node {
+    min-height: 44px;
+  }
+}
+
+/* What one of the host's agents did fills the side's body, to be read;
+   the way to the row that sent it stands at the top. */
+.sp-page.agent-box {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto auto;
+  overflow: hidden;
+  margin: 0;
+  padding: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.sp-page.agent-box > .agent-scroll {
+  max-height: none;
+}
+
+.sp-jump {
+  justify-self: end;
+  margin: var(--space-2) var(--space-4) 0;
+}

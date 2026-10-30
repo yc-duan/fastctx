@@ -7,6 +7,7 @@
   display: flex;
   flex-direction: column;
   height: 100%;
+  container: talk / inline-size;
 }
 
 .conversation-page > .page-head {
@@ -27,7 +28,7 @@
   height: var(--edge);
   background: linear-gradient(to bottom, var(--bg), transparent);
   pointer-events: none;
-  transition: --edge var(--hover) ease;
+  transition: --edge var(--hover) var(--ease);
 }
 
 .conversation-page.scrolled > .page-head::after {
@@ -38,12 +39,12 @@
   flex: 1;
 }
 
-/* A conversation's head, one line by design: the agent's seal, which says
-   who it is; the title, in the display face, cut at a length of its own and
-   whole on resting there; then, at the right, where it lives, quietly, on a
-   computer, what it is pointed at and the tools. That it works is the
-   conversation's own line and the composer's to say; only trouble with the
-   line or the conversation is said here, in words. */
+/* A conversation's head, one line by design: its name, cut at a length of
+   its own and whole on resting there, who it is with on a pointer's rest;
+   then, at the right, where it lives, quietly, on a computer, and the
+   tools. That it works is the conversation's own line and the composer's to
+   say; only trouble with the line or the conversation is said here, in
+   words. */
 .who {
   flex: 1;
   display: flex;
@@ -52,34 +53,20 @@
   min-width: 0;
 }
 
-.who-seal {
-  position: relative;
-  flex: none;
-  display: grid;
-  place-items: center;
-  width: 30px;
-  height: 30px;
-  padding: 0;
-  border: 0;
-  border-radius: var(--radius-full);
-  background: var(--fill-strong);
-  color: var(--text-2);
-  transition: color var(--hover) ease;
+.who-name.gone {
+  color: var(--text-3);
 }
 
-.who-seal.gone {
-  opacity: 0.55;
-}
-
+/* The conversation's name in the reading face it is written in, its
+   semibold cut, at the text's size: one voice with the words under it. */
 .who-name {
   min-width: 0;
   max-width: 20em;
   margin: 0;
-  font-family: var(--font-display);
+  font-family: var(--font-emphasis);
   font-weight: 400;
-  font-size: var(--size-head);
-  line-height: 1.25;
-  letter-spacing: 0.02em;
+  font-size: var(--size-text);
+  line-height: var(--leading-ui);
   color: var(--text-strong);
   white-space: nowrap;
   overflow: hidden;
@@ -141,16 +128,11 @@
 }
 
 /* On a phone the line keeps the seal, the title, the machines as a mark and
-   a count, and the "⋯"; where it lives, finding and the details are a
-   press of the seal or the "⋯" away. */
+   a count, and the "⋯"; where it lives, finding, the choice of view and the
+   details are a press of the seal or the "⋯" away. */
 @media (max-width: 760px) {
   .who {
     gap: 10px;
-  }
-
-  .who-seal {
-    width: 28px;
-    height: 28px;
   }
 
   .who-home {
@@ -171,7 +153,22 @@
     font-variant-numeric: tabular-nums;
   }
 
-  .page-head-actions:has(.talk-menu-toggle) .find-toggle {
+  .page-head-actions:has(.talk-menu-toggle) :is(.find-toggle, .view-steps) {
+    display: none;
+  }
+}
+
+/* A narrow place on the desk folds finding and the choice of view into the
+   "⋯" as a phone does; the top row's last, beside the window's own buttons
+   on Windows, a little sooner. */
+@container talk (max-width: 560px) {
+  .page-head-actions:has(.talk-menu-toggle) :is(.find-toggle, .view-steps) {
+    display: none;
+  }
+}
+
+@container talk (max-width: 700px) {
+  html.framed .dk-corner .page-head-actions:has(.talk-menu-toggle) :is(.find-toggle, .view-steps) {
     display: none;
   }
 }
@@ -207,8 +204,8 @@
   transform: translateX(-50%);
   opacity: var(--shown);
   translate: var(--slide) var(--lift);
-  animation: to-latest-in var(--enter) ease-out;
-  transition: color var(--hover) ease;
+  animation: to-latest-in var(--enter) var(--ease-out);
+  transition: color var(--hover) var(--ease);
 }
 
 .to-latest[hidden] {
@@ -265,7 +262,7 @@
   font: inherit;
   font-size: var(--size-text);
   cursor: pointer;
-  transition: color var(--hover) ease, background-color var(--hover) ease;
+  transition: color var(--hover) var(--ease), background-color var(--hover) var(--ease);
 }
 
 .steps-back-go .glyph {
@@ -442,7 +439,7 @@
   color: var(--text-2);
   font-size: var(--body-size);
   white-space: nowrap;
-  transition: color var(--hover) ease, background-color var(--hover) ease;
+  transition: color var(--hover) var(--ease), background-color var(--hover) var(--ease);
 }
 
 .composer-chip > span {
@@ -461,8 +458,9 @@
   }
 
   /* A refusal does not fit beside the tools on a phone: it takes a line of
-     its own above them, and the tools keep theirs. */
-  .composer-row {
+     its own above them, and the tools keep theirs. Otherwise the row never
+     breaks: the model's name gives way, the send button keeps its end. */
+  .composer-row:has(> .composer-note.refused) {
     flex-wrap: wrap;
   }
 
@@ -554,6 +552,34 @@
   width: min(420px, 100%);
 }
 
+/* The paperclip's menu on a phone (`attach-way.ts`): the camera and files,
+   a row a finger presses each. */
+.composer-menu.attach-pop {
+  right: auto;
+  width: min(240px, 100%);
+}
+
+.attach-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  width: 100%;
+  min-height: 44px;
+  padding: 0 var(--space-3);
+  border-radius: var(--radius-s);
+  color: var(--text);
+  font-size: var(--size-text);
+}
+
+.attach-row:hover {
+  background: var(--hairline);
+}
+
+.attach-row > .glyph {
+  flex: none;
+  color: var(--text-2);
+}
+
 .menu-row {
   display: grid;
   grid-template-columns: minmax(0, auto) minmax(0, 1fr) auto;
@@ -616,7 +642,7 @@
   background: var(--accent);
   color: var(--bg);
   scale: var(--press);
-  transition: background-color var(--hover) ease, --press var(--settle) var(--spring);
+  transition: background-color var(--hover) var(--ease), --press var(--settle) var(--spring);
 }
 
 .composer-action:hover:not(:disabled) {
@@ -626,7 +652,7 @@
 .composer-action:active:not(:disabled) {
   --press: 0.94;
   transition-duration: var(--hover), var(--quick);
-  transition-timing-function: ease, var(--ease-out);
+  transition-timing-function: var(--ease), var(--ease-out);
 }
 
 .composer-action:disabled {
@@ -642,7 +668,7 @@
 /* Asked to stop: it breathes until the turn has ended. */
 .composer-action.stopping {
   opacity: var(--shown);
-  animation: stopping var(--armed) ease-in-out infinite alternate;
+  animation: stopping var(--armed) var(--ease-in-out) infinite alternate;
 }
 
 @keyframes stopping {
@@ -693,6 +719,40 @@
 
 .attach-item.failed {
   background: color-mix(in srgb, var(--wrong) 14%, transparent);
+}
+
+/* A card rises into the tray the first time it is drawn; one taken away
+   sinks out before it goes. */
+.attach-item {
+  opacity: var(--shown);
+  translate: 0 var(--lift);
+}
+
+.attach-item.fresh {
+  animation: attach-in var(--enter) var(--ease-out) both;
+}
+
+.attach-item.leaving {
+  pointer-events: none;
+  animation: attach-out var(--quick) var(--ease-out) both;
+}
+
+@keyframes attach-in {
+  from {
+    --shown: 0;
+    --lift: 6px;
+  }
+}
+
+@keyframes attach-out {
+  to {
+    --shown: 0;
+    --lift: 6px;
+  }
+}
+
+:root[data-reduced] .attach-item.fresh {
+  animation: none;
 }
 
 .attach-thumb {
@@ -754,7 +814,7 @@
   place-items: center;
   border-radius: var(--radius-full);
   color: var(--text-3);
-  transition: color var(--hover) ease, background-color var(--hover) ease;
+  transition: color var(--hover) var(--ease), background-color var(--hover) var(--ease);
 }
 
 .attach-remove:hover {
@@ -769,7 +829,7 @@
   height: 2px;
   width: 0;
   background: var(--accent);
-  transition: width var(--hover) linear;
+  transition: width var(--hover) var(--linear);
 }
 
 .composer-attach {
@@ -835,7 +895,7 @@
 
 .composer-confirm-acts {
   display: flex;
-  gap: var(--space-2);
+  gap: var(--space-4);
   margin-top: var(--space-3);
 }
 
@@ -844,7 +904,7 @@ button.composer-context {
   height: 28px;
   padding: 0 var(--space-2);
   border-radius: var(--radius-full);
-  transition: background-color var(--hover) ease, color var(--hover) ease;
+  transition: background-color var(--hover) var(--ease), color var(--hover) var(--ease);
 }
 
 button.composer-context:hover {
@@ -973,16 +1033,18 @@ button.composer-context[hidden] {
   box-shadow: 0 2px 0 -1px var(--rule);
 }
 
+/* Renamed in place: a solid field a shade deeper than the page, its words
+   where the title's were. */
 .who-rename {
   width: min(28em, 100%);
-  margin: 0;
-  padding: 0;
+  margin: 0 calc(-1 * var(--space-2));
+  padding: 0 var(--space-2);
   border: 0;
   outline: 0;
-  background: transparent;
+  border-radius: var(--radius-s);
+  background: var(--fill);
   color: var(--text-strong);
   font: inherit;
-  box-shadow: 0 2px 0 -1px var(--accent);
 }
 
 /* Words said while the agent works: a block of their own above the input,
@@ -1026,6 +1088,8 @@ button.composer-context[hidden] {
   gap: var(--space-1);
   min-height: 34px;
   padding: 2px var(--space-2) 2px 2px;
+  opacity: var(--shown);
+  translate: 0 var(--lift);
 }
 
 .queue-row.wrong .queue-text {
@@ -1085,6 +1149,22 @@ button.composer-context[hidden] {
     width: 44px;
     height: 44px;
   }
+}
+
+/* A row rises into the queue the first time it is drawn. */
+.queue-row.fresh {
+  animation: queue-in var(--enter) var(--ease-out) both;
+}
+
+@keyframes queue-in {
+  from {
+    --shown: 0;
+    --lift: 6px;
+  }
+}
+
+:root[data-reduced] .queue-row.fresh {
+  animation: none;
 }
 
 .queue-row.dragging {

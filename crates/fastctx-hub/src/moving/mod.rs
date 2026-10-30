@@ -41,6 +41,7 @@ pub(crate) mod frames;
 pub(crate) mod old;
 pub(crate) mod out;
 pub(crate) mod requests;
+mod snapshot;
 pub(crate) mod standby;
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -419,7 +420,8 @@ impl Moving {
         if !hub.moving.settled(tokio::time::Instant::now() + SETTLING).await {
             return Err(format!("what the hub took was not done within {} s of it stopping", SETTLING.as_secs()));
         }
-        hub.store().save_letters_now().map_err(|error| format!("recording where the letters stand: {error}"))
+        hub.store().save_letters_now().map_err(|error| format!("recording where the letters stand: {error}"))?;
+        crate::updates::flush(hub).await
     }
 
     pub fn thaw(&self) {

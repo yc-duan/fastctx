@@ -58,7 +58,11 @@ impl Inner {
     /// Puts the times in `view` the hub gave by its clock by this machine's.
     pub(super) fn localize(&self, view: &mut View) {
         for member in &mut view.directory.members {
-            member.since = member.since.map(|at| self.local(at));
+            if member.since.is_some() || member.settled.is_some() {
+                let member = std::sync::Arc::make_mut(member);
+                member.since = member.since.map(|at| self.local(at));
+                member.settled = member.settled.map(|at| self.local(at));
+            }
         }
     }
 }

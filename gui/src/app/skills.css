@@ -1,0 +1,128 @@
+/* The account's skills (`skills-page.ts`): a solid row for each, its name
+   and when it applies; 「新建」 at the end of the list's rule. The page holds
+   still and the list scrolls in its own place, however many there are. */
+
+.skl-body.host-prefs {
+  padding-bottom: 0;
+}
+
+.skl-board {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  padding-bottom: max(var(--space-6), var(--safe-bottom));
+}
+
+.skl-board > .skl-section {
+  flex: 0 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.skl-title::after {
+  order: 1;
+}
+
+/* The page's own name says what the list is: the rule starts the list
+   without saying it again, the name kept for a screen reader. */
+.skl-said {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.skl-title .skl-add {
+  order: 2;
+  height: 28px;
+  margin-right: calc(-1 * var(--space-2));
+  padding: 0 var(--space-2);
+  letter-spacing: 0;
+}
+
+.skl-rows {
+  display: grid;
+  align-content: start;
+  gap: 6px;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+}
+
+.skl-row {
+  display: grid;
+  grid-template-columns: 11em minmax(0, 1fr);
+  align-items: center;
+  column-gap: var(--space-4);
+  width: 100%;
+  min-height: 52px;
+  padding: 6px var(--space-4);
+  border-radius: var(--radius-m);
+  background: var(--fill);
+  color: var(--text);
+  text-align: left;
+  transition: background-color var(--hover) var(--ease);
+}
+
+.skl-row:hover,
+.skl-row:focus-visible {
+  outline: 0;
+  background: var(--fill-strong);
+}
+
+.skl-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-family: var(--font-emphasis);
+  color: var(--text-strong);
+  white-space: nowrap;
+}
+
+.skl-when {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-3);
+}
+
+/* None yet: the book alone, quiet, where the rows would be. */
+.skl-none {
+  display: grid;
+  justify-items: center;
+  gap: var(--space-3);
+  padding: var(--space-12) 0 var(--space-8);
+  color: var(--text-3);
+}
+
+/* The sheet: the instructions grow only so far, then scroll in their place. */
+.skl-sheet .skl-instructions {
+  min-height: 9em;
+  max-height: 40vh;
+  font-family: var(--font-reading);
+}
+
+/* A phone: the name, then when it applies under it. */
+@media (max-width: 600px) {
+  .skl-row {
+    grid-template-columns: minmax(0, 1fr);
+    row-gap: 2px;
+    padding: var(--space-3) var(--space-4);
+  }
+
+  .skl-when {
+    white-space: normal;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+  }
+}

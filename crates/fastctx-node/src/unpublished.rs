@@ -4,13 +4,24 @@ use std::io;
 use std::path::Path;
 
 pub(crate) fn collect(directory: &Path) -> io::Result<()> {
-    for path in crate::retention::entries(directory)? {
-        let metadata = std::fs::symlink_metadata(&path)?;
-        if fastctx_platform::owned_directory::is_link(&metadata) {
+    let entries = match std::fs::read_dir(directory) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error),
+    };
+    for entry in entries {
+        let entry = entry?;
+        let kind = entry.file_type()?;
+        if kind.is_symlink() {
             continue;
         }
-        let Some(name) = path.file_name().and_then(|name| name.to_str()) else { continue };
-        if metadata.is_dir() {
+        let path = entry.path();
+        let name = entry.file_name();
+        let Some(name) = name.to_str() else { continue };
+        if kind.is_dir() {
+            if fastctx_platform::owned_directory::is_link(&entry.metadata()?) {
+                continue;
+            }
             if name == "attachments" {
                 uploads(&path)?;
             }

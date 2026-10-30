@@ -1,0 +1,134 @@
+/* Every project (`projects-page.ts`): a solid row for each, its folder, its
+   name and the first line of what it is for, its conversations counted at
+   its end; the search above holds still while the rows scroll. */
+
+.pjl-page {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.pjl-find {
+  flex: none;
+  width: min(100%, 760px);
+  margin: 0 auto;
+  padding: var(--space-2) var(--gutter) var(--space-1);
+}
+
+.pjl-body {
+  flex: 1;
+  min-height: 0;
+  width: min(100%, 760px);
+  margin: 0 auto;
+  padding: 0 var(--gutter) var(--space-10);
+}
+
+.pjl-title::after {
+  order: 1;
+}
+
+.pjl-title .pjl-add {
+  order: 2;
+  height: 28px;
+  margin-right: calc(-1 * var(--space-2));
+  padding: 0 var(--space-2);
+  letter-spacing: 0;
+}
+
+/* With one account the page's own name says what the rows are: the rule
+   starts them without saying it again, the name kept for a screen reader. */
+.pjl-said {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.pjl-rows {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.pjl-row {
+  display: grid;
+  grid-template-columns: 18px 11em minmax(0, 1fr) auto;
+  align-items: center;
+  column-gap: var(--space-3);
+  min-height: 52px;
+  padding: 6px var(--space-4);
+  border-radius: var(--radius-m);
+  background: var(--fill);
+  color: var(--text);
+  text-decoration: none;
+  transition: background-color var(--hover) var(--ease);
+}
+
+.pjl-row:hover,
+.pjl-row:focus-visible {
+  outline: 0;
+  background: var(--fill-strong);
+}
+
+.pjl-mark {
+  display: grid;
+  place-items: center;
+  color: var(--text-3);
+}
+
+.pjl-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-emphasis);
+  color: var(--text-strong);
+}
+
+.pjl-what {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-3);
+}
+
+.pjl-row .count {
+  justify-self: end;
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+
+.pjl-row .count.waiting {
+  color: var(--accent);
+}
+
+.pjl-none {
+  display: grid;
+  justify-items: center;
+  gap: var(--space-3);
+  padding: var(--space-12) 0 var(--space-8);
+  color: var(--text-3);
+}
+
+.pjl-quiet {
+  padding: var(--space-3) 0;
+}
+
+/* A phone: the name, then what it is for under it. */
+@media (max-width: 600px) {
+  .pjl-row {
+    grid-template-columns: 18px minmax(0, 1fr) auto;
+    row-gap: 2px;
+    padding: var(--space-3) var(--space-4);
+  }
+
+  .pjl-what {
+    grid-column: 2 / -1;
+    grid-row: 2;
+  }
+}

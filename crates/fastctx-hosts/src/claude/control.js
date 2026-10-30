@@ -273,6 +273,12 @@ async function controlReply($, state, file, request) {
     const starting = new Promise(resolve => { finishStarting = resolve })
     state.starting.add(starting)
     try {
+      const nativeContext = nativeGoalContexts.get(state.host.session)
+      if (nativeContext && !nativeContext.busy) {
+        try { await clearNativeGoal($, nativeContext) }
+        catch (error) { throw controlRefusal(String(error)) }
+        if (!nativeContext.nativeGoalCleared) throw controlRefusal('Claude native goal cleanup did not finish; the control was not sent')
+      }
       const owner = await $.process.run([FASTCTX, 'claude-control-owner', WORLD])
       if (owner.exitCode !== 0) throw new Error('checking the World node: ' + owner.stderr)
       if (!controlSame(JSON.parse(owner.stdout), request.controller)) throw new Error('the World node that requested this control exited')
@@ -297,7 +303,7 @@ async function controlReply($, state, file, request) {
       }
       if (state.closed) return
       entered = true
-      const executing = controlExecute($, state, { ...request.control, receipt: request.handoff_contract === 1 ? file.slice(0, -5) : undefined }, request.handoff_contract === 1)
+      const executing = controlExecute($, state, { ...request.control, controller: request.controller, receipt: request.handoff_contract === 1 ? file.slice(0, -5) : undefined }, request.handoff_contract === 1)
       // These commands can enter session.end while their own call is pending.
       if (request.control.do === 'command' && ['exit', 'quit', 'reload-plugins'].includes(request.control.name)) finishStarting()
       reply = { ok: await executing }
@@ -331,6 +337,13 @@ async function controlReply($, state, file, request) {
 
 async function controlExecute($, state, control, handoff = false) {
   if (state.closed) throw new Error('this Claude conversation ended')
+  if (control.do === 'usage') return $.session.usage({ breakdown: 'summary' })
+  if (control.do === 'goal_compact') {
+    const automatic = (await $.config.list()).find((row) => row.key === 'autoCompact')
+    if (!automatic) return { kind: 'refused', said: 'Claude did not report its automatic compaction setting.' }
+    if (automatic.value === false) return { kind: 'refused', said: 'Automatic compaction is disabled.' }
+    return controlCompact($, state, undefined, control)
+  }
   if (control.do === 'offers') {
     const commands = await controlCatalog($, state)
     const rows = await $.config.list()
@@ -356,7 +369,7 @@ async function controlExecute($, state, control, handoff = false) {
     return offered
   }
   if (control.do === 'compact') {
-    return controlCompact($, state)
+    return controlCompact($, state, undefined, control)
   }
   if (control.do === 'command') {
     return controlCommand($, state, control)
@@ -373,8 +386,11 @@ async function controlExecute($, state, control, handoff = false) {
   if (control.do === 'rewind') return controlRewind($, state, control)
   if (control.do === 'selection') return { kind: 'selected', model: state.selection.model ?? null, effort: state.selection.effort ?? null }
   if (control.do === 'checkpoint') {
-    if (state.busy !== false) throw new Error('Claude Code can fork from a turn only between turns')
-    if (control.through === state.completedTurn) await controlCheckpoint($, state, control.through, false)
+    // A turn under way is forked from once it ends. One that ended keeps the
+    // boundary taken as it ended: while another turn runs, it is not taken
+    // again from what the session holds now, that turn's messages among it.
+    if (state.busy !== false && control.through === state.turn) throw new Error('Claude Code can fork from a turn only once it ends')
+    if (state.busy === false && control.through === state.completedTurn) await controlCheckpoint($, state, control.through, false)
     const count = state.checkpoints.turns[control.through]?.after
     if (count === undefined) throw new Error('this turn has no retained Claude message checkpoint')
     if (state.checkpoints.full !== true) throw new Error('this session has no fully observed message prefix')
@@ -459,11 +475,11 @@ async function controlExecute($, state, control, handoff = false) {
   throw new Error('Claude Code has no mod control for ' + control.do)
 }
 
-async function controlQuestion($, state, name, params, call, nativeWait = false) {
+async function controlQuestion($, state, name, params, call) {
   const key = 'r-' + String(++state.sequence)
   const agent = params.agentId ?? params.agent_id ?? call?.agentId
   const request = { key, host: state.host, turn: agent === undefined && state.busy === true ? state.turn : null,
-    request: name, params, native_wait: nativeWait }
+    request: name, params }
   if (call !== undefined) call.requests.push(key)
   let child
   try {
@@ -556,6 +572,7 @@ async function completeControlTurn($, e) {
 }
 
 async function endControls($, e) {
+    nativeGoalContexts.delete(e.sessionId)
     const state = sessions.get(e.sessionId)
     if (state) {
       state.closed = true
@@ -578,16 +595,6 @@ async function controlCall($, e, next) {
     const call = { tool, agentId, requests: [] }
     state.calls.set(tool_use_id, call)
     try {
-      if (tool === 'AskUserQuestion') {
-        // Keep the native path running. Its immediate refusal needs no
-        // viewer; if it waits, someone opening World later can still answer.
-        // A tool.call hook settling first aborts its pending next() branch.
-        const native = next(e)
-        const world = controlQuestion($, state, 'AskUserQuestion', e, call, true)
-          .then((reply) => reply.kind === 'answer' ? reply.answer : native)
-          .catch((error) => { if (!call.finished) worldFailure($, 'AskUserQuestion', error); return native })
-        return await Promise.race([native, world])
-      }
       return await next(e)
     } finally {
       call.finished = true

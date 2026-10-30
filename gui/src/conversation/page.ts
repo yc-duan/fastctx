@@ -2,6 +2,7 @@
 // conversation itself in a region that scrolls on its own, and the words
 // the user is about to send, always at the foot.
 
+import { leave, leaving, stay } from "../app/leave";
 import { keepChoice } from "../app/model-memory";
 import { layerOpened } from "../app/back";
 import { FocusPanel, type FocusServers, focusSummary, type FocusPlace } from "../app/focus-panel";
@@ -13,6 +14,7 @@ import type { Attachment } from "../world/attachments";
 import type { AttachmentSource } from "../world/files";
 import type { Decoding } from "../world/remote-lines";
 import { AttachTray, type AttachSeam, type AttachWords, type Attached } from "./attach";
+import { wireAttach } from "./attach-way";
 import { SendQueue, type Queued } from "./queue";
 import { bindComposer, type ComposerSession, type ComposerSessionState } from "./composer";
 import type { ComposerSnapshot, ComposerUpdated } from "../world/composer";
@@ -26,7 +28,11 @@ import { effortLabel } from "./effort-slider";
 import { fileRow, mentionAt, mentioned, type FileWords, type FoundFile } from "./mention";
 import { FileLinks } from "./file-links";
 import { JobsPanel, type Job, type OutputLines } from "./jobs-panel";
-import { AgentsPanel } from "./agents-panel";
+import { AgentBox } from "./agent-box";
+import { SideParts } from "../side/parts";
+import type { Address } from "../world/wire";
+import type { SideSeams } from "../side/seams";
+import type { ForkFrom } from "./fork-card";
 import type { AgentActivity, Tool } from "../world/events";
 import { Pictures, type PictureSeams } from "./pictures";
 import type { HeldRead } from "../world/reads";
@@ -137,6 +143,13 @@ export interface PageOptions {
     words: ComposerWords;
     offers(): Promise<Offers>;
     control(what: Control): Promise<Controlled>;
+    /** A fork is asked for, from a turn or from where the conversation is
+    *  now: its place opens beside it at once. */
+    forking?(through: string | null): void;
+    /** It waits for the turn under way to end. */
+    forkQueued?(): void;
+    /** None was made; the line beside the input says why. */
+    forkFailed?(): void;
     /** A fork was made: where it lives. */
     forked(resident: { resident: string; machine: string }): void;
     /** Opens a link in the system's browser. */
@@ -144,6 +157,9 @@ export interface PageOptions {
   };
   /** Where the words being written are kept between visits. */
   draftKey?: string;
+  /** Where this device keeps which view the conversation was last read
+   *  in (`world-voice.md`, 两种看法). */
+  viewKey?: string;
   /** The input shared by every device with this conversation open, its
    *  words and queue kept by the node of the agent's machine; where it
    *  cannot be opened (a node of an older version), the page keeps its own. */
@@ -178,6 +194,8 @@ export interface PageOptions {
   /** A job's output as lines from the machine running it, read as it
    *  grows. */
   jobOutput?: ((job: Job) => Promise<OutputLines>) | undefined;
+  /** The address of a watcher's own page, for its row among the jobs. */
+  watchLink?: ((job: Job) => string) | undefined;
   /** Lines of a file or a job's output on the machine holding them: what a
    *  write changed, a command's whole output. */
   lines?: ((machine: string, path: string, decoding: Decoding) => Promise<OutputLines>) | undefined;
@@ -186,6 +204,17 @@ export interface PageOptions {
   agentRecord?: ((agent: string) => Promise<AgentActivity>) | undefined;
   /** A turn's requests one by one, on its login's usage page. */
   calls?: ((turn: string) => void) | undefined;
+  /** The panel beside the conversation: its plan, its goal, and who works
+   *  with it (`side/parts.ts`). */
+  side?: SideSeams | undefined;
+  /** How the list names another conversation, and its family. */
+  named?: ((address: Address) => { name: string; agent: "claude" | "codex" }) | undefined;
+  /** What the list calls this conversation, where it calls it anything:
+   *  its head says so until its host gives a title of its own. */
+  listedTitle?: (() => string | null) | undefined;
+  /** Goes to the conversation a fork came from, at the turn it was made
+   *  from, as the card at the fork's head asks. */
+  toSource?: ((address: Address, turn: string | null) => void) | undefined;
 }
 
 /** How many times what a conversation offers is asked again after asking
@@ -280,9 +309,10 @@ export class ConversationPage {
   private chip: HTMLButtonElement;
   private finder: Finder;
   private far: FarFind;
-  /** Ctrl+F finds in the conversation while its page is shown. */
+  /** Ctrl+F finds in the conversation while its page is shown and in
+   *  focus on the desk. */
   private readonly findKey = (event: KeyboardEvent) => {
-    if (!this.element.isConnected || !(event.ctrlKey || event.metaKey) || event.key.toLowerCase() !== "f" || event.altKey) return;
+    if (!this.element.isConnected || !this.active || !(event.ctrlKey || event.metaKey) || event.key.toLowerCase() !== "f" || event.altKey) return;
     event.preventDefault();
     this.finder.show();
   };
@@ -294,12 +324,11 @@ export class ConversationPage {
     this.element.innerHTML = `
       ${options.head(
         `<div class="who">
-        <span class="who-seal" tabindex="0">${glyph(markOf(someone.agent), 16)}</span>
         <h1 class="who-name">${escape(someone.agent)}</h1>
-        <span class="who-home">${glyph("machine", 14)}<span>${escape(someone.assistFrom ? words.assistFrom(someone.assistFrom) : someone.machine)}</span></span>
+        ${someone.assistFrom ? `<span class="who-home">${glyph("machine", 14)}<span>${escape(words.assistFrom(someone.assistFrom))}</span></span>` : ""}
         <span class="who-state" hidden></span>
       </div>`,
-        `<button class="icon-button find-toggle" type="button" aria-label="${escape(words.find.find)}" title="${escape(words.find.find)}">${glyph("search", 18)}</button>${
+        `<button class="icon-button view-steps" type="button" aria-pressed="false" aria-label="${escape(words.viewSteps)}" title="${escape(words.viewSteps)}">${glyph("steps", 18)}</button><button class="icon-button find-toggle" type="button" aria-label="${escape(words.find.find)}" title="${escape(words.find.find)}">${glyph("search", 18)}</button>${
           options.manage
             ? `<button class="icon-button talk-menu-toggle" type="button" aria-haspopup="menu" aria-expanded="false" aria-label="${escape(options.manage.words.more)}">${glyph("more", 20)}</button>`
             : ""
@@ -312,12 +341,12 @@ export class ConversationPage {
         <p class="composer-gone" hidden></p>
         <div class="composer-queue"></div>
         <form class="composer">
-          <div class="composer-menus"><div class="composer-menu usage-pop" hidden></div><div class="composer-menu said-pop" role="dialog" hidden></div><div class="jobs-pop" role="dialog" hidden></div><div class="agents-pop" role="dialog" hidden></div></div>
+          <div class="composer-menus"><div class="composer-menu usage-pop" hidden></div><div class="composer-menu said-pop" role="dialog" hidden></div><div class="jobs-pop" role="dialog" hidden></div></div>
           <div class="composer-confirm" hidden></div>
           <div class="composer-tray"></div>
           <textarea rows="1" enterkeyhint="send" placeholder="${escape(words.sendPlaceholder(someone.agent))}" aria-label="${escape(words.sendPlaceholder(someone.agent))}"></textarea>
           <div class="composer-row">
-            <div class="composer-tools"><button class="icon-button composer-attach" type="button" hidden></button><input class="composer-pick" type="file" multiple hidden><button class="icon-button composer-photo" type="button" hidden></button><input class="composer-shot" type="file" accept="image/*" capture="environment" hidden><button class="composer-chip" type="button" hidden></button><button class="composer-agents" type="button" hidden></button><button class="composer-jobs" type="button" hidden></button></div>
+            <div class="composer-tools"><button class="icon-button composer-attach" type="button" hidden></button><input class="composer-pick" type="file" multiple hidden><input class="composer-shot" type="file" accept="image/*" capture="environment" hidden><button class="composer-chip" type="button" hidden></button><button class="composer-jobs" type="button" hidden></button></div>
             <span class="composer-note" aria-live="polite"></span>
             <button class="composer-context" type="button" hidden></button>
             <button class="composer-action" type="submit" aria-label="${escape(words.send)}"></button>
@@ -366,6 +395,7 @@ export class ConversationPage {
       this.drawFocus();
     }
     this.element.querySelector(".find-toggle")!.addEventListener("click", () => (this.finder.open ? this.finder.close() : this.finder.show()));
+    this.element.querySelector(".view-steps")!.addEventListener("click", () => this.toggleSteps());
     document.addEventListener("keydown", this.findKey);
     this.name = this.element.querySelector<HTMLElement>(".who-name")!;
     // Cut or whole again as the head narrows or widens, its hint follows.
@@ -454,15 +484,6 @@ export class ConversationPage {
       near: (gap, side) => void this.fillGap(gap, side),
       // Words being sent leave from where they were typed.
       departure: () => departureOf(this.input),
-      questions: {
-        words: words.questions,
-        // Answers go in at once, into the turn if one runs: they never wait
-        // in the queue.
-        answer: async (text) => {
-          const came = await this.options.send(text, { refs: [], shown: [] });
-          if (came === "failed") throw new Error(words.notSent(""));
-        },
-      },
       here: options.here,
       residentMachine: someone.machine,
       agent: someone.agent,
@@ -479,15 +500,47 @@ export class ConversationPage {
       lines: options.lines,
       agentRecord: options.agentRecord,
       turnCalls: options.calls,
+      openAgent: options.side ? (id) => this.side?.openAgent(id) ?? false : undefined,
+      named: options.named,
     });
-    // The host's own agents as one picture (`agents-panel.ts`): a lane
-    // pressed brings the row of the call that started it into view.
-    this.agents = new AgentsPanel(this.element.querySelector<HTMLButtonElement>(".composer-agents")!, this.element.querySelector<HTMLElement>(".agents-pop")!, {
-      words,
-      show: (run) => {
-        if (this.view.openAgent(run.id)) this.following = false;
-      },
+    // The card at a fork's head goes back to where it came from.
+    main.addEventListener("click", (event) => {
+      const target = event.target as Element;
+      const from = target.closest<HTMLElement>(".fk-from[data-fork-source]");
+      if (!from || !target.closest(".fk-card")) return;
+      const source = from.dataset.forkSource!;
+      const at = source.lastIndexOf("@");
+      options.toSource?.({ resident: source.slice(0, at), machine: source.slice(at + 1) }, from.dataset.forkTurn ?? null);
     });
+    // Its parts for the desk's side (`side/parts.ts`): the plan, the goal,
+    // and who works with it, the host's own agents among them.
+    if (options.side) {
+      this.side = new SideParts(this.element, {
+        host: markOf(someone.agent) === "codex" ? "codex" : "claude",
+        seams: options.side,
+        say: (text, detail) => this.say(text, detail ?? ""),
+        // Answers go in at once, into the turn if one runs.
+        answer: async (text) => {
+          const came = await this.options.send(text, { refs: [], shown: [] });
+          if (came === "failed") throw new Error(words.notSent(""));
+        },
+        agentBox: (run) =>
+          new AgentBox(run, {
+            words,
+            english: words.english,
+            here: options.here,
+            residentMachine: someone.machine,
+            ...(options.lines ? { lines: options.lines } : {}),
+            ...(options.agentRecord ? { record: options.agentRecord } : {}),
+            reading: () => {},
+          }),
+        jump: (id) => {
+          if (this.view.openAgent(id)) this.following = false;
+        },
+        // What it is pointed at leaves the head for the side's foot.
+        env: this.element.querySelector<HTMLElement>(".focus-strip"),
+      });
+    }
     // For how long a way has been broken, and why, as the note says it.
     const broken = (since: number, why: string) => words.brokenFor(words.took(Date.now() - since), why);
     if (options.opening) {
@@ -520,6 +573,8 @@ export class ConversationPage {
       });
     }
 
+    // It opens in the view it was last read in here (`world-voice.md`).
+    this.viewing(this.storedView());
     // What was read of the conversation from the shell is drawn as it comes.
     options.conversation.changed = () => this.update({ read: true });
     this.latest = this.element.querySelector<HTMLButtonElement>(".to-latest")!;
@@ -803,7 +858,11 @@ export class ConversationPage {
     this.bound();
   }
 
-  private agents: AgentsPanel;
+  private side: SideParts | null = null;
+  /** In focus on the desk. */
+  private active = true;
+  /** The desk's own buttons in the head. */
+  private tools: HTMLElement[] = [];
   private agentsSeen = "";
 
   /** The host's own agents, as the conversation now knows them, to their
@@ -813,7 +872,7 @@ export class ConversationPage {
     const seen = `${conversation.agentStamp}|${conversation.bounds().join(";")}`;
     if (seen === this.agentsSeen) return;
     this.agentsSeen = seen;
-    this.agents.update(conversation.agents());
+    this.side?.agents(conversation.agents());
   }
 
   /** Where the reader was, kept while the page is out of view: following
@@ -927,7 +986,7 @@ export class ConversationPage {
     cancelAnimationFrame(this.frame);
     this.view.destroy();
     this.badge?.dispose();
-    this.agents.destroy();
+    this.side?.leave();
     this.finder.destroy();
     this.left = true;
     document.removeEventListener("keydown", this.findKey);
@@ -947,7 +1006,10 @@ export class ConversationPage {
   private controlQueue: ControlQueue | null = null;
   /** The controls the node took to do once a turn ends, by their ids. */
   private readonly pendingControls = new Map<string, PendingControl>();
-  private offersAsked = 0;
+  /** The asking of what the conversation offers that is out, and the one
+   *  that follows it for every wish made meanwhile. */
+  private offersAsking: Promise<void> | null = null;
+  private offersWanted: Promise<void> | null = null;
   private nodeTray: NodeTray | null = null;
   /** This device's last send of the shared words, until the node answers. */
   private sendingShared: Promise<unknown> = Promise.resolve();
@@ -1308,6 +1370,36 @@ export class ConversationPage {
     pop.innerHTML = "";
   }
 
+  /** Which view this conversation was last read in on this device: only
+   *  what was said, unless every step was asked for. */
+  private storedView(): "said" | "steps" {
+    if (!this.options.viewKey) return "said";
+    try {
+      return localStorage.getItem(this.options.viewKey) === "steps" ? "steps" : "said";
+    } catch {
+      return "said";
+    }
+  }
+
+  /** Shows only what was said, or every step; `keep` remembers it here. */
+  private viewing(mode: "said" | "steps", keep = false): void {
+    const { words } = this.options;
+    const toggle = this.element.querySelector<HTMLButtonElement>(".view-steps")!;
+    const steps = mode === "steps";
+    const label = steps ? words.viewSaid : words.viewSteps;
+    toggle.setAttribute("aria-pressed", String(steps));
+    toggle.setAttribute("aria-label", label);
+    toggle.title = label;
+    this.view.showing(mode);
+    if (!keep || !this.options.viewKey) return;
+    try {
+      if (steps) localStorage.setItem(this.options.viewKey, "steps");
+      else localStorage.removeItem(this.options.viewKey);
+    } catch {
+      // Not kept: the conversation opens in its usual view next time.
+    }
+  }
+
   private draft(): string | null {
     if (!this.options.draftKey) return null;
     try {
@@ -1353,12 +1445,67 @@ export class ConversationPage {
 
   private renaming = false;
 
-  /** Renames the conversation in its title, as from its "⋯". */
   /** Finds in the conversation: from the head's "⋯" on a phone. */
   showFind(): void {
     this.finder.show();
   }
 
+  /** Whether every step is shown, not only what was said. */
+  stepsShown(): boolean {
+    return this.element.querySelector(".view-steps")!.getAttribute("aria-pressed") === "true";
+  }
+
+  /** The side of the conversation, opened from the head's "⋯" on a phone;
+   *  none where it has no side, or the desk's side shows another's. */
+  panel(): (() => void) | null {
+    const side = this.side;
+    return side?.frame ? () => side.frame?.show(side.part ?? side.firstPart()) : null;
+  }
+
+  /** Whether its head folded finding and the choice of view into its
+   *  "⋯", as a narrow place on the desk or a phone does (`app.css`). */
+  folded(): boolean {
+    const steps = this.element.querySelector<HTMLElement>(".page-head .view-steps");
+    return !!steps && getComputedStyle(steps).display === "none";
+  }
+
+  /** Its parts, for the desk's side while it is in focus. */
+  get sideParts(): SideParts | null {
+    return this.side;
+  }
+
+  /** Whether it is the conversation in focus on the desk: the keys that
+   *  find in a conversation go to that one. */
+  setActive(active: boolean): void {
+    this.active = active;
+  }
+
+  /** The desk's own buttons at the end of the head (`desk/desk.ts`). */
+  paneTools(...tools: HTMLElement[]): void {
+    for (const tool of this.tools) tool.remove();
+    this.tools = tools;
+    this.element.querySelector(".page-head-actions")?.append(...tools);
+  }
+
+  /** Where a fork from `turn`, or from where the conversation is now,
+   *  begins: the user's words, the answer, and the answer as it is drawn. */
+  forkFrom(turn: string | null): { said: string | null; answer: string | null; element: HTMLElement | null } {
+    const at = this.options.conversation.excerpt(turn);
+    return { said: at.said, answer: at.answer, element: at.key ? this.view.elementOf(at.key) : null };
+  }
+
+  /** Where this fork came from, as the desk saw it as it was made. */
+  forkSeed(from: ForkFrom): void {
+    this.view.seedFork(from);
+  }
+
+  /** Shows every step, or only what was said again: by the head's button,
+   *  or from its "⋯" on a phone. */
+  toggleSteps(): void {
+    this.viewing(this.stepsShown() ? "said" : "steps", true);
+  }
+
+  /** Renames the conversation in its title, as from its "⋯". */
   startRename(): void {
     this.rename();
   }
@@ -1429,36 +1576,21 @@ export class ConversationPage {
     tray.onlyImages(() => this.imagesOnly(), (why) => this.say(why, "", true));
     this.tray = tray;
     this.element.querySelector(".composer-tray")!.replaceWith(tray.element);
-    const button = this.element.querySelector<HTMLButtonElement>(".composer-attach")!;
     const pick = this.element.querySelector<HTMLInputElement>(".composer-pick")!;
-    button.hidden = false;
-    button.innerHTML = glyph("attach", 18);
-    button.setAttribute("aria-label", attach.words.attach);
-    button.title = attach.words.attach;
-    // Where no machine of the user's can take a file, the picker offers
-    // images alone.
-    button.addEventListener("click", () => {
-      pick.accept = this.imagesOnly() ? "image/*" : "";
-      pick.click();
+    const shot = this.element.querySelector<HTMLInputElement>(".composer-shot")!;
+    wireAttach(this.element, this.element.querySelector<HTMLButtonElement>(".composer-attach")!, this.element.querySelector<HTMLElement>(".composer-menus")!, attach.words, {
+      // Where no machine of the user's can take a file, the picker offers
+      // images alone.
+      files: () => {
+        pick.accept = this.imagesOnly() ? "image/*" : "";
+        pick.click();
+      },
+      photo: () => shot.click(),
     });
-    pick.addEventListener("change", () => {
-      if (pick.files) this.attachFiles(pick.files);
-      pick.value = "";
-      this.input.focus();
-    });
-    // On a phone the camera is one tap away. Elsewhere an input that asks
-    // for a capture is only another file picker, so it is not offered.
-    if (matchMedia("(pointer: coarse)").matches) {
-      const photo = this.element.querySelector<HTMLButtonElement>(".composer-photo")!;
-      const shot = this.element.querySelector<HTMLInputElement>(".composer-shot")!;
-      photo.hidden = false;
-      photo.innerHTML = glyph("camera", 18);
-      photo.setAttribute("aria-label", attach.words.photo);
-      photo.title = attach.words.photo;
-      photo.addEventListener("click", () => shot.click());
-      shot.addEventListener("change", () => {
-        if (shot.files) this.attachFiles(shot.files);
-        shot.value = "";
+    for (const input of [pick, shot]) {
+      input.addEventListener("change", () => {
+        if (input.files) this.attachFiles(input.files);
+        input.value = "";
         this.input.focus();
       });
     }
@@ -1518,7 +1650,7 @@ export class ConversationPage {
     const space = text.indexOf(" ");
     const name = (space < 0 ? text.slice(1) : text.slice(1, space)).trim();
     const args = space < 0 ? "" : text.slice(space + 1).trim();
-    const find = (moving: boolean) => commandFor(commandsOf(this.offered, controls.words.commands, moving), name, args);
+    const find = (moving: boolean) => commandFor(commandsOf(this.offered, controls.words.commands, moving, this.side?.goals ?? false), name, args);
     if (!find(this.options.conversation.moving())) await this.askOffers();
     if (this.left) return;
     if (!this.offered) {
@@ -1540,20 +1672,37 @@ export class ConversationPage {
     this.say(waiting ? controls.words.afterTurn(name) : controls.words.unknown(name));
   }
 
-  private async askOffers(): Promise<void> {
+  /** Asks what the conversation offers, one asking at a time. Its commands
+   *  can change many times in a second (a host describing every command it
+   *  has), and each asking holds a place on its machine: wished for again
+   *  while one is out, it asks once more after that one, for every wish
+   *  made meanwhile, so whoever waits gets an answer begun after it asked. */
+  private askOffers(): Promise<void> {
+    if (!this.offersAsking) {
+      const asking = this.askOffersNow().finally(() => {
+        this.offersAsking = null;
+      });
+      this.offersAsking = asking;
+      return asking;
+    }
+    const next = () => {
+      this.offersWanted = null;
+      return this.askOffers();
+    };
+    this.offersWanted ??= this.offersAsking.then(next, next);
+    return this.offersWanted;
+  }
+
+  private async askOffersNow(): Promise<void> {
     const controls = this.options.controls;
     if (!controls || this.left) return;
     clearTimeout(this.offersAgain);
-    // An answer to an earlier asking that comes after a later one is set aside.
-    const asking = ++this.offersAsked;
     try {
       const offered = await controls.offers();
-      if (asking !== this.offersAsked) return;
       this.offered = offered;
       this.offersFailed = 0;
       this.syncControls(offered.pending_controls ?? []);
     } catch {
-      if (asking !== this.offersAsked) return;
       // The way to its machine broke for a moment: asked again a few times,
       // soon and then less often; after that, when a turn ends. Its machine
       // offers a model picker whatever its host answers, so only a machine
@@ -1659,11 +1808,16 @@ export class ConversationPage {
     return this.usagePop.fill({ context: conversation.context ?? this.offered?.usage?.context ?? null, usage: this.offered?.usage ?? null, requests });
   }
 
-  /** Starting again from the user's words, or forking from a turn: said
-   *  plainly first, done once the user agrees. */
+  /** Starting again from the user's words: said plainly first, done once
+   *  the user agrees. Forking from a turn takes nothing away: it is done at
+   *  once, the fork opening beside the conversation. */
   private turnAct(act: "rewind" | "regenerate" | "fork", turn: string, words: string | null, kept: Attachment[]): void {
     const controls = this.options.controls;
     if (!controls) return;
+    if (act === "fork") {
+      void this.run({ name: "fork", description: "", args: null, arguments: "none", control: "fork", source: null }, "", { do: "fork", through: turn });
+      return;
+    }
     const said = controls.words;
     const confirm = this.element.querySelector<HTMLElement>(".composer-confirm")!;
     const ask = act === "rewind" ? said.rewindAsk : act === "regenerate" ? said.regenerateAsk : said.forkAsk;
@@ -1732,7 +1886,7 @@ export class ConversationPage {
     const typed = /^\/(\S*)$/.exec(this.input.value);
     if (!typed) return menu.hide();
     const prefix = typed[1]!.toLowerCase();
-    const found = commandsOf(this.offered, this.options.controls.words.commands, this.options.conversation.moving()).filter((command) =>
+    const found = commandsOf(this.offered, this.options.controls.words.commands, this.options.conversation.moving(), this.side?.goals ?? false).filter((command) =>
       command.name.toLowerCase().startsWith(prefix),
     );
     menu.show(found, this.options.controls.words.commands.noCommands);
@@ -1835,6 +1989,10 @@ export class ConversationPage {
       this.stop();
       return true;
     }
+    if (command.control === "goal") {
+      this.side?.setGoal(args);
+      return true;
+    }
     if (command.control === "model" && !given && !args) {
       this.modelPanel?.show(true);
       return false;
@@ -1868,6 +2026,11 @@ export class ConversationPage {
     // never reached it.
     const told = Boolean(this.offered?.controls_told);
     if (!quiet && !told) this.say(words.running(command.name));
+    // A fork's place opens beside the conversation as it is asked for, and
+    // closes again where none comes of it.
+    const forking = what.do === "fork";
+    let forkHeld = false;
+    if (what.do === "fork") controls.forking?.(what.through);
     try {
       const done = await controls.control(what);
       // Taken to do once the turn ends: its line above the input says so.
@@ -1875,6 +2038,10 @@ export class ConversationPage {
         this.pendingControls.set(done.queued, { id: done.queued, control: what, at: new Date().toISOString(), state: "waiting" });
         this.say("");
         this.syncControls();
+        if (forking) {
+          forkHeld = true;
+          controls.forkQueued?.();
+        }
         return true;
       }
       // A choice kept for the next turn: the caller already shows it, and
@@ -1882,6 +2049,7 @@ export class ConversationPage {
       if (quiet && (done.kind === "done" || done.kind === "reported" || done.kind === "selected")) return true;
       if (done.kind === "forked") {
         this.say("");
+        forkHeld = true;
         controls.forked(done.resident);
         return true;
       }
@@ -1889,6 +2057,7 @@ export class ConversationPage {
       if (done.kind === "fork_incomplete") {
         if (told) this.say("");
         else this.say(words.forkIncomplete, done.why, true);
+        forkHeld = true;
         controls.forked(done.resident);
         return true;
       }
@@ -1933,6 +2102,8 @@ export class ConversationPage {
       else if (failure?.code === "control_uncertain") this.say(words.unknownOutcome(command.name), detailOf(error));
       else this.say(words.failed(detailOf(error)), detailOf(error), true);
       return false;
+    } finally {
+      if (forking && !forkHeld) controls.forkFailed?.();
     }
   }
 
@@ -1950,8 +2121,12 @@ export class ConversationPage {
         title: words.stillRunning,
         stop: words.stop,
         stopAsk: words.stopJobAsk,
+        withdraw: words.withdrawSentinel,
+        withdrawAsk: words.withdrawSentinelAsk,
         notStopped: words.notStopped,
         cancel: this.options.controls?.words.never ?? words.cancel,
+        wakeAt: words.sentinelWakeAt,
+        wakes: words.sentinelWakes,
         output: words.jobOutput,
         loading: words.jobOutputLoading,
         failed: words.jobOutputFailed,
@@ -1961,17 +2136,18 @@ export class ConversationPage {
       },
       stop: this.options.stopJob,
       output: this.options.jobOutput,
+      watch: this.options.watchLink,
       detail: detailOf,
     });
     this.jobs.update(jobs, now);
   }
 
-  private away: "removed" | "deleted" | null = null;
+  private away: "removed" | "deleted" | "away" | null = null;
 
   /** Whether the user archived it, or deleted it, as the World last listed
    *  it. Archived, it is kept to read and can be brought back where the
    *  composer was; deleted, what is shown is all that is left of it here. */
-  presence(away: "removed" | "deleted" | null): void {
+  presence(away: "removed" | "deleted" | "away" | null): void {
     if (this.away === away) return;
     this.away = away;
     // Its shared input is no one's now.
@@ -1982,6 +2158,11 @@ export class ConversationPage {
       this.session = null;
     }
     this.element.querySelector<HTMLElement>(".composer")!.hidden = away !== null;
+    // Nothing more is heard of it: no turn is said to go on, and its goal's
+    // bar, whose acts would reach nothing, steps aside.
+    const unheard = away === "away" || away === "deleted";
+    this.view.hearing(!unheard);
+    this.element.toggleAttribute("data-unheard", unheard);
     const gone = this.element.querySelector<HTMLElement>(".composer-gone")!;
     gone.hidden = away === null;
     const manage = this.options.manage;
@@ -1992,10 +2173,13 @@ export class ConversationPage {
           : escape(this.options.words.removedNote)
         : away === "deleted"
           ? `${glyph("trash", 16)}<span>${escape(manage?.words.deleted ?? this.options.words.removedNote)}</span>`
-          : "";
+          : away === "away"
+            ? `${glyph("lock", 16)}<span>${escape(this.options.someone.assistFrom ? this.options.words.assistEndedNote : this.options.words.departedNote)}</span>`
+            : "";
     this.element.querySelector<HTMLElement>(".talk-menu-toggle")?.toggleAttribute("hidden", away === "deleted");
     this.drawState();
     this.drawFocus();
+    this.update();
   }
 
   /** Who it is, as the World lists it: a conversation opened before then,
@@ -2067,6 +2251,7 @@ export class ConversationPage {
     );
     this.focusPanel.set(current);
     pop.replaceChildren(this.focusPanel.element);
+    stay(pop);
     pop.hidden = false;
     strip.querySelector(".focus-chip")!.setAttribute("aria-expanded", "true");
     layerOpened({ isOpen: () => !pop.hidden && this.element.isConnected, close: () => this.closeFocus(focus) });
@@ -2075,8 +2260,8 @@ export class ConversationPage {
   private closeFocus(focus: NonNullable<PageOptions["focus"]>): void {
     const strip = this.element.querySelector<HTMLElement>(".focus-strip")!;
     const pop = strip.querySelector<HTMLElement>(".focus-pop")!;
-    if (pop.hidden) return;
-    pop.hidden = true;
+    if (pop.hidden || leaving(pop)) return;
+    leave(pop, () => (pop.hidden = true));
     strip.querySelector(".focus-chip")!.setAttribute("aria-expanded", "false");
     const before = this.options.someone.focus;
     const next = this.focusDraft;
@@ -2140,7 +2325,8 @@ export class ConversationPage {
     const summary = focusSummary(focus, words);
     // On a phone the chip is its machine and how many places it holds.
     const count = focus.machines.reduce((sum, chosen) => sum + Math.max(1, chosen.folders.length), 0);
-    const html = `${glyph("machine", 16)}${summary ? summary.html : `<span class="talk-chip-name">${escape(words.none)}</span>`}${count ? `<span class="focus-count">${count}</span>` : ""}${glyph("chevron", 12)}`;
+    const named = summary ? summary.html : `<span class="talk-chip-name">${escape(words.none)}</span>`;
+    const html = `${glyph("machine", 16)}${named}${count ? `<span class="focus-count">${count}</span>` : ""}${glyph("chevron", 12)}`;
     if (chip.innerHTML !== html) chip.innerHTML = html;
     chip.classList.toggle("quiet", !summary);
     chip.title = summary ? `${words.title}\n${summary.said}` : words.title;
@@ -2209,9 +2395,11 @@ export class ConversationPage {
     if (!words) return;
     const name = controlName(row);
     const result = row.result;
-    if (row.state === "cancelled") return;
-    // A fork done later opens as one done at once does.
+    // A fork done later opens as one done at once does; one that came to
+    // nothing closes the place that waited for it.
     if (result?.kind === "forked" || result?.kind === "fork_incomplete") this.options.controls?.forked(result.resident);
+    else if (row.control.do === "fork") this.options.controls?.forkFailed?.();
+    if (row.state === "cancelled") return;
     if (this.offered?.controls_told) {
       void this.askOffers();
       return;
@@ -2274,8 +2462,9 @@ export class ConversationPage {
   private drawState(): void {
     const { words, someone, conversation } = this.options;
     // The host's own title for the conversation, once it gives one; until
-    // then the agent's name. Where it lives follows, on a computer.
-    const title = conversation.title;
+    // then what the list calls it, else the agent's name. Where it lives
+    // follows, on a computer.
+    const title = conversation.title ?? this.options.listedTitle?.() ?? null;
     const name = escape(title ?? someone.agent);
     if (!this.renaming && this.name.innerHTML !== name) this.name.innerHTML = name;
     const renamable = !!this.offered?.controls.includes("rename");
@@ -2287,12 +2476,17 @@ export class ConversationPage {
     const waiting = !this.gone && this.away === null && conversation.waiting();
     // Working for the whole of a turn, not only while something shows.
     const working = !this.gone && this.away === null && !waiting && conversation.busy();
+    // Out of reach for good, that is what is said, not that the line broke.
     const now =
-      this.gone ??
+      (this.away === "away" ? null : this.gone) ??
       (this.away !== null
         ? this.away === "deleted"
           ? (this.options.manage?.words.deleted ?? words.removed)
-          : words.removed
+          : this.away === "away"
+            ? someone.assistFrom
+              ? words.assistEnded
+              : words.departed
+            : words.removed
         : waiting
           ? words.waitingForYou
           : working
@@ -2304,19 +2498,18 @@ export class ConversationPage {
     // its words as they stream would be too many to hear.
     if (this.said !== null && this.said !== now) this.spoken.textContent = `${someone.agent}　${now}`;
     this.said = now;
-    // The seal says who; how it stands is on a pointer's rest. That it works
-    // or waits is the conversation's own to show, below; only what is wrong
-    // with the line or the conversation is said in words, after the title.
-    const seal = this.element.querySelector<HTMLElement>(".who-seal")!;
-    seal.classList.toggle("gone", this.gone !== null || this.away !== null);
+    // Who it is with and how it stands are on a pointer's rest over the
+    // head's name. That it works or waits is the conversation's own to show,
+    // below; only what is wrong with the line or the conversation is said in
+    // words, after the title.
+    const who = this.element.querySelector<HTMLElement>(".who")!;
+    this.name.classList.toggle("gone", this.gone !== null || this.away !== null);
     const model = this.options.conversation.answeredBy ? modelName(this.options.conversation.answeredBy) : someone.model;
     // Who it is, where it lives, how it is now and its model: on a phone,
     // where the head has no room for its machine, a long press says it.
     const lives = someone.assistFrom ? this.options.words.assistFrom(someone.assistFrom) : someone.machine;
-    const sealSaid = [someone.agent, lives, now, model].filter(Boolean).join("　");
-    seal.title = sealSaid;
-    seal.setAttribute("aria-label", sealSaid);
-    const trouble = this.gone ?? (this.away !== null ? now : null);
+    who.title = [someone.agent, lives, now, model].filter(Boolean).join("　");
+    const trouble = this.away === "away" ? now : (this.gone ?? (this.away !== null ? now : null));
     this.state.hidden = !trouble;
     if (this.state.textContent !== (trouble ?? "")) this.state.textContent = trouble ?? "";
     this.state.classList.toggle("gone", trouble !== null);

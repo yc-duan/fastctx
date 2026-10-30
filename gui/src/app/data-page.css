@@ -10,6 +10,21 @@
   --data-other: var(--pen-rose);
 }
 
+/* One column down the middle of the page, scrolling under its head. */
+.data-body > * {
+  width: var(--board);
+  margin-left: auto;
+  margin-right: auto;
+}
+
+.data-body > .home-section {
+  margin-top: var(--space-8);
+}
+
+.data-body > .home-section:last-child {
+  padding-bottom: var(--space-12);
+}
+
 .data-top {
   margin-top: var(--space-6);
 }
@@ -79,7 +94,8 @@
   order: 1;
 }
 
-.data-section .section-title .data-size {
+.data-section .section-title .data-size,
+.data-section .section-title .data-clear {
   order: 2;
   font-family: var(--font-reading);
   letter-spacing: 0;
@@ -101,7 +117,7 @@
   background: var(--fill);
   color: var(--text-2);
   font-size: var(--size-text);
-  transition: color var(--hover) ease, background-color var(--hover) ease;
+  transition: color var(--hover) var(--ease), background-color var(--hover) var(--ease);
 }
 
 .data-tab:hover {
@@ -132,7 +148,7 @@
 
 .data-row {
   border-radius: var(--radius-m);
-  transition: background-color var(--hover) ease;
+  transition: background-color var(--hover) var(--ease);
 }
 
 .data-row:hover,
@@ -270,8 +286,11 @@
   color: var(--text-3);
 }
 
+/* A phone: a conversation's row is its mark, its name and its size; its
+   project and when it was last used are said when its name is held. */
 @media (max-width: 520px) {
-  .data-when {
+  .data-when,
+  .data-row-open > .tag {
     display: none;
   }
 

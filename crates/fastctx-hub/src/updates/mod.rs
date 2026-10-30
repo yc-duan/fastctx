@@ -8,7 +8,13 @@
 //! machines' reports only what each ran is kept past its session, in
 //! memory: each tells the rest again.
 
+mod announce;
+mod due_batch;
+mod publishing;
+pub(crate) use publishing::start;
 mod history;
+mod repair;
+mod repair_batch;
 mod view;
 pub(crate) use view::request as view_request;
 mod attempt;
@@ -28,7 +34,6 @@ use std::time::Duration;
 
 use std::collections::BTreeMap;
 
-use fastctx_net::wire::Down;
 use fastctx_types::MachineName;
 use fastctx_types::machine_log::{Action, Actor, Outcome};
 use fastctx_types::update::{Asked, Channel, Due, Held, Looked, Manifest, Network, Policy, Report, Running};
@@ -38,7 +43,7 @@ use tokio::sync::oneshot;
 pub(crate) use obtain::{ask, bring_in, progress, unfetched};
 pub(crate) use transfer::{deliver, serve};
 
-use crate::{Hub, Out};
+use crate::Hub;
 
 /// One of the archives a hub cannot pack itself (`HELD_ARCHIVES`), of
 /// `version`, as the hub holds it among its update packages, checked when
@@ -85,13 +90,15 @@ pub(crate) struct Updates {
     reports: HashMap<MachineName, (u64, Report)>,
     /// What each machine ran when it last reported, online or away.
     last: history::History,
-    history_writer: tokio::sync::watch::Sender<history::History>,
+    hub_hosts: std::collections::BTreeSet<fastctx_net::sign::PublicKey>,
+    history_writer: history::Writer,
+    publishing: Arc<publishing::Publishing>,
     catalog: BTreeMap<String, Manifest>,
     /// What the hub found when it last looked on GitHub.
     looked: Looked,
     check: Arc<tokio::sync::Mutex<()>>,
     /// What every machine was last told.
-    told: HashMap<MachineName, Network>,
+    told: HashMap<MachineName, crate::outq::VersionSnapshot>,
     /// The packages being brought in, and who waits for each.
     obtaining: HashMap<Held, obtain::Obtaining>,
     requests: HashMap<(MachineName, u64, u64), (Held, bool)>,
@@ -133,12 +140,18 @@ struct Fetching {
 impl Updates {
     /// The hub's record of updates; what tries of an earlier run of the hub
     /// left of packages coming is deleted, and said in `left`.
-    pub fn new(dir: &Path, due: &[crate::store::DueFor], left: &mut Vec<String>) -> Result<Self, String> {
+    pub fn new(
+        dir: &Path,
+        shelf: &crate::store::shelf::Shelf,
+        due: &[Arc<crate::store::DueFor>],
+        left: &mut Vec<String>,
+    ) -> Result<Self, String> {
         let cache = Cache::new(dir.join("updates"));
         left.extend(
             cache.clear_attempts().into_iter().map(|failed| format!("deleting a package left coming: {failed}")),
         );
-        let (last, history_writer) = history::open(cache.root())?;
+        let (last, history_writer) = history::open(shelf)?;
+        let hub_hosts = last.iter().filter(|(_, last)| last.report.hub_here).map(|(key, _)| *key).collect();
         let looked = discovery::read(cache.root()).unwrap_or_else(|why| {
             left.push(format!("reading discovered releases: {why}"));
             Looked::default()
@@ -153,7 +166,9 @@ impl Updates {
         Ok(Self {
             reports: HashMap::new(),
             last,
+            hub_hosts,
             history_writer,
+            publishing: Arc::default(),
             catalog,
             looked,
             check: Arc::new(tokio::sync::Mutex::new(())),
@@ -174,13 +189,16 @@ impl Updates {
 
     /// Every release the hub knows the manifest of.
     fn manifests(&self) -> impl Iterator<Item = Manifest> + '_ {
+        let mut seen = std::collections::HashSet::new();
         self.reports
             .values()
-            .flat_map(|(_, report)| report.found.iter().cloned())
-            .chain(self.looked.stable.iter().cloned())
-            .chain(self.looked.beta.iter().cloned())
-            .chain(self.looked.newer.iter().cloned())
-            .chain(self.catalog.values().cloned())
+            .flat_map(|(_, report)| report.found.iter())
+            .chain(self.looked.stable.iter())
+            .chain(self.looked.beta.iter())
+            .chain(self.looked.newer.iter())
+            .chain(self.catalog.values())
+            .filter(move |manifest| seen.insert(manifest.version.as_str()))
+            .cloned()
     }
 
     fn network(&self, policy: Policy, due: BTreeMap<MachineName, Due>) -> Network {
@@ -208,6 +226,8 @@ impl Updates {
             hub: Some(env!("CARGO_PKG_VERSION").to_string()),
             due,
             updates_view: true,
+            repair_supported: true,
+            repairs: BTreeMap::new(),
         }
     }
 
@@ -224,6 +244,7 @@ fn running(report: &Report) -> Running {
         github: report.github,
         away: false,
         hub_here: report.hub_here,
+        repair_supported: report.repair_supported,
     }
 }
 
@@ -232,30 +253,30 @@ pub(crate) fn running_of(hub: &Hub, key: &fastctx_net::sign::PublicKey) -> Optio
     hub.updates.lock().expect("never poisoned").last.get(key).map(|last| running(&last.report))
 }
 
-/// What the hub's settings say of updates: the policy, and the updates kept
-/// for machines, under their names now.
-fn kept(hub: &Hub) -> (Policy, BTreeMap<MachineName, Due>) {
-    let store = hub.store();
-    let due = store
-        .hub
-        .due
+fn network_in(
+    hub: &Hub,
+    directory: &fastctx_net::directory_index::Indexed<'_>,
+    policy: Policy,
+    due: &[Arc<crate::store::DueFor>],
+    repairs: &[Arc<crate::store::RepairFor>],
+) -> Network {
+    let due = due
         .iter()
         .filter_map(|kept| {
-            store.book.directory.by_key(&kept.key).map(|member| {
-                let mut due = kept.due.clone();
-                due.manifest = None;
-                due.problem = None;
-                (member.name.clone(), due)
+            directory.by_key(&kept.key).map(|member| {
+                (
+                    member.name.clone(),
+                    Due {
+                        version: kept.due.version.clone(),
+                        by: kept.due.by.clone(),
+                        at: kept.due.at,
+                        manifest: None,
+                        problem: None,
+                    },
+                )
             })
         })
         .collect();
-    (store.hub.updates.clone(), due)
-}
-
-/// The network's versions as every machine is told them now.
-pub(crate) fn network(hub: &Hub) -> Network {
-    let (policy, due) = kept(hub);
-    let directory = hub.store().book.directory.clone();
     let mut network = {
         let updates = hub.updates.lock().expect("never poisoned");
         let mut network = updates.network(policy, due);
@@ -270,16 +291,82 @@ pub(crate) fn network(hub: &Hub) -> Network {
         network
     };
     network.machines.retain(|name, _| directory.member(name).is_some());
+    network.repairs = repairs
+        .iter()
+        .filter_map(|kept| {
+            directory.by_key(&kept.key).map(|member| {
+                (
+                    member.name.clone(),
+                    fastctx_types::update::RepairDue {
+                        id: kept.due.id.clone(),
+                        version: kept.due.version.clone(),
+                        by: kept.due.by.clone(),
+                        at: kept.due.at,
+                        manifest: None,
+                        problem: kept.due.problem.clone(),
+                        attempts: kept.due.attempts,
+                        retry_at: kept.due.retry_at,
+                        observed: kept.due.observed,
+                    },
+                )
+            })
+        })
+        .collect();
     inventory::ready_network(hub, network)
 }
 
+/// Flushes accepted report changes before shutdown or the frozen handover.
+pub(crate) async fn flush(hub: &Hub) -> Result<(), String> {
+    let (writer, publishing) = {
+        let updates = hub.updates.lock().expect("never poisoned");
+        (updates.history_writer.clone(), updates.publishing.clone())
+    };
+    tokio::time::timeout(std::time::Duration::from_secs(30), async {
+        writer.flush().await;
+        publishing.flush().await;
+    })
+    .await
+    .map_err(|_| "the hub could not finish committing reports and publishing versions within 30 seconds".to_string())
+}
+
+/// Identities whose last report says this hub runs there.
+pub(crate) fn hub_hosts(hub: &Hub) -> std::collections::BTreeSet<fastctx_net::sign::PublicKey> {
+    hub.updates.lock().expect("never poisoned").hub_hosts.clone()
+}
+
+/// Membership changes, not every report, retire records of removed devices.
+pub(crate) fn directory_changed(hub: &Hub) {
+    let keys: std::collections::BTreeSet<_> = {
+        let mut store = hub.store();
+        let keys = store.book.directory.members.iter().map(|m| m.key).collect::<std::collections::BTreeSet<_>>();
+        let before = store.hub.package_targets.len();
+        store.hub.package_targets.retain(|key, _| keys.contains(key));
+        if before != store.hub.package_targets.len()
+            && let Err(error) = store.save_hub()
+        {
+            hub.log.line(format_args!("retiring package targets of removed devices: {error}"));
+        }
+        keys
+    };
+    let mut updates = hub.updates.lock().expect("never poisoned");
+    let gone: Vec<_> = updates.last.keys().filter(|key| !keys.contains(key)).copied().collect();
+    for key in gone {
+        updates.last.remove(&key);
+        updates.hub_hosts.remove(&key);
+        updates.history_writer.put(key, None);
+    }
+}
+
 /// `name` told the hub its versions on its session `generation`.
-pub(crate) fn heard(hub: &Arc<Hub>, name: &MachineName, generation: u64, report: Report) {
+pub(crate) fn heard(hub: &Arc<Hub>, name: &MachineName, generation: u64, mut report: Report) {
+    repair::merge_legacy_report(hub, name, &mut report);
+    if let Some(result) = &report.repair {
+        repair::settle(hub, name, result);
+    }
     inventory::targets(hub, name, &report);
     let (kernel, app, asked) =
         (report.kernel.clone(), report.app.as_ref().map(|a| a.version.clone()), report.asked.clone());
-    let directory = hub.store().book.directory.clone();
-    let Some(key) = directory.member(name).map(|m| m.key) else { return };
+    let Some(key) = hub.store().book.directory.member(name).map(|m| m.key) else { return };
     let planning_changed = {
         let mut updates = hub.updates.lock().expect("never poisoned");
         let changed = updates.reports.get(name).is_none_or(|(_, previous)| {
@@ -293,13 +380,22 @@ pub(crate) fn heard(hub: &Arc<Hub>, name: &MachineName, generation: u64, report:
                 updates.catalog.insert(manifest.version.clone(), manifest.clone());
             }
         }
-        updates.last.insert(key, history::LastReport { at: jiff::Timestamp::now(), report: report.clone() });
-        updates.last.retain(|key, _| directory.by_key(key).is_some());
-        updates.history_writer.send_replace(updates.last.clone());
+        if report.hub_here {
+            updates.hub_hosts.insert(key);
+        } else {
+            updates.hub_hosts.remove(&key);
+        }
+        let last = Arc::new(history::LastReport { at: jiff::Timestamp::now(), report: report.clone() });
+        updates.last.insert(key, last.clone());
+        updates.history_writer.put(key, Some(last));
         updates.reports.insert(name.clone(), (generation, report));
         changed
     };
+    if let Err(error) = crate::hub_machine::settle(hub) {
+        hub.log.line(format_args!("revoking shares of the hub machine: {error}"));
+    }
     if planning_changed {
+        hub.directory_changed.notify_one();
         settle(hub, name, &kernel, app.as_deref(), asked);
     }
     let mut due_changed = false;
@@ -309,14 +405,11 @@ pub(crate) fn heard(hub: &Arc<Hub>, name: &MachineName, generation: u64, report:
         // A machine brought to a newer release than it was asked for fails
         // the arrangement all the same.
         let reached = fastctx_types::update::release(&version);
-        if let Some(due) = store
-            .hub
-            .due
-            .iter_mut()
-            .find(|due| due.key == key && reached.is_some() && reached >= fastctx_types::update::release(&due.due.version))
-            && due.due.problem.as_ref() != Some(&problem)
+        if let Some(due) = store.hub.due.iter_mut().find(|due| {
+            due.key == key && reached.is_some() && reached >= fastctx_types::update::release(&due.due.version)
+        }) && due.due.problem.as_ref() != Some(&problem)
         {
-            due.due.problem = Some(problem);
+            Arc::make_mut(due).due.problem = Some(problem);
             due_changed = true;
             if let Err(error) = store.save_hub() {
                 hub.log.line(format_args!("keeping the failed arrangement for {name}: {error}"));
@@ -325,11 +418,8 @@ pub(crate) fn heard(hub: &Arc<Hub>, name: &MachineName, generation: u64, report:
     }
     // Progress updates the durable account view without repeating discovery
     // or rebuilding every member's version notice on each byte sample.
-    if planning_changed {
-        prefetch(hub);
-    }
     if planning_changed || due_changed {
-        tell(hub, None);
+        hub.updates.lock().expect("never poisoned").publishing.request(None, planning_changed);
     }
 }
 
@@ -354,14 +444,22 @@ fn settle(hub: &Hub, name: &MachineName, kernel: &str, app: Option<&str>, asked:
         store = hub.store();
     }
     let Some(asked) = asked.filter(|asked| asked.from != kernel) else { return };
-    if store.book.machine_log.updated(&key, &asked.from, kernel) {
-        return;
+    match store.book.machine_log.updated(&key, &asked.from, kernel) {
+        Ok(true) => return,
+        Ok(false) => {}
+        Err(error) => {
+            hub.log.line(format_args!("reading completed updates: {error}"));
+            return;
+        }
     }
     let directory = store.book.directory.clone();
     let actor = Actor { account: None, authenticated: true, member: Some(name.clone()), peer: None };
     let action = Action::Updated { machine: name.clone(), from: asked.from, to: kernel.to_string(), by: asked.by };
     match crate::machine_log::keep(&mut store, &directory, actor, action, Outcome::Done) {
-        Ok(()) => hub.machine_log_changed.notify_one(),
+        Ok(()) => {
+            hub.machine_log_changed.notify_one();
+            hub.directory_changed.notify_one();
+        }
         Err(error) => hub.log.line(format_args!("{error}")),
     }
 }
@@ -399,44 +497,7 @@ pub(crate) fn closed(hub: &Hub, name: &MachineName, generation: u64) {
 /// Tells every machine that reads versions what changed, or, with `only`,
 /// tells that one machine all of it.
 pub(crate) fn tell(hub: &Hub, only: Option<&MachineName>) {
-    let network = network(hub);
-    let directory = hub.store().book.directory.clone();
-    let recipients: Vec<_> = hub
-        .sessions()
-        .iter()
-        .filter(|(name, session)| session.versions && only.is_none_or(|only| only == *name))
-        .map(|(name, session)| (name.clone(), session.out.clone()))
-        .collect();
-    for (name, out) in recipients {
-        let name = &name;
-        let mut cut = network.clone();
-        let accounts = directory.member(name).map(|m| &m.logins);
-        let visible = |machine: &MachineName| {
-            directory.same(name, machine)
-                || accounts.is_some_and(|accounts| accounts.iter().any(|a| directory.may_update(a, machine)))
-        };
-        cut.machines.retain(|machine, _| visible(machine));
-        cut.due.retain(|machine, _| visible(machine));
-        // Only the executor needs the full manifest. Repeating it for every
-        // managed machine exceeds the control-frame limit (2026-10-20).
-        if let Some(due) = cut.due.get_mut(directory.canonical(name)) {
-            let store = hub.store();
-            if let Some(details) = directory.member(name).and_then(|member| {
-                store.hub.due.iter().find(|kept| kept.key == member.key && kept.due.version == due.version)
-            }) {
-                due.manifest = details.due.manifest.clone();
-                due.problem = details.due.problem.clone();
-            }
-        }
-        inventory::offer_to(hub, name, &mut cut);
-        let mut updates = hub.updates.lock().expect("never poisoned");
-        if only.is_none() && updates.told.get(name) == Some(&cut) {
-            continue;
-        }
-        updates.told.insert(name.clone(), cut.clone());
-        drop(updates);
-        let _ = out.send(Out::Frame(Down::Versions { network: Box::new(cut) }));
-    }
+    hub.updates.lock().expect("never poisoned").publishing.request(only, false);
 }
 
 /// Looks on GitHub now and every few hours, while the hub runs.

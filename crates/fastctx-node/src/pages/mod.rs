@@ -24,11 +24,35 @@ pub async fn call(
     opened_on: &MachineName,
     call: PageCall,
 ) -> Result<Reply, Failure> {
+    let mut reply = answer(node, caller, opened_on, call).await?;
+    // Who published a page and who consented to it, and where, as whoever
+    // asks may know them (`ledger::query::usable`).
+    let acting = crate::around::acting_of(node, caller);
+    let town = match &reply {
+        Reply::Page { view } => Some(view.town.clone()),
+        Reply::PageHistory { town, .. } | Reply::Pages { town, .. } => Some(town.clone()),
+        _ => None,
+    };
+    let usable = match &town {
+        Some(town) => crate::ledger::query::usable(node, &acting, town).map_err(io_failure)?,
+        None => None,
+    };
+    if let Some(usable) = usable {
+        match &mut reply {
+            Reply::Page { view } => view.for_reader(&*usable),
+            Reply::PageHistory { versions, .. } => versions.iter_mut().for_each(|version| version.for_reader(&*usable)),
+            Reply::Pages { pages, .. } => pages.iter_mut().for_each(|summary| summary.current.for_reader(&*usable)),
+            _ => {}
+        }
+    }
+    Ok(reply)
+}
+
+async fn answer(node: &Arc<Node>, caller: &Caller, opened_on: &MachineName, call: PageCall) -> Result<Reply, Failure> {
     match call {
         PageCall::Publish { town, page, base, draft } => {
             publisher(caller)?;
             let town = caller.town_or(node, town)?;
-            let _writing = node.writing.lock().await;
             refresh(node, &town).await?;
             let stored = stored(node, &town, &page)?;
             check_base(&page, base, stored.current().map(|v| v.version))?;
@@ -38,7 +62,6 @@ pub async fn call(
         PageCall::Withdraw { town, page, base } => {
             publisher(caller)?;
             let town = caller.town_or(node, town)?;
-            let _writing = node.writing.lock().await;
             refresh(node, &town).await?;
             let stored = stored(node, &town, &page)?;
             check_base(&page, Some(base), stored.current().map(|v| v.version))?;
@@ -54,7 +77,6 @@ pub async fn call(
         PageCall::Restore { town, page, base, version } => {
             publisher(caller)?;
             let town = caller.town_or(node, town)?;
-            let _writing = node.writing.lock().await;
             refresh(node, &town).await?;
             let stored = stored(node, &town, &page)?;
             check_base(&page, Some(base), stored.current().map(|v| v.version))?;
@@ -95,7 +117,6 @@ pub async fn call(
         PageCall::Consent { town, page, version, base, acts, account } => {
             user(caller)?;
             let town = caller.town_or(node, town)?;
-            let _writing = node.writing.lock().await;
             refresh(node, &town).await?;
             let stored = stored(node, &town, &page)?;
             check_base(&page, Some(version), stored.current().map(|v| v.version))?;
@@ -118,7 +139,7 @@ pub async fn call(
                 base,
                 page_version: version,
                 acts: unique(acts),
-                stamp: Stamp { by: Writer::User, on: opened_on.clone(), at: Timestamp::now() },
+                stamp: Stamp { by: Writer::User, on: Some(opened_on.clone()), at: Timestamp::now() },
             };
             let files = vec![(account_consent_path(&page, &identity, consent.version), pretty(&consent)?)];
             identity::resolve(node, caller, opened_on, &town, account.as_ref())?;
@@ -172,7 +193,6 @@ async fn current(node: &Arc<Node>, town: &TownName, required: bool) -> Result<()
     let Some((place, link)) = place.and_then(|place| node.link_of(&place.hub).map(|link| (place, link))) else {
         return require_town(node, town);
     };
-    let _syncing = node.syncing.lock().await;
     let offline = || {
         Failure::new(format!(
             "cannot verify the current page and consent for {town}: the hub connection ended; no action was admitted"
@@ -243,11 +263,7 @@ async fn validate_acts(node: &Arc<Node>, town: &TownName, acts: &[PageAct]) -> R
                 }
             }
             PageAct::Say { to } => actions::resident(node, town, to).await?,
-            PageAct::Journal { journal } => {
-                if !crate::town::read::journal_names(&node.world, town).map_err(io_failure)?.contains(journal) {
-                    return Err(Failure::new(format!("{town} has no journal {journal}")));
-                }
-            }
+            PageAct::Journal { .. } => return Err(Failure::not_run(fastctx_types::memory::LEGACY)),
         }
     }
     Ok(())
@@ -274,7 +290,7 @@ async fn publish(
         withdrawn,
         restored_from,
         by: caller.writer(),
-        on: node.machine(),
+        on: Some(node.machine()),
         at: Timestamp::now(),
     };
     let mut files = vec![(version_path(page, version), pretty(&publication)?)];

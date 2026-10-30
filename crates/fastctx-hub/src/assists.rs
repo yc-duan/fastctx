@@ -33,8 +33,25 @@ pub(crate) async fn expire(hub: &Hub) -> io::Result<()> {
         let changed = hub.assists_changed.notified();
         let (ended, next) = {
             let mut store = hub.store();
-            let ended = !hub.moving.frozen() && end_due(&mut store, Timestamp::now())?;
-            (ended, store.book.directory.assists.iter().filter_map(|assist| assist.until).min())
+            let ended = !hub.moving.frozen()
+                && end_due(&mut store, Timestamp::now()).unwrap_or_else(|error| {
+                    // The deadline stands and is tried again shortly; a hub that
+                    // stopped for it would end every assistance at once.
+                    crate::hold_back::log(
+                        hub,
+                        &ENDING,
+                        format_args!("ending assistances that ran out: {error}; trying again in a minute"),
+                    );
+                    false
+                });
+            let next = store.book.directory.assists.iter().filter_map(|assist| assist.until).min();
+            // One that could not be ended is due still: looked at again in a minute.
+            let next = if next.is_some_and(|next| next <= Timestamp::now()) {
+                Timestamp::now().checked_add(jiff::SignedDuration::from_secs(60)).ok()
+            } else {
+                next
+            };
+            (ended, next)
         };
         hub.next_assist_end.0.store(next.map_or(i64::MAX, |next| next.as_second()), Ordering::Relaxed);
         if ended {
@@ -52,6 +69,10 @@ pub(crate) async fn expire(hub: &Hub) -> io::Result<()> {
         }
     }
 }
+
+/// When a failure to end an assistance was last told, so a lasting one is
+/// told once a minute.
+static ENDING: AtomicI64 = AtomicI64::new(0);
 
 /// The second of the clock in which the next deadline falls; `i64::MAX`
 /// while no assistance has one.
@@ -75,7 +96,8 @@ pub(crate) fn heard(hub: &Hub) {
 /// Ends the assistance due at `now`, each recorded as the hub's own doing;
 /// whether there was any.
 pub(crate) fn end_due(store: &mut Store, now: Timestamp) -> io::Result<bool> {
-    let due: Vec<Assist> = store.book.directory.assists.iter().filter(|assist| !assist.live(now)).cloned().collect();
+    let due: Vec<std::sync::Arc<Assist>> =
+        store.book.directory.assists.iter().filter(|assist| !assist.live(now)).cloned().collect();
     let hub = Actor { account: None, authenticated: true, member: None, peer: None };
     for assist in &due {
         let before = store.book.directory.clone();

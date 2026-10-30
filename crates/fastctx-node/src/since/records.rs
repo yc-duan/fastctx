@@ -2,15 +2,22 @@
 //! project a fact belongs to is the one the conversation was in when it
 //! happened, from its `town` record. Turn records can be written more than
 //! once, by different paths, and are merged by identity.
+//!
+//! A record is written when what it tells happens or later, so one written
+//! before `since` tells nothing after it: such files are not read, nor are
+//! folders nothing was added to since, and a reading touches what changed
+//! rather than all there ever was. A few minutes' grace covers a clock that
+//! stamped a record a little ahead of the file.
 
 use std::collections::BTreeMap;
 use std::io::{self, BufRead};
 use std::path::{Path, PathBuf};
+use std::time::{Duration, SystemTime};
 
 use fastctx_net::ledger::Entry;
 use fastctx_net::sign::Signed;
 use fastctx_types::layout::{ConversationDir, Kind, WorldDir};
-use fastctx_types::project::{Description, EntryStamp, Location, Record, version_of};
+use fastctx_types::project::{Location, Record, version_of};
 use fastctx_types::residents::{About, Action, Activity, MessageKind, MessageLine, Places};
 use fastctx_types::run::JobRecord;
 use fastctx_types::session::{Happened, SessionEvent, TurnEnd};
@@ -35,14 +42,35 @@ fn matches_town(place: &SinceTown, filter: Option<&TownName>) -> bool {
     })
 }
 
+/// How long before `since` a file must have been written to be passed over.
+const GRACE: Duration = Duration::from_secs(10 * 60);
+
+/// What the records read so far establish, before it is cut to `since`.
+pub(super) struct Partial {
+    started: Timestamp,
+    events: Vec<SinceEvent>,
+    undated: Vec<UndatedFact>,
+    issues: Vec<SinceIssue>,
+}
+
+/// Everything this machine's records establish since `since`.
 pub(super) fn read(
     world: &WorldDir,
     machine: &MachineName,
     since: Timestamp,
     town: Option<&TownName>,
 ) -> io::Result<SinceReply> {
+    let mut partial = conversations(world, machine, since)?;
+    ledgers(&mut partial, world, machine, town)?;
+    Ok(reply(partial, machine, since, town))
+}
+
+/// What the conversations and the jobs here establish. Each of their records
+/// is published whole, so no lock is needed to read them.
+pub(super) fn conversations(world: &WorldDir, machine: &MachineName, since: Timestamp) -> io::Result<Partial> {
     let started = Timestamp::now();
-    let mut scan = Scan { machine, events: Vec::new(), undated: Vec::new(), issues: Vec::new() };
+    let cutoff = SystemTime::from(since).checked_sub(GRACE);
+    let mut scan = Scan { machine, events: Vec::new(), undated: Vec::new(), issues: Vec::new(), cutoff };
     let mut residents = BTreeMap::<ResidentId, ResidentFiles>::new();
     for parent in world.job_parents()? {
         for directory in scan.dirs(&parent) {
@@ -110,6 +138,24 @@ pub(super) fn read(
         scan.finish_resident(id, files);
     }
     scan.claude(world, &residents);
+    Ok(Partial { started, events: scan.events, undated: scan.undated, issues: scan.issues })
+}
+
+/// The projects' ledgers, in `town` or all of them: read by the caller under
+/// the lock their intake publishes them under.
+pub(super) fn ledgers(
+    partial: &mut Partial,
+    world: &WorldDir,
+    machine: &MachineName,
+    town: Option<&TownName>,
+) -> io::Result<()> {
+    let mut scan = Scan {
+        machine,
+        events: std::mem::take(&mut partial.events),
+        undated: std::mem::take(&mut partial.undated),
+        issues: std::mem::take(&mut partial.issues),
+        cutoff: None,
+    };
     let towns = match town {
         Some(town) => vec![town.clone()],
         None => world.towns()?,
@@ -117,23 +163,30 @@ pub(super) fn read(
     for town in towns {
         scan.ledger(world, &town);
     }
-    scan.events.retain(|event| {
+    (partial.events, partial.undated, partial.issues) = (scan.events, scan.undated, scan.issues);
+    Ok(())
+}
+
+/// What happened after `since`, in `town` when one is named.
+pub(super) fn reply(partial: Partial, machine: &MachineName, since: Timestamp, town: Option<&TownName>) -> SinceReply {
+    let Partial { started, mut events, mut undated, mut issues } = partial;
+    events.retain(|event| {
         event.at > since
             && (matches_town(&event.town, town)
                 || matches!(&event.what, SinceKind::ResidentMoved { to, .. } if town.is_some() && to.as_ref() == town))
     });
-    scan.undated.retain(|fact| matches_town(&fact.town, town));
-    let events = fastctx_types::since::merge_events(scan.events, &mut scan.issues);
-    Ok(SinceReply {
+    undated.retain(|fact| matches_town(&fact.town, town));
+    let events = fastctx_types::since::merge_events(events, &mut issues);
+    SinceReply {
         coverage: SinceCoverage {
             machine: machine.clone(),
             read_started_at: started,
             read_finished_at: Timestamp::now(),
-            issues: scan.issues,
+            issues,
         },
         events,
-        undated: scan.undated,
-    })
+        undated,
+    }
 }
 
 /// Reads the queried ledger without claiming to know the residents of a
@@ -144,7 +197,7 @@ pub(super) fn ledger(
     since: Timestamp,
     town: &TownName,
 ) -> (Vec<SinceEvent>, Vec<SinceIssue>) {
-    let mut scan = Scan { machine, events: Vec::new(), undated: Vec::new(), issues: Vec::new() };
+    let mut scan = Scan { machine, events: Vec::new(), undated: Vec::new(), issues: Vec::new(), cutoff: None };
     scan.ledger(world, town);
     scan.events.retain(|event| event.at > since);
     (scan.events, scan.issues)
@@ -157,6 +210,9 @@ struct ResidentFiles {
     birth_sources: Vec<Location>,
     turns: BTreeMap<String, Turn>,
     uncertain: BTreeMap<NoticeId, Uncertain>,
+    /// Some of its session events were passed over as written before the
+    /// cutoff: what they would have dated is older than `since`.
+    events_passed: bool,
 }
 
 impl ResidentFiles {
@@ -194,6 +250,8 @@ struct Scan<'a> {
     events: Vec<SinceEvent>,
     undated: Vec<UndatedFact>,
     issues: Vec<SinceIssue>,
+    /// Files written before this tell nothing after `since`.
+    cutoff: Option<SystemTime>,
 }
 
 impl Scan<'_> {
@@ -240,8 +298,34 @@ impl Scan<'_> {
             .collect()
     }
 
+    /// The JSON files of `directory` written since the cutoff, and whether
+    /// any were passed over. A record is published by moving it into its
+    /// folder, so a folder changed before the cutoff holds none written since.
+    fn changed_json_files(&mut self, directory: &Path) -> (Vec<PathBuf>, bool) {
+        let Some(cutoff) = self.cutoff else { return (self.json_files(directory), false) };
+        if modified(directory).is_some_and(|at| at < cutoff) {
+            return (Vec::new(), true);
+        }
+        let mut passed = false;
+        let paths = self
+            .json_files(directory)
+            .into_iter()
+            .filter(|path| {
+                let keep = modified(path).is_none_or(|at| at >= cutoff);
+                passed |= !keep;
+                keep
+            })
+            .collect();
+        (paths, passed)
+    }
+
+    /// Whether a file only ever appended to was written to since the cutoff.
+    fn appended_since(&self, path: &Path) -> bool {
+        self.cutoff.is_none_or(|cutoff| modified(path).is_none_or(|at| at >= cutoff))
+    }
+
     fn jobs(&mut self, directory: &Path) {
-        for path in self.json_files(directory) {
+        for path in self.changed_json_files(directory).0 {
             let Some(job) = self.optional::<JobRecord>(&path) else { continue };
             let Some(end) = job.end else { continue };
             let account = job.account.or_else(|| job.on.and_then(|on| on.account));
@@ -271,7 +355,7 @@ impl Scan<'_> {
 
     fn resident(&mut self, about: &About, directory: &ConversationDir, files: &mut ResidentFiles) {
         let address = Address { machine: self.machine.clone(), resident: about.id.clone() };
-        for path in self.json_files(&directory.turns()) {
+        for path in self.changed_json_files(&directory.turns()).0 {
             if let Some(finished) = self.optional::<Finished>(&path) {
                 self.turn(
                     files,
@@ -286,7 +370,9 @@ impl Scan<'_> {
                 );
             }
         }
-        for path in self.json_files(&directory.session_events()) {
+        let (events, passed) = self.changed_json_files(&directory.session_events());
+        files.events_passed |= passed;
+        for path in events {
             if let Some(event) = self.optional::<SessionEvent>(&path) {
                 match event.happened {
                     Happened::TurnEnded { turn, end } => self.turn(
@@ -321,7 +407,8 @@ impl Scan<'_> {
             }
         }
         let path = directory.messages();
-        self.lines::<MessageLine>(&path, |scan, line, number| match line.what {
+        let messages = self.appended_since(&path);
+        self.lines::<MessageLine>(&path, messages, |scan, line, number| match line.what {
             MessageKind::Ended { turn, end, owed } => scan.turn(
                 files,
                 turn,
@@ -340,7 +427,8 @@ impl Scan<'_> {
             MessageKind::Asked { .. } | MessageKind::Heard { .. } => {}
         });
         let path = directory.actions();
-        self.lines::<Action>(&path, |scan, action, number| {
+        let actions = self.appended_since(&path);
+        self.lines::<Action>(&path, actions, |scan, action, number| {
             let town = files.town_at(action.at);
             if matches!(action.hand.as_str(), "write" | "edit" | "apply_patch") {
                 scan.events.push(SinceEvent {
@@ -385,7 +473,15 @@ impl Scan<'_> {
         });
     }
 
-    fn lines<T: serde::de::DeserializeOwned>(&mut self, path: &Path, mut take: impl FnMut(&mut Self, T, usize)) {
+    fn lines<T: serde::de::DeserializeOwned>(
+        &mut self,
+        path: &Path,
+        read: bool,
+        mut take: impl FnMut(&mut Self, T, usize),
+    ) {
+        if !read {
+            return;
+        }
         let file = match std::fs::File::open(path) {
             Ok(file) => file,
             Err(error) if error.kind() == io::ErrorKind::NotFound => return,
@@ -487,6 +583,9 @@ impl Scan<'_> {
                         readers: uncertain.readers.clone(),
                     },
                 }),
+                // The event that dates it may be among those passed over as
+                // older than `since`; only one known to have none is undated.
+                None if files.events_passed => {}
                 None => self.undated.push(UndatedFact {
                     hub: None,
                     resident: address.clone(),
@@ -611,39 +710,18 @@ fn ledger_fact(_town: &TownName, path: &str, bytes: &[u8]) -> io::Result<Option<
     let fact = match parts.as_slice() {
         ["project", version] if version_of(version).is_some() => {
             let record: Record = serde_json::from_slice(bytes).map_err(io::Error::other)?;
-            (
-                record.at,
-                record.on,
-                SinceKind::ProjectVersion { version: record.version, name: record.name, by: record.by },
-            )
-        }
-        ["journals", journal, "entries", _, "entry.json"] => {
-            let stamp: EntryStamp = serde_json::from_slice(bytes).map_err(io::Error::other)?;
-            (
-                stamp.at,
-                stamp.machine,
-                SinceKind::JournalEntry {
-                    journal: journal.parse().map_err(io::Error::other)?,
-                    entry: stamp.id,
-                    by: stamp.by,
-                },
-            )
-        }
-        ["journals", journal, "description", version] if version_of(version).is_some() => {
-            let description: Description = serde_json::from_slice(bytes).map_err(io::Error::other)?;
-            (
-                description.at,
-                description.on,
-                SinceKind::JournalDescription {
-                    journal: journal.parse().map_err(io::Error::other)?,
-                    version: description.version,
-                    by: description.by,
-                },
-            )
+            // Written down with the machine it was written on, always.
+            let Some(on) = record.on else { return Ok(None) };
+            (record.at, on, SinceKind::ProjectVersion { version: record.version, name: record.name, by: record.by })
         }
         _ => return Ok(None),
     };
     Ok(Some(fact))
+}
+
+/// When `path` was last written; none where that cannot be told.
+fn modified(path: &Path) -> Option<SystemTime> {
+    std::fs::metadata(path).and_then(|meta| meta.modified()).ok()
 }
 
 fn paths(directory: &Path) -> io::Result<Vec<PathBuf>> {

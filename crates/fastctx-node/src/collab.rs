@@ -14,10 +14,8 @@ use fastctx_types::{AccountName, AgentName, ResidentId};
 
 use crate::Node;
 
-/// Whether model collaboration is offered: while it is in development, no
-/// session is given a colleague, whatever an account or this computer has
-/// set, and the interface has nothing to turn it on (`world-gui.md`, 功能).
-const OFFERED: bool = false;
+/// Accounts still opt in and select each calling login.
+const OFFERED: bool = true;
 
 pub(crate) struct Candidate {
     pub shown: String,
@@ -77,6 +75,12 @@ pub(crate) fn choices(
         return Ok(None);
     }
     let about = resident.and_then(|id| node.residents.about(id).map(|(about, _)| about));
+    // Only a conversation the World holds asks colleagues: a session the
+    // user opened outside Fastctx is given `run` and nothing more
+    // (`world-layers.md`).
+    if !about.as_ref().is_some_and(|about| about.world_managed()) {
+        return Ok(None);
+    }
     let was_started = resident.map(|id| started(node, id)).transpose()?.flatten().is_some();
     if about.as_ref().is_some_and(|about| matches!(about.origin, Origin::Colleague { .. })) || was_started {
         return Ok(None);
@@ -219,14 +223,14 @@ fn own(node: &Node, login: &Caller) -> Result<Option<Choices>, Failure> {
 
 pub(crate) fn require(node: &Arc<Node>, resident: &ResidentId, login: Option<&Caller>) -> Result<Choices, Failure> {
     if let Some((about, _)) = node.residents.about(resident)
-        && let Origin::Colleague { asked_by, .. } = &about.origin
+        && matches!(about.origin, Origin::Colleague { .. })
     {
-        return Err(Failure::not_run(format!(
-            "you are a colleague {asked_by} asked for, and a colleague does not ask for colleagues; say what you need in your last message"
-        )));
+        return Err(Failure::not_run(fastctx_types::collab_prompt::NO_NESTING));
     }
     choices(node, Some(resident), login)?.ok_or_else(|| {
-        Failure::not_run(if OFFERED {
+        Failure::not_run(if !node.residents.about(resident).is_some_and(|(about, _)| about.world_managed()) {
+            crate::speech::OWN_SESSION
+        } else if OFFERED {
             "model collaboration is off for this caller; the user changes it on the Model collaboration page"
         } else {
             "model collaboration is still in development: no colleague can be asked yet"

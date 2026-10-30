@@ -53,9 +53,11 @@ pub async fn prior(
     node.residents.active(id)?;
     let cell = node.composers.cell(id);
     let mut cell = cell.lock().await;
-    load(node, id, &mut cell)?;
+    load(node, id, &mut cell).await?;
     let state = cell.as_ref().expect("loaded");
-    let Some(mut record) = receipts::upload(node, id, state, &scope.operation)? else { return Ok(Prior::Fresh) };
+    let Some(mut record) = receipts::upload(node, id, state, &scope.operation).await? else {
+        return Ok(Prior::Fresh);
+    };
     if record.scope != *scope || record.from != *from {
         return Err(failure("that upload operation ID was reused for another device, file or draft"));
     }
@@ -69,14 +71,14 @@ pub async fn prior(
         }
         Outcome::Failed { why } => {
             let why = why.clone();
-            let mut next = state.clone();
+            let mut next = cell.take().expect("loaded");
             if !mark(&mut next, scope, &record.attachment.id, None, &why) {
                 return Err(Failure::new(why));
             }
             record.outcome = Outcome::Uploading;
             next.uploads.insert(scope.operation.clone(), record.clone());
-            publish(node, id, &mut cell, next)?;
             let guard = Guard { node: node.clone(), id: id.clone(), scope: scope.clone(), armed: true };
+            storage::publish_then(node, id, &mut cell, next, clear_failure(node, id, &scope.operation)).await?;
             return Ok(Prior::Again(Box::new(record.attachment), guard));
         }
         Outcome::Attached => Ok(Updated { composer: state.view(), landed: None, delivery: None }),
@@ -94,7 +96,7 @@ pub(crate) async fn files_on(
 ) -> Result<Option<fastctx_types::access::Written>, Failure> {
     let cell = node.composers.cell(id);
     let mut cell = cell.lock().await;
-    load(node, id, &mut cell)?;
+    load(node, id, &mut cell).await?;
     Ok(cell.as_mut().expect("loaded").document(&scope.target, scope.epoch)?.files_on.clone())
 }
 
@@ -110,9 +112,9 @@ pub async fn begin(
     node.residents.active(id)?;
     let cell = node.composers.cell(id);
     let mut cell = cell.lock().await;
-    load(node, id, &mut cell)?;
-    let mut next = cell.as_ref().expect("loaded").clone();
-    if let Some(mut kept) = receipts::upload(node, id, &next, &scope.operation)? {
+    load(node, id, &mut cell).await?;
+    let mut next = cell.take().expect("loaded");
+    if let Some(mut kept) = receipts::upload(node, id, &next, &scope.operation).await? {
         let mut expected = attachment.clone();
         expected.path = kept.attachment.path.clone();
         if kept.from != *from || kept.scope != *scope || kept.attachment != expected {
@@ -124,13 +126,15 @@ pub async fn begin(
             }
             kept.outcome = Outcome::Uploading;
             next.uploads.insert(scope.operation.clone(), kept);
-            publish(node, id, &mut cell, next)?;
+            let guard = Guard { node: node.clone(), id: id.clone(), scope: scope.clone(), armed: true };
+            storage::publish_then(node, id, &mut cell, next, clear_failure(node, id, &scope.operation)).await?;
+            return Ok(guard);
         }
         return Ok(Guard { node: node.clone(), id: id.clone(), scope: scope.clone(), armed: false });
     }
     if scope.operation.is_empty()
-        || receipts::receipt(node, id, &next, &scope.operation)?.is_some()
-        || receipts::upload(node, id, &next, &scope.operation)?.is_some()
+        || receipts::receipt(node, id, &next, &scope.operation).await?.is_some()
+        || receipts::upload(node, id, &next, &scope.operation).await?.is_some()
     {
         return Err(failure("a fresh upload operation ID is required"));
     }
@@ -149,8 +153,9 @@ pub async fn begin(
             outcome: Outcome::Uploading,
         },
     );
-    publish(node, id, &mut cell, next)?;
-    Ok(Guard { node: node.clone(), id: id.clone(), scope: scope.clone(), armed: true })
+    let guard = Guard { node: node.clone(), id: id.clone(), scope: scope.clone(), armed: true };
+    storage::publish_then(node, id, &mut cell, next, clear_failure(node, id, &scope.operation)).await?;
+    Ok(guard)
 }
 
 pub async fn complete(
@@ -161,9 +166,10 @@ pub async fn complete(
 ) -> Result<Updated, Failure> {
     let cell = node.composers.cell(id);
     let mut cell = cell.lock().await;
-    load(node, id, &mut cell)?;
-    let mut next = cell.as_ref().expect("loaded").clone();
-    let record = receipts::upload(node, id, &next, &scope.operation)?
+    load(node, id, &mut cell).await?;
+    let mut next = cell.take().expect("loaded");
+    let record = receipts::upload(node, id, &next, &scope.operation)
+        .await?
         .ok_or_else(|| failure("the upload has no shared-input record"))?;
     if matches!(record.outcome, Outcome::Attached) && record.attachment == *attachment && record.scope == *scope {
         return Ok(Updated { composer: next.view(), landed: None, delivery: None });
@@ -178,8 +184,22 @@ pub async fn complete(
     if let Outcome::Detached { why } = &record.outcome {
         return Err(Failure::new(why.clone()));
     }
-    next.uploads.insert(scope.operation.clone(), UploadRecord { attachment: attachment.clone(), ..record });
-    let applied = match next.document(&scope.target, scope.epoch) {
+    let applied = attach(&mut next, scope, attachment, record);
+    publish(node, id, &mut cell, next).await?;
+    let composer = cell.as_ref().expect("loaded").view();
+    drop(cell);
+    schedule(node, id);
+    applied.map(|()| Updated { composer, landed: None, delivery: None })
+}
+
+fn attach(
+    state: &mut Stored,
+    scope: &UploadScope,
+    attachment: &Attachment,
+    record: UploadRecord,
+) -> Result<(), Failure> {
+    state.uploads.insert(scope.operation.clone(), UploadRecord { attachment: attachment.clone(), ..record });
+    let applied = match state.document(&scope.target, scope.epoch) {
         Ok(document) if document.uploads.iter().any(|upload| upload.id == attachment.id) => {
             document.uploads.retain(|upload| upload.id != attachment.id);
             document.attachments.push(attachment.clone());
@@ -189,39 +209,66 @@ pub async fn complete(
             "this attachment was removed or its draft was sent while it uploaded; the verified file is retained",
         )),
     };
-    next.uploads.get_mut(&scope.operation).expect("known upload").outcome = match &applied {
+    state.uploads.get_mut(&scope.operation).expect("known upload").outcome = match &applied {
         Ok(()) => Outcome::Attached,
         Err(error) => Outcome::Detached { why: error.message.clone() },
     };
-    publish(node, id, &mut cell, next)?;
-    let composer = cell.as_ref().expect("loaded").view();
-    drop(cell);
-    schedule(node, id);
-    applied.map(|()| Updated { composer, landed: None, delivery: None })
+    applied
 }
 
 pub async fn failed(node: &Arc<Node>, id: &ResidentId, scope: &UploadScope, why: &str) -> Result<(), Failure> {
+    node.composers
+        .upload_failures
+        .lock()
+        .expect("composer upload failures")
+        .entry(id.clone())
+        .or_default()
+        .insert(scope.operation.clone(), why.into());
     let cell = node.composers.cell(id);
     let mut cell = cell.lock().await;
-    load(node, id, &mut cell)?;
-    let mut next = cell.as_ref().expect("loaded").clone();
-    let Some(record) = next.uploads.get(&scope.operation) else { return Ok(()) };
+    load(node, id, &mut cell).await?;
+    let mut next = cell.take().expect("loaded");
+    let Some(record) = next.uploads.get(&scope.operation) else {
+        return Ok(());
+    };
     if !matches!(record.outcome, Outcome::Uploading) {
+        clear_failure(node, id, &scope.operation)();
         return Ok(());
     }
     let attachment = record.attachment.id.clone();
     next.uploads.get_mut(&scope.operation).expect("known upload").outcome = Outcome::Failed { why: why.into() };
     mark(&mut next, scope, &attachment, Some(why), "");
-    if let Err(error) = publish(node, id, &mut cell, next) {
-        if let Some(state) = cell.as_mut() {
-            if let Some(record) = state.uploads.get_mut(&scope.operation) {
-                record.outcome = Outcome::Failed { why: why.into() };
-            }
-            mark(state, scope, &attachment, Some(why), "");
-        }
-        return Err(error);
+    storage::publish_then(node, id, &mut cell, next, clear_failure(node, id, &scope.operation)).await
+}
+
+/// A disconnected writer remains known even if persisting its failure failed.
+/// Its intent is not published as a committed document or discarded by a reload.
+pub(super) fn interrupted(node: &Node, id: &ResidentId, operation: &str, record: &mut UploadRecord) {
+    if matches!(record.outcome, Outcome::Uploading)
+        && let Some(why) = node
+            .composers
+            .upload_failures
+            .lock()
+            .expect("composer upload failures")
+            .get(id)
+            .and_then(|failures| failures.get(operation))
+    {
+        record.outcome = Outcome::Failed { why: why.clone() };
     }
-    Ok(())
+}
+
+fn clear_failure(node: &Node, id: &ResidentId, operation: &str) -> impl FnOnce() + Send + 'static {
+    let failures = node.composers.upload_failures.clone();
+    let (id, operation) = (id.clone(), operation.to_string());
+    move || {
+        let mut failures = failures.lock().expect("composer upload failures");
+        if let Some(records) = failures.get_mut(&id) {
+            records.remove(&operation);
+            if records.is_empty() {
+                failures.remove(&id);
+            }
+        }
+    }
 }
 
 /// Says `why` on the upload of `attachment` listed in the words of `scope`,
@@ -234,8 +281,12 @@ fn mark(
     why: Option<&str>,
     was: &str,
 ) -> bool {
-    let Ok(document) = state.document(&scope.target, scope.epoch) else { return false };
-    let Some(upload) = document.uploads.iter_mut().find(|upload| &upload.id == attachment) else { return false };
+    let Ok(document) = state.document(&scope.target, scope.epoch) else {
+        return false;
+    };
+    let Some(upload) = document.uploads.iter_mut().find(|upload| &upload.id == attachment) else {
+        return false;
+    };
     upload.error = why.map(Into::into);
     if let Target::Queued { id } = &scope.target
         && let Ok(entry) = state.entry(id)
@@ -248,14 +299,12 @@ fn mark(
 
 /// Uploads the words listed in `before` and no longer list in `after` that
 /// are not arriving now: what arrived of them is left for nothing.
-pub(super) fn forsaken(before: &Stored, after: &Stored) -> Vec<fastctx_types::NoticeId> {
-    let listed = |state: &Stored| -> std::collections::HashSet<fastctx_types::NoticeId> {
-        std::iter::once(&state.draft)
-            .chain(state.queue.iter().chain(&state.unobserved).map(|entry| &entry.document))
-            .flat_map(|document| document.uploads.iter().map(|upload| upload.id.clone()))
-            .collect()
-    };
-    let (was, is) = (listed(before), listed(after));
+pub(super) fn listed(state: &Stored) -> HashSet<fastctx_types::NoticeId> {
+    state.documents().flat_map(|document| document.uploads.iter().map(|upload| upload.id.clone())).collect()
+}
+
+pub(super) fn forsaken(was: HashSet<fastctx_types::NoticeId>, after: &Stored) -> Vec<fastctx_types::NoticeId> {
+    let is = listed(after);
     let arriving: std::collections::HashSet<_> = after
         .uploads
         .values()
@@ -265,45 +314,30 @@ pub(super) fn forsaken(before: &Stored, after: &Stored) -> Vec<fastctx_types::No
     was.into_iter().filter(|upload| !is.contains(upload) && !arriving.contains(upload)).collect()
 }
 
-pub async fn recover(node: &Arc<Node>, id: &ResidentId) -> Result<(), Failure> {
-    let cell = node.composers.cell(id);
-    let mut cell = cell.lock().await;
-    load(node, id, &mut cell)?;
-    let records: Vec<_> = cell
-        .as_ref()
-        .expect("loaded")
-        .uploads
-        .values()
-        .filter(|record| matches!(record.outcome, Outcome::Uploading))
-        .cloned()
-        .collect();
-    drop(cell);
+/// Settles only uploads left by the stopped node, while the first loader owns
+/// the composer cell. A new upload cannot begin until this state commits.
+pub(super) async fn recover(node: &Arc<Node>, id: &ResidentId, state: &mut Stored) -> Result<bool, Failure> {
+    let records: Vec<_> =
+        state.uploads.values().filter(|record| matches!(record.outcome, Outcome::Uploading)).cloned().collect();
+    let changed = !records.is_empty();
     for record in records {
         match crate::attachments::resolve(node, id, std::slice::from_ref(&record.attachment)).await {
             Ok(()) => {
-                if let Err(error) = complete(node, id, &record.scope, &record.attachment).await {
-                    let cell = node.composers.cell(id);
-                    let mut cell = cell.lock().await;
-                    load(node, id, &mut cell)?;
-                    if !receipts::upload(node, id, cell.as_ref().expect("loaded"), &record.scope.operation)?
-                        .is_some_and(|record| matches!(record.outcome, Outcome::Detached { .. }))
-                    {
-                        return Err(error);
-                    }
-                }
+                let scope = record.scope.clone();
+                let attachment = record.attachment.clone();
+                // A verified file whose placeholder was removed stays retained
+                // with a Detached receipt, exactly as for a live completion.
+                let _ = attach(state, &scope, &attachment, record);
             }
             Err(error) => {
-                failed(
-                    node,
-                    id,
-                    &record.scope,
-                    &format!("the node restarted before this upload was verified: {}", error.message),
-                )
-                .await?;
+                let why = format!("the node restarted before this upload was verified: {}", error.message);
+                mark(state, &record.scope, &record.attachment.id, Some(&why), "");
+                state.uploads.get_mut(&record.scope.operation).expect("recovering upload").outcome =
+                    Outcome::Failed { why };
             }
         }
     }
-    Ok(())
+    Ok(changed)
 }
 
 pub struct Guard {

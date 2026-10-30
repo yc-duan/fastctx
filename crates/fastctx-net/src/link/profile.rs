@@ -28,6 +28,8 @@ impl Link {
             return Err(format!("upgrade hub {} to use user-level configuration", self.hub_name()));
         }
         profile.subagents = current.profile.subagents;
+        profile.memory = current.profile.memory;
+        profile.layer = current.profile.layer;
         profile.validate()?;
         let confirmed = profile.clone();
         let told =
@@ -39,7 +41,12 @@ impl Link {
         Ok(version)
     }
 
-    async fn confirm_profile(&self, account: &AccountName, mut confirmed: Profile, version: u64) -> Result<(), String> {
+    pub(super) async fn confirm_profile(
+        &self,
+        account: &AccountName,
+        mut confirmed: Profile,
+        version: u64,
+    ) -> Result<(), String> {
         confirmed.version = version;
         {
             let _one = self.inner.refreshing.lock().await;
@@ -54,7 +61,7 @@ impl Link {
                     format!("the hub committed profile version {version}, but the account left the view")
                 })?;
             if found.profile.as_ref().is_none_or(|current| current.version < version) {
-                found.profile = Some(confirmed);
+                std::sync::Arc::make_mut(found).profile = Some(confirmed);
                 super::state::write(&self.inner.dir.view(), &view).map_err(|error| {
                     format!("the hub committed profile version {version}, but keeping its view failed: {error}")
                 })?;

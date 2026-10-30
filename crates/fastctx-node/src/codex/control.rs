@@ -124,7 +124,7 @@ pub async fn control(node: &Arc<Node>, resident: &ResidentId, mut control: Contr
             "rename" => Control::Rename { name: args.clone() },
             "fork" => {
                 no_args(args)?;
-                Control::Fork { through: None }
+                Control::Fork { through: None, side: false }
             }
             "status" | "usage" | "skills" => {
                 no_args(args)?;
@@ -165,8 +165,17 @@ pub async fn control(node: &Arc<Node>, resident: &ResidentId, mut control: Contr
     let speaking = speaking.lock().await;
     let _starting =
         node.handoff.start_turn().ok_or_else(|| Failure::new(crate::handoff::Handoff::waiting_why(node)))?;
+    // What starts a turn takes a turn of its login, as words do; joining
+    // the turn that runs takes none.
+    let admit = || {
+        if codex.running_turn(&thread).is_some() {
+            return Ok(());
+        }
+        crate::turn_slots::admit(node, resident, &about).map_err(|_| crate::turn_slots::full())
+    };
     match control {
         Control::Compact => {
+            admit()?;
             codex.compact(&thread).await.map_err(|error| error.failure())?;
             done("Compaction started; its completion appears in the conversation.")
         }
@@ -179,11 +188,12 @@ pub async fn control(node: &Arc<Node>, resident: &ResidentId, mut control: Contr
                 return Err(Failure::new("a conversation name cannot be empty"));
             }
             codex.rename(&thread, &name).await.map_err(|error| error.failure())?;
+            crate::codex::titled(node, resident, name).await;
             Ok(Controlled::Done { said: None })
         }
-        Control::Fork { through } => {
+        Control::Fork { through, side } => {
             drop(speaking);
-            fork(node, resident, &codex, &thread, through).await
+            fork(node, resident, &codex, &thread, through, side).await
         }
         Control::Rewind { from } => {
             codex.rewind(&thread, &from).await.map_err(|error| error.failure())?;
@@ -192,12 +202,16 @@ pub async fn control(node: &Arc<Node>, resident: &ResidentId, mut control: Contr
             done("Conversation rewound. Files changed by discarded turns have not been restored.")
         }
         Control::Command { name, args, path: None } if name == "review" => {
+            admit()?;
             let answer = codex.review(&thread, &args).await.map_err(|error| error.failure())?;
             done(&format!(
                 "Review started using Codex's current review/default settings. Pending model choices apply to the next ordinary turn. {answer}"
             ))
         }
         Control::Command { name, args, path: None } if name == "goal" => {
+            if !fastctx_platform::preview() {
+                return Err(Failure::not_run(fastctx_types::goals::words::UNOFFERED));
+            }
             done(&codex.goal(&thread, &args).await.map_err(Failure::new)?.to_string())
         }
         Control::Command { name, args, path: None } if name == "debug-config" => {
@@ -241,6 +255,7 @@ pub async fn control(node: &Arc<Node>, resident: &ResidentId, mut control: Contr
                     return done(&format!("Service tier {selected} saved for the next World turn."));
                 }
             }
+            admit()?;
             let sent = codex.skill(&thread, &name, path.as_deref(), &args).await.map_err(Failure::new)?;
             done(&format!("Skill input {} turn {}", if sent.joined { "joined" } else { "started" }, sent.turn))
         }
@@ -258,13 +273,16 @@ async fn fork(
     codex: &Arc<CodexHost>,
     thread: &str,
     through: Option<String>,
+    side: bool,
 ) -> Result<Controlled, Failure> {
     let gate = node.residents.management(parent)?;
     let source_guard = crate::gate_waits::shared(node, parent, &gate).await?;
     node.residents.active(parent)?;
     let (source, town) = node.residents.about(parent).ok_or_else(|| Failure::new("unknown source resident"))?;
 
+    crate::layers::may_start(node, &source.acting)?;
     let id = node.residents.new_id(&source.host.agent)?;
+    let _birth = crate::here::born(node, &id, source.acting.clone(), &Origin::User);
     crate::assists::host::inherit(node, codex.assisted_cwd().is_some(), &id)?;
     crate::session_options::keep(node, &id, &crate::session_options::read(node, parent)?)?;
     crate::focus::open(node, &node.world.conversation(&id), &source.acting, &source.focus).await?;
@@ -277,6 +295,7 @@ async fn fork(
     let at = Timestamp::now();
     let about = About {
         forked_from: Some(Address { machine: node.machine(), resident: parent.clone() }),
+        side,
         mcp_off: source.mcp_off.clone(),
         id: id.clone(),
         host: source.host,
@@ -285,6 +304,7 @@ async fn fork(
         origin: Origin::User,
         session: Some(fork.clone()),
         world_started: true,
+        native_resumed: false,
         model,
         acting: source.acting,
         focus: source.focus,
@@ -295,6 +315,7 @@ async fn fork(
         activity: Activity::Idle,
         since: at,
         turn: None,
+        last_turn: None,
         owed: Default::default(),
         answering: Vec::new(),
         trouble: None,
@@ -307,7 +328,9 @@ async fn fork(
         first_words: None,
         last_said: None,
         last_compacted: false,
+        last_heard_user: None,
         asked: None,
+        told: None,
     };
     if let Some(town) = &town {
         crate::town::access::check(node, &about.acting, town)?;
@@ -319,6 +342,7 @@ async fn fork(
         codex.history(&fork, &Address { machine: node.machine(), resident: id.clone() }).await.map_err(Failure::new)?;
     crate::attachments::inherit(node, parent, &id, &inherited)?;
     drop(source_guard);
+    crate::context::instructed(node, &id, &heard).map_err(|error| Failure::new(error.to_string()))?;
     node.residents.set_instructed(&id, heard);
     let event = SessionEvent {
         at,

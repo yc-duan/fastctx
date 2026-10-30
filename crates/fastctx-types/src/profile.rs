@@ -18,9 +18,17 @@ pub use subagents::{
 };
 
 /// The account's own layer, versioned so two devices' edits never cross.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Profile {
     pub version: u64,
+    /// Whether conversations receive their project's memory map. On unless
+    /// the account turned it off, so only an off is written.
+    #[serde(default = "on", skip_serializing_if = "is_on")]
+    pub memory: bool,
+    /// The layer the account chose (`world-layers.md`); none until it
+    /// chooses.
+    #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "crate::tolerant::read_option")]
+    pub layer: Option<crate::layers::Layer>,
     /// What the account writes to every agent that works for it.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub prompt: String,
@@ -135,6 +143,29 @@ pub const CODEX_SETTINGS: &[&str] = &[
     "model_verbosity",
     "show_raw_agent_reasoning",
 ];
+
+impl Default for Profile {
+    fn default() -> Self {
+        Self {
+            version: 0,
+            memory: on(),
+            layer: None,
+            prompt: String::new(),
+            claude: Map::new(),
+            codex: Map::new(),
+            servers: BTreeMap::new(),
+            subagents: None,
+        }
+    }
+}
+
+fn on() -> bool {
+    true
+}
+
+fn is_on(value: &bool) -> bool {
+    *value
+}
 
 impl Profile {
     /// Whether this is a profile an account may keep.

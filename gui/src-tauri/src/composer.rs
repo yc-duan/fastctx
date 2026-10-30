@@ -34,9 +34,11 @@ pub enum Piece {
 }
 
 /// A request the page sent that came to nothing: `again` when no answer
-/// came, so it is sent again, as it was, once the shared input is back.
+/// came, or the machine had no place for it yet and did not start it, so
+/// it is sent again, as it was, once the shared input is back or a while
+/// later.
 fn not_done(error: fastctx_client::Error) -> crate::NotSaid {
-    crate::NotSaid { again: World::unanswered(&error), message: error.to_string() }
+    crate::NotSaid { again: World::unanswered(&error) || World::busy(&error), message: error.to_string() }
 }
 
 fn refused(message: String) -> crate::NotSaid {
@@ -92,7 +94,7 @@ pub async fn composer_watch(
     shell: tauri::State<'_, Shell>,
     resident_id: String,
     machine_name: Option<String>,
-    pieces: Channel<Piece>,
+    pieces: Channel<crate::watch_delivery::Wake>,
 ) -> Result<Watching, String> {
     let page = shell.page.load(std::sync::atomic::Ordering::Relaxed);
     let world = shell.world();
@@ -100,7 +102,44 @@ pub async fn composer_watch(
     let machine = machine(machine_name)?;
     let (composing, watch, composer) = open(&world, &resident, &machine).await.map_err(|not| not.why)?;
     let id = shell.next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    shell.follow(page, id, stream(world, resident, machine, composing, watch.clone(), pieces))?;
+    let mut initial = Some((composing, watch.clone()));
+    shell.follow_delivery(
+        page,
+        id,
+        pieces,
+        |_: &Piece| Some("composer".into()),
+        move |pieces, _| {
+            let (world, resident, machine) = (world.clone(), resident.clone(), machine.clone());
+            let initial = initial.take();
+            async move {
+                let (composing, name) = if let Some(initial) = initial {
+                    initial
+                } else {
+                    let mut again = fastctx_client::Again::default();
+                    loop {
+                        match open(&world, &resident, &machine).await {
+                            Ok((composing, name, composer)) => {
+                                if pieces
+                                    .send(Piece::Snapshot { watch: name.clone(), composer: Box::new(composer) })
+                                    .is_err()
+                                {
+                                    return;
+                                }
+                                break (composing, name);
+                            }
+                            Err(error) => {
+                                if pieces.send(interrupted(again.broke(error.why))).is_err() || error.deleted {
+                                    return;
+                                }
+                                again.pause(&world, machine.as_ref()).await;
+                            }
+                        }
+                    }
+                };
+                stream(world, resident, machine, composing, name, pieces).await;
+            }
+        },
+    )?;
     Ok(Watching { id, watch, composer })
 }
 
@@ -166,7 +205,7 @@ async fn stream(
     machine: Option<Written>,
     initial: Composing,
     name: String,
-    pieces: Channel<Piece>,
+    pieces: crate::watch_delivery::Sender<Piece>,
 ) {
     #[cfg(target_os = "android")]
     let mut visible = crate::android::visibility();
