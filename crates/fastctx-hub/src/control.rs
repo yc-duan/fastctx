@@ -47,6 +47,7 @@ pub(crate) struct Said {
     pub roles: bool,
     /// Whether it reads the network's versions.
     pub versions: bool,
+    pub version_parts: bool,
     /// Whether it reads the records of updates due and made as asked.
     pub due: bool,
     /// Whether it reads the records of projects deleted.
@@ -178,6 +179,7 @@ pub(crate) async fn session(
         }
     };
     let generation = hub.next();
+    let reads_afoot = said.afoot;
     let out = Outq::new(said.parts);
     if let Err(reason) = open(&hub, &name, key, generation, out.clone(), letters, peer, said) {
         hub.log.line(format_args!("{peer}: the session of {name} could not open: {reason}"));
@@ -198,7 +200,9 @@ pub(crate) async fn session(
     // Whoever sees it sees it online now.
     hub.health.opened();
     hub.present(&name);
-    out.afoot_started();
+    if !reads_afoot {
+        out.afoot_started();
+    }
 
     let pulse = crate::pulse_of(&socket);
     let (mut sink, mut stream) = socket.split();
@@ -635,6 +639,7 @@ fn open(
         afoot: said.afoot,
         forgets: said.forgets,
         versions: said.versions,
+        version_parts: said.version_parts,
         cancels: said.cancels,
         presence: said.presence,
         project_entry: said.project_entry,
@@ -805,15 +810,19 @@ fn handle(
             crate::updates::ask(hub, name, generation, id, version, target, progress, out.clone());
         }
         Up::Ask { id, question: Question::NetworkUpdates { account, request } } => {
+            let held = crate::moving::Moving::hold(hub);
             let (hub, name, out) = (hub.clone(), name.clone(), out.clone());
             tokio::spawn(async move {
+                let _held = held;
                 let answer = crate::updates::view_request(&hub, &name, &account, request).await;
                 let _ = out.send(Out::Frame(Down::Told { id, answer }));
             });
         }
         Up::Ask { id, question: Question::PrepareUpdate { machine, version } } => {
+            let held = crate::moving::Moving::hold(hub);
             let (hub, out) = (hub.clone(), out.clone());
             tokio::spawn(async move {
+                let _held = held;
                 let answer = crate::updates::prepare_update(&hub, &machine, &version).await.map(|()| Told::Done);
                 let _ = out.send(Out::Frame(Down::Told { id, answer }));
             });
@@ -1451,7 +1460,7 @@ fn ask(hub: &Arc<Hub>, name: &MachineName, question: Question) -> Result<Told, S
         Question::KernelRelease { .. } | Question::Package { .. } | Question::PrepareUpdate { .. } => {
             Err("release reads are dispatched asynchronously".into())
         }
-        Question::Directory => Ok(Told::Directory { view: Box::new(hub.view_for(name)) }),
+        Question::Directory => Ok(Told::Directory { view: Box::new(hub.view_for(name)?) }),
         Question::ProjectDeleted { town } => crate::project_deletions::finished(hub, name, &town),
         Question::Manage { .. } => Err("changes are made as they come".into()),
         Question::LedgerWrite { .. } | Question::MemoryWrite { .. } => {

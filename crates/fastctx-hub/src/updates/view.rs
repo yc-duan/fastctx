@@ -53,6 +53,21 @@ pub(super) fn snapshot(hub: &Hub, asker: &MachineName, account: &AccountName) ->
     let store = hub.store();
     let directory = &store.book.directory;
     authenticate(directory, asker, account)?;
+    let index = hub.index_of(&store);
+    let indexed = fastctx_net::directory_index::Indexed::new(directory, &index);
+    let positions = fastctx_net::directory_index::ordered(
+        super::announce::managed(&indexed, account)
+            .into_iter()
+            .chain(indexed.logged(account).iter().copied().filter(|&at| directory.members[at].home.is_none())),
+    );
+    let mut due = std::collections::BTreeMap::new();
+    let mut repairs = std::collections::BTreeMap::new();
+    for kept in &store.hub.due {
+        due.entry(kept.key).or_insert(&kept.due);
+    }
+    for kept in &store.hub.repairs {
+        repairs.entry(kept.key).or_insert(&kept.due);
+    }
     let sessions = hub.sessions();
     let updates = hub.updates.lock().expect("never poisoned");
     let network = updates.network(store.hub.updates.clone(), Default::default());
@@ -87,11 +102,9 @@ pub(super) fn snapshot(hub: &Hub, asker: &MachineName, account: &AccountName) ->
     let mut versions: Vec<_> = versions.into_values().collect();
     versions.sort_by_key(|choice| std::cmp::Reverse(release(&choice.version)));
     let mut machines = Vec::new();
-    for member in &directory.members {
+    for at in positions {
+        let member = &directory.members[at];
         let phone = member.home.is_none();
-        if if phone { !member.logins.contains(account) } else { !directory.may_update(account, &member.name) } {
-            continue;
-        }
         let last = updates.last.get(&member.key);
         let report = last.map(|l| &l.report);
         let kernel = report.map(|r| r.kernel.clone());
@@ -134,11 +147,27 @@ pub(super) fn snapshot(hub: &Hub, asker: &MachineName, account: &AccountName) ->
             check_failure: report.and_then(|r| r.check_failure.clone()),
             checking: online && report.is_some_and(|r| r.checking),
             stage: report.filter(|r| r.updates_view).map_or(Stage::Unknown, |r| r.stage.clone()),
-            due: store.hub.due.iter().find(|d| d.key == member.key).map(|d| d.due.clone()),
+            due: due.get(&member.key).map(|due| fastctx_types::update::Due {
+                version: due.version.clone(),
+                by: due.by.clone(),
+                at: due.at,
+                manifest: None,
+                problem: due.problem.clone(),
+            }),
             offer,
             actions,
             repair_supported: report.is_some_and(|r| r.repair_supported),
-            repair_due: store.hub.repairs.iter().find(|d| d.key == member.key).map(|d| d.due.clone()),
+            repair_due: repairs.get(&member.key).map(|due| fastctx_types::update::RepairDue {
+                id: due.id.clone(),
+                version: due.version.clone(),
+                by: due.by.clone(),
+                at: due.at,
+                manifest: None,
+                problem: due.problem.clone(),
+                attempts: due.attempts,
+                retry_at: due.retry_at,
+                observed: due.observed,
+            }),
             repair: report.and_then(|r| r.repair.clone()),
         });
     }
@@ -181,7 +210,9 @@ pub(crate) async fn request(
         view = snapshot(hub, asker, account)?;
     }
     let reply = match request {
-        ViewCall::Repair { .. } | ViewCall::CancelRepair { .. } | ViewCall::RepairResult { .. } => unreachable!("repair was dispatched above"),
+        ViewCall::Repair { .. } | ViewCall::CancelRepair { .. } | ViewCall::RepairResult { .. } => {
+            unreachable!("repair was dispatched above")
+        }
         ViewCall::Release { version } => {
             let mut choice = view.versions.into_iter().find(|choice| choice.version == version).unwrap_or(
                 fastctx_types::update::VersionChoice {
@@ -208,12 +239,14 @@ pub(crate) async fn request(
             ViewReply::Done
         }
         ViewCall::Schedule { machines, version } => {
-            if machines.len() > 1024 {
-                return Err("at most 1024 machines may be arranged at once".into());
+            let mut rows = std::collections::HashMap::new();
+            for row in &view.machines {
+                rows.entry(&row.machine).or_insert(row);
             }
-            let mut results = Vec::new();
+            let mut results = Vec::with_capacity(machines.len());
+            let mut pending = Vec::new();
             for machine in machines {
-                let row = view.machines.iter().find(|m| m.machine == machine);
+                let row = rows.get(&machine).copied();
                 let refusal = match row {
                     None => {
                         let store = hub.store();
@@ -266,19 +299,23 @@ pub(crate) async fn request(
                     });
                     continue;
                 }
-                // The ordinary mutation checks authority again while committing,
-                // writes the arrangement and its manifest, and records the actor.
-                let (result, ended) = crate::manage::change(
-                    hub,
-                    asker,
-                    account,
-                    Change::UpdateDue { machine: machine.clone(), version: version.clone(), batch: None },
-                );
-                crate::manage::end(hub, ended);
-                results.push(match result {
-                    Ok(_) => Scheduled { machine, done: true, reason: None, why: None },
-                    Err(why) => Scheduled { machine, done: false, reason: Some(ActionReason::Other), why: Some(why) },
-                });
+                pending.push(results.len());
+                results.push(Scheduled { machine, done: false, reason: None, why: None });
+            }
+            // Bound each durable transaction, not the number the user can arrange.
+            for chunk in pending.chunks(64) {
+                let machines: Vec<_> = chunk.iter().map(|&at| results[at].machine.clone()).collect();
+                let committed = super::due_batch::apply(hub, asker, account, &machines, version.as_deref());
+                for (&at, result) in chunk.iter().zip(committed) {
+                    match result {
+                        Ok(()) => results[at].done = true,
+                        Err(why) => {
+                            results[at].reason = Some(ActionReason::Other);
+                            results[at].why = Some(why);
+                        }
+                    }
+                }
+                tokio::task::yield_now().await;
             }
             ViewReply::Scheduled { results }
         }
@@ -293,6 +330,11 @@ pub(super) fn problem(hub: &Hub, version: &str, target: Option<&str>, why: Optio
     let cache = hub.updates.lock().expect("never poisoned").cache.clone();
     let available = super::inventory::held(hub, &cache);
     let mut store = hub.store();
+    // Background preparation may outlive the final moving snapshot
+    // (2026-10-29); its late outcome is retried by the receiving hub.
+    if hub.moving.frozen() {
+        return;
+    }
     let targets = store.hub.package_targets.clone();
     let problem = why.map(|why| Problem { reason: FailureReason::Other, why });
     let mut changed = false;
@@ -314,17 +356,30 @@ pub(super) fn problem(hub: &Hub, version: &str, target: Option<&str>, why: Optio
             continue;
         }
         if due.due.problem != problem {
-            due.due.problem = problem.clone();
+            std::sync::Arc::make_mut(due).due.problem = problem.clone();
             changed = true;
         }
     }
     for repair in &mut store.hub.repairs {
-        if repair.due.version != version { continue; }
+        if repair.due.version != version {
+            continue;
+        }
         let needs = targets.get(&repair.key).cloned().unwrap_or_default();
         let packages = repair.due.manifest.as_ref().map(|m| super::inventory::for_targets(m, &needs));
-        if target.is_some_and(|target| packages.as_ref().is_some_and(|packages| !packages.iter().any(|p| p.target == target))) { continue; }
-        if problem.is_none() && !packages.as_ref().is_some_and(|packages| packages.iter().all(|p| available.contains(p))) { continue; }
-        if repair.due.observed.is_none() && repair.due.problem != problem { repair.due.problem = problem.clone(); changed = true; }
+        if target.is_some_and(|target| {
+            packages.as_ref().is_some_and(|packages| !packages.iter().any(|p| p.target == target))
+        }) {
+            continue;
+        }
+        if problem.is_none()
+            && !packages.as_ref().is_some_and(|packages| packages.iter().all(|p| available.contains(p)))
+        {
+            continue;
+        }
+        if repair.due.observed.is_none() && repair.due.problem != problem {
+            std::sync::Arc::make_mut(repair).due.problem = problem.clone();
+            changed = true;
+        }
     }
     if changed && let Err(error) = store.save_hub() {
         hub.log.line(format_args!("keeping update preparation outcome: {error}"));

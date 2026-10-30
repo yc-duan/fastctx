@@ -3,7 +3,7 @@
 
 use std::ffi::OsString;
 use std::future::Future;
-use std::path::PathBuf;
+
 use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Instant;
@@ -18,13 +18,7 @@ use crate::Node;
 
 type Exit = Pin<Box<dyn Future<Output = std::io::Result<Option<u32>>> + Send>>;
 
-pub(super) type Listings =
-    crate::leases::Registry<(PathBuf, Option<OsString>), fastctx_platform::doing::Mutex<Option<Listed>>>;
-
-pub(super) struct Listed {
-    at: Instant,
-    answer: Result<String, String>,
-}
+pub(super) use super::listing::Listings;
 
 /// Only a turn of the replacement activation can consume a CLI wake. Old
 /// starts can arrive after the next wake was kept, even after a node restart.
@@ -255,33 +249,13 @@ pub(super) fn recover(node: &Arc<Node>) {
     }
 }
 
-async fn run(command: &super::Command, args: Vec<OsString>) -> Result<String, String> {
+pub(super) async fn run(command: &super::Command, args: Vec<OsString>) -> Result<String, String> {
     let command = command.clone();
     tokio::task::spawn_blocking(fastctx_platform::doing::carried(move || {
         background::claude(&command.program, &args, &command.cwd, &command.env)
     }))
     .await
     .map_err(|error| format!("observing Claude startup: {error}"))?
-}
-
-async fn agents(
-    listing: &fastctx_platform::doing::Mutex<Option<Listed>>,
-    command: &super::Command,
-    after: Option<Instant>,
-) -> Result<String, String> {
-    let mut listing = listing.lock().await;
-    if let Some(listed) = &*listing
-        && after.is_none_or(|after| listed.at >= after)
-        && listed.at.elapsed() < fastctx_hosts::claude::MOD_LOOK
-    {
-        return listed.answer.clone();
-    }
-    // Concurrent births in one login share one query. Repeated CLI launches
-    // per resident would compete with startup on small machines.
-    let at = Instant::now();
-    let answer = run(command, vec!["agents".into(), "--json".into(), "--all".into()]).await;
-    *listing = Some(Listed { at, answer: answer.clone() });
-    answer
 }
 
 async fn diagnosis(command: &super::Command, short: &str, mut why: String) -> String {
@@ -456,7 +430,8 @@ async fn watch(
     let listing = node
         .claude
         .startup_listings
-        .get_or_insert_with(&(command.program.clone(), home), || crate::ranked::listing(&login));
+        .get_or_insert_with(&(command.program.clone(), home), || super::listing::Listing::new(command, &login));
+    let listing = listing.as_ref().map_err(|error| std::io::Error::other(error.clone()))?;
     let mut process: Option<ProcessIdentity> = None;
     let mut exited: Option<Exit> = None;
     let mut code = None;
@@ -469,15 +444,19 @@ async fn watch(
     let mut after = Some(Instant::now());
     let mut observation = None;
     let mut pause = fastctx_hosts::claude::MOD_LOOK;
+    let mut records = listing.changes();
 
     loop {
+        // What the list read below has seen of the records: only a later
+        // change wakes the wait for the next look.
+        records.borrow_and_update();
         let changed = node.claude.changed.notified();
         tokio::pin!(changed);
         changed.as_mut().enable();
         if !pending(node, resident, id, waking)? {
             return Ok(());
         }
-        let listed = agents(&listing, command, after).await;
+        let listed = listing.agents(command, after).await;
         after = None;
         if !pending(node, resident, id, waking)? {
             return Ok(());
@@ -504,13 +483,20 @@ async fn watch(
                                     async move { fastctx_platform::host_process::exit_status(&identity).await },
                                 ));
                         }
-                        Ok(None) if process.as_ref().is_some_and(|identity| identity.pid != pid) => {
-                            // A replacement already gone must not inherit the
-                            // previous process's observed exit code.
-                            process = None;
-                            exited = None;
-                            code = None;
-                            process_ended = false;
+                        Ok(None) => {
+                            if process.as_ref().is_some_and(|identity| identity.pid != pid) {
+                                // A replacement already gone must not inherit the
+                                // previous process's observed exit code.
+                                process = None;
+                                exited = None;
+                                code = None;
+                                process_ended = false;
+                            }
+                            // The supervisor can report a terminal job after its
+                            // process disappeared, before we ever observed it.
+                            if job.ended() {
+                                process_ended = true;
+                            }
                         }
                         Ok(_) => {}
                         Err(error) => node.log.line(format_args!("observing Claude startup process {pid}: {error}")),
@@ -523,7 +509,8 @@ async fn watch(
                     exited =
                         Some(Box::pin(async move { fastctx_platform::host_process::exit_status(&identity).await }));
                 }
-                if (job.ended() && (job.pid.is_none() || process_ended)) || (job.blocked() && !blocked) {
+                if (job.ended() && (job.pid.is_none_or(|pid| pid == 0) || process_ended)) || (job.blocked() && !blocked)
+                {
                     if job.ended()
                         && process
                             .as_ref()
@@ -659,7 +646,9 @@ async fn watch(
                         // CLI. Pairing and input acceptance still wake us at once.
                     },
                     // Unchanged facts reduce observation work, never establish a
-                    // failed birth. A process exit forces a fresh query at once.
+                    // failed birth. A process exit forces a fresh query at once,
+                    // and a change to the supervisor's records a look at it.
+                    Ok(()) = records.changed() => break false,
                     () = &mut next => break false,
                 }
             }

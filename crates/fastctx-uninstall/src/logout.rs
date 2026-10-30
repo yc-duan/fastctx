@@ -81,6 +81,7 @@ async fn open_saying(
         forgets: false,
         roles: true,
         versions: false,
+        version_parts: false,
         due: false,
         project_deletes: false,
         project_entry: false,

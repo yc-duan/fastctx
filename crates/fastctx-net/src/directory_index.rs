@@ -23,6 +23,7 @@ pub struct Index {
     /// Members by the name they have now, and by the names they had.
     named: HashMap<MachineName, Vec<usize>>,
     formerly: HashMap<MachineName, Vec<usize>>,
+    keys: HashMap<crate::sign::PublicKey, usize>,
     projects: HashMap<TownId, usize>,
     /// Members by the account whose machines they are, and by the accounts
     /// logged in on them.
@@ -55,6 +56,7 @@ impl Index {
             }
         }
         for (at, member) in all.members.iter().enumerate() {
+            index.keys.entry(member.key).or_insert(at);
             index.named.entry(member.name.clone()).or_default().push(at);
             for was in &member.was {
                 index.formerly.entry(was.clone()).or_default().push(at);
@@ -196,6 +198,16 @@ impl<'a> Indexed<'a> {
 
     pub fn member(&self, name: &MachineName) -> Option<&'a Member> {
         self.position(name).map(|at| &*self.all.members[at])
+    }
+
+    /// The first member's position for this identity, in directory order.
+    pub fn key_position(&self, key: &crate::sign::PublicKey) -> Option<usize> {
+        self.index.keys.get(key).copied()
+    }
+
+    /// The first member with `key`, as `Directory::by_key` finds it.
+    pub fn by_key(&self, key: &crate::sign::PublicKey) -> Option<&'a Member> {
+        self.key_position(key).map(|at| &*self.all.members[at])
     }
 
     pub fn account(&self, name: &AccountName) -> Option<&'a Account> {

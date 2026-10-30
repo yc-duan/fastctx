@@ -39,6 +39,9 @@ pub(crate) fn local(name: &str) -> bool {
     matches!(
         name,
         "hub.json"
+            | crate::store::shelf::WAL
+            | crate::store::shelf::SHM
+            | crate::store::shelf::JOURNAL
             | "tls"
             | "login.secret"
             | "releases"
@@ -54,12 +57,21 @@ pub(crate) fn local(name: &str) -> bool {
 /// a write in progress, never a record.
 pub(crate) fn manifest(dir: &Path) -> io::Result<Vec<Entry>> {
     let mut entries = Vec::new();
-    walk(dir, "", &mut entries)?;
+    walk(dir, "", &mut entries, false)?;
     entries.sort();
     Ok(entries)
 }
 
-fn walk(dir: &Path, prefix: &str, entries: &mut Vec<Entry>) -> io::Result<()> {
+pub(super) fn snapshot(dir: &Path) -> io::Result<Vec<Entry>> {
+    super::snapshot::capture(dir)?;
+    let mut entries = Vec::new();
+    walk(dir, "", &mut entries, true)?;
+    entries.push(Entry { path: crate::store::shelf::FILE.into(), file: Some(sum(&super::snapshot::path(dir))?) });
+    entries.sort();
+    Ok(entries)
+}
+
+fn walk(dir: &Path, prefix: &str, entries: &mut Vec<Entry>, snapshot: bool) -> io::Result<()> {
     for found in std::fs::read_dir(dir)? {
         let found = found?;
         let name = found.file_name();
@@ -69,14 +81,16 @@ fn walk(dir: &Path, prefix: &str, entries: &mut Vec<Entry>) -> io::Result<()> {
                 format!("{} has a name that is not UTF-8", found.path().display()),
             )
         })?;
-        if name.starts_with('.') || (prefix.is_empty() && local(name)) {
+        if name.starts_with('.')
+            || (prefix.is_empty() && (local(name) || snapshot && name == crate::store::shelf::FILE))
+        {
             continue;
         }
         let path = if prefix.is_empty() { name.to_string() } else { format!("{prefix}/{name}") };
         let kind = found.file_type()?;
         if kind.is_dir() {
             entries.push(Entry { path: path.clone(), file: None });
-            walk(&found.path(), &path, entries)?;
+            walk(&found.path(), &path, entries, snapshot)?;
         } else if kind.is_file() {
             entries.push(Entry { path, file: Some(sum(&found.path())?) });
         } else {

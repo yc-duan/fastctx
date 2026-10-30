@@ -6,10 +6,10 @@
 //! comes late takes a file back to what it was.
 
 use std::io;
-use std::path::Path;
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicU64, Ordering};
 
-use fastctx_platform::{Permissions, publish};
+use crate::store::{letter_rows::Snapshot, shelf::Shelf};
 use tokio::sync::watch;
 
 /// Lets through only writes newer than the last one let through.
@@ -46,17 +46,23 @@ impl Fence {
 pub(crate) struct Records {
     fence: Fence,
     said: watch::Sender<u64>,
+    changes: AtomicU64,
 }
 
 impl Records {
     pub(crate) fn new() -> Self {
-        Self { fence: Fence::new(), said: watch::channel(0).0 }
+        Self { fence: Fence::new(), said: watch::channel(0).0, changes: AtomicU64::new(0) }
     }
 
     /// Writes `bytes`, the records as of `revision`, to `path`, unless newer
     /// ones are written already.
-    pub(crate) fn write(&self, revision: u64, path: &Path, bytes: &[u8]) -> io::Result<()> {
-        if self.fence.write(revision, || publish(path, bytes, Permissions::Private))? {
+    pub(crate) fn write(&self, revision: u64, shelf: &Shelf, snapshot: &Snapshot) -> io::Result<()> {
+        let changes = snapshot.changes()?;
+        if self.fence.write(revision, || {
+            shelf.write(changes)?;
+            self.changes.store(snapshot.revision, Ordering::Release);
+            Ok(())
+        })? {
             self.said.send_if_modified(|said| {
                 let newer = revision > *said;
                 if newer {
@@ -66,6 +72,10 @@ impl Records {
             });
         }
         Ok(())
+    }
+
+    pub(crate) fn written_changes(&self) -> u64 {
+        self.changes.load(Ordering::Acquire)
     }
 
     /// The revision of the records written last.

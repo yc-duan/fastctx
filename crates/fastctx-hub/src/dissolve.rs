@@ -12,7 +12,7 @@ use fastctx_net::sign::PublicKey;
 use fastctx_net::wire::Refusal;
 
 use crate::Hub;
-use crate::store::{HubFile, Store, read};
+use crate::store::Store;
 
 /// How long the hub still answers after the last one was told, for a
 /// machine whose answer was lost on its way and that asks again.
@@ -69,7 +69,7 @@ pub(crate) async fn settled(hub: &Hub) -> String {
 /// its administrator asks before every machine was told; nothing may run
 /// the hub then. How many were not told.
 pub fn retire(dir: &Path) -> anyhow::Result<usize> {
-    let hub: HubFile = read(&Store::hub_file(dir))?;
+    let hub = Store::read_hub(dir)?;
     let Some(dissolved) = hub.dissolved else {
         anyhow::bail!("the network {} kept in {} is not dissolved", hub.name, dir.display());
     };
@@ -82,9 +82,9 @@ pub fn retire(dir: &Path) -> anyhow::Result<usize> {
 /// The network kept in `dir` and how many are still to be told, when it is
 /// a dissolved one.
 pub fn dissolved(dir: &Path) -> anyhow::Result<Option<(fastctx_types::HubName, usize)>> {
-    if !Store::hub_file(dir).try_exists()? {
+    if !Store::hub_file(dir).try_exists()? && !dir.join(crate::store::shelf::FILE).try_exists()? {
         return Ok(None);
     }
-    let hub: HubFile = read(&Store::hub_file(dir))?;
+    let hub = Store::read_hub(dir)?;
     Ok(hub.dissolved.map(|dissolved| (hub.name, dissolved.untold.len())))
 }

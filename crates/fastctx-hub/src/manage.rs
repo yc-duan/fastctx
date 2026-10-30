@@ -710,7 +710,7 @@ fn apply(
                     manifest,
                     problem,
                 };
-                store.hub.due.push(crate::store::DueFor { key, due, batch });
+                store.hub.due.push(Arc::new(crate::store::DueFor { key, due, batch }));
             }
             store.save_hub().map_err(|error| format!("the hub could not keep the update: {error}"))?;
             Ok(Told::Done)

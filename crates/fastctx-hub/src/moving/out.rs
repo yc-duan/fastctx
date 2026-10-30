@@ -185,7 +185,7 @@ pub(crate) async fn dial_new(
     let mut socket = dialed.socket;
     let proof = record.key().sign(Domain::Handover, &dialed.binding);
     let hello = Up::Hello {
-        protocol: wire::PROTOCOL,
+        protocol: wire::GREETING_PROTOCOL,
         version: env!("CARGO_PKG_VERSION").to_string(),
         intent: Intent::Handover { id: record.id.clone(), role, proof },
     };
@@ -293,9 +293,12 @@ async fn copy(hub: &Arc<Hub>, record: &Outgoing, socket: &mut HubSocket) -> Resu
 
 /// What the new place holds.
 async fn holds(socket: &mut HubSocket) -> Result<Vec<Entry>, String> {
-    frames::send(socket, &ToNew::Holds).await?;
+    frames::send(socket, &ToNew::Holds { sqlite: true }).await?;
     match frames::frame::<_, ToOld>(socket).await? {
-        ToOld::Holds { .. } => {}
+        ToOld::Holds { sqlite: true, .. } => {}
+        ToOld::Holds { sqlite: false, .. } => {
+            return Err("update the receiving hub process to 1.0.1-beta.12 or later before moving: it cannot read SQLite hub records".into());
+        }
         ToOld::Refused { reason } => return Err(reason),
         other => return Err(format!("the new place answered {other:?}")),
     }
@@ -312,7 +315,7 @@ async fn holds(socket: &mut HubSocket) -> Result<Vec<Entry>, String> {
 /// What is here, listed while the new place is told this end is working.
 async fn listing(socket: &mut HubSocket, dir: &std::path::Path) -> Result<Vec<Entry>, String> {
     let dir = dir.to_path_buf();
-    let listed = tokio::task::spawn_blocking(move || files::manifest(&dir));
+    let listed = tokio::task::spawn_blocking(move || files::snapshot(&dir));
     frames::working::<_, ToNew, _>(socket, listed)
         .await?
         .map_err(|error| error.to_string())?
@@ -353,7 +356,7 @@ async fn send_difference(
 async fn send_file(socket: &mut HubSocket, dir: &std::path::Path, path: &str) -> Result<(), String> {
     use sha2::Digest as _;
     use tokio::io::AsyncReadExt as _;
-    let place = files::place(dir, path)?;
+    let place = if path == crate::store::shelf::FILE { super::snapshot::path(dir) } else { files::place(dir, path)? };
     let mut file = match tokio::fs::File::open(&place).await {
         Ok(file) => file,
         // Gone since it was listed; the next listing says so.

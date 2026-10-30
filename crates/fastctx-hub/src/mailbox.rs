@@ -495,15 +495,11 @@ pub(crate) async fn keep_records(hub: Weak<Hub>, changed: Arc<Notify>) {
         // A burst of changes goes in one write.
         tokio::time::sleep(Duration::from_millis(20)).await;
         let Some(hub) = hub.upgrade() else { return };
-        let ((revision, letters, path), records) = {
-            let store = hub.store();
+        let ((revision, letters, shelf), records) = {
+            let mut store = hub.store();
             (store.letters_record(), store.records.clone())
         };
-        let written = tokio::task::spawn_blocking(move || {
-            let bytes = crate::store::json(&letters)?;
-            records.write(revision, &path, &bytes)
-        })
-        .await;
+        let written = tokio::task::spawn_blocking(move || records.write(revision, &shelf, &letters)).await;
         match written {
             Ok(Ok(())) => {}
             Ok(Err(error)) => {

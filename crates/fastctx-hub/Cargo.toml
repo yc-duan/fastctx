@@ -17,6 +17,7 @@ harness = false
 anyhow.workspace = true
 fastctx-net = { path = "../fastctx-net" }
 fastctx-platform = { path = "../fastctx-platform" }
+fastctx-storage = { path = "../fastctx-storage" }
 fastctx-types = { path = "../fastctx-types" }
 fastctx-update = { path = "../fastctx-update" }
 futures-util = { version = "0.3", default-features = false, features = ["sink", "std"] }

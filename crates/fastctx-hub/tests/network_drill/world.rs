@@ -161,7 +161,24 @@ impl Hub {
 
     /// Its records of where every member's letters stand.
     pub fn letters(&self) -> Option<serde_json::Value> {
-        serde_json::from_slice(&std::fs::read(self.dir.join("letters.json")).ok()?).ok()
+        let database = self.dir.join("hub.sqlite3");
+        if !database.exists() {
+            return serde_json::from_slice(&std::fs::read(self.dir.join("letters.json")).ok()?).ok();
+        }
+        let c = fastctx_storage::rusqlite::Connection::open_with_flags(
+            database,
+            fastctx_storage::rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+        )
+        .ok()?;
+        let mut stmt = c.prepare("SELECT key,body FROM hub_rows WHERE kind='letters'").ok()?;
+        let mut rows = stmt.query([]).ok()?;
+        let mut values = serde_json::Map::new();
+        while let Some(row) = rows.next().ok()? {
+            let key: String = row.get(0).ok()?;
+            let bytes: Vec<u8> = row.get(1).ok()?;
+            values.insert(key, serde_json::from_slice(&bytes).ok()?);
+        }
+        Some(serde_json::Value::Object(values))
     }
 }
 

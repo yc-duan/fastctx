@@ -4,8 +4,7 @@
 use crate::Hub;
 use fastctx_net::wire::Told;
 use fastctx_types::update::{
-    ActionReason, Channel, FailureReason, Problem, REPAIR_SINCE, RepairDue, Scheduled, Stage, ViewCall, ViewReply,
-    release,
+    ActionReason, Channel, FailureReason, Problem, REPAIR_SINCE, Scheduled, Stage, ViewCall, ViewReply, release,
 };
 use fastctx_types::{AccountName, MachineName};
 use std::sync::Arc;
@@ -44,14 +43,16 @@ pub(super) async fn request(
         ViewCall::CancelRepair { machines } => (machines, None, true),
         _ => return Err("not a repair arrangement".into()),
     };
-    if machines.len() > 1024 {
-        return Err("at most 1024 machines may be arranged at once".into());
+    let mut rows = std::collections::HashMap::new();
+    for row in &view.machines {
+        rows.entry(&row.machine).or_insert(row);
     }
-    let mut results = Vec::new();
+    let mut manifests = std::collections::BTreeMap::new();
+    let mut pending = Vec::new();
+    let mut results = Vec::with_capacity(machines.len());
     for machine in machines {
         let result = async {
-            let row =
-                view.machines.iter().find(|r| r.machine == machine).ok_or("this account cannot manage that machine")?;
+            let row = rows.get(&machine).copied().ok_or("this account cannot manage that machine")?;
             if !cancel && !row.actions.repair.as_ref().is_some_and(|permission| permission.allowed) {
                 return Err("this machine does not support a repair arrangement".into());
             }
@@ -91,62 +92,50 @@ pub(super) async fn request(
                 if !row.repair_supported && release(&version) < release(REPAIR_SINCE) {
                     return Err("this release is too old to contain the repair program".into());
                 }
-                super::view::read_manifest(hub, &version).await?;
-                let manifest = hub
-                    .updates
-                    .lock()
-                    .expect("repair manifest")
-                    .manifest(&version)
-                    .ok_or("repair manifest is unavailable")?;
+                if !manifests.contains_key(&version) {
+                    super::view::read_manifest(hub, &version).await?;
+                    let manifest = hub
+                        .updates
+                        .lock()
+                        .expect("repair manifest")
+                        .manifest(&version)
+                        .ok_or("repair manifest is unavailable")?;
+                    let cache = hub.updates.lock().expect("repair manifest cache").cache.clone();
+                    let keeping = manifest.clone();
+                    tokio::task::spawn_blocking(move || cache.keep_manifest(&keeping))
+                        .await
+                        .map_err(|e| e.to_string())??;
+                    manifests.insert(version.clone(), Arc::new(manifest));
+                }
+                let manifest = manifests.get(&version).expect("prepared above").clone();
                 if row.target.as_ref().is_some_and(|target| manifest.package(target).is_none()) {
                     return Err("repair release has no package for this machine".into());
                 }
-                let cache = hub.updates.lock().expect("repair manifest cache").cache.clone();
-                let keeping = manifest.clone();
-                tokio::task::spawn_blocking(move || cache.keep_manifest(&keeping))
-                    .await
-                    .map_err(|e| e.to_string())??;
-                Some((version, manifest))
+                Some(manifest)
             };
-            let mut store = hub.store();
-            super::view::authenticate(&store.book.directory, asker, account)?;
-            if !store.book.directory.may_update(account, &machine) {
-                return Err("this account can no longer manage that machine".into());
-            }
-            let key = store.book.directory.member(&machine).ok_or("repair target no longer exists")?.key;
-            let before = store.hub.repairs.clone();
-            store.hub.repairs.retain(|r| r.key != key);
-            if let Some((version, manifest)) = chosen {
-                let at = jiff::Timestamp::now();
-                let id = format!("{}-{}", store.hub.id, at.as_nanosecond());
-                store.hub.repairs.push(crate::store::RepairFor {
-                    key,
-                    due: RepairDue {
-                        id,
-                        version,
-                        by: account.clone(),
-                        at,
-                        manifest: Some(manifest),
-                        problem: None,
-                        attempts: 0,
-                        retry_at: None,
-                        observed: None,
-                    },
-                });
-            }
-            if let Err(error) = store.save_hub() {
-                store.hub.repairs = before;
-                return Err(format!("saving repair arrangement for {machine}: {error}"));
-            }
-            hub.log
-                .line(format_args!("{account} {} repair for {machine}", if cancel { "cancelled" } else { "arranged" }));
-            Ok(())
+            Ok(chosen)
         }
         .await;
         results.push(match result {
-            Ok(()) => Scheduled { machine, done: true, reason: None, why: None },
+            Ok(chosen) => {
+                pending.push((results.len(), machine.clone(), chosen));
+                Scheduled { machine, done: false, reason: None, why: None }
+            }
             Err(why) => Scheduled { machine, done: false, reason: Some(ActionReason::Other), why: Some(why) },
         });
+    }
+    for chunk in pending.chunks(64) {
+        let committed = super::repair_batch::apply(hub, asker, account, chunk);
+        for ((at, _, _), result) in chunk.iter().zip(committed) {
+            match result {
+                Ok(()) => results[*at].done = true,
+                Err(why) => {
+                    results[*at].reason = Some(ActionReason::Other);
+                    results[*at].why = Some(why);
+                }
+            }
+        }
+        tokio::task::yield_now().await;
     }
     super::prefetch(hub);
     super::tell(hub, None);
@@ -172,7 +161,7 @@ pub(super) fn settle(hub: &Hub, machine: &MachineName, result: &fastctx_types::r
     if result.success {
         store.hub.repairs.remove(index);
     } else {
-        let due = &mut store.hub.repairs[index].due;
+        let due = &mut std::sync::Arc::make_mut(&mut store.hub.repairs[index]).due;
         if due.observed == Some(result.started) {
             return;
         }
@@ -213,13 +202,14 @@ fn record_helper_result(hub: &Hub, machine: &MachineName, report: fastctx_types:
     settle(hub, machine, &report);
     let mut updates = hub.updates.lock().expect("repair result");
     let last = updates.last.get_mut(&key).ok_or("the legacy machine has never reported its version")?;
+    let last = std::sync::Arc::make_mut(last);
     last.report.stage = stage(&report);
     last.report.repair = Some(report.clone());
     if let Some((_, active)) = updates.reports.get_mut(machine) {
         active.stage = stage(&report);
         active.repair = Some(report);
     }
-    updates.history_writer.send_replace(updates.last.clone());
+    updates.history_writer.put(key, updates.last.get(&key).cloned());
     Ok(())
 }
 

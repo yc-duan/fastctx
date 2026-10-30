@@ -26,8 +26,11 @@ const LISTING: usize = fastctx_net::wire::MAX_DATA_MESSAGE / 2;
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "f")]
 pub(crate) enum ToNew {
-    /// Say what you hold.
-    Holds,
+    /// Say what you hold. The sender must carry all settings in its database.
+    Holds {
+        #[serde(default)]
+        sqlite: bool,
+    },
     /// A file, whose `bytes` follow, then its `Sum`.
     Put {
         path: String,
@@ -77,6 +80,10 @@ pub(crate) enum ToOld {
     /// `Files` messages, then `End`.
     Holds {
         committed: bool,
+        /// This receiving process can open the hub's SQLite records. Older
+        /// senders ignore it; older receivers omit it and cannot take them.
+        #[serde(default)]
+        sqlite: bool,
     },
     Files {
         entries: Vec<Entry>,

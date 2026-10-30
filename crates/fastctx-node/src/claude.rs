@@ -39,6 +39,7 @@ pub(crate) use image_records::paths as image_records;
 mod image_flush;
 pub(crate) use image_flush::wait_for_image;
 pub(crate) mod lifecycle;
+mod listing;
 pub mod management;
 mod oldest;
 pub(crate) mod pairing;

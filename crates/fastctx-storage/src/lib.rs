@@ -70,6 +70,17 @@ impl Database {
     /// Opens a private database and installs the service's idempotent schema.
     /// Opening belongs in startup or a blocking task, never under a shared lock.
     pub fn open(path: &Path, schema: &str) -> Result<Self> {
+        Self::open_initialized(path, schema, |_| Ok(()))
+    }
+
+    /// Initializes records in the schema transaction, before any reader or
+    /// writer starts. The initializer may stream legacy files into SQL and
+    /// verify them there; an error rolls back both schema and records.
+    pub fn open_initialized(
+        path: &Path,
+        schema: &str,
+        initialize: impl FnOnce(&rusqlite::Connection) -> Result<()>,
+    ) -> Result<Self> {
         let parent = path.parent().ok_or_else(|| Error::new("the database has no parent directory"))?;
         fastctx_platform::ensure_private_dir(parent)?;
         let mut connection = rusqlite::Connection::open(path)?;
@@ -83,6 +94,7 @@ impl Database {
         transaction.execute_batch(receipts::SCHEMA)?;
         transaction.execute_batch(documents::SCHEMA)?;
         transaction.execute_batch(schema)?;
+        initialize(&transaction)?;
         transaction.commit()?;
         let count = std::thread::available_parallelism().map_or(2, |n| n.get().clamp(2, 4));
         let mut readers = Vec::with_capacity(count);
