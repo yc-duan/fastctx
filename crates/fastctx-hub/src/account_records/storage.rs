@@ -28,12 +28,18 @@ pub(crate) struct Account {
 
 pub(crate) struct Slot {
     dir: PathBuf,
-    pub records: tokio::sync::Mutex<Account>,
+    pub records: Arc<tokio::sync::Mutex<Account>>,
     pub count: AtomicUsize,
     pub bytes: AtomicUsize,
 }
 
 impl Slot {
+    pub fn root(&self) -> &Path {
+        &self.dir
+    }
+    pub fn history(&self, kind: &str, key: &str) -> PathBuf {
+        self.path(kind, key).with_extension("versions")
+    }
     pub fn path(&self, kind: &str, key: &str) -> PathBuf {
         let digest = Sha256::digest(format!("{kind}\0{key}").as_bytes());
         self.dir.join(format!("{digest:x}.json"))
@@ -60,7 +66,9 @@ impl Records {
             let mut account = slot.records.try_lock().expect("not shared during startup");
             for file in files {
                 let path = file?.path();
-                if path.extension().is_none_or(|extension| extension != "json") {
+                if path.file_name().is_some_and(|name| name == "skill-edit.json")
+                    || path.extension().is_none_or(|extension| extension != "json")
+                {
                     continue;
                 }
                 let bytes = std::fs::read(&path)?;
@@ -73,6 +81,14 @@ impl Records {
                 account
                     .entries
                     .insert((metadata.kind.clone(), metadata.key.clone()), Entry { metadata, size: bytes.len() });
+            }
+            crate::skill_storage::recover(&slot, &mut account).map_err(std::io::Error::other)?;
+            for entry in account
+                .entries
+                .values()
+                .filter(|entry| entry.metadata.deleted && entry.metadata.kind == fastctx_types::plan::KIND)
+            {
+                super::history::delete(&slot.history(&entry.metadata.kind, &entry.metadata.key))?;
             }
             slot.count.store(account.entries.len(), Ordering::Relaxed);
             slot.bytes.store(account.bytes, Ordering::Relaxed);
@@ -88,7 +104,7 @@ impl Records {
             .or_insert_with(|| {
                 Arc::new(Slot {
                     dir: self.dir.join(name.as_str()).join(opened.as_nanosecond().to_string()),
-                    records: tokio::sync::Mutex::default(),
+                    records: Default::default(),
                     count: AtomicUsize::new(0),
                     bytes: AtomicUsize::new(0),
                 })

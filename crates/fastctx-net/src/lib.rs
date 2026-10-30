@@ -40,6 +40,7 @@ pub mod memory;
 pub mod message;
 pub mod moving;
 pub mod peer;
+pub mod plan_merge;
 pub mod proxy;
 pub mod pulse;
 pub mod question_parts;

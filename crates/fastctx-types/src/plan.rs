@@ -23,6 +23,9 @@ pub struct Body {
     /// share: this tells them apart. Earlier releases wrote none.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub owner: Option<Box<Address>>,
+    /// The durable working-copy submission that created this revision.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub submission: Option<Box<String>>,
 }
 
 impl Body {
