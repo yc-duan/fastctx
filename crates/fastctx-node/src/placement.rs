@@ -53,6 +53,12 @@ pub(crate) fn account(node: &Node, acting: &Acting, pinned: Option<HubAccount>) 
     })
 }
 
+/// Storage follows registration ownership, not Hold, which also admits shares.
+/// Work authorization is checked separately through the existing shell gate.
+pub(crate) fn owned(member: Option<&fastctx_net::directory::Member>, account: &fastctx_types::AccountName) -> bool {
+    member.is_some_and(|member| member.home.as_ref() == Some(account) && member.logins.contains(account))
+}
+
 /// Current online computers owned by the acting account, excluding machines
 /// merely shared with it. Work authorization itself is exactly the shell gate.
 pub(crate) fn destinations(node: &Node, acting: &Acting) -> Result<Vec<Destination>, Failure> {
@@ -69,7 +75,7 @@ pub(crate) fn destinations(node: &Node, acting: &Acting) -> Result<Vec<Destinati
             }
             let scope = HubAccount { hub: link.membership().id, account };
             let subject = Acting::one(scope.hub.clone(), scope.account.clone());
-            for member in view.machines().filter(|member| member.online && view.holds(&scope.account, &member.name)) {
+            for member in view.machines().filter(|member| member.online && owned(Some(member), &scope.account)) {
                 let machine = Written { name: member.name.clone(), hub: Some(link.hub_name()) };
                 if node.authorize_machine(&subject, &machine).is_ok() {
                     destinations.push(Destination { machine, account: scope.clone(), aliases: member.was.clone() });
@@ -88,11 +94,12 @@ fn matches(wanted: &Written, candidate: &Destination) -> bool {
 }
 
 /// Explicit user choice, then conversation focus in its recorded order, then
-/// the speaking computer, then the account's sole online computer. Ambiguity
+/// its own host, the speaking computer, and the account's sole online computer. Ambiguity
 /// remains absence; it is never resolved by alphabetical order.
 pub(crate) fn select<'a>(
     choices: &'a [Destination],
     focus: &Focus,
+    host: Option<&MachineName>,
     speaking: Option<&MachineName>,
     preferred: Option<&Written>,
 ) -> Result<Option<&'a Destination>, Failure> {
@@ -107,6 +114,12 @@ pub(crate) fn select<'a>(
         if let Some(choice) = choices.iter().find(|choice| matches(&focused.machine, choice)) {
             return Ok(Some(choice));
         }
+    }
+    if let Some(host) = host
+        && let Some(choice) =
+            choices.iter().find(|choice| choice.machine.name == *host || choice.aliases.contains(host))
+    {
+        return Ok(Some(choice));
     }
     if let Some(speaking) = speaking
         && let Some(choice) =
@@ -131,7 +144,7 @@ pub(crate) async fn require_copy(
     let link = node.link_of(&account.hub).ok_or_else(|| Failure::new("the working-copy hub is unavailable"))?;
     let acting = Acting::one(account.hub.clone(), account.account.clone());
     node.authorize_machine(&acting, &node.machine().into())?;
-    if !crate::authorization::current_view(&link)?.holds(&account.account, &node.machine()) {
+    if !owned(crate::authorization::current_view(&link)?.member(&node.machine()), &account.account) {
         return Err(Failure::refused("working copies belong on the account's own computers"));
     }
     let (version, place) = location::read_place(&link, &account, owner).await?;

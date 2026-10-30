@@ -106,7 +106,8 @@ pub(super) fn owns_here(node: &Node, acting: &Acting) -> Result<(), Failure> {
     }
     for link in node.links() {
         let view = link.view();
-        if node.accounts_on(&link, acting).iter().any(|account| view.holds(account, &view.me)) {
+        if node.accounts_on(&link, acting).iter().any(|account| crate::placement::owned(view.member(&view.me), account))
+        {
             return Ok(());
         }
     }
@@ -186,8 +187,8 @@ fn owned(
         }
         _ => Default::default(),
     };
-    let selected =
-        crate::placement::select(&choices, &focus, Some(from), preferred)?.map(|choice| choice.machine.clone());
+    let selected = crate::placement::select(&choices, &focus, Some(&node.machine()), Some(from), preferred)?
+        .map(|choice| choice.machine.clone());
     let machines: Vec<_> = choices.into_iter().map(|choice| choice.machine).collect();
     Ok(AttachmentPlaces { images_only: machines.is_empty(), machines, selected })
 }
@@ -197,7 +198,7 @@ pub(super) fn validate_original(node: &Node, acting: &Acting, original: &Attachm
     for identity in accounts {
         let Some(link) = node.link_of(&identity.hub) else { continue };
         let view = link.view();
-        if view.holds(&identity.account, &original.owner.machine)
+        if crate::placement::owned(view.member(&original.owner.machine), &identity.account)
             && view.admits(&view.me, &identity.account, &original.owner.machine, Purpose::Hands).is_ok()
         {
             return Ok(());

@@ -119,10 +119,8 @@ pub(crate) async fn prepare(
         None => crate::focus::opening(&room)?.map(|opening| opening.focus).unwrap_or_default(),
     };
     let from: Option<MachineName> = read(&room.path().join("working-from.json"))?;
-    // Earlier own conversations did not record the speaking device. Their
-    // own computer remains the natural second choice, only if actually owned.
     let local = node.machine();
-    let selected = super::select(&choices, &focus, from.as_ref().or(Some(&local)), None)?.cloned();
+    let selected = super::select(&choices, &focus, Some(&local), from.as_ref(), None)?.cloned();
     let owner = Address { machine: node.machine(), resident: id.clone() };
     let mut desired =
         Place { owner: owner.clone(), machine: selected.as_ref().map(|choice| choice.machine.name.clone()) };

@@ -136,7 +136,7 @@ pub(crate) async fn activate(
     let link = node.link_of(&account.hub).ok_or_else(|| failure("the copy's hub is unavailable"))?;
     let acting = Acting::one(account.hub.clone(), account.account.clone());
     node.authorize_machine(&acting, &node.machine().into())?;
-    if !crate::authorization::current_view(&link)?.holds(&account.account, &node.machine()) {
+    if !super::owned(crate::authorization::current_view(&link)?.member(&node.machine()), &account.account) {
         return Err(Failure::refused("working copies belong on the account's own computers"));
     }
     let (version, place) = super::location::read_place(&link, &account, &owner).await?;
@@ -176,7 +176,7 @@ async fn synchronize(node: &Arc<Node>, slot: &Arc<Slot>) -> Result<(), Failure> 
     let link = node.link_of(&state.account.hub).ok_or_else(|| failure("the copy's hub is unavailable"))?;
     let acting = Acting::one(state.account.hub.clone(), state.account.account.clone());
     node.authorize_machine(&acting, &node.machine().into())?;
-    if !crate::authorization::current_view(&link)?.holds(&state.account.account, &node.machine()) {
+    if !super::owned(crate::authorization::current_view(&link)?.member(&node.machine()), &state.account.account) {
         return Err(Failure::refused("this computer no longer owns the copy's account"));
     }
     if crate::authorization::current_view(&link)?
