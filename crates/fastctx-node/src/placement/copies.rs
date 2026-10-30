@@ -49,6 +49,9 @@ struct Slot {
     dirty: AtomicBool,
     running: AtomicBool,
     watching: AtomicBool,
+    /// Wakes a worker waiting to try again after a failure, once the file or
+    /// the record changes.
+    wake: tokio::sync::Notify,
 }
 #[derive(Clone, Serialize, Deserialize)]
 struct State {
@@ -124,6 +127,7 @@ fn register(node: &Arc<Node>, state: State) -> Result<Arc<Slot>, Failure> {
             dirty: AtomicBool::new(false),
             running: AtomicBool::new(false),
             watching: AtomicBool::new(true),
+            wake: tokio::sync::Notify::new(),
         });
         slots.insert(key, slot.clone());
         slot
@@ -325,6 +329,7 @@ fn discard(node: &Node, slot: &Slot) -> Result<(), Failure> {
 fn request(node: &Arc<Node>, slot: Arc<Slot>) {
     slot.dirty.store(true, Ordering::Release);
     if slot.running.swap(true, Ordering::AcqRel) {
+        slot.wake.notify_one();
         return;
     }
     let weak = Arc::downgrade(node);
@@ -352,7 +357,12 @@ fn request(node: &Arc<Node>, slot: Arc<Slot>) {
                         previous = error.message;
                     }
                     drop(node);
-                    tokio::time::sleep(retry.next()).await;
+                    // A save or a record change meanwhile is taken at once;
+                    // the wait only paces a failure that stays.
+                    tokio::select! {
+                        () = tokio::time::sleep(retry.next()) => {}
+                        () = slot.wake.notified() => {}
+                    }
                     continue;
                 }
             }

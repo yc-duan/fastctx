@@ -100,6 +100,7 @@ def inside(args):
         f'model="mock-model"\nmodel_provider="mock"\n[model_providers.mock]\nname="mock"\n'
         f'base_url="{mock.base_url}"\nwire_api="responses"\nrequires_openai_auth=false\n'
         'request_max_retries=0\nstream_max_retries=0\n')
+    passed = False
     try:
         subprocess.run([str(args.drill), str(base), str(args.kernel), goal.endpoint], check=True, timeout=900,
                        env={"PATH": path, "HOME": str(base / "user"), "LANG": "C.UTF-8", "TMPDIR": str(base)})
@@ -110,7 +111,15 @@ def inside(args):
         if "WORLD_FACTS_READ" not in goal_text or "PLACEMENT_GOAL_CANARY" not in goal_text:
             raise AssertionError("the goal sentinel did not receive the copied full evidence")
         print("PASS the goal model received full working-computer evidence through the real look tool",flush=True)
+        passed = True
     finally:
+        if not passed:
+            # What each node said of its copies, so a failure on a runner explains itself.
+            for log in sorted(base.glob("**/world/node.log")):
+                said = [line for line in log.read_text(errors="replace").splitlines()
+                        if any(word in line for word in ("plan copy", "skill", "goal", "sentinel", "working-copy"))]
+                if said:
+                    print("NODE LOG", log.relative_to(base), *said[-15:], sep="\n  ", flush=True)
         (base / "requests.json").write_text(json.dumps(mock.requests, ensure_ascii=False, indent=2))
         (base / "goal-requests.json").write_text(json.dumps(goal.requests,ensure_ascii=False,indent=2))
         (base / "goal-errors.json").write_text(json.dumps(goal.errors))
