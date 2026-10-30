@@ -894,6 +894,8 @@ async fn fetch_attachment(
 #[serde(tag = "kind", rename_all = "snake_case")]
 enum Opened {
     Opened,
+    /// A phone opens a file in the app the system picks, which runs nothing.
+    #[cfg_attr(target_os = "android", allow(dead_code))]
     Program,
 }
 
