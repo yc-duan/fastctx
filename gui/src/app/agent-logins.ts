@@ -312,6 +312,11 @@ export class AgentLoginsPage implements Page {
     const machine = this.current(this.options.store.world.peek()).machine;
     if (!machine || this.reading === machine.name || this.fetched === machine.name) return;
     this.fetched = machine.name;
+    // What was last read of it shows at once, while it is read anew.
+    if (this.record?.machine !== machine.name) {
+      this.record = keptRecord(machine.name);
+      if (this.record) this.draw();
+    }
     void this.read();
   }
 

@@ -62,7 +62,7 @@ import { enUsage, zhUsage } from "./app/usage/words";
 import "./app/usage/usage.css";
 import { enCalls, zhCalls } from "./app/usage/calls-words";
 import "./app/usage/calls.css";
-import { keptRecord } from "./app/usage/kept";
+import { keepLoginsFor, keptRecord } from "./app/usage/kept";
 import { ActsMenu } from "./app/acts-menu";
 import { specimenUsage } from "./specimen/usage";
 import { specimenCalls } from "./specimen/calls";
@@ -408,6 +408,13 @@ if (params.has("quiet")) {
 }
 const store = createStore(() => ({ world: specimen.world, now: specimen.now }));
 const live = store.live;
+keepLoginsFor(() => store.world.peek()?.accounts);
+// `?slowlogins=<ms>`: a machine's logins come from a node that takes that
+// long to answer.
+const specimenLoginsRead = async (machine: Parameters<typeof specimenLogins>[0]) => {
+  await new Promise((resolve) => setTimeout(resolve, Number(params.get("slowlogins") ?? 0)));
+  return specimenLogins(machine, specimen.now);
+};
 // `?departed=<machine>`: that machine leaves the network once it was read,
 // as when an assistance ended; its conversations stay listed, read only.
 const departing = !live ? params.get("departed") : null;
@@ -2430,7 +2437,7 @@ async function openCalls(about: { machine: string; host: { agent: string }; home
   const defaultOf = (logins: MachineLogins | null) => logins?.[agent].listed.find((login) => login.default)?.dir ?? null;
   let dir = about.home ?? defaultOf(keptRecord(machine));
   if (!dir) {
-    const read = await (live ? agentLogins(machine) : specimenLogins(machine, specimen.now)).catch(() => null);
+    const read = await (live ? agentLogins(machine) : specimenLoginsRead(machine)).catch(() => null);
     const heard = read?.machines.find((one) => one.kind === "answered" && one.logins.machine === machine);
     dir = heard?.kind === "answered" ? defaultOf(heard.logins) : null;
   }
@@ -2914,7 +2921,7 @@ function show(next: Place): void {
         },
         when,
         workbench: accountLayer.workbench,
-        read: (machine) => (live ? agentLogins(machine) : specimenLogins(machine, specimen.now)),
+        read: (machine) => (live ? agentLogins(machine) : specimenLoginsRead(machine)),
         scan: (machine, stop) => (live ? scanAgents(machine, stop) : specimenScan(machine, stop, specimen.now)),
         add: (machine, agent, dir) => (live ? addAgentLogin(machine, agent, dir) : specimenTakeUp(machine, agent, dir, specimen.now)),
         folder: (machine, dir, change) => (live ? agentFolder(machine, dir, change) : specimenFolder(machine, dir, change, specimen.now)),
@@ -2957,7 +2964,7 @@ function show(next: Place): void {
         agent: next.agent,
         dir: next.dir,
         workbench: accountLayer.workbench,
-        read: (machine) => (live ? agentLogins(machine) : specimenLogins(machine, specimen.now)),
+        read: (machine) => (live ? agentLogins(machine) : specimenLoginsRead(machine)),
         usage: (machine, agent, dir) => (live ? agentUsage(machine, agent, dir) : specimenUsage(machine, agent, dir, specimen.now)),
         when,
         talk: (machine, agent, home) => beginTalk(null, loginKey(machine, agent, home), machine),
