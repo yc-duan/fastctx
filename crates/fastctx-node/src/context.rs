@@ -131,11 +131,19 @@ pub(crate) fn acknowledge(node: &Node, id: &ResidentId, heard: &mut crate::resid
 /// No body is copied to a second place that could lag after a failed refresh.
 pub(crate) fn hand_to_session(node: &Node, id: &ResidentId, session: &Path) -> io::Result<()> {
     storage::initialize(&node.world, id)?;
-    fastctx_platform::publish(
-        &session.join("context.json"),
-        &serde_json::to_vec(&serde_json::json!({"directory": storage::directory(&node.world, id), "state": storage::state_path(&node.world, id)})).map_err(io::Error::other)?,
-        fastctx_platform::Permissions::Private,
-    )
+    let path = session.join("context.json");
+    let bytes = serde_json::to_vec(&serde_json::json!({
+        "directory": storage::directory(&node.world, id),
+        "state": storage::state_path(&node.world, id),
+    }))
+    .map_err(io::Error::other)?;
+    match std::fs::read(&path) {
+        Ok(kept) if kept == bytes => return Ok(()),
+        Ok(_) => {}
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error),
+    }
+    fastctx_platform::publish(&path, &bytes, fastctx_platform::Permissions::Private)
 }
 
 /// What the plugin reports a session's model holds: the block versions a

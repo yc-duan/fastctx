@@ -41,7 +41,7 @@ impl Inner {
         };
         if changed {
             self.ways_changed();
-            self.node.directory_changed();
+            self.node.presence_changed();
         }
     }
 

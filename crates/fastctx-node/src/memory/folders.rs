@@ -6,7 +6,6 @@ use fastctx_types::{
     access::{Acting, Purpose},
     ipc::Failure,
     memory::Folders,
-    remote::{RemoteCall, RemoteReply},
 };
 use std::sync::Arc;
 
@@ -58,28 +57,24 @@ pub(crate) async fn get(node: &Arc<Node>, town: &TownName, acting: &Acting) -> R
         .collect();
     computers.sort();
     let machine = computers.first().ok_or(fastctx_types::memory::words::OFFLINE_COMPUTERS)?;
-    drop(view);
-    let facts = link
-        .call(machine, &account, Purpose::Look, RemoteCall::Facts)
-        .await
-        .map_err(|error| error.to_string())?
-        .map_err(|error| error.message)?;
-    let RemoteReply::Facts(facts) = facts else { return Err(fastctx_types::memory::words::COMPUTER_UNANSWERED.into()) };
-    if !facts.memory_folders {
-        return Err(fastctx_types::memory::words::paths_old(machine));
-    }
-    let town = node
+    let network_town = node
         .town_across(&link, Some(town))
         .map_err(|error| error.message)?
         .ok_or(fastctx_types::memory::words::MISSING_NETWORK_NAME)?;
-    let reply = link
-        .call(machine, &account, Purpose::Hands, RemoteCall::MemoryFolders { town })
-        .await
-        .map_err(|error| error.to_string())?
-        .map_err(|error| error.message)?;
-    let RemoteReply::MemoryFolders(folders) = reply else {
-        return Err(fastctx_types::memory::words::PATHS_UNANSWERED.into());
-    };
+    let ways = *node.ways.borrow();
+    let memory = *node.memory_changes.borrow();
+    let folders = node
+        .folder_reads
+        .fetch(super::folder_reads::Query {
+            link: link.clone(),
+            view,
+            account: account.clone(),
+            machine: machine.clone(),
+            town: network_town,
+            ways,
+            memory,
+        })
+        .await?;
     let view = link.view();
     if !view.member(machine).is_some_and(|member| {
         member.online && member.home.as_ref() == Some(&account) && member.logins.contains(&account)

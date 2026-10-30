@@ -93,11 +93,15 @@ pub(crate) async fn prepare(
 /// the hub cannot be asked now.
 pub(crate) async fn skills(node: &Node, id: &ResidentId, acting: &Acting) -> Result<(), Failure> {
     let Some(text) = crate::skills::context(node, acting).await else { return Ok(()) };
+    set_skills(node, id, &text)
+}
+
+pub(crate) fn set_skills(node: &Node, id: &ResidentId, text: &str) -> Result<(), Failure> {
     let change = Change { by: None, version: "", fact: &words::changed("skills", words::USER), full: true };
     let set = if node.residents.about(id).is_some() {
-        super::set(node, id, "skills", &text, change)
+        super::set(node, id, "skills", text, change)
     } else {
-        storage::set(&node.world, id, "skills", &text, change)
+        storage::set(&node.world, id, "skills", text, change)
     };
     set.map_err(|error| Failure::new(error.to_string()))
 }

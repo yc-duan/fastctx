@@ -50,6 +50,7 @@ mod data;
 mod delivery;
 mod desk;
 mod devices;
+mod directory_changes;
 mod ending;
 mod facts;
 mod features;
@@ -127,7 +128,6 @@ mod run_receipts;
 mod run_stops;
 mod scratch;
 mod sentinels;
-mod skills;
 mod server;
 mod server_invitation;
 mod session_live;
@@ -136,6 +136,7 @@ mod session_record;
 mod shown;
 mod signals;
 mod since;
+mod skills;
 mod speech;
 mod stats;
 mod step_command;
@@ -260,6 +261,7 @@ pub(crate) struct Node {
     /// beyond the residents and jobs here (`shown`).
     shown: tokio::sync::watch::Sender<u64>,
     memory_changes: tokio::sync::watch::Sender<u64>,
+    folder_reads: memory::folder_reads::Reads,
     /// What the other machines said of themselves (`facts`).
     facts: facts::Facts,
     /// Deletions of conversations still to be asked of hubs (`forget`).
@@ -684,6 +686,7 @@ pub async fn run_prepared(
         views: tokio::sync::watch::channel(0).0,
         shown: tokio::sync::watch::channel(0).0,
         memory_changes: tokio::sync::watch::channel(0).0,
+        folder_reads: Default::default(),
         facts: facts::Facts::default(),
         forget_asks: forget::Asks::default(),
         stuck: Default::default(),
