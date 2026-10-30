@@ -117,9 +117,11 @@ export class ActivityPage implements Page {
       const width = Math.floor(entry?.contentRect.width ?? 0);
       const height = Math.floor(entry?.contentRect.height ?? 0);
       if (width && (width !== this.width || height !== this.height)) {
+        const first = !this.width;
         this.width = width;
         this.height = height;
-        this.draw();
+        // Lists reflow in CSS; only charts use these dimensions to draw.
+        if (first || ["timeline", "calendar", "rhythm", "spread"].includes(this.view)) this.draw();
       }
     });
     this.resize.observe(this.body);
