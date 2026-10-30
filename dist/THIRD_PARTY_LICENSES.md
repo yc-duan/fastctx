@@ -10827,6 +10827,38 @@ third-party/chromium/LICENSE.
 
 Used by:
 
+- serde_yaml_ng 0.10.0 (https://github.com/acatton/serde-yaml-ng)
+
+````text
+                                  MIT License
+
+Copyright 2024 Antoine Catton
+Copyright 2016-2024 David Tolnay
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of
+this software and associated documentation files (the “Software”), to deal in
+the Software without restriction, including without limitation the rights to
+use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies
+of the Software, and to permit persons to whom the Software is furnished to do
+so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED “AS IS”, WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+````
+
+## MIT License
+
+Used by:
+
 - uds_windows 1.2.1 (https://github.com/haraldh/rust_uds_windows)
 
 ````text
@@ -12090,6 +12122,7 @@ SOFTWARE.
 Used by:
 
 - endi 1.1.1 (https://github.com/zeenix/endi)
+- unsafe-libyaml 0.2.11 (https://github.com/dtolnay/unsafe-libyaml)
 - voprf 0.5.0 (https://github.com/facebook/voprf/)
 - zmij 1.0.23 (https://github.com/dtolnay/zmij)
 - zvariant_utils 4.2.0 (https://github.com/z-galaxy/zbus/)
@@ -86859,6 +86892,7 @@ Source archives for the crates.io dependencies recorded by this build follow. Ea
 - serde_json 1.0.151: https://static.crates.io/crates/serde_json/serde_json-1.0.151.crate
 - serde_repr 0.1.21: https://static.crates.io/crates/serde_repr/serde_repr-0.1.21.crate
 - serde_spanned 1.1.1: https://static.crates.io/crates/serde_spanned/serde_spanned-1.1.1.crate
+- serde_yaml_ng 0.10.0: https://static.crates.io/crates/serde_yaml_ng/serde_yaml_ng-0.10.0.crate
 - sha1 0.11.0: https://static.crates.io/crates/sha1/sha1-0.11.0.crate
 - sha2 0.10.9: https://static.crates.io/crates/sha2/sha2-0.10.9.crate
 - sha2 0.11.0: https://static.crates.io/crates/sha2/sha2-0.11.0.crate
@@ -86938,6 +86972,7 @@ Source archives for the crates.io dependencies recorded by this build follow. Ea
 - unicode-segmentation 1.13.3: https://static.crates.io/crates/unicode-segmentation/unicode-segmentation-1.13.3.crate
 - unicode-truncate 2.0.1: https://static.crates.io/crates/unicode-truncate/unicode-truncate-2.0.1.crate
 - unicode-width 0.2.2: https://static.crates.io/crates/unicode-width/unicode-width-0.2.2.crate
+- unsafe-libyaml 0.2.11: https://static.crates.io/crates/unsafe-libyaml/unsafe-libyaml-0.2.11.crate
 - untrusted 0.9.0: https://static.crates.io/crates/untrusted/untrusted-0.9.0.crate
 - url 2.5.8: https://static.crates.io/crates/url/url-2.5.8.crate
 - utf8_iter 1.0.4: https://static.crates.io/crates/utf8_iter/utf8_iter-1.0.4.crate
@@ -87033,4 +87068,4 @@ Source archives for the crates.io dependencies recorded by this build follow. Ea
 - zvariant_derive 5.15.0: https://static.crates.io/crates/zvariant_derive/zvariant_derive-5.15.0.crate
 - zvariant_utils 4.2.0: https://static.crates.io/crates/zvariant_utils/zvariant_utils-4.2.0.crate
 
-<!-- fastctx-notices-inputs: f5aca5e081c11b0e116083aa54a900d3d17c10ceda5f662735b7981d0e707a4a -->
+<!-- fastctx-notices-inputs: fc59ace4e0d50af01e616c746a48c9d0157f570a445b33a952f1f73177a5b1ab -->
