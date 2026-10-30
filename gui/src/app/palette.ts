@@ -113,7 +113,8 @@ export class Palette {
       .map((item, index) => {
         const head = item.group !== group ? `<li class="palette-group" role="presentation">${escape(item.group)}</li>` : "";
         group = item.group;
-        return `${head}<li class="palette-item" role="option" aria-selected="false" id="palette-item-${index}" data-index="${index}"><span class="palette-label">${escape(item.label)}</span>${item.note ? `<span class="palette-note">${escape(item.note)}</span>` : ""}</li>`;
+        const label = [item.label, item.note].filter(Boolean).join(" ");
+        return `${head}<li class="palette-item" role="option" aria-label="${escape(label)}" aria-selected="false" id="palette-item-${index}" data-index="${index}"><span class="palette-label">${escape(item.label)}</span>${item.note ? `<span class="palette-note">${escape(item.note)}</span>` : ""}</li>`;
       })
       .join("");
     this.mark();
