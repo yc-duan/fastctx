@@ -24,7 +24,7 @@ fn edits<'a>(base: &[&str], changed: &[&'a str]) -> Vec<Edit<'a>> {
         .collect()
 }
 
-pub(super) fn merge(base: &str, hub: &str, file: &str) -> String {
+pub fn merge(base: &str, hub: &str, file: &str) -> String {
     if hub == base || hub == file {
         return file.into();
     }
@@ -65,4 +65,11 @@ pub(super) fn merge(base: &str, hub: &str, file: &str) -> String {
         result.push_str(line);
     }
     result
+}
+
+/// The submission identity is determined by the original edit, not by a
+/// merged result or by a retry time. Account incarnation scopes its receipt.
+pub fn submission(owner: &fastctx_types::Address, base: Option<u64>, markdown: &str) -> String {
+    use sha2::{Digest, Sha256};
+    format!("{:x}", Sha256::digest(serde_json::to_vec(&(owner, base, markdown)).expect("plain values serialize")))
 }

@@ -23,7 +23,6 @@ fastctx-update = { path = "../fastctx-update" }
 futures-util = { version = "0.3", default-features = false, features = ["sink", "std"] }
 bytes = "1"
 http-body-util = "0.1"
-imara-diff = { version = "0.2", default-features = false }
 hyper = { version = "1", features = ["http1", "server"] }
 hyper-util = { version = "0.1", features = ["tokio"] }
 jiff.workspace = true

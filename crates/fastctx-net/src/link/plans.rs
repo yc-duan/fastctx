@@ -79,7 +79,7 @@ impl Link {
                 current.body.and_then(|body| body.owner).or_else(|| whose.cloned().map(Box::new))
             }
         };
-        let body = Body { markdown, author, owner: owned };
+        let body = Body { markdown, author, owner: owned, submission: None };
         match self
             .account_records(
                 account,

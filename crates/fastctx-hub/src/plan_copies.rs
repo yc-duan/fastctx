@@ -1,7 +1,7 @@
 //! Account-authorized plan history and three-way working-copy submissions.
 //! No network operation is performed while an account's storage gate is held.
 
-mod merge;
+use fastctx_net::plan_merge as merge;
 
 use crate::{
     Hub,
@@ -49,6 +49,11 @@ pub(crate) async fn ask(
     request: Request,
 ) -> Result<Told, String> {
     request.validate()?;
+    if let Request::Merge { owner, base, markdown, submission: Some(id) } = &request
+        && *id != fastctx_net::plan_merge::submission(owner, *base, markdown)
+    {
+        return Err("the submission identity does not describe this edit".into());
+    }
     let owner = request.owner().clone();
     let slot = hub.account_records.account(&account, opened);
     for _ in 0..8 {
@@ -58,8 +63,13 @@ pub(crate) async fn ask(
         let history = slot.history(plan::KIND, owner.resident.as_str());
         let exists = records.entries.contains_key(&(plan::KIND.into(), owner.resident.to_string()));
         let wanted = request.clone();
-        let (current, historical) = tokio::task::spawn_blocking(move || {
+        let (current, historical, submitted) = tokio::task::spawn_blocking(move || {
             let current = if exists { Some(storage::read(&current)?) } else { None };
+            if let Request::Merge { submission: Some(id), .. } = &wanted
+                && let Some(submitted) = account_records::history::submitted(current.as_ref(), &history, id)?
+            {
+                return Ok((current, Vec::new(), Some(submitted)));
+            }
             let version = match wanted {
                 Request::Revision { version, .. } => Some(version),
                 Request::Merge { base, .. } => base,
@@ -84,7 +94,7 @@ pub(crate) async fn ask(
                         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
                         Err(error) => return Err(error.to_string()),
                     }
-                    return Ok((current, found));
+                    return Ok((current, found, None));
                 }
             };
             let base = if let Some(version) = version {
@@ -96,7 +106,7 @@ pub(crate) async fn ask(
             } else {
                 Vec::new()
             };
-            Ok::<_, String>((current, base))
+            Ok::<_, String>((current, base, None))
         })
         .await
         .map_err(|error| error.to_string())??;
@@ -105,6 +115,11 @@ pub(crate) async fn ask(
         belongs(hub, &current, &owner)?;
         if current.deleted() {
             return Err(plan::words::DELETED.into());
+        }
+        if let Some(submitted) = submitted {
+            let submitted = page(&owner, Some(submitted))?;
+            belongs(hub, &submitted, &owner)?;
+            return Ok(Told::PlanCopies { reply: Reply::Page { page: Box::new(submitted) } });
         }
         let historical =
             historical.into_iter().map(|record| page(&owner, Some(record))).collect::<Result<Vec<_>, _>>()?;
@@ -135,12 +150,28 @@ pub(crate) async fn ask(
                 let markdown = merge::merge(base, text, markdown);
                 plan::validate(&markdown)?;
                 if current.body.as_ref().is_some_and(|body| body.markdown == markdown) {
+                    if let Request::Merge { submission: Some(id), .. } = &request {
+                        let history = slot.history(plan::KIND, owner.resident.as_str());
+                        let id = id.clone();
+                        let record = Record {
+                            metadata: current.metadata.clone().expect("a stored page has metadata"),
+                            body: serde_json::to_value(&current.body).map_err(|error| error.to_string())?,
+                        };
+                        tokio::task::spawn_blocking(move || account_records::history::receipt(&history, &id, &record))
+                            .await
+                            .map_err(|error| error.to_string())?
+                            .map_err(|error| error.to_string())?;
+                    }
                     return Ok(Told::PlanCopies { reply: Reply::Page { page: Box::new(current) } });
                 }
                 let body = Body {
                     markdown,
                     author: Author::Resident { address: owner.clone() },
                     owner: Some(Box::new(owner.clone())),
+                    submission: match &request {
+                        Request::Merge { submission, .. } => submission.clone().map(Box::new),
+                        _ => None,
+                    },
                 };
                 let operation = Records::Write {
                     kind: plan::KIND.into(),

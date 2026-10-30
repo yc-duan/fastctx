@@ -11,7 +11,14 @@ pub enum Request {
     Revision { owner: Address, version: u64 },
     /// Merge a file based on `base`; concurrent conflicting lines favor the
     /// file while the replaced hub version remains in history.
-    Merge { owner: Address, base: Option<u64>, markdown: String },
+    Merge {
+        owner: Address,
+        base: Option<u64>,
+        markdown: String,
+        /// Stable across retries, persisted by the submitting working copy.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        submission: Option<String>,
+    },
     /// Confirm an exact body before retiring an obsolete local file.
     Contains { owner: Address, markdown: String },
 }
@@ -23,6 +30,11 @@ impl Request {
         }
     }
     pub fn validate(&self) -> Result<(), String> {
+        if let Self::Merge { submission: Some(id), .. } = self
+            && (id.len() != 64 || !id.bytes().all(|byte| byte.is_ascii_hexdigit()))
+        {
+            return Err("invalid working-copy submission identity".into());
+        }
         match self {
             Self::Merge { markdown, .. } | Self::Contains { markdown, .. } => crate::plan::validate(markdown),
             _ => Ok(()),

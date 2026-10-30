@@ -29,7 +29,10 @@ pub async fn exercise(world: &World, report: &mut Report) -> anyhow::Result<()> 
     let base = "# Work\n- [ ] first\n- [ ] second\n";
     let first = page(
         alpha
-            .plan_copy(&world.account, Request::Merge { owner: owner.clone(), base: None, markdown: base.into() })
+            .plan_copy(
+                &world.account,
+                Request::Merge { submission: None, owner: owner.clone(), base: None, markdown: base.into() },
+            )
             .await
             .map_err(anyhow::Error::msg)?,
     )?;
@@ -44,7 +47,12 @@ pub async fn exercise(world: &World, report: &mut Report) -> anyhow::Result<()> 
         alpha
             .plan_copy(
                 &world.account,
-                Request::Merge { owner: owner.clone(), base: first.version(), markdown: file.into() },
+                Request::Merge {
+                    submission: Some(fastctx_net::plan_merge::submission(&owner, first.version(), file)),
+                    owner: owner.clone(),
+                    base: first.version(),
+                    markdown: file.into(),
+                },
             )
             .await
             .map_err(anyhow::Error::msg)?,
@@ -70,7 +78,12 @@ pub async fn exercise(world: &World, report: &mut Report) -> anyhow::Result<()> 
         alpha
             .plan_copy(
                 &world.account,
-                Request::Merge { owner: owner.clone(), base: merged.version(), markdown: "file conflict\n".into() },
+                Request::Merge {
+                    submission: None,
+                    owner: owner.clone(),
+                    base: merged.version(),
+                    markdown: "file conflict\n".into(),
+                },
             )
             .await
             .map_err(anyhow::Error::msg)?,
@@ -89,18 +102,48 @@ pub async fn exercise(world: &World, report: &mut Report) -> anyhow::Result<()> 
         )?;
         report.check(text(&historical) == expected, "the superseded revision is preserved exactly", version.unwrap());
     }
+    let replayed = page(
+        alpha
+            .plan_copy(
+                &world.account,
+                Request::Merge {
+                    submission: Some(fastctx_net::plan_merge::submission(&owner, first.version(), file)),
+                    owner: owner.clone(),
+                    base: first.version(),
+                    markdown: file.into(),
+                },
+            )
+            .await
+            .map_err(anyhow::Error::msg)?,
+    )?;
+    report.check(
+        replayed.version() == merged.version() && text(&replayed) == text(&merged),
+        "a lost receipt replays the original accepted result",
+        "",
+    );
+    let current = alpha.plan_read_of(&world.account, &owner).await.map_err(anyhow::Error::msg)?;
+    report.check(
+        current.version() == chosen.version() && text(&current) == text(&chosen),
+        "replaying an accepted edit cannot overwrite a later edit",
+        "",
+    );
     let alien = Address { machine: world.machine("beta").name.clone(), ..owner.clone() };
     let refused = beta
         .plan_copy(
             &world.account,
-            Request::Merge { owner: alien, base: chosen.version(), markdown: "collision".into() },
+            Request::Merge { submission: None, owner: alien, base: chosen.version(), markdown: "collision".into() },
         )
         .await;
     report.check(refused.is_err(), "a same-short-name conversation cannot replace another's plan", "");
     let missing = beta
         .plan_copy(
             &world.account,
-            Request::Merge { owner: owner.clone(), base: Some(99999), markdown: "unknown base".into() },
+            Request::Merge {
+                submission: None,
+                owner: owner.clone(),
+                base: Some(99999),
+                markdown: "unknown base".into(),
+            },
         )
         .await;
     report.check(missing.is_err(), "an unavailable base is not silently treated as an empty plan", "");
