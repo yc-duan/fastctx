@@ -21,7 +21,7 @@ import type { TalkActs } from "./talk-acts";
 import { TalkList } from "./talk-list";
 import type { TalkMenu } from "./talk-menu";
 import type { TalkMenuWords } from "./talk-menu-words";
-import { factsByMachine, talkRow, talksOf } from "./talk-row";
+import { factsByMachine, keepWriting, talkRow, talksOf } from "./talk-row";
 import type { Confirm } from "./confirm";
 import type { ShellWords } from "./words";
 
@@ -234,6 +234,7 @@ export class TalksPage implements Page {
     redrawKeepingFocus(this.list, () => {
       this.list.innerHTML = html;
     });
+    keepWriting(this.list);
     this.unwatch();
     this.unwatch = whenNear(this.list, this.list.parentElement, () => {
       this.reach += ROWS;

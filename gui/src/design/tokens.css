@@ -132,8 +132,9 @@
   --draw: 1100ms;
   --stagger: 60ms;
   --breath: 1.6s;
-  /* One turn of a mark at work, slow enough to be calm (`app/shell.css`). */
-  --turning: 3.2s;
+  /* A pen writing a mark at work, resting, and writing it again
+     (`app/shell.css`). */
+  --writing: 3.6s;
   --breath-slow: 2.6s;
   --flow: 2.8s;
   --flow-slow: 3.4s;

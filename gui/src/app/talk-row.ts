@@ -103,9 +103,9 @@ export function talkRow(r: ResidentNow, place: Place, now: Date, facts: Map<stri
   const titled = r.about.forked_from && !acts?.renaming
     ? `<span class="talk-named">${named}<span class="talk-forked" title="${escape(words.forked)}" aria-label="${escape(words.forked)}">${glyph("fork", 13)}</span></span>`
     : named;
-  // How it stands is its family's mark, turning while it works and in clay
-  // while it waits on the user; said in words to a screen reader and on a
-  // pointer's rest over the mark. Being deleted says so in its place.
+  // How it stands is its family's mark, written as by hand while it works
+  // and in clay while it waits on the user; said in words to a screen reader
+  // and on a pointer's rest over the mark. Being deleted says so in its place.
   const stateCell = deleting ? `<span class="talk-state">${escape(state)}</span>` : state ? `<span class="spoken">${escape(state)}</span>` : "";
   return `<li class="talk-item"${acts ? ` data-own-press data-machine="${escape(address.machine)}" data-resident="${escape(address.resident)}"` : ""}><a class="talk-row${kind ? ` ${kind}` : ""}${archived ? " archived" : ""}${current ? " current" : ""}" href="${link({ kind: "talk", address })}"${current ? ' aria-current="page"' : ""}>
     <span class="talk-host" title="${escape([agent, state].filter(Boolean).join("\n"))}">${host}</span>
@@ -117,6 +117,18 @@ export function talkRow(r: ResidentNow, place: Place, now: Date, facts: Map<stri
         : `<span class="talk-device" title="${escape(device)}" aria-label="${escape(assisting !== null ? device : `${words.device(form)} ${r.about.machine}`)}">${glyph(assisting !== null ? "colleague" : form, 16)}</span>`
     }
   </a>${acts && !deleting ? quick(acts, archived, name) : ""}</li>`;
+}
+
+/** Puts each mark at work under `root` on the page's own clock, once its
+ *  rows are in the page: a list drawn again never starts a mark's writing
+ *  over, and each conversation writes a little apart from the others. */
+export function keepWriting(root: ParentNode): void {
+  for (const host of root.querySelectorAll<HTMLElement>(".talk-row.mark-busy .talk-host")) {
+    const id = host.closest<HTMLElement>("[data-resident]")?.dataset.resident ?? "";
+    let apart = 0;
+    for (const character of id) apart = (apart * 31 + character.charCodeAt(0)) % 10_000;
+    for (const animation of host.getAnimations({ subtree: true })) animation.startTime = -apart;
+  }
 }
 
 /** What shows at the row's end on hover: archiving it at once, or bringing

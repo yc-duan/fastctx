@@ -40,7 +40,7 @@ import type { TalkMenu } from "./talk-menu";
 import type { TalkMenuWords } from "./talk-menu-words";
 import { assistedBy, departedFor, isUnreached } from "./store";
 import { TalkList } from "./talk-list";
-import { factsByMachine, talkRow, talksOf } from "./talk-row";
+import { factsByMachine, keepWriting, talkRow, talksOf } from "./talk-row";
 import type { ShellWords } from "./words";
 import type { Offered } from "./updates";
 import type { UpdateWords } from "./update-words";
@@ -260,6 +260,7 @@ export class Sidebar {
     redrawKeepingFocus(this.list, () => {
       this.list.innerHTML = html;
     });
+    keepWriting(this.list);
   }
 
   /** The list as things now stand, and everything around it brought up to

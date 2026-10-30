@@ -46,6 +46,16 @@
   animation-delay: calc(var(--quick) + var(--enter));
 }
 
+/* The asterisk, a path a stroke, is drawn all at once; the ring's points
+   inside it, both after it. */
+.new-talk-mark svg path.pen-2 {
+  animation-delay: 0s;
+}
+
+.new-talk-mark svg path.pen-6 {
+  animation-delay: calc(var(--quick) + var(--enter));
+}
+
 @keyframes mark-draw {
   from {
     stroke-dashoffset: 1;
