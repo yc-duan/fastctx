@@ -47,7 +47,8 @@ pub(super) fn begin(node: &Node, version: &str) -> Option<u32> {
 
 /// Gives back the attempt reserved for `version`, as while it waits for
 /// someone to sign in: a node started again meanwhile begins it at once and
-/// waits again, rather than an hour on.
+/// waits again, rather than an hour on. Only Windows waits for a sign-in.
+#[cfg_attr(not(windows), allow(dead_code))]
 pub(super) fn give_back(node: &Node, version: &str) {
     let mut held = node.updates.held.lock().expect("never poisoned");
     if held.attempt.version.as_deref() == Some(version) && held.attempt.failed.is_none() {

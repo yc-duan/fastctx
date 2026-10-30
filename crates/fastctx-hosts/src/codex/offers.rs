@@ -147,6 +147,10 @@ impl CodexHost {
         if !speeds.any() {
             commands.retain(|command| command.name != "tier");
         }
+        // Goals are not offered in a release yet (`world.md`, 这一版不发的).
+        if !fastctx_platform::preview() {
+            commands.retain(|command| command.name != "goal");
+        }
         for skill in skills {
             let name = string(&skill, "name")?;
             commands.push(CommandOffer {

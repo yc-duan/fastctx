@@ -2,7 +2,7 @@
 // Stop hook. session.start is held by the host, so cleanup starts after that
 // callback returns and is retried after a turn. The host may evaluate an old
 // restored goal before it first becomes idle; no public goal state API exists.
-const NATIVE_GOAL_DISABLED = 'Use the conversation goal in Fastctx.'
+const NATIVE_GOAL_DISABLED = __FASTCTX_NATIVE_GOAL_REFUSAL__
 const nativeGoalContexts = new Map()
 
 function internalGoalClear($, event) {

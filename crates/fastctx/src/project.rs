@@ -8,6 +8,9 @@ use fastctx_types::{Call, MachineName, ProjectCall, Reply, TownName};
 
 use crate::ask;
 
+/// `show`'s help where project memory is not offered (`fastctx_platform::preview`).
+pub(crate) const SHOW_RECORD_HELP: &str = "A project's attributes.";
+
 /// The user's projects: list, show and enter them; open one or write
 /// the next version of its record.
 #[derive(Subcommand)]

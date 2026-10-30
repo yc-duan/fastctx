@@ -82,7 +82,13 @@ impl Database {
         initialize: impl FnOnce(&rusqlite::Connection) -> Result<()>,
     ) -> Result<Self> {
         let parent = path.parent().ok_or_else(|| Error::new("the database has no parent directory"))?;
-        fastctx_platform::ensure_private_dir(parent)?;
+        // A directory made here is private; one that exists keeps the access
+        // its owner gave it. A hub run as a system service opens its database
+        // in a directory its user made: made private again by the service, it
+        // would admit SYSTEM alone, and the user could no longer read it.
+        if !parent.try_exists()? {
+            fastctx_platform::ensure_private_dir(parent)?;
+        }
         let mut connection = rusqlite::Connection::open(path)?;
         connection.busy_timeout(ADMISSION)?;
         connection.set_prepared_statement_cache_capacity(64);

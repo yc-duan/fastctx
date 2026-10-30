@@ -26,6 +26,16 @@ pub(super) const PLAN_UNAVAILABLE: &str = "The plan is unavailable.";
 /// How to keep a plan, for a conversation that keeps its own: the plan is
 /// the Markdown file at `path` on `machine` (`plan_file`).
 pub(super) fn plan_guide(path: &str, machine: &str) -> String {
+    // Sentinels and journals are not offered in a release yet (`world.md`,
+    // 这一版不发的).
+    let live = if fastctx_platform::preview() {
+        "- For how a colleague, a sentinel or a job stands right now. Write its id
+  (codex-7f3a, s-a1b2c3, j-k3x9a2, or a journal entry such as
+  20261022T031205Z-desktop) and the panel shows its state, live."
+    } else {
+        "- For how a colleague or a job stands right now. Write its id (codex-7f3a,
+  j-k3x9a2) and the panel shows its state, live."
+    };
     format!(
         r#"YOUR PLAN
 
@@ -54,9 +64,7 @@ changes. Nothing else marks where the work stands.
 ## When not to
 - For what you can finish at once: a question answered, a quick look, a
   small fix.
-- For how a colleague, a sentinel or a job stands right now. Write its id
-  (codex-7f3a, s-a1b2c3, j-k3x9a2, or a journal entry such as
-  20261022T031205Z-desktop) and the panel shows its state, live.
+{live}
 
 ## What it can hold
 Markdown in the user's language, short enough to take in at a glance. A #
