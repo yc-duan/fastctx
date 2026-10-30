@@ -124,6 +124,8 @@ export class SettingsPage implements Page {
   private setup: Setup | null = null;
   private busy = false;
   private said = "";
+  /** What the World said, for the pointer's rest. */
+  private why = "";
   private tab: Tab = "look";
 
   /** Shows `tab`'s sheet, and keeps it for the next time where `kept`. */
@@ -319,7 +321,8 @@ export class SettingsPage implements Page {
         this.drawService();
       },
       (error: unknown) => {
-        this.said = String(error);
+        this.why = String(error instanceof Error ? error.message : error);
+        this.said = this.options.words.notDone(this.why);
         this.drawService();
       },
     );
@@ -332,6 +335,7 @@ export class SettingsPage implements Page {
     if (!service || this.busy) return;
     this.busy = true;
     this.said = "";
+    this.why = "";
     this.drawService();
     const { words } = this.options;
     service
@@ -341,7 +345,8 @@ export class SettingsPage implements Page {
           this.said = done.kind === "command" ? words.command(done.command) : words.kept[done.kind];
         },
         (error: unknown) => {
-          this.said = String(error);
+          this.why = String(error instanceof Error ? error.message : error);
+          this.said = this.options.words.notDone(this.why);
         },
       )
       .finally(() => {
@@ -367,7 +372,7 @@ export class SettingsPage implements Page {
     const old = legacySaid(legacy, words);
     // What became of an old fastctx in a word, the sentence behind it.
     const done = legacy?.kind === "unreadable" ? words.legacyUnreadable(legacy.why) : legacy?.waiting ? words.legacyBusy(legacy.waiting) : words.legacyDone;
-    this.service.innerHTML = `<dt>${escape(words.service)}</dt><dd><span${kept ? ` title="${escape(words.serviceWhat)}"` : ""}>${escape(state)}</span>${this.said ? `<p class="settings-said">${escape(this.said)}</p>` : ""}</dd>${button}${
+    this.service.innerHTML = `<dt>${escape(words.service)}</dt><dd><span${kept ? ` title="${escape(words.serviceWhat)}"` : ""}>${escape(state)}</span>${this.said ? `<p class="settings-said"${this.why ? ` title="${escape(this.why)}"` : ""}>${escape(this.said)}</p>` : ""}</dd>${button}${
       old ? `<dt>${escape(words.legacy)}</dt><dd class="settings-legacy"><span title="${escape(old)}">${escape(done)}</span></dd>` : ""
     }`;
   }

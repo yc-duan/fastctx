@@ -16,7 +16,7 @@ import type { Decoding } from "../world/remote-lines";
 import { AttachTray, type AttachSeam, type AttachWords, type Attached } from "./attach";
 import { wireAttach } from "./attach-way";
 import { SendQueue, type Queued } from "./queue";
-import { bindComposer, type ComposerSession, type ComposerSessionState } from "./composer";
+import { bindComposer, Withdrawn, type ComposerSession, type ComposerSessionState } from "./composer";
 import type { ComposerSnapshot, ComposerUpdated } from "../world/composer";
 import { NodeQueue } from "./node-queue";
 import { ControlQueue, controlName } from "./control-queue";
@@ -551,7 +551,7 @@ export class ConversationPage {
         open: options.opening.open,
         openAttachment: options.opening.openAttachment,
         reveal: options.opening.reveal,
-        say: (text) => this.say(text),
+        say: (text, detail) => this.say(text, detail ?? ""),
         note: (text, detail) => {
           this.say(text, detail?.() ?? "");
           this.noteDetail = detail;
@@ -568,7 +568,7 @@ export class ConversationPage {
         here: options.here,
         machine: someone.machine,
         seams: options.pictures,
-        say: (text) => this.say(text),
+        say: (text, detail) => this.say(text, detail ?? ""),
         broken,
       });
     }
@@ -1011,8 +1011,8 @@ export class ConversationPage {
   private offersAsking: Promise<void> | null = null;
   private offersWanted: Promise<void> | null = null;
   private nodeTray: NodeTray | null = null;
-  /** This device's last send of the shared words, until the node answers. */
-  private sendingShared: Promise<unknown> = Promise.resolve();
+  /** Words sent straight on from here that the agent has not heard yet. */
+  private straight = 0;
 
   /** Opens the shared input: the words typed here before it opened go into
    *  it, the queue and what is attached become the node's. */
@@ -1038,7 +1038,9 @@ export class ConversationPage {
     }
     this.unbindShared = bindComposer(this.input, session.draft);
     if (typed.trim() && !this.input.value.trim()) this.setWords(typed, caret);
-    const say = (why: string) => this.say(why, why, true);
+    // What could not be done to waiting words is said in the interface's
+    // words, the node's own on the pointer's rest.
+    const say = (why: string, said?: string) => this.say(said ?? this.options.words.notDone(why), why, true);
     const assistantFiles = this.options.attach?.filesOn ?? null;
     this.nodeQueue = new NodeQueue(this.options.words.queue, this.options.attach?.words ?? null, session, say, assistantFiles, (id, text, attachments, sending) => {
       // Sent now, they are said at once; the node takes them into the turn.
@@ -1162,35 +1164,29 @@ export class ConversationPage {
     // as waiting to send; the node says once they go whether they queue.
     const connected = session.state.connected;
     const queued = connected && this.queues();
-    const shown = (draft?.draft.attachments ?? []).map((one) => ({ name: one.name, size: one.size, image: one.media_type.startsWith("image/"), preview: null }));
+    const going = session.state.attachmentsOnTheirWay;
+    const shown = (draft?.draft.attachments ?? []).filter((one) => !going.has(one.id)).map((one) => ({ name: one.name, size: one.size, image: one.media_type.startsWith("image/"), preview: null }));
     const key = queued ? null : conversation.sending(text, here || null, shown);
     if (key && !connected) conversation.sent(key, { state: "waiting", why: session.state.error?.message ?? "" });
+    // Words that will wait for the turn to end are in the queue at once, as
+    // sent from here, while the node of the conversation's machine takes
+    // them in over the network.
+    const waiting = queued ? (this.nodeQueue?.pending(text, shown.length) ?? null) : null;
+    // The words leave the input as they are sent: what is typed from now is
+    // the next words, which go once the node has these.
+    const sent = session.send();
     this.update();
-    // Words sent here while the last ones are still on their way go once
-    // the node has those, as the next draft rather than the one already sent.
-    // Nothing is sent when those took everything the input held.
-    const sent = this.sendingShared.then(() => {
-      const draft = session.draft;
-      const left = draft.view.characters.some((one) => /\S/u.test(one.text)) || draft.attachments.length > 0 || draft.uploads.length > 0;
-      return left ? session.send() : null;
-    });
-    this.sendingShared = sent.catch(() => {});
-    if (key) this.quiet(sent);
+    if (waiting) void sent.then(waiting, waiting);
+    if (key) {
+      this.straight += 1;
+      this.nodeQueue?.goingStraight(this.straight);
+      const heard = () => {
+        this.straight -= 1;
+        this.nodeQueue?.goingStraight(this.straight);
+      };
+      void sent.then(heard, heard);
+    }
     this.follow(key, sent);
-  }
-
-  /** Words sent from the shared input are not shown in it a second time
-   *  while they rise: the node empties the input once it has them, and the
-   *  reply that says so arrives with the emptied draft already applied. */
-  private quiet(sent: Promise<unknown>): void {
-    const input = this.input;
-    input.classList.add("words-going");
-    const done = () => {
-      input.classList.remove("words-going");
-      input.removeEventListener("input", done);
-    };
-    input.addEventListener("input", done);
-    sent.then(done, done);
   }
 
   /** Words shown below the turn's line while on their way: where they
@@ -1219,9 +1215,9 @@ export class ConversationPage {
         const why = error instanceof Error ? error.message : String(error);
         // Words that did not go are where the node keeps them, back in the
         // input or still in the queue: they leave the conversation, and the
-        // reason is said by the input.
+        // reason is said by the input, once for words sent after them too.
         if (key) conversation.unsend(key);
-        this.say(this.options.words.notSent(why), why, true);
+        if (!(error instanceof Withdrawn)) this.say(this.options.words.notSent(why), why, true);
         this.update();
       },
     );
@@ -1232,7 +1228,8 @@ export class ConversationPage {
    *  as the node decides; with it idle they go straight on. */
   private queues(): boolean {
     const composer = this.sharedState?.composer;
-    return this.options.conversation.busy() || !!composer?.awaiting_turn || !!composer?.queue.some((item) => item.sending);
+    return this.options.conversation.busy() || !!composer?.awaiting_turn || !!composer?.queue.some((item) => item.sending)
+      || !!this.session?.state.onTheirWay;
   }
 
   private submit(): void {
@@ -1333,8 +1330,8 @@ export class ConversationPage {
    *  with the host's own words on hover. */
   /** A short line under the input, such as what an act from the head's
    *  "⋯" came to. */
-  notify(text: string, refused = false): void {
-    this.say(text, "", refused);
+  notify(text: string, refused = false, detail = ""): void {
+    this.say(text, detail, refused);
   }
 
   /** Why only images can be attached now: an agent of another's assists
@@ -1859,7 +1856,12 @@ export class ConversationPage {
               else this.input.value = words;
               // What came with the words comes back with them.
               if (this.session && kept.length && !this.nodeTray?.count) {
-                for (const attachment of kept) void this.session.attach(attachment as Attachment).catch((error: unknown) => this.say(String(error)));
+                for (const attachment of kept) {
+                  void this.session.attach(attachment as Attachment).catch((error: unknown) => {
+                    const why = error instanceof Error ? error.message : String(error);
+                    this.say(this.options.words.notDone(why), why, true);
+                  });
+                }
               } else if (kept.length && this.tray && !this.tray.count) this.tray.restore(kept);
               this.fit();
               this.drawAction();
@@ -1930,7 +1932,7 @@ export class ConversationPage {
         if (asked === this.mentionAsked && menu.open) menu.show(found, files.words.none);
       },
       (error: unknown) => {
-        if (asked === this.mentionAsked && menu.open) menu.show([], String(error));
+        if (asked === this.mentionAsked && menu.open) menu.show([], this.options.words.notDone(error instanceof Error ? error.message : String(error)));
       },
     );
   }
@@ -2288,7 +2290,9 @@ export class ConversationPage {
       })
       .catch((error: unknown) => {
         this.options.someone.focus = before;
-        state.textContent = focus.words.failed(error instanceof Error ? error.message : String(error));
+        const why = error instanceof Error ? error.message : String(error);
+        state.textContent = focus.words.failed(why);
+        state.title = why;
         state.classList.add("refused");
       })
       .finally(() => {

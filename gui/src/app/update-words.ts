@@ -4,6 +4,7 @@
 
 import type { ReachFailure } from "../world/updates";
 import { enRepair, zhRepair, type RepairWords } from "./repair-words";
+import { enProblems, failure, zhProblems } from "./problem";
 
 /** The window of versions (`version-window.ts`). */
 export interface VersionWords {
@@ -79,7 +80,7 @@ export const zhVersions: VersionWords = {
   looked: (iso) => ago(iso, true),
   unreachable: "连不上 GitHub，下面是网络里拿得到的版本",
   lookAgain: "重新查",
-  failed: (why) => `没成：${why}`,
+  failed: failure(zhProblems, "没有做成"),
   minimumTitle: "网络要求的最低版本",
   minimumNow: (version) => (version ? `现在要求至少 ${version}` : "现在不要求最低版本"),
   ask: "设为最低",
@@ -113,7 +114,7 @@ export const enVersions: VersionWords = {
   looked: (iso) => ago(iso, false),
   unreachable: "Can't reach GitHub; these are the versions the network has",
   lookAgain: "Check again",
-  failed: (why) => `Didn't work: ${why}`,
+  failed: failure(enProblems, "Couldn't do that"),
   minimumTitle: "The network's minimum version",
   minimumNow: (version) => (version ? `At least ${version} is asked for now` : "No minimum is asked for now"),
   ask: "Set as minimum",

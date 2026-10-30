@@ -20,6 +20,13 @@ import { viewAttached } from "./attached-pictures";
 import { glyph } from "./glyphs";
 import { escape } from "./prose";
 
+/** Something could not be done, said by the composer: the World's own
+ *  words, kept for the pointer's rest, and the interface's words for it
+ *  where the one that failed has them. */
+export type Failed = (why: string, said?: string) => void;
+
+const reason = (error: unknown): string => String(error instanceof Error ? error.message : error);
+
 const IMAGE = /\.(png|jpe?g|gif|webp|bmp|avif|svg)$/i;
 
 interface Sending {
@@ -53,8 +60,7 @@ export class NodeTray {
     private readonly words: AttachWords,
     private readonly session: ComposerSession,
     private readonly document: ComposerDocument,
-    /** Something could not be attached or taken out: said by the composer. */
-    private readonly failed: (why: string) => void,
+    private readonly failed: Failed,
     private readonly assistantFiles: AssistantFiles | null = null,
   ) {
     this.element = window.document.createElement("ul");
@@ -67,7 +73,7 @@ export class NodeTray {
         return;
       }
       if (button.dataset.retry) {
-        this.session.retryOperation(button.dataset.retry).catch((error: unknown) => this.failed(String(error)));
+        this.session.retryOperation(button.dataset.retry).catch((error: unknown) => this.failed(reason(error), this.words.failed(reason(error))));
         return;
       }
       const id = button.dataset.remove!;
@@ -79,7 +85,7 @@ export class NodeTray {
       // This device's own upload goes no further once taken out.
       const operation = this.draft()?.uploads.find((one) => one.id === id)?.operation;
       if (operation && this.sending.has(operation)) this.forget(operation);
-      this.session.detach(id, this.document).catch((error: unknown) => this.failed(String(error)));
+      this.session.detach(id, this.document).catch((error: unknown) => this.failed(reason(error)));
     });
   }
 
@@ -92,12 +98,16 @@ export class NodeTray {
     }
   }
 
-  /** The words this tray holds the files of: the input's, or a queued
-   *  one's being changed. */
+  /** The words this tray holds the files of: the input's, without those
+   *  that went with words still on their way, or a queued one's being
+   *  changed. */
   private draft(state: ComposerSessionState | null = this.state) {
     const target = this.document.view.state.target;
     if (!state) return null;
-    return target.kind === "draft" ? state.composer.draft : (state.composer.queue.find((item) => item.id === target.id)?.draft ?? null);
+    if (target.kind !== "draft") return state.composer.queue.find((item) => item.id === target.id)?.draft ?? null;
+    const draft = state.composer.draft;
+    const going = state.attachmentsOnTheirWay;
+    return going.size ? { ...draft, attachments: draft.attachments.filter((one) => !going.has(one.id)) } : draft;
   }
 
   /** Whether files are attached or on their way. */
@@ -131,7 +141,7 @@ export class NodeTray {
   settle(): void {
     const chosen = this.chosen;
     if (chosen === null || chosen === (this.draft()?.files_on ?? null)) return;
-    this.session.setFilesOn(chosen, this.document).catch((error: unknown) => this.failed(String(error instanceof Error ? error.message : error)));
+    this.session.setFilesOn(chosen, this.document).catch((error: unknown) => this.failed(reason(error), this.words.failed(reason(error))));
   }
 
   addFiles(files: Iterable<File>): void {
@@ -164,7 +174,7 @@ export class NodeTray {
     const kept = this.draft()?.files_on ?? null;
     const place = kept ?? this.assistantFiles.place();
     if (place === null) {
-      this.failed(this.words.imagesOnly);
+      this.failed("", this.words.imagesOnly);
       return null;
     }
     return place === kept ? undefined : () => this.session.setFilesOn(place, this.document);
@@ -174,7 +184,7 @@ export class NodeTray {
     if (first) {
       first().then(
         () => this.start(file, upload),
-        (error: unknown) => this.failed(this.words.failed(String(error instanceof Error ? error.message : error))),
+        (error: unknown) => this.failed(reason(error), this.words.failed(reason(error))),
       );
       return;
     }
@@ -187,12 +197,12 @@ export class NodeTray {
     const kept = () => !operation || this.sending.has(operation.id);
     done.then(
       (added) => {
-        if (kept() && "Err" in added.updated) this.failed(this.words.failed(added.updated.Err));
+        if (kept() && "Err" in added.updated) this.failed(added.updated.Err, this.words.failed(added.updated.Err));
         if (operation) this.sending.delete(operation.id);
         this.draw();
       },
       (error: unknown) => {
-        if (kept()) this.failed(this.words.failed(String(error)));
+        if (kept()) this.failed(reason(error), this.words.failed(reason(error)));
         this.draw();
       },
     );

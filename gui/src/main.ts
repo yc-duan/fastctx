@@ -1029,7 +1029,7 @@ function talkManage(address: Address, page: () => ConversationPage, markdown?: (
                   .then((text) => navigator.clipboard.writeText(text))
                   .then(
                     () => page().notify(talkMenuWords.copied),
-                    (error: unknown) => page().notify(String(error), true),
+                    (error: unknown) => page().notify(words.notDone(String(error)), true, String(error)),
                   ),
             }
           : {}),
@@ -1039,7 +1039,7 @@ function talkManage(address: Address, page: () => ConversationPage, markdown?: (
                 agent: agentName(r.about.host.agent),
                 run: () => {
                   page().notify(talkMenuWords.openedOwn);
-                  (live ? attachHere(address.resident) : Promise.resolve()).catch((error: unknown) => page().notify(String(error), true));
+                  (live ? attachHere(address.resident) : Promise.resolve()).catch((error: unknown) => page().notify(words.notDone(String(error)), true, String(error)));
                 },
               },
             }
@@ -1694,8 +1694,12 @@ function specimenTalk(address: Address): DeskTalk {
             page.update();
           }, 300)
       : undefined;
+  // `?slow=<taken>,<heard>` (milliseconds): its node is far away and busy,
+  // as `SpecimenSlowness` says.
+  const [taken, heard] = (params.get("slow") ?? "").split(",").map(Number);
+  const slow = params.has("slow") ? { taken: taken || 1500, heard: heard || 6000 } : undefined;
   const sharedInput = () =>
-    (shared ??= specimenComposer(address, () => conversation.turning(), params.has("queued") ? (english ? ["Then run the overflow test on lab", "And write the result into the journal"] : ["然后在 lab 上跑溢出测试", "再把结果写进手记"]) : [], retrying));
+    (shared ??= specimenComposer(address, () => conversation.turning(), params.has("queued") ? (english ? ["Then run the overflow test on lab", "And write the result into the journal"] : ["然后在 lab 上跑溢出测试", "再把结果写进手记"]) : [], retrying, slow));
   const name = address.resident;
   const sample: Specimen & { later?: SessionEvent[]; rate?: number; timed?: boolean } = specimenForks.get(talkKey(address)) ?? (name.startsWith("stream")
     ? streamSpecimen(params)

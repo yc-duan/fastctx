@@ -1,5 +1,5 @@
 import type { Character } from "../../world/composer";
-import { documentOffset, inserted, key, mapSelection, scalarOffset, textareaText, utf16Offset, wellFormed } from "./characters";
+import { documentOffset, key, mapSelection, scalarOffset, textareaText, utf16Offset, wellFormed } from "./characters";
 import type { InputHint, Selection } from "./characters";
 import type { ComposerState, ComposerView } from "./document";
 import { ComposerDocument } from "./document";
@@ -83,9 +83,9 @@ export function bindComposer(
       for (const delta of deltas) {
         const start = documentOffset(base.characters, delta.start);
         const end = documentOffset(base.characters, delta.end);
-        const mutation = document.edit(start, end, delta.insert, base.characters, base.epoch);
+        const put = document.edit(start, end, delta.insert, base.characters, base.epoch);
         for (const character of base.characters.slice(at, start)) local.push(character);
-        for (const character of mutation ? inserted(mutation) : []) local.push(character);
+        for (const character of put ?? []) local.push(character);
         at = end;
       }
       for (const character of base.characters.slice(at)) local.push(character);

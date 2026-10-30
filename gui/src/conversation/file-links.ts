@@ -45,8 +45,8 @@ export interface FileLinkOptions {
    *  folder to show (a phone). */
   reveal?: ((path: string) => Promise<void>) | undefined;
   /** A line beside the composer: why a file did not open, or that its
-   *  path was copied. */
-  say(text: string): void;
+   *  path was copied; `detail`, the original of a failure, on hover. */
+  say(text: string, detail?: string): void;
   /** The same line saying how a file comes, with `detail` on hover worked
    *  out when the pointer comes to it; `unsay` takes it back unless
    *  something else was said since. */
@@ -132,7 +132,8 @@ export class FileLinks {
           clearTimeout(saying);
           if (error instanceof LetGo) return;
           const gone = !!error && typeof error === "object" && "gone" in error && error.gone === true;
-          options.say(gone ? words.gone : words.openFailed(error instanceof Error ? error.message : String(error)));
+          const why = error instanceof Error ? error.message : String(error);
+          options.say(gone ? words.gone : words.openFailed(why), gone ? undefined : why);
         },
       );
   }
@@ -159,7 +160,11 @@ export class FileLinks {
     }
     menu.addEventListener("click", (event) => {
       const act = (event.target as HTMLElement).closest<HTMLElement>("[data-file-act]")?.dataset.fileAct;
-      if (act === "reveal") void reveal!(path).catch((error: unknown) => this.options.say(this.options.words.openFailed(error instanceof Error ? error.message : String(error))));
+      if (act === "reveal")
+        void reveal!(path).catch((error: unknown) => {
+          const why = error instanceof Error ? error.message : String(error);
+          this.options.say(this.options.words.openFailed(why), why);
+        });
       if (act === "copy") void navigator.clipboard?.writeText(naturalPath(path)).then(() => this.options.say(words.copied));
       this.closeMenu();
     });

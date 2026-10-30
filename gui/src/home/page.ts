@@ -403,7 +403,7 @@ export class HomePage {
     const missing = away.trouble
       ? `<p class="front-missing wrong" title="${escape(away.trouble)}">${escape(words.awayTrouble(away.trouble))}</p>`
       : unanswered.length
-        ? `<p class="front-missing">${escape(words.unasked(unanswered.map((u) => words.unaskedWhy(u.machine, u.why ?? "")).join(words.listSeparator)))}</p>`
+        ? `<p class="front-missing" title="${escape(unanswered.map((u) => (u.why ? `${u.machine}: ${u.why}` : u.machine)).join("\n"))}">${escape(words.unasked(unanswered.map((u) => u.machine).join(words.listSeparator)))}</p>`
         : "";
     const span = words.lasted(Math.max(0, this.now.getTime() - lastVisit.getTime()));
     const list = came.length
@@ -516,7 +516,7 @@ export class HomePage {
     const busy = this.stopping.has(`${job.machine}\n${job.job}`) ? " disabled" : "";
     const asking =
       this.confirming === `${job.machine}\n${job.job}`
-        ? `<div class="jobs-confirm"><span${why ? ` title="${escape(why)}"` : ""}>${escape(why ? `${words.jobNotStopped}: ${why}` : words.stopJobAsk)}</span><button class="ask-button" type="button" data-job="${key}" data-act="cancel">${escape(words.cancel)}</button><button class="ask-button ask-primary" type="button" data-job="${key}" data-act="stop"${busy}>${escape(words.stopJob)}</button></div>`
+        ? `<div class="jobs-confirm"><span${why ? ` title="${escape(why)}"` : ""}>${escape(why ? words.jobNotStopped : words.stopJobAsk)}</span><button class="ask-button" type="button" data-job="${key}" data-act="cancel">${escape(words.cancel)}</button><button class="ask-button ask-primary" type="button" data-job="${key}" data-act="stop"${busy}>${escape(words.stopJob)}</button></div>`
         : "";
     return `<li><div class="front-job-line"><a class="front-job" href="${escape(fileLink(job.machine, job.output, true))}" title="${escape(about)}">
       <span class="front-job-glyph" aria-hidden="true">${glyph("command", 16)}</span><code class="front-command">${escape(first)}</code>${whose ? `<span class="front-whose">${glyph("person", 12)}<span>${escape(whose)}</span></span>` : ""}${this.device(job.machine)}<span class="front-for">${escape(lasted)}</span>

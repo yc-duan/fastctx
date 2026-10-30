@@ -71,7 +71,6 @@ export interface HomeWords {
   earlier(at: Date, yesterday: boolean): string;
   you: string;
   unasked(list: string): string;
-  unaskedWhy(machine: string, why: string): string;
   awayTrouble(why: string): string;
   startedBy(who: string): string;
   /** Said of a job or agent that works for other accounts than the reader's. */
@@ -151,7 +150,6 @@ export const zhHome: HomeWords = {
   earlier: (at, yesterday) => `${yesterday ? "昨天" : `${at.getMonth() + 1}月${at.getDate()}日`} ${pad(at.getHours())}:${pad(at.getMinutes())}`,
   you: "你",
   unasked: (list) => `未获取：${list}`,
-  unaskedWhy: (machine, why) => `${machine}（${why}）`,
   awayTrouble: () => "无法获取离开期间的动态",
   startedBy: (who) => `由 ${who} 启动`,
   forAccounts: (accounts) => `属于 ${accounts}`,
@@ -209,7 +207,6 @@ export const enHome: HomeWords = {
   earlier: (at, yesterday) => `${yesterday ? "yesterday" : `${enMonths[at.getMonth()].slice(0, 3)} ${at.getDate()}`} ${pad(at.getHours())}:${pad(at.getMinutes())}`,
   you: "You",
   unasked: (list) => `Not asked: ${list}`,
-  unaskedWhy: (machine, why) => `${machine} (${why})`,
   awayTrouble: () => "Couldn't load activity while you were away",
   startedBy: (who) => `started by ${who}`,
   forAccounts: (accounts) => `belongs to ${accounts}`,

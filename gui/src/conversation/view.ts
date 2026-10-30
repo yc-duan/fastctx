@@ -1431,7 +1431,8 @@ export class ConversationView {
         // Words that never began a conversation: it could not start, and
         // why, as it was given, where the first words wait.
         if (!this.conversation.hasTurns()) {
-          return `<div class="start-failed"><p class="start-failed-said">${escape(words.startFailed)}</p><p class="start-failed-why">${escape(entry.why)}</p></div>`;
+          const why = words.startWhy(entry.why);
+          return `<div class="start-failed" title="${escape(entry.why)}"><p class="start-failed-said">${escape(words.startFailed)}</p>${why ? `<p class="start-failed-why">${escape(why)}</p>` : ""}</div>`;
         }
         return `<div class="note caution" title="${escape(entry.why)}">${escape(words.uncertain(entry.why))}</div>`;
       case "ask":
@@ -1846,7 +1847,7 @@ export class ConversationView {
     let body: string;
     switch (told.kind) {
       case "job":
-        body = `<p class="told-line">${escape(words.jobEnded(told.job, told.machine))}<span class="told-how">${escape(words.ended(told.how))}</span></p><p class="told-path">${escape(told.output)}</p>`;
+        body = `<p class="told-line">${escape(words.jobEnded(told.job, told.machine))}<span class="told-how" title="${escape(told.how)}">${escape(words.ended(told.how))}</span></p><p class="told-path">${escape(told.output)}</p>`;
         break;
       case "colleague":
         label = `${told.colleague} ${told.machine}`;

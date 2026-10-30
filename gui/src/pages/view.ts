@@ -118,7 +118,8 @@ export class PageScreen {
       this.host = null;
       this.stage.replaceChildren();
       this.notice.hidden = false;
-      this.notice.innerHTML = `<p class="unreachable">${escape(error instanceof Error ? error.message : String(error))}</p>`;
+      const why = error instanceof Error ? error.message : String(error);
+      this.notice.innerHTML = `<p class="unreachable" title="${escape(why)}">${escape(this.options.words.failed(why))}</p>`;
     }
   }
 

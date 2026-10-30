@@ -78,8 +78,9 @@ export interface PicturesOptions {
   /** The machine whose files the agent's words name. */
   machine: MachineName;
   seams: PictureSeams;
-  /** A line beside the composer. */
-  say(text: string): void;
+  /** A line beside the composer; `detail`, the original of a failure, on
+   *  hover. */
+  say(text: string, detail?: string): void;
   /** For how long the way to a picture has been broken, since `since`
    *  (milliseconds since the epoch), and why. */
   broken(since: number, why: string): string;
@@ -578,7 +579,8 @@ class PictureViewer {
       }
     } catch (error) {
       if (error instanceof LetGo) return;
-      say(words.failed(error instanceof Error ? error.message : String(error)));
+      const why = error instanceof Error ? error.message : String(error);
+      say(words.failed(why), why);
     }
   }
 

@@ -261,7 +261,7 @@ export class RemovalSection {
           </div>`;
       }
       case "finishing":
-        return `<p class="removal-said${state.error ? " removal-wrong" : ""}">${escape(state.error ?? words.finishing)}</p>`;
+        return `<p class="removal-said${state.error ? " removal-wrong" : ""}"${state.error ? ` title="${escape(state.error)}"` : ""}>${escape(state.error ? words.failedRun(state.error) : words.finishing)}</p>`;
     }
   }
 

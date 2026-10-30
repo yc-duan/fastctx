@@ -3,6 +3,8 @@
 // on the card that asks before it, and why one was not done in a line that
 // says so once.
 
+import { enProblems, failure, zhProblems } from "./problem";
+
 export interface TalkMenuWords {
   more: string;
   /** Opens it side by side with those shown. */
@@ -113,7 +115,7 @@ export const zhTalkMenu: TalkMenuWords = {
   deleteGo: "删除",
   cancel: "取消",
   working: "正在删除…",
-  failed: (why) => `没删成：${why}`,
+  failed: failure(zhProblems, "没删成"),
   archivedNote: "已归档",
   deletedNote: "对话已删除",
 };
@@ -160,7 +162,7 @@ export const enTalkMenu: TalkMenuWords = {
   deleteGo: "Delete",
   cancel: "Cancel",
   working: "Deleting…",
-  failed: (why) => `Not deleted: ${why}`,
+  failed: failure(enProblems, "Not deleted"),
   archivedNote: "Archived",
   deletedNote: "This conversation was deleted",
 };

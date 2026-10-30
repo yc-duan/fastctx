@@ -120,6 +120,8 @@ export const phoneSeam: PhoneSeam = {
 export class PhoneRow {
   private status: PhoneStatus | null = null;
   private said = "";
+  /** What the phone or the World said, for the pointer's rest. */
+  private why = "";
 
   constructor(
     private readonly element: HTMLElement,
@@ -134,7 +136,8 @@ export class PhoneRow {
       void done.then(
         () => this.ask(),
         (error: unknown) => {
-          this.said = String(error);
+          this.why = String(error instanceof Error ? error.message : error);
+          this.said = this.words.notDone(this.why);
           this.draw();
         },
       );
@@ -153,7 +156,8 @@ export class PhoneRow {
         this.draw();
       },
       (error: unknown) => {
-        this.said = String(error);
+        this.why = String(error instanceof Error ? error.message : error);
+        this.said = this.words.notDone(this.why);
         this.draw();
       },
     );
@@ -187,6 +191,6 @@ export class PhoneRow {
     this.element.hidden = !rows.length && !this.said;
     this.element.innerHTML =
       rows.map(([label, body]) => `<dt>${escape(label)}</dt><dd>${body}</dd>`).join("") +
-      (this.said ? `<dt></dt><dd><p class="settings-said" role="status">${escape(this.said)}</p></dd>` : "");
+      (this.said ? `<dt></dt><dd><p class="settings-said" role="status"${this.why ? ` title="${escape(this.why)}"` : ""}>${escape(this.said)}</p></dd>` : "");
   }
 }

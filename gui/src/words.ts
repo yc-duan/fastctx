@@ -189,8 +189,10 @@ export interface Words {
    *  and nothing has come back yet. */
   starting: string;
   /** Under the first words, when the conversation could not begin; the
-   *  reason follows as it was given. */
+   *  reason follows where the interface knows it, and rests under the
+   *  pointer as it was given. */
   startFailed: string;
+  startWhy(why: string): string | null;
   idle: string;
   /** The user archived it: kept to read, not to speak to. */
   removed: string;
@@ -280,6 +282,8 @@ export interface Words {
   brokenFor(took: string, why: string | null): string;
   /** Words that could not be sent. */
   notSent(why: string): string;
+  /** Something asked of waiting words that was not done. */
+  notDone(why: string): string;
   /** Words with no answer yet, said again until one comes. */
   waitingToSend: string;
   /** What the session's host said of its own health, in a plain line; the
@@ -443,6 +447,7 @@ export const zh: Words = {
     paused: "已暂停",
     done: "完成",
     sending: "发送中",
+    stillGoing: "上一条还在路上",
     editingElsewhere: "别处正在改",
   },
   act: (act, tense) => zhActs[act][index(tense)],
@@ -539,6 +544,7 @@ export const zh: Words = {
   working: "工作中",
   starting: "启动中",
   startFailed: "启动失败",
+  startWhy: (why) => known(why, zhProblems),
   idle: "空闲",
   removed: "已归档",
   removedNote: "已归档，对话仅供查看",
@@ -665,6 +671,7 @@ export const zh: Words = {
   watchInterrupted: () => "连接中断，正在重连…",
   brokenFor: (took, why) => (why ? `已断开 ${took}：${why}` : `已断开 ${took}`),
   notSent: (why) => known(why, zhProblems) ?? "发送失败",
+  notDone: (why) => known(why, zhProblems) ?? "没有做成",
   waitingToSend: "等待发送",
   health: {
     reconnecting: "连接中断，正在重试",
@@ -681,7 +688,7 @@ export const zh: Words = {
     copyPath: "复制路径",
     copied: "已复制路径",
     on: (machine, path) => `${machine} 上的 ${path}`,
-    openFailed: (why) => `打不开这个文件：${why}`,
+    openFailed: (why) => known(why, zhProblems) ?? "打不开这个文件",
     gone: "原件已不在",
     fetching: (name, share) => (share === null ? `正在取 ${name}` : `正在取 ${name}　${share}%`),
     fetchInterrupted: (name) => `${name}：连接中断，正在重连…`,
@@ -697,7 +704,7 @@ export const zh: Words = {
     copied: "已复制",
     saved: "已保存",
     gone: "原件已不在",
-    failed: (why) => `没能取到：${why}`,
+    failed: (why) => known(why, zhProblems) ?? "没能取到",
     counter: (at, of) => `${at} / ${of}`,
     fetching: (share) => (share === null ? "正在取…" : `正在取… ${share}%`),
     interrupted: "连接中断，正在重连…",
@@ -739,7 +746,7 @@ export const zh: Words = {
   cancel: "取消",
   jobOutput: (command) => `${command} 的输出`,
   jobOutputLoading: "正在读取…",
-  jobOutputFailed: (why) => `读不到输出：${why}`,
+  jobOutputFailed: (why) => known(why, zhProblems) ?? "读不到输出",
   jobOver: "已结束",
   jobRunning: (job, machine, lasted) => `${job}　${machine}　${lasted}`,
   minutes: (n) => (n < 1 ? "不到 1 分钟" : `${n} 分钟`),
@@ -781,8 +788,10 @@ export const zh: Words = {
       signal: (signal) => `被信号 ${signal} 结束`,
       stopped: "已停止",
       finished: "已完成",
-      interrupted: (reason) => `中断：${reason}`,
-      couldNotRun: (error) => `启动失败：${error}`,
+      interrupted: "中断",
+      failed: "出错",
+      couldNotRun: "没能运行",
+      other: "已结束",
       turn: (how, reason) =>
         (how === "completed" ? "本轮完成" : how === "failed" ? "本轮失败" : how === "interrupted" ? "本轮中断" : `本轮 ${how}`) +
         (reason ? `：${reason}` : ""),
@@ -810,6 +819,7 @@ export const en: Words = {
     paused: "Paused",
     done: "Done",
     sending: "Sending",
+    stillGoing: "The last one is still on its way",
     editingElsewhere: "Being edited elsewhere",
   },
   act: (act, tense) => enActs[act][index(tense)],
@@ -908,6 +918,7 @@ export const en: Words = {
   working: "Working",
   starting: "Starting",
   startFailed: "Couldn't start",
+  startWhy: (why) => known(why, enProblems),
   idle: "Idle",
   removed: "Archived",
   removedNote: "Archived; the conversation is read-only",
@@ -1036,6 +1047,7 @@ export const en: Words = {
   watchInterrupted: () => "Disconnected, reconnecting…",
   brokenFor: (took, why) => (why ? `Disconnected for ${took}: ${why}` : `Disconnected for ${took}`),
   notSent: (why) => known(why, enProblems) ?? "Couldn't send",
+  notDone: (why) => known(why, enProblems) ?? "Couldn't do that",
   waitingToSend: "Waiting to send",
   health: {
     reconnecting: "Connection lost, retrying",
@@ -1052,7 +1064,7 @@ export const en: Words = {
     copyPath: "Copy path",
     copied: "Path copied",
     on: (machine, path) => `${path} on ${machine}`,
-    openFailed: (why) => `Couldn't open the file: ${why}`,
+    openFailed: (why) => known(why, enProblems) ?? "Couldn't open the file",
     gone: "The original is gone",
     fetching: (name, share) => (share === null ? `Fetching ${name}` : `Fetching ${name}, ${share}%`),
     fetchInterrupted: (name) => `${name}: disconnected, reconnecting…`,
@@ -1068,7 +1080,7 @@ export const en: Words = {
     copied: "Copied",
     saved: "Saved",
     gone: "The original is gone",
-    failed: (why) => `Couldn't get it: ${why}`,
+    failed: (why) => known(why, enProblems) ?? "Couldn't get it",
     counter: (at, of) => `${at} / ${of}`,
     fetching: (share) => (share === null ? "Fetching…" : `Fetching… ${share}%`),
     interrupted: "Disconnected, reconnecting…",
@@ -1110,7 +1122,7 @@ export const en: Words = {
   cancel: "Cancel",
   jobOutput: (command) => `Output of ${command}`,
   jobOutputLoading: "Reading…",
-  jobOutputFailed: (why) => `Couldn't read the output: ${why}`,
+  jobOutputFailed: (why) => known(why, enProblems) ?? "Couldn't read the output",
   jobOver: "Ended",
   jobRunning: (job, machine, lasted) => `${job} on ${machine}, ${lasted}`,
   minutes: (n) => (n < 1 ? "under a minute" : `${n} min`),
@@ -1151,8 +1163,10 @@ export const en: Words = {
       signal: (signal) => `ended by signal ${signal}`,
       stopped: "stopped",
       finished: "finished",
-      interrupted: (reason) => `interrupted: ${reason}`,
-      couldNotRun: (error) => `could not run: ${error}`,
+      interrupted: "interrupted",
+      failed: "failed",
+      couldNotRun: "could not run",
+      other: "ended",
       turn: (how, reason) => `turn ${how}${reason ? `: ${reason}` : ""}`,
       inTurn: "in its turn",
     }),
@@ -1163,8 +1177,12 @@ interface EndedWords {
   signal(signal: string): string;
   stopped: string;
   finished: string;
-  interrupted(reason: string): string;
-  couldNotRun(error: string): string;
+  /** Interrupted, failed or not run: why rests under the pointer. */
+  interrupted: string;
+  failed: string;
+  couldNotRun: string;
+  /** A way of ending this page does not know. */
+  other: string;
   turn(how: string, reason: string | null): string;
   inTurn: string;
 }
@@ -1181,11 +1199,12 @@ function endedIn(how: string, say: EndedWords): string {
   else if ((match = /^ended by signal (\d+)$/.exec(what))) said = say.signal(match[1]);
   else if (what === "stopped") said = say.stopped;
   else if (what === "finished") said = say.finished;
-  else if ((match = /^interrupted: (.*)$/.exec(what))) said = say.interrupted(match[1]);
-  else if ((match = /^could not run: (.*)$/.exec(what))) said = say.couldNotRun(match[1]);
+  else if (/^interrupted(: |$)/.test(what)) said = say.interrupted;
+  else if (/^failed(: |$)/.test(what)) said = say.failed;
+  else if (/^could not run(: |$)/.test(what)) said = say.couldNotRun;
   else if (what === "in its turn") said = say.inTurn;
   else if ((match = /^turn (\w+)(?:: (.*))?$/.exec(what))) said = say.turn(match[1], match[2] ?? null);
-  else said = what;
+  else said = say.other;
   return said + took;
 }
 
