@@ -28,7 +28,6 @@ export class FindHighlights {
         changed();
       });
     });
-
   }
 
   paint(query: string, identity: string | null, current: () => Range | null): void {

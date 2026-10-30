@@ -234,7 +234,7 @@ export class LoginUsagePage implements Page {
       const calls = tab === "calls";
       if (calls) context = this.callsContext(usage, mine, only, now);
       const foot = calls && !mine ? "" : `${this.where(went, unit)}${this.models(went, unit, amounts, only?.ink)}`;
-      const drawPanel = () => `<section class="ledger-panel">${this.narrow() ? this.panel(usage, tab, only, looked, caps, unit, amounts, now).replace('<div class="ledger-panel-head">', `<div class="ledger-panel-head">${this.unitSwitch(usage, tab)}`) : this.panel(usage, tab, only, looked, caps, unit, amounts, now)}</section>`;
+      const drawPanel = () => `<section class="ledger-panel">${this.narrow() ? this.panel(usage, tab, only, looked, caps, unit, amounts, now).replace('<div class="ledger-panel-head">', () => `<div class="ledger-panel-head">${this.unitSwitch(usage, tab)}`) : this.panel(usage, tab, only, looked, caps, unit, amounts, now)}</section>`;
       const panelHtml = calls ? `<section class="ledger-panel" data-calls></section>` : drawPanel();
       if (!calls) panel = { html: panelHtml, draw: drawPanel };
       html = `<div class="ledger-sheet${mine ? " alone" : ""}${calls ? " calls" : ""}">${this.strip(usage, login?.limits ?? null, unit, amounts, mine, only, caps, now)}
@@ -274,7 +274,8 @@ export class LoginUsagePage implements Page {
       this.height = figure.clientHeight;
       const fitted = panel.draw();
       this.body.querySelector(".ledger-panel")!.outerHTML = fitted;
-      this.drawn = html.replace(panel.html, fitted);
+      // A function, so the `$` of the amounts in it is never read as a pattern.
+      this.drawn = html.replace(panel.html, () => fitted);
     }
   }
 
