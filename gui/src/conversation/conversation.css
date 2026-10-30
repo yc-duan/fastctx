@@ -57,8 +57,8 @@
 /* A long stretch's earlier rows, asked for from a quiet line above the
    rows it shows. */
 .rows-earlier {
-  grid-column: 2 / -1;
-  justify-self: start;
+  display: block;
+  margin-left: calc(var(--rail-glyph) + var(--rail-gap));
   height: var(--row-line);
   padding: 0;
   font: inherit;
@@ -520,24 +520,14 @@
    face: monospace only in what a row opens. A line down the rail joins
    one glyph to the next, breaking a little before each.
 
-   A stretch's rows share the rail's and the verbs' columns: each row and
-   its line are subgrids of the stretch, so the verbs' column is as wide as
-   the widest verb there, in whatever language, and the objects start on
-   one line. */
-.rows {
-  display: grid;
-  grid-template-columns: calc(var(--rail-glyph) + var(--rail-gap)) max-content minmax(0, 1fr) auto;
-}
-
+   What it acted on follows its verb at one gap, row by row: Chinese verbs
+   are two characters wide and so stand level, and a longer verb (a web
+   search, a step still running) moves only its own row's object rather
+   than every object of its stretch. */
 .row {
   position: relative;
-  grid-column: 1 / -1;
   display: grid;
   grid-template-columns: calc(var(--rail-glyph) + var(--rail-gap)) max-content minmax(0, 1fr) auto;
-}
-
-.rows > .row {
-  grid-template-columns: subgrid;
 }
 
 .row-link {
