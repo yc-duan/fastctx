@@ -146,13 +146,12 @@ fn is_zero(count: &u32) -> bool {
     *count == 0
 }
 
-/// What a machine keeps free for its agents when no one chose: Claude Code
-/// retires idle sessions below a gigabyte available, and a turn that starts
-/// grows by about half of one.
+/// The default reserve's ceiling. The node selects a supported reserve no
+/// larger than half the machine's physical memory when no one chose one.
 pub const MEMORY_ROOM: u64 = 1536 << 20;
 
 /// What the user chooses from for it; zero keeps none.
-pub const MEMORY_ROOMS: [u64; 5] = [0, 1 << 30, 1536 << 20, 2 << 30, 3 << 30];
+pub const MEMORY_ROOMS: [u64; 8] = [0, 256 << 20, 512 << 20, 768 << 20, 1 << 30, 1536 << 20, 2 << 30, 3 << 30];
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Disk {

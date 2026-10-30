@@ -71,7 +71,7 @@ impl Room {
         let bytes = std::fs::read(file(world))
             .ok()
             .and_then(|bytes| serde_json::from_slice::<Kept>(&bytes).ok())
-            .map_or(MEMORY_ROOM, |kept| kept.bytes);
+            .map_or_else(default_room, |kept| kept.bytes);
         Self { bytes: AtomicU64::new(bytes), line: Mutex::default() }
     }
 
@@ -85,6 +85,14 @@ impl Room {
         let now = Instant::now();
         line.waiting.iter().filter(|(_, asked)| now.duration_since(*asked) < ASKING).count() as u32
     }
+}
+
+/// Keep the usual reserve on larger machines without reserving nearly all of
+/// a small machine. Explicit settings are preserved, including zero.
+fn default_room() -> u64 {
+    fastctx_platform::system::memory().map_or(MEMORY_ROOM, |memory| {
+        MEMORY_ROOMS.iter().copied().filter(|room| *room <= MEMORY_ROOM && *room <= memory.total / 2).max().unwrap_or(0)
+    })
 }
 
 fn file(world: &WorldDir) -> PathBuf {

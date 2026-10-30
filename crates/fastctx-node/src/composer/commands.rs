@@ -43,7 +43,12 @@ pub async fn forget_command(node: &Arc<Node>, id: &ResidentId, command: &str) ->
 /// order: one with no place first (taken when no words waited), then the
 /// first by place, unless words before it are still to go on their own,
 /// on their way or waiting with nothing holding the queue: then none.
-pub async fn next_command(node: &Node, id: &ResidentId, waiting: &[String]) -> Result<Option<String>, Failure> {
+pub async fn next_command(node: &Arc<Node>, id: &ResidentId, waiting: &[String]) -> Result<Option<String>, Failure> {
+    // Empty control queues must not materialize every idle draft during startup.
+    // The composer recovery worker restores its own reservations independently.
+    if waiting.is_empty() {
+        return Ok(None);
+    }
     let Some(cell) = storage::existing(node, id).await? else {
         return Ok(waiting.first().cloned());
     };

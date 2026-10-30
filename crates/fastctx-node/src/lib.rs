@@ -762,7 +762,7 @@ pub async fn run_prepared(
     speech::restore(&node).await;
     unfinished.extend(node.residents.unfinished());
     turns::recover(&node, unfinished.into_iter().collect()).await;
-    composer::recover(&node).await;
+    composer::prepare_recovery(&node);
     speech::recover(&node).await;
     control_queue::recover(&node);
     node.effects_ready.store(true, std::sync::atomic::Ordering::Release);

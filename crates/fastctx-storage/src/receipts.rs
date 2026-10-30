@@ -103,17 +103,18 @@ pub fn put(
 /// Imports without overwriting a live result. A repeated legacy import must
 /// match; a newer live result wins after runtime's normal identity checks.
 /// The source file may be removed only after this transaction is committed.
-/// An older node acknowledged its hub's place as soon as it kept a receipt,
-/// so one imported is settled from now and kept `keep` more.
-pub fn import(connection: &Connection, key: &Key, value: &[u8], keep: Duration, now: i64) -> Result<()> {
+/// A legacy file contains no durable acknowledgement position. Keeping the
+/// receipt and acknowledging the hub were separate writes, and another copy
+/// can still be queued elsewhere. Import preserves the original indefinite
+/// deduplication until runtime supplies independent settlement evidence.
+pub fn import(connection: &Connection, key: &Key, value: &[u8], keep: Duration, _now: i64) -> Result<()> {
     let keep = i64::try_from(keep.as_millis()).map_err(|_| Error::new("receipt retention is too long"))?;
     connection
         .prepare_cached(
             "INSERT INTO receipts(namespace,scope,id,value,keep_ms,terminal,legacy)
-        VALUES(?1,?2,?3,?4,?5,1,1) ON CONFLICT DO NOTHING",
+        VALUES(?1,?2,?3,?4,?5,0,1) ON CONFLICT DO NOTHING",
         )?
         .execute(params![key.namespace, key.scope, key.id, value, keep])?;
-    settle_if_proven(connection, key, now)?;
     let (legacy, stored): (bool, Vec<u8>) = connection
         .prepare_cached("SELECT legacy,value FROM receipts WHERE namespace=?1 AND scope=?2 AND id=?3")?
         .query_row(params![key.namespace, key.scope, key.id], |row| Ok((row.get(0)?, row.get(1)?)))?;

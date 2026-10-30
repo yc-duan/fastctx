@@ -304,6 +304,13 @@ pub async fn hand_over(
     // Startup's recovery may need the gate alone, as to finish a deletion:
     // nothing waits for it holding the gate.
     node.ready().await;
+    if crate::composer::restore_before_delivery(node, to).await?
+        && crate::inbox::read(directory, &pending.delivery.id)
+            .map_err(|error| Failure::new(error.to_string()))?
+            .is_none()
+    {
+        return Ok(Landed::Waiting { why: None, answered: true });
+    }
     let actions = crate::control_queue::gate(node, to);
     let _action = actions.lock().await;
     crate::control_queue::drain(node, to).await?;
@@ -472,6 +479,7 @@ pub async fn send_composer(
     idle_only: bool,
 ) -> Result<Option<Landed>, Failure> {
     node.ready().await;
+    crate::composer::restore_before_delivery(node, id).await?;
     let actions = crate::control_queue::gate(node, id);
     let _action = actions.lock().await;
     crate::control_queue::drain(node, id).await?;

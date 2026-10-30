@@ -144,7 +144,7 @@ pub async fn uncertain(
     publish(node, id, &mut cell, next).await
 }
 
-pub async fn awaits_turn(node: &Node, id: &ResidentId, turn: &str) -> Result<bool, Failure> {
+pub async fn awaits_turn(node: &Arc<Node>, id: &ResidentId, turn: &str) -> Result<bool, Failure> {
     let Some(cell) = storage::existing(node, id).await? else {
         return Ok(false);
     };
@@ -230,19 +230,7 @@ pub(super) fn schedule(node: &Arc<Node>, id: &ResidentId) {
 }
 
 pub fn resume(node: &Arc<Node>) {
-    let node = node.clone();
-    tokio::spawn(async move {
-        for resident in node.residents.everyone() {
-            if resident.removed.is_some() {
-                continue;
-            }
-            match storage::existing(&node, &resident.id).await {
-                Ok(Some(_)) => schedule(&node, &resident.id),
-                Ok(None) => {}
-                Err(error) => node.log.line(format_args!("resuming {}'s composer: {error}", resident.id)),
-            }
-        }
-    });
+    super::recovery::migrate(node);
 }
 
 pub(super) fn after_commit(

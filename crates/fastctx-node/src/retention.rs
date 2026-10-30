@@ -53,6 +53,7 @@ pub(crate) fn set_days(world: &fastctx_types::layout::WorldDir, days: u32) -> io
 }
 
 pub(crate) fn start(node: &Arc<Node>) -> io::Result<()> {
+    crate::claude::claim_cleanup::start(node);
     let settings = node.world.retention();
     create(&settings, &Settings::default())?;
     let weak = Arc::downgrade(node);

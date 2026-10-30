@@ -1,6 +1,6 @@
 //! One business handoff per immutable letter identity, shared by every hub.
 //! Its receipt settles once the place its letter came at is acknowledged to
-//! that hub (`fastctx_storage::receipts`); an older node's counts as settled.
+//! that hub (`fastctx_storage::receipts`); legacy files carry no such proof.
 
 use fastctx_storage::{
     Database,

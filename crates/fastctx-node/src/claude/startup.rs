@@ -467,6 +467,8 @@ async fn watch(
     // A cached list from before this birth cannot establish that its job
     // is missing. Concurrent births share a list begun after their starts.
     let mut after = Some(Instant::now());
+    let mut observation = None;
+    let mut pause = fastctx_hosts::claude::MOD_LOOK;
 
     loop {
         let changed = node.claude.changed.notified();
@@ -480,7 +482,16 @@ async fn watch(
         if !pending(node, resident, id, waking)? {
             return Ok(());
         }
-        match listed.and_then(|listed| startup::background(&listed, &short)) {
+        let listed = listed.and_then(|listed| startup::background(&listed, &short));
+        let current =
+            listed.as_ref().map(|job| job.as_ref().map(|job| (job.state.clone(), job.pid))).map_err(Clone::clone);
+        pause = if observation.as_ref() == Some(&current) {
+            (pause * 2).min(std::time::Duration::from_secs(60))
+        } else {
+            fastctx_hosts::claude::MOD_LOOK
+        };
+        observation = Some(current);
+        match listed {
             Ok(Some(job)) => {
                 if let Some(pid) = job.pid.filter(|pid| *pid != 0) {
                     match fastctx_platform::identity_of(pid) {
@@ -614,30 +625,47 @@ async fn watch(
                 }
             }
         }
-        let exit = async {
-            match &mut exited {
-                Some(exit) => exit.await,
-                None => std::future::pending().await,
+        let saw_exit = {
+            let exit = async {
+                match &mut exited {
+                    Some(exit) => exit.await,
+                    None => std::future::pending().await,
+                }
+            };
+            tokio::pin!(exit);
+            let next = tokio::time::sleep(pause);
+            tokio::pin!(next);
+            loop {
+                tokio::select! {
+                    result = &mut exit => {
+                        match result {
+                            Ok(status) => {
+                                code = status;
+                                process_ended = true;
+                            }
+                            Err(error) => node.log.line(format_args!("reading Claude startup exit status: {error}")),
+                        }
+                        after = Some(Instant::now());
+                        observation = None;
+                        break true;
+                    }
+                    () = &mut changed => {
+                        changed.set(node.claude.changed.notified());
+                        changed.as_mut().enable();
+                        if !pending(node, resident, id, waking)? {
+                            return Ok(());
+                        }
+                        // Changes in another session do not relaunch this login's
+                        // CLI. Pairing and input acceptance still wake us at once.
+                    },
+                    // Unchanged facts reduce observation work, never establish a
+                    // failed birth. A process exit forces a fresh query at once.
+                    () = &mut next => break false,
+                }
             }
         };
-        tokio::select! {
-            result = exit => {
-                match result {
-                    Ok(status) => {
-                        code = status;
-                        process_ended = true;
-                    }
-                    Err(error) => node.log.line(format_args!("reading Claude startup exit status: {error}")),
-                }
-                exited = None;
-                after = Some(Instant::now());
-                // A process exit alone is not a failed birth: the supervisor
-                // can respawn it. Ask for the job's outcome immediately.
-            }
-            () = &mut changed => {},
-            // This is observation frequency, shared with the mod, never a
-            // deadline or a reason to declare the session failed.
-            () = tokio::time::sleep(fastctx_hosts::claude::MOD_LOOK) => {},
+        if saw_exit {
+            exited = None;
         }
     }
 }

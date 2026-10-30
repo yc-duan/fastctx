@@ -184,8 +184,22 @@ pub async fn complete(
     if let Outcome::Detached { why } = &record.outcome {
         return Err(Failure::new(why.clone()));
     }
-    next.uploads.insert(scope.operation.clone(), UploadRecord { attachment: attachment.clone(), ..record });
-    let applied = match next.document(&scope.target, scope.epoch) {
+    let applied = attach(&mut next, scope, attachment, record);
+    publish(node, id, &mut cell, next).await?;
+    let composer = cell.as_ref().expect("loaded").view();
+    drop(cell);
+    schedule(node, id);
+    applied.map(|()| Updated { composer, landed: None, delivery: None })
+}
+
+fn attach(
+    state: &mut Stored,
+    scope: &UploadScope,
+    attachment: &Attachment,
+    record: UploadRecord,
+) -> Result<(), Failure> {
+    state.uploads.insert(scope.operation.clone(), UploadRecord { attachment: attachment.clone(), ..record });
+    let applied = match state.document(&scope.target, scope.epoch) {
         Ok(document) if document.uploads.iter().any(|upload| upload.id == attachment.id) => {
             document.uploads.retain(|upload| upload.id != attachment.id);
             document.attachments.push(attachment.clone());
@@ -195,15 +209,11 @@ pub async fn complete(
             "this attachment was removed or its draft was sent while it uploaded; the verified file is retained",
         )),
     };
-    next.uploads.get_mut(&scope.operation).expect("known upload").outcome = match &applied {
+    state.uploads.get_mut(&scope.operation).expect("known upload").outcome = match &applied {
         Ok(()) => Outcome::Attached,
         Err(error) => Outcome::Detached { why: error.message.clone() },
     };
-    publish(node, id, &mut cell, next).await?;
-    let composer = cell.as_ref().expect("loaded").view();
-    drop(cell);
-    schedule(node, id);
-    applied.map(|()| Updated { composer, landed: None, delivery: None })
+    applied
 }
 
 pub async fn failed(node: &Arc<Node>, id: &ResidentId, scope: &UploadScope, why: &str) -> Result<(), Failure> {
@@ -304,46 +314,30 @@ pub(super) fn forsaken(was: HashSet<fastctx_types::NoticeId>, after: &Stored) ->
     was.into_iter().filter(|upload| !is.contains(upload) && !arriving.contains(upload)).collect()
 }
 
-pub async fn recover(node: &Arc<Node>, id: &ResidentId) -> Result<(), Failure> {
-    let cell = node.composers.cell(id);
-    let mut cell = cell.lock().await;
-    load(node, id, &mut cell).await?;
-    let records: Vec<_> = cell
-        .as_ref()
-        .expect("loaded")
-        .uploads
-        .values()
-        .filter(|record| matches!(record.outcome, Outcome::Uploading))
-        .cloned()
-        .collect();
-    drop(cell);
+/// Settles only uploads left by the stopped node, while the first loader owns
+/// the composer cell. A new upload cannot begin until this state commits.
+pub(super) async fn recover(node: &Arc<Node>, id: &ResidentId, state: &mut Stored) -> Result<bool, Failure> {
+    let records: Vec<_> =
+        state.uploads.values().filter(|record| matches!(record.outcome, Outcome::Uploading)).cloned().collect();
+    let changed = !records.is_empty();
     for record in records {
         match crate::attachments::resolve(node, id, std::slice::from_ref(&record.attachment)).await {
             Ok(()) => {
-                if let Err(error) = complete(node, id, &record.scope, &record.attachment).await {
-                    let cell = node.composers.cell(id);
-                    let mut cell = cell.lock().await;
-                    load(node, id, &mut cell).await?;
-                    if !receipts::upload(node, id, cell.as_ref().expect("loaded"), &record.scope.operation)
-                        .await?
-                        .is_some_and(|record| matches!(record.outcome, Outcome::Detached { .. }))
-                    {
-                        return Err(error);
-                    }
-                }
+                let scope = record.scope.clone();
+                let attachment = record.attachment.clone();
+                // A verified file whose placeholder was removed stays retained
+                // with a Detached receipt, exactly as for a live completion.
+                let _ = attach(state, &scope, &attachment, record);
             }
             Err(error) => {
-                failed(
-                    node,
-                    id,
-                    &record.scope,
-                    &format!("the node restarted before this upload was verified: {}", error.message),
-                )
-                .await?;
+                let why = format!("the node restarted before this upload was verified: {}", error.message);
+                mark(state, &record.scope, &record.attachment.id, Some(&why), "");
+                state.uploads.get_mut(&record.scope.operation).expect("recovering upload").outcome =
+                    Outcome::Failed { why };
             }
         }
     }
-    Ok(())
+    Ok(changed)
 }
 
 pub struct Guard {

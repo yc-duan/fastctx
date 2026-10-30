@@ -5,11 +5,13 @@ mod document;
 mod failures;
 mod idle;
 mod keeping;
+mod legacy_records;
 pub(crate) use idle::input_busy;
 pub(crate) use keeping::start as keep;
 mod persistence;
 mod publication;
 mod receipts;
+mod recovery;
 pub(crate) use persistence::SCHEMA;
 mod rejected;
 pub(crate) use rejected::rejected;
@@ -24,7 +26,8 @@ mod watching;
 
 pub use commands::{forget_command, next_command, place_command};
 use fastctx_types::access::Written;
-pub use storage::recover;
+pub use storage::prepare_recovery;
+pub(crate) use storage::restore_before_delivery;
 use storage::{event, load, publish};
 pub use submissions::resume;
 use submissions::schedule;
@@ -52,6 +55,7 @@ type Future<'a, T> = std::pin::Pin<Box<dyn std::future::Future<Output = Result<T
 
 #[derive(Default)]
 pub struct Composers {
+    recovering: Mutex<HashSet<ResidentId>>,
     cells: crate::leases::Registry<ResidentId, fastctx_platform::doing::Mutex<Option<Stored>>>,
     watches: Mutex<HashMap<String, ResidentId>>,
     legacy_watchers: Mutex<HashMap<ResidentId, usize>>,
@@ -76,6 +80,7 @@ pub async fn deleted(node: &Node, id: &ResidentId) -> Result<(), Failure> {
     persistence::delete(node, id).await?;
     *cell = None;
     removed(node, id);
+    recovery::finished(node, id);
     node.composers.watches.lock().expect("composer watches").retain(|_, watched| watched != id);
     node.composers.editors.lock().expect("composer editors").remove(id);
     node.composers.upload_failures.lock().expect("composer upload failures").remove(id);
@@ -141,7 +146,7 @@ pub fn here<'a>(
                 .expect("composer snapshots")
                 .get(id)
                 .and_then(|snapshot| snapshot.view.clone());
-            if let Some(composer) = snapshot {
+            if let Some(composer) = snapshot.filter(|_| !recovery::pending(node, id)) {
                 return Ok(Updated { composer: (*composer).clone(), landed: None, delivery: None });
             }
             let gate = node.residents.management(id)?;
