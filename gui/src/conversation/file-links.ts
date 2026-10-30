@@ -33,8 +33,12 @@ export interface FileLinkOptions {
   words: FileLinkWords;
   /** This computer. */
   here: MachineName;
-  /** The machine whose files the agent's links name. */
+  /** The conversation's own machine, whose files the agent's links name
+   *  where nothing else says. */
   machine: MachineName;
+  /** The machine the file `path` that `link` names is on, as the turn its
+   *  words are in says; absent where it says nothing. */
+  machineFor?: ((link: HTMLElement, path: string) => MachineName | null) | undefined;
   /** Opens a file on `machine` here, bringing it over first when needed,
    *  as the read `held`. */
   open(machine: MachineName, path: string, held: HeldRead): Promise<void>;
@@ -87,9 +91,15 @@ export class FileLinks {
       const link = linkOf(event.target);
       if (!link || link.title) return;
       const path = naturalPath(link.dataset.file!);
-      const machine = link.dataset.fileMachine ?? options.machine;
+      const machine = this.machineOf(link);
       link.title = machine === options.here ? path : options.words.on(machine, path);
     });
+  }
+
+  /** The machine holding the file `link` names. */
+  private machineOf(link: HTMLElement): MachineName {
+    const { options } = this;
+    return link.dataset.fileMachine ?? options.machineFor?.(link, link.dataset.file!) ?? options.machine;
   }
 
   /** The page went: the files still coming are not wanted. */
@@ -117,7 +127,7 @@ export class FileLinks {
       tell();
     }, SAY_AFTER);
     const opening = (held: HeldRead) =>
-      sent && options.openAttachment ? options.openAttachment(sent, held) : options.open(link.dataset.fileMachine ?? options.machine, path, held);
+      sent && options.openAttachment ? options.openAttachment(sent, held) : options.open(this.machineOf(link), path, held);
     void this.reads
       .hold(opening, (now) => {
         progress = now;
@@ -141,7 +151,7 @@ export class FileLinks {
   private openMenu(link: HTMLElement, x: number, y: number, sheet: boolean): void {
     this.closeMenu();
     const { words, here, reveal } = this.options;
-    const machine = link.dataset.fileMachine ?? this.options.machine;
+    const machine = this.machineOf(link);
     const path = link.dataset.file!;
     const menu = document.createElement("div");
     menu.className = `file-menu${sheet ? " as-sheet" : ""}`;

@@ -18,6 +18,7 @@ import type { SessionEvent, TurnEnd } from "../world/events";
 import type { MachineName } from "../world/events";
 import { Fold, sayOf, type Block, type Entry, type Gap, type KeptWords, type SendState, type ShownAttachment } from "./model";
 import type { AgentRun } from "./agents";
+import { machineNamed } from "./acted-on";
 import type { PendingControl } from "../world/control";
 
 /** The part a page opens on, in place of all it held. */
@@ -519,6 +520,16 @@ export class Conversation {
       if (found) return found;
     }
     return undefined;
+  }
+
+  /** The machine holding the file `path` named in the words of `key`, as
+   *  what their turn did says (`acted-on.ts`); null for the conversation's
+   *  own host, or where nothing says. */
+  machineNamed(key: string, path: string): MachineName | null {
+    const words = this.get(key);
+    const turn = words && "turn" in words && typeof words.turn === "string" ? words.turn : null;
+    const fold = turn === null ? null : this.foldOf(turn);
+    return words && turn !== null && fold ? machineNamed(fold.turnEntries(turn), words, path) : null;
   }
 
   /** The part holding `turn`. */

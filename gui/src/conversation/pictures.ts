@@ -75,8 +75,12 @@ export interface PicturesOptions {
   words: PictureWords;
   /** This computer. */
   here: MachineName;
-  /** The machine whose files the agent's words name. */
+  /** The conversation's own machine, whose files the agent's words name
+   *  where nothing else says. */
   machine: MachineName;
+  /** The machine the file `path` that `element` shows is on, as the turn
+   *  its words are in says; absent where it says nothing. */
+  machineFor?: ((element: HTMLElement, path: string) => MachineName | null) | undefined;
   seams: PictureSeams;
   /** A line beside the composer; `detail`, the original of a failure, on
    *  hover. */
@@ -153,7 +157,7 @@ export class Pictures {
     return {
       element,
       name: element.alt || kept?.name || element.dataset.path?.split(/[\\/]/).pop() || "",
-      machine: attachment?.owner.machine ?? element.dataset.machine ?? this.options.machine,
+      machine: attachment?.owner.machine ?? element.dataset.machine ?? (element.dataset.path ? this.options.machineFor?.(element, element.dataset.path) : null) ?? this.options.machine,
       path: kept?.path ?? element.dataset.path ?? null,
       attachment,
     };

@@ -319,7 +319,7 @@ let i = (self.ki.widen() * self.integral).narrow();
   s.say(
     "t2",
     "message",
-    "整套测试在 lab 上全过了：42 个单元测试、3 个文档测试，用时 3 分 12 秒。\n\n我另请了一位同事去造让新积分溢出的输入。收窄回 Q16 的那一步最可疑，它交回来我再告诉你。",
+    "整套测试在 lab 上全过了：42 个单元测试、3 个文档测试，用时 3 分 12 秒，完整的输出在 [j-k3x9a2.log](/home/me/.fastctx/world/towns/mark50/residents/claude-2b1c/out/j-k3x9a2.log)。\n\n我另请了一位同事去造让新积分溢出的输入。收窄回 Q16 的那一步最可疑，它交回来我再告诉你。",
     3,
   );
   s.ended("t2", "completed");

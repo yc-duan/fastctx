@@ -207,7 +207,7 @@ export type Block = Entry | Activity | Gap | Say;
 
 /** Whether `server` names the World's own tools, as either host lists them:
  *  Codex as they are served, Claude Code under its plugin. */
-function worldServer(server: string | null): boolean {
+export function worldServer(server: string | null): boolean {
   return server === "fastctx" || (server?.endsWith("_fastctx") ?? false);
 }
 
@@ -1061,6 +1061,11 @@ export class Fold {
   /** Whether this fold holds anything of `turn`. */
   holds(turn: string): boolean {
     return this.byTurn.has(turn);
+  }
+
+  /** `turn`'s entries, in the order they came. */
+  turnEntries(turn: string): readonly Entry[] {
+    return this.byTurn.get(turn) ?? [];
   }
 
   /** Whether this fold holds the tool a run's facts are about. */

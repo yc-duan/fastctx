@@ -33,7 +33,7 @@ import { SideParts } from "../side/parts";
 import type { Address } from "../world/wire";
 import type { SideSeams } from "../side/seams";
 import type { ForkFrom } from "./fork-card";
-import type { AgentActivity, Tool } from "../world/events";
+import type { AgentActivity, MachineName, Tool } from "../world/events";
 import { Pictures, type PictureSeams } from "./pictures";
 import type { HeldRead } from "../world/reads";
 import { glyph } from "./glyphs";
@@ -543,11 +543,19 @@ export class ConversationPage {
     }
     // For how long a way has been broken, and why, as the note says it.
     const broken = (since: number, why: string) => words.brokenFor(words.took(Date.now() - since), why);
+    // A file the agent's words name is on the machine their turn worked on.
+    const machineFor = (element: HTMLElement, path: string): MachineName | null => {
+      for (let block = element.closest<HTMLElement>("[data-key]"); block; block = block.parentElement?.closest<HTMLElement>("[data-key]") ?? null) {
+        if (options.conversation.get(block.dataset.key!)) return options.conversation.machineNamed(block.dataset.key!, path);
+      }
+      return null;
+    };
     if (options.opening) {
       this.fileLinks = new FileLinks(main, {
         words: words.files,
         here: options.here,
         machine: someone.machine,
+        machineFor,
         open: options.opening.open,
         openAttachment: options.opening.openAttachment,
         reveal: options.opening.reveal,
@@ -567,6 +575,7 @@ export class ConversationPage {
         words: words.pictures,
         here: options.here,
         machine: someone.machine,
+        machineFor,
         seams: options.pictures,
         say: (text, detail) => this.say(text, detail ?? ""),
         broken,
