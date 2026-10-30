@@ -50,6 +50,7 @@ mod data;
 mod delivery;
 mod desk;
 mod devices;
+mod directory_changes;
 mod ending;
 mod facts;
 mod features;
