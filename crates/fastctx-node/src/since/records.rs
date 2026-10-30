@@ -710,11 +710,9 @@ fn ledger_fact(_town: &TownName, path: &str, bytes: &[u8]) -> io::Result<Option<
     let fact = match parts.as_slice() {
         ["project", version] if version_of(version).is_some() => {
             let record: Record = serde_json::from_slice(bytes).map_err(io::Error::other)?;
-            (
-                record.at,
-                record.on,
-                SinceKind::ProjectVersion { version: record.version, name: record.name, by: record.by },
-            )
+            // Written down with the machine it was written on, always.
+            let Some(on) = record.on else { return Ok(None) };
+            (record.at, on, SinceKind::ProjectVersion { version: record.version, name: record.name, by: record.by })
         }
         _ => return Ok(None),
     };

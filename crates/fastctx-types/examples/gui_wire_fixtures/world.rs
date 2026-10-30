@@ -34,7 +34,14 @@ fn host() -> Host {
 }
 
 fn writers() -> Vec<Writer> {
-    vec![Writer::User, Writer::Resident { address: address() }, Writer::Session { agent: "claude".parse().unwrap() }]
+    vec![
+        Writer::User,
+        Writer::Resident { address: address() },
+        Writer::Session { agent: "claude".parse().unwrap() },
+        // As told to whoever may not work on the machine it was written on.
+        Writer::Elsewhere { page: false },
+        Writer::Elsewhere { page: true },
+    ]
 }
 
 fn location() -> Location {
@@ -48,6 +55,7 @@ fn towns() -> Vec<TownSummary> {
         .map(|(i, by)| TownSummary {
             town: format!("project-{i}").parse().unwrap(),
             record: Record {
+                on: (!matches!(by, Writer::Elsewhere { .. })).then(machine),
                 version: i as u32 + 1,
                 name: "Example project 世界".into(),
                 what: "Exercise the ledger contract".into(),
@@ -55,7 +63,6 @@ fn towns() -> Vec<TownSummary> {
                 places: vec![Listing { what: "checkout".into(), location: location() }],
                 canon: (i != 0).then(location),
                 by,
-                on: machine(),
                 at: at(),
             },
             journals: i,

@@ -31,6 +31,14 @@ pub const PROTOCOL: u32 = 13;
 /// `renewal_legacy::notices`).
 pub const NOTICES: u32 = 1;
 
+/// The generation of reply shapes this build reads beyond those protocol 13
+/// shipped with: 1 added a stamp told without the machine it was written on
+/// and a writer told only as a conversation or a page elsewhere, what
+/// whoever may not work on that machine is told (`project::Writer`). A
+/// client that says none is told such a reply as text instead
+/// (`fastctx-node`'s `renewal_legacy`).
+pub const SHAPES: u32 = 1;
+
 /// The first frame on every connection.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Hello {
@@ -41,6 +49,9 @@ pub struct Hello {
     /// The generation of notices the client reads (`NOTICES`).
     #[serde(default)]
     pub notices: u32,
+    /// The generation of reply shapes the client reads (`SHAPES`).
+    #[serde(default)]
+    pub shapes: u32,
 }
 
 /// What is on the other end of a connection.

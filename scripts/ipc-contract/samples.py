@@ -121,9 +121,14 @@ def replies(fixtures):
     yield {"reply": "journals", "town": "project", "journals": fixtures["world"]["journals"]}
     page_map = fixtures["pages"]["map"]
     for writer in [{"kind": "user"}, {"kind": "resident", "address": ADDRESS},
-                   {"kind": "session", "agent": "claude"}, fixtures["pages"]["writer"]]:
+                   {"kind": "session", "agent": "claude"}, fixtures["pages"]["writer"],
+                   {"kind": "elsewhere", "page": False}, {"kind": "elsewhere", "page": True}]:
         record = {**page_map["record"], "by": writer}
         stamp = {"by": writer, "on": "desktop", "at": AT}
+        # As told to whoever may not work on the machine it was written on.
+        if writer["kind"] == "elsewhere":
+            record.pop("on", None)
+            stamp.pop("on")
         yield {"reply": "record", "town": "project", "record": record, "opened": stamp}
         for canon in [None, {"Ok": [{"file": "design.md", "title": "Design", "scope": "system"}]}, {"Err": "missing"}]:
             mapping = {**page_map, "record": record, "opened": stamp, "canon": canon}
@@ -137,7 +142,7 @@ def replies(fixtures):
                  "cites": ["20261003T120000Z-desktop"], "attachments": attachments}
         yield {"reply": "entry_added", "town": "project", "journal": "notes", "id": entry["id"], "attachments": attachments}
         yield {"reply": "journal", "view": {"town": "project", "journal": "notes", "directory": "C:/notes",
-               "description": {"version": 1, "text": "notes", **stamp}, "first": 1,
+               "description": {"version": 1, "text": "notes", "by": writer, "on": "desktop", "at": AT}, "first": 1,
                "entries": [{"stamp": entry, "text": "entry", "mentioned_by": []}], "total": 1, "writers": 1}}
     for reply in fixtures["pages"]["replies"]:
         if reply["reply"] in ["page", "pages"]:
@@ -210,6 +215,17 @@ def page_identity(value):
     return isinstance(value, list) and any(map(page_identity, value))
 
 
+def elsewhere(value):
+    """Whether a reply tells a writer as no more than a conversation or a
+    page elsewhere, or a stamp without its machine: shapes no historical
+    reader knows, said to them as text."""
+    if isinstance(value, dict):
+        if value.get("kind") == "elsewhere" and "page" in value:
+            return True
+        return any(map(elsewhere, value.values()))
+    return isinstance(value, list) and any(map(elsewhere, value))
+
+
 def samples(root):
     fixtures = json.loads((root / "gui/fixtures/wire.json").read_text(encoding="utf-8"))
     for protocol in [5, 6, 7, 8, 9, 10]:
@@ -248,7 +264,7 @@ def samples(root):
             case["sentinel"] = reply["reply"] == "notices" and reply["notices"][0]["notice"]["kind"] == "sentinel"
             case["turn_facts"] = reply["reply"] == "notices" and reply["notices"][0]["notice"]["kind"] == "answer"
             # Hub-by-hub nodes have no shape before protocol 8 and are said as text.
-            case["text_result"] = (protocol == 5 and reply["reply"] != "notices" and page_identity(reply)) or (reply["reply"] == "nodes" and protocol < 8) or (reply["reply"] == "controlled" and protocol < CONTROLLED_SINCE.get(reply["controlled"]["kind"], 13))
+            case["text_result"] = (protocol == 5 and reply["reply"] != "notices" and page_identity(reply)) or (reply["reply"] == "nodes" and protocol < 8) or (reply["reply"] == "controlled" and protocol < CONTROLLED_SINCE.get(reply["controlled"]["kind"], 13)) or elsewhere(reply)
             yield case
         yield {"mode": "reply", "protocol": protocol, "value": {"kind": "reply", "id": 37, "reply": {"Err": {"message": "not executed"}}}}
         if protocol >= 8:
@@ -280,6 +296,7 @@ def samples(root):
             notice = reply["notices"][0]["notice"] if reply["reply"] == "notices" else {}
             yield {"mode": "reply", "protocol": 13, "reader": reader, "value": frame(reply),
                    "sentinel": notice.get("kind") == "sentinel",
-                   "world": notice.get("kind") == "world" and notice["fact"]["fact"] in LATER_FACTS}
+                   "world": notice.get("kind") == "world" and notice["fact"]["fact"] in LATER_FACTS,
+                   "text_result": elsewhere(reply)}
         yield {"mode": "reply", "protocol": 13, "reader": reader,
                "value": {"kind": "reply", "id": 37, "reply": {"Err": {"message": "not executed"}}}}

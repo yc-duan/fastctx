@@ -297,6 +297,16 @@ pub(crate) async fn enqueue_if_busy(
     if !(between_turns(control) || (told(control) && node.long_controls.of(id))) {
         return Ok(None);
     }
+    // A fork through a turn already ended takes that turn's history as it
+    // stands, which the turn under way does not change: it is made at once,
+    // the conversation going on undisturbed (user 2026-10-29). A fork of the
+    // whole, or through the turn under way, waits for that turn to end.
+    if let Control::Fork { through: Some(turn), .. } = control
+        && !node.long_controls.of(id)
+        && node.residents.now(id).is_none_or(|now| now.turn.as_deref() != Some(turn.as_str()))
+    {
+        return Ok(None);
+    }
     // Ones still waiting behind queued words keep their place ahead of it;
     // words handed over whose turn has not begun yet are a turn under way.
     if !busy(node, id)? && pending(node, id)?.is_empty() && !words_ahead(node, id, None)? {

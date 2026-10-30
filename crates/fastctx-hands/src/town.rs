@@ -53,12 +53,13 @@ pub fn record_of(town: &TownName, record: &Record, opened: &Stamp) -> String {
 /// machine they may not, they are not told even the name (`world-network.md`,
 /// 共享机器与智能体协助).
 fn placed(stamp: &Stamp, machines: &[MachineName], when: fn(Timestamp) -> String) -> String {
-    if machines.contains(&stamp.on) {
-        return format!("{} on {}, {}", writer(&stamp.by, &stamp.on), stamp.on, when(stamp.at));
+    if let Some(on) = stamp.on.as_ref().filter(|on| machines.contains(on)) {
+        return format!("{} on {on}, {}", writer(&stamp.by, Some(on)), when(stamp.at));
     }
     let by = match &stamp.by {
-        Writer::Resident { .. } => "a conversation".to_string(),
-        by => writer(by, &stamp.on),
+        Writer::Resident { .. } => writer(&Writer::Elsewhere { page: false }, None),
+        Writer::Page { .. } => writer(&Writer::Elsewhere { page: true }, None),
+        by => writer(by, None),
     };
     format!("{by}, {}", when(stamp.at))
 }
@@ -77,14 +78,17 @@ pub fn brief(view: &MapView) -> String {
     map(view)
 }
 
-/// Who wrote a version of something, for a line that says where already.
-pub fn writer(by: &Writer, on: &MachineName) -> String {
+/// Who wrote a version of something, for a line that says where already
+/// (`on`, when it does).
+pub fn writer(by: &Writer, on: Option<&MachineName>) -> String {
     match by {
         Writer::Page { page } => page.to_string(),
         Writer::User => "the user".to_string(),
-        Writer::Resident { address } if address.machine == *on => address.resident.to_string(),
+        Writer::Resident { address } if Some(&address.machine) == on => address.resident.to_string(),
         Writer::Resident { address } => address.tag(),
         Writer::Session { agent } => format!("a {} session fastctx does not know", program(agent, "", "")),
+        Writer::Elsewhere { page: true } => "a page".to_string(),
+        Writer::Elsewhere { page: false } => "a conversation".to_string(),
     }
 }
 

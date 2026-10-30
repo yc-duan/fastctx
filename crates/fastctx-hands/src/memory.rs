@@ -59,7 +59,7 @@ pub fn journals(catalog: &Catalog) -> String {
 pub fn changed(revision: &Revision) -> String {
     let by = match &revision.author.stamp.by {
         fastctx_types::project::Writer::Resident { address } => address.resident.to_string(),
-        by => crate::town::writer(by, &revision.author.stamp.on),
+        by => crate::town::writer(by, revision.author.stamp.on.as_ref()),
     };
     words::changed(&by, revision)
 }

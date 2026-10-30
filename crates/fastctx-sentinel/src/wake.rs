@@ -34,8 +34,8 @@ pub async fn wake(
 ) -> Result<State, String> {
     let Environment { model, look, web, machines, limits } = *environment;
     if state.wake_id == wake_id || state.finished {
-        if state.pending.as_ref().is_some_and(|pending|pending.id==wake_id) {
-            state.pending=None;
+        if state.pending.as_ref().is_some_and(|pending| pending.id == wake_id) {
+            state.pending = None;
             store.checkpoint(&state)?;
         }
         return Ok(state);
@@ -55,21 +55,30 @@ pub async fn wake(
     }
     let mut observations = Vec::new();
     if let WakeReason::Reflex { observation, .. } = &mut reason {
-        if observation.text.len() > 65_536 { return Err("reflex evidence is too large".into()); }
-        if observation.full_path.is_none() {
-            let path = store.directory().join("evidence").join(format!("reflex-{}.txt",state.sequence));
-            std::fs::create_dir_all(path.parent().expect("evidence directory")).map_err(|e|e.to_string())?;
-            fastctx_platform::publish(&path,observation.text.as_bytes(),fastctx_platform::Permissions::Private).map_err(|e|e.to_string())?;
-            observation.full_path=Some(path.to_string_lossy().into_owned());
+        if observation.text.len() > 65_536 {
+            return Err("reflex evidence is too large".into());
         }
-        observation.text=bounded(&observation.text,8192);
+        if observation.full_path.is_none() {
+            let path = store.directory().join("evidence").join(format!("reflex-{}.txt", state.sequence));
+            std::fs::create_dir_all(path.parent().expect("evidence directory")).map_err(|e| e.to_string())?;
+            fastctx_platform::publish(&path, observation.text.as_bytes(), fastctx_platform::Permissions::Private)
+                .map_err(|e| e.to_string())?;
+            observation.full_path = Some(path.to_string_lossy().into_owned());
+        }
+        observation.text = bounded(&observation.text, 8192);
         observations.push(observation.clone());
-        if state.definition.kind==Kind::Web { observation.full_path=None; }
+        if state.definition.kind == Kind::Web {
+            observation.full_path = None;
+        }
     }
     let recent: Vec<_> = state.recent.iter().map(|o| json!({"id":o.id,"at":o.at,"source":bounded(&o.source,256),"text":bounded(&o.text,1024),"full_path":if state.definition.kind==Kind::Web { None } else { o.full_path.as_ref() }})).collect();
     let reflexes: Vec<_> = state.reflexes.iter().map(|r| json!({"id":r.id,"at":r.at,"every_ms":r.every_ms})).collect();
-    let input = if let WakeReason::Goal { review } = &reason { crate::goal::input(review)?.to_string() } else { json!({"condition":state.definition.condition,"kind":state.definition.kind,"at":state.definition.at,"plan_claim":state.plan,"notes_claim":state.notes,"recent":recent,
-        "reflexes":reflexes,"machines":machines,"wake":reason,"now":now}).to_string() };
+    let input = if let WakeReason::Goal { review } = &reason {
+        crate::goal::input(review)?.to_string()
+    } else {
+        json!({"condition":state.definition.condition,"kind":state.definition.kind,"at":state.definition.at,"plan_claim":state.plan,"notes_claim":state.notes,"recent":recent,
+        "reflexes":reflexes,"machines":machines,"wake":reason,"now":now}).to_string()
+    };
     let goal = state.definition.kind == Kind::Goal;
     if goal != matches!(reason, WakeReason::Goal { .. }) {
         return Err("goal wake and sentinel kind disagree".into());
@@ -86,11 +95,15 @@ pub async fn wake(
         obstacle_recorded: false,
         invalid_reports: 0,
     };
-    let system = if goal { words::GOAL } else if app.state.definition.kind == Kind::Web { words::WATCH_WEB } else { words::WATCH };
+    let system = if goal {
+        words::GOAL
+    } else if app.state.definition.kind == Kind::Web {
+        words::WATCH_WEB
+    } else {
+        words::WATCH
+    };
     let path = store.run_path(app.state.sequence);
-    let run =
-        fastctx_agent::run(model, &mut app, system.into(), input, limits, &path)
-            .await;
+    let run = fastctx_agent::run(model, &mut app, system.into(), input, limits, &path).await;
     let run = run?;
     if let Some(value) = run.result {
         app.state.conclusion = serde_json::from_value(value).map_err(|e| e.to_string())?;
@@ -119,6 +132,7 @@ pub async fn wake(
     app.state.wake_id = wake_id.into();
     app.state.pending = None;
     store.commit(&app.state)?;
+    store.tallied(now, &app.state.usage, app.state.elapsed_ms)?;
     Ok(app.state)
 }
 
@@ -168,7 +182,12 @@ impl Application for Sentinel<'_> {
     fn tools(&self) -> Vec<Tool> {
         let mut tools = match self.state.definition.kind {
             Kind::Local | Kind::Goal => {
-                vec![tool("look", words::LOOK, json!({"machine":self.machine(),"command":string()}), &["machine", "command"])]
+                vec![tool(
+                    "look",
+                    words::LOOK,
+                    json!({"machine":self.machine(),"command":string()}),
+                    &["machine", "command"],
+                )]
             }
             Kind::Web => vec![
                 tool("fetch_web", words::FETCH, json!({"url":string()}), &["url"]),

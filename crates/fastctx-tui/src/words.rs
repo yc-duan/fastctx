@@ -188,6 +188,11 @@ impl Words {
         self.pick("你", "You")
     }
 
+    /// Who wrote something, on a machine the reader may not work on.
+    pub fn elsewhere(&self, page: bool) -> &'static str {
+        if page { self.pick("一个页面", "A page") } else { self.pick("一段对话", "A conversation") }
+    }
+
     pub fn the_world(&self) -> &'static str {
         self.pick("世界", "The World")
     }

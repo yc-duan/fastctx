@@ -57,12 +57,29 @@ pub(crate) async fn catalog_for(
 ) -> Result<fastctx_types::memory::Catalog, Failure> {
     crate::town::access::check(node, acting, town)?;
     let (world, name) = (node.world.clone(), town.clone());
-    let catalog = tokio::task::spawn_blocking(move || super::store::catalog(&world, &name))
+    let mut catalog = tokio::task::spawn_blocking(move || super::store::catalog(&world, &name))
         .await
         .map_err(|error| Failure::new(error.to_string()))?
         .map_err(|error: std::io::Error| Failure::new(error.to_string()))?;
     crate::town::access::check(node, acting, town)?;
+    told(node, acting, town, |usable| catalog.for_reader(usable))?;
     Ok(catalog)
+}
+
+/// Tells what `tell` trims as whoever works for `acting` may know it: the
+/// authors of the project `town`'s memory named only where they may work
+/// (`ledger::query::usable`).
+fn told(
+    node: &Node,
+    acting: &Acting,
+    town: &TownName,
+    tell: impl FnOnce(&dyn Fn(&fastctx_types::MachineName) -> bool),
+) -> Result<(), Failure> {
+    let usable = crate::ledger::query::usable(node, acting, town).map_err(|error| Failure::new(error.to_string()))?;
+    if let Some(usable) = usable {
+        tell(&*usable);
+    }
+    Ok(())
 }
 
 pub(crate) async fn call(node: &Arc<Node>, caller: &Caller, request: MemoryCall) -> Result<MemoryReply, Failure> {
@@ -73,7 +90,9 @@ pub(crate) async fn call(node: &Arc<Node>, caller: &Caller, request: MemoryCall)
             crate::ledger::metadata::read(&node.world, town).map_err(|error| Failure::new(error.to_string()))?
         && !node.world.town(town).signed().is_dir()
     {
-        return Ok(MemoryReply::Catalog { catalog: index.catalog });
+        let mut catalog = index.catalog;
+        told(node, &acting, town, |usable| catalog.for_reader(usable))?;
+        return Ok(MemoryReply::Catalog { catalog });
     }
     node.authorize_here(&acting)?;
     let (world, town) = (node.world.clone(), request.town().clone());
@@ -84,10 +103,16 @@ pub(crate) async fn call(node: &Arc<Node>, caller: &Caller, request: MemoryCall)
     crate::town::access::check(node, &acting, request.town())?;
     node.authorize_here(&acting)?;
     match request {
-        MemoryCall::List { .. } => Ok(MemoryReply::Catalog { catalog: store.index.catalog() }),
-        MemoryCall::Read { name, version, .. } => Ok(MemoryReply::Document {
-            document: Box::new(store.index.document(&name, version, &store.files).map_err(Failure::new)?),
-        }),
+        MemoryCall::List { town } => {
+            let mut catalog = store.index.catalog();
+            told(node, &acting, &town, |usable| catalog.for_reader(usable))?;
+            Ok(MemoryReply::Catalog { catalog })
+        }
+        MemoryCall::Read { town, name, version } => {
+            let mut document = store.index.document(&name, version, &store.files).map_err(Failure::new)?;
+            told(node, &acting, &town, |usable| document.for_reader(usable))?;
+            Ok(MemoryReply::Document { document: Box::new(document) })
+        }
         MemoryCall::Save { town, kind, name, text, expected } => {
             let author = super::identity::author(node, caller).await?;
             let (revision, files) =

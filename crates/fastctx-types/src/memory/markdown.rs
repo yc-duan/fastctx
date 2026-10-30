@@ -91,13 +91,38 @@ fn scalar(value: &str) -> Result<String, String> {
     Ok(value.to_string())
 }
 
+/// `text`, a journal as `render` wrote it, its header naming the machine
+/// and the conversation as `author` now tells them (`Author::for_reader`).
+pub fn attributed(text: &str, author: &Author) -> String {
+    let Some(rest) = text.strip_prefix("---\n") else { return text.to_string() };
+    let Some(end) = rest.find("\n---\n") else { return text.to_string() };
+    let (header, body) = rest.split_at(end);
+    let header: Vec<String> = header
+        .lines()
+        .map(|line| {
+            if line.starts_with("machine: ") {
+                format!("machine: {}", serde_json::to_string(&author.stamp.on).expect("names serialize"))
+            } else if line.starts_with("conversation: ") {
+                format!("conversation: {}", serde_json::to_string(&author.stamp.by).expect("writers serialize"))
+            } else {
+                line.to_string()
+            }
+        })
+        .collect();
+    format!("---\n{}{body}", header.join("\n"))
+}
+
 /// Replaces caller-supplied attribution with the facts supplied by the World.
 pub fn render(name: &str, kind: Kind, text: &str, author: &Author) -> Result<(String, String), String> {
     let parsed = parse(name, text)?;
     let quote = |value: &str| serde_json::to_string(value).expect("strings serialize");
     let mut result = format!("---\nname: {name}\ndescription: {}\n", quote(&parsed.description));
     if kind == Kind::Journal {
-        result.push_str(&format!("written_at: {}\nmachine: {}\n", author.stamp.at, quote(author.stamp.on.as_str())));
+        result.push_str(&format!(
+            "written_at: {}\nmachine: {}\n",
+            author.stamp.at,
+            serde_json::to_string(&author.stamp.on).expect("names serialize")
+        ));
         result.push_str(&format!(
             "conversation: {}\nhost: {}\nmodel: {}\n",
             serde_json::to_string(&author.stamp.by).expect("writers serialize"),

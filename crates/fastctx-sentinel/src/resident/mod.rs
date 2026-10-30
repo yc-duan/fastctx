@@ -69,7 +69,9 @@ impl Host {
             .await
             .map_err(|e| e.to_string())?
             .ok_or("sentinel not found")?;
-        if !self.runtime.assigned(&registration).await? { return Err("sentinel is assigned to another home".into()); }
+        if !self.runtime.assigned(&registration).await? {
+            return Err("sentinel is assigned to another home".into());
+        }
         let store = self.store(&registration);
         let state = store.load()?.ok_or("the sentinel has not begun on this home")?;
         if state.definition != registration.definition {
@@ -246,7 +248,9 @@ impl ResidentHost for Host {
     fn call<'a>(&'a self, scope: &'a HubAccount, request: &'a HomeRequest) -> FutureResult<'a, HomeReply> {
         Box::pin(async move {
             match request {
-                HomeRequest::Judge { request } => Ok(HomeReply::Judged { judgment: self.judge(scope, request).await.unwrap_or_else(|reason| Judgment::NotJudged { reason }) }),
+                HomeRequest::Judge { request } => Ok(HomeReply::Judged {
+                    judgment: self.judge(scope, request).await.unwrap_or_else(|reason| Judgment::NotJudged { reason }),
+                }),
                 HomeRequest::Inspect { id } => {
                     self.inspect(scope, id).await.map(|sentinel| HomeReply::Summary { sentinel: Box::new(sentinel) })
                 }
@@ -257,7 +261,9 @@ impl ResidentHost for Host {
                         .await
                         .map_err(|e| e.to_string())?
                         .ok_or("sentinel not found")?;
-                    if current.1.definition.owner != *owner { return Err("sentinel owner does not match its record".into()); }
+                    if current.1.definition.owner != *owner {
+                        return Err("sentinel owner does not match its record".into());
+                    }
                     if current.0 < *version {
                         return Err("sentinel home has not seen this definition version".into());
                     }
@@ -267,26 +273,37 @@ impl ResidentHost for Host {
                 }
                 // Only the asking account's own: its sentinels live under it.
                 HomeRequest::Record { id, generation, held } => {
-                    let directory = self
-                        .assignment(scope, id)
-                        .parent()
-                        .expect("assignment directory")
-                        .join(generation.to_string());
+                    let directory =
+                        self.assignment(scope, id).parent().expect("assignment directory").join(generation.to_string());
                     let held = held.clone();
                     let store = crate::state::Store::new(directory.clone());
-                    let mut record = tokio::task::spawn_blocking(move || crate::record::read(&directory, held.as_deref()))
-                        .await
-                        .map_err(|error| error.to_string())??;
                     // How it stands, and when it next looks: the earliest of
                     // its reflexes' times and of the times it wakes its
                     // conversation that are still to come.
-                    if !record.unchanged
-                        && let Some(state) = store.load()?
-                    {
-                        let now = self.runtime.now();
-                        let due = state.definition.at.iter().copied().filter(|at| *at > now);
-                        record.next = state.reflexes.iter().map(|reflex| reflex.at).filter(|at| *at < i64::MAX).chain(due).min();
-                        record.summary = Some(Box::new(storage::summary(&state)));
+                    let (summary, next) = match store.load()? {
+                        Some(state) => {
+                            let now = self.runtime.now();
+                            let due = state.definition.at.iter().copied().filter(|at| *at > now);
+                            let next = state
+                                .reflexes
+                                .iter()
+                                .map(|reflex| reflex.at)
+                                .filter(|at| *at < i64::MAX)
+                                .chain(due)
+                                .min();
+                            (Some(storage::summary(&state)), next)
+                        }
+                        None => (None, None),
+                    };
+                    let standing = serde_json::to_string(&(&summary, next)).map_err(|error| error.to_string())?;
+                    let mut record = tokio::task::spawn_blocking(move || {
+                        crate::record::read(&directory, held.as_deref(), &standing)
+                    })
+                    .await
+                    .map_err(|error| error.to_string())??;
+                    if !record.unchanged {
+                        record.next = next;
+                        record.summary = summary.map(Box::new);
                     }
                     Ok(HomeReply::Record { record: Box::new(record) })
                 }
@@ -332,9 +349,11 @@ fn overview(scope_dir: &std::path::Path, since: i64) -> Result<Vec<Watched>, Str
                 continue;
             }
             // One whose home has kept nothing of it yet has nothing to show.
-            let Some(state) = crate::state::Store::new(directory.clone()).load()? else { continue };
+            let store = crate::state::Store::new(directory.clone());
+            let Some(state) = store.load()? else { continue };
             let (wakes, earlier) = crate::record::wakes(&directory, since)?;
-            watched.push(Watched { summary: storage::summary(&state), wakes, earlier });
+            let days = store.tally(since)?;
+            watched.push(Watched { summary: storage::summary(&state), wakes, earlier, days });
         }
     }
     Ok(watched)

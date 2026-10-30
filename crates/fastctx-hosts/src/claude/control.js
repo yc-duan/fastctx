@@ -386,8 +386,11 @@ async function controlExecute($, state, control, handoff = false) {
   if (control.do === 'rewind') return controlRewind($, state, control)
   if (control.do === 'selection') return { kind: 'selected', model: state.selection.model ?? null, effort: state.selection.effort ?? null }
   if (control.do === 'checkpoint') {
-    if (state.busy !== false) throw new Error('Claude Code can fork from a turn only between turns')
-    if (control.through === state.completedTurn) await controlCheckpoint($, state, control.through, false)
+    // A turn under way is forked from once it ends. One that ended keeps the
+    // boundary taken as it ended: while another turn runs, it is not taken
+    // again from what the session holds now, that turn's messages among it.
+    if (state.busy !== false && control.through === state.turn) throw new Error('Claude Code can fork from a turn only once it ends')
+    if (state.busy === false && control.through === state.completedTurn) await controlCheckpoint($, state, control.through, false)
     const count = state.checkpoints.turns[control.through]?.after
     if (count === undefined) throw new Error('this turn has no retained Claude message checkpoint')
     if (state.checkpoints.full !== true) throw new Error('this session has no fully observed message prefix')

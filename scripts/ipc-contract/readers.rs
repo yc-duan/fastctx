@@ -86,6 +86,8 @@ fn main() {
                     // No historical reader says which notices it reads.
                     compat::notices(0, reply);
                 }
+                // Nor which reply shapes.
+                compat::shapes(0, &mut reply);
                 let wire: Value = serde_json::from_slice(&compat::frame(protocol as u32, id, &reply)).unwrap();
                 json!({"read": decode(reader, wire.clone(), false), "wire": wire, "current": current})
             }

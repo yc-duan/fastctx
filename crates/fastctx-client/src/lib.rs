@@ -43,10 +43,10 @@ mod originals;
 pub mod pages;
 pub mod plans;
 mod profile;
-mod sentinels;
-mod skills;
 pub mod renewal;
+mod sentinels;
 pub mod shown;
+mod skills;
 mod thumbnail;
 pub mod town;
 pub mod world;
@@ -156,7 +156,13 @@ impl Client {
             }
             Err(error) => return Err(io_error(error)),
         };
-        let hello = Hello { protocol: PROTOCOL, version: env!("CARGO_PKG_VERSION").to_string(), peer, notices: NOTICES };
+        let hello = Hello {
+            protocol: PROTOCOL,
+            version: env!("CARGO_PKG_VERSION").to_string(),
+            peer,
+            notices: NOTICES,
+            shapes: fastctx_types::ipc::SHAPES,
+        };
         connection.send(&to_json(&hello)).await.map_err(io_error)?;
         let welcome = connection
             .recv()
@@ -311,7 +317,9 @@ impl Client {
         if !self.goal_runtime && matches!(call, Call::Goal { .. } | Call::GoalCommand { .. }) {
             return Err(CallError::Failed(Failure::not_run(fastctx_types::goals::words::OLDER_NODE)));
         }
-        if !self.sentinels && matches!(call, Call::SentinelSettings { .. } | Call::SentinelKey { .. } | Call::Sentinel { .. }) {
+        if !self.sentinels
+            && matches!(call, Call::SentinelSettings { .. } | Call::SentinelKey { .. } | Call::Sentinel { .. })
+        {
             return Err(CallError::Failed(Failure::not_run(format!("upgrade {} to use sentinels", self.machine))));
         }
         if !self.goal_commands

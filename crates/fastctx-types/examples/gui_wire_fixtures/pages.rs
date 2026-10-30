@@ -44,7 +44,7 @@ pub fn fixtures() -> Fixtures {
         withdrawn: false,
         restored_from: None,
         by: Writer::Resident { address: to.clone() },
-        on: machine.clone(),
+        on: Some(machine.clone()),
         at,
     };
     let mut withdrawn = publication.clone();
@@ -71,7 +71,7 @@ pub fn fixtures() -> Fixtures {
         base: None,
         page_version: 1,
         acts: acts.clone(),
-        stamp: Stamp { by: Writer::User, on: "phone".parse().unwrap(), at },
+        stamp: Stamp { by: Writer::User, on: Some("phone".parse().unwrap()), at },
     };
     let html = "<!doctype html><title>Training</title><p>Loss</p>".to_string();
     let draft = PageDraft {
@@ -159,10 +159,10 @@ pub fn fixtures() -> Fixtures {
             places: Vec::new(),
             canon: None,
             by: Writer::User,
-            on: machine.clone(),
+            on: Some(machine.clone()),
             at,
         },
-        opened: Stamp { by: Writer::User, on: machine.clone(), at },
+        opened: Stamp { by: Writer::User, on: Some(machine.clone()), at },
         journals: Vec::new(),
         pages: vec![PageSummary { page: page.clone(), current: restored.clone() }],
         canon: None,

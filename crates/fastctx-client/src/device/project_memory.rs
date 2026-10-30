@@ -41,14 +41,22 @@ impl Device {
         let (link, account, town) = self.project_scope(request.town())?;
         match request {
             MemoryCall::List { .. } => {
-                Ok(MemoryReply::Catalog { catalog: link.project_index(&account, &town).await.map_err(failed)?.catalog })
+                let mut catalog = link.project_index(&account, &town).await.map_err(failed)?.catalog;
+                catalog.for_reader(&usable(&link, &account));
+                Ok(MemoryReply::Catalog { catalog })
             }
-            MemoryCall::Read { name, version, .. } => Ok(MemoryReply::Document {
-                document: Box::new(link.memory_read(&account, &town, &name, version).await.map_err(failed)?),
-            }),
+            MemoryCall::Read { name, version, .. } => {
+                let mut document = link.memory_read(&account, &town, &name, version).await.map_err(failed)?;
+                document.for_reader(&usable(&link, &account));
+                Ok(MemoryReply::Document { document: Box::new(document) })
+            }
             MemoryCall::Save { kind, name, text, expected, .. } => {
                 let author = Author {
-                    stamp: Stamp { by: Writer::User, on: link.membership().name.clone(), at: jiff::Timestamp::now() },
+                    stamp: Stamp {
+                        by: Writer::User,
+                        on: Some(link.membership().name.clone()),
+                        at: jiff::Timestamp::now(),
+                    },
                     host: None,
                     model: None,
                     session: None,
@@ -87,7 +95,7 @@ impl Device {
                     for (project, account) in selected {
                         let index = session.link.project_index(&account, &project.town).await.map_err(failed)?;
                         let mut record = index.record;
-                        visible(&session.link, &account, &mut record);
+                        record.for_reader(&usable(&session.link, &account));
                         towns.push(TownSummary {
                             town: project.name.clone(),
                             record,
@@ -102,8 +110,11 @@ impl Device {
                 let town = town.ok_or_else(|| failed("name the project"))?;
                 let (link, account, id) = self.project_scope(&town)?;
                 let index = link.project_index(&account, &id).await.map_err(failed)?;
-                let mut record = index.record;
-                visible(&link, &account, &mut record);
+                let (mut record, mut opened, mut pages) = (index.record, index.opened, index.pages);
+                let usable = usable(&link, &account);
+                record.for_reader(&usable);
+                opened.for_reader(&usable);
+                pages.iter_mut().for_each(|summary| summary.current.for_reader(&usable));
                 if map {
                     Ok(Reply::Map {
                         map: Box::new(MapView {
@@ -111,14 +122,14 @@ impl Device {
                             town,
                             ledger: String::new(),
                             record,
-                            opened: index.opened,
+                            opened,
                             journals: Vec::new(),
-                            pages: index.pages,
+                            pages,
                             canon: None,
                         }),
                     })
                 } else {
-                    Ok(Reply::Record { town, record: Box::new(record), opened: index.opened })
+                    Ok(Reply::Record { town, record: Box::new(record), opened })
                 }
             }
             ProjectCall::Edit { town, fields } => {
@@ -132,12 +143,15 @@ impl Device {
                 record.version = record.version.checked_add(1).ok_or_else(|| failed("project version exhausted"))?;
                 change(&mut record, fields);
                 record.by = Writer::User;
-                record.on = link.membership().name.clone();
+                record.on = Some(link.membership().name.clone());
                 record.at = jiff::Timestamp::now();
                 checked(&link, &account, &mut record)?;
                 publish(&link, &id, &record).await?;
-                visible(&link, &account, &mut record);
-                Ok(Reply::Record { town, record: Box::new(record), opened: index.opened })
+                let mut opened = index.opened;
+                let usable = usable(&link, &account);
+                record.for_reader(&usable);
+                opened.for_reader(&usable);
+                Ok(Reply::Record { town, record: Box::new(record), opened })
             }
             ProjectCall::New { town, fields, account, hub } => {
                 let (link, account) = self.project_account(hub.as_ref(), account.as_ref())?;
@@ -159,7 +173,7 @@ impl Device {
                     places: Vec::new(),
                     canon: None,
                     by: Writer::User,
-                    on: link.membership().name.clone(),
+                    on: Some(link.membership().name.clone()),
                     at: jiff::Timestamp::now(),
                 };
                 change(&mut record, fields);
@@ -268,12 +282,14 @@ async fn publish(link: &Link, town: &TownId, record: &Record) -> Result<(), Erro
         .map_err(failed)?;
     Ok(())
 }
-fn visible(link: &Link, account: &AccountName, record: &mut Record) {
+/// Whether `account` may work on a machine of `link`'s hub, this device
+/// counted: what a device is told of a project's machines and of who wrote
+/// it where (`world-network.md`, 共享机器与智能体协助).
+fn usable(link: &Link, account: &AccountName) -> impl Fn(&fastctx_types::MachineName) -> bool + use<> {
     let view = link.view();
-    let usable = |machine: &fastctx_types::MachineName| view.rights(account, view.canonical(machine)).hands;
-    record.machines.retain(usable);
-    record.places.retain(|place| usable(&place.location.machine));
-    if record.canon.as_ref().is_some_and(|canon| !usable(&canon.machine)) {
-        record.canon = None;
+    let account = account.clone();
+    move |machine| {
+        let machine = view.canonical(machine);
+        view.is_me(machine) || view.rights(&account, machine).hands
     }
 }

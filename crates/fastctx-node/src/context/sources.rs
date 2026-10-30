@@ -29,7 +29,7 @@ fn local_locked(node: &Node, id: &ResidentId, town: Option<&TownName>, acting: &
         Some(town) => match crate::town::instructions::current(node, town, acting)? {
             Some((text, record)) => {
                 let version = format!("{town}:{}", record.version);
-                let writer = fastctx_hands::town::writer(&record.by, &record.on);
+                let writer = fastctx_hands::town::writer(&record.by, record.on.as_ref());
                 let by = match record.by {
                     Writer::Resident { address } => Some(address),
                     _ => None,

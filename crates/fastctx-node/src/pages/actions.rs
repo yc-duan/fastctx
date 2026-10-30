@@ -95,7 +95,11 @@ async fn admitted(
         page,
         version,
         by: Box::new(publication.by.clone()),
-        on: publication.on.clone(),
+        // A publication is written down with the machine it was published on.
+        on: publication
+            .on
+            .clone()
+            .ok_or_else(|| Failure::refused("the page's publication does not say where it was published"))?,
         opened_on,
     };
     super::identity::acting(node, &source)?;
@@ -113,7 +117,8 @@ fn consenter_may(
     town: &TownName,
 ) -> Result<(), Failure> {
     let PageIdentity::Account { hub, account } = identity else {
-        return if node.is_me(by) && node.is_me(&consent.stamp.on) {
+        // A consent is written down with the machine it was given on.
+        return if node.is_me(by) && consent.stamp.on.as_ref().is_some_and(|on| node.is_me(on)) {
             Ok(())
         } else {
             Err(Failure::refused("local page consent was not given here"))
@@ -128,7 +133,7 @@ fn consenter_may(
         || view.account(account).is_none_or(|account| account.locked)
         || !view.in_project(account, &place.town)
         || !view.may_act_for(account, by)
-        || !view.logged_in(&consent.stamp.on, account)
+        || consent.stamp.on.as_ref().is_none_or(|on| !view.logged_in(on, account))
     {
         return Err(Failure::refused("the account's page consent is no longer authorized"));
     }

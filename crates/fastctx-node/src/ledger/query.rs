@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use fastctx_types::access::{Acting, HubId};
 use fastctx_types::ipc::Failure;
-use fastctx_types::project::{Record, TownSummary};
+use fastctx_types::project::{Record, Stamp, TownSummary};
 use fastctx_types::{MachineName, TownName};
 
 use crate::Node;
@@ -110,19 +110,8 @@ pub async fn list_for(node: &Arc<Node>, acting: &Acting) -> Result<Vec<TownSumma
 /// on are named (`world-network.md`, 共享机器与智能体协助). A project kept on
 /// no hub spans this computer alone.
 pub(crate) fn seen_at(node: &Node, acting: &Acting, hub: Option<&HubId>, record: &mut Record) {
-    let Some(link) = hub.and_then(|hub| node.link_of(hub)) else { return };
-    let accounts = node.accounts_on(&link, acting);
-    let view = link.view();
-    let here = node.works_here(acting).is_ok();
-    // A machine renamed since the record was written is known by its name now.
-    let usable = |machine: &MachineName| {
-        let machine = view.canonical(machine);
-        (view.is_me(machine) && here) || accounts.iter().any(|account| view.rights(account, machine).hands)
-    };
-    record.machines.retain(|machine| usable(machine));
-    record.places.retain(|place| usable(&place.location.machine));
-    if record.canon.as_ref().is_some_and(|canon| !usable(&canon.machine)) {
-        record.canon = None;
+    if let Some(usable) = usable_at(node, acting, hub) {
+        record.for_reader(&*usable);
     }
 }
 
@@ -131,6 +120,38 @@ pub(crate) fn seen(node: &Node, acting: &Acting, town: &TownName, record: &mut R
     let place = super::names::place(&node.world, town)?;
     seen_at(node, acting, place.as_ref().map(|place| &place.hub), record);
     Ok(())
+}
+
+/// A stamp of the project `town` as whoever acts as `acting` may know it:
+/// the machine it was written on, and the conversation or page that wrote
+/// it, named only where they may work (`seen_at`).
+pub(crate) fn seen_stamp(node: &Node, acting: &Acting, town: &TownName, stamp: &mut Stamp) -> std::io::Result<()> {
+    if let Some(usable) = usable(node, acting, town)? {
+        stamp.for_reader(&*usable);
+    }
+    Ok(())
+}
+
+/// Whether whoever acts as `acting` may work on a machine of the hub the
+/// project `town` is kept at; none to tell of a project kept on no hub,
+/// which spans this computer alone.
+pub(crate) fn usable(node: &Node, acting: &Acting, town: &TownName) -> std::io::Result<Option<Usable>> {
+    let place = super::names::place(&node.world, town)?;
+    Ok(usable_at(node, acting, place.as_ref().map(|place| &place.hub)))
+}
+
+pub(crate) type Usable = Box<dyn Fn(&MachineName) -> bool + Send + Sync>;
+
+fn usable_at(node: &Node, acting: &Acting, hub: Option<&HubId>) -> Option<Usable> {
+    let link = hub.and_then(|hub| node.link_of(hub))?;
+    let accounts = node.accounts_on(&link, acting);
+    let view = link.view();
+    let here = node.works_here(acting).is_ok();
+    // A machine renamed since the record was written is known by its name now.
+    Some(Box::new(move |machine: &MachineName| {
+        let machine = view.canonical(machine);
+        (view.is_me(machine) && here) || accounts.iter().any(|account| view.rights(account, machine).hands)
+    }))
 }
 
 /// Whether one of the accounts `acting` works for may use the project at

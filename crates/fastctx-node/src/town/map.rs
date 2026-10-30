@@ -27,8 +27,16 @@ pub(crate) async fn view_for(
     .await
     .map_err(|error| Failure::new(error.to_string()))?
     .map_err(|error| Failure::new(error.to_string()))?;
-    let Some((mut record, opened)) = records else { return Err(no_ledger(node, town)) };
+    let Some((mut record, mut opened)) = records else { return Err(no_ledger(node, town)) };
+    let mut pages = pages;
     crate::ledger::query::seen(node, acting, town, &mut record).map_err(|error| Failure::new(error.to_string()))?;
+    crate::ledger::query::seen_stamp(node, acting, town, &mut opened)
+        .map_err(|error| Failure::new(error.to_string()))?;
+    if let Some(usable) =
+        crate::ledger::query::usable(node, acting, town).map_err(|error| Failure::new(error.to_string()))?
+    {
+        pages.iter_mut().for_each(|summary| summary.current.for_reader(&*usable));
+    }
     let memory = crate::memory::context::text(node, town, acting, read_only).await?.map(|(text, _)| text);
     Ok(MapView {
         memory,

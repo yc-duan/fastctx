@@ -27,8 +27,9 @@ pub(crate) fn current(
     if !super::access::permits(node, acting, town).map_err(io::Error::other)? {
         return Ok(None);
     }
-    let Some((mut record, opened)) = super::read::current(&node.world, town)? else { return Ok(None) };
+    let Some((mut record, mut opened)) = super::read::current(&node.world, town)? else { return Ok(None) };
     crate::ledger::query::seen(node, acting, town, &mut record)?;
+    crate::ledger::query::seen_stamp(node, acting, town, &mut opened)?;
     Ok(Some((fastctx_hands::town::record_of(town, &record, &opened), record)))
 }
 

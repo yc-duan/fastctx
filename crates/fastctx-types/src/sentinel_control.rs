@@ -16,12 +16,24 @@ pub struct Create {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Request {
-    Create { request: Create },
-    List { owner: Option<Address> },
-    Stop { id: SentinelId, home: Option<crate::MachineName> },
+    Create {
+        request: Create,
+    },
+    List {
+        owner: Option<Address>,
+    },
+    Stop {
+        id: SentinelId,
+        home: Option<crate::MachineName>,
+    },
     Help,
     /// What it did, read as a conversation, from the machine it lives on.
-    Record { id: SentinelId, home: crate::MachineName, generation: u64, held: Option<String> },
+    Record {
+        id: SentinelId,
+        home: crate::MachineName,
+        generation: u64,
+        held: Option<String>,
+    },
     /// Every sentinel of the account, ended or not, with when each woke and
     /// what each wake took, from the machines they live on.
     Overview,
@@ -72,6 +84,22 @@ pub struct Watched {
     /// It woke earlier too: those wakes are left out.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub earlier: bool,
+    /// Every wake of the last days, counted day by day: what `wakes`
+    /// leaves out is in here. Empty for wakes its home kept no count of,
+    /// which only `wakes` tells.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub days: Vec<WakeDay>,
+}
+
+/// How often a sentinel woke on one day, and what it took (`Wake`).
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WakeDay {
+    /// Its start in UTC, in milliseconds since the epoch.
+    pub day: i64,
+    pub wakes: u64,
+    pub input: u64,
+    pub output: u64,
+    pub elapsed_ms: u64,
 }
 
 /// One time a sentinel woke, and what it took.

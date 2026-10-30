@@ -22,8 +22,10 @@ use sha2::{Digest as _, Sha256};
 const WAKES: usize = 40;
 
 /// The wakes recorded in the generation directory `directory`, unless they
-/// are as `held` names them.
-pub fn read(directory: &Path, held: Option<&str>) -> Result<Record, String> {
+/// are as `held` names them. `standing` is how the sentinel stands besides
+/// (`resident`), named in the version too: what it shows changes when that
+/// does, with no new wake.
+pub fn read(directory: &Path, held: Option<&str>, standing: &str) -> Result<Record, String> {
     if !directory.is_dir() {
         return Err("no such sentinel lives here for this account".into());
     }
@@ -44,6 +46,7 @@ pub fn read(directory: &Path, held: Option<&str>) -> Result<Record, String> {
     let earlier = files.len() > WAKES;
     let files = files.split_off(files.len().saturating_sub(WAKES));
     let mut stamp = Sha256::new();
+    stamp.update(standing.as_bytes());
     for (sequence, path) in &files {
         let meta = std::fs::metadata(path).map_err(|error| format!("reading {}: {error}", path.display()))?;
         let modified = meta.modified().ok().and_then(|at| at.duration_since(std::time::UNIX_EPOCH).ok());
@@ -54,12 +57,18 @@ pub fn read(directory: &Path, held: Option<&str>) -> Result<Record, String> {
         return Ok(Record { version, unchanged: true, events: Vec::new(), earlier, summary: None, next: None });
     }
     let mut events = Vec::new();
+    let mut whole = true;
     for (sequence, path) in files {
         // A wake being written is read again next time.
-        let Ok(bytes) = std::fs::read(&path) else { continue };
-        let Ok(run) = serde_json::from_slice::<Run>(&bytes) else { continue };
+        let Some(run) = std::fs::read(&path).ok().and_then(|bytes| serde_json::from_slice::<Run>(&bytes).ok()) else {
+            whole = false;
+            continue;
+        };
         events.extend(wake(sequence, &run));
     }
+    // What could not be read is not named as read: the reader asks again,
+    // and is not told it already has it.
+    let version = if whole { version } else { format!("{version}-partial") };
     Ok(Record { version, unchanged: false, events, earlier, summary: None, next: None })
 }
 

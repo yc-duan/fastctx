@@ -24,6 +24,31 @@ pub async fn call(
     opened_on: &MachineName,
     call: PageCall,
 ) -> Result<Reply, Failure> {
+    let mut reply = answer(node, caller, opened_on, call).await?;
+    // Who published a page and who consented to it, and where, as whoever
+    // asks may know them (`ledger::query::usable`).
+    let acting = crate::around::acting_of(node, caller);
+    let town = match &reply {
+        Reply::Page { view } => Some(view.town.clone()),
+        Reply::PageHistory { town, .. } | Reply::Pages { town, .. } => Some(town.clone()),
+        _ => None,
+    };
+    let usable = match &town {
+        Some(town) => crate::ledger::query::usable(node, &acting, town).map_err(io_failure)?,
+        None => None,
+    };
+    if let Some(usable) = usable {
+        match &mut reply {
+            Reply::Page { view } => view.for_reader(&*usable),
+            Reply::PageHistory { versions, .. } => versions.iter_mut().for_each(|version| version.for_reader(&*usable)),
+            Reply::Pages { pages, .. } => pages.iter_mut().for_each(|summary| summary.current.for_reader(&*usable)),
+            _ => {}
+        }
+    }
+    Ok(reply)
+}
+
+async fn answer(node: &Arc<Node>, caller: &Caller, opened_on: &MachineName, call: PageCall) -> Result<Reply, Failure> {
     match call {
         PageCall::Publish { town, page, base, draft } => {
             publisher(caller)?;
@@ -114,7 +139,7 @@ pub async fn call(
                 base,
                 page_version: version,
                 acts: unique(acts),
-                stamp: Stamp { by: Writer::User, on: opened_on.clone(), at: Timestamp::now() },
+                stamp: Stamp { by: Writer::User, on: Some(opened_on.clone()), at: Timestamp::now() },
             };
             let files = vec![(account_consent_path(&page, &identity, consent.version), pretty(&consent)?)];
             identity::resolve(node, caller, opened_on, &town, account.as_ref())?;
@@ -265,7 +290,7 @@ async fn publish(
         withdrawn,
         restored_from,
         by: caller.writer(),
-        on: node.machine(),
+        on: Some(node.machine()),
         at: Timestamp::now(),
     };
     let mut files = vec![(version_path(page, version), pretty(&publication)?)];

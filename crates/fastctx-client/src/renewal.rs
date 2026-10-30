@@ -140,6 +140,7 @@ fn hello(protocol: u32) -> Hello {
         version: env!("CARGO_PKG_VERSION").into(),
         peer: Peer::Command { resident: None, session: None },
         notices: fastctx_types::ipc::NOTICES,
+        shapes: fastctx_types::ipc::SHAPES,
     }
 }
 

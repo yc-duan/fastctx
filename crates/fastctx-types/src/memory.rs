@@ -38,6 +38,49 @@ pub struct Author {
     pub session: Option<String>,
 }
 
+impl Author {
+    /// As told to someone who may work only on the machines `usable`
+    /// admits (`Stamp::for_reader`): the host's session is not named either
+    /// where the writer is not.
+    pub fn for_reader(&mut self, usable: &dyn Fn(&crate::MachineName) -> bool) {
+        self.stamp.for_reader(usable);
+        if self.stamp.on.is_none() || matches!(self.stamp.by, crate::project::Writer::Elsewhere { .. }) {
+            self.session = None;
+        }
+    }
+}
+
+impl Catalog {
+    /// As told to someone who may work only on the machines `usable` admits.
+    pub fn for_reader(&mut self, usable: &dyn Fn(&crate::MachineName) -> bool) {
+        for revision in self.journals.iter_mut().chain(self.specs.iter_mut()) {
+            revision.author.for_reader(usable);
+        }
+    }
+}
+
+impl Document {
+    /// As told to someone who may work only on the machines `usable` admits:
+    /// its authors, a journal's header that names them, and evidence kept on
+    /// a machine they may not work on.
+    pub fn for_reader(&mut self, usable: &dyn Fn(&crate::MachineName) -> bool) {
+        let written = self.revision.author.clone();
+        self.revision.author.for_reader(usable);
+        if self.revision.kind == Kind::Journal && self.revision.author != written {
+            self.text = markdown::attributed(&self.text, &self.revision.author);
+        }
+        for revision in &mut self.versions {
+            revision.author.for_reader(usable);
+        }
+        for evidence in &mut self.evidence {
+            evidence.author.for_reader(usable);
+            if evidence.location.as_ref().is_some_and(|location| !usable(&location.machine)) {
+                evidence.location = None;
+            }
+        }
+    }
+}
+
 /// Metadata of one immutable revision. The text is stored beside it as Markdown.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Revision {

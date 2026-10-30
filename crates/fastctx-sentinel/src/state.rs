@@ -93,7 +93,9 @@ impl Store {
                 if recovered.sequence != sequence || recovered.pending.is_some() {
                     return Err("invalid completed sentinel snapshot".into());
                 }
-                if current.as_ref().is_some_and(|s| s.sequence == sequence && s.pending.as_ref().is_some_and(|p| p.id != recovered.wake_id)) {
+                if current.as_ref().is_some_and(|s| {
+                    s.sequence == sequence && s.pending.as_ref().is_some_and(|p| p.id != recovered.wake_id)
+                }) {
                     continue;
                 }
                 current = Some(recovered);
@@ -111,4 +113,41 @@ impl Store {
     pub fn run_path(&self, sequence: u64) -> PathBuf {
         self.directory.join("runs").join(format!("{sequence:020}.json"))
     }
+    /// Counts a wake that began at `began` and took `usage` over
+    /// `elapsed_ms` into its day, so the totals of a span need no wake read
+    /// (`world-senses.md`, 全部观测); days older than `TALLY_DAYS` go.
+    pub fn tallied(&self, began: i64, usage: &Usage, elapsed_ms: u64) -> Result<(), String> {
+        let path = self.directory.join("tally.json");
+        let mut days: Vec<fastctx_types::sentinel_control::WakeDay> = load(&path)?.unwrap_or_default();
+        let day = began.div_euclid(DAY_MS) * DAY_MS;
+        days.retain(|kept| kept.day > day - TALLY_DAYS * DAY_MS);
+        let at = match days.iter().position(|kept| kept.day == day) {
+            Some(at) => at,
+            None => {
+                days.push(fastctx_types::sentinel_control::WakeDay { day, ..Default::default() });
+                days.sort_by_key(|kept| kept.day);
+                days.iter().position(|kept| kept.day == day).expect("just kept")
+            }
+        };
+        let kept = &mut days[at];
+        kept.wakes += 1;
+        kept.input = kept.input.saturating_add(usage.input);
+        kept.output = kept.output.saturating_add(usage.output);
+        kept.elapsed_ms = kept.elapsed_ms.saturating_add(elapsed_ms);
+        save(&path, &days)
+    }
+    /// The days counted since `since` (milliseconds since the epoch), the
+    /// one it falls in among them.
+    pub fn tally(&self, since: i64) -> Result<Vec<fastctx_types::sentinel_control::WakeDay>, String> {
+        let mut days: Vec<fastctx_types::sentinel_control::WakeDay> =
+            load(&self.directory.join("tally.json"))?.unwrap_or_default();
+        days.retain(|kept| kept.day + DAY_MS > since);
+        Ok(days)
+    }
 }
+
+const DAY_MS: i64 = 86_400_000;
+
+/// How many days of wakes a sentinel keeps counted: more than the overview
+/// looks back over.
+const TALLY_DAYS: i64 = 62;

@@ -611,8 +611,6 @@ pub fn listen(node: Arc<Node>, mut events: mpsc::UnboundedReceiver<HostEvent>) {
     });
 }
 
-/// A resident whose thread the World holds moved to another town: when its
-/// thread is next resumed, it is told it lives there.
 /// A name given to a conversation's thread, kept at once: Codex tells of it
 /// only to a thread it is following, which one at rest after its turn is not.
 pub(crate) async fn titled(node: &Arc<Node>, id: &ResidentId, title: String) {
@@ -625,6 +623,8 @@ pub(crate) async fn titled(node: &Arc<Node>, id: &ResidentId, title: String) {
     }
 }
 
+/// A resident whose thread the World holds moved to another town: when its
+/// thread is next resumed, it is told it lives there.
 pub async fn moved(node: &Arc<Node>, id: &ResidentId) {
     let Some((about, town)) = node.residents.about(id) else { return };
     if !about.world_started || about.host.agent.as_str() != "codex" {

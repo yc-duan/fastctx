@@ -98,8 +98,34 @@ pub async fn query(
         answers.push(status);
     }
     answers.sort_by(|a, b| a.machine().cmp(b.machine()));
+    told(node, acting, &mut events);
     let events = merge_events(events, &mut issues);
     Ok(WorldSince { machine, since, town, machines: answers, events, undated, issues, limitations: limitations() })
+}
+
+/// Who wrote a project's version, or a journal's entry or description, and
+/// where, as whoever asks (`acting`) may know them (`ledger::query::usable`):
+/// one written on a machine they may not work on is not told at all.
+fn told(node: &Node, acting: &Acting, events: &mut Vec<SinceEvent>) {
+    let mut readers = std::collections::BTreeMap::new();
+    events.retain_mut(|event| {
+        let (SinceKind::ProjectVersion { by, .. }
+        | SinceKind::JournalEntry { by, .. }
+        | SinceKind::JournalDescription { by, .. }) = &mut event.what
+        else {
+            return true;
+        };
+        let SinceTown::Known { town: Some(town) } = &event.town else { return true };
+        let usable = readers
+            .entry(town.clone())
+            .or_insert_with(|| crate::ledger::query::usable(node, acting, town).ok().flatten());
+        let Some(usable) = usable else { return true };
+        if !usable(&event.machine) {
+            return false;
+        }
+        by.for_reader(&**usable);
+        true
+    });
 }
 
 async fn ledger_events(

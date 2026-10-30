@@ -12636,6 +12636,64 @@
                 "at": "2026-10-04T12:06:07Z"
               },
               "journals": 2
+            },
+            {
+              "town": "project-3",
+              "record": {
+                "version": 4,
+                "name": "Example project 世界",
+                "what": "Exercise the ledger contract",
+                "machines": [
+                  "desktop",
+                  "laptop"
+                ],
+                "places": [
+                  {
+                    "what": "checkout",
+                    "machine": "desktop",
+                    "path": "C:/work/project"
+                  }
+                ],
+                "canon": {
+                  "machine": "desktop",
+                  "path": "C:/work/project"
+                },
+                "by": {
+                  "kind": "elsewhere",
+                  "page": false
+                },
+                "at": "2026-10-04T12:06:07Z"
+              },
+              "journals": 3
+            },
+            {
+              "town": "project-4",
+              "record": {
+                "version": 5,
+                "name": "Example project 世界",
+                "what": "Exercise the ledger contract",
+                "machines": [
+                  "desktop",
+                  "laptop"
+                ],
+                "places": [
+                  {
+                    "what": "checkout",
+                    "machine": "desktop",
+                    "path": "C:/work/project"
+                  }
+                ],
+                "canon": {
+                  "machine": "desktop",
+                  "path": "C:/work/project"
+                },
+                "by": {
+                  "kind": "elsewhere",
+                  "page": true
+                },
+                "at": "2026-10-04T12:06:07Z"
+              },
+              "journals": 4
             }
           ]
         },
@@ -17124,6 +17182,64 @@
           "at": "2026-10-04T12:06:07Z"
         },
         "journals": 2
+      },
+      {
+        "town": "project-3",
+        "record": {
+          "version": 4,
+          "name": "Example project 世界",
+          "what": "Exercise the ledger contract",
+          "machines": [
+            "desktop",
+            "laptop"
+          ],
+          "places": [
+            {
+              "what": "checkout",
+              "machine": "desktop",
+              "path": "C:/work/project"
+            }
+          ],
+          "canon": {
+            "machine": "desktop",
+            "path": "C:/work/project"
+          },
+          "by": {
+            "kind": "elsewhere",
+            "page": false
+          },
+          "at": "2026-10-04T12:06:07Z"
+        },
+        "journals": 3
+      },
+      {
+        "town": "project-4",
+        "record": {
+          "version": 5,
+          "name": "Example project 世界",
+          "what": "Exercise the ledger contract",
+          "machines": [
+            "desktop",
+            "laptop"
+          ],
+          "places": [
+            {
+              "what": "checkout",
+              "machine": "desktop",
+              "path": "C:/work/project"
+            }
+          ],
+          "canon": {
+            "machine": "desktop",
+            "path": "C:/work/project"
+          },
+          "by": {
+            "kind": "elsewhere",
+            "page": true
+          },
+          "at": "2026-10-04T12:06:07Z"
+        },
+        "journals": 4
       }
     ],
     "journals": [
@@ -17327,6 +17443,172 @@
           "model": {
             "name": "model-a",
             "self_reported": true
+          },
+          "session": "thread-1",
+          "cites": [
+            "20261003T120607Z-laptop"
+          ],
+          "attachments": [
+            {
+              "name": "attachment-0",
+              "kind": "text",
+              "bytes": 0,
+              "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+              "kept": {
+                "kind": "in_entry"
+              }
+            },
+            {
+              "name": "attachment-1",
+              "kind": "image",
+              "bytes": 18446744073709551615,
+              "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+              "kept": {
+                "kind": "on_machine",
+                "location": {
+                  "machine": "desktop",
+                  "path": "C:/work/project"
+                }
+              }
+            },
+            {
+              "name": "attachment-2",
+              "kind": "pdf",
+              "bytes": 18446744073709551615,
+              "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+              "kept": {
+                "kind": "in_entry"
+              }
+            },
+            {
+              "name": "attachment-3",
+              "kind": "binary",
+              "bytes": 18446744073709551615,
+              "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+              "kept": {
+                "kind": "on_machine",
+                "location": {
+                  "machine": "desktop",
+                  "path": "C:/work/project"
+                }
+              }
+            }
+          ]
+        }
+      },
+      {
+        "journal": "wire-3",
+        "description": {
+          "version": 1,
+          "text": "Wire shapes",
+          "by": {
+            "kind": "elsewhere",
+            "page": false
+          },
+          "on": "desktop",
+          "at": "2026-10-04T12:06:07Z"
+        },
+        "entries": 2,
+        "writers": 1,
+        "latest": {
+          "id": "20261004T120607Z-desktop",
+          "at": "2026-10-04T12:06:07Z",
+          "machine": "desktop",
+          "by": {
+            "kind": "elsewhere",
+            "page": false
+          },
+          "agent": {
+            "agent": "codex",
+            "client": "codex-mcp-client",
+            "version": "fixture-version"
+          },
+          "model": {
+            "name": "model-a",
+            "self_reported": false
+          },
+          "session": "thread-1",
+          "cites": [
+            "20261003T120607Z-laptop"
+          ],
+          "attachments": [
+            {
+              "name": "attachment-0",
+              "kind": "text",
+              "bytes": 0,
+              "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+              "kept": {
+                "kind": "in_entry"
+              }
+            },
+            {
+              "name": "attachment-1",
+              "kind": "image",
+              "bytes": 18446744073709551615,
+              "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+              "kept": {
+                "kind": "on_machine",
+                "location": {
+                  "machine": "desktop",
+                  "path": "C:/work/project"
+                }
+              }
+            },
+            {
+              "name": "attachment-2",
+              "kind": "pdf",
+              "bytes": 18446744073709551615,
+              "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+              "kept": {
+                "kind": "in_entry"
+              }
+            },
+            {
+              "name": "attachment-3",
+              "kind": "binary",
+              "bytes": 18446744073709551615,
+              "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+              "kept": {
+                "kind": "on_machine",
+                "location": {
+                  "machine": "desktop",
+                  "path": "C:/work/project"
+                }
+              }
+            }
+          ]
+        }
+      },
+      {
+        "journal": "wire-4",
+        "description": {
+          "version": 1,
+          "text": "Wire shapes",
+          "by": {
+            "kind": "elsewhere",
+            "page": true
+          },
+          "on": "desktop",
+          "at": "2026-10-04T12:06:07Z"
+        },
+        "entries": 2,
+        "writers": 1,
+        "latest": {
+          "id": "20261004T120607Z-desktop",
+          "at": "2026-10-04T12:06:07Z",
+          "machine": "desktop",
+          "by": {
+            "kind": "elsewhere",
+            "page": true
+          },
+          "agent": {
+            "agent": "codex",
+            "client": "codex-mcp-client",
+            "version": "fixture-version"
+          },
+          "model": {
+            "name": "model-a",
+            "self_reported": false
           },
           "session": "thread-1",
           "cites": [

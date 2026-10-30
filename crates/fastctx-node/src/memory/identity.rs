@@ -25,7 +25,7 @@ pub(crate) async fn scoped(
         return Err(Failure::refused(fastctx_types::memory::words::COLLEAGUE_READ_ONLY));
     }
     Ok(Author {
-        stamp: Stamp { by: caller.writer(), on: node.machine(), at: jiff::Timestamp::now() },
+        stamp: Stamp { by: caller.writer(), on: Some(node.machine()), at: jiff::Timestamp::now() },
         host: about.as_ref().map(|about| about.host.clone()),
         model: about.as_ref().and_then(|about| about.model.clone()),
         session: about.and_then(|about| about.session),

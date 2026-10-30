@@ -50,11 +50,24 @@ pub async fn call(node: &Arc<Node>, caller: &Caller, call: ProjectCall) -> Resul
 /// The current record of `town`, as whoever works for `acting` may know it.
 pub(crate) async fn show_for(node: &Arc<Node>, town: &TownName, acting: &Acting) -> Result<Reply, Failure> {
     map::query(node, town).await?;
-    let Some((mut record, opened)) = blocking(node, town, read::current).await? else {
+    let Some((record, opened)) = blocking(node, town, read::current).await? else {
         return Err(map::no_ledger(node, town));
     };
-    crate::ledger::query::seen(node, acting, town, &mut record)
-        .map_err(|error| Failure::new(format!("reading the project {town}: {error}")))?;
+    told(node, acting, town, record, opened)
+}
+
+/// A version of `town`'s record and the stamp of its opening, as whoever
+/// works for `acting` may know them (`ledger::query::seen`).
+fn told(
+    node: &Node,
+    acting: &Acting,
+    town: &TownName,
+    mut record: Record,
+    mut opened: Stamp,
+) -> Result<Reply, Failure> {
+    let reading = |error: std::io::Error| Failure::new(format!("reading the project {town}: {error}"));
+    crate::ledger::query::seen(node, acting, town, &mut record).map_err(reading)?;
+    crate::ledger::query::seen_stamp(node, acting, town, &mut opened).map_err(reading)?;
     Ok(Reply::Record { town: town.clone(), record: Box::new(record), opened })
 }
 
@@ -85,7 +98,7 @@ async fn new(
         places: fields.places.unwrap_or_default(),
         canon: fields.canon,
         by: caller.writer(),
-        on: node.machine(),
+        on: Some(node.machine()),
         at: Timestamp::now(),
     };
     let record = checked(node, caller, owner.as_ref().map(|owner| &owner.hub), record).await?;
@@ -98,7 +111,7 @@ async fn new(
         }
     })?;
     let opened = Stamp { by: record.by.clone(), on: record.on.clone(), at: record.at };
-    Ok(Reply::Record { town, record: Box::new(record), opened })
+    told(node, &crate::around::acting_of(node, caller), &town, record, opened)
 }
 
 /// Writes the next version of a town's record: what `fields` gives
@@ -119,7 +132,7 @@ async fn edit(node: &Arc<Node>, caller: &Caller, town: TownName, fields: RecordF
         places: fields.places.unwrap_or_else(|| latest.places.clone()),
         canon: fields.canon.or_else(|| latest.canon.clone()),
         by: caller.writer(),
-        on: node.machine(),
+        on: Some(node.machine()),
         at: Timestamp::now(),
     };
     let hub = crate::ledger::names::place(&node.world, &town).ok().flatten().map(|place| place.hub);
@@ -134,7 +147,7 @@ async fn edit(node: &Arc<Node>, caller: &Caller, town: TownName, fields: RecordF
             failure
         }
     })?;
-    Ok(Reply::Record { town, record: Box::new(record), opened })
+    told(node, &crate::around::acting_of(node, caller), &town, record, opened)
 }
 
 /// The record with its machines checked against those whoever asks may

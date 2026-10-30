@@ -291,7 +291,8 @@ async fn converse(node: &Arc<Node>, connection: Connection) -> std::io::Result<(
                 let mut again = false;
                 if crate::shown::ready(node) {
                     match crate::shown::now(node).await {
-                        Ok(world) => {
+                        Ok(mut world) => {
+                            crate::renewal_legacy::world(hello.shapes, &mut world);
                             failing = None;
                             let frame = json(&NodeFrame::World { id, world: Box::new(world) });
                             if told.as_ref() != Some(&frame) {
@@ -648,6 +649,7 @@ async fn converse(node: &Arc<Node>, connection: Connection) -> std::io::Result<(
             }
             crate::renewal_legacy::notices(hello.notices, reply);
         }
+        crate::renewal_legacy::shapes(hello.shapes, &mut reply);
         if arriving && let Ok(Reply::Arrived(whereabouts)) = &reply {
             arrived.residents.push(whereabouts.resident.clone());
         }
