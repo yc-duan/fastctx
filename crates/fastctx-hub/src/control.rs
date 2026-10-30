@@ -178,6 +178,7 @@ pub(crate) async fn session(
         }
     };
     let generation = hub.next();
+    let reads_afoot = said.afoot;
     let out = Outq::new(said.parts);
     if let Err(reason) = open(&hub, &name, key, generation, out.clone(), letters, peer, said) {
         hub.log.line(format_args!("{peer}: the session of {name} could not open: {reason}"));
@@ -198,7 +199,9 @@ pub(crate) async fn session(
     // Whoever sees it sees it online now.
     hub.health.opened();
     hub.present(&name);
-    out.afoot_started();
+    if !reads_afoot {
+        out.afoot_started();
+    }
 
     let pulse = crate::pulse_of(&socket);
     let (mut sink, mut stream) = socket.split();

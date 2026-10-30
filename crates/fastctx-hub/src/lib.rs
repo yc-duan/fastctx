@@ -748,6 +748,7 @@ async fn serving(dir: &Path, kept: Option<Kept>, log: Arc<log::Log>) -> anyhow::
     tokio::spawn(expiry::settle(Arc::downgrade(&hub)));
     tokio::spawn(updates::look_every(Arc::downgrade(&hub)));
     tokio::spawn(tell_directory(Arc::downgrade(&hub), hub.directory_changed.clone(), hub.presence_changed.clone()));
+    afoot::start(&hub);
     let letters_changed = hub.store().letters_changed.clone();
     tokio::spawn(mailbox::keep_records(Arc::downgrade(&hub), letters_changed));
     if driven {
