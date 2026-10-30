@@ -107,6 +107,8 @@ export class Desk implements Page {
   /** What this device kept is put back the first time the desk is shown. */
   private restored = false;
   private forks = 0;
+  /** How the conversations stood when last laid out (`shapeAt`). */
+  private shape = "";
   /** Only the one in focus is drawn. */
   private single = false;
 
@@ -139,7 +141,14 @@ export class Desk implements Page {
         if (source) this.focus(source, true);
       }
     });
-    new ResizeObserver(() => this.lay()).observe(this.box);
+    // Resized, as when the sidebar or the side moves it every frame, the desk
+    // is laid out again only where the width changes how its conversations
+    // stand, and from the width the observer gives: reading it from the page
+    // would restyle the page in the middle of the frame.
+    new ResizeObserver((entries) => {
+      const width = entries[0]?.contentRect.width ?? this.box.clientWidth;
+      if (this.shapeAt(width) !== this.shape) this.lay(width);
+    }).observe(this.box);
     OVER.addEventListener("change", () => this.lay());
     this.dropping();
   }
@@ -426,9 +435,10 @@ export class Desk implements Page {
    *  line ruled before each but the first of its row and across the top of
    *  the second, and the top row's last keeping clear of the corner where
    *  the window's own buttons stand. */
-  private lay(): void {
+  /** How the conversations stand at `width`: how many in the top row, and
+   *  whether one is shown at a time. */
+  private arrangement(width: number): { single: boolean; top: number } {
     const n = this.panes.length;
-    const width = this.box.clientWidth;
     let top = n;
     let single = n > 1 && OVER.matches;
     if (n > 1 && !single && width > 0 && width / n < ONE_ROW) {
@@ -438,6 +448,18 @@ export class Desk implements Page {
         top = n;
       }
     }
+    return { single, top };
+  }
+
+  private shapeAt(width: number): string {
+    const { single, top } = this.arrangement(width);
+    return `${this.panes.length}|${single}|${top}`;
+  }
+
+  private lay(width = this.box.clientWidth): void {
+    const n = this.panes.length;
+    const { single, top } = this.arrangement(width);
+    this.shape = `${n}|${single}|${top}`;
     const two = !single && top < n;
     this.single = single;
     this.element.classList.toggle("desk-single", single);

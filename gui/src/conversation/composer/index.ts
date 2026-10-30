@@ -1,4 +1,4 @@
-export { ComposerSession } from "./session";
+export { ComposerSession, Withdrawn } from "./session";
 export type { ComposerOperation, ComposerSessionOptions, ComposerSessionState } from "./session";
 export { ComposerDocument } from "./document";
 export type { ComposerJournal, ComposerState, ComposerView } from "./document";

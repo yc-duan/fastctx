@@ -37,7 +37,8 @@ export type PrintoutEnd = { kind: "failed"; said: string } | { kind: "stopped"; 
 export interface PrintoutOptions {
   /** What it is the output of, as the reader names it. */
   label: string;
-  /** The command as it was given, line by line. */
+  /** The command as it was given, line by line; a call given nothing
+   *  worth showing has none, and its card is only what came back. */
   command: readonly string[];
   lines: readonly string[];
   /** The lines that are the World's own word in place of what was left
@@ -48,7 +49,7 @@ export interface PrintoutOptions {
   /** How the reader draws and numbers them, where they are not simply the
    *  output's from its first. */
   reading?: LinePaint;
-  /** Said, quietly, where nothing was printed. */
+  /** Said, quietly, where nothing was printed; empty says nothing. */
   nothing: string;
   end?: PrintoutEnd | null;
   /** Pictures it gave, as markup, after its lines. */
@@ -86,14 +87,31 @@ export class Printout {
     const { command, lines, words, layout } = options;
     this.element.className = "po";
     const printed = lines.some((_, at) => !options.notes?.has(at));
-    const given = new WrappedLines({ lines: command, ...COMMAND, layout, words, name: "po-command" });
+    const out = document.createElement("div");
+    out.className = "po-out";
+    let output: WrappedLines | null = null;
+    if (lines.length) {
+      output = new WrappedLines({ lines, ...(options.paint ? { paint: options.paint } : {}), scrolls: true, layout, words, name: "po-printed" });
+      out.append(output.clip);
+    } else if (!options.pictures && options.nothing) {
+      out.insertAdjacentHTML("beforeend", `<p class="po-nothing">${escape(options.nothing)}</p>`);
+    }
+    if (options.pictures) out.insertAdjacentHTML("beforeend", `<div class="po-pictures">${options.pictures}</div>`);
     const head = document.createElement("div");
     head.className = "po-in";
-    const text = document.createElement("div");
-    text.className = "po-given";
-    text.append(given.clip);
-    if (given.more) text.append(given.more);
-    head.append(text);
+    let given: WrappedLines | null = null;
+    if (command.length) {
+      given = new WrappedLines({ lines: command, ...COMMAND, layout, words, name: "po-command" });
+      const text = document.createElement("div");
+      text.className = "po-given";
+      text.append(given.clip);
+      if (given.more) text.append(given.more);
+      head.append(text);
+    } else {
+      // Nothing given to say above it: what came back is the card's first
+      // line, its corner at that line's end.
+      head.append(out);
+    }
     // The corner is for lines a program printed.
     if (printed) {
       head.insertAdjacentHTML(
@@ -102,18 +120,10 @@ export class Printout {
       );
     }
     this.element.append(head);
-    this.element.insertAdjacentHTML("beforeend", `<div class="po-rule" aria-hidden="true"></div>`);
-    const out = document.createElement("div");
-    out.className = "po-out";
-    let output: WrappedLines | null = null;
-    if (lines.length) {
-      output = new WrappedLines({ lines, ...(options.paint ? { paint: options.paint } : {}), scrolls: true, layout, words, name: "po-printed" });
-      out.append(output.clip);
-    } else if (!options.pictures) {
-      out.insertAdjacentHTML("beforeend", `<p class="po-nothing">${escape(options.nothing)}</p>`);
+    if (given && out.firstChild) {
+      this.element.insertAdjacentHTML("beforeend", `<div class="po-rule" aria-hidden="true"></div>`);
+      this.element.append(out);
     }
-    if (options.pictures) out.insertAdjacentHTML("beforeend", `<div class="po-pictures">${options.pictures}</div>`);
-    this.element.append(out);
     const foot = document.createElement("div");
     foot.className = "po-foot";
     if (output?.more) foot.append(output.more);
@@ -123,7 +133,7 @@ export class Printout {
       foot.insertAdjacentHTML("beforeend", `<span class="po-end ${end.kind}">${mark}<span>${escape(end.said)}</span></span>`);
     }
     if (foot.childElementCount) this.element.append(foot);
-    this.parts.push(given, ...(output ? [output] : []));
+    this.parts.push(...(given ? [given] : []), ...(output ? [output] : []));
     this.sides.push(...this.parts);
     this.element.addEventListener("click", (event) => {
       const tool = (event.target as HTMLElement).closest<HTMLElement>("[data-po]");

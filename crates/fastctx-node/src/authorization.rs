@@ -41,6 +41,12 @@ pub(crate) fn current_view(link: &Link) -> Result<Arc<View>, Failure> {
     Ok(view)
 }
 
+/// Whether `failure` only says a hub's view of this connection has not come
+/// yet: no judgement, which one made once it comes may reverse.
+pub(crate) fn view_pending(failure: &Failure) -> bool {
+    failure.denial == Some(DenialReason::ViewUnavailable)
+}
+
 pub(crate) fn resident(node: &Node, id: &ResidentId) -> Result<Acting, Failure> {
     let acting = crate::here::acting(node, id).ok_or_else(no_subject)?;
     if matches!(&acting, Acting::Accounts { accounts } if accounts.is_empty()) {
@@ -57,6 +63,7 @@ impl Node {
             return Err(no_subject());
         }
         let mut refused = None;
+        let mut pending = None;
         for account in accounts {
             let allowed = (|| {
                 let link = self.link_of(&account.hub).ok_or_else(|| {
@@ -70,10 +77,12 @@ impl Node {
             })();
             match allowed {
                 Ok(()) => return Ok(()),
+                Err(why) if view_pending(&why) => pending = Some(why),
                 Err(why) => refused = Some(why),
             }
         }
-        Err(refused.unwrap_or_else(no_subject))
+        // An account whose hub has not judged yet may yet be let in.
+        Err(pending.or(refused).unwrap_or_else(no_subject))
     }
 
     /// Checks content access before reading either endpoint, including local shortcuts.

@@ -47,7 +47,7 @@ import type { AgentTab, ProfileWords } from "./profile-words";
 import type { Page } from "./shell";
 import { effect, type Signal } from "./signals";
 import type { Store } from "./store";
-import { keepRecord, keptRecord, keptReport, readReport, reportKey } from "./usage/kept";
+import { keepRecord, keptRecord, keptReport, readerNow, readReport, reportKey } from "./usage/kept";
 import { usageOf } from "./usage/model";
 import { assistingMe, namer } from "./usage/people";
 import type { UsageWords } from "./usage/words";
@@ -312,6 +312,11 @@ export class AgentLoginsPage implements Page {
     const machine = this.current(this.options.store.world.peek()).machine;
     if (!machine || this.reading === machine.name || this.fetched === machine.name) return;
     this.fetched = machine.name;
+    // What was last read of it shows at once, while it is read anew.
+    if (this.record?.machine !== machine.name) {
+      this.record = keptRecord(machine.name);
+      if (this.record) this.draw();
+    }
     void this.read();
   }
 
@@ -342,13 +347,14 @@ export class AgentLoginsPage implements Page {
     if (!machine || this.reading === machine.name) return;
     const name = machine.name;
     this.reading = name;
+    const asked = readerNow();
     try {
       const world = await this.calls.read(name);
       const heard = world.machines.find((one) => (one.kind === "answered" ? one.logins.machine : one.machine) === name) ?? world.machines[0];
       if (this.reading !== name) return;
       if (heard?.kind === "answered") {
         this.record = heard.logins;
-        keepRecord(heard.logins);
+        keepRecord(heard.logins, asked);
         this.problem = null;
       } else if (heard) {
         this.record = null;

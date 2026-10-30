@@ -85,9 +85,12 @@ pub async fn upload(
 ) -> Result<Uploaded, Failure> {
     if let UploadTarget::Sent { machine, target, operation, account, files_on } = target {
         let uploader = destinations::sender(node, &machine, &target, account.as_ref())?;
+        node.settled_for(&uploader).await;
         if node.is_here(&machine) {
             let acting = destinations::acting(node, &target, &uploader)?;
-            if !file.media_type.starts_with("image/") && destinations::assisted(node, &target, &acting)? {
+            if !file.media_type.starts_with("image/")
+                && destinations::forward(node, &node.machine(), &target, &acting, files_on.as_ref())?
+            {
                 return forwarded::upload(
                     node,
                     &node.machine(),
@@ -103,7 +106,8 @@ pub async fn upload(
             }
         }
         if !node.is_here(&machine) {
-            let (link, account_name) = node.speaking(&uploader, &machine, Purpose::Agents).map_err(failure)?;
+            node.settled(&machine).await;
+            let (link, account_name) = node.speaking(&uploader, &machine, Purpose::Agents).await.map_err(failure)?;
             let supported = match link
                 .call(&machine.name, &account_name, Purpose::Look, RemoteCall::Facts)
                 .await
@@ -142,10 +146,13 @@ pub async fn upload(
     if local || node.is_here(&machine) {
         let uploader = destinations::sender(node, &machine, &target, None)?;
         let acting = destinations::acting(node, &target, &uploader)?;
+        node.settled_for(&acting).await;
         // The account the file is for may use the conversation's project,
         // before anything is kept for it.
         check_project(node, &acting, &target).await?;
-        if !file.media_type.starts_with("image/") && destinations::assisted(node, &target, &acting)? {
+        if !file.media_type.starts_with("image/")
+            && destinations::forward(node, &node.machine(), &target, &acting, None)?
+        {
             let operation = composer
                 .as_ref()
                 .map(|scope| scope.operation.clone())
@@ -206,7 +213,8 @@ async fn relay(
     composer: Option<fastctx_types::composer::UploadScope>,
     source: FrameReader,
 ) -> Result<Uploaded, Failure> {
-    let (link, account) = node.speaking(acting, machine, Purpose::Agents).map_err(failure)?;
+    node.settled(machine).await;
+    let (link, account) = node.speaking(acting, machine, Purpose::Agents).await.map_err(failure)?;
     let machine = machine.name.clone();
     if !file.media_type.starts_with("image/") {
         match link.call(&machine, &account, Purpose::Look, RemoteCall::Facts).await.map_err(broke)?? {
@@ -418,7 +426,12 @@ pub async fn receive(
     mut stream: Stream,
 ) -> Result<Uploaded, Failure> {
     let acting = destinations::acting(node, &target, uploader)?;
-    let routed = !file.media_type.starts_with("image/") && destinations::assisted(node, &target, &acting)?;
+    let preferred = match &target {
+        UploadTarget::Sent { files_on, .. } => files_on.as_ref(),
+        _ => None,
+    };
+    let routed =
+        !file.media_type.starts_with("image/") && destinations::forward(node, from, &target, &acting, preferred)?;
     if let UploadTarget::Sent { machine, target, operation, account, files_on } = target {
         if account
             .as_ref()
@@ -1041,7 +1054,8 @@ pub async fn place(
     files_on: Option<&Written>,
 ) -> Result<Vec<Attachment>, Failure> {
     let acting = node.residents.about(resident).ok_or_else(|| crate::forget::gone(node, resident))?.0.acting;
-    let assisting = !crate::around::works_here(node, &acting);
+    node.settled_for(&acting).await;
+    let assisting = !node.may_work_here(&acting)?;
     let mut given = Vec::with_capacity(attachments.len());
     for attachment in attachments {
         if let Some(kept) = references::reference(node, resident, &attachment)? {
@@ -1075,7 +1089,7 @@ async fn send_placed(
     resident: &ResidentId,
     kept: Attachment,
 ) -> Result<Attachment, Failure> {
-    let town = match node.speaking(acting, goes_to, Purpose::Hands) {
+    let town = match node.speaking(acting, goes_to, Purpose::Hands).await {
         Ok((link, _)) => node.town_across(&link, kept.town.as_ref())?,
         Err(_) => kept.town.clone(),
     };

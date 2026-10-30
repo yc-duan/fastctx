@@ -12,6 +12,7 @@
 import { bytesSaid } from "../bytes";
 import { glyph } from "../conversation/glyphs";
 import { escape } from "../conversation/prose";
+import { enProblems, known, zhProblems } from "./problem";
 import { outline, seeded, type Point } from "../pen/shapes";
 import { OUTPUT_DAYS, type ConversationSpace, type DataCall, type DataReply, type Group, type Space } from "../world/data";
 import type { Confirm } from "./confirm";
@@ -86,7 +87,7 @@ export const zhData: DataWords = {
       .join(""),
   deleteGo: "删除",
   deleted: (n, size) => `已删除 ${n} 段，腾出 ${size}`,
-  refused: (name, why) => `${name} 没删：${why}`,
+  refused: (name, why) => `${name} 没删${known(why, zhProblems) ? `：${known(why, zhProblems)}` : ""}`,
   output: "命令输出",
   outputSaid: "模型拿到之后，完整输出再留",
   days: (n) => `${n} 天`,
@@ -128,7 +129,7 @@ export const enData: DataWords = {
     ].join(""),
   deleteGo: "Delete",
   deleted: (n, size) => `Deleted ${n}, freed ${size}`,
-  refused: (name, why) => `${name} not deleted: ${why}`,
+  refused: (name, why) => `${name} not deleted${known(why, enProblems) ? `: ${known(why, enProblems)}` : ""}`,
   output: "Command output",
   outputSaid: "After the model has its answer, keep the full output for",
   days: (n) => (n === 1 ? "1 day" : `${n} days`),

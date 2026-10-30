@@ -89,7 +89,9 @@ pub(crate) fn answer(node: &Arc<Node>, request: Request) -> io::Result<Response>
     })
 }
 
-/// Resumes an interrupted handover and retries failed attempts after their delay.
+/// Resumes an interrupted handover and retries failed attempts after their
+/// delay; once no replacement is under way, brings up to date the logins
+/// that waited for one.
 pub(crate) fn resume(node: &Arc<Node>) {
     let weak = Arc::downgrade(node);
     tokio::spawn(async move {
@@ -98,8 +100,10 @@ pub(crate) fn resume(node: &Arc<Node>) {
             let Some(node) = weak.upgrade() else { return };
             let root = node.root.clone();
             let build = node.renewal.build.clone();
-            let result = tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
-                if let Some(plan) = store::read(&root)? {
+            // Whether no replacement is under way or failed.
+            let result = tokio::task::spawn_blocking(move || -> anyhow::Result<bool> {
+                let plan = store::read(&root)?;
+                if let Some(plan) = &plan {
                     let failed = plan.phase == fastctx_types::renewal::Phase::Failed;
                     if !failed
                         && (matches!(
@@ -119,11 +123,13 @@ pub(crate) fn resume(node: &Arc<Node>) {
                         store::request(&root, false)?;
                     }
                 }
-                Ok(())
+                Ok(plan.is_none_or(|plan| plan.phase == fastctx_types::renewal::Phase::Complete))
             })
             .await;
-            if let Err(error) = result.unwrap_or_else(|error| Err(error.into())) {
-                node.log.line(format_args!("could not resume executable renewal: {error:#}"));
+            match result.unwrap_or_else(|error| Err(error.into())) {
+                Ok(true) => crate::logins::refresh::replaced(&node).await,
+                Ok(false) => {}
+                Err(error) => node.log.line(format_args!("could not resume executable renewal: {error:#}")),
             }
             first = false;
             drop(node);

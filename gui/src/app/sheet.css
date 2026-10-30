@@ -365,6 +365,15 @@
   cursor: pointer;
 }
 
+/* Each option is one unwrapped line. Offscreen options retain that exact
+   line height and their accessibility entries without laying out the text. */
+@supports (contain-intrinsic-block-size: auto 1lh) {
+  .palette-item {
+    content-visibility: auto;
+    contain-intrinsic-block-size: auto 1lh;
+  }
+}
+
 .palette-item.chosen {
   color: var(--text-strong);
   background: var(--hairline);
@@ -861,4 +870,31 @@
 /* A program's name can run long without a space to break at. */
 .program-sheet .sheet-title {
   overflow-wrap: anywhere;
+}
+
+/* Which account a project goes to: a column of the accounts, the chosen one
+   washed; many of them scroll in the column, the dialog's head and buttons
+   staying where they are. */
+.transfer-field {
+  min-width: 0;
+  margin-inline: 0;
+  margin-bottom: 0;
+  padding: 0;
+  border: 0;
+}
+
+.transfer-field > .field-label {
+  padding: 0;
+  margin-bottom: 6px;
+}
+
+.transfer-choices {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  max-height: min(40vh, 320px);
+  overflow-y: auto;
+  padding-inline: 10px;
+  scrollbar-width: thin;
 }

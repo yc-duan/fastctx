@@ -21,6 +21,7 @@ const zh = {
   say: "说",
   saying: "正在送…",
   delivered: "送到了",
+  notDone: "没有做成",
   signal: (n: number) => `被信号 ${n} 结束`,
   jobState: { running: "在跑", exited: "跑完了", stopped: "被停下了", interrupted: "中断了", failed: "出错了" } as Record<string, string>,
 };
@@ -40,6 +41,7 @@ const en: typeof zh = {
   say: "Say",
   saying: "Sending…",
   delivered: "Delivered",
+  notDone: "Didn't work",
   signal: (n) => `ended by signal ${n}`,
   jobState: { running: "running", exited: "finished", stopped: "stopped", interrupted: "interrupted", failed: "failed" },
 };

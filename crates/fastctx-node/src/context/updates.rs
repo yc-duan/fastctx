@@ -14,39 +14,53 @@ pub(crate) struct Updates(Mutex<BTreeMap<ResidentId, Pending>>);
 struct Pending {
     revision: u64,
     loaded: u64,
+    plan_revision: u64,
+    plan_loaded: u64,
     working: bool,
 }
 impl Default for Pending {
     fn default() -> Self {
-        Self { revision: 1, loaded: 0, working: false }
+        Self { revision: 1, loaded: 0, plan_revision: 1, plan_loaded: 0, working: false }
     }
 }
 
 /// Called while the conversation's exclusive management gate is held.
 pub(crate) async fn refresh(node: &Arc<Node>, id: &ResidentId) -> Result<(), Failure> {
-    let revision = {
+    let (revision, plan_revision, read_plan) = {
         let mut pending = node.contexts.0.lock().expect("never poisoned");
         let pending = pending.entry(id.clone()).or_default();
         if pending.loaded == pending.revision {
             return Ok(());
         }
-        pending.revision
+        (pending.revision, pending.plan_revision, pending.plan_loaded != pending.plan_revision)
     };
     node.residents.active(id)?;
     let (about, town) = node.residents.about(id).ok_or_else(|| Failure::new(super::words::UNKNOWN))?;
     crate::focus::refresh(node, id).await?;
     super::refresh_local(node, id).map_err(|error| Failure::new(error.to_string()))?;
-    crate::plan::context(node, id, &about.origin, &about.acting).await?;
+    super::sources::plan_guide(node, id, &about.origin, &about.acting)
+        .await
+        .map_err(|error| Failure::new(error.to_string()))?;
+    if read_plan {
+        crate::plan::context(node, id, &about.origin, &about.acting).await?;
+    }
+    super::sources::skills(node, id, &about.acting).await?;
     super::map(node, id, town.as_ref(), &about.origin, &about.acting).await?;
-    node.contexts.0.lock().expect("never poisoned").entry(id.clone()).or_default().loaded = revision;
+    let mut contexts = node.contexts.0.lock().expect("never poisoned");
+    let pending = contexts.entry(id.clone()).or_default();
+    pending.loaded = revision;
+    pending.plan_loaded = plan_revision;
     Ok(())
 }
 
-pub(crate) fn request(node: &Arc<Node>, id: &ResidentId) {
+fn request(node: &Arc<Node>, id: &ResidentId, plan: bool) {
     {
         let mut pending = node.contexts.0.lock().expect("never poisoned");
         let pending = pending.entry(id.clone()).or_default();
         pending.revision = pending.revision.wrapping_add(1);
+        if plan {
+            pending.plan_revision = pending.plan_revision.wrapping_add(1);
+        }
         if pending.working {
             return;
         }
@@ -81,9 +95,15 @@ pub(crate) fn request(node: &Arc<Node>, id: &ResidentId) {
     });
 }
 
-pub(crate) fn request_all(node: &Arc<Node>) {
+/// Refreshes `id`'s context with its plan read again: its plan or working
+/// place changed.
+pub(crate) fn request_plan(node: &Arc<Node>, id: &ResidentId) {
+    request(node, id, true);
+}
+
+fn request_each(node: &Arc<Node>, plan: bool) {
     for resident in node.residents.everyone().filter(|resident| resident.removed.is_none()) {
-        request(node, &resident.id);
+        request(node, &resident.id, plan);
     }
 }
 
@@ -93,14 +113,20 @@ pub(crate) fn start(node: &Arc<Node>) {
         let mut views = node.views.subscribe();
         let mut ways = node.ways.subscribe();
         let mut memory = node.memory_changes.subscribe();
+        let mut retry = tokio::time::interval(std::time::Duration::from_secs(60));
+        retry.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        retry.tick().await;
+        let mut plan = true;
         loop {
-            request_all(&node);
-            tokio::select! {
-                _ = views.changed() => {},
-                _ = ways.changed() => {},
-                _ = memory.changed() => {},
-                _ = tokio::time::sleep(std::time::Duration::from_secs(60)) => {},
-            }
+            request_each(&node, plan);
+            // Connectivity changes the authorized focus and memory paths, but
+            // never the plan. Plan records and reconnects invalidate it separately.
+            plan = tokio::select! {
+                _ = views.changed() => true,
+                _ = ways.changed() => false,
+                _ = memory.changed() => false,
+                _ = retry.tick() => true,
+            };
         }
     });
 }

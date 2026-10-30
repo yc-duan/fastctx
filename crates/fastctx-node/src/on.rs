@@ -394,7 +394,7 @@ async fn there(
     let written = request.written();
     let acting = acting(node, origin);
     let (link, account) =
-        node.speaking(&acting, &written, Purpose::Hands).map_err(|failure| Failure::not_run(failure.to_string()))?;
+        node.speaking(&acting, &written, Purpose::Hands).await.map_err(|failure| Failure::not_run(failure.to_string()))?;
     // Recorded here under its project; there, under it only on its hub.
     let local_origin = origin;
     let origin = &OnOrigin { town: node.town_across(&link, origin.town.as_ref())?, ..origin.clone() };
@@ -934,7 +934,13 @@ async fn bring_files(
         return Ok(());
     }
     let acting = acting(node, origin);
-    let mut bringing = Box::pin(crate::attachments::follow::bring(node, &origin.resident, &acting, files, None));
+    let mut bringing = Box::pin(crate::attachments::follow::bring(
+        node,
+        &origin.resident,
+        &acting,
+        files,
+        Some(crate::attachments::follow::RUN_WAITS),
+    ));
     loop {
         tokio::select! {
             _ = &mut bringing => return Ok(()),
@@ -1291,9 +1297,8 @@ async fn start(
     writes_off: bool,
     piped: bool,
 ) -> Result<(JobId, PathBuf, Follower), Failure> {
-    if origin.sentinel.is_some() {
-        crate::sentinels::look::admit(node, origin).await?;
-    }
+    let observation_directory =
+        if origin.sentinel.is_some() { crate::sentinels::look::admit(node, origin).await? } else { None };
     let script = staged.script;
     let on = OnJob {
         sentinel: origin.sentinel.clone(),
@@ -1307,7 +1312,7 @@ async fn start(
         turn: origin.turn.clone(),
         call_id: origin.call_id.clone(),
         script,
-        cwd: None,
+        cwd: observation_directory.map(|path| crate::world::native(&path)),
         writes_off,
         wait: None,
         attachments: Vec::new(),

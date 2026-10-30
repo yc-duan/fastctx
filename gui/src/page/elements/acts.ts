@@ -51,6 +51,8 @@ abstract class Act extends PageElement {
   protected static override styles = acts;
   protected busy = false;
   protected said = "";
+  /** What the World said, for the pointer's rest. */
+  protected why = "";
   protected wrong = false;
   protected output: string | null = null;
 
@@ -63,9 +65,10 @@ abstract class Act extends PageElement {
 
   protected abstract act(): Promise<void>;
 
-  protected settle(said: string, wrong = false): void {
+  protected settle(said: string, wrong = false, why = ""): void {
     this.busy = false;
     this.said = said;
+    this.why = why;
     this.wrong = wrong;
     this.draw();
   }
@@ -86,7 +89,7 @@ export class Run extends Act {
       this.output = ran.output;
       this.settle(words().exit(ran.exit), ran.exit !== 0);
     } catch (error) {
-      this.settle(error instanceof Error ? error.message : String(error), true);
+      this.settle(words().notDone, true, error instanceof Error ? error.message : String(error));
     }
   }
 
@@ -96,7 +99,7 @@ export class Run extends Act {
     this.shadow.innerHTML = `
       <button class="act" type="button"${this.busy ? " disabled" : ""}>${escape(this.getAttribute("label") ?? words().run)}</button>
       <div class="what">${escape(machine)} $ ${escape(command)}</div>
-      ${this.said ? `<div class="said${this.wrong ? " wrong" : ""}" role="status">${escape(this.said)}</div>` : ""}
+      ${this.said ? `<div class="said${this.wrong ? " wrong" : ""}" role="status"${this.why ? ` title="${escape(this.why)}"` : ""}>${escape(this.said)}</div>` : ""}
       ${this.output !== null ? `<pre>${escape(this.output)}</pre>` : ""}`;
   }
 }
@@ -116,7 +119,7 @@ export class Say extends Act {
       });
       this.settle(words().delivered);
     } catch (error) {
-      this.settle(error instanceof Error ? error.message : String(error), true);
+      this.settle(words().notDone, true, error instanceof Error ? error.message : String(error));
     }
   }
 
@@ -124,6 +127,6 @@ export class Say extends Act {
     this.shadow.innerHTML = `
       <button class="act" type="button"${this.busy ? " disabled" : ""}>${escape(this.getAttribute("label") ?? words().say)}</button>
       <div class="what">→ ${escape(this.getAttribute("resident"))} ${escape(this.getAttribute("text"))}</div>
-      ${this.said ? `<div class="said${this.wrong ? " wrong" : ""}" role="status">${escape(this.said)}</div>` : ""}`;
+      ${this.said ? `<div class="said${this.wrong ? " wrong" : ""}" role="status"${this.why ? ` title="${escape(this.why)}"` : ""}>${escape(this.said)}</div>` : ""}`;
   }
 }

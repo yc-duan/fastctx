@@ -5,11 +5,15 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context as _, bail, ensure};
 use clap::{Args, Subcommand};
-use fastctx_client::renewal::{self, Probe};
+use fastctx_client::renewal::Probe;
+
+mod observing;
 use fastctx_install::renewal::{self as store, Plan};
 use fastctx_platform::FileLock;
 use fastctx_types::layout::WorldDir;
 use fastctx_types::renewal::{Action, Phase, Status};
+pub(super) use observing::observing;
+use observing::{process_of, requesting};
 
 #[derive(Args)]
 pub struct RenewalArgs {
@@ -112,7 +116,9 @@ pub fn run(args: RenewalArgs) -> anyhow::Result<()> {
         }
         RenewalAction::Status { dir } => println!("{}", serde_json::to_string(&runtime.block_on(status(&dir))?)?),
         RenewalAction::Repair(args) => crate::repair::run(args)?,
-        RenewalAction::RepairState { dir } => println!("{}", serde_json::to_string(&fastctx_install::repair::inspect(&dir)?)?),
+        RenewalAction::RepairState { dir } => {
+            println!("{}", serde_json::to_string(&fastctx_install::repair::inspect(&dir)?)?)
+        }
         RenewalAction::Now { dir } => store::request(&dir, true)?,
         RenewalAction::Run { dir, retry } => runtime.block_on(worker(&dir, retry))?,
         RenewalAction::Guardian { dir, graphical } => {
@@ -187,7 +193,7 @@ async fn advance(root: &Path, plan: &mut Plan) -> anyhow::Result<()> {
     let service =
         fastctx_install::service::Service::new(fastctx_install::service::Kind::Node, store::installed(root), root);
     let needs_guardian = kept && !service.guardian_current(&plan.candidate.build.digest)?;
-    let current = renewal::probe(&world).await?;
+    let current = observing(&world).await?;
     if let Probe::Running(node) = &current
         && node.build == plan.candidate.build
         && std::fs::canonicalize(&node.executable)? == std::fs::canonicalize(store::installed(root))?
@@ -253,8 +259,8 @@ async fn advance(root: &Path, plan: &mut Plan) -> anyhow::Result<()> {
     phase(root, plan, Phase::WaitingForIdle)?;
     let mut asked = None;
     if !matches!(current, Probe::Absent | Probe::Legacy { .. }) {
-        asked = settled(renewal::process(&world).await)?.flatten();
-        settled(renewal::request(&world, Action::Yield).await)?;
+        asked = settled(process_of(&world).await)?.flatten();
+        settled(requesting(&world, Action::Yield).await)?;
     }
     loop {
         let observed = observing(&world).await?;
@@ -284,8 +290,8 @@ async fn advance(root: &Path, plan: &mut Plan) -> anyhow::Result<()> {
         if matches!(observed, Probe::Legacy { .. }) {
             return phase(root, plan, Phase::AwaitingLegacyExit);
         }
-        let serving = settled(renewal::process(&world).await)?.flatten();
-        if serving.is_some() && serving != asked && settled(renewal::request(&world, Action::Yield).await)?.is_some() {
+        let serving = settled(process_of(&world).await)?.flatten();
+        if serving.is_some() && serving != asked && settled(requesting(&world, Action::Yield).await)?.is_some() {
             asked = serving;
         }
         tick().await;
@@ -327,7 +333,7 @@ async fn finish_bridge(root: &Path, plan: &mut Plan, needs_guardian: bool) -> an
             return waiting_for_service(root, plan, why);
         }
         let _gate = FileLock::acquire(&store::directory(root).join("manager-gate.lock"))?;
-        let Probe::Running(node) = renewal::probe(&WorldDir::under(root)).await? else {
+        let Probe::Running(node) = observing(&WorldDir::under(root)).await? else {
             bail!("no serving replacement bridge")
         };
         ensure!(node.bridge && node.build == plan.candidate.build, "the replacement bridge is not serving");
@@ -357,11 +363,17 @@ async fn finish_bridge(root: &Path, plan: &mut Plan, needs_guardian: bool) -> an
     }
     phase(root, plan, Phase::ReturningToService)?;
     let world = WorldDir::under(root);
-    renewal::request(&world, Action::Yield).await?;
-    let began = std::time::Instant::now();
+    requesting(&world, Action::Yield).await?;
+    let mut began = std::time::Instant::now();
     loop {
+        let observed = observing(&world).await?;
+        // A bridge still draining its live work is not a failed service start.
+        // The service's own startup deadline starts once the bridge has left.
+        if matches!(&observed, Probe::Running(node) if node.bridge && node.yielding) {
+            began = std::time::Instant::now();
+        }
         returning(began)?;
-        if let Probe::Running(node) = observing(&world).await?
+        if let Probe::Running(node) = observed
             && !node.bridge
             && node.build.digest == plan.candidate.build.digest
         {
@@ -465,8 +477,8 @@ async fn guard_supervised(root: &Path, plan: &mut Plan) -> anyhow::Result<()> {
     let gate = FileLock::acquire(&store::directory(root).join("manager-gate.lock"))?;
     phase(root, plan, Phase::WaitingForIdle)?;
     let world = WorldDir::under(root);
-    if let Some(serving) = settled(renewal::process(&world).await)?.flatten() {
-        settled(renewal::request(&world, Action::Yield).await)?;
+    if let Some(serving) = settled(process_of(&world).await)?.flatten() {
+        settled(requesting(&world, Action::Yield).await)?;
         while let Probe::Running(node) = observing(&world).await?
             && node.process == serving
         {
@@ -557,7 +569,7 @@ async fn recover(root: &Path, plan: &Plan, kept: bool) -> anyhow::Result<()> {
             if !node.yielding {
                 return Ok(());
             }
-            match renewal::request(&world, Action::Cancel).await {
+            match requesting(&world, Action::Cancel).await {
                 Ok(()) => return Ok(()),
                 Err(error) if error.to_string() == "handover already committed" || transient(&error) => {
                     // Commit may have won. The writer lock below decides
@@ -580,15 +592,6 @@ async fn recover(root: &Path, plan: &Plan, kept: bool) -> anyhow::Result<()> {
             return Ok(());
         }
         tick().await;
-    }
-}
-
-pub(super) async fn observing(world: &WorldDir) -> std::io::Result<Probe> {
-    let result = tokio::time::timeout(std::time::Duration::from_secs(30), renewal::probe(world)).await
-        .map_err(|_| std::io::Error::new(std::io::ErrorKind::TimedOut, format!("checking node at {} exceeded 30 seconds", world.path().display())))?;
-    match result {
-        Err(error) if transient(&error) => Ok(Probe::Absent),
-        result => result,
     }
 }
 
@@ -616,7 +619,7 @@ async fn guardian(root: &Path, graphical: bool) -> anyhow::Result<()> {
         "the replacement has not reached guardian renewal"
     );
     store::verify(&plan.candidate)?;
-    let Probe::Running(node) = renewal::probe(&WorldDir::under(root)).await? else {
+    let Probe::Running(node) = observing(&WorldDir::under(root)).await? else {
         bail!("the replacement bridge is not serving yet")
     };
     // A guardian that runs the candidate as its node already takes its own

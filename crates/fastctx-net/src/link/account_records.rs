@@ -9,6 +9,39 @@ use super::Link;
 use crate::wire::{Question, Told};
 
 impl Link {
+    /// Opt in or out of one metadata stream. Reads also opt in; a withdrawn
+    /// working copy releases its plan stream while keeping its placement stream.
+    pub async fn follow_record(
+        &self,
+        account: &AccountName,
+        kind: &str,
+        key: &str,
+        following: bool,
+    ) -> Result<(), String> {
+        if !self.view().record_keys {
+            return Ok(());
+        }
+        Request::Read { kind: kind.into(), key: key.into() }.validate()?;
+        let connection = self.inner.connected().await.ok_or_else(|| words::disconnected(self.inner.not_connected()))?;
+        match self
+            .inner
+            .ask_on(
+                connection,
+                Question::RecordFollowing {
+                    account: account.clone(),
+                    record_kind: kind.into(),
+                    key: key.into(),
+                    following,
+                },
+            )
+            .await?
+            .ok_or(words::HUB_CLOSED)?
+        {
+            Told::Done => Ok(()),
+            _ => Err(words::HUB_REPLY.into()),
+        }
+    }
+
     /// Queries the hub at the time of this call. A disconnected or older hub
     /// returns an error; a compare-and-swap conflict is a structured response.
     pub async fn account_records(&self, account: &AccountName, request: Request) -> Result<Response, String> {
@@ -54,6 +87,7 @@ pub struct RecordWatch {
     changes: tokio::sync::broadcast::Receiver<Option<Changed>>,
     status: tokio::sync::watch::Receiver<super::Status>,
     first: bool,
+    watch: fastctx_types::NoticeId,
 }
 
 impl Link {
@@ -66,6 +100,12 @@ impl Link {
             changes: self.record_changes(),
             status: self.subscribe(),
             first: true,
+            watch: format!(
+                "{:032x}",
+                u128::from_be_bytes(crate::sign::random::<16>().map_err(|error| error.to_string())?)
+            )
+            .parse()
+            .expect("hex identity"),
         })
     }
 }
@@ -95,9 +135,56 @@ impl RecordWatch {
                 }
             }
         }
+        self.link.watch_records(&self.account, &self.kind, self.watch.as_str(), true).await?;
         match self.link.account_records(&self.account, Request::List { kind: self.kind.clone() }).await? {
             Response::Listed { entries } => Ok(Watched::Current { entries }),
             _ => Err(words::HUB_LIST.into()),
+        }
+    }
+}
+
+impl Link {
+    async fn watch_records(
+        &self,
+        account: &AccountName,
+        kind: &str,
+        watch: &str,
+        following: bool,
+    ) -> Result<(), String> {
+        if !self.view().record_keys {
+            return Ok(());
+        }
+        let connection = self.inner.connected().await.ok_or_else(|| words::disconnected(self.inner.not_connected()))?;
+        match self
+            .inner
+            .ask_on(
+                connection,
+                Question::RecordWatching {
+                    account: account.clone(),
+                    record_kind: kind.into(),
+                    watch: watch.into(),
+                    following,
+                },
+            )
+            .await?
+            .ok_or(words::HUB_CLOSED)?
+        {
+            Told::Done => Ok(()),
+            _ => Err(words::HUB_REPLY.into()),
+        }
+    }
+}
+impl Drop for RecordWatch {
+    fn drop(&mut self) {
+        if !self.link.view().record_keys {
+            return;
+        }
+        if let Ok(runtime) = tokio::runtime::Handle::try_current() {
+            let (link, account, kind, watch) =
+                (self.link.clone(), self.account.clone(), self.kind.clone(), self.watch.clone());
+            runtime.spawn(async move {
+                let _ = link.watch_records(&account, &kind, watch.as_str(), false).await;
+            });
         }
     }
 }

@@ -39,6 +39,8 @@ export interface QueueWords {
   done: string;
   /** Beside one the node is sending now. */
   sending: string;
+  /** Why one cannot be sent at once while another is on its way. */
+  stillGoing: string;
   /** Beside one another device is changing. */
   editingElsewhere: string;
 }

@@ -109,6 +109,8 @@ export class VersionWindow {
   private looking = false;
   private picking: string | null = null;
   private said = "";
+  /** What the World said, for the pointer's rest. */
+  private why = "";
   private drawn = "";
 
   constructor(private readonly words: VersionWords) {}
@@ -173,7 +175,8 @@ export class VersionWindow {
       },
       (error: unknown) => {
         this.looking = false;
-        this.said = this.words.failed(error instanceof Error ? error.message : String(error));
+        this.why = error instanceof Error ? error.message : String(error);
+        this.said = this.words.failed(this.why);
         this.draw();
       },
     );
@@ -193,7 +196,8 @@ export class VersionWindow {
       },
       (error: unknown) => {
         this.picking = null;
-        this.said = this.words.failed(error instanceof Error ? error.message : String(error));
+        this.why = error instanceof Error ? error.message : String(error);
+        this.said = this.words.failed(this.why);
         this.draw();
       },
     );
@@ -270,7 +274,7 @@ export class VersionWindow {
       </div>
       <ol class="vw-list">${list}</ol>
       ${clear ? `<div class="vw-foot">${clear}</div>` : ""}
-      <p class="sheet-note" role="alert"${this.said ? "" : " hidden"}>${escape(this.said)}</p>`;
+      <p class="sheet-note" role="alert"${this.said ? "" : " hidden"}${this.said && this.why ? ` title="${escape(this.why)}"` : ""}>${escape(this.said)}</p>`;
     if (html === this.drawn) return;
     this.drawn = html;
     sheet.body.innerHTML = html;

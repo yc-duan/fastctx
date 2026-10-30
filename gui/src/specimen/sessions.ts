@@ -50,7 +50,32 @@ function claude(): Specimen {
     run(
       "fastctx view -- /home/me/mark50/src/ctrl/fixed.rs /home/me/mark50/src/ctrl/pid.rs",
       "=== run on laptop (exited 0) ===",
-      "=== view (2 files: 2 shown) ===\n=== laptop:/home/me/mark50/src/ctrl/fixed.rs (lines 1-112 of 112) ===\n1\t//! Fixed-point PID for the joint controllers.\n2\t\n3\tuse crate::q16::Q16;\n…",
+      [
+        "=== view (2 files: 1 shown whole, 1 in part, 0 not shown) ===",
+        "=== laptop:/home/me/mark50/src/ctrl/fixed.rs (lines 1-14 of 112) ===",
+        "1\t//! Fixed-point PID for the joint controllers.",
+        "2\t",
+        "3\tuse crate::q16::Q16;",
+        "4\t",
+        "5\t/// One controller: its gains, and what it has summed so far.",
+        "6\tpub struct Pid {",
+        "7\t    pub kp: Q16,",
+        "8\t    pub ki: Q16,",
+        "9\t    pub kd: Q16,",
+        "10\t    integral: Q16,",
+        "11\t    last: Q16,",
+        "12\t}",
+        "13\t",
+        "14\timpl Pid {",
+        "=== lines 15-112 not shown ===",
+        "=== laptop:/home/me/mark50/src/ctrl/pid.rs (6 lines) ===",
+        "1\tmod fixed;",
+        "2\t",
+        "3\tpub use fixed::Pid;",
+        "4\t",
+        "5\t/// The loop runs at this rate, in hertz.",
+        "6\tpub const RATE: u32 = 1000;",
+      ].join("\n"),
       { duration_ms: 120 },
     ),
   );
@@ -294,7 +319,7 @@ let i = (self.ki.widen() * self.integral).narrow();
   s.say(
     "t2",
     "message",
-    "整套测试在 lab 上全过了：42 个单元测试、3 个文档测试，用时 3 分 12 秒。\n\n我另请了一位同事去造让新积分溢出的输入。收窄回 Q16 的那一步最可疑，它交回来我再告诉你。",
+    "整套测试在 lab 上全过了：42 个单元测试、3 个文档测试，用时 3 分 12 秒，完整的输出在 [j-k3x9a2.log](/home/me/.fastctx/world/towns/mark50/residents/claude-2b1c/out/j-k3x9a2.log)。\n\n我另请了一位同事去造让新积分溢出的输入。收窄回 Q16 的那一步最可疑，它交回来我再告诉你。",
     3,
   );
   s.ended("t2", "completed");

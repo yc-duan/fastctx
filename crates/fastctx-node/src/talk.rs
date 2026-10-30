@@ -82,6 +82,7 @@ pub async fn talk_here(
 ) -> Result<Landed, Failure> {
     crate::attachments::resolve(node, to, &attachments).await?;
     let attachments = crate::attachments::place(node, to, attachments, files_on).await?;
+    crate::placement::location::speaking(node, to, typed_on)?;
     let delivery = crate::attachments::delivery(typed_on, text, attachments, id);
     speech::tell_here(node, to, delivery, Owed::Nobody).await
 }
@@ -353,6 +354,14 @@ async fn read_here(node: &Arc<Node>, resident: &ResidentId) -> Result<HistoryRea
         }
         _ => (recorded(&directory)?, None),
     };
+    let mut hosted = hosted;
+    if let Some(events) = &mut hosted {
+        let projection = crate::context::input::Projection::open(&directory)
+            .map_err(|error| Failure::new(error.to_string()))?;
+        for event in events {
+            projection.restore(event).map_err(|error| Failure::new(error.to_string()))?;
+        }
+    }
     let receipts = crate::attachments::delivered::of(node, resident);
     let mut history = history(recorded, hosted, about.host.agent.as_str(), &receipts);
     // A change of history tells a view already open to read again; the
@@ -823,7 +832,7 @@ pub async fn open(
                 || !profile.servers.is_empty()
             {
                 let (link, account) =
-                    node.speaking(&acting, &target, Purpose::Agents).map_err(|e| Failure::new(e.to_string()))?;
+                    node.speaking(&acting, &target, Purpose::Agents).await.map_err(|e| Failure::new(e.to_string()))?;
                 crate::mcp::supports(node, &link, &account, &target.name).await?;
             }
             let call = RemoteCall::Open {
@@ -886,6 +895,7 @@ pub async fn open_here(
         crate::town::access::ready(node, &opened.acting, town).await?;
     }
     let (id, _opening) = crate::attachments::opening(node, &agent, &opened.acting, town.as_ref(), &attachments).await?;
+    crate::placement::location::speaking(node, &id, typed_on)?;
     let origin = Origin::User;
     let _birth = crate::here::born(node, &id, opened.acting.clone(), &origin);
     crate::session_options::keep(node, &id, &options)?;

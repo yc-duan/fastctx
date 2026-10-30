@@ -88,6 +88,8 @@ async fn open_saying(
         conversation_deletions: false,
         profiles: false,
         account_records: false,
+        record_keys: false,
+        skill_files: false,
         conversation_plans: false,
         scratch_locations: false,
         left: left.map(str::to_string),

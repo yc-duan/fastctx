@@ -98,7 +98,7 @@ pub(crate) async fn open(
     decoding: Decoding,
 ) -> std::result::Result<(Reply, Lease), Failure> {
     if let Some(machine) = machine.filter(|machine| !node.is_here(machine)) {
-        let (link, account) = node.speaking(&Acting::Here, &machine, Purpose::Hands).map_err(failed)?;
+        let (link, account) = node.speaking(&Acting::Here, &machine, Purpose::Hands).await.map_err(failed)?;
         let (reply, lease) = fastctx_net::lines::open(link, machine.name, account, path, decoding).await?;
         return Ok((reply, Lease::Remote(lease)));
     }

@@ -54,10 +54,12 @@ struct Request {
 
 pub async fn control(node: &Arc<Node>, resident: &ResidentId, control: Control) -> Result<Controlled, Failure> {
     let (about, _) = node.residents.about(resident).ok_or_else(|| Failure::new("unknown conversation"))?;
-    if crate::assists::assisting(node, &about.acting) {
+    node.settled_for(&about.acting).await;
+    let assisting = crate::assists::assisting_known(node, &about.acting)?;
+    if assisting {
         crate::assists::host::require(node, resident)?;
     }
-    if crate::assists::assisting(node, &about.acting)
+    if assisting
         && let Control::Command { name, path, .. } = &control
         && (path.is_some() || !fastctx_hosts::claude::assisted::command_allowed(name))
     {
@@ -269,7 +271,7 @@ pub async fn offers(node: &Arc<Node>, resident: &ResidentId) -> Result<Offers, F
         offers.controls.push(ControlKind::Answer);
     }
     if crate::assists::assisting(node, &about.acting) {
-        if crate::assists::host::kept(node, resident)? != Some(true) {
+        if !crate::assists::host::isolated(node, resident)? {
             offers.controls.clear();
             offers.commands.clear();
             return Ok(offers);

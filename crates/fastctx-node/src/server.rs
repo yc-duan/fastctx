@@ -609,6 +609,7 @@ async fn converse(node: &Arc<Node>, connection: Connection) -> std::io::Result<(
                     let internal = matches!(
                         call,
                         Call::Arrive { .. }
+                            | Call::ClaudeContext { .. }
                             | Call::ClaudeSessionDirectory { .. }
                             | Call::JobChanged { .. }
                             | Call::Stepped { .. }
@@ -1647,6 +1648,12 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
                 .map(|view| Reply::ProfileSubagents(Box::new(view)))
                 .map_err(Failure::new)
         }
+        Call::ClaudeContext { session } => {
+            if !matches!(peer, Peer::Session { host } if host.agent.as_str() == "claude") {
+                users_voice(node, peer)?;
+            }
+            crate::context::memory::for_session(node, &session).await.map(|bodies| Reply::ClaudeContext { bodies })
+        }
         Call::ClaudeSubagents { session } => {
             if !matches!(peer, Peer::Session { host } if host.agent.as_str() == "claude") {
                 users_voice(node, peer)?;
@@ -1682,9 +1689,24 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
                 .map(|result| Reply::Plan { result })
                 .map_err(Failure::new)
         }
-        Call::Skill { name } => {
+        Call::Skill { name, folder } => {
             let caller = caller::of(node, peer)?;
-            crate::skills::read(node, &caller, &name).await.map(|skill| Reply::Skill { skill })
+            let (skill, location) = crate::skills::read(node, &caller, &name).await?;
+            if !folder && fastctx_types::skill_files::requires_folder_editor(&skill).map_err(Failure::new)? {
+                return Err(Failure::not_run("update this command to read the complete skill folder"));
+            }
+            Ok(Reply::Skill { skill, location })
+        }
+        Call::SkillFiles { hub, account, request } => {
+            if request.writes() {
+                users_voice(node, peer)?;
+            }
+            let caller = caller::of(node, peer)?;
+            let (link, account) = crate::profile::scope(node, &caller, hub.as_ref(), account.as_ref())?;
+            link.skill_files(&account, request)
+                .await
+                .map(|result| Reply::SkillFiles { result: Box::new(result) })
+                .map_err(Failure::new)
         }
         Call::AccountRecords { hub, account, request } => {
             let caller = caller::of(node, peer)?;

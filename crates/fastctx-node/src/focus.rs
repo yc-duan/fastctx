@@ -167,6 +167,7 @@ fn indent(outline: &str) -> String {
 
 /// What the folders of one machine hold, read there.
 async fn read(node: &Arc<Node>, acting: &Acting, machine: &FocusedMachine) -> Result<Vec<Outlined>, String> {
+    node.settled(&machine.machine).await;
     node.authorize_machine(acting, &machine.machine).map_err(|failure| failure.message)?;
     if machine.folders.is_empty() {
         return Ok(Vec::new());

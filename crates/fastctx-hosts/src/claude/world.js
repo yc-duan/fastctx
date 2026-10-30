@@ -1046,14 +1046,33 @@ async function contextBlocks($, context, fresh) {
   const pointer = JSON.parse(await $.fs.read(context.dir + '/context.json'))
   const state = JSON.parse(await $.fs.read(pointer.state))
   const entries = (await $.fs.list(pointer.directory)).filter((entry) => /^[a-z0-9-]{1,32}\.json$/.test(entry.name))
-  const blocks = []
-  const receipt = { epoch: state.epoch, revisions: {}, versions: {} }
   const order = ['user.json', 'project.json', 'focus.json', 'plan.json', 'goal.json', 'map.json']
   const rank = (entry) => order.includes(entry.name) ? order.indexOf(entry.name) : order.length
   entries.sort((a, b) => rank(a) - rank(b) || a.name.localeCompare(b.name))
+  const read = []
   for (const entry of entries) {
-    const block = JSON.parse(await $.fs.read(pointer.directory + '/' + entry.name))
-    const name = entry.name.slice(0, -5)
+    read.push({ name: entry.name.slice(0, -5), block: JSON.parse(await $.fs.read(pointer.directory + '/' + entry.name)) })
+  }
+  // A block the node holds only in memory is asked of it; when that fails,
+  // only those blocks are left out, unheard, for the node to tell at a tool
+  // boundary.
+  let memory = {}
+  if (pointer.memory && read.some(({ block }) => block.transient)) {
+    try {
+      const result = await $.process.run([FASTCTX, 'claude-context', WORLD, context.sessionId])
+      memory = result.exitCode === 0 ? JSON.parse(result.stdout) : {}
+    } catch (error) {
+      memory = {}
+    }
+  }
+  const blocks = []
+  const receipt = { epoch: state.epoch, revisions: {}, versions: {} }
+  for (const { name, block } of read) {
+    if (block.transient) {
+      const body = memory[name]
+      if (body === undefined || body.source !== block.source) continue
+      block.text = body.text
+    }
     receipt.revisions[name] = block.revision
     receipt.versions[name] = block.version
     if (block.text !== '') blocks.push({ name: CONTEXT_PREFIX + name, text: block.text })

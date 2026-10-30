@@ -82,42 +82,55 @@ pub(crate) async fn prepare(
     if let Err(failure) = skills(node, id, acting).await {
         node.log.line(format_args!("telling {id} its skills: {}", failure.message));
     }
-    plan_guide(node, id, origin, acting).map_err(|error| Failure::new(error.to_string()))?;
+    plan_guide(node, id, origin, acting).await.map_err(|error| Failure::new(error.to_string()))?;
     crate::plan::context(node, id, origin, acting).await?;
     map(node, id, town, origin, acting).await?;
-    storage::opening(&node.world, id).map_err(|error| Failure::new(error.to_string()))
+    storage::opening(&node.world, id, &node.context_bodies).map_err(|error| Failure::new(error.to_string()))
 }
 
 /// The names and sentences of the skills of the account the conversation
 /// works for, as the "skills" block (`crate::skills`); kept as it was where
 /// the hub cannot be asked now.
 pub(crate) async fn skills(node: &Node, id: &ResidentId, acting: &Acting) -> Result<(), Failure> {
-    let Some(text) = crate::skills::context(node, acting).await else { return Ok(()) };
-    let change = Change { by: None, version: "", fact: &words::changed("skills", words::USER), full: true };
-    let set = if node.residents.about(id).is_some() {
-        super::set(node, id, "skills", &text, change)
-    } else {
-        storage::set(&node.world, id, "skills", &text, change)
-    };
-    set.map_err(|error| Failure::new(error.to_string()))
+    let Some((text, version)) = crate::skills::context(node, acting).await else { return Ok(()) };
+    set_skills(node, id, &text, &version)
 }
 
-/// How to keep a plan, for a conversation that keeps its own; a colleague
-/// only reads the plan of the conversation that asked it, and a session the
-/// user opened outside Fastctx keeps none (`world-layers.md`). Nor does one
-/// assisting an account: its plan file would be on the computer it runs on,
-/// which it has no hands on and is told nothing of (`world-plan.md`).
-fn plan_guide(node: &Node, id: &ResidentId, origin: &Origin, acting: &Acting) -> io::Result<()> {
+/// The skills block, as `version` of the account's index has it.
+pub(crate) fn set_skills(node: &Node, id: &ResidentId, text: &str, version: &str) -> Result<(), Failure> {
+    let change = Change { by: None, version, fact: &words::changed("skills", words::USER), full: true };
+    super::set_account(node, id, "skills", text, change).map_err(|error| Failure::new(error.to_string()))
+}
+
+/// The single working-copy path for this turn; a colleague reads its
+/// requester's account record and never receives a writable plan path.
+pub(crate) async fn plan_guide(node: &Arc<Node>, id: &ResidentId, origin: &Origin, acting: &Acting) -> io::Result<()> {
+    if node.residents.now(id).is_some_and(|now| now.turn.is_some()) {
+        return Ok(());
+    }
     let own = node.residents.about(id).is_some_and(|(about, _)| !about.world_managed());
-    let assisted =
-        crate::assists::host::kept(node, id).ok().flatten().unwrap_or_else(|| crate::assists::assisting(node, acting));
-    let text = if matches!(origin, Origin::Colleague { .. }) || own || assisted {
-        String::new()
+    let (text, fact) = if own {
+        (String::new(), String::new())
+    } else if matches!(origin, Origin::Colleague { .. }) {
+        if let Err(error) = crate::placement::location::prepare(node, id, origin, acting).await {
+            node.log.line(format_args!("placing the colleague {id}: {}", error.message));
+        }
+        (String::new(), String::new())
     } else {
-        let path = crate::plan_file::path(node, id).to_string_lossy().replace('\\', "/");
-        words::plan_guide(&path, node.machine().as_str())
+        match crate::placement::location::prepare(node, id, origin, acting).await {
+            Ok(Some(location)) => {
+                let path=crate::placement::plan_path(&location);
+                (words::plan_guide(&path,location.machine.as_str()),format!("The plan file is now on {} at {path}.",location.machine))
+            },
+            Ok(None) => ("YOUR PLAN\n\nYour plan remains in your account. There is no online working computer for its file now; the app can still read and edit it.".into(),"There is no online working computer for the plan file now.".into()),
+            Err(error) => {
+                node.log.line(format_args!("placing the plan of {id}: {}", error.message));
+                let fact=if error.message.starts_with("update "){error.message}else{"The plan working copy could not be prepared; no writable file path is available this turn.".into()};
+                (format!("YOUR PLAN\n\nYour plan remains in your account. {fact} The app can still read and edit it."),fact)
+            }
+        }
     };
-    let change = Change { by: None, version: "", fact: &words::changed("plan-guide", words::USER), full: true };
+    let change = Change { by: None, version: "", fact: &fact, full: false };
     if node.residents.about(id).is_some() {
         super::set(node, id, "plan-guide", &text, change)
     } else {
@@ -140,7 +153,7 @@ pub(crate) async fn map(
 ) -> Result<(), Failure> {
     let read_only = matches!(origin, Origin::Colleague { .. });
     let snapshot = match town {
-        Some(town) => crate::memory::context::text(node, town, acting, read_only).await?,
+        Some(town) => crate::memory::context::text(node, Some((id, origin)), town, acting, read_only).await?,
         None => None,
     };
     let directory = node.world.conversation(id);
@@ -246,14 +259,10 @@ pub(crate) fn plan(node: &Node, id: &ResidentId, page: &fastctx_types::plan::Pag
         fastctx_types::plan::Author::User => None,
     });
     let who = by.map(|by| by.resident.to_string()).unwrap_or_else(|| words::USER.into());
-    let set = |text: &str, change| {
-        if node.residents.about(id).is_some() {
-            super::set(node, id, "plan", text, change)
-        } else {
-            storage::set(&node.world, id, "plan", text, change)
-        }
-    };
-    set(
+    super::set_account(
+        node,
+        id,
+        "plan",
         page.body.as_ref().map(|body| body.markdown.as_str()).unwrap_or_default(),
         Change { by, version, fact: &words::changed("plan", &who), full: true },
     )

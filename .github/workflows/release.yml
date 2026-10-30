@@ -18,9 +18,9 @@ name: Release
 # compiled dependencies come from the caches `warm.yml` leaves on main after a release, since a tag's
 # run reads only its own caches and the default branch's; this workflow saves none.
 #
-# A job that needs what another uploads starts once that job has passed (`needs`): an application is
-# compiled after the kernels it carries are built. GitHub orders them itself; nothing polls its API, whose
-# list of a run's jobs has answered nothing but 502 for long stretches.
+# Independent compilation starts together. Only bundling waits for the kernels and the prepared
+# application, through same-run artifacts and `needs`; no job polls the Actions API. Native drills
+# run beside bundling, and every check must pass before the run can be published.
 # The machines that compile fastest compile for their slower siblings: both Mac kernels and applications
 # are built on Apple silicon and both Windows ones on ARM64 Windows, Intel's and x64's as cross builds,
 # and an Intel Mac and an x64 Windows machine run those very kernels, tests and applications.
@@ -39,7 +39,7 @@ env:
   TAURI_CLI: '@tauri-apps/cli@2.12.1'
   # The release before this one: the network drill runs its hub with this one's machines, and its
   # node on this one's hub, from its Linux package.
-  EARLIER_RELEASE: 1.0.1-beta.11
+  EARLIER_RELEASE: 1.0.1-beta.12
   # The drills run on a ci/ branch, never for a version tag.
   DRILLS: ${{ github.ref_type == 'branch' }}
 
@@ -136,18 +136,68 @@ jobs:
       - if: env.DRILLS == 'true'
         name: Build the release tests
         run: node scripts/kernel.mjs --tests '${{ matrix.target }}' tests
-      - if: matrix.target == 'x86_64-pc-windows-msvc' && env.DRILLS == 'true'
+      - if: env.DRILLS == 'true'
         name: Upload the tests
         uses: actions/upload-artifact@v4
         with:
           name: tests-${{ matrix.target }}
           path: tests
           if-no-files-found: error
-      - if: matrix.target == 'aarch64-pc-windows-msvc'
-        name: Smoke test on this machine
+
+  network-windows:
+    needs: kernel-windows
+    name: network ${{ matrix.target }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-pc-windows-msvc
+            runner: windows-2025
+          - target: aarch64-pc-windows-msvc
+            runner: windows-11-arm
+    runs-on: ${{ matrix.runner }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - name: Keep the antivirus off the build's own files
+        if: matrix.target == 'aarch64-pc-windows-msvc'
+        shell: pwsh
+        run: Add-MpPreference -ExclusionPath $env:GITHUB_WORKSPACE, "$env:USERPROFILE\.cargo", "$env:USERPROFILE\.rustup"
+      - uses: actions/download-artifact@v4
+        with:
+          name: tests-${{ matrix.target }}
+          path: tests
+      - if: env.DRILLS == 'true'
+        name: Network drill
+        run: tests/network_drill.exe --root "$(cygpath -m "$RUNNER_TEMP")"
+
+  test-windows-arm:
+    needs: kernel-windows
+    runs-on: windows-11-arm
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - name: Keep the antivirus off the build's own files
+        shell: pwsh
+        run: Add-MpPreference -ExclusionPath $env:GITHUB_WORKSPACE, "$env:USERPROFILE\.cargo", "$env:USERPROFILE\.rustup"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - uses: actions/download-artifact@v4
+        with:
+          name: kernel-aarch64-pc-windows-msvc
+          path: kernel
+      - uses: actions/download-artifact@v4
+        with:
+          name: tests-aarch64-pc-windows-msvc
+          path: tests
+      - name: Smoke test on this machine
         run: python scripts/smoke.py kernel/fastctx.exe
-      - if: matrix.target == 'aarch64-pc-windows-msvc' && env.DRILLS == 'true'
-        name: Verify the bundled ripgrep, the node's lifetime, job control and byte streams
+      - name: Verify the bundled ripgrep, the node's lifetime, job control and byte streams
         run: |
           python scripts/ripgrep.py verify
           export FASTCTX_TEST_BASH="$(cygpath -m /usr/bin/bash.exe)"
@@ -155,12 +205,9 @@ jobs:
           tests/offline.exe
           tests/own_lifetime.exe
           tests/job_lifecycle.exe
-      - if: matrix.target == 'aarch64-pc-windows-msvc' && env.DRILLS == 'true'
-        name: Network drill
-        run: tests/network_drill.exe --root "$(cygpath -m "$RUNNER_TEMP")"
 
   windows-x64:
-    needs: [kernel-windows, gui-windows]
+    needs: kernel-windows
     runs-on: windows-2025
     defaults:
       run:
@@ -183,10 +230,6 @@ jobs:
         with:
           name: tests-x86_64-pc-windows-msvc
           path: tests
-      - uses: actions/download-artifact@v4
-        with:
-          name: gui-windows-x64
-          path: dist/gui
       - name: Smoke test on an x64 machine, with a managed computer installed as SYSTEM
         run: python scripts/smoke.py kernel/fastctx.exe --managed archive/fastctx-x86_64-pc-windows-msvc.zip
       # A real Codex app-server whose model is a mock on this machine: no
@@ -211,9 +254,23 @@ jobs:
           tests/offline.exe
           tests/own_lifetime.exe
           tests/job_lifecycle.exe
-      - if: env.DRILLS == 'true'
-        name: Network drill
-        run: tests/network_drill.exe --root "$(cygpath -m "$RUNNER_TEMP")"
+
+  install-windows-x64:
+    needs: [kernel-windows, bundle-windows]
+    runs-on: windows-2025
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: kernel-x86_64-pc-windows-msvc
+          path: kernel
+      - uses: actions/download-artifact@v4
+        with:
+          name: gui-windows-x64
+          path: dist/gui
       - name: Install it and open it
         shell: pwsh
         run: |
@@ -298,6 +355,88 @@ jobs:
           name: archive-${{ matrix.target }}
           path: dist/fastctx-*.tar.gz
           if-no-files-found: error
+      - name: Build the release tests
+        run: node scripts/kernel.mjs --tests '${{ matrix.target }}' tests
+      - name: Placement drill
+        if: matrix.target == 'x86_64-unknown-linux-gnu'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bubblewrap iproute2 util-linux
+          mkdir -p "$RUNNER_TEMP/placement-codex"
+          curl -fsSL -o "$RUNNER_TEMP/placement-codex.tar.gz" "https://github.com/openai/codex/releases/download/rust-v0.160.0/codex-x86_64-unknown-linux-musl.tar.gz"
+          echo "306865417d4ee7a927785852910a527f41e1e159add390ac5ae3accb67d44a13  $RUNNER_TEMP/placement-codex.tar.gz" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/placement-codex.tar.gz" -C "$RUNNER_TEMP/placement-codex"
+          python scripts/placement.py --kernel "$PWD/target/${{ matrix.build }}/release/fastctx" --drill "$PWD/tests/placement_drill" --codex "$RUNNER_TEMP/placement-codex/codex-x86_64-unknown-linux-musl" --root "$RUNNER_TEMP/placement-drill"
+      - name: Upload the tests
+        uses: actions/upload-artifact@v4
+        with:
+          name: tests-${{ matrix.target }}
+          path: tests
+          if-no-files-found: error
+
+  network-linux:
+    needs: kernel-linux
+    name: network ${{ matrix.target }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            runner: ubuntu-24.04
+          - target: aarch64-unknown-linux-gnu
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: tests-${{ matrix.target }}
+          path: tests
+      - name: Restore executable permissions
+        run: chmod +x tests/*
+      # With the earlier release's hub and node too, where its Linux package runs.
+      - if: env.DRILLS == 'true'
+        name: Network drill
+        run: |
+          earlier=()
+          if [[ "$(uname -m)" == x86_64 ]]; then
+            curl -fsSL -o "$RUNNER_TEMP/earlier.deb" \
+              "https://github.com/${{ github.repository }}/releases/download/v$EARLIER_RELEASE/Fastctx_${EARLIER_RELEASE}_amd64.deb"
+            dpkg-deb -x "$RUNNER_TEMP/earlier.deb" "$RUNNER_TEMP/earlier"
+            earlier=(--earlier "$RUNNER_TEMP/earlier/usr/bin/fastctx")
+          fi
+          tests/network_drill --root "$RUNNER_TEMP" "${earlier[@]}"
+
+  test-linux:
+    needs: kernel-linux
+    name: test ${{ matrix.target }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            runner: ubuntu-24.04
+          - target: aarch64-unknown-linux-gnu
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - uses: actions/download-artifact@v4
+        with:
+          name: kernel-${{ matrix.target }}
+          path: kernel
+      - uses: actions/download-artifact@v4
+        with:
+          name: tests-${{ matrix.target }}
+          path: tests
+      - name: Restore executable permissions
+        run: chmod +x kernel/fastctx tests/*
       - name: Smoke test on this machine
         run: python scripts/smoke.py kernel/fastctx --service
       # The World's Claude plugin, as this kernel writes it, through Claude Code's own scanner and plugin
@@ -328,24 +467,11 @@ jobs:
       - if: env.DRILLS == 'true'
         name: Verify the bundled ripgrep, the node's lifetime, job control and byte streams
         run: |
-          node scripts/kernel.mjs --tests '${{ matrix.target }}' tests
           python scripts/ripgrep.py verify
           export FASTCTX_TEST_BASH=/bin/bash FASTCTX_TEST_ROOT="$RUNNER_TEMP"
           tests/offline
           tests/own_lifetime
           tests/job_lifecycle
-      # With the earlier release's hub and node too, where its Linux package runs.
-      - if: env.DRILLS == 'true'
-        name: Network drill
-        run: |
-          earlier=()
-          if [[ "$(uname -m)" == x86_64 ]]; then
-            curl -fsSL -o "$RUNNER_TEMP/earlier.deb" \
-              "https://github.com/${{ github.repository }}/releases/download/v$EARLIER_RELEASE/Fastctx_${EARLIER_RELEASE}_amd64.deb"
-            dpkg-deb -x "$RUNNER_TEMP/earlier.deb" "$RUNNER_TEMP/earlier"
-            earlier=(--earlier "$RUNNER_TEMP/earlier/usr/bin/fastctx")
-          fi
-          tests/network_drill --root "$RUNNER_TEMP" "${earlier[@]}"
 
   old-linux:
     if: github.ref_type == 'branch'
@@ -390,7 +516,7 @@ jobs:
       fail-fast: false
       matrix:
         target: [aarch64-apple-darwin, x86_64-apple-darwin]
-    runs-on: macos-14
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@1.92.0
@@ -432,24 +558,10 @@ jobs:
           name: archive-${{ matrix.target }}
           path: dist/fastctx-*.tar.gz
           if-no-files-found: error
-      - if: matrix.target == 'aarch64-apple-darwin'
-        name: Smoke test on this machine, with a managed Mac installed as root
-        run: python scripts/smoke.py kernel/fastctx --service --managed dist/fastctx-aarch64-apple-darwin.tar.gz
       - if: env.DRILLS == 'true'
         name: Build the release tests
         run: node scripts/kernel.mjs --tests '${{ matrix.target }}' tests
-      - if: matrix.target == 'aarch64-apple-darwin' && env.DRILLS == 'true'
-        name: Verify the bundled ripgrep, the node's lifetime, job control and byte streams, in the bash a Mac comes with
-        run: |
-          python scripts/ripgrep.py verify
-          export FASTCTX_TEST_BASH=/bin/bash FASTCTX_TEST_ROOT="$RUNNER_TEMP"
-          tests/offline
-          tests/own_lifetime
-          tests/job_lifecycle
-      - if: matrix.target == 'aarch64-apple-darwin' && env.DRILLS == 'true'
-        name: Network drill
-        run: tests/network_drill --root "$RUNNER_TEMP"
-      - if: matrix.target == 'x86_64-apple-darwin' && env.DRILLS == 'true'
+      - if: env.DRILLS == 'true'
         name: Upload the tests
         uses: actions/upload-artifact@v4
         with:
@@ -457,8 +569,74 @@ jobs:
           path: tests
           if-no-files-found: error
 
+  network-macos:
+    needs: kernel-macos
+    name: network ${{ matrix.target }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: aarch64-apple-darwin
+            runner: macos-15
+          - target: x86_64-apple-darwin
+            runner: macos-15-intel
+    runs-on: ${{ matrix.runner }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - name: Use the bash a Mac comes with
+        if: matrix.target == 'x86_64-apple-darwin'
+        run: |
+          for bash in /opt/homebrew/bin/bash /usr/local/bin/bash; do
+            if [ -e "$bash" ]; then sudo mv "$bash" "$bash.hidden"; fi
+          done
+          /bin/bash --version | head -1
+      - uses: actions/download-artifact@v4
+        with:
+          name: tests-${{ matrix.target }}
+          path: tests
+      - name: Restore executable permissions
+        run: chmod +x tests/*
+      - if: env.DRILLS == 'true'
+        name: Network drill
+        run: tests/network_drill --root "$RUNNER_TEMP"
+
+  test-macos-arm:
+    needs: kernel-macos
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - uses: actions/download-artifact@v4
+        with:
+          name: kernel-aarch64-apple-darwin
+          path: kernel
+      - uses: actions/download-artifact@v4
+        with:
+          name: archive-aarch64-apple-darwin
+          path: dist
+      - uses: actions/download-artifact@v4
+        with:
+          name: tests-aarch64-apple-darwin
+          path: tests
+      - name: Restore executable permissions
+        run: chmod +x kernel/fastctx tests/*
+      - name: Smoke test on this machine, with a managed Mac installed as root
+        run: python scripts/smoke.py kernel/fastctx --service --managed dist/fastctx-aarch64-apple-darwin.tar.gz
+      - name: Verify the bundled ripgrep, the node's lifetime, job control and byte streams, in the bash a Mac comes with
+        run: |
+          python scripts/ripgrep.py verify
+          export FASTCTX_TEST_BASH=/bin/bash FASTCTX_TEST_ROOT="$RUNNER_TEMP"
+          tests/offline
+          tests/own_lifetime
+          tests/job_lifecycle
+
   macos-intel:
-    needs: [kernel-macos, gui-macos]
+    needs: [kernel-macos, bundle-macos]
     runs-on: macos-15-intel
     steps:
       - uses: actions/checkout@v4
@@ -497,9 +675,6 @@ jobs:
           tests/offline
           tests/own_lifetime
           tests/job_lifecycle
-      - if: env.DRILLS == 'true'
-        name: Network drill
-        run: tests/network_drill --root "$RUNNER_TEMP"
       - name: Open the application
         run: |
           tar -xzf dist/*.app.tar.gz -C "$RUNNER_TEMP"
@@ -525,8 +700,9 @@ jobs:
           path: shots
           if-no-files-found: ignore
 
+
   sign-kernels:
-    needs: [kernel-linux, kernel-windows, gui-macos]
+    needs: [kernel-linux, kernel-windows, bundle-macos]
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/download-artifact@v4
@@ -580,7 +756,7 @@ jobs:
           if-no-files-found: error
 
   gui-windows:
-    needs: [kernel-windows, kernel-linux]
+    if: github.ref_type == 'branch'
     name: gui ${{ matrix.target }}
     strategy:
       fail-fast: false
@@ -625,6 +801,52 @@ jobs:
       - name: Compile the application
         working-directory: gui
         run: node scripts/release.mjs --prepare --kernel-signed --target '${{ matrix.target }}'
+      - name: Archive the prepared application
+        run: python scripts/gui-prepared.py '${{ matrix.target }}' prepared/gui.tar.gz
+      - uses: actions/upload-artifact@v4
+        with:
+          name: prepared-${{ matrix.target }}
+          path: prepared/gui.tar.gz
+          compression-level: 0
+          if-no-files-found: error
+
+  bundle-windows:
+    needs: [gui-windows, kernel-windows, kernel-linux]
+    name: bundle ${{ matrix.target }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-pc-windows-msvc
+            arch: x64
+          - target: aarch64-pc-windows-msvc
+            arch: arm64
+    runs-on: windows-11-arm
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      # These machines scan every file as it is written, and keep scanning a build's thousands of new files
+      # long after it: what runs next waits behind them. The build's own files need no scan.
+      - name: Keep the antivirus off the build's own files
+        shell: pwsh
+        run: Add-MpPreference -ExclusionPath $env:GITHUB_WORKSPACE, "$env:USERPROFILE\.cargo", "$env:USERPROFILE\.rustup"
+      - uses: dtolnay/rust-toolchain@1.92.0
+        with:
+          targets: ${{ matrix.target }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install the bundler
+        working-directory: gui
+        run: npm ci --no-audit --no-fund
+      - uses: actions/download-artifact@v4
+        with:
+          name: prepared-${{ matrix.target }}
+          path: prepared
+      - name: Restore the prepared application
+        run: tar -xzf prepared/gui.tar.gz
       - uses: actions/download-artifact@v4
         with:
           name: kernel-${{ matrix.target }}
@@ -687,7 +909,7 @@ jobs:
           if-no-files-found: error
 
   gui-macos:
-    needs: [kernel-macos, kernel-linux]
+    if: github.ref_type == 'branch'
     name: gui ${{ matrix.target }}
     strategy:
       fail-fast: false
@@ -697,7 +919,7 @@ jobs:
             arch: aarch64
           - target: x86_64-apple-darwin
             arch: x64
-    runs-on: macos-14
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@1.92.0
@@ -727,6 +949,50 @@ jobs:
       - name: Compile the application
         working-directory: gui
         run: node scripts/release.mjs --prepare --target '${{ matrix.target }}'
+      - name: Archive the prepared application
+        run: python scripts/gui-prepared.py '${{ matrix.target }}' prepared/gui.tar.gz
+      - uses: actions/upload-artifact@v4
+        with:
+          name: prepared-${{ matrix.target }}
+          path: prepared/gui.tar.gz
+          compression-level: 0
+          if-no-files-found: error
+
+  bundle-macos:
+    needs: [gui-macos, kernel-macos, kernel-linux]
+    name: bundle ${{ matrix.target }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: aarch64-apple-darwin
+            arch: aarch64
+          - target: x86_64-apple-darwin
+            arch: x64
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.92.0
+        with:
+          targets: ${{ matrix.target }}
+      - if: matrix.target == 'x86_64-apple-darwin'
+        name: Let Apple silicon run what is built for Intel
+        run: softwareupdate --install-rosetta --agree-to-license || /usr/bin/arch -x86_64 /usr/bin/true
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install the bundler
+        working-directory: gui
+        run: npm ci --no-audit --no-fund
+      - uses: actions/download-artifact@v4
+        with:
+          name: prepared-${{ matrix.target }}
+          path: prepared
+      - name: Restore the prepared application
+        run: tar -xzf prepared/gui.tar.gz
       - uses: actions/download-artifact@v4
         with:
           name: kernel-${{ matrix.target }}
@@ -832,7 +1098,7 @@ jobs:
           if-no-files-found: error
 
   gui-linux:
-    needs: kernel-linux
+    if: github.ref_type == 'branch'
     name: gui x86_64-unknown-linux-gnu
     runs-on: ubuntu-22.04
     env:
@@ -871,6 +1137,43 @@ jobs:
       - name: Compile the application
         working-directory: gui
         run: node scripts/release.mjs --prepare
+      - name: Archive the prepared application
+        run: python scripts/gui-prepared.py 'x86_64-unknown-linux-gnu' prepared/gui.tar.gz
+      - uses: actions/upload-artifact@v4
+        with:
+          name: prepared-x86_64-unknown-linux-gnu
+          path: prepared/gui.tar.gz
+          compression-level: 0
+          if-no-files-found: error
+
+  bundle-linux:
+    needs: [gui-linux, kernel-linux]
+    name: bundle x86_64-unknown-linux-gnu
+    runs-on: ubuntu-22.04
+    env:
+      CARGO_TARGET_DIR: ${{ github.workspace }}/gui/src-tauri/target
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install the build's system packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev librsvg2-dev libayatana-appindicator3-dev patchelf squashfs-tools xvfb x11-utils imagemagick file libfuse2
+      - uses: dtolnay/rust-toolchain@1.92.0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install the bundler
+        working-directory: gui
+        run: npm ci --no-audit --no-fund
+      - uses: actions/download-artifact@v4
+        with:
+          name: prepared-x86_64-unknown-linux-gnu
+          path: prepared
+      - name: Restore the prepared application
+        run: tar -xzf prepared/gui.tar.gz
       - uses: actions/download-artifact@v4
         with:
           name: kernel-x86_64-unknown-linux-gnu
@@ -1034,7 +1337,7 @@ jobs:
           if-no-files-found: error
 
   update-windows:
-    needs: gui-windows
+    needs: bundle-windows
     runs-on: windows-2025
     defaults:
       run:
@@ -1068,13 +1371,14 @@ jobs:
   # The boot service taking a newer release by itself (`world-upgrade.md`, 换版不要人确认): this run's
   # kernel keeps a hub and a node as Windows services; the same source, built as a later release and
   # signed as one, goes to the renewal, and the protected guardians take it with no administrator.
-  renewal-windows:
-    needs: kernel-windows
+  renewal-build-windows:
     if: github.ref_type == 'branch'
-    runs-on: windows-2025
+    runs-on: windows-11-arm
     defaults:
       run:
         shell: bash
+    env:
+      RUSTFLAGS: '-C target-feature=+crt-static'
     steps:
       - uses: actions/checkout@v4
       - name: Keep the antivirus off the build's own files
@@ -1085,7 +1389,8 @@ jobs:
           targets: x86_64-pc-windows-msvc
       - uses: Swatinem/rust-cache@v2
         with:
-          key: renewal-x86_64-pc-windows-msvc
+          # Same host, target and flags as the x64 kernel; use its existing main-branch cache.
+          shared-key: kernel-x86_64-pc-windows-msvc-kernel-windows
           save-if: false
       - uses: actions/setup-python@v5
         with:
@@ -1100,7 +1405,37 @@ jobs:
           node scripts/kernel.mjs x86_64-pc-windows-msvc
           mkdir -p later && cp target/x86_64-pc-windows-msvc/release/fastctx.exe later/fastctx.exe
           git checkout -- Cargo.toml Cargo.lock dist/THIRD_PARTY_LICENSES.md
-          echo "LATER=$later" >> "$GITHUB_ENV"
+          printf '%s\n' "$later" > later/version.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: renewal-windows
+          path: later
+          if-no-files-found: error
+
+  renewal-windows:
+    needs: [kernel-windows, renewal-build-windows]
+    if: github.ref_type == 'branch'
+    runs-on: windows-2025
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - name: Keep the antivirus off the build's own files
+        shell: pwsh
+        run: Add-MpPreference -ExclusionPath $env:GITHUB_WORKSPACE, "$env:USERPROFILE\.cargo", "$env:USERPROFILE\.rustup"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: actions/download-artifact@v4
+        with:
+          name: renewal-windows
+          path: later
+      - name: Read the later release's version
+        run: echo "LATER=$(cat later/version.txt)" >> "$GITHUB_ENV"
       - name: Sign the later release
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
@@ -1134,7 +1469,7 @@ jobs:
             runner: windows-2025
             program: fastctx.exe
           - target: aarch64-apple-darwin
-            runner: macos-14
+            runner: macos-15
             program: fastctx
           - target: x86_64-apple-darwin
             runner: macos-15-intel
@@ -1186,8 +1521,10 @@ jobs:
       - name: Its startup service takes this release by itself, and a repair then changes nothing
         run: python scripts/renewal-drill.py earlier "earlier/${{ matrix.program }}" "kernel/${{ matrix.program }}" "$VERSION" "$PACKAGE"
 
+  # Writing the manifest does not release anything. The tag job accepts only a fully green run,
+  # including every independent smoke, installation, network, renewal and compatibility drill.
   manifest:
-    needs: [notices, kernel-windows, windows-x64, kernel-linux, kernel-macos, macos-intel, sign-kernels, gui-windows, gui-macos, gui-linux, android, update-windows]
+    needs: [sign-kernels, bundle-windows, bundle-macos, bundle-linux, android]
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4

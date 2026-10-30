@@ -271,6 +271,7 @@ async fn home(node: &Arc<Node>, id: &ResidentId) -> Result<(), String> {
         Ok(_) | Err(Stop::Nothing(_)) => {}
         Err(stop) => return Err(stop.why()),
     }
+    node.context_bodies.remove(id);
     let names = node.machine_names();
     let mut machines = vec![names.name];
     machines.extend(names.was);

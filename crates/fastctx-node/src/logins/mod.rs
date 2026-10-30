@@ -58,6 +58,9 @@ pub(crate) struct Logins {
     /// The listed logins whose tools were not brought up to date by
     /// themselves, and why (`refresh`).
     drift: Mutex<Vec<(AgentName, PathBuf, fastctx_types::logins::Drift)>>,
+    /// Whether bringing them up to date waits for the World program's
+    /// replacement to be done (`refresh::replaced`).
+    after_replacement: AtomicBool,
     /// Asking again the logins whose sign-in changed, one round at a time
     /// (`sign_in`).
     asking: crate::ranked::LoginAsking,
@@ -248,7 +251,7 @@ fn assemble(node: &Node) -> Result<MachineLogins, Failure> {
                 integration,
                 unattended,
                 auto_title: agent == "codex"
-                    && kept.codex.titled.iter().any(|known| crate::homes::same_dir(known, dir)),
+                    && !kept.codex.untitled.iter().any(|known| crate::homes::same_dir(known, dir)),
                 launcher: program::now(node, agent, dir, known),
                 models,
                 change,
@@ -304,21 +307,22 @@ pub(crate) fn set_title(node: &Node, agent: &AgentName, dir: &Path, on: bool) ->
     known(node, agent, dir)?;
     let dir = dir.to_path_buf();
     kept::change(node, move |kept| {
-        kept.codex.titled.retain(|known| !crate::homes::same_dir(known, &dir));
-        if on {
-            kept.codex.titled.push(dir);
+        kept.codex.untitled.retain(|known| !crate::homes::same_dir(known, &dir));
+        if !on {
+            kept.codex.untitled.push(dir);
         }
     })
     .map_err(|error| Failure::new(format!("keeping the login's naming: {error}")))
 }
 
 /// Whether the Codex login `dir` (the default one when none) names its new
-/// conversations. Quiet about any trouble reading the record: unread is off.
+/// conversations: on unless turned off there. Quiet about any trouble
+/// reading the record: unread is the default, on.
 pub(crate) fn codex_auto_title(node: &Node, dir: Option<&Path>) -> bool {
-    let Ok(kept) = kept::read(node) else { return false };
+    let Ok(kept) = kept::read(node) else { return true };
     let default = node.codex.default().config_home().to_path_buf();
     let dir = dir.unwrap_or(&default);
-    kept.codex.titled.iter().any(|known| crate::homes::same_dir(known, dir))
+    !kept.codex.untitled.iter().any(|known| crate::homes::same_dir(known, dir))
 }
 
 /// The login `dir` of `agent` is one the World knows here, listed or a

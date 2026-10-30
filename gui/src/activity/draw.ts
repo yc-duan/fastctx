@@ -13,6 +13,12 @@ import type { ActivityWords } from "./words";
 const f = (n: number) => (Math.round(n * 10) / 10).toString();
 const hint = (text: string) => ` title="${escape(text)}"`;
 const LEVELS = [0, 0.3, 0.52, 0.76, 1];
+const YEAR_LEFT = 22;
+const YEAR_RIGHT = 4;
+const YEAR_WEEKS = 53;
+const YEAR_PITCH = 19;
+/** Beyond this width the calendar's marks stay at their full size. */
+export const YEAR_FULL_WIDTH = YEAR_LEFT + YEAR_RIGHT + YEAR_WEEKS * YEAR_PITCH;
 
 /** The ink a deed is drawn in: the accent only where it went wrong. */
 function inkOf(deed: Placed): string {
@@ -163,10 +169,10 @@ export interface YearInput {
  *  down from the days it sums. As many recent weeks as fit. */
 export function year(input: YearInput): { svg: string; height: number } {
   const { width, days, today, words } = input;
-  const left = 22;
+  const left = YEAR_LEFT;
   const top = 18;
-  const weeks = Math.max(8, Math.min(53, Math.floor((width - left - 4) / 13)));
-  const pitch = Math.min(19, (width - left - 4) / weeks);
+  const weeks = Math.max(8, Math.min(YEAR_WEEKS, Math.floor((width - left - YEAR_RIGHT) / 13)));
+  const pitch = Math.min(YEAR_PITCH, (width - left - YEAR_RIGHT) / weeks);
   const cell = pitch - 3;
   const first = today - (weekdayOf(today) + (weeks - 1) * 7) * DAY_MS;
   const ran = [...days.values()].map((day) => day.runs).filter((runs) => runs > 0).sort((a, b) => a - b);

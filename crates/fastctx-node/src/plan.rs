@@ -148,11 +148,13 @@ pub(crate) async fn here(
         // it whole is told where the file is.
         Operation::Write { .. } => {
             let _ = (previous, scope);
-            // One assisting an account is not told the computer it runs on.
-            if crate::assists::host::kept(node, id)?.unwrap_or_else(|| crate::assists::assisting(node, &about.acting)) {
-                return Err(Failure::not_run(words::ASSISTED));
-            }
-            return Err(Failure::not_run(words::file(&crate::plan_file::path(node, id), &node.machine())));
+            let location = crate::placement::location::prepare(node, id, &about.origin, &about.acting)
+                .await?
+                .ok_or_else(|| Failure::not_run("there is no online working computer for the plan file"))?;
+            return Err(Failure::not_run(words::file(
+                std::path::Path::new(&crate::placement::plan_path(&location)),
+                &location.machine,
+            )));
         }
     };
     if let plan::Result::Page { page } = &result {
@@ -194,6 +196,7 @@ pub(crate) async fn context(
         Origin::User => Address { machine: node.machine(), resident: id.clone() },
         Origin::Colleague { asked_by, .. } => asked_by.clone(),
     };
+    let Some(generation) = node.plan_reads.begin(id, &scope, &whose) else { return Ok(()) };
     // A hub that does not answer now changed nothing: the conversation keeps
     // the plan it was told, and a later refresh reads it again.
     let Ok(mut page) = link.plan_read(&scope.account, whose.resident.clone()).await else { return Ok(()) };
@@ -206,7 +209,9 @@ pub(crate) async fn context(
     }
     let version = serde_json::to_string(&Seen { account: scope, owner: page.owner.clone(), version: page.version() })
         .map_err(|error| Failure::new(error.to_string()))?;
-    crate::context::plan(node, id, &page, &version).map_err(|error| Failure::new(error.to_string()))
+    crate::context::plan(node, id, &page, &version).map_err(|error| Failure::new(error.to_string()))?;
+    node.plan_reads.done(id, generation);
+    Ok(())
 }
 
 /// Writes `markdown`, what the plan file of the conversation `id` holds
@@ -214,6 +219,9 @@ pub(crate) async fn context(
 /// another wrote meanwhile is written over: the file is the plan. None where
 /// no hub keeps plans for it.
 pub(crate) async fn save(node: &Arc<Node>, id: &ResidentId, markdown: String) -> Result<Option<Page>, Failure> {
+    if !crate::plan_file::allowed(node, id)? {
+        return Err(Failure::not_run("this conversation has no plan file on this machine"));
+    }
     let (about, _) = node.residents.about(id).ok_or_else(|| Failure::refused(words::RESIDENT))?;
     if matches!(about.origin, Origin::Colleague { .. }) {
         return Ok(None);
@@ -257,24 +265,13 @@ pub(crate) async fn save(node: &Arc<Node>, id: &ResidentId, markdown: String) ->
     Err(Failure::new(words::CONFLICT))
 }
 
+pub(crate) fn file_account(node: &Node, id: &ResidentId, acting: &Acting) -> Result<Option<HubAccount>, Failure> {
+    crate::placement::account(node, acting, seen(node, id)?.map(|seen| seen.account))
+}
+
 /// The one account `acting` works for, where it is one.
 fn only_account(node: &Node, acting: &Acting) -> Option<HubAccount> {
-    let accounts = match acting {
-        Acting::Accounts { accounts } => accounts.clone(),
-        Acting::Here => node
-            .links()
-            .into_iter()
-            .flat_map(|link| {
-                node.accounts_on(&link, acting)
-                    .into_iter()
-                    .map(move |account| HubAccount { hub: link.membership().id, account })
-            })
-            .collect(),
-    };
-    match accounts.as_slice() {
-        [account] => Some(account.clone()),
-        _ => None,
-    }
+    crate::placement::account(node, acting, None).ok().flatten()
 }
 
 pub(crate) fn context_seen(node: &Node, id: &ResidentId, version: &str) -> Result<(), Failure> {

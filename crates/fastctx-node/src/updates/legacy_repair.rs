@@ -13,14 +13,16 @@ use fastctx_types::{
 };
 use std::sync::Arc;
 
+// An earlier release may run a job without naming its World directory; its
+// World is then the default one, under the home the job runs with.
 const ROOT: &str = r#"set -e
-root="${FASTCTX_HOME:?the node did not provide its World directory}"
+root="${FASTCTX_HOME:-$HOME/.fastctx}"
 if command -v cygpath >/dev/null 2>&1; then root=$(cygpath -m "$root"); fi
 printf 'FASTCTX_ROOT=%s\n' "$root"
 "#;
 
 const EXECUTE: &str = r#"set -e
-root="${FASTCTX_HOME:?the node did not provide its World directory}"
+root="${FASTCTX_HOME:-$HOME/.fastctx}"
 if command -v cygpath >/dev/null 2>&1; then root=$(cygpath -u "$root"); fi
 version=@VERSION@
 target=@TARGET@
@@ -141,7 +143,7 @@ async fn run(node: &Arc<Node>, acting: &Acting, machine: &Written, script: Strin
     let call = RemoteCall::Run {
         answer_receipts: false,
         dispatch: None,
-        resident: ResidentId::try_from("world-0000").expect("system job identity"),
+        resident: ResidentId::try_from(fastctx_types::repair::JOBS).expect("system job identity"),
         town: None,
         request: RunRequest {
             turn: None,

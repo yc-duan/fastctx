@@ -2,7 +2,6 @@
 
 use super::{super::reviewer::Materials, failure};
 use fastctx_types::ipc::Failure;
-use std::path::Path;
 
 pub(super) const MAX_BYTES: usize = 24 * 1024;
 const EXCERPT: &str = "\n[excerpt; see full_path]\n";
@@ -81,15 +80,7 @@ fn project(full: &Materials, scale: usize) -> Materials {
 
 /// Called before the request is submitted. The frozen file contains every
 /// eligible field, including claims that cannot fit in the initial prompt.
-pub(super) fn freeze(mut full: Materials, directory: &Path) -> Result<Materials, Failure> {
-    let path = directory.join("full-materials.json");
-    full.full_path = Some(path.to_string_lossy().into_owned());
-    fastctx_platform::publish(
-        &path,
-        &serde_json::to_vec(&full).map_err(failure)?,
-        fastctx_platform::Permissions::Private,
-    )
-    .map_err(failure)?;
+pub(super) fn freeze(full: Materials) -> Result<Materials, Failure> {
     for scale in [1, 2, 4, 8, 16, 32, 64] {
         let projected = project(&full, scale);
         if serde_json::to_vec(&projected).map_err(failure)?.len() <= MAX_BYTES {
@@ -101,9 +92,9 @@ pub(super) fn freeze(mut full: Materials, directory: &Path) -> Result<Materials,
 
 /// Old frozen requests have no comparison snapshot. Their original data can
 /// be bounded without claiming newly read observations were already reviewed.
-pub(super) fn cached(materials: Materials, directory: &Path) -> Result<Materials, Failure> {
+pub(super) fn cached(materials: Materials) -> Result<Materials, Failure> {
     if materials.full_path.is_some() && serde_json::to_vec(&materials).map_err(failure)?.len() <= MAX_BYTES {
         return Ok(materials);
     }
-    freeze(materials, directory)
+    freeze(materials)
 }

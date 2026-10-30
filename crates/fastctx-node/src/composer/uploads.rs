@@ -47,7 +47,7 @@ pub async fn prior(
     scope: &UploadScope,
     file: &UploadFile,
 ) -> Result<Prior, Failure> {
-    node.ready().await;
+    node.ready_for(id).await;
     let gate = node.residents.management(id)?;
     let _reading = crate::gate_waits::shared(node, id, &gate).await?;
     node.residents.active(id)?;

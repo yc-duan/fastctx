@@ -30,6 +30,9 @@ pub struct Skill {
     pub description: String,
     /// What to do, in Markdown.
     pub instructions: String,
+    /// Complete folder; absence is the legacy instructions-only format.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub files: Option<Vec<crate::skill_files::File>>,
 }
 
 /// The names and sentences of an account's skills.
@@ -45,6 +48,20 @@ pub struct Listed {
 }
 
 impl Skill {
+    /// Legacy instructions become a folder containing only SKILL.md.
+    pub fn folder(&self) -> Result<Vec<crate::skill_files::File>, String> {
+        if let Some(files) = &self.files {
+            return Ok(files.clone());
+        }
+        let text = format!(
+            "---\nname: {}\ndescription: {}\n---\n\n{}\n",
+            serde_json::to_string(&self.name).map_err(|error| error.to_string())?,
+            serde_json::to_string(&self.description).map_err(|error| error.to_string())?,
+            self.instructions
+        );
+        Ok(vec![crate::skill_files::File::text("SKILL.md", &text)])
+    }
+
     /// What is wrong with it, said as the interface says it.
     pub fn validate(&self) -> Result<(), String> {
         if !valid_name(&self.name) {
@@ -54,7 +71,8 @@ impl Skill {
         if description.is_empty() || description.chars().count() > DESCRIPTION_MOST || description.contains('\n') {
             return Err(words::DESCRIPTION.into());
         }
-        if self.instructions.trim().is_empty() || self.instructions.len() > INSTRUCTIONS_MOST {
+        if self.instructions.trim().is_empty() || (self.files.is_none() && self.instructions.len() > INSTRUCTIONS_MOST)
+        {
             return Err(words::INSTRUCTIONS.into());
         }
         Ok(())
