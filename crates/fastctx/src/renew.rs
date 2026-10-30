@@ -583,9 +583,26 @@ async fn recover(root: &Path, plan: &Plan, kept: bool) -> anyhow::Result<()> {
     }
 }
 
+/// How the node here stands. A node may be slow to answer for a while: the
+/// old one on its way out, the new one moving what it keeps at its first
+/// start. Each look waits half a minute and is made again; only a node that
+/// answers none for ten minutes is a fault.
 pub(super) async fn observing(world: &WorldDir) -> std::io::Result<Probe> {
-    let result = tokio::time::timeout(std::time::Duration::from_secs(30), renewal::probe(world)).await
-        .map_err(|_| std::io::Error::new(std::io::ErrorKind::TimedOut, format!("checking node at {} exceeded 30 seconds", world.path().display())))?;
+    const LOOK: std::time::Duration = std::time::Duration::from_secs(30);
+    const SILENCE: std::time::Duration = std::time::Duration::from_secs(600);
+    let began = std::time::Instant::now();
+    let result = loop {
+        match tokio::time::timeout(LOOK, renewal::probe(world)).await {
+            Ok(result) => break result,
+            Err(_) if began.elapsed() < SILENCE => continue,
+            Err(_) => {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::TimedOut,
+                    format!("the node at {} answered no check for ten minutes", world.path().display()),
+                ));
+            }
+        }
+    };
     match result {
         Err(error) if transient(&error) => Ok(Probe::Absent),
         result => result,

@@ -269,7 +269,7 @@ pub async fn offers(node: &Arc<Node>, resident: &ResidentId) -> Result<Offers, F
         offers.controls.push(ControlKind::Answer);
     }
     if crate::assists::assisting(node, &about.acting) {
-        if crate::assists::host::kept(node, resident)? != Some(true) {
+        if !crate::assists::host::isolated(node, resident)? {
             offers.controls.clear();
             offers.commands.clear();
             return Ok(offers);

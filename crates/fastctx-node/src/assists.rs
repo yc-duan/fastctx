@@ -97,7 +97,7 @@ pub(crate) fn check_turn(node: &Node, id: &fastctx_types::ResidentId, about: &Ab
             refused = Some(failure);
             continue;
         }
-        if assisting(node, &about.acting) && host::kept(node, id)? != Some(true) {
+        if assisting(node, &about.acting) && host::assisted(node, id)? != Some(true) {
             return Err(TurnRefusal { failure: host::legacy(), permanent: true });
         }
         match crate::usage::used_up(node, about, account, model) {

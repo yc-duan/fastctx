@@ -132,7 +132,11 @@ pub(super) fn acting(node: &Node, target: &UploadTarget, uploader: &Acting) -> R
 
 pub(super) fn assisted(node: &Node, target: &UploadTarget, acting: &Acting) -> Result<bool, Failure> {
     let isolated = match target.conversation_target() {
-        UploadTarget::Resident { resident } => crate::assists::host::kept(node, resident)? == Some(true),
+        UploadTarget::Resident { resident } => match crate::assists::host::kept(node, resident)? {
+            Some(isolated) => isolated,
+            // One opened before isolation existed goes on isolated when it next runs.
+            None => crate::assists::assisting(node, acting) && crate::assists::host::isolated(node, resident)?,
+        },
         _ => false,
     };
     Ok(isolated || !crate::around::works_here(node, acting))
