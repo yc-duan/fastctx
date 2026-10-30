@@ -114,6 +114,8 @@ def inside(args):
         (base / "requests.json").write_text(json.dumps(mock.requests, ensure_ascii=False, indent=2))
         (base / "goal-requests.json").write_text(json.dumps(goal.requests,ensure_ascii=False,indent=2))
         (base / "goal-errors.json").write_text(json.dumps(goal.errors))
+        if goal.errors:
+            print("GOAL MODEL ERRORS", json.dumps(goal.errors, ensure_ascii=False), flush=True)
         goal.close()
         mock.close()
         print("ARTIFACTS", base, flush=True)
@@ -129,7 +131,9 @@ def main():
     if args.inside:
         inside(args)
         return
-    args.root = args.root.resolve() if args.root else Path(tempfile.mkdtemp(prefix="placement-", dir=os.environ.get("RUNNER_TEMP")))
+    # The sentinel's walls run root inside a user namespace, where it cannot pass a home directory
+    # closed to others (a runner's own is), so the drill lives in the system's temporary directory.
+    args.root = args.root.resolve() if args.root else Path(tempfile.mkdtemp(prefix="placement-"))
     args.root.mkdir(parents=True, exist_ok=True)
     command = ["unshare", "--net", "--mount", "--pid", "--fork", "--kill-child", "--mount-proc", sys.executable,
                str(Path(__file__).resolve()), "--inside", "--root", str(args.root)]
