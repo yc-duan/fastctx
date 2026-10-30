@@ -934,7 +934,13 @@ async fn bring_files(
         return Ok(());
     }
     let acting = acting(node, origin);
-    let mut bringing = Box::pin(crate::attachments::follow::bring(node, &origin.resident, &acting, files, None));
+    let mut bringing = Box::pin(crate::attachments::follow::bring(
+        node,
+        &origin.resident,
+        &acting,
+        files,
+        Some(crate::attachments::follow::RUN_WAITS),
+    ));
     loop {
         tokio::select! {
             _ = &mut bringing => return Ok(()),
