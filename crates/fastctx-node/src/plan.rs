@@ -214,6 +214,9 @@ pub(crate) async fn context(
 /// another wrote meanwhile is written over: the file is the plan. None where
 /// no hub keeps plans for it.
 pub(crate) async fn save(node: &Arc<Node>, id: &ResidentId, markdown: String) -> Result<Option<Page>, Failure> {
+    if !crate::plan_file::allowed(node, id)? {
+        return Err(Failure::not_run("this conversation has no plan file on this machine"));
+    }
     let (about, _) = node.residents.about(id).ok_or_else(|| Failure::refused(words::RESIDENT))?;
     if matches!(about.origin, Origin::Colleague { .. }) {
         return Ok(None);
@@ -255,6 +258,10 @@ pub(crate) async fn save(node: &Arc<Node>, id: &ResidentId, markdown: String) ->
         }
     }
     Err(Failure::new(words::CONFLICT))
+}
+
+pub(crate) fn file_account(node: &Node, id: &ResidentId, acting: &Acting) -> Result<Option<HubAccount>, Failure> {
+    Ok(seen(node, id)?.map(|seen| seen.account).or_else(|| only_account(node, acting)))
 }
 
 /// The one account `acting` works for, where it is one.
