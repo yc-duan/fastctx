@@ -260,6 +260,7 @@ pub(crate) struct Node {
     /// beyond the residents and jobs here (`shown`).
     shown: tokio::sync::watch::Sender<u64>,
     memory_changes: tokio::sync::watch::Sender<u64>,
+    folder_reads: memory::folder_reads::Reads,
     /// What the other machines said of themselves (`facts`).
     facts: facts::Facts,
     /// Deletions of conversations still to be asked of hubs (`forget`).
@@ -684,6 +685,7 @@ pub async fn run_prepared(
         views: tokio::sync::watch::channel(0).0,
         shown: tokio::sync::watch::channel(0).0,
         memory_changes: tokio::sync::watch::channel(0).0,
+        folder_reads: Default::default(),
         facts: facts::Facts::default(),
         forget_asks: forget::Asks::default(),
         stuck: Default::default(),
