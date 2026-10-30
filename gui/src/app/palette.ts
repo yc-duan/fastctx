@@ -32,6 +32,12 @@ function matches(text: string, query: string): boolean {
     .every((word) => haystack.includes(word));
 }
 
+/** How many candidates are drawn as the list opens or narrows: more than a
+ *  screen holds. The rest follow a batch a frame, so a World of thousands
+ *  opens at once; one the keys reach before its batch is drawn on the spot. */
+const FIRST = 120;
+const BATCH = 400;
+
 export class Palette {
   private readonly dialog: HTMLDialogElement;
   private readonly input: HTMLInputElement;
@@ -39,6 +45,11 @@ export class Palette {
   private shown: PaletteItem[] = [];
   private chosen = 0;
   private marked: HTMLElement | null = null;
+  /** How many of `shown` the list holds, and the group the last of them
+   *  is in. */
+  private drawn = 0;
+  private group = "";
+  private filling = 0;
 
   constructor(private readonly options: PaletteOptions) {
     const { words } = options;
@@ -100,6 +111,7 @@ export class Palette {
   }
 
   private draw(): void {
+    cancelAnimationFrame(this.filling);
     this.marked = null;
     const query = this.input.value.trim();
     this.shown = this.options.items().filter((item) => !query || matches(`${item.label} ${item.note ?? ""} ${item.group}`, query));
@@ -108,19 +120,35 @@ export class Palette {
       this.input.removeAttribute("aria-activedescendant");
       return;
     }
-    let group = "";
-    this.list.innerHTML = this.shown
-      .map((item, index) => {
-        const head = item.group !== group ? `<li class="palette-group" role="presentation">${escape(item.group)}</li>` : "";
-        group = item.group;
-        const label = [item.label, item.note].filter(Boolean).join(" ");
-        return `${head}<li class="palette-item" role="option" aria-label="${escape(label)}" aria-selected="false" id="palette-item-${index}" data-index="${index}"><span class="palette-label">${escape(item.label)}</span>${item.note ? `<span class="palette-note">${escape(item.note)}</span>` : ""}</li>`;
-      })
-      .join("");
+    this.list.innerHTML = "";
+    this.drawn = 0;
+    this.group = "";
+    this.more(Math.max(FIRST, this.chosen + 1));
     this.mark();
   }
 
+  /** Draws the candidates up to `until`, and then the rest a batch a
+   *  frame. */
+  private more(until: number): void {
+    const end = Math.min(until, this.shown.length);
+    if (end > this.drawn) {
+      let html = "";
+      for (let index = this.drawn; index < end; index += 1) {
+        const item = this.shown[index]!;
+        if (item.group !== this.group) html += `<li class="palette-group" role="presentation">${escape(item.group)}</li>`;
+        this.group = item.group;
+        const label = [item.label, item.note].filter(Boolean).join(" ");
+        html += `<li class="palette-item" role="option" aria-label="${escape(label)}" aria-selected="false" id="palette-item-${index}" data-index="${index}"><span class="palette-label">${escape(item.label)}</span>${item.note ? `<span class="palette-note">${escape(item.note)}</span>` : ""}</li>`;
+      }
+      this.list.insertAdjacentHTML("beforeend", html);
+      this.drawn = end;
+    }
+    cancelAnimationFrame(this.filling);
+    if (this.drawn < this.shown.length) this.filling = requestAnimationFrame(() => this.more(this.drawn + BATCH));
+  }
+
   private mark(): void {
+    if (this.chosen >= this.drawn) this.more(this.chosen + 1);
     const element = this.list.querySelector<HTMLElement>(`[data-index="${this.chosen}"]`);
     if (this.marked !== element) {
       this.marked?.classList.remove("chosen");
@@ -144,6 +172,7 @@ export class Palette {
 
   /** Goes as a sheet does (`sheet.css`). */
   private close(): void {
+    cancelAnimationFrame(this.filling);
     const body = this.dialog.querySelector(".sheet-body");
     if (this.dialog.open) leave(this.dialog, () => this.dialog.close(), { as: "sheet-leaving", ...(body ? { moving: body } : {}) });
   }
