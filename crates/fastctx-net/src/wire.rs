@@ -624,6 +624,10 @@ pub enum CallStatus {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "kind")]
 pub enum Question {
+    PlanCopies {
+        account: AccountName,
+        request: fastctx_types::plan_copies::Request,
+    },
     AccountRecords {
         account: AccountName,
         request: fastctx_types::account_records::Request,
@@ -1024,6 +1028,9 @@ pub enum Change {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "kind")]
 pub enum Told {
+    PlanCopies {
+        reply: fastctx_types::plan_copies::Reply,
+    },
     AccountRecords {
         response: fastctx_types::account_records::Response,
     },

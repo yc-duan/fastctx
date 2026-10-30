@@ -44,6 +44,7 @@ mod manage;
 mod moving;
 mod outq;
 mod plan_calls;
+mod plan_copies;
 mod project_deletions;
 mod project_entry;
 mod question_parts;

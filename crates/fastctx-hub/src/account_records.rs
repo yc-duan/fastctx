@@ -1,7 +1,8 @@
 //! Account records are independent of the directory. Each account incarnation
 //! serializes its own operations; disk work never holds the registry lock.
 
-mod storage;
+mod history;
+pub(crate) mod storage;
 
 use std::sync::Arc;
 
@@ -18,7 +19,7 @@ use serde_json::Value;
 use crate::Hub;
 pub(crate) use storage::Records;
 
-fn authorized(
+pub(crate) fn authorized(
     hub: &Hub,
     from: &MachineName,
     key: &PublicKey,
@@ -137,9 +138,15 @@ pub(crate) async fn ask(
             }
             let path = slot.path(&record.metadata.kind, &record.metadata.key);
             let (publishing, author, owner) = (hub.clone(), from.clone(), account.clone());
+            let archive = record.metadata.kind == fastctx_types::plan::KIND;
+            let historical = archive.then(|| slot.history(&record.metadata.kind, &record.metadata.key));
             let result = tokio::task::spawn_blocking(move || {
                 fastctx_platform::ensure_private_dir(path.parent().expect("record folder"))
                     .map_err(|error| fastctx_platform::PublishFailure { error, published: false })?;
+                if let Some(history) = historical {
+                    history::preserve(&path, &history)
+                        .map_err(|error| fastctx_platform::PublishFailure { error, published: false })?;
+                }
                 fastctx_platform::publish_checked(&path, &bytes, fastctx_platform::Permissions::Private, true, || {
                     let store = publishing.store();
                     check(&store, &author, &member_key, &owner, opened).map_err(std::io::Error::other)?;

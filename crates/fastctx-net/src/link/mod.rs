@@ -38,6 +38,7 @@ mod machine_log;
 mod memory;
 mod moving;
 mod outgoing;
+mod plan_copies;
 mod plans;
 mod presence;
 mod profile;

@@ -34,6 +34,9 @@ pub(crate) struct Slot {
 }
 
 impl Slot {
+    pub fn history(&self, kind: &str, key: &str) -> PathBuf {
+        self.path(kind, key).with_extension("versions")
+    }
     pub fn path(&self, kind: &str, key: &str) -> PathBuf {
         let digest = Sha256::digest(format!("{kind}\0{key}").as_bytes());
         self.dir.join(format!("{digest:x}.json"))

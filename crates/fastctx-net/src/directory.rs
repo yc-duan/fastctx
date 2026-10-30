@@ -709,6 +709,9 @@ pub struct View {
     /// Plan operations and their authorized return from remote jobs.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub conversation_plans: bool,
+    /// Versioned plan history and working-copy merges.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub plan_copies: bool,
     /// The hub understands the account-scoped goal control call.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub goal_control: bool,
@@ -808,6 +811,7 @@ impl View {
             profiles: false,
             account_records: false,
             conversation_plans: false,
+            plan_copies: false,
             goal_control: false,
             scratch_locations: false,
             goal_commands: false,
