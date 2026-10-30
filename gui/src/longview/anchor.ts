@@ -78,6 +78,11 @@ export class AnchoredHeight {
 
   private motionChanged = (): void => { if (reducedMotion()) this.active?.finish(false); };
 
+  /** Whether the box is on its way to a height now. */
+  get moving(): boolean {
+    return this.active !== null;
+  }
+
   /** A source or viewport changed while opening. Keep the original completion
    * promise and anchor, and continue from the painted height to the new target. */
   resize(height: number, anchor: HTMLElement): void {
@@ -89,9 +94,10 @@ export class AnchoredHeight {
 
   to(height: number, anchor: HTMLElement): Promise<FoldMotion> {
     this.active?.finish(true);
-    // Chromium rounds scrollTop to CSS pixels even at high device scales.
-    // Whole-pixel box heights avoid a residual jump underneath the pointer.
-    height = Math.round(height);
+    // Chromium rounds scrollTop to CSS pixels even at high device scales:
+    // the box moves in whole pixels, which leave no residual jump under the
+    // pointer, never past where it goes, and ends at the exact height, the
+    // one it keeps once nothing holds it.
     let from = this.box.getBoundingClientRect().height;
     const held = this.layout.hold(anchor);
     const style = getComputedStyle(this.box);
@@ -99,7 +105,7 @@ export class AnchoredHeight {
     const duration = parseFloat(token) * (token.endsWith("ms") ? 1 : 1000);
     const reduced = reducedMotion();
     if (!Number.isFinite(duration)) throw new Error("--expand must be a CSS time");
-    if (reduced || duration === 0 || height === from) {
+    if (reduced || duration === 0 || Math.abs(height - from) < 0.01) {
       this.box.style.height = `${height}px`;
       this.frame?.({ time: performance.now(), height, anchorError: held.correct() });
       held.release();
@@ -125,16 +131,17 @@ export class AnchoredHeight {
         resolve({ cancelled, reduced: reduced || reducedMotion() });
       };
       const retarget = (target: number): void => {
-        if (Math.round(target) === height) return;
+        if (Math.abs(target - height) < 0.01) return;
         from = this.box.getBoundingClientRect().height;
-        height = Math.round(target);
+        height = target;
         animation.currentTime = 0;
       };
       this.active = { animation, finish, retarget };
       const tick = (time: number): void => {
         if (animation.playState === "paused") animation.play();
         const progress = animation.effect?.getComputedTiming().progress ?? 0;
-        this.box.style.height = `${from + Math.round((height - from) * progress)}px`;
+        const step = progress >= 1 ? height : Math.round(from + (height - from) * progress);
+        this.box.style.height = `${Math.min(Math.max(step, Math.min(from, height)), Math.max(from, height))}px`;
         this.frame?.({ time, height: this.box.getBoundingClientRect().height, anchorError: held.correct() });
         // Correct even when no instrumentation is installed.
         if (!this.frame) held.correct();

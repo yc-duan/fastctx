@@ -2614,13 +2614,18 @@ export class ConversationView {
           return close();
         }
         this.held(key, long);
-        note.replaceWith(long.element);
-        shown(long);
+        this.arrive(note, () => {
+          note.replaceWith(long.element);
+          long.settle();
+          shown(long);
+        });
       } catch (error) {
         if (request.signal.aborted) return;
         close();
-        note.textContent = gone(error) ? words.output.diffGone : words.output.readFailed;
-        note.title = detailOf(error);
+        this.arrive(note, () => {
+          note.textContent = gone(error) ? words.output.diffGone : words.output.readFailed;
+          note.title = detailOf(error);
+        });
       }
     })();
     this.filling.set(key, pending);
@@ -3079,16 +3084,61 @@ export class ConversationView {
       filled();
       box.inert = false;
       for (const long of this.longsIn(box)) long.settle();
-      const content = box.firstElementChild as HTMLElement | null;
-      const target = content?.offsetHeight ?? 0;
-      const result = await motion.to(target, anchor);
+      const following = this.following(box, anchor);
+      const result = await motion.to(natural(box), anchor);
+      following.disconnect();
       if (!result.cancelled && anchor.getAttribute("aria-expanded") === "true") box.style.height = "";
       return true;
     }
-    box.style.height = `${box.offsetHeight}px`;
+    box.style.height = `${box.getBoundingClientRect().height}px`;
     const result = await motion.to(0, anchor);
     if (!result.cancelled && anchor.getAttribute("aria-expanded") === "false") box.inert = true;
     return !result.cancelled;
+  }
+
+  /** Puts in what an open box was still waiting for, after its first
+   *  height was taken: the box opens on to what came, from the height it
+   *  stands at, whether it is still opening or open already, the pressed
+   *  line where it is. Out of view, it simply takes it. */
+  private arrive(at: HTMLElement, put: () => void): void {
+    const box = at.closest<HTMLElement>(".fold-box");
+    const anchor = box ? foldLine(box) : null;
+    if (!box || !anchor || anchor.getAttribute("aria-expanded") !== "true") {
+      put();
+      return;
+    }
+    const view = this.context.scroller.getBoundingClientRect();
+    const line = anchor.getBoundingClientRect();
+    if (line.bottom < view.top || line.top > view.bottom) {
+      put();
+      return;
+    }
+    const motion = this.motionOf(box);
+    const from = box.getBoundingClientRect().height;
+    put();
+    const to = natural(box);
+    if (motion.moving) {
+      motion.resize(to, anchor);
+      return;
+    }
+    if (Math.abs(to - from) < 0.01) return;
+    box.style.height = `${from}px`;
+    const following = this.following(box, anchor);
+    void motion.to(to, anchor).then((result) => {
+      following.disconnect();
+      if (!result.cancelled && anchor.getAttribute("aria-expanded") === "true") box.style.height = "";
+    });
+  }
+
+  /** While a box opens, what is in it may settle after its height was
+   *  taken (a viewport its rows, a picture its size): it opens on to that. */
+  private following(box: HTMLElement, anchor: HTMLElement): ResizeObserver {
+    const motion = this.motionOf(box);
+    const observer = new ResizeObserver(() => {
+      if (motion.moving) motion.resize(natural(box), anchor);
+    });
+    if (box.firstElementChild) observer.observe(box.firstElementChild);
+    return observer;
   }
 
   private longsIn(box: HTMLElement): OpenedText[] {
@@ -3267,6 +3317,25 @@ function longWords(text: string): boolean {
  *  its own conversation can be opened. */
 function worldColleague(tool: Tool): boolean {
   return tool.does.as === "colleague" && (tool.name === "ask_colleague" || tool.name === "message_colleague");
+}
+
+/** The height a fold's box takes open: what is in it, with the margins its
+ *  first and last parts keep inside it. */
+function natural(box: HTMLElement): number {
+  const held = box.style.height;
+  box.style.height = "auto";
+  const height = box.getBoundingClientRect().height;
+  box.style.height = held;
+  return height;
+}
+
+/** The line whose press opens and closes `box`: the row's own, or the
+ *  notice's above it. */
+function foldLine(box: HTMLElement): HTMLElement | null {
+  const own = box.parentElement?.querySelector<HTMLElement>(":scope > [aria-expanded]");
+  if (own) return own;
+  const before = box.previousElementSibling as HTMLElement | null;
+  return before?.matches("[aria-expanded]") ? before : (before?.querySelector<HTMLElement>("[aria-expanded]") ?? null);
 }
 
 /** Whether what a run started still runs, its output still growing. */

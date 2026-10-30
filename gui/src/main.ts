@@ -1853,7 +1853,12 @@ function specimenTalk(address: Address): DeskTalk {
     stopJob: async () => {},
     jobOutput: async (job) => specimenOutput(job.command),
     watchLink,
-    lines: async (_machine, path) => specimenLines(path),
+    // `?slowlines=<ms>`: a file's lines come from a machine that takes that
+    // long to answer.
+    lines: async (_machine, path) => {
+      await new Promise((resolve) => setTimeout(resolve, Number(params.get("slowlines") ?? 0)));
+      return specimenLines(path);
+    },
     agentRecord: (agent) => specimenAgentRecord(agent),
     calls: (turn) => void openCalls(known?.about ?? { machine: address.machine, host: { agent: sample.agent } }, address, turn),
   });
