@@ -36,8 +36,9 @@ import { CallsList, type CallsContext } from "./calls";
 import type { CallsWords } from "./calls-words";
 import { bar, calendar, fitInks, meter, parts, punch, quota, weeks, type Amounts, type RingPart } from "./draw";
 import { keepRecord, keptRecord, keptReport, readReport, reportKey } from "./kept";
-import { allowanceTrack, between, byDay, byHourOfWeek, dayOf, DAY_MS, daysBefore, longestRun, pace, total, track, usageOf, valueOf, windowOf, type Person, type Span, type Unit, type Usage, type Went } from "./model";
+import { allowanceTrack, between, byDay, byHourOfWeek, dayOf, DAY_MS, daysBefore, longestRun, pace, total, track, valueOf, windowOf, type Person, type Span, type Unit, type Usage, type Went } from "./model";
 import { assistingMe, assistsOf, namer } from "./people";
+import { PreparedUsage } from "./prepared";
 import { assistingOwner } from "../reach";
 import type { UsageWords } from "./words";
 
@@ -93,6 +94,7 @@ export class LoginUsagePage implements Page {
   private readonly key: string;
   private record: MachineLogins | null;
   private report: UsageReport | null;
+  private readonly prepared = new PreparedUsage();
   private problem: string | null = null;
   private again = 0;
   private left = false;
@@ -212,7 +214,7 @@ export class LoginUsagePage implements Page {
     } else if (!this.report) {
       html = this.problem ? `<p class="feature-note" title="${escape(this.problem)}">${escape(words.failed)}</p>` : `<p class="feature-quiet ledger-reading">${escape(words.reading)}</p>`;
     } else {
-      const usage = usageOf(this.report, namer(world, options.machine, words));
+      const usage = this.prepared.get(this.report, namer(world, options.machine, words));
       const mine = assistingMe(world, options.machine, options.agent, options.dir, login?.default ?? false);
       // The one looked at: the reader where the login assists them, else
       // the one picked.
