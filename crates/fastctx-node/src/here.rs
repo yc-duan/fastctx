@@ -197,7 +197,7 @@ pub(crate) async fn run(
     // turn, meanwhile are not missed here.
     let mut words = node.words.watch(&here);
     let mut interrupted = node.interrupts.watch(&here);
-    let town = match node.speaking(&acting, to, Purpose::Hands) {
+    let town = match node.speaking(&acting, to, Purpose::Hands).await {
         Ok((link, _)) => node.town_across(&link, town.as_ref())?,
         Err(_) => town,
     };

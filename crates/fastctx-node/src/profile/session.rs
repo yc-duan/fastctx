@@ -24,8 +24,11 @@ fn write_session_file(path: &std::path::Path, bytes: &[u8]) -> std::io::Result<(
 pub(crate) const INTRO: &str = "The user's own instructions for all work for them; follow them:";
 
 /// A first use can arrive before the hub's directory notification that
-/// grants this machine the account's full profile. Read that acknowledged view.
+/// grants this machine the account's full profile. Read that acknowledged view,
+/// once the hub has given this connection its own: what a conversation is
+/// started as (whether it assists another account) is kept for good.
 pub(crate) async fn ready(node: &Node, acting: &Acting) -> Result<(), Failure> {
+    node.settled_for(acting).await;
     let Acting::Accounts { accounts } = acting else {
         return Ok(());
     };

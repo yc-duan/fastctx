@@ -184,6 +184,8 @@ async fn copy_once(
     let (from_machine, to_machine) = (at(&from), at(&to));
     let from_here = from.machine.is_none() || node.is_here(&from_machine);
     let to_here = to.machine.is_none() || node.is_here(&to_machine);
+    node.settled(&from_machine).await;
+    node.settled(&to_machine).await;
     node.authorize_machine(acting, &from_machine)?;
     node.authorize_machine(acting, &to_machine)?;
     if from_here && to_here {

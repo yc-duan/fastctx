@@ -30,7 +30,7 @@ pub(crate) async fn query(
     if node.is_here(&machine) {
         return places(node, &node.machine(), &target, &acting, preferred.as_ref());
     }
-    let (link, account) = node.speaking(&acting, &machine, Purpose::Agents).map_err(failure)?;
+    let (link, account) = node.speaking(&acting, &machine, Purpose::Agents).await.map_err(failure)?;
     match link.call(&machine.name, &account, Purpose::Look, RemoteCall::Facts).await.map_err(broke)?? {
         RemoteReply::Facts(facts) if facts.attachment_places => {}
         _ => return Err(Failure::not_run(format!("upgrade {machine} to choose where attachments are stored"))),
@@ -135,11 +135,12 @@ pub(super) fn assisted(node: &Node, target: &UploadTarget, acting: &Acting) -> R
         UploadTarget::Resident { resident } => match crate::assists::host::kept(node, resident)? {
             Some(isolated) => isolated,
             // One opened before isolation existed goes on isolated when it next runs.
-            None => crate::assists::assisting(node, acting) && crate::assists::host::isolated(node, resident)?,
+            None => crate::assists::assisting_known(node, acting)? && crate::assists::host::isolated(node, resident)?,
         },
         _ => false,
     };
-    Ok(isolated || !crate::around::works_here(node, acting))
+    // Where a file goes is not guessed while a hub's view is on its way.
+    Ok(isolated || !node.may_work_here(acting)?)
 }
 
 pub(crate) fn places(

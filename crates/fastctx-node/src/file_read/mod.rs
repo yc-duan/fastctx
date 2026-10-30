@@ -36,7 +36,7 @@ fn start(node: Arc<Node>, acting: Acting, machine: Option<Written>, request: Rea
                             error
                         }))
                     }
-                    Some(machine) => match node.speaking(&acting, &machine, Purpose::Hands) {
+                    Some(machine) => match node.speaking(&acting, &machine, Purpose::Hands).await {
                         Ok((link, account)) => {
                             fastctx_net::file_read::read(&link, machine.name, account, request, &sender).await
                         }
@@ -88,6 +88,7 @@ pub(crate) fn attachment_for(
                 };
                 let machine = attachment.owner().machine.clone();
                 if !node.is_here(&machine.clone().into()) {
+                    node.settled(&machine.clone().into()).await;
                     let speakers = node.speakers(&acting, &machine.clone().into(), fastctx_types::remote::RemoteCall::ReadAttachment {
                         attachment: attachment.clone(), range: range.clone(), read: 0,
                     }.purpose()).map_err(|error| Failure::new(error.to_string()))?;

@@ -318,6 +318,18 @@ pub fn stage_repair(root: &Path, source: &Path) -> anyhow::Result<Plan> {
         .with_context(|| format!("staging repair {} for {}", source.display(), root.display()))
 }
 
+/// Asked for while a renewal is under way: one placing this same program is
+/// joined, as asking for it again is no failure; any other is left as it is.
+fn joined(root: &Path, source: &Path) -> anyhow::Result<Plan> {
+    let offered = crate::program::inspect(source)?;
+    match read(root)? {
+        Some(plan) if plan.candidate.build == offered && !matches!(plan.phase, Phase::Complete | Phase::Failed) => {
+            Ok(plan)
+        }
+        _ => anyhow::bail!("the World program is already being replaced; its plan was left unchanged"),
+    }
+}
+
 fn stage_inner(root: &Path, source: &Path, repair: bool) -> anyhow::Result<Plan> {
     anyhow::ensure!(
         !root.join("uninstalled.json").try_exists()?,
@@ -336,11 +348,12 @@ fn stage_inner(root: &Path, source: &Path, repair: bool) -> anyhow::Result<Plan>
         // renewal's.
         None => {
             let _collection = FileLock::acquire(&collection_lock(root))?;
-            FileLock::try_acquire(&worker)
+            match FileLock::try_acquire(&worker)
                 .with_context(|| format!("opening renewal worker gate {}", worker.display()))?
-                .ok_or_else(|| {
-                    anyhow::anyhow!("the World program is already being replaced; its plan was left unchanged")
-                })?
+            {
+                Some(lock) => lock,
+                None => return joined(root, source),
+            }
         }
     };
     let entry = directory(root).join("node-entry.lock");

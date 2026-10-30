@@ -39,7 +39,7 @@ pub(crate) async fn descriptions(
                     return Ok(here(&node, &owner));
                 }
                 let (link, account) =
-                    node.speaking(&acting, &written, Purpose::Hands).map_err(|error| error.to_string())?;
+                    node.speaking(&acting, &written, Purpose::Hands).await.map_err(|error| error.to_string())?;
                 if !link.view().scratch_locations {
                     return Err(words::OLD_HUB.into());
                 }

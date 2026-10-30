@@ -32,6 +32,7 @@ impl Look for MachineLook {
             let link = self.node.link_of(&scope.hub).ok_or("the observation account's hub is not connected")?;
             let acting = Acting::one(scope.hub.clone(), scope.account.clone());
             let written = Written { name: machine.clone(), hub: Some(link.hub_name()) };
+            self.node.settled(&written).await;
             self.node.authorize_machine(&acting, &written).map_err(|e| e.message)?;
             let origin = OnOrigin {
                 sentinel: Some(SentinelProbe { id: definition.id.clone(), generation: definition.generation }),

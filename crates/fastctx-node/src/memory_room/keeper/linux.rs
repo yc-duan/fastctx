@@ -1,6 +1,8 @@
 //! A service's aggregate cgroup owns both deployment layouts. The kernel's
 //! anonymous-only capability is probed without reclaiming any pages. Numeric
 //! swappiness, even 200, can reclaim file cache on older classic and MGLRU LRUs.
+//! A kernel without it is asked plainly: each step is small, and one that
+//! moves too little into swap, file cache taken instead, rests the keeper.
 
 use std::fs;
 use std::io;
@@ -23,6 +25,8 @@ pub(super) struct Observation {
 pub(super) struct Keeper {
     group: PathBuf,
     unavailable: Option<String>,
+    /// The kernel takes no `swappiness=max`: reclaim is asked plainly.
+    plain: bool,
     ranked: Option<Instant>,
     standing: bool,
     page: u64,
@@ -43,24 +47,41 @@ impl Keeper {
         }
         let page = page as u64;
         let group = service_group()?;
-        let unavailable = match fs::write(group.join("memory.reclaim"), "0 swappiness=max") {
-            Ok(()) => None,
-            Err(error) => Some(match error.kind() {
-                io::ErrorKind::InvalidInput => "the kernel cannot reclaim anonymous memory exclusively".into(),
-                io::ErrorKind::NotFound => "the service has no cgroup v2 memory.reclaim interface".into(),
-                io::ErrorKind::PermissionDenied => "the service account cannot write memory.reclaim".into(),
-                _ => format!("probing memory.reclaim: {error}"),
-            }),
+        let (unavailable, plain) = match fs::write(group.join("memory.reclaim"), "0 swappiness=max") {
+            Ok(()) => (None, false),
+            Err(error) if error.kind() == io::ErrorKind::InvalidInput => (None, true),
+            Err(error) => (
+                Some(match error.kind() {
+                    io::ErrorKind::NotFound => "the service has no cgroup v2 memory.reclaim interface".into(),
+                    io::ErrorKind::PermissionDenied => "the service account cannot write memory.reclaim".into(),
+                    _ => format!("probing memory.reclaim: {error}"),
+                }),
+                false,
+            ),
         };
         let standing = fs::write("/proc/self/oom_score_adj", "-500").is_ok();
-        Ok(Self { group, unavailable, ranked: None, standing, page, last: None, rest_until: None, rest: FIRST_REST })
+        Ok(Self {
+            group,
+            unavailable,
+            plain,
+            ranked: None,
+            standing,
+            page,
+            last: None,
+            rest_until: None,
+            rest: FIRST_REST,
+        })
     }
 
     pub(super) fn description(&self) -> String {
         format!(
             "{}; {}; {}",
             self.group.display(),
-            self.unavailable.as_deref().unwrap_or("anonymous-only reclaim available"),
+            self.unavailable.as_deref().unwrap_or(if self.plain {
+                "plain reclaim, resting when it swaps too little: the kernel cannot reclaim anonymous memory exclusively"
+            } else {
+                "anonymous-only reclaim available"
+            }),
             if self.standing {
                 "node OOM priority -500; service descendants 300"
             } else {
@@ -124,7 +145,8 @@ impl Keeper {
             return Ok(out);
         }
         let before = number(&self.group.join("memory.swap.current"))?;
-        match fs::write(self.group.join("memory.reclaim"), format!("{amount} swappiness=max")) {
+        let asked = if self.plain { format!("{amount}") } else { format!("{amount} swappiness=max") };
+        match fs::write(self.group.join("memory.reclaim"), asked) {
             Ok(()) => {}
             Err(error) if error.kind() == io::ErrorKind::WouldBlock => {}
             Err(error) => return Err(error),

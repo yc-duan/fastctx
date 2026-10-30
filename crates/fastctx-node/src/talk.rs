@@ -823,7 +823,7 @@ pub async fn open(
                 || !profile.servers.is_empty()
             {
                 let (link, account) =
-                    node.speaking(&acting, &target, Purpose::Agents).map_err(|e| Failure::new(e.to_string()))?;
+                    node.speaking(&acting, &target, Purpose::Agents).await.map_err(|e| Failure::new(e.to_string()))?;
                 crate::mcp::supports(node, &link, &account, &target.name).await?;
             }
             let call = RemoteCall::Open {

@@ -143,7 +143,7 @@ async fn run(node: &Arc<Node>, acting: &Acting, machine: &Written, script: Strin
     let call = RemoteCall::Run {
         answer_receipts: false,
         dispatch: None,
-        resident: ResidentId::try_from("world-0000").expect("system job identity"),
+        resident: ResidentId::try_from(fastctx_types::repair::JOBS).expect("system job identity"),
         town: None,
         request: RunRequest {
             turn: None,

@@ -71,6 +71,13 @@ async fn one(
         set_aside(format!("from {}: it is not a letter", message.from))?;
         return Ok(None);
     }
+    // The end of a job an earlier release ran to repair itself is told to no
+    // one (`fastctx_types::repair::JOBS`): it is taken and kept nowhere.
+    if message.body.pointer("/letter/to").and_then(serde_json::Value::as_str) == Some(fastctx_types::repair::JOBS)
+        && message.body.pointer("/letter/notice/kind").and_then(serde_json::Value::as_str) == Some("job_ended")
+    {
+        return Ok(None);
+    }
     let mut caller = match inner.admit(message).await {
         Ok(caller) => caller,
         Err(reason) => {

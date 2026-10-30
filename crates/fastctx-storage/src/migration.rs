@@ -15,7 +15,11 @@ pub struct Receipt {
 /// Migrates at most 256 files in one transaction. No process may continue writing
 /// these source files after migration starts; live writes use the database.
 /// Concurrent imports of the same source are harmless and verify the same value.
+/// A batch then rests twice as long as it took, a second at most: what else the
+/// machine reads and writes gets the disk between batches however slow it is,
+/// so a node moving many receipts at its first start still answers its devices.
 pub fn receipts(database: &Database, batch: Vec<Receipt>) -> Result<usize> {
+    let began = std::time::Instant::now();
     if batch.len() > 256 {
         return Err(Error::new("a migration batch exceeds 256 receipts"));
     }
@@ -46,5 +50,6 @@ pub fn receipts(database: &Database, batch: Vec<Receipt>) -> Result<usize> {
             Err(error) => return Err(error.into()),
         }
     }
+    std::thread::sleep((began.elapsed() * 2).min(Duration::from_secs(1)));
     Ok(count)
 }

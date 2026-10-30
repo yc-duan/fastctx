@@ -60,6 +60,17 @@ fn replacing(node: &Node) -> bool {
         .is_some_and(|plan| !matches!(plan.phase, Phase::Complete | Phase::Failed))
 }
 
+/// Whether the last replacement of the World program failed: the machine's
+/// update says so, and what could not be placed meanwhile is no fault of the
+/// login's either. The replacement tried again restarts the node, which
+/// brings the logins up to date, as the hourly look does.
+fn replacement_failed(node: &Node) -> bool {
+    fastctx_install::renewal::read(&node.root)
+        .ok()
+        .flatten()
+        .is_some_and(|plan| plan.phase == fastctx_types::renewal::Phase::Failed)
+}
+
 /// The logins left waiting for the user, and whether to try again shortly;
 /// none when they could not be read.
 fn every(node: &Node) -> Option<(Waiting, bool)> {
@@ -114,6 +125,14 @@ fn every(node: &Node) -> Option<(Waiting, bool)> {
                     waiting.push((agent, dir, drift));
                 }
                 again = true;
+            }
+            Err(error) if replacement_failed(node) => {
+                node.log.line(format_args!(
+                    "the World program could not be replaced: the World's tools in the {agent} login {shown} are brought up to date once it is ({error})"
+                ));
+                if let Some(drift) = of(node, agent.as_str(), &dir) {
+                    waiting.push((agent, dir, drift));
+                }
             }
             Err(error) => {
                 node.log.line(format_args!(

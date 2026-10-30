@@ -34,7 +34,7 @@ pub(crate) fn starting(node: &Node, resident: &ResidentId, acting: &Acting) -> R
     if node.residents.about(resident).is_some_and(|(about, _)| about.session.is_some()) {
         return Ok(false);
     }
-    let assisted = super::assisting(node, acting);
+    let assisted = super::assisting_known(node, acting)?;
     record(node, resident, assisted)
         .map_err(|error| Failure::new(format!("recording conversation host isolation: {error}")))?;
     Ok(assisted)
