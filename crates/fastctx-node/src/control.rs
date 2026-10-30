@@ -78,6 +78,7 @@ pub async fn control_here(node: &Arc<Node>, resident: &ResidentId, control: Cont
     node.ready_for(resident).await;
     let host = host_of(node, resident)?;
     let (about, _) = node.residents.about(resident).ok_or_else(|| Failure::new("unknown conversation"))?;
+    node.settled_for(&about.acting).await;
     // Each control is told in its conversation as it begins and ends
     // (`world-gui.md`, 对话); one refused here is told as it is refused.
     let told = crate::control_queue::told(&control);
@@ -129,7 +130,7 @@ fn allowed(
     host: &str,
     control: &Control,
 ) -> Result<(), Failure> {
-    if crate::assists::assisting(node, &about.acting) {
+    if crate::assists::assisting_known(node, &about.acting)? {
         crate::assists::host::require(node, resident)?;
         if let Control::Command { name, path, .. } = control {
             let allowed = match host {
