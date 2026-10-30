@@ -21,10 +21,7 @@ pub(crate) fn here(node: &Node, town: &TownName) -> Folders {
 pub(crate) fn here_for(node: &Node, asker: &crate::admission::Asker, town: &TownName) -> Result<Folders, Failure> {
     let link = node.link_of(&asker.hub).ok_or_else(|| Failure::refused(fastctx_types::memory::words::HUB_GONE))?;
     let view = link.view();
-    if !view
-        .me()
-        .is_some_and(|member| member.home.as_ref() == Some(&asker.account) && member.logins.contains(&asker.account))
-    {
+    if !crate::placement::owned(view.me(), &asker.account) {
         return Err(Failure::refused(fastctx_types::memory::words::OWN_COMPUTER_PATHS));
     }
     crate::town::access::check(node, &Acting::one(asker.hub.clone(), asker.account.clone()), town)?;
@@ -93,9 +90,8 @@ pub(crate) async fn get(
         })
         .await?;
     let view = link.view();
-    if !view.member(machine).is_some_and(|member| {
-        member.online && member.home.as_ref() == Some(&account) && member.logins.contains(&account)
-    }) || view.admits(&view.me, &account, machine, Purpose::Hands).is_err()
+    if !view.member(machine).is_some_and(|member| member.online && crate::placement::owned(Some(member), &account))
+        || view.admits(&view.me, &account, machine, Purpose::Hands).is_err()
     {
         return Err(fastctx_types::memory::words::PATH_ACCESS_ENDED.into());
     }

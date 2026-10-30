@@ -357,6 +357,16 @@ jobs:
           if-no-files-found: error
       - name: Build the release tests
         run: node scripts/kernel.mjs --tests '${{ matrix.target }}' tests
+      - name: Placement drill
+        if: matrix.target == 'x86_64-unknown-linux-gnu'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bubblewrap iproute2 util-linux
+          mkdir -p "$RUNNER_TEMP/placement-codex"
+          curl -fsSL -o "$RUNNER_TEMP/placement-codex.tar.gz" "https://github.com/openai/codex/releases/download/rust-v0.160.0/codex-x86_64-unknown-linux-musl.tar.gz"
+          echo "306865417d4ee7a927785852910a527f41e1e159add390ac5ae3accb67d44a13  $RUNNER_TEMP/placement-codex.tar.gz" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/placement-codex.tar.gz" -C "$RUNNER_TEMP/placement-codex"
+          python scripts/placement.py --kernel "$PWD/target/${{ matrix.build }}/release/fastctx" --drill "$PWD/tests/placement_drill" --codex "$RUNNER_TEMP/placement-codex/codex-x86_64-unknown-linux-musl" --root "$RUNNER_TEMP/placement-drill"
       - name: Upload the tests
         uses: actions/upload-artifact@v4
         with:

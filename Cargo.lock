@@ -1427,6 +1427,7 @@ version = "1.0.1-beta.12"
 dependencies = [
  "anyhow",
  "bytes",
+ "fastctx-client",
  "fastctx-net",
  "fastctx-platform",
  "fastctx-ripgrep",

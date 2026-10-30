@@ -86,7 +86,7 @@ pub(crate) async fn prepare(
     node.authorize_machine(&acting, &node.machine().into())?;
     let link = node.link_of(&scope.hub).ok_or_else(|| failure("the skill's hub is unavailable"))?;
     let view = crate::authorization::current_view(&link)?;
-    if !view.holds(&scope.account, &node.machine()) {
+    if !crate::placement::owned(view.member(&node.machine()), &scope.account) {
         return Err(Failure::refused("skill folders belong on the account's own working computers"));
     }
     let opened = view.account(&scope.account).ok_or_else(|| failure("the skill account is unavailable"))?.opened;
@@ -206,10 +206,23 @@ pub(crate) async fn prepare(
                 generation.users.push(owner.clone());
             }
         }
+        let metadata = serde_json::to_vec(&kept).map_err(failure)?.len() as u64;
+        let held = kept
+            .generations
+            .values()
+            .try_fold(metadata, |used, generation| used.checked_add(generation.size))
+            .ok_or_else(|| failure("the skill-copy size overflows"))?;
+        if held > limits.account_bytes {
+            return Err(failure(format!(
+                "skill folders and their tracking records exceed this computer's account allowance of {} bytes",
+                limits.account_bytes
+            )));
+        }
         keep(&root, &kept)?;
         // Recheck after the download and disk publication; revocation never returns a path.
         node.authorize_machine(&acting, &node.machine().into())?;
-        if !crate::authorization::current_view(&link)?.holds(&scope.account, &node.machine()) {
+        if !crate::placement::owned(crate::authorization::current_view(&link)?.member(&node.machine()), &scope.account)
+        {
             return Err(Failure::refused("this computer no longer owns the skill account"));
         }
         follow::register(node, &scope, name);

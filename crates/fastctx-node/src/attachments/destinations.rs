@@ -106,7 +106,8 @@ pub(super) fn owns_here(node: &Node, acting: &Acting) -> Result<(), Failure> {
     }
     for link in node.links() {
         let view = link.view();
-        if node.accounts_on(&link, acting).iter().any(|account| view.holds(account, &view.me)) {
+        if node.accounts_on(&link, acting).iter().any(|account| crate::placement::owned(view.member(&view.me), account))
+        {
             return Ok(());
         }
     }
@@ -198,7 +199,7 @@ pub(super) fn validate_original(node: &Node, acting: &Acting, original: &Attachm
     for identity in accounts {
         let Some(link) = node.link_of(&identity.hub) else { continue };
         let view = link.view();
-        if view.holds(&identity.account, &original.owner.machine)
+        if crate::placement::owned(view.member(&original.owner.machine), &identity.account)
             && view.admits(&view.me, &identity.account, &original.owner.machine, Purpose::Hands).is_ok()
         {
             return Ok(());
