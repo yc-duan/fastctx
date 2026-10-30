@@ -32,7 +32,9 @@ export function viewedFiles(lines: OutputLines, machine: string | null): Found<F
     }
     const section = SECTION.exec(line);
     if (section) {
-      if (!/\blines? \d/.test(section[2]!) || /\bnot shown\b/.test(section[2]!)) return null;
+      // Lines of it shown: all of them (`314 lines`, `1 line`) or some
+      // (`lines 1-300 of 447`), after what its encoding is, where said.
+      if (!/\b(?:lines? \d|\d+ lines?\b)/.test(section[2]!) || /\bnot shown\b/.test(section[2]!)) return null;
       const { at, path } = placeOf(section[1]!);
       open = { kind: "file", command: null, machine: at ?? machine, path, rows: [], of: Number(OF.exec(section[2]!)?.[1] ?? NaN) || null };
       found.push({ at: index, deed: open });
