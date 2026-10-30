@@ -1415,6 +1415,8 @@ impl fastctx_net::link::Node for Handler {
         let Some(node) = self.node.upgrade() else { return };
         node.views_changed();
         let Some(link) = node.link_of(&self.hub) else { return };
+        // A previous cleanup may have failed after consuming this same view.
+        crate::directory_changes::cleanup(&node, &link);
         tokio::spawn(async move { same_name(&node, &link).await });
     }
 

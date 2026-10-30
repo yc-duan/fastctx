@@ -86,7 +86,7 @@ impl Changes {
 /// A new revocation never waits for an older read or another conversation's
 /// management gate. Ordinary ledger notifications retain their own worker too:
 /// a failed full reconciliation cannot suppress a healthy project's update.
-fn cleanup(node: &Arc<Node>, link: &Arc<Link>) {
+pub(crate) fn cleanup(node: &Arc<Node>, link: &Arc<Link>) {
     let (node, link) = (node.clone(), link.clone());
     tokio::spawn(async move {
         if node.link_of(link.hub()).is_some_and(|current| Arc::ptr_eq(&current, &link)) {
