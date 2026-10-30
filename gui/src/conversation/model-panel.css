@@ -129,8 +129,8 @@
 .model-list {
   display: flex;
   flex-direction: column;
-  gap: 1px;
-  max-height: calc(7 * 36px);
+  gap: var(--row-gap);
+  max-height: calc(7 * 36px + 6 * var(--row-gap));
   margin: 0;
   padding: 0;
   list-style: none;

@@ -36,6 +36,19 @@
   display: none;
 }
 
+/* With no tabs over it, the sheet stands apart from the card above, not
+   joined to it. */
+.me-tabs[hidden] + .st-sheet {
+  margin-top: var(--space-6);
+}
+
+/* A sheet that holds nothing but the way out is no sheet: the way out is a
+   quiet line under the card, in line with what the card holds. */
+.me > .st-sheet:not(:has(.me-login > :not(.me-leave, .me-login-name))) {
+  padding: 0 var(--space-5);
+  background: none;
+}
+
 .me-login {
   display: flex;
   flex-direction: column;

@@ -178,7 +178,7 @@
 .fp-list {
   display: flex;
   flex-direction: column;
-  gap: 1px;
+  gap: var(--row-gap);
   min-height: 0;
   padding: var(--space-1);
   overflow-y: auto;

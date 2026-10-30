@@ -1,24 +1,23 @@
-/* The side of a conversation (`pane.ts`, `mount.ts`) and what it holds:
-   the overview (`overview.ts`) with the goal's page (`goal-page.ts`), the
-   plan and who works with the conversation (`collab-page.ts`); other
-   conversations and the host's agents in its tabs; and the goal's bar above
-   the input (`goal-bar.ts`). Every page is set in one voice: the reading
-   face at the text size, in the text's ink, the semibold face for what
-   heads a part; the accent is kept for the marks a hand adds and the one
-   act that matters. */
+/* The side of the desk (`frame.ts`, `pane.ts`) and what it holds of the
+   conversation in focus: the goal's page (`goal-page.ts`), the plan, who
+   works with it (`collab-page.ts`) and one of the host's agents read over
+   them; and the goal's bar above the input (`goal-bar.ts`). Every page is
+   set in one voice: the reading face at the text size, in the text's ink,
+   the semibold face for what heads a part; the accent is kept for the marks
+   a hand adds and the one act that matters. */
 
-/* The page in two columns: the conversation with its head, and the side as
-   tall as the window. --sp-open goes from nothing to one as the side
-   opens: the side widens by it from the right, the conversation giving way
-   beside it, and back as it shuts. */
+/* The desk in two columns: the conversations, and the side as tall as the
+   window. --sp-open goes from nothing to one as the side opens: the side
+   widens by it from the right, the conversations giving way beside it, and
+   back as it shuts. */
 @property --sp-open {
   syntax: "<number>";
   inherits: true;
   initial-value: 0;
 }
 
-/* Registered so its width is a length where it is read: the page, the
-   conversation's column carried as it opens (`column-hold.ts`). */
+/* Registered so its width is a length where it is read, as the corner's
+   room that the side takes over. */
 @property --side-width {
   syntax: "<length>";
   inherits: true;
@@ -31,12 +30,12 @@
   initial-value: 0px;
 }
 
-.conversation-page.sp-host {
+.sp-host {
   --sp-open: 0;
   transition: --sp-open var(--glide) var(--glide-easing);
 }
 
-.conversation-page.sp-host.sp-shown {
+.sp-host.sp-shown {
   --sp-open: 1;
 }
 
@@ -47,27 +46,26 @@
   min-height: 0;
 }
 
-.talk-main {
-  position: relative;
-  display: flex;
-  flex: 1;
-  flex-direction: column;
-  min-width: 0;
-  min-height: 0;
+/* The desk's top right corner: the side's one switch. On Windows the
+   window's own buttons hold the corner's first line and the switch stands
+   under them; elsewhere it holds the corner itself. A head in that line
+   keeps clear of what stands in it (`--sp-corner`). */
+.sp-host {
+  --sp-switch-top: calc(var(--safe-top) + 10px);
+  --sp-switch-right: var(--space-3);
+  --sp-corner: calc(var(--sp-switch-right) + 32px + var(--space-2));
 }
 
-/* The window's own buttons stand over the side once it is open: the
-   conversation's head leaves them their room only while the side is
-   narrower than they are. */
-html.framed .sp-host > .sp-split[data-dock="right"] > .talk-main > .page-head {
-  padding-right: max(var(--space-4), calc(3 * 46px + var(--space-2) - var(--side-width) * var(--sp-open)));
+html.framed .sp-host {
+  --sp-switch-top: calc(52px + var(--space-1));
+  --sp-corner: calc(3 * 46px + var(--space-2));
 }
 
 .sp-panel {
   --grip-ink: 0;
   position: relative;
   display: flex;
-  justify-content: flex-end;
+  justify-content: flex-start;
   min-width: 0;
   background: var(--bg);
   color: var(--text);
@@ -86,14 +84,14 @@ html.framed .sp-host > .sp-split[data-dock="right"] > .talk-main > .page-head {
   overflow: hidden;
 }
 
-/* The sheet keeps its width while the side widens over it, so nothing in
-   it is set again as it comes: it slides in from the right, its words
-   coming up as it does. */
+/* The sheet keeps its width while the side widens, so nothing in it is set
+   again as it comes: it rides in on the side's edge, pushing the
+   conversation aside, its words coming up as it does. */
 .sp-sheet {
   position: relative;
   flex: none;
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr) auto;
   grid-template-columns: minmax(0, 1fr);
   width: var(--side-width);
   min-height: 0;
@@ -151,128 +149,102 @@ html.framed .sp-host > .sp-split[data-dock="right"] > .talk-main > .page-head {
   --grip-ink: 1;
 }
 
-.sp-panel.sp-over .sp-grip,
-.sp-panel.sp-over .sp-dock {
+.sp-panel.sp-over .sp-grip {
   display: none;
 }
 
-/* The row of tabs at the side's top, as high as the conversation's head
-   and dragged as a head is; the window's own buttons keep their corner. */
+/* The side's head: one line as high as a conversation's head and dragged
+   as a head is, the conversation's parts as marks and the side's "⋯". At
+   the desk's right it keeps the corner clear: on Windows of the window's
+   own buttons, the switch standing under them over the side's first words;
+   elsewhere of the switch. Its words begin as far from the margin as the
+   conversations' end before it, so the margin stands midway. */
 .sp-head {
   display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  min-height: 52px;
-  padding: var(--safe-top) var(--space-3) 0 var(--space-4);
+  flex-direction: column;
+  min-width: 0;
+  container-type: inline-size;
 }
 
-html.framed .sp-split[data-dock="right"] .sp-head {
+.sp-line {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-height: 52px;
+  padding: var(--safe-top) var(--space-3) 0 var(--gutter);
+}
+
+.sp-split[data-dock="right"] .sp-line {
+  padding-right: var(--sp-corner);
+}
+
+/* Under the window's own buttons the switch stands over the side's first
+   line of words: the pages there keep their ends clear of it. */
+html.framed .sp-split[data-dock="right"] > .sp-panel:not(.sp-over) .sp-page > :first-child {
+  margin-right: calc(32px + var(--space-2));
+}
+
+html.framed .sp-panel.sp-over .sp-line {
   padding-right: calc(3 * 46px + var(--space-2));
 }
 
-.sp-tabs {
-  flex: 0 1 auto;
+/* The parts' marks: each with its figures after it, in clay while
+   something there waits on the user, the one shown on the clay wash. Where
+   the line is short the figures give way first; shorter still, the marks
+   scroll across. */
+.sp-parts {
+  flex: 1 1 auto;
   display: flex;
   align-items: center;
   gap: 2px;
   min-width: 0;
+  margin-left: calc(-1 * var(--space-2));
   overflow-x: auto;
   scrollbar-width: none;
 }
 
-.sp-tabs::-webkit-scrollbar {
-  display: none;
-}
-
-/* A tab: a conversation's mark, its name and its cross; the one shown in
-   the semibold face on a field's shade. Each name keeps the width of its
-   semibold self, so choosing a tab moves nothing beside it. */
-.sp-tab {
+.sp-part {
   flex: none;
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: 5px;
+  min-width: 34px;
   height: 32px;
-  padding: 0 var(--space-3);
+  padding: 0 var(--space-2);
+  justify-content: center;
   border-radius: var(--radius-m);
   color: var(--text-2);
-  font-size: var(--size-text);
-  white-space: nowrap;
   transition: background-color var(--hover) var(--ease), color var(--hover) var(--ease);
 }
 
-.sp-tab:has(> .sp-tab-x) {
-  padding-right: var(--space-1);
-}
-
-.sp-tab:hover {
+.sp-part:hover {
   background: var(--hairline);
   color: var(--text);
 }
 
-.sp-tab.current {
-  background: var(--fill);
-  color: var(--text);
-  font-family: var(--font-emphasis);
+.sp-part.chosen {
+  background: var(--accent-wash);
+  color: var(--text-strong);
 }
 
-.sp-tab-seal {
-  flex: none;
-  display: inline-grid;
+.sp-part.waiting {
+  color: var(--accent);
 }
 
-.sp-tab-name {
-  display: inline-grid;
-  max-width: 10em;
-}
-
-.sp-tab-name > span {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.sp-tab-name::after {
-  content: attr(data-label);
-  height: 0;
-  overflow: hidden;
-  visibility: hidden;
-  font-family: var(--font-emphasis);
-}
-
-/* The cross keeps its room, shown on the tab pointed at and the one shown. */
-.sp-tab-x {
-  flex: none;
-  display: grid;
-  place-items: center;
-  width: 22px;
-  height: 22px;
-  border-radius: var(--radius-s);
+.sp-part-count {
   color: var(--text-3);
-  visibility: hidden;
+  font-size: var(--size-fine);
+  font-variant-numeric: tabular-nums;
 }
 
-.sp-tab:hover > .sp-tab-x,
-.sp-tab.current > .sp-tab-x,
-.sp-tab:focus-visible > .sp-tab-x {
-  visibility: visible;
+.sp-part.chosen .sp-part-count {
+  color: var(--text-2);
 }
 
-.sp-tab-x:hover {
-  background: var(--fill-strong);
-  color: var(--text);
-}
-
-.sp-dot {
-  display: none;
-  width: 6px;
-  height: 6px;
-  border-radius: var(--radius-full);
-  background: var(--accent);
-}
-
-.sp-tab.fresh .sp-dot {
-  display: block;
+@container (max-width: 400px) {
+  .sp-part-count {
+    display: none;
+  }
 }
 
 .sp-acts {
@@ -283,32 +255,11 @@ html.framed .sp-split[data-dock="right"] .sp-head {
   margin-left: auto;
 }
 
-/* Branching off a side conversation: a cross of ink right after the last
-   tab, as a browser puts its new tab. */
-.sp-new {
-  flex: none;
-}
-
-.sp-new[hidden] {
+/* Over the whole page the side is shut by its own cross and stands nowhere
+   else; beside the conversation the switch in the corner shuts it. */
+.sp-panel:not(.sp-over) .sp-shut,
+.sp-panel.sp-over .sp-more {
   display: none;
-}
-
-.sp-new[aria-busy="true"] {
-  opacity: 0.5;
-}
-
-/* How the tab's conversation's goal stands, in the goal's own small mark. */
-.sp-tab-goal {
-  flex: none;
-  display: grid;
-  place-items: center;
-  width: 12px;
-  height: 14px;
-}
-
-.sp-tab-goal-svg {
-  display: block;
-  overflow: visible;
 }
 
 .sp-acts > [hidden] {
@@ -327,7 +278,7 @@ html.framed .sp-split[data-dock="right"] .sp-head {
   overflow: auto;
   overscroll-behavior: contain;
   overflow-wrap: anywhere;
-  padding: var(--space-2) var(--space-6) var(--space-12);
+  padding: var(--space-2) var(--gutter) var(--space-12);
   line-height: var(--leading-prose);
 }
 
@@ -335,369 +286,61 @@ html.framed .sp-split[data-dock="right"] .sp-head {
   display: none;
 }
 
-/* The overview, the side's first tab (`overview.ts`): small paper cards one
-   under another, each only what is read at a glance, so the whole stands in
-   one screen, and what the conversation is pointed at at its foot. The
-   goal's, the plan's or the team's page opens in the cards' place under a
-   way back, and that page alone scrolls. A window too short for the cards
-   lets them scroll rather than leave any out. */
-.sp-home {
-  grid-area: 1 / 1;
-  min-height: 0;
-  overflow-y: auto;
-  overscroll-behavior: contain;
-}
-
-.sp-home[hidden] {
-  display: none;
-}
-
-.ov-page {
-  display: flex;
-  flex-direction: column;
-  min-height: 100%;
-}
-
-.ov-cards {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-3);
-  padding: var(--space-3) var(--space-4) var(--space-4);
-  box-sizing: border-box;
-}
-
-.ov-cards[hidden] {
-  display: none;
-}
-
-.ov-card {
-  padding: var(--space-3) var(--space-4);
-  border-radius: var(--radius-l);
-  background: var(--fill);
-}
-
-.ov-card[hidden],
-.sp-panel:not(.sp-over) .ov-goal[data-on-bar] {
-  display: none;
-}
-
-.ov-head {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  min-height: 26px;
-  margin-bottom: var(--space-1);
-  line-height: var(--leading-ui);
-}
-
-.ov-name {
-  color: var(--text-2);
-}
-
-.ov-count {
-  margin-left: auto;
-  color: var(--text-3);
-  font-variant-numeric: tabular-nums;
-}
-
-/* A line in a card that opens something: its mark, then its words, washed
-   under the pointer out to the card's own padding. */
-.ov-row {
-  display: grid;
-  grid-template-columns: 16px minmax(0, 1fr);
-  align-items: start;
-  column-gap: var(--space-3);
-  width: calc(100% + 2 * var(--space-2));
-  margin: 0 calc(-1 * var(--space-2));
-  padding: 5px var(--space-2);
-  border-radius: var(--radius-m);
-  color: var(--text);
-  text-align: left;
-  font: inherit;
-  line-height: var(--leading-ui);
-  transition: background-color var(--hover) var(--ease);
-}
-
-.ov-row:hover {
-  background: var(--hairline);
-}
-
-.ov-mark {
-  display: grid;
-  place-items: center;
-  height: calc(var(--size-text) * var(--leading-ui));
-  color: var(--text-2);
-}
-
-.ov-goal-svg {
-  display: block;
-  width: 16px;
-  height: 18px;
-}
-
-.ov-goal-now[data-status="active"] .ov-goal-svg {
-  transform: scale(var(--breath-scale));
-  opacity: var(--breath-alpha);
-  animation: ink-breathe var(--breath-slow) var(--ease-in-out) infinite;
-}
-
-:root[data-reduced] .ov-goal-now .ov-goal-svg {
-  animation: none;
-}
-
-.ov-lines {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
+/* What the conversation is pointed at, at the foot under its parts, its
+   panel opening above it. */
+.sp-foot {
   min-width: 0;
+  padding: var(--space-2) var(--gutter) var(--space-3);
 }
 
-.ov-words {
-  display: -webkit-box;
-  overflow: hidden;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
+.sp-foot[hidden] {
+  display: none;
 }
 
-.ov-meta {
-  display: flex;
-  gap: var(--space-3);
-  color: var(--text-3);
-  font-variant-numeric: tabular-nums;
-}
-
-.ov-note {
-  overflow: hidden;
-  color: var(--text-3);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.ov-goal-none .ov-mark,
-.ov-goal-none .ov-words {
-  color: var(--text-3);
-}
-
-.ov-goal-none:hover .ov-words {
-  color: var(--text);
-}
-
-/* The plan's stops around the one the work stands at, strung on the ink
-   line its own page draws (`plan/flow.ts`): walked in the quieter ink, the
-   one the work stands at in the text's own. Where the plan goes on before
-   or after them, the line runs on into the card's room above or below. */
-.ov-route {
-  position: relative;
-}
-
-.ov-route[data-before] {
-  padding-top: var(--space-3);
-}
-
-.ov-route[data-after] {
-  padding-bottom: var(--space-3);
-}
-
-.ov-ink {
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-}
-
-.ov-ink-svg {
-  display: block;
-  width: 100%;
-  height: 100%;
-  overflow: visible;
-}
-
-.ov-stops,
-.ov-asks {
-  margin: 0;
+.sp-foot .focus-strip {
   padding: 0;
-  list-style: none;
 }
 
-.ov-stop {
-  display: grid;
-  grid-template-columns: 16px minmax(0, 1fr);
-  align-items: start;
-  column-gap: var(--space-3);
-  padding: 5px 0;
-  line-height: var(--leading-ui);
+@media (min-width: 761px) {
+  .sp-foot .focus-pop {
+    top: auto;
+    bottom: calc(100% + var(--space-1));
+    right: auto;
+    left: 0;
+    width: min(440px, calc(var(--side-width) - 2 * var(--space-4)));
+  }
 }
 
-/* Where the stop's mark is drawn: the middle of its first line. */
-.ov-dot {
-  height: calc(var(--size-text) * var(--leading-ui));
-}
-
-.ov-stop .ov-words {
-  color: var(--text-2);
-}
-
-.ov-stop[data-where="walked"] .ov-words {
-  color: var(--text-3);
-}
-
-.ov-stop[data-where="here"] .ov-words {
-  color: var(--text-strong);
-}
-
-.ov-asks {
-  margin-top: var(--space-1);
-}
-
-.ov-ask .ov-mark {
-  color: var(--accent);
-}
-
-.ov-title {
-  margin: 0 0 var(--space-1);
-}
-
-.ov-whole {
-  margin-top: var(--space-1);
-}
-
-/* Those who work with the conversation, one line each: the family's seal,
-   the name, the task in the quieter ink, and how it stands at the end. */
-.ov-member {
-  display: grid;
-  grid-template-columns: 26px auto minmax(0, 1fr) 16px;
-  align-items: center;
-  column-gap: var(--space-3);
-  width: calc(100% + 2 * var(--space-2));
-  margin: 0 calc(-1 * var(--space-2));
-  padding: 6px var(--space-2);
-  border-radius: var(--radius-m);
-  color: var(--text);
-  text-align: left;
-  font: inherit;
-  line-height: var(--leading-ui);
-  transition: background-color var(--hover) var(--ease);
-}
-
-.ov-member:hover {
-  background: var(--hairline);
-}
-
-.ov-member-name {
-  max-width: 12em;
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-  font-family: var(--font-emphasis);
-}
-
-.ov-member-task {
-  min-width: 0;
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-  color: var(--text-3);
-}
-
-.ov-member.failed .cp-end {
-  color: var(--wrong);
-}
-
-/* The foot: what the conversation is pointed at, its panel opening above
-   it; and how another conversation comes in, until one has. */
-.ov-foot {
+/* Who works with the conversation. */
+.sp-team {
   display: flex;
   flex-direction: column;
-  gap: var(--space-2);
-  margin-top: auto;
-  padding: var(--space-1) 0 0;
+  gap: var(--space-6);
 }
 
-.ov-env[hidden],
-.ov-hint[hidden],
-.sp-over .ov-hint {
-  display: none;
-}
-
-.ov-env .focus-strip {
-  padding: 0;
-}
-
-.ov-env .focus-pop {
-  top: auto;
-  bottom: calc(100% + var(--space-1));
-  left: 0;
-  width: min(440px, 100%);
-}
-
-.ov-hint {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  margin: 0;
-  color: var(--text-3);
-}
-
-/* The goal's, the plan's or the team's page in the cards' place, under the
-   way back, which says what is open. */
-.ov-drill[hidden] {
-  display: none;
-}
-
-.ov-drill-head {
-  position: sticky;
-  top: 0;
-  z-index: 2;
-  display: flex;
-  align-items: center;
-  min-height: 44px;
-  padding: 0 var(--space-3);
-  background: var(--bg);
-}
-
-.ov-back {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-1);
-  height: 32px;
-  padding: 0 var(--space-2);
-  border-radius: var(--radius-m);
-  color: var(--text-2);
-  transition: background-color var(--hover) var(--ease), color var(--hover) var(--ease);
-}
-
-.ov-back:hover {
-  background: var(--hairline);
-  color: var(--text);
-}
-
-.ov-back-name {
-  color: var(--text);
-  font-family: var(--font-emphasis);
-}
-
-.ov-drill-body {
-  padding: var(--space-2) var(--space-6) var(--space-12);
-  line-height: var(--leading-prose);
-}
-
-.ov-drill-body > .scroller {
-  overflow: visible;
-  padding: 0;
-}
-
-/* The switch that opens the side: at the conversation's top right under
-   its head, with a dot while something new waits there. Open, the side's
-   own row shuts it; on a phone the head's "⋯" opens it. */
+/* The side's one switch, in the desk's top right corner whether the side
+   is open or shut, drawn as the place it opens at, with a dot while
+   something new waits there. Over the whole desk the side's own cross shuts
+   it; on a phone the head's "⋯" opens it. */
 .sp-toggle {
   position: absolute;
   z-index: 41;
-  top: calc(var(--safe-top) + 58px);
-  right: var(--space-3);
+  top: var(--sp-switch-top);
+  right: var(--sp-switch-right);
   background: var(--bg);
 }
 
-.sp-toggle[hidden] {
+.sp-toggle[aria-pressed="true"] {
+  color: var(--text);
+}
+
+/* On the desk the window's buttons stand on the paper's own ground too, so
+   the side slides in beneath them. */
+html:has(.sp-host) .window-controls {
+  background: var(--bg);
+}
+
+.sp-host:has(> .sp-split > .sp-panel.sp-over:not([hidden])) .sp-toggle {
   display: none;
 }
 
@@ -722,65 +365,10 @@ html.framed .sp-split[data-dock="right"] .sp-head {
   display: block;
 }
 
-/* Where a conversation dragged from the list would open: a wash over the
-   half of the page the side would take, or over the side when it is open. */
-.sp-drop {
-  position: absolute;
-  z-index: 42;
-  top: var(--space-2);
-  right: var(--space-2);
-  bottom: var(--space-2);
-  width: calc(50% - var(--space-3));
-  display: none;
-  place-items: center;
-  border-radius: var(--radius-l);
-  background: var(--accent-wash);
-  color: var(--text-2);
-  pointer-events: none;
-}
-
-.sp-dropping .sp-drop {
-  display: grid;
-}
-
-[data-dropping="left"] .sp-drop {
-  right: auto;
-  left: var(--space-2);
-}
-
-[data-dropping="bottom"] .sp-drop {
-  top: auto;
-  left: var(--space-2);
-  width: auto;
-  height: calc(50% - var(--space-3));
-}
-
-/* With no room beside the conversation, over the whole of it. */
-[data-dropping="over"] .sp-drop {
-  left: var(--space-2);
-  width: auto;
-}
-
-.sp-drop-words {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-2);
-  height: 34px;
-  padding: 0 var(--space-4);
-  border-radius: var(--radius-full);
-  background: var(--accent);
-  color: var(--bg);
-  font-family: var(--font-emphasis);
-}
-
-.sp-drop-mark {
-  display: inline-grid;
-}
-
-/* The side at the conversation's left, or along its foot as wide as the
-   page (`mount.ts`): its margin and the line to drag along the edge it
-   shares with the conversation; the sheet held against the window's edge
-   as the side opens from it. */
+/* The side at the conversations' left, or along their foot as wide as the
+   desk (`frame.ts`): its margin and the line to drag along the edge it
+   shares with them; the sheet held against the window's edge as the side
+   opens from it. */
 .sp-split[data-dock="left"] {
   flex-direction: row-reverse;
 }
@@ -790,12 +378,12 @@ html.framed .sp-split[data-dock="right"] .sp-head {
 }
 
 .sp-split[data-dock="left"] > .sp-panel:not(.sp-over) {
-  justify-content: flex-start;
+  justify-content: flex-end;
 }
 
 .sp-split[data-dock="bottom"] > .sp-panel:not(.sp-over) {
   flex-direction: column;
-  justify-content: flex-end;
+  justify-content: flex-start;
   width: auto;
   height: calc(var(--side-height) * var(--sp-open));
 }
@@ -831,35 +419,21 @@ html.framed .sp-split[data-dock="right"] .sp-head {
   cursor: row-resize;
 }
 
-/* Along the foot the overview's cards stand side by side, as many to a
-   row as the page is wide, its own foot under them all. */
-.sp-split[data-dock="bottom"] .ov-cards {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
-  align-items: start;
-}
 
-.sp-split[data-dock="bottom"] .ov-foot {
-  grid-column: 1 / -1;
-}
-
-.sp-split[data-dock="bottom"] .ov-hint {
-  display: none;
-}
-
-/* Where the side stands, chosen from its row: a small menu under its
+/* The side's "⋯": where the side stands, in a small menu under its
    button. */
 .sp-acts {
   position: relative;
 }
 
-.sp-dock-menu {
+.sp-menu {
   position: absolute;
   z-index: 8;
   top: calc(100% + var(--space-1));
   right: 0;
   display: flex;
   flex-direction: column;
+  gap: var(--row-gap);
   min-width: 160px;
   padding: var(--space-1);
   border-radius: var(--radius-m);
@@ -867,11 +441,12 @@ html.framed .sp-split[data-dock="right"] .sp-head {
   box-shadow: var(--shadow-pop);
 }
 
-.sp-dock-menu[hidden] {
+.sp-menu[hidden],
+.sp-menu-row[hidden] {
   display: none;
 }
 
-.sp-dock-row {
+.sp-menu-row {
   display: flex;
   align-items: center;
   gap: var(--space-2);
@@ -882,16 +457,16 @@ html.framed .sp-split[data-dock="right"] .sp-head {
   white-space: nowrap;
 }
 
-.sp-dock-row:hover:enabled {
+.sp-menu-row:hover:enabled {
   background: var(--hairline);
   color: var(--text);
 }
 
-.sp-dock-row:disabled {
+.sp-menu-row:disabled {
   color: var(--text-3);
 }
 
-.sp-dock-row[aria-checked="true"] {
+.sp-menu-row[aria-checked="true"] {
   background: var(--accent-wash);
   color: var(--text-strong);
 }
@@ -916,11 +491,7 @@ html.framed .sp-split[data-dock="right"] .sp-head {
   display: none;
 }
 
-.sp-over .sp-tab-home {
-  padding-left: 0;
-  background: none;
-  font-family: var(--font-emphasis);
-}
+
 
 /* The goal's bar, among the words waiting above the input. */
 .gb-bar {
@@ -935,6 +506,12 @@ html.framed .sp-split[data-dock="right"] .sp-head {
   border-radius: var(--radius-m);
   background: var(--fill);
   font-size: var(--size-text);
+}
+
+/* A conversation nothing more is heard of keeps no goal bar: its acts would
+   reach nothing. */
+.conversation-page[data-unheard] .gb-bar {
+  display: none;
 }
 
 .gb-bar[hidden] {
@@ -1013,6 +590,15 @@ html.framed .sp-split[data-dock="right"] .sp-head {
 /* On a phone the bar is one press: it opens the goal, where its acts are.
    A goal going on is its mark and its words. */
 @media (max-width: 760px) {
+  .gb-bar:not([data-status="paused"]) .gb-when,
+  .gb-bar .gb-act:not([data-act="expand"]),
+  .gb-bar[data-status="active"] .gb-state {
+    display: none;
+  }
+}
+
+/* So in a narrow place on the desk. */
+@container talk (max-width: 560px) {
   .gb-bar:not([data-status="paused"]) .gb-when,
   .gb-bar .gb-act:not([data-act="expand"]),
   .gb-bar[data-status="active"] .gb-state {
@@ -1462,17 +1048,8 @@ button.cp-node:hover {
   }
 }
 
-/* A conversation opened in a tab fills it, under the tab's name rather
-   than a head of its own. */
-.sp-page.conversation-page {
-  --gutter: var(--space-5);
-  overflow: hidden;
-  padding: 0;
-  line-height: normal;
-}
-
-/* What one of the host's agents did fills its tab, to be read; the way to
-   the row that sent it stands at the top. */
+/* What one of the host's agents did fills the side's body, to be read;
+   the way to the row that sent it stands at the top. */
 .sp-page.agent-box {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr) auto auto;

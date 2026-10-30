@@ -1,8 +1,8 @@
-/* What a run did (`draw.ts`): each deed a solid card as a change is, its
-   head a shade deeper saying what it is, its body what came of it; a
-   command named alone on a quiet line between them; the run's own words
-   folded at the foot. One size throughout, the reading face, monospace for
-   what is code. */
+/* What a run did (`draw.ts`): each deed one solid card of one ground, as a
+   change is, its head saying what it is and, under a stroke of the pen, its
+   body what came of it; a command named alone on a quiet line between them;
+   the run's own words folded at the foot, the same sheet going on. One size
+   throughout, the reading face, monospace for what is code. */
 
 .dd-deeds {
   display: flex;
@@ -12,7 +12,7 @@
 
 .dd-card {
   border-radius: var(--radius-m);
-  background: var(--surface-code);
+  background: var(--surface-header);
   overflow: hidden;
 }
 
@@ -22,14 +22,9 @@
   gap: var(--space-2);
   min-height: 34px;
   padding: 0 var(--space-3);
-  background: var(--surface-header);
   font-size: var(--size-text);
   line-height: var(--leading-ui);
   color: var(--text-3);
-}
-
-.dd-card:not(:has(.dd-body)) > .dd-head {
-  background: transparent;
 }
 
 .dd-mark {
@@ -88,11 +83,6 @@
   align-items: center;
   gap: var(--space-4);
   padding: var(--space-3) var(--space-4);
-  background: var(--surface-header);
-}
-
-.dd-drawn:not(:has(.dd-body)) > .dd-scene {
-  background: transparent;
 }
 
 .dd-art {
@@ -140,6 +130,17 @@
 
 .dd-body {
   padding: var(--space-2) 0;
+}
+
+/* The head and what came of it, parted by a stroke of the pen. */
+:is(.dd-head, .dd-scene) + .dd-body::before {
+  content: "";
+  display: block;
+  height: 8px;
+  margin: calc(-1 * var(--space-2)) var(--space-3) var(--space-1);
+  background: var(--pen-rule);
+  -webkit-mask: var(--pen-rule-1) 0 50% / 100% 100% no-repeat;
+  mask: var(--pen-rule-1) 0 50% / 100% 100% no-repeat;
 }
 
 /* A failed test, a diagnostic: a line that opens what it holds. */
@@ -194,7 +195,7 @@ button.dd-opener-line:hover {
   color: var(--text-3);
   --turn: -90deg;
   rotate: var(--turn);
-  transition: --turn var(--fold) var(--fold-easing);
+  transition: --turn var(--expand) var(--expand-easing);
 }
 
 [aria-expanded="true"] > .dd-chevron {
@@ -431,7 +432,7 @@ button.dd-opener-line:hover {
    and what it printed come in below, on the same sheet. */
 .dd-foot {
   border-radius: var(--radius-m);
-  background: var(--surface-code);
+  background: var(--surface-header);
 }
 
 .dd-card:has(+ .dd-foot) {

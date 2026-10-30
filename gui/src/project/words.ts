@@ -34,8 +34,13 @@ export interface ProjectWords {
   /** The page's two views: the work now, and what the project keeps. */
   nowTab: string;
   referenceTab: string;
-  opened(by: string, on: string, day: string): string;
+  /** Who opened the project, where (unless it was on a machine this
+   *  device's account may not use), and when. */
+  opened(by: string, on: string | undefined, day: string): string;
   you: string;
+  /** A conversation, or a page, on a machine this device's account may
+   *  not use, as who wrote something. */
+  elsewhere(page: boolean): string;
   /** An open page, as who wrote an entry. */
   aPage(name: string): string;
   entries(n: number): string;
@@ -95,8 +100,9 @@ export const zhProject: ProjectWords = {
   colleague: (label, who, doing) => [label, `${who}　${doing}`].filter(Boolean).join("\n"),
   ground: (agents, senses, jobs) =>
     [agents ? `${agents} 段对话` : "", senses ? `${senses} 项观测` : "", jobs ? `${jobs} 件作业` : ""].filter(Boolean).join("　") || "这里暂时没有在做的事",
-  opened: (by, on, day) => `${then(by)}创建于 ${on}，${day}`,
+  opened: (by, on, day) => (on ? `${then(by)}创建于 ${on}，${day}` : `${then(by)}创建，${day}`),
   you: "你",
+  elsewhere: (page) => (page ? "一个页面" : "一段对话"),
   aPage: (name) => `页面「${name}」`,
   entries: (n) => `${n} 条`,
   writers: (n) => `${n} 位作者`,
@@ -151,8 +157,9 @@ export const enProject: ProjectWords = {
     [agents ? `${agents} conversation${agents === 1 ? "" : "s"}` : "", senses ? `${senses} watcher${senses === 1 ? "" : "s"}` : "", jobs ? `${jobs} job${jobs === 1 ? "" : "s"}` : ""]
       .filter(Boolean)
       .join(", ") || "Nothing running here",
-  opened: (by, on, day) => `Created by ${by} on ${on}, ${day}`,
+  opened: (by, on, day) => (on ? `Created by ${by} on ${on}, ${day}` : `Created by ${by}, ${day}`),
   you: "you",
+  elsewhere: (page) => (page ? "a page" : "a conversation"),
   aPage: (name) => `the page “${name}”`,
   entries: (n) => `${n} entr${n === 1 ? "y" : "ies"}`,
   writers: (n) => `${n} writer${n === 1 ? "" : "s"}`,

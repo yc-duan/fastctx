@@ -78,6 +78,8 @@ function follow(start: PointerEvent, list: HTMLElement, carried: Carried, option
       if (at) place.out();
       else if (place.over(carried, x, y, under)) at = place;
     }
+    // Where nothing would take it, the card says so by stepping back.
+    card?.classList.toggle("td-nowhere", !at);
   };
   const end = (taken: { x: number; y: number } | null) => {
     stop.abort();
@@ -108,7 +110,11 @@ function follow(start: PointerEvent, list: HTMLElement, carried: Carried, option
         card.textContent = options.name(carried);
         document.body.append(card);
         document.documentElement.classList.add("td-carrying");
-        list.setPointerCapture(start.pointerId);
+        try {
+          list.setPointerCapture(start.pointerId);
+        } catch {
+          // A pointer already gone is followed on the window as it is.
+        }
         options.began(carried);
       }
       card.style.left = `${event.clientX}px`;

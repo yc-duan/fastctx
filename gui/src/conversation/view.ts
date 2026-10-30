@@ -42,6 +42,7 @@ import type { JsonValue } from "../world/wire";
 import { folderName, type Focus } from "../world/focus";
 import { answerOf, drawAsk, readAsk, type AskWords } from "./asks";
 import type { Words } from "../words";
+import { forkCard, type ForkFrom } from "./fork-card";
 import { glyph, type GlyphName } from "./glyphs";
 import { controlName } from "./control-queue";
 import { saidHtml } from "./said";
@@ -114,6 +115,9 @@ export interface Context {
   sent?: ((key: string) => void) | undefined;
   /** Where another resident's conversation opens, where it can. */
   link?: ((address: { resident: string; machine: MachineName }) => string) | undefined;
+  /** How the list names another conversation, and its family, for the card
+   *  of where a fork came from. */
+  named?: ((address: { resident: string; machine: MachineName }) => { name: string; agent: "claude" | "codex" }) | undefined;
   /** Answering what the session waits on the user for, where the page
    *  can. */
   asks?:
@@ -718,15 +722,22 @@ export class ConversationView {
   }
 
   /** The room above a block, as its own: none for the first, more where a
-   *  turn begins, a line's space otherwise. */
+   *  turn begins, a line's space otherwise. The chat view's room goes by
+   *  what that view shows before it, in either view, so a change of view
+   *  moves from the one room to the other without a step (`say.css`). */
   private spacing(slot: Slot, index: number): void {
-    const previous = this.blocks[index - 1];
     const block = slot.block;
-    const start =
-      (block.kind === "heard" && slot.element.classList.contains("from-user")) ||
-      (previous?.kind === "ended" && !this.context.words.turn(previous.end.how, previous.end.reason));
+    const user = block.kind === "heard" && slot.element.classList.contains("from-user");
+    const begins = (previous: Block | null | undefined) =>
+      user || (previous?.kind === "ended" && !this.context.words.turn(previous.end.how, previous.end.reason));
+    const previous = this.blocks[index - 1];
     slot.element.classList.toggle("first", index === 0);
-    slot.element.classList.toggle("turn-start", index > 0 && start);
+    slot.element.classList.toggle("turn-start", index > 0 && begins(previous));
+    const chat = this.context.nested ? undefined : this.conversation.chatPrevious(block.key);
+    slot.element.classList.toggle("chat-first", chat === null);
+    slot.element.classList.toggle("chat-turn", !!chat && begins(chat));
+    // Where the agent answers the user's words, the other side begins.
+    slot.element.classList.toggle("chat-answer", !!chat && chat.kind === "heard" && (!chat.from || chat.from.kind === "user") && !user);
   }
 
   /** Lets a block go from the page, keeping its height. */
@@ -1078,15 +1089,46 @@ export class ConversationView {
       }
       case "say": {
         const last = conversation.lastSayOf(block.turn) === block.key;
-        return `${block.stamp}|${last ? `l${conversation.turnEnded(block.turn) ? "e" : ""}${conversation.latestEnded() === block.turn ? "n" : ""}` : ""}`;
+        return `${block.stamp}|${last ? `l${conversation.turnEnded(block.turn) ? "e" : ""}${conversation.latestEnded() === block.turn ? "n" : ""}` : ""}|${this.chatMomentSign(block.key)}`;
       }
       case "heard":
-        return `${block.stamp}|${block.turn && conversation.turnEnded(block.turn) ? "e" : ""}${block.turn && conversation.latestEnded() === block.turn ? "n" : ""}`;
+        return `${block.stamp}|${block.turn && conversation.turnEnded(block.turn) ? "e" : ""}${block.turn && conversation.latestEnded() === block.turn ? "n" : ""}|${this.chatMomentSign(block.key)}`;
       case "uncertain":
         return `${block.stamp}|${this.conversation.hasTurns() ? "t" : ""}`;
+      case "forked":
+        return `${block.stamp}|${this.forkSeed ? "s" : ""}`;
       default:
         return String(block.stamp);
     }
+  }
+
+  /** Where a fork came from, as the desk saw it as the fork was made: for
+   *  a fork whose record does not hold the words it carries on from. */
+  private forkSeed: ForkFrom | null = null;
+
+  /** The moment said above a bubble in the chat view, where one is: the
+   *  time today, yesterday's and the week's by their day, older ones by
+   *  their date, as this device's clock reads the moment the machine
+   *  recorded (`Conversation.chatTime`); the whole moment on a pointer's
+   *  rest. Drawn in both views, folded away in the view of every step
+   *  (`say.css`), so a change of view opens or closes it rather than
+   *  drawing the block again. */
+  private chatMoment(key: string): string {
+    if (this.context.nested) return "";
+    const time = this.conversation.chatTime(key);
+    if (time === null) return "";
+    const at = new Date(time);
+    const { words } = this.context;
+    return `<div class="chat-moment" title="${escape(words.chatMomentFull(at))}">${escape(words.chatMoment(at, new Date()))}</div>`;
+  }
+
+  private chatMomentSign(key: string): string {
+    return this.context.nested ? "" : String(this.conversation.chatTime(key) ?? "");
+  }
+
+  seedFork(from: ForkFrom): void {
+    this.forkSeed = from;
+    this.update();
   }
 
   private findSignature(block: Block): string {
@@ -1109,7 +1151,7 @@ export class ConversationView {
       slot.signature = this.signature(block);
       if (block.kind === "say") {
         this.letGo(block.key);
-        element.innerHTML = this.said(block);
+        element.innerHTML = this.chatMoment(block.key) + this.said(block);
         return;
       }
       if (block.kind === "gap") {
@@ -1125,7 +1167,7 @@ export class ConversationView {
         return;
       }
       this.letGo(block.key);
-      element.innerHTML = this.entry(block);
+      element.innerHTML = (block.kind === "heard" ? this.chatMoment(block.key) : "") + this.entry(block);
       // A plan long enough to scroll in its card hands the wheel on to the
       // conversation at its ends.
       for (const plan of element.querySelectorAll<HTMLElement>(".ask-plan")) handOnAtEdge(plan);
@@ -1209,10 +1251,18 @@ export class ConversationView {
   }
   private followed = true;
 
+  /** Whether the conversation can be heard from at all: out of reach for
+   *  good, or deleted, whether a turn goes on is not known, and the line
+   *  says nothing until it can again. */
+  hearing(can: boolean): void {
+    this.unheard = !can;
+  }
+  private unheard = false;
+
   /** What the line at the foot says, or null when no turn is under way:
    *  what the model is on is said above, by the stretch that holds it. */
   private lineSays(blocks: readonly Block[]): LineSays | null {
-    if (!this.followed) return null;
+    if (!this.followed || this.unheard) return null;
     const conversation = this.conversation;
     // Asked to stop, it is not said to go on while its host ends it.
     if (conversation.halting()) return null;
@@ -1298,9 +1348,13 @@ export class ConversationView {
       case "ask":
         return this.ask(entry);
       case "forked": {
-        const from = `${entry.source.resident} ${entry.source.machine}`;
-        const link = this.context.link ? `<a href="${escape(this.context.link(entry.source))}">${escape(from)}</a>` : escape(from);
-        return `<div class="divider"><span>${words.forkedFrom(link)}</span></div>`;
+        // Where it came from, a card at its head standing for what it
+        // carried over; its words, where its record does not hold them, as
+        // the desk saw them when it was made.
+        const named = this.context.named?.(entry.source) ?? { name: entry.source.resident, agent: this.context.agent && /codex/i.test(this.context.agent) ? "codex" : "claude" };
+        const seed = this.forkSeed;
+        const from: ForkFrom = { name: named.name, agent: named.agent, said: entry.said ?? seed?.said ?? null, answer: entry.answer ?? seed?.answer ?? null };
+        return `<div class="fk-from" data-fork-source="${escape(`${entry.source.resident}@${entry.source.machine}`)}"${entry.through ? ` data-fork-turn="${escape(entry.through)}"` : ""}>${forkCard(from, words.backTo(named.name))}</div>`;
       }
       case "agent-told":
         return this.agentTold(entry);

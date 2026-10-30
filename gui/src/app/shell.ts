@@ -27,9 +27,6 @@ export interface Page {
   readonly title: string;
   /** Stops whatever the page keeps running: a refresh, a watch. */
   leave?(): void;
-  /** The page is about to have `by` pixels more room across, or fewer
-   *  where negative, over `--glide`: the sidebar folding or coming back. */
-  roomWillChange?(by: number): void;
 }
 
 export interface ShellOptions {
@@ -211,6 +208,14 @@ export class Shell {
 
   show(place: Place, page: Page): void {
     const before = this.page;
+    // The page shown already, as the desk is for every conversation, stays:
+    // only where it is changes.
+    if (before === page) {
+      this.place = place;
+      document.title = page.title ? `${page.title} - ${this.options.words.app}` : this.options.words.app;
+      this.sidebar.draw();
+      return;
+    }
     this.page?.leave?.();
     this.page?.element.remove();
     this.page = page;
@@ -274,11 +279,6 @@ export class Shell {
   }
 
   private fold(shut: boolean): void {
-    // The page is told first, so what it shows is carried rather than set
-    // again at every frame of the glide.
-    if (shut !== this.element.classList.contains("folded") && !narrow.matches) {
-      this.page?.roomWillChange?.(shut ? this.sidebarWidth() : -this.sidebarWidth());
-    }
     this.element.classList.toggle("folded", shut);
     try {
       localStorage.setItem("sidebar", shut ? "folded" : "open");

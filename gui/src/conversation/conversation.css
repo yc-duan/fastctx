@@ -21,58 +21,8 @@
   padding: var(--space-6) var(--gutter) var(--space-12);
   display: flex;
   flex-direction: column;
-  opacity: calc(var(--shown) * var(--held-ink));
+  opacity: var(--shown);
   transition: --shown var(--enter) var(--ease-out);
-}
-
-/* Carried through a change of the room beside it (`column-hold.ts`): the
-   column at once at the width it will end with, its lines broken once, and
-   carried from where its words stood as the room changes round it; where
-   they break anew, the words dip and come back up. */
-@property --held-glide {
-  syntax: "<number>";
-  inherits: false;
-  initial-value: 0;
-}
-
-@property --held-ink {
-  syntax: "<number>";
-  inherits: false;
-  initial-value: 1;
-}
-
-/* The page's own column, not one shown in its side. */
-.column-held > .talk-scroller,
-.column-held > .sp-split > .talk-main > .talk-scroller {
-  overflow-x: hidden;
-}
-
-:is(.column-held > .talk-scroller, .column-held > .sp-split > .talk-main > .talk-scroller) > .transcript {
-  --held-glide: 1;
-  width: var(--held);
-  max-width: none;
-  translate: calc(var(--held-shift) * var(--held-glide)) 0;
-}
-
-:is(.column-held.column-moving > .talk-scroller, .column-held.column-moving > .sp-split > .talk-main > .talk-scroller) > .transcript {
-  --held-glide: 0;
-  transition:
-    --shown var(--enter) var(--ease-out),
-    --held-glide var(--glide) var(--glide-easing);
-}
-
-.transcript.column-dip {
-  animation: column-dip var(--glide) var(--ease-out);
-}
-
-@keyframes column-dip {
-  from {
-    --held-ink: 0.45;
-  }
-
-  to {
-    --held-ink: 1;
-  }
 }
 
 /* In whole pixels where the system can round. */
@@ -528,7 +478,7 @@
   color: var(--text-3);
   --turn: -90deg;
   rotate: var(--turn);
-  transition: --turn var(--fold) var(--fold-easing), color var(--hover) var(--ease);
+  transition: --turn var(--expand) var(--expand-easing), color var(--hover) var(--ease);
 }
 
 .group-head[aria-expanded="true"] .glyph {
@@ -544,7 +494,7 @@
 .fold {
   display: grid;
   grid-template-rows: 0fr;
-  transition: grid-template-rows var(--fold) var(--fold-easing);
+  transition: grid-template-rows var(--expand) var(--expand-easing);
 }
 
 .fold.open {
@@ -558,7 +508,7 @@
 
 .fold:not(.open) > .fold-inner {
   visibility: hidden;
-  transition: visibility 0s var(--fold);
+  transition: visibility 0s var(--expand);
 }
 
 .rows {
@@ -922,7 +872,7 @@
   opacity: var(--shown);
   --turn: -90deg;
   rotate: var(--turn);
-  transition: --shown var(--hover) var(--ease), --turn var(--fold) var(--fold-easing);
+  transition: --shown var(--hover) var(--ease), --turn var(--expand) var(--expand-easing);
 }
 
 .row-line:hover .row-chevron,

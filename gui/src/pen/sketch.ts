@@ -29,9 +29,10 @@ export class Sketch {
     return this.put(swatch(x, y, width, height, this.random, corner), `sk-${tone}`);
   }
 
-  /** A line drawn against a straight edge. */
-  rule(from: Point, to: Point, width: number, ink: SketchInk): this {
-    return this.put(outline(ruledPoints(from, to, this.random), width, this.random, { pressure: 0.18, taper: 0.04 }), `sk-${ink}`);
+  /** A line drawn against a straight edge, thinning over `taper` of its
+   *  length at either end. */
+  rule(from: Point, to: Point, width: number, ink: SketchInk, taper = 0.04): this {
+    return this.put(outline(ruledPoints(from, to, this.random), width, this.random, { pressure: 0.18, taper }), `sk-${ink}`);
   }
 
   /** A free stroke along `points`, thinning at its ends. */

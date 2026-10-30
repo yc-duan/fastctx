@@ -206,6 +206,7 @@
 .pop-list {
   display: flex;
   flex-direction: column;
+  gap: var(--row-gap);
   margin: 0 calc(-1 * var(--space-2));
 }
 
@@ -374,6 +375,7 @@
   display: grid;
   grid-template-columns: minmax(0, 1fr) max-content max-content max-content;
   column-gap: var(--space-4);
+  row-gap: var(--row-gap);
   font-size: var(--body-size);
   /* A level in is one small step, as in the sidebar. */
   --ap-pad: var(--space-2);
@@ -507,7 +509,7 @@ button.agent-machine:hover,
   color: var(--text-3);
   --turn: -90deg;
   rotate: var(--turn);
-  transition: --turn var(--fold) var(--fold-easing);
+  transition: --turn var(--expand) var(--expand-easing);
 }
 
 .open > .agent-arrow {
@@ -523,7 +525,7 @@ button.agent-machine:hover,
   display: grid;
   grid-template-columns: subgrid;
   grid-template-rows: 1fr;
-  transition: grid-template-rows var(--fold) var(--fold-easing);
+  transition: grid-template-rows var(--expand) var(--expand-easing);
 }
 
 .agent-fold.shut {
@@ -534,6 +536,7 @@ button.agent-machine:hover,
   grid-column: 1 / -1;
   display: grid;
   grid-template-columns: subgrid;
+  row-gap: var(--row-gap);
   align-content: start;
   min-height: 0;
   overflow: hidden;

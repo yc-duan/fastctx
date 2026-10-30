@@ -30,8 +30,5 @@ export function deferredPage(title: string, make: () => Promise<Page>): Page {
       left = true;
       page?.leave?.();
     },
-    roomWillChange(by) {
-      page?.roomWillChange?.(by);
-    },
   };
 }

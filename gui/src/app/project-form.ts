@@ -53,18 +53,28 @@ interface Place {
   path: string;
 }
 
-const slugRule = /^[a-z][a-z0-9-]{0,31}$/;
+const slugRule = /^[a-z][a-z0-9]*(-[a-z0-9]+)*$/;
 
-/** A short name suggested from a Latin name; nothing from other scripts. */
-function suggest(name: string): string {
-  const slug = name
+/** A new project's short name, which commands and each machine's folders
+ *  know it by (`TownName`) and the user never types: its name's own words
+ *  where it is written in Latin letters, else `project`; with an ending of
+ *  its own after a first try found the name taken, here or on the hub. At
+ *  most 32 characters, as every release reads them. */
+function shortName(name: string, attempt: number): string {
+  const words = name
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^[^a-z]+/, "")
-    .replace(/-+$/, "")
-    .slice(0, 32);
-  return slugRule.test(slug) ? slug : "";
+    .slice(0, 24)
+    .replace(/-+$/, "");
+  const base = slugRule.test(words) ? words : "project";
+  if (attempt === 0 && base !== "project") return base;
+  const ending = Array.from(crypto.getRandomValues(new Uint8Array(4)), (byte) => "abcdefghijkmnpqrstuvwxyz23456789"[byte % 32]).join("");
+  return `${base}-${ending}`;
 }
+
+/** Whether opening a project failed only because its short name is taken. */
+const nameTaken = (error: unknown) => /exists already|exists on this hub already/.test(String(error));
 
 export class ProjectForm {
   private readonly dialog: HTMLDialogElement;
@@ -76,7 +86,6 @@ export class ProjectForm {
   /** The machines it spans, by name, in the order chosen. */
   private machines: string[] = [];
   private places: Place[] = [];
-  private slugTouched = false;
   private busy = false;
   /** What narrows the machines to choose among. */
   private query = "";
@@ -105,18 +114,10 @@ export class ProjectForm {
     });
     this.body.addEventListener("input", (event) => {
       const target = event.target as HTMLInputElement;
-      if (target.name === "slug") {
-        this.slugTouched = true;
-        this.slugState(false);
-      }
       // A field filled in no longer needs anything.
       if (target.name === "name" || target.name === "what") {
         const said = this.body.querySelector<HTMLElement>(`[data-need="${target.name}"]`);
         if (said && target.value.trim()) said.hidden = true;
-      }
-      if (target.name === "name" && !this.editing && !this.slugTouched) {
-        const slug = this.body.querySelector<HTMLInputElement>("[name=slug]");
-        if (slug) slug.value = suggest(target.value);
       }
       if (target.classList.contains("pf-filter")) {
         this.query = target.value.trim().toLowerCase();
@@ -140,7 +141,6 @@ export class ProjectForm {
     this.editing = editing;
     const logins = groupsOf(this.options.store.world.peek()).map((group) => group.login);
     this.login = (login && logins.find((known) => sameLogin(known, login))) ?? logins[0] ?? null;
-    this.slugTouched = false;
     this.query = "";
     this.reach = CHOICE_ROWS;
     const here = this.options.store.world.peek()?.here;
@@ -259,7 +259,6 @@ export class ProjectForm {
     // what was typed; `open` empties it first.
     const kept = {
       name: this.body.querySelector<HTMLInputElement>("[name=name]")?.value ?? record?.name ?? "",
-      slug: this.body.querySelector<HTMLInputElement>("[name=slug]")?.value ?? "",
       what: this.body.querySelector<HTMLTextAreaElement>("[name=what]")?.value ?? record?.what ?? "",
     };
     this.body.innerHTML = `
@@ -283,13 +282,6 @@ export class ProjectForm {
           <label class="field pf-name"><span class="field-label">${escape(words.name)}</span>
             <input name="name" autocomplete="off" required placeholder="${escape(words.namePlaceholder)}" value="${escape(kept.name)}">
             <span class="field-hint pf-need" data-need="name" hidden>${escape(words.needName)}</span></label>
-          ${
-            this.editing
-              ? ""
-              : `<label class="field pf-slug" title="${escape(words.slugHint)}"><span class="field-label">${escape(words.slug)}</span>
-            <input name="slug" autocomplete="off" required spellcheck="false" value="${escape(kept.slug)}" aria-describedby="pf-slug-rule">
-            <span class="field-hint pf-slug-rule" id="pf-slug-rule" hidden>${escape(words.slugHint)}</span></label>`
-          }
         </div>
         <div class="field"><span class="field-label">${escape(words.what)}<span class="field-tip" tabindex="0" aria-label="${escape(words.whatTip)}">?<span class="field-tip-card" role="tooltip">${escape(words.whatTip)}</span></span></span>
           <textarea name="what" rows="5" required aria-label="${escape(words.what)}" placeholder="${escape(words.whatPlaceholder)}">${escape(kept.what)}</textarea>
@@ -366,16 +358,16 @@ export class ProjectForm {
     return drawn;
   }
 
-  /** Whether the short name is as it must be; said beside it only once it
-   *  is not. */
-  private slugState(check: boolean): boolean {
-    const field = this.body.querySelector<HTMLInputElement>("[name=slug]");
-    const rule = this.body.querySelector<HTMLElement>(".pf-slug-rule");
-    if (!field || !rule) return true;
-    const right = slugRule.test(field.value.trim());
-    if (check || right) rule.hidden = right;
-    field.classList.toggle("wrong", check && !right);
-    return right;
+  /** Opens the new project under a short name of its own, another one
+   *  each time the one tried is taken. */
+  private async opened(name: string, fields: RecordFields): Promise<{ town: string }> {
+    for (let attempt = 0; ; attempt += 1) {
+      try {
+        return await this.options.create(shortName(name, attempt), fields, this.login);
+      } catch (error) {
+        if (attempt >= 4 || !nameTaken(error)) throw error;
+      }
+    }
   }
 
   private async submit(): Promise<void> {
@@ -397,10 +389,6 @@ export class ProjectForm {
       this.body.querySelector<HTMLElement>(first === "machines" ? ".pf-filter" : `[name="${first}"]`)?.focus();
       return;
     }
-    if (!this.editing && !this.slugState(true)) {
-      this.body.querySelector<HTMLInputElement>("[name=slug]")?.focus();
-      return;
-    }
     const fields: RecordFields = {
       name: value("name"),
       what: value("what"),
@@ -411,7 +399,6 @@ export class ProjectForm {
       // is finished (`world-journals.md`); a record that names it keeps it.
       canon: this.editing?.record.canon ?? null,
     };
-    const town = this.editing?.town ?? value("slug");
     const note = this.body.querySelector<HTMLElement>(".sheet-note")!;
     const go = this.body.querySelector<HTMLButtonElement>(".sheet-go")!;
     this.busy = true;
@@ -419,7 +406,7 @@ export class ProjectForm {
     go.textContent = words.saving;
     note.hidden = true;
     try {
-      const written = this.editing ? await this.options.edit(town, fields) : await this.options.create(town, fields, this.login);
+      const written = this.editing ? await this.options.edit(this.editing.town, fields) : await this.opened(value("name"), fields);
       this.busy = false;
       this.close();
       this.options.done(written.town);

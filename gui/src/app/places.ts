@@ -7,7 +7,7 @@ import type { AgentSection, AgentTab } from "./profile-words";
 /** The features a World can turn on (`world-gui.md`, 功能). */
 export type Feature = "conversations" | "collaboration" | "memory" | "sentinels";
 const features: Feature[] = ["conversations", "collaboration", "memory", "sentinels"];
-const sections: AgentSection[] = ["claude", "codex", "prompt", "mcp"];
+const sections: AgentSection[] = ["claude", "codex", "prompt", "skills", "mcp"];
 
 export type Place =
   | { kind: "home" }
@@ -26,6 +26,8 @@ export type Place =
   /** The drawing of the machines, with one chosen when `focus` names it;
    *  or their update view, with that one ticked. */
   | { kind: "machines"; focus?: string; updates?: boolean }
+  /** Every project of the user's accounts, managed as a whole. */
+  | { kind: "projects" }
   /** A machine's own page: how it is doing, and what is done to it. */
   | { kind: "machine"; name: string }
   /** The agents: a section of them, the one last shown when none is
@@ -83,6 +85,8 @@ export function link(place: Place): string {
       return `#/memory/${part(place.town)}/${part(place.name)}`;
     case "page":
       return `#/page/${part(place.town)}/${part(place.page)}${place.version === null ? "" : `/${place.version}`}`;
+    case "projects":
+      return "#/projects";
     case "machines":
       if (place.updates) return place.focus ? `#/updates/${part(place.focus)}` : "#/updates";
       return place.focus ? `#/machines/${part(place.focus)}` : "#/machines";
@@ -145,6 +149,8 @@ export function placeOf(hash: string): Place {
         return { kind: "page", town: parts[1], page: parts[2], version: version !== null && Number.isInteger(version) && version > 0 ? version : null };
       }
       break;
+    case "projects":
+      return { kind: "projects" };
     case "machines":
       return parts[1] ? { kind: "machines", focus: parts[1] } : { kind: "machines" };
     case "updates":

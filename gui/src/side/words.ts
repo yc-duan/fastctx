@@ -4,7 +4,7 @@
 import type { GoalStatus, NodeState, PausedBy } from "./types";
 
 export interface SideWords {
-  /** The parts of the overview, each under its quiet name. */
+  /** The conversation's own parts, each a word in the side's first line. */
   pages: { plan: string; goal: string; collab: string };
   /** The switch that opens the side, and the act that shuts it. */
   panel: string;
@@ -12,29 +12,19 @@ export interface SideWords {
   /** The line between the side and the conversation, dragged. */
   resize: string;
   close: string;
-  back: string;
   /** A tab's conversation opened as the page's own. */
   openMain: string;
   /** Said where a conversation dragged from the list would open. */
   dropHere: string;
-  /** Where the side stands: its menu, and each place in it. */
-  dock: string;
+  /** The side's "⋯", and each place it may stand at, in it. */
+  more: string;
   docks: { right: string; bottom: string; left: string };
-  /** The side's home, the way back to it from a tab, and how another
-   *  conversation comes into it. */
-  home: string;
+  /** How another conversation comes into the side, said until one has. */
   dropHint: string;
-  /** The plan's way in the card above the input: opening it, and how far
-   *  along it is. */
-  planOpen: string;
+  /** How far along the plan is, on its tab. */
   planCount: (reached: number, stops: number) => string;
-  /** The team's whole tree, opened from its card. */
-  teamOpen: string;
-  /** Branching off a side conversation, its name where it has none yet,
-   *  and the branch not made. */
-  fork: string;
+  /** A side conversation's name where it has none yet. */
   sideTalk: string;
-  forkFailed: string;
   goal: GoalWords;
   collab: CollabWords;
 }
@@ -96,6 +86,8 @@ export interface CollabWords {
   separator: string;
   /** To the row of the call that sent one of the host's agents. */
   jump: string;
+  /** How many work now, said on the team's tab. */
+  atWork: (n: number) => string;
 }
 
 function clock(ms: number, now: number, locale: string, today: string, tomorrow: string): string {
@@ -117,17 +109,11 @@ export const zhSide: SideWords = {
   close: "关闭",
   openMain: "在主区打开",
   dropHere: "分屏",
-  dock: "停靠位置",
+  more: "更多",
   docks: { right: "停在右边", bottom: "停在下边", left: "停在左边" },
-  home: "概览",
   dropHint: "把左边的一段对话拖过来，分屏来看",
-  planOpen: "全文",
   planCount: (reached, stops) => `${reached}/${stops}`,
-  teamOpen: "全部",
-  fork: "分出一段侧边对话",
   sideTalk: "侧边对话",
-  forkFailed: "侧边对话没分出来",
-  back: "返回",
   goal: {
     bar: { active: "进行中的目标", paused: "已暂停", blocked: "阻碍", complete: "已完成" },
     states: { active: "进行中", paused: "已暂停", blocked: "阻碍", complete: "已完成" },
@@ -187,6 +173,7 @@ export const zhSide: SideWords = {
     steps: (n) => `${n} 步`,
     separator: "，",
     jump: "转到它",
+    atWork: (n) => `${n} 个在干活`,
   },
 };
 
@@ -198,17 +185,11 @@ export const enSide: SideWords = {
   close: "Close",
   openMain: "Open as the main conversation",
   dropHere: "Split view",
-  dock: "Where it stands",
+  more: "More",
   docks: { right: "On the right", bottom: "At the foot", left: "On the left" },
-  home: "Overview",
   dropHint: "Drag a conversation here from the list to see both",
-  planOpen: "The whole plan",
   planCount: (reached, stops) => `${reached}/${stops}`,
-  teamOpen: "Everyone",
-  fork: "Branch off a side conversation",
   sideTalk: "Side conversation",
-  forkFailed: "Couldn't branch off a side conversation",
-  back: "Back",
   goal: {
     bar: { active: "Goal", paused: "Paused", blocked: "Blocked", complete: "Done" },
     states: { active: "Under way", paused: "Paused", blocked: "Blocked", complete: "Done" },
@@ -266,5 +247,6 @@ export const enSide: SideWords = {
     steps: (n) => `${n} step${n === 1 ? "" : "s"}`,
     separator: ", ",
     jump: "Go to it",
+    atWork: (n) => `${n} at work`,
   },
 };

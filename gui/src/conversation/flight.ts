@@ -121,7 +121,7 @@ function settle(bubble: HTMLElement): void {
 }
 
 /** A CSS `cubic-bezier()` as a function of progress. */
-function bezier(easing: string): (t: number) => number {
+export function bezier(easing: string): (t: number) => number {
   const numbers = /cubic-bezier\(([^)]+)\)/.exec(easing)?.[1]?.split(",").map(Number);
   if (!numbers || numbers.length !== 4 || numbers.some((n) => !Number.isFinite(n))) throw new Error(`not a cubic-bezier easing: ${easing}`);
   const [x1, y1, x2, y2] = numbers as [number, number, number, number];

@@ -81,13 +81,13 @@ html.gripping-y * {
   user-select: none !important;
 }
 
-/* The sidebar is the book's contents, on the same page as the rest, set
-   apart by its edge alone, a line ruled by hand. */
+/* The sidebar is the book's contents, on a sheet a shade under the page,
+   its edge a line ruled by hand. */
 .sidebar-frame {
   position: relative;
   min-width: 0;
   overflow: hidden;
-  background: var(--bg);
+  background: var(--bg-sunken);
 }
 
 .sidebar-frame::after {
@@ -364,8 +364,10 @@ html.gripping-y * {
    and how many are in it; under a pointer those give way to its "⋯", as a
    conversation's marks give way to its buttons. */
 .project-link {
+  width: 100%;
   padding-left: calc(var(--space-3) + 18px + 10px);
   padding-right: var(--space-2);
+  text-align: left;
 }
 
 .project-row:hover .project-link {
@@ -423,14 +425,14 @@ html.gripping-y * {
 }
 
 .project-row:hover .side-project-more,
-.project-row:focus-within .side-project-more,
+.project-row:has(:focus-visible) .side-project-more,
 .side-project-more[aria-expanded="true"] {
   --shown: 1;
   pointer-events: auto;
 }
 
 .project-row:hover .project-shut-marks,
-.project-row:focus-within .project-shut-marks,
+.project-row:has(:focus-visible) .project-shut-marks,
 .project-row:has(.side-project-more[aria-expanded="true"]) .project-shut-marks {
   visibility: hidden;
 }
@@ -457,7 +459,7 @@ html.gripping-y * {
   }
 
   .project-row:hover .project-shut-marks,
-  .project-row:focus-within .project-shut-marks {
+  .project-row:has(:focus-visible) .project-shut-marks {
     visibility: visible;
   }
 }
@@ -468,7 +470,7 @@ html.gripping-y * {
 .project-talks {
   display: grid;
   grid-template-rows: 1fr;
-  transition: grid-template-rows var(--fold) var(--fold-easing);
+  transition: grid-template-rows var(--expand) var(--expand-easing);
 }
 
 .project-talks.shut {
@@ -501,16 +503,21 @@ html.gripping-y * {
 }
 
 /* Conversations: one line each, in fixed columns so a long name never moves
-   the marks: which agent, the name cut short, a dot for what it is doing,
-   the kind of device it lives on. Waiting on the reader is a filled clay
-   dot; working, a clay ring that breathes; idle, nothing, the place kept. */
-.side-places {
+   the marks: which agent, the name cut short, the kind of device it lives
+   on. Every name in the sidebar begins on one line, a project's
+   conversations under its own name, not a step in. How one stands is its
+   agent's mark: turning slowly while it works, in clay while it waits on
+   the reader, as it is at rest otherwise. */
+.side-places,
+.projects-places {
   display: grid;
-  gap: 1px;
+  gap: var(--row-gap);
 }
 
 .talks {
-  margin: 1px 0 var(--space-1);
+  display: grid;
+  gap: var(--row-gap);
+  margin: var(--row-gap) 0 var(--space-1);
   padding: 0;
   list-style: none;
 }
@@ -523,12 +530,18 @@ html.gripping-y * {
   }
 }
 
+@property --talk-turn {
+  syntax: "<angle>";
+  inherits: false;
+  initial-value: 0deg;
+}
+
 .talk-row,
 .talk-all {
   display: grid;
-  grid-template-columns: 16px minmax(0, 1fr) 10px 16px;
+  grid-template-columns: 18px minmax(0, 1fr) auto;
   align-items: center;
-  column-gap: 9px;
+  column-gap: 10px;
   min-height: 34px;
   padding: 4px var(--space-3);
   border-radius: var(--radius-s);
@@ -537,13 +550,6 @@ html.gripping-y * {
   line-height: var(--leading-ui);
   text-decoration: none;
   transition: color var(--hover) var(--ease), background-color var(--hover) var(--ease);
-}
-
-/* A project's conversations stand under its name, a step in from its
-   folder. */
-.talks.in-project .talk-row,
-.talks.in-project .talk-all {
-  padding-left: calc(var(--space-3) + 18px);
 }
 
 .talk-row:hover,
@@ -595,6 +601,33 @@ html.gripping-y * {
   color: var(--text-strong);
 }
 
+.talk-row.mark-ask .talk-host {
+  color: var(--accent);
+}
+
+.talk-row.mark-busy .talk-host {
+  color: var(--text-2);
+}
+
+.talk-row.mark-busy .talk-host .glyph {
+  rotate: var(--talk-turn);
+  animation: talk-turning var(--turning) linear infinite;
+}
+
+@keyframes talk-turning {
+  to {
+    --talk-turn: 360deg;
+  }
+}
+
+:root[data-reduced] .talk-row.mark-busy .talk-host .glyph {
+  animation: none;
+}
+
+:root[data-reduced] .talk-row.mark-busy .talk-host {
+  color: var(--text);
+}
+
 /* A conversation whose machine is away: listed as it last was, quieter. */
 .talk-row.mark-away .talk-name,
 .talk-row.mark-away .talk-host,
@@ -602,9 +635,15 @@ html.gripping-y * {
   color: var(--text-3);
 }
 
+/* Being deleted is said where the device's mark stands. */
 .talk-state {
-  display: grid;
-  place-items: center;
+  color: var(--text-3);
+  font-size: var(--size-text);
+  white-space: nowrap;
+}
+
+.talk-row.deleting .talk-device {
+  display: none;
 }
 
 .talk-all {
@@ -613,7 +652,7 @@ html.gripping-y * {
 }
 
 .talk-all .count {
-  grid-column: 3 / 5;
+  grid-column: 3;
   justify-self: end;
 }
 
@@ -658,6 +697,8 @@ html.gripping-y * {
 
 .sidebar-foot {
   flex: none;
+  display: grid;
+  gap: var(--row-gap);
   padding-top: var(--space-2);
 }
 
@@ -896,6 +937,12 @@ html.framed .page-head {
   padding-right: calc(3 * 46px + var(--space-2));
 }
 
+/* On the desk the window's buttons stand over the top row's last pane
+   alone: the others' heads end at their own edge (`desk/desk.css`). */
+html.framed .desk-pane:not(.dk-corner) > :is(.conversation-page, .dk-fork-page) > .page-head {
+  padding-right: var(--space-4);
+}
+
 /* What a pointer shows on hover, raised by a long press on a touch screen. */
 .touch-hint,
 .pointer-hint {
@@ -948,18 +995,35 @@ html.framed .page-head {
   animation: none;
 }
 
-/* Every conversation: the sidebar's lines, wider, with a search above. */
+/* Every conversation: the sidebar's lines, wider, with a search above that
+   holds still while the rows scroll under it. */
 .talks-page {
   display: flex;
   flex-direction: column;
   min-height: 0;
 }
 
-.talks-body {
-  flex: 1;
+.talks-find {
+  flex: none;
   width: min(100%, 720px);
   margin: 0 auto;
-  padding: var(--space-2) var(--gutter) var(--space-10);
+  padding: var(--space-2) var(--gutter) var(--space-3);
+}
+
+.talks-body {
+  flex: 1;
+  min-height: 0;
+  width: min(100%, 720px);
+  margin: 0 auto;
+  padding: 0 var(--gutter) var(--space-10);
+}
+
+/* When one was archived, quiet at the row's end where its machine would be. */
+.talk-when {
+  justify-self: end;
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 
 .talks-search {

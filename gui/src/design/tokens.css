@@ -74,6 +74,10 @@
   --space-8: 32px;
   --space-10: 40px;
   --space-12: 48px;
+  /* Rows that may be filled at once, the current one and the one under the
+     pointer, stand this far apart, so two filled rows never run together
+     into one shape. */
+  --row-gap: 2px;
 
   --radius-s: 6px;
   --radius-m: 10px;
@@ -100,6 +104,12 @@
      easing in and settling long. */
   --glide: 520ms;
   --glide-easing: cubic-bezier(0.45, 0, 0.2, 1);
+  /* What opens and closes in place, a tool's row, a command's output, a
+     project's folder, a fold in a picker, and the chevron turning with it:
+     the sidebar's own rhythm, the one the user holds the rest to (user
+     2026-10-29). What pops up over the page keeps `--fold`. */
+  --expand: 520ms;
+  --expand-easing: cubic-bezier(0.45, 0, 0.2, 1);
   --enter: 220ms;
   /* A turn's line comes in softly, and goes at once. */
   --line-in: 240ms;
@@ -119,6 +129,8 @@
   --draw: 1100ms;
   --stagger: 60ms;
   --breath: 1.6s;
+  /* One turn of a mark at work, slow enough to be calm (`app/shell.css`). */
+  --turning: 3.2s;
   --breath-slow: 2.6s;
   --flow: 2.8s;
   --flow-slow: 3.4s;
@@ -366,6 +378,7 @@
 :root[data-reduced] {
   --hover: 0ms;
   --fold: 0ms;
+  --expand: 0ms;
   --glide: 0ms;
   --enter: 0ms;
   --line-in: 0ms;

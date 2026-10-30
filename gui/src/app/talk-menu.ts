@@ -24,12 +24,16 @@ export interface TalkMenuOptions {
   towns(r: ResidentNow): { town: string; name: string }[];
   /** Whether the conversation's machine is there to be asked now. */
   reachable(r: ResidentNow): boolean;
+  /** Whether its machine is out of reach for good. */
+  departed?(r: ResidentNow): boolean;
   /** Who it is with, where it has no name; where it is said to be. Never
    *  the computer an agent assisting the user runs on. */
   someone(r: ResidentNow): string;
   place(r: ResidentNow): string;
   /** Asks before deleting, and deletes; then `then`. */
   askDelete(r: ResidentNow, then?: () => void): void;
+  /** Opens it side by side with the conversations shown. */
+  beside?(r: ResidentNow): void;
 }
 
 export interface MenuOpening {
@@ -39,6 +43,11 @@ export interface MenuOpening {
   at?: { x: number; y: number };
   /** Renames it where it is shown. */
   rename(): void;
+  /** Opened from its own head, where it is shown already. */
+  shown?: boolean;
+  /** Its head has no room for finding and the choice of view: they are
+   *  here, as on a phone. */
+  folded?: boolean;
   /** Finds in it, where its page is the one shown. */
   find?: () => void;
   /** Its page's choice between every step and only what was said. */
@@ -172,7 +181,7 @@ export class TalkMenu {
     const head = narrow.matches
       ? `<div class="talk-menu-head"><span class="talk-menu-host">${glyph(r.about.host.agent === "claude" || r.about.host.agent === "codex" ? r.about.host.agent : "agents", 18)}</span><span class="talk-menu-name">${escape(titleOf(r) ?? this.options.someone(r))}</span></div>`
       : "";
-    const note = away ? `<p class="talk-menu-note">${escape(words.offline(this.options.place(r)))}</p>` : "";
+    const note = away ? `<p class="talk-menu-note">${escape(this.options.departed?.(r) ? words.departed : words.offline(this.options.place(r)))}</p>` : "";
     const item = (act: string, icon: Parameters<typeof glyph>[0], label: string, disabled: boolean, end = "") =>
       `<button class="talk-menu-item${act === "delete" ? " danger" : ""}" type="button" role="menuitem" data-act="${act}"${disabled ? " disabled" : ""}>${glyph(icon, 16)}<span class="talk-menu-label">${escape(label)}</span>${end}</button>`;
     const rule = `<hr class="talk-menu-rule">`;
@@ -190,7 +199,9 @@ export class TalkMenu {
       : [
           // On a phone the head has no room for finding or for the choice
           // of view: they are here.
-          ...(narrow.matches && (this.opened.how.find || this.opened.how.steps || this.opened.how.panel)
+          // A phone shows one conversation at a time.
+          ...(this.options.beside && !this.opened.how.shown && !narrow.matches ? [item("beside", "split", words.beside, false), rule] : []),
+          ...((narrow.matches || this.opened.how.folded) && (this.opened.how.find || this.opened.how.steps || this.opened.how.panel)
             ? [
                 ...(this.opened.how.panel ? [item("panel", "panel", words.panel, false)] : []),
                 ...(this.opened.how.steps ? [item("steps", "steps", this.opened.how.steps.shown() ? words.viewSaid : words.viewSteps, false)] : []),
@@ -274,6 +285,11 @@ export class TalkMenu {
         const steps = opened.how.steps;
         this.close();
         steps?.toggle();
+        return;
+      }
+      case "beside": {
+        this.close();
+        this.options.beside?.(r);
         return;
       }
       case "panel": {

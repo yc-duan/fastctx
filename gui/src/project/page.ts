@@ -248,6 +248,7 @@ export class ProjectPage {
     if (writer.kind === "user") return this.options.words.you;
     if (writer.kind === "resident") return `${writer.address.resident} ${writer.address.machine}`;
     if (writer.kind === "page") return writer.page.page;
+    if (writer.kind === "elsewhere") return this.options.words.elsewhere(writer.page);
     return agentName(writer.agent);
   }
 

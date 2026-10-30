@@ -25,3 +25,8 @@
   cursor: grabbing !important;
   user-select: none;
 }
+
+/* Over a place that would not take it, the card steps back. */
+.td-card.td-nowhere {
+  color: var(--text-3);
+}

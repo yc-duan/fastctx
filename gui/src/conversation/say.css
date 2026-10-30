@@ -119,6 +119,85 @@
   --said: 1;
 }
 
+/* The view of what was said reads as a chat: each bubble on its own with
+   room round its ground, those one side says in a row closer together, and
+   more where the other side begins (user 2026-10-29: they ran into one).
+   The room goes from one view's to the other's over the change of view,
+   with `--chat`, as the grounds do with `--said`: a room changed at once
+   would move every block under the reader at the start or the end. */
+@property --chat {
+  syntax: "<number>";
+  inherits: false;
+  initial-value: 0;
+}
+
+.transcript > .block {
+  --steps-room: var(--block-gap);
+  --chat-room: calc(var(--space-2) + 2 * var(--hang-y));
+  transition: --chat var(--glide) var(--glide-easing);
+}
+
+.transcript > .block.turn-start {
+  --steps-room: var(--turn-gap);
+}
+
+.transcript > .block.first {
+  --steps-room: 0px;
+}
+
+.transcript > .block.chat-answer {
+  --chat-room: calc(var(--space-5) + 2 * var(--hang-y));
+}
+
+.transcript > .block.chat-turn {
+  --chat-room: var(--turn-gap);
+}
+
+.transcript > .block.chat-first {
+  --chat-room: 0px;
+}
+
+.transcript[data-view="said"] > .block,
+.transcript.view-leaving > .block {
+  padding-top: calc(var(--steps-room) + var(--chat) * (var(--chat-room) - var(--steps-room)));
+}
+
+.transcript > .block.from-user {
+  transition: --said var(--glide) var(--glide-easing), --chat var(--glide) var(--glide-easing);
+}
+
+.transcript[data-view="said"]:not(.view-leaving) > .block,
+.transcript[data-view="said"]:not(.view-leaving) > .block > .chat-moment {
+  --chat: 1;
+}
+
+/* When it was said, above the bubble said a while after the one before:
+   quiet, small, in the middle, as a chat says it. In every step's view it
+   is folded away, and opens and closes with the change of view. */
+.chat-moment {
+  --moment-line: calc(var(--size-fine) * var(--leading-ui));
+  --moment-room: calc(var(--space-3) + var(--hang-y));
+  align-self: stretch;
+  width: 100%;
+  height: calc(var(--chat) * var(--moment-line));
+  margin: 0 0 calc(var(--chat) * var(--moment-room));
+  overflow: clip;
+  color: var(--text-3);
+  opacity: clamp(0, calc(var(--chat) * 2 - 1), 1);
+  font-size: var(--size-fine);
+  line-height: var(--moment-line);
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+  cursor: default;
+  transition: --chat var(--glide) var(--glide-easing);
+}
+
+/* The user's words hang out to the right in this view; their moment stays
+   in the middle of the column all the same. */
+.transcript > .block.from-user > .chat-moment {
+  translate: calc(-1 * var(--chat) * var(--hang-x)) 0;
+}
+
 /* What follows the words keeps clear of their ground. */
 .transcript > .block-say > .say + .turn-acts,
 .transcript > .block-prose > .prose + .message-acts > .turn-acts {
@@ -159,4 +238,26 @@
 .transcript > .block.view-shut {
   --unfold: 0;
   transition: none;
+}
+
+/* What changes room over a change of view does so in whole pixels where
+   the system can round: the view keeps the reader's block still by
+   scrolling as much as the room above it changed, and scrolls in whole
+   pixels, so a fraction left over would shake everything a pixel back and
+   forth as it moves. */
+@supports (width: round(nearest, 1px, 1px)) {
+  .transcript[data-view="said"] > .block,
+  .transcript.view-leaving > .block {
+    padding-top: round(nearest, calc(var(--steps-room) + var(--chat) * (var(--chat-room) - var(--steps-room))), 1px);
+  }
+
+  .chat-moment {
+    height: round(nearest, calc(var(--chat) * var(--moment-line)), 1px);
+    margin-bottom: round(nearest, calc(var(--chat) * var(--moment-room)), 1px);
+  }
+
+  .transcript > .block.view-fold {
+    height: round(nearest, calc(var(--full) * var(--unfold)), 1px);
+    padding-top: round(nearest, calc(var(--gap) * var(--unfold)), 1px);
+  }
 }

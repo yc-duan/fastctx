@@ -12,8 +12,8 @@ export type MemoryKind = "journal" | "spec";
 
 export interface MemoryAuthor {
   by: Writer;
-  /** The machine it was written on. */
-  on: string;
+  /** The machine it was written on; left out as a project record's is. */
+  on?: string;
   at: string;
   host?: { agent: string; client?: string; version?: string } | null;
   model?: string | null;

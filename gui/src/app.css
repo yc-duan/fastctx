@@ -7,10 +7,10 @@
   display: flex;
   flex-direction: column;
   height: 100%;
+  container: talk / inline-size;
 }
 
-.conversation-page > .page-head,
-.talk-main > .page-head {
+.conversation-page > .page-head {
   position: relative;
   z-index: 2;
 }
@@ -19,8 +19,7 @@
    fades out beneath the composer; the fade grows in once the conversation
    has left its top. A shade over the words, not a mask on them: masked,
    the whole conversation would lose its subpixel smoothing on Windows. */
-.conversation-page > .page-head::after,
-.talk-main > .page-head::after {
+.conversation-page > .page-head::after {
   content: "";
   position: absolute;
   left: 0;
@@ -32,8 +31,7 @@
   transition: --edge var(--hover) var(--ease);
 }
 
-.conversation-page.scrolled > .page-head::after,
-.conversation-page.scrolled > .talk-main > .page-head::after {
+.conversation-page.scrolled > .page-head::after {
   --edge: var(--space-6);
 }
 
@@ -41,12 +39,12 @@
   flex: 1;
 }
 
-/* A conversation's head, one line by design: the agent's seal, which says
-   who it is; the title, in the display face, cut at a length of its own and
-   whole on resting there; then, at the right, where it lives, quietly, on a
-   computer, what it is pointed at and the tools. That it works is the
-   conversation's own line and the composer's to say; only trouble with the
-   line or the conversation is said here, in words. */
+/* A conversation's head, one line by design: its name, cut at a length of
+   its own and whole on resting there, who it is with on a pointer's rest;
+   then, at the right, where it lives, quietly, on a computer, and the
+   tools. That it works is the conversation's own line and the composer's to
+   say; only trouble with the line or the conversation is said here, in
+   words. */
 .who {
   flex: 1;
   display: flex;
@@ -55,34 +53,20 @@
   min-width: 0;
 }
 
-.who-seal {
-  position: relative;
-  flex: none;
-  display: grid;
-  place-items: center;
-  width: 30px;
-  height: 30px;
-  padding: 0;
-  border: 0;
-  border-radius: var(--radius-full);
-  background: var(--fill-strong);
-  color: var(--text-2);
-  transition: color var(--hover) var(--ease);
+.who-name.gone {
+  color: var(--text-3);
 }
 
-.who-seal.gone {
-  opacity: 0.55;
-}
-
+/* The conversation's name in the reading face it is written in, its
+   semibold cut, at the text's size: one voice with the words under it. */
 .who-name {
   min-width: 0;
   max-width: 20em;
   margin: 0;
-  font-family: var(--font-display);
+  font-family: var(--font-emphasis);
   font-weight: 400;
-  font-size: var(--size-head);
-  line-height: 1.25;
-  letter-spacing: 0.02em;
+  font-size: var(--size-text);
+  line-height: var(--leading-ui);
   color: var(--text-strong);
   white-space: nowrap;
   overflow: hidden;
@@ -151,11 +135,6 @@
     gap: 10px;
   }
 
-  .who-seal {
-    width: 28px;
-    height: 28px;
-  }
-
   .who-home {
     display: none;
   }
@@ -175,6 +154,21 @@
   }
 
   .page-head-actions:has(.talk-menu-toggle) :is(.find-toggle, .view-steps) {
+    display: none;
+  }
+}
+
+/* A narrow place on the desk folds finding and the choice of view into the
+   "⋯" as a phone does; the top row's last, beside the window's own buttons
+   on Windows, a little sooner. */
+@container talk (max-width: 560px) {
+  .page-head-actions:has(.talk-menu-toggle) :is(.find-toggle, .view-steps) {
+    display: none;
+  }
+}
+
+@container talk (max-width: 700px) {
+  html.framed .dk-corner .page-head-actions:has(.talk-menu-toggle) :is(.find-toggle, .view-steps) {
     display: none;
   }
 }

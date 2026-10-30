@@ -96,7 +96,7 @@ export class MemoryPage {
     const facts = [
       escape(words.date(revision.author.at, this.options.now())),
       writer.href ? `<a href="${escape(writer.href)}">${escape(writer.name)}</a>` : escape(writer.name),
-      escape(revision.author.on),
+      ...(revision.author.on ? [escape(revision.author.on)] : []),
       ...(spec ? [escape(words.version(revision.version))] : []),
     ];
     const note = older

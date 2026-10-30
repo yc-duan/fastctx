@@ -2,7 +2,7 @@
 // its own, its logins and, beside them on a tab, the account's preferences
 // for it, Claude Code's leading on to its subagents; then the rest of the
 // account's own layer of configuration
-// (`world-user-config.md`): its prompt and its MCP servers. While one of
+// (`world-user-config.md`): its prompt, its skills and its MCP servers. While one of
 // them is open they stand under 「智能体」 in the sidebar, a step in, as a
 // project's conversations stand under it; the one last open, and the tab, are
 // kept on this device, and 「智能体」 opens them again.
@@ -13,7 +13,7 @@ import { link, type Place } from "./places";
 import type { AgentSection, AgentTab, ProfileWords } from "./profile-words";
 
 export const HOSTS = ["claude", "codex"] as const satisfies readonly AgentSection[];
-export const OWN = ["prompt", "mcp"] as const satisfies readonly AgentSection[];
+export const OWN = ["prompt", "skills", "mcp"] as const satisfies readonly AgentSection[];
 
 const SECTION = "agents.section";
 const VIEW = "agents.view";
@@ -107,6 +107,8 @@ export function sectionMark(section: AgentSection, size = 16): string {
       return glyph("codex", size);
     case "prompt":
       return glyph("note", size);
+    case "skills":
+      return glyph("skill", size);
     case "mcp":
       return glyph("plug", size);
   }

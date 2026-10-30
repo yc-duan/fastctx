@@ -445,7 +445,7 @@
   color: var(--text-3);
   --turn: -90deg;
   rotate: var(--turn);
-  transition: --turn var(--fold) var(--fold-easing);
+  transition: --turn var(--expand) var(--expand-easing);
 }
 
 .notice-open[aria-expanded="true"] > .glyph:last-child {

@@ -41,17 +41,6 @@
 
 .pf-names {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 12em;
-  column-gap: var(--space-3);
-}
-
-/* The short name's rule, said beside it once it is not kept. */
-.pf-slug-rule {
-  color: var(--wrong);
-}
-
-.pf-slug-rule[hidden] {
-  display: none;
 }
 
 /* The machines chosen, each with its places: a folder, a word on what is
@@ -126,10 +115,6 @@
 @media (max-width: 760px) {
   .project-sheet .sheet-body {
     width: 100%;
-  }
-
-  .pf-names {
-    grid-template-columns: minmax(0, 1fr);
   }
 
   .pf-place {

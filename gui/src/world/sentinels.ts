@@ -135,6 +135,18 @@ export interface SentinelWatched {
   summary: SentinelSummary;
   wakes: SentinelWake[];
   earlier?: boolean;
+  /** Every wake of the last days, counted day by day; none for wakes its
+   *  home kept no count of, which only `wakes` tells. */
+  days?: SentinelWakeDay[];
+}
+
+/** How often a sentinel woke on one day (its UTC start), and what it took. */
+export interface SentinelWakeDay {
+  day: number;
+  wakes: number;
+  input: number;
+  output: number;
+  elapsed_ms: number;
 }
 
 export interface SentinelOverview {

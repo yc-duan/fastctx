@@ -245,8 +245,10 @@ export class NewTalk {
   private readonly pop: HTMLElement;
   private readonly chip: HTMLButtonElement;
   private readonly models: ModelPanel;
-  /** The login chosen, by its key; the one used last where none is. */
-  private pick: string | null = remembered("pick");
+  /** The login chosen, by its key: the one this page's kind of new
+  *  conversation (outside any project, or in its project) began with last,
+  *  else the one used last anywhere. */
+  private pick: string | null;
   /** A machine whose logins come first, when the page was opened from it. */
   private machine: string | null = null;
   private town: string | null;
@@ -255,8 +257,8 @@ export class NewTalk {
   /** The model and effort were chosen on this page, not taken as they
    *  were kept. */
   private chosenHere = false;
-  /** The account chosen, as `hub/account`. */
-  private account: string | null = remembered("account");
+  /** The account chosen, as `hub/account`, as `pick` is. */
+  private account: string | null;
   /** The machines and folders it is pointed at. */
   private focus: Focus = noFocus();
   /** The account's MCP servers switched off for the conversation begun. */
@@ -290,6 +292,8 @@ export class NewTalk {
     const { words } = options;
     this.town = options.town;
     this.kept = `new-draft:${options.town ?? ""}`;
+    this.pick = remembered(`pick:${options.town ?? ""}`) ?? remembered("pick");
+    this.account = remembered(`account:${options.town ?? ""}`) ?? remembered("account");
     this.element = document.createElement("div");
     this.element.className = "new-talk-page";
     this.element.innerHTML = `
@@ -412,6 +416,9 @@ export class NewTalk {
    *  program may have been installed, logged in or updated since; `pick`
    *  is a login to begin with, `machine` one whose logins come first. */
   show(pick: string | null = null, machine: string | null = null): void {
+    // Each opens as its own kind: outside any project, or in its project,
+    // whatever was chosen in it before it was left.
+    this.town = this.options.town;
     if (pick) this.pick = pick;
     if (pick || machine) this.machine = machine;
     this.note.textContent = "";
@@ -1265,11 +1272,18 @@ ${words.assistantWorks(option.assistant.owner ?? "")}` : said,
     this.drawStart();
     this.note.classList.remove("refused");
     this.note.title = "";
+    // Kept for this kind of new conversation, and as the one used last for
+    // a kind not begun yet.
+    const kind = this.options.town ?? "";
     remember("pick", option.key);
+    remember(`pick:${kind}`, option.key);
     remember("agent", option.agent);
     const world = this.options.store.world.peek();
     const login = this.loginFor(world, option);
-    if (login && !option.assistant) remember("account", `${login.hub}/${login.account}`);
+    if (login && !option.assistant) {
+      remember("account", `${login.hub}/${login.account}`);
+      remember(`account:${kind}`, `${login.hub}/${login.account}`);
+    }
     keepChoice(option.agent, this.model, this.effort);
     const { words } = this.options;
     // The words go into the conversation at once; what happens on the way

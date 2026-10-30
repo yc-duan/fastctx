@@ -1984,6 +1984,7 @@ dependencies = [
  "fastctx-net",
  "fastctx-platform",
  "fastctx-ripgrep",
+ "fastctx-storage",
  "fastctx-types",
  "fastctx-update",
  "flate2",

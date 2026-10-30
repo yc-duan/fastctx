@@ -8,9 +8,11 @@
 import { loginsOf } from "../world/accounts";
 import { inShell, watchWorld, worldNow, type WorldNow } from "../world/bridge";
 import { applyChange } from "../world/change";
+import { lendTitles } from "../world/names";
 import type { Address } from "../world/events";
 import type { MachineWho, ResidentNow, RunningJob, WhoFor, WhoReply } from "../world/world";
 import { keepNetwork, shownNetwork, viewOf } from "./network";
+import { assistingOwner } from "./reach";
 import { signal, type Signal } from "./signals";
 
 export interface Store {
@@ -49,6 +51,7 @@ export function createStore(specimen: () => { world: WorldNow; now: Date }): Sto
   const whole = signal<WorldNow | null>(null);
   const read = (given: WorldNow) => {
     const now = written(given);
+    lendTitles([...residentsOf(now, true), ...unreachedOf(now, true)]);
     whole.set(now);
     world.set(viewOf(now, shownNetwork(now)));
   };
@@ -156,24 +159,55 @@ export function createStore(specimen: () => { world: WorldNow; now: Date }): Sto
 
 /** What each machine last answered with about its residents. A machine
  *  away keeps its conversations listed: one not removed is always listed
- *  (`world-gui.md`). Kept in this device's storage as well, so a window
- *  opened while the machine is away lists them too. */
-const lastAnswered = new Map<string, ResidentNow[]>();
+ *  (`world-gui.md`), and one no network this device sees lists any more,
+ *  as when an assistance ended, still lists them as they were, to be read
+ *  from what this device keeps of them. Kept in this device's storage as
+ *  well, so a window opened while the machine is away lists them too. */
+interface Answered {
+  residents: ResidentNow[];
+  /** Its logins in each network it was in as it answered: whom the
+   *  conversations it runs for its own accounts work for, once no network
+   *  says. Null as an earlier release kept it. */
+  logins: { hub: string; account: string }[] | null;
+  /** Whose machine it was, when it assisted one of this device's logins:
+   *  its conversations go by that name, never by the machine's. */
+  assisting: string | null;
+}
+const lastAnswered = new Map<string, Answered>();
 const unreached = new WeakSet<ResidentNow>();
+/** Those of a machine no network this device sees lists now. */
+const departed = new WeakSet<ResidentNow>();
 const keptKey = "fastctx.last-answered";
 
+/** The logins of `machine` in each network of `world` it is a member of. */
+function loginsThere(world: WorldNow, machine: string): { hub: string; account: string }[] {
+  return world.accounts.hubs.flatMap((hub) => (hub.members.find((member) => member.name === bareName(machine))?.logins ?? []).map((account) => ({ hub: hub.hub, account })));
+}
+
 function remember(world: WorldNow): void {
+  const answered = (machine: string, residents: ResidentNow[]) =>
+    lastAnswered.set(machine, { residents, logins: loginsThere(world, machine), assisting: assistingOwner(world, machine) });
   for (const machine of world.who.machines) {
-    if (machine.kind === "answered") lastAnswered.set(machine.reply.machine, machine.reply.residents);
+    if (machine.kind === "answered") answered(machine.reply.machine, machine.reply.residents);
     // What the hub kept of a machine gone offline is the latest there is.
-    if (machine.kind === "offline" && machine.last) lastAnswered.set(machine.machine, machine.last.residents);
+    if (machine.kind === "offline" && machine.last) answered(machine.machine, machine.last.residents);
   }
+  // A machine renamed answers by its new name: what it said by an old one
+  // is not another machine's.
+  for (const hub of world.accounts.hubs) for (const member of hub.members) for (const was of member.was ?? []) lastAnswered.delete(was);
 }
 
 function recall(): void {
   try {
-    const kept = JSON.parse(localStorage.getItem(keptKey) ?? "{}") as Record<string, ResidentNow[]>;
-    for (const [machine, residents] of Object.entries(kept)) if (Array.isArray(residents)) lastAnswered.set(machine, residents);
+    const kept = JSON.parse(localStorage.getItem(keptKey) ?? "{}") as Record<string, unknown>;
+    for (const [machine, one] of Object.entries(kept)) {
+      // An earlier release kept the residents alone.
+      if (Array.isArray(one)) lastAnswered.set(machine, { residents: one as ResidentNow[], logins: null, assisting: null });
+      else if (one && typeof one === "object" && Array.isArray((one as Answered).residents)) {
+        const { residents, logins, assisting } = one as Answered;
+        lastAnswered.set(machine, { residents, logins: Array.isArray(logins) ? logins : null, assisting: typeof assisting === "string" ? assisting : null });
+      }
+    }
   } catch {
     // Storage may be unavailable or hold something else; the list then
     // starts from what the machines answer.
@@ -190,35 +224,99 @@ function keep(): void {
 
 /** The residents of machines that did not answer this time, as they last
  *  answered: listed, marked as out of reach, never taken for live; those
- *  archived too when `archived`. Only those working for an account this
- *  device is logged in to now: what was kept under another login, or an
- *  older World that answered with every conversation, is not listed. */
+ *  archived too when `archived`. With them those of machines the network
+ *  shown does not list now, never taken for deleted: a network that
+ *  wobbles, a view not read again yet and an assistance ended all look so
+ *  for a while. Only those working for an account this device is logged in
+ *  to there now: what was kept under another login, or an older World that
+ *  answered with every conversation, is not listed. */
 export function unreachedOf(world: WorldNow | null, archived = false): ResidentNow[] {
   if (!world) return [];
   const ours = loginsOf(world.accounts);
-  const theirs = (machine: string): { hub: string; account: string }[] =>
-    world.accounts.hubs.flatMap((hub) => (hub.members.find((member) => member.name === bareName(machine))?.logins ?? []).map((account) => ({ hub: hub.hub, account })));
-  const worksForUs = (resident: ResidentNow): boolean => {
+  const worksForUs = (resident: ResidentNow, kept: Answered): boolean => {
     const acting = resident.about.acting;
-    const accounts = !acting || acting.kind === "here" ? theirs(resident.about.machine) : acting.accounts;
+    const own = !acting || acting.kind === "here";
+    // Its own accounts' conversations work for its logins, as the network
+    // says or, once it says nothing of the machine, as it last said.
+    const named = own ? loginsThere(world, resident.about.machine) : acting.accounts;
+    const accounts = own && named.length === 0 ? (kept.logins ?? []) : named;
     return accounts.some((account) => ours.some((login) => login.hub === account.hub && login.account === account.account));
   };
-  return world.who.machines.flatMap((machine) => {
-    if (machine.kind === "answered") return [];
-    const residents = (lastAnswered.get(machine.machine) ?? []).filter((r) => (archived || !r.removed) && worksForUs(r));
-    for (const r of residents) unreached.add(r);
+  const listed = (machine: string, left: boolean): ResidentNow[] => {
+    const kept = lastAnswered.get(machine);
+    if (!kept) return [];
+    const residents = kept.residents.filter((r) => (archived || !r.removed) && worksForUs(r, kept));
+    for (const r of residents) {
+      unreached.add(r);
+      if (left) departed.add(r);
+      else departed.delete(r);
+    }
     return residents;
-  });
+  };
+  const named = new Set(world.who.machines.map((machine) => (machine.kind === "answered" ? machine.reply.machine : machine.machine)));
+  const away = world.who.machines.flatMap((machine) => (machine.kind === "answered" ? [] : listed(machine.machine, false)));
+  // One listed where it is now is not listed again where it was.
+  const now = new Set([...residentsOf(world, true), ...away].map((r) => r.about.id));
+  const left = [...lastAnswered.keys()]
+    .filter((machine) => !named.has(machine) && machine !== world.here)
+    .flatMap((machine) => listed(machine, true))
+    .filter((r) => !now.has(r.about.id));
+  return [...away, ...left];
 }
 
 /** A copy of `original` shown in its place is out of reach as it is. */
 export function sameReach(copy: ResidentNow, original: ResidentNow): void {
   if (unreached.has(original)) unreached.add(copy);
+  if (departed.has(original)) departed.add(copy);
 }
 
 /** Whether a resident is one its machine did not answer for this time. */
 export function isUnreached(r: ResidentNow): boolean {
   return unreached.has(r);
+}
+
+/** Whether `r` is out of reach for good, as far as this device can tell:
+ *  its machine is in no network shown while those networks answer, as when
+ *  an assistance ended, the machine is no longer shared or it was taken off
+ *  the network. It is read from what this device keeps of it, and takes
+ *  nothing; should the machine come back, so does the conversation. */
+export function isDeparted(world: WorldNow | null, r: ResidentNow): boolean {
+  const hubs = world?.accounts.hubs ?? [];
+  return departed.has(r) && hubs.length > 0 && hubs.every((hub) => hub.link.kind === "online" || hub.link.kind === "stopped");
+}
+
+/** Whose agent `r` is, when it runs on a machine assisting one of this
+ *  device's logins: as the network says, or, its machine no longer listed,
+ *  as it was when it last answered. */
+export function assistedBy(world: WorldNow | null, r: ResidentNow): string | null {
+  return assistingOwner(world, r.about.machine) ?? (departed.has(r) ? (lastAnswered.get(r.about.machine)?.assisting ?? null) : null);
+}
+
+/** Whether `r`, of a machine no network lists now, worked for `login` as
+ *  its machine last answered. */
+export function departedFor(r: ResidentNow, login: { hub: string; account: string }): boolean {
+  if (!departed.has(r)) return false;
+  const acting = r.about.acting;
+  const accounts = !acting || acting.kind === "here" ? (lastAnswered.get(r.about.machine)?.logins ?? []) : acting.accounts;
+  return accounts.some((account) => account.hub === login.hub && account.account === login.account);
+}
+
+/** Lets go of what every machine last answered, as when an account is
+ *  logged out of this device. */
+export function forgetAnswered(): void {
+  lastAnswered.clear();
+  keep();
+}
+
+/** Lets go of a conversation out of reach for good from this device's
+ *  list. */
+export function letGo(address: Address): void {
+  const kept = lastAnswered.get(address.machine);
+  if (!kept) return;
+  const residents = kept.residents.filter((r) => r.about.id !== address.resident);
+  if (residents.length) lastAnswered.set(address.machine, { ...kept, residents });
+  else lastAnswered.delete(address.machine);
+  keep();
 }
 
 /** Every resident each machine answered with that is still in the World;

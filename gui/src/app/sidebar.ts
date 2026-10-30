@@ -9,7 +9,7 @@
 // project, its name a way to its overview and its folder opening and closing
 // on its conversations (the rest from its "⋯"), and the conversations in
 // no project, most recent first; a conversation is listed as long as it is not archived,
-// whether its agent's process runs or not, and the archived ones are folded
+// whether its agent's process runs or not, and the archived ones are in
 // away at the end. Each conversation's "⋯" (a long press on a touch screen)
 // moves, renames, archives or deletes it (`talk-menu.ts`). Logged in to more
 // than one account of the network, the projects and conversations come
@@ -32,13 +32,13 @@ import type { WorldNow } from "../world/bridge";
 import type { MachineFacts, ResidentNow } from "../world/world";
 import type { Place } from "./places";
 import { link } from "./places";
-import { assistantsOf, assistingOwner, groupsOf, isComputer, loginLabel, machinesOf, residentIn } from "./reach";
+import { assistantsOf, groupsOf, isComputer, loginLabel, machinesOf, residentIn } from "./reach";
 import { effect, type Signal } from "./signals";
 import type { Store } from "./store";
 import type { TalkActs } from "./talk-acts";
 import type { TalkMenu } from "./talk-menu";
 import type { TalkMenuWords } from "./talk-menu-words";
-import { isUnreached } from "./store";
+import { assistedBy, departedFor, isUnreached } from "./store";
 import { TalkList } from "./talk-list";
 import { factsByMachine, talkRow, talksOf } from "./talk-row";
 import type { ShellWords } from "./words";
@@ -86,8 +86,8 @@ const SLOW = 5;
 const SHOWN = 6;
 
 /** How long a project's folder takes to open or close: no redraw cuts it
- *  short meanwhile. A little over the motion's own `--fold`. */
-const FOLDING_MS = 260;
+ *  short meanwhile. A little over the motion's own `--expand`. */
+const FOLDING_MS = 560;
 
 /** Projects, and accounts' parts, folded shut by the reader, kept on this
  *  device. */
@@ -278,8 +278,8 @@ export class Sidebar {
     begin?.classList.toggle("current", beginning);
     if (beginning) begin?.setAttribute("aria-current", "page");
     else begin?.removeAttribute("aria-current");
-    const { listed: talks, archived } = talksOf(world, this.options.acts);
-    this.talkList.drawing([...talks, ...archived]);
+    const { listed: talks } = talksOf(world, this.options.acts);
+    this.talkList.drawing(talks);
     const facts = factsByMachine(world);
     const waiting = talks.filter((r) => r.now?.waiting_for_user).length;
 
@@ -305,6 +305,7 @@ export class Sidebar {
         ${top(link({ kind: "activity" }), at(["activity"]), glyph("history", 18), words.activity)}
         ${machines || assisted || !talking ? top(link({ kind: "agents", machine: null }), section === null ? "" : " open", glyph("agents", 18), talking ? words.kernels : words.agents) + sections : ""}
         ${machines ? top(link({ kind: "machines" }), at(["machines", "machine"]), glyph("machine", 18), words.machines) : ""}
+        ${talking ? top(link({ kind: "projects" }), at(["projects"]), glyph("folder", 18), words.projects) : ""}
       </div>
       ${store.trouble.peek() ? `<p class="sidebar-trouble" title="${escape(store.trouble.peek() ?? "")}">${escape(words.unreachable)}</p>` : ""}
       ${store.unanswered.peek() >= SLOW ? `<p class="sidebar-trouble" role="status">${escape(words.unanswered(store.unanswered.peek()))}</p>` : ""}`;
@@ -320,10 +321,10 @@ export class Sidebar {
         .map((group) => {
           const key = `${group.login.hub}/${group.login.account}`;
           const shut = folded.has(`group:${key}`);
-          const mine = talks.filter((r) => residentIn(world, group, r));
+          const mine = talks.filter((r) => residentIn(world, group, r) || departedFor(r, group.login));
           const asking = mine.some((r) => r.now?.waiting_for_user);
           return `<section class="sidebar-account${shut ? " shut" : ""}">
-            <h2 class="side-account-title"><button class="side-account-fold" type="button" data-fold="group:${escape(key)}" aria-expanded="${!shut}" aria-label="${escape(words.groupOf(loginLabel(group.login)))}">${glyph("chevron", 14)}<span class="side-account-name">${escape(group.login.hubName)}<span class="side-account-sep"></span>${escape(group.login.account)}</span>${shut && asking ? `<span class="mark mark-ask" aria-hidden="true"></span>` : ""}</button></h2>
+            <h2 class="side-account-title"><button class="side-account-fold${shut && asking ? " asking" : ""}" type="button" data-fold="group:${escape(key)}" aria-expanded="${!shut}" aria-label="${escape(words.groupOf(loginLabel(group.login)))}">${glyph("chevron", 14)}<span class="side-account-name">${escape(group.login.hubName)}<span class="side-account-sep"></span>${escape(group.login.account)}</span></button></h2>
             ${shut ? "" : `<div class="side-account-body">${this.projects(group.towns, mine, place, now, facts, key)}${this.loose(mine, place, now, facts)}</div>`}
           </section>`;
         })
@@ -332,7 +333,6 @@ export class Sidebar {
       const towns = groups[0]?.towns ?? (world?.towns ?? []).map((town) => town.town);
       body = this.projects(towns, talks, place, now, facts, null) + this.loose(talks, place, now, facts);
     }
-    if (talking) body += this.archived(archived, place, now, facts);
 
     this.drawFoot(world, place);
     return places + body;
@@ -425,19 +425,18 @@ export class Sidebar {
         const inside = talks.filter((r) => r.town === town);
         const shut = folded.has(town);
         const asking = inside.some((r) => r.now?.waiting_for_user);
-        const working = inside.some((r) => r.now?.activity === "busy");
         const current = (place.kind === "project" || place.kind === "memory" || place.kind === "page") && place.town === town;
-        const shutMark = asking ? "mark-ask" : working ? "mark-busy" : "";
-        // Its name leads to its overview; its folder opens and closes on its
-        // conversations where it is. Shut, it says whether something in it
-        // waits or works, and how many are in it.
+        // Its folder and its name alike open and close it on its
+        // conversations where it is; its overview is in its "⋯" (user
+        // 2026-10-29). Shut, it says how many are in it, in clay while one
+        // of them waits on the user.
         return `<li class="project-place${shut ? " shut" : ""}" data-drop="town" data-town="${escape(town)}" data-name="${escape(name)}">
           <div class="place-row project-row" data-own-press>
             <button class="project-fold" type="button" data-fold="${escape(town)}" aria-expanded="${!shut}" aria-label="${escape(words.agentsIn(name))}" title="${escape(words.agentsIn(name))}">${glyph(shut ? "folder" : "folder-open", 18)}</button>
-            <a class="place project-link${current ? " current" : ""}" href="${link({ kind: "project", town })}"${current ? ' aria-current="page"' : ""}>
+            <button class="place project-link${current ? " current" : ""}" type="button" data-fold="${escape(town)}" aria-expanded="${!shut}">
               <span class="place-name">${escape(name)}</span>
-              <span class="project-shut-marks">${shutMark ? `<span class="mark ${shutMark}" aria-hidden="true"></span>` : ""}${inside.length ? `<span class="count">${inside.length}</span>` : ""}</span>
-            </a>
+              <span class="project-shut-marks">${inside.length ? `<span class="count${asking ? " waiting" : ""}">${inside.length}</span>` : ""}</span>
+            </button>
             ${this.options.projects ? `<button class="side-project-more" type="button" data-project-more="${escape(town)}" aria-haspopup="menu" aria-expanded="false" aria-label="${escape(words.projectMore)}" title="${escape(words.projectMore)}">${glyph("more", 18)}</button>` : ""}
           </div>
           <div class="project-talks${shut ? " shut" : ""}"${shut ? " inert" : ""}><div class="project-talks-inner">${
@@ -462,6 +461,7 @@ export class Sidebar {
     talks.classList.toggle("shut", !open);
     talks.inert = !open;
     row.setAttribute("aria-expanded", String(open));
+    place.querySelector(".project-link")?.setAttribute("aria-expanded", String(open));
     row.innerHTML = glyph(open ? "folder-open" : "folder", 18);
     // The next drawing is the one that matches what is now shown.
     this.drawn = this.compose();
@@ -480,12 +480,14 @@ export class Sidebar {
     const name = place.dataset.name ?? town;
     const more = projects.acts(town);
     const entries: MenuEntry[] = [
+      { act: "overview", icon: "page", label: words.projectOverview },
       { act: "new", icon: "plus", label: words.projectNewTalk },
       { act: "edit", icon: "edit", label: words.projectEdit },
       ...(more.length ? [{ rule: true as const }, ...more] : []),
     ];
     this.projectMenu.open(button, name, entries, (act) => {
-      if (act === "new") projects.newTalk(town);
+      if (act === "overview") location.hash = link({ kind: "project", town });
+      else if (act === "new") projects.newTalk(town);
       else if (act === "edit") projects.edit(town);
       else projects.run(act, town, name);
     });
@@ -508,30 +510,13 @@ export class Sidebar {
     const shown = talks.filter((r, i) => i < SHOWN || r.now?.waiting_for_user || (place.kind === "talk" && place.address.resident === r.about.id && place.address.machine === r.about.machine));
     const rest = talks.length - shown.length;
     const all = place.kind === "talks" && place.town === town;
-    return `<ul class="${kind}">${shown.map((r) => talkRow(r, place, now, facts, words, this.talkList.rowActs(r), assistingOwner(this.options.store.world.peek(), r.about.machine))).join("")}${
+    return `<ul class="${kind}">${shown.map((r) => talkRow(r, place, now, facts, words, this.talkList.rowActs(r), assistedBy(this.options.store.world.peek(), r))).join("")}${
       rest > 0
         ? `<li><a class="talk-all${all ? " current" : ""}" href="${link({ kind: "talks", town })}"><span class="talk-host"></span><span class="talk-name">${escape(words.all)}</span><span class="count">${talks.length}</span></a></li>`
         : ""
     }</ul>`;
   }
 
-  /** The archived conversations, folded away at the end: the most recent,
-   *  and a way to all of them. */
-  private archived(archived: ResidentNow[], place: Place, now: Date, facts: Map<string, MachineFacts>): string {
-    if (!archived.length) return "";
-    const { words, menuWords } = this.options;
-    const open = folded.has("archived-open");
-    const shown = archived.slice(0, SHOWN);
-    const rows = shown.map((r) => talkRow(r, place, now, facts, words, this.talkList.rowActs(r), assistingOwner(this.options.store.world.peek(), r.about.machine))).join("");
-    const all =
-      archived.length > shown.length
-        ? `<li><a class="talk-all${place.kind === "archived" ? " current" : ""}" href="${link({ kind: "archived" })}"><span class="talk-host"></span><span class="talk-name">${escape(words.all)}</span><span class="count">${archived.length}</span></a></li>`
-        : "";
-    return `<section class="side-archived${open ? "" : " shut"}">
-      <button class="side-archived-head" type="button" data-fold="archived-open" aria-expanded="${open}">${glyph("chevron", 14)}<span>${escape(menuWords.archivedGroup)}</span><span class="side-archived-count">${archived.length}</span></button>
-      ${open ? `<ul class="talks archived-talks">${rows}${all}</ul>` : ""}
-    </section>`;
-  }
 }
 
 /** The World's mark: machines as rings round the knot where they meet. */

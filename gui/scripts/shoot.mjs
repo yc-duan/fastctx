@@ -261,12 +261,17 @@ for (const session of sessions) {
       // page shut with a conversation dragged from the list over that part.
       if (named.startsWith("panel-drop-")) {
         const at = { right: [0.8, 0.4], left: [0.2, 0.4], bottom: [0.5, 0.85] }[named.slice("panel-drop-".length)];
+        // A row of the list carried by the pointer over that part of the page.
         await send("Runtime.evaluate", {
           awaitPromise: true,
-          expression: `new Promise((r) => setTimeout(() => { const split = document.querySelector('.sp-split'); const box = split.getBoundingClientRect(); const carried = new DataTransfer(); carried.setData('application/x-fastctx-talk', JSON.stringify({ resident: 'x', machine: 'y' })); split.dispatchEvent(new DragEvent('dragover', { bubbles: true, cancelable: true, dataTransfer: carried, clientX: box.left + box.width * ${at[0]}, clientY: box.top + box.height * ${at[1]} })); setTimeout(r, 600); }, 600))`,
+          expression: `new Promise((r) => setTimeout(() => { const name = document.querySelector('.sidebar .talk-item[data-resident] .talk-name'); const from = name.getBoundingClientRect(); const box = document.querySelector('.sp-split').getBoundingClientRect(); const x = box.left + box.width * ${at[0]}, y = box.top + box.height * ${at[1]}; const pointer = (type, cx, cy) => new PointerEvent(type, { bubbles: true, cancelable: true, pointerId: 7, pointerType: 'mouse', isPrimary: true, button: 0, buttons: 1, clientX: cx, clientY: cy }); name.dispatchEvent(pointer('pointerdown', from.left + 8, from.top + 8)); window.dispatchEvent(pointer('pointermove', from.left + 30, from.top + 20)); window.dispatchEvent(pointer('pointermove', x, y)); setTimeout(r, 600); }, 600))`,
         });
       } else if (named.startsWith("panel")) {
-        const opened = named === "panel-talk" ? `'.ov-member[data-id="codex-b10g"]'` : named === "panel-agent" ? `'.ov-member[data-id="b7c1d9e4f2"]'` : named === "panel-plan" ? `'.ov-plan .ov-whole'` : named === "panel-goal" ? `'.gb-act[data-act="expand"]'` : named === "panel-team" ? `'.ov-team .ov-whole'` : named === "panel-menu" ? `'.sp-dock'` : named === "panel-bottom" || named === "panel-left" ? `'.sp-dock-row[data-dock="${named.slice("panel-".length)}"]'` : named.startsWith("panel-goalpage-") ? `'.ov-cards [data-open="goal"]'` : null;
+        const opened = named === "panel-talk" ? `'.cp-node[data-id="codex-b10g"]'` : named === "panel-agent" ? `'.cp-node[data-id="b7c1d9e4f2"]'` : named === "panel-plan" ? `'[data-part="part:plan"]'` : named === "panel-goal" ? `'.gb-act[data-act="expand"]'` : named === "panel-team" ? `'[data-part="part:team"]'` : named === "panel-menu" ? `'.sp-more'` : named === "panel-bottom" || named === "panel-left" ? `'.sp-menu-row[data-dock="${named.slice("panel-".length)}"]'` : named.startsWith("panel-goalpage-") ? `'[data-part="part:goal"]'` : null;
+        // Those who work with it are pressed on the team's part.
+        if (named === "panel-talk" || named === "panel-agent") {
+          await send("Runtime.evaluate", { awaitPromise: true, expression: `new Promise((r) => { if (!document.querySelector(".sp-host.sp-shown")) document.querySelector(".sp-toggle")?.click(); setTimeout(() => { document.querySelector('[data-part="part:team"]')?.click(); setTimeout(r, 300); }, 300); })` });
+        }
         await send("Runtime.evaluate", {
           awaitPromise: true,
           // The row to press is waited for: an agent comes as the stream goes.

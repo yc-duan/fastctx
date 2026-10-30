@@ -75,7 +75,7 @@ export function factsByMachine(world: WorldNow | null): Map<string, MachineFacts
   return facts;
 }
 
-export function talkRow(r: ResidentNow, place: Place, now: Date, facts: Map<string, MachineFacts>, words: TalkRowWords, acts?: RowActs, assisting: string | null = null): string {
+export function talkRow(r: ResidentNow, place: Place, now: Date, facts: Map<string, MachineFacts>, words: TalkRowWords, acts?: RowActs, assisting: string | null = null, when: string | null = null): string {
   const address: Address = { resident: r.about.id, machine: r.about.machine };
   const current = place.kind === "talk" && place.address.resident === address.resident && place.address.machine === address.machine;
   const agent = agentName(r.about.host.agent);
@@ -103,14 +103,19 @@ export function talkRow(r: ResidentNow, place: Place, now: Date, facts: Map<stri
   const titled = r.about.forked_from && !acts?.renaming
     ? `<span class="talk-named">${named}<span class="talk-forked" title="${escape(words.forked)}" aria-label="${escape(words.forked)}">${glyph("fork", 13)}</span></span>`
     : named;
-  const stateCell = deleting
-    ? `<span class="talk-state">${escape(state)}</span>`
-    : `<span class="talk-state" title="${escape(state)}"><span class="mark${kind ? ` ${kind}` : ""}" aria-hidden="true"></span><span class="spoken">${escape(state)}</span></span>`;
+  // How it stands is its family's mark, turning while it works and in clay
+  // while it waits on the user; said in words to a screen reader and on a
+  // pointer's rest over the mark. Being deleted says so in its place.
+  const stateCell = deleting ? `<span class="talk-state">${escape(state)}</span>` : state ? `<span class="spoken">${escape(state)}</span>` : "";
   return `<li class="talk-item"${acts ? ` data-own-press data-machine="${escape(address.machine)}" data-resident="${escape(address.resident)}"` : ""}><a class="talk-row${kind ? ` ${kind}` : ""}${archived ? " archived" : ""}${current ? " current" : ""}" href="${link({ kind: "talk", address })}"${current ? ' aria-current="page"' : ""}>
-    <span class="talk-host" title="${escape(agent)}">${host}</span>
+    <span class="talk-host" title="${escape([agent, state].filter(Boolean).join("\n"))}">${host}</span>
     ${titled}
     ${stateCell}
-    <span class="talk-device" title="${escape(device)}" aria-label="${escape(assisting !== null ? device : `${words.device(form)} ${r.about.machine}`)}">${glyph(assisting !== null ? "colleague" : form, 16)}</span>
+    ${
+      when !== null
+        ? `<span class="talk-when">${escape(when)}</span>`
+        : `<span class="talk-device" title="${escape(device)}" aria-label="${escape(assisting !== null ? device : `${words.device(form)} ${r.about.machine}`)}">${glyph(assisting !== null ? "colleague" : form, 16)}</span>`
+    }
   </a>${acts && !deleting ? quick(acts, archived, name) : ""}</li>`;
 }
 

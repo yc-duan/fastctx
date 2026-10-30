@@ -29,10 +29,10 @@ import { fileRow, mentionAt, mentioned, type FileWords, type FoundFile } from ".
 import { FileLinks } from "./file-links";
 import { JobsPanel, type Job, type OutputLines } from "./jobs-panel";
 import { AgentBox } from "./agent-box";
-import { SideMount } from "../side/mount";
-import { holdColumn } from "./column-hold";
+import { SideParts } from "../side/parts";
 import type { Address } from "../world/wire";
 import type { SideSeams } from "../side/seams";
+import type { ForkFrom } from "./fork-card";
 import type { AgentActivity, Tool } from "../world/events";
 import { Pictures, type PictureSeams } from "./pictures";
 import type { HeldRead } from "../world/reads";
@@ -143,6 +143,13 @@ export interface PageOptions {
     words: ComposerWords;
     offers(): Promise<Offers>;
     control(what: Control): Promise<Controlled>;
+    /** A fork is asked for, from a turn or from where the conversation is
+    *  now: its place opens beside it at once. */
+    forking?(through: string | null): void;
+    /** It waits for the turn under way to end. */
+    forkQueued?(): void;
+    /** None was made; the line beside the input says why. */
+    forkFailed?(): void;
     /** A fork was made: where it lives. */
     forked(resident: { resident: string; machine: string }): void;
     /** Opens a link in the system's browser. */
@@ -198,8 +205,16 @@ export interface PageOptions {
   /** A turn's requests one by one, on its login's usage page. */
   calls?: ((turn: string) => void) | undefined;
   /** The panel beside the conversation: its plan, its goal, and who works
-   *  with it (`side/mount.ts`). */
+   *  with it (`side/parts.ts`). */
   side?: SideSeams | undefined;
+  /** How the list names another conversation, and its family. */
+  named?: ((address: Address) => { name: string; agent: "claude" | "codex" }) | undefined;
+  /** What the list calls this conversation, where it calls it anything:
+   *  its head says so until its host gives a title of its own. */
+  listedTitle?: (() => string | null) | undefined;
+  /** Goes to the conversation a fork came from, at the turn it was made
+   *  from, as the card at the fork's head asks. */
+  toSource?: ((address: Address, turn: string | null) => void) | undefined;
 }
 
 /** How many times what a conversation offers is asked again after asking
@@ -294,9 +309,10 @@ export class ConversationPage {
   private chip: HTMLButtonElement;
   private finder: Finder;
   private far: FarFind;
-  /** Ctrl+F finds in the conversation while its page is shown. */
+  /** Ctrl+F finds in the conversation while its page is shown and in
+   *  focus on the desk. */
   private readonly findKey = (event: KeyboardEvent) => {
-    if (!this.element.isConnected || !(event.ctrlKey || event.metaKey) || event.key.toLowerCase() !== "f" || event.altKey) return;
+    if (!this.element.isConnected || !this.active || !(event.ctrlKey || event.metaKey) || event.key.toLowerCase() !== "f" || event.altKey) return;
     event.preventDefault();
     this.finder.show();
   };
@@ -308,7 +324,6 @@ export class ConversationPage {
     this.element.innerHTML = `
       ${options.head(
         `<div class="who">
-        <span class="who-seal" tabindex="0">${glyph(markOf(someone.agent), 16)}</span>
         <h1 class="who-name">${escape(someone.agent)}</h1>
         ${someone.assistFrom ? `<span class="who-home">${glyph("machine", 14)}<span>${escape(words.assistFrom(someone.assistFrom))}</span></span>` : ""}
         <span class="who-state" hidden></span>
@@ -485,12 +500,22 @@ export class ConversationPage {
       lines: options.lines,
       agentRecord: options.agentRecord,
       turnCalls: options.calls,
-      openAgent: options.side && !options.side.bare ? (id) => this.side?.openAgent(id) ?? false : undefined,
+      openAgent: options.side ? (id) => this.side?.openAgent(id) ?? false : undefined,
+      named: options.named,
     });
-    // The panel beside it (`side/mount.ts`): the plan, the goal, and who
-    // works with it, the host's own agents among them.
+    // The card at a fork's head goes back to where it came from.
+    main.addEventListener("click", (event) => {
+      const target = event.target as Element;
+      const from = target.closest<HTMLElement>(".fk-from[data-fork-source]");
+      if (!from || !target.closest(".fk-card")) return;
+      const source = from.dataset.forkSource!;
+      const at = source.lastIndexOf("@");
+      options.toSource?.({ resident: source.slice(0, at), machine: source.slice(at + 1) }, from.dataset.forkTurn ?? null);
+    });
+    // Its parts for the desk's side (`side/parts.ts`): the plan, the goal,
+    // and who works with it, the host's own agents among them.
     if (options.side) {
-      this.side = new SideMount(this.element, {
+      this.side = new SideParts(this.element, {
         host: markOf(someone.agent) === "codex" ? "codex" : "claude",
         seams: options.side,
         say: (text, detail) => this.say(text, detail ?? ""),
@@ -512,7 +537,7 @@ export class ConversationPage {
         jump: (id) => {
           if (this.view.openAgent(id)) this.following = false;
         },
-        // What it is pointed at leaves the head for the side's first page.
+        // What it is pointed at leaves the head for the side's foot.
         env: this.element.querySelector<HTMLElement>(".focus-strip"),
       });
     }
@@ -833,7 +858,11 @@ export class ConversationPage {
     this.bound();
   }
 
-  private side: SideMount | null = null;
+  private side: SideParts | null = null;
+  /** In focus on the desk. */
+  private active = true;
+  /** The desk's own buttons in the head. */
+  private tools: HTMLElement[] = [];
   private agentsSeen = "";
 
   /** The host's own agents, as the conversation now knows them, to their
@@ -948,12 +977,6 @@ export class ConversationPage {
     if (phoneWide.matches && head) head.prepend(this.context);
     else row.insertBefore(this.context, row.querySelector(".composer-action"));
   };
-
-  /** The sidebar folds or comes back: the column is carried rather than
-   *  set again at every frame (`column-hold.ts`). */
-  roomWillChange(by: number): void {
-    holdColumn(this.element, this.side ? this.side.roomWillChange(by) : by);
-  }
 
   /** Stops what the page keeps asking for. */
   leave(): void {
@@ -1433,16 +1456,47 @@ export class ConversationPage {
   }
 
   /** The side of the conversation, opened from the head's "⋯" on a phone;
-   *  none where it has no side of its own. */
+   *  none where it has no side, or the desk's side shows another's. */
   panel(): (() => void) | null {
     const side = this.side;
-    return side?.shown ? () => side.pane.show() : null;
+    return side?.frame ? () => side.frame?.show(side.part ?? side.firstPart()) : null;
   }
 
-  /** Another conversation, opened beside this one; false where it cannot
-   *  be, as on a phone or for this conversation itself. */
-  openBeside(address: Address): boolean {
-    return this.side?.openTalk(address) ?? false;
+  /** Whether its head folded finding and the choice of view into its
+   *  "⋯", as a narrow place on the desk or a phone does (`app.css`). */
+  folded(): boolean {
+    const steps = this.element.querySelector<HTMLElement>(".page-head .view-steps");
+    return !!steps && getComputedStyle(steps).display === "none";
+  }
+
+  /** Its parts, for the desk's side while it is in focus. */
+  get sideParts(): SideParts | null {
+    return this.side;
+  }
+
+  /** Whether it is the conversation in focus on the desk: the keys that
+   *  find in a conversation go to that one. */
+  setActive(active: boolean): void {
+    this.active = active;
+  }
+
+  /** The desk's own buttons at the end of the head (`desk/desk.ts`). */
+  paneTools(...tools: HTMLElement[]): void {
+    for (const tool of this.tools) tool.remove();
+    this.tools = tools;
+    this.element.querySelector(".page-head-actions")?.append(...tools);
+  }
+
+  /** Where a fork from `turn`, or from where the conversation is now,
+   *  begins: the user's words, the answer, and the answer as it is drawn. */
+  forkFrom(turn: string | null): { said: string | null; answer: string | null; element: HTMLElement | null } {
+    const at = this.options.conversation.excerpt(turn);
+    return { said: at.said, answer: at.answer, element: at.key ? this.view.elementOf(at.key) : null };
+  }
+
+  /** Where this fork came from, as the desk saw it as it was made. */
+  forkSeed(from: ForkFrom): void {
+    this.view.seedFork(from);
   }
 
   /** Shows every step, or only what was said again: by the head's button,
@@ -1754,11 +1808,16 @@ export class ConversationPage {
     return this.usagePop.fill({ context: conversation.context ?? this.offered?.usage?.context ?? null, usage: this.offered?.usage ?? null, requests });
   }
 
-  /** Starting again from the user's words, or forking from a turn: said
-   *  plainly first, done once the user agrees. */
+  /** Starting again from the user's words: said plainly first, done once
+   *  the user agrees. Forking from a turn takes nothing away: it is done at
+   *  once, the fork opening beside the conversation. */
   private turnAct(act: "rewind" | "regenerate" | "fork", turn: string, words: string | null, kept: Attachment[]): void {
     const controls = this.options.controls;
     if (!controls) return;
+    if (act === "fork") {
+      void this.run({ name: "fork", description: "", args: null, arguments: "none", control: "fork", source: null }, "", { do: "fork", through: turn });
+      return;
+    }
     const said = controls.words;
     const confirm = this.element.querySelector<HTMLElement>(".composer-confirm")!;
     const ask = act === "rewind" ? said.rewindAsk : act === "regenerate" ? said.regenerateAsk : said.forkAsk;
@@ -1967,6 +2026,11 @@ export class ConversationPage {
     // never reached it.
     const told = Boolean(this.offered?.controls_told);
     if (!quiet && !told) this.say(words.running(command.name));
+    // A fork's place opens beside the conversation as it is asked for, and
+    // closes again where none comes of it.
+    const forking = what.do === "fork";
+    let forkHeld = false;
+    if (what.do === "fork") controls.forking?.(what.through);
     try {
       const done = await controls.control(what);
       // Taken to do once the turn ends: its line above the input says so.
@@ -1974,6 +2038,10 @@ export class ConversationPage {
         this.pendingControls.set(done.queued, { id: done.queued, control: what, at: new Date().toISOString(), state: "waiting" });
         this.say("");
         this.syncControls();
+        if (forking) {
+          forkHeld = true;
+          controls.forkQueued?.();
+        }
         return true;
       }
       // A choice kept for the next turn: the caller already shows it, and
@@ -1981,6 +2049,7 @@ export class ConversationPage {
       if (quiet && (done.kind === "done" || done.kind === "reported" || done.kind === "selected")) return true;
       if (done.kind === "forked") {
         this.say("");
+        forkHeld = true;
         controls.forked(done.resident);
         return true;
       }
@@ -1988,6 +2057,7 @@ export class ConversationPage {
       if (done.kind === "fork_incomplete") {
         if (told) this.say("");
         else this.say(words.forkIncomplete, done.why, true);
+        forkHeld = true;
         controls.forked(done.resident);
         return true;
       }
@@ -2032,6 +2102,8 @@ export class ConversationPage {
       else if (failure?.code === "control_uncertain") this.say(words.unknownOutcome(command.name), detailOf(error));
       else this.say(words.failed(detailOf(error)), detailOf(error), true);
       return false;
+    } finally {
+      if (forking && !forkHeld) controls.forkFailed?.();
     }
   }
 
@@ -2070,12 +2142,12 @@ export class ConversationPage {
     this.jobs.update(jobs, now);
   }
 
-  private away: "removed" | "deleted" | null = null;
+  private away: "removed" | "deleted" | "away" | null = null;
 
   /** Whether the user archived it, or deleted it, as the World last listed
    *  it. Archived, it is kept to read and can be brought back where the
    *  composer was; deleted, what is shown is all that is left of it here. */
-  presence(away: "removed" | "deleted" | null): void {
+  presence(away: "removed" | "deleted" | "away" | null): void {
     if (this.away === away) return;
     this.away = away;
     // Its shared input is no one's now.
@@ -2086,6 +2158,11 @@ export class ConversationPage {
       this.session = null;
     }
     this.element.querySelector<HTMLElement>(".composer")!.hidden = away !== null;
+    // Nothing more is heard of it: no turn is said to go on, and its goal's
+    // bar, whose acts would reach nothing, steps aside.
+    const unheard = away === "away" || away === "deleted";
+    this.view.hearing(!unheard);
+    this.element.toggleAttribute("data-unheard", unheard);
     const gone = this.element.querySelector<HTMLElement>(".composer-gone")!;
     gone.hidden = away === null;
     const manage = this.options.manage;
@@ -2096,10 +2173,13 @@ export class ConversationPage {
           : escape(this.options.words.removedNote)
         : away === "deleted"
           ? `${glyph("trash", 16)}<span>${escape(manage?.words.deleted ?? this.options.words.removedNote)}</span>`
-          : "";
+          : away === "away"
+            ? `${glyph("lock", 16)}<span>${escape(this.options.someone.assistFrom ? this.options.words.assistEndedNote : this.options.words.departedNote)}</span>`
+            : "";
     this.element.querySelector<HTMLElement>(".talk-menu-toggle")?.toggleAttribute("hidden", away === "deleted");
     this.drawState();
     this.drawFocus();
+    this.update();
   }
 
   /** Who it is, as the World lists it: a conversation opened before then,
@@ -2315,9 +2395,11 @@ export class ConversationPage {
     if (!words) return;
     const name = controlName(row);
     const result = row.result;
-    if (row.state === "cancelled") return;
-    // A fork done later opens as one done at once does.
+    // A fork done later opens as one done at once does; one that came to
+    // nothing closes the place that waited for it.
     if (result?.kind === "forked" || result?.kind === "fork_incomplete") this.options.controls?.forked(result.resident);
+    else if (row.control.do === "fork") this.options.controls?.forkFailed?.();
+    if (row.state === "cancelled") return;
     if (this.offered?.controls_told) {
       void this.askOffers();
       return;
@@ -2380,8 +2462,9 @@ export class ConversationPage {
   private drawState(): void {
     const { words, someone, conversation } = this.options;
     // The host's own title for the conversation, once it gives one; until
-    // then the agent's name. Where it lives follows, on a computer.
-    const title = conversation.title;
+    // then what the list calls it, else the agent's name. Where it lives
+    // follows, on a computer.
+    const title = conversation.title ?? this.options.listedTitle?.() ?? null;
     const name = escape(title ?? someone.agent);
     if (!this.renaming && this.name.innerHTML !== name) this.name.innerHTML = name;
     const renamable = !!this.offered?.controls.includes("rename");
@@ -2393,12 +2476,17 @@ export class ConversationPage {
     const waiting = !this.gone && this.away === null && conversation.waiting();
     // Working for the whole of a turn, not only while something shows.
     const working = !this.gone && this.away === null && !waiting && conversation.busy();
+    // Out of reach for good, that is what is said, not that the line broke.
     const now =
-      this.gone ??
+      (this.away === "away" ? null : this.gone) ??
       (this.away !== null
         ? this.away === "deleted"
           ? (this.options.manage?.words.deleted ?? words.removed)
-          : words.removed
+          : this.away === "away"
+            ? someone.assistFrom
+              ? words.assistEnded
+              : words.departed
+            : words.removed
         : waiting
           ? words.waitingForYou
           : working
@@ -2410,19 +2498,18 @@ export class ConversationPage {
     // its words as they stream would be too many to hear.
     if (this.said !== null && this.said !== now) this.spoken.textContent = `${someone.agent}　${now}`;
     this.said = now;
-    // The seal says who; how it stands is on a pointer's rest. That it works
-    // or waits is the conversation's own to show, below; only what is wrong
-    // with the line or the conversation is said in words, after the title.
-    const seal = this.element.querySelector<HTMLElement>(".who-seal")!;
-    seal.classList.toggle("gone", this.gone !== null || this.away !== null);
+    // Who it is with and how it stands are on a pointer's rest over the
+    // head's name. That it works or waits is the conversation's own to show,
+    // below; only what is wrong with the line or the conversation is said in
+    // words, after the title.
+    const who = this.element.querySelector<HTMLElement>(".who")!;
+    this.name.classList.toggle("gone", this.gone !== null || this.away !== null);
     const model = this.options.conversation.answeredBy ? modelName(this.options.conversation.answeredBy) : someone.model;
     // Who it is, where it lives, how it is now and its model: on a phone,
     // where the head has no room for its machine, a long press says it.
     const lives = someone.assistFrom ? this.options.words.assistFrom(someone.assistFrom) : someone.machine;
-    const sealSaid = [someone.agent, lives, now, model].filter(Boolean).join("　");
-    seal.title = sealSaid;
-    seal.setAttribute("aria-label", sealSaid);
-    const trouble = this.gone ?? (this.away !== null ? now : null);
+    who.title = [someone.agent, lives, now, model].filter(Boolean).join("　");
+    const trouble = this.away === "away" ? now : (this.gone ?? (this.away !== null ? now : null));
     this.state.hidden = !trouble;
     if (this.state.textContent !== (trouble ?? "")) this.state.textContent = trouble ?? "";
     this.state.classList.toggle("gone", trouble !== null);

@@ -99,7 +99,7 @@ export interface MachinePageOptions {
 }
 
 /** What a machine may keep free for its agents (`fastctx_types::stats`). */
-const ROOMS = [0, 2 ** 30, 1.5 * 2 ** 30, 2 * 2 ** 30, 3 * 2 ** 30];
+const ROOMS = [0, 2 ** 28, 2 ** 29, 3 * 2 ** 28, 2 ** 30, 1.5 * 2 ** 30, 2 * 2 ** 30, 3 * 2 ** 30];
 
 type Tab = "now" | "net" | "manage";
 const TABS: Tab[] = ["now", "net", "manage"];

@@ -123,10 +123,9 @@ export class SentinelOverviewPage implements Page {
     const shown = overview.watched.filter((one) => one.summary.definition.kind !== "goal");
     const watching = shown.filter((one) => live(one)).sort(byLast);
     const ended = shown.filter((one) => !live(one) && one.wakes.some((wake) => wake.at >= from)).sort(byLast);
-    const inSpan = shown.flatMap((one) => one.wakes.filter((wake) => wake.at >= from));
-    const tokens = inSpan.reduce((sum, wake) => sum + wake.input + wake.output, 0);
-    this.totals.innerHTML = inSpan.length
-      ? `<span>${escape(words.overview.wakes(inSpan.length))}</span><span>${escape(words.overview.tokens(count(tokens)))}</span>`
+    const spent = shown.map((one) => took(one, from)).reduce((sum, one) => ({ wakes: sum.wakes + one.wakes, tokens: sum.tokens + one.tokens, time: sum.time + one.time }), { wakes: 0, tokens: 0, time: 0 });
+    this.totals.innerHTML = spent.wakes
+      ? `<span>${escape(words.overview.wakes(spent.wakes))}</span><span>${escape(words.overview.tokens(count(spent.tokens)))}</span>`
       : "";
     const unreachable = overview.unavailable.length ? words.overview.unreachable : null;
     this.say(!watching.length && !ended.length ? (unreachable ?? words.overview.nothing) : unreachable, overview.unavailable.join("\n"));
@@ -172,17 +171,35 @@ export class SentinelOverviewPage implements Page {
     const { words, talkWords } = this.options;
     const { definition, phase } = one.summary;
     const said = definition.condition || one.summary.plan;
-    const wakes = one.wakes.filter((wake) => wake.at >= from);
-    const tokens = wakes.reduce((sum, wake) => sum + wake.input + wake.output, 0);
-    const time = wakes.reduce((sum, wake) => sum + wake.elapsed_ms, 0);
-    const took = wakes.length ? words.overview.took(wakes.length, count(tokens), duration(time, talkWords)) : "";
+    const spent = took(one, from);
+    const tookWords = spent.wakes ? words.overview.took(spent.wakes, count(spent.tokens), duration(spent.time, talkWords)) : "";
     const mark = phase === "satisfied" ? "check" : "sentinel";
     const lane = laneMarkup(one, from, now, this.width, over, (wake) => `${words.at(wake.at, now)} ${woke(wake, talkWords)}`);
-    return `<li class="so-row" data-phase="${phase}"><a class="so-link" href="${this.options.link(one)}" title="${escape(took)}">
+    return `<li class="so-row" data-phase="${phase}"><a class="so-link" href="${this.options.link(one)}" title="${escape(tookWords)}">
       <span class="so-head"><span class="so-what">${escape(said)}</span><span class="so-where">${glyph(this.options.form(definition.home), 14)}<span>${escape(definition.home)}</span></span><span class="so-phase">${glyph(mark, 14)}<span>${escape(words.phase[phase])}</span></span></span>
       <svg class="so-lane" viewBox="0 0 ${this.width} ${LANE}" height="${LANE}" aria-hidden="true">${lane}</svg>
     </a></li>`;
   }
+}
+
+/** How often it woke since `from` and what it took: counted day by day by
+ *  its home, every wake in it, or else from the wakes it sent, the latest
+ *  only. */
+function took(one: SentinelWatched, from: number): { wakes: number; tokens: number; time: number } {
+  if (one.days?.length) {
+    const days = one.days.filter((day) => day.day + 86_400_000 > from);
+    return {
+      wakes: days.reduce((sum, day) => sum + day.wakes, 0),
+      tokens: days.reduce((sum, day) => sum + day.input + day.output, 0),
+      time: days.reduce((sum, day) => sum + day.elapsed_ms, 0),
+    };
+  }
+  const wakes = one.wakes.filter((wake) => wake.at >= from);
+  return {
+    wakes: wakes.length,
+    tokens: wakes.reduce((sum, wake) => sum + wake.input + wake.output, 0),
+    time: wakes.reduce((sum, wake) => sum + wake.elapsed_ms, 0),
+  };
 }
 
 function live(one: SentinelWatched): boolean {

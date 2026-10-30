@@ -219,6 +219,16 @@
   background: var(--rule);
 }
 
+/* Rows stand apart, so the chosen one and the one under the pointer never
+   run together; a level's hairline reaches across the room between them. */
+.ml-row + .ml-row {
+  margin-top: var(--row-gap);
+}
+
+.ml-row + .ml-row[data-depth]::before {
+  top: calc(-1 * var(--row-gap));
+}
+
 .ml-name {
   display: flex;
   align-items: center;

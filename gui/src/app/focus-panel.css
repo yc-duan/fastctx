@@ -120,7 +120,7 @@
   color: var(--text-3);
   --turn: -90deg;
   rotate: var(--turn);
-  transition: --turn var(--fold) var(--fold-easing);
+  transition: --turn var(--expand) var(--expand-easing);
 }
 
 .focus-group.open > .focus-arrow {
@@ -132,7 +132,7 @@
 .focus-fold {
   display: grid;
   grid-template-rows: 1fr;
-  transition: grid-template-rows var(--fold) var(--fold-easing);
+  transition: grid-template-rows var(--expand) var(--expand-easing);
 }
 
 .focus-fold.shut {

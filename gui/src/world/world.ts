@@ -323,7 +323,10 @@ export type Writer =
   | { kind: "resident"; address: Address }
   | { kind: "session"; agent: AgentName }
   /** An open page, doing what the user agreed to (`pages.ts`). */
-  | { kind: "page"; page: PageSource };
+  | { kind: "page"; page: PageSource }
+  /** A conversation, or a page, on a machine this device's account may not
+   *  work on: no more is told (`world-network.md`, 共享机器与智能体协助). */
+  | { kind: "elsewhere"; page: boolean };
 
 /** Who started a job: a resident, or an open page. A resident is its
  *  address as it always was. */
@@ -353,7 +356,9 @@ export interface ProjectRecord {
   places: Listing[];
   canon: Location | null;
   by: Writer;
-  on: MachineName;
+  /** Left out where whoever reads it may not work on the machine it was
+   *  written on. */
+  on?: MachineName;
   at: Timestamp;
 }
 
@@ -410,10 +415,11 @@ export interface JournalSummary {
   latest: EntryStamp | null;
 }
 
-/** Who wrote a version of a record, on which machine, when. */
+/** Who wrote a version of a record, on which machine, when; the machine
+ *  left out as a record's is. */
 export interface Stamp {
   by: Writer;
-  on: MachineName;
+  on?: MachineName;
   at: Timestamp;
 }
 

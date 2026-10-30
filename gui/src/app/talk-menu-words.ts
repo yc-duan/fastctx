@@ -5,6 +5,8 @@
 
 export interface TalkMenuWords {
   more: string;
+  /** Opens it side by side with those shown. */
+  beside: string;
   move: string;
   rename: string;
   /** Finding in the conversation, from its head's "⋯" on a phone. */
@@ -30,6 +32,9 @@ export interface TalkMenuWords {
   noProjects: string;
   /** Its machine is away: only deleting goes ahead now. */
   offline(machine: string): string;
+  /** Its machine is out of reach for good: only this device's copy is
+   *  left to delete. */
+  departed: string;
   archived: string;
   /** The sidebar's group of archived conversations. */
   archivedGroup: string;
@@ -55,6 +60,8 @@ export interface TalkMenuWords {
   hostRecord(agent: "codex" | "claude" | string): string;
   deleteWorking: string;
   deleteAway(machine: string): string;
+  /** Its machine is out of reach for good: what deleting it does. */
+  deleteHere: string;
   deleteGo: string;
   cancel: string;
   working: string;
@@ -66,6 +73,7 @@ export interface TalkMenuWords {
 
 export const zhTalkMenu: TalkMenuWords = {
   more: "更多",
+  beside: "分屏打开",
   move: "移入项目",
   rename: "重命名",
   find: "查找",
@@ -82,6 +90,7 @@ export const zhTalkMenu: TalkMenuWords = {
   noProject: "不放在项目里",
   noProjects: "还没有项目",
   offline: (machine) => `${machine} 离线，只能删除`,
+  departed: "已无法访问，只能删除这台设备上的副本",
   archived: "已归档",
   archivedGroup: "已归档",
   deleting: "正在删除",
@@ -100,6 +109,7 @@ export const zhTalkMenu: TalkMenuWords = {
   hostRecord: (agent) => (agent === "codex" ? "Codex 的线程记录" : agent === "claude" ? "Claude Code 的会话记录" : "智能体自己的记录"),
   deleteWorking: "它正在干活，会先停下。",
   deleteAway: (machine) => `${machine} 离线，连回来后再删。`,
+  deleteHere: "它所在的机器已无法访问，只删除这台设备上的副本。",
   deleteGo: "删除",
   cancel: "取消",
   working: "正在删除…",
@@ -110,6 +120,7 @@ export const zhTalkMenu: TalkMenuWords = {
 
 export const enTalkMenu: TalkMenuWords = {
   more: "More",
+  beside: "Open side by side",
   move: "Move to project",
   rename: "Rename",
   find: "Find",
@@ -126,6 +137,7 @@ export const enTalkMenu: TalkMenuWords = {
   noProject: "No project",
   noProjects: "No projects yet",
   offline: (machine) => `${machine} is offline; only deleting works`,
+  departed: "No longer reachable; only this device's copy can be deleted",
   archived: "Archived",
   archivedGroup: "Archived",
   deleting: "Deleting",
@@ -144,6 +156,7 @@ export const enTalkMenu: TalkMenuWords = {
   hostRecord: (agent) => (agent === "codex" ? "Codex's thread" : agent === "claude" ? "Claude Code's session" : "The agent's own record"),
   deleteWorking: "It's working; it will be stopped first.",
   deleteAway: (machine) => `${machine} is offline; it's deleted there when it's back.`,
+  deleteHere: "Its machine is no longer reachable; only this device's copy is deleted.",
   deleteGo: "Delete",
   cancel: "Cancel",
   working: "Deleting…",

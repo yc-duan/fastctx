@@ -1,0 +1,306 @@
+/* The desk (`desk.ts`): conversations side by side, each a pane as tall as
+   its row, set apart by lines ruled by hand down the edge two share and
+   across the top of the second row, midway between their words, as the
+   sidebar's edge is ruled; the one in focus with its name in full ink. A
+   pane coming in grows from nothing as the others give way, and one going
+   shrinks back to nothing, by --dk-grow; each takes its share of its row,
+   so the rows break where they should with nothing between them. */
+
+@property --dk-grow {
+  syntax: "<number>";
+  inherits: false;
+  initial-value: 1;
+}
+
+@property --fk-wash {
+  syntax: "<number>";
+  inherits: false;
+  initial-value: 0;
+}
+
+.desk {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+.desk-panes {
+  position: relative;
+  display: flex;
+  flex: 1;
+  flex-wrap: wrap;
+  align-content: stretch;
+  min-width: 0;
+  min-height: 0;
+}
+
+.desk-pane {
+  --dk-row: 1;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  flex: var(--dk-grow) 1 calc((100% / var(--dk-row) - 1px) * var(--dk-grow));
+  min-width: 0;
+  height: 100%;
+  transition: --dk-grow var(--glide) var(--glide-easing);
+}
+
+.desk-two .desk-pane {
+  height: 50%;
+}
+
+.desk-pane > .conversation-page,
+.desk-pane > .dk-fork-page {
+  flex: 1;
+  min-height: 0;
+}
+
+/* What does not fit a pane is cut at its edges, its line left whole. */
+.desk-many .desk-pane,
+.desk-pane.dk-moving {
+  overflow: clip;
+  overflow-clip-margin: 4px;
+}
+
+.desk-single .desk-pane:not(.focused) {
+  display: none;
+}
+
+/* The lines: down the edge a pane shares with the one before it in its
+   row, and across the top of the second row. */
+.desk-pane.dk-after::before,
+.desk-pane.dk-below::after {
+  content: "";
+  position: absolute;
+  z-index: 5;
+  background: var(--pen-rule);
+  opacity: 0.55;
+  pointer-events: none;
+}
+
+.desk-pane.dk-after::before {
+  top: 0;
+  bottom: 0;
+  left: -3px;
+  width: 6px;
+  -webkit-mask: var(--pen-rule-down) 50% 0 / 100% 100% no-repeat;
+  mask: var(--pen-rule-down) 50% 0 / 100% 100% no-repeat;
+}
+
+.desk-pane.dk-below::after {
+  top: -4px;
+  left: 0;
+  right: 0;
+  height: 8px;
+  -webkit-mask: var(--pen-rule-1) 0 50% / 100% 100% no-repeat;
+  mask: var(--pen-rule-1) 0 50% / 100% 100% no-repeat;
+}
+
+/* The way to the sidebar, where it is hidden, stands in the first pane's
+   head alone. */
+.desk-pane:is(.dk-after, .dk-below) .menu-button {
+  display: none;
+}
+
+/* The one in focus has its name in full ink; the others step back. */
+.desk-many .desk-pane:not(.focused) .who-name {
+  color: var(--text-2);
+}
+
+/* The top row's last keeps clear of the corner, where the window's own
+   buttons and the side's switch stand, until the side takes it over. */
+.desk-pane.dk-corner > .conversation-page > .page-head,
+.desk-pane.dk-corner > .dk-fork-page > .page-head {
+  padding-right: var(--sp-corner);
+}
+
+.sp-split[data-dock="right"] .desk-pane.dk-corner > .conversation-page > .page-head,
+.sp-split[data-dock="right"] .desk-pane.dk-corner > .dk-fork-page > .page-head {
+  padding-right: max(var(--space-4), calc(var(--sp-corner) - var(--side-width) * var(--sp-open)));
+}
+
+/* The cross at the end of a conversation's head, while the desk shows more
+   than one. */
+.dk-close {
+  display: none;
+}
+
+.desk-many .dk-close {
+  display: inline-grid;
+}
+
+/* Where a conversation carried in would stand: the half of a pane it would
+   open in, or the whole pane it would take, washed in clay with its name. */
+.desk-drop {
+  position: absolute;
+  z-index: 42;
+  display: none;
+  place-items: center;
+  border-radius: var(--radius-l);
+  background: var(--accent-wash);
+  pointer-events: none;
+}
+
+.dk-dropping .desk-drop {
+  display: grid;
+}
+
+.desk-drop-words {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  max-width: calc(100% - 2 * var(--space-4));
+  height: 34px;
+  padding: 0 var(--space-4);
+  border-radius: var(--radius-full);
+  background: var(--accent);
+  color: var(--bg);
+  font-family: var(--font-emphasis);
+}
+
+.desk-drop-mark {
+  display: inline-grid;
+  flex: none;
+}
+
+.desk-drop-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* A fork on its way: a head like a conversation's, the card of where it
+   comes from, and a quiet line under it. */
+.dk-fork-page {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.dk-fork-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  width: 100%;
+  max-width: calc(var(--column) + 2 * var(--gutter));
+  margin: 0 auto;
+  padding: var(--space-6) var(--gutter);
+}
+
+.dk-fork-status {
+  margin: 0;
+  color: var(--text-3);
+}
+
+/* Where a fork came from (`conversation/fork-card.ts`): a raised card at
+   its head, the conversation it was made from by its mark and name, the
+   user's last words there as they stood, and the answer under them fading
+   into the card. */
+.fk-from {
+  margin: var(--space-4) 0 var(--space-2);
+}
+
+.fk-card {
+  display: grid;
+  gap: var(--space-2);
+  width: 100%;
+  padding: var(--space-3) var(--space-4) var(--space-4);
+  border-radius: var(--radius-l);
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-float);
+  color: var(--text-2);
+  font-family: var(--font-reading);
+  font-size: var(--size-text);
+  line-height: var(--leading-ui);
+  text-align: left;
+  cursor: pointer;
+}
+
+.fk-who {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  color: var(--text-3);
+  transition: color var(--hover) var(--ease);
+}
+
+.fk-who > .glyph {
+  flex: none;
+}
+
+.fk-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.fk-card:hover .fk-who {
+  color: var(--text);
+}
+
+.fk-said {
+  justify-self: end;
+  max-width: 85%;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-m);
+  background: var(--bubble);
+  color: var(--on-bubble);
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+}
+
+.fk-answer {
+  position: relative;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  overflow: hidden;
+}
+
+/* A shade over the last words, not a mask on them, so they stay sharp. */
+.fk-answer::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 2.4em;
+  background: linear-gradient(to bottom, transparent, var(--bg-elevated));
+  pointer-events: none;
+}
+
+/* Carried over (`flight.ts`): a copy in flight, the card itself unseen
+   until it lands, and the turn it lifted off washed a moment in clay over
+   its own ground. */
+.fk-ghost {
+  position: fixed;
+  z-index: 90;
+  margin: 0;
+  pointer-events: none;
+}
+
+.fk-waiting {
+  visibility: hidden;
+}
+
+.fk-from-turn {
+  background-image: linear-gradient(color-mix(in srgb, var(--accent-wash) calc(var(--fk-wash) * 100%), transparent), color-mix(in srgb, var(--accent-wash) calc(var(--fk-wash) * 100%), transparent));
+  animation: fk-wash calc(var(--glide) * 2) var(--ease);
+}
+
+@keyframes fk-wash {
+  30% {
+    --fk-wash: 1;
+  }
+}
+
+:root[data-reduced] .fk-from-turn {
+  animation: none;
+}

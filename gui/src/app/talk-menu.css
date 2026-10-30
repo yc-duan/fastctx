@@ -23,17 +23,17 @@
 }
 
 .talk-item:hover .talk-quick,
-.talk-item:focus-within .talk-quick,
+.talk-item:has(:focus-visible) .talk-quick,
 .talk-item.menu-open .talk-quick {
   --shown: 1;
   pointer-events: auto;
 }
 
 .talk-item:hover .talk-device,
-.talk-item:focus-within .talk-device,
+.talk-item:has(:focus-visible) .talk-device,
 .talk-item.menu-open .talk-device,
 .talk-item:hover .talk-state,
-.talk-item:focus-within .talk-state,
+.talk-item:has(:focus-visible) .talk-state,
 .talk-item.menu-open .talk-state {
   --shown: 0;
 }
@@ -81,8 +81,8 @@
     display: none;
   }
 
-  .talk-item:focus-within .talk-device,
-  .talk-item:focus-within .talk-state {
+  .talk-item:has(:focus-visible) .talk-device,
+  .talk-item:has(:focus-visible) .talk-state {
     --shown: 1;
   }
 }
@@ -139,48 +139,6 @@
 .talk-item.menu-open > .talk-row.archived .talk-name,
 .talk-row.archived.current .talk-name {
   color: var(--text-2);
-}
-
-/* The archived group's head: a fold with its count, quiet as a group title. */
-.side-archived {
-  margin-top: var(--space-2);
-}
-
-.side-archived-head {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  width: 100%;
-  padding: 4px var(--space-3);
-  border: 0;
-  border-radius: var(--radius-s);
-  background: transparent;
-  color: var(--text-3);
-  font: inherit;
-  font-size: var(--size-text);
-  text-align: left;
-  cursor: pointer;
-  transition: color var(--hover) var(--ease);
-}
-
-.side-archived-head:hover,
-.side-archived-head:focus-visible {
-  outline: 0;
-  color: var(--text-2);
-}
-
-.side-archived-head .glyph {
-  rotate: var(--turn);
-  transition: --turn var(--fold) var(--fold-easing);
-}
-
-.side-archived.shut .side-archived-head .glyph:first-child {
-  --turn: -90deg;
-}
-
-.side-archived-count {
-  margin-left: auto;
-  font-variant-numeric: tabular-nums;
 }
 
 /* The field a row's name becomes while it is renamed: a solid well in the

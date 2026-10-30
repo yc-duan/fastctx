@@ -1,150 +1,133 @@
-// The side of a conversation's page (`world-gui.md`, 对话的侧面板): shut
-// until asked for, then the page's second part, set apart from the
-// conversation by the margin ruled along the edge they share alone. It
-// holds other conversations, a tab each at its top: a colleague the
-// conversation asked, one of the host's agents, or any conversation dragged
-// in from the list, each closed by its cross. Before them all stands the
-// conversation's own overview, its first tab, which does not close. A
-// tab's content is made when first chosen and kept while the tab is open.
-// The side opens and shuts by the page's `--sp-open` (`side.css`):
-// shutting, it stays drawn until that has gone back to nothing. Where
-// there is no room beside the conversation, as on a phone, it lies over the
-// whole page and holds the overview alone.
+// The side of the conversations shown (`world-gui.md`, 对话的侧面板): shut
+// until asked for, then a column of the desk beside the conversations, set
+// apart from them by the margin ruled along the edge they share alone. It
+// holds the parts of the conversation in focus: its first line is their
+// marks, the goal, the plan and who works with it, how far the plan is and
+// how many work with it in small figures after them, a mark in clay while
+// something there waits on the user, the one shown on the clay wash; then the
+// side's "⋯". Another conversation in focus, the side turns to its parts.
+// One of the host's agents, opened from who works with it, is read in the
+// side's body until a part's mark is pressed again. What the conversation is
+// pointed at stands at the foot under its parts. The side opens and shuts by
+// the desk's `--sp-open` (`side.css`): shutting, it stays drawn until that
+// has gone back to nothing. Where there is no room beside the conversations,
+// as on a phone, it lies over the whole desk.
 
 import { glyph } from "../conversation/glyphs";
 import { escape } from "../conversation/prose";
 import { msOf, reducedMotion } from "../motion";
 import { Sketch } from "../pen/sketch";
-import { goalMark } from "./marks";
-import type { GoalStatus } from "./types";
 import type { SideWords } from "./words";
 import "./side.css";
 
-/** A page drawn in the side or laid on the conversation's whole. */
+/** A page drawn in the side. */
 export interface SidePage {
   readonly element: HTMLElement;
   /** It came into view: it may draw what needs its size. */
   shown?(): void;
 }
 
-/** What a tab shows: kept while the tab is open, let go when it closes. */
-export interface PaneContent extends SidePage {
-  leave?(): void;
-  /** The room it has across is about to change by `by` pixels. */
-  roomWillChange?(by: number): void;
-}
-
-/** Where the side stands beside the conversation. */
+/** Where the side stands beside the conversations. */
 export type Dock = "right" | "bottom" | "left";
 
-export interface PaneTab {
-  /** The conversation or agent the tab shows. */
+/** One of a conversation's own parts, a mark in the side's first line. */
+export interface PanePart {
   id: string;
   name: string;
-  /** The family's mark before the name. */
-  agent: "claude" | "codex";
-  /** Opens the tab's conversation as the page's own, where it is one. */
-  main?: () => void;
-  /** How the goal of the tab's conversation stands, where it has one. */
-  goal?: GoalStatus | null;
+  glyph: "goal" | "rows" | "tree";
+  page: SidePage;
 }
 
-interface Held {
-  tab: PaneTab;
-  make: () => PaneContent;
-  content: PaneContent | null;
+/** How a part stands, drawn on its mark. */
+export interface PartState {
+  /** A few figures after the mark: how far the plan is, how many work. */
+  count?: string;
+  /** Something there waits on the user: the mark is in clay. */
+  waiting?: boolean;
+  /** What pointing at it says after its name. */
+  said?: string;
+}
+
+/** A conversation's parts, as the side shows them while it is in focus. */
+export interface PartSet {
+  readonly parts: PanePart[];
+  state(id: string): PartState | undefined;
+  /** What the conversation is pointed at, for the foot. */
+  readonly env: HTMLElement | null;
+  /** The part this conversation last showed. */
+  part: string | null;
+}
+
+/** Something read in the side's body over the parts: one of the host's
+ *  agents. */
+export interface Peek {
+  readonly element: HTMLElement;
+  leave(): void;
 }
 
 export class SidePane {
   readonly element: HTMLElement;
   private readonly sheet: HTMLElement;
-  private readonly strip: HTMLElement;
+  private readonly partsRow: HTMLElement;
   private readonly body: HTMLElement;
-  private readonly home: HTMLElement;
+  private readonly foot: HTMLElement;
   private readonly margin: HTMLElement;
-  private readonly main: HTMLButtonElement;
-  private readonly held = new Map<string, Held>();
-  private order: string[] = [];
-  private current: string | null = null;
-  private readonly fresh = new Set<string>();
+  private readonly menu: HTMLElement;
+  private set: PartSet | null = null;
+  private peeked: Peek | null = null;
   private height = 0;
   private dock: Dock = "right";
-  /** Over the whole page, where there is no room beside the conversation. */
-  private lying = false;
-  private readonly docks: HTMLElement;
   /** Shutting: still drawn while it goes. */
   private shutting = 0;
 
   constructor(
-    private readonly words: SideWords,
+    words: SideWords,
     private readonly seams: {
-      /** The side opened or shut, its tabs changed, or one has news. */
+      /** The side opened or shut, or turned to another part. */
       changed: () => void;
       /** The user chose where the side stands. */
       dock: (dock: Dock) => void;
-      /** The user asked for a side conversation branched off this one. */
-      fork?: () => void;
     },
   ) {
     this.element = document.createElement("aside");
     this.element.className = "sp-panel";
     this.element.hidden = true;
     this.element.setAttribute("aria-label", words.panel);
-    this.element.innerHTML = `<div class="sp-sheet"><div class="sp-margin" aria-hidden="true"></div><header class="sp-head"><nav class="sp-tabs" role="tablist"></nav><button class="icon-button sp-new" type="button" hidden aria-label="${escape(words.fork)}" title="${escape(words.fork)}">${glyph("plus", 16)}</button><div class="sp-acts"><button class="icon-button sp-main" type="button" hidden aria-label="${escape(words.openMain)}" title="${escape(words.openMain)}">${glyph("expand", 16)}</button><button class="icon-button sp-dock" type="button" aria-haspopup="menu" aria-expanded="false" aria-label="${escape(words.dock)}" title="${escape(words.dock)}">${glyph("more", 18)}</button><button class="icon-button sp-shut" type="button" aria-label="${escape(words.shut)}" title="${escape(words.shut)}">${glyph("dock-right", 18)}</button><div class="sp-dock-menu" role="menu" hidden>${(["right", "bottom", "left"] as const)
-      .map((dock) => `<button class="sp-dock-row" type="button" role="menuitemradio" aria-checked="false" data-dock="${dock}">${glyph(`dock-${dock}`, 16)}<span>${escape(words.docks[dock])}</span></button>`)
-      .join("")}</div></div></header><div class="sp-body"><div class="sp-home"></div></div></div>`;
+    this.element.innerHTML = `<div class="sp-sheet"><div class="sp-margin" aria-hidden="true"></div><header class="sp-head"><div class="sp-line"><div class="sp-parts" role="tablist" aria-label="${escape(words.panel)}"></div><div class="sp-acts"><button class="icon-button sp-more" type="button" aria-haspopup="menu" aria-expanded="false" aria-label="${escape(words.more)}" title="${escape(words.more)}">${glyph("more", 18)}</button><button class="icon-button sp-shut" type="button" aria-label="${escape(words.shut)}" title="${escape(words.shut)}">${glyph("close", 18)}</button><div class="sp-menu" role="menu" hidden>${(["right", "bottom", "left"] as const)
+      .map((dock) => `<button class="sp-menu-row" type="button" role="menuitemradio" aria-checked="false" data-dock="${dock}">${glyph(`dock-${dock}`, 16)}<span>${escape(words.docks[dock])}</span></button>`)
+      .join("")}</div></div></div></header><div class="sp-body"></div><footer class="sp-foot"></footer></div>`;
     this.sheet = this.element.querySelector(".sp-sheet")!;
-    this.strip = this.element.querySelector(".sp-tabs")!;
+    this.partsRow = this.element.querySelector(".sp-parts")!;
     this.body = this.element.querySelector(".sp-body")!;
-    this.home = this.element.querySelector(".sp-home")!;
+    this.foot = this.element.querySelector(".sp-foot")!;
     this.margin = this.element.querySelector(".sp-margin")!;
-    this.main = this.element.querySelector(".sp-main")!;
-    this.docks = this.element.querySelector(".sp-dock-menu")!;
-    const dockButton = this.element.querySelector<HTMLButtonElement>(".sp-dock")!;
-    dockButton.addEventListener("click", () => this.dockMenu(this.docks.hidden));
-    this.docks.addEventListener("click", (event) => {
-      const dock = (event.target as HTMLElement).closest<HTMLElement>("[data-dock]")?.dataset.dock as Dock | undefined;
+    this.menu = this.element.querySelector(".sp-menu")!;
+    const more = this.element.querySelector<HTMLButtonElement>(".sp-more")!;
+    more.addEventListener("click", () => this.openMenu(this.menu.hidden));
+    this.menu.addEventListener("click", (event) => {
+      const dock = (event.target as HTMLElement).closest<HTMLElement>(".sp-menu-row")?.dataset.dock as Dock | undefined;
       if (!dock) return;
-      this.dockMenu(false);
+      this.openMenu(false);
       this.seams.dock(dock);
     });
     document.addEventListener("pointerdown", (event) => {
       const target = event.target as HTMLElement;
-      if (!this.docks.hidden && !this.docks.contains(target) && !dockButton.contains(target)) this.dockMenu(false);
+      if (!this.menu.hidden && !this.menu.contains(target) && !more.contains(target)) this.openMenu(false);
     });
-    this.main.addEventListener("click", () => (this.current ? this.held.get(this.current)?.tab.main?.() : undefined));
     this.element.querySelector(".sp-shut")!.addEventListener("click", () => this.close());
-    this.element.querySelector(".sp-new")!.addEventListener("click", () => this.seams.fork?.());
-    this.strip.addEventListener("click", (event) => {
-      const target = event.target as HTMLElement;
-      if (target.closest(".sp-tab-home")) {
-        this.goHome();
-        return;
-      }
-      const id = target.closest<HTMLElement>(".sp-tab")?.dataset.tab;
-      if (!id) return;
-      if (target.closest(".sp-tab-x")) this.remove(id);
-      else this.select(id);
+    this.partsRow.addEventListener("click", (event) => {
+      const id = (event.target as HTMLElement).closest<HTMLElement>("[data-part]")?.dataset.part;
+      if (id) this.select(id);
     });
-    // The middle button closes a tab, as in a browser.
-    this.strip.addEventListener("auxclick", (event) => {
-      const id = (event.target as HTMLElement).closest<HTMLElement>(".sp-tab")?.dataset.tab;
-      if (event.button === 1 && id) this.remove(id);
-    });
-    this.strip.addEventListener("keydown", (event) => {
-      const id = (event.target as HTMLElement).closest<HTMLElement>(".sp-tab")?.dataset.tab;
-      if (!id) return;
-      const at = this.order.indexOf(id);
+    this.partsRow.addEventListener("keydown", (event) => {
+      const at = (event.target as HTMLElement).closest<HTMLElement>("[data-part]")?.dataset.part;
       const step = event.key === "ArrowRight" ? 1 : event.key === "ArrowLeft" ? -1 : 0;
-      if (step) {
-        event.preventDefault();
-        const next = this.order[(at + step + this.order.length) % this.order.length]!;
-        this.select(next);
-        this.strip.querySelector<HTMLElement>(`.sp-tab[data-tab="${CSS.escape(next)}"]`)?.focus();
-      } else if (event.key === "Delete" || event.key === "Backspace") {
-        event.preventDefault();
-        this.remove(id);
-      }
+      const all = this.set?.parts.map((part) => part.id) ?? [];
+      if (!at || !step || !all.length) return;
+      event.preventDefault();
+      const next = all[(all.indexOf(at) + step + all.length) % all.length]!;
+      this.select(next);
+      this.partsRow.querySelector<HTMLElement>(`[data-part="${CSS.escape(next)}"]`)?.focus();
     });
     this.element.addEventListener("keydown", (event) => {
       if (event.key === "Escape" && this.element.classList.contains("sp-over")) this.close();
@@ -162,89 +145,40 @@ export class SidePane {
     return this.shutting !== 0;
   }
 
-  /** Whether something came while it could not be seen, for the switch's dot. */
-  get hasNews(): boolean {
-    return this.fresh.size > 0 && !this.open;
-  }
-
-  /** The tab shown, if any is open. */
-  get shownTab(): string | null {
-    return this.current;
-  }
-
-  /** The tabs, in their order. */
-  get tabs(): PaneTab[] {
-    return this.order.map((id) => this.held.get(id)!.tab);
-  }
-
-  /** Whether a side conversation can be branched off here now. */
-  offerFork(on: boolean): void {
-    this.element.querySelector<HTMLButtonElement>(".sp-new")!.hidden = !on;
-  }
-
-  /** A side conversation is being branched off: the "+" waits. */
-  forking(on: boolean): void {
-    const button = this.element.querySelector<HTMLButtonElement>(".sp-new")!;
-    button.disabled = on;
-    button.setAttribute("aria-busy", String(on));
-  }
-
-  /** How the goal of a tab's conversation stands now. */
-  markGoal(id: string, goal: GoalStatus | null): void {
-    const held = this.held.get(id);
-    if (!held || held.tab.goal === goal) return;
-    held.tab = { ...held.tab, goal };
-    this.drawTabs();
-  }
-
-  /** What the tab shows, once it was made. */
-  content(id: string | null): PaneContent | null {
-    return id ? (this.held.get(id)?.content ?? null) : null;
-  }
-
-  /** Puts a tab after the others, or names one already there anew; its
-   *  content is made when it is first shown. */
-  add(tab: PaneTab, make: () => PaneContent): void {
-    const held = this.held.get(tab.id);
-    if (held) held.tab = tab;
-    else {
-      this.held.set(tab.id, { tab, make, content: null });
-      this.order.push(tab.id);
+  /** Turns the side to another conversation's parts, or to none: what was
+   *  read over the parts goes, the parts' pages are put in, the foot holds
+   *  what that conversation is pointed at. */
+  use(set: PartSet | null): void {
+    if (set === this.set) return;
+    this.unpeek();
+    for (const part of this.set?.parts ?? []) part.page.element.remove();
+    this.set = set;
+    for (const part of set?.parts ?? []) {
+      part.page.element.classList.add("sp-page");
+      part.page.element.setAttribute("role", "tabpanel");
+      this.body.append(part.page.element);
     }
-    this.drawTabs();
-    this.seams.changed();
+    this.foot.replaceChildren(...(set?.env ? [set.env] : []));
+    this.drawShown();
+    if (this.open) this.page()?.shown?.();
   }
 
-  /** Closes a tab, its content let go of. */
-  remove(id: string): void {
-    const held = this.held.get(id);
-    if (!held) return;
-    const at = this.order.indexOf(id);
-    this.order.splice(at, 1);
-    this.held.delete(id);
-    this.fresh.delete(id);
-    held.content?.leave?.();
-    held.content?.element.remove();
-    if (this.current === id) {
-      this.current = null;
-      const next = this.order[Math.max(0, at - 1)];
-      if (next) this.select(next);
-      else this.drawShown();
-    } else this.drawTabs();
-    this.seams.changed();
+  /** The marks drawn again, as the parts' states changed. */
+  restate(): void {
+    this.drawParts();
   }
 
-  /** Opens the side, at `id` when one is named. */
-  show(id?: string | null): void {
+  /** Opens the side: at `part` when one is named, else where it was left. */
+  show(part?: string | null): void {
     if (this.shutting) {
       window.clearTimeout(this.shutting);
       this.shutting = 0;
     }
     this.element.hidden = false;
-    const at = id && this.held.has(id) ? id : (this.current ?? this.order[0] ?? null);
-    if (at) this.select(at);
+    if (part && this.set?.parts.some((one) => one.id === part)) this.select(part);
     else {
       this.drawShown();
+      this.page()?.shown?.();
       this.seams.changed();
     }
   }
@@ -256,127 +190,111 @@ export class SidePane {
     this.shutting = window.setTimeout(() => {
       this.shutting = 0;
       this.element.hidden = true;
+      this.unpeek();
       this.seams.changed();
     }, ms);
     this.seams.changed();
   }
 
-  toggle(): void {
+  toggle(first?: string | null): void {
     if (this.open) this.close();
-    else this.show();
+    else this.show(this.set?.part ?? first);
   }
 
+  /** Shows a part, what was read over the parts going. */
   select(id: string): void {
-    const held = this.held.get(id);
-    if (!held) return;
-    this.current = id;
-    this.fresh.delete(id);
-    if (!held.content) {
-      held.content = held.make();
-      held.content.element.classList.add("sp-page");
-      held.content.element.setAttribute("role", "tabpanel");
-      this.body.append(held.content.element);
-    }
+    if (!this.set?.parts.some((part) => part.id === id)) return;
+    this.unpeek();
+    this.set.part = id;
     this.drawShown();
-    if (this.open) held.content.shown?.();
+    if (this.open) this.page()?.shown?.();
     this.seams.changed();
   }
 
-  /** What the side shows with no other tab chosen: the overview. */
-  setHome(element: HTMLElement): void {
-    this.home.replaceChildren(element);
-  }
-
-  /** Back to the side's home, its tabs kept. */
-  goHome(): void {
-    this.current = null;
+  /** Reads `peek` in the body over the parts, until a part is chosen. */
+  peek(peek: Peek): void {
+    this.unpeek();
+    this.peeked = peek;
+    peek.element.classList.add("sp-page", "sp-peek");
+    this.body.append(peek.element);
     this.drawShown();
-    this.seams.changed();
   }
 
-  /** A tab has something new; said by a dot until it is looked at. */
-  news(id: string): void {
-    if (!this.held.has(id) || (this.open && this.current === id)) return;
-    this.fresh.add(id);
-    this.drawTabs();
-    this.seams.changed();
-  }
-
-  /** Where there is no room beside the conversation, as on a phone, the
-   *  side lies over the whole page and holds the overview alone: another
-   *  conversation opens as the page's own instead, and the tabs wait for
-   *  the room to come back. */
+  /** Where there is no room beside the conversations, as on a phone, the
+   *  side lies over the whole desk. */
   over(over: boolean): void {
-    this.lying = over;
     this.element.classList.toggle("sp-over", over);
-    this.drawShut();
-    this.drawShown();
   }
 
   /** Where the side stands: its margin is ruled along the edge it shares
-   *  with the conversation, the button that shuts it drawn as the place,
-   *  and its menu marks the place. */
+   *  with the conversations, and its menu marks the place. */
   setDock(dock: Dock): void {
     this.dock = dock;
     this.height = 0;
     this.rule();
-    this.drawShut();
-    for (const row of this.docks.querySelectorAll<HTMLElement>("[data-dock]")) row.setAttribute("aria-checked", String(row.dataset.dock === dock));
+    for (const row of this.menu.querySelectorAll<HTMLElement>("[data-dock]")) row.setAttribute("aria-checked", String(row.dataset.dock === dock));
   }
 
-  /** The places the page has room for the side at now; the others are
-   *  not offered. */
+  /** The places the desk has room for the side at now; the others are not
+   *  offered. */
   fitting(docks: readonly Dock[]): void {
-    for (const row of this.docks.querySelectorAll<HTMLButtonElement>("[data-dock]")) row.disabled = !docks.includes(row.dataset.dock as Dock);
+    for (const row of this.menu.querySelectorAll<HTMLButtonElement>("[data-dock]")) row.disabled = !docks.includes(row.dataset.dock as Dock);
   }
 
-  /** The button that shuts the side, drawn as where it stands; a cross
-   *  where it lies over the page. */
-  private drawShut(): void {
-    this.element.querySelector(".sp-shut")!.innerHTML = glyph(this.lying ? "close" : `dock-${this.dock}`, 18);
+  private unpeek(): void {
+    const peeked = this.peeked;
+    if (!peeked) return;
+    this.peeked = null;
+    peeked.element.remove();
+    peeked.leave();
   }
 
-  private dockMenu(open: boolean): void {
-    this.docks.hidden = !open;
-    this.element.querySelector(".sp-dock")!.setAttribute("aria-expanded", String(open));
+  private openMenu(open: boolean): void {
+    this.menu.hidden = !open;
+    this.element.querySelector(".sp-more")!.setAttribute("aria-expanded", String(open));
   }
 
-  /** The tab shown, or the home where none is chosen. */
+  /** The part shown, unless something is read over the parts. */
+  private shown(): string | null {
+    if (this.peeked || !this.set) return null;
+    return this.set.part ?? this.set.parts[0]?.id ?? null;
+  }
+
+  private page(): { shown?(): void } | null {
+    const shown = this.shown();
+    return this.set?.parts.find((part) => part.id === shown)?.page ?? null;
+  }
+
   private drawShown(): void {
-    const current = this.lying ? null : this.current;
-    for (const [key, one] of this.held) if (one.content) one.content.element.hidden = key !== current;
-    this.home.hidden = current !== null;
-    this.main.hidden = !(current && this.held.get(current)?.tab.main);
-    this.drawTabs();
+    const shown = this.shown();
+    for (const part of this.set?.parts ?? []) part.page.element.hidden = part.id !== shown;
+    // What the conversation is pointed at is said under its parts.
+    this.foot.hidden = !shown || this.foot.childElementCount === 0;
+    this.drawParts();
   }
 
-  /** The row of tabs, drawn again as they change: the overview first, then
-   *  each conversation's family's mark, its name in the reading face and its
-   *  cross; the one shown in the semibold face on a field's shade. */
-  private drawTabs(): void {
-    const home = this.lying || this.current === null;
-    const overview = `<button class="sp-tab sp-tab-home${home ? " current" : ""}" type="button" role="tab" aria-selected="${home}" tabindex="${home ? 0 : -1}"><span class="sp-tab-name" data-label="${escape(this.words.home)}"><span>${escape(this.words.home)}</span></span></button>`;
-    this.strip.innerHTML = overview + (this.lying ? [] : this.order)
-      .map((id) => {
-        const { tab } = this.held.get(id)!;
-        const current = id === this.current;
-        return `<button class="sp-tab${current ? " current" : ""}${this.fresh.has(id) ? " fresh" : ""}" type="button" role="tab" data-tab="${escape(id)}" aria-selected="${current}" tabindex="${current ? 0 : -1}" title="${escape(tab.name)}"><span class="sp-tab-seal">${glyph(tab.agent, 14)}</span><span class="sp-tab-name" data-label="${escape(tab.name)}"><span>${escape(tab.name)}</span></span>${this.goalMark(tab.goal)}<span class="sp-dot" aria-hidden="true"></span><span class="sp-tab-x" aria-label="${escape(this.words.close)}" title="${escape(this.words.close)}">${glyph("close", 12)}</span></button>`;
+  /** The first line's marks: each part's, with its figures after it, in
+   *  clay while something there waits on the user; the one shown on the
+   *  clay wash. */
+  private drawParts(): void {
+    const shown = this.shown();
+    const set = this.set;
+    this.partsRow.innerHTML = (set?.parts ?? [])
+      .map((part) => {
+        const chosen = part.id === shown;
+        const state = set!.state(part.id) ?? {};
+        const said = [part.name, state.said].filter(Boolean).join("\n");
+        const count = state.count ? `<span class="sp-part-count">${escape(state.count)}</span>` : "";
+        return `<button class="sp-part${chosen ? " chosen" : ""}${state.waiting ? " waiting" : ""}" type="button" role="tab" data-part="${escape(part.id)}" aria-selected="${chosen}" tabindex="${chosen || (!shown && part === set!.parts[0]) ? 0 : -1}" aria-label="${escape(said)}" title="${escape(said)}">${glyph(part.glyph, 18)}${count}</button>`;
       })
       .join("");
-    this.strip.querySelector<HTMLElement>(".sp-tab.current")?.scrollIntoView({ block: "nearest", inline: "nearest" });
-  }
-
-  /** A goal at work is the goal's flag on its tab; one paused or stopped
-   *  its own small mark; one done leaves the tab, as it leaves the bar. */
-  private goalMark(goal: GoalStatus | null | undefined): string {
-    if (!goal || goal === "complete") return "";
-    const mark = goal === "active" ? glyph("goal", 12) : goalMark(goal, `tab-${goal}`, 12, "sp-tab-goal-svg");
-    return `<span class="sp-tab-goal" aria-label="${escape(this.words.goal.states[goal])}">${mark}</span>`;
   }
 
   /** The margin is drawn again when the sheet's length along it changes,
    *  with the same stroke in ink over it for while it is held: down the
-   *  sheet's edge beside the conversation, or across its top at the foot. */
+   *  sheet's edge beside the conversations from end to end, or across its
+   *  top at the foot. The stroke runs past both ends, so the line meets the
+   *  window's edges with no lift. */
   private rule(): void {
     const across = this.dock === "bottom";
     const length = across ? this.sheet.clientWidth : this.sheet.clientHeight;
@@ -384,8 +302,8 @@ export class SidePane {
     this.height = length;
     const stroke = (ink: "graphite" | "current") =>
       across
-        ? new Sketch("side-margin-across").rule([4, 2], [length - 6, 2], 1.2, ink).svg(length, 4, "sp-margin-svg")
-        : new Sketch("side-margin").rule([2, 4], [2, length - 6], 1.2, ink).svg(4, length, "sp-margin-svg");
+        ? new Sketch("side-margin-across").rule([-16, 2], [length + 16, 2], 1, ink).svg(length, 4, "sp-margin-svg")
+        : new Sketch("side-margin").rule([2, -16], [2, length + 16], 1, ink).svg(4, length, "sp-margin-svg");
     this.margin.innerHTML = `${stroke("graphite")}<div class="sp-margin-ink">${stroke("current")}</div>`;
   }
 }

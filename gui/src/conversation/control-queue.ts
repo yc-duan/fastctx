@@ -61,7 +61,8 @@ export function placeControls(
 /** One control's line: moved by its grip where it has a place, the space
  *  of one kept where it has none. */
 export function controlRow({ row, placed }: PlacedControl, words: ControlQueueWords, reorder: string | null): string {
-  const name = `/${controlName(row)}`;
+  // A new name waiting for the turn to end says what it will be.
+  const name = row.control.do === "rename" ? `/rename ${row.control.name}` : `/${controlName(row)}`;
   const waiting = row.state === "waiting";
   const grip =
     waiting && placed && reorder

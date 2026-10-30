@@ -86,6 +86,7 @@ export interface ShellWords {
   agentsIn(project: string): string;
   /** A project's "⋯" in the sidebar, and what is in it before its sharing. */
   projectMore: string;
+  projectOverview: string;
   projectNewTalk: string;
   projectEdit: string;
   /** A project opened with no conversation in it yet. */
@@ -957,8 +958,6 @@ export interface ProjectFormWords {
   editTitle(name: string): string;
   name: string;
   namePlaceholder: string;
-  slug: string;
-  slugHint: string;
   what: string;
   whatPlaceholder: string;
   /** What the instructions are and how agents are given them. */
@@ -991,8 +990,6 @@ export const zhProjectForm: ProjectFormWords = {
   editTitle: (name) => `编辑「${name}」`,
   name: "名称",
   namePlaceholder: "例如 mark50 研发",
-  slug: "短名",
-  slugHint: "小写字母开头，可含数字和连字符；创建后不可修改",
   what: "须知",
   whatPlaceholder: "这个项目里的智能体每次都会读到：它是做什么的、怎么做、要注意什么",
   whatTip: "写给在这个项目里干活的智能体：要照做的规矩，要知道的事。从 Fastctx 开的对话一开始就带着它，压缩之后也还在；改了以后，正在干活的对话下一次调用世界的工具时，会收到新的全文。",
@@ -1022,8 +1019,6 @@ export const enProjectForm: ProjectFormWords = {
   editTitle: (name) => `Edit “${name}”`,
   name: "Name",
   namePlaceholder: "e.g. Mark 50 research",
-  slug: "Short name",
-  slugHint: "Starts with a lowercase letter; digits and hyphens allowed; can't be changed later",
   what: "Instructions",
   whatPlaceholder: "What every agent here reads each time: what this project is for, how to work in it, what to watch out for",
   whatTip: "For every agent working in this project: what to follow and what to know. Conversations opened from Fastctx start with them and keep them after compacting; once they change, a conversation at work gets the new text with its next call of a World tool.",
@@ -1746,6 +1741,7 @@ export const zhShell: ShellWords = {
   span: zhSpan,
   agentsIn: (project) => `${project} 中的对话`,
   projectMore: "项目操作",
+  projectOverview: "项目概览",
   projectNewTalk: "新对话",
   projectEdit: "编辑项目…",
   noTalks: "暂无对话",
@@ -1802,6 +1798,7 @@ export const enShell: ShellWords = {
   span: enSpan,
   agentsIn: (project) => `Conversations in ${project}`,
   projectMore: "Project actions",
+  projectOverview: "Overview",
   projectNewTalk: "New conversation",
   projectEdit: "Edit project…",
   noTalks: "No conversations yet",

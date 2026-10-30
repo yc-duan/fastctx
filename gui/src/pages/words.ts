@@ -11,6 +11,9 @@ export interface PageWords {
   version(n: number): string;
   written(by: string, ago: string): string;
   you: string;
+  /** A conversation, or a page, on a machine this device's account may
+   *  not use, as who wrote a version. */
+  elsewhere(page: boolean): string;
   aPage: string;
   /** The header's buttons. */
   acts: string;
@@ -64,6 +67,7 @@ export const zhPages: PageWords = {
   version: (n) => `第 ${n} 版`,
   written: (by, ago) => `${by}　${ago}`,
   you: "你",
+  elsewhere: (page) => (page ? "一个页面" : "一段对话"),
   aPage: "页面",
   acts: "权限",
   versions: "版本",
@@ -110,6 +114,7 @@ export const enPages: PageWords = {
   version: (n) => `version ${n}`,
   written: (by, ago) => `${by}, ${ago}`,
   you: "you",
+  elsewhere: (page) => (page ? "a page" : "a conversation"),
   aPage: "page",
   acts: "Permissions",
   versions: "Versions",

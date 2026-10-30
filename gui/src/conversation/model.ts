@@ -85,6 +85,10 @@ export type Entry = {
       from: Speaker | null;
       text: string;
       turn: string | null;
+      /** When it was said, in milliseconds since the epoch: as the machine
+       *  the conversation lives on recorded it, or as it was sent from here
+       *  until then. */
+      time?: number;
       sending?: SendState;
       /** Words sent from here, once the World answered for them: their id
        *  on the machine they went to, `null` where it gave none. */
@@ -130,8 +134,10 @@ export type Entry = {
   | { kind: "ended"; key: string; turn: string; end: TurnEnd }
   | { kind: "health"; key: string; health: Health }
   | { kind: "uncertain"; key: string; why: string }
-  /** This conversation was forked from another one. */
-  | { kind: "forked"; key: string; source: import("../world/wire").Address }
+  /** This conversation was forked from another one: from where in it, and
+   *  the last words between the user and the agent it carries on from,
+   *  where its record holds them. */
+  | { kind: "forked"; key: string; source: import("../world/wire").Address; through: string | null; said: string | null; answer: string | null }
   /** A request the session waits on the user for, as its host made it. */
   | { kind: "ask"; key: string; id: JsonValue; turn: string | null; request: string; params: JsonValue; state: AskState; version: number }
   /** What the agent asked the user without stopping its work, with Codex's
@@ -190,6 +196,8 @@ export interface Say {
   stamp: number;
   /** Where in its fold the call that said it was. */
   at: number;
+  /** When it was said, in milliseconds since the epoch, where known. */
+  time: number | null;
   text: string;
   status: "reply" | "info" | "urgent";
   attachments: { machine: string; path: string }[];
@@ -215,7 +223,7 @@ export function sayOf(entry: Extract<Entry, { kind: "tool" }>): Say | null {
         one && typeof one === "object" && !Array.isArray(one) && typeof one.machine === "string" && typeof one.path === "string" ? [{ machine: one.machine, path: one.path }] : [],
       )
     : [];
-  return { kind: "say", key: entry.key, item: entry.item, turn: entry.turn, stamp: entry.stamp, at: entry.at, text: typeof input.message === "string" ? input.message : "", status, attachments };
+  return { kind: "say", key: entry.key, item: entry.item, turn: entry.turn, stamp: entry.stamp, at: entry.at, time: Number.isFinite(entry.began) ? entry.began : null, text: typeof input.message === "string" ? input.message : "", status, attachments };
 }
 
 type Keyed = Extract<Entry, { item: string; turn: string }>;
@@ -314,6 +322,14 @@ export class Fold {
   private halted: Set<string> | null = null;
   private derivedCache: Derived | null = null;
   private blocksCache: { clock: number; blocks: Block[] } | null = null;
+  /** In a fork, what this fold held before the point it was made at: what
+   *  it carried over, which the card at its head stands for. */
+  private inherited: Set<string> | null = null;
+
+  /** Whether this fold holds the point its conversation was forked at. */
+  get holdsFork(): boolean {
+    return this.entries[0]?.kind === "forked";
+  }
 
   /** Marks an entry changed. */
   private touch(entry: Entry): void {
@@ -505,6 +521,7 @@ export class Fold {
             sent.turn = heard.turn;
             sent.from = heard.from;
             sent.at = this.current;
+            sent.time = at;
             // Its files as the World kept them, which its pictures are drawn
             // from: sent, they were known only by name.
             const attached = this.attachedOf(heard);
@@ -544,6 +561,7 @@ export class Fold {
             key: shown,
             stamp: 0,
             at: 0,
+            time: at,
             from: heard.from,
             text: heard.text,
             turn: heard.turn,
@@ -677,7 +695,15 @@ export class Fold {
         }
         if (change.kind === "forked") {
           if (!this.entries.some((entry) => entry.kind === "forked")) {
-            const forked: Entry = { kind: "forked", key: "f", stamp: ++this.clock, at: this.current, source: change.source };
+            // What the record held before this point it carried over: its
+            // last answer to the user and the words that asked for it stand
+            // on the card, the rest folds behind it.
+            const answer = [...this.entries].reverse().find((entry) => (entry.kind === "prose" && entry.prose === "message") || (entry.kind === "tool" && sayOf(entry) !== null));
+            const turn = answer && "turn" in answer ? answer.turn : null;
+            const said = [...this.entries].reverse().find((entry): entry is Heard => entry.kind === "heard" && !entry.notice && (!entry.from || entry.from.kind === "user") && (turn === null || entry.turn === turn));
+            const answered = answer?.kind === "prose" ? answer.text : answer?.kind === "tool" ? (sayOf(answer)?.text ?? null) : null;
+            const forked: Entry = { kind: "forked", key: "f", stamp: ++this.clock, at: this.current, source: change.source, through: change.through ?? null, said: said?.text ?? null, answer: answered };
+            this.inherited = this.entries.length ? new Set(this.entries.map((entry) => entry.key)) : null;
             this.entries.unshift(forked);
             this.index(forked);
           }
@@ -1159,6 +1185,7 @@ export class Fold {
       key,
       stamp: 0,
       at: 0,
+      time: Date.now(),
       from: here ? { kind: "user", machine: here } : null,
       text,
       turn: null,
@@ -1496,6 +1523,7 @@ export class Fold {
       return `group-${turn}-${known[at]}`;
     };
     for (const entry of this.entries) {
+      if (this.inherited?.has(entry.key)) continue;
       if (entry.kind === "prose" && entry.prose === "message" && entry.writing && !entry.text.trim()) continue;
       // A job's end is the World's word to the model alone; the jobs still
       // running are in the composer's panel (`world-gui.md`, 对话).
@@ -1675,5 +1703,5 @@ function askedText(words: string, questions: Asked[]): string {
 
 /** What was asked without stopping, as words said to the user. */
 function askedSay(entry: Extract<Entry, { kind: "question" }>): Say {
-  return { kind: "say", key: entry.key, item: entry.item, turn: entry.turn, stamp: entry.stamp, at: entry.at, text: entry.text, status: "info", attachments: [] };
+  return { kind: "say", key: entry.key, item: entry.item, turn: entry.turn, stamp: entry.stamp, at: entry.at, time: null, text: entry.text, status: "info", attachments: [] };
 }

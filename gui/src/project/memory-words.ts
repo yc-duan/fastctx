@@ -23,6 +23,9 @@ export interface MemoryWords {
   notSaved: string;
   unreadable: string;
   you: string;
+  /** A conversation, or a page, on a machine this device's account may
+   *  not use, as who wrote something. */
+  elsewhere(page: boolean): string;
   /** The new journal's form. */
   name: string;
   nameRule: string;
@@ -61,6 +64,7 @@ export const zhMemory: MemoryWords = {
   notSaved: "没存上",
   unreadable: "读不到这一篇",
   you: "你",
+  elsewhere: (page) => (page ? "一个页面" : "一段对话"),
   name: "名字",
   nameRule: "只用字母、数字与连字符",
   description: "一句话说它是什么",
@@ -90,6 +94,7 @@ export const enMemory: MemoryWords = {
   notSaved: "Not saved",
   unreadable: "This one can't be read",
   you: "You",
+  elsewhere: (page) => (page ? "A page" : "A conversation"),
   name: "Name",
   nameRule: "Letters, numbers and hyphens only",
   description: "What it is, in a line",

@@ -73,6 +73,9 @@ import "./app/agent-sections.css";
 import { PromptPage } from "./app/prompt-page";
 import { HostPrefs } from "./app/host-prefs";
 import { SubagentsPage } from "./app/subagents-page";
+import { SkillsPage } from "./app/skills-page";
+import { skillCalls } from "./world/skills";
+import { specimenSkills } from "./specimen/skills";
 import { profileSubagents } from "./world/subagents";
 import { specimenSubagents } from "./specimen/subagents";
 import { ProfileDefaults } from "./app/profile-defaults";
@@ -81,6 +84,7 @@ import type { ProfileCalls } from "./app/profile-account";
 import "./app/profile.css";
 import "./app/host-prefs.css";
 import "./app/subagents.css";
+import "./app/skills.css";
 import { mcp as mcpCall, readProfile, writeProfile } from "./world/profile";
 import { specimenProfileCalls } from "./specimen/profile";
 import { ServerLists } from "./app/mcp-switches";
@@ -127,13 +131,17 @@ import { specimenStats } from "./specimen/stats";
 import { SettingsPage } from "./app/settings";
 import { DataPage, enData, totalOf, zhData } from "./app/data-page";
 import { data } from "./world/data";
-import { keptUsage, keptClear, seenDissolved, unwatch } from "./world/bridge";
+import { keptForget, keptUsage, keptClear, seenDissolved, unwatch } from "./world/bridge";
+import { PREVIEW } from "./app/preview";
+import { talksOf } from "./app/talk-row";
+import { ProjectsPage, enProjects, zhProjects } from "./app/projects-page";
+import "./app/projects.css";
 import { specimenCache, specimenData } from "./specimen/data";
 import { ReaderPage } from "./app/reader";
 import { Shell, pageHead, type Page } from "./app/shell";
 import { deferredPage } from "./app/deferred-page";
 import { effect, signal } from "./app/signals";
-import { addressOf, bareName, createStore, isUnreached, jobsOf, residentAt, residentsOf, sameAddress, unreachedOf } from "./app/store";
+import { addressOf, assistedBy, bareName, createStore, forgetAnswered, isDeparted, isUnreached, jobsOf, letGo, residentAt, residentsOf, sameAddress, unreachedOf } from "./app/store";
 import { TalkActs } from "./app/talk-acts";
 import { TalkMenu } from "./app/talk-menu";
 import { enTalkMenu, zhTalkMenu } from "./app/talk-menu-words";
@@ -167,7 +175,7 @@ import {
 import { enRemoval, zhRemoval } from "./app/removal-words";
 import { enAccess, enLogin, enMachines, enToken, zhAccess, zhLogin, zhMachines, zhToken } from "./app/account-words";
 import { LASTING, loginsOf, type AccountChange, type Login, type TokenSeen, type TokenWay } from "./world/accounts";
-import { assistantOf, assistantsOf, assistingOwner, fileHome, filePlaces, groupsOf, inNoNetwork, loginKey, loginLabel, machinesOf, residentIn, sameLogin, workPlaces, type Machine } from "./app/reach";
+import { assistantOf, assistantsOf, fileHome, filePlaces, groupsOf, inNoNetwork, loginKey, loginLabel, machinesOf, residentIn, sameLogin, workPlaces, type Machine } from "./app/reach";
 import type { FocusPlace } from "./app/focus-panel";
 import { folders as foldersOf, noFocus, type Focus, type Folders } from "./world/focus";
 import { ComposerSession } from "./conversation/composer";
@@ -179,7 +187,9 @@ import { ClaudeConsent } from "./app/claude-consent";
 import { Conversation } from "./conversation/conversation";
 import { LocalTranscript } from "./specimen/transcript";
 import { ConversationPage, type Someone } from "./conversation/page";
-import { KeptPages, type KeepablePage } from "./conversation/kept";
+import { KeptPages } from "./conversation/kept";
+import { Desk, type DeskTalk } from "./desk/desk";
+import { enDesk, zhDesk } from "./desk/words";
 import type { Seed } from "./conversation/starting";
 import { watched } from "./conversation/source";
 import { redrawDiagrams } from "./conversation/diagrams";
@@ -240,7 +250,6 @@ import type { MachineLogins } from "./world/logins";
 import { ownerResident, type ResidentNow, type WorldWho } from "./world/world";
 import { agentName, titleOf } from "./world/names";
 import { liveSide, specimenSide } from "./side/live";
-import type { OpenedTalk, SideSeams } from "./side/seams";
 import { enSide, zhSide } from "./side/words";
 import { enPlan, zhPlan } from "./plan/words";
 import { samples as planSamples } from "./plan/specimen-samples";
@@ -399,6 +408,16 @@ if (params.has("quiet")) {
 }
 const store = createStore(() => ({ world: specimen.world, now: specimen.now }));
 const live = store.live;
+// `?departed=<machine>`: that machine leaves the network once it was read,
+// as when an assistance ended; its conversations stay listed, read only.
+const departing = !live ? params.get("departed") : null;
+if (departing) {
+  const world = specimen.world;
+  world.who.machines = world.who.machines.filter((machine) => (machine.kind === "answered" ? machine.reply.machine : machine.machine) !== departing);
+  for (const hub of world.nodes.hubs) hub.machines = hub.machines.filter((machine) => machine.name !== departing);
+  for (const hub of world.accounts.hubs) hub.members = hub.members.filter((member) => member.name !== departing);
+  void store.refresh();
+}
 // A specimen in a development build lends its World and store to the page,
 // so a probe can change the World and time what the interface does with it.
 if (!live && import.meta.env.DEV) Object.assign(window, { __specimen: specimen, __store: store });
@@ -425,6 +444,8 @@ const profileCalls: ProfileCalls = {
   },
 };
 const serverLists = new ServerLists(profileCalls, store, english ? enProfile : zhProfile);
+/** The account's skills: the World's, or the specimen's. */
+const specimenSkillCalls = specimenSkills();
 /** The account's Claude subagents: the World's, or the specimen's. */
 const subagentCalls = live ? profileSubagents : specimenSubagents(params.get("subagents") === "older");
 
@@ -472,7 +493,7 @@ function parentOf(at: Place): Place {
     case "page":
       return { kind: "project", town: at.town };
     case "archived":
-      return { kind: "talks", town: null };
+      return { kind: "data" };
     case "sentinel":
       return { kind: "sentinels" };
     default:
@@ -496,6 +517,8 @@ function placeName(at: Place): string {
     case "machines":
     case "machine":
       return shellWords.machines;
+    case "projects":
+      return shellWords.projects;
     case "features":
       return shellWords.features;
     case "settings":
@@ -694,8 +717,25 @@ const change = async (login: Login, made: AccountChange): Promise<void> => {
     return;
   }
   await accountChange(login.hubName, login.account, made);
+  if (made.change === "logout") forgetShown();
   void store.refresh();
 };
+
+/** What this device showed of conversations goes with an account logged out
+ *  of it, as what the shell kept of them does: those on the desk and kept
+ *  behind it, what each machine last said of its conversations, the words
+ *  left unsent in them. Whoever logs in next finds none of it
+ *  (`world-network.md`). */
+function forgetShown(): void {
+  forgetAnswered();
+  theDesk?.forget();
+  keptTalks.dropAll();
+  try {
+    for (const key of Object.keys(localStorage)) if (key.startsWith("draft:") || key === "desk" || key === "side-open") localStorage.removeItem(key);
+  } catch {
+    // Storage that cannot be read kept nothing to forget.
+  }
+}
 /** The way to make a World on a server over SSH, from this computer. */
 const remoteSeams: RemoteSeams = {
   probe: remoteProbe,
@@ -823,8 +863,8 @@ const journalForm = new JournalForm({
 
 /** Whether project memory is on for the account, as last read: the
  *  specimen's unless `?memory=off`. */
-let memoryOn = !live && params.get("memory") !== "off";
-if (live) void memorySeam.enabled(null, null).then((on) => (memoryOn = on), () => (memoryOn = false));
+let memoryOn = PREVIEW && !live && params.get("memory") !== "off";
+if (live && PREVIEW) void memorySeam.enabled(null, null).then((on) => (memoryOn = on), () => (memoryOn = false));
 const sentinelSeam = live ? liveSentinels : specimenSentinels(params.has("sentinels"));
 /** The machines the sentinels may live on, the ones online first; a
  *  phone is a device, not one of them. */
@@ -890,9 +930,11 @@ const talkMenu = new TalkMenu({
   acts: talkActs,
   towns: townsFor,
   reachable: (r) => !isUnreached(r),
+  departed: (r) => isDeparted(store.world.peek(), r),
   someone: (r) => someoneSaid(r),
   place: (r) => placeSaid(r),
   askDelete: (r, then) => askForget(r, then),
+  beside: (r) => openBeside(addressOf(r)),
 });
 effect(() => {
   const now = store.world.get();
@@ -915,19 +957,37 @@ const forgetConfirm = new Confirm({ close: talkMenuWords.cancel, working: talkMe
  *  computer it runs on (`world-network.md`, 共享机器与智能体协助). */
 function someoneSaid(r: ResidentNow, said: { someone(agent: string, machine: string): string; someoneAssisting(agent: string, owner: string): string } = shellWords): string {
   const agent = agentName(r.about.host.agent);
-  const owner = assistingOwner(store.world.peek(), r.about.machine);
+  const owner = assistedBy(store.world.peek(), r);
   return owner !== null ? said.someoneAssisting(agent, owner) : said.someone(agent, r.about.machine);
 }
 
 /** Where a conversation is said to be: its machine, or whose agent it is. */
 function placeSaid(r: ResidentNow): string {
-  return assistingOwner(store.world.peek(), r.about.machine) !== null ? someoneSaid(r) : r.about.machine;
+  return assistedBy(store.world.peek(), r) !== null ? someoneSaid(r) : r.about.machine;
 }
 
 function askForget(r: ResidentNow, then?: () => void): void {
   const words = talkMenuWords;
   const shown = talkActs.view(r);
   const name = titleOf(shown) ?? someoneSaid(r);
+  // Its machine out of reach for good, all there is to delete is what this
+  // device keeps of it.
+  if (isDeparted(store.world.peek(), r)) {
+    forgetConfirm.ask({
+      title: words.deleteTitle(name),
+      what: words.deleteHere,
+      fields: "",
+      go: words.deleteGo,
+      act: async () => {
+        const address = addressOf(r);
+        if (live) await keptForget(address);
+        letGo(address);
+        void store.refresh();
+      },
+      done: () => then?.(),
+    });
+    return;
+  }
   const working = !isUnreached(r) && (r.now?.activity === "busy" || !!r.now?.turn);
   const also = [working ? words.deleteWorking : "", isUnreached(r) ? words.deleteAway(placeSaid(r)) : ""].filter(Boolean);
   forgetConfirm.ask({
@@ -955,6 +1015,8 @@ function talkManage(address: Address, page: () => ConversationPage, markdown?: (
       const own = r.about.world_started && r.about.machine === here && (desktopAvailable() || !live);
       talkMenu.open(r, {
         anchor,
+        shown: true,
+        folded: page().folded(),
         rename: () => page().startRename(),
         find: () => page().showFind(),
         steps: { shown: () => page().stepsShown(), toggle: () => page().toggleSteps() },
@@ -991,15 +1053,16 @@ function talkManage(address: Address, page: () => ConversationPage, markdown?: (
   };
 }
 
-/** Whether the conversation at `address` is archived or gone, as the World
- *  and what the user did to it say; `listed` is whether it was ever listed
- *  while its page was open, so a page opened before the World answered is
- *  not taken for one deleted. */
-function presenceOf(world: WorldNow | null, address: Address, listed: { ever: boolean }): "removed" | "deleted" | null {
+/** Whether the conversation at `address` is archived, or out of reach for
+ *  good, as the World and what the user did to it say. Not being listed
+ *  never says it was deleted: a network that wobbles, a view not read again
+ *  yet and a machine away all look so for a while. Only its machine says
+ *  that, from the record it keeps of what it deleted (`gone` below). */
+function presenceOf(world: WorldNow | null, address: Address): "removed" | "away" | null {
   const r = listedAt(world, address);
-  if (!r) return listed.ever ? "deleted" : null;
-  listed.ever = true;
-  return talkActs.view(r).removed ? "removed" : null;
+  if (!r) return null;
+  if (talkActs.view(r).removed) return "removed";
+  return isDeparted(world, r) ? "away" : null;
 }
 
 /** A specimen's conversations take what is done to them after a moment,
@@ -1151,7 +1214,9 @@ const shell = new Shell({
   words: shellWords,
   sections: english ? enProfile : zhProfile,
   updates: { offered: appUpdates.offered, open: () => updateCard.open(), words: updateWords },
-  newTalk: () => beginTalk(place.kind === "project" || place.kind === "new" ? place.town : null),
+  // The sidebar's own is the one outside any project, wherever it is
+  // pressed; a project's is in its "⋯" (user 2026-10-29).
+  newTalk: () => beginTalk(),
   newProject: (login) => projectForm.open(null, login),
   acts: talkActs,
   menu: talkMenu,
@@ -1567,7 +1632,43 @@ function sentinelsPage(): Page {
   });
 }
 
-function specimenTalk(address: Address, inPanel = false): KeepablePage {
+/** Forks made in the specimen, by key: each holds what its conversation
+ *  held up to the turn it was made from, then the point it was made at. */
+const specimenForks = new Map<string, Specimen>();
+
+/** A fork of a specimen conversation up to `through`, or all of it: listed
+ *  beside the one it came from and marked as a fork, as the World lists one. */
+function specimenFork(source: Address, sample: Specimen, through: string | null): Address {
+  const address = { resident: `fork-${specimenForks.size + 1}`, machine: source.machine };
+  const last = through ? sample.events.map((event) => ("turn" in event ? event.turn : null)).lastIndexOf(through) : -1;
+  const at = new Date().toISOString();
+  const events: SessionEvent[] = [
+    ...sample.events.slice(0, last >= 0 ? last + 1 : sample.events.length),
+    { at, event: "changed", turn: null, change: { kind: "forked", source, thread: "specimen", through } },
+  ];
+  specimenForks.set(talkKey(address), { title: sample.title, agent: sample.agent, resident: address.resident, machine: sample.machine, model: sample.model, town: sample.town, here: sample.here, events });
+  const known = residentAt(specimen.world, source);
+  if (known) {
+    const fork: ResidentNow = {
+      ...known,
+      about: { ...known.about, id: address.resident, forked_from: source, born_at: at },
+      now: known.now ? { ...known.now, activity: "idle", turn: null, waiting_for_user: false, since: at, title: titleOf(known) } : known.now,
+    };
+    specimen.world = {
+      ...specimen.world,
+      who: {
+        ...specimen.world.who,
+        machines: specimen.world.who.machines.map((machine) =>
+          machine.kind === "answered" && machine.reply.residents.includes(known) ? { ...machine, reply: { ...machine.reply, residents: [fork, ...machine.reply.residents] } } : machine,
+        ),
+      },
+    };
+    void store.refresh();
+  }
+  return address;
+}
+
+function specimenTalk(address: Address): DeskTalk {
   let queuedHere: PendingControl[] = [];
   let toldHere = 0;
   // The shared input kept in the page; `?queued` puts two in its queue.
@@ -1596,9 +1697,9 @@ function specimenTalk(address: Address, inPanel = false): KeepablePage {
   const sharedInput = () =>
     (shared ??= specimenComposer(address, () => conversation.turning(), params.has("queued") ? (english ? ["Then run the overflow test on lab", "And write the result into the journal"] : ["然后在 lab 上跑溢出测试", "再把结果写进手记"]) : [], retrying));
   const name = address.resident;
-  const sample: Specimen & { later?: SessionEvent[]; rate?: number; timed?: boolean } = name.startsWith("stream")
+  const sample: Specimen & { later?: SessionEvent[]; rate?: number; timed?: boolean } = specimenForks.get(talkKey(address)) ?? (name.startsWith("stream")
     ? streamSpecimen(params)
-    : (specimens[name === "codex-a51c" ? "asking" : name === "claude-5teps" ? "steps" : name === "trips-1" ? "trips" : name === "deeds-1" ? "deeds" : name === "claude-t0ur" ? "tour" : name === "claude-c0ntrols" ? "controls" : name === "claude-v01c" ? "voice" : name.startsWith("codex") ? "codex" : "claude"] ?? specimens.claude!)();
+    : (specimens[name === "codex-a51c" ? "asking" : name === "claude-5teps" ? "steps" : name === "trips-1" ? "trips" : name === "deeds-1" ? "deeds" : name === "claude-t0ur" ? "tour" : name === "claude-c0ntrols" ? "controls" : name === "claude-v01c" ? "voice" : name.startsWith("codex") ? "codex" : "claude"] ?? specimens.claude!)());
   const conversation = new Conversation();
   conversation.thoughtWords = sample.agent !== "codex";
   // A specimen keeps its whole history as a shell would, and its page holds
@@ -1635,19 +1736,15 @@ function specimenTalk(address: Address, inPanel = false): KeepablePage {
       // A specimen with none listed is pointed at its own machine.
       focus: focusOf(known ?? null) ?? { machines: [{ machine: sample.machine, folders: [] }] },
     },
-    head: inPanel ? quietHead : head,
+    head,
     link: talkLink,
+    named: talkNamed,
+    listedTitle: () => listedTitle(address),
+    toSource: (source, turn) => desk().toSource(address, source, turn),
     conversation,
     side: specimenSide(sideWords, planWords, { ...planSamples.blog!, facts: (id) => planSamples.blog!.facts[id] ?? null }, english, {
       self: address,
-      open: (other) => besideTalk(other, (at) => specimenTalk(at, true)),
-      go: (other) => {
-        location.hash = talkLink(other);
-      },
       goal: params.get("goal"),
-      bare: inPanel,
-      // A specimen branch opens the colleague the specimen already has.
-      ...(inPanel ? {} : { fork: { can: async () => true, make: () => new Promise<Address>((resolve) => setTimeout(() => resolve({ resident: "codex-b10g", machine: "lab" }), 600)) } }),
     }),
     focus: {
       words: focusWords,
@@ -1676,6 +1773,12 @@ function specimenTalk(address: Address, inPanel = false): KeepablePage {
           return { kind: "done", said: null };
         }
         const name = what.do === "command" ? what.name : what.do;
+        // A fork is made after a moment, of what the specimen holds up to
+        // the turn it is made from.
+        if (what.do === "fork") {
+          await new Promise((resolve) => setTimeout(resolve, 1600));
+          return { kind: "forked", resident: specimenFork(address, sample, what.through) };
+        }
         if (name === "compact" && conversation.turning()) {
           const id = `control-${Date.now()}-${queuedHere.length + 1}-0`;
           queuedHere = [...queuedHere, { id, control: what, at: new Date().toISOString(), state: "waiting" }];
@@ -1710,7 +1813,7 @@ function specimenTalk(address: Address, inPanel = false): KeepablePage {
         tell({ ...row, state: "completed", result: done });
         return done;
       },
-      forked: () => {},
+      ...forkSeams(address),
       open: openOutside,
     },
     // A specimen carries nothing anywhere: an attachment arrives after a
@@ -1814,19 +1917,18 @@ function specimenTalk(address: Address, inPanel = false): KeepablePage {
       else playLater(sample.later, sample.rate ?? 0, take);
     }
   }
-  // Archived or deleted from its "⋯", as a live page follows it.
-  const listedEver = { ever: false };
+  // Archived from its "⋯", as a live page follows it.
   let suspended = false;
   const following = effect(() => {
     const now = store.world.get();
     talkActs.changed.get();
-    if (!left) page.presence(presenceOf(now, address, listedEver));
+    if (!left) page.presence(presenceOf(now, address));
     if (!left && !suspended) noteTold(now, address);
   });
   return {
+    page,
     element: page.element,
     title: sample.title,
-    roomWillChange: (by) => page.roomWillChange(by),
     suspend: () => {
       suspended = true;
       page.suspend();
@@ -1878,13 +1980,14 @@ function filePlace(address: Address): FilePlace | null {
 /** Who a resident is, as the World last listed it, removed or not; null
  *  while it is not listed yet. */
 function someoneOf(world: ReturnType<typeof store.world.peek>, address: Address): Someone | null {
-  const known = residentAt(world, address);
+  // A machine away names its conversations as it last answered.
+  const known = residentAt(world, address) ?? listedAt(world, address);
   if (!known) return null;
   const assistant = assistantOf(world, known);
   return {
     agent: agentName(known.about.host.agent),
     machine: address.machine,
-    assistFrom: assistant ? (assistant.owner ?? assistant.machine) : null,
+    assistFrom: assistant ? (assistant.owner ?? assistant.machine) : assistedBy(world, known),
     focus: known.removed ? null : focusOf(known),
     model: known.about.model ?? null,
     project: known.town ? (world?.towns.find((t) => t.town === known.town)?.record.name ?? known.town) : null,
@@ -1892,49 +1995,51 @@ function someoneOf(world: ReturnType<typeof store.world.peek>, address: Address)
   };
 }
 
-/** A side conversation branched off the one at `address`, once its host
- *  offers to branch: known to the list before its tab opens. */
-function sideFork(address: Address): NonNullable<SideSeams["fork"]> {
-  return {
-    can: async () => (await offers(address)).controls.includes("fork"),
-    make: async () => {
-      const done = await control(address, { do: "fork", through: null, side: true });
-      if (done.kind !== "forked" && done.kind !== "fork_incomplete") throw new Error(done.kind === "refused" ? done.said : done.kind);
-      await store.refresh();
-      return done.resident;
-    },
-  };
-}
-
-/** Another conversation, opened in a tab beside the one shown, named as
- *  the list names it; one the list does not know goes by its id. */
-function besideTalk(address: Address, make: (address: Address) => KeepablePage): OpenedTalk {
-  const known = residentAt(live ? store.world.peek() : specimen.world, address);
-  const page = make(address);
-  page.resume();
+/** How the list names a conversation, and its family; one the list does
+ *  not know goes by its id. */
+function talkNamed(address: Address): { name: string; agent: "claude" | "codex" } {
+  const world = live ? store.world.peek() : specimen.world;
+  const known = residentAt(world, address) ?? listedAt(world, address);
   const host = known?.about.host.agent ?? address.resident;
   return {
-    element: page.element,
     name: (known && titleOf(known)) ?? (known ? agentName(known.about.host.agent) : address.resident),
     agent: /codex/i.test(host) ? "codex" : "claude",
-    leave: () => page.leave(),
-    roomWillChange: (by) => page.roomWillChange?.(by),
-    main: () => {
-      location.hash = talkLink(address);
+  };
+}
+
+/** What the list calls a conversation, where it calls it anything. */
+function listedTitle(address: Address): string | null {
+  const world = live ? store.world.peek() : specimen.world;
+  const known = residentAt(world, address) ?? listedAt(world, address);
+  return known ? titleOf(known) : null;
+}
+
+/** What a conversation's page tells the desk of a fork asked for in it:
+ *  its place opens beside it at once, waits for the turn under way, closes
+ *  where none came of it, and takes the fork once made. */
+function forkSeams(address: Address) {
+  return {
+    forking: (through: string | null) => desk().forking(address, through),
+    forkQueued: () => desk().forkQueued(address),
+    forkFailed: () => desk().forkFailed(address),
+    forked: (resident: Address) => {
+      void store.refresh();
+      desk().forked(address, resident);
     },
   };
 }
 
-/** A conversation's page; `inPanel` is one shown in another's side, under
- *  the side's own tab. */
-function liveTalk(address: Address, inPanel = false): KeepablePage {
+/** A conversation's page. */
+function liveTalk(address: Address): DeskTalk {
   const world = store.world.peek();
   const listed = someoneOf(world, address);
   const someone: Someone = listed ?? { agent: address.resident, machine: address.machine, model: null, project: null };
   // Codex's own app, editor or command line holds a conversation the user
   // opened there: the World cannot drive a goal in it.
   const known = residentAt(world, address);
-  const noGoal = !!known && /^codex/i.test(known.about.host.agent) && !known.about.world_started;
+  // Goals are not offered in a release yet (`app/preview.ts`); nor can the
+  // World drive one in a conversation Codex's own app holds.
+  const noGoal = !PREVIEW || (!!known && /^codex/i.test(known.about.host.agent) && !known.about.world_started);
   const here = world?.here ?? null;
   const conversation = new Conversation();
   // The agent by its name, or, not yet listed, its resident's id.
@@ -1950,32 +2055,26 @@ function liveTalk(address: Address, inPanel = false): KeepablePage {
     words,
     here: here ?? "",
     someone,
-    head: inPanel ? quietHead : head,
+    head,
     link: talkLink,
+    named: talkNamed,
+    listedTitle: () => listedTitle(address),
+    toSource: (source, turn) => desk().toSource(address, source, turn),
     conversation,
     side: liveSide({
       words: sideWords,
       planWords,
       store,
       address,
-      bare: inPanel,
       noGoal,
       took: (ms) => words.took(ms),
       openId: (id) => openWorldId(id),
-      open: (other) => besideTalk(other, (at) => liveTalk(at, true)),
-      go: (other) => {
-        location.hash = talkLink(other);
-      },
-      ...(inPanel ? {} : { fork: sideFork(address) }),
     }),
     controls: {
       words: composerWords,
       offers: () => offers(address),
       control: (what) => control(address, what),
-      forked: (resident) => {
-        void store.refresh();
-        location.hash = talkLink(resident);
-      },
+      ...forkSeams(address),
       open: openOutside,
     },
     draftKey: `draft:${address.resident}@${address.machine}`,
@@ -2118,8 +2217,9 @@ function liveTalk(address: Address, inPanel = false): KeepablePage {
   });
   // The sentinels' homes are asked, not followed: as the page opens, every
   // half minute while it is open, and after one is withdrawn.
-  const sentinelTimer = window.setInterval(() => void readSentinels(), 30_000);
-  void readSentinels();
+  // Sentinels are not offered in a release yet (`app/preview.ts`).
+  const sentinelTimer = PREVIEW ? window.setInterval(() => void readSentinels(), 30_000) : 0;
+  if (PREVIEW) void readSentinels();
   // The conversation as the World's watch reads it (`conversation/source.ts`):
   // the page holds its latest part and reads the rest as the reader comes to
   // it; what is new is shown at once. When the host replaced or removed
@@ -2167,8 +2267,8 @@ function liveTalk(address: Address, inPanel = false): KeepablePage {
     },
     deleted: () => gone(),
   });
-  // Deleted, as its machine answers or the World lists it: nothing of it is
-  // watched any more, and its page is kept no longer than it is in view.
+  // Deleted, as its machine answers: nothing of it is watched any more, and
+  // its page is kept no longer than it is in view.
   let deleted = false;
   const gone = () => {
     if (deleted) return;
@@ -2183,7 +2283,6 @@ function liveTalk(address: Address, inPanel = false): KeepablePage {
   // reading the conversation again: named once listed, as one just started;
   // its project and model as they change; asleep or not.
   let shown = listed;
-  const listedEver = { ever: false };
   let suspended = false;
   const named = !world
     ? effect(() => {
@@ -2191,15 +2290,13 @@ function liveTalk(address: Address, inPanel = false): KeepablePage {
         queueMicrotask(() => {
           if (left) return;
           keptTalks.drop(talkKey(address));
-          if (place.kind === "talk" && place.address.resident === address.resident && place.address.machine === address.machine) show(place);
+          desk().renew(address);
         });
       })
     : effect(() => {
         const now = store.world.get();
         talkActs.changed.get();
-        const presence = deleted ? "deleted" : presenceOf(now, address, listedEver);
-        if (!left) page.presence(presence);
-        if (!left && presence === "deleted") queueMicrotask(gone);
+        if (!left) page.presence(deleted ? "deleted" : presenceOf(now, address));
         const known = residentAt(now, address);
         const who = someoneOf(now, address);
         if (!left && !suspended) noteTold(now, address);
@@ -2221,9 +2318,9 @@ function liveTalk(address: Address, inPanel = false): KeepablePage {
         page.identify(who);
       });
   return {
+    page,
     element: page.element,
     title: `${someone.agent} ${someone.machine}`,
-    roomWillChange: (by) => page.roomWillChange(by),
     suspend: () => {
       suspended = true;
       page.suspend();
@@ -2266,18 +2363,40 @@ function openWorldId(id: string): void {
   if (job) location.hash = fileLink(job.machine, job.output, true);
 }
 
-/** The head of a colleague's page opened in the panel: the panel's own
- *  head names it, so the page's is held but not shown. */
-function quietHead(title: string, actions = ""): string {
-  return `<div class="cp-quiet-head" hidden>${title}<div>${actions}</div></div>`;
-}
-
 /** How long a page whose machine does not tell what holds of it now hears
  *  nothing before it holds to the World's listing instead. */
 const QUIET_BEFORE_LISTED = 10_000;
 
 /** The conversations looked at last, alive (`conversation/kept.ts`). */
-const keptTalks = new KeptPages();
+const keptTalks = new KeptPages<DeskTalk>();
+
+/** The conversations shown side by side (`desk/desk.ts`), made when first
+ *  shown. */
+let theDesk: Desk | null = null;
+function desk(): Desk {
+  return (theDesk ??= new Desk({
+    words: english ? enDesk : zhDesk,
+    side: sideWords,
+    take: (address) => keptTalks.take(talkKey(address), () => (live ? liveTalk(address) : specimenTalk(address))),
+    release: (address) => keptTalks.release(talkKey(address)),
+    // The address follows the one in focus: in place on the desk, as a step
+    // of its own where the desk was not shown.
+    focused: (address) => {
+      if (place.kind === "talk") replacePlace(talkLink(address));
+      else location.hash = talkLink(address);
+    },
+    go: (address) => {
+      location.hash = talkLink(address);
+    },
+    named: talkNamed,
+  }));
+}
+
+/** Opens a conversation side by side with those shown (`desk/desk.ts`),
+ *  as its menu, a press with Ctrl or ⌘ held, or the middle button asks. */
+function openBeside(address: Address): void {
+  desk().open(address);
+}
 
 /** The menu of the requests' filters, made when first opened. */
 let callsMenu: ActsMenu | null = null;
@@ -2351,6 +2470,7 @@ function projectPage(town: string): Page {
   let memoryWatch: number | null = null;
   const followMemory = async () => {
     if (!live) return page.showMemory(memoryOn ? specimenCatalog(specimen.now) : null);
+    if (!PREVIEW) return page.showMemory(null);
     memoryOn = await memorySeam.enabled(null, null).catch(() => memoryOn);
     if (memoryLeft || !memoryOn) return page.showMemory(null);
     try {
@@ -2371,7 +2491,7 @@ function projectPage(town: string): Page {
   if (!live) {
     const map = specimenMap();
     page.showPlans(specimenHubPlans());
-    page.showSenses(specimenHubSenses().map(remembered));
+    if (PREVIEW) page.showSenses(specimenHubSenses().map(remembered));
     page.update(map, { machine: specimen.world.here, scope: { kind: "town", town, record: null }, machines: specimen.world.who.machines.map((machine) => machine.kind === "answered" ? { ...machine, reply: { ...machine.reply, residents: machine.reply.residents.filter((r) => r.town === town) } } : machine) }, specimen.now);
     return { element: page.element, title: map.record.name };
   }
@@ -2400,7 +2520,7 @@ function projectPage(town: string): Page {
   };
   let sensesTimer = 0;
   const readSenses = async () => {
-    if (left) return;
+    if (left || !PREVIEW) return;
     if (document.visibilityState === "visible") {
       const listed = await sentinelListAll().catch(() => null);
       if (listed && !left) page.showSenses(listed.map(remembered));
@@ -2465,6 +2585,7 @@ function memoryWriter(author: MemoryAuthor): { name: string; href: string | null
     return { name: known ? someoneSaid(known, homeWords) : homeWords.someone(agent, by.address.machine), href: talkLink(by.address) };
   }
   if (by.kind === "page") return { name: by.page.page, href: null };
+  if (by.kind === "elsewhere") return { name: memoryWords.elsewhere(by.page), href: null };
   return { name: agentName(by.agent), href: null };
 }
 
@@ -2585,9 +2706,9 @@ function show(next: Place): void {
       break;
     case "talk": {
       const address = next.address;
-      const key = talkKey(address);
-      page = keptTalks.page(key, () => (live ? liveTalk(address) : specimenTalk(address)));
-      if (turnWanted?.key === key) keptTalks.reach(key, turnWanted.turn);
+      page = desk();
+      desk().show(address);
+      if (turnWanted?.key === talkKey(address)) desk().reach(address, turnWanted.turn);
       turnWanted = null;
       break;
     }
@@ -2649,6 +2770,15 @@ function show(next: Place): void {
       });
       break;
     }
+    case "projects":
+      page = new ProjectsPage({
+        store,
+        words: english ? enProjects : zhProjects,
+        head,
+        acts: talkActs,
+        newProject: (login) => projectForm.open(null, login),
+      });
+      break;
     case "machines":
       page = deferredPage((english ? enMachines : zhMachines).title, async () => {
         const { MachinesPage } = await import("./app/machines");
@@ -2715,6 +2845,10 @@ function show(next: Place): void {
       const profile = english ? enProfile : zhProfile;
       if (section === "prompt") {
         page = new PromptPage({ store, words: profile, head, calls: profileCalls });
+        break;
+      }
+      if (section === "skills") {
+        page = new SkillsPage({ store, words: profile, head, calls: live ? skillCalls : specimenSkillCalls, confirm: accountConfirm, close: pageWords.close });
         break;
       }
       if (!isHost(section)) {
@@ -2847,6 +2981,7 @@ function show(next: Place): void {
         acts: talkActs,
         menu: talkMenu,
         menuWords: talkMenuWords,
+        confirm: accountConfirm,
       });
       break;
     case "features":
@@ -2974,6 +3109,7 @@ function show(next: Place): void {
         cache: live ? { size: async () => (await keptUsage()).bytes, clear: asDevice ? keptClear : async () => { await data({ do: "clear_cache" }); } } : specimenCache,
         confirm: accountConfirm,
         now: () => new Date(),
+        archived: () => talksOf(store.world.peek(), talkActs).archived.length,
       });
       break;
     case "settings":
@@ -2990,7 +3126,7 @@ function show(next: Place): void {
           const name = chosen === "connect" ? mode.connect.name : chosen === "workbench" ? mode.workbench.name : mode.ask;
           return (
             row(mode.title, link({ kind: "mode" }), name) +
-            (accountLayer.workbench.peek()
+            (accountLayer.workbench.peek() && PREVIEW
               ? row(features.memory.name, link({ kind: "feature", feature: "memory" }), settingsWords.dataOpen) +
                 row(features.sentinels.name, link({ kind: "feature", feature: "sentinels" }), settingsWords.dataOpen)
               : "")
@@ -3181,7 +3317,7 @@ new Palette({
     const items: PaletteItem[] = [
       ...(workbench
         ? [
-            { group: paletteWords.actions, label: shellWords.newTalk, note: "Ctrl N", run: () => beginTalk(place.kind === "project" || place.kind === "new" ? place.town : null) },
+            { group: paletteWords.actions, label: shellWords.newTalk, note: "Ctrl N", run: () => beginTalk() },
             { group: paletteWords.actions, label: shellWords.newProject, run: () => projectForm.open() },
           ]
         : []),
@@ -3335,6 +3471,21 @@ installBack();
 installFrame(shellWords.frame, !live && params.has("frame"));
 nameCodeCopy(words.copyCode);
 addEventListener("hashchange", () => show(placeOf(location.hash)));
+// A conversation pressed with Ctrl or ⌘ held, or with the middle button,
+// wherever it is listed, opens side by side rather than in place.
+const besidePress = (event: MouseEvent) => {
+  const link = (event.target as Element | null)?.closest<HTMLAnchorElement>('a[href^="#/talk/"]');
+  if (!link) return;
+  const wanted = event.type === "auxclick" ? event.button === 1 : event.button === 0 && (event.ctrlKey || event.metaKey);
+  if (!wanted) return;
+  const at = placeOf(link.getAttribute("href")!);
+  if (at.kind !== "talk") return;
+  event.preventDefault();
+  event.stopPropagation();
+  openBeside(at.address);
+};
+document.addEventListener("click", besidePress, true);
+document.addEventListener("auxclick", besidePress, true);
 applyTheme(() => {
   void redrawDiagrams(shell.element);
   openPage?.contextChanged();

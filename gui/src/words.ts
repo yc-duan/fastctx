@@ -118,12 +118,19 @@ export interface Words {
   /** A long message of the user's, its first lines shown: the rest, and
    *  back. */
   bubbleMore: string;
+  /** The moment above a chat bubble said a while after the one before it:
+   *  the time today, yesterday's and the week's by their day, older ones by
+   *  their date. */
+  chatMoment(at: Date, now: Date): string;
+  /** The whole moment, on a pointer's rest over it. */
+  chatMomentFull(at: Date): string;
   bubbleLess: string;
   copyCode: string;
   rewind: string;
   fork: string;
   /** Said with the source already escaped as a link. */
-  forkedFrom(source: string): string;
+  /** What pointing at the card of where a fork came from says. */
+  backTo(name: string): string;
   find: FindWords;
   you(machine: string): string;
   world: string;
@@ -188,6 +195,12 @@ export interface Words {
   /** The user archived it: kept to read, not to speak to. */
   removed: string;
   removedNote: string;
+  /** Its machine out of reach for good: an assistance that ended, or a
+   *  machine no longer reachable; what is kept here is still read. */
+  assistEnded: string;
+  assistEndedNote: string;
+  departed: string;
+  departedNote: string;
   waitingForYou: string;
   on(machine: string): string;
   /** Under the title of a conversation with an agent assisting the user. */
@@ -404,6 +417,12 @@ const enActs: Record<Act, [string, string, string]> = {
 
 const index = (tense: Tense) => (tense === "done" ? 0 : tense === "running" ? 1 : 2);
 
+const hhmm = (at: Date) => `${String(at.getHours()).padStart(2, "0")}:${String(at.getMinutes()).padStart(2, "0")}`;
+/** Whole days from `at`'s day to `now`'s. */
+const daysBefore = (at: Date, now: Date) =>
+  Math.round((Date.UTC(now.getFullYear(), now.getMonth(), now.getDate()) - Date.UTC(at.getFullYear(), at.getMonth(), at.getDate())) / 86_400_000);
+const zhWeekdays = ["日", "一", "二", "三", "四", "五", "六"];
+
 export const zh: Words = {
   english: false,
   queue: {
@@ -452,11 +471,20 @@ export const zh: Words = {
   plan: "计划",
   copyMessage: "复制",
   bubbleMore: "展开全文",
+  chatMoment: (at, now) => {
+    const days = daysBefore(at, now);
+    if (days <= 0) return hhmm(at);
+    if (days === 1) return `昨天 ${hhmm(at)}`;
+    if (days < 7) return `星期${zhWeekdays[at.getDay()]} ${hhmm(at)}`;
+    const date = `${at.getMonth() + 1}月${at.getDate()}日 ${hhmm(at)}`;
+    return at.getFullYear() === now.getFullYear() ? date : `${at.getFullYear()}年${date}`;
+  },
+  chatMomentFull: (at) => `${at.getFullYear()}年${at.getMonth() + 1}月${at.getDate()}日 星期${zhWeekdays[at.getDay()]} ${hhmm(at)}:${String(at.getSeconds()).padStart(2, "0")}`,
   bubbleLess: "收起",
   copyCode: "复制代码",
   rewind: "改了重发",
   fork: "从这里分叉",
-  forkedFrom: (source) => `分叉自 ${source}`,
+  backTo: (name) => `回到「${name}」`,
   find: {
     find: "查找",
     placeholder: "在对话中查找…",
@@ -514,6 +542,10 @@ export const zh: Words = {
   idle: "空闲",
   removed: "已归档",
   removedNote: "已归档，对话仅供查看",
+  assistEnded: "协助已结束",
+  assistEndedNote: "协助已结束，对话仅供查看",
+  departed: "已无法访问",
+  departedNote: "它所在的机器已无法访问，对话仅供查看",
   waitingForYou: "等待回复",
   on: (machine) => machine,
   assistFrom: (owner) => `来自 ${owner}`,
@@ -808,11 +840,20 @@ export const en: Words = {
   plan: "Plan",
   copyMessage: "Copy",
   bubbleMore: "Show all",
+  chatMoment: (at, now) => {
+    const days = daysBefore(at, now);
+    if (days <= 0) return hhmm(at);
+    if (days === 1) return `Yesterday ${hhmm(at)}`;
+    if (days < 7) return `${at.toLocaleDateString("en", { weekday: "short" })} ${hhmm(at)}`;
+    const date = at.toLocaleDateString("en", at.getFullYear() === now.getFullYear() ? { month: "short", day: "numeric" } : { month: "short", day: "numeric", year: "numeric" });
+    return `${date} ${hhmm(at)}`;
+  },
+  chatMomentFull: (at) => at.toLocaleString("en", { dateStyle: "full", timeStyle: "medium" }),
   bubbleLess: "Show less",
   copyCode: "Copy code",
   rewind: "Edit and resend",
   fork: "Fork from here",
-  forkedFrom: (source) => `Forked from ${source}`,
+  backTo: (name) => `Back to ${name}`,
   find: {
     find: "Find",
     placeholder: "Find in conversation…",
@@ -870,6 +911,10 @@ export const en: Words = {
   idle: "Idle",
   removed: "Archived",
   removedNote: "Archived; the conversation is read-only",
+  assistEnded: "Assistance ended",
+  assistEndedNote: "Assistance ended; the conversation is read-only",
+  departed: "No longer reachable",
+  departedNote: "Its machine is no longer reachable; the conversation is read-only",
   waitingForYou: "Waiting for your reply",
   on: (machine) => machine,
   assistFrom: (owner) => `from ${owner}`,
