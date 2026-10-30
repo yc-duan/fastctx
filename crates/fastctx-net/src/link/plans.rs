@@ -104,9 +104,6 @@ impl Link {
     /// first save. A conflict leaves deletion pending for its next attempt.
     pub async fn plan_delete(&self, account: &AccountName, owner: &ResidentId) -> Result<(), String> {
         let page = self.plan_read(account, owner.clone()).await?;
-        if page.deleted() {
-            return Ok(());
-        }
         match self
             .account_records(
                 account,

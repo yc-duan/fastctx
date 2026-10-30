@@ -57,6 +57,7 @@ pub(crate) struct Said {
     /// Whether it reads the records of profiles written.
     pub profiles: bool,
     pub account_records: bool,
+    pub record_keys: bool,
     pub skill_files: bool,
     pub conversation_plans: bool,
     pub scratch_locations: bool,
@@ -626,6 +627,7 @@ fn open(
     let session = Session {
         key,
         account_records: said.account_records,
+        record_keys: said.record_keys.then(Default::default),
         skill_files: said.skill_files,
         conversation_plans: said.conversation_plans,
         scratch_locations: said.scratch_locations,
@@ -1498,6 +1500,34 @@ fn answer(hub: &Hub, name: &MachineName, generation: u64, call: u64, message: En
 
 fn ask(hub: &Arc<Hub>, name: &MachineName, question: Question) -> Result<Told, String> {
     match question {
+        Question::RecordWatching { account, record_kind, watch, following } => {
+            let public = hub.sessions().get(name).ok_or("the record reader disconnected")?.key;
+            crate::account_records::begin(
+                hub,
+                name,
+                &public,
+                &account,
+                &fastctx_types::account_records::Request::List { kind: record_kind.clone() },
+            )?;
+            crate::record_subscriptions::watch(hub, name, &public, &account, &record_kind, &watch, following)?;
+            Ok(Told::Done)
+        }
+        Question::RecordFollowing { account, record_kind, key, following } => {
+            let public = hub.sessions().get(name).ok_or("the record reader disconnected")?.key;
+            crate::account_records::begin(
+                hub,
+                name,
+                &public,
+                &account,
+                &fastctx_types::account_records::Request::Read { kind: record_kind.clone(), key: key.clone() },
+            )?;
+            if following {
+                crate::record_subscriptions::follow(hub, name, &public, &account, &record_kind, &key)?;
+            } else {
+                crate::record_subscriptions::deleted(hub, name, &account, &record_kind, &key);
+            }
+            Ok(Told::Done)
+        }
         Question::AccountRecords { .. } | Question::PlanCopies { .. } | Question::SkillFiles { .. } => {
             Err("account records are dispatched asynchronously".into())
         }

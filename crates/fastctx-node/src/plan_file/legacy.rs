@@ -19,8 +19,19 @@ pub(super) async fn retire(node: &Node, id: &ResidentId) -> Result<(), Failure> 
     let link = node.link_of(&scope.hub).ok_or_else(|| Failure::new("the plan's hub is unavailable"))?;
     let page = link.plan_read(&scope.account, id.clone()).await.map_err(Failure::new)?;
     let owner = Address { machine: about.machine, resident: id.clone() };
-    if link.plan_of_another(&page, &owner).is_some() || page.body.as_ref().is_none_or(|body| body.markdown != text) {
-        return Err(Failure::new("legacy plan retained: its contents are not confirmed in the hub's current version"));
+    if link.plan_of_another(&page, &owner).is_some() {
+        return Err(Failure::new("legacy plan retained: its account record belongs to another conversation"));
+    }
+    let mut archived = page.body.as_ref().is_some_and(|body| body.markdown == text);
+    if !archived && link.view().plan_copies {
+        let answer = link
+            .plan_copy(&scope.account, fastctx_types::plan_copies::Request::Contains { owner, markdown: text.into() })
+            .await
+            .map_err(Failure::new)?;
+        archived = matches!(answer, fastctx_types::plan_copies::Reply::Contains { found: true });
+    }
+    if !archived {
+        return Err(Failure::new("legacy plan retained: its contents are not confirmed in the hub's versions"));
     }
     // Recheck after the network read; never remove a file changed while the
     // hub was being consulted (2026-10-30, legacy assisted-plan migration).

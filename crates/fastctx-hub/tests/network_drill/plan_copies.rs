@@ -160,5 +160,21 @@ pub async fn exercise(world: &World, report: &mut Report) -> anyhow::Result<()> 
     );
     let unchanged = alpha.plan_read_of(&world.account, &owner).await.map_err(anyhow::Error::msg)?;
     report.check(text(&unchanged) == "file conflict\n", "old readers still read the same current page", "");
+    use sha2::{Digest, Sha256};
+    let opened = alpha.view().account(&world.account).expect("account").opened;
+    let digest = format!("{:x}", Sha256::digest(format!("plan\0{}", owner.resident).as_bytes()));
+    let history = world
+        .hub
+        .dir
+        .join("account-records")
+        .join(world.account.as_str())
+        .join(opened.as_nanosecond().to_string())
+        .join(format!("{digest}.versions"));
+    anyhow::ensure!(history.exists(), "the history fixture never existed");
+    alpha.plan_delete(&world.account, &owner.resident).await.map_err(anyhow::Error::msg)?;
+    report.check(!history.exists(), "deleting a plan removes all physical revisions and submission receipts", "");
+    alpha.plan_delete(&world.account, &owner.resident).await.map_err(anyhow::Error::msg)?;
+    report.check(!history.exists(), "retrying a plan deletion leaves no history", "");
+    crate::record_following::exercise(world, report).await?;
     Ok(())
 }

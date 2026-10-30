@@ -116,7 +116,7 @@ pub async fn exercise(world: &World, report: &mut Report) -> anyhow::Result<()> 
     report.check(stale.is_err(), "an old client cannot put a stale description back into the latest index", "");
     let orphan=b.account_records(account,Records::Write{kind:"skill".into(),key:"renamed-by-old-client".into(),expected:None,body:serde_json::json!({"name":"renamed-by-old-client","description":"old editor","instructions":"partial rename"})}).await;
     report.check(orphan.is_err(), "a legacy rename is refused before it can create a partial folder", "");
-    for path in ["../escape", "/absolute", "CON.txt", "A/../x"] {
+    for path in ["../escape", "/absolute", "CON.txt", "A/../x", "COM¹.txt", "Ａ/．．/x"] {
         let invalid = a
             .skill_files(
                 account,
@@ -140,6 +140,17 @@ pub async fn exercise(world: &World, report: &mut Report) -> anyhow::Result<()> 
         )
         .await;
     report.check(collision.is_err(), "case-insensitive path collisions are refused on the hub", "");
+    let directory_collision = a
+        .skill_files(
+            account,
+            Request::Edit {
+                name: "kit".into(),
+                expected: v2,
+                changes: vec![Change::Put { file: File::text("SCRIPTS/different.sh", "collision") }],
+            },
+        )
+        .await;
+    report.check(directory_collision.is_err(), "implicit directory case collisions are refused", "");
     let renamed = written(
         a.skill_files(
             account,

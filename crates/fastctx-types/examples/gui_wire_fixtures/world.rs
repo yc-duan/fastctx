@@ -333,6 +333,7 @@ fn nodes() -> Vec<NodesReply> {
         attachment_places: true,
         attachment_runs: true,
         memory_folders: false,
+        plan_copies: false,
         collaboration_tree: false,
         completion_receipts: false,
         control_letters: lifetime,

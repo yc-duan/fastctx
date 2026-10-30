@@ -230,6 +230,7 @@ pub async fn ask_here(
             reasoning_effort: started.callee.effort.clone(),
         },
     )?;
+    crate::placement::location::inherit(node, &id, &acting, &asker).await?;
     let origin = Origin::Colleague { asked_by: asker.clone(), label };
     crate::layers::may_start(node, &acting)?;
     let _birth = crate::here::born(node, &id, acting.clone(), &origin);

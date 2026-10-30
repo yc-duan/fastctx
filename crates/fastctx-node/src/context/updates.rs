@@ -36,7 +36,11 @@ pub(crate) async fn refresh(node: &Arc<Node>, id: &ResidentId) -> Result<(), Fai
     let (about, town) = node.residents.about(id).ok_or_else(|| Failure::new(super::words::UNKNOWN))?;
     crate::focus::refresh(node, id).await?;
     super::refresh_local(node, id).map_err(|error| Failure::new(error.to_string()))?;
+    super::sources::plan_guide(node, id, &about.origin, &about.acting)
+        .await
+        .map_err(|error| Failure::new(error.to_string()))?;
     crate::plan::context(node, id, &about.origin, &about.acting).await?;
+    super::sources::skills(node, id, &about.acting).await?;
     super::map(node, id, town.as_ref(), &about.origin, &about.acting).await?;
     node.contexts.0.lock().expect("never poisoned").entry(id.clone()).or_default().loaded = revision;
     Ok(())

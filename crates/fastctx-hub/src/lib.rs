@@ -292,6 +292,7 @@ const VIEW_CHANGE_AT_MOST: usize = 192 * 1024;
 pub(crate) struct Session {
     key: PublicKey,
     account_records: bool,
+    record_keys: Option<record_subscriptions::Records>,
     skill_files: bool,
     conversation_plans: bool,
     scratch_locations: bool,
@@ -948,6 +949,7 @@ async fn intended(
                 conversation_deletions,
                 profiles,
                 account_records,
+                record_keys,
                 skill_files,
                 conversation_plans,
                 scratch_locations,
@@ -977,6 +979,7 @@ async fn intended(
                 conversation_deletions,
                 profiles,
                 account_records,
+                record_keys,
                 skill_files,
                 conversation_plans,
                 scratch_locations,

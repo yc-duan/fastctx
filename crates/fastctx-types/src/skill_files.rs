@@ -115,6 +115,10 @@ pub fn validate_path(path: &str) -> Result<(), String> {
     if path.is_empty() || path.len() > 1024 || path.chars().any(|c| c.is_control() || "\\:*?\"<>|".contains(c)) {
         return Err(format!("invalid portable skill path {path:?}"));
     }
+    let normalized = crate::names::nfkc(path);
+    if normalized != path {
+        validate_path(&normalized)?;
+    }
     for component in path.split('/') {
         let stem = component.split('.').next().unwrap_or_default().to_ascii_uppercase();
         if component.is_empty()
@@ -135,9 +139,21 @@ pub fn validate_path(path: &str) -> Result<(), String> {
 
 pub fn validate_files(files: &[File]) -> Result<u64, String> {
     let mut names = BTreeMap::new();
+    let mut components = BTreeMap::new();
     let mut bytes = 0u64;
     for file in files {
         validate_path(&file.path)?;
+        let mut prefix = String::new();
+        for component in file.path.split('/') {
+            if !prefix.is_empty() {
+                prefix.push('/');
+            }
+            prefix.push_str(component);
+            let folded = icu_casemap::CaseMapper::new().fold_string(&crate::names::nfkc(&prefix)).into_owned();
+            if components.insert(folded, prefix.clone()).is_some_and(|prior| prior != prefix) {
+                return Err("skill directory spellings collide on a case-insensitive computer".into());
+            }
+        }
         let folded = icu_casemap::CaseMapper::new().fold_string(&crate::names::nfkc(&file.path)).into_owned();
         if names.insert(folded, file.data.is_some()).is_some() {
             return Err("skill paths collide on a case-insensitive computer".into());

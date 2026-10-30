@@ -647,10 +647,22 @@ async fn submit_thread(
     let (current, _) = node.residents.about(id).ok_or_else(crate::authorization::no_subject)?;
     crate::homes::available(node, &current)?;
     crate::assists::may_turn(node, id, &current)?;
+    let along_only = batch.iter().all(|input| input.delivery.notice.along().is_some());
+    let opening = !along_only
+        && node.residents.now(id).is_none_or(|now| now.turn.is_none())
+        && codex.running_turn(thread).is_none();
+    let (notes, context) = if opening {
+        let (notes, receipt) = crate::context::turn::prepare(node, id).await?;
+        let receipt = (!notes.is_empty()).then_some(receipt);
+        (notes, receipt)
+    } else {
+        (Vec::new(), None)
+    };
     let mut handover =
-        crate::delivery::begin(directory, batch.clone()).map_err(|error| Failure::new(error.to_string()))?;
+        crate::delivery::begin_with_context(directory, batch.clone(), context, crate::context::input::stamp(&notes))
+            .map_err(|error| Failure::new(error.to_string()))?;
     let client = Some(format!("{}{}", fastctx_hosts::codex::WORLD_CLIENT, handover.id));
-    let (input, client) = match batch.as_slice() {
+    let (mut input, client) = match batch.as_slice() {
         // A fact of its own work reads best as the output of the tool that
         // started it.
         [only] if matches!(only.delivery.notice, Notice::JobEnded { .. }) => (
@@ -692,10 +704,10 @@ async fn submit_thread(
             )
         }
     };
+    crate::context::turn::prepend(&mut input, &notes);
     for kept in &batch {
         set_state(directory, &kept.delivery.id, PendingState::Sending).await?;
     }
-    let along_only = batch.iter().all(|input| input.delivery.notice.along().is_some());
     let sending = if along_only {
         let Input::Text(text) = input else { unreachable!("non-waking notices are text facts") };
         codex.send_to_running(thread, text, client).await
@@ -786,6 +798,9 @@ pub async fn bind(
     turn: &str,
 ) -> Result<(), Failure> {
     crate::delivery::accept(directory, handover, turn).map_err(|error| Failure::new(error.to_string()))?;
+    if let Some(receipt) = &handover.context {
+        crate::context::turn::accepted(node, id, receipt).map_err(|error| Failure::new(error.to_string()))?;
+    }
     let readers: Vec<Address> = handover.inputs.iter().flat_map(|input| input.readers.iter().cloned()).collect();
     if let Some(finished) =
         crate::delivery::terminal(directory, turn).map_err(|error| Failure::new(error.to_string()))?

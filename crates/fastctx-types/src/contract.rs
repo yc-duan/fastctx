@@ -135,7 +135,7 @@ impl RemoteCall {
                 ..
             } => Contract::QUERY,
             Self::GoalCommand { request: crate::goals::AgentRequest::Read, .. } => Contract::QUERY,
-            Self::Goal { .. } | Self::GoalCommand { .. } => Contract::CHANGE,
+            Self::WorkingCopy { .. } | Self::Goal { .. } | Self::GoalCommand { .. } => Contract::CHANGE,
             Self::SentinelControl {
                 request: crate::sentinel_control::Request::List { .. } | crate::sentinel_control::Request::Help,
             }
@@ -415,6 +415,7 @@ impl Call {
             | Self::Reopened { .. }
             | Self::Composer { .. }
             | Self::Arrive { .. }
+            | Self::ClaudeContext { .. }
             | Self::ClaudeSessionDirectory { .. }
             | Self::Run { .. }
             | Self::StoreRunFacts { .. }

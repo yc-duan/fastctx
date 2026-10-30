@@ -92,6 +92,7 @@ pub(crate) async fn ask(
                     .collect(),
             },
             Request::Read { kind, key } => {
+                crate::record_subscriptions::follow(&hub, &from, &member_key, &account, &kind, &key)?;
                 let record = if records.entries.contains_key(&(kind.clone(), key.clone())) {
                     let path = slot.path(&kind, &key);
                     Some(storage::read(&path)?)
@@ -108,6 +109,9 @@ pub(crate) async fn ask(
                     if fastctx_types::skill_files::requires_folder_editor(&skill)? {
                         return Err("update this client to read the complete skill folder".into());
                     }
+                }
+                if record.as_ref().is_some_and(|record| record.metadata.deleted) {
+                    crate::record_subscriptions::deleted(&hub, &from, &account, &kind, &key);
                 }
                 Response::Read { record }
             }
@@ -279,7 +283,9 @@ pub(crate) fn tell(hub: &Hub, account: &AccountName, opened: Timestamp, metadata
     let readers: Vec<_> = hub
         .sessions()
         .iter()
-        .filter(|(_, session)| session.account_records)
+        .filter(|(_, session)| {
+            session.account_records && session.record_keys.as_ref().is_none_or(|keys| keys.wants(account, metadata))
+        })
         .map(|(name, session)| (name.clone(), session.key, session.out.clone()))
         .collect();
     let store = hub.store();

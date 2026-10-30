@@ -1,10 +1,13 @@
 //! Named context shared by both hosts. Setting a block never starts a turn.
 
+pub(crate) mod input;
+pub(crate) mod memory;
 pub(crate) mod sources;
 mod storage;
+pub(crate) mod turn;
 mod updates;
 pub(crate) mod words;
-pub(crate) use updates::{Updates, refresh, request_all, start};
+pub(crate) use updates::{Updates, refresh, request, start};
 
 use crate::Node;
 use fastctx_types::{Address, ResidentId};
@@ -24,7 +27,7 @@ pub struct Change<'a> {
 
 /// Revisions actually included in one tool response or opening instructions.
 /// An acknowledgement from before a compaction cannot advance the new epoch.
-#[derive(Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Receipt {
     epoch: u64,
     revisions: BTreeMap<String, u64>,
@@ -65,6 +68,14 @@ pub(crate) fn clear(node: &Node, id: &ResidentId, name: &str, change: Change<'_>
 
 pub(crate) use sources::{map, plan, plan_unavailable, prepare, refresh_local};
 
+pub(crate) fn migrate(node: &Node) {
+    for resident in node.residents.everyone() {
+        if let Err(error) = storage::migrate(node, &resident.id) {
+            node.log.line(format_args!("moving {}'s record projections to memory: {error}", resident.id));
+        }
+    }
+}
+
 pub(crate) fn instructed(node: &Node, id: &ResidentId, heard: &crate::residents::Heard) -> io::Result<()> {
     if let Some(receipt) = &heard.context {
         storage::instructed(&node.world, id, receipt)?;
@@ -82,7 +93,7 @@ pub(crate) fn forked(node: &Node, id: &ResidentId) -> io::Result<()> {
 }
 
 pub(crate) fn collect(node: &Node, id: &ResidentId) -> io::Result<(Vec<String>, Receipt)> {
-    storage::collect(&node.world, &Address { machine: node.machine(), resident: id.clone() })
+    storage::collect(&node.world, &Address { machine: node.machine(), resident: id.clone() }, &node.context_bodies)
 }
 
 /// Reserve only after every fallible part of reply collection has completed.
@@ -133,7 +144,7 @@ pub(crate) fn hand_to_session(node: &Node, id: &ResidentId, session: &Path) -> i
     storage::initialize(&node.world, id)?;
     fastctx_platform::publish(
         &session.join("context.json"),
-        &serde_json::to_vec(&serde_json::json!({"directory": storage::directory(&node.world, id), "state": storage::state_path(&node.world, id)})).map_err(io::Error::other)?,
+        &serde_json::to_vec(&serde_json::json!({"directory": storage::directory(&node.world, id), "state": storage::state_path(&node.world, id), "memory": true})).map_err(io::Error::other)?,
         fastctx_platform::Permissions::Private,
     )
 }

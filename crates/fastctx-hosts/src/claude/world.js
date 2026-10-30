@@ -1044,6 +1044,12 @@ const OLD_CONTEXT_NAMES = ['machinesAndFolders', 'userInstructions', 'projectRec
 
 async function contextBlocks($, context, fresh) {
   const pointer = JSON.parse(await $.fs.read(context.dir + '/context.json'))
+  let memory = {}
+  if (pointer.memory) {
+    const result = await $.process.run([FASTCTX, 'claude-context', WORLD, context.sessionId])
+    if (result.exitCode !== 0) throw new Error(result.stderr || 'The node did not return in-memory context')
+    memory = JSON.parse(result.stdout)
+  }
   const state = JSON.parse(await $.fs.read(pointer.state))
   const entries = (await $.fs.list(pointer.directory)).filter((entry) => /^[a-z0-9-]{1,32}\.json$/.test(entry.name))
   const blocks = []
@@ -1054,6 +1060,11 @@ async function contextBlocks($, context, fresh) {
   for (const entry of entries) {
     const block = JSON.parse(await $.fs.read(pointer.directory + '/' + entry.name))
     const name = entry.name.slice(0, -5)
+    if (block.transient) {
+      const body = memory[name]
+      if (body === undefined || body.source !== block.source) continue
+      block.text = body.text
+    }
     receipt.revisions[name] = block.revision
     receipt.versions[name] = block.version
     if (block.text !== '') blocks.push({ name: CONTEXT_PREFIX + name, text: block.text })
