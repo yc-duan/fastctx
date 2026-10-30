@@ -1,6 +1,9 @@
 //! A prepared delivery coordinates publication; only the stable program serves.
 
 use std::path::Path;
+use std::time::{Duration, Instant};
+
+const STALLED: Duration = Duration::from_secs(600);
 
 use anyhow::{Context as _, ensure};
 use fastctx_install::renewal as store;
@@ -53,24 +56,54 @@ pub async fn prepare(root: &Path, digest: &str) -> anyhow::Result<()> {
         .context("stable replacement exited during launch")?;
         drop(writer);
         let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build()?;
+        let began = Instant::now();
         loop {
             ensure!(is_alive(&child)?, "the stable replacement exited before serving");
-            if let fastctx_client::renewal::Probe::Running(node) =
-                runtime.block_on(fastctx_client::renewal::probe(&world))?
+            ensure!(began.elapsed() < STALLED, "the stable replacement did not serve within ten minutes; its program was retained");
+            let remaining = STALLED.saturating_sub(began.elapsed());
+            let observed = runtime.block_on(async {
+                tokio::time::timeout(remaining.min(Duration::from_secs(30)), fastctx_client::renewal::probe(&world)).await
+            });
+            if let Ok(Ok(fastctx_client::renewal::Probe::Running(node))) = &observed
                 && node.process == child
                 && node.build == build
             {
                 break;
             }
-            std::thread::sleep(std::time::Duration::from_millis(20));
+            if let Ok(Err(error)) = observed
+                && !matches!(error.kind(), std::io::ErrorKind::NotFound | std::io::ErrorKind::ConnectionRefused
+                    | std::io::ErrorKind::UnexpectedEof | std::io::ErrorKind::BrokenPipe
+                    | std::io::ErrorKind::ConnectionReset | std::io::ErrorKind::ConnectionAborted
+                    | std::io::ErrorKind::NotConnected)
+            {
+                return Err(error.into());
+            }
+            std::thread::sleep(Duration::from_millis(20));
         }
         drop(activation);
         if _service.is_none() {
             drop(node_entry);
             return Ok(());
         }
+        let abandoned = Instant::now();
         while is_alive(&child)? {
-            std::thread::sleep(std::time::Duration::from_millis(20));
+            // An active renewal may be waiting for a user's turn. Only a
+            // coordinator left without its worker expires on its own.
+            if abandoned.elapsed() >= STALLED
+                && let Some(_worker) = FileLock::try_acquire(&store::directory(&root).join("worker.lock"))?
+            {
+                if let Some(mut plan) = store::read(&root)?
+                    && plan.candidate.build == build
+                {
+                    plan.phase = fastctx_types::renewal::Phase::Failed;
+                    plan.error = Some("the handover coordinator waited ten minutes without a renewal worker; the serving node was left running".into());
+                    plan.error_version = Some(build.version.clone());
+                    plan.retry.postpone(jiff::Timestamp::now());
+                    store::save(&root, &plan)?;
+                }
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(250));
         }
         Ok(())
     })

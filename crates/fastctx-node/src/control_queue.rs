@@ -436,7 +436,7 @@ pub(crate) fn drain<'a>(
 pub(crate) fn schedule(node: &Arc<Node>, id: &ResidentId) {
     let (node, id) = (node.clone(), id.clone());
     tokio::spawn(async move {
-        node.ready().await;
+        node.ready_for(&id).await;
         let gate = gate(&node, &id);
         let _action = gate.lock().await;
         if node.residents.active(&id).is_ok()
@@ -470,26 +470,23 @@ pub(crate) fn poke(node: &Arc<Node>, id: &ResidentId) {
     }
 }
 
-pub(crate) fn recover(node: &Arc<Node>) {
-    for resident in node.residents.everyone().filter(|resident| resident.removed.is_none()) {
-        let id = &resident.id;
-        let recovered = (|| {
-            for mut row in pending(node, id)? {
-                if row.state == ControlState::Running {
-                    row.state = ControlState::Uncertain;
-                    row.error = Some("the node stopped while this control was entering the host; its outcome is unknown and it was not repeated".into());
-                    finish(node, id, &row)?;
-                } else if row.state != ControlState::Waiting {
-                    finish(node, id, &row)?;
-                }
+pub(crate) fn recover(node: &Arc<Node>, id: &ResidentId) {
+    let recovered = (|| {
+        for mut row in pending(node, id)? {
+            if row.state == ControlState::Running {
+                row.state = ControlState::Uncertain;
+                row.error = Some("the node stopped while this control was entering the host; its outcome is unknown and it was not repeated".into());
+                finish(node, id, &row)?;
+            } else if row.state != ControlState::Waiting {
+                finish(node, id, &row)?;
             }
-            Ok::<_, Failure>(())
-        })();
-        if let Err(error) = recovered {
-            node.log.line(format_args!("recovering {id}'s controls: {error}"));
         }
-        schedule(node, id);
+        Ok::<_, Failure>(())
+    })();
+    if let Err(error) = recovered {
+        node.log.line(format_args!("recovering {id}'s controls: {error}"));
     }
+    schedule(node, id);
 }
 
 fn failure(error: std::io::Error) -> Failure {

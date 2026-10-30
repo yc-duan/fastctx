@@ -69,7 +69,7 @@ import { drawDiagrams } from "./diagrams";
 import { readTold, undelivered, worldSaid, type UndeliveredWhy, type WorldSaid } from "./told";
 import { allowanceOf, detailOf, heldOf } from "../app/problem";
 import { AnchorLayout, AnchoredHeight, MemoryLines, type LinePaint, type ViewerSource } from "../longview";
-import { FEW, LongText, type LongLines, type LongTextWords, type OpenedText, type OtherSource } from "./long-text";
+import { FEW, LongText, type LongTextWords, type OpenedText, type OtherSource } from "./long-text";
 import { Printout, givenLines, type PrintoutEnd } from "./printout";
 import { Said, WholeOutput, outputPaint, type OpenedLines } from "./run-output";
 import "./say.css";
@@ -303,6 +303,20 @@ export class ConversationView {
   /** The block kept where it is on the screen across a change of view,
    *  once. */
   private pin: { slot: Slot; top: number } | null = null;
+  /** The words both views show that the reader was at as a change of view
+   *  began, and where they stood on the screen: held there until it ends,
+   *  whatever opens or closes above them, the room above their own block
+   *  among it. */
+  private steady: { slot: Slot; top: number } | null = null;
+  /** The fraction of a pixel the view was last moved by that a scroll, in
+   *  whole pixels, could not take: the root's top margin carries it, so
+   *  what is kept in view stays exactly where it was. Scrolled whole
+   *  pixels alone, it would be up to half a pixel off each frame, and
+   *  everything moving round it would shake a pixel back and forth. */
+  private trim = 0;
+  /** Following, where the end of what is drawn stood on the page when last
+   *  seen. */
+  private foot: number | null = null;
   /** Blocks a change of view brings in: drawn folded near the reader, and
    *  unfolding once. */
   private unfolding = new Set<string>();
@@ -311,6 +325,8 @@ export class ConversationView {
   /** The spaces that stand for the blocks above and below those drawn. */
   private readonly above: HTMLElement;
   private readonly below: HTMLElement;
+  private spaceAbove = -1;
+  private spaceBelow = -1;
   private readonly sizes: ResizeObserver;
   private laying = 0;
   /** Gaps asked to be read, so a gap near the reader is asked once. */
@@ -369,6 +385,11 @@ export class ConversationView {
     // moving moves the view by as much.
     this.sizes = new ResizeObserver((entries) => this.resized(entries));
     context.scroller.addEventListener("scroll", this.scrolled, { passive: true });
+    // The reader moving the view themselves during a change of view lets go
+    // of the words it holds.
+    for (const kind of ["wheel", "touchstart", "pointerdown", "keydown"]) {
+      context.scroller.addEventListener(kind, () => (this.steady = null), { passive: true });
+    }
     // What happens in an agent's box under one of its rows is that box's
     // own view's to answer.
     root.addEventListener("click", (event) => {
@@ -524,7 +545,8 @@ export class ConversationView {
       previous = slot.element;
       if (slot.signature === null) {
         this.draw(slot, read);
-        this.sizes.observe(slot.element);
+        // Its whole box: the room above it, its padding, is its height too.
+        this.sizes.observe(slot.element, { box: "border-box" });
       } else if (slot.signature !== this.signature(slot.block)) {
         this.draw(slot, read);
         drawn.push(slot.element);
@@ -532,11 +554,19 @@ export class ConversationView {
     }
     this.foldIn(wanted.filter((slot) => this.unfolding.has(slot.key)));
     this.shown = wanted;
-    this.above.style.height = `${n ? this.heights.top(first) : 0}px`;
-    this.below.style.height = `${n ? this.heights.total() - this.heights.top(last + 1) : 0}px`;
+    const above = n ? this.heights.top(first) : 0;
+    const below = n ? this.heights.total() - this.heights.top(last + 1) : 0;
+    if (above !== this.spaceAbove) {
+      this.above.style.height = `${above}px`;
+      this.spaceAbove = above;
+    }
+    if (below !== this.spaceBelow) {
+      this.below.style.height = `${below}px`;
+      this.spaceBelow = below;
+    }
     if (anchor) {
       const moved = anchor.slot.element.isConnected ? anchor.slot.element.getBoundingClientRect().top - anchor.top : 0;
-      if (moved) scroller.scrollTop += moved;
+      if (moved) this.keepStill(moved);
     }
     // A gap near the reader is read, from the side the reader comes from.
     const reader = following ? n : this.heights.find(Math.max(0, top));
@@ -555,9 +585,39 @@ export class ConversationView {
     if (this.laying) return;
     this.laying = requestAnimationFrame(() => {
       this.laying = 0;
-      if (this.root.isConnected) this.lay();
+      if (this.root.isConnected && this.scrollNeedsLayout()) this.lay();
     });
   };
+
+  /** Scrolling inside the mounted range changes no blocks or spacing. A
+   * changed range or spacer still takes the full anchored layout path. */
+  private scrollNeedsLayout(): boolean {
+    if (this.pin || this.unfolding.size) return true;
+    const n = this.blocks.length;
+    if (!n) return this.shown.length > 0;
+    const scroller = this.context.scroller;
+    const following = this.context.following?.() ?? true;
+    const view = this.context.nested ? Math.max(scroller.clientHeight, innerHeight) : scroller.clientHeight || innerHeight;
+    const anchor = following ? null : this.anchorNow();
+    const at = anchor ? this.heights.index(anchor.slot.key) : undefined;
+    const top = anchor && at !== undefined
+      ? this.heights.top(at) - (anchor.top - scroller.getBoundingClientRect().top)
+      : following ? Math.max(0, this.heights.total() - view) : scroller.scrollTop - this.origin();
+    let first = this.heights.find(Math.max(0, top - view * ABOVE));
+    let last = this.heights.find(top + view * (1 + BELOW));
+    for (const slot of this.shown) {
+      if (!this.holding(slot)) continue;
+      const index = this.heights.index(slot.key);
+      if (index === undefined) continue;
+      if (index < first && first - index <= HOLD) first = index;
+      if (index > last && index - last <= HOLD) last = index;
+    }
+    return this.shown.length !== last - first + 1
+      || this.shown[0]?.key !== this.blocks[first]?.key
+      || this.shown[this.shown.length - 1]?.key !== this.blocks[last]?.key
+      || this.spaceAbove !== this.heights.top(first)
+      || this.spaceBelow !== this.heights.total() - this.heights.top(last + 1);
+  }
 
   /** Heights that changed under blocks drawn: kept, and what changed above
    *  the reader moves the view by as much. */
@@ -576,7 +636,59 @@ export class ConversationView {
       const delta = this.heights.set(index, height);
       if (index < reader) moved += delta;
     }
-    if (moved && !following) scroller.scrollTop += moved;
+    if (following) {
+      this.holdFoot();
+      return;
+    }
+    this.foot = null;
+    // Across a change of view, the words held stay where they stood.
+    const held = this.steady;
+    if (held?.slot.element.isConnected) {
+      const words = wordsOf(held.slot.element);
+      const went = words.getBoundingClientRect().top - held.top;
+      if (went) this.keepStill(went);
+      return;
+    }
+    if (moved) this.keepStill(moved);
+  }
+
+  /** Following, the foot stays where it is on the screen: the page scrolls
+   *  to it by the whole pixels its end moved down the page, as it stands
+   *  now, the spaces for what is not drawn with it, and the fraction is
+   *  carried here. What is shorter than the view stands from its top, and
+   *  nothing is carried. */
+  private holdFoot(): void {
+    const scroller = this.context.scroller;
+    const end = this.below.getBoundingClientRect().bottom - scroller.getBoundingClientRect().top + scroller.scrollTop;
+    const was = this.trim;
+    if (this.foot !== null && end !== this.foot && scroller.scrollHeight > scroller.clientHeight) this.carry(end - this.foot);
+    this.foot = end + this.trim - was;
+  }
+
+  /** What is kept in view moved `by` pixels down the screen, the room
+   *  above it changed: the view follows it by as much, so it stays. */
+  private keepStill(by: number): void {
+    const scroller = this.context.scroller;
+    const whole = this.whole(by);
+    const from = scroller.scrollTop;
+    if (whole) scroller.scrollTop = from + whole;
+    // Where the view is at an end and the scroll took less, the fraction is
+    // not carried either: it would move what the scroll could not.
+    if (scroller.scrollTop - from === whole) this.carry(by);
+  }
+
+  /** The whole pixels of `by` a scroll is to take, the fraction carried
+   *  as it stands taking the rest. */
+  private whole(by: number): number {
+    return Math.ceil(by - this.trim - 1e-4);
+  }
+
+  /** Takes in `by` pixels that what is drawn moved down the page, the whole
+   *  pixels of it scrolled: the fraction left is carried in the root's top
+   *  margin, within a pixel, the root never above its own place. */
+  private carry(by: number): void {
+    this.trim = Math.max(0, Math.round((this.trim + this.whole(by) - by) * 64) / 64);
+    this.root.style.marginTop = this.trim ? `${this.trim}px` : "";
   }
 
   /** The first block drawn and in view whose foot is below the top of the
@@ -606,12 +718,19 @@ export class ConversationView {
       this.switchTo(mode);
       return;
     }
+    // The words both views show that the reader is at are held, unless the
+    // view follows the foot or stands at the very top, where what opens
+    // above them is in view and pushes them down instead.
+    const kept = this.keptInView(new Set(this.conversation.chatBlocks().map((block) => block.key)));
+    const free = (this.context.following?.() ?? true) || this.context.scroller.scrollTop <= 0;
+    const held = kept && !free ? { slot: kept.slot, top: wordsOf(kept.slot.element).getBoundingClientRect().top } : null;
+    this.steady = held;
     if (mode === "steps") {
       // The work comes in folded and unfolds; the words leave their ground
       // as it does, and their own shape once it has.
       this.root.classList.add("view-leaving");
       this.switchTo("steps", true);
-      this.after(glide, () => {
+      this.after(glide, held, () => {
         this.root.classList.remove("view-leaving");
         this.root.dataset.view = "steps";
         for (const element of this.root.querySelectorAll<HTMLElement>(":scope > .view-fold")) unfold(element);
@@ -621,24 +740,31 @@ export class ConversationView {
       // comes up as the work folds away; the work goes once it has.
       this.root.dataset.view = "said";
       this.foldAway(new Set(this.conversation.chatBlocks().map((block) => block.key)));
-      this.after(glide, () => this.switchTo("said"));
+      this.after(glide, held, () => this.switchTo("said"));
     }
   }
 
   /** Ends the change of view under way after `ms`, or at once when
-   *  another comes first. */
-  private after(ms: number, end: () => void): void {
+   *  another comes first; the words it held are let go once what it ended
+   *  with has been laid out. */
+  private after(ms: number, held: { slot: Slot; top: number } | null, end: () => void): void {
     const timer = window.setTimeout(() => this.changing?.(), ms);
     this.changing = () => {
       window.clearTimeout(timer);
       this.changing = null;
       end();
+      requestAnimationFrame(() =>
+        requestAnimationFrame(() => {
+          if (this.steady === held) this.steady = null;
+        }),
+      );
     };
   }
 
   /** Blocks a change of view brought in near the reader, drawn: folded at
-   *  once, their room known first and held by none of it, and unfolding
-   *  from the next frame. */
+   *  once, their room known first and held by none of it, and unfolding in
+   *  the same moment as the rest of the change, along the same curve, so
+   *  whatever moves round them moves one way. */
   private foldIn(slots: Slot[]): void {
     if (!slots.length) return;
     const sizes = slots.map((slot) => roomOf(slot.element));
@@ -650,37 +776,40 @@ export class ConversationView {
       this.measured.set(slot.key, 0);
       this.heights.set(index, 0);
     });
-    requestAnimationFrame(() => {
-      for (const slot of slots) slot.element.classList.remove("view-shut");
-    });
+    // Shut as styled, then let go: the unfolding starts now.
+    void getComputedStyle(slots[0]!.element).height;
+    for (const slot of slots) slot.element.classList.remove("view-shut");
   }
 
-  /** The work a change of view takes away, near the reader: folded away
-   *  where it stands from the next frame, to go once it has. */
+  /** The work a change of view takes away, near the reader: folding away
+   *  where it stands, in the same moment and along the same curve as the
+   *  rest of the change, to go once it has. */
   private foldAway(keep: Set<string>): void {
     const going = this.shown.filter((slot) => !keep.has(slot.key) && slot.element.isConnected);
+    if (!going.length) return;
     const sizes = going.map((slot) => roomOf(slot.element));
     going.forEach((slot, at) => foldable(slot.element, sizes[at]!));
-    requestAnimationFrame(() => {
-      for (const slot of going) slot.element.classList.add("view-folded");
-    });
+    void getComputedStyle(going[0]!.element).height;
+    for (const slot of going) slot.element.classList.add("view-folded");
+  }
+
+  /** The first block in view that both views show, `kept` being the
+   *  blocks of the view to come, and where its top stands. */
+  private keptInView(kept: Set<string>): { slot: Slot; top: number } | null {
+    const view = this.context.scroller.getBoundingClientRect();
+    for (const slot of this.shown) {
+      if (!kept.has(slot.key) || slot.block.kind === "gap" || !slot.element.isConnected) continue;
+      const box = slot.element.getBoundingClientRect();
+      if (box.bottom > view.top && box.top < view.bottom) return { slot, top: box.top };
+    }
+    return null;
   }
 
   /** Shows `mode`'s blocks at once, the block read at the top kept where it
    *  stands; `unfold`, what they bring in near the reader comes in folded. */
   private switchTo(mode: "said" | "steps", unfold = false): void {
     const next = mode === "said" ? this.conversation.chatBlocks() : this.conversation.blocks();
-    const kept = new Set(next.map((block) => block.key));
-    const view = this.context.scroller.getBoundingClientRect();
-    this.pin = null;
-    for (const slot of this.shown) {
-      if (!kept.has(slot.key) || slot.block.kind === "gap" || !slot.element.isConnected) continue;
-      const box = slot.element.getBoundingClientRect();
-      if (box.bottom > view.top && box.top < view.bottom) {
-        this.pin = { slot, top: box.top };
-        break;
-      }
-    }
+    this.pin = this.keptInView(new Set(next.map((block) => block.key)));
     const now = new Set(this.blocks.map((block) => block.key));
     this.unfolding = new Set(unfold ? next.filter((block) => !now.has(block.key)).map((block) => block.key) : []);
     this.mode = mode;
@@ -1211,7 +1340,7 @@ export class ConversationView {
     if (slot.acts!.innerHTML !== acts) slot.acts!.innerHTML = acts;
     // In a turn that said something to the user, its other words are its
     // working notes, in the quieter ink (`world-voice.md`).
-    slot.element.classList.toggle("say-notes", this.conversation.spokeIn(entry.turn));
+    slot.element.classList.toggle("say-notes", this.conversation.spokeIn(entry.turn) && !this.answers(entry));
   }
 
   /** Words the agent said to the user: its answer, set as its words are,
@@ -1237,7 +1366,7 @@ export class ConversationView {
             .map((file) => `<li><a class="say-file" href="#" data-file="${escape(file.path)}" data-file-machine="${escape(file.machine)}">${glyph("file", 16)}<span class="say-file-name">${escape(nameOf(file))}</span></a></li>`)
             .join("")}</ul>`
         : "");
-    const last = !this.context.nested && this.conversation.lastSayOf(say.turn) === say.key && this.conversation.turnEnded(say.turn);
+    const last = !this.context.nested && this.conversation.lastSayOf(say.turn) === say.key && this.conversation.turnEnded(say.turn) && !this.conversation.answersAfterSaying(say.turn);
     // The mark opens the first line, where it is read first.
     const body = render(say.text);
     const marked = mark && body.startsWith("<p>") ? `<p>${mark}${body.slice(3)}` : `${mark}${body}`;
@@ -1342,7 +1471,8 @@ export class ConversationView {
         // Words that never began a conversation: it could not start, and
         // why, as it was given, where the first words wait.
         if (!this.conversation.hasTurns()) {
-          return `<div class="start-failed"><p class="start-failed-said">${escape(words.startFailed)}</p><p class="start-failed-why">${escape(entry.why)}</p></div>`;
+          const why = words.startWhy(entry.why);
+          return `<div class="start-failed" title="${escape(entry.why)}"><p class="start-failed-said">${escape(words.startFailed)}</p>${why ? `<p class="start-failed-why">${escape(why)}</p>` : ""}</div>`;
         }
         return `<div class="note caution" title="${escape(entry.why)}">${escape(words.uncertain(entry.why))}</div>`;
       case "ask":
@@ -1434,7 +1564,14 @@ export class ConversationView {
   /** Whether a message is the last its turn said, where what was done to
    *  the turn is offered. */
   private lastOfTurn(entry: ProseEntry): boolean {
-    return entry.prose === "message" && this.conversation.lastMessageOf(entry.turn) === entry.key && !this.conversation.spokeIn(entry.turn);
+    return entry.prose === "message" && this.conversation.lastMessageOf(entry.turn) === entry.key && (!this.conversation.spokeIn(entry.turn) || this.conversation.answersAfterSaying(entry.turn));
+  }
+
+  /** Whether a message answers the user though its turn spoke through
+   *  `message_user`: the final words of a turn that went on working after
+   *  it last spoke (`Conversation.answersAfterSaying`). */
+  private answers(entry: ProseEntry): boolean {
+    return entry.prose === "message" && this.conversation.lastMessageOf(entry.turn) === entry.key && this.conversation.answersAfterSaying(entry.turn);
   }
 
   /** The turn whose actions stay shown: the last that ended. */
@@ -1757,7 +1894,7 @@ export class ConversationView {
     let body: string;
     switch (told.kind) {
       case "job":
-        body = `<p class="told-line">${escape(words.jobEnded(told.job, told.machine))}<span class="told-how">${escape(words.ended(told.how))}</span></p><p class="told-path">${escape(told.output)}</p>`;
+        body = `<p class="told-line">${escape(words.jobEnded(told.job, told.machine))}<span class="told-how" title="${escape(told.how)}">${escape(words.ended(told.how))}</span></p><p class="told-path">${escape(told.output)}</p>`;
         break;
       case "colleague":
         label = `${told.colleague} ${told.machine}`;
@@ -2525,13 +2662,18 @@ export class ConversationView {
           return close();
         }
         this.held(key, long);
-        note.replaceWith(long.element);
-        shown(long);
+        this.arrive(note, () => {
+          note.replaceWith(long.element);
+          long.settle();
+          shown(long);
+        });
       } catch (error) {
         if (request.signal.aborted) return;
         close();
-        note.textContent = gone(error) ? words.output.diffGone : words.output.readFailed;
-        note.title = detailOf(error);
+        this.arrive(note, () => {
+          note.textContent = gone(error) ? words.output.diffGone : words.output.readFailed;
+          note.title = detailOf(error);
+        });
       }
     })();
     this.filling.set(key, pending);
@@ -2727,7 +2869,7 @@ export class ConversationView {
    *  Any other call in its own words. */
   private printoutOf(entry: ToolEntry, scoped: readonly PlainDeed[] | null, deeds: readonly Deed[] | null, longs: OpenedText[], closers: (() => void)[], ending: boolean): HTMLElement {
     const { tool } = entry;
-    if (tool.does.as !== "command") return this.runWords(tool, longs, closers);
+    if (tool.does.as !== "command") return this.runWords(tool, longs);
     const { words, english } = this.context;
     const does = tool.does;
     const { shown, output } = toolText(tool, words);
@@ -2839,8 +2981,18 @@ export class ConversationView {
     const { words } = this.context;
     return {
       words: words.deeds,
-      // The call's pictures, in the order its output gave them.
-      picture: (deed) => imagesOf(tool.output.filter((content) => content.type === "image" || content.type === "image_url" || content.type === "image_ref").slice(deed.index, deed.index + 1)),
+      picture: (deed) => {
+        // What the model saw, where its host's record kept every picture
+        // the call gave, in their order. A host may keep only a preview in
+        // words of a large result (Codex, past a mebibyte), and a run's
+        // answer leaves out pictures past its budget: then each is drawn
+        // from its file, by the machine holding it.
+        const kept = tool.output.filter((content) => content.type === "image" || content.type === "image_url" || content.type === "image_ref");
+        const given = (tool.run?.steps ?? []).reduce((count, step) => count + (step.kind === "view" ? (step.pictures?.length ?? 0) : 0), 0);
+        if (kept.length === given) return imagesOf(kept.slice(deed.index, deed.index + 1));
+        if (deed.page !== null || !/^image\/(png|jpeg|gif|webp)$/.test(deed.mime)) return "";
+        return `<img class="io-image" data-picture data-path="${escape(deed.path)}"${deed.machine ? ` data-machine="${escape(deed.machine)}"` : ""} alt="${escape(deed.path.split(/[\\/]/).pop() ?? "")}">`;
+      },
       file: (deed) => {
         const rows = deed.rows.map((row) =>
           "text" in row ? encodeRow({ kind: "same", old: row.line, new: row.line, text: row.text }) : encodeRow({ kind: "gap", old: null, new: null, hidden: row.skipped, text: "" }),
@@ -2858,78 +3010,31 @@ export class ConversationView {
     };
   }
 
-  /** A run in its own words: what it was given above what it wrote. */
-  private runWords(tool: Tool, longs: OpenedText[], closers: (() => void)[]): HTMLElement {
-    const { words } = this.context;
-    // A World run says what the model got as facts: its own output, apart
-    // from what its writes printed of themselves, which their rows show.
-    const { run, shown, output, given, ending: endText } = toolText(tool, words);
-    const images = imagesOf(tool.output);
-    // What it was given above what it wrote, both from one edge, the
-    // output's box as wide as the surface; how much more there is and how
-    // it ended on one quiet line at the foot.
-    const surface = document.createElement("div");
-    surface.className = "surface io";
-    const part = (side: "in" | "out", label: string, text: string | LongLines, pictures = "", end = "") => {
-      const holder = document.createElement("div");
-      holder.className = `io-part io-${side}`;
-      holder.setAttribute("role", "group");
-      holder.setAttribute("aria-label", label);
-      const foot = document.createElement("div");
-      foot.className = "io-foot";
-      if (text) {
-        const long = new LongText(text, label, this.layoutAnchor, this.longWords());
-        longs.push(long);
-        holder.append(long.element);
-        const more = long.takeMore();
-        if (more) foot.append(more);
-        const full = long.takeFull();
-        if (full) {
-          if (end) foot.insertAdjacentHTML("beforeend", end);
-          end = "";
-          foot.append(full);
-        }
-      }
-      if (pictures) holder.insertAdjacentHTML("beforeend", `<div class="io-pictures">${pictures}</div>`);
-      if (end) foot.insertAdjacentHTML("beforeend", end);
-      if (foot.childElementCount) holder.append(foot);
-      surface.append(holder);
-    };
-    // What the model got, and beside it in the popup the whole
-    // output on its machine, where the model got less than the whole or the
-    // command went on after the model had its answer.
-    let printed: string | LongLines = output;
-    if (run && shown) {
-      const others: OtherSource[] = [];
-      const kept = run.output;
-      const going = stillGoing(run.state);
-      // A command that went on in the background gave the model only what it
-      // wrote before then; the rest is in the file, after it ended as well.
-      const wentOn = tool.does.as === "command" && tool.does.job !== null;
-      if (kept && run.job && this.context.lines && (kept.cut || going || wentOn)) {
-        const open = this.context.lines;
-        const job = run.job;
-        const whole = new WholeOutput(
-          () => open(kept.machine, kept.path, { kind: "output", job }),
-          { length: kept.lines, complete: !going },
-          (error) => new Said(gone(error) ? words.output.wholeGone : words.output.readFailed, detailOf(error)),
-        );
-        others.push({ label: words.output.whole, source: whole, close: () => whole.close() });
-        closers.push(() => whole.close());
-      }
-      // Numbered by place in the whole output where that is not simply the
-      // line's place here: something was left out, or a write's note was.
-      const plain = !shown.cut && shown.numbers.every((kept, index) => kept === index + 1);
-      printed = { lines: shown.lines, ...(plain ? {} : { paint: outputPaint(shown), inline: outputPaint(shown, false) }), name: words.output.modelCopy, others, wrap: true };
-    }
-    // How a command ended, under what it wrote.
-    const ending = endText ? `<span class="io-end${tool.does.as === "command" && !tool.does.job && tool.does.exit !== null && tool.does.exit !== 0 ? " nonzero" : ""}">${escape(endText)}</span>` : "";
-    // A command's output is named by the command; what else a call gave
-    // back, by what it is.
-    const named = tool.does.as === "command" ? tool.does.command.split("\n")[0]?.trim() : "";
-    if (given) part("in", words.output.input, given);
-    if (printed || images || ending) part("out", named || words.output.printed, printed, images, ending);
-    return surface;
+  /** Any other call in its own words, on the card a command has: what it
+   *  was given above a drawn rule, what it gave back below. */
+  private runWords(tool: Tool, longs: OpenedText[]): HTMLElement {
+    const { words, english } = this.context;
+    const { output, given } = toolText(tool, words);
+    const lines = (text: string) => (text ? text.replace(/\n$/, "").split("\n") : []);
+    const printout = new Printout({
+      label: words.output.printed,
+      command: lines(given),
+      lines: lines(output),
+      nothing: "",
+      pictures: imagesOf(tool.output),
+      layout: this.layoutAnchor,
+      words: {
+        more: words.moreLines,
+        less: words.showLess,
+        copy: words.output.copyOutput,
+        copied: words.copied,
+        whole: words.fullScreen,
+        english,
+        failed: (error) => (error instanceof Said ? error.message : words.output.readFailed),
+      },
+    });
+    longs.push(...printout.sides);
+    return printout.element;
   }
 
   /** What one of the host's own agents did, in its box under the row of
@@ -2990,16 +3095,61 @@ export class ConversationView {
       filled();
       box.inert = false;
       for (const long of this.longsIn(box)) long.settle();
-      const content = box.firstElementChild as HTMLElement | null;
-      const target = content?.offsetHeight ?? 0;
-      const result = await motion.to(target, anchor);
+      const following = this.following(box, anchor);
+      const result = await motion.to(natural(box), anchor);
+      following.disconnect();
       if (!result.cancelled && anchor.getAttribute("aria-expanded") === "true") box.style.height = "";
       return true;
     }
-    box.style.height = `${box.offsetHeight}px`;
+    box.style.height = `${box.getBoundingClientRect().height}px`;
     const result = await motion.to(0, anchor);
     if (!result.cancelled && anchor.getAttribute("aria-expanded") === "false") box.inert = true;
     return !result.cancelled;
+  }
+
+  /** Puts in what an open box was still waiting for, after its first
+   *  height was taken: the box opens on to what came, from the height it
+   *  stands at, whether it is still opening or open already, the pressed
+   *  line where it is. Out of view, it simply takes it. */
+  private arrive(at: HTMLElement, put: () => void): void {
+    const box = at.closest<HTMLElement>(".fold-box");
+    const anchor = box ? foldLine(box) : null;
+    if (!box || !anchor || anchor.getAttribute("aria-expanded") !== "true") {
+      put();
+      return;
+    }
+    const view = this.context.scroller.getBoundingClientRect();
+    const line = anchor.getBoundingClientRect();
+    if (line.bottom < view.top || line.top > view.bottom) {
+      put();
+      return;
+    }
+    const motion = this.motionOf(box);
+    const from = box.getBoundingClientRect().height;
+    put();
+    const to = natural(box);
+    if (motion.moving) {
+      motion.resize(to, anchor);
+      return;
+    }
+    if (Math.abs(to - from) < 0.01) return;
+    box.style.height = `${from}px`;
+    const following = this.following(box, anchor);
+    void motion.to(to, anchor).then((result) => {
+      following.disconnect();
+      if (!result.cancelled && anchor.getAttribute("aria-expanded") === "true") box.style.height = "";
+    });
+  }
+
+  /** While a box opens, what is in it may settle after its height was
+   *  taken (a viewport its rows, a picture its size): it opens on to that. */
+  private following(box: HTMLElement, anchor: HTMLElement): ResizeObserver {
+    const motion = this.motionOf(box);
+    const observer = new ResizeObserver(() => {
+      if (motion.moving) motion.resize(natural(box), anchor);
+    });
+    if (box.firstElementChild) observer.observe(box.firstElementChild);
+    return observer;
   }
 
   private longsIn(box: HTMLElement): OpenedText[] {
@@ -3180,6 +3330,25 @@ function worldColleague(tool: Tool): boolean {
   return tool.does.as === "colleague" && (tool.name === "ask_colleague" || tool.name === "message_colleague");
 }
 
+/** The height a fold's box takes open: what is in it, with the margins its
+ *  first and last parts keep inside it. */
+function natural(box: HTMLElement): number {
+  const held = box.style.height;
+  box.style.height = "auto";
+  const height = box.getBoundingClientRect().height;
+  box.style.height = held;
+  return height;
+}
+
+/** The line whose press opens and closes `box`: the row's own, or the
+ *  notice's above it. */
+function foldLine(box: HTMLElement): HTMLElement | null {
+  const own = box.parentElement?.querySelector<HTMLElement>(":scope > [aria-expanded]");
+  if (own) return own;
+  const before = box.previousElementSibling as HTMLElement | null;
+  return before?.matches("[aria-expanded]") ? before : (before?.querySelector<HTMLElement>("[aria-expanded]") ?? null);
+}
+
 /** Whether what a run started still runs, its output still growing. */
 function stillGoing(state: RunFacts["state"]): boolean {
   return state.kind === "running" || (state.kind === "exited" && state.remaining > 0);
@@ -3293,7 +3462,14 @@ export function modelName(id: string): string {
 /** A block's room, whole and above its words: what it folds from or
  *  unfolds to. */
 function roomOf(element: HTMLElement): { full: number; gap: number } {
-  return { full: element.offsetHeight, gap: parseFloat(getComputedStyle(element).paddingTop) || 0 };
+  return { full: element.getBoundingClientRect().height, gap: parseFloat(getComputedStyle(element).paddingTop) || 0 };
+}
+
+/** What a block shows that both views show: its words, below the moment a
+ *  chat says above them. */
+function wordsOf(block: HTMLElement): HTMLElement {
+  for (const child of block.children) if (!child.classList.contains("chat-moment")) return child as HTMLElement;
+  return block;
 }
 
 /** Sets a block to fold or unfold within `room`. */

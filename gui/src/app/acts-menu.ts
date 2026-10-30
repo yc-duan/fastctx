@@ -96,7 +96,9 @@ export class ActsMenu {
    *  screen; pressed again, it closes. A button the page draws anew while
    *  the menu is open is known for the same by its `data-menu-key`.
    *  `beside` keeps it beside the anchor on a narrow screen too, for a
-   *  short menu held up from what the finger rests on. */
+   *  short menu held up from what the finger rests on. An anchor marked
+   *  `data-menu-align="start"` is a field to choose for: the menu opens
+   *  from its left edge, at least as wide as it. */
   open(anchor: HTMLElement, title: string, entries: MenuEntry[], chosen: (act: string) => void, beside = false): void {
     if (this.shown && this.isAnchor(anchor)) return this.close();
     this.close();
@@ -104,7 +106,11 @@ export class ActsMenu {
     const sheet = narrow.matches && !beside;
     this.show(title, entries, chosen, sheet);
     anchor.setAttribute("aria-expanded", "true");
-    if (!sheet) this.place(anchor.getBoundingClientRect());
+    if (sheet) return;
+    const box = anchor.getBoundingClientRect();
+    const field = anchor.dataset.menuAlign === "start";
+    if (field) this.element.style.minWidth = `${Math.round(box.width)}px`;
+    this.place(box, field);
   }
 
   /** Opens at `at`, a point in the window, as the right button's menu
@@ -119,6 +125,7 @@ export class ActsMenu {
 
   private show(title: string, entries: MenuEntry[], chosen: (act: string) => void, sheet: boolean): void {
     this.chosen = chosen;
+    this.element.style.minWidth = "";
     const head = sheet ? `<div class="talk-menu-head"><span class="talk-menu-name">${escape(title)}</span></div>` : "";
     this.element.innerHTML = head + entries.map(entry).join("");
     this.element.classList.remove("leaving");

@@ -125,9 +125,9 @@ pub(super) fn unknown(node: &Arc<Node>, resident: &ResidentId, id: &NoticeId, wh
 
 /// A node restart must resume observing births and wakes whose words are
 /// still crossing the host boundary. No prompt is submitted a second time.
-pub(super) fn recover(node: &Arc<Node>) {
-    for record in node.residents.everyone() {
-        let about = record.about;
+pub(super) fn recover(node: &Arc<Node>, records: &[crate::residents::OnRecord]) {
+    for record in records {
+        let about = record.about.clone();
         // A session that registered holds its whole id: its words wake it.
         let waking = about.session.as_ref().is_some_and(|session| session.len() != 8);
         if record.removed.is_some()
@@ -148,7 +148,7 @@ pub(super) fn recover(node: &Arc<Node>) {
         for input in kept.iter().filter(|input| input.state == PendingState::Handed) {
             let (node, about, input) = (node.clone(), about.clone(), input.clone());
             tokio::spawn(async move {
-                node.ready().await;
+                node.ready_for(&about.id).await;
                 let Some(session) = about.session.as_deref() else { return };
                 let actions = crate::control_queue::gate(&node, &about.id);
                 let _action = actions.lock().await;

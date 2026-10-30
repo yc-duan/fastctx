@@ -11,7 +11,7 @@
 import type { ComposerSession, ComposerSessionState } from "./composer";
 import { bindComposer, type ComposerDocument } from "./composer";
 import type { AttachWords } from "./attach";
-import { NodeTray, type AssistantFiles } from "./node-tray";
+import { NodeTray, type AssistantFiles, type Failed } from "./node-tray";
 import type { QueueWords } from "./queue";
 import type { Attachment } from "../world/attachments";
 import type { ComposerUpdated } from "../world/composer";
@@ -38,13 +38,18 @@ export class NodeQueue {
   private rows: Set<string> | null = null;
   private controls: PendingControl[] = [];
   private commands: { words: ControlQueueWords; withdraw: (id: string) => void } | null = null;
+  /** Words sent into the queue from here, shown in it at once until the
+   *  node's own queue holds them, or until they did not go. */
+  private going: { text: string; files: number; before: Set<string>; drawn: boolean }[] = [];
+  /** Words sent straight on from here that the agent has not heard yet,
+   *  which the node does not list. */
+  private straight = 0;
 
   constructor(
     private readonly words: QueueWords,
     private readonly attachWords: AttachWords | null,
     private readonly session: ComposerSession,
-    /** Something could not be done: said by the composer. */
-    private readonly failed: (why: string) => void,
+    private readonly failed: Failed,
     private readonly assistantFiles: AssistantFiles | null = null,
     /** A line sent at once: the page shows it below the turn's line until
      *  the session takes it in (walkthrough items 9, 10). */
@@ -72,6 +77,29 @@ export class NodeQueue {
 
   setControls(rows: PendingControl[]): void {
     this.controls = rows;
+    this.draw();
+  }
+
+  /** Shows `text` in the queue at once, as sent from this device: the node
+   *  takes it in over the network, which may take a while. Gives what takes
+   *  it out again, once the node's queue holds it or it did not go. */
+  pending(text: string, files: number): () => void {
+    const entry = { text, files, before: new Set((this.state?.composer.queue ?? []).map((item) => item.id)), drawn: false };
+    this.going.push(entry);
+    this.draw();
+    return () => {
+      const at = this.going.indexOf(entry);
+      if (at < 0) return;
+      this.going.splice(at, 1);
+      this.draw();
+    };
+  }
+
+  /** Words sent straight on from here, until the agent hears them: no
+   *  other can be sent at once meanwhile. */
+  goingStraight(count: number): void {
+    if (count === this.straight) return;
+    this.straight = count;
     this.draw();
   }
 
@@ -229,25 +257,35 @@ export class NodeQueue {
     const composer = state?.composer;
     // Words on their way are said in the conversation, not kept here.
     const queue = (composer?.queue ?? []).filter((item) => !item.sending);
+    // One is on its way into the turn: another cannot be sent at once until
+    // it is there.
+    const onItsWay = this.straight > 0 || (composer?.queue ?? []).some((item) => item.sending);
     const unobserved = composer?.unobserved ?? [];
+    const said = (text: string) => text.replace(/\s+/g, " ").trim();
+    // Words sent from here that the node's queue now holds are its own row,
+    // which takes their place without rising in again.
+    this.going = this.going.filter((one) => {
+      const held = queue.find((item) => !one.before.has(item.id) && said(item.draft.text) === said(one.text));
+      if (held) this.rows?.add(held.id);
+      return !held;
+    });
     // The one being changed is gone from the queue: it was sent or removed.
     if (this.editing && !queue.some((item) => item.id === this.editing!.id)) this.close();
     const places = this.commands ? placeControls(queue, this.controls, composer?.commands) : [];
     const commands = places.flat();
-    this.element.hidden = queue.length === 0 && unobserved.length === 0 && commands.length === 0;
+    this.element.hidden = queue.length === 0 && unobserved.length === 0 && commands.length === 0 && this.going.length === 0;
     if (this.element.hidden) {
       this.element.innerHTML = "";
       delete this.element.dataset.drawn;
       return;
     }
-    const waiting = queue.length + commands.filter((one) => one.row.state === "waiting").length;
+    const waiting = queue.length + this.going.length + commands.filter((one) => one.row.state === "waiting").length;
     const head = composer?.held
       ? `<div class="queue-head held" title="${escape(composer.held)}">${escape(words.paused)}</div>`
       : waiting
         ? `<div class="queue-head">${escape(words.waiting(waiting))}</div>`
         : "";
     const before = (index: number) => (places[index] ?? []).map((one) => controlRow(one, this.commands!.words, words.reorder)).join("");
-    const said = (text: string) => text.replace(/\s+/g, " ").trim();
     const files = (count: number) => (count ? `<span class="queue-files">${escape(words.files(count))}</span>` : "");
     const rows = queue
       .map((item, index) => {
@@ -262,7 +300,7 @@ export class NodeQueue {
         }
         const state = item.editing ? ` <span class="queue-state">${escape(words.editingElsewhere)}</span>` : "";
         const wrong = item.error ? ` title="${escape(item.error)}"` : "";
-        return `${before(index)}<li class="queue-row${item.error ? " wrong" : ""}" data-key="${escape(item.id)}"${wrong}><button class="queue-grip" type="button" aria-label="${escape(words.reorder)}" title="${escape(words.reorder)}">${glyph("grip", 14)}</button><span class="queue-text" title="${escape(item.draft.text)}">${escape(said(item.draft.text))}</span>${files(count)}${state}<span class="queue-acts"><button class="text-button queue-now" type="button" data-queue="now" title="${escape(words.sendNowTitle)}">${glyph("guide", 14)}<span>${escape(words.sendNow)}</span></button><button class="icon-button" type="button" data-queue="edit" aria-label="${escape(words.edit)}" title="${escape(words.edit)}">${glyph("edit", 14)}</button><button class="icon-button" type="button" data-queue="remove" aria-label="${escape(words.remove)}" title="${escape(words.remove)}">${glyph("close", 14)}</button></span></li>`;
+        return `${before(index)}<li class="queue-row${item.error ? " wrong" : ""}" data-key="${escape(item.id)}"${wrong}><button class="queue-grip" type="button" aria-label="${escape(words.reorder)}" title="${escape(words.reorder)}">${glyph("grip", 14)}</button><span class="queue-text" title="${escape(item.draft.text)}">${escape(said(item.draft.text))}</span>${files(count)}${state}<span class="queue-acts"><button class="text-button queue-now" type="button" data-queue="now" ${onItsWay ? `disabled title="${escape(words.stillGoing)}"` : `title="${escape(words.sendNowTitle)}"`}>${glyph("guide", 14)}<span>${escape(words.sendNow)}</span></button><button class="icon-button" type="button" data-queue="edit" aria-label="${escape(words.edit)}" title="${escape(words.edit)}">${glyph("edit", 14)}</button><button class="icon-button" type="button" data-queue="remove" aria-label="${escape(words.remove)}" title="${escape(words.remove)}">${glyph("close", 14)}</button></span></li>`;
       })
       .join("");
     // Sent where the World cannot tell whether they arrived: kept apart,
@@ -270,10 +308,17 @@ export class NodeQueue {
     const unsure = unobserved
       .map(
         (item) =>
-          `<li class="queue-row unsure" data-key="${escape(item.id)}"><span class="queue-text" title="${escape(item.draft.text)}">${escape(said(item.draft.text))}</span><span class="queue-state">${escape(words.unsure)}</span><span class="queue-acts"><button class="icon-button" type="button" data-queue="remove" aria-label="${escape(words.remove)}" title="${escape(words.remove)}">${glyph("close", 14)}</button></span></li>`,
+          `<li class="queue-row unsure" data-key="${escape(item.id)}"><span class="queue-spot" aria-hidden="true"></span><span class="queue-text" title="${escape(item.draft.text)}">${escape(said(item.draft.text))}</span><span class="queue-state">${escape(words.unsure)}</span><span class="queue-acts"><button class="icon-button" type="button" data-queue="remove" aria-label="${escape(words.remove)}" title="${escape(words.remove)}">${glyph("close", 14)}</button></span></li>`,
       )
       .join("");
-    const html = `${head}<ol class="queue-rows">${rows}${before(queue.length)}${unsure}</ol>`;
+    const going = this.going
+      .map((one) => {
+        const fresh = one.drawn ? "" : " fresh";
+        one.drawn = true;
+        return `<li class="queue-row going${fresh}"><span class="queue-spot" aria-hidden="true"></span><span class="queue-text" title="${escape(one.text)}">${escape(said(one.text))}</span>${files(one.files)}<span class="queue-state">${escape(words.sending)}</span></li>`;
+      })
+      .join("");
+    const html = `${head}<ol class="queue-rows">${rows}${before(queue.length)}${going}${unsure}</ol>`;
     if (this.element.dataset.drawn !== html) {
       this.element.dataset.drawn = html;
       this.element.innerHTML = html;

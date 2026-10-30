@@ -23,6 +23,8 @@ pub(super) struct Block {
     pub source: String,
     pub version: String,
     pub text: String,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub transient: bool,
     pub by: Option<Address>,
     pub fact: String,
     pub full: bool,
@@ -82,7 +84,11 @@ fn valid(name: &str) -> bool {
         && name.bytes().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == b'-')
 }
 
-fn blocks(world: &WorldDir, id: &ResidentId) -> io::Result<BTreeMap<String, Block>> {
+fn blocks(
+    world: &WorldDir,
+    id: &ResidentId,
+    bodies: Option<&super::memory::Bodies>,
+) -> io::Result<BTreeMap<String, Block>> {
     let entries = match std::fs::read_dir(directory(world, id)) {
         Ok(entries) => entries,
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(BTreeMap::new()),
@@ -96,7 +102,13 @@ fn blocks(world: &WorldDir, id: &ResidentId) -> io::Result<BTreeMap<String, Bloc
             continue;
         }
         let Some(name) = path.file_stem().and_then(|name| name.to_str()).filter(|name| valid(name)) else { continue };
-        if let Some(block) = read(&path)? {
+        if let Some(mut block) = read::<Block>(&path)? {
+            if block.transient
+                && let Some(bodies) = bodies
+            {
+                let Some(text) = bodies.get(id, name, &block.source) else { continue };
+                block.text = text;
+            }
             blocks.insert(name.to_string(), block);
         }
     }
@@ -127,6 +139,29 @@ pub(super) fn set_locked(
     text: &str,
     change: Change<'_>,
 ) -> io::Result<()> {
+    set_mode(world, id, name, text, change, false)
+}
+
+pub(super) fn set_memory(
+    node: &crate::Node,
+    id: &ResidentId,
+    name: &str,
+    text: &str,
+    change: Change<'_>,
+) -> io::Result<()> {
+    let _transaction = crate::resident_storage::lock();
+    node.context_bodies.put(id, name, &crate::profile::session::hash(text), &bounded(text, BLOCK_BYTES));
+    set_mode(&node.world, id, name, text, change, true)
+}
+
+fn set_mode(
+    world: &WorldDir,
+    id: &ResidentId,
+    name: &str,
+    text: &str,
+    change: Change<'_>,
+    transient: bool,
+) -> io::Result<()> {
     if !valid(name) {
         return Err(io::Error::new(io::ErrorKind::InvalidInput, words::INVALID_NAME));
     }
@@ -135,12 +170,14 @@ pub(super) fn set_locked(
     let state: State = read(&state_path(world, id))?.unwrap_or_default();
     let path = directory(world, id).join(format!("{name}.json"));
     let old: Option<Block> = read(&path)?;
-    if old.as_ref().is_some_and(|old| old.source == source && old.version == change.version)
+    if old
+        .as_ref()
+        .is_some_and(|old| old.source == source && old.version == change.version && old.transient == transient)
         || (old.is_none() && text.is_empty() && change.version.is_empty())
     {
         return Ok(());
     }
-    if old.is_none() && blocks(world, id)?.len() >= BLOCK_COUNT {
+    if old.is_none() && blocks(world, id, None)?.len() >= BLOCK_COUNT {
         return Err(io::Error::other(words::TOO_MANY));
     }
     let revision = old
@@ -153,7 +190,8 @@ pub(super) fn set_locked(
             written_epoch: state.epoch,
             source,
             version: change.version.into(),
-            text: bounded(text, BLOCK_BYTES),
+            text: if transient { String::new() } else { bounded(text, BLOCK_BYTES) },
+            transient,
             by: change.by.cloned(),
             fact: bounded(change.fact, FACT_BYTES),
             full: change.full,
@@ -161,14 +199,18 @@ pub(super) fn set_locked(
     )
 }
 
-pub(super) fn opening(world: &WorldDir, id: &ResidentId) -> io::Result<(String, Receipt)> {
+pub(super) fn opening(
+    world: &WorldDir,
+    id: &ResidentId,
+    bodies: &super::memory::Bodies,
+) -> io::Result<(String, Receipt)> {
     let _transaction = crate::resident_storage::lock();
     exists(world, id)?;
     let state: State = read(&state_path(world, id))?.unwrap_or_default();
     let mut text = Vec::new();
     let mut revisions = BTreeMap::new();
     let mut versions = BTreeMap::new();
-    for (name, block) in blocks(world, id)? {
+    for (name, block) in blocks(world, id, Some(bodies))? {
         revisions.insert(name.clone(), block.revision);
         versions.insert(name.clone(), block.version.clone());
         if !block.text.is_empty() {
@@ -240,14 +282,18 @@ fn reset(world: &WorldDir, id: &ResidentId, marker: &str, opening: bool) -> io::
     write(&state_path(world, id), &state)
 }
 
-pub(super) fn collect(world: &WorldDir, me: &Address) -> io::Result<(Vec<String>, Receipt)> {
+pub(super) fn collect(
+    world: &WorldDir,
+    me: &Address,
+    bodies: &super::memory::Bodies,
+) -> io::Result<(Vec<String>, Receipt)> {
     let _transaction = crate::resident_storage::lock();
     exists(world, &me.resident)?;
     let state: State = read(&state_path(world, &me.resident))?.unwrap_or_default();
     let mut notes = Vec::new();
     let mut revisions = BTreeMap::new();
     let mut versions = BTreeMap::new();
-    for (name, block) in blocks(world, &me.resident)? {
+    for (name, block) in blocks(world, &me.resident, Some(bodies))? {
         revisions.insert(name.clone(), block.revision);
         versions.insert(name.clone(), block.version.clone());
         if (block.text.is_empty() && !state.seen.contains_key(&name) && state.compacted.is_none())
@@ -282,7 +328,7 @@ pub(super) fn acknowledge(world: &WorldDir, id: &ResidentId, receipt: &Receipt) 
         return Ok(None);
     }
     let mut accepted = receipt.clone();
-    let current = blocks(world, id)?;
+    let current = blocks(world, id, None)?;
     for (name, revision) in &receipt.revisions {
         let seen = state.seen.entry(name.clone()).or_default();
         if *seen > *revision {
@@ -297,6 +343,25 @@ pub(super) fn acknowledge(world: &WorldDir, id: &ResidentId, receipt: &Receipt) 
         current.iter().all(|(name, block)| state.seen.get(name).is_some_and(|seen| *seen >= block.revision));
     write(&path, &state)?;
     Ok(Some(accepted))
+}
+
+pub(super) fn migrate(node: &crate::Node, id: &ResidentId) -> io::Result<()> {
+    let _transaction = crate::resident_storage::lock();
+    for name in ["plan", "skills"] {
+        let path = directory(&node.world, id).join(format!("{name}.json"));
+        let Some(mut block) = read::<Block>(&path)? else {
+            continue;
+        };
+        if block.transient {
+            continue;
+        }
+        node.context_bodies.put(id, name, &block.source, &block.text);
+        block.text.clear();
+        block.transient = true;
+        block.revision = block.revision.checked_add(1).ok_or_else(|| io::Error::other(words::REVISION_EXHAUSTED))?;
+        write(&path, &block)?;
+    }
+    Ok(())
 }
 
 pub(super) fn initialize(world: &WorldDir, id: &ResidentId) -> io::Result<()> {

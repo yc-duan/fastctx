@@ -17,6 +17,12 @@ pub(super) async fn ready(node: &Arc<Node>, id: &ResidentId) -> Result<(), Failu
 }
 
 pub(crate) async fn connect(node: &Arc<Node>, id: &ResidentId) -> Result<(), Failure> {
+    if let Some(source) = super::isolation::source(node, id)? {
+        let (about, _) = node.residents.about(id).ok_or_else(crate::authorization::no_subject)?;
+        let alive = super::alive(node, about.home.as_deref(), &source).await?;
+        super::isolation::prepare(node, id, alive).await?;
+        super::management::wake(node, about.home.as_deref(), &source).await?;
+    }
     if ready_activation(node, id)? {
         return isolated(node, id, false);
     }

@@ -57,6 +57,14 @@ export interface ProblemWords {
   /** This Claude Code cannot rewind; forking through a turn can. */
   noRewind: string;
   somethingElse: string;
+  /** Words asked to go while the last ones are still on their way. */
+  stillGoing: string;
+  /** The shared draft was sent from another device before these words went. */
+  sentElsewhere: string;
+  /** The hub has not yet given this connection its word on the account. */
+  viewPending: string;
+  /** Something busy with it for a moment. */
+  busyNow: string;
 }
 
 export const zhProblems: ProblemWords = {
@@ -97,6 +105,10 @@ export const zhProblems: ProblemWords = {
   forkPreparing: "分叉还在准备",
   noRewind: "这一版 Claude Code 不能回退，可以从这一轮分叉",
   somethingElse: "操作未完成",
+  stillGoing: "上一条还在路上，稍后再试",
+  sentElsewhere: "草稿已在另一台设备上发出",
+  viewPending: "还在等中枢的确认，稍后再试",
+  busyNow: "正忙，稍后再试",
 };
 
 export const enProblems: ProblemWords = {
@@ -137,9 +149,17 @@ export const enProblems: ProblemWords = {
   forkPreparing: "The fork is still being prepared",
   noRewind: "This Claude Code can't rewind. Fork from this turn instead",
   somethingElse: "Something went wrong",
+  stillGoing: "The last one is still on its way. Try again in a moment",
+  sentElsewhere: "The draft was sent from another device",
+  viewPending: "Still waiting for the hub. Try again in a moment",
+  busyNow: "Busy right now. Try again in a moment",
 };
 
 const KNOWN: [RegExp, keyof ProblemWords][] = [
+  [/another composer message is being delivered|that queued message is being delivered/, "stillGoing"],
+  [/the draft was sent from another device|this draft was already sent/, "sentElsewhere"],
+  [/current account view is unavailable/, "viewPending"],
+  [/try again in a moment/, "busyNow"],
   [/assisted conversation predates host isolation/, "assistedOld"],
   [/unavailable in an assisted conversation/, "assistedCommand"],
   [/did not say a version the World can read/, "claudeVersionUnknown"],

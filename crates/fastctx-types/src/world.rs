@@ -104,6 +104,9 @@ pub struct MachineFacts {
     /// Answers an account's replica-directory query without returning bodies.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub memory_folders: bool,
+    /// Receives account-owned plan working copies.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub plan_copies: bool,
     /// Reads collaboration trees, including native child-agent histories.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub collaboration_tree: bool,

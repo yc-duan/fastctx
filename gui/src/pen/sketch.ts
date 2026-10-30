@@ -94,6 +94,12 @@ export class Sketch {
     return `<svg class="${kind}" viewBox="0 0 ${width} ${height}" aria-hidden="true">${this.parts.join("")}</svg>`;
   }
 
+  /** The drawing at its own size, in pixels from the top left: a box that
+   *  grows or shrinks around it leaves every line where it is. */
+  svgAt(width: number, height: number, kind: string): string {
+    return `<svg class="${kind}" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" aria-hidden="true">${this.parts.join("")}</svg>`;
+  }
+
   private put(d: string, kind: string): this {
     this.parts.push(`<path class="${kind}" d="${d}"/>`);
     return this;

@@ -303,7 +303,7 @@ pub async fn hand_over(
     let _doing = fastctx_platform::doing::doing(format!("handing {} to {to}", pending.delivery.id));
     // Startup's recovery may need the gate alone, as to finish a deletion:
     // nothing waits for it holding the gate.
-    node.ready().await;
+    node.ready_for(to).await;
     if crate::composer::restore_before_delivery(node, to).await?
         && crate::inbox::read(directory, &pending.delivery.id)
             .map_err(|error| Failure::new(error.to_string()))?
@@ -342,7 +342,7 @@ async fn hand_over_locked(
     let Some(_answering) = node.handoff.call() else {
         return Ok(Landed::Waiting { why: Some(crate::handoff::WAITING.into()), answered: answered(node, to, about) });
     };
-    node.ready().await;
+    node.ready_for(to).await;
     node.residents.active(to)?;
     // While a long control runs in the host, words wait in the inbox; they
     // go in as it ends (`control_long`).
@@ -478,7 +478,7 @@ pub async fn send_composer(
     delivery: Delivery,
     idle_only: bool,
 ) -> Result<Option<Landed>, Failure> {
-    node.ready().await;
+    node.ready_for(id).await;
     crate::composer::restore_before_delivery(node, id).await?;
     let actions = crate::control_queue::gate(node, id);
     let _action = actions.lock().await;
@@ -647,10 +647,22 @@ async fn submit_thread(
     let (current, _) = node.residents.about(id).ok_or_else(crate::authorization::no_subject)?;
     crate::homes::available(node, &current)?;
     crate::assists::may_turn(node, id, &current)?;
+    let along_only = batch.iter().all(|input| input.delivery.notice.along().is_some());
+    let opening = !along_only
+        && node.residents.now(id).is_none_or(|now| now.turn.is_none())
+        && codex.running_turn(thread).is_none();
+    let (notes, context) = if opening {
+        let (notes, receipt) = crate::context::turn::prepare(node, id).await?;
+        let receipt = (!notes.is_empty()).then_some(receipt);
+        (notes, receipt)
+    } else {
+        (Vec::new(), None)
+    };
     let mut handover =
-        crate::delivery::begin(directory, batch.clone()).map_err(|error| Failure::new(error.to_string()))?;
+        crate::delivery::begin_with_context(directory, batch.clone(), context, crate::context::input::stamp(&notes))
+            .map_err(|error| Failure::new(error.to_string()))?;
     let client = Some(format!("{}{}", fastctx_hosts::codex::WORLD_CLIENT, handover.id));
-    let (input, client) = match batch.as_slice() {
+    let (mut input, client) = match batch.as_slice() {
         // A fact of its own work reads best as the output of the tool that
         // started it.
         [only] if matches!(only.delivery.notice, Notice::JobEnded { .. }) => (
@@ -692,10 +704,10 @@ async fn submit_thread(
             )
         }
     };
+    crate::context::turn::prepend(&mut input, &notes);
     for kept in &batch {
         set_state(directory, &kept.delivery.id, PendingState::Sending).await?;
     }
-    let along_only = batch.iter().all(|input| input.delivery.notice.along().is_some());
     let sending = if along_only {
         let Input::Text(text) = input else { unreachable!("non-waking notices are text facts") };
         codex.send_to_running(thread, text, client).await
@@ -786,6 +798,9 @@ pub async fn bind(
     turn: &str,
 ) -> Result<(), Failure> {
     crate::delivery::accept(directory, handover, turn).map_err(|error| Failure::new(error.to_string()))?;
+    if let Some(receipt) = &handover.context {
+        crate::context::turn::accepted(node, id, receipt).map_err(|error| Failure::new(error.to_string()))?;
+    }
     let readers: Vec<Address> = handover.inputs.iter().flat_map(|input| input.readers.iter().cloned()).collect();
     if let Some(finished) =
         crate::delivery::terminal(directory, turn).map_err(|error| Failure::new(error.to_string()))?
@@ -929,8 +944,8 @@ pub async fn settle(node: &Arc<Node>, directory: &ConversationDir, id: &NoticeId
 /// into a Codex thread as it stopped went in or not, nobody knows, and its
 /// readers hear so; what waited for a Codex thread goes in now; the ends of
 /// turns not yet told are told.
-pub async fn restore(node: &Arc<Node>) {
-    for resident in node.residents.everyone() {
+pub async fn restore(node: &Arc<Node>, residents: &[crate::residents::OnRecord]) {
+    for resident in residents {
         if resident.removed.is_some() {
             continue;
         }
@@ -976,9 +991,9 @@ pub async fn restore(node: &Arc<Node>) {
 /// when no descriptor was left, is tried again each minute, as of what the
 /// node before this one left: the records last written before this one
 /// started, never a submission begun since.
-pub async fn recover(node: &Arc<Node>) {
+pub async fn recover(node: &Arc<Node>, residents: Vec<crate::residents::OnRecord>) {
     let mut failed = Vec::new();
-    for resident in node.residents.everyone() {
+    for resident in residents {
         // What a Codex conversation was handed is settled from its thread,
         // which its host may be slow to read: that waits for no other
         // conversation and never holds the node from opening

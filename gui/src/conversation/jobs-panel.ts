@@ -283,6 +283,7 @@ export class JobsPanel {
       element.append(open.viewport.element);
     } catch (error) {
       element.textContent = words.failed(error instanceof Error ? error.message : String(error));
+      element.title = error instanceof Error ? error.message : String(error);
       element.classList.add("failed");
     }
   }

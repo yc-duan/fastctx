@@ -18,9 +18,18 @@ pub(crate) mod host;
 
 /// Whether a session here working for `acting` assists another account
 /// with one of this computer's logins: the accounts it works for may not
-/// work here themselves.
+/// work here themselves. While a hub has not given this connection its
+/// view yet, it is taken to, which keeps the owner's own (their
+/// instructions, their memory) from it for the moment; what is recorded or
+/// routed by it asks `assisting_known`.
 pub(crate) fn assisting(node: &Node, acting: &Acting) -> bool {
     node.works_here(acting).is_err()
+}
+
+/// Whether a session for `acting` assists another account, as its hubs now
+/// say; an error while one has not given this connection its view yet.
+pub(crate) fn assisting_known(node: &Node, acting: &Acting) -> Result<bool, Failure> {
+    node.may_work_here(acting).map(|works| !works)
 }
 
 /// Whether a session here working for `acting` works only for this
@@ -97,7 +106,7 @@ pub(crate) fn check_turn(node: &Node, id: &fastctx_types::ResidentId, about: &Ab
             refused = Some(failure);
             continue;
         }
-        if assisting(node, &about.acting) && host::kept(node, id)? != Some(true) {
+        if assisting_known(node, &about.acting)? && host::assisted(node, id)? != Some(true) {
             return Err(TurnRefusal { failure: host::legacy(), permanent: true });
         }
         match crate::usage::used_up(node, about, account, model) {

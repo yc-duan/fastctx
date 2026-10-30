@@ -1859,7 +1859,7 @@ checksum = "c6e8948ce679d00a02a94739ea185595dca7118ed04feb991127e443bd3d761f"
 
 [[package]]
 name = "fastctx-client"
-version = "1.0.1-beta.12"
+version = "1.0.1-beta.13"
 dependencies = [
  "base64 0.22.1",
  "fastctx-net",
@@ -1877,7 +1877,7 @@ dependencies = [
 
 [[package]]
 name = "fastctx-gui"
-version = "1.0.1-beta.12"
+version = "1.0.1-beta.13"
 dependencies = [
  "ashpd",
  "base64 0.22.1",
@@ -1916,7 +1916,7 @@ dependencies = [
 
 [[package]]
 name = "fastctx-gui-command"
-version = "1.0.1-beta.12"
+version = "1.0.1-beta.13"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1925,7 +1925,7 @@ dependencies = [
 
 [[package]]
 name = "fastctx-hands"
-version = "1.0.1-beta.12"
+version = "1.0.1-beta.13"
 dependencies = [
  "aho-corasick",
  "base64 0.22.1",
@@ -1954,7 +1954,7 @@ dependencies = [
 
 [[package]]
 name = "fastctx-hosts"
-version = "1.0.1-beta.12"
+version = "1.0.1-beta.13"
 dependencies = [
  "base64 0.22.1",
  "fastctx-platform",
@@ -1977,7 +1977,7 @@ dependencies = [
 
 [[package]]
 name = "fastctx-hub"
-version = "1.0.1-beta.12"
+version = "1.0.1-beta.13"
 dependencies = [
  "anyhow",
  "bytes",
@@ -2008,7 +2008,7 @@ dependencies = [
 
 [[package]]
 name = "fastctx-install"
-version = "1.0.1-beta.12"
+version = "1.0.1-beta.13"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -2044,7 +2044,7 @@ dependencies = [
 
 [[package]]
 name = "fastctx-net"
-version = "1.0.1-beta.12"
+version = "1.0.1-beta.13"
 dependencies = [
  "argon2 0.5.3",
  "base64 0.22.1",
@@ -2060,6 +2060,7 @@ dependencies = [
  "http-body-util",
  "hyper",
  "hyper-util",
+ "imara-diff",
  "jiff",
  "libc",
  "opaque-ke",
@@ -2083,7 +2084,7 @@ dependencies = [
 
 [[package]]
 name = "fastctx-office"
-version = "1.0.1-beta.12"
+version = "1.0.1-beta.13"
 dependencies = [
  "anyhow",
  "num-bigint 0.4.8",
@@ -2095,7 +2096,7 @@ dependencies = [
 
 [[package]]
 name = "fastctx-pdf"
-version = "1.0.1-beta.12"
+version = "1.0.1-beta.13"
 dependencies = [
  "fontdb",
  "hayro",
@@ -2111,7 +2112,7 @@ dependencies = [
 
 [[package]]
 name = "fastctx-platform"
-version = "1.0.1-beta.12"
+version = "1.0.1-beta.13"
 dependencies = [
  "async-io",
  "fastctx-types",
@@ -2124,7 +2125,7 @@ dependencies = [
 
 [[package]]
 name = "fastctx-ripgrep"
-version = "1.0.1-beta.12"
+version = "1.0.1-beta.13"
 dependencies = [
  "fastctx-platform",
  "flate2",
@@ -2134,7 +2135,7 @@ dependencies = [
 
 [[package]]
 name = "fastctx-storage"
-version = "1.0.1-beta.12"
+version = "1.0.1-beta.13"
 dependencies = [
  "fastctx-platform",
  "rusqlite",
@@ -2143,7 +2144,7 @@ dependencies = [
 
 [[package]]
 name = "fastctx-types"
-version = "1.0.1-beta.12"
+version = "1.0.1-beta.13"
 dependencies = [
  "base64 0.22.1",
  "icu_casemap",
@@ -2153,13 +2154,14 @@ dependencies = [
  "semver",
  "serde",
  "serde_json",
+ "serde_yaml_ng",
  "sha2 0.10.9",
  "thiserror 2.0.21",
 ]
 
 [[package]]
 name = "fastctx-update"
-version = "1.0.1-beta.12"
+version = "1.0.1-beta.13"
 dependencies = [
  "base64 0.22.1",
  "fastctx-net",
@@ -5782,6 +5784,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf54715a573b99ac80df0bc206da022bcd442c974952c7b9720069370852e21f"
 
 [[package]]
+name = "ryu"
+version = "1.0.23"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9774ba4a74de5f7b1c1451ed6cd5285a32eddb5cccb8cc655a4e50009e06477f"
+
+[[package]]
 name = "ryu-js"
 version = "1.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6089,6 +6097,19 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 3.0.6",
+]
+
+[[package]]
+name = "serde_yaml_ng"
+version = "0.10.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7b4db627b98b36d4203a7b458cf3573730f2bb591b28871d916dfa9efabfd41f"
+dependencies = [
+ "indexmap 2.14.2",
+ "itoa",
+ "ryu",
+ "serde",
+ "unsafe-libyaml",
 ]
 
 [[package]]
@@ -6901,7 +6922,7 @@ dependencies = [
 
 [[package]]
 name = "tauri-plugin-world-pages"
-version = "1.0.1-beta.12"
+version = "1.0.1-beta.13"
 dependencies = [
  "serde",
  "serde_json",
@@ -7535,6 +7556,12 @@ dependencies = [
  "crypto-common 0.2.2",
  "ctutils",
 ]
+
+[[package]]
+name = "unsafe-libyaml"
+version = "0.2.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "673aac59facbab8a9007c7f6108d11f63b603f7cabff99fabf650fea5c32b861"
 
 [[package]]
 name = "untrusted"

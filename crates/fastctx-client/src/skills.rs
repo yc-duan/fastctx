@@ -171,3 +171,19 @@ impl World {
         }
     }
 }
+
+impl World {
+    /// Folder reads carry their revision; edits must return that same revision.
+    /// No working computer or conversation host is needed for these operations.
+    pub async fn skill_files(
+        &self,
+        hub: Option<HubName>,
+        account: Option<AccountName>,
+        request: fastctx_types::skill_files::Request,
+    ) -> Result<fastctx_types::skill_files::Reply, Error> {
+        match self.call(fastctx_types::Call::SkillFiles { hub, account, request }).await?.0 {
+            fastctx_types::Reply::SkillFiles { result } => Ok(*result),
+            reply => Err(Error::Unexpected(format!("{reply:?}"))),
+        }
+    }
+}

@@ -341,6 +341,8 @@ async fn fork(
     let inherited =
         codex.history(&fork, &Address { machine: node.machine(), resident: id.clone() }).await.map_err(Failure::new)?;
     crate::attachments::inherit(node, parent, &id, &inherited)?;
+    crate::context::input::inherit(&node.world.conversation(parent), &node.world.conversation(&id), &inherited)
+        .map_err(|error| Failure::new(error.to_string()))?;
     drop(source_guard);
     crate::context::instructed(node, &id, &heard).map_err(|error| Failure::new(error.to_string()))?;
     node.residents.set_instructed(&id, heard);

@@ -80,6 +80,11 @@ pub async fn let_go(node: &Arc<Node>, link: &Arc<Link>) {
             continue;
         }
         let used = link.view().member_in_project(&link.view().me, &place.town);
+        // A copy let go before leaves only the record the conversations here
+        // stand on: there is nothing more to take, nor anything to tell.
+        if (used || stuck) && !holds_copy(node, &town) {
+            continue;
+        }
         let removed = if used || stuck { remove_copy(node, &town).await } else { remove(node, &town).await };
         match removed {
             Ok(()) => {
@@ -110,6 +115,17 @@ pub(crate) async fn leave_kept(
     Ok(())
 }
 
+/// What `remove_copy` takes of a project kept here, beside its signed entries.
+const COPY: [&str; 6] = ["ledger", "attachments", "journals", "specs", "pages", "tampering"];
+
+/// Whether this computer still keeps any of what `remove_copy` takes of `town`.
+fn holds_copy(node: &Node, town: &TownName) -> bool {
+    let directory = node.world.town(town);
+    directory.signed().exists()
+        || directory.path().join("refused.json").exists()
+        || COPY.iter().any(|folder| directory.path().join(folder).exists())
+}
+
 /// Removes what this computer kept of `town`: its ledger, its signed
 /// entries, attachments, pages and records; the folder itself only when
 /// nothing else is left in it, as a conversation may stand there.
@@ -118,7 +134,7 @@ pub(super) async fn remove_copy(node: &Arc<Node>, town: &TownName) -> io::Result
     let directory = node.world.town(town);
     tokio::task::spawn_blocking(move || {
         super::remove(&directory.signed())?;
-        for folder in ["ledger", "attachments", "journals", "specs", "pages", "tampering"] {
+        for folder in COPY {
             super::remove(&directory.path().join(folder))?;
         }
         match std::fs::remove_file(directory.path().join("refused.json")) {

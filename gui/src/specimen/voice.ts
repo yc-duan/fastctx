@@ -155,6 +155,15 @@ export function voice(): Specimen {
     },
   });
 
+  // A model that said it would look, looked, and wrote the answer as its
+  // final words rather than saying it: the answer is shown all the same.
+  s.heard("t6", user, "明早去 lab 机房，路上会下雨吗？", 2_000);
+  s.started("t6");
+  s.tool("t6", say("我查一下明早的天气。", "reply"));
+  s.tool("t6", run("curl -s 'wttr.in/Hangzhou?format=%C+%t+%p&lang=zh'", "=== run on laptop (exited 0) ===", "小雨 +17°C 1.2mm", { duration_ms: 900 }));
+  s.say("t6", "message", "明早有小雨，降水 1 毫米左右，17 度，带把伞就行。");
+  s.ended("t6", "completed");
+
   return {
     title: "夜里的回归与训练",
     agent: "claude",

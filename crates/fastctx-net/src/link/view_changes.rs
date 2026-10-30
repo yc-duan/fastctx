@@ -88,13 +88,20 @@ impl Inner {
             // Who came or went while it was being taken goes in with it: a
             // change told meanwhile went into the view it replaces.
             self.with_presences(&mut view);
+            let records_changed = view.records_changed(&current);
+            let ways_changed = view.ways_changed(&current);
             *current = Arc::from(view);
             drop(current);
+            if records_changed {
+                let _ = self.record_changes.send(None);
+            }
             if let Some(this) = self.this.upgrade() {
                 this.follow_view();
             }
             self.prune_afoot();
-            self.ways_changed();
+            if ways_changed {
+                self.ways_changed();
+            }
         } else if revision != current.revision {
             // The same view under the hub's new number, which its next
             // change starts from.

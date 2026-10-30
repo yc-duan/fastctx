@@ -175,7 +175,7 @@ export const zhFocus: FocusWords = {
   picker: zhFolderPicker,
   more: (count) => `+${count}`,
   saving: "保存中…",
-  failed: (why) => `没改成：${why}`,
+  failed: failure(zhProblems, "没改成"),
   cleared: "已清空",
   undo: "撤回",
 };
@@ -198,7 +198,7 @@ export const enFocus: FocusWords = {
   picker: enFolderPicker,
   more: (count) => `+${count}`,
   saving: "Saving…",
-  failed: (why) => `Not changed: ${why}`,
+  failed: failure(enProblems, "Not changed"),
   cleared: "Cleared",
   undo: "Undo",
 };
@@ -498,6 +498,8 @@ export interface SettingsWords {
   renew: string;
   renewPhase: Record<import("../world/renewal").RenewalPhase, string>;
   renewFailed(why: string): string;
+  /** Something asked here was not done. */
+  notDone(why: string): string;
   /** A phone: what it lets the World do in the background. */
   phoneNotices: string;
   phoneNoticesOn: string;
@@ -606,6 +608,7 @@ export const zhSettings: SettingsWords = {
     failed: "更新失败",
   },
   renewFailed: failure(zhProblems, "更新失败"),
+  notDone: failure(zhProblems, "没有做成"),
   phoneNotices: "通知",
   phoneNoticesOn: "已允许",
   phoneNoticesOff: "未允许",
@@ -727,6 +730,7 @@ export const enSettings: SettingsWords = {
     failed: "Update failed",
   },
   renewFailed: failure(enProblems, "Update failed"),
+  notDone: failure(enProblems, "Couldn't do that"),
   phoneNotices: "Notifications",
   phoneNoticesOn: "Allowed",
   phoneNoticesOff: "Not allowed",

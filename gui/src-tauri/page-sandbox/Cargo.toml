@@ -1,6 +1,6 @@
 [package]
 name = "tauri-plugin-world-pages"
-version = "1.0.1-beta.12"
+version = "1.0.1-beta.13"
 edition = "2024"
 links = "tauri-plugin-world-pages"
 publish = false

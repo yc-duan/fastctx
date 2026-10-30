@@ -29,9 +29,11 @@ type Action = "minimize" | "toggle_maximize" | "close";
 const command = <T>(name: string, args?: Record<string, unknown>) => invoke<T>(`plugin:world-titlebar|${name}`, args);
 const selector = "[data-world-titlebar]";
 
-function rectangles(element: HTMLElement): Rect[] {
+type Clip = { horizontal: boolean; vertical: boolean; box: DOMRect };
+
+function rectangles(element: HTMLElement, clips: Map<HTMLElement, Clip | null>): Rect[] {
   if (!element.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true })) return [];
-  return Array.from(element.getClientRects(), (rect) => clipped(element, rect))
+  return Array.from(element.getClientRects(), (rect) => clipped(element, rect, clips))
     .filter((rect): rect is Rect => rect !== null);
 }
 
@@ -39,18 +41,24 @@ function rectangles(element: HTMLElement): Rect[] {
  *  inside an ancestor that clips them (a sidebar folded to no width still
  *  reports its links where they were), so each is cut to its clipping
  *  ancestors. */
-function clipped(element: HTMLElement, { left, top, right, bottom }: DOMRect): Rect | null {
+function clipped(element: HTMLElement, { left, top, right, bottom }: DOMRect, clips: Map<HTMLElement, Clip | null>): Rect | null {
   for (let holder = element.parentElement; holder && holder !== document.documentElement; holder = holder.parentElement) {
-    const style = getComputedStyle(holder);
-    if (style.overflowX === "visible" && style.overflowY === "visible") continue;
-    const clip = holder.getBoundingClientRect();
-    if (style.overflowX !== "visible") {
-      left = Math.max(left, clip.left);
-      right = Math.min(right, clip.right);
+    let clip = clips.get(holder);
+    if (clip === undefined) {
+      const style = getComputedStyle(holder);
+      const horizontal = style.overflowX !== "visible";
+      const vertical = style.overflowY !== "visible";
+      clip = horizontal || vertical ? { horizontal, vertical, box: holder.getBoundingClientRect() } : null;
+      clips.set(holder, clip);
     }
-    if (style.overflowY !== "visible") {
-      top = Math.max(top, clip.top);
-      bottom = Math.min(bottom, clip.bottom);
+    if (!clip) continue;
+    if (clip.horizontal) {
+      left = Math.max(left, clip.box.left);
+      right = Math.min(right, clip.box.right);
+    }
+    if (clip.vertical) {
+      top = Math.max(top, clip.box.top);
+      bottom = Math.min(bottom, clip.box.bottom);
     }
   }
   return right > left && bottom > top ? { x: left, y: top, width: right - left, height: bottom - top } : null;
@@ -59,9 +67,11 @@ function clipped(element: HTMLElement, { left, top, right, bottom }: DOMRect): R
 function regions(): Regions {
   const result: Regions = { drag: [], client: [], maximize: null, scale: devicePixelRatio };
   const buttons = new Set<string>();
+  // Regions share clipping ancestors; geometry is cached only for this read.
+  const clips = new Map<HTMLElement, Clip | null>();
   for (const element of document.querySelectorAll<HTMLElement>(selector)) {
     const kind = element.dataset.worldTitlebar;
-    const rects = rectangles(element);
+    const rects = rectangles(element, clips);
     if (kind === "drag") result.drag.push(...rects);
     else if (kind === "client") result.client.push(...rects);
     else if (kind === "minimize" || kind === "maximize" || kind === "close") {
@@ -180,12 +190,38 @@ export async function connectTitlebar(options: {
     schedule();
   };
   const sizes = new ResizeObserver(schedule);
+  const observed = new Set<Element>();
   const observeSizes = () => {
-    sizes.disconnect();
-    sizes.observe(document.documentElement);
-    for (const element of document.querySelectorAll(selector)) sizes.observe(element);
+    const current = new Set<Element>([document.documentElement, ...document.querySelectorAll(selector)]);
+    for (const element of observed) {
+      if (current.has(element)) continue;
+      sizes.unobserve(element);
+      observed.delete(element);
+    }
+    for (const element of current) {
+      if (observed.has(element)) continue;
+      sizes.observe(element);
+      observed.add(element);
+    }
   };
-  const mutations = new MutationObserver(() => {
+  // Only a change that can add, remove, hide or move a region asks for the
+  // geometry again: words streaming into a conversation and rows drawn in it
+  // hold no region, and following them kept the shell measuring every frame.
+  // A dialog opening or going is such a change too: while one is modal the
+  // whole window is the page's (`regions`).
+  const regional = `${selector}, dialog`;
+  const holdsRegionOrDialog = (element: Element) => element.matches(regional) || element.querySelector(regional) !== null;
+  const touchesRegion = (record: MutationRecord) => {
+    if (record.type === "attributes") {
+      return record.attributeName === "data-world-titlebar" || (record.target instanceof Element && holdsRegionOrDialog(record.target));
+    }
+    for (const nodes of [record.addedNodes, record.removedNodes]) {
+      for (const node of nodes) if (node instanceof Element && holdsRegionOrDialog(node)) return true;
+    }
+    return false;
+  };
+  const mutations = new MutationObserver((records) => {
+    if (!records.some(touchesRegion)) return;
     observeSizes();
     schedule();
   });
@@ -237,6 +273,7 @@ export async function connectTitlebar(options: {
     for (const [target, type, listener] of listening) target.removeEventListener(type, listener, true);
     mutations.disconnect();
     sizes.disconnect();
+    observed.clear();
     resolution?.removeEventListener("change", resolutionChanged);
     unlistenState();
     unlistenError?.();

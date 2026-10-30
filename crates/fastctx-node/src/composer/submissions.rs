@@ -199,7 +199,7 @@ pub async fn turn_ended(
 }
 
 pub(super) fn schedule(node: &Arc<Node>, id: &ResidentId) {
-    if !node.effects_ready.load(std::sync::atomic::Ordering::Acquire) {
+    if !node.startup.is_ready(id) {
         return;
     }
     // A control waiting behind these words may go once they have gone or
@@ -254,7 +254,7 @@ pub(super) fn after_commit(
 }
 
 async fn release(node: &Arc<Node>, id: &ResidentId) -> Result<(), Failure> {
-    node.ready().await;
+    node.ready_for(id).await;
     // Removed, being deleted or deleted: what is queued for it waits, or
     // goes with it.
     if node.residents.active(id).is_err() {

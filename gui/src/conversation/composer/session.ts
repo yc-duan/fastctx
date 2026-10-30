@@ -4,7 +4,7 @@ import type { ComposerAttachmentAdded, ComposerChange, ComposerMutation, Compose
 import { composing } from "../../world/composing";
 import type { ComposerTransport } from "../../world/composing";
 import { ComposerDocument } from "./document";
-import type { ComposerJournal } from "./document";
+import type { ComposerJournal, Seal } from "./document";
 import { composerJournalStore } from "./journal";
 import type { ComposerJournalStore } from "./journal";
 import { composerWriter } from "./writer";
@@ -30,7 +30,23 @@ export interface ComposerSessionState {
   readonly saving: boolean;
   readonly storageError: Error | null;
   readonly canSend: boolean;
+  /** Sends from this device whose words the node does not have yet. */
+  readonly onTheirWay: number;
+  /** The draft's attachments that went with them. */
+  readonly attachmentsOnTheirWay: ReadonlySet<string>;
 }
+
+/** Words that did not go because words sent before them did not: they are
+ *  back in the input with those, which say why. */
+export class Withdrawn extends Error {
+  constructor() {
+    super("words sent before these did not go");
+  }
+}
+
+/** The draft words were pressed in was sent from another device before
+ *  they went: its next draft is not theirs to send. */
+const SENT_ELSEWHERE = "the draft was sent from another device";
 
 export interface ComposerSessionOptions {
   readonly transport?: ComposerTransport;
@@ -39,7 +55,11 @@ export interface ComposerSessionOptions {
   readonly journal?: ComposerJournalStore;
 }
 
-interface Operation extends Omit<ComposerOperation, "broken"> {
+interface Operation extends Omit<ComposerOperation, "broken" | "change"> {
+  change: ComposerOperation["change"];
+  /** It waits for words sent before it to reach the node, and does not
+   *  belong to their draft. */
+  waiting?: boolean;
   status: ComposerOperation["status"];
   error: Error | null;
   result: ComposerOperation["result"];
@@ -78,6 +98,14 @@ export class ComposerSession {
   private watching: { id: number; watch: string } | undefined;
   private generation = 0;
   private closed = false;
+  /** Settles once the words sent last from here settled. */
+  /** How many of the words sent from here the node has taken: what moves the
+   *  draft's epoch on from this side. */
+  private takenHere = 0;
+  private sends: Promise<unknown> = Promise.resolve();
+  /** Changes to the draft waiting for words sent before them to reach the
+   *  node; each settles once its change is made, or under way. */
+  private readonly preparing = new Set<Promise<unknown>>();
   private readonly documents = new Map<ComposerDocument, DocumentEntry>();
   private readonly editors = new Set<ComposerDocument>();
   private readonly operations = new Map<string, Operation>();
@@ -131,7 +159,7 @@ export class ComposerSession {
       operations: [...this.operations.values()].map(({ id, change, status, error, result, broken }) => ({ id, change, status, error, result, broken: !!broken })),
       editors: [...this.editors], recoveryKey: this.recoveryKey,
       saving: entries.some((entry) => entry.saving !== undefined), storageError: entries.find((entry) => entry.error)?.error ?? null,
-      canSend: this.canSend(this.draft) };
+      canSend: this.canSend(this.draft), onTheirWay: this.draft.onTheirWay, attachmentsOnTheirWay: this.draft.attachmentsOnTheirWay };
   }
 
   /** Includes attachment destinations and uploads being prepared before the node exposes them. */
@@ -369,29 +397,98 @@ export class ComposerSession {
     }
   }
 
-  /** Captures this epoch before flushing. A concurrent send refuses this call;
-   * it never silently sends the next draft. Textareas remain editable while the node works.
-   * Sent while the connection is down, it waits for it and goes then; one that broke on the
-   * way goes again under its own id, so the node sends it once. */
-  async send(): Promise<ComposerUpdated> {
-    this.assertOpen();
-    const epoch = this.draft.view.state.epoch;
-    if (this.draft.view.state.composing) throw new Error("finish the input composition before sending");
-    for (;;) {
-      await this.untilConnected();
-      try {
-        await this.flushMetadata({ kind: "draft" }, epoch);
-        await this.flushDocuments({ kind: "draft" });
-        break;
-      } catch (error) {
-        if (this.connected || this.closed || this.closing) throw error;
-      }
+  /** Sends what the input shows now. The words leave it at once, and what is
+   * typed from here goes to the draft after them: each send goes once the
+   * node has the words sent before it, under the epoch its draft is at then,
+   * which is captured before flushing, so a concurrent send refuses it rather
+   * than this one sending the next draft. Sent while the connection is down,
+   * they wait for it and go then; one that broke on the way goes again under
+   * its own id, so the node sends it once. Words that did not go are back in
+   * the input, ahead of what was typed since, with any sent after them
+   * (which fail as `Withdrawn`). */
+  send(): Promise<ComposerUpdated> {
+    const document = this.draft;
+    // Changes asked of the draft before these words go before them.
+    const prepared = [...this.preparing];
+    // The draft they are pressed in, as the words sent from here before
+    // them will have moved it on.
+    const pressed = { epoch: document.view.state.epoch, taken: this.takenHere };
+    let seal: Seal;
+    try {
+      this.assertOpen();
+      if (document.view.state.composing) throw new Error("finish the input composition before sending");
+      seal = document.seal();
+    } catch (error) {
+      return Promise.reject(error);
     }
+    const before = this.sends;
+    this.sends = seal.settled;
+    void seal.settled.then((taken) => {
+      if (taken) this.takenHere += 1;
+      this.emit();
+    });
+    this.emit();
+    return before.then(() => this.sendSealed(document, seal, prepared, pressed));
+  }
+
+  private async sendSealed(
+    document: ComposerDocument,
+    seal: Seal,
+    prepared: readonly Promise<unknown>[],
+    pressed: { epoch: number; taken: number },
+  ): Promise<ComposerUpdated> {
+    if (!document.sealed(seal)) throw new Withdrawn();
+    await Promise.allSettled(prepared);
+    let epoch: number;
+    try {
+      for (;;) {
+        await this.untilConnected();
+        epoch = document.view.state.epoch;
+        try {
+          await this.flushMetadata({ kind: "draft" }, epoch);
+          await this.flushDocuments({ kind: "draft" });
+          break;
+        } catch (error) {
+          if (this.connected || this.closed || this.closing) throw error;
+        }
+      }
+    } catch (error) {
+      document.unseal(seal);
+      throw error;
+    }
+    // Moved on by anything but the words sent from here, the draft went from
+    // another device: what is in it now is not these words to send. Those of
+    // them still in it are back in the input.
+    if (epoch !== pressed.epoch + (this.takenHere - pressed.taken)) {
+      document.unseal(seal);
+      throw new Error(SENT_ELSEWHERE);
+    }
+    document.asking(seal, epoch);
     const mutation: ComposerMutation = { do: "send", epoch, operation: crypto.randomUUID() };
     const operation: Operation = { id: mutation.operation, change: { do: "send", epoch }, status: "pending", error: null, result: null, attempt: 0,
       run: () => this.transport.update(mutation) };
     this.operations.set(operation.id, operation);
-    return this.lasting(operation) as Promise<ComposerUpdated>;
+    try {
+      const updated = await this.lasting(operation) as ComposerUpdated;
+      document.taken(seal);
+      return updated;
+    } catch (error) {
+      document.unseal(seal);
+      throw error;
+    }
+  }
+
+  /** What is done to the draft while words sent from it are on their way
+   * waits until the node has them, and is done to the draft after them;
+   * words sent meanwhile go after it. */
+  private afterSent<T>(document: ComposerDocument, change: () => Promise<T>): Promise<T> {
+    const before = document.view.state.target.kind === "draft" ? document.unsealed() : null;
+    if (!before) return change();
+    const done = before.then(change);
+    this.preparing.add(done);
+    const forget = () => { this.preparing.delete(done); };
+    done.then(forget, forget);
+    return done;
   }
 
   async deleteQueued(id: string): Promise<ComposerUpdated> {
@@ -423,8 +520,10 @@ export class ComposerSession {
 
   async detach(attachment: string, document = this.draft): Promise<ComposerUpdated> {
     this.owned(document);
-    const { target, epoch } = document.view.state;
-    return this.mutate({ do: "detach", target, epoch, attachment });
+    return this.afterSent(document, () => {
+      const { target, epoch } = document.view.state;
+      return this.mutate({ do: "detach", target, epoch, attachment });
+    });
   }
 
   /** Persists one destination for all non-images in this draft or queued editor.
@@ -434,15 +533,19 @@ export class ComposerSession {
    * A broken connection rejects the call; state.operations retains its ID for retryOperation. */
   async setFilesOn(machine: string | null, document = this.draft): Promise<ComposerUpdated> {
     this.owned(document);
-    const { target, epoch } = document.view.state;
-    return this.mutate({ do: "files_on", target, epoch, files_on: machine });
+    return this.afterSent(document, () => {
+      const { target, epoch } = document.view.state;
+      return this.mutate({ do: "files_on", target, epoch, files_on: machine });
+    });
   }
 
   /** Attaches an already verified receipt, including an upload that finished after detachment. */
   async attach(attachment: Attachment, document = this.draft): Promise<ComposerUpdated> {
     this.owned(document);
-    const { target, epoch } = document.view.state;
-    return this.mutate({ do: "attach", target, epoch, attachment });
+    return this.afterSent(document, () => {
+      const { target, epoch } = document.view.state;
+      return this.mutate({ do: "attach", target, epoch, attachment });
+    });
   }
 
   async attachFile(file: File, document = this.draft): Promise<ComposerAttachmentAdded> {
@@ -453,21 +556,45 @@ export class ComposerSession {
     return this.upload(document, (scope) => this.transport.attachPath(scope, path, sent));
   }
 
+  /** Listed at once, as this device's own; one added while words sent from
+   * the draft are on their way starts once the node has them, in the draft
+   * after them. Its scope, once it starts, is kept for every retry. */
   private upload(document: ComposerDocument, run: (scope: { operation: string; target: ComposerTarget; epoch: number }) => Promise<ComposerAttachmentAdded>): Promise<ComposerAttachmentAdded> {
     this.assertConnected();
     this.owned(document);
-    const { target, epoch } = document.view.state;
+    const { target } = document.view.state;
+    const before = target.kind === "draft" ? document.unsealed() : null;
     const id = crypto.randomUUID();
-    const operation: Operation = { id, change: { do: "upload", target, epoch }, status: "pending", error: null, result: null, attempt: 0,
-      run: () => run({ operation: id, target, epoch }) };
+    let scope: { operation: string; target: ComposerTarget; epoch: number } | null = null;
+    // Words sent after it is asked for go once it is under way, or over.
+    let begun = () => {};
+    if (before) {
+      const started = new Promise<void>((resolve) => { begun = resolve; });
+      this.preparing.add(started);
+      void started.then(() => { this.preparing.delete(started); });
+    }
+    const operation: Operation = { id, change: { do: "upload", target, epoch: document.view.state.epoch }, status: "pending", error: null, result: null, attempt: 0,
+      waiting: before !== null,
+      run: async () => {
+        if (!scope) {
+          if (before) await before;
+          scope ??= { operation: id, target, epoch: document.view.state.epoch };
+          operation.change = { do: "upload", target, epoch: scope.epoch };
+          operation.waiting = false;
+          begun();
+        }
+        return run(scope);
+      } };
     this.operations.set(id, operation);
-    return this.lasting(operation) as Promise<ComposerAttachmentAdded>;
+    const done = this.lasting(operation) as Promise<ComposerAttachmentAdded>;
+    done.then(begun, begun);
+    return done;
   }
 
   private pendingMetadata(target: ComposerTarget, epoch: number): Operation[] {
     return [...this.operations.values()].filter((operation) => {
       const change = operation.change;
-      return operation.status === "pending" && (change.do === "upload" || change.do === "attach" || change.do === "detach" || change.do === "files_on") && change.epoch === epoch
+      return operation.status === "pending" && !operation.waiting && (change.do === "upload" || change.do === "attach" || change.do === "detach" || change.do === "files_on") && change.epoch === epoch
         && change.target.kind === target.kind && (target.kind === "draft" || (change.target.kind === "queued" && change.target.id === target.id));
     });
   }

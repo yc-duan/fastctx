@@ -97,11 +97,14 @@ export class CollabPage implements SidePage {
   }
 
   /** Each branch, from under its parent's seal down and across to the
-   *  seal of what it holds, drawn when the tree's size is known. */
+   *  seal of what it holds, drawn when the tree's size is known. The seals
+   *  stand at their depth from the left whatever the width, so only the
+   *  rows moving down or up, the tree's height, draws them again: the side
+   *  widening with the sidebar every frame does not. */
   private ink(): void {
     const width = this.tree.clientWidth;
     const height = this.tree.clientHeight;
-    const key = `${width}x${height}`;
+    const key = String(height);
     if (width === 0 || key === this.drawn) return;
     this.drawn = key;
     const rows = [...this.tree.querySelectorAll<HTMLElement>(".cp-node")];
@@ -121,7 +124,7 @@ export class CollabPage implements SidePage {
       sketch.rule([x, y0], [x, y1 - 4], 1.1, "graphite");
       sketch.rule([x, y1 - 4], [c.left - box.left - 4, y1], 1.1, "graphite");
     });
-    this.tree.querySelector<HTMLElement>(".cp-ink")!.innerHTML = sketch.svg(width, height, "cp-ink-svg");
+    this.tree.querySelector<HTMLElement>(".cp-ink")!.innerHTML = sketch.svgAt(width, height, "cp-ink-svg");
   }
 
   private find(list: CollabNode[], id: string): CollabNode | null {

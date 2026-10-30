@@ -6,6 +6,7 @@ use fastctx_types::{access::{Acting, Written}, update::Manifest};
 use crate::Node;
 
 pub(crate) async fn send_package(node: &Arc<Node>, acting: &Acting, manifest: &Manifest, target: &str, machine: &Written, destination: &str) -> Result<(), String> {
+    node.settled(machine).await;
     node.authorize_machine(acting, machine).map_err(|e| e.to_string())?;
     let cache = fastctx_update::Cache::new(node.root.join("updates/packages"));
     let path = cache.get(&manifest.version, target).ok_or("repair package is not cached on the helper")?;

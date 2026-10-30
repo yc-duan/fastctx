@@ -75,11 +75,16 @@ export interface PicturesOptions {
   words: PictureWords;
   /** This computer. */
   here: MachineName;
-  /** The machine whose files the agent's words name. */
+  /** The conversation's own machine, whose files the agent's words name
+   *  where nothing else says. */
   machine: MachineName;
+  /** The machine the file `path` that `element` shows is on, as the turn
+   *  its words are in says; absent where it says nothing. */
+  machineFor?: ((element: HTMLElement, path: string) => MachineName | null) | undefined;
   seams: PictureSeams;
-  /** A line beside the composer. */
-  say(text: string): void;
+  /** A line beside the composer; `detail`, the original of a failure, on
+   *  hover. */
+  say(text: string, detail?: string): void;
   /** For how long the way to a picture has been broken, since `since`
    *  (milliseconds since the epoch), and why. */
   broken(since: number, why: string): string;
@@ -152,7 +157,7 @@ export class Pictures {
     return {
       element,
       name: element.alt || kept?.name || element.dataset.path?.split(/[\\/]/).pop() || "",
-      machine: attachment?.owner.machine ?? element.dataset.machine ?? this.options.machine,
+      machine: attachment?.owner.machine ?? element.dataset.machine ?? (element.dataset.path ? this.options.machineFor?.(element, element.dataset.path) : null) ?? this.options.machine,
       path: kept?.path ?? element.dataset.path ?? null,
       attachment,
     };
@@ -192,7 +197,13 @@ export class Pictures {
       image.src = await made;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      const place = image.closest<HTMLElement>(".bubble-picture, .prose-picture") ?? image;
+      // Said where the picture would be: in its own frame, or in a note
+      // put where the picture was.
+      let place = image.closest<HTMLElement>(".bubble-picture, .prose-picture, .dd-picture");
+      if (!place) {
+        place = document.createElement("span");
+        image.replaceWith(place);
+      }
       place.classList.add("picture-missing");
       place.title = message;
       place.innerHTML = `${glyph("image", 16)}<span>${escape(picture.name)}</span><span class="picture-why">${escape(isGone(error, message) ? this.options.words.gone : this.options.words.failed(message))}</span>`;
@@ -578,7 +589,8 @@ class PictureViewer {
       }
     } catch (error) {
       if (error instanceof LetGo) return;
-      say(words.failed(error instanceof Error ? error.message : String(error)));
+      const why = error instanceof Error ? error.message : String(error);
+      say(words.failed(why), why);
     }
   }
 

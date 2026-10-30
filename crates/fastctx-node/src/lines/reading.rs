@@ -90,7 +90,7 @@ fn start(
             () = sender.closed() => {},
             result = async {
                 if let Some(machine) = machine.filter(|machine| !node.is_here(machine)) {
-                    let (link, account) = node.speaking(&Acting::Here, &machine, Purpose::Hands).map_err(failed)?;
+                    let (link, account) = node.speaking(&Acting::Here, &machine, Purpose::Hands).await.map_err(failed)?;
                     fastctx_net::lines_read::read(&link, machine.name, account, fastctx_types::lines::ReadRequest { source, start, count }, &sender, only_notes).await
                 } else {
                     here(&node, from, source, start, count, &sender, only_notes).await

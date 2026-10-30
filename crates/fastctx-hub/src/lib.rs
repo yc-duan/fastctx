@@ -44,13 +44,17 @@ mod manage;
 mod moving;
 mod outq;
 mod plan_calls;
+mod plan_copies;
 mod project_deletions;
 mod project_entry;
 mod question_parts;
+mod record_subscriptions;
 mod records;
 mod releases;
 mod renewal;
 mod sentinel_home;
+mod skill_files;
+mod skill_storage;
 mod store;
 pub mod third;
 mod updates;
@@ -288,6 +292,8 @@ const VIEW_CHANGE_AT_MOST: usize = 192 * 1024;
 pub(crate) struct Session {
     key: PublicKey,
     account_records: bool,
+    record_keys: Option<record_subscriptions::Records>,
+    skill_files: bool,
     conversation_plans: bool,
     scratch_locations: bool,
     call_details: bool,
@@ -943,6 +949,8 @@ async fn intended(
                 conversation_deletions,
                 profiles,
                 account_records,
+                record_keys,
+                skill_files,
                 conversation_plans,
                 scratch_locations,
                 left,
@@ -971,6 +979,8 @@ async fn intended(
                 conversation_deletions,
                 profiles,
                 account_records,
+                record_keys,
+                skill_files,
                 conversation_plans,
                 scratch_locations,
                 left,
