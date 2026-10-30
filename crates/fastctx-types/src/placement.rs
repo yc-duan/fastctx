@@ -23,4 +23,5 @@ pub enum Resource {
     Directory,
     Plan,
     Skill { name: String, version: u64 },
+    Files { key: String, files: Vec<crate::skill_files::File> },
 }

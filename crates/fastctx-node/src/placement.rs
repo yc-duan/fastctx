@@ -2,6 +2,7 @@
 //! shell calls. Features supply focus and the speaking device, never a path
 //! on the conversation's host as a substitute for an unavailable destination.
 
+pub(crate) mod artifacts;
 pub(crate) mod copies;
 pub(crate) mod files;
 pub(crate) mod jobs;
@@ -162,6 +163,9 @@ pub(crate) async fn prepare_copy(
                 .map(|(_, location)| location);
         }
         fastctx_types::placement::Resource::Directory => {}
+        fastctx_types::placement::Resource::Files { key, files } => {
+            return artifacts::put(node, directory, key, files).await;
+        }
     }
     Ok(fastctx_types::placement::Location { machine: node.machine(), path: crate::world::native(&directory) })
 }

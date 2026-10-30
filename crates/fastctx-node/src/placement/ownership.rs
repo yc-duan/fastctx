@@ -50,3 +50,6 @@ fn checked(
 pub(crate) fn bind(node: &Node, directory: &Path, scope: &HubAccount, owner: &Address) -> Result<Address, Failure> {
     checked(node, directory, scope, owner, true)
 }
+pub(crate) fn verify(node: &Node, directory: &Path, scope: &HubAccount, owner: &Address) -> Result<(), Failure> {
+    checked(node, directory, scope, owner, false).map(drop)
+}

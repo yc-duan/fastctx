@@ -114,7 +114,7 @@ impl Drop for Stop {
     }
 }
 
-pub(crate) async fn admit(node: &Arc<Node>, origin: &OnOrigin) -> Result<(), Failure> {
+pub(crate) async fn admit(node: &Arc<Node>, origin: &OnOrigin) -> Result<Option<std::path::PathBuf>, Failure> {
     if let Some(why) = fastctx_hands::run::sentinel::unavailable() {
         return Err(Failure::not_run(why));
     }
@@ -140,5 +140,8 @@ pub(crate) async fn admit(node: &Arc<Node>, origin: &OnOrigin) -> Result<(), Fai
     {
         return Err(Failure::refused("the observation does not match the active sentinel assignment"));
     }
-    Ok(())
+    if d.kind == Kind::Goal {
+        return crate::placement::artifacts::read_directory(node, scope, &d.owner);
+    }
+    Ok(None)
 }

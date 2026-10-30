@@ -161,37 +161,39 @@ fn row<'a>(
 }
 
 impl Delta {
-    pub(crate) fn summary(&self, actions: &str) -> String {
+    pub(crate) fn summary(&self, full_path: &str) -> String {
         use std::fmt::Write;
-        let mut summary = String::new();
+        let mut summary = format!(
+            "Complete evidence: {full_path}. Source fields in that JSON are historical provenance; read the copied evidence here.\n"
+        );
         for facts in &self.turns {
-            summary.push_str(&super::words::render(facts, actions));
-        }
-        for job in &self.jobs {
-            let command = job.script.split_whitespace().collect::<Vec<_>>().join(" ");
-            let command: String = command.chars().take(240).collect();
             let _ = writeln!(
                 summary,
-                "{} job {} · turn {} · {} · exit {:?} · end {:?} · remaining {:?}; record {}; output {}",
-                job.machine,
-                job.id,
-                job.turn.as_deref().unwrap_or("unknown"),
-                command,
-                job.exit,
-                job.end,
-                job.remaining,
-                job.full_record,
-                job.output
+                "Turn {}: {} actions, {} calls, {} job updates; stop {:?}; ended {:?}",
+                facts.turn.as_deref().unwrap_or("unknown"),
+                facts.actions.len(),
+                facts.calls.len(),
+                facts.job_updates.len(),
+                facts.stop,
+                facts.ended_at
+            );
+        }
+        for job in &self.jobs {
+            let command: String =
+                job.script.split_whitespace().collect::<Vec<_>>().join(" ").chars().take(240).collect();
+            let _ = writeln!(
+                summary,
+                "{} job {} · {} · exit {:?} · end {:?} · remaining {:?}",
+                job.machine, job.id, command, job.exit, job.end, job.remaining
             );
         }
         for missing in &self.unavailable {
             let _ = writeln!(
                 summary,
-                "Turn {} call {}: detailed facts unavailable: {}; record {}",
+                "Turn {} call {}: detailed facts unavailable: {}",
                 missing.turn.as_deref().unwrap_or("unknown"),
                 missing.call,
-                missing.reason,
-                missing.source
+                missing.reason
             );
         }
         summary
