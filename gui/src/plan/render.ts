@@ -107,6 +107,13 @@ function checklists(root: HTMLElement): void {
     item.classList.add("pb-check");
     if (done) item.classList.add("done");
     item.parentElement?.classList.add("pb-checklist");
+    // The item's words are one cell beside the box, however many pieces
+    // inline code or a link makes of them; a list or paragraph under them
+    // is a block of its own in the same column.
+    const words = document.createElement("span");
+    words.className = "pb-check-words";
+    while (item.firstChild && !(item.firstChild instanceof HTMLElement && BLOCKS.has(item.firstChild.tagName))) words.append(item.firstChild);
+    if (words.firstChild) item.prepend(words);
     const box = document.createElement("span");
     box.className = "pb-box";
     box.setAttribute("aria-hidden", "true");
@@ -114,6 +121,9 @@ function checklists(root: HTMLElement): void {
     item.prepend(box);
   }
 }
+
+/** What Markdown leaves in a list item as a block, not as its words. */
+const BLOCKS = new Set(["P", "UL", "OL", "PRE", "DIV", "BLOCKQUOTE", "TABLE", "FIGURE", "H1", "H2", "H3", "H4", "H5", "H6", "HR"]);
 
 /** A small square as a hand rules it, and a tick through it once done. */
 export function checkBox(done: boolean, seed: string): string {
