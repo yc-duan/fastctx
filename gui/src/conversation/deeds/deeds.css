@@ -551,43 +551,70 @@ button.dd-opener-line:hover {
   text-align: left;
 }
 
-/* Pictures a call gave, as themselves: a row of them, each as tall as a
-   few lines, named under it; opened whole as any picture is. */
+/* Pictures a call gave, as themselves: a row of them at one height, each
+   as wide as its proportions (`--picture-width`, `--picture-height`, in
+   pixels without their unit) and
+   named under it in a line no wider than it; opened whole as any picture
+   is. The frame is there before the picture comes, so nothing moves. */
 .dd-pictures {
   display: flex;
   flex-wrap: wrap;
-  gap: var(--space-3);
+  align-items: flex-end;
+  gap: var(--space-4) var(--space-3);
   padding: var(--space-3);
 }
 
 .dd-picture {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: var(--space-1);
+  width: min(calc(var(--picture-width) * 1px), 100%);
   margin: 0;
-  max-width: 100%;
 }
 
-.dd-picture img {
+.dd-picture > img,
+.dd-picture-none {
   display: block;
-  max-width: 100%;
-  max-height: 180px;
+  width: 100%;
+  height: auto;
+  aspect-ratio: var(--picture-width) / var(--picture-height);
   border-radius: var(--radius-s);
+  background: var(--fill);
+  object-fit: contain;
 }
 
 .dd-picture-none {
-  display: block;
-  width: 120px;
-  height: 80px;
-  border-radius: var(--radius-s);
-  background: var(--fill-strong);
+  display: grid;
+  place-items: center;
+  color: var(--text-3);
 }
 
 .dd-picture figcaption {
-  display: flex;
-  gap: var(--space-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-size: var(--size-text);
+  line-height: var(--leading-ui);
   color: var(--text-2);
+}
+
+/* A picture that could not be had: its name and why, in its frame. */
+.dd-picture.picture-missing {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: flex-end;
+  width: min(max(calc(var(--picture-width) * 1px), 11em), 100%);
+  min-height: calc(var(--picture-height) * 1px);
+  max-width: none;
+  padding: var(--space-3);
+  border-radius: var(--radius-s);
+}
+
+.dd-picture.picture-missing > span {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  white-space: normal;
 }
 
 /* One command sent to many machines, opened: its grid of machines on the

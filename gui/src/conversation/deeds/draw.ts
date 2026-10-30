@@ -176,17 +176,32 @@ function settled(deed: WorldDeed, words: DeedWords): HTMLElement {
   }
 }
 
-/** Pictures a `view` gave, as themselves, each named under it. */
+/** How tall pictures stand in a row, and how wide one may be at most. */
+const PICTURE_HEIGHT = 156;
+const PICTURE_WIDTH = 360;
+
+/** Pictures a `view` gave, as themselves: a row of them at one height,
+ *  each as wide as its proportions say and named under it; its whole name
+ *  and its size in pixels under the pointer. */
 function pictureCard(deeds: readonly PictureDeed[], tools: DeedTools): HTMLElement {
   const { words } = tools;
   const shown = deeds
     .map((deed) => {
       const image = tools.picture(deed);
       const name = deed.page !== null ? words.page(deed.page) : leaf(deed.path);
-      return `<figure class="dd-picture">${image || `<span class="dd-picture-none"></span>`}<figcaption><span>${escape(name)}</span><span class="dd-quiet">${deed.width}×${deed.height}</span></figcaption></figure>`;
+      const [width, height] = fitted(deed.width, deed.height);
+      return `<figure class="dd-picture" style="--picture-width: ${width}; --picture-height: ${height}" title="${escape(name)}&#10;${deed.width}×${deed.height}">${image || `<span class="dd-picture-none">${glyph("image", 16)}</span>`}<figcaption>${escape(name)}</figcaption></figure>`;
     })
     .join("");
   return html(`<div class="dd-card dd-pictures">${shown}</div>`);
+}
+
+/** A picture's size in the row: the row's height, narrowed where that
+ *  would make it wider than a picture may be. */
+function fitted(width: number, height: number): [number, number] {
+  if (!(width > 0 && height > 0)) return [PICTURE_HEIGHT, PICTURE_HEIGHT];
+  const wide = Math.round((PICTURE_HEIGHT * width) / height);
+  return wide <= PICTURE_WIDTH ? [Math.max(wide, 48), PICTURE_HEIGHT] : [PICTURE_WIDTH, Math.max(Math.round((PICTURE_WIDTH * height) / width), 32)];
 }
 
 function card(mark: GlyphName, tone: string, title: string, figures: string, body = ""): HTMLElement {

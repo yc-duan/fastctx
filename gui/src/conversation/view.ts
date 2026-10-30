@@ -2974,8 +2974,18 @@ export class ConversationView {
     const { words } = this.context;
     return {
       words: words.deeds,
-      // The call's pictures, in the order its output gave them.
-      picture: (deed) => imagesOf(tool.output.filter((content) => content.type === "image" || content.type === "image_url" || content.type === "image_ref").slice(deed.index, deed.index + 1)),
+      picture: (deed) => {
+        // What the model saw, where its host's record kept every picture
+        // the call gave, in their order. A host may keep only a preview in
+        // words of a large result (Codex, past a mebibyte), and a run's
+        // answer leaves out pictures past its budget: then each is drawn
+        // from its file, by the machine holding it.
+        const kept = tool.output.filter((content) => content.type === "image" || content.type === "image_url" || content.type === "image_ref");
+        const given = (tool.run?.steps ?? []).reduce((count, step) => count + (step.kind === "view" ? (step.pictures?.length ?? 0) : 0), 0);
+        if (kept.length === given) return imagesOf(kept.slice(deed.index, deed.index + 1));
+        if (deed.page !== null || !/^image\/(png|jpeg|gif|webp)$/.test(deed.mime)) return "";
+        return `<img class="io-image" data-picture data-path="${escape(deed.path)}"${deed.machine ? ` data-machine="${escape(deed.machine)}"` : ""} alt="${escape(deed.path.split(/[\\/]/).pop() ?? "")}">`;
+      },
       file: (deed) => {
         const rows = deed.rows.map((row) =>
           "text" in row ? encodeRow({ kind: "same", old: row.line, new: row.line, text: row.text }) : encodeRow({ kind: "gap", old: null, new: null, hidden: row.skipped, text: "" }),

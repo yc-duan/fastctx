@@ -143,6 +143,26 @@ export function worldWork(s: Script, user: Speaker): void {
     }),
     1,
   );
+  // Screenshots a host kept only a preview in words of, as Codex does of a
+  // result past a mebibyte: drawn from their files on the machine.
+  const shots: [string, number, number][] = [["warm-black-desktop.png", 936, 1780], ["warm-black-panel.png", 975, 892], ["ink-black-wide.png", 1920, 1080], ["deleted/warm-white-phone.png", 390, 844]];
+  s.tool(
+    "t4",
+    stepped({
+      ...run(
+        `on laptop fastctx view --image ${shots.map(([name]) => `/srv/mark50/shots/${name}`).join(" ")}`,
+        "=== run on laptop (exited 0) ===",
+        "=== view (4 files: 4 shown) ===",
+        { duration_ms: 1400 },
+      ),
+      output: [{ type: "text", text: '{"content":[{"type":"text","text":"=== run on laptop (exited 0) ===\\n=== view (4 files: 4 shown) ==="},{"type":"image","data":"iVBORw0KGgoAAAANSUhEUgAAA…' }],
+    }, {
+      kind: "view",
+      paths: shots.map(([name]) => `/srv/mark50/shots/${name}`),
+      pictures: shots.map(([name, width, height]) => ({ path: `/srv/mark50/shots/${name}`, width, height, mime: "image/png" })),
+    }),
+    1,
+  );
   s.tool("t4", stepped(run("on laptop fastctx page publish tuning --file /srv/mark50/pages/tuning.html --title 调参面板 --run laptop 'cargo run --bin tune'", "=== run on laptop (exited 0) ===", "=== page tuning · 调参面板 on laptop, version 3 ===", { duration_ms: 600 }), { kind: "page", name: "tuning", town: "mark50", title: "调参面板", version: 3 }), 1);
   s.tool("t4", stepped(run("on laptop fastctx plan --file /srv/mark50/.plan.md", "=== run on laptop (exited 0) ===", "Plan version 6.", { duration_ms: 200 }), { kind: "plan", version: 6 }), 1);
   s.tool("t4", stepped(run("on laptop fastctx goal complete --file /srv/mark50/.done.md", "=== run on laptop (exited 0) ===", '{"state":"complete"}', { duration_ms: 200 }), { kind: "goal", mark: "complete" }), 1);

@@ -1767,7 +1767,10 @@ function specimenTalk(address: Address): DeskTalk {
     },
     opening: { open: notLive, reveal: notLive },
     pictures: {
-      thumbnail: async (_machine, path, max) => specimenPicture(path, max),
+      thumbnail: async (_machine, path, max) => {
+        if (path.includes("/deleted/")) throw new Error("No such file or directory (os error 2)");
+        return specimenPicture(path, max);
+      },
       attachmentThumbnail: async (attachment, max) => specimenPicture("path" in attachment ? attachment.name : "picture", max),
       original: async (picture) => (await fetch(specimenPicture(picture.path ?? picture.name, 2400))).blob(),
       save: async () => true,

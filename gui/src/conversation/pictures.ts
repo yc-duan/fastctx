@@ -193,7 +193,13 @@ export class Pictures {
       image.src = await made;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      const place = image.closest<HTMLElement>(".bubble-picture, .prose-picture") ?? image;
+      // Said where the picture would be: in its own frame, or in a note
+      // put where the picture was.
+      let place = image.closest<HTMLElement>(".bubble-picture, .prose-picture, .dd-picture");
+      if (!place) {
+        place = document.createElement("span");
+        image.replaceWith(place);
+      }
       place.classList.add("picture-missing");
       place.title = message;
       place.innerHTML = `${glyph("image", 16)}<span>${escape(picture.name)}</span><span class="picture-why">${escape(isGone(error, message) ? this.options.words.gone : this.options.words.failed(message))}</span>`;
