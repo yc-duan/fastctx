@@ -64,6 +64,17 @@ export function longWork(s: Script, user: Speaker): void {
     if (failing.length) s.say("t2", "thinking", `**${failing.length} still failing**`, 2);
   });
   s.tool("t2", run("mkdir -p /srv/ingest/spool && ls -la /srv/ingest/spool", "=== run on laptop (exited 0) ===", "total 0", { duration_ms: 40 }), 1);
+  // Several commands in one run: the row names the first few and how many.
+  s.tool(
+    "t2",
+    run(
+      "cd /srv/ingest && du -sh spool && df -h /srv && wc -l src/spool.rs src/writer.rs && grep -c unwrap src/spool.rs && ls -la target/release/ingest && tail -n 3 logs/ingest.log",
+      "=== run on laptop (exited 0) ===",
+      ["12K\tspool", "Filesystem      Size  Used Avail Use% Mounted on", "/dev/nvme0n1p2  916G  402G  468G  47% /srv", "  311 src/spool.rs", "  187 src/writer.rs", "  498 total", "0", "-rwxr-xr-x 1 me me 8.1M Oct 30 14:02 target/release/ingest", "14:02:11 spool: 200 rows in 31 ms", "14:02:11 spool: flushed batch 418", "14:02:12 writer: idle"].join("\n"),
+      { duration_ms: 380 },
+    ),
+    1,
+  );
   s.tool("t2", run("python scripts/soak.py --rounds 5 --kill-at random", "=== run on laptop (exited 0) ===", "5 rounds, 0 lost, 0 doubled", { duration_ms: 42_000 }), 1);
   s.tool("t2", run("cargo clippy --all-targets -- -D warnings", "=== run on laptop (exited 0) ===", "    Checking ingest v0.4.0 (/srv/ingest)\n    Finished `dev` profile [unoptimized + debuginfo] target(s) in 2.10s", { duration_ms: 2_100 }), 1);
   s.tool(

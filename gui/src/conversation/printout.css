@@ -25,7 +25,7 @@
 }
 
 .po-printed {
-  color: var(--text-2);
+  color: var(--text);
 }
 
 .po-given > .wrapped-more {

@@ -303,6 +303,20 @@ export class ConversationView {
   /** The block kept where it is on the screen across a change of view,
    *  once. */
   private pin: { slot: Slot; top: number } | null = null;
+  /** The words both views show that the reader was at as a change of view
+   *  began, and where they stood on the screen: held there until it ends,
+   *  whatever opens or closes above them, the room above their own block
+   *  among it. */
+  private steady: { slot: Slot; top: number } | null = null;
+  /** The fraction of a pixel the view was last moved by that a scroll, in
+   *  whole pixels, could not take: the root's top margin carries it, so
+   *  what is kept in view stays exactly where it was. Scrolled whole
+   *  pixels alone, it would be up to half a pixel off each frame, and
+   *  everything moving round it would shake a pixel back and forth. */
+  private trim = 0;
+  /** Following, where the end of what is drawn stood on the page when last
+   *  seen. */
+  private foot: number | null = null;
   /** Blocks a change of view brings in: drawn folded near the reader, and
    *  unfolding once. */
   private unfolding = new Set<string>();
@@ -369,6 +383,11 @@ export class ConversationView {
     // moving moves the view by as much.
     this.sizes = new ResizeObserver((entries) => this.resized(entries));
     context.scroller.addEventListener("scroll", this.scrolled, { passive: true });
+    // The reader moving the view themselves during a change of view lets go
+    // of the words it holds.
+    for (const kind of ["wheel", "touchstart", "pointerdown", "keydown"]) {
+      context.scroller.addEventListener(kind, () => (this.steady = null), { passive: true });
+    }
     // What happens in an agent's box under one of its rows is that box's
     // own view's to answer.
     root.addEventListener("click", (event) => {
@@ -524,7 +543,8 @@ export class ConversationView {
       previous = slot.element;
       if (slot.signature === null) {
         this.draw(slot, read);
-        this.sizes.observe(slot.element);
+        // Its whole box: the room above it, its padding, is its height too.
+        this.sizes.observe(slot.element, { box: "border-box" });
       } else if (slot.signature !== this.signature(slot.block)) {
         this.draw(slot, read);
         drawn.push(slot.element);
@@ -536,7 +556,7 @@ export class ConversationView {
     this.below.style.height = `${n ? this.heights.total() - this.heights.top(last + 1) : 0}px`;
     if (anchor) {
       const moved = anchor.slot.element.isConnected ? anchor.slot.element.getBoundingClientRect().top - anchor.top : 0;
-      if (moved) scroller.scrollTop += moved;
+      if (moved) this.keepStill(moved);
     }
     // A gap near the reader is read, from the side the reader comes from.
     const reader = following ? n : this.heights.find(Math.max(0, top));
@@ -576,7 +596,59 @@ export class ConversationView {
       const delta = this.heights.set(index, height);
       if (index < reader) moved += delta;
     }
-    if (moved && !following) scroller.scrollTop += moved;
+    if (following) {
+      this.holdFoot();
+      return;
+    }
+    this.foot = null;
+    // Across a change of view, the words held stay where they stood.
+    const held = this.steady;
+    if (held?.slot.element.isConnected) {
+      const words = wordsOf(held.slot.element);
+      const went = words.getBoundingClientRect().top - held.top;
+      if (went) this.keepStill(went);
+      return;
+    }
+    if (moved) this.keepStill(moved);
+  }
+
+  /** Following, the foot stays where it is on the screen: the page scrolls
+   *  to it by the whole pixels its end moved down the page, as it stands
+   *  now, the spaces for what is not drawn with it, and the fraction is
+   *  carried here. What is shorter than the view stands from its top, and
+   *  nothing is carried. */
+  private holdFoot(): void {
+    const scroller = this.context.scroller;
+    const end = this.below.getBoundingClientRect().bottom - scroller.getBoundingClientRect().top + scroller.scrollTop;
+    const was = this.trim;
+    if (this.foot !== null && end !== this.foot && scroller.scrollHeight > scroller.clientHeight) this.carry(end - this.foot);
+    this.foot = end + this.trim - was;
+  }
+
+  /** What is kept in view moved `by` pixels down the screen, the room
+   *  above it changed: the view follows it by as much, so it stays. */
+  private keepStill(by: number): void {
+    const scroller = this.context.scroller;
+    const whole = this.whole(by);
+    const from = scroller.scrollTop;
+    if (whole) scroller.scrollTop = from + whole;
+    // Where the view is at an end and the scroll took less, the fraction is
+    // not carried either: it would move what the scroll could not.
+    if (scroller.scrollTop - from === whole) this.carry(by);
+  }
+
+  /** The whole pixels of `by` a scroll is to take, the fraction carried
+   *  as it stands taking the rest. */
+  private whole(by: number): number {
+    return Math.ceil(by - this.trim - 1e-4);
+  }
+
+  /** Takes in `by` pixels that what is drawn moved down the page, the whole
+   *  pixels of it scrolled: the fraction left is carried in the root's top
+   *  margin, within a pixel, the root never above its own place. */
+  private carry(by: number): void {
+    this.trim = Math.max(0, Math.round((this.trim + this.whole(by) - by) * 64) / 64);
+    this.root.style.marginTop = this.trim ? `${this.trim}px` : "";
   }
 
   /** The first block drawn and in view whose foot is below the top of the
@@ -606,12 +678,19 @@ export class ConversationView {
       this.switchTo(mode);
       return;
     }
+    // The words both views show that the reader is at are held, unless the
+    // view follows the foot or stands at the very top, where what opens
+    // above them is in view and pushes them down instead.
+    const kept = this.keptInView(new Set(this.conversation.chatBlocks().map((block) => block.key)));
+    const free = (this.context.following?.() ?? true) || this.context.scroller.scrollTop <= 0;
+    const held = kept && !free ? { slot: kept.slot, top: wordsOf(kept.slot.element).getBoundingClientRect().top } : null;
+    this.steady = held;
     if (mode === "steps") {
       // The work comes in folded and unfolds; the words leave their ground
       // as it does, and their own shape once it has.
       this.root.classList.add("view-leaving");
       this.switchTo("steps", true);
-      this.after(glide, () => {
+      this.after(glide, held, () => {
         this.root.classList.remove("view-leaving");
         this.root.dataset.view = "steps";
         for (const element of this.root.querySelectorAll<HTMLElement>(":scope > .view-fold")) unfold(element);
@@ -621,24 +700,31 @@ export class ConversationView {
       // comes up as the work folds away; the work goes once it has.
       this.root.dataset.view = "said";
       this.foldAway(new Set(this.conversation.chatBlocks().map((block) => block.key)));
-      this.after(glide, () => this.switchTo("said"));
+      this.after(glide, held, () => this.switchTo("said"));
     }
   }
 
   /** Ends the change of view under way after `ms`, or at once when
-   *  another comes first. */
-  private after(ms: number, end: () => void): void {
+   *  another comes first; the words it held are let go once what it ended
+   *  with has been laid out. */
+  private after(ms: number, held: { slot: Slot; top: number } | null, end: () => void): void {
     const timer = window.setTimeout(() => this.changing?.(), ms);
     this.changing = () => {
       window.clearTimeout(timer);
       this.changing = null;
       end();
+      requestAnimationFrame(() =>
+        requestAnimationFrame(() => {
+          if (this.steady === held) this.steady = null;
+        }),
+      );
     };
   }
 
   /** Blocks a change of view brought in near the reader, drawn: folded at
-   *  once, their room known first and held by none of it, and unfolding
-   *  from the next frame. */
+   *  once, their room known first and held by none of it, and unfolding in
+   *  the same moment as the rest of the change, along the same curve, so
+   *  whatever moves round them moves one way. */
   private foldIn(slots: Slot[]): void {
     if (!slots.length) return;
     const sizes = slots.map((slot) => roomOf(slot.element));
@@ -650,37 +736,40 @@ export class ConversationView {
       this.measured.set(slot.key, 0);
       this.heights.set(index, 0);
     });
-    requestAnimationFrame(() => {
-      for (const slot of slots) slot.element.classList.remove("view-shut");
-    });
+    // Shut as styled, then let go: the unfolding starts now.
+    void getComputedStyle(slots[0]!.element).height;
+    for (const slot of slots) slot.element.classList.remove("view-shut");
   }
 
-  /** The work a change of view takes away, near the reader: folded away
-   *  where it stands from the next frame, to go once it has. */
+  /** The work a change of view takes away, near the reader: folding away
+   *  where it stands, in the same moment and along the same curve as the
+   *  rest of the change, to go once it has. */
   private foldAway(keep: Set<string>): void {
     const going = this.shown.filter((slot) => !keep.has(slot.key) && slot.element.isConnected);
+    if (!going.length) return;
     const sizes = going.map((slot) => roomOf(slot.element));
     going.forEach((slot, at) => foldable(slot.element, sizes[at]!));
-    requestAnimationFrame(() => {
-      for (const slot of going) slot.element.classList.add("view-folded");
-    });
+    void getComputedStyle(going[0]!.element).height;
+    for (const slot of going) slot.element.classList.add("view-folded");
+  }
+
+  /** The first block in view that both views show, `kept` being the
+   *  blocks of the view to come, and where its top stands. */
+  private keptInView(kept: Set<string>): { slot: Slot; top: number } | null {
+    const view = this.context.scroller.getBoundingClientRect();
+    for (const slot of this.shown) {
+      if (!kept.has(slot.key) || slot.block.kind === "gap" || !slot.element.isConnected) continue;
+      const box = slot.element.getBoundingClientRect();
+      if (box.bottom > view.top && box.top < view.bottom) return { slot, top: box.top };
+    }
+    return null;
   }
 
   /** Shows `mode`'s blocks at once, the block read at the top kept where it
    *  stands; `unfold`, what they bring in near the reader comes in folded. */
   private switchTo(mode: "said" | "steps", unfold = false): void {
     const next = mode === "said" ? this.conversation.chatBlocks() : this.conversation.blocks();
-    const kept = new Set(next.map((block) => block.key));
-    const view = this.context.scroller.getBoundingClientRect();
-    this.pin = null;
-    for (const slot of this.shown) {
-      if (!kept.has(slot.key) || slot.block.kind === "gap" || !slot.element.isConnected) continue;
-      const box = slot.element.getBoundingClientRect();
-      if (box.bottom > view.top && box.top < view.bottom) {
-        this.pin = { slot, top: box.top };
-        break;
-      }
-    }
+    this.pin = this.keptInView(new Set(next.map((block) => block.key)));
     const now = new Set(this.blocks.map((block) => block.key));
     this.unfolding = new Set(unfold ? next.filter((block) => !now.has(block.key)).map((block) => block.key) : []);
     this.mode = mode;
@@ -3293,7 +3382,14 @@ export function modelName(id: string): string {
 /** A block's room, whole and above its words: what it folds from or
  *  unfolds to. */
 function roomOf(element: HTMLElement): { full: number; gap: number } {
-  return { full: element.offsetHeight, gap: parseFloat(getComputedStyle(element).paddingTop) || 0 };
+  return { full: element.getBoundingClientRect().height, gap: parseFloat(getComputedStyle(element).paddingTop) || 0 };
+}
+
+/** What a block shows that both views show: its words, below the moment a
+ *  chat says above them. */
+function wordsOf(block: HTMLElement): HTMLElement {
+  for (const child of block.children) if (!child.classList.contains("chat-moment")) return child as HTMLElement;
+  return block;
 }
 
 /** Sets a block to fold or unfold within `room`. */

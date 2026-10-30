@@ -8,6 +8,12 @@
   overflow-anchor: none;
 }
 
+/* What a turn did opens at its own pace, the chevron turning with it. */
+.block-activity,
+.row-tool {
+  --expand: var(--expand-work);
+}
+
 .row > .fold-box {
   grid-column: 2 / -1;
   grid-row: 3;

@@ -30,17 +30,3 @@
   bottom: calc(-1 * (var(--row-line) / 2 - var(--rail-glyph) / 2 - 2px));
   background: var(--rail-line);
 }
-
-/* Commands gathered on one row: the first few and how many more while it
-   is closed, every one of them once it is open. */
-.row-line[aria-expanded="true"] .row-few,
-.row-line:not([aria-expanded="true"]) .row-all {
-  display: none;
-}
-
-/* Open, a row says what it was done to whole, onto as many lines as that
-   takes, rather than cut. */
-.row-tool > .row-line[aria-expanded="true"] .row-object {
-  white-space: normal;
-  overflow-wrap: anywhere;
-}

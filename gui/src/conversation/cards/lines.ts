@@ -95,12 +95,12 @@ function cardSaid(card: Card, words: Words): Said {
       const ended = end?.kind === "stopped" ? `<span class="row-outcome">${escape(deeds.ended(end))}</span>` : end?.kind === "lost" || end?.kind === "not_run" ? outcome(deeds.ended(end)) : "";
       const lead = card.on?.piped ? `<span class="row-fed" title="${escape(deeds.fed)}">${glyph("fed", 12)}</span>` : "";
       const verb = card.running ? words.act("command", "running") : verbs.run;
-      // Commands gathered: the first few, and how many more; all of them
-      // once the row is open.
+      // Commands gathered: the first few, and how many more, on the row's
+      // one line; each of them is in what unfolds below it.
       if (card.commands && card.commands.length > 1) {
         const all = named(card.commands);
         const few = all.length > FEW ? `${all.slice(0, FEW).join(words.listSeparator)} ${deeds.moreCommands(all.length)}` : all.join(words.listSeparator);
-        return plainSaid("command", verb, all.join(words.listSeparator), { outcome: ended, lead, objectHtml: `<span class="row-few">${escape(few)}</span><span class="row-all">${escape(all.join(words.listSeparator))}</span>` });
+        return plainSaid("command", verb, all.join(words.listSeparator), { outcome: ended, lead, objectHtml: escape(few) });
       }
       const look = card.running ? null : lookOf(card.command, deeds);
       if (look) return plainSaid(look.glyph, deeds.world.look, look.object, { outcome: ended, lead });
