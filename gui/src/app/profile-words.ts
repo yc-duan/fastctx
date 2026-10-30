@@ -211,10 +211,26 @@ export interface ProfileWords {
   /** The account's skills (`world-user-config.md`, 技能). */
   skills: {
     add: string;
+    /** Takes in a folder from this device as a new skill. */
+    import: string;
+    importUnread: string;
     /** The account keeps none yet. */
     none: string;
-    newTitle: string;
-    editTitle(name: string): string;
+    /** Back to the list from a skill. */
+    back: string;
+    /** A skill's files, as a phone's menu of them is headed. */
+    files: string;
+    /** Adds a file to the folder. */
+    addFile: string;
+    /** The field a new file's path is typed in, as a screen reader says it. */
+    path: string;
+    pathRule: string;
+    pathTaken: string;
+    removeFile: string;
+    /** A file whose bytes are not text, and how large it is. */
+    binary(size: string): string;
+    discardTitle: string;
+    discard: string;
     name: string;
     nameRule: string;
     taken: string;
@@ -223,9 +239,6 @@ export interface ProfileWords {
     whenNeeded: string;
     instructions: string;
     instructionsNeeded: string;
-    /** Fills the sheet from a SKILL.md file. */
-    fromFile: string;
-    fileUnread: string;
     save: string;
     remove: string;
     removeTitle(name: string): string;
@@ -404,9 +417,19 @@ export const zhProfile: ProfileWords = {
   focus: { title: "MCP", when: "开关在这段对话下次被唤醒时生效" },
   skills: {
     add: "新建",
+    import: "导入",
+    importUnread: "这个文件夹读不出来",
     none: "还没有技能",
-    newTitle: "新技能",
-    editTitle: (name) => `编辑「${name}」`,
+    back: "全部技能",
+    files: "文件",
+    addFile: "文件",
+    path: "文件路径",
+    pathRule: "文件夹里的相对路径，用 / 分开",
+    pathTaken: "已有这个文件",
+    removeFile: "移除",
+    binary: (size) => `二进制文件，${size}`,
+    discardTitle: "放弃没保存的改动？",
+    discard: "放弃",
     name: "名称",
     nameRule: "小写字母开头，可含数字和连字符，至多 64 个字符",
     taken: "已有同名的技能",
@@ -414,8 +437,6 @@ export const zhProfile: ProfileWords = {
     whenNeeded: "写一句什么时候用它，一行之内",
     instructions: "内容",
     instructionsNeeded: "写下它的内容",
-    fromFile: "从文件读入",
-    fileUnread: "这个文件读不出来",
     save: "保存",
     remove: "删除",
     removeTitle: (name) => `删除「${name}」？`,
@@ -593,9 +614,19 @@ export const enProfile: ProfileWords = {
   focus: { title: "MCP", when: "Switches take effect at this conversation's next wake" },
   skills: {
     add: "New",
+    import: "Import",
+    importUnread: "Couldn't read this folder",
     none: "No skills yet",
-    newTitle: "New skill",
-    editTitle: (name) => `Edit “${name}”`,
+    back: "All skills",
+    files: "Files",
+    addFile: "File",
+    path: "File path",
+    pathRule: "A path inside the folder, its parts separated by /",
+    pathTaken: "There's a file at this path already",
+    removeFile: "Remove",
+    binary: (size) => `Binary file, ${size}`,
+    discardTitle: "Discard unsaved changes?",
+    discard: "Discard",
     name: "Name",
     nameRule: "Starts with a lowercase letter; digits and hyphens allowed; at most 64 characters",
     taken: "There's a skill with this name already",
@@ -603,8 +634,6 @@ export const enProfile: ProfileWords = {
     whenNeeded: "Say in one line when to use it",
     instructions: "Instructions",
     instructionsNeeded: "Write its instructions",
-    fromFile: "Read from a file",
-    fileUnread: "This file couldn't be read",
     save: "Save",
     remove: "Delete",
     removeTitle: (name) => `Delete “${name}”?`,

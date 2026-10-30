@@ -104,13 +104,6 @@
   color: var(--text-3);
 }
 
-/* The sheet: the instructions grow only so far, then scroll in their place. */
-.skl-sheet .skl-instructions {
-  min-height: 9em;
-  max-height: 40vh;
-  font-family: var(--font-reading);
-}
-
 /* A phone: the name, then when it applies under it. */
 @media (max-width: 600px) {
   .skl-row {
@@ -124,5 +117,321 @@
     display: -webkit-box;
     -webkit-line-clamp: 2;
     -webkit-box-orient: vertical;
+  }
+}
+
+/* Import beside 「新建」, the same quiet word. */
+.skl-title .skl-import {
+  order: 2;
+  height: 28px;
+  padding: 0 var(--space-2);
+  letter-spacing: 0;
+}
+
+/* One skill opened (`skill-editor.ts`): the way back above one solid card,
+   its files down the left, a pen's line, the file chosen written beside
+   them; the buttons under the card. The page holds still: the list and
+   the file scroll each in its own place. */
+.skl-board.skl-editing {
+  padding-bottom: 0;
+}
+
+.ske {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  height: 100%;
+  min-height: 0;
+  padding-bottom: max(var(--space-5), var(--safe-bottom));
+}
+
+.ske-back {
+  align-self: flex-start;
+  height: 28px;
+  margin-left: calc(-1 * var(--space-2));
+  padding: 0 var(--space-2);
+  letter-spacing: 0;
+}
+
+.ske-card {
+  flex: 1 1 auto;
+  display: grid;
+  grid-template-columns: 15rem 6px minmax(0, 1fr);
+  min-height: 0;
+  border-radius: var(--radius-m);
+  background: var(--bg-sunken);
+}
+
+.ske-files {
+  min-height: 0;
+  padding: var(--space-3) var(--space-2);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+}
+
+.ske-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.ske-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  border-radius: var(--radius-s);
+  transition: background-color var(--hover) var(--ease);
+}
+
+.ske-row:hover,
+.ske-row:focus-within {
+  background: var(--fill);
+}
+
+.ske-row.chosen {
+  background: var(--accent-wash);
+}
+
+.ske-pick {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  min-height: 32px;
+  padding: 0 var(--space-2) 0 calc(var(--space-2) + var(--depth) * 16px);
+  color: var(--text-2);
+  text-align: left;
+}
+
+.ske-row.chosen .ske-pick {
+  color: var(--text-strong);
+}
+
+.ske-pick .glyph {
+  flex: none;
+  color: var(--text-3);
+}
+
+.ske-leaf {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Taking a file out waits under the pointer, at the row's end. */
+.ske-drop {
+  --shown: 0;
+  width: 28px;
+  height: 28px;
+  margin-right: 2px;
+  color: var(--text-3);
+  opacity: var(--shown);
+  transition: --shown var(--hover) var(--ease), color var(--hover) var(--ease);
+}
+
+.ske-row:hover .ske-drop,
+.ske-row:focus-within .ske-drop {
+  --shown: 1;
+}
+
+.ske-drop:hover {
+  color: var(--wrong);
+}
+
+@media (hover: none) {
+  .ske-drop {
+    --shown: 1;
+  }
+}
+
+/* A folder names what is under it; it is not pressed. */
+.ske-folder {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 32px;
+  padding-left: calc(var(--space-2) + var(--depth) * 16px);
+  color: var(--text-3);
+}
+
+.ske-add {
+  height: 32px;
+  margin-top: var(--space-1);
+  padding: 0 var(--space-2);
+  letter-spacing: 0;
+}
+
+.ske-adding {
+  padding: var(--space-1) 0;
+}
+
+.ske-path {
+  width: 100%;
+  min-height: 32px;
+  padding: 4px var(--space-2);
+  border: 0;
+  border-radius: var(--radius-s);
+  outline: 0;
+  background: var(--field);
+  color: var(--text);
+  font-family: var(--font-code);
+  font-variation-settings: var(--code-axes);
+  font-size: var(--size-text);
+}
+
+/* On a phone the list folds into one line naming the file. */
+.ske-which {
+  display: none;
+}
+
+.ske-rule {
+  margin: var(--space-4) 0;
+  background: var(--pen-graphite);
+  opacity: 0.5;
+  mix-blend-mode: var(--pen-blend);
+  -webkit-mask: var(--pen-rule-down) 50% 0 / 100% 100% no-repeat;
+  mask: var(--pen-rule-down) 50% 0 / 100% 100% no-repeat;
+}
+
+.ske-file {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  padding: var(--space-4);
+}
+
+.ske-skill {
+  gap: var(--space-1);
+}
+
+.ske-skill .ske-field {
+  margin-top: 0;
+}
+
+.ske-skill .ske-field + .ske-field {
+  margin-top: var(--space-3);
+}
+
+.ske-grow {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.field .ske-text,
+.ske-text {
+  flex: 1 1 auto;
+  width: 100%;
+  min-height: 6em;
+  height: 100%;
+  margin: 0;
+  padding: var(--space-3);
+  border: 0;
+  border-radius: var(--radius-s);
+  outline: 0;
+  background: var(--field);
+  color: var(--text);
+  resize: none;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  font-family: var(--font-code);
+  font-variation-settings: var(--code-axes);
+  font-size: var(--size-code);
+  line-height: var(--leading-code);
+  tab-size: 4;
+}
+
+.field .ske-prose {
+  font-family: var(--font-reading);
+  font-variation-settings: normal;
+  font-size: var(--size-text);
+  line-height: var(--leading-prose);
+}
+
+.ske-binary {
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  color: var(--text-3);
+}
+
+.ske-binary p {
+  margin: 0;
+}
+
+.ske-foot {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+}
+
+.ske-foot .sheet-go {
+  margin-left: auto;
+}
+
+.ske-note {
+  margin: 0;
+  min-width: 0;
+  font-size: var(--size-text);
+  color: var(--wrong);
+}
+
+@media (max-width: 760px) {
+  .ske-card {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr);
+  }
+
+  .ske-rule,
+  .ske-list {
+    display: none;
+  }
+
+  .ske-files {
+    padding: var(--space-3) var(--space-3) 0;
+    overflow: visible;
+  }
+
+  .ske-files:has(.ske-adding) .ske-list {
+    display: block;
+  }
+
+  .ske-files:has(.ske-adding) .ske-list > li:not(.ske-adding) {
+    display: none;
+  }
+
+  .ske-which {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    width: 100%;
+    min-height: 44px;
+    padding: 0 var(--space-3);
+    border-radius: var(--radius-s);
+    background: var(--field);
+    color: var(--text);
+    text-align: left;
+  }
+
+  .ske-which .ske-leaf {
+    flex: 1;
+  }
+
+  .ske-which .glyph {
+    flex: none;
+    color: var(--text-3);
+  }
+
+  .ske-file {
+    padding: var(--space-3);
+  }
+
+  .ske-pick,
+  .ske-folder,
+  .ske-add,
+  .ske-path {
+    min-height: 44px;
   }
 }
