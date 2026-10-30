@@ -516,7 +516,7 @@ jobs:
       fail-fast: false
       matrix:
         target: [aarch64-apple-darwin, x86_64-apple-darwin]
-    runs-on: macos-14
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@1.92.0
@@ -577,7 +577,7 @@ jobs:
       matrix:
         include:
           - target: aarch64-apple-darwin
-            runner: macos-14
+            runner: macos-15
           - target: x86_64-apple-darwin
             runner: macos-15-intel
     runs-on: ${{ matrix.runner }}
@@ -605,7 +605,7 @@ jobs:
 
   test-macos-arm:
     needs: kernel-macos
-    runs-on: macos-14
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -919,7 +919,7 @@ jobs:
             arch: aarch64
           - target: x86_64-apple-darwin
             arch: x64
-    runs-on: macos-14
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@1.92.0
@@ -969,7 +969,7 @@ jobs:
             arch: aarch64
           - target: x86_64-apple-darwin
             arch: x64
-    runs-on: macos-14
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@1.92.0
@@ -1469,7 +1469,7 @@ jobs:
             runner: windows-2025
             program: fastctx.exe
           - target: aarch64-apple-darwin
-            runner: macos-14
+            runner: macos-15
             program: fastctx
           - target: x86_64-apple-darwin
             runner: macos-15-intel
