@@ -149,7 +149,7 @@ pub(crate) async fn map(
 ) -> Result<(), Failure> {
     let read_only = matches!(origin, Origin::Colleague { .. });
     let snapshot = match town {
-        Some(town) => crate::memory::context::text(node, town, acting, read_only).await?,
+        Some(town) => crate::memory::context::text(node, Some((id, origin)), town, acting, read_only).await?,
         None => None,
     };
     let directory = node.world.conversation(id);
