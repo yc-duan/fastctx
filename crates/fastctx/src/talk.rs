@@ -30,6 +30,13 @@ pub struct TalkArgs {
     /// With --open: the machine it runs on; this one without it.
     #[arg(long, requires = "open")]
     node: Option<String>,
+    /// With --open: the model, as the agent names it; its default without it.
+    #[arg(long, requires = "open")]
+    model: Option<String>,
+    /// With --open: how hard it reasons, as the agent names it (low, medium,
+    /// high); the model's default without it.
+    #[arg(long, requires = "open")]
+    effort: Option<String>,
     /// The resident, such as codex-7f3a or codex-7f3a@laptop, then the words
     /// to say; with --open, only the words.
     args: Vec<String>,
@@ -50,12 +57,18 @@ pub fn run(args: TalkArgs) -> anyhow::Result<()> {
             if text.trim().is_empty() {
                 bail!("say something to start the session with");
             }
+            let options = fastctx_types::agents::SessionOptions {
+                model: args.model.clone(),
+                reasoning_effort: args.effort.clone(),
+                ..Default::default()
+            };
             let said = world
-                .open(
+                .open_with_options(
                     AgentName::try_from(agent.as_str())?,
                     args.town.as_deref().map(TownName::try_from).transpose()?,
                     args.node.as_deref().map(fastctx_types::access::Written::parse).transpose()?,
                     text.clone(),
+                    options,
                 )
                 .await?;
             println!("=== opened {} on {} ===", said.to.resident, said.to.machine);

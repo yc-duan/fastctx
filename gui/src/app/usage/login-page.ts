@@ -35,9 +35,10 @@ import type { Store } from "../store";
 import { CallsList, type CallsContext } from "./calls";
 import type { CallsWords } from "./calls-words";
 import { bar, calendar, fitInks, meter, parts, punch, quota, weeks, type Amounts, type RingPart } from "./draw";
-import { keepRecord, keptRecord, keptReport, readReport, reportKey } from "./kept";
-import { allowanceTrack, between, byDay, byHourOfWeek, dayOf, DAY_MS, daysBefore, longestRun, pace, total, track, usageOf, valueOf, windowOf, type Person, type Span, type Unit, type Usage, type Went } from "./model";
+import { keepRecord, keptRecord, keptReport, readerNow, readReport, reportKey } from "./kept";
+import { allowanceTrack, between, byDay, byHourOfWeek, dayOf, DAY_MS, daysBefore, longestRun, pace, total, track, valueOf, windowOf, type Person, type Span, type Unit, type Usage, type Went } from "./model";
 import { assistingMe, assistsOf, namer } from "./people";
+import { PreparedUsage } from "./prepared";
 import { assistingOwner } from "../reach";
 import type { UsageWords } from "./words";
 
@@ -93,6 +94,7 @@ export class LoginUsagePage implements Page {
   private readonly key: string;
   private record: MachineLogins | null;
   private report: UsageReport | null;
+  private readonly prepared = new PreparedUsage();
   private problem: string | null = null;
   private again = 0;
   private left = false;
@@ -105,7 +107,7 @@ export class LoginUsagePage implements Page {
   private everyone = false;
   private width = 0;
   private height = 0;
-  private refitting = false;
+
   private drawn = "";
   /** The requests' panel, kept across drawings once it is first shown. */
   private calls: CallsList | null = null;
@@ -153,11 +155,12 @@ export class LoginUsagePage implements Page {
     clearTimeout(this.again);
     if (!options.workbench.peek()) return;
     this.asked = true;
+    const asked = readerNow();
     const record = options.read(options.machine).then((world) => {
       const heard = world.machines.find((one) => one.kind === "answered" && one.logins.machine === options.machine);
       if (heard?.kind === "answered") {
         this.record = heard.logins;
-        keepRecord(heard.logins);
+        keepRecord(heard.logins, asked);
       }
     });
     const report = readReport(this.key, () => options.usage(options.machine, options.agent, options.dir)).then((report) => {
@@ -207,12 +210,13 @@ export class LoginUsagePage implements Page {
     this.head(login);
     let html: string;
     let context: CallsContext | null = null;
+    let panel: { html: string; draw(): string } | null = null;
     if (!options.workbench.peek()) {
       html = `<p class="feature-quiet">${escape(words.workbenchOff)}</p>`;
     } else if (!this.report) {
       html = this.problem ? `<p class="feature-note" title="${escape(this.problem)}">${escape(words.failed)}</p>` : `<p class="feature-quiet ledger-reading">${escape(words.reading)}</p>`;
     } else {
-      const usage = usageOf(this.report, namer(world, options.machine, words));
+      const usage = this.prepared.get(this.report, namer(world, options.machine, words));
       const mine = assistingMe(world, options.machine, options.agent, options.dir, login?.default ?? false);
       // The one looked at: the reader where the login assists them, else
       // the one picked.
@@ -231,9 +235,12 @@ export class LoginUsagePage implements Page {
       const calls = tab === "calls";
       if (calls) context = this.callsContext(usage, mine, only, now);
       const foot = calls && !mine ? "" : `${this.where(went, unit)}${this.models(went, unit, amounts, only?.ink)}`;
+      const drawPanel = () => `<section class="ledger-panel">${this.narrow() ? this.panel(usage, tab, only, looked, caps, unit, amounts, now).replace('<div class="ledger-panel-head">', () => `<div class="ledger-panel-head">${this.unitSwitch(usage, tab)}`) : this.panel(usage, tab, only, looked, caps, unit, amounts, now)}</section>`;
+      const panelHtml = calls ? `<section class="ledger-panel" data-calls></section>` : drawPanel();
+      if (!calls) panel = { html: panelHtml, draw: drawPanel };
       html = `<div class="ledger-sheet${mine ? " alone" : ""}${calls ? " calls" : ""}">${this.strip(usage, login?.limits ?? null, unit, amounts, mine, only, caps, now)}
         ${this.tabs(usage, tab, mine, caps)}
-        ${calls ? `<section class="ledger-panel" data-calls></section>` : `<section class="ledger-panel">${this.narrow() ? this.panel(usage, tab, only, looked, caps, unit, amounts, now).replace('<div class="ledger-panel-head">', `<div class="ledger-panel-head">${this.unitSwitch(usage, tab)}`) : this.panel(usage, tab, only, looked, caps, unit, amounts, now)}</section>`}
+        ${panelHtml}
         ${foot}
         ${this.problem ? `<p class="feature-note ledger-problem" title="${escape(this.problem)}">${escape(words.failed)}</p>` : ""}</div>`;
     }
@@ -263,10 +270,13 @@ export class LoginUsagePage implements Page {
     // The figure's size is known once it is laid out: a first drawing at a
     // guess is drawn again, once, at the size it has.
     const figure = this.body.querySelector<HTMLElement>(".ledger-figure");
-    if (!this.refitting && figure && (Math.abs(figure.clientWidth - this.width) >= 1 || Math.abs(figure.clientHeight - this.height) >= 1)) {
-      this.refitting = true;
-      this.draw();
-      this.refitting = false;
+    if (panel && figure && (Math.abs(figure.clientWidth - this.width) >= 1 || Math.abs(figure.clientHeight - this.height) >= 1)) {
+      this.width = figure.clientWidth;
+      this.height = figure.clientHeight;
+      const fitted = panel.draw();
+      this.body.querySelector(".ledger-panel")!.outerHTML = fitted;
+      // A function, so the `$` of the amounts in it is never read as a pattern.
+      this.drawn = html.replace(panel.html, () => fitted);
     }
   }
 

@@ -50,6 +50,7 @@ mod data;
 mod delivery;
 mod desk;
 mod devices;
+mod directory_changes;
 mod ending;
 mod facts;
 mod features;
@@ -106,8 +107,10 @@ mod on_stop;
 mod outbox;
 mod own_collab;
 mod pages;
+mod placement;
 mod plan;
 mod plan_file;
+mod plan_reads;
 mod profile;
 mod program_collection;
 mod proxy_setting;
@@ -127,7 +130,6 @@ mod run_receipts;
 mod run_stops;
 mod scratch;
 mod sentinels;
-mod skills;
 mod server;
 mod server_invitation;
 mod session_live;
@@ -136,7 +138,9 @@ mod session_record;
 mod shown;
 mod signals;
 mod since;
+mod skills;
 mod speech;
+mod startup;
 mod stats;
 mod step_command;
 mod stop;
@@ -200,6 +204,12 @@ pub(crate) struct Node {
     mcp_keeping: std::sync::Mutex<()>,
     job_watches: job_watch::Watches,
     plan_files: plan_file::PlanFiles,
+    copies: placement::copies::Copies,
+    context_bodies: context::memory::Bodies,
+    plan_reads: plan_reads::Reads,
+    skill_copies: skills::copies::Copies,
+    skill_index: skills::cache::Cache,
+    locations: placement::location::Locations,
     disk: ranked::Disk,
     /// Each conversation's place here, deleted alone (`data::places`).
     places: data::places::Places,
@@ -260,6 +270,7 @@ pub(crate) struct Node {
     /// beyond the residents and jobs here (`shown`).
     shown: tokio::sync::watch::Sender<u64>,
     memory_changes: tokio::sync::watch::Sender<u64>,
+    folder_reads: memory::folder_reads::Reads,
     /// What the other machines said of themselves (`facts`).
     facts: facts::Facts,
     /// Deletions of conversations still to be asked of hubs (`forget`).
@@ -308,6 +319,7 @@ pub(crate) struct Node {
     on_stopping: std::sync::Mutex<std::collections::HashSet<PathBuf>>,
     on_delivering: std::sync::Mutex<std::collections::HashSet<PathBuf>>,
     notifying_jobs: std::sync::Mutex<std::collections::HashSet<PathBuf>>,
+    startup: startup::Recovery,
     effects_ready: std::sync::atomic::AtomicBool,
     effects_changed: tokio::sync::Notify,
     /// Which resident's offered tools may have changed, or everyone's
@@ -329,6 +341,10 @@ pub(crate) struct Node {
 }
 
 impl Node {
+    pub(crate) async fn ready_for(&self, id: &fastctx_types::ResidentId) {
+        self.startup.wait(id).await;
+    }
+
     pub(crate) async fn ready(&self) {
         loop {
             let changed = self.effects_changed.notified();
@@ -581,7 +597,7 @@ pub async fn run_prepared(
 
     let (residents, problems) = residents::Residents::load(&world)?;
     residents.set_here(machine.name.clone());
-    let unfinished = residents.unfinished();
+    let startup = startup::Recovery::new(&residents);
     for (path, error) in &problems {
         log.line(format_args!("could not read {}: {error}", path.display()));
     }
@@ -648,6 +664,12 @@ pub async fn run_prepared(
         mcp_keeping: std::sync::Mutex::new(()),
         job_watches: Default::default(),
         plan_files: Default::default(),
+        copies: Default::default(),
+        context_bodies: Default::default(),
+        plan_reads: Default::default(),
+        skill_copies: Default::default(),
+        skill_index: Default::default(),
+        locations: Default::default(),
         contexts: Default::default(),
         context_deliveries: Default::default(),
         scratch_deliveries: Default::default(),
@@ -684,6 +706,7 @@ pub async fn run_prepared(
         views: tokio::sync::watch::channel(0).0,
         shown: tokio::sync::watch::channel(0).0,
         memory_changes: tokio::sync::watch::channel(0).0,
+        folder_reads: Default::default(),
         facts: facts::Facts::default(),
         forget_asks: forget::Asks::default(),
         stuck: Default::default(),
@@ -709,6 +732,7 @@ pub async fn run_prepared(
         on_stopping: Default::default(),
         on_delivering: Default::default(),
         notifying_jobs: Default::default(),
+        startup,
         effects_ready: std::sync::atomic::AtomicBool::new(false),
         effects_changed: tokio::sync::Notify::new(),
         // A watcher that falls behind tells its session to list again, so
@@ -723,6 +747,7 @@ pub async fn run_prepared(
         lifetime,
         started: jiff::Timestamp::now(),
     });
+    context::migrate(&node);
     letters::migrate(&node);
     // The third version's projects are kept as this computer's own, to be
     // carried into its account at its hub.
@@ -744,56 +769,46 @@ pub async fn run_prepared(
     }
     on_stop::resume(&node).await;
     run_stops::resume(&node);
-    codex::adopt(&node).await;
     codex::listen(node.clone(), codex_heard.events);
     logins::limits::listen(node.clone(), codex_heard.limits);
     logins::heard::listen(node.clone(), codex_heard.said);
-    codex::replay(&node).await;
-    let mut unfinished: std::collections::BTreeSet<_> = unfinished.into_iter().collect();
-    unfinished.extend(node.residents.unfinished());
-    // The sessions of a conversation a stopped node left deleted halfway
-    // are passed over: what they report is no one's now.
-    claude::replay(&node).await;
-    claude::recover_startups(&node);
     claude::start(&node).context("writing the World's Claude Code plugin")?;
-
-    // What a node that stopped left owed, now that letters can be sent: the
-    // turns it stopped under end, what it was handing over is settled, and
-    // the ends of turns and jobs not yet told are told.
-    speech::restore(&node).await;
-    unfinished.extend(node.residents.unfinished());
-    turns::recover(&node, unfinished.into_iter().collect()).await;
     composer::prepare_recovery(&node);
-    speech::recover(&node).await;
-    control_queue::recover(&node);
-    node.effects_ready.store(true, std::sync::atomic::Ordering::Release);
-    node.effects_changed.notify_waiters();
-    stops::recover(&node);
-    composer::resume(&node);
-    composer::keep(&node);
-    lifecycle::start(&node);
-    recovery::start(&node, jobs_reconciled);
-    timers::start(&node);
-    // Goals and sentinels are not offered in a release yet: what of them is
-    // kept stays as it is, driven by nothing.
-    if fastctx_platform::preview() {
-        goals::start(&node);
-        sentinels::start(&node);
-    }
-    skills::follow(&node);
-    on_delivery::resume(&node);
-    received::resume(&node);
-    control_letters::resume(&node);
-    job_receipts::start(&node);
-    obligations::start(&node);
     retention::start(&node).context("starting command artifact retention")?;
-    plan_file::start(&node);
-    profile::session::start(&node);
-    context::start(&node);
-    updates::start(&node);
-    afoot::start(&node);
-    usage::watch(&node);
-    forget::start(&node);
+    let recovering = node.clone();
+    tokio::spawn(async move {
+        let node = recovering;
+        startup::recover(&node).await;
+        node.effects_ready.store(true, std::sync::atomic::Ordering::Release);
+        node.effects_changed.notify_waiters();
+        stops::recover(&node);
+        composer::resume(&node);
+        composer::keep(&node);
+        lifecycle::start(&node);
+        recovery::start(&node, jobs_reconciled);
+        timers::start(&node);
+        // Goals and sentinels are not offered in a release yet: what of them is
+        // kept stays as it is, driven by nothing.
+        if fastctx_platform::preview() {
+            goals::start(&node);
+            sentinels::start(&node);
+        }
+        skills::follow(&node);
+        on_delivery::resume(&node);
+        received::resume(&node);
+        control_letters::resume(&node);
+        job_receipts::start(&node);
+        obligations::start(&node);
+        placement::copies::start(&node);
+        skills::copies::start(&node);
+        plan_file::start(&node);
+        profile::session::start(&node);
+        context::start(&node);
+        updates::start(&node);
+        afoot::start(&node);
+        usage::watch(&node);
+        forget::start(&node);
+    });
     let jobs_node = node.clone();
     tokio::spawn(async move {
         let mut again = again::Again::default();

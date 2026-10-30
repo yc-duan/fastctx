@@ -230,6 +230,11 @@ pub async fn ask_here(
             reasoning_effort: started.callee.effort.clone(),
         },
     )?;
+    // Where the requester works is only a first guess at where the colleague
+    // speaks from; without it the colleague still chooses its own place.
+    if let Err(error) = crate::placement::location::inherit(node, &id, &acting, &asker).await {
+        node.log.line(format_args!("starting {id} where its requester works: {}", error.message));
+    }
     let origin = Origin::Colleague { asked_by: asker.clone(), label };
     crate::layers::may_start(node, &acting)?;
     let _birth = crate::here::born(node, &id, acting.clone(), &origin);
@@ -519,7 +524,21 @@ fn words(id: &ResidentId, town: Option<&TownName>, origin: &Origin, record: bool
             asked_by.resident,
             fastctx_types::collab_prompt::COLLEAGUE_RULES
         ),
-        Origin::User => "The user started this session from fastctx and talks to you here.".to_string(),
+        // Who the session is to the user, and what of it reaches them
+        // (`world-voice.md`, 交给模型的话). Codex's own instructions for its
+        // models ask for frequent updates and a self-contained final answer,
+        // which here would reach no one or, sent as messages, become chatter;
+        // a Codex thread is the one given its record here.
+        Origin::User => {
+            let channels = if record {
+                "\n\nCodex's own instructions speak of updates in a commentary channel and of a final answer. Here both stay on your side: write them as you like, but they do not reach the user, and the frequent updates those instructions ask for are not wanted from you. Whatever the user should read, send with `message_user`, when you have something for them."
+            } else {
+                ""
+            };
+            format!(
+                "The user started this conversation from fastctx and gave you the work in it. You do it for them the way a capable colleague does work handed over: on your own, while they are elsewhere, and in touch when there is something to say. They do not watch you work. Only what you send with `message_user` reaches them, as messages from you; everything else you write, between tool calls and at the end of a turn, is your own scratch paper, which they seldom open.{channels}"
+            )
+        }
     };
     // Where scripts run is said by the machines `run`'s description lists,
     // never by where the session lives (`world-run.md`, 脚本在哪台机器上跑).

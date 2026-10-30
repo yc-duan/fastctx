@@ -32,6 +32,7 @@ impl Look for MachineLook {
             let link = self.node.link_of(&scope.hub).ok_or("the observation account's hub is not connected")?;
             let acting = Acting::one(scope.hub.clone(), scope.account.clone());
             let written = Written { name: machine.clone(), hub: Some(link.hub_name()) };
+            self.node.settled(&written).await;
             self.node.authorize_machine(&acting, &written).map_err(|e| e.message)?;
             let origin = OnOrigin {
                 sentinel: Some(SentinelProbe { id: definition.id.clone(), generation: definition.generation }),
@@ -113,7 +114,7 @@ impl Drop for Stop {
     }
 }
 
-pub(crate) async fn admit(node: &Arc<Node>, origin: &OnOrigin) -> Result<(), Failure> {
+pub(crate) async fn admit(node: &Arc<Node>, origin: &OnOrigin) -> Result<Option<std::path::PathBuf>, Failure> {
     if let Some(why) = fastctx_hands::run::sentinel::unavailable() {
         return Err(Failure::not_run(why));
     }
@@ -139,5 +140,8 @@ pub(crate) async fn admit(node: &Arc<Node>, origin: &OnOrigin) -> Result<(), Fai
     {
         return Err(Failure::refused("the observation does not match the active sentinel assignment"));
     }
-    Ok(())
+    if d.kind == Kind::Goal {
+        return crate::placement::artifacts::read_directory(node, scope, &d.owner);
+    }
+    Ok(None)
 }

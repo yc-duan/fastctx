@@ -231,6 +231,7 @@ impl Jobs {
             }
         };
         if let Some(acting) = &acting {
+            node.settled_for(acting).await;
             crate::here::check_named(node, acting, &request.script)?;
         }
         // Words for a resident of another machine that works here come

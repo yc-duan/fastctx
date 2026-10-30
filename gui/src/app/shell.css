@@ -90,6 +90,11 @@ html.gripping-y * {
   background: var(--bg-sunken);
 }
 
+.shell > .sidebar-frame,
+.sidebar-frame::after {
+  --grip-ink: inherit;
+}
+
 .sidebar-frame::after {
   content: "";
   position: absolute;
@@ -530,10 +535,16 @@ html.gripping-y * {
   }
 }
 
-@property --talk-turn {
-  syntax: "<angle>";
+@property --talk-pen {
+  syntax: "<number>";
   inherits: false;
-  initial-value: 0deg;
+  initial-value: 0;
+}
+
+@property --talk-wet {
+  syntax: "<percentage>";
+  inherits: false;
+  initial-value: 100%;
 }
 
 .talk-row,
@@ -609,18 +620,88 @@ html.gripping-y * {
   color: var(--text-2);
 }
 
+/* A mark at work is written as a hand writes it: the asterisk stroke by
+   stroke, the ring in one stroke and then its points; the ink rests, dries
+   away, and the mark is written again. */
 .talk-row.mark-busy .talk-host .glyph {
-  rotate: var(--talk-turn);
-  animation: talk-turning var(--turning) linear infinite;
+  color: color-mix(in oklab, var(--text-strong) var(--talk-wet), transparent);
+  animation: talk-wet var(--writing) linear infinite;
 }
 
-@keyframes talk-turning {
-  to {
-    --talk-turn: 360deg;
-  }
+.talk-row.mark-busy .talk-host .glyph path {
+  stroke-dasharray: 1 2;
+  stroke-dashoffset: var(--talk-pen);
+  animation: var(--writing) infinite;
 }
 
-:root[data-reduced] .talk-row.mark-busy .talk-host .glyph {
+.talk-row.mark-busy .talk-host .glyph .pen-1 { animation-name: talk-pen-1; }
+.talk-row.mark-busy .talk-host .glyph .pen-2 { animation-name: talk-pen-2; }
+.talk-row.mark-busy .talk-host .glyph .pen-3 { animation-name: talk-pen-3; }
+.talk-row.mark-busy .talk-host .glyph .pen-4 { animation-name: talk-pen-4; }
+.talk-row.mark-busy .talk-host .glyph .pen-ring { animation-name: talk-pen-ring; }
+.talk-row.mark-busy .talk-host .glyph .pen-5 { animation-name: talk-pen-5; }
+.talk-row.mark-busy .talk-host .glyph .pen-6 { animation-name: talk-pen-6; }
+
+@keyframes talk-wet {
+  0%,
+  80% { --talk-wet: 100%; }
+  92%,
+  100% { --talk-wet: 0%; }
+}
+
+/* Hidden a little past the stroke's start, so no round cap shows there. */
+@keyframes talk-pen-1 {
+  0%,
+  2% { --talk-pen: 1.02; animation-timing-function: var(--ease-out); }
+  11%,
+  100% { --talk-pen: 0; }
+}
+
+@keyframes talk-pen-2 {
+  0%,
+  13% { --talk-pen: 1.02; animation-timing-function: var(--ease-out); }
+  22%,
+  100% { --talk-pen: 0; }
+}
+
+@keyframes talk-pen-3 {
+  0%,
+  24% { --talk-pen: 1.02; animation-timing-function: var(--ease-out); }
+  33%,
+  100% { --talk-pen: 0; }
+}
+
+@keyframes talk-pen-4 {
+  0%,
+  35% { --talk-pen: 1.02; animation-timing-function: var(--ease-out); }
+  44%,
+  100% { --talk-pen: 0; }
+}
+
+@keyframes talk-pen-ring {
+  0%,
+  2% { --talk-pen: 1.02; animation-timing-function: var(--ease-in-out); }
+  30%,
+  100% { --talk-pen: 0; }
+}
+
+@keyframes talk-pen-5 {
+  0%,
+  33% { --talk-pen: 1.02; animation-timing-function: var(--ease-out); }
+  40%,
+  100% { --talk-pen: 0; }
+}
+
+@keyframes talk-pen-6 {
+  0%,
+  42% { --talk-pen: 1.02; animation-timing-function: var(--ease-out); }
+  49%,
+  100% { --talk-pen: 0; }
+}
+
+:root[data-reduced] .talk-row.mark-busy .talk-host .glyph,
+:root[data-reduced] .talk-row.mark-busy .talk-host .glyph path {
+  stroke-dasharray: none;
   animation: none;
 }
 

@@ -11,6 +11,7 @@ mod allocator;
 mod apply;
 mod ask;
 mod attach;
+mod claude_context;
 mod claude_session_directory;
 mod claude_subagents;
 mod command_guard;
@@ -22,6 +23,7 @@ mod host_change;
 mod hub_intake;
 mod hub_retire;
 
+mod goal;
 mod keep;
 mod mcp;
 mod mcp_child;
@@ -41,16 +43,15 @@ mod repair;
 mod secret;
 mod self_update;
 mod sense;
-mod skill;
 mod server_install;
 mod service;
 #[cfg(windows)]
 mod service_local_network;
+mod skill;
 mod steps;
 mod stop;
 mod talk;
 mod timer;
-mod goal;
 mod turn_facts;
 mod uninstall;
 mod update;
@@ -119,6 +120,12 @@ enum Command {
     ParentProcess,
     #[command(name = "command-guard", hide = true)]
     Guard(command_guard::Args),
+    #[command(hide = true)]
+    ClaudeContext {
+        #[arg(value_parser = paths::parser())]
+        world: PathBuf,
+        session: String,
+    },
     #[command(hide = true)]
     ClaudeSubagents {
         #[arg(value_parser = paths::parser())]
@@ -458,6 +465,7 @@ fn main() -> ExitCode {
             | Command::ParentProcess
             | Command::Guard(_)
             | Command::ClaudeSessionDirectory { .. }
+            | Command::ClaudeContext { .. }
             | Command::ClaudeSubagents { .. }
             | Command::ClaudeRequest { .. }
             | Command::ClaudeElicitation { .. }
@@ -501,6 +509,7 @@ fn main() -> ExitCode {
         Command::HostChange(args) => host_change::run(args),
         Command::ParentProcess => parent_process(),
         Command::Guard(args) => command_guard::run(args),
+        Command::ClaudeContext { world, session } => claude_context::run(&world, session),
         Command::ClaudeSubagents { world, session } => claude_subagents::run(&world, session),
         Command::ClaudeSessionDirectory { world, session, previous, cwd, conversation } => {
             claude_session_directory::run(&world, session, previous, cwd, conversation)

@@ -421,7 +421,7 @@
 }
 
 .callee-field input,
-.callee-field select,
+.callee-pick,
 .feature-field input,
 .feature-text {
   width: 100%;
@@ -449,17 +449,50 @@
   font-size: var(--size-text);
 }
 
+/* A choice of several, shown as a field holding what is chosen; pressed,
+   the others in the interface's menu. */
+.callee-pick {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  text-align: left;
+  cursor: pointer;
+}
+
+.callee-pick-value {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.callee-pick .glyph {
+  flex: none;
+  color: var(--text-3);
+  transition: color var(--hover) var(--ease);
+}
+
+.callee-pick:hover .glyph,
+.callee-pick[aria-expanded="true"] .glyph {
+  color: var(--text);
+}
+
 .callee-switch {
   display: inline-flex;
   align-items: center;
-  gap: var(--space-2);
+  align-self: flex-start;
+  gap: var(--space-3);
+  min-height: 32px;
   font-size: var(--size-text);
   color: var(--text-2);
 }
 
-.callee-switch input {
-  margin: 0;
-  accent-color: var(--accent);
+@media (pointer: coarse) {
+  .callee-pick,
+  .callee-switch {
+    min-height: 44px;
+  }
 }
 
 .callee-add {

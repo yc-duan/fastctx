@@ -31,7 +31,7 @@ pub async fn manage(
     } else {
         if matches!(action, Management::Mcp { .. }) {
             let (link, account) =
-                node.speaking(&Acting::Here, &machine, Purpose::Agents).map_err(|e| Failure::new(e.to_string()))?;
+                node.speaking(&Acting::Here, &machine, Purpose::Agents).await.map_err(|e| Failure::new(e.to_string()))?;
             crate::mcp::supports(node, &link, &account, &machine.name).await?;
         }
         let call = RemoteCall::Manage { resident: resident.clone(), action };

@@ -77,6 +77,9 @@ pub(crate) async fn wake(
 ) -> Result<Option<String>, WakeFailure> {
     node.residents.active(id)?;
     let (about, _) = node.residents.about(id).ok_or_else(crate::authorization::no_subject)?;
+    // Judged on its hubs' word: a turn asked in the moments after this
+    // computer connects waits for their view rather than being turned away.
+    node.settled_for(&about.acting).await;
     check(node, id, &about)?;
     let adapter = super::adapters::Adapter::for_conversation(&about)
         .ok_or_else(|| Failure::new("this host has no supported lifecycle entrance"))?;

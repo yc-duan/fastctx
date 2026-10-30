@@ -3,6 +3,7 @@
 pub(crate) mod api;
 pub(crate) mod context;
 pub(crate) mod copy;
+pub(crate) mod folder_reads;
 pub(crate) mod folders;
 pub(crate) mod identity;
 pub(crate) mod projection;

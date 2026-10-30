@@ -37,7 +37,7 @@ pub(crate) async fn view_for(
     {
         pages.iter_mut().for_each(|summary| summary.current.for_reader(&*usable));
     }
-    let memory = crate::memory::context::text(node, town, acting, read_only).await?.map(|(text, _)| text);
+    let memory = crate::memory::context::text(node, None, town, acting, read_only).await?.map(|(text, _)| text);
     Ok(MapView {
         memory,
         town: town.clone(),

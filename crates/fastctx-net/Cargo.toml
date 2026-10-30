@@ -9,6 +9,7 @@ repository.workspace = true
 publish = false
 
 [dependencies]
+imara-diff = { version = "0.2", default-features = false }
 # The password stretching of OPAQUE logins (`crate::login`).
 argon2 = { version = "0.5", default-features = false, features = ["alloc"] }
 base64 = "0.22"

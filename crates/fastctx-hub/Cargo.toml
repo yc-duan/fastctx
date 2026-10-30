@@ -13,6 +13,11 @@ name = "network_drill"
 path = "tests/network_drill/main.rs"
 harness = false
 
+[[test]]
+name = "placement_drill"
+path = "tests/placement_drill/main.rs"
+harness = false
+
 [dependencies]
 anyhow.workspace = true
 fastctx-net = { path = "../fastctx-net" }
@@ -35,6 +40,7 @@ tokio-tungstenite = { version = "0.30.0", default-features = false, features = [
 tokio-util = { version = "0.7", features = ["io"] }
 
 [dev-dependencies]
+fastctx-client = { path = "../fastctx-client" }
 # The network drill runs its machines on a pool of threads.
 tokio = { workspace = true, features = ["rt-multi-thread"] }
 

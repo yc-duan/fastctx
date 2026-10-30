@@ -57,8 +57,8 @@
 /* A long stretch's earlier rows, asked for from a quiet line above the
    rows it shows. */
 .rows-earlier {
-  grid-column: 2 / -1;
-  justify-self: start;
+  display: block;
+  margin-left: calc(var(--rail-glyph) + var(--rail-gap));
   height: var(--row-line);
   padding: 0;
   font: inherit;
@@ -520,24 +520,14 @@
    face: monospace only in what a row opens. A line down the rail joins
    one glyph to the next, breaking a little before each.
 
-   A stretch's rows share the rail's and the verbs' columns: each row and
-   its line are subgrids of the stretch, so the verbs' column is as wide as
-   the widest verb there, in whatever language, and the objects start on
-   one line. */
-.rows {
-  display: grid;
-  grid-template-columns: calc(var(--rail-glyph) + var(--rail-gap)) max-content minmax(0, 1fr) auto;
-}
-
+   What it acted on follows its verb at one gap, row by row: Chinese verbs
+   are two characters wide and so stand level, and a longer verb (a web
+   search, a step still running) moves only its own row's object rather
+   than every object of its stretch. */
 .row {
   position: relative;
-  grid-column: 1 / -1;
   display: grid;
   grid-template-columns: calc(var(--rail-glyph) + var(--rail-gap)) max-content minmax(0, 1fr) auto;
-}
-
-.rows > .row {
-  grid-template-columns: subgrid;
 }
 
 .row-link {
@@ -1266,81 +1256,11 @@
   color: var(--text-3);
 }
 
-/* Words in and out of a tool, on one solid surface: what it was given on
-   top, in the shade of a surface's head, what it wrote beneath; both from
-   the same edge. The output's box is as wide as the surface, its scrollbar
-   at the surface's own edge. How much more there is and how it ended
-   share one quiet line at the foot. No labels: the two shades say which is
-   which. */
-.surface.io {
-  --io-pad: var(--space-4);
-}
-
-.io-in {
-  background: var(--surface-header);
-}
-
-.io-part > .long-text > .io-text,
-.io-part > .long-text > .long-static {
-  padding: var(--space-3) var(--io-pad);
-}
-
-.io-part > .long-text > .long-text-box {
-  margin: var(--space-2) 0;
-}
-
-.io-part .long-text-box .lv-line {
-  padding-left: var(--io-pad);
-  padding-right: var(--io-pad);
-}
-
-.io-pictures {
-  padding: 0 var(--io-pad) var(--space-3);
-}
-
-.io-foot {
-  display: flex;
-  align-items: baseline;
-  gap: var(--space-4);
-  padding: 0 var(--io-pad) var(--space-3);
-  font-size: var(--size-text);
-  line-height: var(--leading-ui);
-}
-
-/* How a command ended, at the end of the foot. */
+/* How a command ended, at the end of the foot of what it did. */
 .io-end {
   margin-left: auto;
   color: var(--text-3);
   font-variant-numeric: tabular-nums;
-}
-
-.io-end:first-child {
-  margin-left: 0;
-}
-
-/* The way to the whole, full screen, at the end of the foot: always
-   there, quiet, covering no line of the text. */
-.io-foot .long-text-full {
-  position: static;
-  align-self: center;
-  width: 28px;
-  height: 28px;
-  margin: -4px -6px -4px auto;
-  background: transparent;
-  --shown: 1;
-}
-
-.io-foot .io-end + .long-text-full {
-  margin-left: calc(-1 * var(--space-2));
-}
-
-@media (hover: none) {
-  .io-foot .long-text-full {
-    width: 36px;
-    height: 36px;
-    margin-top: -8px;
-    margin-bottom: -8px;
-  }
 }
 
 .io-end.nonzero {

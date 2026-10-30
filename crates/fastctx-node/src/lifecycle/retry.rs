@@ -224,7 +224,7 @@ fn run(
     signal: Arc<tokio::sync::Notify>,
 ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>> {
     Box::pin(async move {
-        node.ready().await;
+        node.ready_for(&id).await;
         let mut trouble = None;
         loop {
             if node.residents.active(&id).is_err() {

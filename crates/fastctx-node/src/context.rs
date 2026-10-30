@@ -1,10 +1,13 @@
 //! Named context shared by both hosts. Setting a block never starts a turn.
 
+pub(crate) mod input;
+pub(crate) mod memory;
 pub(crate) mod sources;
 mod storage;
+pub(crate) mod turn;
 mod updates;
 pub(crate) mod words;
-pub(crate) use updates::{Updates, refresh, request_all, start};
+pub(crate) use updates::{Updates, refresh, request_plan, start};
 
 use crate::Node;
 use fastctx_types::{Address, ResidentId};
@@ -24,7 +27,7 @@ pub struct Change<'a> {
 
 /// Revisions actually included in one tool response or opening instructions.
 /// An acknowledgement from before a compaction cannot advance the new epoch.
-#[derive(Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Receipt {
     epoch: u64,
     revisions: BTreeMap<String, u64>,
@@ -56,6 +59,21 @@ pub(crate) fn set(node: &Node, id: &ResidentId, name: &str, text: &str, change: 
 
 /// Removes a named block from a conversation that still has its record here,
 /// an archived one included. A deleted conversation has nothing left to clear.
+/// Sets a block that holds an account's record (the plan, the skills): on
+/// this disk for a conversation working for this computer's own accounts,
+/// whose disk it is, and only in memory for one assisting another account,
+/// whose things never land on the owner's disk (`world-placement.md`, 一条规则).
+/// While the account's view has not come it is held in memory.
+pub(crate) fn set_account(node: &Node, id: &ResidentId, name: &str, text: &str, change: Change<'_>) -> io::Result<()> {
+    let Some((about, _)) = node.residents.about(id) else {
+        return storage::set(&node.world, id, name, text, change);
+    };
+    if crate::assists::assisting_known(node, &about.acting).unwrap_or(true) {
+        return storage::set_memory(node, id, name, text, change);
+    }
+    set(node, id, name, text, change)
+}
+
 pub(crate) fn clear(node: &Node, id: &ResidentId, name: &str, change: Change<'_>) -> io::Result<()> {
     if node.residents.about(id).is_none() {
         return Err(io::Error::other(format!("no resident {id} lives here")));
@@ -64,6 +82,19 @@ pub(crate) fn clear(node: &Node, id: &ResidentId, name: &str, change: Change<'_>
 }
 
 pub(crate) use sources::{map, plan, plan_unavailable, prepare, refresh_local};
+
+/// Moves the account blocks of conversations known to assist another account
+/// off this disk; the owner's own keep theirs here (`set_account`).
+pub(crate) fn migrate(node: &Node) {
+    for resident in node.residents.everyone() {
+        if !crate::assists::assisting_known(node, &resident.about.acting).unwrap_or(false) {
+            continue;
+        }
+        if let Err(error) = storage::migrate(node, &resident.id) {
+            node.log.line(format_args!("moving {}'s record projections to memory: {error}", resident.id));
+        }
+    }
+}
 
 pub(crate) fn instructed(node: &Node, id: &ResidentId, heard: &crate::residents::Heard) -> io::Result<()> {
     if let Some(receipt) = &heard.context {
@@ -82,7 +113,7 @@ pub(crate) fn forked(node: &Node, id: &ResidentId) -> io::Result<()> {
 }
 
 pub(crate) fn collect(node: &Node, id: &ResidentId) -> io::Result<(Vec<String>, Receipt)> {
-    storage::collect(&node.world, &Address { machine: node.machine(), resident: id.clone() })
+    storage::collect(&node.world, &Address { machine: node.machine(), resident: id.clone() }, &node.context_bodies)
 }
 
 /// Reserve only after every fallible part of reply collection has completed.
@@ -131,11 +162,20 @@ pub(crate) fn acknowledge(node: &Node, id: &ResidentId, heard: &mut crate::resid
 /// No body is copied to a second place that could lag after a failed refresh.
 pub(crate) fn hand_to_session(node: &Node, id: &ResidentId, session: &Path) -> io::Result<()> {
     storage::initialize(&node.world, id)?;
-    fastctx_platform::publish(
-        &session.join("context.json"),
-        &serde_json::to_vec(&serde_json::json!({"directory": storage::directory(&node.world, id), "state": storage::state_path(&node.world, id)})).map_err(io::Error::other)?,
-        fastctx_platform::Permissions::Private,
-    )
+    let path = session.join("context.json");
+    let bytes = serde_json::to_vec(&serde_json::json!({
+        "directory": storage::directory(&node.world, id),
+        "state": storage::state_path(&node.world, id),
+        "memory": true,
+    }))
+    .map_err(io::Error::other)?;
+    match std::fs::read(&path) {
+        Ok(kept) if kept == bytes => return Ok(()),
+        Ok(_) => {}
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error),
+    }
+    fastctx_platform::publish(&path, &bytes, fastctx_platform::Permissions::Private)
 }
 
 /// What the plugin reports a session's model holds: the block versions a

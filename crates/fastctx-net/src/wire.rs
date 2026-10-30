@@ -209,6 +209,10 @@ pub enum Intent {
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         account_records: bool,
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        record_keys: bool,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        skill_files: bool,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         conversation_plans: bool,
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         scratch_locations: bool,
@@ -624,6 +628,26 @@ pub enum CallStatus {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "kind")]
 pub enum Question {
+    RecordWatching {
+        account: AccountName,
+        record_kind: String,
+        watch: String,
+        following: bool,
+    },
+    RecordFollowing {
+        account: AccountName,
+        record_kind: String,
+        key: String,
+        following: bool,
+    },
+    SkillFiles {
+        account: AccountName,
+        request: fastctx_types::skill_files::Request,
+    },
+    PlanCopies {
+        account: AccountName,
+        request: fastctx_types::plan_copies::Request,
+    },
     AccountRecords {
         account: AccountName,
         request: fastctx_types::account_records::Request,
@@ -1024,6 +1048,12 @@ pub enum Change {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "kind")]
 pub enum Told {
+    SkillFiles {
+        reply: fastctx_types::skill_files::Reply,
+    },
+    PlanCopies {
+        reply: fastctx_types::plan_copies::Reply,
+    },
     AccountRecords {
         response: fastctx_types::account_records::Response,
     },

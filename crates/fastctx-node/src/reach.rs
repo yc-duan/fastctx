@@ -8,7 +8,7 @@
 
 use std::sync::Arc;
 
-use fastctx_net::link::{CallFailure, Feed, Link};
+use fastctx_net::link::{CallFailure, Feed, Link, Status};
 pub(crate) use fastctx_types::access::Written;
 use fastctx_types::access::{Acting, HubAccount, HubId, Purpose};
 use fastctx_types::ipc::Failure;
@@ -16,6 +16,11 @@ use fastctx_types::remote::{RemoteCall, RemoteResult};
 use fastctx_types::{AccountName, MachineName};
 
 use crate::Node;
+
+/// How long an action waits for the view a hub gives a new connection.
+const VIEW_COMING: std::time::Duration = std::time::Duration::from_secs(60);
+/// How long it waits for a hub that is being connected to again.
+const RECONNECTING: std::time::Duration = std::time::Duration::from_secs(10);
 
 impl Node {
     /// The links to the hubs this computer is on.
@@ -185,6 +190,45 @@ impl Node {
         self.authorize_here(acting).map_err(|failure| failure.message)
     }
 
+    /// Waits until a hub `to` is on can judge an action for it now: while
+    /// one is connected but has not given this connection its view yet, a
+    /// minute at most, and while one is connecting again, a few seconds. An
+    /// action asked in the moments after a machine connects, or while a large
+    /// network's view is on its way, is judged once the view comes rather
+    /// than refused for want of it (`authorization::current_view`).
+    pub(crate) async fn settled(&self, to: &Written) {
+        match self.locate(to) {
+            Ok(links) => settle(&links, Settled::Any).await,
+            Err(_) if to.hub.is_none() => {
+                // An unknown unqualified name may be in any view still coming.
+                // One unrelated hub already answering cannot settle that absence.
+                settle(&self.links(), Settled::Every).await;
+            }
+            Err(_) => {}
+        }
+    }
+
+    /// Waits, as `settled` does, until the hubs of the accounts `acting`
+    /// works for can each judge for it now: what is decided here for them,
+    /// and kept (whether a conversation assists another account), is decided
+    /// on the hub's word rather than guessed.
+    pub(crate) async fn settled_for(&self, acting: &Acting) {
+        let Acting::Accounts { accounts } = acting else { return };
+        let links: Vec<Arc<Link>> = accounts.iter().filter_map(|account| self.link_of(&account.hub)).collect();
+        settle(&links, Settled::Every).await;
+    }
+
+    /// Whether `acting` may work on this computer, as its hubs now say; an
+    /// error while one has not given this connection its view yet, when a
+    /// judgement would be a guess (`authorization::current_view`).
+    pub(crate) fn may_work_here(&self, acting: &Acting) -> Result<bool, Failure> {
+        match self.authorize_here(acting) {
+            Ok(()) => Ok(true),
+            Err(failure) if crate::authorization::view_pending(&failure) => Err(failure),
+            Err(_) => Ok(false),
+        }
+    }
+
     /// Calls `to`, for whom `acting` works, asking `purpose` of it: for each
     /// account `acting` may speak for there that may, in turn, until one is
     /// let in. What a call about a resident there may do depends on whom the
@@ -197,6 +241,7 @@ impl Node {
         purpose: Purpose,
         call: RemoteCall,
     ) -> Result<RemoteResult, CallFailure> {
+        self.settled(to).await;
         let mut turned_away = None;
         for (link, account) in self.speakers(acting, to, purpose)? {
             match link.call(&to.name, &account, purpose, call.clone()).await {
@@ -217,6 +262,7 @@ impl Node {
         call: RemoteCall,
         feed: impl Fn() -> Feed,
     ) -> Result<RemoteResult, CallFailure> {
+        self.settled(to).await;
         let mut turned_away = None;
         for (link, account) in self.speakers(acting, to, purpose)? {
             match link.call_with_stream(&to.name, &account, purpose, call.clone(), feed()).await {
@@ -228,13 +274,15 @@ impl Node {
     }
 
     /// The link and the account to say something for `purpose` to `to`
-    /// that is not answered: the first `speakers` gives.
-    pub(crate) fn speaking(
+    /// that is not answered: the first `speakers` gives, once a hub `to` is
+    /// on can judge it (`settled`).
+    pub(crate) async fn speaking(
         &self,
         acting: &Acting,
         to: &Written,
         purpose: Purpose,
     ) -> Result<(Arc<Link>, AccountName), CallFailure> {
+        self.settled(to).await;
         Ok(self.speakers(acting, to, purpose)?.into_iter().next().expect("speakers names one at least"))
     }
 
@@ -307,5 +355,41 @@ impl Node {
             return Err(CallFailure::NotAllowed { name: to.name.clone(), reason: why.join("; ") });
         }
         Ok(speakers)
+    }
+}
+
+/// Whom `settle` waits for: any one of the links, as a machine on several
+/// hubs is reached through whichever can judge; or every one, as each
+/// account is judged on its own hub.
+#[derive(Clone, Copy)]
+enum Settled {
+    Any,
+    Every,
+}
+
+/// Waits while `links` may soon judge for their hubs: a link connected
+/// whose view of this connection has not come yet, a minute at most, and
+/// one connecting again, a few seconds. A stopped link is not waited for.
+async fn settle(links: &[Arc<Link>], settled: Settled) {
+    let began = tokio::time::Instant::now();
+    let current = |link: &Arc<Link>| matches!(link.status(), Status::Online { .. }) && link.view_current();
+    loop {
+        let done = match settled {
+            Settled::Any => links.iter().any(current),
+            Settled::Every => links.iter().all(current),
+        };
+        if done {
+            return;
+        }
+        let waited = began.elapsed();
+        let coming = links.iter().filter(|link| !current(link)).any(|link| match link.status() {
+            Status::Online { .. } => waited < VIEW_COMING,
+            Status::Connecting { .. } => waited < RECONNECTING,
+            Status::Stopped { .. } => false,
+        });
+        if !coming {
+            return;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
     }
 }

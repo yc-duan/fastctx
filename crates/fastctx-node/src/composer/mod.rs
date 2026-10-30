@@ -132,7 +132,7 @@ pub fn here<'a>(
     request: Request,
 ) -> Future<'a, Updated> {
     Box::pin(async move {
-        node.ready().await;
+        node.ready_for(id).await;
         if let Request::Sync { input } = request {
             update_document(node, id, *input).await?;
             return here(node, from, id, Request::Read).await;

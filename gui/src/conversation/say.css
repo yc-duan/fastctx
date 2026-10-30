@@ -214,7 +214,10 @@
 /* What a change of view brings in near the reader unfolds round what
    stays, its room opening and its ink coming up in the second half; what
    it takes away folds the other way, and goes once it has (`view.ts`,
-   showing). */
+   showing). Every room that changes, here and with `--chat`, starts in
+   the same moment and keeps to the same curve, unrounded, so whatever
+   moves moves one way; the view carries the fraction of a pixel a scroll
+   cannot. */
 @property --unfold {
   syntax: "<number>";
   inherits: false;
@@ -238,26 +241,4 @@
 .transcript > .block.view-shut {
   --unfold: 0;
   transition: none;
-}
-
-/* What changes room over a change of view does so in whole pixels where
-   the system can round: the view keeps the reader's block still by
-   scrolling as much as the room above it changed, and scrolls in whole
-   pixels, so a fraction left over would shake everything a pixel back and
-   forth as it moves. */
-@supports (width: round(nearest, 1px, 1px)) {
-  .transcript[data-view="said"] > .block,
-  .transcript.view-leaving > .block {
-    padding-top: round(nearest, calc(var(--steps-room) + var(--chat) * (var(--chat-room) - var(--steps-room))), 1px);
-  }
-
-  .chat-moment {
-    height: round(nearest, calc(var(--chat) * var(--moment-line)), 1px);
-    margin-bottom: round(nearest, calc(var(--chat) * var(--moment-room)), 1px);
-  }
-
-  .transcript > .block.view-fold {
-    height: round(nearest, calc(var(--full) * var(--unfold)), 1px);
-    padding-top: round(nearest, calc(var(--gap) * var(--unfold)), 1px);
-  }
 }

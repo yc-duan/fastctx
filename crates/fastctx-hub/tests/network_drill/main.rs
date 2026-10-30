@@ -21,10 +21,13 @@ mod health;
 mod lab;
 mod letters;
 mod mixed;
+mod plan_copies;
+mod record_following;
 mod process;
 mod proxy;
 mod report;
 mod scenarios;
+mod skill_folders;
 mod world;
 
 use std::path::{Path, PathBuf};
@@ -36,7 +39,9 @@ use report::Report;
 use world::{Program, World};
 
 /// Every scenario, in the order they run.
-const SCENARIOS: [&str; 15] = [
+const SCENARIOS: [&str; 17] = [
+    "skill-folders",
+    "plan-copies",
     "answers",
     "backlog",
     "cuts",
@@ -56,7 +61,7 @@ const SCENARIOS: [&str; 15] = [
 
 /// The longest a scenario may take.
 const LONGEST: Duration = Duration::from_secs(8 * 60);
-pub const EXPECTED_EARLIER: &str = "1.0.1-beta.11";
+pub const EXPECTED_EARLIER: &str = "1.0.1-beta.12";
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -248,6 +253,8 @@ async fn scenario(name: &'static str, dir: &Path, earlier: Option<&Path>) -> Rep
     }
     let ran = tokio::time::timeout(LONGEST, async {
         match name {
+            "plan-copies" => plan_copies::exercise(&world, &mut report).await,
+            "skill-folders" => skill_folders::exercise(&world, &mut report).await,
             "answers" => scenarios::answers(&world, &mut report).await,
             "backlog" => scenarios::backlog(&world, &mut report).await,
             "cuts" => scenarios::cuts(&world, &mut report).await,

@@ -20,6 +20,15 @@ use crate::{Address, AgentName, EntryId, JobId, JournalName, MachineName, Notice
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "call")]
 pub enum Call {
+    SkillFiles {
+        hub: Option<crate::HubName>,
+        account: Option<crate::AccountName>,
+        request: crate::skill_files::Request,
+    },
+    /// In-memory context bodies for the paired Claude plugin.
+    ClaudeContext {
+        session: String,
+    },
     /// Local operational diagnostics. Never relayed through another machine.
     DoctorCalls,
     Plan {
@@ -31,6 +40,8 @@ pub enum Call {
     /// (`crate::skills`).
     Skill {
         name: String,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        folder: bool,
     },
     /// `machine` is the conversation's: a plan of another conversation of
     /// the same short name is not its own. Older callers omit it.
@@ -884,6 +895,12 @@ pub enum Call {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "reply")]
 pub enum Reply {
+    SkillFiles {
+        result: Box<crate::skill_files::Reply>,
+    },
+    ClaudeContext {
+        bodies: serde_json::Value,
+    },
     DoctorCalls {
         calls: Vec<crate::stats::CallWork>,
     },
@@ -892,6 +909,8 @@ pub enum Reply {
     },
     Skill {
         skill: crate::skills::Skill,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        location: Option<crate::placement::Location>,
     },
     AccountRecords {
         response: crate::account_records::Response,

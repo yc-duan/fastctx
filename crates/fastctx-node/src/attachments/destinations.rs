@@ -30,7 +30,7 @@ pub(crate) async fn query(
     if node.is_here(&machine) {
         return places(node, &node.machine(), &target, &acting, preferred.as_ref());
     }
-    let (link, account) = node.speaking(&acting, &machine, Purpose::Agents).map_err(failure)?;
+    let (link, account) = node.speaking(&acting, &machine, Purpose::Agents).await.map_err(failure)?;
     match link.call(&machine.name, &account, Purpose::Look, RemoteCall::Facts).await.map_err(broke)?? {
         RemoteReply::Facts(facts) if facts.attachment_places => {}
         _ => return Err(Failure::not_run(format!("upgrade {machine} to choose where attachments are stored"))),
@@ -106,7 +106,8 @@ pub(super) fn owns_here(node: &Node, acting: &Acting) -> Result<(), Failure> {
     }
     for link in node.links() {
         let view = link.view();
-        if node.accounts_on(&link, acting).iter().any(|account| view.holds(account, &view.me)) {
+        if node.accounts_on(&link, acting).iter().any(|account| crate::placement::owned(view.member(&view.me), account))
+        {
             return Ok(());
         }
     }
@@ -132,10 +133,15 @@ pub(super) fn acting(node: &Node, target: &UploadTarget, uploader: &Acting) -> R
 
 pub(super) fn assisted(node: &Node, target: &UploadTarget, acting: &Acting) -> Result<bool, Failure> {
     let isolated = match target.conversation_target() {
-        UploadTarget::Resident { resident } => crate::assists::host::kept(node, resident)? == Some(true),
+        UploadTarget::Resident { resident } => match crate::assists::host::kept(node, resident)? {
+            Some(isolated) => isolated,
+            // One opened before isolation existed goes on isolated when it next runs.
+            None => crate::assists::assisting_known(node, acting)? && crate::assists::host::isolated(node, resident)?,
+        },
         _ => false,
     };
-    Ok(isolated || !crate::around::works_here(node, acting))
+    // Where a file goes is not guessed while a hub's view is on its way.
+    Ok(isolated || !node.may_work_here(acting)?)
 }
 
 pub(crate) fn places(
@@ -146,7 +152,7 @@ pub(crate) fn places(
     preferred: Option<&Written>,
 ) -> Result<AttachmentPlaces, Failure> {
     let acting = acting(node, target, uploader)?;
-    if !assisted(node, target, &acting)? {
+    if node.links().is_empty() && matches!(acting, Acting::Here) {
         return Ok(AttachmentPlaces {
             machines: vec![node.machine().into()],
             selected: Some(node.machine().into()),
@@ -156,6 +162,17 @@ pub(crate) fn places(
     owned(node, from, target, &acting, preferred)
 }
 
+pub(super) fn forward(
+    node: &Node,
+    from: &MachineName,
+    target: &UploadTarget,
+    acting: &Acting,
+    preferred: Option<&Written>,
+) -> Result<bool, Failure> {
+    let choices = places(node, from, target, acting, preferred)?;
+    Ok(choices.selected.is_none_or(|selected| !node.is_here(&selected)))
+}
+
 fn owned(
     node: &Node,
     from: &MachineName,
@@ -163,55 +180,17 @@ fn owned(
     acting: &Acting,
     preferred: Option<&Written>,
 ) -> Result<AttachmentPlaces, Failure> {
-    let Acting::Accounts { accounts } = acting else {
-        return Err(Failure::refused("the assisted upload has no account"));
-    };
-    let mut machines = Vec::new();
-    for identity in accounts {
-        let link = node.link_of(&identity.hub).ok_or_else(|| failure("the upload account's hub is not connected"))?;
-        let view = link.view();
-        if view.account(&identity.account).is_none_or(|account| account.locked) {
-            return Err(Failure::refused("the upload account is absent or locked"));
+    let choices = crate::placement::destinations(node, acting)?;
+    let focus = match target.conversation_target() {
+        UploadTarget::Resident { resident } => {
+            node.residents.about(resident).map(|(about, _)| about.focus).unwrap_or_default()
         }
-        for member in view.machines().filter(|member| view.holds(&identity.account, &member.name) && member.online) {
-            if view.admits(from, &identity.account, &member.name, Purpose::Hands).is_err() {
-                continue;
-            }
-            machines.push(Written { name: member.name.clone(), hub: Some(link.hub_name()) });
-        }
-    }
-    let matches = |wanted: &Written, candidate: &&Written| {
-        wanted.name == candidate.name && wanted.hub.as_ref().is_none_or(|hub| Some(hub) == candidate.hub.as_ref())
+        _ => Default::default(),
     };
-    let selected = if let Some(preferred) = preferred {
-        Some(
-            machines
-                .iter()
-                .find(|candidate| matches(preferred, candidate))
-                .cloned()
-                .ok_or_else(|| Failure::refused("choose one of this account's online machines for files"))?,
-        )
-    } else {
-        let focus = match target.conversation_target() {
-            UploadTarget::Resident { resident } => node.residents.about(resident).map(|(about, _)| about.focus),
-            _ => None,
-        };
-        let focused: Vec<_> = machines
-            .iter()
-            .filter(|machine| {
-                focus
-                    .as_ref()
-                    .is_some_and(|focus| focus.machines.iter().any(|wanted| matches(&wanted.machine, machine)))
-            })
-            .cloned()
-            .collect();
-        machines
-            .iter()
-            .find(|machine| machine.name == *from)
-            .cloned()
-            .or_else(|| (focused.len() == 1).then(|| focused[0].clone()))
-            .or_else(|| (machines.len() == 1).then(|| machines[0].clone()))
-    };
+    // This node keeps the conversation, so it is where the conversation lives.
+    let selected = crate::placement::select(&choices, &focus, Some(&node.machine()), Some(from), preferred)?
+        .map(|choice| choice.machine.clone());
+    let machines: Vec<_> = choices.into_iter().map(|choice| choice.machine).collect();
     Ok(AttachmentPlaces { images_only: machines.is_empty(), machines, selected })
 }
 
@@ -220,7 +199,7 @@ pub(super) fn validate_original(node: &Node, acting: &Acting, original: &Attachm
     for identity in accounts {
         let Some(link) = node.link_of(&identity.hub) else { continue };
         let view = link.view();
-        if view.holds(&identity.account, &original.owner.machine)
+        if crate::placement::owned(view.member(&original.owner.machine), &identity.account)
             && view.admits(&view.me, &identity.account, &original.owner.machine, Purpose::Hands).is_ok()
         {
             return Ok(());

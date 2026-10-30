@@ -67,12 +67,23 @@ export function installFrame(words: FrameWords, shown = false): void {
   // A title that becomes renamable gains a tabindex: it is then clicked,
   // no longer dragged from. A side moved to the window's foot no longer
   // has its row at the top.
-  new MutationObserver(() => {
-    marking ||= requestAnimationFrame(mark);
+  // Only what adds, removes or changes a caption, or what is clicked in one,
+  // marks them again; what streams into a conversation does not.
+  const inCaption = (node: Node) =>
+    node instanceof Element && (node.matches(CAPTIONS) || node.querySelector(CAPTIONS) !== null || node.closest(CAPTIONS) !== null);
+  const touchesCaption = (record: MutationRecord) =>
+    record.type === "attributes"
+      ? record.attributeName === "data-dock" || inCaption(record.target)
+      : [...record.addedNodes, ...record.removedNodes].some(inCaption) || inCaption(record.target);
+  new MutationObserver((records) => {
+    if (records.some(touchesCaption)) marking ||= requestAnimationFrame(mark);
   }).observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ["tabindex", "data-dock"] });
 
   if (!native) return;
+  let maximized: boolean | null = null;
   const state = (now: TitlebarState) => {
+    if (maximized === now.maximized) return;
+    maximized = now.maximized;
     const label = now.maximized ? words.restore : words.maximize;
     maximize.firstElementChild!.textContent = now.maximized ? GLYPHS.restore : GLYPHS.maximize;
     maximize.setAttribute("aria-label", label);

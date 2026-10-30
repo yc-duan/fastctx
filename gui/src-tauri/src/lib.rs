@@ -1229,6 +1229,8 @@ pub fn run() {
             skills::skill_read,
             skills::skill_save,
             skills::skill_delete,
+            skills::skill_files,
+            skills::skill_folder_pick,
             sentinels::sentinel_settings_write,
             sentinels::sentinel_key_set,
             profile::profile_read,

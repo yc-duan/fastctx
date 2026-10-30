@@ -238,7 +238,10 @@ export class SidePane {
   /** The places the desk has room for the side at now; the others are not
    *  offered. */
   fitting(docks: readonly Dock[]): void {
-    for (const row of this.menu.querySelectorAll<HTMLButtonElement>("[data-dock]")) row.disabled = !docks.includes(row.dataset.dock as Dock);
+    for (const row of this.menu.querySelectorAll<HTMLButtonElement>("[data-dock]")) {
+      const disabled = !docks.includes(row.dataset.dock as Dock);
+      if (row.disabled !== disabled) row.disabled = disabled;
+    }
   }
 
   private unpeek(): void {

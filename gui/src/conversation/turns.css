@@ -8,6 +8,12 @@
   overflow-anchor: none;
 }
 
+/* What a turn did opens at its own pace, the chevron turning with it. */
+.block-activity,
+.row-tool {
+  --expand: var(--expand-work);
+}
+
 .row > .fold-box {
   grid-column: 2 / -1;
   grid-row: 3;
@@ -635,15 +641,9 @@
 }
 
 /* The input stays quiet while the words it sent are on their way: its
-   placeholder, and words a shared input still holds until the node has
-   them. */
-.composer textarea.hushed::placeholder,
-.composer textarea.words-going {
+   placeholder. */
+.composer textarea.hushed::placeholder {
   color: transparent;
-}
-
-.composer textarea.words-going {
-  caret-color: var(--text);
 }
 
 /* The conversation's region keeps room for its scroll bar from the start,

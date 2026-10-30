@@ -41,7 +41,7 @@ pub(crate) async fn open(
 ) -> Result<(FileSearchReply, Lease), Failure> {
     if let Some(machine) = machine.filter(|machine| !node.is_here(machine)) {
         let (link, account) =
-            node.speaking(acting, &machine, Purpose::Hands).map_err(|failure| Failure::new(failure.to_string()))?;
+            node.speaking(acting, &machine, Purpose::Hands).await.map_err(|failure| Failure::new(failure.to_string()))?;
         let (reply, lease) = fastctx_net::file_search::open(link, machine.name, account, scope).await?;
         return Ok((reply, Lease::Remote(lease)));
     }

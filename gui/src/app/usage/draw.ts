@@ -60,8 +60,12 @@ function marked(svg: string, inked: Inked, width: number): string {
 /** Draws again, at the width each is shown at, every ink drawing in `root`
  *  that is drawn at another. */
 export function fitInks(root: ParentNode): void {
-  for (const svg of root.querySelectorAll<SVGSVGElement>("svg[data-ink]")) {
-    const width = Math.round(svg.getBoundingClientRect().width);
+  // All strokes have their width from the surrounding layout. Read those
+  // widths together before replacing any SVG and invalidating that layout.
+  const drawings = Array.from(root.querySelectorAll<SVGSVGElement>("svg[data-ink]"), (svg) => ({
+    svg, width: Math.round(svg.getBoundingClientRect().width),
+  }));
+  for (const { svg, width } of drawings) {
     if (width < 8 || Number(svg.dataset.width) === width) continue;
     const inked = JSON.parse(svg.dataset.ink!) as Inked;
     svg.outerHTML =

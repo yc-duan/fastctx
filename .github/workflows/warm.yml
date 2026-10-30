@@ -4,8 +4,8 @@ name: Warm the caches
 # compiles every dependency from nothing. After a release main holds the release's own tree: this
 # builds it again so the compiled dependencies wait on main for the next release. Each job here is
 # the job of the same name in `release.yml` up to its build, with the same key, job name and
-# environment, which make the cache key the release looks for; nothing is tested, signed or
-# uploaded. Keep these in step with `release.yml`.
+# environment, which make the cache key the release looks for. The placement system drill runs
+# in both workflows; nothing is signed or uploaded here. Keep these in step with `release.yml`.
 
 on:
   workflow_dispatch:
@@ -89,6 +89,18 @@ jobs:
           chmod +x "$RUNNER_TEMP/zig-bin/zig"
           echo "$RUNNER_TEMP/zig-bin" >> "$GITHUB_PATH"
       - run: node scripts/kernel.mjs '${{ matrix.target }}'
+      - name: Build the release tests
+        run: node scripts/kernel.mjs --tests '${{ matrix.target }}' tests
+      - name: Placement drill
+        if: matrix.target == 'x86_64-unknown-linux-gnu'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bubblewrap iproute2 util-linux
+          mkdir -p "$RUNNER_TEMP/placement-codex"
+          curl -fsSL -o "$RUNNER_TEMP/placement-codex.tar.gz" "https://github.com/openai/codex/releases/download/rust-v0.160.0/codex-x86_64-unknown-linux-musl.tar.gz"
+          echo "306865417d4ee7a927785852910a527f41e1e159add390ac5ae3accb67d44a13  $RUNNER_TEMP/placement-codex.tar.gz" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/placement-codex.tar.gz" -C "$RUNNER_TEMP/placement-codex"
+          python scripts/placement.py --kernel "$PWD/target/${{ matrix.build }}/release/fastctx" --drill "$PWD/tests/placement_drill" --codex "$RUNNER_TEMP/placement-codex/codex-x86_64-unknown-linux-musl" --root "$RUNNER_TEMP/placement-drill"
 
   kernel-macos:
     name: kernel ${{ matrix.target }}

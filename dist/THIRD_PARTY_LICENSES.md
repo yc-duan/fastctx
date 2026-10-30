@@ -9921,29 +9921,29 @@ limitations under the License.
 
 Used by:
 
-- fastctx 1.0.1-beta.12 (https://github.com/yc-duan/fastctx)
-- fastctx-agent 1.0.1-beta.12 (https://github.com/yc-duan/fastctx)
-- fastctx-client 1.0.1-beta.12 (https://github.com/yc-duan/fastctx)
-- fastctx-draft 1.0.1-beta.12 (https://github.com/yc-duan/fastctx)
-- fastctx-file-search 1.0.1-beta.12 (https://github.com/yc-duan/fastctx)
-- fastctx-hands 1.0.1-beta.12 (https://github.com/yc-duan/fastctx)
-- fastctx-hosts 1.0.1-beta.12 (https://github.com/yc-duan/fastctx)
-- fastctx-hub 1.0.1-beta.12 (https://github.com/yc-duan/fastctx)
-- fastctx-install 1.0.1-beta.12 (https://github.com/yc-duan/fastctx)
-- fastctx-net 1.0.1-beta.12 (https://github.com/yc-duan/fastctx)
-- fastctx-node 1.0.1-beta.12 (https://github.com/yc-duan/fastctx)
-- fastctx-office 1.0.1-beta.12 (https://github.com/yc-duan/fastctx)
-- fastctx-pdf 1.0.1-beta.12 (https://github.com/yc-duan/fastctx)
-- fastctx-platform 1.0.1-beta.12 (https://github.com/yc-duan/fastctx)
-- fastctx-ripgrep 1.0.1-beta.12 (https://github.com/yc-duan/fastctx)
-- fastctx-sentinel 1.0.1-beta.12 (https://github.com/yc-duan/fastctx)
-- fastctx-serve 1.0.1-beta.12 (https://github.com/yc-duan/fastctx)
-- fastctx-storage 1.0.1-beta.12 (https://github.com/yc-duan/fastctx)
-- fastctx-tui 1.0.1-beta.12 (https://github.com/yc-duan/fastctx)
-- fastctx-types 1.0.1-beta.12 (https://github.com/yc-duan/fastctx)
-- fastctx-uninstall 1.0.1-beta.12
-- fastctx-update 1.0.1-beta.12 (https://github.com/yc-duan/fastctx)
-- fastctx-watch 1.0.1-beta.12 (https://github.com/yc-duan/fastctx)
+- fastctx 1.0.1-beta.13 (https://github.com/yc-duan/fastctx)
+- fastctx-agent 1.0.1-beta.13 (https://github.com/yc-duan/fastctx)
+- fastctx-client 1.0.1-beta.13 (https://github.com/yc-duan/fastctx)
+- fastctx-draft 1.0.1-beta.13 (https://github.com/yc-duan/fastctx)
+- fastctx-file-search 1.0.1-beta.13 (https://github.com/yc-duan/fastctx)
+- fastctx-hands 1.0.1-beta.13 (https://github.com/yc-duan/fastctx)
+- fastctx-hosts 1.0.1-beta.13 (https://github.com/yc-duan/fastctx)
+- fastctx-hub 1.0.1-beta.13 (https://github.com/yc-duan/fastctx)
+- fastctx-install 1.0.1-beta.13 (https://github.com/yc-duan/fastctx)
+- fastctx-net 1.0.1-beta.13 (https://github.com/yc-duan/fastctx)
+- fastctx-node 1.0.1-beta.13 (https://github.com/yc-duan/fastctx)
+- fastctx-office 1.0.1-beta.13 (https://github.com/yc-duan/fastctx)
+- fastctx-pdf 1.0.1-beta.13 (https://github.com/yc-duan/fastctx)
+- fastctx-platform 1.0.1-beta.13 (https://github.com/yc-duan/fastctx)
+- fastctx-ripgrep 1.0.1-beta.13 (https://github.com/yc-duan/fastctx)
+- fastctx-sentinel 1.0.1-beta.13 (https://github.com/yc-duan/fastctx)
+- fastctx-serve 1.0.1-beta.13 (https://github.com/yc-duan/fastctx)
+- fastctx-storage 1.0.1-beta.13 (https://github.com/yc-duan/fastctx)
+- fastctx-tui 1.0.1-beta.13 (https://github.com/yc-duan/fastctx)
+- fastctx-types 1.0.1-beta.13 (https://github.com/yc-duan/fastctx)
+- fastctx-uninstall 1.0.1-beta.13
+- fastctx-update 1.0.1-beta.13 (https://github.com/yc-duan/fastctx)
+- fastctx-watch 1.0.1-beta.13 (https://github.com/yc-duan/fastctx)
 - pdf_oxide 0.3.78 (https://github.com/yfedoseev/pdf_oxide)
 - allocator-api2 0.2.21 (https://github.com/zakarumych/allocator-api2)
 - anyhow 1.0.104 (https://github.com/dtolnay/anyhow)
@@ -10820,6 +10820,38 @@ OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
 The files under third-party/chromium are licensed as described in
 third-party/chromium/LICENSE.
+
+````
+
+## MIT License
+
+Used by:
+
+- serde_yaml_ng 0.10.0 (https://github.com/acatton/serde-yaml-ng)
+
+````text
+                                  MIT License
+
+Copyright 2024 Antoine Catton
+Copyright 2016-2024 David Tolnay
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of
+this software and associated documentation files (the “Software”), to deal in
+the Software without restriction, including without limitation the rights to
+use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies
+of the Software, and to permit persons to whom the Software is furnished to do
+so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED “AS IS”, WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
 
 ````
 
@@ -12090,6 +12122,7 @@ SOFTWARE.
 Used by:
 
 - endi 1.1.1 (https://github.com/zeenix/endi)
+- unsafe-libyaml 0.2.11 (https://github.com/dtolnay/unsafe-libyaml)
 - voprf 0.5.0 (https://github.com/facebook/voprf/)
 - zmij 1.0.23 (https://github.com/dtolnay/zmij)
 - zvariant_utils 4.2.0 (https://github.com/z-galaxy/zbus/)
@@ -86859,6 +86892,7 @@ Source archives for the crates.io dependencies recorded by this build follow. Ea
 - serde_json 1.0.151: https://static.crates.io/crates/serde_json/serde_json-1.0.151.crate
 - serde_repr 0.1.21: https://static.crates.io/crates/serde_repr/serde_repr-0.1.21.crate
 - serde_spanned 1.1.1: https://static.crates.io/crates/serde_spanned/serde_spanned-1.1.1.crate
+- serde_yaml_ng 0.10.0: https://static.crates.io/crates/serde_yaml_ng/serde_yaml_ng-0.10.0.crate
 - sha1 0.11.0: https://static.crates.io/crates/sha1/sha1-0.11.0.crate
 - sha2 0.10.9: https://static.crates.io/crates/sha2/sha2-0.10.9.crate
 - sha2 0.11.0: https://static.crates.io/crates/sha2/sha2-0.11.0.crate
@@ -86938,6 +86972,7 @@ Source archives for the crates.io dependencies recorded by this build follow. Ea
 - unicode-segmentation 1.13.3: https://static.crates.io/crates/unicode-segmentation/unicode-segmentation-1.13.3.crate
 - unicode-truncate 2.0.1: https://static.crates.io/crates/unicode-truncate/unicode-truncate-2.0.1.crate
 - unicode-width 0.2.2: https://static.crates.io/crates/unicode-width/unicode-width-0.2.2.crate
+- unsafe-libyaml 0.2.11: https://static.crates.io/crates/unsafe-libyaml/unsafe-libyaml-0.2.11.crate
 - untrusted 0.9.0: https://static.crates.io/crates/untrusted/untrusted-0.9.0.crate
 - url 2.5.8: https://static.crates.io/crates/url/url-2.5.8.crate
 - utf8_iter 1.0.4: https://static.crates.io/crates/utf8_iter/utf8_iter-1.0.4.crate
@@ -87033,4 +87068,4 @@ Source archives for the crates.io dependencies recorded by this build follow. Ea
 - zvariant_derive 5.15.0: https://static.crates.io/crates/zvariant_derive/zvariant_derive-5.15.0.crate
 - zvariant_utils 4.2.0: https://static.crates.io/crates/zvariant_utils/zvariant_utils-4.2.0.crate
 
-<!-- fastctx-notices-inputs: f5aca5e081c11b0e116083aa54a900d3d17c10ceda5f662735b7981d0e707a4a -->
+<!-- fastctx-notices-inputs: 7dd47350e77ebcdc273c79fd4c6295e79306a5274b2004961a8b88292db1531a -->

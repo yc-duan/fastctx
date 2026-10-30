@@ -9,10 +9,13 @@
 /* The desk in two columns: the conversations, and the side as tall as the
    window. --sp-open goes from nothing to one as the side opens: the side
    widens by it from the right, the conversations giving way beside it, and
-   back as it shuts. */
+   back as it shuts. None of the three is inherited: each is passed down
+   only along the way to what reads it (below), so the side opening, and the
+   sidebar moving the side's width with it, restyle those few elements each
+   frame rather than everything on the desk. */
 @property --sp-open {
   syntax: "<number>";
-  inherits: true;
+  inherits: false;
   initial-value: 0;
 }
 
@@ -20,13 +23,13 @@
    room that the side takes over. */
 @property --side-width {
   syntax: "<length>";
-  inherits: true;
+  inherits: false;
   initial-value: 0px;
 }
 
 @property --side-height {
   syntax: "<length>";
-  inherits: true;
+  inherits: false;
   initial-value: 0px;
 }
 
@@ -37,6 +40,21 @@
 
 .sp-host.sp-shown {
   --sp-open: 1;
+}
+
+.sp-split,
+.sp-split > .sp-panel,
+.sp-split > .desk-panes,
+.sp-panel > .sp-sheet,
+.sp-sheet > .sp-foot,
+.sp-foot > .focus-strip,
+.sp-foot > .focus-strip > .focus-pop,
+.desk-panes > .desk-pane.dk-corner,
+.desk-pane.dk-corner > :is(.conversation-page, .dk-fork-page),
+.desk-pane.dk-corner > :is(.conversation-page, .dk-fork-page) > .page-head {
+  --sp-open: inherit;
+  --side-width: inherit;
+  --side-height: inherit;
 }
 
 .sp-split {
@@ -117,7 +135,13 @@ html.framed .sp-host {
 }
 
 /* The same stroke in ink over it, coming up while the line is held or
-   pointed at: it can be dragged. */
+   pointed at: it can be dragged. The ink is passed down to it alone. */
+.sp-panel > .sp-sheet,
+.sp-sheet > .sp-margin,
+.sp-margin > .sp-margin-ink {
+  --grip-ink: inherit;
+}
+
 .sp-margin-ink {
   position: absolute;
   inset: 0;
@@ -336,7 +360,7 @@ html.framed .sp-panel.sp-over .sp-line {
 
 /* On the desk the window's buttons stand on the paper's own ground too, so
    the side slides in beneath them. */
-html:has(.sp-host) .window-controls {
+html.on-desk .window-controls {
   background: var(--bg);
 }
 
@@ -917,16 +941,17 @@ button.gh-goal:hover,
   margin: var(--space-1) calc(var(--space-2) * -1) 0;
 }
 
+/* Drawn at its own size (`svgAt`): what reaches past a tree that narrowed
+   is clipped rather than widening the page. */
 .cp-ink {
   position: absolute;
   inset: 0;
+  overflow: hidden;
   pointer-events: none;
 }
 
 .cp-ink-svg {
   display: block;
-  width: 100%;
-  height: 100%;
   overflow: visible;
 }
 

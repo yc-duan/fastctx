@@ -28,7 +28,6 @@ export class FindHighlights {
         changed();
       });
     });
-    this.observer.observe(root, { childList: true, characterData: true, subtree: true, attributes: true, attributeFilter: ["open", "hidden"] });
   }
 
   paint(query: string, identity: string | null, current: () => Range | null): void {
@@ -44,10 +43,20 @@ export class FindHighlights {
       registry.set("find-current", this.chosen);
     }
     if (query !== this.query) {
+      // Closed or empty search does not follow the stream. Starting again
+      // scans the mounted blocks, including changes made while unobserved.
+      if (query && !this.query) {
+        this.observer.observe(this.root, { childList: true, characterData: true, subtree: true, attributes: true, attributeFilter: ["open", "hidden"] });
+      } else if (!query) {
+        this.observer.disconnect();
+        cancelAnimationFrame(this.frame);
+        this.frame = 0;
+      }
       this.query = query;
       this.all.clear();
       this.ranges.clear();
-      for (const block of this.root.querySelectorAll<HTMLElement>(":scope > .block")) this.dirty.add(block);
+      this.dirty.clear();
+      if (query) for (const block of this.root.querySelectorAll<HTMLElement>(":scope > .block")) this.dirty.add(block);
     }
     for (const block of this.dirty) {
       for (const range of this.ranges.get(block) ?? []) this.all.delete(range);

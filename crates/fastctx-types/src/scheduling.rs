@@ -34,7 +34,8 @@ impl RemoteCall {
             | Self::Write { resident, .. }
             | Self::Place { resident, .. }
             | Self::Ask { asker: resident, .. } => Some(format!("{resident}@{from}")),
-            Self::GoalCommand { actor, .. }
+            Self::WorkingCopy { owner: actor, .. }
+            | Self::GoalCommand { actor, .. }
             | Self::Scratch { owner: actor }
             | Self::WaitingJobs { owner: actor }
             | Self::OnReceipt { owner: actor, .. }

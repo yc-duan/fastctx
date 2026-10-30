@@ -110,6 +110,9 @@
      2026-10-29). What pops up over the page keeps `--fold`. */
   --expand: 520ms;
   --expand-easing: cubic-bezier(0.45, 0, 0.2, 1);
+  /* What a turn did, a stretch of its work and each tool's row, opens a
+     little quicker: it is opened again and again (user 2026-10-30). */
+  --expand-work: 440ms;
   --enter: 220ms;
   /* A turn's line comes in softly, and goes at once. */
   --line-in: 240ms;
@@ -129,8 +132,9 @@
   --draw: 1100ms;
   --stagger: 60ms;
   --breath: 1.6s;
-  /* One turn of a mark at work, slow enough to be calm (`app/shell.css`). */
-  --turning: 3.2s;
+  /* A pen writing a mark at work, resting, and writing it again
+     (`app/shell.css`). */
+  --writing: 3.6s;
   --breath-slow: 2.6s;
   --flow: 2.8s;
   --flow-slow: 3.4s;
@@ -379,6 +383,7 @@
   --hover: 0ms;
   --fold: 0ms;
   --expand: 0ms;
+  --expand-work: 0ms;
   --glide: 0ms;
   --enter: 0ms;
   --line-in: 0ms;

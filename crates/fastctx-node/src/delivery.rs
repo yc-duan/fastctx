@@ -16,6 +16,10 @@ use serde::{Deserialize, Serialize};
 pub struct Handover {
     pub id: NoticeId,
     pub inputs: Vec<Pending>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context: Option<crate::context::Receipt>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_input: Option<crate::context::input::Stamp>,
     pub turn: Option<String>,
     pub unresolved: Option<TurnEnd>,
     #[serde(default = "attempting")]
@@ -45,12 +49,21 @@ fn legacy_queue() -> bool {
 }
 
 pub fn begin(directory: &ConversationDir, inputs: Vec<Pending>) -> io::Result<Handover> {
+    begin_with_context(directory, inputs, None, None)
+}
+
+pub fn begin_with_context(
+    directory: &ConversationDir,
+    inputs: Vec<Pending>,
+    context: Option<crate::context::Receipt>,
+    context_input: Option<crate::context::input::Stamp>,
+) -> io::Result<Handover> {
     let _transaction = crate::resident_storage::lock();
     // The host's record will name the files by id alone.
     crate::attachments::delivered::record(directory, &inputs)?;
     let ids: Vec<&str> = inputs.iter().map(|input| input.delivery.id.as_str()).collect();
     let id = crate::speech::fixed_id("handover", &ids);
-    let handover = Handover { id, inputs, turn: None, unresolved: None, attempting: true };
+    let handover = Handover { id, inputs, context, context_input, turn: None, unresolved: None, attempting: true };
     let path = handover_path(directory, &handover.id);
     match create(&path, &handover) {
         Ok(()) => Ok(handover),
@@ -60,6 +73,8 @@ pub fn begin(directory: &ConversationDir, inputs: Vec<Pending>) -> io::Result<Ha
             if prior.turn.is_none() && prior.unresolved.is_none() {
                 prior.attempting = true;
                 prior.inputs = handover.inputs;
+                prior.context = handover.context;
+                prior.context_input = handover.context_input;
                 write(&path, &prior)?;
             }
             Ok(prior)
@@ -251,7 +266,7 @@ pub fn history(directory: &ConversationDir) -> io::Result<Vec<SessionEvent>> {
     crate::session_record::history(directory)
 }
 
-fn handover_path(directory: &ConversationDir, id: &NoticeId) -> PathBuf {
+pub(crate) fn handover_path(directory: &ConversationDir, id: &NoticeId) -> PathBuf {
     directory.handovers().join(format!("{id}.json"))
 }
 

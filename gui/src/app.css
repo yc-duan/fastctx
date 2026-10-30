@@ -1096,8 +1096,9 @@ button.composer-context[hidden] {
   color: var(--wrong);
 }
 
-/* A command the node does once the turn ends has no grip to move it by:
-   its place is kept, and its words start where a queued line's words do. */
+/* A command the node does once the turn ends, words whose arrival nobody
+   can tell and words still on their way have no grip to move them by: its
+   place is kept, and their words start where a queued line's words do. */
 .queue-spot {
   flex: none;
   width: 24px;
@@ -1105,7 +1106,6 @@ button.composer-context[hidden] {
 }
 
 .queue-row.unsure .queue-text {
-  padding-left: var(--space-3);
   color: var(--text-3);
 }
 
@@ -1233,6 +1233,14 @@ button.composer-context[hidden] {
 .queue-acts .queue-now:hover {
   background: none;
   color: var(--text);
+}
+
+/* Held while the last ones are still on their way; the pointer's rest says
+   so. */
+.queue-acts .queue-now:disabled,
+.queue-acts .queue-now:disabled:hover {
+  color: var(--text-3);
+  cursor: default;
 }
 
 .queue-acts .queue-now .glyph {

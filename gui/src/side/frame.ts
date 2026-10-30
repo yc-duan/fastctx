@@ -31,6 +31,7 @@ const ROOM = { across: 360, down: 220 };
 const DOCK_KEPT = "side-dock";
 const OPEN_KEPT = "side-open";
 const DOCKS: readonly Dock[] = ["right", "bottom", "left"];
+type DeskSize = { width: number; height: number };
 
 function kept(key: string): string | null {
   try {
@@ -116,7 +117,12 @@ export class SideFrame implements PartsFrame {
     this.opener.dataset.worldTitlebar = "client";
     host.append(this.opener);
     this.place(true);
-    this.fitting = new ResizeObserver(() => this.place());
+    this.fitting = new ResizeObserver(([entry]) => {
+      if (!entry) return;
+      // The split has no border or padding. Match its integer client size
+      // without forcing another layout after another observer has written.
+      this.place(false, { width: Math.round(entry.contentRect.width), height: Math.round(entry.contentRect.height) });
+    });
     this.fitting.observe(this.split);
     OVER.addEventListener("change", this.replace);
     this.drawSwitch();
@@ -182,8 +188,8 @@ export class SideFrame implements PartsFrame {
 
   /** The side laid out where it stands for the room the desk has now:
    *  drawn anew where that changed, and sized for the room either way. */
-  private place(first = false): void {
-    const placed = this.placement(this.dock);
+  private place(first = false, size: DeskSize = { width: this.split.clientWidth, height: this.split.clientHeight }): void {
+    const placed = this.placement(this.dock, size);
     if (first || placed !== this.placed) {
       this.placed = placed;
       this.pane.over(placed === "over");
@@ -192,23 +198,23 @@ export class SideFrame implements PartsFrame {
       this.pane.setDock(shown);
       this.drawOpener();
     }
-    this.pane.fitting(DOCKS.filter((dock) => this.placement(dock) === dock));
-    this.fit();
+    this.pane.fitting(DOCKS.filter((dock) => this.placement(dock, size) === dock));
+    this.fit(this.down ? size.height : size.width);
   }
 
   /** Whether the desk has room for the side and the conversations both,
    *  with the side at `dock`. */
-  private fits(dock: Dock): boolean {
-    return dock === "bottom" ? this.split.clientHeight >= LEAST.down + ROOM.down : this.split.clientWidth >= LEAST.across + ROOM.across;
+  private fits(dock: Dock, size: DeskSize): boolean {
+    return dock === "bottom" ? size.height >= LEAST.down + ROOM.down : size.width >= LEAST.across + ROOM.across;
   }
 
   /** Where the side stands when put at `dock`: there where it fits, else
    *  along the other edge where that fits, else over the whole desk. */
-  private placement(dock: Dock): Dock | "over" {
+  private placement(dock: Dock, size: DeskSize): Dock | "over" {
     if (OVER.matches) return "over";
-    if (this.fits(dock)) return dock;
+    if (this.fits(dock, size)) return dock;
     const other: Dock = dock === "bottom" ? "right" : "bottom";
-    return this.fits(other) ? other : "over";
+    return this.fits(other, size) ? other : "over";
   }
 
   /** Whether the side stands along the foot, sized by its height. */
@@ -264,8 +270,7 @@ export class SideFrame implements PartsFrame {
   }
 
   /** The side's size for the room the desk has now. */
-  private fit(): void {
-    const room = this.room();
+  private fit(room = this.room()): void {
     if (room <= 0) return;
     const name = this.down ? "--side-height" : "--side-width";
     const value = `${this.fitted(room)}px`;

@@ -31,10 +31,10 @@ pub mod watch;
 /// sessions start asleep: this node has not loaded their runtimes yet. One
 /// whose preparation failed, as when its town could not be read for a
 /// moment, is tried again each minute for an hour.
-pub async fn adopt(node: &Arc<Node>) {
+pub async fn adopt(node: &Arc<Node>, residents: &[crate::residents::OnRecord]) {
     let mut failed = Vec::new();
-    for resident in node.residents.everyone() {
-        if !adopt_one(node, &resident, true).await {
+    for resident in residents {
+        if !adopt_one(node, resident, true).await {
             failed.push(resident.about.id.clone());
         }
     }
@@ -645,6 +645,10 @@ pub async fn moved(node: &Arc<Node>, id: &ResidentId) {
 /// The resident `id` is the thread `thread` now: what was reported of the
 /// thread before goes to it, in order, before anything reported after.
 pub async fn claim(node: &Arc<Node>, thread: &str, _id: &ResidentId) {
+    drain(node, thread).await;
+}
+
+pub(crate) async fn replay_thread(node: &Arc<Node>, thread: &str) {
     drain(node, thread).await;
 }
 

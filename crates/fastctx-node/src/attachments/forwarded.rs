@@ -138,7 +138,7 @@ pub(super) async fn upload(
             }
         }
     }
-    let (link, account) = node.speaking(&acting, &target_machine, Purpose::Hands).map_err(|error| Failure::not_run(
+    let (link, account) = node.speaking(&acting, &target_machine, Purpose::Hands).await.map_err(|error| Failure::not_run(
         format!("cannot place this account's file on its machine: {error}; the hub must authorize this conversation before forwarding files")))?;
     let mut offered = expected.clone();
     offered.town = node.town_across(&link, expected.town.as_ref())?;

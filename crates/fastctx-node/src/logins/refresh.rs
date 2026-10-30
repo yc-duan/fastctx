@@ -4,13 +4,15 @@
 //! one of the files the World writes in it changes (`watch`), one change at
 //! a time with the user's own; what could not be done stays in the record
 //! until a change of that login settles it. While the World program is being
-//! replaced nothing is counted against a login: it is tried again shortly.
+//! replaced nothing is counted against a login: it is tried again shortly,
+//! and once the replacement is done.
 
 use std::path::{Path, PathBuf};
+use std::sync::atomic::Ordering;
 use std::sync::{Arc, Weak};
 use std::time::Duration;
 
-use fastctx_install::apply::{self, Host, Refresh};
+use fastctx_install::apply::{self, Error, Host, Refresh};
 use fastctx_types::AgentName;
 use fastctx_types::logins::Drift;
 
@@ -40,6 +42,15 @@ pub(crate) async fn all(node: &Arc<Node>) {
     }
 }
 
+/// The World program's replacement is done: the logins that waited for it
+/// are brought up to date now, not at the next hourly look
+/// (`world-agent-logins.md`, 换完了接着就补上).
+pub(crate) async fn replaced(node: &Arc<Node>) {
+    if node.logins.after_replacement.swap(false, Ordering::AcqRel) {
+        all(node).await;
+    }
+}
+
 /// Tries again once the World program is likely in place.
 fn later(node: Weak<Node>) {
     tokio::spawn(async move {
@@ -58,6 +69,17 @@ fn replacing(node: &Node) -> bool {
         .ok()
         .flatten()
         .is_some_and(|plan| !matches!(plan.phase, Phase::Complete | Phase::Failed))
+}
+
+/// Whether the last replacement of the World program failed: the machine's
+/// update says so, and what could not be placed meanwhile is no fault of the
+/// login's either. It is tried again on its own schedule; once it is done,
+/// `replaced` brings the logins up to date.
+fn replacement_failed(node: &Node) -> bool {
+    fastctx_install::renewal::read(&node.root)
+        .ok()
+        .flatten()
+        .is_some_and(|plan| plan.phase == fastctx_types::renewal::Phase::Failed)
 }
 
 /// The logins left waiting for the user, and whether to try again shortly;
@@ -94,8 +116,10 @@ fn every(node: &Node) -> Option<(Waiting, bool)> {
         match refreshed {
             Ok(Refresh::Out | Refresh::Current) => {}
             Ok(Refresh::Refreshed { files, commands, kept }) => {
-                let done = files.iter().map(|file| file.display().to_string()).chain(commands).collect::<Vec<_>>().join(", ");
-                let kept = kept.map(|kept| format!("; what was taken back is kept in {}", kept.display())).unwrap_or_default();
+                let done =
+                    files.iter().map(|file| file.display().to_string()).chain(commands).collect::<Vec<_>>().join(", ");
+                let kept =
+                    kept.map(|kept| format!("; what was taken back is kept in {}", kept.display())).unwrap_or_default();
                 node.log.line(format_args!(
                     "brought the World's tools in the {agent} login {shown} up to date: {done}{kept}"
                 ));
@@ -106,7 +130,9 @@ fn every(node: &Node) -> Option<(Waiting, bool)> {
                 ));
                 waiting.push((agent, dir, Drift::Changed { location, reason }));
             }
-            Err(error) if replacing(node) => {
+            // Said by the renewal holding its gates, or while its plan says
+            // it is under way: whatever the plan read a moment later says.
+            Err(error) if matches!(error, Error::Replacing(_)) || replacing(node) => {
                 node.log.line(format_args!(
                     "the World program is being replaced: the World's tools in the {agent} login {shown} are brought up to date once it is ({error})"
                 ));
@@ -114,6 +140,15 @@ fn every(node: &Node) -> Option<(Waiting, bool)> {
                     waiting.push((agent, dir, drift));
                 }
                 again = true;
+            }
+            Err(error) if replacement_failed(node) => {
+                node.log.line(format_args!(
+                    "the World program could not be replaced: the World's tools in the {agent} login {shown} are brought up to date once it is ({error})"
+                ));
+                if let Some(drift) = of(node, agent.as_str(), &dir) {
+                    waiting.push((agent, dir, drift));
+                }
+                node.logins.after_replacement.store(true, Ordering::Release);
             }
             Err(error) => {
                 node.log.line(format_args!(

@@ -43,6 +43,7 @@ pub(crate) async fn user(
         Purpose::Agents
     };
     let mut last = Failure::not_run(words::OLDER_HUB);
+    node.settled(&machine).await;
     for (link, account) in node.speakers(&acting, &machine, purpose).map_err(failure)? {
         if !link.view().goal_control {
             continue;

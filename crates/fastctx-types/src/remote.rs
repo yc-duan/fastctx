@@ -23,6 +23,12 @@ use crate::{AgentName, ResidentId, TownName};
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "call")]
 pub enum RemoteCall {
+    /// Activate a plan copy only for the current account-owned placement revision.
+    WorkingCopy {
+        owner: crate::Address,
+        placement: u64,
+        resource: crate::placement::Resource,
+    },
     /// The actual directory this machine would use for this conversation.
     Scratch {
         owner: crate::Address,
@@ -594,7 +600,8 @@ impl RemoteCall {
             Self::SentinelKey { .. } => Purpose::Hands,
             Self::SentinelHome {
                 request:
-                    crate::sentinel_control::HomeRequest::Inspect { .. } | crate::sentinel_control::HomeRequest::Record { .. },
+                    crate::sentinel_control::HomeRequest::Inspect { .. }
+                    | crate::sentinel_control::HomeRequest::Record { .. },
             } => Purpose::Look,
             Self::SentinelHome { .. } => Purpose::Hands,
             RemoteCall::PageAction { action: crate::pages::PageInvocation::Say { .. }, .. } => Purpose::Words,
@@ -603,7 +610,8 @@ impl RemoteCall {
             {
                 Purpose::Hands
             }
-            RemoteCall::MemoryFolders { .. }
+            RemoteCall::WorkingCopy { .. }
+            | RemoteCall::MemoryFolders { .. }
             | RemoteCall::Scratch { .. }
             | RemoteCall::Mcp { .. }
             | RemoteCall::McpServe { .. }
@@ -685,6 +693,9 @@ impl RemoteCall {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "reply")]
 pub enum RemoteReply {
+    WorkingCopy {
+        location: crate::placement::Location,
+    },
     Scratch {
         path: String,
     },

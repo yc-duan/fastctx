@@ -88,7 +88,8 @@ export class RenewalRow {
           this.timer = window.setTimeout(() => this.ask(), UNDER_WAY_MS);
           return;
         }
-        this.said = String(error);
+        this.why = String(error instanceof Error ? error.message : error);
+        this.said = this.words.notDone(this.why);
         this.unanswered = true;
         this.draw();
         this.timer = window.setTimeout(() => this.ask(), SETTLED_MS);

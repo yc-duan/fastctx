@@ -18,6 +18,7 @@ import type { SessionEvent, TurnEnd } from "../world/events";
 import type { MachineName } from "../world/events";
 import { Fold, sayOf, type Block, type Entry, type Gap, type KeptWords, type SendState, type ShownAttachment } from "./model";
 import type { AgentRun } from "./agents";
+import { machineNamed } from "./acted-on";
 import type { PendingControl } from "../world/control";
 
 /** The part a page opens on, in place of all it held. */
@@ -434,7 +435,7 @@ export class Conversation {
         case "heard":
           return !block.notice && (!block.from || block.from.kind === "user");
         case "prose":
-          return block.prose === "message" && asked.has(block.turn) && !spoke.has(block.turn) && this.turnEnded(block.turn) && this.lastMessageOf(block.turn) === block.key;
+          return block.prose === "message" && asked.has(block.turn) && (!spoke.has(block.turn) || this.answersAfterSaying(block.turn)) && this.turnEnded(block.turn) && this.lastMessageOf(block.turn) === block.key;
         case "ended":
           return block.end.how === "failed" && asked.has(block.turn);
         default:
@@ -492,6 +493,18 @@ export class Conversation {
     return this.foldOf(turn)?.spokeIn(turn) ?? false;
   }
 
+  /** Whether `turn` went on working after the last thing it said to the
+   *  user and ended in words of its own: those words are its answer too,
+   *  said after it, as a model's that said it would look and then wrote
+   *  what it found as its final words (`world-voice.md`, 漏了怎么办). */
+  answersAfterSaying(turn: string): boolean {
+    const fold = this.foldOf(turn);
+    if (!fold?.spokeIn(turn) || !this.turnEnded(turn)) return false;
+    const mine = fold.entries.filter((entry) => "turn" in entry && entry.turn === turn);
+    const after = mine.slice(mine.findLastIndex((entry) => entry.kind === "tool" && !!sayOf(entry)) + 1);
+    return after.some((entry) => entry.kind === "tool") && after.some((entry) => entry.kind === "prose" && entry.prose === "message");
+  }
+
   // What the page asks, as of one conversation.
 
   /** Every fold asked, the latest first, those read aside last. */
@@ -507,6 +520,16 @@ export class Conversation {
       if (found) return found;
     }
     return undefined;
+  }
+
+  /** The machine holding the file `path` named in the words of `key`, as
+   *  what their turn did says (`acted-on.ts`); null for the conversation's
+   *  own host, or where nothing says. */
+  machineNamed(key: string, path: string): MachineName | null {
+    const words = this.get(key);
+    const turn = words && "turn" in words && typeof words.turn === "string" ? words.turn : null;
+    const fold = turn === null ? null : this.foldOf(turn);
+    return words && turn !== null && fold ? machineNamed(fold.turnEntries(turn), words, path) : null;
   }
 
   /** The part holding `turn`. */
@@ -656,12 +679,16 @@ export class Conversation {
   /** All a turn said, as it was written. */
   turnAnswer(turn: string): string {
     const fold = this.foldOf(turn);
-    // A turn that said something to the user answered with that.
+    // A turn that said something to the user answered with that, and with
+    // its final words where it went on working after the last of it.
     if (fold?.spokeIn(turn)) {
-      return fold.entries
+      const said = fold.entries
         .flatMap((entry) => (entry.kind === "tool" && entry.turn === turn ? [sayOf(entry)] : []))
-        .flatMap((say) => (say ? [say.text] : []))
-        .join("\n\n");
+        .flatMap((say) => (say ? [say.text] : []));
+      const final = this.lastMessageOf(turn);
+      const words = this.answersAfterSaying(turn) ? fold.entries.find((entry): entry is ProseEntry => entry.kind === "prose" && entry.key === final) : undefined;
+      if (words) said.push(words.text);
+      return said.join("\n\n");
     }
     return (fold?.entries ?? [])
       .filter((entry): entry is ProseEntry => entry.kind === "prose" && entry.prose === "message" && entry.turn === turn)

@@ -156,7 +156,7 @@ pub fn start(node: &Arc<Node>, membership: Membership) -> io::Result<Arc<Link>> 
         .ok()
         .flatten()
         .is_some_and(|ended| ended.dissolved);
-    let handler = Arc::new(Handler { node: Arc::downgrade(node), hub: hub.clone() });
+    let handler = Arc::new(Handler { node: Arc::downgrade(node), hub: hub.clone(), changes: Arc::default() });
     let link = Arc::new(Link::start(net, membership, key, handler)?);
     if let Some(old) = node.links.write().expect("never poisoned").insert(hub.clone(), link.clone()) {
         old.stop();
@@ -600,6 +600,7 @@ pub fn facts(node: &Node) -> MachineFacts {
         attachment_places: true,
         attachment_runs: true,
         memory_folders: true,
+        plan_copies: true,
         collaboration_tree: true,
         shell: shell(),
         form: Some(form()),
@@ -666,6 +667,7 @@ pub(crate) fn native(path: &std::path::Path) -> String {
 struct Handler {
     node: Weak<Node>,
     hub: HubId,
+    changes: Arc<crate::directory_changes::Changes>,
 }
 
 impl fastctx_net::link::Node for Handler {
@@ -1078,6 +1080,11 @@ impl fastctx_net::link::Node for Handler {
                     ))
                 }),
                 RemoteCall::Canon { .. } => Err(Failure::not_run(fastctx_types::memory::LEGACY)),
+                RemoteCall::WorkingCopy { owner, placement, resource } => {
+                    crate::placement::prepare_copy(&node, &asker, owner, placement, resource)
+                        .await
+                        .map(|location| RemoteReply::WorkingCopy { location })
+                }
                 RemoteCall::MemoryFolders { town } => {
                     crate::memory::folders::here_for(&node, &asker, &town).map(RemoteReply::MemoryFolders)
                 }
@@ -1412,54 +1419,52 @@ impl fastctx_net::link::Node for Handler {
     /// others, as one away when another renamed it, is asked to follow.
     fn connected(&self) {
         let Some(node) = self.node.upgrade() else { return };
+        node.views_changed();
+        node.plan_reads.clear();
+        node.skill_index.invalidate(&self.hub, None);
+        crate::placement::copies::refresh(&node, &self.hub);
+        crate::skills::copies::refresh(&node, &self.hub);
         let Some(link) = node.link_of(&self.hub) else { return };
+        // A previous cleanup may have failed after consuming this same view.
+        crate::directory_changes::cleanup(&node, &link);
         tokio::spawn(async move { same_name(&node, &link).await });
     }
 
     /// Someone may have logged in to an account this computer is logged in
     /// to: its user is told who, from the views before and after.
     fn account_record_changed(&self, change: &fastctx_types::account_records::Changed) {
-        if change.metadata.kind == fastctx_types::plan::KIND
-            && let Some(node) = self.node.upgrade()
-        {
-            crate::context::request_all(&node);
+        if let Some(node) = self.node.upgrade() {
+            crate::placement::copies::changed(&node, &self.hub, change);
+        }
+        if let Some(node) = self.node.upgrade() {
+            crate::plan_reads::changed(&node, &self.hub, change);
+            crate::skills::copies::changed(&node, &self.hub, change);
+        }
+    }
+
+    fn presence_changed(&self) {
+        if let Some(node) = self.node.upgrade() {
+            node.tools_changed(None);
         }
     }
 
     fn directory_changed(&self) {
         let Some(node) = self.node.upgrade() else { return };
+        let Some(link) = node.link_of(&self.hub) else { return };
+        crate::admitted::notice(&node, &self.hub);
+        node.tools_changed(None);
+        node.shown_changed();
+        if !self.changes.changed(link.view()) {
+            return;
+        }
         if let Err(error) = crate::mcp::store::sweep(&node, &self.hub) {
             node.log.line(format_args!("collecting removed MCP commands: {error}"));
         }
-        crate::admitted::notice(&node, &self.hub);
         crate::hub_arrival::check(&node, &self.hub);
-        // The machines each session may use are in its tools' descriptions.
-        node.tools_changed(None);
         node.views_changed();
         let contexts = node.clone();
         tokio::spawn(async move { crate::focus::refresh_all(&contexts).await });
-        // A project shared with an account here since is taken to be listed.
-        if let Some(link) = node.link_of(&self.hub) {
-            tokio::spawn(async move {
-                crate::ledger::letgo::let_go(&node, &link).await;
-                let mut again = crate::again::Again::default();
-                loop {
-                    match crate::ledger::sync(&node, link.hub(), None).await {
-                        Ok(()) => break,
-                        Err(error) => {
-                            node.log.line(format_args!("taking the projects of this computer's accounts: {error}"));
-                            if !matches!(link.status(), Status::Online { .. }) {
-                                break;
-                            }
-                            tokio::time::sleep(again.next()).await;
-                        }
-                    }
-                }
-                // One deleted, or no longer this computer's to keep, goes.
-                crate::ledger::letgo::let_go(&node, &link).await;
-                node.shown_changed();
-            });
-        }
+        self.changes.reconcile(&node, link);
     }
 
     fn ways_changed(&self) {
