@@ -365,6 +365,15 @@
   cursor: pointer;
 }
 
+/* Each option is one unwrapped line. Offscreen options retain that exact
+   line height and their accessibility entries without laying out the text. */
+@supports (contain-intrinsic-block-size: auto 1lh) {
+  .palette-item {
+    content-visibility: auto;
+    contain-intrinsic-block-size: auto 1lh;
+  }
+}
+
 .palette-item.chosen {
   color: var(--text-strong);
   background: var(--hairline);

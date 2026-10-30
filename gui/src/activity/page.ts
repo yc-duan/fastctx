@@ -12,7 +12,7 @@ import { parts } from "../app/usage/draw";
 import type { Page } from "../app/shell";
 import { effect, type Signal } from "../app/signals";
 import type { BookAnswer, BookQuery, Deed } from "../world/book";
-import { elapsed, lines, rhythm, runs, said, timeline, year, type Lane } from "./draw";
+import { elapsed, lines, rhythm, runs, said, timeline, year, YEAR_FULL_WIDTH, type Lane } from "./draw";
 import {
   DAY_MS,
   began,
@@ -117,9 +117,15 @@ export class ActivityPage implements Page {
       const width = Math.floor(entry?.contentRect.width ?? 0);
       const height = Math.floor(entry?.contentRect.height ?? 0);
       if (width && (width !== this.width || height !== this.height)) {
+        const first = !this.width;
+        const fitted = this.fitCalendar(width, height);
+        const changed = this.view === "spread" ? Math.min(width - 8, 760) !== Math.min(this.width - 8, 760)
+          : this.view === "timeline" ? width !== this.width
+          : this.view === "calendar" || this.view === "rhythm";
         this.width = width;
         this.height = height;
-        this.draw();
+        // Lists reflow in CSS; charts only redraw when their own size changes.
+        if (first || (changed && !fitted)) this.draw();
       }
     });
     this.resize.observe(this.body);
@@ -139,6 +145,19 @@ export class ActivityPage implements Page {
     this.timers = [];
     this.resize.disconnect();
     this.stopWatch();
+  }
+
+  /** Full-size calendar cells no longer grow with the surrounding canvas. */
+  private fitCalendar(width: number, height: number): boolean {
+    if (this.view !== "calendar" || height !== this.height || width < YEAR_FULL_WIDTH || this.width < YEAR_FULL_WIDTH) return false;
+    const svg = this.body.querySelector<SVGSVGElement>(".ay-year");
+    if (!svg) return false;
+    const fitted = String(Math.min(width, 1100));
+    if (svg.getAttribute("width") !== fitted) {
+      svg.setAttribute("width", fitted);
+      svg.setAttribute("viewBox", `0 0 ${fitted} ${svg.getAttribute("height")}`);
+    }
+    return true;
   }
 
   private now(): number {

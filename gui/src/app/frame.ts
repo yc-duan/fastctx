@@ -80,7 +80,10 @@ export function installFrame(words: FrameWords, shown = false): void {
   }).observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ["tabindex", "data-dock"] });
 
   if (!native) return;
+  let maximized: boolean | null = null;
   const state = (now: TitlebarState) => {
+    if (maximized === now.maximized) return;
+    maximized = now.maximized;
     const label = now.maximized ? words.restore : words.maximize;
     maximize.firstElementChild!.textContent = now.maximized ? GLYPHS.restore : GLYPHS.maximize;
     maximize.setAttribute("aria-label", label);

@@ -325,6 +325,8 @@ export class ConversationView {
   /** The spaces that stand for the blocks above and below those drawn. */
   private readonly above: HTMLElement;
   private readonly below: HTMLElement;
+  private spaceAbove = -1;
+  private spaceBelow = -1;
   private readonly sizes: ResizeObserver;
   private laying = 0;
   /** Gaps asked to be read, so a gap near the reader is asked once. */
@@ -552,8 +554,16 @@ export class ConversationView {
     }
     this.foldIn(wanted.filter((slot) => this.unfolding.has(slot.key)));
     this.shown = wanted;
-    this.above.style.height = `${n ? this.heights.top(first) : 0}px`;
-    this.below.style.height = `${n ? this.heights.total() - this.heights.top(last + 1) : 0}px`;
+    const above = n ? this.heights.top(first) : 0;
+    const below = n ? this.heights.total() - this.heights.top(last + 1) : 0;
+    if (above !== this.spaceAbove) {
+      this.above.style.height = `${above}px`;
+      this.spaceAbove = above;
+    }
+    if (below !== this.spaceBelow) {
+      this.below.style.height = `${below}px`;
+      this.spaceBelow = below;
+    }
     if (anchor) {
       const moved = anchor.slot.element.isConnected ? anchor.slot.element.getBoundingClientRect().top - anchor.top : 0;
       if (moved) this.keepStill(moved);
@@ -575,9 +585,39 @@ export class ConversationView {
     if (this.laying) return;
     this.laying = requestAnimationFrame(() => {
       this.laying = 0;
-      if (this.root.isConnected) this.lay();
+      if (this.root.isConnected && this.scrollNeedsLayout()) this.lay();
     });
   };
+
+  /** Scrolling inside the mounted range changes no blocks or spacing. A
+   * changed range or spacer still takes the full anchored layout path. */
+  private scrollNeedsLayout(): boolean {
+    if (this.pin || this.unfolding.size) return true;
+    const n = this.blocks.length;
+    if (!n) return this.shown.length > 0;
+    const scroller = this.context.scroller;
+    const following = this.context.following?.() ?? true;
+    const view = this.context.nested ? Math.max(scroller.clientHeight, innerHeight) : scroller.clientHeight || innerHeight;
+    const anchor = following ? null : this.anchorNow();
+    const at = anchor ? this.heights.index(anchor.slot.key) : undefined;
+    const top = anchor && at !== undefined
+      ? this.heights.top(at) - (anchor.top - scroller.getBoundingClientRect().top)
+      : following ? Math.max(0, this.heights.total() - view) : scroller.scrollTop - this.origin();
+    let first = this.heights.find(Math.max(0, top - view * ABOVE));
+    let last = this.heights.find(top + view * (1 + BELOW));
+    for (const slot of this.shown) {
+      if (!this.holding(slot)) continue;
+      const index = this.heights.index(slot.key);
+      if (index === undefined) continue;
+      if (index < first && first - index <= HOLD) first = index;
+      if (index > last && index - last <= HOLD) last = index;
+    }
+    return this.shown.length !== last - first + 1
+      || this.shown[0]?.key !== this.blocks[first]?.key
+      || this.shown[this.shown.length - 1]?.key !== this.blocks[last]?.key
+      || this.spaceAbove !== this.heights.top(first)
+      || this.spaceBelow !== this.heights.total() - this.heights.top(last + 1);
+  }
 
   /** Heights that changed under blocks drawn: kept, and what changed above
    *  the reader moves the view by as much. */

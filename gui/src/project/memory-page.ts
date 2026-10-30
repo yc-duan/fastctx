@@ -12,6 +12,7 @@ import { glyph } from "../conversation/glyphs";
 import { escape, render } from "../conversation/prose";
 import { factRow } from "../design/fact-row";
 import { Sketch } from "../pen/sketch";
+import { sizedInk } from "../pen/sized-ink";
 import { composeText, splitHeader, type MemoryAuthor, type MemoryDocument, type MemoryRevision } from "../world/memory";
 import type { MemoryWords } from "./memory-words";
 import "./memory.css";
@@ -40,6 +41,7 @@ export class MemoryPage {
   /** The newest version known, to tell an older one read from it. */
   private newest = 0;
   private editing = false;
+  private railFrame = 0;
 
   constructor(private readonly options: MemoryPageOptions) {
     const { words } = options;
@@ -66,7 +68,7 @@ export class MemoryPage {
       else if (act === "cancel") this.draw();
       else if (act === "reload") void this.load(null);
     });
-    new ResizeObserver(() => this.drawRail()).observe(this.rail);
+    new ResizeObserver(() => this.drawRailInk()).observe(this.rail);
     void this.load(null);
   }
 
@@ -135,7 +137,14 @@ export class MemoryPage {
         return `<button class="mm-version${current ? " current" : ""}" type="button" data-version="${one.version}"${current ? ' aria-current="true"' : ""}><span class="mm-dot" aria-hidden="true"></span><span class="mm-version-lines"><span>${escape(words.version(one.version))}</span><span class="mm-version-who">${escape(words.date(one.author.at, this.options.now()))}　${escape(writer.name)}</span></span></button>`;
       })
       .join("")}</div>`;
-    requestAnimationFrame(() => {
+    this.drawRailInk();
+  }
+
+  /** Resizing changes the ink's geometry, not the version buttons. */
+  private drawRailInk(): void {
+    if (this.railFrame) return;
+    this.railFrame = requestAnimationFrame(() => {
+      this.railFrame = 0;
       const list = this.rail.querySelector<HTMLElement>(".mm-rail-list");
       if (!list) return;
       const box = list.getBoundingClientRect();
@@ -145,17 +154,19 @@ export class MemoryPage {
         const r = dot.getBoundingClientRect();
         return [r.left - box.left + r.width / 2, r.top - box.top + r.height / 2];
       };
-      const sketch = new Sketch(`memory-rail-${this.options.name}`);
-      const first = at(dots[0]!);
-      const last = at(dots[dots.length - 1]!);
-      if (dots.length > 1) sketch.rule([first[0], first[1] + 6], [last[0], last[1] - 6], 1.1, "graphite");
-      dots.forEach((dot) => {
-        const point = at(dot);
-        const current = dot.closest(".current") !== null;
-        sketch.blot(point, current ? 2.6 : 2.1, current ? "clay" : "graphite");
-        if (current) sketch.ring(point, 6, 1.2, "clay");
+      const points = dots.map((dot) => ({ point: at(dot), current: dot.closest(".current") !== null }));
+      const ink = list.querySelector<HTMLElement>(".mm-rail-ink")!;
+      sizedInk(ink, JSON.stringify(points), box.width, box.height, () => {
+        const sketch = new Sketch(`memory-rail-${this.options.name}`);
+        const first = points[0]!.point;
+        const last = points[points.length - 1]!.point;
+        if (dots.length > 1) sketch.rule([first[0], first[1] + 6], [last[0], last[1] - 6], 1.1, "graphite");
+        points.forEach(({ point, current }) => {
+          sketch.blot(point, current ? 2.6 : 2.1, current ? "clay" : "graphite");
+          if (current) sketch.ring(point, 6, 1.2, "clay");
+        });
+        return sketch.svg(box.width, box.height, "mm-rail-svg");
       });
-      list.querySelector<HTMLElement>(".mm-rail-ink")!.innerHTML = sketch.svg(box.width, box.height, "mm-rail-svg");
     });
   }
 

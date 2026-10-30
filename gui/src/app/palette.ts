@@ -38,6 +38,7 @@ export class Palette {
   private readonly list: HTMLElement;
   private shown: PaletteItem[] = [];
   private chosen = 0;
+  private marked: HTMLElement | null = null;
 
   constructor(private readonly options: PaletteOptions) {
     const { words } = options;
@@ -99,6 +100,7 @@ export class Palette {
   }
 
   private draw(): void {
+    this.marked = null;
     const query = this.input.value.trim();
     this.shown = this.options.items().filter((item) => !query || matches(`${item.label} ${item.note ?? ""} ${item.group}`, query));
     if (!this.shown.length) {
@@ -111,21 +113,25 @@ export class Palette {
       .map((item, index) => {
         const head = item.group !== group ? `<li class="palette-group" role="presentation">${escape(item.group)}</li>` : "";
         group = item.group;
-        return `${head}<li class="palette-item" role="option" id="palette-item-${index}" data-index="${index}"><span class="palette-label">${escape(item.label)}</span>${item.note ? `<span class="palette-note">${escape(item.note)}</span>` : ""}</li>`;
+        const label = [item.label, item.note].filter(Boolean).join(" ");
+        return `${head}<li class="palette-item" role="option" aria-label="${escape(label)}" aria-selected="false" id="palette-item-${index}" data-index="${index}"><span class="palette-label">${escape(item.label)}</span>${item.note ? `<span class="palette-note">${escape(item.note)}</span>` : ""}</li>`;
       })
       .join("");
     this.mark();
   }
 
   private mark(): void {
-    for (const element of this.list.querySelectorAll<HTMLElement>("[data-index]")) {
-      const chosen = Number(element.dataset.index) === this.chosen;
-      element.classList.toggle("chosen", chosen);
-      element.setAttribute("aria-selected", String(chosen));
-      if (chosen) {
-        element.scrollIntoView({ block: "nearest" });
-        this.input.setAttribute("aria-activedescendant", element.id);
-      }
+    const element = this.list.querySelector<HTMLElement>(`[data-index="${this.chosen}"]`);
+    if (this.marked !== element) {
+      this.marked?.classList.remove("chosen");
+      this.marked?.setAttribute("aria-selected", "false");
+      element?.classList.add("chosen");
+      element?.setAttribute("aria-selected", "true");
+      this.marked = element;
+    }
+    if (element) {
+      element.scrollIntoView({ block: "nearest" });
+      this.input.setAttribute("aria-activedescendant", element.id);
     }
   }
 

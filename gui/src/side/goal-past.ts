@@ -10,6 +10,7 @@
 import { escape, render } from "../conversation/prose";
 import { glyph } from "../conversation/glyphs";
 import { Sketch } from "../pen/sketch";
+import { sizedInk } from "../pen/sized-ink";
 import type { Point } from "../pen/shapes";
 import type { CollabNode, GoalStatus, PastGoal } from "./types";
 import type { GoalWords } from "./words";
@@ -52,31 +53,35 @@ export function drawPast(root: HTMLElement): void {
     return [r.left - box.left + r.width / 2, r.top - box.top + r.height / 2];
   };
   const stations = [...line.querySelectorAll<HTMLElement>(".gh-goal, .gh-branch")].map((row) => ({
-    row,
     at: center(row.querySelector<HTMLElement>(".gh-dot")!),
     branch: row.classList.contains("gh-branch"),
+    status: (row.dataset.goal || null) as GoalStatus | null,
+    done: row.closest<HTMLElement>(".gh-row")?.dataset.done === "true",
   }));
   const spine = stations.find((one) => !one.branch);
   if (!spine) return;
-  const x = spine.at[0];
-  const sketch = new Sketch("goal-past");
-  let last: Point | null = null;
-  for (const station of stations) {
-    const at: Point = station.branch ? [x, station.at[1]] : station.at;
-    if (last) {
-      const from: Point = [x, last[1] + 7];
-      const to: Point = [x, at[1] - (station.branch ? 0 : 7)];
-      if (to[1] > from[1]) sketch.rule(from, to, 1.25, "graphite");
+  const shape = JSON.stringify(stations.map(({ at, branch, status, done }) => [at, branch, status, done]));
+  sizedInk(ink, shape, line.clientWidth, line.clientHeight, () => {
+    const x = spine.at[0];
+    const sketch = new Sketch("goal-past");
+    let last: Point | null = null;
+    for (const station of stations) {
+      const at: Point = station.branch ? [x, station.at[1]] : station.at;
+      if (last) {
+        const from: Point = [x, last[1] + 7];
+        const to: Point = [x, at[1] - (station.branch ? 0 : 7)];
+        if (to[1] > from[1]) sketch.rule(from, to, 1.25, "graphite");
+      }
+      if (station.branch) sketch.stroke(curve([x, station.at[1] - 9], [x, station.at[1]], [station.at[0] - 7, station.at[1]]), 1.2, "graphite", 0.1);
+      else last = at;
     }
-    if (station.branch) sketch.stroke(curve([x, station.at[1] - 9], [x, station.at[1]], [station.at[0] - 7, station.at[1]]), 1.2, "graphite", 0.1);
-    else last = at;
-  }
-  for (const station of stations) {
-    if (station.branch) mark(sketch, station.at, (station.row.dataset.goal || null) as GoalStatus | null);
-    else if (station.row.closest<HTMLElement>(".gh-row")?.dataset.done === "true") tick(sketch, station.at);
-    else sketch.ring(station.at, 3.6, 1.15, "graphite");
-  }
-  ink.innerHTML = sketch.svg(line.clientWidth, line.clientHeight, "gh-ink-svg");
+    for (const station of stations) {
+      if (station.branch) mark(sketch, station.at, station.status);
+      else if (station.done) tick(sketch, station.at);
+      else sketch.ring(station.at, 3.6, 1.15, "graphite");
+    }
+    return sketch.svg(line.clientWidth, line.clientHeight, "gh-ink-svg");
+  });
 }
 
 /** A colleague's station, as its own goal stands. */
