@@ -209,6 +209,8 @@ pub enum Intent {
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         account_records: bool,
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        record_keys: bool,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         skill_files: bool,
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         conversation_plans: bool,
@@ -626,6 +628,18 @@ pub enum CallStatus {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "kind")]
 pub enum Question {
+    RecordWatching {
+        account: AccountName,
+        record_kind: String,
+        watch: String,
+        following: bool,
+    },
+    RecordFollowing {
+        account: AccountName,
+        record_kind: String,
+        key: String,
+        following: bool,
+    },
     SkillFiles {
         account: AccountName,
         request: fastctx_types::skill_files::Request,

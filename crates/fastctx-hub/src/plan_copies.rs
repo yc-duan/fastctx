@@ -59,6 +59,7 @@ pub(crate) async fn ask(
     for _ in 0..8 {
         let records = slot.records.lock().await;
         account_records::authorized(hub, &from, &key, &account, opened)?;
+        crate::record_subscriptions::follow(hub, &from, &key, &account, plan::KIND, owner.resident.as_str())?;
         let current = slot.path(plan::KIND, owner.resident.as_str());
         let history = slot.history(plan::KIND, owner.resident.as_str());
         let exists = records.entries.contains_key(&(plan::KIND.into(), owner.resident.to_string()));

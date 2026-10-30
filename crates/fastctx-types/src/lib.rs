@@ -50,6 +50,7 @@ pub mod observation;
 pub mod on;
 pub mod pages;
 pub mod password;
+pub mod placement;
 pub mod plan;
 pub mod plan_copies;
 pub mod process;

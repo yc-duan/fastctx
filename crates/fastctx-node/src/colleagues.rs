@@ -230,6 +230,11 @@ pub async fn ask_here(
             reasoning_effort: started.callee.effort.clone(),
         },
     )?;
+    // Where the requester works is only a first guess at where the colleague
+    // speaks from; without it the colleague still chooses its own place.
+    if let Err(error) = crate::placement::location::inherit(node, &id, &acting, &asker).await {
+        node.log.line(format_args!("starting {id} where its requester works: {}", error.message));
+    }
     let origin = Origin::Colleague { asked_by: asker.clone(), label };
     crate::layers::may_start(node, &acting)?;
     let _birth = crate::here::born(node, &id, acting.clone(), &origin);

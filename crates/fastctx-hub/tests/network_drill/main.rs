@@ -22,6 +22,7 @@ mod lab;
 mod letters;
 mod mixed;
 mod plan_copies;
+mod record_following;
 mod process;
 mod proxy;
 mod report;

@@ -34,7 +34,12 @@ pub(crate) fn here_for(node: &Node, asker: &crate::admission::Asker, town: &Town
     Ok(here(node, town))
 }
 
-pub(crate) async fn get(node: &Arc<Node>, town: &TownName, acting: &Acting) -> Result<Folders, String> {
+pub(crate) async fn get(
+    node: &Arc<Node>,
+    session: Option<(&fastctx_types::ResidentId, &fastctx_types::residents::Origin)>,
+    town: &TownName,
+    acting: &Acting,
+) -> Result<Folders, String> {
     let place = crate::ledger::names::place(&node.world, town)
         .map_err(|error| error.to_string())?
         .ok_or(fastctx_types::memory::words::MISSING_IDENTITY)?;
@@ -45,18 +50,30 @@ pub(crate) async fn get(node: &Arc<Node>, town: &TownName, acting: &Acting) -> R
     let account = super::api::account(node, acting, town)
         .map_err(|error| error.message)?
         .ok_or(fastctx_types::memory::words::MISSING_ACCOUNT)?;
-    let view = link.view();
-    if view.me().is_some_and(|member| member.logins.contains(&account)) && node.works_here(acting).is_ok() {
-        return Ok(here(node, town));
+    let selected = if let Some((id, origin)) = session {
+        crate::placement::location::prepare(node, id, origin, acting)
+            .await
+            .map_err(|error| error.message)?
+            .map(|location| location.machine)
+    } else {
+        let choices = crate::placement::destinations(node, &Acting::one(place.hub.clone(), account.clone()))
+            .map_err(|error| error.message)?;
+        crate::placement::select(&choices, &Default::default(), Some(&node.machine()), None, None)
+            .map_err(|error| error.message)?
+            .map(|choice| choice.machine.name.clone())
+    };
+    let machine = selected.as_ref().ok_or(fastctx_types::memory::words::OFFLINE_COMPUTERS)?;
+    if node.is_me(machine) {
+        let asker = crate::admission::Asker {
+            machine: node.machine(),
+            hub: place.hub.clone(),
+            account: account.clone(),
+            hands: true,
+        };
+        return here_for(node, &asker, town).map_err(|error| error.message);
     }
-    let mut computers: Vec<_> = view
-        .machines()
-        .filter(|member| member.online && member.home.as_ref() == Some(&account) && member.logins.contains(&account))
-        .filter(|member| view.admits(&view.me, &account, &member.name, Purpose::Hands).is_ok())
-        .map(|member| member.name.clone())
-        .collect();
-    computers.sort();
-    let machine = computers.first().ok_or(fastctx_types::memory::words::OFFLINE_COMPUTERS)?;
+    // Whether that computer can be asked is said by the cached read.
+    let view = link.view();
     let network_town = node
         .town_across(&link, Some(town))
         .map_err(|error| error.message)?

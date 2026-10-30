@@ -76,12 +76,18 @@ pub(crate) async fn ask(
         for metadata in crate::skill_storage::recover(&slot, &mut records)? {
             account_records::tell(&hub, &account, opened, &metadata);
         }
+        if let Some(name) = request.name() {
+            crate::record_subscriptions::follow(&hub, &from, &key, &account, skills::KIND, name)?;
+        }
         let limits = crate::skill_storage::limits(&slot)?;
         let result = match request {
             Request::Limits => Reply::Limits { limits },
             Request::List => Reply::Listed { skills: index(&slot, &records)?.0.skills },
             Request::Read { name } => {
                 let record = read(&slot, &records, skills::KIND, &name)?;
+                if record.as_ref().is_some_and(|record| record.metadata.deleted) {
+                    crate::record_subscriptions::deleted(&hub, &from, &account, skills::KIND, &name);
+                }
                 let mut body = skill(&record)?;
                 if let Some(skill) = &mut body {
                     skill.files = Some(skill.folder()?);

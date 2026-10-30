@@ -82,7 +82,10 @@ fn review_of(materials: &Materials) -> GoalReview {
         .full_path
         .clone()
         .or_else(|| materials.world_actions.as_ref().map(|evidence| evidence.full_path.clone()))
-        .map(|path| FullMaterial { machine: materials.conversation.machine.clone(), path });
+        .map(|path| FullMaterial {
+            machine: materials.full_machine.clone().unwrap_or_else(|| materials.conversation.machine.clone()),
+            path,
+        });
     GoalReview {
         trigger: match materials.cause {
             ReviewCause::Idle => GoalTrigger::Idle,
@@ -106,7 +109,8 @@ fn review_of(materials: &Materials) -> GoalReview {
 
 /// How the turn ended, as its kind and the host's own words.
 fn stop_said(stop: &StopReason) -> String {
-    let kind = serde_json::to_value(stop.kind).ok().and_then(|kind| kind.as_str().map(str::to_owned)).unwrap_or_default();
+    let kind =
+        serde_json::to_value(stop.kind).ok().and_then(|kind| kind.as_str().map(str::to_owned)).unwrap_or_default();
     match &stop.message {
         Some(message) => format!("{kind}: {message}"),
         None => kind,
@@ -129,7 +133,9 @@ impl SentinelWaits for Waits {
                 .into_iter()
                 .map(|registration| {
                     let home = registration.definition.home.clone();
-                    let view = node.link_of(&registration.scope.hub).and_then(|link| crate::authorization::current_view(&link).ok());
+                    let view = node
+                        .link_of(&registration.scope.hub)
+                        .and_then(|link| crate::authorization::current_view(&link).ok());
                     let liveness = match view {
                         Some(view) if view.is_me(&home) || view.member(&home).is_some_and(|member| member.online) => {
                             Liveness::Alive

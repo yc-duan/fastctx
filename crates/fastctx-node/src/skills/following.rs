@@ -106,6 +106,14 @@ async fn tell(
 ) -> BTreeSet<AccountName> {
     let mut retry = BTreeSet::new();
     let Some(link) = node.link_of(hub) else { return retry };
+    // What was kept of them is stale now, for every conversation's read.
+    if pending.all {
+        node.skill_index.invalidate(hub, None);
+    } else {
+        for account in &pending.accounts {
+            node.skill_index.invalidate(hub, Some(account));
+        }
+    }
     let mut conversations: BTreeMap<AccountName, Vec<ResidentId>> = BTreeMap::new();
     for resident in node.residents.everyone().filter(|resident| resident.removed.is_none()) {
         let Acting::Accounts { accounts } = &resident.about.acting else { continue };
@@ -115,8 +123,8 @@ async fn tell(
         }
     }
     for (account, residents) in conversations {
-        let index = match super::index(&link, &account).await {
-            Ok(index) => index,
+        let (index, version) = match super::index(&link, &account).await {
+            Ok(read) => read,
             Err(error) => {
                 if errors.get(&account) != Some(&error) {
                     node.log.line(format_args!("reading the skills of {account}: {error}"));
@@ -134,7 +142,7 @@ async fn tell(
                 if !writing.residents.about(&id).is_some_and(|(about, _)| about.acting == acting) {
                     continue;
                 }
-                if let Err(error) = crate::context::sources::set_skills(&writing, &id, &text)
+                if let Err(error) = crate::context::sources::set_skills(&writing, &id, &text, &version)
                     && writing.residents.active(&id).is_ok()
                 {
                     failed.push(format!("{id}: {}", error.message));

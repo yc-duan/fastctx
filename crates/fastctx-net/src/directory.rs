@@ -715,6 +715,9 @@ pub struct View {
     /// Atomic, versioned multi-file skill folders.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub skill_files: bool,
+    /// Computers may release individual record subscriptions after withdrawing copies.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub record_keys: bool,
     /// The hub understands the account-scoped goal control call.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub goal_control: bool,
@@ -816,6 +819,7 @@ impl View {
             conversation_plans: false,
             plan_copies: false,
             skill_files: false,
+            record_keys: false,
             goal_control: false,
             scratch_locations: false,
             goal_commands: false,

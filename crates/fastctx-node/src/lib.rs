@@ -107,8 +107,10 @@ mod on_stop;
 mod outbox;
 mod own_collab;
 mod pages;
+mod placement;
 mod plan;
 mod plan_file;
+mod plan_reads;
 mod profile;
 mod program_collection;
 mod proxy_setting;
@@ -202,6 +204,12 @@ pub(crate) struct Node {
     mcp_keeping: std::sync::Mutex<()>,
     job_watches: job_watch::Watches,
     plan_files: plan_file::PlanFiles,
+    copies: placement::copies::Copies,
+    context_bodies: context::memory::Bodies,
+    plan_reads: plan_reads::Reads,
+    skill_copies: skills::copies::Copies,
+    skill_index: skills::cache::Cache,
+    locations: placement::location::Locations,
     disk: ranked::Disk,
     /// Each conversation's place here, deleted alone (`data::places`).
     places: data::places::Places,
@@ -656,6 +664,12 @@ pub async fn run_prepared(
         mcp_keeping: std::sync::Mutex::new(()),
         job_watches: Default::default(),
         plan_files: Default::default(),
+        copies: Default::default(),
+        context_bodies: Default::default(),
+        plan_reads: Default::default(),
+        skill_copies: Default::default(),
+        skill_index: Default::default(),
+        locations: Default::default(),
         contexts: Default::default(),
         context_deliveries: Default::default(),
         scratch_deliveries: Default::default(),
@@ -733,6 +747,7 @@ pub async fn run_prepared(
         lifetime,
         started: jiff::Timestamp::now(),
     });
+    context::migrate(&node);
     letters::migrate(&node);
     // The third version's projects are kept as this computer's own, to be
     // carried into its account at its hub.
@@ -784,6 +799,8 @@ pub async fn run_prepared(
         control_letters::resume(&node);
         job_receipts::start(&node);
         obligations::start(&node);
+        placement::copies::start(&node);
+        skills::copies::start(&node);
         plan_file::start(&node);
         profile::session::start(&node);
         context::start(&node);

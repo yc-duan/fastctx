@@ -88,7 +88,9 @@ pub async fn upload(
         node.settled_for(&uploader).await;
         if node.is_here(&machine) {
             let acting = destinations::acting(node, &target, &uploader)?;
-            if !file.media_type.starts_with("image/") && destinations::assisted(node, &target, &acting)? {
+            if !file.media_type.starts_with("image/")
+                && destinations::forward(node, &node.machine(), &target, &acting, files_on.as_ref())?
+            {
                 return forwarded::upload(
                     node,
                     &node.machine(),
@@ -148,7 +150,9 @@ pub async fn upload(
         // The account the file is for may use the conversation's project,
         // before anything is kept for it.
         check_project(node, &acting, &target).await?;
-        if !file.media_type.starts_with("image/") && destinations::assisted(node, &target, &acting)? {
+        if !file.media_type.starts_with("image/")
+            && destinations::forward(node, &node.machine(), &target, &acting, None)?
+        {
             let operation = composer
                 .as_ref()
                 .map(|scope| scope.operation.clone())
@@ -422,7 +426,12 @@ pub async fn receive(
     mut stream: Stream,
 ) -> Result<Uploaded, Failure> {
     let acting = destinations::acting(node, &target, uploader)?;
-    let routed = !file.media_type.starts_with("image/") && destinations::assisted(node, &target, &acting)?;
+    let preferred = match &target {
+        UploadTarget::Sent { files_on, .. } => files_on.as_ref(),
+        _ => None,
+    };
+    let routed =
+        !file.media_type.starts_with("image/") && destinations::forward(node, from, &target, &acting, preferred)?;
     if let UploadTarget::Sent { machine, target, operation, account, files_on } = target {
         if account
             .as_ref()

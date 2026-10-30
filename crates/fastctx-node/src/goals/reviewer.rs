@@ -29,9 +29,11 @@ pub(crate) struct Materials {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub machines_total: Option<usize>,
     pub now: Timestamp,
-    /// Complete cause-scoped material on the conversation's machine.
+    /// Complete cause-scoped material on the selected working computer.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub full_path: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub full_machine: Option<MachineName>,
     /// Excerpts or catalog prefixes are present; consult `full_path` for omitted content.
     #[serde(default)]
     pub truncated: bool,
@@ -93,9 +95,13 @@ impl Answer {
 
 pub(crate) enum Readiness {
     Ready,
-    Offline { reason: String },
+    Offline {
+        reason: String,
+    },
     /// No sentinel is set up for the account, or its home cannot be used.
-    Absent { reason: String },
+    Absent {
+        reason: String,
+    },
 }
 
 pub(crate) trait Reviewer: Send + Sync {

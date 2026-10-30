@@ -600,6 +600,7 @@ pub fn facts(node: &Node) -> MachineFacts {
         attachment_places: true,
         attachment_runs: true,
         memory_folders: true,
+        plan_copies: true,
         collaboration_tree: true,
         shell: shell(),
         form: Some(form()),
@@ -1079,6 +1080,11 @@ impl fastctx_net::link::Node for Handler {
                     ))
                 }),
                 RemoteCall::Canon { .. } => Err(Failure::not_run(fastctx_types::memory::LEGACY)),
+                RemoteCall::WorkingCopy { owner, placement, resource } => {
+                    crate::placement::prepare_copy(&node, &asker, owner, placement, resource)
+                        .await
+                        .map(|location| RemoteReply::WorkingCopy { location })
+                }
                 RemoteCall::MemoryFolders { town } => {
                     crate::memory::folders::here_for(&node, &asker, &town).map(RemoteReply::MemoryFolders)
                 }
@@ -1414,6 +1420,10 @@ impl fastctx_net::link::Node for Handler {
     fn connected(&self) {
         let Some(node) = self.node.upgrade() else { return };
         node.views_changed();
+        node.plan_reads.clear();
+        node.skill_index.invalidate(&self.hub, None);
+        crate::placement::copies::refresh(&node, &self.hub);
+        crate::skills::copies::refresh(&node, &self.hub);
         let Some(link) = node.link_of(&self.hub) else { return };
         // A previous cleanup may have failed after consuming this same view.
         crate::directory_changes::cleanup(&node, &link);
@@ -1423,10 +1433,12 @@ impl fastctx_net::link::Node for Handler {
     /// Someone may have logged in to an account this computer is logged in
     /// to: its user is told who, from the views before and after.
     fn account_record_changed(&self, change: &fastctx_types::account_records::Changed) {
-        if change.metadata.kind == fastctx_types::plan::KIND
-            && let Some(node) = self.node.upgrade()
-        {
-            crate::context::request_all(&node);
+        if let Some(node) = self.node.upgrade() {
+            crate::placement::copies::changed(&node, &self.hub, change);
+        }
+        if let Some(node) = self.node.upgrade() {
+            crate::plan_reads::changed(&node, &self.hub, change);
+            crate::skills::copies::changed(&node, &self.hub, change);
         }
     }
 
