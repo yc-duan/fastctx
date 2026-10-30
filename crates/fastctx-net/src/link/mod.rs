@@ -45,6 +45,7 @@ mod questions;
 mod session;
 pub mod state;
 mod update_policy;
+mod version_parts;
 pub mod versions;
 mod view_changes;
 mod watching;

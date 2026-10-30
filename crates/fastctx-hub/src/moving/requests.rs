@@ -140,6 +140,13 @@ fn start(
         if !hub.sessions().contains_key(&to) {
             return Err(format!("{to} is offline"));
         }
+        let version =
+            crate::updates::running_of(hub, &member.key).and_then(|r| fastctx_types::update::release(&r.kernel));
+        if version.is_none_or(|v| Some(v) < fastctx_types::update::release("1.0.1-beta.12")) {
+            return Err(format!(
+                "update {to} to 1.0.1-beta.12 or later before moving the hub: its older version cannot read the hub database"
+            ));
+        }
         // A machine connecting from the hub's own loopback is likely where
         // it runs, but only the targets say so: what is sure is where a move
         // brought the hub, and the new place refuses a directory that holds

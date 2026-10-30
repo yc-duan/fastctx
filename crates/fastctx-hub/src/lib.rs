@@ -113,7 +113,7 @@ pub fn init(dir: &Path, new: New) -> anyhow::Result<CertPin> {
             dir.display()
         );
     }
-    if Store::hub_file(dir).exists() {
+    if Store::hub_file(dir).exists() || dir.join(store::shelf::FILE).exists() {
         anyhow::bail!("{} already holds a hub", dir.display());
     }
     // A hub that moved away left only its log and a note here.
@@ -193,9 +193,9 @@ fn password_record(secrets: &HubSecrets, account: &AccountName, password: &str) 
 
 /// The hub's settings and the pin of its certificate.
 pub fn describe(dir: &Path) -> anyhow::Result<(HubFile, CertPin)> {
-    let store = Store::open(dir)?;
+    let hub = Store::read_hub(dir)?;
     let certificate = std::fs::read(Store::certificate_file(dir))?;
-    Ok((store.hub, CertPin::of(&certificate)))
+    Ok((hub, CertPin::of(&certificate)))
 }
 
 /// What the hub needs of the program that runs it when it leaves a
@@ -310,6 +310,7 @@ pub(crate) struct Session {
     forgets: bool,
     /// Whether it reads the network's versions.
     versions: bool,
+    version_parts: bool,
     /// Whether it reads that a call it answers is over for its caller.
     cancels: bool,
     /// Whether it reads who is online as it changes (`Down::Presence`).
@@ -373,7 +374,7 @@ impl Hub {
     }
 
     /// `name`'s view of the directory now.
-    fn view_for(&self, name: &MachineName) -> View {
+    fn view_for(&self, name: &MachineName) -> Result<View, String> {
         // Counted before who is online is read: a change after that is told
         // past the view, and told again if the view holds it already.
         let rev = self.presence.load(Ordering::SeqCst);
@@ -382,11 +383,11 @@ impl Hub {
         let (mut view, read) = {
             let store = self.store();
             let read = store.view_reads.fetch_add(1, Ordering::SeqCst) + 1;
-            (views::view_for(self, &store, &presence, name, trial), read)
+            (views::view_for(self, &store, &presence, name, trial)?, read)
         };
         view.presence = rev;
         self.give(name, &mut view, read);
-        view
+        Ok(view)
     }
 
     /// Numbers `view`, given whole to `name`, and keeps it as what the next
@@ -425,7 +426,7 @@ impl Hub {
     fn push_views(&self, sessions: Vec<(MachineName, u64, outq::Outq)>) {
         let online = self.online();
         let trials: Vec<_> = sessions.iter().map(|(name, _, _)| self.trial_of(name)).collect();
-        let (views, read): (Vec<View>, u64) = {
+        let (views, read): (Vec<Result<View, String>>, u64) = {
             let store = self.store();
             let read = store.view_reads.fetch_add(1, Ordering::SeqCst) + 1;
             let index = fastctx_net::directory_index::Index::new(&store.book.directory);
@@ -437,7 +438,15 @@ impl Hub {
                 .collect();
             (views, read)
         };
-        for ((name, generation, out), mut view) in sessions.into_iter().zip(views) {
+        for ((name, generation, out), view) in sessions.into_iter().zip(views) {
+            let mut view = match view {
+                Ok(view) => view,
+                Err(error) => {
+                    self.log.line(format_args!("reading {name}'s machine notices: {error}"));
+                    let _ = out.send(Out::Frame(Down::DirectoryChanged));
+                    continue;
+                }
+            };
             let mut given = self.given.lock().expect("never poisoned");
             let Some(before) = given.get(&name).filter(|given| given.generation == generation) else {
                 drop(given);
@@ -556,6 +565,7 @@ impl Hub {
         afoot::directory_changed(self);
         *self.presence_index.lock().expect("never poisoned") = None;
         self.account_records.settle(&self.store().book.directory);
+        updates::directory_changed(self);
         self.machine_log_changed.notify_one();
         self.assists_changed.notify_one();
         self.directory_changed.notify_one();
@@ -702,7 +712,7 @@ async fn serving(dir: &Path, kept: Option<Kept>, log: Arc<log::Log>) -> anyhow::
         log.line(format_args!("on opening, {line}"));
     }
     let mut left = Vec::new();
-    let updates = updates::Updates::new(dir, &store.hub.due, &mut left).map_err(anyhow::Error::msg)?;
+    let updates = updates::Updates::new(dir, &store.shelf, &store.hub.due, &mut left).map_err(anyhow::Error::msg)?;
     for line in left {
         log.line(format_args!("on opening, {line}"));
     }
@@ -748,6 +758,7 @@ async fn serving(dir: &Path, kept: Option<Kept>, log: Arc<log::Log>) -> anyhow::
     tokio::spawn(expiry::settle(Arc::downgrade(&hub)));
     tokio::spawn(updates::look_every(Arc::downgrade(&hub)));
     tokio::spawn(tell_directory(Arc::downgrade(&hub), hub.directory_changed.clone(), hub.presence_changed.clone()));
+    updates::start(&hub);
     afoot::start(&hub);
     let letters_changed = hub.store().letters_changed.clone();
     tokio::spawn(mailbox::keep_records(Arc::downgrade(&hub), letters_changed));
@@ -815,6 +826,7 @@ async fn serving(dir: &Path, kept: Option<Kept>, log: Arc<log::Log>) -> anyhow::
         anyhow::bail!("shutdown did not finish: persistent work is still under way after {} s", SILENCE.as_secs());
     }
     hub.store().save_letters_now()?;
+    updates::flush(&hub).await.map_err(anyhow::Error::msg)?;
     Ok(Next::Stop)
 }
 
@@ -923,6 +935,7 @@ async fn intended(
                 forgets,
                 roles,
                 versions,
+                version_parts,
                 due,
                 project_deletes,
                 project_entry,
@@ -950,6 +963,7 @@ async fn intended(
                 forgets,
                 roles,
                 versions,
+                version_parts,
                 due,
                 project_deletes,
                 project_entry,

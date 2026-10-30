@@ -29,13 +29,13 @@ use crate::{Hub, Out};
 pub(crate) struct Forgettings {
     /// The number the last deletion took.
     #[serde(default)]
-    last: u64,
+    pub(crate) last: u64,
     #[serde(default)]
-    pending: Vec<std::sync::Arc<Pending>>,
+    pub(crate) pending: Vec<std::sync::Arc<Pending>>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-struct Pending {
+pub(crate) struct Pending {
     forgetting: Forgetting,
     asked_by: MachineName,
     at: Timestamp,

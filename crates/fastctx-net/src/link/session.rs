@@ -238,6 +238,7 @@ async fn open(inner: &Inner, upstream: &Upstream) -> Result<Opened, Ended> {
             forgets: true,
             roles: true,
             versions: true,
+            version_parts: true,
             due: true,
             project_deletes: true,
             project_entry: true,
@@ -442,6 +443,7 @@ async fn connected(
     // wait behind letters and answers the hub queued before it.
     let mut heard = Instant::now();
     let mut last_ping = 0;
+    let mut version_parts = super::version_parts::Receiving::default();
     // A check asked since the hub was last heard, and how long it waits;
     // and when it was asked.
     let mut checking: Option<Instant> = None;
@@ -618,7 +620,15 @@ async fn connected(
                     let _ = up.send(Up::Forgot { id, outcome });
                 });
             }
-            Down::Versions { network } => inner.heard_versions(generation, *network),
+            Down::Versions { network } => {
+                version_parts.clear();
+                inner.heard_versions(generation, *network);
+            }
+            Down::VersionPart { index, last, network } => match version_parts.part(index, last, *network) {
+                Ok(Some(network)) => inner.heard_versions(generation, network),
+                Ok(None) => {}
+                Err(error) => break Ended::Retry(format!("reading network versions: {error}")),
+            },
             Down::Fetch { fetch } => inner.fetch_for_hub(generation, *fetch),
             Down::FetchCancelled { id } => inner.cancel_fetch(generation, id),
             Down::PackageProgress { id, progress } => inner.asks.progress(generation, id, progress),

@@ -10,13 +10,25 @@ use fastctx_types::{
 pub(crate) fn current(hub: &Hub, store: &Store) -> Option<MachineName> {
     let directory = &store.book.directory;
     // A completed move supersedes reports kept from the old hub host.
-    if let Some(member) = store.moves.last().and_then(|incoming| directory.member(&incoming.to)) {
-        return Some(member.name.clone());
+    if let Some(incoming) = store.moves.last() {
+        let index = hub.index_of(store);
+        let indexed = fastctx_net::directory_index::Indexed::new(directory, &index);
+        if let Some(member) = indexed.member(&incoming.to) {
+            return Some(member.name.clone());
+        }
     }
-    directory
-        .machines()
-        .find(|member| crate::updates::running_of(hub, &member.key).is_some_and(|running| running.hub_here))
-        .map(|member| member.name.clone())
+    let hosts = crate::updates::hub_hosts(hub);
+    if hosts.is_empty() {
+        return None;
+    }
+    let index = hub.index_of(store);
+    let indexed = fastctx_net::directory_index::Indexed::new(directory, &index);
+    hosts
+        .iter()
+        .filter_map(|key| indexed.key_position(key))
+        .filter(|&at| directory.members[at].is_machine())
+        .min()
+        .map(|at| directory.members[at].name.clone())
 }
 
 pub(crate) fn protected(hub: &Hub, store: &Store, machine: &MachineName) -> bool {

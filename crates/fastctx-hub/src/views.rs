@@ -47,7 +47,7 @@ pub(crate) fn view_for(
     online: &HashMap<MachineName, Presence>,
     me: &MachineName,
     trial: Vec<std::net::SocketAddr>,
-) -> View {
+) -> Result<View, String> {
     let index = Index::new(&store.book.directory);
     view_for_in(hub, store, &Indexed::new(&store.book.directory, &index), online, me, trial)
 }
@@ -61,7 +61,7 @@ pub(crate) fn view_for_in(
     online: &HashMap<MachineName, Presence>,
     me: &MachineName,
     trial: Vec<std::net::SocketAddr>,
-) -> View {
+) -> Result<View, String> {
     let all = &store.book.directory;
     let mine = x.acts_for(me);
     let users = users_in(x, me);
@@ -148,7 +148,7 @@ pub(crate) fn view_for_in(
             Some(fastctx_net::dial::Forwarder { name: member.name.clone(), at })
         })
         .collect();
-    View {
+    Ok(View {
         ledger_parts: true,
         project_memory: true,
         collaboration_tree: true,
@@ -159,7 +159,7 @@ pub(crate) fn view_for_in(
         hub_name: store.hub.name.clone(),
         hub_machine: crate::hub_machine::current(hub, store)
             .filter(|machine| whole || mine.iter().any(|account| x.rights(account, machine).hands)),
-        machine_notices: store.book.machine_log.notices(all, me),
+        machine_notices: store.book.machine_log.notices(all, me).map_err(|e| e.to_string())?,
         me: me.clone(),
         self_registration: store.hub.self_registration,
         direct_links: true,
@@ -196,7 +196,7 @@ pub(crate) fn view_for_in(
         presence: 0,
         revision: 0,
         directory,
-    }
+    })
 }
 
 /// How `machine` is connected now as `reader`'s view has it, when the view

@@ -10,5 +10,5 @@ publish = false
 
 [dependencies]
 fastctx-platform = { path = "../fastctx-platform" }
-rusqlite = { version = "0.41", features = ["bundled"] }
+rusqlite = { version = "0.41", features = ["bundled", "backup"] }
 tokio = { workspace = true, features = ["rt", "sync", "time"] }

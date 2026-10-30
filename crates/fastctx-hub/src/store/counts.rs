@@ -6,6 +6,7 @@ pub(super) fn migrate(
     dir: &Path,
     directory: &Directory,
     letters: &mut BTreeMap<MachineName, Letters>,
+    shelf: &shelf::Shelf,
 ) -> io::Result<bool> {
     let marker = dir.join(COUNTS).join(".legacy-imported");
     match std::fs::read(&marker) {
@@ -29,7 +30,7 @@ pub(super) fn migrate(
     }
     if changed {
         // The import's destination must survive a restart before its first count.
-        publish(&dir.join("letters.json"), &json(letters)?, Permissions::Private)?;
+        keep_legacy_letters(shelf, letters)?;
     }
     ensure_private_dir(&dir.join(COUNTS))?;
     for (name, entry) in letters.iter() {
