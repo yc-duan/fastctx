@@ -197,8 +197,15 @@ impl Node {
     /// network's view is on its way, is judged once the view comes rather
     /// than refused for want of it (`authorization::current_view`).
     pub(crate) async fn settled(&self, to: &Written) {
-        let Ok(links) = self.locate(to) else { return };
-        settle(&links, Settled::Any).await;
+        match self.locate(to) {
+            Ok(links) => settle(&links, Settled::Any).await,
+            Err(_) if to.hub.is_none() => {
+                // An unknown unqualified name may be in any view still coming.
+                // One unrelated hub already answering cannot settle that absence.
+                settle(&self.links(), Settled::Every).await;
+            }
+            Err(_) => {}
+        }
     }
 
     /// Waits, as `settled` does, until the hubs of the accounts `acting`
