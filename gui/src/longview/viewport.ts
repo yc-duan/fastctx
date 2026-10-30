@@ -240,6 +240,10 @@ export class LineViewport {
       if (index < this.first || index >= this.end) { row.remove(); this.rows.delete(index); }
     }
     const paint = this.options.paint;
+    // All rows share this physical-to-logical offset. Reading it between
+    // row writes would force layout once per line.
+    let physicalTop = this.element.scrollTop;
+    let logicalTop = this.top;
     for (let index = this.first; index < this.end; index++) {
       let row = this.rows.get(index);
       if (!row) {
@@ -261,7 +265,7 @@ export class LineViewport {
         this.rows.set(index, row);
         this.track.append(row);
       }
-      row.style.top = `${this.element.scrollTop + index * this.lineHeight - this.top}px`;
+      row.style.top = `${physicalTop + index * this.lineHeight - logicalTop}px`;
       row.style.height = `${this.lineHeight}px`;
       const value = this.cache.get(index) ?? "";
       const match = this.match?.line === index ? { start: this.match.start, end: this.match.end } : null;
@@ -273,7 +277,12 @@ export class LineViewport {
         row.className = "lv-line";
         row.replaceChildren();
         paint(row, value, index, match);
-        row.querySelector("mark")?.scrollIntoView({ block: "nearest", inline: "nearest" });
+        const mark = row.querySelector("mark");
+        if (mark) {
+          mark.scrollIntoView({ block: "nearest", inline: "nearest" });
+          physicalTop = this.element.scrollTop;
+          logicalTop = this.top;
+        }
         continue;
       }
       const text = row.lastElementChild as HTMLElement;
@@ -282,6 +291,8 @@ export class LineViewport {
         mark.textContent = value.slice(match.start, match.end);
         text.replaceChildren(value.slice(0, match.start), mark, value.slice(match.end));
         mark.scrollIntoView({ block: "nearest", inline: "nearest" });
+        physicalTop = this.element.scrollTop;
+        logicalTop = this.top;
       } else text.textContent = value;
     }
     this.maximumWidth = Math.max(this.maximumWidth, ...Array.from(this.rows.values(), (row) => row.scrollWidth));
