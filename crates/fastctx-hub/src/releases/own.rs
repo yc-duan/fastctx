@@ -21,7 +21,7 @@ pub(super) struct Own {
 /// descriptor left, may have passed by the next asking, which packs again.
 enum Packed {
     Not,
-    Packed(Archive),
+    Ready(Archive),
     Failed(String),
 }
 
@@ -47,13 +47,13 @@ impl Own {
 
     pub fn digest(&self, directory: &Path) -> Result<String, String> {
         let mut archive = self.archive.lock().unwrap_or_else(PoisonError::into_inner);
-        if let Packed::Packed(archive) = &*archive {
+        if let Packed::Ready(archive) = &*archive {
             return Ok(archive.digest.clone());
         }
         match self.pack(directory) {
             Ok(packed) => {
                 let digest = packed.digest.clone();
-                *archive = Packed::Packed(packed);
+                *archive = Packed::Ready(packed);
                 Ok(digest)
             }
             Err(error) => {
@@ -65,7 +65,7 @@ impl Own {
 
     pub fn file(&self, sums: bool) -> io::Result<File> {
         match &*self.archive.lock().unwrap_or_else(PoisonError::into_inner) {
-            Packed::Packed(archive) => reopen(if sums { &archive.sums } else { &archive.file }),
+            Packed::Ready(archive) => reopen(if sums { &archive.sums } else { &archive.file }),
             Packed::Failed(error) => Err(io::Error::other(error.clone())),
             Packed::Not => Err(io::Error::new(io::ErrorKind::NotFound, "the running kernel has not been offered yet")),
         }
