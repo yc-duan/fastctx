@@ -44,6 +44,10 @@ export class Withdrawn extends Error {
   }
 }
 
+/** The draft words were pressed in was sent from another device before
+ *  they went: its next draft is not theirs to send. */
+const SENT_ELSEWHERE = "the draft was sent from another device";
+
 export interface ComposerSessionOptions {
   readonly transport?: ComposerTransport;
   /** Stable per writer, never shared by two live pages. The default survives a tab reload. */
@@ -95,6 +99,9 @@ export class ComposerSession {
   private generation = 0;
   private closed = false;
   /** Settles once the words sent last from here settled. */
+  /** How many of the words sent from here the node has taken: what moves the
+   *  draft's epoch on from this side. */
+  private takenHere = 0;
   private sends: Promise<unknown> = Promise.resolve();
   /** Changes to the draft waiting for words sent before them to reach the
    *  node; each settles once its change is made, or under way. */
@@ -403,6 +410,9 @@ export class ComposerSession {
     const document = this.draft;
     // Changes asked of the draft before these words go before them.
     const prepared = [...this.preparing];
+    // The draft they are pressed in, as the words sent from here before
+    // them will have moved it on.
+    const pressed = { epoch: document.view.state.epoch, taken: this.takenHere };
     let seal: Seal;
     try {
       this.assertOpen();
@@ -413,12 +423,20 @@ export class ComposerSession {
     }
     const before = this.sends;
     this.sends = seal.settled;
-    void seal.settled.then(() => this.emit());
+    void seal.settled.then((taken) => {
+      if (taken) this.takenHere += 1;
+      this.emit();
+    });
     this.emit();
-    return before.then(() => this.sendSealed(document, seal, prepared));
+    return before.then(() => this.sendSealed(document, seal, prepared, pressed));
   }
 
-  private async sendSealed(document: ComposerDocument, seal: Seal, prepared: readonly Promise<unknown>[]): Promise<ComposerUpdated> {
+  private async sendSealed(
+    document: ComposerDocument,
+    seal: Seal,
+    prepared: readonly Promise<unknown>[],
+    pressed: { epoch: number; taken: number },
+  ): Promise<ComposerUpdated> {
     if (!document.sealed(seal)) throw new Withdrawn();
     await Promise.allSettled(prepared);
     let epoch: number;
@@ -437,6 +455,13 @@ export class ComposerSession {
     } catch (error) {
       document.unseal(seal);
       throw error;
+    }
+    // Moved on by anything but the words sent from here, the draft went from
+    // another device: what is in it now is not these words to send. Those of
+    // them still in it are back in the input.
+    if (epoch !== pressed.epoch + (this.takenHere - pressed.taken)) {
+      document.unseal(seal);
+      throw new Error(SENT_ELSEWHERE);
     }
     document.asking(seal, epoch);
     const mutation: ComposerMutation = { do: "send", epoch, operation: crypto.randomUUID() };

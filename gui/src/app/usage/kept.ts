@@ -33,6 +33,12 @@ export function keepLoginsFor(accounts: () => AccountsReply | null | undefined):
       .join(" ");
 }
 
+/** Whom a read asked now is for, to be handed back with what it brings
+ *  (`keepRecord`). */
+export function readerNow(): string {
+  return reader();
+}
+
 export function keptRecord(machine: string): MachineLogins | null {
   const who = reader();
   const key = `${who}\n${machine}`;
@@ -43,8 +49,11 @@ export function keptRecord(machine: string): MachineLogins | null {
   return kept;
 }
 
-export function keepRecord(logins: MachineLogins): void {
+/** Keeps what a read brought for `asked`, whom it was asked for: not when
+ *  the accounts have changed since, whose record it would not be. */
+export function keepRecord(logins: MachineLogins, asked: string): void {
   const who = reader();
+  if (who !== asked) return;
   const key = `${who}\n${logins.machine}`;
   records.set(key, logins);
   if (!who) return;

@@ -35,7 +35,7 @@ import type { Store } from "../store";
 import { CallsList, type CallsContext } from "./calls";
 import type { CallsWords } from "./calls-words";
 import { bar, calendar, fitInks, meter, parts, punch, quota, weeks, type Amounts, type RingPart } from "./draw";
-import { keepRecord, keptRecord, keptReport, readReport, reportKey } from "./kept";
+import { keepRecord, keptRecord, keptReport, readerNow, readReport, reportKey } from "./kept";
 import { allowanceTrack, between, byDay, byHourOfWeek, dayOf, DAY_MS, daysBefore, longestRun, pace, total, track, valueOf, windowOf, type Person, type Span, type Unit, type Usage, type Went } from "./model";
 import { assistingMe, assistsOf, namer } from "./people";
 import { PreparedUsage } from "./prepared";
@@ -155,11 +155,12 @@ export class LoginUsagePage implements Page {
     clearTimeout(this.again);
     if (!options.workbench.peek()) return;
     this.asked = true;
+    const asked = readerNow();
     const record = options.read(options.machine).then((world) => {
       const heard = world.machines.find((one) => one.kind === "answered" && one.logins.machine === options.machine);
       if (heard?.kind === "answered") {
         this.record = heard.logins;
-        keepRecord(heard.logins);
+        keepRecord(heard.logins, asked);
       }
     });
     const report = readReport(this.key, () => options.usage(options.machine, options.agent, options.dir)).then((report) => {
