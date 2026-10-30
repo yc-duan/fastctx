@@ -69,7 +69,7 @@ import { drawDiagrams } from "./diagrams";
 import { readTold, undelivered, worldSaid, type UndeliveredWhy, type WorldSaid } from "./told";
 import { allowanceOf, detailOf, heldOf } from "../app/problem";
 import { AnchorLayout, AnchoredHeight, MemoryLines, type LinePaint, type ViewerSource } from "../longview";
-import { FEW, LongText, type LongLines, type LongTextWords, type OpenedText, type OtherSource } from "./long-text";
+import { FEW, LongText, type LongTextWords, type OpenedText, type OtherSource } from "./long-text";
 import { Printout, givenLines, type PrintoutEnd } from "./printout";
 import { Said, WholeOutput, outputPaint, type OpenedLines } from "./run-output";
 import "./say.css";
@@ -2862,7 +2862,7 @@ export class ConversationView {
    *  Any other call in its own words. */
   private printoutOf(entry: ToolEntry, scoped: readonly PlainDeed[] | null, deeds: readonly Deed[] | null, longs: OpenedText[], closers: (() => void)[], ending: boolean): HTMLElement {
     const { tool } = entry;
-    if (tool.does.as !== "command") return this.runWords(tool, longs, closers);
+    if (tool.does.as !== "command") return this.runWords(tool, longs);
     const { words, english } = this.context;
     const does = tool.does;
     const { shown, output } = toolText(tool, words);
@@ -2993,78 +2993,31 @@ export class ConversationView {
     };
   }
 
-  /** A run in its own words: what it was given above what it wrote. */
-  private runWords(tool: Tool, longs: OpenedText[], closers: (() => void)[]): HTMLElement {
-    const { words } = this.context;
-    // A World run says what the model got as facts: its own output, apart
-    // from what its writes printed of themselves, which their rows show.
-    const { run, shown, output, given, ending: endText } = toolText(tool, words);
-    const images = imagesOf(tool.output);
-    // What it was given above what it wrote, both from one edge, the
-    // output's box as wide as the surface; how much more there is and how
-    // it ended on one quiet line at the foot.
-    const surface = document.createElement("div");
-    surface.className = "surface io";
-    const part = (side: "in" | "out", label: string, text: string | LongLines, pictures = "", end = "") => {
-      const holder = document.createElement("div");
-      holder.className = `io-part io-${side}`;
-      holder.setAttribute("role", "group");
-      holder.setAttribute("aria-label", label);
-      const foot = document.createElement("div");
-      foot.className = "io-foot";
-      if (text) {
-        const long = new LongText(text, label, this.layoutAnchor, this.longWords());
-        longs.push(long);
-        holder.append(long.element);
-        const more = long.takeMore();
-        if (more) foot.append(more);
-        const full = long.takeFull();
-        if (full) {
-          if (end) foot.insertAdjacentHTML("beforeend", end);
-          end = "";
-          foot.append(full);
-        }
-      }
-      if (pictures) holder.insertAdjacentHTML("beforeend", `<div class="io-pictures">${pictures}</div>`);
-      if (end) foot.insertAdjacentHTML("beforeend", end);
-      if (foot.childElementCount) holder.append(foot);
-      surface.append(holder);
-    };
-    // What the model got, and beside it in the popup the whole
-    // output on its machine, where the model got less than the whole or the
-    // command went on after the model had its answer.
-    let printed: string | LongLines = output;
-    if (run && shown) {
-      const others: OtherSource[] = [];
-      const kept = run.output;
-      const going = stillGoing(run.state);
-      // A command that went on in the background gave the model only what it
-      // wrote before then; the rest is in the file, after it ended as well.
-      const wentOn = tool.does.as === "command" && tool.does.job !== null;
-      if (kept && run.job && this.context.lines && (kept.cut || going || wentOn)) {
-        const open = this.context.lines;
-        const job = run.job;
-        const whole = new WholeOutput(
-          () => open(kept.machine, kept.path, { kind: "output", job }),
-          { length: kept.lines, complete: !going },
-          (error) => new Said(gone(error) ? words.output.wholeGone : words.output.readFailed, detailOf(error)),
-        );
-        others.push({ label: words.output.whole, source: whole, close: () => whole.close() });
-        closers.push(() => whole.close());
-      }
-      // Numbered by place in the whole output where that is not simply the
-      // line's place here: something was left out, or a write's note was.
-      const plain = !shown.cut && shown.numbers.every((kept, index) => kept === index + 1);
-      printed = { lines: shown.lines, ...(plain ? {} : { paint: outputPaint(shown), inline: outputPaint(shown, false) }), name: words.output.modelCopy, others, wrap: true };
-    }
-    // How a command ended, under what it wrote.
-    const ending = endText ? `<span class="io-end${tool.does.as === "command" && !tool.does.job && tool.does.exit !== null && tool.does.exit !== 0 ? " nonzero" : ""}">${escape(endText)}</span>` : "";
-    // A command's output is named by the command; what else a call gave
-    // back, by what it is.
-    const named = tool.does.as === "command" ? tool.does.command.split("\n")[0]?.trim() : "";
-    if (given) part("in", words.output.input, given);
-    if (printed || images || ending) part("out", named || words.output.printed, printed, images, ending);
-    return surface;
+  /** Any other call in its own words, on the card a command has: what it
+   *  was given above a drawn rule, what it gave back below. */
+  private runWords(tool: Tool, longs: OpenedText[]): HTMLElement {
+    const { words, english } = this.context;
+    const { output, given } = toolText(tool, words);
+    const lines = (text: string) => (text ? text.replace(/\n$/, "").split("\n") : []);
+    const printout = new Printout({
+      label: words.output.printed,
+      command: lines(given),
+      lines: lines(output),
+      nothing: "",
+      pictures: imagesOf(tool.output),
+      layout: this.layoutAnchor,
+      words: {
+        more: words.moreLines,
+        less: words.showLess,
+        copy: words.output.copyOutput,
+        copied: words.copied,
+        whole: words.fullScreen,
+        english,
+        failed: (error) => (error instanceof Said ? error.message : words.output.readFailed),
+      },
+    });
+    longs.push(...printout.sides);
+    return printout.element;
   }
 
   /** What one of the host's own agents did, in its box under the row of

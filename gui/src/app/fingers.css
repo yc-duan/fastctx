@@ -19,15 +19,9 @@
   }
 
   .prose-copy,
-  .io-foot .long-text-full,
   .to-latest {
     width: 44px;
     height: 44px;
-  }
-
-  .io-foot .long-text-full {
-    margin-top: -12px;
-    margin-bottom: -12px;
   }
 
   /* Its line keeps its height: the target spills over it. */
