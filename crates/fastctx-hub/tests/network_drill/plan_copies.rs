@@ -37,8 +37,11 @@ pub async fn exercise(world: &World, report: &mut Report) -> anyhow::Result<()> 
             .map_err(anyhow::Error::msg)?,
     )?;
     let user = "# Work\n- [x] first\n- [ ] second\n";
+    // Exercise the legacy account-record endpoint. Passing an address to the
+    // modern helper selects owned records, whose separate fixture registers
+    // a conversation before reading or writing it.
     let user_page = beta
-        .plan_write(&world.account, owner.resident.clone(), first.version(), user.into(), Author::User, Some(&owner))
+        .plan_write(&world.account, owner.resident.clone(), first.version(), user.into(), Author::User, None)
         .await
         .map_err(anyhow::Error::msg)?;
     let PlanResult::Page { page: user_page } = user_page else { anyhow::bail!("the user save conflicted") };
@@ -69,7 +72,7 @@ pub async fn exercise(world: &World, report: &mut Report) -> anyhow::Result<()> 
             merged.version(),
             "hub conflict\n".into(),
             Author::User,
-            Some(&owner),
+            None,
         )
         .await
         .map_err(anyhow::Error::msg)?;
@@ -121,7 +124,7 @@ pub async fn exercise(world: &World, report: &mut Report) -> anyhow::Result<()> 
         "a lost receipt replays the original accepted result",
         "",
     );
-    let current = alpha.plan_read_of(&world.account, &owner).await.map_err(anyhow::Error::msg)?;
+    let current = alpha.plan_read(&world.account, owner.resident.clone()).await.map_err(anyhow::Error::msg)?;
     report.check(
         current.version() == chosen.version() && text(&current) == text(&chosen),
         "replaying an accepted edit cannot overwrite a later edit",
@@ -158,7 +161,7 @@ pub async fn exercise(world: &World, report: &mut Report) -> anyhow::Result<()> 
         "historical content remains verifiable after hub restart",
         "",
     );
-    let unchanged = alpha.plan_read_of(&world.account, &owner).await.map_err(anyhow::Error::msg)?;
+    let unchanged = alpha.plan_read(&world.account, owner.resident.clone()).await.map_err(anyhow::Error::msg)?;
     report.check(text(&unchanged) == "file conflict\n", "old readers still read the same current page", "");
     use sha2::{Digest, Sha256};
     let opened = alpha.view().account(&world.account).expect("account").opened;
