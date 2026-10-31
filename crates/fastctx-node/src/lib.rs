@@ -220,6 +220,9 @@ pub(crate) struct Node {
     /// What each hub was last told of each conversation's records
     /// (`record_ownership::Registered`).
     registered: record_ownership::Registered,
+    /// The latest read of each conversation's collaboration asked for here
+    /// (`colleagues::tree::Reads`).
+    collaboration_reads: colleagues::tree::Reads,
     plan_reads: plan_reads::Reads,
     skill_copies: skills::copies::Copies,
     skill_index: skills::cache::Cache,
@@ -698,6 +701,7 @@ pub async fn run_prepared(
         history_shelves: Default::default(),
         alone_ledgers: Default::default(),
         registered: Default::default(),
+        collaboration_reads: Default::default(),
         plan_reads: Default::default(),
         skill_copies: Default::default(),
         skill_index: Default::default(),

@@ -12,7 +12,45 @@ use fastctx_types::{
 use std::{collections::BTreeMap, sync::Arc, time::Duration};
 use tokio::time::Instant;
 
+/// How long one read of a conversation's collaboration answers every ask
+/// for it: a page asks whenever the World changes, many times a second
+/// while work goes on, and each read goes through every colleague's record.
+const FRESH: Duration = Duration::from_secs(1);
+
+/// How long a read no one asked again for is kept.
+const KEPT: Duration = Duration::from_secs(60);
+
+type Read = Arc<tokio::sync::Mutex<Option<(Instant, Result<Tree, Failure>)>>>;
+
+/// The latest read of each conversation's collaboration asked for here, by
+/// conversation and machine: asks that come together share one read.
+#[derive(Default)]
+pub(crate) struct Reads(std::sync::Mutex<std::collections::HashMap<String, Read>>);
+
+/// The collaboration of `id` as the user here sees it, read once for the
+/// asks that come within `FRESH` of each other.
 pub(crate) async fn query(node: &Arc<Node>, id: ResidentId, machine: Option<Written>) -> Result<Tree, Failure> {
+    let key = serde_json::to_string(&(&id, &machine)).map_err(|error| Failure::new(error.to_string()))?;
+    let read = {
+        let mut reads = node.collaboration_reads.0.lock().expect("never poisoned");
+        reads.retain(|_, read| {
+            Arc::strong_count(read) > 1
+                || read.try_lock().is_ok_and(|held| held.as_ref().is_some_and(|(at, _)| at.elapsed() < KEPT))
+        });
+        reads.entry(key).or_default().clone()
+    };
+    let mut held = read.lock().await;
+    if let Some((at, result)) = held.as_ref()
+        && at.elapsed() < FRESH
+    {
+        return result.clone();
+    }
+    let result = read_now(node, id, machine).await;
+    *held = Some((Instant::now(), result.clone()));
+    result
+}
+
+async fn read_now(node: &Arc<Node>, id: ResidentId, machine: Option<Written>) -> Result<Tree, Failure> {
     let acting = Acting::Here;
     let machine = match machine {
         Some(machine) => machine,
