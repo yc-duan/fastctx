@@ -748,8 +748,11 @@ impl Device {
         machine: &Written,
     ) -> Result<fastctx_types::management::Forgetting, Error> {
         let session = self.reaching(machine)?;
-        let account = session.link.account_of(&machine.name, resident).map_err(failed)?;
-        let conversation = Address { machine: machine.name.clone(), resident: resident.clone() };
+        let (account, conversation) = session
+            .link
+            .record_actor(&Address { machine: machine.name.clone(), resident: resident.clone() })
+            .await
+            .map_err(failed)?;
         match session.link.forget(&account, &conversation).await.map_err(failed)? {
             true => Ok(fastctx_types::management::Forgetting::Asked),
             false => Err(failed("not connected to the hub now; nothing was deleted, try again once connected")),

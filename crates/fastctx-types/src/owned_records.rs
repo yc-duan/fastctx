@@ -29,6 +29,10 @@ pub enum Request {
     Delete {
         resident: ResidentId,
     },
+    /// The runtime host durably records deletion recipients before removing ownership.
+    PrepareDeletion {
+        conversation: Address,
+    },
     Authorize {
         conversation: Address,
         reader: AccountName,
@@ -76,6 +80,7 @@ pub enum Response {
     Authorization { allowed: bool },
     Sentinels { registrations: Vec<crate::sentinel_control::Registration> },
     Deleted,
+    DeletionPrepared,
     Conversations { conversations: Vec<Conversation> },
     Replicas { catalog: crate::replicas::Catalog },
     Submitted { record: Option<account_records::Record> },

@@ -124,6 +124,10 @@ pub(crate) async fn ask(
         Request::Register { resident, shared, previous } => Response::Conversation {
             conversation: registration::register(hub, &from, &key, &account, resident, shared, previous).await?,
         },
+        Request::PrepareDeletion { conversation } => {
+            crate::forget::prepare(hub, &from, account.clone(), conversation)?;
+            Response::DeletionPrepared
+        }
         Request::Delete { resident } => {
             deletion::delete(hub, &from, &key, &account, &resident).await?;
             Response::Deleted

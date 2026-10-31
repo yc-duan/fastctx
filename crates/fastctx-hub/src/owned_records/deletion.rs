@@ -29,6 +29,7 @@ pub(super) async fn delete(
             if !hub.store().book.directory.same(&conversation.address.machine, from) {
                 return Err("delete a conversation through the computer that runs it".into());
             }
+            crate::forget::prepare(hub, from, account.clone(), conversation.address.clone())?;
         }
         if record.as_ref().is_some_and(|record| record.metadata.deleted) {
             break;
