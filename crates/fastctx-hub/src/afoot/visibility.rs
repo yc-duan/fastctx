@@ -57,16 +57,17 @@ pub(super) fn seen(
     let mut seen = Seen::default();
     let projected = Arc::make_mut(&mut seen.afoot);
     for (id, resident) in &afoot.residents {
+        // Born on a machine that is still the one, and still its owner's.
+        let born = resident.shared_on.as_ref().filter(|born| {
+            resident.born_seal.as_deref().is_some_and(|seal| {
+                directory.member(born).and_then(fastctx_net::record_ownership::seal).is_some_and(|now| now == seal)
+            })
+        });
         if shown(id)
             && (replicated_records || theirs(&resident.accounts))
-            && logins.iter().any(|account| {
-                fastctx_net::record_ownership::allows(
-                    directory,
-                    account,
-                    &resident.accounts,
-                    resident.shared_on.as_ref(),
-                )
-            })
+            && logins
+                .iter()
+                .any(|account| fastctx_net::record_ownership::allows(directory, account, &resident.accounts, born))
         {
             let mut summary = resident.resident.clone();
             summary.about.focus.machines.retain(|focused| {

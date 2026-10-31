@@ -11,6 +11,11 @@ pub struct Conversation {
     pub address: Address,
     /// An assisted birth is never opened to the host's whole-machine holders.
     pub shared_on: Option<MachineName>,
+    /// The machine it was born on as it was then: its key and the account it
+    /// was registered under. A machine that later takes the name, or the same
+    /// machine under another owner, holds none of its records.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub born_seal: Option<String>,
     /// Previous runtime addresses remain aliases after a manual conversation move.
     #[serde(default)]
     pub previous: Vec<MachineName>,

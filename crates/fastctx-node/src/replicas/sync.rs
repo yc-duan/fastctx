@@ -299,11 +299,18 @@ pub(crate) async fn repair_paths(node: &Arc<Node>, paths: &[PathBuf]) -> Result<
         let native = fastctx_platform::local_path(path).map_err(failure)?;
         let actual = fastctx_hands::files::canonical_path(&native).map_err(failure)?;
         let Some(slot) = node.replicas.state.at(&native).or_else(|| node.replicas.state.at(&actual)) else { continue };
-        let copy = slot.lock().await;
+        // A document being written may be waiting on the hub: its reader gets
+        // the copy as it stands rather than waiting with it (the writer
+        // repairs and publishes its own projection when it is done).
+        let Ok(copy) = tokio::time::timeout(READ_WAIT, slot.lock()).await else { continue };
         super::publication::repair(node, &copy)?;
     }
     Ok(())
 }
+
+/// How long a read waits for a document's writer before reading the copy
+/// as it stands.
+const READ_WAIT: std::time::Duration = std::time::Duration::from_secs(2);
 
 /// Preparing one newly opened conversation does not enumerate every other conversation.
 pub(crate) async fn conversation(

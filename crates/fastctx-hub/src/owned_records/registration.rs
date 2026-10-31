@@ -44,10 +44,18 @@ pub(super) async fn register(
             kept
         } else {
             let source = previous.clone().unwrap_or_else(|| from.clone());
+            let born = shared
+                .then(|| {
+                    let store = hub.store();
+                    let member = store.book.directory.member(&source)?;
+                    Some((member.name.clone(), fastctx_net::record_ownership::seal(member)?))
+                })
+                .flatten();
             Conversation {
                 account: account.clone(),
                 address: Address { machine: from.clone(), resident: resident.clone() },
-                shared_on: shared.then_some(source.clone()),
+                shared_on: born.as_ref().map(|(machine, _)| machine.clone()),
+                born_seal: born.map(|(_, key)| key),
                 previous: if source != *from { vec![source] } else { Vec::new() },
             }
         };

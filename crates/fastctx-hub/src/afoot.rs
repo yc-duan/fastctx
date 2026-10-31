@@ -95,6 +95,7 @@ enum Scope<'a> {
 /// `machine` told how what is afoot on it changed.
 pub(crate) fn heard(hub: &Hub, machine: &MachineName, mut change: AfootChange<AfootResident, AfootJob>) {
     fastctx_net::afoot::bounded::change(&mut change);
+    born_keys(hub, machine, &mut change.residents);
     {
         let mut afoots = hub.afoots();
         let Afoots { told, prior, rejected, .. } = &mut *afoots;
@@ -107,6 +108,42 @@ pub(crate) fn heard(hub: &Hub, machine: &MachineName, mut change: AfootChange<Af
         );
     }
     hub.afoots().publishing.request(Some(machine));
+}
+
+/// Seals each conversation's birth as the hub knows it: the registered
+/// birth, or for one not registered yet, the telling machine as it is now
+/// when it was born there; none otherwise. The seal, not the machine's name,
+/// says who holds it (`owned_records::born_on`). The account that opened it
+/// goes first among those it works for: it is who others are told opened it.
+fn born_keys(hub: &Hub, machine: &MachineName, residents: &mut [AfootResident]) {
+    if residents.iter().all(|resident| resident.shared_on.is_none()) {
+        return;
+    }
+    let store = hub.store();
+    let directory = &store.book.directory;
+    let owners = hub.account_records.owners.lock().expect("never poisoned");
+    for resident in residents {
+        resident.born_seal = None;
+        let Some(born) = resident.shared_on.clone() else { continue };
+        let address = fastctx_types::Address { machine: machine.clone(), resident: resident.resident.about.id.clone() };
+        resident.born_seal = match owners.at(directory, &address) {
+            Some(conversation) => {
+                if let Some(at) = resident.accounts.iter().position(|account| *account == conversation.account) {
+                    resident.accounts[..=at].rotate_right(1);
+                }
+                conversation
+                    .shared_on
+                    .as_ref()
+                    .is_some_and(|shared| directory.same(shared, &born))
+                    .then(|| conversation.born_seal.clone())
+                    .flatten()
+            }
+            None if directory.same(&born, machine) => {
+                directory.member(machine).and_then(fastctx_net::record_ownership::seal)
+            }
+            None => None,
+        };
+    }
 }
 
 /// Tells every member what changed in what it may see, after the directory
@@ -127,11 +164,15 @@ pub(crate) fn owned_by(hub: &Hub, conversation: &fastctx_types::Address, account
     let store = hub.store();
     let afoots = hub.afoots();
     let resident = afoots.told.get(&conversation.machine)?.residents.get(&conversation.resident)?;
+    let directory = &store.book.directory;
     Some(fastctx_net::record_ownership::allows(
-        &store.book.directory,
+        directory,
         account,
         &resident.accounts,
-        resident.shared_on.as_ref(),
+        resident
+            .shared_on
+            .as_ref()
+            .filter(|born| crate::owned_records::born_there(directory, born, resident.born_seal.as_deref())),
     ))
 }
 

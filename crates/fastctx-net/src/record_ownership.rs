@@ -18,6 +18,13 @@ pub fn allows<L: Lookup + ?Sized>(
             || shared_on.is_some_and(|machine| authorize(directory, reader, Action::Hold(machine)).is_ok()))
 }
 
+/// A machine as a birth on it is sealed: its key and the account it is
+/// registered under, so neither a newcomer taking its name nor a new owner of
+/// the same machine inherits what its earlier holders shared there.
+pub fn seal(member: &Member) -> Option<String> {
+    member.home.as_ref().map(|home| format!("{}:{home}", member.key))
+}
+
 /// A registered, logged-in computer keeps the records of its own account.
 /// A shared computer keeps only records belonging to its own holders, never
 /// one sharer's private records. Managed machines and phones keep no files.

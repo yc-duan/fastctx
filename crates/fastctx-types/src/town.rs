@@ -243,6 +243,11 @@ pub struct AfootResident {
     /// Older nodes omit this; their conversations remain account-private.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub shared_on: Option<MachineName>,
+    /// That machine as it was when the conversation was born, as the hub
+    /// knows it (`owned_records::Conversation::born_seal`); whatever a
+    /// machine says of it is replaced.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub born_seal: Option<String>,
 }
 
 /// A job running on a machine as the machine tells it, with the accounts of

@@ -60,6 +60,8 @@ fn of(node: &Node, link: &Link, reply: &WhoReply) -> Afoot {
                     resident: resident.clone().at_turn_grain(),
                     accounts,
                     shared_on: crate::record_ownership::origin(node, &resident.about),
+                    // The hub seals the birth itself.
+                    born_seal: None,
                 },
             );
         }

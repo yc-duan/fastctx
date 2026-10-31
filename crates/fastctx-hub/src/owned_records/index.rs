@@ -89,9 +89,26 @@ impl Index {
                 if directory.account(&identity.0).is_none_or(|account| account.opened != identity.1) {
                     return None;
                 }
-                self.conversations.get(&identity).cloned()
+                self.conversations.get(&identity).map(|conversation| super::verified(directory, conversation))
             })
             .collect()
+    }
+
+    /// The one conversation registered at `address`, whoever owns it.
+    pub(crate) fn at(&self, directory: &fastctx_net::directory::Directory, address: &Address) -> Option<&Conversation> {
+        let names: Vec<_> = match directory.member(&address.machine) {
+            Some(member) => std::iter::once(&member.name).chain(&member.was).collect(),
+            None => vec![&address.machine],
+        };
+        let mut found = names
+            .into_iter()
+            .filter_map(|name| self.addresses.get(&(name.clone(), address.resident.clone())))
+            .flatten()
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .filter_map(|identity| self.conversations.get(identity));
+        let conversation = found.next()?;
+        found.next().is_none().then_some(conversation)
     }
 
     pub(crate) fn resolve(
@@ -116,7 +133,7 @@ impl Index {
                 return None;
             }
             let conversation = self.conversations.get(&identity)?;
-            super::allows(directory, account, conversation).then(|| conversation.clone())
+            super::allows(directory, account, conversation).then(|| super::verified(directory, conversation))
         });
         let conversation = found.next().ok_or("this account has no record of that conversation")?;
         if found.next().is_some() {

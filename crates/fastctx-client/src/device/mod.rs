@@ -466,6 +466,14 @@ impl fastctx_net::link::Node for Handler {
         self.towns_changed();
     }
 
+    /// A conversation's history changed on some machine: the history the
+    /// device follows is read again.
+    fn account_record_changed(&self, change: &fastctx_types::account_records::Changed) {
+        if change.metadata.kind == fastctx_types::history::RECORD_KIND {
+            changed(&self.shown);
+        }
+    }
+
     fn directory_changed(&self) {
         let Some(link) = self.link.get().and_then(std::sync::Weak::upgrade) else { return };
         let view = link.view();

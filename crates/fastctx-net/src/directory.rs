@@ -355,6 +355,11 @@ impl Directory {
                 Arc::make_mut(acting).machine = to.clone();
             }
         }
+        for project in &mut self.projects {
+            if project.shared_on.as_ref() == Some(&old) {
+                Arc::make_mut(project).shared_on = Some(to.clone());
+            }
+        }
         Some(old)
     }
 

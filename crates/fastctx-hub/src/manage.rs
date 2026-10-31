@@ -1062,6 +1062,14 @@ fn forget_machine(directory: &mut fastctx_net::directory::Directory, name: &Mach
     directory.assists.retain(|assist| assist.machine != *name);
     directory.plans.retain(|plan| plan.machine != *name);
     directory.acting.retain(|acting| acting.machine != *name);
+    // A project opened there was its holders'; with the machine gone from
+    // them it is its owner's and those it is shared with, and no later
+    // holder of the name or the machine inherits it.
+    for project in &mut directory.projects {
+        if project.shared_on.as_ref() == Some(name) {
+            Arc::make_mut(project).shared_on = None;
+        }
+    }
 }
 
 /// Takes the member `name` off the hub: its logins, what was shared of it,

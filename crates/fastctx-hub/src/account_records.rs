@@ -267,6 +267,7 @@ pub(crate) async fn ask_as(
                                 .map_err(|error| error.to_string())?;
                         if old.account != ownership.account
                             || old.shared_on != ownership.shared_on
+                            || old.born_seal != ownership.born_seal
                             || (!store.book.directory.same(&ownership.address.machine, &old.address.machine)
                                 && !ownership.previous.contains(&old.address.machine))
                             || !old.previous.iter().all(|machine| ownership.previous.contains(machine))
@@ -279,6 +280,14 @@ pub(crate) async fn ask_as(
                             .directory
                             .authorize(&account, Action::Work(source))
                             .map_err(|error| error.to_string())?;
+                        // Born on that very machine: its key, not a name another may take.
+                        if !crate::owned_records::born_there(
+                            &store.book.directory,
+                            source,
+                            ownership.born_seal.as_deref(),
+                        ) {
+                            return Err("a shared birth names the key of the machine it was born on".into());
+                        }
                     }
                 }
 

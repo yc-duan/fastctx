@@ -36,8 +36,40 @@ pub(crate) fn allows(
         directory,
         actor,
         std::slice::from_ref(&conversation.account),
-        conversation.shared_on.as_ref(),
+        born_on(directory, conversation),
     )
+}
+
+/// The machine a conversation was born on, while the member of that name is
+/// the very machine it was born on: one that took the name after the first
+/// left the network (or was renamed to it) holds none of its records.
+pub(crate) fn born_on<'a>(
+    directory: &fastctx_net::directory::Directory,
+    conversation: &'a Conversation,
+) -> Option<&'a MachineName> {
+    let machine = conversation.shared_on.as_ref()?;
+    born_there(directory, machine, conversation.born_seal.as_deref()).then_some(machine)
+}
+
+pub(crate) fn born_there(
+    directory: &fastctx_net::directory::Directory,
+    machine: &MachineName,
+    seal: Option<&str>,
+) -> bool {
+    seal.is_some_and(|seal| {
+        directory.member(machine).and_then(fastctx_net::record_ownership::seal).is_some_and(|now| now == seal)
+    })
+}
+
+/// A conversation as it is told to others: its birth machine only while
+/// that machine is still the one it was born on.
+pub(crate) fn verified(directory: &fastctx_net::directory::Directory, conversation: &Conversation) -> Conversation {
+    let mut told = conversation.clone();
+    if born_on(directory, conversation).is_none() {
+        told.shared_on = None;
+        told.born_seal = None;
+    }
+    told
 }
 
 pub(crate) fn check(
