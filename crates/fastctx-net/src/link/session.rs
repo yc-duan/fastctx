@@ -12,7 +12,7 @@ use std::time::Duration;
 
 use futures_util::{SinkExt as _, StreamExt as _};
 use jiff::Timestamp;
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::{mpsc, oneshot, watch};
 use tokio::task::JoinHandle;
 use tokio::time::Instant;
 use tokio_tungstenite::tungstenite::Message as WsMessage;
@@ -388,12 +388,14 @@ async fn connected(
     let (letter_failed, mut letters_failed) = oneshot::channel::<String>();
     let (outbox_failed, mut outbox_failure) = oneshot::channel::<String>();
     let (deliveries, delivered) = mpsc::channel(DELIVERIES);
+    // Set once this connection's view is current: letters are admitted by it.
+    let (view_ready, view_current) = watch::channel(false);
     let pinged: Arc<std::sync::Mutex<std::collections::HashMap<u64, Instant>>> = Arc::default();
     let mut tasks = Tasks(vec![
         writer,
         tokio::spawn(heartbeat(inner.clone(), up.clone(), pinged.clone(), pulse.clone())),
         tokio::spawn(flush(inner.clone(), up.clone(), taken, outbox_failed)),
-        tokio::spawn(take_letters(inner.clone(), up.clone(), hub_letters, delivered, letter_failed)),
+        tokio::spawn(take_letters(inner.clone(), up.clone(), hub_letters, delivered, view_current, letter_failed)),
     ]);
     let (returned, mut preferred_back) = oneshot::channel::<Upstream>();
     let mut preferred = tried[..tried.len() - 1].to_vec();
@@ -429,6 +431,7 @@ async fn connected(
                 }
             }
             inner.view_synced.store(generation, std::sync::atomic::Ordering::Release);
+            let _ = view_ready.send(true);
             // Records may have changed while disconnected even when the directory
             // itself is identical. Readers reconcile once this view is current.
             let _ = inner.record_changes.send(None);
@@ -907,13 +910,22 @@ async fn flush(inner: Arc<Inner>, up: Outgoing, mut sent: u64, failed: oneshot::
 
 /// Takes the hub's letters in the order the hub numbered them, and tells
 /// the hub they are taken, once for each run of them that came together.
+///
+/// None is taken before this connection's view is current: admitting a
+/// letter needs it, and a letter refused for want of it would end the
+/// connection, the next one delivering it again before its view. Letters
+/// wait meanwhile in `delivered`, which holds more than the hub sends ahead.
 async fn take_letters(
     inner: Arc<Inner>,
     up: Outgoing,
     hub_letters: u64,
     mut delivered: mpsc::Receiver<(u64, Envelope)>,
+    mut view_current: watch::Receiver<bool>,
     failed: oneshot::Sender<String>,
 ) {
+    if view_current.wait_for(|current| *current).await.is_err() {
+        return;
+    }
     while let Some(first) = delivered.recv().await {
         let mut run = vec![first];
         while run.len() < TAKEN_AT_ONCE {

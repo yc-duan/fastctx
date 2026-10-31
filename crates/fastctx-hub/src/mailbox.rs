@@ -12,6 +12,10 @@
 //! numbered them: a number given out is not passed until its letter is
 //! written or given up, so a letter written sooner never goes ahead of one
 //! numbered before it, and a receipt never counts for a letter not sent.
+//! A session's letters go once it was told its view (`view_told`), or ten
+//! seconds on if it never asks: a member admits no letter before it has
+//! its view, and one refused then would end the session, the next one
+//! delivering it again before its view.
 //!
 //! A letter the member took is deleted only once the records number past
 //! it (`crate::records`): until then a stop would give its number out again,
@@ -41,6 +45,12 @@ use crate::{Hub, Out};
 const WINDOW: usize = 256;
 /// The most bytes of them.
 const WINDOW_BYTES: u64 = 8 * 1024 * 1024;
+/// How long after its view was told a session's letters wait: a member
+/// admits none before it has taken in its view, which an earlier release
+/// does on its own time once the answer came.
+const VIEW_TAKEN: Duration = Duration::from_millis(300);
+/// How long a session's letters wait for a view it never asks for.
+const VIEW_UNASKED: Duration = Duration::from_secs(10);
 
 /// What the hub knows of the letters waiting for one member, of one
 /// numbering of them (`crate::store::Letters::out_epoch`).
@@ -90,6 +100,10 @@ struct Sending {
     on_way_bytes: u64,
     /// Whether letters are being read for it now.
     pumping: bool,
+    /// Whether letters may go to it yet: not before its view was told
+    /// (`view_told`), as a member that takes one before it has its view
+    /// cannot admit it.
+    viewed: bool,
 }
 
 impl Sending {
@@ -151,10 +165,40 @@ pub(crate) fn opened(
     let mailbox = of(store, name, epoch);
     // A member that numbers the hub's letters afresh takes them all again.
     mailbox.taken = taken;
-    mailbox.to =
-        Some(Sending { generation, out, sent: taken, on_way: VecDeque::new(), on_way_bytes: 0, pumping: false });
+    mailbox.to = Some(Sending {
+        generation,
+        out,
+        sent: taken,
+        on_way: VecDeque::new(),
+        on_way_bytes: 0,
+        pumping: false,
+        viewed: false,
+    });
     drop_taken(hub, store, name);
-    pump(hub, store, name);
+    release(hub, name, generation, VIEW_UNASKED);
+}
+
+/// The session `generation` of `name` was told its view: its letters go
+/// once it has taken it in.
+pub(crate) fn view_told(hub: &Arc<Hub>, name: &MachineName, generation: u64) {
+    release(hub, name, generation, VIEW_TAKEN);
+}
+
+/// Lets letters go to the session `generation` of `name` after `after`.
+fn release(hub: &Arc<Hub>, name: &MachineName, generation: u64, after: Duration) {
+    let (hub, name) = (Arc::downgrade(hub), name.clone());
+    tokio::spawn(async move {
+        tokio::time::sleep(after).await;
+        let Some(hub) = hub.upgrade() else { return };
+        let mut store = hub.store();
+        let Some(mailbox) = sending(&mut store, &name, generation) else { return };
+        let to = mailbox.to.as_mut().expect("its session");
+        if to.viewed {
+            return;
+        }
+        to.viewed = true;
+        pump(&hub, &mut store, &name);
+    });
 }
 
 /// The session `generation` of `name` ended.
@@ -263,7 +307,7 @@ fn drop_taken(hub: &Arc<Hub>, store: &mut Store, name: &MachineName) {
 pub(crate) fn pump(hub: &Arc<Hub>, store: &mut Store, name: &MachineName) {
     let Some(mailbox) = store.mailboxes.get_mut(name) else { return };
     let Some(to) = mailbox.to.as_ref() else { return };
-    if to.pumping || to.full() || (mailbox.loaded && !mailbox.waiting(to)) {
+    if !to.viewed || to.pumping || to.full() || (mailbox.loaded && !mailbox.waiting(to)) {
         return;
     }
     let generation = to.generation;

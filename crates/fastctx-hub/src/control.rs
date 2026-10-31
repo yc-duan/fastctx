@@ -990,8 +990,13 @@ fn handle(
             });
         }
         Up::Ask { id, question } => {
+            let view = matches!(question, Question::Directory);
             let answer = ask(hub, name, question);
+            let told = view && answer.is_ok();
             reply(Down::Told { id, answer });
+            if told {
+                crate::mailbox::view_told(hub, name, generation);
+            }
         }
         Up::QuestionPart { .. } | Up::CancelQuestion { .. } => unreachable!("assembled by the connection"),
         Up::Hello { .. } => {
