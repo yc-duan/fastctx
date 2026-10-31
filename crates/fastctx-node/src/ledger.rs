@@ -30,11 +30,11 @@ use fastctx_types::access::{HubAccount, TownId};
 use fastctx_types::ipc::Failure;
 use fastctx_types::layout::{TownDir, WorldDir};
 use fastctx_types::{MachineName, TownName};
-use jiff::Timestamp;
 
 use crate::Node;
 use names::Place;
 
+pub(crate) mod alone;
 pub(crate) mod deletion;
 pub(crate) mod letgo;
 pub(crate) mod metadata;
@@ -153,75 +153,19 @@ async fn write_for(
                     "the project's ledger moved while the write was being prepared; read it again",
                 ));
             }
-            tokio::task::spawn_blocking(move || write_alone(&world, &here, &town, &place, files, machines))
-                .await
-                .map_err(|error| Failure::new(format!("writing the ledger: {error}")))?
-                .map_err(Failure::new)
+            let node = node.clone();
+            tokio::task::spawn_blocking(move || {
+                alone::write(&node.alone_ledgers, &world, &here, &town, &place, files, machines)
+            })
+            .await
+            .map_err(|error| Failure::new(format!("writing the ledger: {error}")))?
+            .map_err(Failure::new)
         }
         None => Err(Failure::new(format!(
             "the project {town} is kept on the hub {}, which this computer is not logged in to",
             place.hub
         ))),
     }
-}
-
-/// A computer on no hub: the entry is checked as the hub would check it,
-/// numbered, and taken here.
-fn write_alone(
-    world: &WorldDir,
-    here: &MachineName,
-    town: &TownName,
-    place: &Place,
-    files: Vec<File>,
-    machines: Option<Vec<MachineName>>,
-) -> Result<(), String> {
-    let directory = world.town(town);
-    let entries = read_all(world, &directory).map_err(|error| format!("reading {town}'s ledger: {error}"))?;
-    if entries.is_empty() && machines.is_none() {
-        return Err(format!("the project {town} has no record yet; its first version says which machines it spans"));
-    }
-    if let Some(machines) = &machines
-        && let Some(stranger) = machines.iter().find(|machine| *machine != here)
-    {
-        return Err(format!(
-            "there is no machine named {stranger}; this computer, {here}, is in no network, so a project spans only it"
-        ));
-    }
-    let known: Vec<&str> =
-        entries.iter().flat_map(|(_, entry, _)| entry.files.iter().map(|file| file.path.as_str())).collect();
-    for (index, file) in files.iter().enumerate() {
-        if files[..index].iter().any(|other| ledger::conflicts(&other.path, &file.path)) {
-            return Err(format!("the entry names {} twice", file.path));
-        }
-        if let Some(taken) = known.iter().find(|path| ledger::conflicts(path, &file.path)) {
-            return Err(format!("{town} has {taken} already; nothing in a ledger is written twice"));
-        }
-    }
-    let key = own_key(world).map_err(|error| format!("this machine's key: {error}"))?;
-    let entry = Entry {
-        hub: place.hub.clone(),
-        town: place.town.clone(),
-        author: here.clone(),
-        key: key.public(),
-        at: Timestamp::now(),
-        machines,
-        files,
-    };
-    let mut memory = fastctx_net::memory::Index::default();
-    let mut history = fastctx_net::topic_history::Index::default();
-    for (_, previous, _) in &entries {
-        memory.take(previous)?;
-        history.take(previous)?;
-    }
-    memory.check(&entry.files)?;
-    if let Some(revision) = fastctx_net::topic_history::decode(&entry.files)? {
-        history.check(&revision)?;
-    }
-    check_size(&entry)?;
-    let signed = ledger::sign(&key, &entry);
-    let seq = entries.last().map(|(seq, _, _)| *seq).unwrap_or(0) + 1;
-    apply(world, town, seq, &entry, &signed).map_err(|error| format!("keeping the entry: {error}"))?;
-    Ok(())
 }
 
 /// Checks the encoded multipart limit before any files are kept.
@@ -613,6 +557,20 @@ pub fn seq(world: &WorldDir, town: &TownName) -> io::Result<u64> {
         return Ok(index.seq);
     }
     replica_seq(world, town)
+}
+
+/// The entry of `town` numbered `seq`, when this machine has it.
+pub(crate) fn entry(world: &WorldDir, town: &TownName, seq: u64) -> io::Result<Option<Entry>> {
+    let directory = world.town(town).signed();
+    let path = directory.join(format!("{seq:020}.json"));
+    let path = match path.try_exists()? {
+        true => path,
+        false => match numbered(&directory)?.into_iter().find(|(number, _)| *number == seq) {
+            Some((_, path)) => path,
+            None => return Ok(None),
+        },
+    };
+    Ok(Some(read_entry(world, &path)?.0))
 }
 
 /// The full copy's cursor; an index-only cache is never a replicated entry.

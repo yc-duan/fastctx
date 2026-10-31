@@ -116,22 +116,10 @@ pub(crate) async fn intercept(
             && let fastctx_types::files::SeenVersion::Full { sha256 } = &seen.version
             && fastctx_hands::files::content_hash(before.as_bytes()) != *sha256
         {
-            let mut found = None;
-            if let Some(document) = &document {
-                for version in document.versions.iter().rev() {
-                    if let HistoryReply::Document { document } = super::local::call(
-                        node,
-                        HistoryCall::Read { scope: scope.clone(), name: name.clone(), version: Some(version.version) },
-                        None,
-                    )
-                    .await?
-                        && fastctx_hands::files::content_hash(document.text.as_bytes()) == *sha256
-                    {
-                        found = Some(document.text);
-                        break;
-                    }
-                }
-            }
+            let found = match &document {
+                Some(_) => super::local::seen(node, &scope, &name, sha256).await?,
+                None => None,
+            };
             before = found.ok_or_else(|| failure("the observed history version is unavailable; read it again"))?;
         }
     }

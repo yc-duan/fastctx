@@ -1,32 +1,19 @@
 //! Standalone history has the same revision rules without a network account.
+//! Each scope is read through its shelf (`super::shelf`): only what changed
+//! since the last call and the text a call needs come from disk, and only
+//! the local copy of a document that moved on is written again.
 
 use crate::Node;
 use fastctx_types::{
-    history::{Author, Catalog, Document, HistoryCall, HistoryReply, Scope, stored::Stored},
+    history::{Author, HistoryCall, HistoryReply, Scope, stored::Stored},
     ipc::Failure,
 };
-use std::{
-    io,
-    path::{Path, PathBuf},
-    sync::Arc,
-};
+use std::{path::PathBuf, sync::Arc};
+
+use super::shelf::{Of, Place, Shelf};
 
 fn failure(error: impl std::fmt::Display) -> Failure {
     Failure::new(error.to_string())
-}
-
-pub(crate) struct Store {
-    pub index: fastctx_net::topic_history::Index,
-    pub files: Vec<fastctx_net::ledger::File>,
-}
-
-pub(crate) fn project(world: &fastctx_types::layout::WorldDir, town: &fastctx_types::TownName) -> io::Result<Store> {
-    let mut store = Store { index: Default::default(), files: Vec::new() };
-    for (_, entry) in crate::ledger::entries_after(world, town, 0)? {
-        store.index.take(&entry).map_err(io::Error::other)?;
-        store.files.extend(entry.files.into_iter().filter(|file| file.path.starts_with("history/")));
-    }
-    Ok(store)
 }
 
 pub(crate) fn directory(node: &Node, scope: &Scope) -> PathBuf {
@@ -40,27 +27,36 @@ pub(crate) fn directory(node: &Node, scope: &Scope) -> PathBuf {
     }
 }
 
-fn versions(directory: &Path, name: &str) -> Result<Vec<Stored>, String> {
-    fastctx_types::history::markdown::check_name(name)?;
-    let mut versions = Vec::new();
-    match std::fs::read_dir(directory.join(name)) {
-        Ok(files) => {
-            for file in files {
-                let path = file.map_err(|error| error.to_string())?.path();
-                if path.extension().is_some_and(|extension| extension == "json") {
-                    let stored: Stored =
-                        serde_json::from_slice(&std::fs::read(path).map_err(|error| error.to_string())?)
-                            .map_err(|error| error.to_string())?;
-                    stored.validate()?;
-                    versions.push(stored);
-                }
-            }
+fn place(node: &Node, scope: &Scope) -> Place {
+    let of = match scope {
+        Scope::Project { project } => Of::Project { world: node.world.clone(), town: project.clone() },
+        Scope::Conversation { .. } => Of::Conversation { records: directory(node, scope) },
+    };
+    Place { of, copies: super::local_copy::folder(node, scope) }
+}
+
+/// Runs `work` on the shelf and its place on a thread meant to block, and
+/// gives both back. A shelf whose work failed is let go: it may hold part
+/// of a change, and the next call reads the scope afresh.
+async fn on_shelf<R: Send + 'static>(
+    shelf: &mut Shelf,
+    place: Place,
+    work: impl FnOnce(&mut Shelf, &Place) -> Result<R, String> + Send + 'static,
+) -> Result<(R, Place), Failure> {
+    let mut taken = std::mem::take(shelf);
+    let (taken, result, place) = tokio::task::spawn_blocking(move || {
+        let result = work(&mut taken, &place);
+        (taken, result, place)
+    })
+    .await
+    .map_err(failure)?;
+    match result {
+        Ok(value) => {
+            *shelf = taken;
+            Ok((value, place))
         }
-        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-        Err(error) => return Err(error.to_string()),
+        Err(error) => Err(failure(error)),
     }
-    versions.sort_by_key(|stored| stored.revision.version);
-    Ok(versions)
 }
 
 pub(crate) async fn call(
@@ -70,165 +66,121 @@ pub(crate) async fn call(
 ) -> Result<HistoryReply, Failure> {
     let scope = request.scope().clone();
     let identity = serde_json::to_string(&scope).map_err(failure)?;
-    let gate = node.local_history.get_or_insert_with(&identity, || tokio::sync::Mutex::new(()));
-    let _local = gate.lock().await;
-    let mut documents = Vec::new();
-    match &scope {
-        Scope::Project { project: town } => {
-            let (world, town) = (node.world.clone(), town.clone());
-            let store =
-                tokio::task::spawn_blocking(move || project(&world, &town)).await.map_err(failure)?.map_err(failure)?;
-            for revision in store.index.catalog().documents {
-                documents.push(store.index.document(&revision.name, None, &store.files).map_err(failure)?);
-            }
-        }
-        Scope::Conversation { .. } => {
-            let directory = directory(node, &scope);
-            documents = tokio::task::spawn_blocking(move || {
-                let mut documents = Vec::new();
-                match std::fs::read_dir(&directory) {
-                    Ok(entries) => {
-                        for entry in entries {
-                            let entry = entry.map_err(|error| error.to_string())?;
-                            if !entry.file_type().map_err(|error| error.to_string())?.is_dir() {
-                                continue;
-                            }
-                            let name = entry.file_name().to_string_lossy().to_string();
-                            let all = versions(&directory, &name)?;
-                            if let Some(stored) = all.last() {
-                                documents.push(Document {
-                                    revision: stored.revision.clone(),
-                                    text: stored.text.clone(),
-                                    versions: all.into_iter().map(|stored| stored.revision).collect(),
-                                });
-                            }
-                        }
-                    }
-                    Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-                    Err(error) => return Err(error.to_string()),
-                }
-                Ok::<_, String>(documents)
-            })
-            .await
-            .map_err(failure)?
-            .map_err(failure)?;
-        }
-    }
-    let projection = super::local_copy::folder(node, &scope);
-    for document in &documents {
-        let path = projection.join(format!("{}.md", document.revision.name));
-        if document.revision.retired {
-            crate::replicas::files::delete(&path).map_err(failure)?;
-        } else {
-            crate::replicas::files::publish(&path, &document.text, Some(&document.text)).map_err(failure)?;
-        }
-    }
-    let read = |name: &str| {
-        documents
-            .iter()
-            .find(|document| document.revision.name == name)
-            .cloned()
-            .ok_or_else(|| failure("the history document does not exist"))
-    };
+    let shelf = node.history_shelves.of(&identity);
+    let mut shelf = shelf.lock().await;
+    let ((), at) = on_shelf(&mut shelf, place(node, &scope), |shelf, place| {
+        shelf.refresh(place)?;
+        shelf.keep_copies(place)
+    })
+    .await?;
     let (name, text, expected, retired) = match request {
-        HistoryCall::List { .. } => {
-            let mut catalog = Catalog { documents: documents.into_iter().map(|document| document.revision).collect() };
-            catalog.sort();
-            return Ok(HistoryReply::Catalog { catalog });
-        }
+        HistoryCall::List { .. } => return Ok(HistoryReply::Catalog { catalog: shelf.catalog() }),
         HistoryCall::Read { name, version, .. } => {
-            let mut document = read(&name)?;
-            if let Some(version) = version {
-                let stored = revision(node, &scope, &name, version).await?;
-                document.revision = stored.revision;
-                document.text = stored.text;
-            }
+            let (document, _) = on_shelf(&mut shelf, at, move |shelf, place| {
+                let mut document = shelf.whole(place, &name)?.ok_or("the history document does not exist")?;
+                if let Some(version) = version {
+                    let stored = shelf.stored(place, &name, version)?;
+                    document.revision = stored.revision;
+                    document.text = stored.text;
+                }
+                Ok(document)
+            })
+            .await?;
             return Ok(HistoryReply::Document { document: Box::new(document) });
         }
         HistoryCall::Save { name, text, expected, .. } => (name, text, expected, false),
-        HistoryCall::Retire { name, expected, .. } => (name.clone(), read(&name)?.text, Some(expected), true),
+        HistoryCall::Retire { name, expected, .. } => {
+            let current = shelf.document(&name).ok_or_else(|| failure("the history document does not exist"))?;
+            let version = current.latest.version;
+            let latest = name.clone();
+            let (stored, _) =
+                on_shelf(&mut shelf, place(node, &scope), move |shelf, place| shelf.stored(place, &latest, version))
+                    .await?;
+            (name, stored.text, Some(expected), true)
+        }
         HistoryCall::Restore { name, version, .. } => {
-            let stored = revision(node, &scope, &name, version).await?;
-            let expected = read(&name)?.revision.version;
+            let current = shelf.document(&name).ok_or_else(|| failure("the history document does not exist"))?;
+            let expected = current.latest.version;
+            let restored = name.clone();
+            let (stored, _) =
+                on_shelf(&mut shelf, place(node, &scope), move |shelf, place| shelf.stored(place, &restored, version))
+                    .await?;
             (name, stored.text, Some(expected), false)
         }
     };
     let author = author.ok_or_else(|| failure("history writes require attribution"))?;
-    let current =
-        documents.iter().find(|document| document.revision.name == name).map(|document| document.revision.version);
+    let current = shelf.document(&name).map(|document| document.latest.version);
     if expected != current {
         return Err(failure(fastctx_types::history::conflict(current)));
     }
+    // What the local copy held, so writing the new text over it leaves no
+    // trace of tampering.
+    let previous = match current {
+        None => None,
+        Some(version) => {
+            let before = name.clone();
+            let (stored, _) =
+                on_shelf(&mut shelf, place(node, &scope), move |shelf, place| shelf.stored(place, &before, version))
+                    .await?;
+            Some(stored.text)
+        }
+    };
     let (revision, files) =
         fastctx_net::topic_history::revision_files(&name, &text, expected, retired, author, None).map_err(failure)?;
+    let digest = fastctx_net::sign::sha256(text.as_bytes());
     match &scope {
+        // The new entry is read into the shelf by the next call.
         Scope::Project { project } => crate::ledger::write_memory(node, project, files, None).await?,
         Scope::Conversation { .. } => {
             let folder = directory(node, &scope);
             let stored = Stored { revision: revision.clone(), text: text.clone(), submission: None };
             let _gate = node.syncing.lock().await;
             tokio::task::spawn_blocking(move || {
-                let current = versions(&folder, &name)?.last().map(|stored| stored.revision.version);
-                if current != expected {
-                    return Err(fastctx_types::history::conflict(current));
-                }
-                let path = folder.join(&name).join(format!("{}.json", stored.revision.version));
+                let path = folder.join(&stored.revision.name).join(format!("{}.json", stored.revision.version));
                 fastctx_platform::ensure_private_dir(path.parent().expect("revision parent"))
                     .map_err(|error| error.to_string())?;
+                // A version is written once: one written meanwhile by another
+                // writer is a conflict, never overwritten.
                 fastctx_platform::publish_new(
                     &path,
                     &serde_json::to_vec(&stored).map_err(|error| error.to_string())?,
                     fastctx_platform::Permissions::Private,
                 )
-                .map_err(|error| error.to_string())
+                .map_err(|error| match error.kind() {
+                    std::io::ErrorKind::AlreadyExists => {
+                        fastctx_types::history::conflict(Some(stored.revision.version))
+                    }
+                    _ => error.to_string(),
+                })
             })
             .await
             .map_err(failure)?
             .map_err(failure)?;
+            shelf.put(revision.clone(), digest, 0);
         }
     }
-    let path = projection.join(format!("{}.md", revision.name));
-    if retired {
-        crate::replicas::files::delete(&path).map_err(failure)?;
-    } else {
-        crate::replicas::files::publish(
-            &path,
-            &text,
-            documents
-                .iter()
-                .find(|document| document.revision.name == revision.name)
-                .map(|document| document.text.as_str()),
-        )
-        .map_err(failure)?;
-    }
+    let saved = revision.clone();
+    let written = (!retired).then_some(text);
+    on_shelf(&mut shelf, place(node, &scope), move |shelf, place| {
+        let path = place.copies.join(format!("{}.md", saved.name));
+        shelf.write_copy(&path, &saved.name, &saved, written.as_deref(), previous.as_deref())
+    })
+    .await?;
     node.memory_changed();
     Ok(HistoryReply::Saved { revision: Box::new(revision) })
 }
 
-async fn revision(node: &Arc<Node>, scope: &Scope, name: &str, version: u64) -> Result<Stored, Failure> {
-    match scope {
-        Scope::Project { project: town } => {
-            let (world, town, name) = (node.world.clone(), town.clone(), name.to_string());
-            tokio::task::spawn_blocking(move || {
-                let store = project(&world, &town).map_err(|error| error.to_string())?;
-                let document = store.index.document(&name, Some(version), &store.files)?;
-                Ok::<_, String>(Stored { revision: document.revision, text: document.text, submission: None })
-            })
-            .await
-            .map_err(failure)?
-            .map_err(failure)
-        }
-        Scope::Conversation { .. } => {
-            let (folder, name) = (directory(node, scope), name.to_string());
-            tokio::task::spawn_blocking(move || {
-                versions(&folder, &name)?
-                    .into_iter()
-                    .find(|stored| stored.revision.version == version)
-                    .ok_or_else(|| "the history revision does not exist".to_string())
-            })
-            .await
-            .map_err(failure)?
-            .map_err(failure)
-        }
-    }
+/// The text of the newest version of `name` in `scope` whose digest is
+/// `sha256`: what a conversation saw of a document before writing it.
+pub(crate) async fn seen(node: &Arc<Node>, scope: &Scope, name: &str, sha256: &str) -> Result<Option<String>, Failure> {
+    let identity = serde_json::to_string(scope).map_err(failure)?;
+    let shelf = node.history_shelves.of(&identity);
+    let mut shelf = shelf.lock().await;
+    let (name, sha256) = (name.to_string(), sha256.to_string());
+    let (text, _) = on_shelf(&mut shelf, place(node, scope), move |shelf, place| {
+        shelf.refresh(place)?;
+        shelf.seen(place, &name, &sha256)
+    })
+    .await?;
+    Ok(text)
 }

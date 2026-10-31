@@ -211,7 +211,12 @@ pub(crate) struct Node {
     copies: placement::copies::Copies,
     context_bodies: context::memory::Bodies,
     replicas: replicas::Copies,
-    local_history: leases::Registry<String, tokio::sync::Mutex<()>>,
+    /// What this machine keeps in memory of each history scope, when it
+    /// has no network (`history::shelf`).
+    history_shelves: history::shelf::Shelves,
+    /// What this machine keeps in memory of the ledgers it writes alone
+    /// (`ledger::alone`).
+    alone_ledgers: ledger::alone::Ledgers,
     plan_reads: plan_reads::Reads,
     skill_copies: skills::copies::Copies,
     skill_index: skills::cache::Cache,
@@ -685,7 +690,8 @@ pub async fn run_prepared(
         copies: Default::default(),
         context_bodies: Default::default(),
         replicas: Default::default(),
-        local_history: Default::default(),
+        history_shelves: Default::default(),
+        alone_ledgers: Default::default(),
         plan_reads: Default::default(),
         skill_copies: Default::default(),
         skill_index: Default::default(),

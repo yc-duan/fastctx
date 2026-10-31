@@ -5,3 +5,4 @@ pub(crate) mod context;
 pub(crate) mod identity;
 pub(crate) mod local;
 pub(crate) mod local_copy;
+pub(crate) mod shelf;
