@@ -10,21 +10,24 @@
 //! tells each once.
 
 use std::collections::{HashMap, VecDeque};
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use arc_swap::ArcSwap;
 use fastctx_net::directory::Level;
 use fastctx_net::directory_index::Indexed;
 use fastctx_net::sign::PublicKey;
+use fastctx_platform::doing::Rank;
 use fastctx_types::health::Near;
 use fastctx_types::trouble::{Trouble, TroubleKind};
+use fastctx_types::update::Kind;
 use fastctx_types::{AccountName, MachineName};
 use jiff::{SignedDuration, Timestamp};
 use serde::{Deserialize, Serialize};
 
 use crate::Hub;
+use crate::locks::Mutex;
 use crate::store::rows::{Changes, Put, body};
 use crate::store::shelf::Shelf;
 
@@ -41,10 +44,15 @@ const ROWS: &str = "troubles";
 /// `CONNECTED_WITHIN` dropped too often.
 const DROPS: usize = 3;
 const CONNECTED_WITHIN: Duration = Duration::from_secs(60 * 60);
-/// Machines that went silent within `SILENT_WITHIN`, past `OUTAGE_LEAST` and
-/// a tenth of the network, lost their line together.
+/// The most connections of one machine remembered.
+const CONNECTIONS_KEPT: usize = 256;
+/// Machines meant to stay up that went silent within `SILENT_WITHIN`, past
+/// `OUTAGE_LEAST` and a tenth of all such machines, lost their line together.
 const SILENT_WITHIN: Duration = Duration::from_secs(5 * 60);
 const OUTAGE_LEAST: usize = 5;
+/// How often what no longer counts is let go of, and how many machines are
+/// meant to stay up is counted again.
+const RECOUNT: Duration = Duration::from_secs(60);
 
 /// How long one kind of trouble of one machine, or of the network, is not
 /// told again.
@@ -60,6 +68,24 @@ fn quiet(kind: TroubleKind) -> SignedDuration {
         | TroubleKind::Rollout
         | TroubleKind::Other => SignedDuration::from_hours(1),
     }
+}
+
+/// The longest `quiet`.
+const QUIET_LONGEST: SignedDuration = SignedDuration::from_hours(24);
+
+/// Whether a machine of `kind`, as it last reported, holds its line while it
+/// is up, so that the line coming and going is told: all but a phone, whose
+/// line comes and goes with it.
+fn steady(kind: Option<Kind>) -> bool {
+    kind != Some(Kind::Phone)
+}
+
+/// Whether a machine of `kind` is meant to stay up, so that its silence is
+/// told: one with no application, such as a server. A computer someone sits
+/// at, a managed one and a phone sleep, shut down or lose power at will, all
+/// of which the hub hears as silence.
+fn stays_up(kind: Option<Kind>) -> bool {
+    kind == Some(Kind::Headless)
 }
 
 /// A trouble as it is kept.
@@ -98,13 +124,37 @@ pub(crate) struct Troubles {
     shelf: Shelf,
     kept: ArcSwap<Shelved>,
     next: AtomicU64,
+    recent: Mutex<Recent>,
+}
+
+/// What the rules remember between one event and the next.
+#[derive(Default)]
+struct Recent {
     /// When each kind was last told of each machine, by its key, or of the
     /// network.
-    told: Mutex<HashMap<(Option<PublicKey>, TroubleKind), Timestamp>>,
-    /// When each machine connected lately (`DROPS`).
-    connected: Mutex<HashMap<PublicKey, VecDeque<Instant>>>,
-    /// When machines went silent lately (`OUTAGE_LEAST`).
-    silent: Mutex<VecDeque<Instant>>,
+    told: HashMap<(Option<PublicKey>, TroubleKind), Timestamp>,
+    /// When each steady machine connected lately (`DROPS`).
+    connected: HashMap<PublicKey, VecDeque<Instant>>,
+    /// When machines meant to stay up went silent lately (`OUTAGE_LEAST`).
+    silent: VecDeque<Instant>,
+    /// How many machines are meant to stay up, as counted then.
+    staying: Option<(Instant, usize)>,
+    /// When `told` and `connected` last let go of what no longer counts.
+    pruned: Option<Instant>,
+}
+
+impl Recent {
+    /// Lets go of the troubles past their longest quiet and of machines not
+    /// connected within the hour, at most once every `RECOUNT`: the cost
+    /// does not grow with the network on every event.
+    fn prune(&mut self, now: Instant, at: Timestamp) {
+        if self.pruned.is_some_and(|pruned| now.duration_since(pruned) < RECOUNT) {
+            return;
+        }
+        self.pruned = Some(now);
+        self.told.retain(|_, told| told.checked_add(QUIET_LONGEST).is_ok_and(|until| until > at));
+        self.connected.retain(|_, times| times.back().is_some_and(|last| now.duration_since(*last) < CONNECTED_WITHIN));
+    }
 }
 
 impl Troubles {
@@ -135,10 +185,12 @@ impl Troubles {
             shelf,
             kept: ArcSwap::from_pointee(Shelved::of(all)),
             next: AtomicU64::new(next),
-            told: Mutex::new(told),
-            connected: Mutex::default(),
-            silent: Mutex::default(),
+            recent: Mutex::new("hub troubles", Rank::HUB_TROUBLES, Recent { told, ..Recent::default() }),
         })
+    }
+
+    pub(crate) fn measurements(&self) -> serde_json::Value {
+        self.recent.measurements()
     }
 
     /// The troubles `me`'s view tells, newest last: those told to an account
@@ -179,15 +231,20 @@ impl Troubles {
             .collect()
     }
 
-    /// `name` connected: one that connected again too often within the hour
-    /// dropped too often.
-    pub(crate) fn connected(&self, hub: &Hub, name: &MachineName, key: PublicKey) {
+    /// `name`, last reported as `kind`, connected: a steady machine that
+    /// connected again too often within the hour dropped too often.
+    pub(crate) fn connected(&self, hub: &Hub, name: &MachineName, key: PublicKey, kind: Option<Kind>) {
+        if !steady(kind) {
+            return;
+        }
         let now = Instant::now();
         let times = {
-            let mut connected = self.connected.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-            connected.retain(|_, times| times.back().is_some_and(|at| now.duration_since(*at) < CONNECTED_WITHIN));
-            let times = connected.entry(key).or_default();
-            while times.front().is_some_and(|at| now.duration_since(*at) >= CONNECTED_WITHIN) {
+            let Ok(mut recent) = self.recent.lock();
+            recent.prune(now, Timestamp::now());
+            let times = recent.connected.entry(key).or_default();
+            while times.front().is_some_and(|at| now.duration_since(*at) >= CONNECTED_WITHIN)
+                || times.len() >= CONNECTIONS_KEPT
+            {
                 times.pop_front();
             }
             times.push_back(now);
@@ -199,29 +256,35 @@ impl Troubles {
         }
     }
 
-    /// Nothing was heard from `name` for `seconds`, and its session ended:
-    /// told of a machine meant to stay up; many of them together are an
-    /// outage of the network.
-    pub(crate) fn silent(&self, hub: &Hub, name: &MachineName, key: PublicKey, stays_up: bool, seconds: u64) {
-        if stays_up {
-            self.raise(
-                hub,
-                Some((name, key)),
-                TroubleKind::Silent,
-                Detail { seconds: Some(seconds), ..Detail::default() },
-            );
+    /// Nothing was heard from `name`, last reported as `kind`, for
+    /// `seconds`, and its session ended: told of a machine meant to stay up;
+    /// many of them together are an outage of the network.
+    pub(crate) fn silent(&self, hub: &Hub, name: &MachineName, key: PublicKey, kind: Option<Kind>, seconds: u64) {
+        if !stays_up(kind) {
+            return;
         }
+        self.raise(hub, Some((name, key)), TroubleKind::Silent, Detail { seconds: Some(seconds), ..Detail::default() });
         let now = Instant::now();
-        let together = {
-            let mut silent = self.silent.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-            while silent.front().is_some_and(|at| now.duration_since(*at) >= SILENT_WITHIN) {
-                silent.pop_front();
+        let (together, counted) = {
+            let Ok(mut recent) = self.recent.lock();
+            while recent.silent.front().is_some_and(|at| now.duration_since(*at) >= SILENT_WITHIN) {
+                recent.silent.pop_front();
             }
-            silent.push_back(now);
-            silent.len()
+            recent.silent.push_back(now);
+            let counted =
+                recent.staying.filter(|(at, _)| now.duration_since(*at) < RECOUNT).map(|(_, staying)| staying);
+            (recent.silent.len(), counted)
         };
-        let members = hub.store().book.directory.members.len();
-        if together >= OUTAGE_LEAST.max(members / 10) {
+        if together < OUTAGE_LEAST {
+            return;
+        }
+        let staying = counted.unwrap_or_else(|| {
+            let staying = crate::updates::reported_of_kind(hub, Kind::Headless);
+            let Ok(mut recent) = self.recent.lock();
+            recent.staying = Some((now, staying));
+            staying
+        });
+        if together >= staying / 10 {
             let count = u32::try_from(together).unwrap_or(u32::MAX);
             self.raise(hub, None, TroubleKind::Outage, Detail { count: Some(count), ..Detail::default() });
         }
@@ -239,12 +302,13 @@ impl Troubles {
         let now = Timestamp::now();
         let key = machine.map(|(_, key)| key);
         {
-            let mut told = self.told.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-            let quiet_until = told.get(&(key, kind)).and_then(|at| at.checked_add(quiet(kind)).ok());
+            let Ok(mut recent) = self.recent.lock();
+            recent.prune(Instant::now(), now);
+            let quiet_until = recent.told.get(&(key, kind)).and_then(|at| at.checked_add(quiet(kind)).ok());
             if quiet_until.is_some_and(|until| until > now) {
                 return;
             }
-            told.insert((key, kind), now);
+            recent.told.insert((key, kind), now);
         }
         let store = hub.store();
         let directory = &store.book.directory;

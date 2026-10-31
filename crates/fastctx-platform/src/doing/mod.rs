@@ -139,6 +139,8 @@ impl Rank {
     pub const HUB_UPDATES: Rank = Rank(830);
     /// One machine's activity as it told it.
     pub const HUB_MACHINE_ACTIVITY: Rank = Rank(830);
+    /// What troubles were told lately, and when machines came and went.
+    pub const HUB_TROUBLES: Rank = Rank(840);
 }
 
 /// What each task says it does, latest last, by the token of each saying.

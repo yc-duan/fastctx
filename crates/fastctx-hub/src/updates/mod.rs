@@ -489,6 +489,11 @@ pub(crate) fn reported_kind(hub: &Hub, key: &fastctx_net::sign::PublicKey) -> Op
     hub.updates.lock().expect("never poisoned").last.get(key).and_then(|last| last.report.kind)
 }
 
+/// How many machines last reported they are of `kind`.
+pub(crate) fn reported_of_kind(hub: &Hub, kind: fastctx_types::update::Kind) -> usize {
+    hub.updates.lock().expect("never poisoned").last.values().filter(|last| last.report.kind == Some(kind)).count()
+}
+
 /// The session `generation` of `name` ended: what it reported goes, and
 /// whatever it was asked to fetch is asked of another.
 pub(crate) fn closed(hub: &Hub, name: &MachineName, generation: u64) {

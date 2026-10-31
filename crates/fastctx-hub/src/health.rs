@@ -127,7 +127,7 @@ fn now(hub: &Hub) -> serde_json::Value {
         "at": jiff::Timestamp::now(),
         "view": hub.health.view.snapshot(), "presence": hub.health.presence.snapshot(), "presence_queue": hub.health.presence_queue.snapshot(),
         "sessions": queues.len(),
-        "locks": [hub.sessions.measurements(), hub.given.measurements(), hub.calls.measurements(), hub.data.measurements(), hub.ledgers.measurements(), hub.afoots.measurements(), hub.updates.measurements(), hub.pending_presence.measurements()],
+        "locks": [hub.sessions.measurements(), hub.given.measurements(), hub.calls.measurements(), hub.data.measurements(), hub.ledgers.measurements(), hub.afoots.measurements(), hub.updates.measurements(), hub.pending_presence.measurements(), hub.troubles.measurements()],
         "lock_order_violations": fastctx_platform::doing::violations(),
         // How long tasks waited for a thread on each runtime (`fastctx_platform::task::watch`).
         "runtime": fastctx_platform::readings::snapshot().timings.into_iter().filter(|timing| timing.name.starts_with("runtime.hub")).collect::<Vec<_>>(),

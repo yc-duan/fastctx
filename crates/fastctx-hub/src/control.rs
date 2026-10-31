@@ -215,7 +215,7 @@ pub(crate) async fn session(
     }
     // Whoever sees it sees it online now.
     hub.health.opened();
-    hub.troubles.connected(&hub, &name, key);
+    hub.troubles.connected(&hub, &name, key, crate::updates::reported_kind(&hub, &key));
     hub.present(&name);
     if reads_afoot {
         crate::afoot::came(&hub, &name);
@@ -397,9 +397,7 @@ pub(crate) async fn session(
     // A machine meant to stay up that stopped answering is told of to those
     // who hold it (`crate::troubles`).
     if transport.ended.borrow().as_ref().is_some_and(|ended| ended.silent) {
-        let stays_up = hub.store().indexed().by_key(&key).is_some_and(|member| member.managed)
-            || crate::updates::reported_kind(&hub, &key) == Some(fastctx_types::update::Kind::Headless);
-        hub.troubles.silent(&hub, &name, key, stays_up, SILENCE.as_secs());
+        hub.troubles.silent(&hub, &name, key, crate::updates::reported_kind(&hub, &key), SILENCE.as_secs());
     }
 }
 
