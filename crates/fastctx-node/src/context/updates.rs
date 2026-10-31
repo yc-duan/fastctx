@@ -8,6 +8,12 @@ use std::{
     sync::{Arc, Mutex},
 };
 
+/// How long a refresh of every conversation waits for the changes that come
+/// with the one that woke it: machines come and go in bursts (a room starting
+/// up, a line that keeps dropping), and each would otherwise refresh every
+/// conversation here again.
+const SETTLE: std::time::Duration = std::time::Duration::from_secs(3);
+
 #[derive(Default)]
 pub(crate) struct Updates(Mutex<BTreeMap<ResidentId, Pending>>);
 
@@ -68,6 +74,8 @@ fn request(node: &Arc<Node>, id: &ResidentId, plan: bool) {
     }
     let (node, id) = (node.clone(), id.clone());
     tokio::spawn(async move {
+        // Named in what the node reports of a lock held too long.
+        let _doing = fastctx_platform::doing::doing(format!("refreshing {id}'s context"));
         loop {
             let result = async {
                 let gate = node.residents.management(&id)?;
@@ -127,6 +135,12 @@ pub(crate) fn start(node: &Arc<Node>) {
                 _ = memory.changed() => false,
                 _ = retry.tick() => true,
             };
+            tokio::time::sleep(SETTLE).await;
+            // What changed meanwhile is in this refresh, and is not seen again.
+            plan |= views.has_changed().unwrap_or(false);
+            views.mark_unchanged();
+            ways.mark_unchanged();
+            memory.mark_unchanged();
         }
     });
 }
