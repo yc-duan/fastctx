@@ -49,6 +49,9 @@ pub enum TroubleKind {
     Outage,
     /// The hub's own work is held up or stuck.
     Hub,
+    /// The hub stopped a version going out: the machines that took it fared
+    /// worse than the others (`crate::update::Stop`).
+    Rollout,
     /// One a later release tells.
     Other,
 }
@@ -62,6 +65,7 @@ impl crate::tolerant::Tolerant for TroubleKind {
         TroubleKind::Violations,
         TroubleKind::Outage,
         TroubleKind::Hub,
+        TroubleKind::Rollout,
         TroubleKind::Other,
     ];
     const UNKNOWN: Self = TroubleKind::Other;

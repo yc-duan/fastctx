@@ -1032,6 +1032,14 @@ pub enum Change {
     Updates {
         policy: fastctx_types::update::Policy,
     },
+    /// How a version goes out a batch at a time, and the versions withdrawn
+    /// (`fastctx_types::update::Rollout`). Made by the hub from its
+    /// administrator's network-updates calls; no release sends it.
+    Rollout {
+        rollout: Option<fastctx_types::update::Rollout>,
+        #[serde(default)]
+        withdrawn: std::collections::BTreeSet<String>,
+    },
     /// How fast the hub takes packages in at most, in bytes a second; none,
     /// its default (`fastctx_types::update::INTAKE`). The super
     /// administrator's; sent only to a hub whose view says it paces intake.

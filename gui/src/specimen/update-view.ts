@@ -122,6 +122,25 @@ export function specimenUpdateView(world: () => WorldNow | null): (hub: string, 
       return { kind: "done" };
     }
     if (call.do === "repair" || call.do === "cancel_repair") return { kind: "scheduled", results: call.machines.map((machine) => ({ machine, done: true, reason: null, why: null })) };
+    if (call.do === "rollout") {
+      if (call.version) policy.rollout = { version: call.version, first: call.first, share: call.share };
+      else delete policy.rollout;
+      return { kind: "done" };
+    }
+    if (call.do === "pause") {
+      if (policy.rollout) {
+        const { stopped, ...rest } = policy.rollout;
+        policy.rollout = call.paused && stopped ? { ...rest, paused: true, stopped } : { ...rest, paused: call.paused };
+      }
+      return { kind: "done" };
+    }
+    if (call.do === "withdraw") {
+      const withdrawn = new Set(policy.withdrawn ?? []);
+      if (call.withdrawn) withdrawn.add(call.version);
+      else withdrawn.delete(call.version);
+      policy.withdrawn = [...withdrawn];
+      return { kind: "done" };
+    }
     for (const name of call.machines) {
       if (call.version) due.set(name, { version: call.version, by: "me", at: new Date().toISOString() });
       else due.delete(name);

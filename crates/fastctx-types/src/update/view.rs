@@ -78,7 +78,6 @@ pub struct MachineUpdate {
     pub repair_due: Option<super::RepairDue>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub repair: Option<crate::repair::Report>,
-
 }
 
 /// A known version, including a listed release whose manifest is unavailable.
@@ -105,16 +104,28 @@ pub struct View {
     pub available: usize,
     #[serde(default)]
     pub repair_supported: bool,
-
+    /// Whether the hub rolls a version out a batch at a time and withdraws
+    /// versions (`ViewCall::Rollout`, `Pause`, `Withdraw`).
+    #[serde(default)]
+    pub rollouts: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "do", rename_all = "snake_case")]
 pub enum ViewCall {
-    Repair { machines: Vec<MachineName>, #[serde(default)] version: Option<String> },
-    CancelRepair { machines: Vec<MachineName> },
+    Repair {
+        machines: Vec<MachineName>,
+        #[serde(default)]
+        version: Option<String>,
+    },
+    CancelRepair {
+        machines: Vec<MachineName>,
+    },
     /// The hub's node reports a legacy machine's independently read receipt.
-    RepairResult { machine: MachineName, result: Box<crate::repair::Report> },
+    RepairResult {
+        machine: MachineName,
+        result: Box<crate::repair::Report>,
+    },
     View,
     /// Reads one listed manifest on demand; ordinary view polling never does IO.
     Release {
@@ -128,6 +139,25 @@ pub enum ViewCall {
     Policy {
         minimum: Option<String>,
         managed_auto: bool,
+    },
+    /// Rolls `version` out: the machines named in `first` take it, then
+    /// `share` hundredths of the others. With no version, every machine
+    /// takes a release as it comes again.
+    Rollout {
+        version: Option<String>,
+        #[serde(default)]
+        first: Vec<MachineName>,
+        #[serde(default)]
+        share: u8,
+    },
+    /// Stops the rollout where it is, or lets it go on.
+    Pause {
+        paused: bool,
+    },
+    /// Withdraws `version`, or takes the withdrawal back.
+    Withdraw {
+        version: String,
+        withdrawn: bool,
     },
 }
 

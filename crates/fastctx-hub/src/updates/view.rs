@@ -188,7 +188,26 @@ pub(super) fn snapshot(hub: &Hub, asker: &crate::origin::Origin, account: &Accou
         machines,
         available,
         repair_supported: true,
+        rollouts: true,
     })
+}
+
+/// Keeps how a version goes out and the versions withdrawn, as the super
+/// administrator `asker` set them.
+async fn change_rollout(
+    hub: &Hub,
+    asker: &crate::origin::Origin,
+    account: &AccountName,
+    rollout: Option<fastctx_types::update::Rollout>,
+    withdrawn: std::collections::BTreeSet<String>,
+) -> Result<(), String> {
+    let (asker, account) = (asker.clone(), account.clone());
+    let (result, ended) = hub
+        .blocking(move |hub| crate::manage::change(&hub, &asker, &account, Change::Rollout { rollout, withdrawn }))
+        .await;
+    result?;
+    crate::manage::end(hub, ended);
+    Ok(())
 }
 
 async fn read_snapshot(hub: &Hub, asker: &crate::origin::Origin, account: &AccountName) -> Result<View, String> {
@@ -249,6 +268,58 @@ pub(crate) async fn request(
                 .await;
             result?;
             crate::manage::end(hub, ended);
+            ViewReply::Done
+        }
+        ViewCall::Rollout { version, first, share } => {
+            let rollout = match version {
+                None => None,
+                Some(version) => {
+                    if fastctx_types::update::release(&version).is_none() {
+                        return Err(format!("{version} is not a version a release can have"));
+                    }
+                    if share > 100 {
+                        return Err("the share is in hundredths, at most 100".into());
+                    }
+                    let store = hub.store();
+                    let directory = store.indexed();
+                    let first = first
+                        .iter()
+                        .map(|name| {
+                            directory
+                                .member(name)
+                                .map(|member| member.key.to_string())
+                                .ok_or_else(|| format!("{name} is not a machine of this network"))
+                        })
+                        .collect::<Result<std::collections::BTreeSet<_>, String>>()?;
+                    Some(fastctx_types::update::Rollout { version, first, share, paused: false, stopped: None })
+                }
+            };
+            let withdrawn = hub.store().hub.updates.withdrawn.clone();
+            change_rollout(hub, asker, account, rollout, withdrawn).await?;
+            ViewReply::Done
+        }
+        ViewCall::Pause { paused } => {
+            let policy = hub.store().hub.updates.clone();
+            let Some(mut rollout) = policy.rollout else { return Err("no version is being rolled out".into()) };
+            rollout.paused = paused;
+            if !paused {
+                rollout.stopped = None;
+            }
+            change_rollout(hub, asker, account, Some(rollout), policy.withdrawn).await?;
+            ViewReply::Done
+        }
+        ViewCall::Withdraw { version, withdrawn } => {
+            if fastctx_types::update::release(&version).is_none() {
+                return Err(format!("{version} is not a version a release can have"));
+            }
+            let policy = hub.store().hub.updates.clone();
+            let mut all = policy.withdrawn;
+            if withdrawn {
+                all.insert(version);
+            } else {
+                all.remove(&version);
+            }
+            change_rollout(hub, asker, account, policy.rollout, all).await?;
             ViewReply::Done
         }
         ViewCall::Schedule { machines, version } => {

@@ -923,6 +923,9 @@
         "kind": "not_newer"
       },
       {
+        "kind": "withdrawn"
+      },
+      {
         "kind": "other"
       },
       {
@@ -965,6 +968,29 @@
         "do": "policy",
         "minimum": null,
         "managed_auto": true
+      },
+      {
+        "do": "rollout",
+        "version": "1.0.2",
+        "first": [
+          "server"
+        ],
+        "share": 25
+      },
+      {
+        "do": "rollout",
+        "version": null,
+        "first": [],
+        "share": 0
+      },
+      {
+        "do": "pause",
+        "paused": true
+      },
+      {
+        "do": "withdraw",
+        "version": "1.0.3",
+        "withdrawn": true
       }
     ],
     "device_calls": [
@@ -1035,7 +1061,23 @@
           ],
           "policy": {
             "channel": "stable",
-            "managed_auto": true
+            "managed_auto": true,
+            "rollout": {
+              "version": "1.0.2",
+              "first": [
+                "ed25519:server"
+              ],
+              "share": 25,
+              "paused": true,
+              "stopped": {
+                "at": "2026-10-31T08:00:00Z",
+                "machine": "server",
+                "kind": "stuck"
+              }
+            },
+            "withdrawn": [
+              "1.0.3"
+            ]
           },
           "machines": [
             {
@@ -1111,7 +1153,8 @@
             }
           ],
           "available": 1,
-          "repair_supported": true
+          "repair_supported": true,
+          "rollouts": true
         }
       },
       {

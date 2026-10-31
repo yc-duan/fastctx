@@ -651,11 +651,32 @@ fn apply(
             {
                 return Err(format!("{minimum} is not a version a release can have"));
             }
-            // The ceiling on intake is its own change: an interface that
-            // sets the rest knows nothing of it.
+            // The ceiling on intake, the rollout and the versions withdrawn
+            // are their own changes: an interface that sets the rest, an
+            // earlier release's among them, knows nothing of them.
             let intake = store.hub.updates.intake;
             let channel = store.hub.updates.channel;
-            store.hub.updates = fastctx_types::update::Policy { intake, channel, ..policy };
+            let rollout = store.hub.updates.rollout.clone();
+            let withdrawn = store.hub.updates.withdrawn.clone();
+            store.hub.updates = fastctx_types::update::Policy { intake, channel, rollout, withdrawn, ..policy };
+            store.save_hub().map_err(|error| format!("the hub could not keep its settings: {error}"))?;
+            Ok(Told::Done)
+        }
+        Change::Rollout { rollout, withdrawn } => {
+            need_super()?;
+            if let Some(rollout) = &rollout {
+                if fastctx_types::update::release(&rollout.version).is_none() {
+                    return Err(format!("{} is not a version a release can have", rollout.version));
+                }
+                if rollout.share > 100 {
+                    return Err("the share is in hundredths, at most 100".into());
+                }
+            }
+            if let Some(version) = withdrawn.iter().find(|version| fastctx_types::update::release(version).is_none()) {
+                return Err(format!("{version} is not a version a release can have"));
+            }
+            store.hub.updates.rollout = rollout;
+            store.hub.updates.withdrawn = withdrawn;
             store.save_hub().map_err(|error| format!("the hub could not keep its settings: {error}"))?;
             Ok(Told::Done)
         }

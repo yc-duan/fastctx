@@ -57,6 +57,7 @@ fn quiet(kind: TroubleKind) -> SignedDuration {
         | TroubleKind::Stuck
         | TroubleKind::Outage
         | TroubleKind::Hub
+        | TroubleKind::Rollout
         | TroubleKind::Other => SignedDuration::from_hours(1),
     }
 }
@@ -160,6 +161,22 @@ impl Troubles {
         found.dedup_by_key(|kept| kept.trouble.id);
         let skip = found.len().saturating_sub(SHOWN);
         found.into_iter().skip(skip).map(|kept| kept.trouble.clone()).collect()
+    }
+
+    /// The troubles of `kinds` told of a machine since `since`: the machine's
+    /// key, the kind and when.
+    pub(crate) fn of_kinds_since(
+        &self,
+        kinds: &[TroubleKind],
+        since: Timestamp,
+    ) -> Vec<(PublicKey, TroubleKind, Timestamp)> {
+        self.kept
+            .load()
+            .all
+            .iter()
+            .filter(|kept| kept.trouble.at >= since && kinds.contains(&kept.trouble.kind))
+            .filter_map(|kept| kept.key.map(|key| (key, kept.trouble.kind, kept.trouble.at)))
+            .collect()
     }
 
     /// `name` connected: one that connected again too often within the hour

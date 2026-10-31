@@ -576,6 +576,14 @@ pub(crate) fn action(change: &Change, book: &Book, policy: &fastctx_types::updat
             managed_auto: Some(policy.managed_auto),
             intake: None,
         },
+        // How a version goes out is told as a change of the update policy:
+        // every release reads that.
+        Change::Rollout { .. } => Action::Updates {
+            channel: policy.channel,
+            minimum: policy.minimum.clone(),
+            managed_auto: Some(policy.managed_auto),
+            intake: None,
+        },
         Change::Intake { rate } => Action::Updates {
             channel: policy.channel,
             minimum: policy.minimum.clone(),

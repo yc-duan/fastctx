@@ -15,6 +15,8 @@ pub(crate) use publishing::start;
 mod history;
 mod repair;
 mod repair_batch;
+mod rollout;
+pub(crate) use rollout::watch as watch_rollouts;
 mod view;
 pub(crate) use view::request as view_request;
 mod attempt;
@@ -230,6 +232,7 @@ impl Updates {
             updates_view: true,
             repair_supported: true,
             repairs: BTreeMap::new(),
+            rolled: None,
         }
     }
 
@@ -470,6 +473,13 @@ fn settle(hub: &Hub, name: &MachineName, kernel: &str, app: Option<&str>, asked:
 /// told them.
 pub(crate) fn opened(hub: &Hub, name: &MachineName) {
     tell(hub, Some(name));
+}
+
+/// The release each machine runs, by its key, as its last report of its
+/// versions said.
+pub(crate) fn running_kernels(hub: &Hub) -> HashMap<fastctx_net::sign::PublicKey, String> {
+    let updates = hub.updates.lock().expect("never poisoned");
+    updates.last.iter().map(|(key, last)| (*key, last.report.kernel.clone())).collect()
 }
 
 /// What the machine of `key` said it is in its last report of its versions,

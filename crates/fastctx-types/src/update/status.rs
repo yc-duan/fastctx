@@ -48,6 +48,8 @@ pub enum FailureReason {
         code: Option<i32>,
     },
     NotNewer,
+    /// The network's administrator withdrew the release.
+    Withdrawn,
     #[serde(other)]
     Other,
 }

@@ -5,6 +5,7 @@
 // starts the new version.
 
 import { invoke } from "@tauri-apps/api/core";
+import type { Trouble } from "./accounts";
 import type { RepairReport } from "./repair";
 
 export type Channel = "stable" | "beta";
@@ -60,6 +61,24 @@ export interface Policy {
   managed_auto?: boolean;
   /** How fast the hub takes a new release in, in bytes a second; none, its default. */
   intake?: number | null;
+  /** A version going out a batch at a time (`specs/world-engine.md`, 发布与推广). */
+  rollout?: Rollout;
+  /** Versions no machine takes by itself any more. */
+  withdrawn?: string[];
+}
+
+/** A version going out: the machines named first, then a share of the
+ *  others, each by where its key falls. */
+export interface Rollout {
+  version: string;
+  /** The keys of the machines that take it first. */
+  first?: string[];
+  /** How many of the other machines take it, in hundredths. */
+  share: number;
+  paused?: boolean;
+  /** Why the hub stopped it by itself: a machine on it had trouble more
+   *  often than the others. */
+  stopped?: { at: string; machine: string; kind: Trouble["kind"] };
 }
 
 export interface UpdateNetwork {
@@ -176,7 +195,7 @@ export type CheckFailure =
   | { kind: "http"; status: number }
   | { kind: "unreadable" | "other" };
 export type FailureReason =
-  | { kind: "no_package" | "signature" | "disk" | "not_newer" | "other" }
+  | { kind: "no_package" | "signature" | "disk" | "not_newer" | "withdrawn" | "other" }
   | { kind: "sources"; sources: { via: "github" | "network"; why: string; unconnected?: boolean }[] }
   | { kind: "installer"; code: number | null };
 export interface UpdateProblem { reason: FailureReason; why: string }
@@ -257,6 +276,8 @@ export interface UpdatesView {
   available: number;
   /** The hub keeps repairs for machines. */
   repair_supported?: boolean;
+  /** The hub rolls versions out a batch at a time and withdraws them. */
+  rollouts?: boolean;
 }
 export type UpdatesViewCall =
   | { do: "view" }
@@ -264,7 +285,10 @@ export type UpdatesViewCall =
   | { do: "schedule"; machines: string[]; version: string | null }
   | { do: "repair"; machines: string[]; version: string | null }
   | { do: "cancel_repair"; machines: string[] }
-  | { do: "policy"; minimum: string | null; managed_auto: boolean };
+  | { do: "policy"; minimum: string | null; managed_auto: boolean }
+  | { do: "rollout"; version: string | null; first: string[]; share: number }
+  | { do: "pause"; paused: boolean }
+  | { do: "withdraw"; version: string; withdrawn: boolean };
 export type UpdatesViewReply =
   | { kind: "release"; choice: UpdateVersionChoice }
   | { kind: "view"; view: UpdatesView }

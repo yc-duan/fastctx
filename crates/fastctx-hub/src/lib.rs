@@ -845,6 +845,7 @@ async fn serving(
     tokio::spawn(data::expire(Arc::downgrade(&hub)));
     tokio::spawn(expiry::settle(Arc::downgrade(&hub)));
     tokio::spawn(updates::look_every(Arc::downgrade(&hub)));
+    fastctx_platform::task::spawn(updates::watch_rollouts(Arc::downgrade(&hub)));
     tokio::spawn(presence::run(Arc::downgrade(&hub), hub.presence_pending.clone()));
     tokio::spawn(tell_directory(Arc::downgrade(&hub), hub.directory_changed.clone(), hub.presence_changed.clone()));
     updates::start(&hub);
