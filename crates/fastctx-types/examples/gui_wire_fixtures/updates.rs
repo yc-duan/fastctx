@@ -22,7 +22,9 @@ pub fn fixtures() -> Fixtures {
         FailureReason::NotNewer,
         FailureReason::Other,
         FailureReason::Installer { code: Some(23) },
-        FailureReason::Sources { sources: vec![SourceFailure { via: Via::Github, why: "connection refused".into() }] },
+        FailureReason::Sources {
+            sources: vec![SourceFailure { via: Via::Github, why: "connection refused".into(), unconnected: false }],
+        },
     ];
     let problem = Problem::new(FailureReason::Signature, "the package does not match its signature");
     let stages = vec![

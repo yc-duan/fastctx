@@ -177,7 +177,7 @@ export type CheckFailure =
   | { kind: "unreadable" | "other" };
 export type FailureReason =
   | { kind: "no_package" | "signature" | "disk" | "not_newer" | "other" }
-  | { kind: "sources"; sources: { via: "github" | "network"; why: string }[] }
+  | { kind: "sources"; sources: { via: "github" | "network"; why: string; unconnected?: boolean }[] }
   | { kind: "installer"; code: number | null };
 export interface UpdateProblem { reason: FailureReason; why: string }
 export type UpdateStage =
