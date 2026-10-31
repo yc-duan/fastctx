@@ -8,6 +8,10 @@ license.workspace = true
 repository.workspace = true
 publish = false
 
+[[test]]
+name = "storage_drill"
+harness = false
+
 [dependencies]
 fastctx-platform = { path = "../fastctx-platform" }
 rusqlite = { version = "0.41", features = ["bundled", "backup"] }
