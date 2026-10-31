@@ -1,6 +1,7 @@
 //! Applying a fact frame is independent of the node, its files and its network.
 
-use super::sql;
+use super::{projections, sql};
+use crate::record_payloads::{self as payloads, Reference};
 use fastctx_storage::{Result as StoredResult, rusqlite::Connection};
 use fastctx_types::run_facts::{JobFacts, RunFacts};
 use serde::{Deserialize, Serialize};
@@ -61,11 +62,6 @@ pub(super) fn apply(stored: &mut StoredCall, update: &JobFacts) -> StoredResult<
                 stored.facts.output = Some(output.clone());
             }
         }
-        if let Some(notes) = &update.notes
-            && (current || stored.facts.notes.is_empty())
-        {
-            stored.facts.notes = notes.clone();
-        }
         if current {
             if let Some(state) = &update.state
                 && (!terminal(&stored.facts.state) || terminal(state))
@@ -78,18 +74,34 @@ pub(super) fn apply(stored: &mut StoredCall, update: &JobFacts) -> StoredResult<
     Ok(())
 }
 
-pub(super) fn receive_in(db: &Connection, conversation: &str, update: &JobFacts) -> StoredResult<bool> {
+pub(super) fn receive_in(
+    db: &Connection,
+    conversation: &str,
+    update: &JobFacts,
+    notes: Option<&Reference>,
+) -> StoredResult<bool> {
     let Some(mut stored) = sql::head(db, conversation, &update.call_id)? else { return Ok(false) };
     // Sequence orders a job's state, not the membership of its facts: an
     // earlier frame can still carry steps absent from a later one.
     let before = db.total_changes();
+    let current = update.sequence >= stored.sequence;
     apply(&mut stored, update)?;
+    if let Some(notes) = notes
+        && update.primary
+        && stored.facts.machine == update.machine
+        && stored.facts.job.as_ref() == Some(&update.job)
+        && (current
+            || payloads::root(db, conversation, projections::NOTES, &update.call_id)?
+                .is_none_or(|root| root.bytes == 2))
+    {
+        payloads::link(db, conversation, projections::NOTES, &update.call_id, Some(notes))?;
+    }
     sql::writes(db, conversation, &update.call_id, &update.writes)?;
     sql::steps(db, conversation, &update.call_id, &update.steps)?;
     sql::visits(db, conversation, &update.call_id, &update.visited)?;
     let mut observed = update.clone();
     observed.turn = stored.facts.turn.clone();
-    sql::save_job(db, conversation, &observed)?;
+    sql::save_job(db, conversation, &observed, notes)?;
     sql::save(db, conversation, &stored)?;
     let changed = db.total_changes() != before;
     if changed {

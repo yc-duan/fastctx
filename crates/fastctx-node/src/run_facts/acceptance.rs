@@ -99,11 +99,23 @@ pub(super) fn receive_at(
             }
         }
     }
-    let saved = incoming.clone();
+    let mut saved = incoming.clone();
+    let staged = saved
+        .notes
+        .take()
+        .map(|notes| crate::record_payloads::stage(database, conversation, sql::encode(&notes)?, priority))
+        .transpose()
+        .map_err(io::Error::other)?;
     let scope = conversation.to_string();
-    let bytes = sql::encode(&incoming).map_err(io::Error::other)?.len();
+    let bytes = sql::encode(&saved).map_err(io::Error::other)?.len();
     let changed = database
-        .write_now_at(priority, bytes, move |db| snapshot::receive_in(db, &scope, &saved))
+        .write_now_at(priority, bytes, move |db| {
+            let changed = snapshot::receive_in(db, &scope, &saved, staged.as_ref().map(|staged| &staged.reference))?;
+            if let Some(staged) = &staged {
+                crate::record_payloads::finish(db, &scope, staged)?;
+            }
+            Ok(changed)
+        })
         .map_err(io::Error::other)?;
     any |= changed;
     if any {

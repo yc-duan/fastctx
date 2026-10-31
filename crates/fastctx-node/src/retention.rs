@@ -118,9 +118,14 @@ pub(crate) fn start(node: &Arc<Node>) -> io::Result<()> {
             }
             let retiring = node.clone();
             match tokio::task::spawn_blocking(move || {
+                let payloads = crate::record_payloads::maintain(&retiring.database, |scope, error| {
+                    retiring.log.line(format_args!("collecting conversation {scope} projections: {error}"))
+                })
+                .map_err(io::Error::other);
                 let _collecting = retiring.disk.lock();
                 // Each step is told on its own when it fails.
                 [
+                    ("collecting conversation projections", payloads),
                     ("retiring the bookkeeping of removed conversations", crate::books::retire(&retiring)),
                     ("collecting what Claude sessions left", crate::claude::garbage::collect(&retiring.world)),
                     (

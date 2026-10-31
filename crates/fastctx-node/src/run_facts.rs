@@ -3,9 +3,12 @@
 mod cursor;
 #[cfg(feature = "storage-drill")]
 pub(crate) mod drill;
+#[cfg(feature = "storage-drill")]
+mod drill_mixed;
 mod journal;
 mod log;
 mod migrate;
+mod projections;
 mod snapshot;
 mod sql;
 mod steps;
@@ -16,7 +19,7 @@ mod updates;
 mod visits;
 mod writing;
 pub(crate) use steps::tell as tell_step;
-pub(crate) use storage::{evidence, evidence_all, job_updates, observations, stamp};
+pub(crate) use storage::{evidence, job_updates, observations, pending_machines, stamp};
 mod acceptance;
 mod asynchronous;
 pub(crate) use asynchronous::{begin_for, failed_for, keep_for, keep_reply, legacy_reply, receive, record_failure};

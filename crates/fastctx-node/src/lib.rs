@@ -122,6 +122,7 @@ mod record_access;
 mod record_database;
 mod record_gates;
 mod record_ownership;
+mod record_payloads;
 mod records;
 mod recovery;
 mod removed;
@@ -658,8 +659,16 @@ pub async fn run_prepared(
     let database = fastctx_storage::Database::open_or_unavailable(&world.path().join("node.sqlite3"), schema, |db| {
         fastctx_storage::versions::apply(
             db,
+            "node.record-payloads",
+            &[fastctx_storage::versions::Migration { version: 1, sql: record_payloads::SCHEMA }],
+        )?;
+        fastctx_storage::versions::apply(
+            db,
             "node.run-facts",
-            &[fastctx_storage::versions::Migration { version: 1, sql: run_facts::SCHEMA }],
+            &[
+                fastctx_storage::versions::Migration { version: 1, sql: run_facts::SCHEMA },
+                fastctx_storage::versions::Migration { version: 2, sql: run_facts::SCHEMA },
+            ],
         )?;
         fastctx_storage::versions::apply(
             db,

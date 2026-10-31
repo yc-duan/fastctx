@@ -1,7 +1,8 @@
 //! Indexed call facts. Hot step detail is capped at 200 rows / 2 MiB per call; folded
 //! identities remain until conversation deletion so old full updates deduplicate.
 
-use super::snapshot::StoredCall;
+use super::{projections, snapshot::StoredCall};
+use crate::record_payloads::{self as payloads, Reference};
 use fastctx_storage::{
     Error, Result,
     rusqlite::{Connection, OptionalExtension, params},
@@ -27,6 +28,8 @@ CREATE TABLE IF NOT EXISTS run_job_sources (
 CREATE TABLE IF NOT EXISTS run_versions (
     conversation TEXT PRIMARY KEY, version INTEGER NOT NULL
 ) WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS run_inline_budget (conversation TEXT NOT NULL, call TEXT NOT NULL, used INTEGER NOT NULL, PRIMARY KEY(conversation,call)) WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS run_inline_hashes (conversation TEXT NOT NULL, call TEXT NOT NULL, id TEXT NOT NULL, hash TEXT NOT NULL, PRIMARY KEY(conversation,call,id)) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS run_writes (
     position INTEGER PRIMARY KEY, conversation TEXT NOT NULL, call TEXT NOT NULL,
     id TEXT NOT NULL, body BLOB NOT NULL, UNIQUE(conversation,call,id)
@@ -51,6 +54,11 @@ CREATE TABLE IF NOT EXISTS run_jobs (
     conversation TEXT NOT NULL, call TEXT NOT NULL, machine TEXT NOT NULL, job TEXT NOT NULL,
     sequence BLOB NOT NULL, body BLOB NOT NULL, PRIMARY KEY(conversation,call,machine,job)
 ) WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS run_calls_active ON run_calls(conversation,json_extract(body,'$.facts.machine'),call) WHERE json_valid(body) AND json_extract(body,'$.unavailable') IS NULL AND (json_extract(body,'$.facts.state.kind')='running' OR (json_extract(body,'$.facts.state.kind')='exited' AND json_extract(body,'$.facts.state.remaining')>0));
+CREATE INDEX IF NOT EXISTS run_jobs_active ON run_jobs(conversation,call,machine,job) WHERE json_valid(body) AND (json_extract(body,'$.state.kind')='running' OR (json_extract(body,'$.state.kind')='exited' AND json_extract(body,'$.state.remaining')>0));
+CREATE INDEX IF NOT EXISTS run_jobs_turn ON run_jobs(conversation,json_extract(body,'$.turn'),call,machine,job) WHERE json_valid(body);
+CREATE INDEX IF NOT EXISTS run_calls_invalid ON run_calls(conversation,call) WHERE NOT json_valid(body);
+CREATE INDEX IF NOT EXISTS run_jobs_invalid ON run_jobs(conversation,call,machine,job) WHERE NOT json_valid(body);
 CREATE TABLE IF NOT EXISTS run_imported (
     conversation TEXT PRIMARY KEY, checked INTEGER NOT NULL DEFAULT 0
 ) WITHOUT ROWID;
@@ -74,6 +82,9 @@ pub(super) fn head(db: &Connection, conversation: &str, call: &str) -> Result<Op
 }
 
 pub(super) fn save(db: &Connection, conversation: &str, stored: &StoredCall) -> Result<()> {
+    if !stored.facts.notes.is_empty() || !stored.facts.spans.is_empty() {
+        return Err(Error::new("call projections must be staged before committing metadata"));
+    }
     if !stored.script.is_empty() {
         db.execute(
             "INSERT INTO run_scripts(conversation,call,script) VALUES(?1,?2,?3)
@@ -106,20 +117,95 @@ pub(super) fn changed(db: &Connection, conversation: &str) -> Result<()> {
     Ok(())
 }
 
+const INLINE_BUDGET: u64 = 256 * 1024;
+fn inline_hash(fact: &WriteFact) -> Result<Option<String>> {
+    fact.diff
+        .as_ref()
+        .and_then(|diff| diff.lines.as_ref())
+        .map(|lines| encode(lines).map(|bytes| fingerprint(&bytes)))
+        .transpose()
+}
+fn same_write(left: &WriteFact, right: &WriteFact) -> bool {
+    let (mut left, mut right) = (left.clone(), right.clone());
+    if let Some(diff) = &mut left.diff {
+        diff.lines = None;
+    }
+    if let Some(diff) = &mut right.diff {
+        diff.lines = None;
+    }
+    left == right
+}
+fn known_write(db: &Connection, conversation: &str, call: &str, fact: &WriteFact, prior: &WriteFact) -> Result<bool> {
+    if !same_write(prior, fact) {
+        return Err(Error::new("write fact identity changed"));
+    }
+    let Some(incoming) = inline_hash(fact)? else { return Ok(true) };
+    let recorded: Option<String> = db
+        .query_row(
+            "SELECT hash FROM run_inline_hashes WHERE conversation=?1 AND call=?2 AND id=?3",
+            (conversation, call, &fact.id),
+            |row| row.get(0),
+        )
+        .optional()?;
+    let recorded = match recorded {
+        Some(hash) => Some(hash),
+        None => inline_hash(prior)?,
+    };
+    match recorded {
+        Some(recorded) if recorded != incoming => Err(Error::new("inline write content changed")),
+        Some(_) => Ok(true),
+        None => Ok(false),
+    }
+}
 pub(super) fn writes(db: &Connection, conversation: &str, call: &str, incoming: &[WriteFact]) -> Result<()> {
-    let mut query = db.prepare_cached("SELECT body FROM run_writes WHERE conversation=?1 AND call=?2 AND id=?3")?;
-    let mut insert = db.prepare_cached("INSERT INTO run_writes(conversation,call,id,body) VALUES(?1,?2,?3,?4)")?;
+    if incoming.is_empty() {
+        return Ok(());
+    }
+    // An earlier SQL format may already contain inline rows. Reserve its whole
+    // allowance instead of scanning its history in a writer transaction.
+    db.execute("INSERT OR IGNORE INTO run_inline_budget(conversation,call,used) VALUES(?1,?2,CASE WHEN EXISTS(SELECT 1 FROM run_writes WHERE conversation=?1 AND call=?2) THEN ?3 ELSE 0 END)",(conversation,call,INLINE_BUDGET as i64))?;
+    let mut used = db.query_row(
+        "SELECT used FROM run_inline_budget WHERE conversation=?1 AND call=?2",
+        (conversation, call),
+        |row| row.get::<_, i64>(0),
+    )? as u64;
     for fact in incoming {
-        let body = encode(fact)?;
-        let previous: Option<Vec<u8>> = query.query_row((conversation, call, &fact.id), |row| row.get(0)).optional()?;
-        match previous {
-            Some(previous) if previous != body => return Err(Error::new("write fact identity changed")),
-            Some(_) => {}
-            None => {
-                insert.execute(params![conversation, call, fact.id, body])?;
+        let prior: Option<Vec<u8>> = db
+            .query_row(
+                "SELECT body FROM run_writes WHERE conversation=?1 AND call=?2 AND id=?3",
+                (conversation, call, &fact.id),
+                |row| row.get(0),
+            )
+            .optional()?;
+        if let Some(prior) = &prior
+            && known_write(db, conversation, call, fact, &decode(prior)?)?
+        {
+            continue;
+        }
+        let hash = inline_hash(fact)?;
+        let mut kept = fact.clone();
+        if let Some(diff) = &mut kept.diff
+            && diff.lines.is_some()
+        {
+            let size = diff
+                .bytes
+                .unwrap_or(fastctx_types::run_facts::INLINE_DIFF)
+                .max(encode(diff.lines.as_ref().expect("inline lines"))?.len() as u64);
+            if size > INLINE_BUDGET.saturating_sub(used) {
+                diff.lines = None;
+            } else {
+                used += size;
             }
         }
+        if let Some(hash) = hash {
+            db.execute("INSERT INTO run_inline_hashes(conversation,call,id,hash) VALUES(?1,?2,?3,?4) ON CONFLICT(conversation,call,id) DO NOTHING",(conversation,call,&fact.id,hash))?;
+        }
+        db.execute("INSERT INTO run_writes(conversation,call,id,body) VALUES(?1,?2,?3,?4) ON CONFLICT(conversation,call,id) DO UPDATE SET body=excluded.body",params![conversation,call,fact.id,encode(&kept)?])?;
     }
+    db.execute(
+        "UPDATE run_inline_budget SET used=?3 WHERE conversation=?1 AND call=?2 AND used!=?3",
+        (conversation, call, used as i64),
+    )?;
     Ok(())
 }
 
@@ -216,7 +302,19 @@ pub(super) fn steps(db: &Connection, conversation: &str, call: &str, incoming: &
 }
 
 pub(super) fn load(db: &Connection, conversation: &str, call: &str) -> Result<Option<StoredCall>> {
+    if db.is_autocommit() {
+        let tx = db.unchecked_transaction()?;
+        let result = load(&tx, conversation, call)?;
+        tx.commit()?;
+        return Ok(result);
+    }
     let Some(mut stored) = head(db, conversation, call)? else { return Ok(None) };
+    if let Some(bytes) = payloads::read_root(db, conversation, projections::NOTES, call)? {
+        stored.facts.notes = decode(&bytes)?;
+    }
+    if let Some(bytes) = payloads::read_root(db, conversation, projections::SPANS, call)? {
+        stored.facts.spans = decode(&bytes)?;
+    }
     stored.script = db
         .query_row("SELECT script FROM run_scripts WHERE conversation=?1 AND call=?2", (conversation, call), |row| {
             row.get(0)
@@ -294,19 +392,34 @@ pub(super) fn job(db: &Connection, conversation: &str, update: &JobFacts) -> Res
     bytes.as_deref().map(decode).transpose()
 }
 
-pub(super) fn save_job(db: &Connection, conversation: &str, update: &JobFacts) -> Result<()> {
+pub(super) fn save_job(
+    db: &Connection,
+    conversation: &str,
+    update: &JobFacts,
+    notes: Option<&Reference>,
+) -> Result<()> {
+    if update.notes.is_some() {
+        return Err(Error::new("job notes must be staged before committing metadata"));
+    }
     let mut metadata = update.clone();
+    let mut current = true;
     if let Some(previous) = job(db, conversation, update)? {
         if previous.sequence > update.sequence {
             metadata = previous.clone();
+            current = false;
         }
+        metadata.state = metadata.state.or(previous.state);
         metadata.turn = metadata.turn.or(previous.turn);
         metadata.output = metadata.output.or(previous.output);
-        metadata.notes = metadata.notes.or(previous.notes);
     }
     metadata.turn = metadata.turn.or(update.turn.clone());
     metadata.output = metadata.output.or(update.output.clone());
-    metadata.notes = metadata.notes.or(update.notes.clone());
+    if let Some(notes) = notes {
+        let key = projections::job_key(update)?;
+        if current || payloads::root(db, conversation, projections::JOB_NOTES, &key)?.is_none() {
+            payloads::link(db, conversation, projections::JOB_NOTES, &key, Some(notes))?;
+        }
+    }
     if update.record.is_some() || update.script.is_some() || update.started_at.is_some() {
         db.execute("INSERT INTO run_job_sources(conversation,call,machine,job,record,script,started) VALUES(?1,?2,?3,?4,?5,?6,?7)
             ON CONFLICT(conversation,call,machine,job) DO UPDATE SET
@@ -339,6 +452,10 @@ pub(super) fn save_job(db: &Connection, conversation: &str, update: &JobFacts) -
 }
 
 pub(super) fn job_source(db: &Connection, conversation: &str, update: &mut JobFacts) -> Result<()> {
+    if let Some(bytes) = payloads::read_root(db, conversation, projections::JOB_NOTES, &projections::job_key(update)?)?
+    {
+        update.notes = Some(decode(&bytes)?);
+    }
     type Source = (Option<String>, Option<String>, Option<String>);
     let source: Option<Source> = db.query_row("SELECT record,script,started FROM run_job_sources WHERE conversation=?1 AND call=?2 AND machine=?3 AND job=?4",
         (conversation,&update.call_id,update.machine.as_str(),update.job.as_str()),|row|Ok((row.get(0)?,row.get(1)?,row.get(2)?))).optional()?;
@@ -385,11 +502,12 @@ pub(super) fn difference(
     for fact in writes {
         let previous: Option<Vec<u8>> =
             write_query.query_row((conversation, call, &fact.id), |row| row.get(0)).optional()?;
-        match previous {
-            Some(previous) if previous != encode(fact)? => return Err(Error::new("write fact identity changed")),
-            Some(_) => {}
-            None => next.writes.push(fact.clone()),
+        if let Some(previous) = previous
+            && known_write(db, conversation, call, fact, &decode(&previous)?)?
+        {
+            continue;
         }
+        next.writes.push(fact.clone());
     }
     let mut step_query =
         db.prepare_cached("SELECT fingerprint,finished FROM run_steps WHERE conversation=?1 AND call=?2 AND id=?3")?;

@@ -57,15 +57,20 @@ pub(super) fn ensure(directory: &ConversationDir, database: &Database, conversat
 
 fn import(database: &Database, conversation: &str, path: &Path) -> io::Result<()> {
     let bytes = std::fs::read(path)?;
-    let stored: StoredCall = serde_json::from_slice(&bytes)?;
+    let mut stored: StoredCall = serde_json::from_slice(&bytes)?;
     let (writes, steps, visits) =
         (stored.facts.writes.clone(), stored.facts.steps.clone(), stored.facts.visited.clone());
+    let projections = super::projections::Call::prepare(database, conversation, &mut stored, Priority::Background)
+        .map_err(io::Error::other)?;
     let call = stored.call_id.clone();
     let scope = conversation.to_string();
     database
         .write_now_at(Priority::Background, bytes.len(), move |db| {
             if sql::head(db, &scope, &stored.call_id)?.is_none() {
                 sql::save(db, &scope, &stored)?;
+                projections.install(db, &scope, &stored.call_id, false)?;
+            } else {
+                projections.finish(db, &scope)?;
             }
             Ok(())
         })
@@ -104,12 +109,28 @@ fn import(database: &Database, conversation: &str, path: &Path) -> io::Result<()
                     continue;
                 }
                 let bytes = std::fs::read(path)?;
-                let update: JobFacts = serde_json::from_slice(&bytes)?;
+                let mut update: JobFacts = serde_json::from_slice(&bytes)?;
+                let notes = update
+                    .notes
+                    .take()
+                    .map(|notes| {
+                        crate::record_payloads::stage(
+                            database,
+                            conversation,
+                            sql::encode(&notes)?,
+                            Priority::Background,
+                        )
+                    })
+                    .transpose()
+                    .map_err(io::Error::other)?;
                 let scope = conversation.to_string();
                 database
                     .write_now_at(Priority::Background, bytes.len(), move |db| {
                         if sql::job(db, &scope, &update)?.is_none() {
-                            sql::save_job(db, &scope, &update)?;
+                            sql::save_job(db, &scope, &update, notes.as_ref().map(|notes| &notes.reference))?;
+                        }
+                        if let Some(notes) = &notes {
+                            crate::record_payloads::finish(db, &scope, notes)?;
                         }
                         Ok(())
                     })

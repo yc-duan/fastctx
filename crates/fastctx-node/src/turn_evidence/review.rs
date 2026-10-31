@@ -122,7 +122,7 @@ pub(crate) fn collect(node: &Node, resident: &ResidentId, previous: &Seen) -> io
             jobs.push(job);
         }
     }
-    for update in crate::run_facts::job_updates(&directory)? {
+    for update in crate::run_facts::job_updates(&directory, None)? {
         if comparing.changed("job_update", &(&update.machine, &update.job, &update.call_id), &update)? {
             row(&mut turns, resident, update.turn.clone()).job_updates.push(update);
         }

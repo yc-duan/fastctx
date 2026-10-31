@@ -105,7 +105,11 @@ pub(crate) async fn collect(
 ) -> Result<Vec<WaitHandle>, Failure> {
     let (about, _) = node.residents.about(resident).ok_or_else(|| Failure::new("unknown conversation"))?;
     let owner = Address { machine: node.machine(), resident: resident.clone() };
-    let mut result = jobs_here(node, &owner, None).map_err(failure)?;
+    let (reading, job_owner) = (node.clone(), owner.clone());
+    let mut result = tokio::task::spawn_blocking(move || jobs_here(&reading, &job_owner, None))
+        .await
+        .map_err(|e| Failure::new(e.to_string()))?
+        .map_err(failure)?;
     let mut colleagues = BTreeMap::<Address, Timestamp>::new();
     let mut machines = BTreeMap::<MachineName, Option<Timestamp>>::new();
     for action in actions {
@@ -115,20 +119,14 @@ pub(crate) async fn collect(
             colleagues.entry(Address { machine: action.machine.clone(), resident: id }).or_insert(action.at);
         }
     }
-    let unfinished = |state: &fastctx_types::run::RunState| {
-        matches!(
-            state,
-            fastctx_types::run::RunState::Running | fastctx_types::run::RunState::Exited { remaining: 1.., .. }
-        )
-    };
-    for call in crate::run_facts::evidence_all(&node.world.conversation(resident)).map_err(failure)? {
-        if !node.is_me(&call.facts.machine) && unfinished(&call.facts.state) {
-            machines.entry(call.facts.machine).or_insert(None);
-        }
-    }
-    for update in crate::run_facts::job_updates(&node.world.conversation(resident)).map_err(failure)? {
-        if !node.is_me(&update.machine) && update.state.as_ref().is_some_and(unfinished) {
-            machines.entry(update.machine).or_insert(update.started_at);
+    let directory = node.world.conversation(resident);
+    let unfinished = tokio::task::spawn_blocking(move || crate::run_facts::pending_machines(&directory))
+        .await
+        .map_err(|e| Failure::new(e.to_string()))?
+        .map_err(failure)?;
+    for (machine, started) in unfinished {
+        if !node.is_me(&machine) {
+            machines.entry(machine).or_insert(started);
         }
     }
     // A single-on run may not have returned its action yet. Its durable remote receipt also identifies the executor.

@@ -15,7 +15,8 @@ pub fn run(root: &Path) -> Result<(), Box<dyn std::error::Error>> {
         return Err("the drill needs an absolute, absent root".into());
     }
     std::fs::create_dir_all(root)?;
-    let database = Database::open(&root.join("node.sqlite3"), sql::SCHEMA)?;
+    let database =
+        Database::open(&root.join("node.sqlite3"), &format!("{}{}", sql::SCHEMA, crate::record_payloads::SCHEMA))?;
     let machine: MachineName = "executor".parse()?;
     let job: JobId = "j-123456".parse()?;
     let at: jiff::Timestamp = "2026-01-01T00:00:00Z".parse()?;
@@ -110,6 +111,7 @@ pub fn run(root: &Path) -> Result<(), Box<dyn std::error::Error>> {
         let repeated = duplicate.clone();
         assert!(!super::acceptance::receive(&database, "conversation", &repeated, |_| {})?);
     }
+    let repeated_in = repeat.elapsed();
     let count =
         database.read_now(|db| Ok(db.query_row("SELECT count(*) FROM run_steps", [], |row| row.get::<_, i64>(0))?))?;
     assert_eq!(count, baseline);
@@ -131,7 +133,10 @@ pub fn run(root: &Path) -> Result<(), Box<dyn std::error::Error>> {
     assert!(super::acceptance::receive(&database, "conversation", &late, |_| {})?);
     let mut latest = database.read_now(|db| sql::job(db, "conversation", &late))?.ok_or("missing job")?;
     assert_eq!(latest.sequence, 1001);
-    database.read_now(|db| sql::job_source(db, "conversation", &mut latest))?;
+    database.read_now(|db| {
+        let tx = db.unchecked_transaction()?;
+        sql::job_source(&tx, "conversation", &mut latest)
+    })?;
     assert_eq!(latest.record.as_deref(), Some("/jobs/record.json"));
     assert!(!super::acceptance::receive(&database, "conversation", &late, |_| {})?);
     let count =
@@ -168,14 +173,13 @@ pub fn run(root: &Path) -> Result<(), Box<dyn std::error::Error>> {
         }
     })?;
     assert_eq!(Some(shown), ended.state, "member notification consumed the terminal metadata sequence");
+    super::drill_mixed::run(&database, &ended)?;
     let stats = database.statistics();
     println!("SQL operations {}, over 2 ms {}", stats.operations, stats.writes_over_budget);
     assert!(stats.writes_over_budget * 100 <= stats.operations, "SQL operation p99 exceeded 2 ms");
     println!(
         "100000 steps: 200 hot, 99800 folded; call read p99 {:?}; 100 duplicates {:?}; slow operations {}",
-        reads[197],
-        repeat.elapsed(),
-        stats.slow_operations
+        reads[197], repeated_in, stats.slow_operations
     );
     let head_size = database.read_now(|db| {
         Ok(db.query_row("SELECT length(body) FROM run_calls WHERE call='call'", [], |row| row.get::<_, i64>(0))?)

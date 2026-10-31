@@ -118,10 +118,11 @@ pub(crate) async fn snapshot_locked(
             actions: actions.into_iter().filter(|action| action.turn.is_some() && action.turn == turn).collect(),
             calls,
             jobs,
-            job_updates: crate::run_facts::job_updates(&directory)?
-                .into_iter()
-                .filter(|update| update.turn.is_some() && update.turn == turn)
-                .collect(),
+            job_updates: turn
+                .as_deref()
+                .map(|turn| crate::run_facts::job_updates(&directory, Some(turn)))
+                .transpose()?
+                .unwrap_or_default(),
             notices,
             waiting,
             quota: None,

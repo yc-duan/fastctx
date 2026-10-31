@@ -104,6 +104,9 @@ pub(super) fn keep(directory: &ConversationDir, id: &str, facts: &RunFacts, disp
         stored.facts.spans.clear();
     }
     let (database, conversation) = database(directory)?;
+    let projections =
+        super::projections::Call::prepare(&database, &conversation, &mut stored, fastctx_storage::Priority::Normal)
+            .map_err(io::Error::other)?;
     let members = database
         .read_now(|db| {
             sql::difference(db, &conversation, id, &stored.facts.writes, &stored.facts.steps, &stored.facts.visited)
@@ -115,6 +118,7 @@ pub(super) fn keep(directory: &ConversationDir, id: &str, facts: &RunFacts, disp
     stored.facts.visited.clear();
     let bytes = sql::encode(&stored).map_err(io::Error::other)?.len();
     mutate(directory, bytes, move |db, conversation| {
+        let mut preserve_notes = false;
         if let Some(previous) = sql::head(db, conversation, &stored.call_id)? {
             stored.script = previous.script;
             stored.facts.turn = previous.facts.turn.or(stored.facts.turn);
@@ -130,7 +134,7 @@ pub(super) fn keep(directory: &ConversationDir, id: &str, facts: &RunFacts, disp
                 output.bytes = kept.bytes;
                 output.lines = kept.lines;
                 output.cut |= kept.cut;
-                stored.facts.notes = previous.facts.notes;
+                preserve_notes = true;
             }
             if terminal(&previous.facts.state) && !terminal(&stored.facts.state) {
                 stored.facts.state = previous.facts.state;
@@ -138,6 +142,7 @@ pub(super) fn keep(directory: &ConversationDir, id: &str, facts: &RunFacts, disp
             stored.sequence = previous.sequence;
             stored.launched |= previous.launched;
         }
+        projections.install(db, conversation, &stored.call_id, preserve_notes)?;
         sql::save(db, conversation, &stored)
     })
 }
@@ -233,9 +238,6 @@ pub(crate) fn evidence(
 ) -> io::Result<Vec<fastctx_types::turn_evidence::CallEvidence>> {
     read_evidence(directory, Some(turn))
 }
-pub(crate) fn evidence_all(directory: &ConversationDir) -> io::Result<Vec<fastctx_types::turn_evidence::CallEvidence>> {
-    read_evidence(directory, None)
-}
 fn read_evidence(
     directory: &ConversationDir,
     turn: Option<&str>,
@@ -296,20 +298,48 @@ fn read_calls(directory: &ConversationDir, turn: Option<&str>) -> io::Result<Vec
         .map_err(io::Error::other)
 }
 
-pub(crate) fn job_updates(directory: &ConversationDir) -> io::Result<Vec<JobFacts>> {
+pub(crate) fn job_updates(directory: &ConversationDir, turn: Option<&str>) -> io::Result<Vec<JobFacts>> {
     let (database, conversation) = database(directory)?;
     database
         .read_now(|db| {
-            let mut query =
-                db.prepare_cached("SELECT body FROM run_jobs WHERE conversation=?1 ORDER BY call,machine,job")?;
-            query
-                .query_map([&conversation], |row| row.get::<_, Vec<u8>>(0))?
+            let tx = db.unchecked_transaction()?;
+            if tx.query_row("SELECT call FROM run_jobs WHERE conversation=?1 AND NOT json_valid(body) LIMIT 1",[&conversation],|row|row.get::<_,String>(0)).optional()?.is_some(){return Err(fastctx_storage::Error::with_kind(fastctx_storage::ErrorKind::Corrupt,"job metadata is unreadable"));}
+            let query=if turn.is_some(){"SELECT body FROM run_jobs WHERE conversation=?1 AND json_valid(body) AND json_extract(body,'$.turn')=?2 ORDER BY call,machine,job"}else{"SELECT body FROM run_jobs WHERE conversation=?1 AND ?2 IS NULL ORDER BY call,machine,job"};
+            let mut query=tx.prepare_cached(query)?;
+            query.query_map((&conversation,turn), |row| row.get::<_, Vec<u8>>(0))?
                 .map(|row| {
-                    let mut update = sql::decode(&row?)?;
-                    sql::job_source(db, &conversation, &mut update)?;
+                    let mut update=sql::decode(&row?)?;
+                    sql::job_source(&tx,&conversation,&mut update)?;
                     Ok(update)
-                })
-                .collect()
+                }).collect()
         })
         .map_err(io::Error::other)
+}
+
+/// The wait detector needs only unfinished execution locations, not retained
+/// output, write details or every historical call. Partial indices exclude
+/// completed history before any application deserialization.
+pub(crate) fn pending_machines(directory: &ConversationDir) -> io::Result<Vec<(MachineName, Option<jiff::Timestamp>)>> {
+    let (database, conversation) = database(directory)?;
+    database.read_now(|db| {
+        for table in ["run_calls","run_jobs"] {
+            if db.query_row(&format!("SELECT call FROM {table} WHERE conversation=?1 AND NOT json_valid(body) LIMIT 1"),[&conversation],|row|row.get::<_,String>(0)).optional()?.is_some() {
+                return Err(fastctx_storage::Error::with_kind(fastctx_storage::ErrorKind::Corrupt,format!("conversation {conversation} has unreadable call metadata")));
+            }
+        }
+        let mut result=std::collections::BTreeMap::new();
+        let mut query=db.prepare_cached("SELECT json_extract(body,'$.facts.machine') FROM run_calls WHERE conversation=?1 AND json_valid(body) AND json_extract(body,'$.unavailable') IS NULL AND (json_extract(body,'$.facts.state.kind')='running' OR (json_extract(body,'$.facts.state.kind')='exited' AND json_extract(body,'$.facts.state.remaining')>0)) ORDER BY json_extract(body,'$.facts.machine'),call")?;
+        for machine in query.query_map([&conversation],|row|row.get::<_,String>(0))? {
+            let machine=machine?.parse::<MachineName>().map_err(|e|fastctx_storage::Error::new(e.to_string()))?;
+            result.entry(machine).or_insert(None);
+        }
+        let mut query=db.prepare_cached("SELECT j.machine,s.started FROM run_jobs j LEFT JOIN run_job_sources s ON s.conversation=j.conversation AND s.call=j.call AND s.machine=j.machine AND s.job=j.job WHERE j.conversation=?1 AND json_valid(j.body) AND (json_extract(j.body,'$.state.kind')='running' OR (json_extract(j.body,'$.state.kind')='exited' AND json_extract(j.body,'$.state.remaining')>0)) ORDER BY j.call,j.machine,j.job")?;
+        for row in query.query_map([&conversation],|row|Ok((row.get::<_,String>(0)?,row.get::<_,Option<String>>(1)?)))? {
+            let (machine,started)=row?;
+            let machine=machine.parse::<MachineName>().map_err(|e|fastctx_storage::Error::new(e.to_string()))?;
+            let started=started.map(|at|at.parse::<jiff::Timestamp>().map_err(|e|fastctx_storage::Error::new(e.to_string()))).transpose()?;
+            result.entry(machine).or_insert(started);
+        }
+        Ok(result.into_iter().collect())
+    }).map_err(io::Error::other)
 }
