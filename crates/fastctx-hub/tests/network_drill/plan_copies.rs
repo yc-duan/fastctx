@@ -1,12 +1,25 @@
 //! Real hub persistence and concurrent edits from distinct network members.
 
 use crate::{report::Report, world::World};
+use fastctx_net::link::Link;
 use fastctx_types::{
-    Address, ResidentId,
+    AccountName, Address, ResidentId,
     plan::{Author, Page, Result as PlanResult},
     plan_copies::{Reply, Request},
 };
 use std::time::Duration;
+
+/// Registers a conversation of `link`'s machine, as its node does when the
+/// conversation is born: its records are reached through it.
+pub async fn register(link: &Link, account: &AccountName, resident: &ResidentId) -> anyhow::Result<()> {
+    link.owned_records(
+        account,
+        fastctx_types::owned_records::Request::Register { resident: resident.clone(), shared: true, previous: None },
+    )
+    .await
+    .map_err(anyhow::Error::msg)?;
+    Ok(())
+}
 
 fn text(page: &Page) -> &str {
     page.body.as_ref().map_or("", |body| body.markdown.as_str())
@@ -26,6 +39,7 @@ pub async fn exercise(world: &World, report: &mut Report) -> anyhow::Result<()> 
         resident: ResidentId::try_from("codex-a1b2".to_string()).map_err(anyhow::Error::msg)?,
     };
     report.check(alpha.view().plan_copies, "the hub advertises revision-aware plan copies", "");
+    register(&alpha, &world.account, &owner.resident).await?;
     let base = "# Work\n- [ ] first\n- [ ] second\n";
     let first = page(
         alpha

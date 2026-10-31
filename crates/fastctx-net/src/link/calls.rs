@@ -10,7 +10,7 @@
 //! the hub, which keeps them for machines that are away.
 
 use std::io;
-use std::sync::Arc;
+use std::sync::{Arc, PoisonError};
 
 use fastctx_types::access::Purpose;
 use fastctx_types::remote::{Letter, RemoteCall, RemoteResult};
@@ -465,10 +465,42 @@ impl Inner {
 
     /// The next number this machine sends under, for something to `to`.
     fn number(&self, to: &MachineName) -> Result<u64, CallFailure> {
-        self.counter.next().map_err(|error| CallFailure::Unreachable {
+        self.next_number().map_err(|error| CallFailure::Unreachable {
             name: to.clone(),
             reason: format!("numbering the call: {error}"),
         })
+    }
+
+    /// The next number this machine sends under. Once half the numbers
+    /// reserved are given, the next block is reserved on a thread meant to
+    /// block, so giving one seldom waits for the disk.
+    fn next_number(&self) -> io::Result<u64> {
+        let (number, ahead) = self.counter.next()?;
+        if let Some(ahead) = ahead
+            && let Some(inner) = self.this.upgrade()
+        {
+            self.blocking(move || {
+                if let Err(error) = inner.counter.reserve(ahead) {
+                    inner.node.log(format!("reserving the numbers this machine sends under: {error}"));
+                }
+            });
+        }
+        Ok(number)
+    }
+
+    /// Changes the letters' state as `change` does, which says whether it
+    /// changed it, and keeps the change in the letters file: on a thread
+    /// meant to block, one write of the letters' state at a time, the state
+    /// in memory changed only once it is kept. Whether it changed.
+    pub(super) fn change_letters(&self, change: impl FnOnce(&mut super::Letters) -> bool) -> io::Result<bool> {
+        let _writing = self.letters_writing.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut letters = *self.letters();
+        if !change(&mut letters) {
+            return Ok(false);
+        }
+        super::state::write(&self.dir.letters(), &letters.file)?;
+        *self.letters() = letters;
+        Ok(true)
     }
 
     /// Keeps a letter to `to` in the outbox; it goes to the hub whenever
@@ -481,7 +513,7 @@ impl Inner {
         id: LetterId,
         letter: Letter,
     ) -> io::Result<super::Posted> {
-        let n = self.counter.next()?;
+        let n = self.next_number()?;
         let message = self.letter(to, account, purpose, n, id, letter);
         let frame = wire::encode(&Up::Send { seq: u64::MAX, message: message.clone() });
         if frame.len() > wire::MAX_CONTROL_FRAME {
@@ -491,12 +523,18 @@ impl Inner {
                 wire::MAX_CONTROL_FRAME
             )));
         }
+        // Letters are written one at a time, in the order they are
+        // numbered, without holding the letters' state meanwhile.
         let posted = {
+            let _writing = self.letters_writing.lock().unwrap_or_else(PoisonError::into_inner);
+            let (epoch, seq) = {
+                let letters = self.letters();
+                (letters.file.epoch, letters.next)
+            };
+            super::letters::Outbox::new(&self.dir).put(seq, &message)?;
             let mut letters = self.letters();
-            super::letters::Outbox::new(&self.dir).put(letters.next, &message)?;
-            let posted = super::Posted { epoch: letters.file.epoch, seq: letters.next };
-            letters.next += 1;
-            posted
+            letters.next = letters.next.max(seq + 1);
+            super::Posted { epoch, seq }
         };
         self.outbox_changed.notify_one();
         Ok(posted)

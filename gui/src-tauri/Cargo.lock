@@ -2116,6 +2116,7 @@ version = "1.0.1-beta.13"
 dependencies = [
  "async-io",
  "fastctx-types",
+ "jiff",
  "libc",
  "tokio",
  "tokio-util",

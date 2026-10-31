@@ -65,7 +65,7 @@ use std::io;
 use std::net::SocketAddr;
 use std::pin::Pin;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, MutexGuard, Weak};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError, Weak};
 
 use fastctx_types::access::{Purpose, TownId};
 use fastctx_types::contract::Pool;
@@ -328,13 +328,26 @@ pub(crate) struct Inner {
     /// This machine's place on the hub as its membership file keeps it: its
     /// name there changes when the hub renames it (`Inner::follow_name`).
     membership: Mutex<Membership>,
+    /// The membership file is written one write at a time, off the lock
+    /// that holds the membership (`change_membership`).
+    membership_writing: Mutex<()>,
     /// Where the hub is reached now (`addresses`): the membership's, until
     /// a hub that moved says otherwise.
     addresses: Mutex<Vec<SocketAddr>>,
-    key: SecretKey,
+    key: Arc<SecretKey>,
     node: Arc<dyn Node>,
+    /// The node's own runtime: what the hub's frames mean is handled there,
+    /// never on the lines' threads (`crate::threads`).
+    node_runtime: tokio::runtime::Handle,
     counter: Counter,
+    /// Held only to read or change the letters' state in memory.
     letters: Mutex<Letters>,
+    /// What of the letters goes to disk, the letters file and the outbox, is
+    /// written one write at a time under this, on a thread meant to block.
+    letters_writing: Mutex<()>,
+    /// How far the hub holds this machine's letters, as the heartbeat on the
+    /// lines' thread reads it without a lock.
+    held_now: AtomicU64,
     /// Replaced whole on each refresh, so a reader holds it as it was.
     view: Mutex<Arc<View>>,
     /// One refresh of the view at a time, or one change to it; others wait,
@@ -387,6 +400,11 @@ pub(crate) struct Inner {
     hub_ms: Mutex<Option<u32>>,
     /// How the line to the hub has held (`line`).
     line: Mutex<line::Line>,
+    /// Each change to the line is kept on disk off the lines' thread; the
+    /// writes go one at a time, and a write that a later change outdated is
+    /// left to the later one (`line`).
+    line_changes: AtomicU64,
+    line_writing: Mutex<()>,
     /// The direct links (`direct`).
     direct: direct::Direct,
     /// What is afoot here and elsewhere (`afoot`).
@@ -401,6 +419,7 @@ pub(crate) struct Inner {
     then: Mutex<Option<fastctx_types::uninstall::Then>>,
 }
 
+#[derive(Clone, Copy)]
 struct Letters {
     file: LettersFile,
     /// The number the next letter gets.
@@ -445,23 +464,14 @@ impl Link {
     /// Starts the link of the machine `membership` describes, which says
     /// who it is with `key`.
     pub fn start(dir: NetDir, membership: Membership, key: SecretKey, node: Arc<dyn Node>) -> io::Result<Self> {
-        // Noticing this machine's network change or wake only hastens a
-        // reconnect: without it, heartbeats and retries still find the hub.
-        let changes = match changes::Changes::new(node.clone()) {
-            Ok(changes) => Some(changes),
-            Err(error) => {
-                node.log(format!("not watching this machine's network and sleep: {error}"));
-                None
-            }
-        };
-        Self::start_with_changes(dir, membership, key, node, changes)
+        Self::start_with_changes(dir, membership, key, node, true)
     }
 
     /// Starts a link whose network and resume notifications are supplied by
     /// its application through [`Link::reconnect`]. Heartbeats and automatic
     /// retries still run here. Mobile applications own their OS callbacks.
     pub fn start_managed(dir: NetDir, membership: Membership, key: SecretKey, node: Arc<dyn Node>) -> io::Result<Self> {
-        Self::start_with_changes(dir, membership, key, node, None)
+        Self::start_with_changes(dir, membership, key, node, false)
     }
 
     fn start_with_changes(
@@ -469,7 +479,7 @@ impl Link {
         membership: Membership,
         key: SecretKey,
         node: Arc<dyn Node>,
-        changes: Option<changes::Changes>,
+        watch_changes: bool,
     ) -> io::Result<Self> {
         dir.prepare()?;
         dir.open_database(&membership.id)?;
@@ -518,10 +528,16 @@ impl Link {
             cert: membership.cert,
             kind: membership.kind,
             membership: Mutex::new(membership),
-            key,
+            membership_writing: Mutex::new(()),
+            key: Arc::new(key),
             node,
+            // A link started outside any runtime handles its frames on the
+            // lines' thread; a node and an application start it on theirs.
+            node_runtime: tokio::runtime::Handle::try_current().unwrap_or_else(|_| crate::threads::lines()),
             counter,
+            held_now: AtomicU64::new(letters_file.held),
             letters: Mutex::new(Letters { file: letters_file, next }),
+            letters_writing: Mutex::new(()),
             view: Mutex::new(Arc::new(view)),
             refreshing: tokio::sync::Mutex::new(Refreshed::default()),
             refreshes: AtomicU64::new(0),
@@ -555,6 +571,8 @@ impl Link {
             network: watch::channel(0).0,
             hub_ms: Mutex::new(None),
             line: Mutex::default(),
+            line_changes: AtomicU64::new(0),
+            line_writing: Mutex::new(()),
             direct: direct::Direct::default(),
             afoots: afoot::Afoots::default(),
             versions: versions::Versions::with_policy(policy),
@@ -566,7 +584,23 @@ impl Link {
         // roster it last had, before it reaches the hub, and whether or not
         // it does.
         inner.follow_view();
-        let task = tokio::spawn(session::run(inner.clone(), changes));
+        // The line is kept on the lines' thread, and so is the noticing of
+        // this machine's network changing or waking, which only hastens a
+        // reconnect: without it, heartbeats and retries still find the hub.
+        let running = inner.clone();
+        let task = crate::threads::lines().spawn(async move {
+            let changes = match watch_changes {
+                false => None,
+                true => match changes::Changes::new(running.node.clone()) {
+                    Ok(changes) => Some(changes),
+                    Err(error) => {
+                        running.node.log(format!("not watching this machine's network and sleep: {error}"));
+                        None
+                    }
+                },
+            };
+            session::run(running, changes).await;
+        });
         *inner.task.lock().expect("never poisoned") = Some(task);
         Ok(Self { inner })
     }
@@ -964,35 +998,70 @@ impl Inner {
         self.membership.lock().expect("never poisoned").clone()
     }
 
+    /// Runs `work` on the node's runtime: what the hub's frames mean, and
+    /// whatever calls into the node, is never done on the lines' thread.
+    pub(crate) fn on_node<F>(&self, work: F) -> tokio::task::JoinHandle<F::Output>
+    where
+        F: Future + Send + 'static,
+        F::Output: Send + 'static,
+    {
+        self.node_runtime.spawn(work)
+    }
+
+    /// Runs `work`, which writes to disk or otherwise blocks, on a thread
+    /// meant to block (`fastctx_platform::roles`).
+    pub(crate) fn blocking<F, R>(&self, work: F) -> tokio::task::JoinHandle<R>
+    where
+        F: FnOnce() -> R + Send + 'static,
+        R: Send + 'static,
+    {
+        self.node_runtime.spawn_blocking(fastctx_platform::doing::carried(move || {
+            let _blocking = fastctx_platform::roles::scoped(fastctx_platform::roles::Role::Blocking);
+            work()
+        }))
+    }
+
+    /// Tells the node what `tell` says, on the node's runtime.
+    pub(crate) fn tell_node(&self, tell: impl FnOnce(&dyn Node) + Send + 'static) {
+        let node = self.node.clone();
+        self.node_runtime.spawn(async move { tell(&*node) });
+    }
+
     /// This machine's name on the hub now.
     pub(crate) fn me(&self) -> MachineName {
         self.membership.lock().expect("never poisoned").name.clone()
     }
 
-    /// Changes the membership as `change` does and keeps it in the
-    /// membership file. The change holds while the node runs even when
-    /// keeping it fails; after a restart the hub says it again.
-    pub(crate) fn keep_membership(&self, change: impl FnOnce(&mut Membership)) -> io::Result<()> {
-        let mut membership = self.membership.lock().expect("never poisoned");
-        change(&mut membership);
-        state::write(&self.dir.membership(), &*membership)
+    /// Changes the membership as `change` does, and keeps it in the
+    /// membership file on a thread meant to block. The change holds while
+    /// the node runs even when keeping it fails; after a restart the hub
+    /// says it again.
+    pub(crate) fn change_membership(&self, change: impl FnOnce(&mut Membership)) {
+        change(&mut self.membership.lock().expect("never poisoned"));
+        let Some(inner) = self.this.upgrade() else { return };
+        self.blocking(move || {
+            let _writing = inner.membership_writing.lock().unwrap_or_else(PoisonError::into_inner);
+            // The membership as it is now: a change made meanwhile is kept
+            // by this write or a later one, never undone by an earlier one.
+            let membership = inner.membership.lock().expect("never poisoned").clone();
+            if let Err(error) = state::write(&inner.dir.membership(), &membership) {
+                inner.node.log(format!("keeping the membership: {error}"));
+            }
+        });
     }
 
     /// Takes `name` as this machine's name on the hub, which renamed it
     /// (`world-network.md`, 机器的名字): what it is called there is the hub's
     /// to say, and the hub says it of this machine's key. Kept in the
-    /// membership file, and told to the node.
+    /// membership file, and told to the node: on the node's runtime, before
+    /// what follows the view that says so.
     pub(crate) fn follow_name(&self, name: MachineName) {
         let before = self.me();
         if before == name {
             return;
         }
-        match self.keep_membership(|kept| kept.name = name.clone()) {
-            Ok(()) => self.node.log(format!("the hub calls this machine {name} now, no longer {before}")),
-            Err(error) => {
-                self.node.log(format!("the hub calls this machine {name} now; recording that failed: {error}"))
-            }
-        }
+        self.change_membership(|kept| kept.name = name.clone());
+        self.node.log(format!("the hub calls this machine {name} now, no longer {before}"));
         self.node.renamed(&before, &name);
     }
 

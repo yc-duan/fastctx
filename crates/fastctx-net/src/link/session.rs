@@ -1,6 +1,12 @@
 //! The link's connections: dialing an upstream, the welcome, and everything
 //! that passes on one connection until it ends; then dialing again.
 //!
+//! The line itself runs on the lines' thread (`crate::threads`): reading and
+//! writing frames, heartbeats, the silence that ends it. Every frame it
+//! does not need for that is handed, in the order it came, to a task on the
+//! node's runtime, which does what it means; what writes to disk goes to a
+//! thread meant to block (`specs/world-engine.md`, 连接与判活).
+//!
 //! The ways to the hub are tried in order: this machine's own line, then
 //! through each machine that allows direct connections; one that cannot be
 //! reached gives way to the next. A machine on a later way asks the earlier
@@ -18,7 +24,7 @@ use tokio::time::Instant;
 use tokio_tungstenite::tungstenite::Message as WsMessage;
 
 use super::letters::{self, Outbox};
-use super::outgoing::Outgoing;
+use super::outgoing::{Outgoing, Writing};
 use super::{CallEvent, CallOn, Connection, Inner, Replier, Status};
 use crate::again::{STABLE, backoff};
 use crate::dial::{self, HubSocket, Upstream};
@@ -72,11 +78,16 @@ pub(super) async fn run(inner: Arc<Inner>, mut changes: Option<super::changes::C
                 let dissolved = inner.dissolved.load(std::sync::atomic::Ordering::Relaxed);
                 let then = *inner.then.lock().expect("never poisoned");
                 let ended = super::state::Ended { at: Timestamp::now(), reason: reason.clone(), dissolved, then };
-                if let Err(error) = super::state::write(&inner.dir.ended(), &ended) {
-                    inner.node.log(format!("keeping that the hub ended this machine's place: {error}"));
+                let keeping = inner.clone();
+                match inner.blocking(move || super::state::write(&keeping.dir.ended(), &ended)).await {
+                    Ok(Ok(())) => {}
+                    Ok(Err(error)) => {
+                        inner.node.log(format!("keeping that the hub ended this machine's place: {error}"))
+                    }
+                    Err(error) => inner.node.log(format!("keeping that the hub ended this machine's place: {error}")),
                 }
                 inner.status.send_replace(Status::Stopped { reason });
-                inner.node.place_ended(dissolved, then);
+                inner.tell_node(move |node| node.place_ended(dissolved, then));
                 return;
             }
             Ended::Reroute(reason) => {
@@ -202,7 +213,7 @@ async fn connect(inner: &Arc<Inner>, online_since: &mut Option<Instant>) -> Ende
     Ended::Retry(failures.join("; "))
 }
 
-async fn open(inner: &Inner, upstream: &Upstream) -> Result<Opened, Ended> {
+async fn open(inner: &Arc<Inner>, upstream: &Upstream) -> Result<Opened, Ended> {
     let membership = inner.membership();
     let dialed =
         dial::dial_upstream(upstream, &membership.id, membership.cert, wire::CONTROL_PATH, wire::MAX_CONTROL_FRAME)
@@ -283,16 +294,18 @@ async fn open(inner: &Inner, upstream: &Upstream) -> Result<Opened, Ended> {
                     .await
                     .map_err(|error| Ended::Retry(format!("settling the prior receive position: {error}")))?;
             }
+            // What the welcome changes of the membership holds at once, and
+            // is kept on disk off the lines' thread; the node hears of a new
+            // name on its own runtime.
             if name != membership.name {
-                inner.follow_name(name);
+                let following = inner.clone();
+                let _ = inner.on_node(async move { following.follow_name(name) }).await;
             }
             // The hub's short name is the hub's to say: a membership kept
             // before it was known takes it from the welcome.
             if hub_name != membership.hub_name {
-                match inner.keep_membership(|kept| kept.hub_name = hub_name.clone()) {
-                    Ok(()) => inner.node.log(format!("the hub {hub} is called {hub_name}")),
-                    Err(error) => inner.node.log(format!("recording that the hub is called {hub_name}: {error}")),
-                }
+                inner.change_membership(|kept| kept.hub_name = hub_name.clone());
+                inner.node.log(format!("the hub {hub} is called {hub_name}"));
             }
             Ok(Opened {
                 socket,
@@ -318,19 +331,29 @@ async fn connected(
     let Opened { socket, address, route, taken, hub_letters, afoot_pending } = opened;
     let upstream = tried.last().expect("a session is opened by a way").clone();
 
-    // The hub holds this machine's letters through `taken`.
-    if let Err(error) = held(inner, taken) {
-        return Ended::Retry(format!("recording what the hub holds: {error}"));
-    }
-    // The hub numbers its letters afresh when it lost its records.
-    {
-        let mut letters = inner.letters.lock().expect("never poisoned");
-        if letters.file.taken.is_none_or(|(epoch, _)| epoch != hub_letters) {
-            letters.file.taken = Some((hub_letters, 0));
-            if let Err(error) = super::state::write(&inner.dir.letters(), &letters.file) {
-                return Ended::Retry(format!("recording the hub's letters: {error}"));
-            }
-        }
+    // The hub holds this machine's letters through `taken`; and it numbers
+    // its letters afresh when it lost its records. Both are kept on disk,
+    // off the lines' thread.
+    let keeping = inner.clone();
+    let kept = inner
+        .blocking(move || -> Result<(), String> {
+            held(&keeping, taken).map_err(|error| format!("recording what the hub holds: {error}"))?;
+            keeping
+                .change_letters(|letters| {
+                    let fresh = letters.file.taken.is_none_or(|(epoch, _)| epoch != hub_letters);
+                    if fresh {
+                        letters.file.taken = Some((hub_letters, 0));
+                    }
+                    fresh
+                })
+                .map_err(|error| format!("recording the hub's letters: {error}"))?;
+            Ok(())
+        })
+        .await;
+    match kept {
+        Ok(Ok(())) => {}
+        Ok(Err(reason)) => return Ended::Retry(reason),
+        Err(error) => return Ended::Retry(format!("recording the hub's letters: {error}")),
     }
 
     // Registered before the connection is published, so a change of the
@@ -341,7 +364,7 @@ async fn connected(
 
     let generation = super::ways::connection_number();
     inner.afoot_started(generation, afoot_pending);
-    let (up, mut outgoing) = Outgoing::channel();
+    let (up, mut outgoing): (Outgoing, Writing) = Outgoing::channel();
     let (closed, closing) = tokio::sync::watch::channel(None);
     *inner.connection.lock().expect("never poisoned") = Some(Connection {
         generation,
@@ -388,15 +411,20 @@ async fn connected(
     });
     let (letter_failed, mut letters_failed) = oneshot::channel::<String>();
     let (outbox_failed, mut outbox_failure) = oneshot::channel::<String>();
+    let (frames_failed, mut frames_failure) = oneshot::channel::<String>();
     let (deliveries, delivered) = mpsc::channel(DELIVERIES);
+    let (frames, arriving) = mpsc::channel(FRAMES);
     // Set once this connection's view is current: letters are admitted by it.
     let (view_ready, view_current) = watch::channel(false);
     let pinged: Arc<std::sync::Mutex<std::collections::HashMap<u64, Instant>>> = Arc::default();
+    // The writer and the heartbeat keep the line, here; sending letters,
+    // taking the hub's, and doing what its frames say are the node's work.
     let mut tasks = Tasks(vec![
         writer,
         tokio::spawn(heartbeat(inner.clone(), up.clone(), pinged.clone(), pulse.clone())),
-        tokio::spawn(flush(inner.clone(), up.clone(), taken, outbox_failed)),
-        tokio::spawn(take_letters(inner.clone(), up.clone(), hub_letters, delivered, view_current, letter_failed)),
+        inner.on_node(flush(inner.clone(), up.clone(), taken, outbox_failed)),
+        inner.on_node(take_letters(inner.clone(), up.clone(), hub_letters, delivered, view_current, letter_failed)),
+        inner.on_node(handle_frames(inner.clone(), generation, up.clone(), deliveries, arriving, frames_failed)),
     ]);
     let (returned, mut preferred_back) = oneshot::channel::<Upstream>();
     let mut preferred = tried[..tried.len() - 1].to_vec();
@@ -417,7 +445,7 @@ async fn connected(
     inner.presences.lock().expect("never poisoned").clear();
     {
         let inner = inner.clone();
-        tasks.0.push(tokio::spawn(async move {
+        tasks.0.push(inner.clone().on_node(async move {
             let mut failing = None;
             loop {
                 match inner.refresh().await {
@@ -452,7 +480,6 @@ async fn connected(
     // wait behind letters and answers the hub queued before it.
     let mut heard = Instant::now();
     let mut last_ping = 0;
-    let mut version_parts = super::version_parts::Receiving::default();
     // A check asked since the hub was last heard, and how long it waits;
     // and when it was asked.
     let mut checking: Option<Instant> = None;
@@ -489,8 +516,8 @@ async fn connected(
                     // Numbered apart from the heartbeats, so its pong measures
                     // nothing.
                     let paths = inner.view().direct_links.then(|| inner.paths());
-                    let held = Some(inner.letters.lock().expect("never poisoned").file.held);
-                    let _ = up.send(Up::Ping { n: 0, paths, took: Some(pulse.taken()), held });
+                    let held = Some(inner.held_now.load(std::sync::atomic::Ordering::Acquire));
+                    let _ = up.send_first(Up::Ping { n: 0, paths, took: Some(pulse.taken()), held });
                 }
                 continue;
             },
@@ -505,6 +532,7 @@ async fn connected(
             },
             failed = &mut letters_failed => break Ended::Retry(failed.unwrap_or_else(|_| "taking letters stopped".to_string())),
             failed = &mut outbox_failure => break Ended::Retry(failed.unwrap_or_else(|_| "sending letters stopped".to_string())),
+            failed = &mut frames_failure => break Ended::Retry(failed.unwrap_or_else(|_| "doing what the hub's frames say stopped".to_string())),
             next = stream.next() => next,
         };
         let frame: Down = match next {
@@ -565,35 +593,9 @@ async fn connected(
                     pinged.retain(|sent, _| *sent > n);
                 }
             }
-            Down::Ack { seq, refused } => {
-                if let Some(reason) = refused
-                    && let Err(error) = refused_letter(inner, seq, &reason)
-                {
-                    break Ended::Retry(format!("recording refused letter {seq}: {error}"));
-                }
-                if let Err(error) = held(inner, seq) {
-                    break Ended::Retry(format!("recording what the hub holds: {error}"));
-                }
-            }
-            // Letters the hub sends faster than this machine takes them wait
-            // for it, the connection read no further meanwhile, for as long
-            // as a silence lasts at most: an older hub sends all it holds at
-            // once.
-            Down::Deliver { seq, message } => {
-                match tokio::time::timeout(SILENCE, deliveries.send((seq, message))).await {
-                    Ok(_) => {}
-                    Err(_) => {
-                        break Ended::Retry(format!(
-                            "the hub's letters came faster than this machine takes them, for {} s",
-                            SILENCE.as_secs()
-                        ));
-                    }
-                }
-            }
-            Down::Incoming { call, message } => {
-                let stop = inner.answers.open(inner, CallOn::Hub(generation), call);
-                tokio::spawn(super::answering::answer(inner.clone(), Replier::Hub(up.clone(), call), message, stop));
-            }
+            // Answers to this machine's own questions and calls go straight
+            // to whoever waits for them: routing them is all there is to do,
+            // and none waits behind the node's other work.
             Down::Cancelled { call } => {
                 inner.answers.stop(&CallOn::Hub(generation), call, "its caller gave it up");
             }
@@ -602,46 +604,11 @@ async fn connected(
                 inner.call_event(&CallOn::Hub(generation), id, CallEvent::Answered(message));
             }
             Down::Told { id, answer } => inner.asks.told(generation, id, answer),
-            Down::Part { id, index, total, text } => inner.asks.part(generation, id, index, total, text),
-            Down::Presence { machine, presence, rev } => inner.heard_presence(machine, presence, rev),
-            Down::View { delta } => inner.heard_view(*delta),
-            Down::DirectoryChanged => {
-                let inner = inner.clone();
-                tokio::spawn(async move {
-                    if let Err(error) = inner.refresh().await {
-                        inner.node.log(format!("asking the hub for the view: {error}"));
-                    }
-                    inner.node.directory_changed();
-                });
+            Down::Part { id, index, total, text } => {
+                if let Some(decode) = inner.asks.part(generation, id, index, total, text) {
+                    inner.blocking(move || decode.run());
+                }
             }
-            Down::HistoryChanged { town, name, version } => inner.node.history_changed(town, name, version),
-            Down::ReplicasChanged => inner.node.replicas_changed(),
-            Down::LedgerChanged { town } => inner.node.ledger_changed(Some(town)),
-            Down::AccountRecordChanged { changed } => {
-                inner.node.account_record_changed(&changed);
-                let _ = inner.record_changes.send(Some(changed));
-            }
-            Down::Afoot { machine, busy, change } => inner.heard_afoot(machine, busy, *change),
-            Down::Forget { forgetting } => {
-                let (inner, up) = (inner.clone(), up.clone());
-                tokio::spawn(async move {
-                    let id = forgetting.id;
-                    let outcome = inner.node.forget(forgetting).await;
-                    // A session ended meanwhile: the hub tells it again.
-                    let _ = up.send(Up::Forgot { id, outcome });
-                });
-            }
-            Down::Versions { network } => {
-                version_parts.clear();
-                inner.heard_versions(generation, *network);
-            }
-            Down::VersionPart { index, last, network } => match version_parts.part(index, last, *network) {
-                Ok(Some(network)) => inner.heard_versions(generation, network),
-                Ok(None) => {}
-                Err(error) => break Ended::Retry(format!("reading network versions: {error}")),
-            },
-            Down::Fetch { fetch } => inner.fetch_for_hub(generation, *fetch),
-            Down::FetchCancelled { id } => inner.cancel_fetch(generation, id),
             Down::PackageProgress { id, progress } => inner.asks.progress(generation, id, progress),
             Down::Refused { reason } => break refused(inner, reason),
             Down::Welcome { .. }
@@ -654,6 +621,21 @@ async fn connected(
             | Down::Ready => {
                 break Ended::Retry("the hub sent a frame that belongs to another kind of connection".to_string());
             }
+            // The rest is the node's to do, in the order it came. A node that
+            // falls this far behind lets the connection go rather than hold
+            // the hub's frames without end: the next one starts afresh, and
+            // what it missed comes again.
+            frame => match frames.try_send(frame) {
+                Ok(()) => {}
+                Err(mpsc::error::TrySendError::Full(_)) => {
+                    break Ended::Retry(format!(
+                        "the hub's frames piled up faster than this machine does what they say ({FRAMES} waiting)"
+                    ));
+                }
+                Err(mpsc::error::TrySendError::Closed(_)) => {
+                    break Ended::Retry("doing what the hub's frames say stopped".to_string());
+                }
+            },
         }
     };
 
@@ -714,6 +696,127 @@ impl Drop for Tasks {
     }
 }
 
+/// How many of the hub's frames may wait for the node to do what they say.
+/// The hub sends letters a window at a time and bounds the rest it queues
+/// for one machine, so a node that keeps up never comes near it.
+const FRAMES: usize = 4096;
+
+/// Does what the hub's frames say, in the order they came, on the node's
+/// runtime: the line goes on being read and kept while it takes its time.
+async fn handle_frames(
+    inner: Arc<Inner>,
+    generation: u64,
+    up: Outgoing,
+    deliveries: mpsc::Sender<(u64, Envelope)>,
+    mut arriving: mpsc::Receiver<Down>,
+    failed: oneshot::Sender<String>,
+) {
+    let mut version_parts = super::version_parts::Receiving::default();
+    while let Some(frame) = arriving.recv().await {
+        if let Err(reason) = handle_frame(&inner, generation, &up, &deliveries, &mut version_parts, frame).await {
+            let _ = failed.send(reason);
+            return;
+        }
+    }
+}
+
+async fn handle_frame(
+    inner: &Arc<Inner>,
+    generation: u64,
+    up: &Outgoing,
+    deliveries: &mpsc::Sender<(u64, Envelope)>,
+    version_parts: &mut super::version_parts::Receiving,
+    frame: Down,
+) -> Result<(), String> {
+    match frame {
+        Down::Ack { seq, refused } => {
+            let keeping = inner.clone();
+            inner
+                .blocking(move || -> Result<(), String> {
+                    if let Some(reason) = refused {
+                        refused_letter(&keeping, seq, &reason)
+                            .map_err(|error| format!("recording refused letter {seq}: {error}"))?;
+                    }
+                    held(&keeping, seq).map_err(|error| format!("recording what the hub holds: {error}"))
+                })
+                .await
+                .map_err(|error| format!("recording what the hub holds: {error}"))??;
+        }
+        // Letters the hub sends faster than this machine takes them wait
+        // for it, for as long as a silence lasts at most: an older hub
+        // sends all it holds at once.
+        Down::Deliver { seq, message } => {
+            if tokio::time::timeout(SILENCE, deliveries.send((seq, message))).await.is_err() {
+                return Err(format!(
+                    "the hub's letters came faster than this machine takes them, for {} s",
+                    SILENCE.as_secs()
+                ));
+            }
+        }
+        Down::Incoming { call, message } => {
+            let stop = inner.answers.open(inner, CallOn::Hub(generation), call);
+            tokio::spawn(super::answering::answer(inner.clone(), Replier::Hub(up.clone(), call), message, stop));
+        }
+        Down::Presence { machine, presence, rev } => inner.heard_presence(machine, presence, rev),
+        Down::View { delta } => inner.heard_view(*delta),
+        Down::DirectoryChanged => {
+            let inner = inner.clone();
+            tokio::spawn(async move {
+                if let Err(error) = inner.refresh().await {
+                    inner.node.log(format!("asking the hub for the view: {error}"));
+                }
+                inner.node.directory_changed();
+            });
+        }
+        Down::HistoryChanged { town, name, version } => inner.node.history_changed(town, name, version),
+        Down::ReplicasChanged => inner.node.replicas_changed(),
+        Down::LedgerChanged { town } => inner.node.ledger_changed(Some(town)),
+        Down::AccountRecordChanged { changed } => {
+            inner.node.account_record_changed(&changed);
+            let _ = inner.record_changes.send(Some(changed));
+        }
+        Down::Afoot { machine, busy, change } => inner.heard_afoot(machine, busy, *change),
+        Down::Forget { forgetting } => {
+            let (inner, up) = (inner.clone(), up.clone());
+            tokio::spawn(async move {
+                let id = forgetting.id;
+                let outcome = inner.node.forget(forgetting).await;
+                // A session ended meanwhile: the hub tells it again.
+                let _ = up.send(Up::Forgot { id, outcome });
+            });
+        }
+        Down::Versions { network } => {
+            version_parts.clear();
+            inner.heard_versions(generation, *network);
+        }
+        Down::VersionPart { index, last, network } => match version_parts.part(index, last, *network) {
+            Ok(Some(network)) => inner.heard_versions(generation, network),
+            Ok(None) => {}
+            Err(error) => return Err(format!("reading network versions: {error}")),
+        },
+        Down::Fetch { fetch } => inner.fetch_for_hub(generation, *fetch),
+        Down::FetchCancelled { id } => inner.cancel_fetch(generation, id),
+        // Done on the lines' thread.
+        Down::Pong { .. }
+        | Down::Cancelled { .. }
+        | Down::Status { .. }
+        | Down::Answered { .. }
+        | Down::Told { .. }
+        | Down::Part { .. }
+        | Down::PackageProgress { .. }
+        | Down::Refused { .. }
+        | Down::Welcome { .. }
+        | Down::LoginResponse { .. }
+        | Down::TokenInfo { .. }
+        | Down::RegisterResponse { .. }
+        | Down::LoggedIn { .. }
+        | Down::Registered
+        | Down::Paired
+        | Down::Ready => {}
+    }
+    Ok(())
+}
+
 fn refused(inner: &Inner, reason: Refusal) -> Ended {
     match reason {
         Refusal::Removed { dissolved, then, .. } => {
@@ -762,8 +865,8 @@ async fn heartbeat(
         n += 1;
         let paths = inner.view().direct_links.then(|| inner.paths());
         pinged.lock().expect("never poisoned").insert(n, Instant::now());
-        let held = Some(inner.letters.lock().expect("never poisoned").file.held);
-        if up.send(Up::Ping { n, paths, took: Some(pulse.taken()), held }).is_err() {
+        let held = Some(inner.held_now.load(std::sync::atomic::Ordering::Acquire));
+        if up.send_first(Up::Ping { n, paths, took: Some(pulse.taken()), held }).is_err() {
             return;
         }
     }
@@ -822,20 +925,20 @@ fn held(inner: &Inner, seq: u64) -> std::io::Result<()> {
     // Kept before the letters are deleted: a stop in between leaves letters
     // the next start deletes, never a number given out again to a letter
     // the hub would take for one it holds.
-    let before = {
-        let mut letters = inner.letters.lock().expect("never poisoned");
-        let before = letters.file.held;
-        if seq <= before {
-            return Ok(());
+    let mut before = 0;
+    let further = inner.change_letters(|letters| {
+        before = letters.file.held;
+        let further = seq > letters.file.held;
+        if further {
+            letters.file.held = seq;
+            letters.next = letters.next.max(seq + 1);
         }
-        letters.file.held = seq;
-        letters.next = letters.next.max(seq + 1);
-        if let Err(error) = super::state::write(&inner.dir.letters(), &letters.file) {
-            letters.file.held = before;
-            return Err(error);
-        }
-        before
-    };
+        further
+    })?;
+    if !further {
+        return Ok(());
+    }
+    inner.held_now.store(seq, std::sync::atomic::Ordering::Release);
     Outbox::new(&inner.dir).held_between(before, seq)?;
     inner.outbox_changed.notify_one();
     Ok(())
@@ -944,7 +1047,7 @@ async fn take_letters(
                 return;
             }
         };
-        if up.write(Up::Ack { seq }).await.is_err() {
+        if up.write_first(Up::Ack { seq }).await.is_err() {
             return;
         }
         if let Err(error) = letters::acknowledge(&inner.dir, hub_letters, seq).await {

@@ -48,6 +48,7 @@ pub(crate) struct Awaited {
 }
 
 /// How the data connections of one call over a direct link are made.
+#[derive(Clone)]
 pub struct DataWay {
     inner: Arc<Inner>,
     conn: Arc<PeerConn>,

@@ -21,6 +21,9 @@ pub(crate) struct Versions {
     /// What the hub last told.
     network: Mutex<Option<(u64, Network)>>,
     policy: Mutex<Option<super::update_policy::UpdatePolicy>>,
+    /// The policy file is written one write at a time, off the lock on
+    /// `policy`.
+    policy_writing: Mutex<()>,
     synced: std::sync::atomic::AtomicU64,
     fetching: Mutex<std::collections::HashMap<(u64, u64), tokio::sync::watch::Sender<bool>>>,
 }
@@ -95,14 +98,25 @@ impl Inner {
 
     pub(super) fn heard_versions(&self, generation: u64, network: Network) {
         let policy = super::update_policy::UpdatePolicy::of(&network);
-        {
+        let changed = {
             let mut kept = self.versions.policy.lock().expect("never poisoned");
-            if kept.as_ref() != Some(&policy) {
-                if let Err(error) = policy.save(self.dir.path()) {
-                    self.node.log(format!("keeping the network's update policy: {error}"));
-                }
+            let changed = kept.as_ref() != Some(&policy);
+            if changed {
                 *kept = Some(policy);
             }
+            changed
+        };
+        if changed && let Some(inner) = self.this.upgrade() {
+            self.blocking(move || {
+                let _writing = inner.versions.policy_writing.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+                // The policy as it is now, never one an earlier write outdated.
+                let policy = inner.versions.policy.lock().expect("never poisoned").clone();
+                if let Some(policy) = policy
+                    && let Err(error) = policy.save(inner.dir.path())
+                {
+                    inner.node.log(format!("keeping the network's update policy: {error}"));
+                }
+            });
         }
         *self.versions.network.lock().expect("never poisoned") = Some((generation, network));
         self.node.versions_changed();
@@ -180,7 +194,8 @@ impl Inner {
             return Err("packages go to the hub itself".to_string());
         };
         let mut stream =
-            Stream::to_hub(&upstreams, &hub, cert, &self.key, |key, proof| Intent::Deliver { key, proof, id }).await?;
+            Stream::to_hub(&upstreams, &hub, cert, &self.key, move |key, proof| Intent::Deliver { key, proof, id })
+                .await?;
         stream.say(&Sized { size }).await?;
         let mut buffer = vec![0; CHUNK];
         loop {
@@ -352,12 +367,8 @@ impl Link {
                 return Err("packages come from the hub itself".into());
             };
             let (version, target) = (version.to_string(), target.to_string());
-            let mut stream = Stream::to_hub(&upstreams, &hub, cert, &self.inner.key, |key, proof| Intent::Package {
-                key,
-                proof,
-                version,
-                target,
-                from: have,
+            let mut stream = Stream::to_hub(&upstreams, &hub, cert, &self.inner.key, move |key, proof| {
+                Intent::Package { key, proof, version, target, from: have }
             })
             .await?;
             let said: Sized = stream.hear().await?;

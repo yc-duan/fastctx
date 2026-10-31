@@ -75,9 +75,11 @@ impl Inner {
         *self.afoots.complete.lock().expect("never poisoned") = (!pending).then_some(generation);
     }
 
+    /// Called on the lines' thread as a pong says so: the node hears of it
+    /// on its own runtime.
     pub(super) fn afoot_complete(&self, generation: u64) {
         *self.afoots.complete.lock().expect("never poisoned") = Some(generation);
-        self.node.afoot_changed();
+        self.tell_node(|node| node.afoot_changed());
     }
 
     /// Whether what the hub told of the other machines is as the session

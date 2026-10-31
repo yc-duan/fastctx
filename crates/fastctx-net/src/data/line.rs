@@ -49,7 +49,8 @@ enum Out {
     Close(oneshot::Sender<()>),
 }
 
-/// One end of a data connection, read and written by tasks of its own.
+/// One end of a data connection, read and written by tasks of its own on
+/// the data connections' thread (`crate::threads`).
 pub(super) struct Line {
     incoming: mpsc::Receiver<Received>,
     /// Why reading stopped, once it has; none when the other end closed.
@@ -81,7 +82,7 @@ impl Line {
             stopped: stopped.clone(),
             over: over.clone(),
             outgoing,
-            reader: tokio::spawn(read(
+            reader: crate::threads::data().spawn(read(
                 stream,
                 received,
                 stopped.clone(),
@@ -90,7 +91,7 @@ impl Line {
                 pulse.clone(),
                 receipt.clone(),
             )),
-            writer: tokio::spawn(write(sink, sending, over, stopped, ending, pulse, receipt.clone())),
+            writer: crate::threads::data().spawn(write(sink, sending, over, stopped, ending, pulse, receipt.clone())),
             receipt,
         }
     }

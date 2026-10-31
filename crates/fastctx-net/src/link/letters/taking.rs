@@ -41,13 +41,20 @@ pub(in crate::link) async fn take(inner: Arc<Inner>, epoch: u64, run: Vec<(u64, 
         }
         receipts::keep_batch(&inner.dir, pending).await?;
         let sequence = last.expect("receive windows are nonempty");
-        let mut letters = inner.letters.lock().expect("never poisoned");
-        if !letters.file.taken.is_some_and(|(known, taken)| known == epoch && sequence <= taken) {
-            let mut next = letters.file;
-            next.taken = Some((epoch, sequence));
-            super::super::state::write(&inner.dir.letters(), &next)?;
-            letters.file = next;
-        }
+        let keeping = inner.clone();
+        inner
+            .blocking(move || {
+                keeping.change_letters(|letters| {
+                    let taken = letters.file.taken;
+                    let further = !taken.is_some_and(|(known, taken)| known == epoch && sequence <= taken);
+                    if further {
+                        letters.file.taken = Some((epoch, sequence));
+                    }
+                    further
+                })
+            })
+            .await
+            .map_err(io::Error::other)??;
         Ok(sequence)
     })
     .await

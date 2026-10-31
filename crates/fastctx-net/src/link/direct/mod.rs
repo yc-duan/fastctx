@@ -240,7 +240,7 @@ impl Inner {
                         conn.close("this machine no longer takes direct connections".to_string());
                     }
                     let this = self.clone();
-                    tokio::spawn(async move {
+                    self.on_node(async move {
                         if let Err(why) = this.firewall(BTreeSet::new()).await {
                             this.node.log(format!("direct connections: closing this machine's firewall: {why}"));
                         }
@@ -265,7 +265,7 @@ impl Inner {
         }
         let this = self.clone();
         let ports: BTreeSet<u16> = wanted.iter().map(|(_, port)| *port).collect();
-        tokio::spawn(async move {
+        self.on_node(async move {
             let outcome = this.open_ports(ports).await;
             if report {
                 let question = crate::wire::Question::Listening { at: trial, outcome };
@@ -301,7 +301,7 @@ impl Inner {
     async fn firewall(self: &Arc<Self>, ports: BTreeSet<u16>) -> Result<crate::wire::Firewall, String> {
         *self.direct.firewall.wanted.lock().expect("never poisoned") = ports;
         let (node, firewall) = (self.node.clone(), self.direct.firewall.clone());
-        tokio::task::spawn_blocking(move || {
+        self.blocking(move || {
             let _one_at_a_time = firewall.applying.lock().expect("never poisoned");
             let wanted = firewall.wanted.lock().expect("never poisoned").clone();
             node.open_ports(&wanted)
@@ -362,7 +362,8 @@ impl Inner {
             if keepers.contains_key(&peer) {
                 continue;
             }
-            let task = tokio::spawn(peer::keep(self.clone(), peer.clone(), at.clone()));
+            // Kept on the control lines' thread (`crate::threads`).
+            let task = crate::threads::lines().spawn(peer::keep(self.clone(), peer.clone(), at.clone()));
             keepers.insert(peer, Keeper { at, task });
         }
     }

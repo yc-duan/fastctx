@@ -10,6 +10,7 @@ pub async fn exercise(world: &World, report: &mut Report) -> anyhow::Result<()> 
     let writer = world.machine("alpha").link();
     let reader = world.machine("gamma").link();
     let owner = Address { machine: world.machine("alpha").name.clone(), resident: "codex-f011".parse()? };
+    crate::plan_copies::register(&writer, &world.account, &owner.resident).await?;
     let mut changes = reader.record_changes();
     let mut base = None;
     for (step, expected) in [(0, false), (1, true), (2, false)] {
@@ -79,6 +80,7 @@ pub async fn exercise(world: &World, report: &mut Report) -> anyhow::Result<()> 
         "watch did not list"
     );
     let new_owner = Address { resident: "codex-f012".parse()?, ..owner.clone() };
+    crate::plan_copies::register(&writer, &world.account, &new_owner.resident).await?;
     writer
         .plan_copy(
             &world.account,
