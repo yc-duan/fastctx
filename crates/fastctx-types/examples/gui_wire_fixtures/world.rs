@@ -340,6 +340,7 @@ fn nodes() -> Vec<NodesReply> {
         completion_receipts: false,
         control_letters: lifetime,
         run_stops: lifetime,
+        job_fact_deltas: false,
         upload_resumes: false,
         attachment_references: false,
         stats: lifetime,

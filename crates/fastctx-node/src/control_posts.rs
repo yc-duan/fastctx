@@ -13,6 +13,7 @@ use fastctx_types::{AccountName, MachineName, NoticeId};
 use serde::{Deserialize, Serialize};
 
 use crate::Node;
+use crate::records::items;
 
 #[derive(Serialize, Deserialize)]
 struct Request {
@@ -52,13 +53,13 @@ pub(crate) fn send(
     command: ControlLetter,
 ) -> io::Result<Option<Result<(), Failure>>> {
     let id = crate::control_letters::id(path, bytes);
-    if let Some(reply) = fastctx_install::renewal::read_json::<Reply>(&path.with_extension("reply"))?
+    if let Some(reply) = items::get::<Reply>(&path.with_extension("reply"))?
         && reply.id == id
     {
         return Ok(Some(reply.result));
     }
     let marker = path.with_extension("posted");
-    let posted = match fastctx_install::renewal::read_json::<Posted>(&marker)? {
+    let posted = match items::get::<Posted>(&marker)? {
         Some(posted) if posted.id == id => posted,
         _ => {
             let (link, account) =
@@ -71,8 +72,7 @@ pub(crate) fn send(
                 digest: fastctx_hands::files::content_hash(bytes),
             };
             let request_file = request_path(node, &id);
-            fastctx_platform::ensure_private_dir(request_file.parent().expect("control requests directory"))?;
-            fastctx_install::renewal::write_json(&request_file, &request)?;
+            items::keep(&request_file, &request)?;
             let posted = crate::letters::post(
                 node,
                 acting,
@@ -81,7 +81,7 @@ pub(crate) fn send(
                 Letter::Control { command: Box::new(command) },
             )?;
             let posted = Posted { id, posted, at: Some(jiff::Timestamp::now()) };
-            fastctx_install::renewal::write_json(&marker, &posted)?;
+            items::keep(&marker, &posted)?;
             posted
         }
     };
@@ -91,7 +91,7 @@ pub(crate) fn send(
             Ok(set_aside(node, &marker, &posted, destination)?.map(|reason| Err(Failure::refused(reason))))
         }
         Posting::Replaced => {
-            std::fs::remove_file(marker)?;
+            items::delete(&marker)?;
             Ok(None)
         }
         Posting::Refused(reason) => Ok(Some(Err(Failure::refused(reason)))),
@@ -108,7 +108,7 @@ fn set_aside(node: &Node, marker: &Path, posted: &Posted, destination: &Written)
     let Ok(view) = crate::authorization::current_view(&link) else { return Ok(None) };
     let at = match posted.at {
         Some(at) => at,
-        None => jiff::Timestamp::try_from(marker.metadata()?.modified()?).map_err(io::Error::other)?,
+        None => jiff::Timestamp::try_from(items::modified(marker)?).map_err(io::Error::other)?,
     };
     let since = |member: Option<&fastctx_net::directory::Member>| member.and_then(|member| member.settled) > Some(at);
     Ok(if since(view.member(&destination.name)) {
@@ -132,14 +132,14 @@ pub(crate) fn receive(
     id: &NoticeId,
     result: Result<(), Failure>,
 ) -> io::Result<Result<(), String>> {
-    let Some(request) = fastctx_install::renewal::read_json::<Request>(&request_path(node, id))? else {
+    let Some(request) = items::get::<Request>(&request_path(node, id))? else {
         return Ok(Err("this node has no such outgoing control request".into()));
     };
     let same = node.link_of(hub).is_some_and(|link| link.view().same(&request.machine, &caller.machine));
     if request.hub != *hub || request.account != caller.account || !same {
         return Ok(Err("the control reply is from another machine or account".into()));
     }
-    let still_pending = match std::fs::read(&request.path) {
+    let still_pending = match items::read(&request.path) {
         Ok(bytes) => fastctx_hands::files::content_hash(&bytes) == request.digest,
         // A stop may be posting while its local pending record is still
         // being published. The registered request already binds this reply.
@@ -147,7 +147,7 @@ pub(crate) fn receive(
         Err(error) => return Err(error),
     };
     if still_pending {
-        fastctx_install::renewal::write_json(&request.path.with_extension("reply"), &Reply { id: id.clone(), result })?;
+        items::keep(&request.path.with_extension("reply"), &Reply { id: id.clone(), result })?;
         node.control_letters.changed.notify_waiters();
         node.disk_changed.notify_one();
         node.receipts_changed.notify_one();
@@ -156,26 +156,26 @@ pub(crate) fn receive(
 }
 
 pub(crate) fn collect(node: &Node, age: std::time::Duration) -> io::Result<()> {
-    for path in crate::retention::entries(&node.world.path().join("control-requests"))? {
+    for path in items::entries(&node.world.path().join("control-requests"), Some("json"))? {
         if path.extension().is_none_or(|extension| extension != "json") {
             continue;
         }
-        let request = match fastctx_install::renewal::read_json::<Request>(&path) {
+        let request = match items::get::<Request>(&path) {
             Ok(Some(request)) => request,
             Ok(None) => continue,
             Err(error) => {
-                crate::obligations::retry(node, &path, &error.to_string())?;
+                crate::obligations::retry_record(node, &path, &error.to_string())?;
                 continue;
             }
         };
-        if !request.path.try_exists()? && path.metadata()?.modified()?.elapsed().is_ok_and(|elapsed| elapsed >= age) {
+        if !items::exists(&request.path)? && items::modified(&path)?.elapsed().is_ok_and(|elapsed| elapsed >= age) {
             for extension in ["reply", "posted"] {
-                match std::fs::remove_file(request.path.with_extension(extension)) {
+                match items::delete(&request.path.with_extension(extension)) {
                     Err(error) if error.kind() != io::ErrorKind::NotFound => return Err(error),
                     _ => {}
                 }
             }
-            std::fs::remove_file(path)?;
+            items::delete(&path)?;
         }
     }
     Ok(())

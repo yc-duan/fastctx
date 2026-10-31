@@ -69,19 +69,6 @@ fn retry(node: &Arc<Node>, id: &ResidentId, directory: &ConversationDir) {
     });
 }
 
-fn abandon(
-    node: &Node,
-    directory: &ConversationDir,
-    path: &std::path::Path,
-    owing: &fastctx_types::residents::Owing,
-    reason: &str,
-) -> std::io::Result<()> {
-    let bytes = std::fs::read(path)?;
-    crate::inbox::without_reader(directory, owing)?;
-    crate::obligations::finish(node, path, &bytes, crate::obligations::Outcome::Impossible, reason)?;
-    Ok(())
-}
-
 /// Tells each reader the answers kept for it in the resident's outbox; each
 /// leaves the outbox once its reader's machine has it, or telling it failed
 /// for good, which the colleague's records keep.
@@ -107,11 +94,23 @@ fn pay_once<'a>(
                     owing.into_iter().filter(|answer| telling.insert(answer.delivery.id.clone())).collect::<Vec<_>>()
                 }
                 Ok(Err(error)) => {
-                    let _ = crate::obligations::retry(node, &directory.outbox().join("reading"), &error.to_string());
+                    let _ = crate::inbox::outgoing::retry(
+                        node,
+                        directory,
+                        &directory.outbox().join("reading"),
+                        &error.to_string(),
+                    )
+                    .await;
                     return true;
                 }
                 Err(error) => {
-                    let _ = crate::obligations::retry(node, &directory.outbox().join("reading"), &error.to_string());
+                    let _ = crate::inbox::outgoing::retry(
+                        node,
+                        directory,
+                        &directory.outbox().join("reading"),
+                        &error.to_string(),
+                    )
+                    .await;
                     return true;
                 }
             }
@@ -121,11 +120,13 @@ fn pay_once<'a>(
         }
         let _told = Told(owing.iter().map(|answer| answer.delivery.id.clone()).collect());
         let Some((about, _)) = node.residents.about(id) else {
-            let _ = crate::obligations::retry(
+            let _ = crate::inbox::outgoing::retry(
                 node,
+                directory,
                 &directory.outbox().join("identity"),
                 "the answer's account identity is no longer known",
-            );
+            )
+            .await;
             return true;
         };
         let colleague = matches!(about.origin, Origin::Colleague { .. });
@@ -153,16 +154,16 @@ fn pay_once<'a>(
             let path = directory.outbox().join(format!("{}.json", answer.delivery.id));
             match crate::obligations::impossible(node, posting_account, &(&answer.to.machine).into()) {
                 Ok(Some(reason)) => {
-                    if let Err(error) = abandon(node, directory, &path, &answer, &reason) {
+                    if let Err(error) = crate::inbox::outgoing::abandon(node, directory, &answer, &reason).await {
                         pending = true;
-                        let _ = crate::obligations::retry(node, &path, &error.to_string());
+                        let _ = crate::inbox::outgoing::retry(node, directory, &path, &error.to_string()).await;
                     }
                     continue;
                 }
                 Ok(None) => {}
                 Err(error) => {
                     pending = true;
-                    let _ = crate::obligations::retry(node, &path, &error.to_string());
+                    let _ = crate::inbox::outgoing::retry(node, directory, &path, &error.to_string()).await;
                     continue;
                 }
             }
@@ -177,13 +178,15 @@ fn pay_once<'a>(
             .await;
             if let Err(failure) = &landed {
                 if crate::obligations::permanent(failure) || crate::lifecycle::refused::reported(failure) {
-                    if let Err(error) = abandon(node, directory, &path, &answer, &failure.message) {
+                    if let Err(error) =
+                        crate::inbox::outgoing::abandon(node, directory, &answer, &failure.message).await
+                    {
                         pending = true;
-                        let _ = crate::obligations::retry(node, &path, &error.to_string());
+                        let _ = crate::inbox::outgoing::retry(node, directory, &path, &error.to_string()).await;
                     }
                     continue;
                 }
-                let _ = crate::obligations::retry(node, &path, &failure.message);
+                let _ = crate::inbox::outgoing::retry(node, directory, &path, &failure.message).await;
                 pending = true;
             }
             if colleague {
@@ -191,13 +194,7 @@ fn pay_once<'a>(
                     at: Timestamp::now(),
                     what: MessageKind::Told { to: answer.to.clone(), turn, outcome: speech::outcome(&landed) },
                 };
-                let outcome = serde_json::to_vec(&line.what).expect("delivery outcome serializes");
-                let marker = path.with_extension("attempt");
-                if std::fs::read(&marker).ok().as_ref() != Some(&outcome)
-                    && let Err(error) = crate::residents::append_message(directory, &line).and_then(|()| {
-                        fastctx_platform::publish(&marker, &outcome, fastctx_platform::Permissions::Private)
-                    })
-                {
+                if let Err(error) = crate::inbox::outgoing::attempt(directory, &answer.delivery.id, line).await {
                     node.log.line(format_args!("recording that {} was told: {error}", answer.to));
                 }
             }
@@ -205,7 +202,13 @@ fn pay_once<'a>(
                 if landed.is_err() && node.is_me(&answer.to.machine) && !node.residents.knows(&answer.to.resident) {
                     match node.world.conversation(&answer.to.resident).about().try_exists() {
                         Ok(false) => {
-                            if let Err(error) = crate::inbox::without_reader(directory, &answer) {
+                            let (settling, answer) = (directory.clone(), answer.clone());
+                            if let Err(error) =
+                                tokio::task::spawn_blocking(move || crate::inbox::without_reader(&settling, &answer))
+                                    .await
+                                    .map_err(std::io::Error::other)
+                                    .and_then(|result| result)
+                            {
                                 node.log.line(format_args!("settling the answer without a local recipient: {error}"));
                                 pending = true;
                             }
@@ -216,9 +219,14 @@ fn pay_once<'a>(
                 }
                 continue;
             }
-            if let Err(error) = crate::inbox::paid(directory, &answer.delivery.id) {
+            let (settling, key) = (directory.clone(), answer.delivery.id.clone());
+            if let Err(error) = tokio::task::spawn_blocking(move || crate::inbox::paid(&settling, &key))
+                .await
+                .map_err(std::io::Error::other)
+                .and_then(|result| result)
+            {
                 pending = true;
-                let _ = crate::obligations::retry(node, &path, &error.to_string());
+                let _ = crate::inbox::outgoing::retry(node, directory, &path, &error.to_string()).await;
             }
         }
         pending

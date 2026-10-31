@@ -227,7 +227,11 @@ pub(crate) async fn collect(
     while let Some(query) = queries.join_next().await {
         result.extend(query.map_err(|error| Failure::new(error.to_string()))?);
     }
-    for timer in crate::timers::table(node)?.list(Some(&Owner::Conversation { resident: resident.clone() })) {
+    for timer in crate::timers::table(node)?
+        .list(Some(&Owner::Conversation { resident: resident.clone() }))
+        .await
+        .map_err(|e| Failure::new(e.to_string()))?
+    {
         result.push(WaitHandle {
             id: timer.id,
             completion: Some(timer.delivery),

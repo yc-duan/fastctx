@@ -1,0 +1,425 @@
+//! Indexed call facts. Hot step detail is capped at 200 rows / 2 MiB per call; folded
+//! identities remain until conversation deletion so old full updates deduplicate.
+
+use super::snapshot::StoredCall;
+use fastctx_storage::{
+    Error, Result,
+    rusqlite::{Connection, OptionalExtension, params},
+};
+use fastctx_types::run_facts::{JobFacts, RunStep, StepSummary, WriteFact};
+use sha2::{Digest, Sha256};
+
+pub(crate) const SCHEMA: &str = "
+CREATE TABLE IF NOT EXISTS run_calls (
+    conversation TEXT NOT NULL, call TEXT NOT NULL, turn TEXT, body BLOB NOT NULL,
+    PRIMARY KEY(conversation,call)
+) WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS run_calls_turn ON run_calls(conversation,turn,call);
+CREATE TABLE IF NOT EXISTS run_scripts (
+    conversation TEXT NOT NULL, call TEXT NOT NULL, script TEXT NOT NULL,
+    PRIMARY KEY(conversation,call)
+) WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS run_job_sources (
+    conversation TEXT NOT NULL, call TEXT NOT NULL, machine TEXT NOT NULL, job TEXT NOT NULL,
+    record TEXT, script TEXT, started TEXT,
+    PRIMARY KEY(conversation,call,machine,job)
+) WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS run_versions (
+    conversation TEXT PRIMARY KEY, version INTEGER NOT NULL
+) WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS run_writes (
+    position INTEGER PRIMARY KEY, conversation TEXT NOT NULL, call TEXT NOT NULL,
+    id TEXT NOT NULL, body BLOB NOT NULL, UNIQUE(conversation,call,id)
+);
+CREATE TABLE IF NOT EXISTS run_visits (
+    position INTEGER PRIMARY KEY, conversation TEXT NOT NULL, call TEXT NOT NULL,
+    machine TEXT NOT NULL, job TEXT NOT NULL, UNIQUE(conversation,call,machine,job)
+);
+CREATE TABLE IF NOT EXISTS run_steps (
+    position INTEGER PRIMARY KEY, conversation TEXT NOT NULL, call TEXT NOT NULL,
+    id TEXT NOT NULL, body BLOB, fingerprint TEXT NOT NULL, finished INTEGER NOT NULL,
+    machine TEXT NOT NULL, kind TEXT NOT NULL, first INTEGER NOT NULL, last INTEGER NOT NULL,
+    UNIQUE(conversation,call,id)
+);
+CREATE INDEX IF NOT EXISTS run_steps_hot ON run_steps(conversation,call,position) WHERE body IS NOT NULL;
+CREATE TABLE IF NOT EXISTS run_folded (
+    conversation TEXT NOT NULL, call TEXT NOT NULL, machine TEXT NOT NULL, kind TEXT NOT NULL,
+    count INTEGER NOT NULL, first INTEGER NOT NULL, last INTEGER NOT NULL,
+    PRIMARY KEY(conversation,call,machine,kind)
+) WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS run_jobs (
+    conversation TEXT NOT NULL, call TEXT NOT NULL, machine TEXT NOT NULL, job TEXT NOT NULL,
+    sequence BLOB NOT NULL, body BLOB NOT NULL, PRIMARY KEY(conversation,call,machine,job)
+) WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS run_imported (
+    conversation TEXT PRIMARY KEY, checked INTEGER NOT NULL DEFAULT 0
+) WITHOUT ROWID;
+";
+
+pub(super) fn encode(value: &impl serde::Serialize) -> Result<Vec<u8>> {
+    serde_json::to_vec(value).map_err(|error| Error::new(error.to_string()))
+}
+pub(super) fn decode<T: serde::de::DeserializeOwned>(bytes: &[u8]) -> Result<T> {
+    serde_json::from_slice(bytes)
+        .map_err(|error| Error::with_kind(fastctx_storage::ErrorKind::Corrupt, error.to_string()))
+}
+
+pub(super) fn head(db: &Connection, conversation: &str, call: &str) -> Result<Option<StoredCall>> {
+    let bytes: Option<Vec<u8>> = db
+        .query_row("SELECT body FROM run_calls WHERE conversation=?1 AND call=?2", (conversation, call), |row| {
+            row.get(0)
+        })
+        .optional()?;
+    bytes.as_deref().map(decode).transpose()
+}
+
+pub(super) fn save(db: &Connection, conversation: &str, stored: &StoredCall) -> Result<()> {
+    if !stored.script.is_empty() {
+        db.execute(
+            "INSERT INTO run_scripts(conversation,call,script) VALUES(?1,?2,?3)
+            ON CONFLICT(conversation,call) DO UPDATE SET script=excluded.script WHERE script!=excluded.script",
+            (conversation, &stored.call_id, &stored.script),
+        )?;
+    }
+    let mut head = stored.clone();
+    head.script.clear();
+    head.facts.steps.clear();
+    head.facts.writes.clear();
+    head.facts.visited.clear();
+    head.facts.folded_steps.clear();
+    let body = encode(&head)?;
+    db.execute(
+        "INSERT INTO run_calls(conversation,call,turn,body) VALUES(?1,?2,?3,?4)
+        ON CONFLICT(conversation,call) DO UPDATE SET turn=excluded.turn,body=excluded.body
+        WHERE run_calls.body != excluded.body",
+        params![conversation, stored.call_id, stored.facts.turn, body],
+    )?;
+    Ok(())
+}
+
+pub(super) fn changed(db: &Connection, conversation: &str) -> Result<()> {
+    db.execute(
+        "INSERT INTO run_versions(conversation,version) VALUES(?1,1)
+        ON CONFLICT(conversation) DO UPDATE SET version=version+1",
+        [conversation],
+    )?;
+    Ok(())
+}
+
+pub(super) fn writes(db: &Connection, conversation: &str, call: &str, incoming: &[WriteFact]) -> Result<()> {
+    let mut query = db.prepare_cached("SELECT body FROM run_writes WHERE conversation=?1 AND call=?2 AND id=?3")?;
+    let mut insert = db.prepare_cached("INSERT INTO run_writes(conversation,call,id,body) VALUES(?1,?2,?3,?4)")?;
+    for fact in incoming {
+        let body = encode(fact)?;
+        let previous: Option<Vec<u8>> = query.query_row((conversation, call, &fact.id), |row| row.get(0)).optional()?;
+        match previous {
+            Some(previous) if previous != body => return Err(Error::new("write fact identity changed")),
+            Some(_) => {}
+            None => {
+                insert.execute(params![conversation, call, fact.id, body])?;
+            }
+        }
+    }
+    Ok(())
+}
+
+pub(super) fn visits(
+    db: &Connection,
+    conversation: &str,
+    call: &str,
+    incoming: &[(fastctx_types::MachineName, fastctx_types::JobId)],
+) -> Result<()> {
+    let mut insert =
+        db.prepare_cached("INSERT OR IGNORE INTO run_visits(conversation,call,machine,job) VALUES(?1,?2,?3,?4)")?;
+    for (machine, job) in incoming {
+        insert.execute((conversation, call, machine.as_str(), job.as_str()))?;
+    }
+    Ok(())
+}
+
+pub(super) fn steps(db: &Connection, conversation: &str, call: &str, incoming: &[RunStep]) -> Result<()> {
+    let mut query = db.prepare_cached(
+        "SELECT fingerprint,finished,body IS NULL FROM run_steps WHERE conversation=?1 AND call=?2 AND id=?3",
+    )?;
+    let mut insert = db.prepare_cached("INSERT INTO run_steps(conversation,call,id,body,fingerprint,finished,machine,kind,first,last)
+        VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)
+        ON CONFLICT(conversation,call,id) DO UPDATE SET body=excluded.body,fingerprint=excluded.fingerprint,
+            finished=excluded.finished,machine=excluded.machine,kind=excluded.kind,first=excluded.first,last=excluded.last")?;
+    for step in incoming {
+        let bytes = encode(step)?;
+        let fingerprint = fingerprint(&bytes);
+        let previous: Option<(String, bool, bool)> = query
+            .query_row((conversation, call, &step.id), |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
+            .optional()?;
+        if previous
+            .as_ref()
+            .is_some_and(|(hash, finished, _)| *hash == fingerprint || (*finished && step.ended.is_none()))
+        {
+            continue;
+        }
+        let first = step.began.as_microsecond();
+        let last = step.ended.unwrap_or(step.began).as_microsecond();
+        if previous.is_some_and(|(_, _, folded)| folded) {
+            db.execute("UPDATE run_folded SET last=max(last,?4),first=min(first,?5)
+                WHERE conversation=?1 AND call=?2 AND (machine,kind)=(SELECT machine,kind FROM run_steps WHERE conversation=?1 AND call=?2 AND id=?3)",
+                (conversation,call,&step.id,last,first))?;
+            db.execute(
+                "UPDATE run_steps SET fingerprint=?4,finished=?5,last=?6 WHERE conversation=?1 AND call=?2 AND id=?3",
+                (conversation, call, &step.id, fingerprint, step.ended.is_some(), last),
+            )?;
+            continue;
+        }
+        let kind = serde_json::to_value(&step.did)
+            .map_err(|error| Error::new(error.to_string()))?
+            .get("kind")
+            .and_then(serde_json::Value::as_str)
+            .expect("step kind")
+            .to_string();
+        insert.execute(params![
+            conversation,
+            call,
+            step.id,
+            bytes,
+            fingerprint,
+            step.ended.is_some(),
+            step.machine.as_str(),
+            kind,
+            first,
+            last
+        ])?;
+    }
+    let mut query=db.prepare_cached("SELECT position,machine,kind,first,last,length(body) FROM run_steps WHERE conversation=?1 AND call=?2 AND body IS NOT NULL ORDER BY position DESC")?;
+    let old = query
+        .query_map((conversation, call), |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, i64>(3)?,
+                row.get::<_, i64>(4)?,
+                row.get::<_, i64>(5)?,
+            ))
+        })?
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+    let mut retained = 0i64;
+    for (index, (position, machine, kind, first, last, bytes)) in old.into_iter().enumerate() {
+        retained += bytes;
+        if index < 200 && retained <= 2 * 1024 * 1024 {
+            continue;
+        }
+        db.execute("INSERT INTO run_folded(conversation,call,machine,kind,count,first,last) VALUES(?1,?2,?3,?4,1,?5,?6)
+            ON CONFLICT(conversation,call,machine,kind) DO UPDATE SET count=count+1,first=min(first,excluded.first),last=max(last,excluded.last)",
+            (conversation,call,machine,kind,first,last))?;
+        db.execute("UPDATE run_steps SET body=NULL WHERE position=?1", [position])?;
+    }
+    Ok(())
+}
+
+pub(super) fn load(db: &Connection, conversation: &str, call: &str) -> Result<Option<StoredCall>> {
+    let Some(mut stored) = head(db, conversation, call)? else { return Ok(None) };
+    stored.script = db
+        .query_row("SELECT script FROM run_scripts WHERE conversation=?1 AND call=?2", (conversation, call), |row| {
+            row.get(0)
+        })
+        .optional()?
+        .unwrap_or_default();
+    stored.facts.writes = values(
+        db,
+        "SELECT body FROM run_writes WHERE conversation=?1 AND call=?2 ORDER BY position",
+        conversation,
+        call,
+    )?;
+    stored.facts.steps = values(
+        db,
+        "SELECT body FROM run_steps WHERE conversation=?1 AND call=?2 AND body IS NOT NULL ORDER BY position",
+        conversation,
+        call,
+    )?;
+    let mut query =
+        db.prepare_cached("SELECT machine,job FROM run_visits WHERE conversation=?1 AND call=?2 ORDER BY position")?;
+    let visits =
+        query.query_map((conversation, call), |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))?;
+    for visit in visits {
+        let (machine, job) = visit?;
+        stored.facts.visited.push((
+            machine.try_into().map_err(|error: fastctx_types::names::NameError| Error::new(error.to_string()))?,
+            job.try_into().map_err(|error: fastctx_types::names::NameError| Error::new(error.to_string()))?,
+        ));
+    }
+    let mut query = db.prepare_cached(
+        "SELECT machine,kind,count,first,last FROM run_folded WHERE conversation=?1 AND call=?2 ORDER BY machine,kind",
+    )?;
+    let folded = query.query_map((conversation, call), |row| {
+        Ok((
+            row.get::<_, String>(0)?,
+            row.get::<_, String>(1)?,
+            row.get::<_, i64>(2)?,
+            row.get::<_, i64>(3)?,
+            row.get::<_, i64>(4)?,
+        ))
+    })?;
+    for row in folded {
+        let (machine, kind, count, first, last) = row?;
+        stored.facts.folded_steps.push(StepSummary {
+            machine: machine
+                .try_into()
+                .map_err(|error: fastctx_types::names::NameError| Error::new(error.to_string()))?,
+            kind,
+            count: count as u64,
+            first: jiff::Timestamp::from_microsecond(first).map_err(|error| Error::new(error.to_string()))?,
+            last: jiff::Timestamp::from_microsecond(last).map_err(|error| Error::new(error.to_string()))?,
+        });
+    }
+    Ok(Some(stored))
+}
+
+fn values<T: serde::de::DeserializeOwned>(
+    db: &Connection,
+    sql: &str,
+    conversation: &str,
+    call: &str,
+) -> Result<Vec<T>> {
+    let mut query = db.prepare_cached(sql)?;
+    query.query_map((conversation, call), |row| row.get::<_, Vec<u8>>(0))?.map(|row| decode(&row?)).collect()
+}
+
+pub(super) fn job(db: &Connection, conversation: &str, update: &JobFacts) -> Result<Option<JobFacts>> {
+    let bytes: Option<Vec<u8>> = db
+        .query_row(
+            "SELECT body FROM run_jobs WHERE conversation=?1 AND call=?2 AND machine=?3 AND job=?4",
+            (conversation, &update.call_id, update.machine.as_str(), update.job.as_str()),
+            |row| row.get(0),
+        )
+        .optional()?;
+    bytes.as_deref().map(decode).transpose()
+}
+
+pub(super) fn save_job(db: &Connection, conversation: &str, update: &JobFacts) -> Result<()> {
+    let mut metadata = update.clone();
+    if let Some(previous) = job(db, conversation, update)? {
+        if previous.sequence > update.sequence {
+            metadata = previous.clone();
+        }
+        metadata.turn = metadata.turn.or(previous.turn);
+        metadata.output = metadata.output.or(previous.output);
+        metadata.notes = metadata.notes.or(previous.notes);
+    }
+    metadata.turn = metadata.turn.or(update.turn.clone());
+    metadata.output = metadata.output.or(update.output.clone());
+    metadata.notes = metadata.notes.or(update.notes.clone());
+    if update.record.is_some() || update.script.is_some() || update.started_at.is_some() {
+        db.execute("INSERT INTO run_job_sources(conversation,call,machine,job,record,script,started) VALUES(?1,?2,?3,?4,?5,?6,?7)
+            ON CONFLICT(conversation,call,machine,job) DO UPDATE SET
+                record=coalesce(excluded.record,record),script=coalesce(excluded.script,script),started=coalesce(excluded.started,started)
+            WHERE (excluded.record IS NOT NULL AND excluded.record IS NOT record)
+                OR (excluded.script IS NOT NULL AND excluded.script IS NOT script)
+                OR (excluded.started IS NOT NULL AND excluded.started IS NOT started)",
+            params![conversation,update.call_id,update.machine.as_str(),update.job.as_str(),update.record,update.script,update.started_at.map(|at|at.to_string())])?;
+    }
+    metadata.record = None;
+    metadata.script = None;
+    metadata.started_at = None;
+    metadata.writes.clear();
+    metadata.steps.clear();
+    metadata.visited.clear();
+    db.execute(
+        "INSERT INTO run_jobs(conversation,call,machine,job,sequence,body) VALUES(?1,?2,?3,?4,?5,?6)
+        ON CONFLICT(conversation,call,machine,job) DO UPDATE SET sequence=excluded.sequence,body=excluded.body
+        WHERE run_jobs.sequence!=excluded.sequence OR run_jobs.body!=excluded.body",
+        params![
+            conversation,
+            update.call_id,
+            update.machine.as_str(),
+            update.job.as_str(),
+            metadata.sequence.to_be_bytes().as_slice(),
+            encode(&metadata)?
+        ],
+    )?;
+    Ok(())
+}
+
+pub(super) fn job_source(db: &Connection, conversation: &str, update: &mut JobFacts) -> Result<()> {
+    type Source = (Option<String>, Option<String>, Option<String>);
+    let source: Option<Source> = db.query_row("SELECT record,script,started FROM run_job_sources WHERE conversation=?1 AND call=?2 AND machine=?3 AND job=?4",
+        (conversation,&update.call_id,update.machine.as_str(),update.job.as_str()),|row|Ok((row.get(0)?,row.get(1)?,row.get(2)?))).optional()?;
+    if let Some((record, script, started)) = source {
+        update.record = record;
+        update.script = script;
+        update.started_at =
+            started.map(|at| at.parse().map_err(|error: jiff::Error| Error::new(error.to_string()))).transpose()?;
+    }
+    Ok(())
+}
+
+/// Reduces legacy full progress on a read connection, before admission to the
+/// writer. The write transaction repeats identity and sequence checks.
+pub(super) fn additions(db: &Connection, conversation: &str, update: &JobFacts) -> Result<Option<JobFacts>> {
+    let Some(stored) = head(db, conversation, &update.call_id)? else { return Ok(None) };
+    super::snapshot::validate(&stored, update)?;
+    let members = difference(db, conversation, &update.call_id, &update.writes, &update.steps, &update.visited)?;
+    let mut next = update.clone();
+    next.writes = members.writes;
+    next.steps = members.steps;
+    next.visited = members.visited;
+    Ok(Some(next))
+}
+
+#[derive(Default)]
+pub(super) struct Members {
+    pub writes: Vec<WriteFact>,
+    pub steps: Vec<RunStep>,
+    pub visited: Vec<(fastctx_types::MachineName, fastctx_types::JobId)>,
+}
+
+pub(super) fn difference(
+    db: &Connection,
+    conversation: &str,
+    call: &str,
+    writes: &[WriteFact],
+    steps: &[RunStep],
+    visited: &[(fastctx_types::MachineName, fastctx_types::JobId)],
+) -> Result<Members> {
+    let mut next = Members::default();
+    let mut write_query =
+        db.prepare_cached("SELECT body FROM run_writes WHERE conversation=?1 AND call=?2 AND id=?3")?;
+    for fact in writes {
+        let previous: Option<Vec<u8>> =
+            write_query.query_row((conversation, call, &fact.id), |row| row.get(0)).optional()?;
+        match previous {
+            Some(previous) if previous != encode(fact)? => return Err(Error::new("write fact identity changed")),
+            Some(_) => {}
+            None => next.writes.push(fact.clone()),
+        }
+    }
+    let mut step_query =
+        db.prepare_cached("SELECT fingerprint,finished FROM run_steps WHERE conversation=?1 AND call=?2 AND id=?3")?;
+    for step in steps {
+        let previous: Option<(String, bool)> =
+            step_query.query_row((conversation, call, &step.id), |row| Ok((row.get(0)?, row.get(1)?))).optional()?;
+        if let Some((known_hash, finished)) = previous {
+            if finished && step.ended.is_none() {
+                continue;
+            }
+            if known_hash == fingerprint(&encode(step)?) {
+                continue;
+            }
+        }
+        next.steps.push(step.clone());
+    }
+    let mut visit_query =
+        db.prepare_cached("SELECT 1 FROM run_visits WHERE conversation=?1 AND call=?2 AND machine=?3 AND job=?4")?;
+    for (machine, job) in visited {
+        if visit_query
+            .query_row((conversation, call, machine.as_str(), job.as_str()), |row| row.get::<_, i32>(0))
+            .optional()?
+            .is_none()
+        {
+            next.visited.push((machine.clone(), job.clone()));
+        }
+    }
+    Ok(next)
+}
+
+fn fingerprint(bytes: &[u8]) -> String {
+    format!("{:x}", Sha256::digest(bytes))
+}

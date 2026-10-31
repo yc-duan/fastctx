@@ -88,14 +88,8 @@ fn owes(node: &Node, owner: &Address, directory: &ConversationDir) -> io::Result
         Err(error) if error.kind() == io::ErrorKind::NotFound => {}
         Err(error) => return Err(error),
     }
-    for path in crate::retention::entries(&directory.outbox())? {
-        let Some(stem) = path.file_stem().and_then(|stem| stem.to_str()) else { continue };
-        if path.extension().is_some_and(|extension| extension == "json")
-            && !directory.paid().join(stem).try_exists()?
-            && !directory.outbox().join(format!("{stem}.paid")).try_exists()?
-        {
-            return Ok(true);
-        }
+    if !crate::inbox::owing(directory)?.is_empty() {
+        return Ok(true);
     }
     for jobs in node.world.job_directories(&owner.machine, owner)? {
         for path in crate::retention::entries(&jobs)? {

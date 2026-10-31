@@ -43,14 +43,7 @@ impl<'a> Projection<'a> {
         }
         let Some(id) = client.strip_prefix(fastctx_hosts::codex::WORLD_CLIENT) else { return Ok(None) };
         let Ok(id) = id.parse::<NoticeId>() else { return Ok(None) };
-        match std::fs::read(crate::delivery::handover_path(self.directory, &id)) {
-            Ok(bytes) => {
-                let handover: crate::delivery::Handover = serde_json::from_slice(&bytes).map_err(io::Error::other)?;
-                Ok(handover.context_input)
-            }
-            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
-            Err(error) => Err(error),
-        }
+        Ok(crate::delivery::handover(self.directory, &id)?.and_then(|row| row.context_input))
     }
     pub(crate) fn restore(&self, event: &mut SessionEvent) -> io::Result<()> {
         let Happened::Heard { text, message: Some(message), .. } = &mut event.happened else { return Ok(()) };

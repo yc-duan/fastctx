@@ -591,6 +591,7 @@ pub fn facts(node: &Node) -> MachineFacts {
         completion_receipts: true,
         control_letters: true,
         run_stops: true,
+        job_fact_deltas: true,
         upload_resumes: true,
         attachment_references: true,
         stats: true,
@@ -1319,7 +1320,7 @@ impl fastctx_net::link::Node for Handler {
                     }
                     Letter::Fragment { .. } => unreachable!("nested fragments are rejected"),
                     Letter::JobFacts { to, update } => {
-                        crate::run_facts::receive(&node, &to, &update)?;
+                        crate::run_facts::receive(&node, to, *update).await?;
                         Ok(Ok(()))
                     }
                     Letter::Notice { to, notice } => {

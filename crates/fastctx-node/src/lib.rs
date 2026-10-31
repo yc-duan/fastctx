@@ -76,6 +76,7 @@ mod inbox;
 mod initializing;
 mod intake;
 mod job_accounts;
+mod job_metadata;
 mod job_reader;
 mod job_receipts;
 mod job_watch;
@@ -118,7 +119,10 @@ mod ranked;
 mod reach;
 mod received;
 mod record_access;
+mod record_database;
+mod record_gates;
 mod record_ownership;
+mod records;
 mod recovery;
 mod removed;
 mod renewal;
@@ -191,6 +195,8 @@ pub(crate) struct Node {
     root: PathBuf,
     world: WorldDir,
     database: fastctx_storage::Database,
+    book_database: fastctx_storage::Database,
+    controls_due: std::sync::Mutex<std::collections::HashMap<fastctx_types::ResidentId, bool>>,
     /// This program's own copy under the World, which everything the node
     /// starts from itself runs from (`own.rs`).
     fastctx: PathBuf,
@@ -648,15 +654,46 @@ pub async fn run_prepared(
     );
     let claude = claude::Claude::new(&world)?;
     let memory_room = memory_room::Room::new(&world);
-    let schema = format!("{}{}", composer::SCHEMA, activity_book::SCHEMA);
-    let database = fastctx_storage::Database::open(&world.path().join("node.sqlite3"), &schema)
-        .context("opening the node database")?;
+    let schema = composer::SCHEMA;
+    let database = fastctx_storage::Database::open_or_unavailable(&world.path().join("node.sqlite3"), schema, |db| {
+        fastctx_storage::versions::apply(
+            db,
+            "node.run-facts",
+            &[fastctx_storage::versions::Migration { version: 1, sql: run_facts::SCHEMA }],
+        )?;
+        fastctx_storage::versions::apply(
+            db,
+            "node.session-events",
+            &[fastctx_storage::versions::Migration { version: 1, sql: session_record::SCHEMA }],
+        )?;
+        fastctx_storage::versions::apply(
+            db,
+            "node.records",
+            &[fastctx_storage::versions::Migration { version: 1, sql: records::SCHEMA }],
+        )
+    });
+    if let Some(error) = database.fault() {
+        log.line(format_args!("node record storage unavailable: {error}"));
+    }
+    record_database::register(&world, &database);
+    let book_database = fastctx_storage::Database::open_or_unavailable(&world.path().join("book.sqlite3"), "", |db| {
+        fastctx_storage::versions::apply(
+            db,
+            "node.activity-book",
+            &[fastctx_storage::versions::Migration { version: 1, sql: activity_book::SCHEMA }],
+        )
+    });
+    if let Some(error) = book_database.fault() {
+        log.line(format_args!("activity book storage unavailable: {error}"));
+    }
     // Built cyclically so the goal services can hold a weak handle back to the
     // node they reach account records and context through.
     let node = Arc::new_cyclic(|weak: &std::sync::Weak<Node>| Node {
         root: fastctx_root.to_path_buf(),
         world,
         database,
+        book_database,
+        controls_due: Default::default(),
         fastctx,
         machine: RwLock::new(machine),
         jobs: jobs::Jobs::new(),
@@ -752,8 +789,11 @@ pub async fn run_prepared(
         lifetime,
         started: jiff::Timestamp::now(),
     });
-    context::migrate(&node);
-    letters::migrate(&node);
+    if node.database.fault().is_none() {
+        activity_book::start(&node);
+        context::migrate(&node);
+        letters::migrate(&node);
+    }
     // The third version's projects are kept as this computer's own, to be
     // carried into its account at its hub.
     let (kept, problems) =
@@ -772,20 +812,28 @@ pub async fn run_prepared(
         node.log.line(format_args!("on the hub {} ({}) as {}", membership.hub_name, membership.id, membership.name));
         world::start(&node, membership).context("starting a link to a hub")?;
     }
-    on_stop::resume(&node).await;
-    run_stops::resume(&node);
+    if node.database.fault().is_none() {
+        on_stop::resume(&node).await;
+        run_stops::resume(&node);
+    }
     codex::listen(node.clone(), codex_heard.events);
     logins::limits::listen(node.clone(), codex_heard.limits);
     logins::heard::listen(node.clone(), codex_heard.said);
     claude::start(&node).context("writing the World's Claude Code plugin")?;
     composer::prepare_recovery(&node);
-    retention::start(&node).context("starting command artifact retention")?;
+    if node.database.fault().is_none() {
+        retention::start(&node).context("starting command artifact retention")?;
+    }
     let recovering = node.clone();
     tokio::spawn(async move {
         let node = recovering;
         startup::recover(&node).await;
         node.effects_ready.store(true, std::sync::atomic::Ordering::Release);
         node.effects_changed.notify_waiters();
+        if node.database.fault().is_some() {
+            node.log.line("record recovery is unavailable; durable work remains pending until storage is repaired");
+            return;
+        }
         stops::recover(&node);
         composer::resume(&node);
         composer::keep(&node);
@@ -816,6 +864,9 @@ pub async fn run_prepared(
     });
     let jobs_node = node.clone();
     tokio::spawn(async move {
+        if jobs_node.database.fault().is_some() {
+            return;
+        }
         let mut again = again::Again::default();
         loop {
             match inbox::settle_jobs(&jobs_node).await {
@@ -906,3 +957,9 @@ pub async fn run_prepared(
         }
     }
 }
+
+#[cfg(feature = "storage-drill")]
+#[doc(hidden)]
+pub use storage_drill::run as record_drill;
+#[cfg(feature = "storage-drill")]
+mod storage_drill;

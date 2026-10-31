@@ -396,7 +396,7 @@ pub(crate) async fn apply(node: &Arc<Node>, resident: &ResidentId, view: &View) 
             }
         };
         if let Some(accepted) = accepted {
-            return super::engine::timing(node, resident, &accepted);
+            return super::engine::timing(node, resident, &accepted).await;
         }
         bounded(node.goals.context.set(resident, "goal", &text, words::changed(view.goal.as_ref()))).await?;
         installed = Some(text);

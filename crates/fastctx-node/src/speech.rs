@@ -375,7 +375,7 @@ async fn hand_over_locked(
     }
     if pending.delivery.notice.along().is_none() {
         if node.residents.now(to).is_none_or(|now| now.turn.is_none())
-            && crate::control_queue::pending(node, to)?.iter().any(|row| {
+            && crate::control_queue::pending(node, to).await?.iter().any(|row| {
                 row.state == fastctx_types::session::control::ControlState::Waiting && row.at < pending.delivery.at
             })
         {

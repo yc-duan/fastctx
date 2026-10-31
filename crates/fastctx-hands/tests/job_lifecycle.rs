@@ -73,7 +73,6 @@ fn exercise() -> Result {
     };
     let names = Names { me: machine.clone(), was: Vec::new(), renamed: Vec::new() };
     let launch = run::Launch {
-        answer_receipts: false,
         world: &world,
         names: &names,
         owner: &owner,

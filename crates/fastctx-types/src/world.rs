@@ -68,6 +68,9 @@ pub struct MachineFacts {
     /// Stops only the dispatch named by a durable StopRun control.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub run_stops: bool,
+    /// Retains immutable job metadata when subsequent facts omit it.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub job_fact_deltas: bool,
     /// Understands sentinel account settings and lifecycle calls.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub sentinels: bool,

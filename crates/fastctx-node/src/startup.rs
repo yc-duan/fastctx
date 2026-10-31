@@ -109,7 +109,7 @@ pub(crate) async fn recover(node: &Arc<Node>) {
             }
             crate::turns::recover(&node, turns.into_iter().collect()).await;
             crate::claude::recover_startups(&node, &resident);
-            crate::control_queue::recover(&node, &id);
+            crate::control_queue::recover(&node, &id).await;
             crate::speech::recover(&node, vec![resident]).await;
             drop(finished);
             crate::control_queue::poke(&node, &id);

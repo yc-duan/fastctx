@@ -106,11 +106,11 @@ fn generation(node: &Node, id: &ResidentId) -> String {
     format!("{}:{}:{revision}", node.goals.engine.epoch, reading.generation)
 }
 
-pub(crate) fn timing(node: &Node, id: &ResidentId, view: &View) -> Result<(), Failure> {
+pub(crate) async fn timing(node: &Node, id: &ResidentId, view: &View) -> Result<(), Failure> {
     let table = crate::timers::table(node)?;
     let key = format!("goal:{id}");
     let owner = Owner::Goal { resident: id.clone() };
-    let current = table.get(&key);
+    let current = table.get(&key).await.map_err(failure)?;
     if current.as_ref().is_some_and(|timer| timer.owner != owner) {
         return Err(Failure::new("the goal's timer ID belongs to another owner"));
     }
@@ -125,10 +125,10 @@ pub(crate) fn timing(node: &Node, id: &ResidentId, view: &View) -> Result<(), Fa
             .as_ref()
             .is_none_or(|timer| timer.delivery != work.id || timer.due != work.due || timer.action != action)
         {
-            table.set(key, owner, work.due, action, work.id.clone()).map_err(failure)?;
+            table.set(key, owner, work.due, action, work.id.clone()).await.map_err(failure)?;
         }
     } else if current.is_some() {
-        table.cancel(&key).map_err(failure)?;
+        table.cancel(&key).await.map_err(failure)?;
     }
     Ok(())
 }

@@ -26,7 +26,7 @@ pub(super) async fn quiet(node: &Arc<Node>, id: &ResidentId) -> Result<bool, Fai
     // Facts that ride along cannot start a turn or prevent the goal from starting one.
     Ok(pending.iter().all(|input| input.delivery.notice.along().is_some())
         && !crate::inbox::uncertain_lately(&directory, UNSETTLED).map_err(failure)?
-        && crate::control_queue::pending(node, id)?.is_empty())
+        && crate::control_queue::pending(node, id).await?.is_empty())
 }
 
 pub(super) fn assistance(node: &Node, goal: &Goal) -> Result<Option<policy::QuotaHold>, Failure> {
@@ -75,7 +75,7 @@ pub(super) async fn reconcile(node: &Arc<Node>, id: &ResidentId) -> Result<(), F
     {
         return commit(node, &view, policy::host_refused(goal, error.failure.message)).await;
     }
-    timing(node, id, &view)?;
+    timing(node, id, &view).await?;
     let restarted = checkpoint::restore(node, &mut goal)?;
     if goal.runtime.pending.as_ref().is_some_and(|work| matches!(work.task, Task::Compact)) {
         return Ok(());

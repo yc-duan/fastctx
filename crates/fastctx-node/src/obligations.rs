@@ -61,6 +61,100 @@ pub(crate) fn finish(node: &Node, path: &Path, bytes: &[u8], outcome: Outcome, r
     Ok(true)
 }
 
+/// Job completion metadata has incarnation-scoped identities, separate from
+/// queue filenames, and its terminal receipt commits with debt removal.
+pub(crate) fn finish_job(node: &Node, path: &Path, bytes: &[u8], outcome: Outcome, reason: &str) -> io::Result<bool> {
+    let job = crate::job_metadata::Job::open(&path.with_extension("json"))?;
+    let kind = path.extension().and_then(|s| s.to_str()).ok_or_else(|| io::Error::other("job debt kind missing"))?;
+    for kind in [kind, "done", "retry"] {
+        job.scalar(kind)?;
+    }
+    let done = Finished {
+        at: Timestamp::now(),
+        digest: fastctx_hands::files::content_hash(bytes),
+        outcome,
+        reason: reason.into(),
+    };
+    let (terminal, retry) = (job.family("done"), job.family("retry"));
+    let expected = bytes.to_vec();
+    let removed = job.change(kind, expected.len() + serde_json::to_vec(&done)?.len(), move |rows, family| {
+        rows.put(&terminal, "value", &done)?;
+        rows.expire(&terminal, "value", done.at + jiff::SignedDuration::from_hours(30 * 24))?;
+        if rows.get_raw(family, "value")?.is_some_and(|current| current != expected) {
+            return Ok(false);
+        }
+        rows.delete(family, "value")?;
+        rows.delete(&retry, "value")?;
+        Ok(true)
+    })?;
+    if removed && matches!(outcome, Outcome::Impossible) {
+        node.log.line(format_args!("delivery ended for {}: {reason}", path.display()));
+    }
+    Ok(removed)
+}
+pub(crate) fn retry_job(node: &Node, path: &Path, reason: &str) -> io::Result<()> {
+    let job = crate::job_metadata::Job::open(&path.with_extension("json"))?;
+    if job.raw("retry")?.as_deref() != Some(reason.as_bytes()) {
+        job.put_raw("retry", reason.as_bytes())?;
+        node.log.line(format_args!("delivery pending for {}: {reason}", path.display()));
+    }
+    Ok(())
+}
+
+pub(crate) fn finished_record(path: &Path, bytes: &[u8]) -> io::Result<bool> {
+    Ok(crate::records::items::get::<Finished>(&path.with_extension("done"))?
+        .is_some_and(|done| done.digest == fastctx_hands::files::content_hash(bytes)))
+}
+
+/// Terminal disposition and conditional removal of an SQL queue item are atomic.
+pub(crate) fn finish_record(
+    node: &Node,
+    path: &Path,
+    bytes: &[u8],
+    outcome: Outcome,
+    reason: &str,
+) -> io::Result<bool> {
+    let done = Finished {
+        at: Timestamp::now(),
+        digest: fastctx_hands::files::content_hash(bytes),
+        outcome,
+        reason: reason.into(),
+    };
+    let expires = done.at + jiff::SignedDuration::from_hours(30 * 24);
+    let (done, expected) = (serde_json::to_vec(&done)?, bytes.to_vec());
+    let removed = crate::records::items::change(path, done.len() + expected.len(), move |rows, family, key| {
+        let done_key = Path::new(key).with_extension("done").to_string_lossy().into_owned();
+        rows.put_raw(family, &done_key, &done)?;
+        rows.expire(family, &done_key, expires)?;
+        if rows.get_raw(family, key)?.is_some_and(|current| current != expected) {
+            return Ok(false);
+        }
+        rows.delete(family, key)?;
+        let retry = Path::new(key).with_extension("retry").to_string_lossy().into_owned();
+        rows.delete(family, &retry)?;
+        Ok(true)
+    })?;
+    if removed && matches!(outcome, Outcome::Impossible) {
+        node.log.line(format_args!("delivery ended for {}: {reason}", path.display()));
+    }
+    Ok(removed)
+}
+pub(crate) fn retry_record(node: &Node, path: &Path, reason: &str) -> io::Result<()> {
+    let marker = path.with_extension("retry");
+    let bytes = reason.as_bytes().to_vec();
+    let changed = crate::records::items::change(&marker, bytes.len(), move |rows, family, key| {
+        if rows.get_raw(family, key)?.as_ref() == Some(&bytes) {
+            return Ok(false);
+        }
+        rows.put_raw(family, key, &bytes)?;
+        Ok(true)
+    })?;
+    if changed {
+        node.log.line(format_args!("delivery pending for {}: {reason}", path.display()));
+    }
+    Ok(())
+}
+
 pub(crate) fn retry(node: &Node, path: &Path, reason: &str) -> io::Result<()> {
     static UNWRITABLE: std::sync::LazyLock<std::sync::Mutex<std::collections::HashMap<std::path::PathBuf, String>>> =
         std::sync::LazyLock::new(Default::default);
@@ -193,6 +287,13 @@ pub(crate) fn impossible(node: &Node, acting: &Acting, destination: &Written) ->
 /// Terminal markers expire independently of pending work and never keep an
 /// archived conversation alive. Transport receipt retention is separate.
 pub(crate) fn collect(node: &Node) -> io::Result<()> {
+    let now = Timestamp::now().as_millisecond();
+    loop {
+        let count=node.database.write_now_at(fastctx_storage::Priority::Background,4096,move |db|Ok(db.execute("DELETE FROM conversation_records WHERE position IN (SELECT position FROM conversation_records WHERE expires<=?1 ORDER BY expires LIMIT 64)",[now])?)).map_err(io::Error::other)?;
+        if count == 0 {
+            break;
+        }
+    }
     let age = Duration::from_secs(30 * 24 * 60 * 60);
     for book in
         ["on-stops", "run-stops", "job-deliveries", "received-controls", "received", "on-deliveries", "run-receipts"]

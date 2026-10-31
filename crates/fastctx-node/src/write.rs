@@ -9,8 +9,8 @@
 pub(crate) mod record;
 
 use std::collections::BTreeMap;
-use std::io::{self, BufRead as _};
-use std::path::{Path, PathBuf};
+use std::io;
+use std::path::Path;
 
 use fastctx_hands::files::canonical_path;
 use fastctx_hands::write::Writer;
@@ -41,7 +41,8 @@ pub(crate) fn write_job(
     job: Option<&fastctx_types::JobId>,
 ) -> io::Result<WriteOutcome> {
     let directory = world.owner(here, owner);
-    let seen = load_seen(&directory.seen())?;
+    let paths = fastctx_hands::write::touched_paths(&op).unwrap_or_default();
+    let seen = load_seen_for(&directory, &paths)?;
     let mut writer = Writer::new(world, here.me.as_str())?;
     let mut turn = None;
     // A job an older program still runs keeps its record where that program
@@ -92,29 +93,36 @@ pub(crate) fn write_job(
 /// The latest of what a resident saw of each file, by the file's canonical
 /// path, as the writing core looks files up.
 pub(crate) fn load_seen(path: &Path) -> io::Result<SeenFiles> {
-    let file = match std::fs::File::open(path) {
-        Ok(file) => file,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(SeenFiles::new()),
-        Err(error) => return Err(error),
-    };
-    let mut latest: BTreeMap<PathBuf, SeenFile> = BTreeMap::new();
-    for line in io::BufReader::new(file).lines() {
-        let line = line?;
-        if line.trim().is_empty() {
-            continue;
+    let rows = crate::residents::activity::lines::<Seen>(path)?;
+    let mut latest = BTreeMap::new();
+    for row in rows {
+        if let Some(version) = seen_version(&row) {
+            latest.insert(std::path::PathBuf::from(&row.path), version);
         }
-        let seen: Seen = serde_json::from_str(&line)
-            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, format!("{}: {error}", path.display())))?;
-        // A file seen and since removed has no identity to keep.
-        let Ok(canonical) = canonical_path(Path::new(&seen.path)) else { continue };
-        let version = match (seen.sha256, seen.modified) {
-            (Some(sha256), _) => SeenVersion::Full { sha256 },
-            (None, Some(modified)) => SeenVersion::Partial { size: seen.size, modified: modified.into() },
-            (None, None) => continue,
-        };
-        latest.insert(canonical, SeenFile { version, encoding: seen.encoding_selection });
     }
     Ok(latest)
+}
+pub(crate) fn load_seen_for(
+    directory: &fastctx_types::layout::ConversationDir,
+    paths: &[std::path::PathBuf],
+) -> io::Result<SeenFiles> {
+    let mut latest = BTreeMap::new();
+    for path in paths {
+        if let Some(row) = crate::residents::activity::get_seen(directory, path)?
+            && let Some(version) = seen_version(&row)
+        {
+            latest.insert(canonical_path(path)?, version);
+        }
+    }
+    Ok(latest)
+}
+fn seen_version(seen: &Seen) -> Option<SeenFile> {
+    let version = match (&seen.sha256, seen.modified) {
+        (Some(sha256), _) => SeenVersion::Full { sha256: sha256.clone() },
+        (None, Some(modified)) => SeenVersion::Partial { size: seen.size, modified: modified.into() },
+        (None, None) => return None,
+    };
+    Some(SeenFile { version, encoding: seen.encoding_selection.clone() })
 }
 
 /// What the resident knows of a file after writing it: its new contents,

@@ -16,6 +16,7 @@
 //! A resident has one directory, its conversation's home; which project it
 //! is in is one record there (`town`), so changing projects moves nothing.
 
+pub(crate) mod activity;
 pub(crate) mod cache;
 mod departures;
 mod records;

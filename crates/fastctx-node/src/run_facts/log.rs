@@ -72,3 +72,11 @@ fn recover(file: &mut File) -> io::Result<u64> {
     file.seek(io::SeekFrom::Start(before))?;
     Ok(before)
 }
+
+pub(super) fn repair(path: &Path) -> io::Result<()> {
+    match OpenOptions::new().read(true).write(true).open(path) {
+        Ok(mut file) => recover(&mut file).map(|_| ()),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error),
+    }
+}

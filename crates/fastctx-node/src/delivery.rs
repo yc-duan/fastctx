@@ -2,9 +2,9 @@
 //! to the inbox, `now`, and outbox so each of those views can be repaired.
 
 use std::io;
-use std::path::{Path, PathBuf};
+mod storage;
+use storage::{change, read_rows};
 
-use fastctx_platform::{Permissions, ensure_private_dir, publish, publish_new};
 use fastctx_types::layout::ConversationDir;
 use fastctx_types::residents::Pending;
 use fastctx_types::session::{SessionEvent, TurnEnd};
@@ -58,29 +58,26 @@ pub fn begin_with_context(
     context: Option<crate::context::Receipt>,
     context_input: Option<crate::context::input::Stamp>,
 ) -> io::Result<Handover> {
-    let _transaction = crate::resident_storage::lock();
-    // The host's record will name the files by id alone.
-    crate::attachments::delivered::record(directory, &inputs)?;
+    crate::attachments::delivered::prepare(directory)?;
     let ids: Vec<&str> = inputs.iter().map(|input| input.delivery.id.as_str()).collect();
     let id = crate::speech::fixed_id("handover", &ids);
     let handover = Handover { id, inputs, context, context_input, turn: None, unresolved: None, attempting: true };
-    let path = handover_path(directory, &handover.id);
-    match create(&path, &handover) {
-        Ok(()) => Ok(handover),
-        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
-            let mut prior: Handover = read(&path)?;
-            accepted_turn(directory, &mut prior)?;
-            if prior.turn.is_none() && prior.unresolved.is_none() {
-                prior.attempting = true;
-                prior.inputs = handover.inputs;
-                prior.context = handover.context;
-                prior.context_input = handover.context_input;
-                write(&path, &prior)?;
+    let bytes = serde_json::to_vec(&handover)?.len();
+    change(directory, bytes, move |rows| {
+        crate::attachments::delivered::record_in(rows, &handover.inputs)?;
+        let mut prior = rows.get::<Handover>("handovers", handover.id.as_str())?.unwrap_or_else(|| handover.clone());
+        if prior.turn.is_none() && prior.unresolved.is_none() {
+            prior.attempting = true;
+            prior.inputs = handover.inputs;
+            prior.context = handover.context;
+            prior.context_input = handover.context_input;
+            rows.put("handovers", prior.id.as_str(), &prior)?;
+            for input in &prior.inputs {
+                rows.link("handovers", input.delivery.id.as_str(), prior.id.as_str())?;
             }
-            Ok(prior)
         }
-        Err(error) => Err(error),
-    }
+        Ok(prior)
+    })
 }
 
 fn attempting() -> bool {
@@ -88,85 +85,63 @@ fn attempting() -> bool {
 }
 
 pub fn refused(directory: &ConversationDir, handover: &mut Handover) -> io::Result<()> {
-    let _transaction = crate::resident_storage::lock();
-    handover.attempting = false;
-    write(&handover_path(directory, &handover.id), handover)
+    update(directory, handover, false, |row| {
+        row.attempting = false;
+        Ok(())
+    })
 }
-
 pub fn accept(directory: &ConversationDir, handover: &mut Handover, turn: &str) -> io::Result<()> {
-    let _transaction = crate::resident_storage::lock();
-    if handover.turn.as_deref().is_some_and(|prior| prior != turn) {
-        return Err(io::Error::other("one handover cannot belong to two turns"));
-    }
-    if handover.turn.is_some() {
-        return Ok(());
-    }
-    // Acceptance never replaces the intent file: a concurrent reader on
-    // Windows may deny replacement, although a new receipt can be published.
-    let path = handover_path(directory, &handover.id).with_extension("accepted");
-    match create(&path, &turn) {
-        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
-            if read::<String>(&path)? != turn {
-                return Err(io::Error::other("one handover cannot belong to two turns"));
-            }
+    let turn = turn.to_string();
+    update(directory, handover, true, move |row| {
+        if row.turn.as_ref().is_some_and(|prior| prior != &turn) {
+            return Err(fastctx_storage::Error::new("one handover cannot belong to two turns"));
         }
-        result => result?,
-    }
-    handover.turn = Some(turn.to_string());
-    Ok(())
+        row.turn = Some(turn);
+        Ok(())
+    })
 }
-
 pub fn unresolved(directory: &ConversationDir, handover: &mut Handover, end: TurnEnd) -> io::Result<()> {
-    let _transaction = crate::resident_storage::lock();
-    if handover.turn.is_some() {
-        return Err(io::Error::other("a handover with a known turn is not an unknown submission"));
-    }
-    if handover.unresolved.is_none() {
-        handover.unresolved = Some(end);
-        write(&handover_path(directory, &handover.id), handover)?;
-    }
-    Ok(())
-}
-
-fn handovers_here(directory: &ConversationDir) -> io::Result<Vec<Handover>> {
-    let mut handovers: Vec<Handover> = list(&directory.handovers())?;
-    for handover in &mut handovers {
-        accepted_turn(directory, handover)?;
-    }
-    Ok(handovers)
-}
-
-fn accepted_turn(directory: &ConversationDir, handover: &mut Handover) -> io::Result<()> {
-    let path = handover_path(directory, &handover.id).with_extension("accepted");
-    if let Some(turn) = optional::<String>(&path)? {
-        if handover.turn.as_ref().is_some_and(|prior| prior != &turn) {
-            return Err(io::Error::other("a handover and its receipt disagree about their turn"));
+    update(directory, handover, false, move |row| {
+        if row.turn.is_some() {
+            return Err(fastctx_storage::Error::new("a handover with a known turn is not an unknown submission"));
         }
-        handover.turn = Some(turn);
-    }
-    Ok(())
+        row.unresolved.get_or_insert(end);
+        Ok(())
+    })
 }
-
-pub fn input_turn(directory: &ConversationDir, id: &NoticeId) -> io::Result<Option<String>> {
-    let _transaction = crate::resident_storage::lock();
-    Ok(handovers_here(directory)?.into_iter().find_map(|handover| {
-        handover.inputs.iter().any(|input| input.delivery.id == *id).then_some(handover.turn).flatten()
-    }))
-}
-
-pub fn input_uncertainty(directory: &ConversationDir, id: &NoticeId) -> io::Result<Option<String>> {
-    let _transaction = crate::resident_storage::lock();
-    Ok(handovers_here(directory)?.into_iter().find_map(|handover| {
-        if handover.inputs.iter().any(|input| input.delivery.id == *id) {
-            handover.unresolved.and_then(|end| end.reason)
+fn update(
+    directory: &ConversationDir,
+    handover: &mut Handover,
+    preserving_time: bool,
+    apply: impl FnOnce(&mut Handover) -> fastctx_storage::Result<()> + Send + 'static,
+) -> io::Result<()> {
+    let key = handover.id.clone();
+    *handover = change(directory, 512, move |rows| {
+        let mut row = rows
+            .get::<Handover>("handovers", key.as_str())?
+            .ok_or_else(|| fastctx_storage::Error::new("handover is unavailable"))?;
+        apply(&mut row)?;
+        if preserving_time {
+            rows.put_retaining_time("handovers", key.as_str(), &row)?;
         } else {
-            None
+            rows.put("handovers", key.as_str(), &row)?;
         }
-    }))
+        Ok(row)
+    })?;
+    Ok(())
 }
-
-fn terminal_here(directory: &ConversationDir, turn: &str) -> io::Result<Option<Finished>> {
-    optional(&terminal_path(directory, turn))
+pub fn input_turn(directory: &ConversationDir, id: &NoticeId) -> io::Result<Option<String>> {
+    read_rows(directory, |rows| {
+        Ok(rows.linked::<Handover>("handovers", id.as_str())?.into_iter().find_map(|row| row.turn))
+    })
+}
+pub fn input_uncertainty(directory: &ConversationDir, id: &NoticeId) -> io::Result<Option<String>> {
+    read_rows(directory, |rows| {
+        Ok(rows
+            .linked::<Handover>("handovers", id.as_str())?
+            .into_iter()
+            .find_map(|row| row.unresolved.and_then(|end| end.reason)))
+    })
 }
 
 /// The first terminal outcome is authoritative. Later readers can be added
@@ -188,155 +163,86 @@ pub fn finish_at(
     ended_at: Option<Timestamp>,
     settles_queue: bool,
 ) -> io::Result<(Finished, bool)> {
-    let _transaction = crate::resident_storage::lock();
-    let prior = terminal_here(directory, turn)?;
-    let first = prior.is_none();
-    let mut finished = match prior {
-        Some(finished) => finished,
-        None => {
-            let counter = directory.turns().join("order");
-            let order = optional::<u64>(&counter)?
-                .unwrap_or(0)
-                .checked_add(1)
-                .ok_or_else(|| io::Error::other("terminal order exhausted"))?;
-            // A stop after this reservation leaves a harmless gap, never a reused order.
-            write(&counter, &order)?;
-            Finished {
-                turn: turn.to_string(),
-                at: Timestamp::now(),
-                ended_at,
-                end,
-                readers: Vec::new(),
-                settles_queue,
-                queue_order: order,
+    let (turn, readers) = (turn.to_string(), readers.to_vec());
+    change(directory, 512 + readers.len() * 128, move |rows| {
+        let prior = rows.get::<Finished>("terminals", &turn)?;
+        let first = prior.is_none();
+        let mut finished = match prior {
+            Some(row) => row,
+            None => {
+                let order = rows
+                    .get::<u64>("terminal-counter", "order")?
+                    .unwrap_or(0)
+                    .checked_add(1)
+                    .ok_or_else(|| fastctx_storage::Error::new("terminal order exhausted"))?;
+                rows.put("terminal-counter", "order", &order)?;
+                Finished {
+                    turn: turn.clone(),
+                    at: Timestamp::now(),
+                    ended_at,
+                    end,
+                    readers: Vec::new(),
+                    settles_queue,
+                    queue_order: order,
+                }
             }
-        }
-    };
-    let before = finished.readers.clone();
-    finished.readers.extend_from_slice(readers);
-    finished.readers.sort();
-    finished.readers.dedup();
-    if first || finished.readers != before {
-        write(&terminal_path(directory, turn), &finished)?;
-    }
-    Ok((finished, first))
+        };
+        finished.readers.extend(readers);
+        finished.readers.sort();
+        finished.readers.dedup();
+        rows.put("terminals", &turn, &finished)?;
+        Ok((finished, first))
+    })
 }
-
 pub fn terminals(directory: &ConversationDir) -> io::Result<Vec<Finished>> {
-    let _transaction = crate::resident_storage::lock();
-    list(&directory.turns())
+    read_rows(directory, |rows| rows.all("terminals"))
 }
-
 pub fn remember_session(directory: &ConversationDir, turn: &str, session: &str) -> io::Result<()> {
-    let _transaction = crate::resident_storage::lock();
-    let key = crate::speech::fixed_id("turn", &[turn]);
-    let path = directory.turn_sessions().join(format!("{key}.json"));
-    match create(&path, &session) {
-        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
-            if read::<String>(&path)? != session {
-                return Err(io::Error::other("turn belongs to a different conversation"));
-            }
-            Ok(())
+    let (key, session) = (crate::speech::fixed_id("turn", &[turn]), session.to_string());
+    change(directory, session.len(), move |rows| {
+        if rows.get::<String>("turn-sessions", key.as_str())?.is_some_and(|prior| prior != session) {
+            return Err(fastctx_storage::Error::new("turn belongs to a different conversation"));
         }
-        result => result,
-    }
+        rows.put("turn-sessions", key.as_str(), &session)
+    })
 }
-
 pub fn session(directory: &ConversationDir, turn: &str) -> io::Result<Option<String>> {
-    let _transaction = crate::resident_storage::lock();
     let key = crate::speech::fixed_id("turn", &[turn]);
-    optional(&directory.turn_sessions().join(format!("{key}.json")))
+    read_rows(directory, |rows| rows.get("turn-sessions", key.as_str()))
 }
 
 /// Whether this event identity has already been durably published.
 pub(crate) fn has_event(directory: &ConversationDir, key: &str) -> io::Result<bool> {
-    let _transaction = crate::resident_storage::lock();
     let key = crate::speech::fixed_id("event", &[key]);
-    directory.session_events().join(format!("{key}.json")).try_exists()
+    crate::session_record::contains(directory, key.as_str())
 }
 
 pub fn event(directory: &ConversationDir, key: &str, event: &SessionEvent) -> io::Result<bool> {
-    let _transaction = crate::resident_storage::lock();
     let key = crate::speech::fixed_id("event", &[key]);
     crate::session_record::append(directory, key.as_str(), event)
 }
 
 pub fn history(directory: &ConversationDir) -> io::Result<Vec<SessionEvent>> {
-    let _transaction = crate::resident_storage::lock();
     crate::session_record::history(directory)
 }
 
-pub(crate) fn handover_path(directory: &ConversationDir, id: &NoticeId) -> PathBuf {
-    directory.handovers().join(format!("{id}.json"))
+pub fn handover(directory: &ConversationDir, id: &NoticeId) -> io::Result<Option<Handover>> {
+    read_rows(directory, |rows| rows.get("handovers", id.as_str()))
 }
 
-/// Whether the handover `id` was last written before `before`, any time
-/// with none: a node recovering what the one before it left takes only
-/// what that one wrote.
+/// The write time of the durable intent, retained when importing old files.
 pub fn written_before(
     directory: &ConversationDir,
     id: &NoticeId,
     before: Option<std::time::SystemTime>,
 ) -> io::Result<bool> {
     let Some(before) = before else { return Ok(true) };
-    match std::fs::metadata(handover_path(directory, id)) {
-        Ok(metadata) => Ok(metadata.modified()? < before),
-        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(false),
-        Err(error) => Err(error),
-    }
+    let before = Timestamp::try_from(before).map_err(io::Error::other)?;
+    read_rows(directory, |rows| Ok(rows.modified("handovers", id.as_str())?.is_some_and(|at| at < before)))
 }
-
-fn terminal_path(directory: &ConversationDir, turn: &str) -> PathBuf {
-    let id = crate::speech::fixed_id("turn", &[turn]);
-    directory.turns().join(format!("{id}.json"))
-}
-
-fn list<T: serde::de::DeserializeOwned>(directory: &Path) -> io::Result<Vec<T>> {
-    let entries = match std::fs::read_dir(directory) {
-        Ok(entries) => entries,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
-        Err(error) => return Err(error),
-    };
-    let mut values = Vec::new();
-    for entry in entries {
-        let path = entry?.path();
-        if path.extension().is_some_and(|extension| extension == "json")
-            && !path.file_name().is_some_and(|name| name.to_string_lossy().starts_with('.'))
-        {
-            values.push(read(&path)?);
-        }
-    }
-    Ok(values)
-}
-
-fn read<T: serde::de::DeserializeOwned>(path: &Path) -> io::Result<T> {
-    serde_json::from_slice(&std::fs::read(path)?)
-        .map_err(|error| io::Error::other(format!("{}: {error}", path.display())))
-}
-
-fn optional<T: serde::de::DeserializeOwned>(path: &Path) -> io::Result<Option<T>> {
-    match read(path) {
-        Ok(value) => Ok(Some(value)),
-        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
-        Err(error) => Err(error),
-    }
-}
-
-fn write(path: &Path, value: &impl Serialize) -> io::Result<()> {
-    ensure_private_dir(path.parent().expect("a record has a directory"))?;
-    publish(path, &serde_json::to_vec(value).map_err(io::Error::other)?, Permissions::Private)
-}
-
-fn create(path: &Path, value: &impl Serialize) -> io::Result<()> {
-    ensure_private_dir(path.parent().expect("a record has a directory"))?;
-    publish_new(path, &serde_json::to_vec(value).map_err(io::Error::other)?, Permissions::Private)
-}
-
 pub fn handovers(directory: &ConversationDir) -> io::Result<Vec<Handover>> {
-    let _transaction = crate::resident_storage::lock();
-    handovers_here(directory)
+    read_rows(directory, |rows| rows.all("handovers"))
 }
 pub fn terminal(directory: &ConversationDir, turn: &str) -> io::Result<Option<Finished>> {
-    let _transaction = crate::resident_storage::lock();
-    terminal_here(directory, turn)
+    read_rows(directory, |rows| rows.get("terminals", turn))
 }

@@ -421,27 +421,17 @@ async fn finish_at(
         }
     }
     if matches!(about.origin, Origin::Colleague { .. }) {
-        let already = match std::fs::read_to_string(directory.messages()) {
-            Ok(text) => text
-                .lines()
-                .filter_map(|line| serde_json::from_str::<MessageLine>(line).ok())
-                .any(|line| matches!(line.what, MessageKind::Ended { turn: ref recorded, .. } if recorded == turn)),
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => false,
-            Err(error) => return Err(error),
-        };
-        if !already {
-            crate::residents::append_message(
-                &directory,
-                &MessageLine {
-                    at: finished.at,
-                    what: MessageKind::Ended {
-                        turn: turn.to_string(),
-                        end: finished.end.clone(),
-                        owed: finished.readers.clone(),
-                    },
+        crate::residents::append_message(
+            &directory,
+            &MessageLine {
+                at: finished.at,
+                what: MessageKind::Ended {
+                    turn: turn.to_string(),
+                    end: finished.end.clone(),
+                    owed: finished.readers.clone(),
                 },
-            )?;
-        }
+            },
+        )?;
     }
     Ok(())
 }

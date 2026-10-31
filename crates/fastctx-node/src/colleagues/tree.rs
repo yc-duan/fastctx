@@ -7,7 +7,7 @@ use fastctx_types::{
     collaboration::{Branch, Tree},
     ipc::Failure,
     remote::{RemoteCall, RemoteReply},
-    residents::{Action, Origin},
+    residents::Origin,
 };
 use std::{collections::BTreeMap, sync::Arc, time::Duration};
 use tokio::time::Instant;
@@ -183,22 +183,10 @@ async fn branch(node: &Arc<Node>, id: &ResidentId, acting: &Acting, deadline: In
 
 async fn targets(node: &Arc<Node>, owner: &Address, acting: &Acting) -> Result<BTreeMap<Address, String>, Failure> {
     let path = node.world.conversation(&owner.resident).actions();
-    let actions = tokio::task::spawn_blocking(move || {
-        let bytes = match std::fs::read(&path) {
-            Ok(bytes) => bytes,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
-            Err(error) => return Err(error),
-        };
-        let Some(end) = bytes.iter().rposition(|byte| *byte == b'\n') else { return Ok(Vec::new()) };
-        bytes[..end]
-            .split(|byte| *byte == b'\n')
-            .filter(|line| !line.is_empty())
-            .map(|line| serde_json::from_slice::<Action>(line).map_err(std::io::Error::other))
-            .collect::<std::io::Result<Vec<_>>>()
-    })
-    .await
-    .map_err(|error| Failure::new(error.to_string()))?
-    .map_err(|error| Failure::new(error.to_string()))?;
+    let actions = tokio::task::spawn_blocking(move || crate::residents::activity::asked(&path, None))
+        .await
+        .map_err(|error| Failure::new(error.to_string()))?
+        .map_err(|error| Failure::new(error.to_string()))?;
     let mut found = BTreeMap::new();
     for action in actions.into_iter().filter(|action| action.hand == "ask_colleague") {
         let address = Address {

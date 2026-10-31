@@ -116,6 +116,7 @@ fn request_each(node: &Arc<Node>, plan: bool) {
 }
 
 pub(crate) fn start(node: &Arc<Node>) {
+    super::records::start(node);
     let node = node.clone();
     tokio::spawn(async move {
         let mut views = node.views.subscribe();

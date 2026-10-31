@@ -6,7 +6,6 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use fastctx_platform::{Permissions, ensure_private_dir, publish};
 use fastctx_types::access::{Acting, HubAccount, Purpose, Written};
 use fastctx_types::delivery_control::ControlLetter;
 use fastctx_types::ipc::Failure;
@@ -17,6 +16,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::Node;
 use crate::obligations::Outcome;
+use crate::records::items;
 
 #[derive(Serialize, Deserialize)]
 struct Pending {
@@ -42,12 +42,11 @@ fn incoming_path(node: &Node, owner: &Address, dispatch: &NoticeId) -> PathBuf {
 }
 
 fn read<T: serde::de::DeserializeOwned>(path: &Path) -> io::Result<Option<T>> {
-    fastctx_install::renewal::read_json(path)
+    items::get(path)
 }
 
 fn write(path: &Path, value: &impl Serialize) -> io::Result<()> {
-    ensure_private_dir(path.parent().expect("request directory"))?;
-    fastctx_install::renewal::write_json(path, value)
+    items::keep(path, value)
 }
 
 /// Persists before the run's caller can return from observing the interruption.
@@ -71,7 +70,7 @@ pub(crate) async fn keep(
         match write(&path, &pending) {
             Ok(()) => break,
             Err(error) => {
-                let _ = crate::obligations::retry(node, &path, &format!("keeping the turn's stop: {error}"));
+                let _ = crate::obligations::retry_record(node, &path, &format!("keeping the turn's stop: {error}"));
             }
         }
         tokio::time::sleep(again.next()).await;
@@ -110,7 +109,7 @@ pub(crate) enum Answered {
 /// Kept apart from the immutable stop body, whose digest binds its mailed reply.
 pub(crate) fn answered(node: &Node, owner: &Address, dispatch: &NoticeId, answered: Answered) -> io::Result<()> {
     let path = pending_path(node, owner, dispatch);
-    if path.try_exists()? {
+    if items::exists(&path)? {
         write(&path.with_extension("answer"), &answered)?;
         node.control_letters.changed.notify_waiters();
     }
@@ -124,7 +123,7 @@ pub(crate) fn resume(node: &Arc<Node>) {
         loop {
             let result = (|| -> io::Result<()> {
                 for directory in node.world.book_directories("run-stops")? {
-                    for path in crate::retention::entries(&directory)? {
+                    for path in items::entries(&directory, None)? {
                         if path.extension().is_some_and(|ext| ext == "json") {
                             start(&node, path, true);
                         }
@@ -164,7 +163,7 @@ fn start(node: &Arc<Node>, path: PathBuf, recovered: bool) {
                 Ok(true) => break,
                 Ok(false) => {}
                 Err(error) => {
-                    let _ = crate::obligations::retry(&node, &path, &error.to_string());
+                    let _ = crate::obligations::retry_record(&node, &path, &error.to_string());
                 }
             }
             tokio::select! {
@@ -178,7 +177,7 @@ fn start(node: &Arc<Node>, path: PathBuf, recovered: bool) {
 }
 
 async fn attempt(node: &Arc<Node>, path: &Path, recovered: bool) -> io::Result<bool> {
-    let bytes = match std::fs::read(path) {
+    let bytes = match items::read(path) {
         Ok(bytes) => bytes,
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(true),
         Err(error) => return Err(error),
@@ -200,7 +199,7 @@ async fn attempt(node: &Arc<Node>, path: &Path, recovered: bool) -> io::Result<b
         // A legacy resident-wide interruption cannot be replayed safely: a
         // later turn might already be waiting there. Its concrete job is safe.
         let answer = path.with_extension("answer");
-        let answered: Answered = match std::fs::read(&answer) {
+        let answered: Answered = match items::read(&answer) {
             Ok(bytes) => serde_json::from_slice(&bytes).map_err(io::Error::other)?,
             Err(error) if error.kind() == io::ErrorKind::NotFound && !recovered => return Ok(false),
             Err(error) if error.kind() == io::ErrorKind::NotFound => Answered::Unknown,
@@ -217,7 +216,13 @@ async fn attempt(node: &Arc<Node>, path: &Path, recovered: bool) -> io::Result<b
                 }
             }
             Answered::NotRun => {
-                crate::obligations::finish(node, path, &bytes, Outcome::Superseded, "the run never started there")?;
+                crate::obligations::finish_record(
+                    node,
+                    path,
+                    &bytes,
+                    Outcome::Superseded,
+                    "the run never started there",
+                )?;
                 return Ok(true);
             }
             Answered::Unknown => Err(Failure::refused(
@@ -227,7 +232,7 @@ async fn attempt(node: &Arc<Node>, path: &Path, recovered: bool) -> io::Result<b
     };
     match result {
         Ok(()) => {
-            crate::obligations::finish(
+            crate::obligations::finish_record(
                 node,
                 path,
                 &bytes,
@@ -242,10 +247,10 @@ async fn attempt(node: &Arc<Node>, path: &Path, recovered: bool) -> io::Result<b
                 path,
                 format!("The stop on {} could not be delivered: {}.", pending.destination.name, error.message),
             )?;
-            crate::obligations::finish(node, path, &bytes, Outcome::Impossible, &error.message)?;
+            crate::obligations::finish_record(node, path, &bytes, Outcome::Impossible, &error.message)?;
         }
         Err(error) => {
-            crate::obligations::retry(node, path, &error.message)?;
+            crate::obligations::retry_record(node, path, &error.message)?;
             return Ok(false);
         }
     }
@@ -265,8 +270,8 @@ pub(crate) fn register(node: &Arc<Node>, path: &Path, dispatch: &NoticeId) -> Re
                 "this dispatch was already accepted; its previous execution was not repeated",
             ));
         }
-        write(&incoming, &Incoming { job: record.id.clone(), scope: scope.clone() })?;
-        publish(&path.with_extension("run-request"), dispatch.as_str().as_bytes(), Permissions::Private)?;
+        items::create(&incoming, &serde_json::to_vec(&Incoming { job: record.id.clone(), scope: scope.clone() })?)?;
+        crate::job_metadata::put_raw(&path.with_extension("run-request"), dispatch.as_str().as_bytes())?;
         if let Some(cancelled) = read::<HubAccount>(&incoming.with_extension("stopped"))? {
             if cancelled != scope {
                 return Err(io::Error::other("the dispatch cancellation belongs to another account"));
@@ -335,7 +340,7 @@ pub(crate) async fn serve(
         // there now is this dispatch's only while it names the dispatch. One
         // started by another has nothing to do with this stop, whose job
         // ended long since.
-        match std::fs::read(path.with_extension("run-request")) {
+        match crate::job_metadata::read(&path.with_extension("run-request")) {
             Ok(named) if named == dispatch.as_str().as_bytes() => {}
             Ok(_) => return Ok(()),
             Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
@@ -349,11 +354,11 @@ pub(crate) async fn serve(
 /// Request identities outlive their job so late duplicates cannot name a new job.
 pub(crate) fn collect(node: &Node, age: std::time::Duration) -> io::Result<()> {
     for directory in node.world.book_directories("run-requests")? {
-        for path in crate::retention::entries(&directory)? {
+        for path in items::entries(&directory, None)? {
             if !matches!(path.extension().and_then(|ext| ext.to_str()), Some("json" | "stopped")) {
                 continue;
             }
-            if !path.metadata()?.modified()?.elapsed().is_ok_and(|elapsed| elapsed >= age) {
+            if !items::modified(&path)?.elapsed().is_ok_and(|elapsed| elapsed >= age) {
                 continue;
             }
             if let Some(known) = read::<Incoming>(&path.with_extension("json"))? {
@@ -362,16 +367,16 @@ pub(crate) fn collect(node: &Node, age: std::time::Duration) -> io::Result<()> {
                     continue;
                 }
             }
-            std::fs::remove_file(path)?;
+            items::delete(&path)?;
         }
     }
     for directory in node.world.book_directories("run-stops")? {
-        for path in crate::retention::entries(&directory)? {
+        for path in items::entries(&directory, None)? {
             if path.extension().is_some_and(|ext| ext == "answer")
-                && !path.with_extension("json").try_exists()?
-                && path.metadata()?.modified()?.elapsed().is_ok_and(|elapsed| elapsed >= age)
+                && !items::exists(&path.with_extension("json"))?
+                && items::modified(&path)?.elapsed().is_ok_and(|elapsed| elapsed >= age)
             {
-                std::fs::remove_file(path)?;
+                items::delete(&path)?;
             }
         }
     }
