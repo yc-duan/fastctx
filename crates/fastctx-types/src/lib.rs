@@ -32,6 +32,7 @@ pub mod file_search;
 pub mod files;
 pub mod focus;
 pub mod goals;
+pub mod health;
 pub mod history;
 pub mod hub_move;
 pub mod ipc;

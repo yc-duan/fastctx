@@ -26,6 +26,7 @@ pub mod event_queue;
 pub mod file_read;
 pub mod file_version;
 pub mod form;
+pub mod health;
 pub mod home;
 pub mod host_process;
 pub mod hostname;

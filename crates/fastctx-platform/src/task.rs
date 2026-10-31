@@ -95,6 +95,7 @@ pub fn watch(runtime: &'static str) {
             counted.fetch_add(1, Ordering::Relaxed);
         }
     });
+    let lag = crate::health::Lag::claim();
     let watching = std::thread::Builder::new().name(format!("watch-{runtime}")).spawn(move || {
         let mut handed: u64 = 0;
         // Since when the runtime has left ticks unrun, and whether the scene
@@ -109,7 +110,13 @@ pub fn watch(runtime: &'static str) {
             }
             let unrun = handed.saturating_sub(run.load(Ordering::Relaxed));
             if unrun > 1 {
-                let (since, written) = behind.get_or_insert_with(|| (Instant::now() - TICK, false));
+                let (since, written) = behind.get_or_insert_with(|| {
+                    let since = Instant::now() - TICK;
+                    if let Some(lag) = lag {
+                        lag.fell_behind(since);
+                    }
+                    (since, false)
+                });
                 if !*written && since.elapsed() >= HELD_UP {
                     *written = true;
                     crate::scene::capture(format!(
@@ -117,10 +124,13 @@ pub fn watch(runtime: &'static str) {
                         since.elapsed().as_millis()
                     ));
                 }
-            } else if let Some((since, _)) = behind.take()
-                && since.elapsed() >= HELD_UP
-            {
-                crate::conduct::held_up(runtime, since.elapsed());
+            } else if let Some((since, _)) = behind.take() {
+                if let Some(lag) = lag {
+                    lag.caught_up(since.elapsed());
+                }
+                if since.elapsed() >= HELD_UP {
+                    crate::conduct::held_up(runtime, since.elapsed());
+                }
             }
         }
     });

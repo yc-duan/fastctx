@@ -164,6 +164,7 @@ pub(crate) fn view_for_in(
         me: me.clone(),
         self_registration: store.hub.self_registration,
         direct_links: true,
+        health: false,
         trial,
         forwarders,
         moving: true,

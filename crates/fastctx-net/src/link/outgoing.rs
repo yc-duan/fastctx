@@ -52,7 +52,7 @@ impl Writing {
 
 impl Outgoing {
     pub fn channel() -> (Self, Writing) {
-        let (queued, receiving) = queue::bounded(QUEUED, QUEUED_BYTES);
+        let (queued, receiving) = queue::bounded(QUEUED, QUEUED_BYTES, "link.outgoing");
         let (first, first_receiving) = mpsc::unbounded_channel();
         (Self { queued, first }, Writing { queued: receiving, first: first_receiving })
     }

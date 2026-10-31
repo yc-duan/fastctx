@@ -97,6 +97,7 @@ pub(crate) fn start(node: &Arc<Node>) {
                     ));
                 }
             }
+            fastctx_platform::health::set_stuck(snapshot.stuck.len());
             *node.stuck.now.lock().expect("never poisoned") = snapshot.stuck;
             let Some(first) = snapshot.cycles.first() else {
                 circle = None;

@@ -66,7 +66,7 @@ impl PeerConn {
         at: Vec<SocketAddr>,
         cancels: bool,
     ) -> (Arc<Self>, Writing) {
-        let (out, frames) = crate::queue::bounded(QUEUED, QUEUED_BYTES);
+        let (out, frames) = crate::queue::bounded(QUEUED, QUEUED_BYTES, "direct.outgoing");
         let (first, firsts) = mpsc::unbounded_channel();
         let (closed, _) = watch::channel(None);
         let conn = Self {

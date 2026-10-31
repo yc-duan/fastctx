@@ -80,6 +80,9 @@ pub enum Up {
         /// earlier release says none.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         held: Option<u64>,
+        /// This machine's health, to a hub that reads it (`View::health`).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        health: Option<fastctx_types::health::Health>,
     },
     /// The second half of a password login (`Intent::Login`): the last
     /// OPAQUE message, and the computer or phone that logs in.

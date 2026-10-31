@@ -27,6 +27,8 @@ pub struct LogWriter {
     sender: SyncSender<Message>,
     recent: Arc<Mutex<VecDeque<String>>>,
     dropped: Arc<AtomicU64>,
+    /// Lines handed over and not yet written.
+    waiting: Arc<std::sync::atomic::AtomicUsize>,
 }
 
 impl LogWriter {
@@ -37,6 +39,8 @@ impl LogWriter {
         let (sender, receiver) = mpsc::sync_channel(WAITING);
         let dropped = Arc::new(AtomicU64::new(0));
         let lost = dropped.clone();
+        let waiting = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let written = waiting.clone();
         let named = name.to_string();
         std::thread::Builder::new().name(named.clone()).spawn(move || {
             crate::roles::set(crate::roles::Role::Blocking);
@@ -44,6 +48,7 @@ impl LogWriter {
             while let Ok(message) = receiver.recv() {
                 match message {
                     Message::Line(line) => {
+                        written.fetch_sub(1, Ordering::Relaxed);
                         let missed = lost.swap(0, Ordering::Relaxed);
                         if missed > 0 {
                             let note = format!(
@@ -60,7 +65,7 @@ impl LogWriter {
                 }
             }
         })?;
-        Ok(Self { sender, recent: Arc::new(Mutex::new(VecDeque::with_capacity(RECENT))), dropped })
+        Ok(Self { sender, recent: Arc::new(Mutex::new(VecDeque::with_capacity(RECENT))), dropped, waiting })
     }
 
     /// Hands `line`, ending in a newline, over to be written.
@@ -73,9 +78,14 @@ impl LogWriter {
             recent.push_back(line.clone());
         }
         match self.sender.try_send(Message::Line(line)) {
-            Ok(()) | Err(TrySendError::Disconnected(_)) => {}
+            Ok(()) => {
+                let waiting = self.waiting.fetch_add(1, Ordering::Relaxed) + 1;
+                crate::health::bound("log.waiting").note(waiting, WAITING);
+            }
+            Err(TrySendError::Disconnected(_)) => {}
             Err(TrySendError::Full(_)) => {
                 self.dropped.fetch_add(1, Ordering::Relaxed);
+                crate::health::bound("log.waiting").note(WAITING, WAITING);
             }
         }
     }

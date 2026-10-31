@@ -517,7 +517,8 @@ async fn connected(
                     // nothing.
                     let paths = inner.view().direct_links.then(|| inner.paths());
                     let held = Some(inner.held_now.load(std::sync::atomic::Ordering::Acquire));
-                    let _ = up.send_first(Up::Ping { n: 0, paths, took: Some(pulse.taken()), held });
+                    let health = inner.view().health.then(fastctx_platform::health::summary);
+                    let _ = up.send_first(Up::Ping { n: 0, paths, took: Some(pulse.taken()), held, health });
                 }
                 continue;
             },
@@ -626,7 +627,9 @@ async fn connected(
             // the hub's frames without end: the next one starts afresh, and
             // what it missed comes again.
             frame => match frames.try_send(frame) {
-                Ok(()) => {}
+                Ok(()) => {
+                    fastctx_platform::health::bound("link.frames").note(FRAMES - frames.capacity(), FRAMES);
+                }
                 Err(mpsc::error::TrySendError::Full(_)) => {
                     break Ended::Retry(format!(
                         "the hub's frames piled up faster than this machine does what they say ({FRAMES} waiting)"
@@ -866,7 +869,8 @@ async fn heartbeat(
         let paths = inner.view().direct_links.then(|| inner.paths());
         pinged.lock().expect("never poisoned").insert(n, Instant::now());
         let held = Some(inner.held_now.load(std::sync::atomic::Ordering::Acquire));
-        if up.send_first(Up::Ping { n, paths, took: Some(pulse.taken()), held }).is_err() {
+        let health = inner.view().health.then(fastctx_platform::health::summary);
+        if up.send_first(Up::Ping { n, paths, took: Some(pulse.taken()), held, health }).is_err() {
             return;
         }
     }

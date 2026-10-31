@@ -640,6 +640,10 @@ pub struct View {
     /// Older hubs omit it.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub direct_links: bool,
+    /// Whether this hub reads the health its members' heartbeats carry
+    /// (`fastctx_types::health`). Older hubs omit it, and are told none.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub health: bool,
     /// While the hub checks whether it reaches this member at these
     /// addresses, before direct connections to it count: the member
     /// listens at their ports meanwhile.
@@ -816,6 +820,7 @@ impl View {
             me,
             self_registration: false,
             direct_links: false,
+            health: false,
             trial: Vec::new(),
             forwarders: Vec::new(),
             moving: false,
