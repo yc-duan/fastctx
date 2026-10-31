@@ -1188,9 +1188,21 @@ export class ConversationPage {
     const waiting = queued ? (this.nodeQueue?.pending(text, shown.length) ?? null) : null;
     // The words leave the input as they are sent: what is typed from now is
     // the next words, which go once the node has these.
-    const sent = session.send();
+    // With no answer within two minutes, words handed to the node are not
+    // known to have gone: they say so, and can be sent again or taken back
+    // into the input (`Fold.settles`).
+    const sending = session.send((why) => {
+      if (!key) {
+        waiting?.late(sending.withdraw);
+        return;
+      }
+      conversation.sent(key, { state: "unknown", why });
+      this.update();
+    });
+    const sent = sending.sent;
+    if (key) conversation.settles(key, { again: sending.again, remove: sending.withdraw });
     this.update();
-    if (waiting) void sent.then(waiting, waiting);
+    if (waiting) void sent.then(waiting.done, waiting.done);
     if (key) {
       this.straight += 1;
       this.nodeQueue?.goingStraight(this.straight);
@@ -1210,6 +1222,7 @@ export class ConversationPage {
     sending.then(
       (updated) => {
         if (!key) return;
+        conversation.settles(key, null);
         if (!updated) {
           conversation.unsend(key);
           this.update();

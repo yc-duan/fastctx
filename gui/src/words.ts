@@ -288,6 +288,12 @@ export interface Words {
   notDone(why: string): string;
   /** Words with no answer yet, said again until one comes. */
   waitingToSend: string;
+  /** Words with no answer in two minutes: they may or may not have gone. */
+  notConfirmed: string;
+  /** Sends words that did not go, or are not known to have, again. */
+  sendAgain: string;
+  /** Takes such words away. */
+  takeAway: string;
   /** What the session's host said of its own health, in a plain line; the
    *  host's words go on hover. */
   health: Record<HealthKind, string>;
@@ -676,6 +682,9 @@ export const zh: Words = {
   notSent: (why) => known(why, zhProblems) ?? "发送失败",
   notDone: (why) => known(why, zhProblems) ?? "没有做成",
   waitingToSend: "等待发送",
+  notConfirmed: "不知是否送到",
+  sendAgain: "重发",
+  takeAway: "移除",
   health: {
     reconnecting: "连接中断，正在重试",
     safety: "OpenAI 正在对这一轮的输出做额外的安全审查",
@@ -1053,6 +1062,9 @@ export const en: Words = {
   notSent: (why) => known(why, enProblems) ?? "Couldn't send",
   notDone: (why) => known(why, enProblems) ?? "Couldn't do that",
   waitingToSend: "Waiting to send",
+  notConfirmed: "Delivery unknown",
+  sendAgain: "Resend",
+  takeAway: "Remove",
   health: {
     reconnecting: "Connection lost, retrying",
     safety: "OpenAI is giving this turn's output extra safety review",

@@ -126,12 +126,17 @@ export class TalkActs {
     });
   }
 
-  delete(r: ResidentNow): void {
+  /** Deletes `r`; `announced` when the asking already said it waits for its
+   *  machine to come back. */
+  delete(r: ResidentNow, announced = false): void {
     this.show(r, { deleting: true });
     const address = addressOf(r);
     this.chain(address, async () => {
       try {
-        await this.options.forget(address);
+        // Its machine gone offline since it was asked, it is deleted there
+        // once it is back: said, unless the asking said so already.
+        const done = await this.options.forget(address);
+        if (done === "queued" && !announced) this.options.say(this.options.words.deleteAway(address.machine));
       } catch (error) {
         this.undo(address, "deleting", this.options.words.notDeleted, String(error instanceof Error ? error.message : error));
       }

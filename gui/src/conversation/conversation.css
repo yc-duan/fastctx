@@ -189,7 +189,8 @@
 }
 
 .bubble.going,
-.bubble.queued {
+.bubble.queued,
+.bubble.unknown {
   --shown: 0.62;
 }
 
@@ -211,6 +212,19 @@
 
 .bubble-note.wrong {
   color: var(--wrong);
+}
+
+/* Sending again or taking away words that did not go: plain words beside
+   what became of them, the line's own colour kept. */
+.bubble-settle {
+  display: inline-flex;
+  align-items: baseline;
+  margin-left: var(--space-2);
+}
+
+.bubble-settle .text-button {
+  height: 28px;
+  padding: 0 var(--space-2);
 }
 
 .bubble-from {

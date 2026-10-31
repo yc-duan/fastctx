@@ -15,7 +15,7 @@ import type { WorldNow } from "../world/bridge";
 import { compareVersions, type MachineUpdate, type UpdateCall, type UpdatesView, type UpdatesViewCall, type UpdatesViewReply, type UpdateState } from "../world/updates";
 import type { AccessWords } from "./account-words";
 import type { UpdatesNow } from "./machine-list";
-import { detailOf } from "./problem";
+import { detailOf, known } from "./problem";
 import { machinesOf } from "./reach";
 import type { Signal } from "./signals";
 import { rulerOf } from "./update-ruler";
@@ -278,7 +278,7 @@ export class MachineUpdates {
         try {
           await updates.remote(machine.machine, { do: "kernel", version });
         } catch (error) {
-          this.sayOnRow(machine.machine, words.notScheduled(error instanceof Error ? error.message : String(error)));
+          this.sayOnRow(machine.machine, plainly(error, words, words.notScheduled));
         }
       });
     }
@@ -319,7 +319,7 @@ export class MachineUpdates {
           else this.sayOnRow(written(result.machine), words.notScheduled(result.reason ? words.reasons[result.reason] : (result.why ?? words.reasons.other)));
         }
       } catch (error) {
-        for (const name of names) this.sayOnRow(written(name), words.notScheduled(error instanceof Error ? error.message : String(error)));
+        for (const name of names) this.sayOnRow(written(name), plainly(error, words, words.notScheduled));
       }
     }
   }
@@ -339,7 +339,7 @@ export class MachineUpdates {
         await updates.remote(machine.machine, call);
         this.said.delete(machine.machine);
       } catch (error) {
-        this.sayOnRow(machine.machine, error instanceof Error ? error.message : String(error));
+        this.sayOnRow(machine.machine, plainly(error, updates.view, (why) => why));
       }
     });
     await this.ask();
@@ -369,6 +369,13 @@ export class MachineUpdates {
       this.host.draw();
     }, SAID_MS);
   }
+}
+
+/** `error` as a machine's row says it: in plain words, the kernel's own on
+ *  a line of their own, for the pointer to rest on. */
+function plainly(error: unknown, words: UpdateViewWords, say: (why: string) => string): string {
+  const detail = detailOf(error);
+  return `${say(known(detail, words.problems) ?? words.reasons.other)}\n${detail}`;
 }
 
 /** Runs `each` over `items`, at most `width` at a time. */

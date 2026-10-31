@@ -40,7 +40,9 @@ export class NodeQueue {
   private commands: { words: ControlQueueWords; withdraw: (id: string) => void } | null = null;
   /** Words sent into the queue from here, shown in it at once until the
    *  node's own queue holds them, or until they did not go. */
-  private going: { text: string; files: number; before: Set<string>; drawn: boolean }[] = [];
+  /** Words sent from here the node's queue does not hold yet; `take`, once
+   *  no answer came for them in time, takes them back into the input. */
+  private going: { text: string; files: number; before: Set<string>; drawn: boolean; take?: () => void }[] = [];
   /** Words sent straight on from here that the agent has not heard yet,
    *  which the node does not list. */
   private straight = 0;
@@ -82,16 +84,23 @@ export class NodeQueue {
 
   /** Shows `text` in the queue at once, as sent from this device: the node
    *  takes it in over the network, which may take a while. Gives what takes
-   *  it out again, once the node's queue holds it or it did not go. */
-  pending(text: string, files: number): () => void {
-    const entry = { text, files, before: new Set((this.state?.composer.queue ?? []).map((item) => item.id)), drawn: false };
+   *  it out again, once the node's queue holds it or it did not go, and what
+   *  says no answer came for it in time, with what takes it back. */
+  pending(text: string, files: number): { done(): void; late(take: () => void): void } {
+    const entry: (typeof this.going)[number] = { text, files, before: new Set((this.state?.composer.queue ?? []).map((item) => item.id)), drawn: false };
     this.going.push(entry);
     this.draw();
-    return () => {
-      const at = this.going.indexOf(entry);
-      if (at < 0) return;
-      this.going.splice(at, 1);
-      this.draw();
+    return {
+      done: () => {
+        const at = this.going.indexOf(entry);
+        if (at < 0) return;
+        this.going.splice(at, 1);
+        this.draw();
+      },
+      late: (take) => {
+        entry.take = take;
+        this.draw();
+      },
     };
   }
 
@@ -130,6 +139,10 @@ export class NodeQueue {
     }
     const id = button.closest<HTMLElement>("[data-key]")?.dataset.key;
     if (!id) return;
+    if (button.dataset.queue === "take") {
+      this.going[Number(button.closest<HTMLElement>("[data-going]")?.dataset.going)]?.take?.();
+      return;
+    }
     switch (button.dataset.queue) {
       case "now": {
         const item = this.state?.composer.queue.find((one) => one.id === id);
@@ -312,9 +325,13 @@ export class NodeQueue {
       )
       .join("");
     const going = this.going
-      .map((one) => {
+      .map((one, at) => {
         const fresh = one.drawn ? "" : " fresh";
         one.drawn = true;
+        // No answer came in time: not known to have gone, and to be taken back.
+        if (one.take) {
+          return `<li class="queue-row going unsure" data-going="${at}"><span class="queue-spot" aria-hidden="true"></span><span class="queue-text" title="${escape(one.text)}">${escape(said(one.text))}</span>${files(one.files)}<span class="queue-state">${escape(words.unsure)}</span><span class="queue-acts"><button class="icon-button" type="button" data-queue="take" aria-label="${escape(words.remove)}" title="${escape(words.remove)}">${glyph("close", 14)}</button></span></li>`;
+        }
         return `<li class="queue-row going${fresh}"><span class="queue-spot" aria-hidden="true"></span><span class="queue-text" title="${escape(one.text)}">${escape(said(one.text))}</span>${files(one.files)}<span class="queue-state">${escape(words.sending)}</span></li>`;
       })
       .join("");

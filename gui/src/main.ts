@@ -102,7 +102,7 @@ import { enActivity, zhActivity } from "./activity/words";
 import { specimenBook, specimenBookMachines } from "./specimen/activity";
 import { bringIn, readBook } from "./world/book";
 import { readFeatures, setLanguage } from "./world/features";
-import { untilAnswered, whyOf } from "./world/again";
+import { type Asked, untilAnswered, whyOf } from "./world/again";
 import { enFeatures, zhFeatures } from "./app/features-words";
 import { enHomes, zhHomes } from "./app/agent-homes";
 import { Tokens, type CodeAsked } from "./app/tokens";
@@ -186,7 +186,7 @@ import { specimenComposer, type SpecimenComposer } from "./specimen/composer";
 import { ClaudeConsent } from "./app/claude-consent";
 import { Conversation } from "./conversation/conversation";
 import { LocalTranscript } from "./specimen/transcript";
-import { ConversationPage, type Someone } from "./conversation/page";
+import { ConversationPage, type Sent, type Someone } from "./conversation/page";
 import { KeptPages } from "./conversation/kept";
 import { Desk, type DeskTalk } from "./desk/desk";
 import { enDesk, zhDesk } from "./desk/words";
@@ -1029,7 +1029,7 @@ function askForget(r: ResidentNow, then?: () => void): void {
     what: words.deleteWhat,
     fields: `<ul class="forget-parts">${words.deleteParts(words.hostRecord(r.about.host.agent)).map((part) => `<li>${escapeText(part)}</li>`).join("")}</ul>${also.length ? `<p class="forget-also">${escapeText(also.join(" "))}</p>` : ""}`,
     go: words.deleteGo,
-    act: async () => talkActs.delete(r),
+    act: async () => talkActs.delete(r, isUnreached(r)),
     done: () => then?.(),
   });
 }
@@ -1728,10 +1728,10 @@ function specimenTalk(address: Address): DeskTalk {
             page.update();
           }, 300)
       : undefined;
-  // `?slow=<taken>,<heard>` (milliseconds): its node is far away and busy,
-  // as `SpecimenSlowness` says.
-  const [taken, heard] = (params.get("slow") ?? "").split(",").map(Number);
-  const slow = params.has("slow") ? { taken: taken || 1500, heard: heard || 6000 } : undefined;
+  // `?slow=<taken>,<heard>[,<sent>]` (milliseconds): its node is far away
+  // and busy, as `SpecimenSlowness` says.
+  const [taken, heard, sentAfter] = (params.get("slow") ?? "").split(",").map(Number);
+  const slow = params.has("slow") ? { taken: taken || 1500, heard: heard || 6000, ...(sentAfter ? { sent: sentAfter } : {}) } : undefined;
   const sharedInput = () =>
     (shared ??= specimenComposer(address, () => conversation.turning(), params.has("queued") ? (english ? ["Then run the overflow test on lab", "And write the result into the journal"] : ["然后在 lab 上跑溢出测试", "再把结果写进手记"]) : [], retrying, slow));
   const name = address.resident;
@@ -2204,34 +2204,64 @@ function liveTalk(address: Address): DeskTalk {
       );
       page.update();
       // Words with no answer are said again under the same id until one
-      // comes: they go in once (`world-network.md`, 断开不是结束).
+      // comes: they go in once (`world-network.md`, 断开不是结束). Words
+      // that did not go, or had no answer within two minutes, can be sent
+      // again under the same id or taken away (`Fold.settles`).
       const id = crypto.randomUUID();
-      return untilAnswered(
-        () => talk(address, text, attached.refs as Attachment[], attached.filesOn ?? null, id),
-        (why) => {
-          conversation.sent(key, { state: "waiting", why });
-          page.update();
-        },
-        address.machine,
-      )
-        .then(({ to, landed, delivery }) => {
-          conversation.named(key, delivery ?? null);
-          // Words in a turn take their place when the session hears them;
-          // words in no turn yet say where they are.
-          if (standsUnder(landed, someone.heldByWorld === true)) {
-            const why = "why" in landed ? landed.why : null;
-            conversation.sent(key, { state: "landed", how: landed.kind, machine: to.machine, why });
+      return new Promise<Sent>((done) => {
+        let asked: Asked<Awaited<ReturnType<typeof talk>>> | null = null;
+        const go = () => {
+          asked?.stop();
+          const sending = untilAnswered(
+            () => talk(address, text, attached.refs as Attachment[], attached.filesOn ?? null, id),
+            (why) => {
+              conversation.sent(key, { state: "waiting", why });
+              page.update();
+            },
+            address.machine,
+            (why) => {
+              conversation.sent(key, { state: "unknown", why });
+              page.update();
+            },
+          );
+          asked = sending;
+          sending.answered.then(
+            ({ to, landed, delivery }) => {
+              conversation.settles(key, null);
+              conversation.named(key, delivery ?? null);
+              // Words in a turn take their place when the session hears
+              // them; words in no turn yet say where they are.
+              if (standsUnder(landed, someone.heldByWorld === true)) {
+                const why = "why" in landed ? landed.why : null;
+                conversation.sent(key, { state: "landed", how: landed.kind, machine: to.machine, why });
+              }
+              page.update();
+              // A turn whose end this conversation will not see leaves
+              // nothing for words queued after these to wait on.
+              done(landed.kind === "uncertain" || (landed.kind === "waiting" && !landed.answered) ? "unseen" : "turn");
+            },
+            (error: unknown) => {
+              conversation.sent(key, { state: "failed", why: whyOf(error) });
+              page.update();
+              done("failed");
+            },
+          );
+        };
+        conversation.settles(key, {
+          again: () => {
+            conversation.sent(key, { state: "going" });
             page.update();
-          }
-          // A turn whose end this conversation will not see leaves nothing
-          // for words queued after these to wait on.
-          return landed.kind === "uncertain" || (landed.kind === "waiting" && !landed.answered) ? ("unseen" as const) : ("turn" as const);
-        })
-        .catch((error: unknown) => {
-          conversation.sent(key, { state: "failed", why: whyOf(error) });
-          page.update();
-          return "failed" as const;
+            go();
+          },
+          remove: () => {
+            asked?.stop();
+            conversation.unsend(key);
+            page.update();
+            done("failed");
+          },
         });
+        go();
+      });
     },
     stop: () => stop(address),
     // A sentinel's row withdraws it, then the list is asked again.

@@ -1861,6 +1861,17 @@ export class ConversationView {
     }
   }
 
+  /** How words that did not go, or are not known to have, are sent again
+   *  or taken away, where the page can (`Fold.settler`). */
+  private settle(key: string | undefined): string {
+    const settler = key === undefined ? undefined : this.conversation.settler(key);
+    if (key === undefined || !settler) return "";
+    const { words } = this.context;
+    const button = (act: string, label: string) =>
+      `<button class="text-button" type="button" data-settle="${act}" data-key="${escape(key)}">${escape(label)}</button>`;
+    return `<span class="bubble-settle">${settler.again ? button("again", words.sendAgain) : ""}${button("remove", words.takeAway)}</span>`;
+  }
+
   private heard(from: Speaker | null, text: string, sending: SendState | null, key?: string): string {
     const { words } = this.context;
     if (!from || from.kind === "user") {
@@ -1870,7 +1881,12 @@ export class ConversationView {
         from && from.machine !== this.context.here ? `<div class="bubble-from">${escape(words.you(from.machine))}</div>` : "";
       const state = sending && sending.state !== "settled" ? ` ${sending.state}` : "";
       let note = "";
-      if (sending?.state === "failed") note = `<div class="bubble-note wrong" title="${escape(sending.why)}">${escape(words.notSent(sending.why))}</div>`;
+      if (sending?.state === "failed") {
+        note = `<div class="bubble-note wrong"><span title="${escape(sending.why)}">${escape(words.notSent(sending.why))}</span>${this.settle(key)}</div>`;
+      }
+      if (sending?.state === "unknown") {
+        note = `<div class="bubble-note"><span title="${escape(sending.why)}">${escape(words.notConfirmed)}</span>${this.settle(key)}</div>`;
+      }
       if (sending?.state === "waiting") note = `<div class="bubble-note" title="${escape(sending.why)}">${escape(words.waitingToSend)}</div>`;
       if (sending?.state === "landed") {
         note = `<div class="bubble-note"${sending.why ? ` title="${escape(sending.why)}"` : ""}>${escape(words.landed(sending.how, sending.machine, sending.why ?? null))}</div>`;
@@ -3286,6 +3302,13 @@ export class ConversationView {
     const unfold = (event.target as HTMLElement).closest<HTMLElement>("[data-unfold]");
     if (unfold) {
       this.unfold(unfold);
+      return;
+    }
+    const settle = (event.target as HTMLElement).closest<HTMLElement>("[data-settle]");
+    if (settle) {
+      const settler = this.conversation.settler(settle.dataset.key!);
+      if (settle.dataset.settle === "again") settler?.again?.();
+      else settler?.remove();
       return;
     }
     // A file's name on a row opens the file; the row stays as it is.

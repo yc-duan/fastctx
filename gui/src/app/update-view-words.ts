@@ -3,9 +3,12 @@
 // the network's update policy, and what is done to the machines chosen.
 
 import type { ActionReason, FailureReason } from "../world/updates";
+import { enProblems, zhProblems, type ProblemWords } from "./problem";
 import { enRepair, zhRepair, type RepairWords } from "./repair-words";
 
 export interface UpdateViewWords {
+  /** The kernel's errors, in plain words (`problem.ts`). */
+  problems: ProblemWords;
   /** The view's name in the page's head. */
   view: string;
   /** What a machine's mark says when pointed at or held. */
@@ -72,6 +75,7 @@ export interface UpdateViewWords {
 }
 
 export const zhUpdateView: UpdateViewWords = {
+  problems: zhProblems,
   view: "更新",
   newest: "已是最新",
   behind: (version) => `可更新到 ${version}`,
@@ -139,6 +143,7 @@ export const zhUpdateView: UpdateViewWords = {
 };
 
 export const enUpdateView: UpdateViewWords = {
+  problems: enProblems,
   view: "Updates",
   newest: "Up to date",
   behind: (version) => `${version} available`,
