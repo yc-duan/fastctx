@@ -1,109 +1,68 @@
-//! Project memory and its account switch, on desktop and devices without a node.
+//! Project and conversation history, including direct hub access on phones.
 
 use crate::Shell;
-use fastctx_types::{
-    AccountName, HubName, TownName,
-    memory::{Catalog, Document, Kind, MemoryCall, MemoryReply, Revision, Settings},
-};
+use fastctx_types::history::{Catalog, Document, HistoryCall, HistoryReply, HistoryRevision, Scope};
 use serde::Serialize;
 use std::sync::atomic::Ordering;
 use tauri::ipc::Channel;
 
-fn town(name: String) -> Result<TownName, String> {
-    TownName::try_from(name).map_err(|error| error.to_string())
-}
-fn scope(hub: Option<String>, account: Option<String>) -> Result<(Option<HubName>, Option<AccountName>), String> {
-    Ok((
-        hub.map(HubName::try_from).transpose().map_err(|error| error.to_string())?,
-        account.map(AccountName::try_from).transpose().map_err(|error| error.to_string())?,
-    ))
-}
-
 #[fastctx_gui_command::command]
-pub(crate) async fn memory_list(shell: tauri::State<'_, Shell>, project: String) -> Result<Catalog, String> {
-    match shell.world().memory(MemoryCall::List { town: town(project)? }).await.map_err(|error| error.to_string())? {
-        MemoryReply::Catalog { catalog } => Ok(catalog),
-        _ => Err(fastctx_types::memory::words::CATALOG_UNANSWERED.into()),
+pub(crate) async fn history_list(shell: tauri::State<'_, Shell>, scope: Scope) -> Result<Catalog, String> {
+    match shell.world().history(HistoryCall::List { scope }).await.map_err(|error| error.to_string())? {
+        HistoryReply::Catalog { catalog } => Ok(catalog),
+        _ => Err("the history catalog was not returned".into()),
     }
 }
 
 #[fastctx_gui_command::command]
-pub(crate) async fn memory_read(
+pub(crate) async fn history_read(
     shell: tauri::State<'_, Shell>,
-    project: String,
+    scope: Scope,
     name: String,
-    version: Option<u32>,
+    version: Option<u64>,
 ) -> Result<Document, String> {
-    match shell
-        .world()
-        .memory(MemoryCall::Read { town: town(project)?, name, version })
-        .await
-        .map_err(|error| error.to_string())?
-    {
-        MemoryReply::Document { document } => Ok(*document),
-        _ => Err(fastctx_types::memory::words::WORLD_DOCUMENT_UNANSWERED.into()),
+    match shell.world().history(HistoryCall::Read { scope, name, version }).await.map_err(|error| error.to_string())? {
+        HistoryReply::Document { document } => Ok(*document),
+        _ => Err("the history document was not returned".into()),
     }
 }
 
 #[fastctx_gui_command::command]
-pub(crate) async fn memory_save_spec(
+pub(crate) async fn history_save(
     shell: tauri::State<'_, Shell>,
-    project: String,
+    scope: Scope,
     name: String,
     text: String,
-    expected: Option<u32>,
-) -> Result<Revision, String> {
-    save(&shell, project, Kind::Spec, name, text, expected).await
+    expected: Option<u64>,
+) -> Result<HistoryRevision, String> {
+    saved(&shell, HistoryCall::Save { scope, name, text, expected }).await
 }
 
 #[fastctx_gui_command::command]
-pub(crate) async fn memory_add_journal(
+pub(crate) async fn history_retire(
     shell: tauri::State<'_, Shell>,
-    project: String,
+    scope: Scope,
     name: String,
-    text: String,
-) -> Result<Revision, String> {
-    save(&shell, project, Kind::Journal, name, text, None).await
+    expected: u64,
+) -> Result<HistoryRevision, String> {
+    saved(&shell, HistoryCall::Retire { scope, name, expected }).await
 }
 
-async fn save(
-    shell: &Shell,
-    project: String,
-    kind: Kind,
+#[fastctx_gui_command::command]
+pub(crate) async fn history_restore(
+    shell: tauri::State<'_, Shell>,
+    scope: Scope,
     name: String,
-    text: String,
-    expected: Option<u32>,
-) -> Result<Revision, String> {
-    match shell
-        .world()
-        .memory(MemoryCall::Save { town: town(project)?, kind, name, text, expected })
-        .await
-        .map_err(|error| error.to_string())?
-    {
-        MemoryReply::Saved { revision } => Ok(*revision),
-        _ => Err(fastctx_types::memory::words::SAVE_UNCONFIRMED.into()),
+    version: u64,
+) -> Result<HistoryRevision, String> {
+    saved(&shell, HistoryCall::Restore { scope, name, version }).await
+}
+
+async fn saved(shell: &Shell, request: HistoryCall) -> Result<HistoryRevision, String> {
+    match shell.world().history(request).await.map_err(|error| error.to_string())? {
+        HistoryReply::Saved { revision } => Ok(*revision),
+        _ => Err("the history change was not confirmed".into()),
     }
-}
-
-#[fastctx_gui_command::command]
-pub(crate) async fn memory_settings_read(
-    shell: tauri::State<'_, Shell>,
-    hub: Option<String>,
-    account: Option<String>,
-) -> Result<Settings, String> {
-    let (hub, account) = scope(hub, account)?;
-    shell.world().memory_settings(hub, account, None).await.map_err(|error| error.to_string())
-}
-
-#[fastctx_gui_command::command]
-pub(crate) async fn memory_settings_set(
-    shell: tauri::State<'_, Shell>,
-    hub: Option<String>,
-    account: Option<String>,
-    enabled: bool,
-) -> Result<Settings, String> {
-    let (hub, account) = scope(hub, account)?;
-    shell.world().memory_settings(hub, account, Some(enabled)).await.map_err(|error| error.to_string())
 }
 
 #[derive(Clone, Serialize)]
@@ -114,15 +73,14 @@ pub enum Piece {
 }
 
 #[fastctx_gui_command::command]
-pub(crate) async fn memory_watch(
+pub(crate) async fn history_watch(
     shell: tauri::State<'_, Shell>,
-    project: String,
+    scope: Scope,
     pieces: Channel<crate::watch_delivery::Wake>,
 ) -> Result<u64, String> {
-    let town = town(project)?;
     let page = shell.page.load(Ordering::Relaxed);
     let world = shell.world();
-    let mut initial = Some(world.watch_memory(town.clone()).await.map_err(|error| error.to_string())?);
+    let mut initial = Some(world.watch_history(scope.clone()).await.map_err(|error| error.to_string())?);
     let id = shell.next.fetch_add(1, Ordering::Relaxed);
     shell.follow_delivery(
         page,
@@ -130,7 +88,7 @@ pub(crate) async fn memory_watch(
         pieces,
         |_: &Piece| Some("catalog".into()),
         move |pieces, _| {
-            let (world, town) = (world.clone(), town.clone());
+            let (world, scope) = (world.clone(), scope.clone());
             let initial = initial.take();
             async move {
                 let mut again = fastctx_client::Again::default();
@@ -138,7 +96,7 @@ pub(crate) async fn memory_watch(
                     initial
                 } else {
                     loop {
-                        match world.watch_memory(town.clone()).await {
+                        match world.watch_history(scope.clone()).await {
                             Ok(watch) => break watch,
                             Err(error) => {
                                 let interruption = again.broke(error.to_string());
@@ -180,7 +138,7 @@ pub(crate) async fn memory_watch(
                     }
                     loop {
                         again.pause(&world, None).await;
-                        match world.watch_memory(town.clone()).await {
+                        match world.watch_history(scope.clone()).await {
                             Ok(opened) => {
                                 watch = opened;
                                 break;

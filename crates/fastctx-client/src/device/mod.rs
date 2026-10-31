@@ -9,6 +9,7 @@ mod connection_state;
 mod features;
 pub(crate) mod file_read;
 mod file_search;
+mod history;
 mod lines;
 mod mcp;
 mod project_memory;

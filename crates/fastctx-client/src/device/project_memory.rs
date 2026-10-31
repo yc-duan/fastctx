@@ -6,7 +6,6 @@ use fastctx_net::{ledger::File, link::Link, sign::Bytes, wire::Change};
 use fastctx_types::{
     AccountName, HubName, ProjectCall, Reply, TownName,
     access::TownId,
-    memory::{Author, MemoryCall, MemoryReply},
     project::{MapView, Record, RecordFields, Stamp, TownSummary, Writer},
 };
 use std::sync::Arc;
@@ -14,7 +13,7 @@ use std::sync::Arc;
 type Scope = (Arc<Link>, AccountName, TownId);
 
 impl Device {
-    fn project_scope(&self, town: &TownName) -> Result<Scope, Error> {
+    pub(super) fn project_scope(&self, town: &TownName) -> Result<Scope, Error> {
         let mut scopes = Vec::new();
         for session in self.sessions() {
             let view = session.link.view();
@@ -34,40 +33,6 @@ impl Device {
             1 => Ok(scopes.pop().expect("one project")),
             0 => Err(failed(format!("no signed-in account has the project {town}"))),
             _ => Err(failed(format!("more than one hub has a project named {town}"))),
-        }
-    }
-
-    pub(super) async fn memory(&self, request: MemoryCall) -> Result<MemoryReply, Error> {
-        let (link, account, town) = self.project_scope(request.town())?;
-        match request {
-            MemoryCall::List { .. } => {
-                let mut catalog = link.project_index(&account, &town).await.map_err(failed)?.catalog;
-                catalog.for_reader(&usable(&link, &account));
-                Ok(MemoryReply::Catalog { catalog })
-            }
-            MemoryCall::Read { name, version, .. } => {
-                let mut document = link.memory_read(&account, &town, &name, version).await.map_err(failed)?;
-                document.for_reader(&usable(&link, &account));
-                Ok(MemoryReply::Document { document: Box::new(document) })
-            }
-            MemoryCall::Save { kind, name, text, expected, .. } => {
-                let author = Author {
-                    stamp: Stamp {
-                        by: Writer::User,
-                        on: Some(link.membership().name.clone()),
-                        at: jiff::Timestamp::now(),
-                    },
-                    host: None,
-                    model: None,
-                    session: None,
-                };
-                let (revision, files) =
-                    fastctx_net::memory::revision_files(kind, &name, &text, expected, author).map_err(failed)?;
-                link.memory_write(&account, &town, link.sign_entry(&link.entry(&town, None, files)))
-                    .await
-                    .map_err(failed)?;
-                Ok(MemoryReply::Saved { revision: Box::new(revision) })
-            }
         }
     }
 
@@ -179,9 +144,20 @@ impl Device {
                 change(&mut record, fields);
                 checked(&link, &account, &mut record)?;
                 let id = TownId::from_bytes(fastctx_net::sign::random::<8>().map_err(failed)?);
-                link.manage(&account, Change::OpenProject { town: id.clone(), name: town.clone() })
-                    .await
-                    .map_err(failed)?;
+                link.manage(
+                    &account,
+                    Change::OpenProject {
+                        town: id.clone(),
+                        name: town.clone(),
+                        shared_on: link
+                            .view()
+                            .me()
+                            .filter(|member| member.is_machine() && !member.managed)
+                            .map(|member| member.name.clone()),
+                    },
+                )
+                .await
+                .map_err(failed)?;
                 publish(&link, &id, &record).await?;
                 let opened = Stamp { by: record.by.clone(), on: record.on.clone(), at: record.at };
                 Ok(Reply::Record { town, record: Box::new(record), opened })
