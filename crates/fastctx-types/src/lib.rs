@@ -9,8 +9,8 @@
 
 pub mod access;
 pub mod account_records;
-pub mod activity_book;
 pub mod accounts;
+pub mod activity_book;
 pub mod agent;
 pub mod agents;
 pub mod attachments;
@@ -49,6 +49,7 @@ pub mod names;
 pub mod node_lifetime;
 pub mod observation;
 pub mod on;
+pub mod owned_records;
 pub mod pages;
 pub mod password;
 pub mod placement;
@@ -60,6 +61,7 @@ pub mod project;
 pub mod remote;
 pub mod renewal;
 pub mod repair;
+pub mod replicas;
 pub mod residents;
 pub mod run;
 pub mod run_facts;

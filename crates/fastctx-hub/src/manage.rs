@@ -737,8 +737,13 @@ fn apply(
                 .map_err(|error| format!("the hub could not keep that its network is dissolved: {error}"))?;
             Ok(Told::Done)
         }
-        Change::OpenProject { town, name } => {
+        Change::OpenProject { town, name, shared_on } => {
             let book = &mut store.book;
+            if let Some(machine) = &shared_on {
+                book.directory
+                    .authorize(account, fastctx_net::authorization::Action::Work(machine))
+                    .map_err(|error| error.to_string())?;
+            }
             if book.directory.project(&town).is_some() || book.archived.iter().any(|project| project.town == town) {
                 return Err(format!("the project {town} exists already"));
             }
@@ -750,6 +755,7 @@ fn apply(
                 name,
                 owner: account.clone(),
                 granted: Default::default(),
+                shared_on,
             }));
             Ok(Told::Done)
         }

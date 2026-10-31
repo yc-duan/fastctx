@@ -33,6 +33,7 @@ pub mod dissolve;
 mod expiry;
 mod forget;
 mod health;
+mod history_projection;
 mod hold_back;
 mod hub_machine;
 mod ledger;
@@ -43,6 +44,7 @@ mod mailbox;
 mod manage;
 mod moving;
 mod outq;
+mod owned_records;
 mod plan_calls;
 mod plan_copies;
 mod project_deletions;
@@ -290,6 +292,7 @@ const VIEW_CHANGE_AT_MOST: usize = 192 * 1024;
 
 /// A member's open control connection.
 pub(crate) struct Session {
+    replicated_records: bool,
     key: PublicKey,
     account_records: bool,
     record_keys: Option<record_subscriptions::Records>,
@@ -929,6 +932,7 @@ async fn intended(
         (
             wire::CONTROL_PATH,
             Intent::Session {
+                replicated_records,
                 key,
                 proof,
                 letters,
@@ -962,6 +966,7 @@ async fn intended(
             },
         ) => {
             let said = control::Said {
+                replicated_records,
                 through,
                 direct,
                 interfaces,

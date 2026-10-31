@@ -123,21 +123,27 @@ pub(crate) fn came(hub: &Hub) {
 
 /// The accounts the conversation at `conversation` works for, as its
 /// machine last told: `None` when it told nothing of it.
-pub(crate) fn accounts_of(hub: &Hub, conversation: &fastctx_types::Address) -> Option<Vec<AccountName>> {
+pub(crate) fn owned_by(hub: &Hub, conversation: &fastctx_types::Address, account: &AccountName) -> Option<bool> {
+    let store = hub.store();
     let afoots = hub.afoots();
     let resident = afoots.told.get(&conversation.machine)?.residents.get(&conversation.resident)?;
-    Some(resident.accounts.clone())
+    Some(fastctx_net::record_ownership::allows(
+        &store.book.directory,
+        account,
+        &resident.accounts,
+        resident.shared_on.as_ref(),
+    ))
 }
 
 /// Tells each member reading what is afoot what changed in `scope`.
 fn tell(hub: &Hub, scope: Scope<'_>) {
     // The sessions and the directory are read first, without the afoot
     // record's lock, which is taken last.
-    let readers: Vec<(MachineName, u64, crate::outq::Outq)> = hub
+    let readers: Vec<(MachineName, u64, crate::outq::Outq, bool)> = hub
         .sessions()
         .iter()
         .filter(|(_, session)| session.afoot)
-        .map(|(name, session)| (name.clone(), session.generation, session.out.clone()))
+        .map(|(name, session)| (name.clone(), session.generation, session.out.clone(), session.replicated_records))
         .collect();
     // Hold the directory until the state it will prune is locked. A newly
     // admitted machine cannot publish into a snapshot from before it joined.
@@ -152,16 +158,16 @@ fn tell(hub: &Hub, scope: Scope<'_>) {
     let Afoots { told, prior, shown, rejected, .. } = &mut *afoots;
     // A machine's last stays while it is on the hub under that name.
     told.retain(|machine, _| directory.member(machine).is_some_and(|member| member.name == *machine));
-    let generations: HashMap<_, _> = readers.iter().map(|(name, generation, _)| (name, generation)).collect();
+    let generations: HashMap<_, _> = readers.iter().map(|(name, generation, _, _)| (name, generation)).collect();
     shown.retain(|reader, shown| generations.get(reader).is_some_and(|generation| **generation == shown.generation));
     rejected.retain(|machine, _| told.contains_key(machine));
     prior.retain(|machine, _| told.contains_key(machine));
     let told = &*told;
     // What each set of logins sees of each machine, worked out once.
-    let mut groups: HashMap<BTreeSet<AccountName>, usize> = HashMap::new();
+    let mut groups: HashMap<(BTreeSet<AccountName>, bool), usize> = HashMap::new();
     let mut seen_by: HashMap<(usize, &MachineName), Option<Arc<Seen>>> = HashMap::new();
     let mut candidates: HashMap<usize, Vec<&MachineName>> = HashMap::new();
-    for (reader, generation, out) in readers {
+    for (reader, generation, out, replicated_records) in readers {
         let shown = shown.entry(reader.clone()).or_insert_with(|| Shown {
             generation,
             fresh: true,
@@ -174,7 +180,7 @@ fn tell(hub: &Hub, scope: Scope<'_>) {
         let logins: BTreeSet<AccountName> =
             directory.member(&reader).map(|member| member.logins.clone()).unwrap_or_default();
         let next = groups.len();
-        let group = *groups.entry(logins.clone()).or_insert(next);
+        let group = *groups.entry((logins.clone(), replicated_records)).or_insert(next);
         let machines: Vec<&MachineName> = match scope {
             Scope::Machines(machines) if !shown.fresh => {
                 let candidates =
@@ -216,8 +222,16 @@ fn tell(hub: &Hub, scope: Scope<'_>) {
             let mut now = seen_by
                 .entry((group, machine))
                 .or_insert_with(|| {
-                    sees(&directory, &logins, machine)
-                        .then(|| Arc::new(seen(&directory, &logins, machine, &told[machine], hidden.get(machine))))
+                    sees(&directory, &logins, machine).then(|| {
+                        Arc::new(seen(
+                            &directory,
+                            &logins,
+                            machine,
+                            &told[machine],
+                            hidden.get(machine),
+                            replicated_records,
+                        ))
+                    })
                 })
                 .clone();
             let before = shown.machines.get(machine);

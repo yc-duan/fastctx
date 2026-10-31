@@ -48,6 +48,7 @@ pub(super) fn seen(
     machine: &MachineName,
     afoot: &Afoot,
     hidden: Option<&BTreeSet<ResidentId>>,
+    replicated_records: bool,
 ) -> Seen {
     let theirs = |accounts: &[AccountName]| accounts.iter().any(|account| logins.contains(account));
     let shown = |id: &ResidentId| hidden.is_none_or(|hidden| !hidden.contains(id));
@@ -56,8 +57,28 @@ pub(super) fn seen(
     let mut seen = Seen::default();
     let projected = Arc::make_mut(&mut seen.afoot);
     for (id, resident) in &afoot.residents {
-        if theirs(&resident.accounts) && shown(id) {
-            projected.residents.insert(id.clone(), resident.resident.clone());
+        if shown(id)
+            && (replicated_records || theirs(&resident.accounts))
+            && logins.iter().any(|account| {
+                fastctx_net::record_ownership::allows(
+                    directory,
+                    account,
+                    &resident.accounts,
+                    resident.shared_on.as_ref(),
+                )
+            })
+        {
+            let mut summary = resident.resident.clone();
+            summary.about.focus.machines.retain(|focused| {
+                focused.machine.hub.is_none()
+                    && logins.iter().any(|account| directory.rights(account, &focused.machine.name).hands)
+            });
+            summary.opened_by = if theirs(&resident.accounts) {
+                None
+            } else {
+                resident.accounts.first().cloned().map(|account| fastctx_types::town::OpenedBy { account })
+            };
+            projected.residents.insert(id.clone(), summary);
         }
     }
     for (id, job) in &afoot.jobs {

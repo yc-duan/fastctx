@@ -225,6 +225,7 @@ async fn open(inner: &Inner, upstream: &Upstream) -> Result<Opened, Ended> {
         protocol: wire::GREETING_PROTOCOL,
         version: env!("CARGO_PKG_VERSION").to_string(),
         intent: Intent::Session {
+            replicated_records: true,
             key: inner.key.public(),
             proof,
             letters: position,
@@ -613,6 +614,8 @@ async fn connected(
                     inner.node.directory_changed();
                 });
             }
+            Down::HistoryChanged { town, name, version } => inner.node.history_changed(town, name, version),
+            Down::ReplicasChanged => inner.node.replicas_changed(),
             Down::LedgerChanged { town } => inner.node.ledger_changed(Some(town)),
             Down::AccountRecordChanged { changed } => {
                 inner.node.account_record_changed(&changed);

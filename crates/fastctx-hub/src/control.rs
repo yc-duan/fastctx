@@ -25,6 +25,7 @@ use crate::{Hub, Out, Session, Socket, refuse, storage_failure};
 
 /// What a member says of itself when its session opens.
 pub(crate) struct Said {
+    pub replicated_records: bool,
     pub call_details: bool,
     /// The machine that forwards its connection here, if any.
     pub through: Option<String>,
@@ -240,16 +241,35 @@ pub(crate) async fn session(
                     return;
                 }
             };
-            for frame in frames {
-                if let Down::AccountRecordChanged { changed } = &frame {
+            for mut frame in frames {
+                if let Down::HistoryChanged { town, .. } = &frame
+                    && !telling.store().book.directory.member_in_project(&member_name, town)
+                {
+                    continue;
+                }
+                if let Down::AccountRecordChanged { changed } = &mut frame {
                     let store = telling.store();
                     let directory = &store.book.directory;
-                    if directory.member(&member_name).is_none_or(|found| found.key != member)
-                        || directory
-                            .authorize(&changed.account, fastctx_net::authorization::Action::ActFor(&member_name))
-                            .is_err()
-                    {
+                    if !crate::owned_records::hint(
+                        &telling,
+                        directory,
+                        &member_name,
+                        &member,
+                        &changed.account,
+                        &changed.metadata,
+                    ) {
                         continue;
+                    }
+                    if crate::record_subscriptions::replica_reader(&telling, &member_name, &member)
+                        && changed.metadata.by.as_ref().is_some_and(|by| {
+                            !directory.member(&member_name).is_some_and(|reader| {
+                                reader.logins.iter().any(|account| {
+                                    directory.authorize(account, fastctx_net::authorization::Action::Work(by)).is_ok()
+                                })
+                            })
+                        })
+                    {
+                        changed.metadata.by = None;
                     }
                 }
                 let bytes = wire::encode(&frame);
@@ -625,6 +645,7 @@ fn open(
     out.welcome(welcome);
     crate::mailbox::opened(hub, &mut store, name, numbering, generation, out.clone(), taken_by_member);
     let session = Session {
+        replicated_records: said.replicated_records,
         key,
         account_records: said.account_records,
         record_keys: said.record_keys.then(Default::default),
@@ -831,10 +852,27 @@ fn handle(
                 let _ = out.send(Out::Frame(Down::Told { id, answer }));
             });
         }
+        Up::Ask {
+            id,
+            question:
+                question @ (Question::HistoryCatalog { .. }
+                | Question::HistoryRead { .. }
+                | Question::HistorySubmitted { .. }),
+        } => {
+            let (hub, from, out) = (hub.clone(), name.clone(), out.clone());
+            tokio::spawn(async move {
+                let _reservation = reservation;
+                let answer = crate::ledger::history_requests::ask(&hub, &from, question).await;
+                let _ = out.send(Out::Frame(Down::Told { id, answer }));
+            });
+        }
         Up::Ask { id, question: question @ (Question::ProjectIndex { .. } | Question::MemoryRead { .. }) } => {
             crate::ledger::requests::ask(hub, name, out, id, question);
         }
-        Up::Ask { id, question: Question::MemoryWrite { town, account, entry } } => {
+        Up::Ask {
+            id,
+            question: Question::MemoryWrite { town, account, entry } | Question::HistoryWrite { town, account, entry },
+        } => {
             let (hub, writer, out) = (hub.clone(), name.clone(), out.clone());
             let held = crate::moving::Moving::hold(&hub);
             tokio::spawn(async move {
@@ -842,6 +880,9 @@ fn handle(
                 let answer = crate::ledger::write_as(&hub, &writer, town, entry, Some(account)).await;
                 let _ = out.send(Out::Frame(Down::Told { id, answer }));
             });
+        }
+        Up::Ask { id, question: Question::LedgerProjection { town, after } } => {
+            crate::ledger::projection(hub, name, out, id, town, after);
         }
         Up::Ask { id, question: Question::LedgerRead { town, after } } => {
             crate::ledger::ask(hub, name, out, id, town, after);
@@ -876,6 +917,16 @@ fn handle(
         // The answer goes out before any session the change ends, the
         // asker's own among them: a machine that renamed or removed itself
         // hears that it did.
+        Up::Ask { id, question: Question::OwnedRecords { account, request } } => {
+            let (hub, from, out) = (hub.clone(), name.clone(), out.clone());
+            let held = crate::moving::Moving::hold(&hub);
+            tokio::spawn(async move {
+                let _held = held;
+                let _reservation = reservation;
+                let answer = crate::owned_records::ask(&hub, from, key, account, request).await;
+                let _ = out.send(Out::Frame(Down::Told { id, answer }));
+            });
+        }
         Up::Ask { id, question: Question::AccountRecords { account, request } } => {
             let opened = match crate::account_records::begin(hub, name, &key, &account, &request) {
                 Ok(opened) => opened,
@@ -1505,6 +1556,7 @@ fn answer(hub: &Hub, name: &MachineName, generation: u64, call: u64, message: En
 
 fn ask(hub: &Arc<Hub>, name: &MachineName, question: Question) -> Result<Told, String> {
     match question {
+        Question::HistorySubmitted { .. } => Err("history reads are dispatched asynchronously".into()),
         Question::RecordWatching { account, record_kind, watch, following } => {
             let public = hub.sessions().get(name).ok_or("the record reader disconnected")?.key;
             crate::account_records::begin(
@@ -1533,9 +1585,10 @@ fn ask(hub: &Arc<Hub>, name: &MachineName, question: Question) -> Result<Told, S
             }
             Ok(Told::Done)
         }
-        Question::AccountRecords { .. } | Question::PlanCopies { .. } | Question::SkillFiles { .. } => {
-            Err("account records are dispatched asynchronously".into())
-        }
+        Question::OwnedRecords { .. }
+        | Question::AccountRecords { .. }
+        | Question::PlanCopies { .. }
+        | Question::SkillFiles { .. } => Err("account records are dispatched asynchronously".into()),
         Question::NetworkUpdates { .. } => Err("update management is dispatched asynchronously".into()),
         Question::MachineLog { account, before } => {
             let store = hub.store();
@@ -1560,12 +1613,13 @@ fn ask(hub: &Arc<Hub>, name: &MachineName, question: Question) -> Result<Told, S
         Question::Directory => Ok(Told::Directory { view: Box::new(hub.view_for(name)?) }),
         Question::ProjectDeleted { town } => crate::project_deletions::finished(hub, name, &town),
         Question::Manage { .. } => Err("changes are made as they come".into()),
-        Question::LedgerWrite { .. } | Question::MemoryWrite { .. } => {
+        Question::LedgerWrite { .. } | Question::MemoryWrite { .. } | Question::HistoryWrite { .. } => {
             Err("ledger entries are written as they come".into())
         }
-        Question::ProjectIndex { .. } | Question::MemoryRead { .. } => {
-            Err("project reads are dispatched asynchronously".into())
-        }
+        Question::ProjectIndex { .. }
+        | Question::MemoryRead { .. }
+        | Question::HistoryRead { .. }
+        | Question::HistoryCatalog { .. } => Err("project reads are dispatched asynchronously".into()),
         Question::LedgerTowns => {
             let store = hub.store();
             let towns = hub.ledgers.lock().expect("never poisoned").towns_of(&store.book.directory, name);
@@ -1586,7 +1640,9 @@ fn ask(hub: &Arc<Hub>, name: &MachineName, question: Question) -> Result<Told, S
         }
         Question::HubMove { account, request } => crate::moving::requests::ask(hub, name, &account, request),
         Question::HubArrival { request } => crate::moving::requests::arrival(hub, name, request),
-        Question::LedgerRead { .. } => Err("ledger reads are dispatched asynchronously".into()),
+        Question::LedgerRead { .. } | Question::LedgerProjection { .. } => {
+            Err("ledger reads are dispatched asynchronously".into())
+        }
         Question::Worked { to, account, purpose, resident } => {
             // What the hub notes of a call it passes on, for one made over
             // a direct link: only while that call is allowed.

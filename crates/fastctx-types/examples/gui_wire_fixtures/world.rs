@@ -75,6 +75,7 @@ fn residents() -> Vec<ResidentNow> {
         .into_iter()
         .enumerate()
         .map(|(i, activity)| ResidentNow {
+            opened_by: None,
             source: None,
             tools: vec![CurrentTool {
                 turn: "turn-1".into(),
@@ -334,6 +335,7 @@ fn nodes() -> Vec<NodesReply> {
         attachment_runs: true,
         memory_folders: false,
         plan_copies: false,
+        replicated_records: false,
         collaboration_tree: false,
         completion_receipts: false,
         control_letters: lifetime,

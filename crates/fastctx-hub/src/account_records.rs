@@ -63,6 +63,11 @@ pub(crate) fn begin(
     directory.authorize(account, Action::ActFor(from)).map_err(|error| error.to_string())?;
     let opened = directory.account(account).expect("authorized account").opened;
     check(&store, from, key, account, opened)?;
+    if let Request::Read { kind, key } | Request::Write { kind, key, .. } | Request::Delete { kind, key, .. } = request
+        && kind == fastctx_types::plan::KIND
+    {
+        crate::owned_records::legacy_plan(hub, directory, account, key)?;
+    }
     Ok(opened)
 }
 
@@ -74,11 +79,25 @@ pub(crate) async fn ask(
     opened: Timestamp,
     request: Request,
 ) -> Result<Told, String> {
+    ask_as(hub, from, member_key, account, opened, request, None).await
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn ask_as(
+    hub: &Arc<Hub>,
+    from: MachineName,
+    member_key: PublicKey,
+    account: AccountName,
+    opened: Timestamp,
+    request: Request,
+    access: Option<crate::owned_records::Access>,
+) -> Result<Told, String> {
+    request.validate()?;
     let slot = hub.account_records.account(&account, opened);
     let mut records = slot.records.clone().lock_owned().await;
     let hub = hub.clone();
     tokio::task::spawn_blocking(move || {
-        authorized(&hub, &from, &member_key, &account, opened)?;
+        permitted(&hub, &hub.store(), &from, &member_key, &account, opened, access.as_ref())?;
         for metadata in crate::skill_storage::recover(&slot, &mut records)? {
             tell(&hub, &account, opened, &metadata);
         }
@@ -88,18 +107,41 @@ pub(crate) async fn ask(
                     .entries
                     .values()
                     .filter(|entry| entry.metadata.kind == kind && !entry.metadata.deleted)
+                    .filter(|entry| {
+                        access.as_ref().is_none_or(|access| {
+                            crate::owned_records::record_key(
+                                &access.conversation,
+                                &entry.metadata.kind,
+                                &entry.metadata.key,
+                            )
+                            .is_ok()
+                                && (!crate::owned_records::scoped_body(&entry.metadata.kind)
+                                    || entry.conversation.as_deref()
+                                        == Some(access.conversation.address.resident.as_str()))
+                        })
+                    })
                     .map(|entry| entry.metadata.clone())
                     .collect(),
             },
             Request::Read { kind, key } => {
                 crate::record_subscriptions::follow(&hub, &from, &member_key, &account, &kind, &key)?;
+                if let Some(access) = &access
+                    && crate::owned_records::scoped_body(&kind)
+                    && records.entries.get(&(kind.clone(), key.clone())).is_some_and(|entry| {
+                        !entry.metadata.deleted
+                            && entry.conversation.as_deref() != Some(access.conversation.address.resident.as_str())
+                    })
+                {
+                    return Err("this record belongs to another conversation".into());
+                }
+
                 let record = if records.entries.contains_key(&(kind.clone(), key.clone())) {
                     let path = slot.path(&kind, &key);
                     Some(storage::read(&path)?)
                 } else {
                     None
                 };
-                authorized(&hub, &from, &member_key, &account, opened)?;
+                permitted(&hub, &hub.store(), &from, &member_key, &account, opened, access.as_ref())?;
                 if kind == fastctx_types::skills::KIND
                     && !crate::record_subscriptions::folder_reader(&hub, &from, &member_key)
                     && let Some(record) = record.as_ref().filter(|record| !record.metadata.deleted)
@@ -121,14 +163,125 @@ pub(crate) async fn ask(
                     Request::Delete { kind, key, expected } => (kind, key, expected, Value::Null, true),
                     _ => unreachable!("read operations handled above"),
                 };
+                let parent = match kind.as_str() {
+                    fastctx_types::history::RECORD_KIND => key.split_once('/').map(|(resident, _)| resident),
+                    fastctx_types::plan::KIND | "goal" | "goal_past" => Some(key.as_str()),
+                    _ => None,
+                };
+                let parent_deleted = parent.is_some_and(|resident| {
+                    records
+                        .entries
+                        .get(&(fastctx_types::owned_records::KIND.into(), resident.into()))
+                        .is_some_and(|entry| entry.metadata.deleted)
+                });
+                if parent_deleted && !deleted {
+                    return Err("this conversation was deleted".into());
+                }
+                if kind == fastctx_types::history::RECORD_KIND && deleted && !parent_deleted {
+                    return Err("history documents are retired as a new revision; their versions are preserved".into());
+                }
                 let identity = (kind.clone(), key.clone());
                 let before = records.entries.get(&identity);
+                if let Some(access) = &access
+                    && crate::owned_records::scoped_body(&kind)
+                {
+                    if before.is_some_and(|entry| {
+                        !entry.metadata.deleted
+                            && entry.conversation.as_deref() != Some(access.conversation.address.resident.as_str())
+                    }) {
+                        return Err("this record belongs to another conversation".into());
+                    }
+                    if !deleted {
+                        let resident = if kind == "sentinel" {
+                            body["definition"]["owner"]["resident"].as_str()
+                        } else {
+                            body["resident"].as_str()
+                        };
+                        if resident != Some(access.conversation.address.resident.as_str()) {
+                            return Err("the new record belongs to another conversation".into());
+                        }
+                    }
+                }
+                if let Some(access) = &access
+                    && !deleted
+                    && matches!(kind.as_str(), "goal" | "goal_past")
+                {
+                    if let Some(resident) = body.get("resident").filter(|value| !value.is_null())
+                        && resident["resident"].as_str() != Some(access.conversation.address.resident.as_str())
+                    {
+                        return Err("the new goal belongs to another conversation".into());
+                    }
+                    if kind == "goal" && body["account"]["account"].as_str() != Some(account.as_str()) {
+                        return Err("the new goal belongs to another account".into());
+                    }
+                }
+                if kind == "sentinel" && deleted && before.is_some() {
+                    body = storage::read(&slot.path(&kind, &key))?.body;
+                }
+                if let Some(access) = &access
+                    && kind == "sentinel"
+                    && !deleted
+                {
+                    let registration: fastctx_types::sentinel_control::Registration =
+                        serde_json::from_value(body.clone()).map_err(|error| error.to_string())?;
+                    if registration.scope.account != account
+                        || registration.definition.account != account
+                        || registration.definition.id.as_str() != key
+                        || registration.definition.owner.resident != access.conversation.address.resident
+                    {
+                        return Err("the sentinel belongs to another account or conversation".into());
+                    }
+                    if let Some(before) = before.filter(|entry| !entry.metadata.deleted) {
+                        let previous: fastctx_types::sentinel_control::Registration =
+                            serde_json::from_value(storage::read(&slot.path(&kind, &key))?.body)
+                                .map_err(|error| error.to_string())?;
+                        if previous.scope != registration.scope || previous.definition != registration.definition {
+                            return Err("shared sentinel controls cannot change its assignment".into());
+                        }
+                        let _ = before;
+                    }
+                }
                 let version = before.map(|entry| entry.metadata.version);
                 if expected != version {
                     return Ok(Told::AccountRecords {
                         response: Response::Conflict { current: before.map(|entry| entry.metadata.clone()) },
                     });
                 }
+                if kind == fastctx_types::owned_records::KIND && !deleted {
+                    let ownership: fastctx_types::owned_records::Conversation =
+                        serde_json::from_value(body.clone()).map_err(|error| error.to_string())?;
+                    let store = hub.store();
+                    if store.book.directory.member(&from).is_none_or(|member| !member.is_machine() || member.managed)
+                        || ownership.account != account
+                        || ownership.address.resident.as_str() != key
+                        || !store.book.directory.same(&ownership.address.machine, &from)
+                    {
+                        return Err("a host registers only its own conversation for its acting account".into());
+                    }
+                    if let Some(before) = before {
+                        if before.metadata.deleted {
+                            return Err("this conversation was deleted".into());
+                        }
+                        let old: fastctx_types::owned_records::Conversation =
+                            serde_json::from_value(storage::read(&slot.path(&kind, &key))?.body)
+                                .map_err(|error| error.to_string())?;
+                        if old.account != ownership.account
+                            || old.shared_on != ownership.shared_on
+                            || (!store.book.directory.same(&ownership.address.machine, &old.address.machine)
+                                && !ownership.previous.contains(&old.address.machine))
+                            || !old.previous.iter().all(|machine| ownership.previous.contains(machine))
+                        {
+                            return Err("a conversation's birth ownership cannot be rewritten".into());
+                        }
+                    } else if let Some(source) = &ownership.shared_on {
+                        store
+                            .book
+                            .directory
+                            .authorize(&account, Action::Work(source))
+                            .map_err(|error| error.to_string())?;
+                    }
+                }
+
                 if kind == fastctx_types::skills::INDEX_KIND {
                     crate::skill_storage::check_index(&slot, &records, &key, &body, deleted)?;
                 }
@@ -165,7 +318,13 @@ pub(crate) async fn ask(
                     }
                 }
                 if !deleted
-                    && kind != fastctx_types::skills::KIND
+                    && !matches!(
+                        kind.as_str(),
+                        fastctx_types::skills::KIND
+                            | fastctx_types::history::RECORD_KIND
+                            | fastctx_types::owned_records::KIND
+                            | fastctx_types::plan::KIND
+                    )
                     && before.is_none_or(|entry| entry.metadata.deleted)
                     && records
                         .entries
@@ -177,8 +336,18 @@ pub(crate) async fn ask(
                     return Err(words::kind_limit());
                 }
                 let version = before.map_or(0, |entry| entry.metadata.version).checked_add(1).ok_or(words::REVISION)?;
+                if kind == fastctx_types::history::RECORD_KIND && !deleted {
+                    let stored: fastctx_types::history::stored::Stored =
+                        serde_json::from_value(body.clone()).map_err(|error| error.to_string())?;
+                    stored.validate()?;
+                    if stored.revision.version != version
+                        || key.rsplit('/').next() != Some(stored.revision.name.as_str())
+                    {
+                        return Err("the history revision does not match its record key and version".into());
+                    }
+                }
                 let record = Record {
-                    metadata: Metadata { kind, key, version, by: from.clone(), at: Timestamp::now(), deleted },
+                    metadata: Metadata { kind, key, version, by: Some(from.clone()), at: Timestamp::now(), deleted },
                     body,
                 };
                 let bytes = serde_json::to_vec(&record).map_err(|error| error.to_string())?;
@@ -190,13 +359,35 @@ pub(crate) async fn ask(
                     .filter(|entry| {
                         entry.metadata.kind != fastctx_types::skills::KIND
                             && entry.metadata.kind != fastctx_types::skills::INDEX_KIND
+                            && !matches!(
+                                entry.metadata.kind.as_str(),
+                                fastctx_types::history::RECORD_KIND
+                                    | fastctx_types::owned_records::KIND
+                                    | fastctx_types::plan::KIND
+                            )
                     })
                     .map(|entry| entry.size)
                     .sum::<usize>();
                 let specialized = record.metadata.kind == fastctx_types::skills::KIND
                     || record.metadata.kind == fastctx_types::skills::INDEX_KIND;
-                let ordinary =
-                    if specialized { ordinary } else { ordinary - before.map_or(0, |entry| entry.size) + size };
+                let replicated = matches!(
+                    record.metadata.kind.as_str(),
+                    fastctx_types::history::RECORD_KIND
+                        | fastctx_types::owned_records::KIND
+                        | fastctx_types::plan::KIND
+                );
+                let ordinary = if specialized || replicated {
+                    ordinary
+                } else {
+                    ordinary - before.map_or(0, |entry| entry.size) + size
+                };
+                if replicated && size > before.map_or(0, |entry| entry.size) {
+                    let available =
+                        fastctx_platform::space::available(slot.root()).map_err(|error| error.to_string())?;
+                    if (size as u64).saturating_mul(2) > available {
+                        return Err("there is not enough disk space to preserve and publish this revision".into());
+                    }
+                }
                 if specialized {
                     let limits = crate::skill_storage::limits(&slot)?;
                     let held = records
@@ -221,7 +412,10 @@ pub(crate) async fn ask(
                 }
                 let path = slot.path(&record.metadata.kind, &record.metadata.key);
                 let (publishing, author, owner) = (hub.clone(), from.clone(), account.clone());
-                let archive = record.metadata.kind == fastctx_types::plan::KIND;
+                let archive = matches!(
+                    record.metadata.kind.as_str(),
+                    fastctx_types::plan::KIND | fastctx_types::history::RECORD_KIND
+                );
                 let historical = archive.then(|| slot.history(&record.metadata.kind, &record.metadata.key));
                 let result = (move || {
                     fastctx_platform::ensure_private_dir(path.parent().expect("record folder"))
@@ -237,7 +431,8 @@ pub(crate) async fn ask(
                         true,
                         || {
                             let store = publishing.store();
-                            check(&store, &author, &member_key, &owner, opened).map_err(std::io::Error::other)?;
+                            permitted(&publishing, &store, &author, &member_key, &owner, opened, access.as_ref())
+                                .map_err(std::io::Error::other)?;
                             Ok(store)
                         },
                     );
@@ -255,8 +450,29 @@ pub(crate) async fn ask(
                     Err(failure) if failure.published => Some(failure.error.to_string()),
                     Err(failure) => return Err(words::store(failure.error)),
                 };
+                if record.metadata.kind == fastctx_types::owned_records::KIND {
+                    let ownership = if record.metadata.deleted {
+                        None
+                    } else {
+                        Some(serde_json::from_value(record.body.clone()).map_err(|error| error.to_string())?)
+                    };
+                    hub.account_records.owners.lock().expect("never poisoned").take(
+                        &account,
+                        opened,
+                        &record.metadata.key,
+                        ownership,
+                    );
+                }
                 records.bytes = total;
-                records.entries.insert(identity, storage::Entry { metadata: record.metadata.clone(), size });
+                records.entries.insert(
+                    identity,
+                    storage::Entry {
+                        metadata: record.metadata.clone(),
+                        size,
+                        history: storage::history_head(&record).map_err(|error| error.to_string())?,
+                        conversation: storage::record_conversation(&record),
+                    },
+                );
                 slot.count.store(records.entries.len(), std::sync::atomic::Ordering::Relaxed);
                 slot.bytes.store(total, std::sync::atomic::Ordering::Relaxed);
                 // Keep the account gate until hints are queued, preserving revision order.
@@ -290,9 +506,26 @@ pub(crate) fn tell(hub: &Hub, account: &AccountName, opened: Timestamp, metadata
         .collect();
     let store = hub.store();
     for (reader, key, out) in readers {
-        if check(&store, &reader, &key, account, opened).is_ok() {
+        if store.book.directory.account(account).is_some_and(|owner| owner.opened == opened)
+            && crate::owned_records::hint(hub, &store.book.directory, &reader, &key, account, metadata)
+        {
             let changed = Changed { account: account.clone(), metadata: metadata.clone() };
             let _ = out.send(crate::Out::Frame(Down::AccountRecordChanged { changed }));
         }
+    }
+}
+
+fn permitted(
+    hub: &Hub,
+    store: &crate::Store,
+    from: &MachineName,
+    key: &PublicKey,
+    account: &AccountName,
+    opened: Timestamp,
+    access: Option<&crate::owned_records::Access>,
+) -> Result<(), String> {
+    match access {
+        Some(access) => crate::owned_records::check(hub, store, from, key, account, opened, access),
+        None => check(store, from, key, account, opened),
     }
 }

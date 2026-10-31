@@ -11,7 +11,11 @@ pub const MAX_MARKDOWN_BYTES: usize = 16 * 1024;
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Author {
     User,
-    Resident { address: Address },
+    /// The writing conversation is on a machine unavailable to this reader.
+    Elsewhere,
+    Resident {
+        address: Address,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -35,7 +39,7 @@ impl Body {
     pub fn of(&self) -> Option<&Address> {
         self.owner.as_deref().or(match &self.author {
             Author::Resident { address } => Some(address),
-            Author::User => None,
+            Author::User | Author::Elsewhere => None,
         })
     }
 }

@@ -16,6 +16,10 @@ pub struct Create {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Request {
+    Conversation {
+        owner: Address,
+        request: Box<Request>,
+    },
     Create {
         request: Create,
     },
@@ -164,6 +168,7 @@ impl Create {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum HomeRequest {
+    Conversation { actor: crate::AccountName, owner: Address, request: Box<HomeRequest> },
     Begin { id: SentinelId, version: u64, owner: Address },
     Inspect { id: SentinelId },
     Judge { request: Box<GoalRequest> },

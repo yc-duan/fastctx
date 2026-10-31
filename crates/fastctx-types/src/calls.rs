@@ -70,10 +70,19 @@ pub enum Call {
         hub: Option<crate::HubName>,
         account: Option<crate::AccountName>,
         kind: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        owner: Option<ResidentId>,
     },
     Collaboration {
         resident: ResidentId,
         machine: Option<crate::access::Written>,
+    },
+    PrepareCopies {
+        paths: Vec<std::path::PathBuf>,
+    },
+    History(crate::history::HistoryCall),
+    WatchHistory {
+        scope: crate::history::Scope,
     },
     Memory(crate::memory::MemoryCall),
     WatchMemory {
@@ -916,6 +925,7 @@ pub enum Reply {
         response: crate::account_records::Response,
     },
     Collaboration(Box<crate::collaboration::Tree>),
+    History(crate::history::HistoryReply),
     Memory(crate::memory::MemoryReply),
     MemorySettings(crate::memory::Settings),
     Layer(crate::layers::Chosen),

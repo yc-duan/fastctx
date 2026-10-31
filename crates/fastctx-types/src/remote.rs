@@ -598,6 +598,13 @@ impl RemoteCall {
             Self::EnterProject { .. } | Self::Plan { .. } => Purpose::Echo,
             Self::SentinelSettings { .. } | Self::SentinelControl { .. } | Self::SentinelKeys => Purpose::Look,
             Self::SentinelKey { .. } => Purpose::Hands,
+            Self::SentinelHome { request: crate::sentinel_control::HomeRequest::Conversation { request, .. } } => {
+                if matches!(request.as_ref(), crate::sentinel_control::HomeRequest::Withdraw { .. }) {
+                    Purpose::Hands
+                } else {
+                    Purpose::Look
+                }
+            }
             Self::SentinelHome {
                 request:
                     crate::sentinel_control::HomeRequest::Inspect { .. }

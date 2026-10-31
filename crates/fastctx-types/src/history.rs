@@ -1,6 +1,8 @@
 //! Versioned topic documents belonging to a project or a conversation.
 
 pub mod markdown;
+pub mod stored;
+pub mod words;
 
 use crate::{MachineName, ResidentId, TownName, project::Stamp, residents::Host};
 use serde::{Deserialize, Serialize};

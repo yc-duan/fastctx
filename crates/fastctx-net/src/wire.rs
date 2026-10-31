@@ -133,6 +133,8 @@ pub enum Intent {
     /// `through` names the machine that forwards it to the hub, if any: the
     /// hub sees only that machine's address.
     Session {
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        replicated_records: bool,
         key: PublicKey,
         proof: Signature,
         letters: Letters,
@@ -443,6 +445,12 @@ pub enum Down {
     /// The hub takes sessions now (`Intent::Probe`).
     Ready,
     /// A project this member may use has new entries in its ledger.
+    ReplicasChanged,
+    HistoryChanged {
+        town: TownId,
+        name: String,
+        version: u64,
+    },
     LedgerChanged {
         town: TownId,
     },
@@ -648,6 +656,10 @@ pub enum Question {
         account: AccountName,
         request: fastctx_types::plan_copies::Request,
     },
+    OwnedRecords {
+        account: AccountName,
+        request: fastctx_types::owned_records::Request,
+    },
     AccountRecords {
         account: AccountName,
         request: fastctx_types::account_records::Request,
@@ -684,6 +696,29 @@ pub enum Question {
         change: Change,
     },
     /// Metadata only, including for an account whose agent this member hosts.
+    HistorySubmitted {
+        town: TownId,
+        account: AccountName,
+        name: String,
+        submission: String,
+    },
+    HistoryCatalog {
+        town: TownId,
+        account: AccountName,
+    },
+    HistoryRead {
+        town: TownId,
+        account: AccountName,
+        name: String,
+        version: Option<u64>,
+        #[serde(default)]
+        versions: bool,
+    },
+    HistoryWrite {
+        town: TownId,
+        account: AccountName,
+        entry: Signed,
+    },
     ProjectIndex {
         town: TownId,
         account: AccountName,
@@ -718,6 +753,10 @@ pub enum Question {
     },
     /// A project's entries after the one numbered `after`, as many as fit
     /// in one frame.
+    LedgerProjection {
+        town: TownId,
+        after: u64,
+    },
     LedgerRead {
         town: TownId,
         after: u64,
@@ -1017,6 +1056,9 @@ pub enum Change {
     OpenProject {
         town: TownId,
         name: TownName,
+        /// Sent only to hubs advertising shared_records.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        shared_on: Option<MachineName>,
     },
     /// Lets the account `with` read and write the project's records, or no
     /// longer.
@@ -1054,8 +1096,20 @@ pub enum Told {
     PlanCopies {
         reply: fastctx_types::plan_copies::Reply,
     },
+    OwnedRecords {
+        response: fastctx_types::owned_records::Response,
+    },
     AccountRecords {
         response: fastctx_types::account_records::Response,
+    },
+    HistorySubmitted {
+        revision: Option<Box<fastctx_types::history::HistoryRevision>>,
+    },
+    HistoryCatalog {
+        catalog: fastctx_types::history::Catalog,
+    },
+    HistoryDocument {
+        document: Box<fastctx_types::history::Document>,
     },
     ProjectIndex {
         index: Box<fastctx_types::memory::ProjectIndex>,
@@ -1105,6 +1159,11 @@ pub enum Told {
         towns: Vec<(TownId, u64)>,
     },
     /// Entries in order, each with its number; `more` when others follow.
+    LedgerProjection {
+        entries: Vec<(u64, Signed)>,
+        through: u64,
+        more: bool,
+    },
     Entries {
         entries: Vec<(u64, Signed)>,
         more: bool,

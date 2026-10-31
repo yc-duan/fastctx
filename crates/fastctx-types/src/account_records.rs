@@ -19,7 +19,9 @@ pub struct Metadata {
     pub kind: String,
     pub key: String,
     pub version: u64,
-    pub by: MachineName,
+    /// Omitted when this reader may not know the writing machine. Stored records always contain it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub by: Option<MachineName>,
     pub at: Timestamp,
     pub deleted: bool,
 }
@@ -77,7 +79,12 @@ impl Request {
         }
         if let Self::Write { body, .. } = self {
             let size = serde_json::to_vec(body).map_err(|error| error.to_string())?.len();
-            let limit = if self.kind() == crate::skills::KIND || self.kind() == crate::skills::INDEX_KIND {
+            let limit = if self.kind() == crate::history::RECORD_KIND {
+                let stored: crate::history::stored::Stored =
+                    serde_json::from_value(body.clone()).map_err(|error| error.to_string())?;
+                stored.validate()?;
+                crate::history::MAX_DOCUMENT_BYTES * 6 + 16 * 1024
+            } else if self.kind() == crate::skills::KIND || self.kind() == crate::skills::INDEX_KIND {
                 crate::skill_files::ENCODED_LIMIT
             } else {
                 MAX_BODY_BYTES

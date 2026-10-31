@@ -244,6 +244,9 @@ pub struct Project {
     pub owner: AccountName,
     #[serde(default)]
     pub granted: BTreeSet<AccountName>,
+    /// A non-assisted origin whose current whole-machine holders share the records.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shared_on: Option<MachineName>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -576,10 +579,16 @@ impl Directory {
     pub fn member_keeps_project(&self, member: &MachineName, town: &TownId) -> bool {
         self.member(member).is_some_and(|member| {
             !member.managed
+                && member.is_machine()
                 && member
-                    .logins
+                    .home
+                    .as_ref()
+                    .is_some_and(|account| member.logins.contains(account) && self.in_project(account, town))
+                && self
+                    .shares
                     .iter()
-                    .any(|account| self.may_act_for(account, &member.name) && self.in_project(account, town))
+                    .filter(|share| share.machine == member.name && self.holds(&share.account, &member.name))
+                    .all(|share| self.in_project(&share.account, town))
         })
     }
 }
@@ -587,6 +596,9 @@ impl Directory {
 /// One member's view of its hub's directory.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct View {
+    /// Account-owned conversation records and dynamic whole-machine sharing.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub shared_records: bool,
     /// The hub takes ledger questions in parts and serves large ledger entries.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub ledger_parts: bool,
@@ -785,6 +797,7 @@ impl View {
     /// An empty view, before the hub has given one.
     pub fn empty(hub: HubId, hub_name: HubName, me: MachineName) -> Self {
         Self {
+            shared_records: false,
             ledger_parts: false,
             project_memory: false,
             collaboration_tree: false,

@@ -55,6 +55,7 @@ pub(crate) async fn ask(
         return Err("the submission identity does not describe this edit".into());
     }
     let owner = request.owner().clone();
+    crate::owned_records::legacy_plan(hub, &hub.store().book.directory, &account, owner.resident.as_str())?;
     let slot = hub.account_records.account(&account, opened);
     for _ in 0..8 {
         let records = slot.records.lock().await;

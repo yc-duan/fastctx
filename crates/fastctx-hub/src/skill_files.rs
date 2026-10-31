@@ -53,7 +53,7 @@ fn metadata(
         kind: kind.into(),
         key: key.into(),
         version: previous.map_or(0, |metadata| metadata.version).checked_add(1).ok_or("skill revision exhausted")?,
-        by: from.clone(),
+        by: Some(from.clone()),
         at: Timestamp::now(),
         deleted,
     })

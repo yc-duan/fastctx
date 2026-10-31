@@ -26,11 +26,21 @@ pub(super) struct Page {
     pub town: TownId,
     pub after: u64,
     pub last: u64,
+    pub history: std::collections::BTreeSet<u64>,
 }
 
 /// Answers a ledger read on this session's queue, independently of its
 /// next frame and of every project's writer.
 pub(crate) fn ask(hub: &Arc<Hub>, name: &MachineName, out: &Outq, id: u64, town: TownId, after: u64) {
+    serve(hub, name, out, id, town, after, false)
+}
+
+pub(crate) fn projection(hub: &Arc<Hub>, name: &MachineName, out: &Outq, id: u64, town: TownId, after: u64) {
+    serve(hub, name, out, id, town, after, true)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn serve(hub: &Arc<Hub>, name: &MachineName, out: &Outq, id: u64, town: TownId, after: u64, projection: bool) {
     if !hub.store().book.directory.member_keeps_project(name, &town) {
         let answer = Err(format!(
             "{name} has no logged-in account that may keep the bodies of {town}; assisting hosts must use project indices (update older clients)"
@@ -64,7 +74,7 @@ pub(crate) fn ask(hub: &Arc<Hub>, name: &MachineName, out: &Outq, id: u64, town:
         let mut reading = tokio::task::spawn_blocking(move || {
             // A cancelled caller cannot return a place still occupied by disk I/O.
             let _place = place;
-            page.read(&wanted, deadline)
+            page.read(&wanted, deadline, projection)
         });
         let answer = tokio::select! {
             biased;
@@ -94,17 +104,33 @@ pub(crate) fn ask(hub: &Arc<Hub>, name: &MachineName, out: &Outq, id: u64, town:
 }
 
 impl Page {
-    fn read(self, wanted: &oneshot::Sender<()>, deadline: tokio::time::Instant) -> Result<Told, String> {
+    fn read(
+        self,
+        wanted: &oneshot::Sender<()>,
+        deadline: tokio::time::Instant,
+        projection: bool,
+    ) -> Result<Told, String> {
         // The longest id and `false` leave room for either value of `more`.
         let mut size =
             wire::encode(&Down::Told { id: u64::MAX, answer: Ok(Told::Entries { entries: Vec::new(), more: false }) })
                 .len();
+        let answer = |entries, through, more| {
+            if projection { Told::LedgerProjection { entries, through, more } } else { Told::Entries { entries, more } }
+        };
         let mut entries = Vec::new();
+        let mut through = self.after;
         for previous in self.after..self.last {
             if wanted.is_closed() || tokio::time::Instant::now() >= deadline {
                 return Err("the ledger reader ended".into());
             }
             let seq = previous + 1;
+            if self.history.contains(&seq) {
+                if !projection {
+                    return Err("update this computer to synchronize a project that contains history".into());
+                }
+                through = seq;
+                continue;
+            }
             let path = self.dir.join(format!("{seq:020}.json"));
             let signed = entry(&path).map_err(|error| format!("reading entry {seq} of {}: {error}", self.town))?;
             let cost = wire::encode(&(seq, &signed)).len() + usize::from(!entries.is_empty());
@@ -117,12 +143,13 @@ impl Page {
                         wire::PARTS_AT_MOST
                     ));
                 }
-                return Ok(Told::Entries { entries, more: true });
+                return Ok(answer(entries, through, true));
             }
             size += cost;
             entries.push((seq, signed));
+            through = seq;
         }
-        Ok(Told::Entries { entries, more: false })
+        Ok(answer(entries, through, false))
     }
 }
 

@@ -37,7 +37,7 @@ pub const NOTICES: u32 = 1;
 /// whoever may not work on that machine is told (`project::Writer`). A
 /// client that says none is told such a reply as text instead
 /// (`fastctx-node`'s `renewal_legacy`).
-pub const SHAPES: u32 = 1;
+pub const SHAPES: u32 = 2;
 
 /// The first frame on every connection.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

@@ -109,6 +109,8 @@ struct State {
 /// it.
 #[derive(PartialEq, Eq)]
 enum Notice {
+    Replicas,
+    History(TownId, String),
     Directory,
     Ledger(TownId),
     AccountRecord(fastctx_types::AccountName, String, String),
@@ -425,6 +427,8 @@ fn older_presence(kept: &Pending, frame: &Down) -> bool {
 fn notice(frame: &Down) -> Option<Notice> {
     Some(match frame {
         Down::DirectoryChanged => Notice::Directory,
+        Down::ReplicasChanged => Notice::Replicas,
+        Down::HistoryChanged { town, name, .. } => Notice::History(town.clone(), name.clone()),
         Down::LedgerChanged { town } => Notice::Ledger(town.clone()),
         Down::AccountRecordChanged { changed } => {
             Notice::AccountRecord(changed.account.clone(), changed.metadata.kind.clone(), changed.metadata.key.clone())

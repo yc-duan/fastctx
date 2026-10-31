@@ -149,6 +149,7 @@ pub(crate) fn view_for_in(
         })
         .collect();
     Ok(View {
+        shared_records: true,
         ledger_parts: true,
         project_memory: true,
         collaboration_tree: true,

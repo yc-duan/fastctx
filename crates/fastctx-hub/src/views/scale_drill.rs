@@ -131,6 +131,7 @@ fn network() -> Directory {
         let owner = account(rng(&mut seed) as usize % ACCOUNTS);
         let granted = (0..3).map(|_| account(rng(&mut seed) as usize % ACCOUNTS)).collect();
         all.projects.push(std::sync::Arc::new(Project {
+            shared_on: None,
             town: fastctx_types::access::TownId::from_bytes((i as u64 + 1).to_le_bytes()),
             name: format!("p{i}").parse().expect("a project name"),
             owner,

@@ -107,6 +107,8 @@ pub struct MachineFacts {
     /// Receives account-owned plan working copies.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub plan_copies: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub replicated_records: bool,
     /// Reads collaboration trees, including native child-agent histories.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub collaboration_tree: bool,

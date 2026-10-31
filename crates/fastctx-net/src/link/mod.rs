@@ -25,12 +25,17 @@ mod calls;
 mod changes;
 mod clock;
 mod collab;
+mod conversation_history;
 mod direct;
+mod history_api;
 mod kernel;
 mod layer;
 mod ledger;
 mod letters;
+mod owned_plans;
+mod owned_records;
 mod posting;
+mod topic_history;
 pub use posting::{Posted, Posting};
 mod line;
 mod login_identity;
@@ -157,6 +162,12 @@ pub trait Node: Send + Sync + 'static {
     /// The ledger of `town`, or of every project when `None`, may have
     /// entries this machine does not have yet.
     fn ledger_changed(&self, town: Option<TownId>);
+    fn history_changed(&self, town: TownId, _name: String, _version: u64) {
+        self.ledger_changed(Some(town));
+    }
+    fn replicas_changed(&self) {
+        self.ledger_changed(None);
+    }
     /// This machine's view of the directory may have changed: the link has
     /// just asked the hub.
     fn directory_changed(&self) {}
@@ -919,7 +930,8 @@ impl Link {
         theirs
             .into_iter()
             .find(|account| mine.contains(account))
-            .ok_or_else(|| format!("this member is logged in to no account {resident} works for"))
+            .or_else(|| mine.into_iter().find(|account| view.holds(account, machine)))
+            .ok_or_else(|| format!("this member is logged in to no account that owns {resident}"))
     }
 
     /// Asks the hub to delete the conversation at `conversation`, which

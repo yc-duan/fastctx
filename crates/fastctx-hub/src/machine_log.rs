@@ -585,7 +585,7 @@ pub(crate) fn action(change: &Change, book: &Book, policy: &fastctx_types::updat
             Action::UpdateDue { machine: machine.clone(), version: version.clone() }
         }
         Change::Dissolve { name } => Action::Dissolve { name: name.clone() },
-        Change::OpenProject { town, name } => Action::OpenProject { town: town.clone(), name: name.clone() },
+        Change::OpenProject { town, name, .. } => Action::OpenProject { town: town.clone(), name: name.clone() },
         Change::ShareProject { town, with, shared } => {
             Action::ShareProject { town: town.clone(), name: project_name(town), with: with.clone(), shared: *shared }
         }

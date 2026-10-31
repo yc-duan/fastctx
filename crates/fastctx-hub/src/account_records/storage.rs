@@ -18,6 +18,8 @@ use sha2::{Digest, Sha256};
 pub(crate) struct Entry {
     pub metadata: Metadata,
     pub size: usize,
+    pub history: Option<fastctx_types::history::HistoryRevision>,
+    pub conversation: Option<String>,
 }
 
 #[derive(Default)]
@@ -49,13 +51,14 @@ impl Slot {
 type Identity = (AccountName, Timestamp);
 
 pub(crate) struct Records {
+    pub owners: Mutex<crate::owned_records::index::Index>,
     dir: PathBuf,
     accounts: Mutex<HashMap<Identity, Arc<Slot>>>,
 }
 
 impl Records {
     pub fn open(dir: &Path, directory: &fastctx_net::directory::Directory) -> std::io::Result<Self> {
-        let records = Self { dir: dir.join("account-records"), accounts: Mutex::default() };
+        let records = Self { dir: dir.join("account-records"), accounts: Mutex::default(), owners: Mutex::default() };
         for owner in &directory.accounts {
             let slot = records.account(&owner.name, owner.opened);
             let files = match std::fs::read_dir(&slot.dir) {
@@ -73,21 +76,34 @@ impl Records {
                 }
                 let bytes = std::fs::read(&path)?;
                 let record: Record = serde_json::from_slice(&bytes).map_err(std::io::Error::other)?;
-                let metadata = record.metadata;
+                let metadata = record.metadata.clone();
+                if metadata.kind == fastctx_types::owned_records::KIND && !metadata.deleted {
+                    let conversation = serde_json::from_value(record.body.clone()).map_err(std::io::Error::other)?;
+                    records.owners.lock().expect("never poisoned").take(
+                        &owner.name,
+                        owner.opened,
+                        &metadata.key,
+                        Some(conversation),
+                    );
+                }
                 if slot.path(&metadata.kind, &metadata.key) != path {
                     return Err(std::io::Error::other(format!("unexpected record path {}", path.display())));
                 }
+                let history = history_head(&record)?;
                 account.bytes += bytes.len();
-                account
-                    .entries
-                    .insert((metadata.kind.clone(), metadata.key.clone()), Entry { metadata, size: bytes.len() });
+                account.entries.insert(
+                    (metadata.kind.clone(), metadata.key.clone()),
+                    Entry { metadata, size: bytes.len(), history, conversation: record_conversation(&record) },
+                );
             }
             crate::skill_storage::recover(&slot, &mut account).map_err(std::io::Error::other)?;
-            for entry in account
-                .entries
-                .values()
-                .filter(|entry| entry.metadata.deleted && entry.metadata.kind == fastctx_types::plan::KIND)
-            {
+            for entry in account.entries.values().filter(|entry| {
+                entry.metadata.deleted
+                    && matches!(
+                        entry.metadata.kind.as_str(),
+                        fastctx_types::plan::KIND | fastctx_types::history::RECORD_KIND
+                    )
+            }) {
                 super::history::delete(&slot.history(&entry.metadata.kind, &entry.metadata.key))?;
             }
             slot.count.store(account.entries.len(), Ordering::Relaxed);
@@ -136,4 +152,26 @@ impl Records {
 pub(crate) fn read(path: &Path) -> Result<Record, String> {
     let bytes = std::fs::read(path).map_err(fastctx_types::account_records::words::read)?;
     serde_json::from_slice(&bytes).map_err(fastctx_types::account_records::words::read)
+}
+
+pub(crate) fn history_head(record: &Record) -> std::io::Result<Option<fastctx_types::history::HistoryRevision>> {
+    if record.metadata.kind == fastctx_types::history::RECORD_KIND && !record.metadata.deleted {
+        let stored: fastctx_types::history::stored::Stored =
+            serde_json::from_value(record.body.clone()).map_err(std::io::Error::other)?;
+        stored.validate().map_err(std::io::Error::other)?;
+        Ok(Some(stored.revision))
+    } else {
+        Ok(None)
+    }
+}
+
+pub(crate) fn record_conversation(record: &Record) -> Option<String> {
+    if record.metadata.deleted && record.metadata.kind != "sentinel" {
+        return None;
+    }
+    match record.metadata.kind.as_str() {
+        "goal_text" | "goal_history" | "goal_writes" => record.body["resident"].as_str().map(str::to_owned),
+        "sentinel" => record.body["definition"]["owner"]["resident"].as_str().map(str::to_owned),
+        _ => None,
+    }
 }

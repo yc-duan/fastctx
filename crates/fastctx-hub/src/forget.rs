@@ -74,9 +74,7 @@ pub(crate) fn ask(
     };
     // Of a conversation its machine told is afoot, the hub knows whom it
     // works for; the machine itself is asked of any other.
-    if let Some(accounts) = crate::afoot::accounts_of(hub, &conversation)
-        && !accounts.contains(&account)
-    {
+    if crate::afoot::owned_by(hub, &conversation, &account) == Some(false) {
         return Err(format!(
             "the conversation {} on {} does not work for the account {account}",
             conversation.resident, conversation.machine

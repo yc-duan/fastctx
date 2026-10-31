@@ -38,10 +38,11 @@ use fastctx_types::access::TownId;
 use crate::Hub;
 use crate::store::Store;
 
+pub(crate) mod history_requests;
 mod page_index;
 mod reading;
 pub(crate) mod requests;
-pub(crate) use reading::ask;
+pub(crate) use reading::{ask, projection};
 
 /// What the hub knows of one project's ledger.
 #[derive(Default)]
@@ -53,6 +54,7 @@ pub struct TownLedger {
     /// would compare them.
     paths: BTreeSet<String>,
     memory: fastctx_net::memory::Index,
+    pub(crate) history: fastctx_net::topic_history::Index,
     sequences: BTreeMap<String, u64>,
 }
 
@@ -69,6 +71,7 @@ pub struct Ledgers {
 struct Prepared {
     entry: Entry,
     mutation: Option<fastctx_net::memory::Mutation>,
+    history: Option<fastctx_net::topic_history::Revision>,
     account: Option<fastctx_types::AccountName>,
     bytes: Vec<u8>,
 }
@@ -106,6 +109,7 @@ impl Ledgers {
                 let entry = fastctx_net::ledger::open(&signed, identity, &id)
                     .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
                 ledger.memory.take(&entry).map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+                ledger.history.take(&entry).map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
                 ledger.add(&entry, seq);
                 ledger.next = seq + 1;
             }
@@ -132,7 +136,7 @@ impl Ledgers {
         }
         if let Some(account) = &prepared.account {
             requests::authorize(directory, from, account, town, false)?;
-        } else if prepared.mutation.is_some() {
+        } else if prepared.mutation.is_some() || prepared.history.is_some() {
             return Err("project memory writes require an explicit account and a current client".into());
         }
         let entry = &prepared.entry;
@@ -157,6 +161,12 @@ impl Ledgers {
                 .map(|ledger| &ledger.memory)
                 .unwrap_or(&fastctx_net::memory::Index::default())
                 .check_mutation(mutation)?;
+        }
+        if let Some(revision) = &prepared.history {
+            ledger
+                .map(|ledger| &ledger.history)
+                .unwrap_or(&fastctx_net::topic_history::Index::default())
+                .check(revision)?;
         }
         let mut seen = BTreeSet::new();
         for file in &entry.files {
@@ -186,6 +196,9 @@ impl Ledgers {
         let ledger = self.towns.entry(town.clone()).or_insert_with(|| TownLedger { next: 1, ..TownLedger::default() });
         if let Some(mutation) = &checked.prepared.mutation {
             ledger.memory.append(mutation.clone());
+        }
+        if let Some(revision) = &checked.prepared.history {
+            ledger.history.append(revision.clone());
         }
         ledger.add(&checked.prepared.entry, checked.seq);
         ledger.next = checked.seq + 1;
@@ -239,7 +252,15 @@ impl Ledgers {
     /// The committed range to read, without listing or copying the ledger.
     fn page(&self, town: TownId, after: u64) -> reading::Page {
         let last = self.towns.get(&town).map_or(0, |ledger| ledger.next - 1);
-        reading::Page { dir: self.dir.join(town.as_str()), town, after, last }
+        let history = self
+            .towns
+            .get(&town)
+            .into_iter()
+            .flat_map(|ledger| ledger.sequences.iter())
+            .filter(|(path, _)| path.starts_with("history/"))
+            .map(|(_, seq)| *seq)
+            .collect();
+        reading::Page { dir: self.dir.join(town.as_str()), town, after, last, history }
     }
 }
 
@@ -325,11 +346,12 @@ pub(crate) async fn write_as(
         }
         let entry = fastctx_net::ledger::open(&signed, &hub_id, &project)?;
         let mutation = fastctx_net::memory::decode(&entry.files)?;
+        let history = fastctx_net::topic_history::decode(&entry.files)?;
         let bytes = json(&signed).map_err(|error| error.to_string())?;
-        if account.is_some() && mutation.is_none() {
+        if account.is_some() && mutation.is_none() && history.is_none() {
             return Err("a memory write must contain a memory revision or evidence".into());
         }
-        Ok(Arc::new(Prepared { entry, mutation, account, bytes }))
+        Ok(Arc::new(Prepared { entry, mutation, history, account, bytes }))
     })
     .await
     .map_err(|error| format!("checking the ledger entry: {error}"))??;
@@ -368,6 +390,7 @@ pub(crate) async fn write_as(
         )),
         Err(failure) => return Err(format!("the hub could not keep the entry: {}", failure.error)),
     }
+    let history = checked.prepared.history.as_ref().map(|stored| stored.revision.clone());
     let (seq, tell) = {
         let store = hub.store();
         let directory = &store.book.directory;
@@ -389,7 +412,13 @@ pub(crate) async fn write_as(
     };
     hub.log.line(format_args!("{from} wrote entry {seq} of {town}"));
     for machine in tell {
-        hub.tell(&machine, Down::LedgerChanged { town: town.clone() });
+        let changed = match &history {
+            Some(revision) => {
+                Down::HistoryChanged { town: town.clone(), name: revision.name.clone(), version: revision.version }
+            }
+            None => Down::LedgerChanged { town: town.clone() },
+        };
+        hub.tell(&machine, changed);
     }
     Ok(Told::Written { seq })
 }

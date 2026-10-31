@@ -1,7 +1,7 @@
 //! Preserve revisions and accepted submission receipts before overwriting the
 //! current plan. Replaying a submission returns its own result, not a new edit.
 
-use fastctx_types::{account_records::Record, plan::Body};
+use fastctx_types::account_records::Record;
 use std::{io, path::Path};
 
 fn location(directory: &Path) -> io::Result<std::path::PathBuf> {
@@ -32,24 +32,22 @@ pub(super) fn preserve(current: &Path, directory: &Path) -> io::Result<()> {
     let directory = location(directory)?;
     let record: Record = serde_json::from_slice(&bytes).map_err(io::Error::other)?;
     immutable(&directory.join(format!("{}.json", record.metadata.version)), &bytes)?;
-    if !record.metadata.deleted {
-        let body: Body = serde_json::from_value(record.body).map_err(io::Error::other)?;
-        if let Some(id) = body.submission {
-            if id.len() != 64 || !id.bytes().all(|byte| byte.is_ascii_hexdigit()) {
-                return Err(io::Error::other("invalid stored plan submission identity"));
-            }
-            immutable(&directory.join("submissions").join(format!("{id}.json")), &bytes)?;
+    if !record.metadata.deleted
+        && let Some(id) = record.body.get("submission").and_then(serde_json::Value::as_str)
+    {
+        if id.len() != 64 || !id.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+            return Err(io::Error::other("invalid stored plan submission identity"));
         }
+        immutable(&directory.join("submissions").join(format!("{id}.json")), &bytes)?;
     }
     Ok(())
 }
 
 pub(crate) fn submitted(current: Option<&Record>, directory: &Path, id: &str) -> Result<Option<Record>, String> {
-    if let Some(current) = current.filter(|record| !record.metadata.deleted) {
-        let body: Body = serde_json::from_value(current.body.clone()).map_err(|error| error.to_string())?;
-        if body.submission.as_deref().map(String::as_str) == Some(id) {
-            return Ok(Some(current.clone()));
-        }
+    if let Some(current) = current.filter(|record| !record.metadata.deleted)
+        && current.body.get("submission").and_then(serde_json::Value::as_str) == Some(id)
+    {
+        return Ok(Some(current.clone()));
     }
     let path = location(directory).map_err(|error| error.to_string())?.join("submissions").join(format!("{id}.json"));
     match std::fs::read(path) {
