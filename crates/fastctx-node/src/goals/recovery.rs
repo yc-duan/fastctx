@@ -10,15 +10,19 @@ pub(crate) fn start(node: &Arc<Node>) {
     tokio::spawn(async move {
         let mut again = crate::again::Again::default();
         loop {
-            let loaded = (|| -> std::io::Result<_> {
+            let reading = node.clone();
+            let loaded = tokio::task::spawn_blocking(move || -> std::io::Result<_> {
                 let mut owners = Vec::new();
-                for kept in node.world.kept()? {
+                for kept in reading.world.kept()? {
                     for intent in intents::pending(&kept.directory)? {
                         owners.push(intent.resident);
                     }
                 }
                 Ok(owners)
-            })();
+            })
+            .await
+            .map_err(std::io::Error::other)
+            .and_then(|result| result);
             match loaded {
                 Ok(owners) => {
                     for owner in owners {
@@ -34,7 +38,7 @@ pub(crate) fn start(node: &Arc<Node>) {
 }
 
 pub(crate) fn schedule(node: &Arc<Node>, resident: Address) {
-    if !node.goals.recovering.lock().expect("goal recovery").insert(resident.clone()) {
+    if node.goals.recovering.lock().expect("goal recovery").insert(resident.clone(), true).is_some() {
         return;
     }
     let node = node.clone();
@@ -42,9 +46,19 @@ pub(crate) fn schedule(node: &Arc<Node>, resident: Address) {
         let mut again = crate::again::Again::default();
         let mut previous = None;
         loop {
+            if let Some(dirty) = node.goals.recovering.lock().expect("goal recovery").get_mut(&resident) {
+                *dirty = false;
+            }
             let result = settle(&node, &resident).await;
             match result {
-                Ok(()) => break,
+                Ok(()) => {
+                    let mut working = node.goals.recovering.lock().expect("goal recovery");
+                    if working.get(&resident).copied().unwrap_or(false) {
+                        continue;
+                    }
+                    working.remove(&resident);
+                    break;
+                }
                 Err(error) => {
                     if previous.as_ref() != Some(&error.message) {
                         node.log.line(format_args!("recovering {}'s goal: {}", resident.resident, error.message));
@@ -65,6 +79,7 @@ async fn settle(node: &Arc<Node>, resident: &Address) -> Result<(), fastctx_type
     let directory = node.world.owner(&node.names(), resident);
     if node.is_me(&resident.machine)
         && super::lifecycle::hold(node, &resident.resident)
+            .await
             .map_err(|error| fastctx_types::ipc::Failure::new(error.to_string()))?
             .is_some()
     {
@@ -76,11 +91,18 @@ async fn settle(node: &Arc<Node>, resident: &Address) -> Result<(), fastctx_type
                 .await?;
         }
     }
-    for mut intent in
-        intents::pending(&directory).map_err(|error| fastctx_types::ipc::Failure::new(error.to_string()))?
-    {
-        super::operations::finish(node, &mut intent).await?;
+    loop {
+        let reading = directory.clone();
+        let pending = tokio::task::spawn_blocking(move || intents::pending(&reading))
+            .await
+            .map_err(|e| fastctx_types::ipc::Failure::new(e.to_string()))?
+            .map_err(|e| fastctx_types::ipc::Failure::new(e.to_string()))?;
+        if pending.is_empty() {
+            break;
+        }
+        for mut intent in pending {
+            super::operations::finish(node, &mut intent).await?;
+        }
     }
-    node.goals.recovering.lock().expect("goal recovery").remove(resident);
     Ok(())
 }

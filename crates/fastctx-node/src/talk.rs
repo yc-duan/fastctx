@@ -1032,7 +1032,7 @@ pub(crate) async fn stop_here_as(
     node.residents.stoppable(resident)?;
     let targeted = node.residents.now(resident).and_then(|now| now.turn);
     if source == fastctx_types::turn_evidence::StopSource::User {
-        crate::goals::holding::stop(node, resident, targeted.clone())?;
+        crate::goals::holding::stop(node, resident, targeted.clone()).await?;
     }
     if let Some(turn) = &targeted {
         crate::turn_evidence::remember(node, resident, turn, source)

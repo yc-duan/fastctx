@@ -70,7 +70,7 @@ pub(crate) async fn open(
     let account = scope::resolve(node, resident, None)?;
     let address = Address { machine: node.machine(), resident: resident.clone() };
     let operation = format!("colleague-open:{resident}");
-    if let Some(mut intent) = intents::read(&node.world.conversation(resident), &operation).map_err(failure)? {
+    if let Some(mut intent) = intents::read(&node.world.conversation(resident), &operation).await.map_err(failure)? {
         operations::finish(node, &mut intent).await?;
         return Ok(());
     }
@@ -169,7 +169,7 @@ pub(crate) async fn reopen_blocked(
         return Err(Failure::new(words::REUSED_OPERATION));
     }
     while let Some(pending) = &receipt.attempt {
-        let result = if let Some(mut intent) = intents::read(&directory, &pending.operation).map_err(failure)? {
+        let result = if let Some(mut intent) = intents::read(&directory, &pending.operation).await.map_err(failure)? {
             operations::finish(node, &mut intent).await?
         } else {
             let view = operations::read(node, &address, &account).await?;
@@ -214,7 +214,7 @@ pub(crate) async fn reopen_blocked(
                     at,
                     phase: intents::Phase::Prepared,
                 };
-                intents::keep(&directory, &intent).map_err(failure)?;
+                intents::keep(node, &directory, &intent).await.map_err(failure)?;
                 super::recovery::schedule(node, address.clone());
                 operations::finish(node, &mut intent).await?
             }

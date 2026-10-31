@@ -229,7 +229,7 @@ async fn commit(node: &Arc<Node>, view: &View, mut decision: policy::Decision) -
         at,
         phase: intents::Phase::Prepared,
     };
-    intents::keep(&directory, &intent).map_err(failure)?;
+    intents::keep(node, &directory, &intent).await.map_err(failure)?;
     super::recovery::schedule(node, resident);
     match operations::finish(node, &mut intent).await? {
         Updated::Goal { .. } => Ok(()),

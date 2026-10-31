@@ -126,6 +126,7 @@ pub(crate) fn start(node: &Arc<Node>) -> io::Result<()> {
                 // Each step is told on its own when it fails.
                 [
                     ("collecting conversation projections", payloads),
+                    ("collecting closed input memberships", crate::inbox::presence::collect(&retiring.database)),
                     ("retiring the bookkeeping of removed conversations", crate::books::retire(&retiring)),
                     ("collecting what Claude sessions left", crate::claude::garbage::collect(&retiring.world)),
                     (

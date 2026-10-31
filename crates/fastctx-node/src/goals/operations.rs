@@ -30,7 +30,7 @@ async fn loaded(
         return Err(Failure::new(words::CONVERSATION_CHANGED));
     }
     if node.is_me(&resident.machine) {
-        let hold = super::lifecycle::hold(node, &resident.resident).map_err(failure)?;
+        let hold = super::lifecycle::hold(node, &resident.resident).await.map_err(failure)?;
         view.pending = super::lifecycle::pending(node, &resident.resident, &view, hold.as_ref());
     }
     Ok((view, storage))
@@ -138,7 +138,7 @@ pub(crate) async fn call_held(
     let input_hash = fastctx_hands::files::content_hash(
         &serde_json::to_vec(&(&request, &author, crate::record_access::current())).map_err(failure)?,
     );
-    if let Some(mut intent) = intents::read(&directory, operation).map_err(failure)? {
+    if let Some(mut intent) = intents::read(&directory, operation).await.map_err(failure)? {
         if intent.input_hash != input_hash {
             return Err(Failure::not_run(fastctx_types::goals::words::REUSED_OPERATION));
         }
@@ -227,6 +227,7 @@ pub(crate) async fn call_held(
         && let Some(goal) = proposed.as_mut()
     {
         goal.runtime.clears_stop = super::lifecycle::hold(node, &resident.resident)
+            .await
             .map_err(failure)?
             .filter(|held| matches!(held.kind, super::lifecycle::HoldKind::UserStop))
             .map(|held| held.operation);
@@ -243,7 +244,7 @@ pub(crate) async fn call_held(
         at,
         phase: Phase::Prepared,
     };
-    intents::keep(&directory, &intent).map_err(failure)?;
+    intents::keep(node, &directory, &intent).await.map_err(failure)?;
     super::recovery::schedule(node, resident);
     finish(node, &mut intent).await
 }
@@ -279,13 +280,13 @@ async fn finish_inner(node: &Arc<Node>, intent: &mut Intent) -> Result<Updated, 
             let version =
                 intent.expected.unwrap_or(0).checked_add(1).ok_or_else(|| Failure::new("goal revision overflow"))?;
             intent.phase = Phase::Accepted { version };
-            intents::keep(&directory, intent).map_err(failure)?;
+            intents::keep(node, &directory, intent).await.map_err(failure)?;
         } else if current.version != intent.expected {
             super::archive::close(node, &intent.account, &intent.resident.resident, &intent.operation).await?;
             super::archive::for_resident(node, &intent.account, &intent.resident.resident).await?;
             intent.phase = Phase::Conflict { current: current.version };
             intent.proposed = None;
-            intents::keep(&directory, intent).map_err(failure)?;
+            intents::keep(node, &directory, intent).await.map_err(failure)?;
             return Ok(Updated::Conflict { current: current.version });
         } else {
             let body = match &intent.proposed {
@@ -306,7 +307,7 @@ async fn finish_inner(node: &Arc<Node>, intent: &mut Intent) -> Result<Updated, 
             {
                 Exchanged::Written { version } => {
                     intent.phase = Phase::Accepted { version };
-                    intents::keep(&directory, intent).map_err(failure)?;
+                    intents::keep(node, &directory, intent).await.map_err(failure)?;
                     current = read(node, &intent.resident, &intent.account).await?;
                 }
                 Exchanged::Conflict { current } => {
@@ -314,7 +315,7 @@ async fn finish_inner(node: &Arc<Node>, intent: &mut Intent) -> Result<Updated, 
                     super::archive::for_resident(node, &intent.account, &intent.resident.resident).await?;
                     intent.phase = Phase::Conflict { current };
                     intent.proposed = None;
-                    intents::keep(&directory, intent).map_err(failure)?;
+                    intents::keep(node, &directory, intent).await.map_err(failure)?;
                     return Ok(Updated::Conflict { current });
                 }
             }
@@ -357,7 +358,7 @@ async fn finish_inner(node: &Arc<Node>, intent: &mut Intent) -> Result<Updated, 
         Phase::Superseded { current: current.version }
     };
     intent.proposed = None;
-    intents::keep(&directory, intent).map_err(failure)?;
+    intents::keep(node, &directory, intent).await.map_err(failure)?;
     Ok(Updated::Goal { view: Box::new(current) })
 }
 
@@ -368,33 +369,7 @@ pub(crate) async fn apply(node: &Arc<Node>, resident: &ResidentId, view: &View) 
     }
     let mut installed = None;
     loop {
-        let (text, accepted) = {
-            let _transaction = crate::resident_storage::lock();
-            let held = super::lifecycle::hold(node, resident).map_err(failure)?;
-            let holds = held.as_ref().is_some_and(|held| !held.superseded(view));
-            let text = if holds || node.residents.removed(resident).is_some() {
-                String::new()
-            } else {
-                view.goal.as_ref().map(words::context).unwrap_or_default()
-            };
-            if held.is_some() && !holds {
-                super::lifecycle::clear_hold(node, resident).map_err(failure)?;
-            }
-            let mut view = view.clone();
-            view.pending = super::lifecycle::pending(node, resident, &view, held.as_ref());
-            if installed.as_ref() == Some(&text) {
-                super::holding::publish(node, resident, &view)?;
-                publish(node, resident, &view);
-                (text, Some(view))
-            } else {
-                if view.pending.is_some()
-                    || view.goal.as_ref().is_some_and(|goal| goal.status == fastctx_types::goals::Status::Paused)
-                {
-                    super::holding::publish(node, resident, &view)?;
-                }
-                (text, None)
-            }
-        };
+        let (text, accepted) = super::holding::apply(node, resident, view, installed.as_deref()).await?;
         if let Some(accepted) = accepted {
             return super::engine::timing(node, resident, &accepted).await;
         }

@@ -346,7 +346,7 @@ async fn finish_at(
         && crate::turn_evidence::classify(&end, None, about.host.agent.as_str()).kind
             == fastctx_types::turn_evidence::StopKind::UserStopped
     {
-        crate::goals::holding::stop(node, id, Some(turn.to_string())).map_err(std::io::Error::other)?;
+        crate::goals::holding::stop(node, id, Some(turn.to_string())).await.map_err(std::io::Error::other)?;
     }
     let (finished, first) = crate::delivery::finish_at(&directory, turn, end, &readers, ended_at, settles_queue)?;
     if first {

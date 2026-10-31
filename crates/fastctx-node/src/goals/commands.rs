@@ -122,10 +122,11 @@ pub(crate) async fn here(
             let gate = crate::control_queue::gate(node, &resident);
             let _action = gate.lock().await;
             let _place = node.places.using(resident.as_str()).await;
-            let expected = match intents::read(&node.world.conversation(&resident), &operation).map_err(failure)? {
-                Some(intent) => intent.expected,
-                None => operations::read(node, &address, &account).await?.version,
-            };
+            let expected =
+                match intents::read(&node.world.conversation(&resident), &operation).await.map_err(failure)? {
+                    Some(intent) => intent.expected,
+                    None => operations::read(node, &address, &account).await?.version,
+                };
             let change = match control {
                 ColleagueControl::Pause => UserChange::Pause,
                 ColleagueControl::Resume => UserChange::Resume,

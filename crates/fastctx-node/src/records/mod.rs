@@ -73,6 +73,16 @@ pub(crate) fn write_at<T: Send + 'static>(
     bytes: usize,
     action: impl FnOnce(&Rows<'_>) -> Result<T> + Send + 'static,
 ) -> io::Result<T> {
+    write_then_at(directory, priority, bytes, action, |_| {})
+}
+
+pub(crate) fn write_then_at<T: Send + 'static>(
+    directory: &ConversationDir,
+    priority: Priority,
+    bytes: usize,
+    action: impl FnOnce(&Rows<'_>) -> Result<T> + Send + 'static,
+    committed: impl FnOnce(&T) + Send + 'static,
+) -> io::Result<T> {
     let (database, conversation) = locate(directory)?;
     if let Some(error) = database.fault() {
         return Err(io::Error::other(error.clone()));
@@ -82,7 +92,12 @@ pub(crate) fn write_at<T: Send + 'static>(
     }
 
     database
-        .write_now_at(priority, bytes, move |connection| action(&Rows { connection, conversation: &conversation }))
+        .write_now_then_at(
+            priority,
+            bytes,
+            move |connection| action(&Rows { connection, conversation: &conversation }),
+            committed,
+        )
         .map_err(io::Error::other)
 }
 

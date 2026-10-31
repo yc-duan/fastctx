@@ -33,6 +33,7 @@ use crate::Node;
 use crate::speech::{Owed, tell};
 
 pub(crate) mod outgoing;
+pub(crate) mod presence;
 pub(crate) mod storage;
 use storage::{Receipt, change, read_rows};
 
@@ -161,9 +162,6 @@ pub fn rebind(directory: &ConversationDir, id: &NoticeId, session: &str) -> io::
 }
 pub fn pending(directory: &ConversationDir) -> io::Result<Vec<Pending>> {
     read_rows(directory, storage::pending)
-}
-pub(crate) fn pending_here(directory: &ConversationDir) -> io::Result<Vec<Pending>> {
-    pending(directory)
 }
 pub(crate) fn input_states(directory: &ConversationDir) -> io::Result<(Vec<Pending>, Vec<Pending>)> {
     read_rows(directory, |rows| Ok((storage::pending(rows)?, rows.all("uncertain-inputs")?)))

@@ -12,12 +12,16 @@ pub(crate) fn pinned(node: &Node, resident: &ResidentId) -> Result<Option<HubAcc
 }
 
 pub(crate) fn pinned_at(directory: &fastctx_types::layout::ConversationDir) -> Result<Option<HubAccount>, Failure> {
-    let path = directory.books().join("goal-account.json");
-    match std::fs::read(path) {
-        Ok(bytes) => serde_json::from_slice(&bytes).map(Some).map_err(|error| Failure::new(error.to_string())),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
-        Err(error) => Err(Failure::new(error.to_string())),
-    }
+    initialize(directory).map_err(|error| Failure::new(error.to_string()))?;
+    crate::records::read(directory, |rows| rows.get("goal-account", "current"))
+        .map_err(|error| Failure::new(error.to_string()))
+}
+fn initialize(directory: &fastctx_types::layout::ConversationDir) -> std::io::Result<()> {
+    crate::records::legacy::single::<HubAccount>(
+        directory,
+        "goal-account",
+        &directory.books().join("goal-account.json"),
+    )
 }
 
 pub(crate) fn resolve(
@@ -75,15 +79,14 @@ pub(crate) fn keep(node: &Node, resident: &ResidentId, account: &HubAccount) -> 
 }
 
 pub(crate) fn keep_at(directory: &fastctx_types::layout::ConversationDir, account: &HubAccount) -> std::io::Result<()> {
-    if pinned_at(directory)
-        .map_err(|error| std::io::Error::other(error.message))?
-        .is_some_and(|pinned| &pinned != account)
-    {
-        return Err(std::io::Error::other(words::ACCOUNT_CHANGED));
-    }
-    let path = directory.books().join("goal-account.json");
-    fastctx_platform::ensure_private_dir(path.parent().expect("goal binding directory"))?;
-    fastctx_platform::publish(&path, &serde_json::to_vec(account)?, fastctx_platform::Permissions::Private)
+    initialize(directory)?;
+    let account = account.clone();
+    crate::records::write_at(directory, fastctx_storage::Priority::Interactive, 256, move |rows| {
+        if rows.get::<HubAccount>("goal-account", "current")?.is_some_and(|prior| prior != account) {
+            return Err(fastctx_storage::Error::new(words::ACCOUNT_CHANGED));
+        }
+        rows.put("goal-account", "current", &account)
+    })
 }
 
 pub(crate) fn user(node: &Node, resident: &ResidentId, selected: Option<&HubAccount>) -> Result<HubAccount, Failure> {

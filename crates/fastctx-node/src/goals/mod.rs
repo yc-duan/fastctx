@@ -6,8 +6,12 @@ pub(crate) mod colleagues;
 pub(crate) mod commands;
 pub(crate) mod context;
 pub(crate) mod engine;
+mod hold;
 pub(crate) mod holding;
 mod intents;
+mod local;
+mod projection;
+pub(crate) use local::SCHEMA;
 pub(crate) mod lifecycle;
 pub(crate) mod operations;
 pub(crate) mod past;
@@ -32,7 +36,7 @@ use fastctx_types::access::HubAccount;
 use fastctx_types::goals::View;
 use fastctx_types::layout::Here;
 use fastctx_types::{Address, ResidentId};
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 
 pub(crate) struct Services {
@@ -42,8 +46,10 @@ pub(crate) struct Services {
     pub changed: tokio::sync::watch::Sender<u64>,
     pub engine: engine::Running,
     pub reviewer: Arc<dyn reviewer::Reviewer>,
-    recovering: Mutex<HashSet<Address>>,
+    recovering: Mutex<HashMap<Address, bool>>,
     lifecycle: Mutex<HashSet<ResidentId>>,
+    projecting: crate::leases::Registry<ResidentId, Arc<tokio::sync::Mutex<()>>>,
+    projection_changed: tokio::sync::Notify,
     watching: Mutex<HashSet<HubAccount>>,
     /// Goals whose reading failed, read again apart until it succeeds
     /// (`watching::refresh_one`).
@@ -61,6 +67,8 @@ impl Default for Services {
             reviewer: Arc::new(reviewer::Unconnected),
             recovering: Default::default(),
             lifecycle: Default::default(),
+            projecting: Default::default(),
+            projection_changed: Default::default(),
             watching: Default::default(),
             retrying: Default::default(),
         }
@@ -79,6 +87,7 @@ pub(crate) fn same(node: &Node, first: &Address, second: &Address) -> bool {
 }
 
 pub(crate) fn start(node: &Arc<Node>) {
+    projection::start(node);
     if !node.goals.available() {
         return;
     }

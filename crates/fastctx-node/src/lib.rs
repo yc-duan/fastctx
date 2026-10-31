@@ -679,6 +679,16 @@ pub async fn run_prepared(
             db,
             "node.records",
             &[fastctx_storage::versions::Migration { version: 1, sql: records::SCHEMA }],
+        )?;
+        fastctx_storage::versions::apply(
+            db,
+            "node.input-membership",
+            &[fastctx_storage::versions::Migration { version: 1, sql: inbox::presence::SCHEMA }],
+        )?;
+        fastctx_storage::versions::apply(
+            db,
+            "node.goal-projection",
+            &[fastctx_storage::versions::Migration { version: 1, sql: goals::SCHEMA }],
         )
     });
     if let Some(error) = database.fault() {
