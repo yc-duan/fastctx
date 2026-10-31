@@ -25,7 +25,7 @@ pub(crate) fn tells(refusal: &Refusal) -> bool {
 
 /// The machine or device holding `key` was told the network is dissolved.
 pub(crate) fn told(hub: &Hub, key: &PublicKey) {
-    let mut store = hub.store();
+    let mut store = hub.edit_store();
     let Some(dissolved) = store.hub.dissolved.as_mut() else { return };
     let before = dissolved.untold.len();
     dissolved.untold.retain(|untold| untold != key);

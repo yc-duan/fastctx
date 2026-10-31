@@ -26,7 +26,7 @@ pub(super) fn resolve(hub: &Hub, actor: &AccountName, address: &Address) -> Opti
 }
 
 pub(super) fn targets(
-    store: &Store,
+    store: &crate::store::Snapshot,
     forgetting: &Forgetting,
     ownership: Option<&Conversation>,
 ) -> BTreeSet<MachineName> {
@@ -43,13 +43,13 @@ pub(super) fn targets(
         })
         .map(|member| member.name.clone())
         .collect();
-    for (machine, worked) in &store.worked {
+    for (machine, worked) in store.worked.for_resident(conversation) {
         if worked.resident == conversation.resident
             && (directory.same(&worked.machine, &conversation.machine)
                 || ownership.is_some_and(|ownership| {
                     ownership.previous.iter().any(|previous| directory.same(previous, &worked.machine))
                 }))
-            && let Some(member) = directory.member(machine)
+            && let Some(member) = directory.member(&machine)
         {
             targets.insert(member.name.clone());
         }

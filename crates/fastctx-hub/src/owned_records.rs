@@ -74,7 +74,7 @@ pub(crate) fn verified(directory: &fastctx_net::directory::Directory, conversati
 
 pub(crate) fn check(
     hub: &Hub,
-    store: &crate::Store,
+    store: &crate::store::Snapshot,
     from: &MachineName,
     key: &PublicKey,
     owner: &AccountName,
@@ -157,7 +157,8 @@ pub(crate) async fn ask(
             conversation: registration::register(hub, &from, &key, &account, resident, shared, previous).await?,
         },
         Request::PrepareDeletion { conversation } => {
-            crate::forget::prepare(hub, &from, account.clone(), conversation)?;
+            let (from, account) = (from.clone(), account.clone());
+            hub.blocking(move |hub| crate::forget::prepare(&hub, &from, account, conversation)).await?;
             Response::DeletionPrepared
         }
         Request::Delete { resident } => {

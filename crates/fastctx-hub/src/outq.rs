@@ -150,25 +150,38 @@ impl Outq {
     /// Queues `out`; an error once the session's writer is done, or when
     /// the member left so much untaken that it is let go.
     pub(crate) fn send(&self, out: Out) -> Result<(), ()> {
+        let frames = match out {
+            Out::Frame(Down::Told { id, answer }) => {
+                answers::frames(id, answer, self.0.parts).into_iter().map(Out::Frame).collect()
+            }
+            out => vec![out],
+        };
+        let frames: Vec<_> = frames
+            .into_iter()
+            .map(|out| {
+                let bytes = match &out {
+                    Out::Frame(frame) => fastctx_net::wire::encode(frame).len(),
+                    Out::End(_) => 0,
+                };
+                (out, bytes)
+            })
+            .collect();
         let (queued, overflowed) = {
             let mut state = self.0.state.lock().expect("never poisoned");
             if state.shut || state.overflowed.is_some() {
                 return Err(());
             }
-            let queued = match out {
+            let queued = frames.into_iter().try_for_each(|(out, bytes)| match out {
                 Out::Frame(Down::Deliver { seq, message }) => {
                     state.letters.push_back(Down::Deliver { seq, message });
                     Ok(())
                 }
-                Out::Frame(Down::Told { id, answer }) => answers::frames(id, answer, self.0.parts)
-                    .into_iter()
-                    .try_for_each(|frame| state.urge(Out::Frame(frame))),
                 Out::Frame(frame) => match notice(&frame) {
                     Some(notice) => state.notify(notice, frame),
-                    None => state.urge(Out::Frame(frame)),
+                    None => state.urge(Out::Frame(frame), bytes),
                 },
-                end @ Out::End(_) => state.urge(end),
-            };
+                end @ Out::End(_) => state.urge(end, bytes),
+            });
             (queued, state.overflowed.clone())
         };
         // Let go: a write under way for it stops too (`overflowed`).
@@ -252,14 +265,16 @@ impl Outq {
         loop {
             // Asked for before looking, so a frame queued in between wakes it.
             let ready = self.0.ready.notified();
-            {
-                let mut state = self.0.state.lock().expect("never poisoned");
-                if state.shut {
-                    return None;
-                }
-                if let Some(next) = state.take() {
-                    return Some(next);
-                }
+            let queue = self.clone();
+            let next = tokio::task::spawn_blocking(move || {
+                let mut state = queue.0.state.lock().expect("never poisoned");
+                if state.shut { Some(None) } else { state.take().map(Some) }
+            })
+            .await;
+            match next {
+                Ok(Some(next)) => return next,
+                Ok(None) => {}
+                Err(error) => return Some(Next::Overflowed(format!("preparing a queued frame: {error}"))),
             }
             ready.await;
         }
@@ -268,7 +283,11 @@ impl Outq {
     /// The session's writer is done: nothing more is taken, and whoever
     /// waits for the session to end hears it.
     pub(crate) fn shut(&self) {
-        *self.0.state.lock().expect("never poisoned") = State { shut: true, ..State::default() };
+        let old = std::mem::replace(
+            &mut *self.0.state.lock().expect("never poisoned"),
+            State { shut: true, ..State::default() },
+        );
+        drop(old);
         self.0.shut.send_replace(true);
         self.0.ready.notify_waiters();
     }
@@ -310,11 +329,7 @@ impl State {
         Err(())
     }
 
-    fn urge(&mut self, out: Out) -> Result<(), ()> {
-        let bytes = match &out {
-            Out::Frame(frame) => fastctx_net::wire::encode(frame).len(),
-            Out::End(_) => 0,
-        };
+    fn urge(&mut self, out: Out, bytes: usize) -> Result<(), ()> {
         if self.urgent.len() >= URGENT || self.urgent_bytes + bytes > URGENT_BYTES {
             let why = format!(
                 "{} frames of {} bytes wait for it untaken, as many as {URGENT} or {URGENT_BYTES} bytes; letting it go",

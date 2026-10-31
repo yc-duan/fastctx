@@ -31,32 +31,36 @@ pub(crate) async fn expire(hub: &Hub) -> io::Result<()> {
         // Nothing changes while the hub hands its records over.
         hub.moving.unfrozen().await;
         let changed = hub.assists_changed.notified();
-        let (ended, next) = {
-            let mut store = hub.store();
-            let ended = !hub.moving.frozen()
-                && end_due(&mut store, Timestamp::now()).unwrap_or_else(|error| {
-                    // The deadline stands and is tried again shortly; a hub that
-                    // stopped for it would end every assistance at once.
-                    crate::hold_back::log(
-                        hub,
-                        &ENDING,
-                        format_args!("ending assistances that ran out: {error}; trying again in a minute"),
-                    );
-                    false
-                });
-            let next = store.book.directory.assists.iter().filter_map(|assist| assist.until).min();
-            // One that could not be ended is due still: looked at again in a minute.
-            let next = if next.is_some_and(|next| next <= Timestamp::now()) {
-                Timestamp::now().checked_add(jiff::SignedDuration::from_secs(60)).ok()
-            } else {
-                next
-            };
-            (ended, next)
-        };
+        let (ended, next) = hub
+            .blocking(|hub| {
+                let mut store = hub.edit_store();
+                let ended = !hub.moving.frozen()
+                    && end_due(&mut store, Timestamp::now()).unwrap_or_else(|error| {
+                        // The deadline stands and is tried again shortly; a hub that
+                        // stopped for it would end every assistance at once.
+                        crate::hold_back::log(
+                            &hub,
+                            &ENDING,
+                            format_args!("ending assistances that ran out: {error}; trying again in a minute"),
+                        );
+                        false
+                    });
+                let next = store.book.directory.assists.iter().filter_map(|assist| assist.until).min();
+                // One that could not be ended is due still: looked at again in a minute.
+                let next = if next.is_some_and(|next| next <= Timestamp::now()) {
+                    Timestamp::now().checked_add(jiff::SignedDuration::from_secs(60)).ok()
+                } else {
+                    next
+                };
+                drop(store);
+                if ended {
+                    hub.changed();
+                }
+                (ended, next)
+            })
+            .await;
         hub.next_assist_end.0.store(next.map_or(i64::MAX, |next| next.as_second()), Ordering::Relaxed);
-        if ended {
-            hub.changed();
-        }
+        let _ = ended;
         match next {
             Some(next) => {
                 let wait = next.duration_since(Timestamp::now()).as_secs_f64().max(0.0);

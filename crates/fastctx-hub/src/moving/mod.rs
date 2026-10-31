@@ -284,7 +284,7 @@ pub(crate) fn clear(dir: &Path, why: &str) -> io::Result<()> {
 /// moved, whose members keep what they logged in with. Otherwise the hub's
 /// own addresses, after the loopback one for the machine it runs on, and
 /// the old places still forwarding, for members that cannot reach it yet.
-pub(crate) fn addresses_for(store: &crate::store::Store, me: &MachineName) -> Vec<SocketAddr> {
+pub(crate) fn addresses_for(store: &crate::store::Snapshot, me: &MachineName) -> Vec<SocketAddr> {
     let Some(latest) = store.moves.last() else { return Vec::new() };
     let mut addresses = Vec::new();
     let listen = store.hub.listen;
@@ -420,7 +420,8 @@ impl Moving {
         if !hub.moving.settled(tokio::time::Instant::now() + SETTLING).await {
             return Err(format!("what the hub took was not done within {} s of it stopping", SETTLING.as_secs()));
         }
-        hub.store().save_letters_now().map_err(|error| format!("recording where the letters stand: {error}"))?;
+        hub.flush_catalog().await.map_err(|error| format!("settling the catalog: {error}"))?;
+        hub.post.flush().await.map_err(|error| format!("recording where the letters stand: {error}"))?;
         crate::updates::flush(hub).await
     }
 

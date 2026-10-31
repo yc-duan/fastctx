@@ -26,6 +26,7 @@
 mod account_records;
 mod afoot;
 mod assists;
+mod catalog;
 mod control;
 mod data;
 mod direct;
@@ -37,16 +38,22 @@ mod history_projection;
 mod hold_back;
 mod hub_machine;
 mod ledger;
+mod locks;
 mod log;
 mod login;
 mod machine_log;
 mod mailbox;
 mod manage;
+mod measure;
 mod moving;
+mod network;
+mod origin;
 mod outq;
 mod owned_records;
 mod plan_calls;
 mod plan_copies;
+mod post;
+mod presence;
 mod project_deletions;
 mod project_entry;
 mod question_parts;
@@ -62,13 +69,17 @@ pub mod third;
 mod updates;
 mod upgrade;
 mod views;
+mod watchdog;
+mod worked;
 
+use crate::locks::{Guard as MutexGuard, Mutex};
+use fastctx_platform::doing::Rank;
 use std::collections::HashMap;
 use std::io;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, MutexGuard};
 
 use fastctx_net::directory::{Account, View};
 use fastctx_net::ids::CertPin;
@@ -220,14 +231,17 @@ pub type RemoveService = dyn Fn(&Path) -> Result<String, String> + Send + Sync;
 /// there to take over.
 pub fn arriving(dir: &Path) -> io::Result<Option<(fastctx_net::ids::HubId, String)>> {
     let Some(arriving) = moving::standby::arriving_in(dir)? else { return Ok(None) };
-    let hub: HubFile = store::read(&Store::hub_file(dir))?;
+    let hub: HubFile = store::read(&crate::store::Store::hub_file(dir))?;
     Ok(Some((hub.id, arriving.id)))
 }
 
 /// What every connection shares.
 pub(crate) struct Hub {
     releases: Arc<releases::Releases>,
-    store: Mutex<Store>,
+    catalog: catalog::Catalog,
+    post: Arc<post::Post>,
+    this: std::sync::OnceLock<std::sync::Weak<Hub>>,
+    network: tokio::runtime::Handle,
     secrets: HubSecrets,
     /// The pin of the hub's certificate, written into tokens.
     pin: CertPin,
@@ -252,7 +266,7 @@ pub(crate) struct Hub {
     assists_changed: tokio::sync::Notify,
     next_assist_end: assists::NextEnd,
     /// What is afoot on each machine, taken after `sessions` and `store`.
-    afoots: Mutex<afoot::Afoots>,
+    afoots: afoot::Afoots,
     /// The network's versions and the packages kept here, taken after
     /// `sessions` and `store`.
     updates: Mutex<updates::Updates>,
@@ -269,21 +283,24 @@ pub(crate) struct Hub {
     presence: AtomicU64,
     /// Held while a change in who is online is counted, looked at and
     /// queued, so that of two at once the later counted is queued later.
-    presenting: Mutex<()>,
+    pending_presence: Mutex<HashMap<MachineName, u64>>,
+    presence_pending: Arc<tokio::sync::Notify>,
     /// The directory's index for telling who is online (`Hub::index_of`).
-    presence_index: Mutex<Option<(u64, Arc<fastctx_net::directory_index::Index>)>>,
     /// What the hub counts for its health (`health`).
     health: health::Health,
+    watch: watchdog::Health,
+    diagnostic_dir: PathBuf,
     account_records: account_records::Records,
 }
 
 /// The view a session that reads what changes in its view was last given
 /// (`fastctx_net::view_delta`), numbered among those it was given.
+#[derive(Clone)]
 pub(crate) struct Given {
     generation: u64,
     view: Arc<View>,
     /// When it read the directory (`store::Store::view_reads`).
-    read: u64,
+    read: (u64, u64),
 }
 
 /// The most bytes a change to a view takes in one frame; a larger one is
@@ -337,16 +354,35 @@ pub(crate) enum Out {
 }
 
 impl Hub {
-    fn store(&self) -> MutexGuard<'_, Store> {
-        self.store.lock().expect("never poisoned")
+    async fn blocking<T: Send + 'static>(&self, work: impl FnOnce(Arc<Hub>) -> T + Send + 'static) -> T {
+        let hub = self.this.get().and_then(std::sync::Weak::upgrade).expect("hub running");
+        match tokio::task::spawn_blocking(move || work(hub)).await {
+            Ok(value) => value,
+            Err(error) => std::panic::resume_unwind(error.into_panic()),
+        }
+    }
+
+    async fn changed_async(&self) {
+        self.blocking(|hub| hub.changed()).await;
+    }
+
+    /// Waits for catalog edits admitted before this barrier and their database
+    /// writes. Freeze callers stop admission before awaiting this boundary.
+    async fn flush_catalog(&self) -> io::Result<()> {
+        self.blocking(|hub| drop(hub.edit_store())).await;
+        self.store().shelf.0.write(0, |_| Ok(())).await.map_err(store::shelf::other)
+    }
+
+    fn store(&self) -> Arc<store::Snapshot> {
+        self.catalog.read()
+    }
+
+    fn edit_store(&self) -> catalog::Editing {
+        self.catalog.edit()
     }
 
     fn sessions(&self) -> MutexGuard<'_, HashMap<MachineName, Session>> {
         self.sessions.lock().expect("never poisoned")
-    }
-
-    fn afoots(&self) -> MutexGuard<'_, afoot::Afoots> {
-        self.afoots.lock().expect("never poisoned")
     }
 
     fn next(&self) -> u64 {
@@ -368,7 +404,7 @@ impl Hub {
             return Err(Refusal::Broken { reason: "the proof of the machine's key does not verify".to_string() });
         }
         let store = self.store();
-        if let Some(member) = store.book.directory.by_key(key) {
+        if let Some(member) = store.indexed().by_key(key) {
             return Ok(member.name.clone());
         }
         Err(match store.book.removed.iter().rev().find(|removed| removed.key == *key) {
@@ -384,19 +420,21 @@ impl Hub {
     }
 
     /// `name`'s view of the directory now.
-    fn view_for(&self, name: &MachineName) -> Result<View, String> {
+    fn view_for(&self, name: &MachineName, key: PublicKey, generation: u64) -> Result<View, String> {
         // Counted before who is online is read: a change after that is told
         // past the view, and told again if the view holds it already.
         let rev = self.presence.load(Ordering::SeqCst);
-        let presence = self.online();
         let trial = self.trial_of(name);
         let (mut view, read) = {
             let store = self.store();
-            let read = store.view_reads.fetch_add(1, Ordering::SeqCst) + 1;
-            (views::view_for(self, &store, &presence, name, trial)?, read)
+            let read = (store.sequence, store.view_reads.fetch_add(1, Ordering::SeqCst) + 1);
+            if store.indexed().member(name).is_none_or(|member| member.key != key) {
+                return Err("the member was replaced".into());
+            }
+            (views::view_for(self, &store, self, name, trial)?, read)
         };
         view.presence = rev;
-        self.give(name, &mut view, read);
+        self.give(name, generation, &mut view, read);
         Ok(view)
     }
 
@@ -404,28 +442,35 @@ impl Hub {
     /// change to it is made against, when `name`'s session reads changes.
     /// One read before what the session was last given is given that
     /// instead: a view made earlier is never numbered past a later one.
-    fn give(&self, name: &MachineName, view: &mut View, read: u64) {
-        let Some(generation) =
-            self.sessions().get(name).filter(|session| session.view_deltas).map(|session| session.generation)
-        else {
+    fn give(&self, name: &MachineName, generation: u64, view: &mut View, read: (u64, u64)) {
+        let mut copy = view.clone();
+        let sessions = self.sessions();
+        if !sessions.get(name).is_some_and(|session| session.view_deltas && session.generation == generation) {
             return;
-        };
+        }
         let mut given = self.given.lock().expect("never poisoned");
         let before = given.get(name).filter(|given| given.generation == generation);
-        if let Some(later) = before.filter(|given| given.read > read) {
-            *view = View::clone(&later.view);
+        if let Some(later) = before.filter(|given| given.read > read).map(|given| given.view.clone()) {
+            drop(given);
+            drop(sessions);
+            *view = View::clone(&later);
             return;
         }
         view.revision = before.map_or(1, |given| given.view.revision + 1);
-        given.insert(name.clone(), Given { generation, view: Arc::new(view.clone()), read });
+        copy.revision = view.revision;
+        let before = given.insert(name.clone(), Given { generation, view: Arc::new(copy), read });
+        drop(given);
+        drop(sessions);
+        drop(before);
     }
 
     /// `name`'s session `generation` ended: what it was given goes with it.
     pub(crate) fn forget_view(&self, name: &MachineName, generation: u64) {
         let mut given = self.given.lock().expect("never poisoned");
-        if given.get(name).is_some_and(|given| given.generation == generation) {
-            given.remove(name);
-        }
+        let before =
+            if given.get(name).is_some_and(|given| given.generation == generation) { given.remove(name) } else { None };
+        drop(given);
+        drop(before);
     }
 
     /// The directory changed: each session that reads what changes in its
@@ -433,22 +478,25 @@ impl Hub {
     /// one whose view did not change is sent nothing, and one never given
     /// a whole view, or whose change is too large for a frame, is told to
     /// ask for it.
-    fn push_views(&self, sessions: Vec<(MachineName, u64, outq::Outq)>) {
-        let online = self.online();
-        let trials: Vec<_> = sessions.iter().map(|(name, _, _)| self.trial_of(name)).collect();
-        let (views, read): (Vec<Result<View, String>>, u64) = {
+    fn push_views(&self, sessions: Vec<(MachineName, PublicKey, u64, outq::Outq)>) {
+        let trials: Vec<_> = sessions.iter().map(|(name, _, _, _)| self.trial_of(name)).collect();
+        let (views, read): (Vec<Result<View, String>>, (u64, u64)) = {
             let store = self.store();
-            let read = store.view_reads.fetch_add(1, Ordering::SeqCst) + 1;
-            let index = fastctx_net::directory_index::Index::new(&store.book.directory);
-            let indexed = fastctx_net::directory_index::Indexed::new(&store.book.directory, &index);
+            let read = (store.sequence, store.view_reads.fetch_add(1, Ordering::SeqCst) + 1);
+            let indexed = store.indexed();
             let views = sessions
                 .iter()
                 .zip(trials)
-                .map(|((name, _, _), trial)| views::view_for_in(self, &store, &indexed, &online, name, trial))
+                .map(|((name, key, _, _), trial)| {
+                    if indexed.member(name).is_none_or(|member| member.key != *key) {
+                        return Err("the member was replaced".into());
+                    }
+                    views::view_for_in(self, &store, &indexed, self, name, trial)
+                })
                 .collect();
             (views, read)
         };
-        for ((name, generation, out), view) in sessions.into_iter().zip(views) {
+        for ((name, _, generation, out), view) in sessions.into_iter().zip(views) {
             let mut view = match view {
                 Ok(view) => view,
                 Err(error) => {
@@ -457,9 +505,14 @@ impl Hub {
                     continue;
                 }
             };
-            let mut given = self.given.lock().expect("never poisoned");
-            let Some(before) = given.get(&name).filter(|given| given.generation == generation) else {
-                drop(given);
+            let before = self
+                .given
+                .lock()
+                .expect("never poisoned")
+                .get(&name)
+                .filter(|given| given.generation == generation)
+                .cloned();
+            let Some(before) = before else {
                 let _ = out.send(Out::Frame(Down::DirectoryChanged));
                 continue;
             };
@@ -476,7 +529,16 @@ impl Hub {
             view.revision = base + 1;
             let delta = fastctx_net::view_delta::between(&before.view, &view, base, base + 1);
             let frame = match delta {
-                Ok(None) => continue,
+                Ok(None) => {
+                    let mut given = self.given.lock().expect("never poisoned");
+                    if let Some(current) = given
+                        .get_mut(&name)
+                        .filter(|current| current.generation == generation && current.read == before.read)
+                    {
+                        current.read = read;
+                    }
+                    continue;
+                }
                 Ok(Some(delta)) => Down::View { delta: Box::new(delta) },
                 Err(error) => {
                     self.log.line(format_args!("making what changed in {name}'s view: {error}"));
@@ -488,35 +550,21 @@ impl Hub {
                 let _ = out.send(Out::Frame(Down::DirectoryChanged));
                 continue;
             }
-            given.insert(name, Given { generation, view: Arc::new(view), read });
+            {
+                let mut given = self.given.lock().expect("never poisoned");
+                if !given.get(&name).is_some_and(|current| {
+                    current.generation == generation && current.read == before.read && current.view.revision == base
+                }) {
+                    continue;
+                }
+                given.insert(name, Given { generation, view: Arc::new(view), read });
+            }
             let _ = out.send(Out::Frame(frame));
         }
     }
 
-    /// Who is connected, and how, as the hub sees it now.
-    fn online(&self) -> HashMap<MachineName, views::Presence> {
-        self.sessions().iter().map(|(name, session)| (name.clone(), presence_of(session))).collect()
-    }
-
-    /// How `name` alone is connected now, when it is.
-    fn online_one(&self, name: &MachineName) -> HashMap<MachineName, views::Presence> {
-        self.sessions().get(name).map(|session| (name.clone(), presence_of(session))).into_iter().collect()
-    }
-
-    /// The index of the directory as last kept, made again only once it is
-    /// kept or changed, as `afoot` keeps its copy: who is online changes
-    /// many times a second in a network of thousands, the directory seldom.
-    fn index_of(&self, store: &store::Store) -> Arc<fastctx_net::directory_index::Index> {
-        let saves = store.book_saves.load(Ordering::SeqCst);
-        let mut kept = self.presence_index.lock().expect("never poisoned");
-        match &*kept {
-            Some((at, index)) if *at == saves => index.clone(),
-            _ => {
-                let index = Arc::new(fastctx_net::directory_index::Index::new(&store.book.directory));
-                *kept = Some((saves, index.clone()));
-                index
-            }
-        }
+    fn index_of(&self, store: &store::Snapshot) -> Arc<fastctx_net::directory_index::Index> {
+        store.index.clone()
     }
 
     /// Resolves once `name`'s session ends, at once when it has none.
@@ -533,47 +581,46 @@ impl Hub {
     /// no call or transfer is cut; a session just come is told what is
     /// afoot.
     fn present(&self, name: &MachineName) {
-        let mut older = false;
-        {
-            // A change counted later is looked at later and queued later: a
-            // reader is never told an older state past a newer one.
-            let _presenting = self.presenting.lock().expect("never poisoned");
-            let rev = self.presence.fetch_add(1, Ordering::SeqCst) + 1;
-            // What each reader is told is of `name` alone.
-            let online = self.online_one(name);
-            let readers: Vec<(MachineName, outq::Outq, bool)> = self
+        let _timing = self.health.presence_queue.time();
+        let rev = self.presence.fetch_add(1, Ordering::SeqCst) + 1;
+        self.pending_presence
+            .lock()
+            .expect("presence changes")
+            .entry(name.clone())
+            .and_modify(|pending| *pending = (*pending).max(rev))
+            .or_insert(rev);
+        self.presence_pending.notify_one();
+    }
+
+    fn publish_presence(&self, name: &MachineName, rev: u64) {
+        let _timing = self.health.presence.time();
+        let store = self.store();
+        let indexed = store.indexed();
+        for reader in store.audience.readers(&indexed, name) {
+            if reader == *name {
+                continue;
+            }
+            let Some(member) = indexed.member(&reader) else { continue };
+            let session = self
                 .sessions()
-                .iter()
-                .map(|(reader, session)| (reader.clone(), session.out.clone(), session.presence))
-                .collect();
-            let store = self.store();
-            let index = self.index_of(&store);
-            let indexed = fastctx_net::directory_index::Indexed::new(&store.book.directory, &index);
-            for (reader, out, reads) in readers {
-                if !reads {
-                    older = true;
-                } else if reader != *name
-                    && let Some(presence) = views::presence_for(&store, &indexed, &online, &reader, name)
-                {
-                    let _ = out.send(Out::Frame(Down::Presence { machine: name.clone(), presence, rev }));
-                }
+                .get(&reader)
+                .filter(|session| session.key == member.key)
+                .map(|session| (session.out.clone(), session.presence));
+            let Some((out, reads)) = session else { continue };
+            if !reads {
+                self.presence_changed.notify_one();
+                continue;
+            }
+            if let Some(presence) = views::presence_for(&store, &indexed, self, &reader, name) {
+                let _ = out.send(Out::Frame(Down::Presence { machine: name.clone(), presence, rev }));
             }
         }
-        if older {
-            self.presence_changed.notify_one();
-        }
-        self.machine_log_changed.notify_one();
-        self.assists_changed.notify_one();
-        moving::follow::settle(self);
-        forget::prune(self);
-        afoot::came(self);
     }
 
     /// The directory changed, or who is online did: every member is told to
     /// look again, and what lost the standing it was allowed under ends.
     fn changed(&self) {
         afoot::directory_changed(self);
-        *self.presence_index.lock().expect("never poisoned") = None;
         self.account_records.settle(&self.store().book.directory);
         updates::directory_changed(self);
         self.machine_log_changed.notify_one();
@@ -608,26 +655,24 @@ async fn tell_directory(
             () = present.notified() => false,
         };
         let Some(hub) = hub.upgrade() else { return };
-        let mut outs: Vec<outq::Outq> = Vec::new();
-        let mut changes = Vec::new();
-        for (name, session) in hub.sessions().iter() {
-            if every && session.view_deltas {
-                changes.push((name.clone(), session.generation, session.out.clone()));
-            } else if every || !session.presence {
-                outs.push(session.out.clone());
+        hub.blocking(move |hub| {
+            let mut outs: Vec<outq::Outq> = Vec::new();
+            let mut changes = Vec::new();
+            for (name, session) in hub.sessions().iter() {
+                if every && session.view_deltas {
+                    changes.push((name.clone(), session.key, session.generation, session.out.clone()));
+                } else if every || !session.presence {
+                    outs.push(session.out.clone());
+                }
             }
-        }
-        for out in outs {
-            let _ = out.send(Out::Frame(Down::DirectoryChanged));
-        }
-        if !changes.is_empty() {
-            // Making every view takes a while on a large hub; the runtime's
-            // other work goes on meanwhile.
-            let pushing = hub.clone();
-            if let Err(error) = tokio::task::spawn_blocking(move || pushing.push_views(changes)).await {
-                hub.log.line(format_args!("telling members what changed in their views: {error}"));
+            for out in outs {
+                let _ = out.send(Out::Frame(Down::DirectoryChanged));
             }
-        }
+            if !changes.is_empty() {
+                hub.push_views(changes);
+            }
+        })
+        .await;
         drop(hub);
         tokio::time::sleep(DIRECTORY_SPACING).await;
     }
@@ -666,10 +711,11 @@ pub(crate) async fn bind(kept: Option<Kept>, listen: SocketAddr) -> anyhow::Resu
 /// standing by for a move here, or forwarding after a move away.
 pub async fn serve(dir: &Path, leave: Leave) -> anyhow::Result<()> {
     let log = Arc::new(log::Log::open(&dir.join("hub.log"))?);
+    let network = network::Network::new()?;
     let mut kept = None;
     loop {
         let next = match moving::mode(dir)? {
-            moving::Mode::Serving => serving(dir, kept.take(), log.clone()).await?,
+            moving::Mode::Serving => serving(dir, kept.take(), log.clone(), network.handle()).await?,
             moving::Mode::Standby(arriving) => {
                 moving::standby::run(dir, kept.take(), arriving, log.clone(), &leave).await?
             }
@@ -689,7 +735,12 @@ pub async fn serve(dir: &Path, leave: Leave) -> anyhow::Result<()> {
     }
 }
 
-async fn serving(dir: &Path, kept: Option<Kept>, log: Arc<log::Log>) -> anyhow::Result<Next> {
+async fn serving(
+    dir: &Path,
+    kept: Option<Kept>,
+    log: Arc<log::Log>,
+    network: tokio::runtime::Handle,
+) -> anyhow::Result<Next> {
     let mut store = Store::open(dir)?;
     // An assistance whose deadline passed while the hub was stopped is
     // ended before any member is heard.
@@ -730,48 +781,56 @@ async fn serving(dir: &Path, kept: Option<Kept>, log: Arc<log::Log>) -> anyhow::
     let driven = store.outgoing.as_ref().is_some_and(|outgoing| {
         outgoing.pending() || (outgoing.stage == fastctx_types::hub_move::MoveStage::Cancelled && outgoing.prepared)
     });
+    let post = store.enable_runtime()?;
     let (switched, mut switch) = tokio::sync::oneshot::channel();
     let hub = Arc::new(Hub {
         releases: Arc::new(releases::Releases::new(dir, certificate.certificate.clone())?),
-        store: Mutex::new(store),
+        catalog: catalog::Catalog::new(store)?,
+        post,
+        this: std::sync::OnceLock::new(),
+        network,
         secrets,
         pin: certificate.pin(),
-        sessions: Mutex::new(HashMap::new()),
-        given: Mutex::new(HashMap::new()),
-        trials: Mutex::new(direct::Trials::default()),
-        calls: Mutex::new(control::InFlight::default()),
-        data: Mutex::new(data::Pairing::default()),
-        ledgers: Mutex::new(ledgers),
-        limits: Mutex::new(login::Limits::default()),
+        sessions: Mutex::new("hub sessions", Rank::RECORDS, HashMap::new()),
+        given: Mutex::new("hub given", Rank::WRITE_FACTS, HashMap::new()),
+        trials: Mutex::new("hub trials", Rank::COPYING, direct::Trials::default()),
+        calls: Mutex::new("hub calls", Rank::EMITTING, control::InFlight::default()),
+        data: Mutex::new("hub data", Rank::WRITING, data::Pairing::default()),
+        ledgers: Mutex::new("hub ledgers", Rank::WRITE_FACTS, ledgers),
+        limits: Mutex::new("hub limits", Rank::DRAINING, login::Limits::default()),
         next: AtomicU64::new(0),
         log,
         machine_log_changed: tokio::sync::Notify::new(),
         moving: moving::Moving::new(switched),
         assists_changed: tokio::sync::Notify::new(),
         next_assist_end: assists::NextEnd::default(),
-        afoots: Mutex::new(afoot::Afoots::default()),
-        updates: Mutex::new(updates),
+        afoots: afoot::Afoots::default(),
+        updates: Mutex::new("hub updates", Rank::WRITE_FACTS, updates),
         dissolution: tokio::sync::Notify::new(),
         directory_changed: Arc::new(tokio::sync::Notify::new()),
         presence_changed: Arc::new(tokio::sync::Notify::new()),
         presence: AtomicU64::new(0),
-        presenting: Mutex::new(()),
-        presence_index: Mutex::new(None),
+        pending_presence: Mutex::new("hub presence", Rank::DRAINING, Default::default()),
+        presence_pending: Arc::new(tokio::sync::Notify::new()),
         health: health::Health::default(),
+        watch: watchdog::Health::default(),
+        diagnostic_dir: dir.to_path_buf(),
         account_records,
     });
-    if let Err(error) = hub_machine::settle(&hub) {
+    let _ = hub.this.set(Arc::downgrade(&hub));
+    hub.post.attach(Arc::downgrade(&hub));
+    let _watchdog = watchdog::Watchdog::start(&hub)?;
+    if let Err(error) = hub.blocking(|hub| hub_machine::settle(&hub)).await {
         hub.log.line(format_args!("revoking shares of the hub machine: {error}"));
     }
     tokio::spawn(health::keep(Arc::downgrade(&hub)));
     tokio::spawn(data::expire(Arc::downgrade(&hub)));
     tokio::spawn(expiry::settle(Arc::downgrade(&hub)));
     tokio::spawn(updates::look_every(Arc::downgrade(&hub)));
+    tokio::spawn(presence::run(Arc::downgrade(&hub), hub.presence_pending.clone()));
     tokio::spawn(tell_directory(Arc::downgrade(&hub), hub.directory_changed.clone(), hub.presence_changed.clone()));
     updates::start(&hub);
     afoot::start(&hub);
-    let letters_changed = hub.store().letters_changed.clone();
-    tokio::spawn(mailbox::keep_records(Arc::downgrade(&hub), letters_changed));
     if driven {
         moving::out::drive(&hub);
     }
@@ -779,9 +838,15 @@ async fn serving(dir: &Path, kept: Option<Kept>, log: Arc<log::Log>) -> anyhow::
     tokio::pin!(settled);
     let replaced = renewal::replaced();
     tokio::pin!(replaced);
+    // These workers enqueue durable work before awaiting it. Recreating them
+    // on every accept would abandon their waits and duplicate that work.
+    let expiring_log = machine_log::expire(&hub);
+    let expiring_assists = assists::expire(&hub);
+    let stopping = shutdown_signal();
+    tokio::pin!(expiring_log, expiring_assists, stopping);
     let switched = loop {
         tokio::select! {
-            accepted = kept.listener.accept() => match accepted {
+            accepted = network::accept(&hub.network, &kept.listener) => match accepted {
                 Ok((tcp, peer)) => {
                     fastctx_net::dial::configure(&tcp);
                     let host = releases::http::Host::Hub(hub.clone());
@@ -793,13 +858,13 @@ async fn serving(dir: &Path, kept: Option<Kept>, log: Arc<log::Log>) -> anyhow::
                     tokio::time::sleep(std::time::Duration::from_secs(1)).await;
                 }
             },
-            () = shutdown_signal() => break false,
+            () = &mut stopping => break false,
             version = &mut replaced => {
                 hub.log.line(format_args!("the program this hub runs from is {version} now: stopping for its service to start it on that"));
                 break false;
             }
-            expired = machine_log::expire(&hub) => expired?,
-            ended = assists::expire(&hub) => ended?,
+            expired = &mut expiring_log => expired?,
+            ended = &mut expiring_assists => ended?,
             Ok(()) = &mut switch => break true,
             why = &mut settled => {
                 hub.log.line(format_args!("{why}: the hub retires"));
@@ -809,6 +874,7 @@ async fn serving(dir: &Path, kept: Option<Kept>, log: Arc<log::Log>) -> anyhow::
                 if !hub.moving.settled(deadline).await {
                     anyhow::bail!("retirement did not finish: persistent work is still under way after {} s", SILENCE.as_secs());
                 }
+                hub.flush_catalog().await?;
                 return Ok(Next::Retire(why));
             }
         }
@@ -817,7 +883,8 @@ async fn serving(dir: &Path, kept: Option<Kept>, log: Arc<log::Log>) -> anyhow::
         // The hub moved away: every connection still open here ends, and the
         // old place forwards on the same port.
         hub.moving.stop();
-        keep_letters_now(&hub);
+        hub.flush_catalog().await?;
+        hub.post.flush().await.map_err(anyhow::Error::msg)?;
         return Ok(Next::Again(Some(kept)));
     }
     hub.moving.stop_taking();
@@ -835,17 +902,10 @@ async fn serving(dir: &Path, kept: Option<Kept>, log: Arc<log::Log>) -> anyhow::
     if !hub.moving.settled(deadline).await {
         anyhow::bail!("shutdown did not finish: persistent work is still under way after {} s", SILENCE.as_secs());
     }
-    hub.store().save_letters_now()?;
+    hub.flush_catalog().await?;
+    hub.post.flush().await.map_err(anyhow::Error::msg)?;
     updates::flush(&hub).await.map_err(anyhow::Error::msg)?;
     Ok(Next::Stop)
-}
-
-/// Keeps the records of where the letters stand as they are, as the hub
-/// stops: their writer may not have caught up with the last changes.
-fn keep_letters_now(hub: &Hub) {
-    if let Err(error) = hub.store().save_letters_now() {
-        hub.log.line(format_args!("recording where the letters stand: {error}"));
-    }
 }
 
 pub(crate) async fn shutdown_signal() {

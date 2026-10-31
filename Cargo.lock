@@ -1426,6 +1426,7 @@ name = "fastctx-hub"
 version = "1.0.1-beta.13"
 dependencies = [
  "anyhow",
+ "arc-swap",
  "bytes",
  "fastctx-client",
  "fastctx-net",

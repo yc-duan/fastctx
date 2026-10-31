@@ -30,7 +30,7 @@ use crate::{Hub, Out};
 /// removed itself hears that it did.
 pub(crate) fn change(
     hub: &Hub,
-    asker: &MachineName,
+    asker: &crate::origin::Origin,
     account: &AccountName,
     change: Change,
 ) -> (Result<Told, String>, Vec<(MachineName, Refusal)>) {
@@ -76,14 +76,15 @@ pub(crate) fn end(hub: &Hub, ended: Vec<(MachineName, Refusal)>) {
 
 fn made(
     hub: &Hub,
-    asker: &MachineName,
+    asker: &crate::origin::Origin,
     account: &AccountName,
     change: Change,
     ended: &mut Vec<(MachineName, Refusal)>,
     renaming: bool,
 ) -> Result<Told, String> {
     {
-        let mut store = hub.store();
+        let mut store = hub.edit_store();
+        asker.check(&store.book.directory)?;
         // An assistance past its deadline is ended first, as the hub's own
         // doing, so no change is made over it: letting that login assist
         // again is a new assistance, which the account uses again before
@@ -93,7 +94,8 @@ fn made(
         let before = store.book.clone();
         let action = crate::machine_log::action(&change, &before, &store.hub.updates);
         let authenticated = may_change(&before.directory, &change, asker, account);
-        let actor = Actor { account: Some(account.clone()), authenticated, member: Some(asker.clone()), peer: None };
+        let actor =
+            Actor { account: Some(account.clone()), authenticated, member: Some(asker.name.clone()), peer: None };
         let before_hub = store.hub.clone();
         let result = (|| {
             let directory = &before.directory;
@@ -693,6 +695,7 @@ fn apply(
                     "an update batch needs an identifier of at most 64 letters, digits, hyphens or underscores".into(),
                 );
             }
+            let directory = directory.clone();
             store.hub.due.retain(|kept| {
                 let replaces = kept.key == key && (version.is_some() || batch.is_none() || kept.batch == batch);
                 !replaces && directory.by_key(&kept.key).is_some()
@@ -993,7 +996,7 @@ fn rename(
         return Err(reason);
     }
     let old = member.name.clone();
-    if !store.letters.get(&old).is_some_and(|letters| letters.renames) {
+    if !store.metadata().letters.get(&old).is_some_and(|letters| letters.renames) {
         return Err(format!(
             "{old} has not connected with a release of fastctx that takes a new name; update fastctx there and let it connect first"
         ));
@@ -1118,7 +1121,7 @@ fn remove_member(
 /// uninstalls once it is off, nor the machine that runs this hub.
 fn may_uninstall(
     hub: &Hub,
-    store: &Store,
+    store: &crate::store::Snapshot,
     member: &fastctx_net::directory::Member,
     account: &AccountName,
     super_: bool,
@@ -1144,7 +1147,7 @@ fn may_uninstall(
 /// the uninstall it was asked: kept on its removal, and in the machine log
 /// once for each thing it says.
 pub(crate) fn left(hub: &Hub, key: &PublicKey, left: &str) {
-    let mut store = hub.store();
+    let mut store = hub.edit_store();
     let Some(removed) = store.book.removed.iter_mut().rev().find(|removed| removed.key == *key).map(Arc::make_mut)
     else {
         return;

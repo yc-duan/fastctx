@@ -4,7 +4,7 @@
 //! told at once however many there are (`world-concurrency.md`, 规矩不随
 //! 规模变坏).
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::LazyLock;
 
 use fastctx_types::{AccountName, MachineName};
@@ -14,6 +14,7 @@ use super::Pending;
 #[derive(Default)]
 pub(crate) struct InFlight {
     calls: HashMap<u64, Pending>,
+    sessions: HashMap<(MachineName, u64), HashSet<u64>>,
     members: HashMap<MachineName, usize>,
     accounts: HashMap<AccountName, usize>,
     /// The hub's key of a call by its caller, the caller's session and the
@@ -51,6 +52,8 @@ impl InFlight {
         *self.members.entry(pending.caller.clone()).or_default() += 1;
         *self.accounts.entry(pending.standing.account.clone()).or_default() += 1;
         self.asked.insert((pending.caller.clone(), pending.caller_generation, pending.id), key);
+        self.sessions.entry((pending.caller.clone(), pending.caller_generation)).or_default().insert(key);
+        self.sessions.entry((pending.target.clone(), pending.target_generation)).or_default().insert(key);
         self.calls.insert(key, pending);
     }
 
@@ -61,6 +64,16 @@ impl InFlight {
     }
 
     fn forget(&mut self, key: u64, pending: &Pending) {
+        for session in
+            [(pending.caller.clone(), pending.caller_generation), (pending.target.clone(), pending.target_generation)]
+        {
+            if let Some(keys) = self.sessions.get_mut(&session) {
+                keys.remove(&key);
+                if keys.is_empty() {
+                    self.sessions.remove(&session);
+                }
+            }
+        }
         less(&mut self.members, &pending.caller);
         less(&mut self.accounts, &pending.standing.account);
         let asked = (pending.caller.clone(), pending.caller_generation, pending.id);
@@ -87,6 +100,10 @@ impl InFlight {
 
     /// The hub's key of the call `id` that `caller` made in its session
     /// `generation`.
+    pub(crate) fn in_session(&self, member: &MachineName, generation: u64) -> Vec<u64> {
+        self.sessions.get(&(member.clone(), generation)).into_iter().flatten().copied().collect()
+    }
+
     pub(crate) fn asked_by(&self, caller: &MachineName, generation: u64, id: u64) -> Option<u64> {
         self.asked.get(&(caller.clone(), generation, id)).copied()
     }

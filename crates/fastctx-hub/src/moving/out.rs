@@ -122,7 +122,7 @@ async fn run(hub: &Arc<Hub>) {
                     hub.log.line(format_args!("the move {} to {}: {reason}", record.id, record.to));
                     said.insert(record.id.clone(), reason.clone());
                 }
-                noted(hub, &record.id, if quiet { None } else { Some(reason) });
+                noted(hub, &record.id, if quiet { None } else { Some(reason) }).await;
             }
             None => {}
         }
@@ -135,40 +135,48 @@ async fn run(hub: &Arc<Hub>) {
 }
 
 /// Records how the move stands after a try, telling those who watch it.
-fn noted(hub: &Hub, id: &str, error: Option<String>) {
-    let changed = {
-        let mut store = hub.store();
-        let Some(outgoing) = store.outgoing.as_mut().filter(|outgoing| outgoing.id == id) else { return };
-        if outgoing.error == error {
-            false
-        } else {
-            outgoing.error = error;
-            if let Err(error) = store.save_outgoing() {
-                hub.log.line(format_args!("recording the move: {error}"));
+async fn noted(hub: &Hub, id: &str, error: Option<String>) {
+    let id = id.to_owned();
+    hub.blocking(move |hub| {
+        let changed = {
+            let mut store = hub.edit_store();
+            let Some(outgoing) = store.outgoing.as_mut().filter(|outgoing| outgoing.id == id) else { return };
+            if outgoing.error == error {
+                false
+            } else {
+                outgoing.error = error;
+                if let Err(error) = store.save_outgoing() {
+                    hub.log.line(format_args!("recording the move: {error}"));
+                }
+                true
             }
-            true
+        };
+        if changed {
+            hub.changed();
         }
-    };
-    if changed {
-        hub.changed();
-    }
+    })
+    .await;
 }
 
 /// Moves the record on to `stage`, as the move gets there.
-fn reached(hub: &Hub, id: &str, stage: MoveStage) {
-    {
-        let mut store = hub.store();
-        let Some(outgoing) = store.outgoing.as_mut().filter(|outgoing| outgoing.id == id) else { return };
-        outgoing.stage = stage;
-        outgoing.error = None;
-        if stage >= MoveStage::Copying {
-            outgoing.waiting = None;
+async fn reached(hub: &Hub, id: &str, stage: MoveStage) {
+    let id = id.to_owned();
+    hub.blocking(move |hub| {
+        {
+            let mut store = hub.edit_store();
+            let Some(outgoing) = store.outgoing.as_mut().filter(|outgoing| outgoing.id == id) else { return };
+            outgoing.stage = stage;
+            outgoing.error = None;
+            if stage >= MoveStage::Copying {
+                outgoing.waiting = None;
+            }
+            if let Err(error) = store.save_outgoing() {
+                hub.log.line(format_args!("recording the move: {error}"));
+            }
         }
-        if let Err(error) = store.save_outgoing() {
-            hub.log.line(format_args!("recording the move: {error}"));
-        }
-    }
-    hub.changed();
+        hub.changed();
+    })
+    .await;
 }
 
 fn called_off(hub: &Hub, id: &str) -> bool {
@@ -213,7 +221,7 @@ async fn handover(hub: &Arc<Hub>, record: &Outgoing) -> Tried {
             if hub.moving.frozen() {
                 hub.moving.thaw();
                 hub.log.line(format_args!("the hub serves on: the switch did not finish"));
-                reached(hub, &record.id, MoveStage::Copying);
+                reached(hub, &record.id, MoveStage::Copying).await;
             }
             Tried::Failed { reason, quiet: false }
         }
@@ -223,7 +231,7 @@ async fn handover(hub: &Arc<Hub>, record: &Outgoing) -> Tried {
 async fn copy(hub: &Arc<Hub>, record: &Outgoing, socket: &mut HubSocket) -> Result<Tried, String> {
     let dir = hub.store().dir().to_path_buf();
     let theirs = holds(socket).await?;
-    reached(hub, &record.id, MoveStage::Copying);
+    reached(hub, &record.id, MoveStage::Copying).await;
     hub.log.line(format_args!("the move {}: copying the records to {}", record.id, record.to));
     let mine = listing(socket, &dir).await?;
     send_difference(socket, &dir, &mine, &theirs).await?;
@@ -235,13 +243,13 @@ async fn copy(hub: &Arc<Hub>, record: &Outgoing, socket: &mut HubSocket) -> Resu
     if called_off(hub, &record.id) {
         frames::send(socket, &ToNew::Cancel).await?;
         match frames::frame::<_, ToOld>(socket).await? {
-            ToOld::Cancelled => given_up(hub, &record.id),
+            ToOld::Cancelled => given_up(hub, &record.id).await,
             other => return Err(format!("the new place answered {other:?}")),
         }
         return Ok(Tried::Gone);
     }
 
-    reached(hub, &record.id, MoveStage::Switching);
+    reached(hub, &record.id, MoveStage::Switching).await;
     hub.log.line(format_args!("the move {}: the hub stops taking anything and hands over", record.id));
     frames::working::<_, ToNew, _>(socket, Moving::freeze(hub)).await??;
     let theirs = holds(socket).await?;
@@ -264,15 +272,18 @@ async fn copy(hub: &Arc<Hub>, record: &Outgoing, socket: &mut HubSocket) -> Resu
     }
 
     // The switch, recorded: from here this hub only forwards.
-    {
-        let mut store = hub.store();
-        let outgoing = store.outgoing.as_mut().filter(|outgoing| outgoing.id == record.id).ok_or("the move is gone")?;
+    let id = record.id.clone();
+    hub.blocking(move |hub| -> Result<(), String> {
+        let mut store = hub.edit_store();
+        let outgoing = store.outgoing.as_mut().filter(|outgoing| outgoing.id == id).ok_or("the move is gone")?;
         outgoing.switched = Some(Timestamp::now());
         outgoing.stage = MoveStage::Following;
         outgoing.old = Some(OldPlace::Forwarding);
         outgoing.error = None;
         store.save_outgoing().map_err(|error| format!("recording the switch: {error}"))?;
-    }
+        Ok(())
+    })
+    .await?;
     hub.log.line(format_args!("the move {}: {} took over; this place forwards to it", record.id, record.to));
     let confirmed = async {
         frames::send(socket, &ToNew::Confirm).await?;
@@ -391,23 +402,27 @@ async fn tell_called_off(hub: &Hub, record: &Outgoing) -> Result<(), String> {
     match told.await {
         Err(error) if !error.contains(super::NOT_ARRIVING) => Err(error),
         _ => {
-            given_up(hub, &record.id);
+            given_up(hub, &record.id).await;
             Ok(())
         }
     }
 }
 
 /// The new place of the move `id`, called off, holds nothing of it any more.
-fn given_up(hub: &Hub, id: &str) {
-    hub.log.line(format_args!("the new place gave the move {id} up"));
-    {
-        let mut store = hub.store();
-        store.called_off.retain(|untold| untold.id != id);
-        if let Err(error) = store.save_called_off() {
-            hub.log.line(format_args!("recording the move: {error}"));
+async fn given_up(hub: &Hub, id: &str) {
+    let id = id.to_owned();
+    hub.blocking(move |hub| {
+        hub.log.line(format_args!("the new place gave the move {id} up"));
+        {
+            let mut store = hub.edit_store();
+            store.called_off.retain(|untold| untold.id != id);
+            if let Err(error) = store.save_called_off() {
+                hub.log.line(format_args!("recording the move: {error}"));
+            }
         }
-    }
-    hub.changed();
+        hub.changed();
+    })
+    .await;
 }
 
 fn list(addresses: &[std::net::SocketAddr]) -> String {

@@ -37,7 +37,8 @@ pub(crate) async fn expire(hub: &std::sync::Arc<crate::Hub>) -> io::Result<()> {
                 )
                 .await
                 .map_err(io::Error::other)?;
-            crate::store::log_store::expires(&database)
+            let database = database.clone();
+            hub.blocking(move |_| crate::store::log_store::expires(&database)).await
         };
         match pass.await {
             Ok(Some(expires)) => {
@@ -362,7 +363,7 @@ impl History {
     /// recipient account, including after reconnect or the machine's removal.
     pub(crate) fn notices(
         &self,
-        directory: &Directory,
+        directory: &fastctx_net::directory_index::Indexed<'_>,
         me: &MachineName,
     ) -> io::Result<Vec<fastctx_types::sharing::Notice>> {
         let Some(member) = directory.member(me) else { return Ok(Vec::new()) };
@@ -607,10 +608,9 @@ pub(crate) fn keep(
     // An unrelated login can still remove just its login from a device. That
     // does not remove the machine and must not tell its holders that it did.
     let login_only = matches!(&action, Action::Remove { name, .. } if store.book.directory.member(name).is_some());
-    store
-        .book
-        .machine_log
-        .push(directory, &store.book.directory.accounts, actor, action, outcome)
+    let book = &mut *store.book;
+    book.machine_log
+        .push(directory, &book.directory.accounts, actor, action, outcome)
         .map_err(|error| format!("the hub could not keep the machine log: {error}"))?;
     if login_only && let Some(kept) = store.book.machine_log.records.last_mut() {
         kept.notified.clear();
@@ -659,10 +659,9 @@ pub(crate) fn effects(store: &mut Store, before: &Directory, actor: &Actor, acti
         }
     }
     for effect in effects {
-        store
-            .book
-            .machine_log
-            .push(before, &store.book.directory.accounts, actor.clone(), effect, Outcome::Done)
+        let book = &mut *store.book;
+        book.machine_log
+            .push(before, &book.directory.accounts, actor.clone(), effect, Outcome::Done)
             .map_err(|error| error.to_string())?;
     }
     Ok(())

@@ -113,7 +113,7 @@ fn ask_inner(
         ));
     }
     let tell = {
-        let mut store = hub.store();
+        let mut store = hub.edit_store();
         if ownership.as_ref().is_some_and(|owner| !crate::owned_records::allows(&store.book.directory, &actor, owner)) {
             return Err("this account no longer owns that conversation".into());
         }
@@ -206,7 +206,7 @@ fn ask_inner(
 /// What the member `member` did with the deletion `id`.
 pub(crate) fn forgot(hub: &Hub, member: &MachineName, id: u64, outcome: Forgot) {
     let (tell, ended) = {
-        let mut store = hub.store();
+        let mut store = hub.edit_store();
         let member = store.book.directory.canonical(member).clone();
         let Some(index) = store.book.forgetting.pending.iter().position(|pending| pending.forgetting.id == id) else {
             return;
@@ -293,9 +293,12 @@ pub(crate) fn opened(hub: &Hub, name: &MachineName) {
 /// Lets go of the members that left the hub: a deletion waits no longer
 /// for them, and one whose conversation's machine left ends.
 pub(crate) fn prune(hub: &Hub) {
+    if hub.store().book.forgetting.pending.is_empty() {
+        return;
+    }
     let ended = {
-        let mut store = hub.store();
-        let Store { book, .. } = &mut *store;
+        let mut store = hub.edit_store();
+        let book = &mut *store.book;
         let directory = &book.directory;
         let before = book.forgetting.pending.len();
         let mut changed = false;
@@ -322,7 +325,7 @@ pub(crate) fn prune(hub: &Hub) {
 
 /// The conversations being deleted, machine by machine: no member is told
 /// of them as afoot.
-pub(crate) fn hidden(store: &Store) -> HashMap<MachineName, BTreeSet<ResidentId>> {
+pub(crate) fn hidden(store: &crate::store::Snapshot) -> HashMap<MachineName, BTreeSet<ResidentId>> {
     let mut hidden: HashMap<MachineName, BTreeSet<ResidentId>> = HashMap::new();
     for pending in &store.book.forgetting.pending {
         let conversation = &pending.forgetting.conversation;
@@ -373,7 +376,7 @@ fn finish(hub: &Hub, store: &mut Store, index: usize) -> bool {
 
 /// Current and former asset readers, plus machines with recorded work, may
 /// need cleanup. Administrative machine access alone is not a recipient.
-fn targets(store: &Store, pending: &Pending) -> BTreeSet<MachineName> {
+fn targets(store: &crate::store::Snapshot, pending: &Pending) -> BTreeSet<MachineName> {
     let mut targets = ownership::targets(store, &pending.forgetting, pending.ownership.as_ref());
     targets.extend(pending.audience.iter().filter(|machine| store.book.directory.member(machine).is_some()).cloned());
     targets

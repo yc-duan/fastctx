@@ -3,14 +3,19 @@
 use crate::Hub;
 use fastctx_net::directory::{Directory, Member};
 use fastctx_net::wire::{Change, Told};
+use fastctx_types::AccountName;
 use fastctx_types::update::{
     ASKED_SINCE, ActionReason, Actions, Channel, FailureReason, Kind, MachineUpdate, Permission, Problem, Scheduled,
     Stage, View, ViewCall, ViewReply, release,
 };
-use fastctx_types::{AccountName, MachineName};
 use std::sync::Arc;
 
-pub(super) fn authenticate(directory: &Directory, asker: &MachineName, account: &AccountName) -> Result<(), String> {
+pub(super) fn authenticate(
+    directory: &Directory,
+    asker: &crate::origin::Origin,
+    account: &AccountName,
+) -> Result<(), String> {
+    asker.check(directory)?;
     if !directory.logged_in(asker, account) || directory.account(account).is_none_or(|a| a.locked) {
         return Err(format!("{asker} is not logged in to an unlocked account {account}"));
     }
@@ -49,7 +54,7 @@ fn actions(member: &Member, kernel: Option<&str>, online: bool, phone: bool, app
     }
 }
 
-pub(super) fn snapshot(hub: &Hub, asker: &MachineName, account: &AccountName) -> Result<View, String> {
+pub(super) fn snapshot(hub: &Hub, asker: &crate::origin::Origin, account: &AccountName) -> Result<View, String> {
     let store = hub.store();
     let directory = &store.book.directory;
     authenticate(directory, asker, account)?;
@@ -186,16 +191,21 @@ pub(super) fn snapshot(hub: &Hub, asker: &MachineName, account: &AccountName) ->
     })
 }
 
+async fn read_snapshot(hub: &Hub, asker: &crate::origin::Origin, account: &AccountName) -> Result<View, String> {
+    let (asker, account) = (asker.clone(), account.clone());
+    hub.blocking(move |hub| snapshot(&hub, &asker, &account)).await
+}
+
 pub(crate) async fn request(
     hub: &Arc<Hub>,
-    asker: &MachineName,
+    asker: &crate::origin::Origin,
     account: &AccountName,
     request: ViewCall,
 ) -> Result<Told, String> {
     if matches!(request, ViewCall::Repair { .. } | ViewCall::CancelRepair { .. } | ViewCall::RepairResult { .. }) {
         return super::repair::request(hub, asker, account, request).await;
     }
-    let mut view = snapshot(hub, asker, account)?;
+    let mut view = read_snapshot(hub, asker, account).await?;
     let needed = match &request {
         ViewCall::Release { version } | ViewCall::Schedule { version: Some(version), .. } => Some(version),
         _ => None,
@@ -207,7 +217,7 @@ pub(crate) async fn request(
         manifest_problem = read_manifest(hub, version).await.err();
         // Authority can change during IO; the refreshed snapshot and each
         // committed arrangement both check it again.
-        view = snapshot(hub, asker, account)?;
+        view = read_snapshot(hub, asker, account).await?;
     }
     let reply = match request {
         ViewCall::Repair { .. } | ViewCall::CancelRepair { .. } | ViewCall::RepairResult { .. } => {
@@ -233,7 +243,10 @@ pub(crate) async fn request(
             let mut policy = hub.store().hub.updates.clone();
             policy.minimum = minimum;
             policy.managed_auto = managed_auto;
-            let (result, ended) = crate::manage::change(hub, asker, account, Change::Updates { policy });
+            let (asker, account) = (asker.clone(), account.clone());
+            let (result, ended) = hub
+                .blocking(move |hub| crate::manage::change(&hub, &asker, &account, Change::Updates { policy }))
+                .await;
             result?;
             crate::manage::end(hub, ended);
             ViewReply::Done
@@ -305,7 +318,10 @@ pub(crate) async fn request(
             // Bound each durable transaction, not the number the user can arrange.
             for chunk in pending.chunks(64) {
                 let machines: Vec<_> = chunk.iter().map(|&at| results[at].machine.clone()).collect();
-                let committed = super::due_batch::apply(hub, asker, account, &machines, version.as_deref());
+                let (asker, account, version) = (asker.clone(), account.clone(), version.clone());
+                let committed = hub
+                    .blocking(move |hub| super::due_batch::apply(&hub, &asker, &account, &machines, version.as_deref()))
+                    .await;
                 for (&at, result) in chunk.iter().zip(committed) {
                     match result {
                         Ok(()) => results[at].done = true,
@@ -329,7 +345,7 @@ pub(crate) async fn request(
 pub(super) fn problem(hub: &Hub, version: &str, target: Option<&str>, why: Option<String>) {
     let cache = hub.updates.lock().expect("never poisoned").cache.clone();
     let available = super::inventory::held(hub, &cache);
-    let mut store = hub.store();
+    let mut store = hub.edit_store();
     // Background preparation may outlive the final moving snapshot
     // (2026-10-29); its late outcome is retried by the receiving hub.
     if hub.moving.frozen() {

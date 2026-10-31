@@ -36,7 +36,6 @@ use fastctx_types::MachineName;
 use fastctx_types::access::TownId;
 
 use crate::Hub;
-use crate::store::Store;
 
 pub(crate) mod history_requests;
 mod page_index;
@@ -123,7 +122,7 @@ impl Ledgers {
     /// kept at a time (`write`).
     fn check(
         &self,
-        store: &Store,
+        store: &crate::store::Snapshot,
         from: &MachineName,
         town: &TownId,
         prepared: &Arc<Prepared>,
@@ -135,7 +134,13 @@ impl Ledgers {
             return Err(format!("{from} acts for no account that may write in the project {}", project.name));
         }
         if let Some(account) = &prepared.account {
-            requests::authorize(directory, from, account, town, false)?;
+            requests::authorize(
+                directory,
+                &crate::origin::Origin { name: from.clone(), key: prepared.entry.key },
+                account,
+                town,
+                false,
+            )?;
         } else if prepared.mutation.is_some() || prepared.history.is_some() {
             return Err("project memory writes require an explicit account and a current client".into());
         }
@@ -367,7 +372,7 @@ pub(crate) async fn write_as(
         let folder = path.parent().expect("an entry has a folder");
         ensure_private_dir(folder).map_err(|error| PublishFailure { error, published: false }).and_then(|()| {
             publish_checked(&path, &proposed.bytes, Permissions::Private, false, || {
-                let store = publishing.store();
+                let store = publishing.edit_store();
                 publishing
                     .ledgers
                     .lock()
