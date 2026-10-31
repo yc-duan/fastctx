@@ -1022,7 +1022,7 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
         Call::TurnEvidence { resident, turn, refresh_limits } => {
             users_voice(node, peer)?;
             let evidence = crate::turn_evidence::snapshot(node, &resident, turn, refresh_limits).await?;
-            let text = crate::turn_evidence::words::render(&evidence, &node.database.path().to_string_lossy());
+            let text = crate::turn_evidence::words::render(&evidence);
             Ok(Reply::TurnEvidence { evidence: Box::new(evidence), text })
         }
         Call::CompactBetweenTurns { resident } => {

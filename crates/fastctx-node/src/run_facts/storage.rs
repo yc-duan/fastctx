@@ -282,7 +282,7 @@ fn read_calls(directory: &ConversationDir, turn: Option<&str>) -> io::Result<Vec
                 let stored = sql::load(&transaction, &conversation, &call)?.expect("call in read snapshot");
                 result.push(ObservedCall {
                     call: fastctx_types::turn_evidence::CallEvidence {
-                        source: format!("{} (call {})", database.path().display(), stored.call_id),
+                        source: format!("conversation {conversation}, call {}", stored.call_id),
                         call_id: stored.call_id,
                         script: stored.script,
                         facts: stored.facts,
