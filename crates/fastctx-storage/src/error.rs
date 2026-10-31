@@ -17,6 +17,7 @@ pub enum ErrorKind {
 pub struct Error {
     kind: ErrorKind,
     reason: Arc<str>,
+    database_damage: bool,
 }
 
 impl Error {
@@ -25,7 +26,17 @@ impl Error {
     }
 
     pub fn with_kind(kind: ErrorKind, reason: impl Into<String>) -> Self {
-        Self { kind, reason: Arc::from(reason.into()) }
+        Self { kind, reason: Arc::from(reason.into()), database_damage: false }
+    }
+
+    /// True only for SQLite physical integrity failures, never a service's
+    /// malformed record or unknown business format.
+    pub fn is_database_damage(&self) -> bool {
+        self.database_damage
+    }
+
+    pub(crate) fn damaged(reason: impl Into<String>) -> Self {
+        Self { kind: ErrorKind::Corrupt, reason: Arc::from(reason.into()), database_damage: true }
     }
 
     pub fn kind(&self) -> ErrorKind {
@@ -51,7 +62,11 @@ impl From<rusqlite::Error> for Error {
             Some(ErrorCode::ConstraintViolation | ErrorCode::TypeMismatch) => ErrorKind::Invalid,
             _ => ErrorKind::Other,
         };
-        Self::with_kind(kind, error.to_string())
+        if kind == ErrorKind::Corrupt {
+            Self::damaged(error.to_string())
+        } else {
+            Self::with_kind(kind, error.to_string())
+        }
     }
 }
 

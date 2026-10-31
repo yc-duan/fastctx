@@ -121,6 +121,9 @@ fn commit(connection: &mut Connection, queue: &Queue, metrics: &Metrics, batch: 
         let elapsed = operation.elapsed();
         metrics.write_micros.record(elapsed);
         metrics.operations.fetch_add(1, Ordering::Relaxed);
+        if elapsed > Duration::from_millis(2) {
+            metrics.writes_over_budget.fetch_add(1, Ordering::Relaxed);
+        }
         if elapsed > Duration::from_millis(20) {
             metrics.slow_operations.fetch_add(1, Ordering::Relaxed);
         }

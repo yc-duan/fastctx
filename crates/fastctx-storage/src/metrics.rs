@@ -10,6 +10,7 @@ pub(super) struct Metrics {
     pub commits: AtomicU64,
     pub failures: AtomicU64,
     pub slow_operations: AtomicU64,
+    pub writes_over_budget: AtomicU64,
     pub database_bytes: AtomicU64,
     pub wal_bytes: AtomicU64,
     pub write_micros: Histogram,
@@ -34,11 +35,15 @@ impl Histogram {
 /// below 2^n microseconds. The final bucket also contains larger observations.
 #[derive(Clone, Debug)]
 pub struct Statistics {
+    /// The database did not open; zero work counters do not indicate health.
+    pub unavailable: Option<String>,
     pub queued: usize,
     pub operations: u64,
     pub commits: u64,
     pub failures: u64,
     pub slow_operations: u64,
+    /// SQL operations exceeding the two-millisecond target, excluding FULL commit.
+    pub writes_over_budget: u64,
     pub database_bytes: u64,
     pub wal_bytes: u64,
     pub write_micros: [u64; 32],
@@ -48,11 +53,13 @@ pub struct Statistics {
 impl Metrics {
     pub fn snapshot(&self) -> Statistics {
         Statistics {
+            unavailable: None,
             queued: self.queued.load(Ordering::Relaxed),
             operations: self.operations.load(Ordering::Relaxed),
             commits: self.commits.load(Ordering::Relaxed),
             failures: self.failures.load(Ordering::Relaxed),
             slow_operations: self.slow_operations.load(Ordering::Relaxed),
+            writes_over_budget: self.writes_over_budget.load(Ordering::Relaxed),
             database_bytes: self.database_bytes.load(Ordering::Relaxed),
             wal_bytes: self.wal_bytes.load(Ordering::Relaxed),
             write_micros: self.write_micros.snapshot(),

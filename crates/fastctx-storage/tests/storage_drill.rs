@@ -30,6 +30,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     performance(root)?;
     tokio::runtime::Builder::new_current_thread().enable_all().build()?.block_on(concurrency(root))?;
     crashes(root)?;
+    corruption(root)?;
     println!("storage drill passed");
     Ok(())
 }
@@ -62,9 +63,9 @@ fn performance(root: &Path) -> Result<(), Box<dyn std::error::Error>> {
     assert!(pages[197] < Duration::from_millis(300), "first page p99 exceeded 300 ms");
     let stats = database.statistics();
     let count: u64 = stats.write_micros.iter().sum();
-    let slow: u64 = stats.write_micros.iter().skip(12).sum();
-    println!("100000 events: first page p99 {:?}; SQL operations {}, operations >=2048 us {}", pages[197], count, slow);
-    assert!(slow * 100 <= count, "more than 1% of SQL operations took >=2048 us");
+    let slow = stats.writes_over_budget;
+    println!("100000 events: first page p99 {:?}; SQL operations {}, operations >2 ms {}", pages[197], count, slow);
+    assert!(slow * 100 <= count, "more than 1% of SQL operations took >2 ms");
     let bad = database.write_now(32, |db| {
         db.execute("INSERT INTO events(id,body) VALUES(100001,'must roll back')", [])?;
         Err::<(), _>(Error::new("injected operation failure"))
@@ -230,5 +231,52 @@ fn crashes(root: &Path) -> Result<(), Box<dyn std::error::Error>> {
         assert_eq!(count, acknowledged, "lost acknowledged rows in kill round {round}");
     }
     println!("process death: 16 observed forced terminations, zero acknowledged rows lost");
+    Ok(())
+}
+
+fn corruption(root: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    let path = root.join("broken.sqlite3");
+    for (suffix, bytes) in [
+        ("", b"broken acknowledged database".as_slice()),
+        ("-wal", b"uncheckpointed committed bytes".as_slice()),
+        ("-shm", b"shared memory".as_slice()),
+    ] {
+        std::fs::write(format!("{}{suffix}", path.display()), bytes)?;
+    }
+    let broken = Database::open_or_unavailable(&path, SCHEMA, |_| panic!("a broken database was initialized"));
+    assert_eq!(broken.fault().map(Error::kind), Some(ErrorKind::Corrupt));
+    assert!(broken.statistics().unavailable.is_some());
+    assert!(broken.read_now(|_| Ok(())).is_err());
+    assert!(broken.write_now(0, |_| Ok(())).is_err());
+    assert!(!path.exists());
+    let directory =
+        std::fs::read_dir(format!("{}.quarantine", path.display()))?.next().ok_or("no quarantine directory")??.path();
+    assert_eq!(std::fs::read(directory.join("broken.sqlite3-wal"))?, b"uncheckpointed committed bytes");
+    // Stop after moving the database but before moving its WAL, then resume.
+    std::fs::rename(directory.join("broken.sqlite3-wal"), format!("{}-wal", path.display()))?;
+    let reopened = Database::open_or_unavailable(&path, SCHEMA, |_| panic!("quarantine became an empty database"));
+    assert!(reopened.fault().is_some());
+    assert!(Database::open(&path, SCHEMA).is_err());
+    assert!(!path.exists());
+    assert_eq!(std::fs::read(directory.join("broken.sqlite3"))?, b"broken acknowledged database");
+    assert_eq!(std::fs::read(directory.join("broken.sqlite3-wal"))?, b"uncheckpointed committed bytes");
+    let empty = root.join("empty.sqlite3");
+    std::fs::write(&empty, [])?;
+    let empty = Database::open_or_unavailable(&empty, SCHEMA, |_| panic!("an empty existing database was rebuilt"));
+    assert_eq!(empty.fault().map(Error::kind), Some(ErrorKind::Corrupt));
+    let logical = root.join("logical.sqlite3");
+    let database = Database::open(&logical, SCHEMA)?;
+    let error = database
+        .read_now(|_| Err::<(), _>(Error::with_kind(ErrorKind::Corrupt, "one record is malformed")))
+        .unwrap_err();
+    assert!(!error.is_database_damage());
+    assert!(logical.exists());
+    database.write_now(0, |db| {
+        db.execute("INSERT INTO events(id,body) VALUES(1,'healthy')", [])?;
+        Ok(())
+    })?;
+    println!(
+        "corruption: physical files and WAL retained, interrupted quarantine resumed without empty rebuild; logical record error left healthy storage usable"
+    );
     Ok(())
 }

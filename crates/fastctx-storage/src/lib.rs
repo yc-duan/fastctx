@@ -9,6 +9,7 @@ mod metrics;
 pub mod migration;
 mod queue;
 pub mod receipts;
+mod recovery;
 pub mod versions;
 mod writer;
 
@@ -44,6 +45,7 @@ struct Inner {
     reads: Arc<Semaphore>,
     metrics: Arc<metrics::Metrics>,
     path: PathBuf,
+    fault: Option<Error>,
 }
 impl Drop for Inner {
     fn drop(&mut self) {
@@ -87,6 +89,8 @@ impl Database {
         schema: &str,
         initialize: impl FnOnce(&rusqlite::Connection) -> Result<()>,
     ) -> Result<Self> {
+        recovery::check(path)?;
+        recovery::verify(path)?;
         let parent = path.parent().ok_or_else(|| Error::new("the database has no parent directory"))?;
         // Existing directories keep their owner's ACL: a system service must
         // not take away that owner's access to an existing database.
@@ -96,10 +100,6 @@ impl Database {
         let mut connection = rusqlite::Connection::open(path)?;
         connection.busy_timeout(ADMISSION)?;
         connection.set_prepared_statement_cache_capacity(64);
-        let check: String = connection.query_row("PRAGMA quick_check(1)", [], |row| row.get(0))?;
-        if check != "ok" {
-            return Err(Error::with_kind(ErrorKind::Corrupt, check));
-        }
         connection.pragma_update(None, "journal_mode", "WAL")?;
         connection.pragma_update(None, "synchronous", "FULL")?;
         connection.pragma_update(None, "foreign_keys", "ON")?;
@@ -136,7 +136,62 @@ impl Database {
             reads: Arc::new(Semaphore::new(1024)),
             metrics,
             path: path.to_path_buf(),
+            fault: None,
         })))
+    }
+
+    /// Opens without making a service's diagnostic endpoint depend on storage.
+    /// A failed handle rejects every operation with its recorded cause. Only
+    /// native SQLite damage is quarantined; no acknowledged state is rebuilt.
+    /// The caller must exclusively own the service database during startup.
+    pub fn open_or_unavailable(
+        path: &Path,
+        schema: &str,
+        initialize: impl FnOnce(&rusqlite::Connection) -> Result<()>,
+    ) -> Self {
+        match Self::open_initialized(path, schema, initialize) {
+            Ok(database) => database,
+            Err(error) => {
+                let fault = if error.is_database_damage() {
+                    match recovery::quarantine(path, &error) {
+                        Ok(target) => Error::damaged(format!(
+                            "the database is unavailable; preserved in {}: {error}",
+                            target.display()
+                        )),
+                        Err(failure) => Error::damaged(format!(
+                            "the database is unavailable ({error}); preserving its files also failed: {failure}"
+                        )),
+                    }
+                } else {
+                    error
+                };
+                let writes = Arc::new(queue::Queue::new());
+                writes.close();
+                Self(Arc::new(Inner {
+                    writes,
+                    readers: Mutex::new(Vec::new()),
+                    reading: Arc::new(Semaphore::new(0)),
+                    reads: Arc::new(Semaphore::new(0)),
+                    metrics: Arc::new(metrics::Metrics {
+                        failures: std::sync::atomic::AtomicU64::new(1),
+                        ..Default::default()
+                    }),
+                    path: path.to_path_buf(),
+                    fault: Some(fault),
+                }))
+            }
+        }
+    }
+
+    /// A startup failure remains explicit until storage is repaired and reopened.
+    pub fn fault(&self) -> Option<&Error> {
+        self.0.fault.as_ref()
+    }
+    fn available(&self) -> Result<()> {
+        match &self.0.fault {
+            Some(error) => Err(error.clone()),
+            None => Ok(()),
+        }
     }
 
     pub fn path(&self) -> &Path {
@@ -144,7 +199,9 @@ impl Database {
     }
 
     pub fn statistics(&self) -> Statistics {
-        self.0.metrics.snapshot()
+        let mut statistics = self.0.metrics.snapshot();
+        statistics.unavailable = self.fault().map(ToString::to_string);
+        statistics
     }
 
     /// Executes a read on a bounded pool. Waiting for a connection never polls.
@@ -152,6 +209,7 @@ impl Database {
         &self,
         read: impl FnOnce(&rusqlite::Connection) -> Result<T> + Send + 'static,
     ) -> Result<T> {
+        self.available()?;
         let queued = tokio::time::timeout(QUEUE_WAIT, self.0.reads.clone().acquire_owned())
             .await
             .map_err(|_| busy("read admission"))?
@@ -174,6 +232,7 @@ impl Database {
     /// Synchronous reads belong exclusively on blocking threads. The closure may
     /// borrow its caller, and every caller shares the same connection admission.
     pub fn read_now<T>(&self, read: impl FnOnce(&rusqlite::Connection) -> Result<T>) -> Result<T> {
+        self.available()?;
         let permit = blocking::wait(self.0.reading.clone().acquire_owned(), QUEUE_WAIT)
             .ok_or_else(|| busy("read connection"))?
             .map_err(|_| unavailable())?;
@@ -230,6 +289,7 @@ impl Database {
         write: impl FnOnce(&rusqlite::Connection) -> Result<T> + Send + 'static,
         committed: impl FnOnce(&T) + Send + 'static,
     ) -> Result<T> {
+        self.available()?;
         let permit = tokio::time::timeout(QUEUE_WAIT, self.0.writes.admit(priority, bytes))
             .await
             .map_err(|_| busy("write admission"))??;
@@ -259,6 +319,7 @@ impl Database {
         bytes: usize,
         write: impl FnOnce(&rusqlite::Connection) -> Result<T> + Send + 'static,
     ) -> Result<T> {
+        self.available()?;
         let permit = blocking::wait(self.0.writes.admit(priority, bytes), QUEUE_WAIT)
             .ok_or_else(|| busy("write admission"))??;
         let (send, receive) = oneshot::channel();
