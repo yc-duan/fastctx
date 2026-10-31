@@ -20,6 +20,8 @@ export interface ShellWords {
   someoneAssisting(agent: string, owner: string): string;
   /** A conversation forked from another. */
   forked: string;
+  /** Another account opened it, on a machine shared with the user. */
+  openedBy(account: string): string;
   app: string;
   world: string;
   projects: string;
@@ -1719,6 +1721,7 @@ export const zhShell: ShellWords = {
   someone: (agent, machine) => `${machine} 上的 ${agent}`,
   someoneAssisting: (agent, owner) => `${owner} 的 ${agent}`,
   forked: "分叉出来的对话",
+  openedBy: (account) => `${account} 开的`,
   colleagueFor: (asker) => `${asker} 调用的模型`,
   busy: (lasted) => `工作中　${lasted}`,
   idle: "空闲",
@@ -1776,6 +1779,7 @@ export const enShell: ShellWords = {
   someone: (agent, machine) => `${agent} on ${machine}`,
   someoneAssisting: (agent, owner) => `${owner}'s ${agent}`,
   forked: "Forked from another conversation",
+  openedBy: (account) => `Opened by ${account}`,
   colleagueFor: (asker) => `called by ${asker}`,
   busy: (lasted) => `working, ${lasted}`,
   idle: "idle",

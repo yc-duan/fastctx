@@ -342,6 +342,25 @@ html.framed .sp-panel.sp-over .sp-line {
   gap: var(--space-6);
 }
 
+/* A conversation's own history, where it is in no project: its documents
+   one to a line, and the way to write one under them. */
+.sp-history {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.sp-history .page-links {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.sp-history-write {
+  align-self: flex-start;
+  margin: var(--space-2) 0 0 calc(-1 * var(--space-3));
+}
+
 /* The side's one switch, in the desk's top right corner whether the side
    is open or shut, drawn as the place it opens at, with a dot while
    something new waits there. Over the whole desk the side's own cross shuts

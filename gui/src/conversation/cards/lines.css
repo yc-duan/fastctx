@@ -30,3 +30,18 @@
   bottom: calc(-1 * (var(--row-line) / 2 - var(--rail-glyph) / 2 - 2px));
   background: var(--rail-line);
 }
+
+/* A file's name on a row opens the file itself: pointed at, it takes a
+   field's shade of its own, apart from the row it stands in. */
+.row-name {
+  margin: 0 -3px;
+  padding: 1px 3px;
+  border-radius: var(--radius-s);
+  box-decoration-break: clone;
+  transition: background-color var(--hover) var(--ease), color var(--hover) var(--ease);
+}
+
+.row-name:hover {
+  background: var(--fill);
+  color: var(--text);
+}

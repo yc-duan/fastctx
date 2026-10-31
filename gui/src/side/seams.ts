@@ -3,6 +3,8 @@
 // does to them. Each `watch` returns how to stop following.
 
 import type { PageSeams, PlanShown } from "../plan/panel";
+import type { HistoryWords } from "../project/history-words";
+import type { HistoryCatalog } from "../world/history";
 import type { PlanWords } from "../plan/words";
 import type { Address } from "../world/wire";
 import type { CollabNode, GoalShown, PastGoal } from "./types";
@@ -37,4 +39,12 @@ export interface SideSeams {
   /** The colleagues the conversation asked, each with the host's agents
    *  it sent, as far as they are known. */
   colleagues(show: (nodes: CollabNode[]) => void): () => void;
+  /** Its own history, where it is in no project (`world-history.md`). */
+  history?: {
+    words: HistoryWords;
+    watch(show: (catalog: HistoryCatalog | null) => void): () => void;
+    /** Where a document is read. */
+    link(name: string): string;
+    write(): void;
+  };
 }

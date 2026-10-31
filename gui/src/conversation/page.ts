@@ -27,6 +27,9 @@ import { ModelPanel, enModelPanel, zhModelPanel } from "./model-panel";
 import { effortLabel } from "./effort-slider";
 import { fileRow, mentionAt, mentioned, type FileWords, type FoundFile } from "./mention";
 import { FileLinks } from "./file-links";
+import { fileKind } from "./file-kind";
+import { FilePage } from "../side/file-page";
+import { whyOf } from "../world/again";
 import { JobsPanel, type Job, type OutputLines } from "./jobs-panel";
 import { AgentBox } from "./agent-box";
 import { SideParts } from "../side/parts";
@@ -48,7 +51,7 @@ import { UsagePop } from "./usage-pop";
 import { ContextSheet } from "./context-sheet";
 import type { CallSpan } from "./context-steps";
 import { headline } from "./tool";
-import { ConversationView, modelName } from "./view";
+import { ConversationView, gone, modelName } from "./view";
 import { departureOf } from "./flight";
 import { detailOf } from "../app/problem";
 import { standsUnder } from "./landing";
@@ -501,6 +504,7 @@ export class ConversationPage {
       agentRecord: options.agentRecord,
       turnCalls: options.calls,
       openAgent: options.side ? (id) => this.side?.openAgent(id) ?? false : undefined,
+      openFile: (machine, path) => this.openFile(machine, path),
       named: options.named,
     });
     // The card at a fork's head goes back to where it came from.
@@ -556,6 +560,7 @@ export class ConversationPage {
         here: options.here,
         machine: someone.machine,
         machineFor,
+        elsewhere: (machine, path, attachment) => this.openElsewhere(machine, path, attachment),
         open: options.opening.open,
         openAttachment: options.opening.openAttachment,
         reveal: options.opening.reveal,
@@ -1349,6 +1354,49 @@ export class ConversationPage {
   private imagesOnly(): string | null {
     const files = this.options.attach?.filesOn;
     return files?.assisting() && !files.place() ? this.options.attach!.words.imagesOnly : null;
+  }
+
+  /** A file the conversation names, pressed: one that reads as text opens
+   *  in the side, a picture in the viewer, anything else with this device's
+   *  program for its kind (`file-kind.ts`). */
+  private openFile(machine: MachineName, path: string): void {
+    if (!this.openElsewhere(machine, path, null)) this.fileLinks?.openOutside(machine, path);
+  }
+
+  /** Where a file pressed goes other than to this device's program: true
+   *  where it went there. A file the user sent is read where the World
+   *  keeps it. */
+  private openElsewhere(machine: MachineName, path: string, attachment: AttachmentSource | null): boolean {
+    const kind = fileKind(path);
+    if (kind === "picture" && this.pictures) {
+      this.pictures.showFile(machine, path);
+      return true;
+    }
+    return kind === "text" && this.readFile(machine, path, attachment);
+  }
+
+  /** A file read in the side, over the conversation's parts; false where
+   *  there is no side to read it in. */
+  private readFile(machine: MachineName, path: string, attachment: AttachmentSource | null): boolean {
+    const { side, options } = this;
+    const lines = options.lines;
+    const words = options.side?.words.file;
+    if (!side || !lines || !words) return false;
+    const pictures = options.pictures;
+    const page = new FilePage({
+      words,
+      machine,
+      path,
+      lines: (on, at) => lines(on, at, { kind: "file", encoding: null }),
+      outside: () => this.fileLinks?.openOutside(machine, path, attachment),
+      open: (on, at) => this.openFile(on, at),
+      picture: pictures ? (on, at, max) => pictures.thumbnail(on, at, max) : undefined,
+      gone,
+      detail: whyOf,
+    });
+    if (side.openFile(page)) return true;
+    page.leave();
+    return false;
   }
 
   private say(text: string, detail = "", refused = false): void {

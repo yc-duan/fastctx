@@ -34,7 +34,7 @@ export type Dock = "right" | "bottom" | "left";
 export interface PanePart {
   id: string;
   name: string;
-  glyph: "goal" | "rows" | "tree";
+  glyph: "goal" | "rows" | "tree" | "history";
   page: SidePage;
 }
 

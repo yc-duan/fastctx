@@ -131,6 +131,8 @@ export interface LiveSide {
   address: Address;
   /** No goal is set here (`SideSeams.noGoal`). */
   noGoal?: boolean;
+  /** Its own history, where it is in no project (`SideSeams.history`). */
+  history?: SideSeams["history"];
   /** A span of time, short. */
   took(ms: number): string;
   /** Opens what one of the world's ids names, from the plan. */
@@ -209,6 +211,7 @@ export function liveSide(options: LiveSide): SideSeams {
     words: options.words,
     self: options.address,
     ...(options.noGoal ? { noGoal: true } : {}),
+    ...(options.history ? { history: options.history } : {}),
     plan: {
       words: options.planWords,
       seams: plan,
@@ -340,13 +343,14 @@ export function liveSide(options: LiveSide): SideSeams {
 }
 
 /** A specimen conversation's side: a plan, a goal in the state `goal`
- *  names (under way at first) and a team. */
+ *  names (under way at first), a team, and its own history where it is in
+ *  no project. */
 export function specimenSide(
   words: SideWords,
   planWords: PlanWords,
   plan: PlanShown & { facts: PageSeams["facts"] },
   english: boolean,
-  side: { self: Address; goal?: string | null },
+  side: { self: Address; goal?: string | null; history?: SideSeams["history"] },
 ): SideSeams {
   let goal: GoalShown | null = side.goal === "none" ? null : (goalSamples(english, Date.now())[side.goal ?? "active"] ?? null);
   const past: PastGoal[] = pastSamples(english, Date.now());
@@ -363,6 +367,7 @@ export function specimenSide(
   return {
     words,
     self: side.self,
+    ...(side.history ? { history: side.history } : {}),
     plan: {
       words: planWords,
       seams: { facts: plan.facts, save: async () => ({ ok: true }) },

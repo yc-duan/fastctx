@@ -14,12 +14,13 @@ import type { Address } from "../world/wire";
 import { CollabPage } from "./collab-page";
 import { GoalBar } from "./goal-bar";
 import { GoalPage } from "./goal-page";
+import { HistoryCard } from "./history-card";
 import type { PanePart, PartSet, PartState, Peek } from "./pane";
 import type { SideSeams } from "./seams";
 import type { CollabNode, GoalShown, NodeState } from "./types";
 
 /** The side's own parts, as their marks are named. */
-export const PART = { goal: "part:goal", plan: "part:plan", team: "part:team" } as const;
+export const PART = { goal: "part:goal", plan: "part:plan", team: "part:team", history: "part:history" } as const;
 
 export interface PartsContext {
   host: "claude" | "codex";
@@ -146,6 +147,13 @@ export class SideParts implements PartSet {
       { id: PART.plan, name: words.pages.plan, glyph: "rows", page: this.planPage },
       { id: PART.team, name: words.pages.collab, glyph: "tree", page: { element: team, shown: () => this.collab.shown() } },
     ];
+    // A conversation in no project keeps its own history, a page of its own.
+    if (seams.history) {
+      const history = seams.history;
+      const card = new HistoryCard({ words: history.words, link: history.link, write: history.write });
+      this.parts.push({ id: PART.history, name: words.pages.history, glyph: "history", page: card });
+      this.stops.push(history.watch((catalog) => card.show(catalog)));
+    }
     this.stops.push(
       seams.plan.watch((plan) => this.plan(plan)),
       seams.goal.watch((goal) => this.goal(goal)),
@@ -179,6 +187,15 @@ export class SideParts implements PartSet {
     const run = this.runs.find((at) => at.id === id);
     if (!run || !this.frame || this.frame.lying) return false;
     this.openNode(nodeOf(run, this.context.host, new Map(), Date.now()));
+    return true;
+  }
+
+  /** A file read in the side over the parts, the side opened for it, over
+   *  the whole desk where there is no room beside; false where the side is
+   *  showing another conversation's parts. */
+  openFile(page: Peek): boolean {
+    if (!this.frame) return false;
+    this.frame.peek(page);
     return true;
   }
 

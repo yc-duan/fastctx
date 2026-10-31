@@ -1,35 +1,35 @@
-// The user writing a journal in a project (`world-memory.md`): its name,
-// the line that says what it is, and its text, written once as the user's
-// own and never changed after. A name the World would not take says why
-// beside it, in a line, only when it is wrong.
+// The user writing a new document into a history (`world-history.md`): its
+// name, the line that says what it covers and the words to find it by, and
+// its first paragraph, which starts with today's date as every paragraph
+// does. A name the World would not take says why beside it, in a line, only
+// when it is wrong.
 
+import { whyOf } from "../world/again";
 import { leave } from "../app/leave";
 import { onShade, watchShade } from "../app/shade-press";
 import { glyph } from "../conversation/glyphs";
 import { escape } from "../conversation/prose";
-import { composeText } from "../world/memory";
-import type { MemoryWords } from "./memory-words";
+import { composeText, NAME, type HistoryScope } from "../world/history";
+import type { HistoryWords } from "./history-words";
 
-export interface JournalFormOptions {
-  words: MemoryWords;
+export interface HistoryFormOptions {
+  words: HistoryWords;
   close: string;
-  /** Writes the journal's text; resolves once the World has it. */
-  write(town: string, name: string, text: string): Promise<void>;
-  /** The journal was written. */
-  written(town: string, name: string): void;
+  /** Writes the document's text; resolves once the World has it. */
+  write(scope: HistoryScope, name: string, text: string): Promise<void>;
+  /** The document was written. */
+  written(scope: HistoryScope, name: string): void;
+  /** Today, as the paragraph's date. */
+  today(): string;
 }
 
-/** Letters and numbers of any script, with hyphens between them, as the
- *  World names a document. */
-const NAME = /^[\p{L}\p{N}][\p{L}\p{N}\p{M}]*(?:-[\p{L}\p{N}][\p{L}\p{N}\p{M}]*)*$/u;
-
-export class JournalForm {
+export class HistoryForm {
   private readonly dialog: HTMLDialogElement;
   private readonly body: HTMLElement;
-  private town = "";
+  private scope: HistoryScope | null = null;
   private busy = false;
 
-  constructor(private readonly options: JournalFormOptions) {
+  constructor(private readonly options: HistoryFormOptions) {
     this.dialog = document.createElement("dialog");
     this.dialog.className = "sheet form-sheet";
     this.dialog.innerHTML = `<form class="sheet-body" method="dialog"></form>`;
@@ -53,25 +53,25 @@ export class JournalForm {
     });
   }
 
-  open(town: string): void {
+  open(scope: HistoryScope): void {
     const { words } = this.options;
-    this.town = town;
+    this.scope = scope;
     this.body.innerHTML = `
       <header class="sheet-head">
-        <h2 class="sheet-title">${escape(words.newJournal)}</h2>
+        <h2 class="sheet-title">${escape(words.newDocument)}</h2>
         <button class="icon-button sheet-close" type="button" aria-label="${escape(this.options.close)}">${glyph("close", 18)}</button>
       </header>
       <div class="form-scroll">
         <label class="field"><span class="field-label">${escape(words.name)}</span>
-          <input name="name" required autocomplete="off" spellcheck="false">
-          <span class="field-hint jf-rule" hidden>${escape(words.nameRule)}</span></label>
+          <input name="name" required autocomplete="off" spellcheck="false" autocapitalize="off">
+          <span class="field-hint hf-rule" hidden>${escape(words.nameRule)}</span></label>
         <label class="field"><span class="field-label">${escape(words.description)}</span>
           <input name="description" required autocomplete="off"></label>
-        <label class="field"><span class="field-label">${escape(words.body)}</span>
-          <textarea name="text" rows="10" required></textarea></label>
+        <label class="field"><span class="field-label">${escape(words.firstParagraph)}</span>
+          <textarea name="text" rows="8" required>${escape(`${this.options.today()}：`)}</textarea></label>
       </div>
       <p class="sheet-note" role="alert" hidden></p>
-      <footer class="sheet-foot"><span></span><button class="sheet-go" type="submit" title="${escape(words.writeHint)}">${escape(words.write)}</button></footer>`;
+      <footer class="sheet-foot"><span></span><button class="sheet-go" type="submit">${escape(words.write)}</button></footer>`;
     if (!this.dialog.open) this.dialog.showModal();
     this.body.querySelector<HTMLElement>("[name=name]")?.focus();
   }
@@ -84,37 +84,43 @@ export class JournalForm {
    *  where it is not, once something is typed or it is sent. */
   private checkName(sending: boolean): boolean {
     const input = this.body.querySelector<HTMLInputElement>("[name=name]")!;
-    const rule = this.body.querySelector<HTMLElement>(".jf-rule")!;
+    const rule = this.body.querySelector<HTMLElement>(".hf-rule")!;
     const name = input.value.trim();
-    const good = NAME.test(name) && new TextEncoder().encode(name).length <= 240;
+    const good = NAME.test(name) && name.length <= 120;
     rule.hidden = good || (!sending && name === "");
     return good;
   }
 
   private async submit(): Promise<void> {
-    if (this.busy) return;
+    if (this.busy || !this.scope) return;
     const { words } = this.options;
     const value = (name: string) => this.body.querySelector<HTMLInputElement | HTMLTextAreaElement>(`[name="${name}"]`)?.value.trim() ?? "";
     const name = value("name");
     const description = value("description");
     const text = value("text");
-    if (!this.checkName(true) || !description || !text) return;
+    // A first paragraph is more than the date it was handed.
+    if (!this.checkName(true) || !description || !text.replace(/^\d{4}-\d{2}-\d{2}\s*[:：]\s*/, "")) return;
     const go = this.body.querySelector<HTMLButtonElement>(".sheet-go")!;
     const note = this.body.querySelector<HTMLElement>(".sheet-note")!;
+    const scope = this.scope;
     this.busy = true;
     go.disabled = true;
     note.hidden = true;
     try {
-      await this.options.write(this.town, name, composeText(name, description, text));
+      await this.options.write(scope, name, composeText(name, description, text));
       this.busy = false;
       this.close();
-      this.options.written(this.town, name);
+      this.options.written(scope, name);
     } catch (error) {
       this.busy = false;
       go.disabled = false;
-      const taken = /exist|taken|already/i.test(String(error));
+      // A new document fails on another version only where one of that name
+      // is written already: the World says so as it does of any version
+      // that came first (`fastctx-types/src/history.rs`).
+      const why = whyOf(error);
+      const taken = /^the document changed;|already exists/i.test(why);
       note.textContent = taken ? words.taken : words.notSaved;
-      note.title = String(error);
+      note.title = why;
       note.hidden = false;
     }
   }

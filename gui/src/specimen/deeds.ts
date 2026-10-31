@@ -5,7 +5,8 @@
 // own words.
 
 import { run, Script } from "./script";
-import { cut, hunk, noted, printed, put, ran, same, wrote } from "./run-facts";
+import { cut, hunk, keepFile, noted, printed, put, ran, same, wrote } from "./run-facts";
+import { RETRY_RS } from "./files";
 import type { Speaker } from "../world/events";
 import type { Specimen } from "./sessions";
 import { longWork } from "./deeds-long";
@@ -16,6 +17,7 @@ const user: Speaker = { kind: "user", machine: "desktop" };
 
 export function deeds(): Specimen {
   const s = new Script(new Date(Date.now() - 22 * 60_000).toISOString());
+  keepFile("/srv/ingest/src/retry.rs", () => [...RETRY_RS]);
   s.heard("t1", user, "kill_mid_batch_writes_once 这个测试一直挂，查一下，修好了提交推上去。");
   s.started("t1");
   s.say("t1", "thinking", "**Finding where the batch commits**\n\nThe test kills the writer mid-batch and counts rows; a row written twice means the replay starts too early.", 2);

@@ -53,6 +53,7 @@ function resident(
     now: state.now ?? null,
     last_action: state.last_action ?? null,
     moved: state.moved ?? null,
+    ...(state.openedBy ? { openedBy: state.openedBy } : {}),
   };
 }
 
@@ -648,6 +649,8 @@ export function specimenWorld(): { world: WorldState; now: Date; lastVisit: Date
                 last_said: "Rotation now keeps 14 days of logs and compresses anything older than a day; the cron entry is in /etc/cron.d/app-logs.",
                 told: { id: "told-41aa-1", at: at("05:49:40"), status: "info", text: "日志轮转改好了：留 14 天，超过一天的压缩，定时任务在 /etc/cron.d/app-logs。", turn: "t2" },
               },
+              // Opened on this shared server by another who shares it.
+              openedBy: { account: "bob" },
             }),
           ],
           jobs: [],

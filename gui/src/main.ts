@@ -204,10 +204,10 @@ import { installPresses } from "./app/press";
 import { installPointerHints } from "./app/pointer-hint";
 import { installPens } from "./pen/filters";
 import { installRules } from "./pen/rules";
-import { MemoryPage } from "./project/memory-page";
-import { enMemory, zhMemory } from "./project/memory-words";
-import { memory as memorySeam, type MemoryAuthor } from "./world/memory";
-import { specimenCatalog, specimenDocument } from "./specimen/memory";
+import { HistoryPage } from "./project/history-page";
+import { enHistory, zhHistory } from "./project/history-words";
+import { history as historySeam, type HistoryAuthor, type HistoryCatalog, type HistoryScope } from "./world/history";
+import { specimenHistory, specimenHistoryDocument } from "./specimen/history";
 import { sentinelList, sentinelListAll, sentinelOverview, sentinelRecord, sentinelStop, sentinels as liveSentinels, type SentinelSummary } from "./world/sentinels";
 import { planRead } from "./world/plan";
 import { sawTold, toldSeen } from "./app/told-seen";
@@ -216,7 +216,7 @@ import type { Job as PanelJob } from "./conversation/jobs-panel";
 import { specimenSentinels } from "./specimen/sentinels";
 import { specimenWatcherRecord, specimenWatchers, specimenWatchersOverview } from "./specimen/watchers";
 import { enSentinel, zhSentinel } from "./sentinel/words";
-import { JournalForm } from "./project/journal-form";
+import { HistoryForm } from "./project/history-form";
 import { ProjectPage } from "./project/page";
 import { enProject, zhProject } from "./project/words";
 import { specimenMap } from "./specimen/project";
@@ -474,12 +474,12 @@ async function agentModels(agent: "claude" | "codex"): Promise<AgentModel[]> {
 let place: Place = { kind: "home" };
 
 /** The places that are the workbench's: in Connect they open the activity. */
-const WORKBENCH_PLACES: Place["kind"][] = ["home", "new", "project", "talk", "talks", "archived", "memory", "page", "feature"];
+const WORKBENCH_PLACES: Place["kind"][] = ["home", "new", "project", "talk", "talks", "archived", "history", "talk-history", "page", "feature"];
 
 /** The pages one comes into from another, which have a way back in their
  *  head (`world-gui.md`, 界面的结构); the sidebar's own pages have none. */
 function inner(at: Place): boolean {
-  return ["feature", "data", "memory", "page", "file", "login", "talks", "archived", "machine", "usage", "subagents", "sentinel", "sentinels"].includes(at.kind);
+  return ["feature", "data", "history", "talk-history", "page", "file", "login", "talks", "archived", "machine", "usage", "subagents", "sentinel", "sentinels"].includes(at.kind);
 }
 
 /** Where a page's back goes when it was not come into from another page,
@@ -496,9 +496,11 @@ function parentOf(at: Place): Place {
       return { kind: "settings" };
     case "machine":
       return { kind: "machines" };
-    case "memory":
+    case "history":
     case "page":
       return { kind: "project", town: at.town };
+    case "talk-history":
+      return { kind: "talk", address: at.address };
     case "archived":
       return { kind: "data" };
     case "sentinel":
@@ -853,25 +855,57 @@ const removal = (() => {
   return removing ? new RemovalSheet(english ? enRemoval : zhRemoval, removing) : undefined;
 })();
 
-const memoryWords = english ? enMemory : zhMemory;
-const journalForm = new JournalForm({
-  words: memoryWords,
+const historyWords = english ? enHistory : zhHistory;
+/** Where a document of a history is read. */
+function historyLink(scope: HistoryScope, name: string): string {
+  return scope.kind === "project"
+    ? link({ kind: "history", town: scope.project, name })
+    : link({ kind: "talk-history", address: { resident: scope.resident, machine: scope.machine }, name });
+}
+const historyForm = new HistoryForm({
+  words: historyWords,
   close: projectWords.close,
-  write: async (town, name, text) => {
+  write: async (scope, name, text) => {
     if (!live) return notLive();
-    await memorySeam.save(town, "journal", name, text, null);
+    await historySeam.save(scope, name, text, null);
   },
-  written(town, name) {
-    const there = link({ kind: "memory", town, name });
+  written(scope, name) {
+    const there = historyLink(scope, name);
     if (location.hash === there) show(placeOf(there));
     else location.hash = there;
   },
+  today: () => (live ? new Date() : specimen.now).toISOString().slice(0, 10),
 });
 
-/** Whether project memory is on for the account, as last read: the
- *  specimen's unless `?memory=off`. */
-let memoryOn = PREVIEW && !live && params.get("memory") !== "off";
-if (live && PREVIEW) void memorySeam.enabled(null, null).then((on) => (memoryOn = on), () => (memoryOn = false));
+/** Whether histories are offered: the development build's until the
+ *  release turns them on (`world.md`, 这一版不发的). */
+const historyOffered = PREVIEW;
+
+/** Follows a history's catalog as it changes; returns how to stop. A
+ *  World without the watch still answers a single read. */
+function followHistoryOf(scope: HistoryScope, show: (catalog: HistoryCatalog | null) => void): () => void {
+  if (!live) {
+    show(specimenHistory(scope, specimen.now));
+    return () => {};
+  }
+  let stopped = false;
+  let id: number | null = null;
+  historySeam
+    .watch(scope, (catalog) => {
+      if (!stopped) show(catalog);
+    })
+    .then(
+      (watching) => {
+        if (stopped) void unwatch(watching);
+        else id = watching;
+      },
+      () => historySeam.catalog(scope).then((catalog) => !stopped && show(catalog), () => !stopped && show(null)),
+    );
+  return () => {
+    stopped = true;
+    if (id !== null) void unwatch(id);
+  };
+}
 const sentinelSeam = live ? liveSentinels : specimenSentinels(params.has("sentinels"));
 /** The machines the sentinels may live on, the ones online first; a
  *  phone is a device, not one of them. */
@@ -895,13 +929,6 @@ function sentinelHomes(hub: string, account: string): { name: string; form: "des
     .sort((a, b) => Number(b.online) - Number(a.online))
     .map((machine) => ({ name: machine.written, form: machine.facts.Ok?.form ?? "desktop" }));
 }
-const memorySwitch = {
-  enabled: async (hub: string | null, account: string | null) => (live ? (memoryOn = await memorySeam.enabled(hub, account)) : memoryOn),
-  set: async (on: boolean, hub: string | null, account: string | null) => {
-    if (live) await memorySeam.setEnabled(on, hub, account);
-    memoryOn = on;
-  },
-};
 
 /** What the user does to conversations from their "⋯", and the line that
  *  says what was just done (`app/talk-acts.ts`). */
@@ -920,7 +947,7 @@ const projectActs = new ProjectActs({
   deleted: (town) => {
     // A page of the project deleted is left for the front page.
     const at = placeOf(location.hash);
-    if ((at.kind === "project" || at.kind === "memory" || at.kind === "page") && at.town === town) replacePlace(link({ kind: "home" }));
+    if ((at.kind === "project" || at.kind === "history" || at.kind === "page") && at.town === town) replacePlace(link({ kind: "home" }));
   },
 });
 const talkToast = new TalkToast({ undo: talkMenuWords.undo }, () => shell.footBox());
@@ -1756,6 +1783,8 @@ function specimenTalk(address: Address): DeskTalk {
     side: specimenSide(sideWords, planWords, { ...planSamples.blog!, facts: (id) => planSamples.blog!.facts[id] ?? null }, english, {
       self: address,
       goal: params.get("goal"),
+      // As the World lists it: one in no project keeps its own history.
+      ...(historyOffered && !(known ? known.town : sample.town) ? { history: specimenOwnHistory(address) } : {}),
     }),
     focus: {
       words: focusWords,
@@ -2059,6 +2088,17 @@ function liveTalk(address: Address): DeskTalk {
   // Goals are not offered in a release yet (`app/preview.ts`); nor can the
   // World drive one in a conversation Codex's own app holds.
   const noGoal = !PREVIEW || (!!known && /^codex/i.test(known.about.host.agent) && !known.about.world_started);
+  // A conversation in no project keeps its own history (`world-history.md`).
+  const historyScope: HistoryScope = { kind: "conversation", resident: address.resident, machine: address.machine };
+  const ownHistory =
+    historyOffered && !someone.project
+      ? {
+          words: historyWords,
+          watch: (show: (catalog: HistoryCatalog | null) => void) => followHistoryOf(historyScope, show),
+          link: (name: string) => historyLink(historyScope, name),
+          write: () => historyForm.open(historyScope),
+        }
+      : undefined;
   const here = world?.here ?? null;
   const conversation = new Conversation();
   // The agent by its name, or, not yet listed, its resident's id.
@@ -2086,6 +2126,7 @@ function liveTalk(address: Address): DeskTalk {
       store,
       address,
       noGoal,
+      history: ownHistory,
       took: (ms) => words.took(ms),
       openId: (id) => openWorldId(id),
     }),
@@ -2462,11 +2503,11 @@ function projectPage(town: string): Page {
     link: talkLink,
     pageWords,
     pageLink: (town, page) => link({ kind: "page", town, page, version: null }),
-    memory: {
-      words: memoryWords,
-      link: (town, name) => link({ kind: "memory", town, name }),
-      write: (town) => journalForm.open(town),
-      writer: (author) => memoryWriter(author).name,
+    history: {
+      words: historyWords,
+      link: (town, name) => link({ kind: "history", town, name }),
+      write: (town) => historyForm.open({ kind: "project", project: town }),
+      writer: (author) => historyWriter(author).name,
     },
     machineLink: (name) => link({ kind: "machine", name }),
     senseLink: (one) => link({ kind: "sentinel", home: one.definition.home, id: one.definition.id, generation: one.definition.generation }),
@@ -2482,31 +2523,28 @@ function projectPage(town: string): Page {
       },
     },
   });
-  // Its memory, where the feature is on: the catalog as it stands, then as
-  // anyone writes to it. The switch is asked as the page opens, not taken
-  // from a read that may not have come back yet.
-  let memoryLeft = false;
-  let memoryWatch: number | null = null;
-  const followMemory = async () => {
-    if (!live) return page.showMemory(memoryOn ? specimenCatalog(specimen.now) : null);
-    if (!PREVIEW) return page.showMemory(null);
-    memoryOn = await memorySeam.enabled(null, null).catch(() => memoryOn);
-    if (memoryLeft || !memoryOn) return page.showMemory(null);
+  // Its history: the catalog as it stands, then as anyone writes to it.
+  let historyLeft = false;
+  let historyWatch: number | null = null;
+  const followHistory = async () => {
+    const scope: HistoryScope = { kind: "project", project: town };
+    if (!historyOffered) return page.showHistory(null);
+    if (!live) return page.showHistory(specimenHistory(scope, specimen.now));
     try {
-      const id = await memorySeam.watch(town, (catalog) => {
-        if (!memoryLeft) page.showMemory(catalog);
+      const id = await historySeam.watch(scope, (catalog) => {
+        if (!historyLeft) page.showHistory(catalog);
       });
-      if (memoryLeft) void unwatch(id);
-      else memoryWatch = id;
+      if (historyLeft) void unwatch(id);
+      else historyWatch = id;
     } catch {
       // A World without the watch still answers a single read.
-      await memorySeam.catalog(town).then(
-        (catalog) => !memoryLeft && page.showMemory(catalog),
-        () => !memoryLeft && page.showMemory(null),
+      await historySeam.catalog(scope).then(
+        (catalog) => !historyLeft && page.showHistory(catalog),
+        () => !historyLeft && page.showHistory(null),
       );
     }
   };
-  void followMemory();
+  void followHistory();
   if (!live) {
     const map = specimenMap();
     page.showPlans(specimenHubPlans());
@@ -2570,33 +2608,68 @@ function projectPage(town: string): Page {
     title: store.world.peek()?.towns.find((t) => t.town === town)?.record.name ?? town,
     leave() {
       left = true;
-      memoryLeft = true;
-      if (memoryWatch !== null) void unwatch(memoryWatch);
+      historyLeft = true;
+      if (historyWatch !== null) void unwatch(historyWatch);
       clearTimeout(timer);
       clearTimeout(sensesTimer);
     },
   };
 }
 
-function memoryPage(town: string, name: string): Page {
-  const project = store.world.peek()?.towns.find((t) => t.town === town)?.record.name ?? town;
-  const page = new MemoryPage({
-    words: memoryWords,
+const historyConfirm = new Confirm({ close: projectWords.close, working: talkMenuWords.working, failed: talkMenuWords.failed });
+
+/** One document of a project's history, or of a conversation's. */
+function historyPage(scope: HistoryScope, name: string): Page {
+  const world = live ? store.world.peek() : specimen.world;
+  let back: { href: string; name: string };
+  if (scope.kind === "project") {
+    back = { href: link({ kind: "project", town: scope.project }), name: world?.towns.find((t) => t.town === scope.project)?.record.name ?? scope.project };
+  } else {
+    const address = { resident: scope.resident, machine: scope.machine };
+    const known = residentsOf(world).find((r) => sameAddress(addressOf(r), address));
+    // Named as the list names it: its title, else who and where.
+    back = { href: talkLink(address), name: listedTitle(address) ?? (known ? someoneSaid(known, homeWords) : scope.resident) };
+  }
+  const notHere = () => Promise.reject(new Error("specimen"));
+  const page = new HistoryPage({
+    words: historyWords,
     head,
-    project: { href: link({ kind: "project", town }), name: project },
+    back,
     name,
-    read: (version) => (live ? memorySeam.read(town, name, version) : Promise.resolve(specimenDocument(name, version, specimen.now))),
-    save: (text, expected) => (live ? memorySeam.save(town, "spec", name, text, expected) : Promise.reject(new Error("specimen"))),
-    writer: (author) => memoryWriter(author),
-    now: () => (live ? new Date() : specimen.now),
+    close: projectWords.close,
+    read: (version) => (live ? historySeam.read(scope, name, version) : Promise.resolve(specimenHistoryDocument(scope, name, version, specimen.now))),
+    save: (text, expected) => (live ? historySeam.save(scope, name, text, expected) : notHere()),
+    retire: (expected, done) =>
+      historyConfirm.ask({
+        title: historyWords.retireTitle(name),
+        what: historyWords.retireWhat,
+        go: historyWords.retire,
+        gentle: true,
+        act: () => (live ? historySeam.retire(scope, name, expected).then(() => undefined) : notHere()),
+        done,
+      }),
+    restore: (version) => (live ? historySeam.restore(scope, name, version) : notHere()),
+    writer: (author) => historyWriter(author).name,
+    ago: (at) => homeWords.ago((live ? Date.now() : specimen.now.getTime()) - at.getTime()),
   });
   return { element: page.element, title: name };
 }
 
+/** A specimen conversation's own history, for its side. */
+function specimenOwnHistory(address: Address) {
+  const scope: HistoryScope = { kind: "conversation", resident: address.resident, machine: address.machine };
+  return {
+    words: historyWords,
+    watch: (show: (catalog: HistoryCatalog | null) => void) => followHistoryOf(scope, show),
+    link: (name: string) => historyLink(scope, name),
+    write: () => historyForm.open(scope),
+  };
+}
+
 /** Who wrote a version of a document, and where their conversation is. */
-function memoryWriter(author: MemoryAuthor): { name: string; href: string | null } {
+function historyWriter(author: HistoryAuthor): { name: string; href: string | null } {
   const by = author.by;
-  if (by.kind === "user") return { name: memoryWords.you, href: null };
+  if (by.kind === "user") return { name: historyWords.you, href: null };
   if (by.kind === "resident") {
     const known = residentsOf(live ? store.world.peek() : specimen.world).find((r) => sameAddress(addressOf(r), by.address));
     // A conversation gone from the World is still named by its host.
@@ -2604,7 +2677,7 @@ function memoryWriter(author: MemoryAuthor): { name: string; href: string | null
     return { name: known ? someoneSaid(known, homeWords) : homeWords.someone(agent, by.address.machine), href: talkLink(by.address) };
   }
   if (by.kind === "page") return { name: by.page.page, href: null };
-  if (by.kind === "elsewhere") return { name: memoryWords.elsewhere(by.page), href: null };
+  if (by.kind === "elsewhere") return { name: historyWords.elsewhere(by.page), href: null };
   return { name: agentName(by.agent), href: null };
 }
 
@@ -2742,8 +2815,11 @@ function show(next: Place): void {
     case "project":
       page = projectPage(next.town);
       break;
-    case "memory":
-      page = memoryPage(next.town, next.name);
+    case "history":
+      page = historyPage({ kind: "project", project: next.town }, next.name);
+      break;
+    case "talk-history":
+      page = historyPage({ kind: "conversation", resident: next.address.resident, machine: next.address.machine }, next.name);
       break;
     case "page":
       page = pageScreen(next.town, next.page, next.version);
@@ -3014,7 +3090,7 @@ function show(next: Place): void {
       });
       break;
     case "feature":
-      page = new FeaturesPage({ store, words: english ? enFeatures : zhFeatures, homeWords: agentHomeWords, english, head, feature: next.feature === "conversations" ? "collaboration" : next.feature, agents: () => agentsOn(null), confirm: accountConfirm, memory: memorySwitch, sentinels: { seam: sentinelSeam, machines: sentinelHomes } });
+      page = new FeaturesPage({ store, words: english ? enFeatures : zhFeatures, homeWords: agentHomeWords, english, head, feature: next.feature === "conversations" ? "collaboration" : next.feature, agents: () => agentsOn(null), confirm: accountConfirm, sentinels: { seam: sentinelSeam, machines: sentinelHomes } });
       break;
     case "activity":
       page = new ActivityPage({
@@ -3146,8 +3222,7 @@ function show(next: Place): void {
           return (
             row(mode.title, link({ kind: "mode" }), name) +
             (accountLayer.workbench.peek() && PREVIEW
-              ? row(features.memory.name, link({ kind: "feature", feature: "memory" }), settingsWords.dataOpen) +
-                row(features.sentinels.name, link({ kind: "feature", feature: "sentinels" }), settingsWords.dataOpen)
+              ? row(features.sentinels.name, link({ kind: "feature", feature: "sentinels" }), settingsWords.dataOpen)
               : "")
           );
         },
@@ -3275,9 +3350,9 @@ function specimenPlace(): Place | null {
       return { kind: "home" };
     case "project":
       return { kind: "project", town: "mark50" };
-    // `?s=journal&memory`: a decision of the project, its versions beside it.
+    // `?s=journal`: a document of the project's history, its versions beside it.
     case "journal":
-      return { kind: "memory", town: "mark50", name: "定点数格式" };
+      return { kind: "history", town: "mark50", name: "q16-fixed-point" };
     case "page":
       return { kind: "page", town: "mark50", page: "tuning", version: null };
     case "machines":

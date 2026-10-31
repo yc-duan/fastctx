@@ -49,7 +49,7 @@ const widths = [
   { name: "desktop", width: 1280, height: 860, scale: 1.5, mobile: false },
 ];
 const themes = option("theme", null) ? [option("theme")] : ["warm-black", "ink-black", "warm-white"];
-const sessions = only ? only.split(",") : ["welcome", "create", "created", "home", "claude", "codex", "project", "journal", "machines", "settings", "new", "new-project", "invite", "invite-windows", "invite-windows-made", "share", "lend", "relays", "palette", "login", "account", "admin", "home-2", "machines-2", "new-2", "slash", "drawer", "about", "manage", "asks", "asks-question", "asks-form", "asks-link", "asks-claude-permission", "asks-claude-question", "asks-claude-plan", "asks-claude-form", "stop", "new-codex", "new-attach", "new-lent-2", "new-pick-2", "find", "attach", "queue", "rewind", "usage", "service", "remove-keep", "remove-erase", "remove-run", "program", "mention", "decision", "log", "written", "page", "page-ask", "page-versions"];
+const sessions = only ? only.split(",") : ["welcome", "create", "created", "home", "claude", "codex", "project", "journal", "machines", "settings", "new", "new-project", "invite", "invite-windows", "invite-windows-made", "share", "lend", "relays", "palette", "login", "account", "admin", "home-2", "machines-2", "new-2", "slash", "drawer", "about", "manage", "asks", "asks-question", "asks-form", "asks-link", "asks-claude-permission", "asks-claude-question", "asks-claude-plan", "asks-claude-form", "stop", "new-codex", "new-attach", "new-lent-2", "new-pick-2", "find", "attach", "queue", "rewind", "usage", "service", "remove-keep", "remove-erase", "remove-run", "program", "mention", "decision", "log", "written", "page", "page-ask", "page-versions", "read-card", "panel-code", "panel-file"];
 const sizes = option("width", null) ? widths.filter((size) => option("width").split(",").includes(size.name)) : widths;
 
 const profile = mkdtempSync(join(tmpdir(), "shoot-"));
@@ -145,7 +145,7 @@ for (const session of sessions) {
       const loaded = once("Page.loadEventFired");
       const two = session.endsWith("-2");
       const named = two ? session.slice(0, -2) : session;
-      const shown = named.startsWith("invite-") ? "invite" : named === "stop" || named === "program" ? "claude" : named === "drawer" || named === "palette" ? "home" : named === "service" || named.startsWith("remove-") ? "settings" : named === "slash" || named === "mention" || named === "find" || named === "attach" || named === "rewind" || named === "usage" ? "codex" : named.startsWith("asks") ? "asks" : named === "new-codex" || named === "new-attach" || named === "new-lent" || named === "new-pick" ? "new" : named === "manage" ? "about" : named === "welcome" || named === "create" || named === "created" ? "login" : named === "share" || named === "relays" ? "machines" : named === "lend" || named.startsWith("ledger") ? "home" : named === "queue" ? "codex" : named.startsWith("page") ? "page" : named.startsWith("panel") && named !== "panel-agent" ? "claude" : named.startsWith("team") || named === "panel-agent" ? "stream" : named.startsWith("repair-") ? "home" : named === "updates-repair" ? "machines" : named === "journal-edit" ? "journal" : named === "project-write" ? "project" : named === "features" || named.startsWith("feature-") || named.startsWith("prefs-") || named.startsWith("activity") || named === "mode" || named === "sidebar-drag" ? "home" : named;
+      const shown = named.startsWith("invite-") ? "invite" : named === "stop" || named === "program" || named === "read-card" ? "claude" : named === "drawer" || named === "palette" ? "home" : named === "service" || named.startsWith("remove-") ? "settings" : named === "slash" || named === "mention" || named === "find" || named === "attach" || named === "rewind" || named === "usage" ? "codex" : named.startsWith("asks") ? "asks" : named === "new-codex" || named === "new-attach" || named === "new-lent" || named === "new-pick" ? "new" : named === "manage" ? "about" : named === "welcome" || named === "create" || named === "created" ? "login" : named === "share" || named === "relays" ? "machines" : named === "lend" || named.startsWith("ledger") ? "home" : named === "queue" ? "codex" : named.startsWith("page") ? "page" : named.startsWith("panel") && named !== "panel-agent" ? "claude" : named.startsWith("team") || named === "panel-agent" ? "stream" : named.startsWith("repair-") ? "home" : named === "updates-repair" ? "machines" : named === "journal-edit" || named === "journal-versions" ? "journal" : named === "project-write" || named === "project-history" ? "project" : named === "features" || named.startsWith("feature-") || named.startsWith("prefs-") || named.startsWith("activity") || named === "mode" || named === "sidebar-drag" ? "home" : named;
       // `welcome` and `create` are a computer's first open, in no World yet.
       const alone = named === "welcome" || named === "create" || named === "created";
       const ask = (session.startsWith("asks-") ? `&ask=${session.slice(5)}` : "") + (two ? "&accounts=2" : "") + (alone ? "&accounts=0" : "") + (named.startsWith("team") || named === "panel-agent" ? "&start=agents" : "") + (named.startsWith("repair-") ? `&repair=${named === "repair-broken" ? "broken" : "failed"}` : "") + (named.startsWith("panel-goal-") ? `&goal=${named.slice("panel-goal-".length)}` : "") + (named.startsWith("panel-goalpage-") ? `&goal=${named.slice("panel-goalpage-".length).replace(/-typed$/, "")}` : "");
@@ -216,12 +216,20 @@ for (const session of sessions) {
         const keep = view ? `localStorage.setItem("activity.view", ${JSON.stringify(view)});` : "";
         await send("Runtime.evaluate", { awaitPromise: true, expression: `new Promise((r) => { ${keep} location.hash = ${JSON.stringify(where)}; setTimeout(r, 2400); })` });
       }
-      // `journal-edit` is a decision being edited; `project-write` the sheet
-      // for writing a journal (both with `--query memory`).
-      if (named === "journal-edit" || named === "project-write") {
+      // `journal-edit` is a history document being edited, `journal-versions`
+      // its versions' sheet; `project-history` a
+      // project's page turned to what it keeps, `project-write` the sheet
+      // for writing a new document there.
+      if (named === "journal-edit" || named === "journal-versions") {
         await send("Runtime.evaluate", {
           awaitPromise: true,
-          expression: `new Promise((r) => setTimeout(() => { document.querySelector(${JSON.stringify(named === "journal-edit" ? ".mm-edit" : "[data-write-journal]")})?.click(); setTimeout(r, 700); }, 700))`,
+          expression: `new Promise((r) => setTimeout(() => { document.querySelector(${JSON.stringify(named === "journal-edit" ? ".hd-edit" : ".hd-versions")})?.click(); setTimeout(r, 700); }, 900))`,
+        });
+      }
+      if (named === "project-history" || named === "project-write") {
+        await send("Runtime.evaluate", {
+          awaitPromise: true,
+          expression: `new Promise((r) => setTimeout(() => { document.querySelector('[data-view="reference"]')?.click(); setTimeout(() => { ${named === "project-write" ? 'document.querySelector("[data-write-history]")?.click();' : ""} setTimeout(r, 700); }, 500); }, 900))`,
         });
       }
       // `updates-repair` is the machines' update view with two machines picked,
@@ -253,6 +261,38 @@ for (const session of sessions) {
           } setTimeout(r, 1200); }))`,
         });
       }
+      // `read-card` is the Claude specimen's own read of a file, opened on its
+      // row; `panel-code` that file opened in the side from the row's name.
+      if (named === "read-card" || named === "panel-code") {
+        // Every step shown, the stretch with the read is looked for upward,
+        // as a phone draws only what is near the screen.
+        await send("Runtime.evaluate", {
+          awaitPromise: true,
+          expression: `new Promise((r) => setTimeout(r, 2000)).then(() => new Promise((r) => {
+            const steps = document.querySelector('.view-steps');
+            if (steps?.getAttribute('aria-pressed') !== 'true') steps?.click();
+            const scroller = document.querySelector('.talk-scroller');
+            const find = () => [...document.querySelectorAll('.row-tool')].find((one) => one.querySelector('.row-name[data-name-path$="fixed.rs"]') && ['读取', 'Read'].includes(one.querySelector('.row-action')?.textContent));
+            let tries = 0;
+            const look = () => {
+              for (const head of document.querySelectorAll('.group-head[aria-expanded="false"]')) head.click();
+              const row = find();
+              if (!row && tries++ < 30) {
+                scroller.scrollTop = Math.max(0, scroller.scrollTop - scroller.clientHeight * 0.8);
+                return setTimeout(look, 400);
+              }
+              row?.scrollIntoView({ block: 'start' });
+              (${named === "panel-code"} ? row?.querySelector('.row-name') : row?.querySelector('.row-line'))?.click();
+              // Opened, the row is brought back to the top of the screen.
+              setTimeout(() => {
+                find()?.scrollIntoView({ block: 'start' });
+                setTimeout(r, 600);
+              }, 1200);
+            };
+            setTimeout(look, 600);
+          }))`,
+        });
+      }
       // `panel` is a conversation with its side open at its home;
       // `panel-goal-blocked` and the like with its goal in that state;
       // `panel-talk` with a colleague it asked opened beside it, and
@@ -267,7 +307,7 @@ for (const session of sessions) {
           expression: `new Promise((r) => setTimeout(() => { const name = document.querySelector('.sidebar .talk-item[data-resident] .talk-name'); const from = name.getBoundingClientRect(); const box = document.querySelector('.sp-split').getBoundingClientRect(); const x = box.left + box.width * ${at[0]}, y = box.top + box.height * ${at[1]}; const pointer = (type, cx, cy) => new PointerEvent(type, { bubbles: true, cancelable: true, pointerId: 7, pointerType: 'mouse', isPrimary: true, button: 0, buttons: 1, clientX: cx, clientY: cy }); name.dispatchEvent(pointer('pointerdown', from.left + 8, from.top + 8)); window.dispatchEvent(pointer('pointermove', from.left + 30, from.top + 20)); window.dispatchEvent(pointer('pointermove', x, y)); setTimeout(r, 600); }, 600))`,
         });
       } else if (named.startsWith("panel")) {
-        const opened = named === "panel-talk" ? `'.cp-node[data-id="codex-b10g"]'` : named === "panel-agent" ? `'.cp-node[data-id="b7c1d9e4f2"]'` : named === "panel-plan" ? `'[data-part="part:plan"]'` : named === "panel-goal" ? `'.gb-act[data-act="expand"]'` : named === "panel-team" ? `'[data-part="part:team"]'` : named === "panel-menu" ? `'.sp-more'` : named === "panel-bottom" || named === "panel-left" ? `'.sp-menu-row[data-dock="${named.slice("panel-".length)}"]'` : named.startsWith("panel-goalpage-") ? `'[data-part="part:goal"]'` : null;
+        const opened = named === "panel-file" ? `'a[data-file$="控制环.md"]'` : named === "panel-talk" ? `'.cp-node[data-id="codex-b10g"]'` : named === "panel-agent" ? `'.cp-node[data-id="b7c1d9e4f2"]'` : named === "panel-plan" ? `'[data-part="part:plan"]'` : named === "panel-goal" ? `'.gb-act[data-act="expand"]'` : named === "panel-team" ? `'[data-part="part:team"]'` : named === "panel-menu" ? `'.sp-more'` : named === "panel-bottom" || named === "panel-left" ? `'.sp-menu-row[data-dock="${named.slice("panel-".length)}"]'` : named.startsWith("panel-goalpage-") ? `'[data-part="part:goal"]'` : null;
         // Those who work with it are pressed on the team's part.
         if (named === "panel-talk" || named === "panel-agent") {
           await send("Runtime.evaluate", { awaitPromise: true, expression: `new Promise((r) => { if (!document.querySelector(".sp-host.sp-shown")) document.querySelector(".sp-toggle")?.click(); setTimeout(() => { document.querySelector('[data-part="part:team"]')?.click(); setTimeout(r, 300); }, 300); })` });
@@ -536,7 +576,8 @@ for (const session of sessions) {
       // A page an agent wrote scrolls inside the frame the host gives it.
       if (!written && page.h > page.inner + 1) problems.push(`${session} ${size.name} ${theme}: the page scrolls, ${page.h}px in a ${page.inner}px screen`);
       if (probe) {
-        const { result: probed } = await send("Runtime.evaluate", { expression: `JSON.stringify(${probe})`, returnByValue: true });
+        // A probe may be a promise: it is waited for, then said.
+        const { result: probed } = await send("Runtime.evaluate", { expression: `Promise.resolve(${probe}).then((value) => JSON.stringify(value))`, awaitPromise: true, returnByValue: true });
         console.log(`${session} ${size.name} ${theme}: ${probed.value}`);
       }
       const shot = await send("Page.captureScreenshot", { format: "png" });

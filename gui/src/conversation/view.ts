@@ -58,7 +58,9 @@ import { DiffLines, RemoteDiff, diffPaint, encodeRow, keptDiff, memoryDiff } fro
 import { readRun } from "./deeds/read";
 import { scriptSaid } from "./deeds/script";
 import { drawDeeds, goingOn, type DeedTools } from "./deeds/draw";
-import type { Deed, PlainDeed } from "./deeds/types";
+import type { Deed, FileDeed, PlainDeed } from "./deeds/types";
+import { numberedFile } from "./deeds/files";
+import { whyOf } from "../world/again";
 import { troubled } from "./deeds/fan";
 import { shortCommand } from "./deeds/rows";
 import { cardsOf, type Card } from "./cards/cards";
@@ -100,6 +102,9 @@ export interface Context {
   /** Opens one of the host's agents in the panel beside the conversation,
    *  rather than under the row that sent it; false where it cannot. */
   openAgent?: ((id: string) => boolean) | undefined;
+  /** Opens a file a row or a card names (`file-kind.ts`): one that reads as
+   *  text in the panel beside the conversation, a picture in the viewer. */
+  openFile?: ((machine: MachineName, path: string) => void) | undefined;
   /** The reader opened or closed something: the page stops keeping the
    *  newest in view, so nothing moves under their hand. */
   reading(): void;
@@ -2093,6 +2098,10 @@ export class ConversationView {
     const closers: (() => void)[] = [];
     this.longs.set(key, longs);
     this.closers.set(key, closers);
+    if (thing.kind === "read") {
+      this.fillRead(key, thing, content);
+      return;
+    }
     // The deeds read from one run are drawn together, under its own words.
     const deeds = new Map<string, number[]>();
     const order: (string | { write: string; entry: string } | { change: number; entry: string })[] = [];
@@ -2595,11 +2604,12 @@ export class ConversationView {
   }
 
   /** A change's card, the rows put in it once there are some: `shown`
-   *  has them put. */
+   *  has them put. Its file's name opens the file as it is now, unless the
+   *  change deleted it. */
   private changeCard(path: string, machine: string | null, kind: DiffKind): { card: DiffCard; shown: (long: LongText) => void } {
     const { words } = this.context;
     let held: LongText | null = null;
-    const card = diffCard(path, machine, { copy: words.copyDiff, copied: words.copied }, async (signal) => unifiedDiff(path, kind, held ? await held.all(signal) : []));
+    const card = diffCard(path, machine, { copy: words.copyDiff, copied: words.copied }, async (signal) => unifiedDiff(path, kind, held ? await held.all(signal) : []), kind === "deleted" ? undefined : this.opener(machine, path));
     return {
       card,
       shown: (long) => {
@@ -2608,6 +2618,102 @@ export class ConversationView {
         if (full) card.act(full);
       },
     };
+  }
+
+  /** The way a card's file name opens the file, where the page opens files. */
+  private opener(machine: string | null, path: string): (() => void) | undefined {
+    const open = this.context.openFile;
+    return open ? () => open(machine ?? this.context.residentMachine, path) : undefined;
+  }
+
+  /** A file read, in a card as a change is, with no words of the run under
+   *  it: the lines the read brought back, where its output holds them;
+   *  else the file as its machine has it now, its beginning where it is
+   *  long. A read that failed says so, the host's words on hover. */
+  private fillRead(key: string, card: Extract<Card, { kind: "read" }>, content: HTMLElement): void {
+    const { words } = this.context;
+    const machine = card.machine ?? this.context.residentMachine;
+    const entry = this.conversation.get(card.sources[0]?.entry ?? "");
+    const tool = entry?.kind === "tool" ? entry.tool : null;
+    const brought = card.deed?.rows.length ? card.deed : tool && tool.does.as !== "command" ? numberedFile(toolText(tool, words).output, machine, card.path) : null;
+    const note = document.createElement("p");
+    note.className = "io-note";
+    if (brought) {
+      const drawn = this.fileCard({ ...brought, machine: brought.machine ?? machine });
+      for (const long of drawn.longs) this.held(key, long);
+      content.append(drawn.element);
+      return;
+    }
+    if (card.failed || !card.path || !this.context.lines) {
+      note.textContent = words.output.readFailed;
+      if (tool) note.title = toolText(tool, words).output.trim();
+      content.append(note);
+      return;
+    }
+    note.textContent = words.output.reading;
+    content.append(note);
+    const lines = this.context.lines;
+    const request = new AbortController();
+    const closers = this.closers.get(key);
+    if (closers) closers.push(() => request.abort());
+    else this.closers.set(key, [() => request.abort()]);
+    const pending = (async () => {
+      let source: OpenedLines | null = null;
+      try {
+        source = await lines(machine, card.path, { kind: "file", encoding: null });
+        if (request.signal.aborted) return;
+        const length = source.extent.length;
+        const read = await source.read(0, Math.min(length, READ_LINES), request.signal);
+        if (request.signal.aborted) return;
+        // As many of its first lines as fit in a card; a line too long for
+        // one (minified code) is cut where the card's share runs out.
+        const rows: FileDeed["rows"] = [];
+        let left = READ_CHARS;
+        for (const [at, text] of read.entries()) {
+          if (left <= 0) break;
+          rows.push({ line: at + 1, text: text.length > left ? `${text.slice(0, left)}…` : text });
+          left -= text.length;
+        }
+        if (length > rows.length) rows.push({ skipped: length - rows.length });
+        const drawn = this.fileCard({ kind: "file", command: null, machine, path: card.path, rows, of: length });
+        this.arrive(note, () => {
+          note.replaceWith(drawn.element);
+          for (const long of drawn.longs) {
+            this.held(key, long);
+            long.settle();
+          }
+        });
+      } catch (error) {
+        if (request.signal.aborted) return;
+        this.arrive(note, () => {
+          note.textContent = gone(error) ? words.output.fileMissing : words.output.readFailed;
+          note.title = whyOf(error);
+        });
+      } finally {
+        if (source) void source.close().catch((error: unknown) => console.warn("a file's lines could not be let go", error));
+      }
+    })();
+    this.filling.set(key, pending);
+    void pending.finally(() => {
+      if (this.filling.get(key) === pending) this.filling.delete(key);
+    });
+  }
+
+  /** A file's lines in a card as a change's are: numbered where their
+   *  places are known, in its colours; the lines passed over left out, not
+   *  unchanged; wrapping, since a file read is not a change. */
+  private fileCard(deed: FileDeed): { element: HTMLElement; longs: LongText[] } {
+    const { words } = this.context;
+    const rows = deed.rows.map((row) =>
+      "text" in row ? encodeRow({ kind: "same", old: row.line, new: row.line, text: row.text }) : encodeRow({ kind: "gap", old: null, new: null, hidden: row.skipped, text: "" }),
+    );
+    const text = deed.rows.flatMap((row) => ("text" in row ? [row.text] : [])).join("\n");
+    const card = diffCard(deed.path, deed.machine, { copy: words.copy, copied: words.copied }, async () => text, this.opener(deed.machine, deed.path));
+    const long = this.diffText(rows, deed.path, deed.rows.some((row) => "line" in row && row.line !== null), (n) => words.deeds.skipped(n), true);
+    card.body.append(long.element);
+    const full = long.takeFull();
+    if (full) card.act(full);
+    return { element: card.element, longs: [long] };
   }
 
   /** What a write changed, read from the machine that keeps it, in its
@@ -2993,20 +3099,7 @@ export class ConversationView {
         if (deed.page !== null || !/^image\/(png|jpeg|gif|webp)$/.test(deed.mime)) return "";
         return `<img class="io-image" data-picture data-path="${escape(deed.path)}"${deed.machine ? ` data-machine="${escape(deed.machine)}"` : ""} alt="${escape(deed.path.split(/[\\/]/).pop() ?? "")}">`;
       },
-      file: (deed) => {
-        const rows = deed.rows.map((row) =>
-          "text" in row ? encodeRow({ kind: "same", old: row.line, new: row.line, text: row.text }) : encodeRow({ kind: "gap", old: null, new: null, hidden: row.skipped, text: "" }),
-        );
-        const text = deed.rows.flatMap((row) => ("text" in row ? [row.text] : [])).join("\n");
-        const card = diffCard(deed.path, deed.machine, { copy: words.copy, copied: words.copied }, async () => text);
-        // Lines passed over in a file read are left out, not unchanged.
-        // A file read is not a change: its lines wrap.
-        const long = this.diffText(rows, deed.path, deed.rows.some((row) => "line" in row && row.line !== null), (n) => words.deeds.skipped(n), true);
-        card.body.append(long.element);
-        const full = long.takeFull();
-        if (full) card.act(full);
-        return { element: card.element, longs: [long] };
-      },
+      file: (deed) => this.fileCard(deed),
     };
   }
 
@@ -3195,6 +3288,14 @@ export class ConversationView {
       this.unfold(unfold);
       return;
     }
+    // A file's name on a row opens the file; the row stays as it is.
+    const name = (event.target as HTMLElement).closest<HTMLElement>("[data-name-path]");
+    if (name && this.context.openFile) {
+      event.preventDefault();
+      event.stopPropagation();
+      this.context.openFile(name.dataset.nameMachine ?? this.context.residentMachine, name.dataset.namePath!);
+      return;
+    }
     const target = (event.target as HTMLElement).closest<HTMLElement>(
       "[data-open], [data-fold], [data-gap], [data-earlier], [data-asked], .code-copy, .ask-option, [data-ask], [data-copy], [data-copy-turn], [data-turn-act], [data-turn-calls]",
     );
@@ -3354,9 +3455,14 @@ function stillGoing(state: RunFacts["state"]): boolean {
   return state.kind === "running" || (state.kind === "exited" && state.remaining > 0);
 }
 
+/** How many lines of a file read from its machine a read's card shows,
+ *  and how many characters of them at most; the whole is in the side. */
+const READ_LINES = 400;
+const READ_CHARS = 64 * 1024;
+
 /** Whether a machine said that what was asked for is no longer there, as
  *  the node's failure codes it. */
-function gone(error: unknown): boolean {
+export function gone(error: unknown): boolean {
   const code = typeof error === "object" && error !== null && "code" in error ? (error as { code?: unknown }).code : undefined;
   return code === "source_missing" || code === "original_gone" || code === "output_not_retained";
 }

@@ -11,15 +11,16 @@ type Named = Glyph | "thinking" | "chevron" | "copy" | "check" | "expand" | "sto
  *  archive and restore, delete), a page and its versions; an account, its
  *  password, a phone, logging out, trust and a relay; locking a person out
  *  and letting them in, signing up; a conversation's context, the
- *  provider's cache and how long it stays; saving a copy, and a file's
- *  path; the machines as a drawing and as a list; a new version; a
+ *  provider's cache and how long it stays; saving a copy, a file's path,
+ *  and opening it with this device's program; the machines as a drawing
+ *  and as a list; a new version; a
  *  conversation's goal, pausing and resuming it, and the panel beside it;
  *  a repair; a project's journal and decision; a sentinel; a
  *  conversation's every step; one of the account's skills. */
 type Frame =
   | "menu" | "plus" | "minus" | "settings" | "sidebar" | "machine" | "close" | "more" | "back" | "sleep" | "wake" | "move"
   | "archive" | "unarchive" | "trash" | "reread" | "scan" | "grip" | "page" | "versions" | "history" | "person" | "key" | "phone"
-  | "logout" | "shield" | "lock" | "unlock" | "signup" | "relay" | "save" | "link"
+  | "logout" | "shield" | "lock" | "unlock" | "signup" | "relay" | "save" | "link" | "launch"
   | "context" | "cache" | "clock" | "tree" | "rows" | "update"
   | "note" | "plug" | "tune" | "skill"
   | "goal" | "pause" | "resume" | "panel" | "repair" | "journal" | "spec" | "sentinel" | "steps" | "dock-right" | "dock-bottom" | "dock-left" | "split"
@@ -84,6 +85,7 @@ const paths: Record<Named, string> = {
   trash: '<path d="M4.25 6h11.5"/><path d="M8 6V4.75a.75.75 0 0 1 .75-.75h2.5a.75.75 0 0 1 .75.75V6"/><path d="M5.6 6l.65 9.1a1 1 0 0 0 1 .9h5.5a1 1 0 0 0 1-.9L14.4 6"/><path d="M8.6 8.75v4.5M11.4 8.75v4.5"/>',
   save: '<path d="M10 3.75v8.5M6.75 9l3.25 3.25L13.25 9"/><path d="M4.25 13v2.25a1 1 0 0 0 1 1h9.5a1 1 0 0 0 1-1V13"/>',
   link: '<path d="M8.5 11.5l3-3"/><path d="M7.4 9.1 5.95 10.55a2.3 2.3 0 0 0 3.25 3.25l1.45-1.45"/><path d="M12.6 10.9l1.45-1.45a2.3 2.3 0 0 0-3.25-3.25L9.35 7.65"/>',
+  launch: '<path d="M9.25 4.75h-3.5a1 1 0 0 0-1 1v8.5a1 1 0 0 0 1 1h8.5a1 1 0 0 0 1-1v-3.5"/><path d="M11.75 4.75h3.5v3.5M15.25 4.75 9.75 10.25"/>',
   page: '<rect x="3.75" y="4.25" width="12.5" height="11.5" rx="1.5"/><path d="M3.75 7.25h12.5"/><path d="M6.25 13.25l2.25-2.5 1.75 1.5 3.5-3.5"/>',
   versions: '<rect x="6.25" y="6.75" width="10" height="9" rx="1.25"/><path d="M3.75 13.25v-7.5a1 1 0 0 1 1-1h8.5"/>',
   read: '<path d="M4.5 4.5h7l4 4v7a1 1 0 0 1-1 1h-10a1 1 0 0 1-1-1v-10a1 1 0 0 1 1-1z"/><path d="M11.5 4.5v4h4"/><path d="M7 11h6M7 13.5h4"/>',

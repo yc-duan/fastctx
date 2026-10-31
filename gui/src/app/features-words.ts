@@ -3,7 +3,6 @@
 
 import type { GlyphName } from "../conversation/glyphs";
 import type { CollaborationWords } from "../film/collaboration";
-import type { MemoryFilmWords } from "../film/memory";
 import type { SentinelFilmWords } from "../film/sentinel";
 import type { WorkbenchWords } from "../film/workbench";
 
@@ -32,7 +31,6 @@ export interface FeaturesWords {
   /** While the settings are being read. */
   reading: string;
   retry: string;
-  memory: { name: string; line: string; film: MemoryFilmWords; after: string; offWhat: string };
   sentinels: SentinelWords;
   callers: string;
   callersSaid: string;
@@ -162,13 +160,6 @@ export const zhFeatures: FeaturesWords = {
     notSaved: "未能保存",
     changedElsewhere: "已在别处修改，现已载入最新版本",
   },
-  memory: {
-    name: "项目记忆",
-    line: "项目里一路写下的手记与定下的定论",
-    film: { captions: ["对话里要紧的，写成一篇手记", "过些天，另一段对话一开头就读到它", "定下的规矩是定论，每改一次多一版"] },
-    after: "项目页里有了手记与定论，项目里的对话一开头就读到它们",
-    offWhat: "项目页里收起手记与定论，对话不再拿到它们；已经写下的都留着，再开时照旧。",
-  },
   callers: "调用方",
   callersSaid: "这些智能体的对话里会有请 GPT 的工具",
   callees: "被调用方",
@@ -267,13 +258,6 @@ export const enFeatures: FeaturesWords = {
     save: "Save",
     notSaved: "Not saved",
     changedElsewhere: "Changed elsewhere; that version is loaded",
-  },
-  memory: {
-    name: "Project memory",
-    line: "A project's journal and its decisions",
-    film: { captions: ["What mattered in a conversation is written as a journal", "Days later, another conversation reads it from its first line", "What was settled is a decision, one more version each change"] },
-    after: "Projects show their journal and decisions, and conversations in them start with both",
-    offWhat: "Projects fold their journal and decisions away and conversations no longer get them; all that was written stays, as it was, for next time.",
   },
   callers: "Callers",
   callersSaid: "Conversations with these agents get the tools to ask a GPT",

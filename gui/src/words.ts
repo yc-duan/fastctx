@@ -237,6 +237,8 @@ export interface Words {
     diffGone: string;
     reading: string;
     readFailed: string;
+    /** A file read from its machine that is not there. */
+    fileMissing: string;
   };
   /** How long something took: "1 分 12 秒". */
   took(ms: number): string;
@@ -633,6 +635,7 @@ export const zh: Words = {
     diffGone: "改动的细节已不在那台机器上",
     reading: "读取中…",
     readFailed: "读取失败",
+    fileMissing: "找不到这个文件",
   },
   turnInfo: {
     model: "模型",
@@ -1009,6 +1012,7 @@ export const en: Words = {
     diffGone: "This change's details are no longer on that machine",
     reading: "Reading…",
     readFailed: "Couldn't read it",
+    fileMissing: "File not found",
   },
   turnInfo: {
     model: "Model",

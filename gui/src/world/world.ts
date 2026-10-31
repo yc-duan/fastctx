@@ -135,6 +135,9 @@ export interface ResidentNow {
   moved: Moved | null;
   /** Which computer of which hub answered for it, as `fastctx_types::observation::MachineSource`. */
   source?: MachineSource | null;
+  /** Another account opened it, on a machine shared whole with this one
+   *  (`world-network.md`, 共享机器与智能体协助); absent for one's own. */
+  openedBy?: { account: string } | null;
 }
 
 /** A machine in one network, and how this computer writes it: `name.hub`

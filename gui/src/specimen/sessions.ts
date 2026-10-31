@@ -9,7 +9,8 @@ import { trips } from "./trips";
 import { deeds } from "./deeds";
 import type { SessionEvent, Speaker } from "../world/events";
 import type { JsonValue } from "../world/wire";
-import { cut, hunk, leftOut, noted, printed, put, ran, same, wrote } from "./run-facts";
+import { cut, hunk, keepFile, leftOut, noted, printed, put, ran, same, wrote } from "./run-facts";
+import { CONTROL_MD, FIXED_RS, readCall } from "./files";
 import { tour } from "./tour";
 import { voice } from "./voice";
 
@@ -135,6 +136,9 @@ function claude(): Specimen {
     ),
   );
   s.say("t1", "thinking", "", 3);
+  // The host's own read of the file it then changes.
+  s.tool("t1", readCall("laptop", "/home/me/mark50/src/ctrl/fixed.rs", FIXED_RS));
+  keepFile("/home/me/mark50/specs/控制环.md", () => [...CONTROL_MD]);
   // One run that only wrote: its writes are its rows.
   const vectors = [
     "// Step-response vectors recorded on lab, 2026-10-04: input, expected output.",
@@ -226,7 +230,7 @@ function claude(): Specimen {
   s.say(
     "t1",
     "message",
-    `找到了。\`fixed.rs\` 里的积分项是用 Q16 累加的，每一步 $e \\cdot \\Delta t$ 都会被舍入到 $2^{-16}$；误差越接近零，被舍掉的比例越大，所以系统停在 0.9612，再也爬不上去。
+    `找到了。[fixed.rs](/home/me/mark50/src/ctrl/fixed.rs) 里的积分项是用 Q16 累加的，每一步 $e \\cdot \\Delta t$ 都会被舍入到 $2^{-16}$；误差越接近零，被舍掉的比例越大，所以系统停在 0.9612，再也爬不上去。
 
 ### 改了什么
 
@@ -251,7 +255,7 @@ $$
 let i = (self.ki.widen() * self.integral).narrow();
 \`\`\`
 
-整套测试已经在 lab 上跑起来了，大约要三分钟，跑完我会接着看结果。`,
+取舍的来由记在 [控制环.md](/home/me/mark50/specs/控制环.md)。整套测试已经在 lab 上跑起来了，大约要三分钟，跑完我会接着看结果。`,
     3,
   );
   s.push({ event: "context", used: 61_400, window: 200_000 });
