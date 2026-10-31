@@ -23,11 +23,16 @@ pub(super) fn wait<F: Future>(future: F, timeout: Duration) -> Option<F::Output>
     let signal = Arc::new(Signal { ready: Mutex::new(false), changed: Condvar::new() });
     let waker = Waker::from(signal.clone());
     let mut context = Context::from_waker(&waker);
-    let mut future = std::pin::pin!(future);
+    // This synchronous driver cannot yield to an enclosing Tokio task when
+    // its cooperative budget expires; admission must wake for real readiness.
+    let mut future = std::pin::pin!(tokio::task::unconstrained(future));
     let deadline = Instant::now() + timeout;
     loop {
         if let Poll::Ready(value) = future.as_mut().poll(&mut context) {
             return Some(value);
+        }
+        if Instant::now() >= deadline {
+            return None;
         }
         let mut ready = signal.ready.lock().expect("wake state");
         while !*ready {

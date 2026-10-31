@@ -319,20 +319,27 @@ impl Database {
         bytes: usize,
         write: impl FnOnce(&rusqlite::Connection) -> Result<T> + Send + 'static,
     ) -> Result<T> {
+        self.write_now_then_at(priority, bytes, write, |_| {})
+    }
+
+    /// A blocking caller parks until commit. Its memory-only notification runs
+    /// in writer order after durability, even if the caller no longer waits.
+    pub fn write_now_then_at<T: Send + 'static>(
+        &self,
+        priority: Priority,
+        bytes: usize,
+        write: impl FnOnce(&rusqlite::Connection) -> Result<T> + Send + 'static,
+        committed: impl FnOnce(&T) + Send + 'static,
+    ) -> Result<T> {
         self.available()?;
         let permit = blocking::wait(self.0.writes.admit(priority, bytes), QUEUE_WAIT)
             .ok_or_else(|| busy("write admission"))??;
         let (send, receive) = oneshot::channel();
         self.submit(
             priority,
-            writer::job(
-                permit,
-                write,
-                |_| {},
-                move |result| {
-                    let _ = send.send(result);
-                },
-            ),
+            writer::job(permit, write, committed, move |result| {
+                let _ = send.send(result);
+            }),
         )?;
         blocking::wait(receive, ANSWER).ok_or_else(unknown)?.map_err(|_| unknown())?
     }
