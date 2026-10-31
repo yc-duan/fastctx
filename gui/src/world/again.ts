@@ -71,6 +71,32 @@ export function whyOf(error: unknown): string {
 export const ANSWER_WITHIN =
   (import.meta.env.DEV && Number(new URLSearchParams(location.search).get("late"))) || 2 * 60_000;
 
+/** What an answer that did not come within `ANSWER_WITHIN` says: what was
+ *  asked may or may not be done (`app/problem.ts` says it plainly). */
+export class Unanswered extends Error {
+  constructor() {
+    super("no answer came within two minutes; it may or may not have been done");
+  }
+}
+
+/** `asked`, or `Unanswered` once `ANSWER_WITHIN` passes without its answer:
+ *  for what is asked once, so that waiting for it ends. */
+export function within<T>(asked: Promise<T>): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const due = window.setTimeout(() => reject(new Unanswered()), ANSWER_WITHIN);
+    asked.then(
+      (value) => {
+        clearTimeout(due);
+        resolve(value);
+      },
+      (error: unknown) => {
+        clearTimeout(due);
+        reject(error);
+      },
+    );
+  });
+}
+
 /** A call made until it is answered (`untilAnswered`). */
 export interface Asked<T> {
   answered: Promise<T>;

@@ -6,6 +6,7 @@
 // says the same; one refused gives way to what the World has, and why is said
 // once. Archiving can be undone for a moment.
 
+import { Unanswered, within } from "../world/again";
 import type { Controlled } from "../world/control";
 import type { Address } from "../world/events";
 import type { Forgetting, Managed, Management } from "../world/management";
@@ -118,10 +119,10 @@ export class TalkActs {
     const address = addressOf(r);
     this.chain(address, async () => {
       try {
-        const done = await this.options.rename(address, name);
+        const done = await within(this.options.rename(address, name));
         if (done.kind === "refused") this.undo(address, "name", this.options.words.notRenamed, done.said);
       } catch (error) {
-        this.undo(address, "name", this.options.words.notRenamed, String(error instanceof Error ? error.message : error));
+        this.undo(address, "name", this.notDone(error, this.options.words.notRenamed), String(error instanceof Error ? error.message : error));
       }
     });
   }
@@ -135,12 +136,18 @@ export class TalkActs {
       try {
         // Its machine gone offline since it was asked, it is deleted there
         // once it is back: said, unless the asking said so already.
-        const done = await this.options.forget(address);
+        const done = await within(this.options.forget(address));
         if (done === "queued" && !announced) this.options.say(this.options.words.deleteAway(address.machine));
       } catch (error) {
-        this.undo(address, "deleting", this.options.words.notDeleted, String(error instanceof Error ? error.message : error));
+        this.undo(address, "deleting", this.notDone(error, this.options.words.notDeleted), String(error instanceof Error ? error.message : error));
       }
     });
+  }
+
+  /** What an act that was not done says: not known to be done when no
+   *  answer came in time, else `refused`. */
+  private notDone(error: unknown, refused: string): string {
+    return error instanceof Unanswered ? this.options.words.failed(error.message) : refused;
   }
 
   private nameOf(r: ResidentNow): string {
@@ -159,11 +166,11 @@ export class TalkActs {
     const address = addressOf(r);
     this.chain(address, async () => {
       try {
-        const managed = await this.options.manage(address, action);
+        const managed = await within(this.options.manage(address, action));
         const undone = managed.steps.filter((step) => step.outcome === "failed");
         if (undone.length) this.undo(address, part, refused, undone.map((step) => step.detail).join("\n"));
       } catch (error) {
-        this.undo(address, part, refused, String(error instanceof Error ? error.message : error));
+        this.undo(address, part, this.notDone(error, refused), String(error instanceof Error ? error.message : error));
       }
     });
   }
