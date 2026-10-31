@@ -1121,6 +1121,11 @@ pub fn run() {
         Ok(None) => return,
         Err(error) => (None, Some(error)),
     };
+    let context = tauri::generate_context!();
+    #[cfg(windows)]
+    let context = titlebar::configure(context);
+    #[cfg(desktop)]
+    updates::take_left(&context.config().identifier);
     let builder = tauri::Builder::default()
         .manage(startup::Startup::default())
         .plugin(tauri_plugin_world_pages::init())
@@ -1380,9 +1385,6 @@ pub fn run() {
     let builder = builder.plugin(titlebar::plugin());
     #[cfg(target_os = "android")]
     let builder = builder.plugin(android::plugin());
-    let context = tauri::generate_context!();
-    #[cfg(windows)]
-    let context = titlebar::configure(context);
     if let Err(error) = builder.run(context) {
         startup::persist("open_window", &error.to_string());
     }

@@ -14,6 +14,15 @@ pub(crate) struct Cache(Mutex<HashMap<HubAccount, Arc<Entry>>>);
 struct Entry {
     epoch: AtomicU64,
     body: tokio::sync::Mutex<Option<(u64, String, String)>>,
+    /// Why reading the index last failed, while it keeps failing.
+    failed: Mutex<Option<String>>,
+}
+
+/// Why an index could not be read, and whether that is news since the last
+/// try, worth a line in the log.
+pub(super) struct Failed {
+    pub error: String,
+    pub news: bool,
 }
 impl Cache {
     pub(crate) fn invalidate(&self, hub: &HubId, account: Option<&fastctx_types::AccountName>) {
@@ -28,7 +37,7 @@ pub(super) async fn get(
     node: &Node,
     link: &fastctx_net::link::Link,
     account: &fastctx_types::AccountName,
-) -> Result<(String, String), String> {
+) -> Result<(String, String), Failed> {
     let scope = HubAccount { hub: link.membership().id, account: account.clone() };
     let entry = node.skill_index.0.lock().expect("never poisoned").entry(scope).or_default().clone();
     let mut body = entry.body.lock().await;
@@ -39,7 +48,16 @@ pub(super) async fn get(
         {
             return Ok((text.clone(), version.clone()));
         }
-        let (index, version) = super::index(link, account).await?;
+        let (index, version) = match super::index(link, account).await {
+            Ok(read) => {
+                *entry.failed.lock().expect("never poisoned") = None;
+                read
+            }
+            Err(error) => {
+                let news = entry.failed.lock().expect("never poisoned").replace(error.clone()).as_ref() != Some(&error);
+                return Err(Failed { error, news });
+            }
+        };
         let mut text = fastctx_types::skills::context(&index);
         if text.len() > 16 * 1024 {
             let mut end = 16 * 1024 - 256;
