@@ -76,6 +76,7 @@ fn request(node: &Arc<Node>, id: &ResidentId, plan: bool) {
     tokio::spawn(async move {
         // Named in what the node reports of a lock held too long.
         let _doing = fastctx_platform::doing::doing(format!("refreshing {id}'s context"));
+        let mut again = crate::again::Again::default();
         loop {
             let result = async {
                 let gate = node.residents.management(&id)?;
@@ -89,15 +90,25 @@ fn request(node: &Arc<Node>, id: &ResidentId, plan: bool) {
             {
                 node.log.line(format_args!("refreshing {id}'s context: {error}"));
             }
-            let mut pending = node.contexts.0.lock().expect("never poisoned");
-            if node.residents.active(&id).is_err() {
-                pending.remove(&id);
-                break;
+            {
+                let mut pending = node.contexts.0.lock().expect("never poisoned");
+                if node.residents.active(&id).is_err() {
+                    pending.remove(&id);
+                    break;
+                }
+                let pending = pending.get_mut(&id).expect("worker owns its entry");
+                if !failed && pending.loaded == pending.revision {
+                    pending.working = false;
+                    break;
+                }
             }
-            let pending = pending.get_mut(&id).expect("worker owns its entry");
-            if failed || pending.loaded == pending.revision {
-                pending.working = false;
-                break;
+            // A refresh that failed is tried again, later each time, and a
+            // change meanwhile is taken in with it; one that a change
+            // outdated while it ran runs again at once.
+            if failed {
+                tokio::time::sleep(again.next()).await;
+            } else {
+                again.reset();
             }
         }
     });
@@ -121,19 +132,16 @@ pub(crate) fn start(node: &Arc<Node>) {
         let mut views = node.views.subscribe();
         let mut ways = node.ways.subscribe();
         let mut memory = node.memory_changes.subscribe();
-        let mut retry = tokio::time::interval(std::time::Duration::from_secs(60));
-        retry.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-        retry.tick().await;
         let mut plan = true;
         loop {
             request_each(&node, plan);
             // Connectivity changes the authorized focus and memory paths, but
-            // never the plan. Plan records and reconnects invalidate it separately.
+            // never the plan. Plan records and reconnects invalidate it
+            // separately; a refresh that fails is tried again on its own.
             plan = tokio::select! {
                 _ = views.changed() => true,
                 _ = ways.changed() => false,
                 _ = memory.changed() => false,
-                _ = retry.tick() => true,
             };
             tokio::time::sleep(SETTLE).await;
             // What changed meanwhile is in this refresh, and is not seen again.

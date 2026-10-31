@@ -3,6 +3,7 @@
 //! later letters, including the enclosing answer that may consume it.
 
 use std::collections::HashMap;
+use std::hash::{Hash as _, Hasher as _};
 use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -20,7 +21,20 @@ use crate::speech::Owed;
 
 #[derive(Default)]
 pub(crate) struct Received {
+    /// Each conversation's worker; whoever keeps a letter wakes it, or
+    /// starts one when none runs.
     workers: Mutex<HashMap<ResidentId, Arc<Notify>>>,
+    /// A conversation's letters are numbered and kept one at a time, under
+    /// the one of these its id falls to; other conversations' go on.
+    keeping: [Mutex<()>; 16],
+}
+
+impl Received {
+    fn keeping(&self, to: &ResidentId) -> &Mutex<()> {
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        to.hash(&mut hasher);
+        &self.keeping[hasher.finish() as usize % self.keeping.len()]
+    }
 }
 
 #[derive(Serialize, Deserialize)]
@@ -51,9 +65,10 @@ pub(crate) fn keep(node: &Arc<Node>, to: &ResidentId, delivery: Delivery, owed: 
     let directory = directory(node, to);
     ensure_private_dir(&directory)?;
     let path = directory.join(format!("{}.json", delivery.id));
-    // The same short lock serializes publication and worker retirement. A
-    // persisted sequence preserves arrival order even if the clock moves back.
-    let publishing = node.received.workers.lock().expect("never poisoned");
+    // A persisted sequence preserves arrival order even if the clock moves
+    // back. The letter is kept before its worker is woken, so a worker
+    // either finds it before it retires or a new one starts after.
+    let publishing = node.received.keeping(to).lock().expect("never poisoned");
     let sequence = directory.join("sequence");
     let order = match std::fs::read_to_string(&sequence) {
         Ok(text) => text.parse::<u64>().map_err(io::Error::other)?,
@@ -115,17 +130,26 @@ async fn drain(node: Arc<Node>, to: ResidentId, wake: Arc<Notify>) {
     let mut ways = node.ways.subscribe();
     let mut errors = HashMap::new();
     let mut again = crate::again::Again::default();
+    // The letters read so far, by path: each wake lists the folder and reads
+    // only the letters new to it, so a backlog is read once, not once a wake.
+    let mut known: HashMap<PathBuf, Entry> = HashMap::new();
     loop {
         let notified = wake.notified();
         tokio::pin!(notified);
         notified.as_mut().enable();
         ways.borrow_and_update();
-        let mut waiting = Vec::new();
         match paths(&directory(&node, &to)) {
             Ok(paths) => {
+                let listed: std::collections::HashSet<&PathBuf> = paths.iter().collect();
+                known.retain(|path, _| listed.contains(path));
                 for path in paths {
+                    if known.contains_key(&path) {
+                        continue;
+                    }
                     match fastctx_install::renewal::read_json::<Entry>(&path) {
-                        Ok(Some(entry)) => waiting.push((path, entry)),
+                        Ok(Some(entry)) => {
+                            known.insert(path, entry);
+                        }
                         Ok(None) => {}
                         Err(error) => report(&node, &mut errors, &path, &error),
                     }
@@ -133,10 +157,13 @@ async fn drain(node: Arc<Node>, to: ResidentId, wake: Arc<Notify>) {
             }
             Err(error) => report(&node, &mut errors, &directory(&node, &to), &error),
         }
-        waiting.sort_by(|a, b| a.1.order.cmp(&b.1.order).then(a.1.delivery.at.cmp(&b.1.delivery.at)));
+        let mut waiting: Vec<(PathBuf, u64, Timestamp)> =
+            known.iter().map(|(path, entry)| (path.clone(), entry.order, entry.delivery.at)).collect();
+        waiting.sort_by(|a, b| a.1.cmp(&b.1).then(a.2.cmp(&b.2)));
         let mut pause = fastctx_net::again::LONGEST;
         let mut failed = false;
-        for (path, mut entry) in waiting {
+        for (path, _, _) in waiting {
+            let Some(mut entry) = known.remove(&path) else { continue };
             match deliver(&node, &mut entry).await {
                 Ok(outcome) => {
                     let done = !matches!(outcome, Handover::Waiting);
@@ -154,6 +181,7 @@ async fn drain(node: Arc<Node>, to: ResidentId, wake: Arc<Notify>) {
                             .map(|_| ())
                         }),
                     };
+                    let stored = result.is_ok();
                     if let Err(error) = result {
                         failed = true;
                         report(&node, &mut errors, &path, &error);
@@ -164,11 +192,19 @@ async fn drain(node: Arc<Node>, to: ResidentId, wake: Arc<Notify>) {
                         let millis = due.as_millisecond().saturating_sub(Timestamp::now().as_millisecond()).max(0);
                         pause = pause.min(Duration::from_millis(millis as u64));
                     }
+                    // A letter still waiting stays known as it was just kept;
+                    // one whose keeping failed is read again from disk.
+                    if !done && stored {
+                        known.insert(path, entry);
+                    }
                 }
                 Err(error) => {
                     failed = true;
-                    if let Err(storing) = fastctx_install::renewal::write_json(&path, &entry) {
-                        report(&node, &mut errors, &path, &storing);
+                    match fastctx_install::renewal::write_json(&path, &entry) {
+                        Ok(()) => {
+                            known.insert(path.clone(), entry);
+                        }
+                        Err(storing) => report(&node, &mut errors, &path, &storing),
                     }
                     report(&node, &mut errors, &path, &error);
                 }

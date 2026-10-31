@@ -217,6 +217,9 @@ pub(crate) struct Node {
     /// What this machine keeps in memory of the ledgers it writes alone
     /// (`ledger::alone`).
     alone_ledgers: ledger::alone::Ledgers,
+    /// What each hub was last told of each conversation's records
+    /// (`record_ownership::Registered`).
+    registered: record_ownership::Registered,
     plan_reads: plan_reads::Reads,
     skill_copies: skills::copies::Copies,
     skill_index: skills::cache::Cache,
@@ -692,6 +695,7 @@ pub async fn run_prepared(
         replicas: Default::default(),
         history_shelves: Default::default(),
         alone_ledgers: Default::default(),
+        registered: Default::default(),
         plan_reads: Default::default(),
         skill_copies: Default::default(),
         skill_index: Default::default(),

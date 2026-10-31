@@ -144,17 +144,19 @@ pub(crate) fn request(node: &Arc<Node>, id: &ResidentId) {
 
 /// Takes each plan file changed since it was last looked at.
 async fn look(node: &Arc<Node>, wanted: &ResidentId) {
+    // The one resident asked for, read alone: every resident here is asked
+    // for when the view changes.
     let held: Vec<ResidentId> = node
         .residents
-        .everyone()
+        .on_record(wanted)
         .filter(|held| {
-            held.id == *wanted
-                && held.here
+            held.here
                 && held.removed.is_none()
                 && held.about.world_managed()
                 && matches!(held.about.origin, Origin::User)
         })
         .map(|held| held.id)
+        .into_iter()
         .collect();
     for id in held {
         if let Some((about, _)) = node.residents.about(&id)

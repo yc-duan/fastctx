@@ -208,6 +208,9 @@ pub(crate) fn uncertain_lately(directory: &ConversationDir, within: std::time::D
 /// The caller holds the resident-storage transaction.
 pub(crate) fn pending_here(directory: &ConversationDir) -> io::Result<Vec<Pending>> {
     let mut all = Vec::new();
+    // The list an earlier release kept of what went in, read once a scan
+    // rather than once an entry.
+    let mut listed = None;
     for path in entries(&directory.inbox())? {
         // A file being written sits under a hidden temporary name until it
         // is whole.
@@ -216,7 +219,7 @@ pub(crate) fn pending_here(directory: &ConversationDir) -> io::Result<Vec<Pendin
             continue;
         }
         let pending = parse_pending(directory, &path, &std::fs::read(&path)?)?;
-        if !delivered_here(directory, &pending.delivery.id)?
+        if !delivered_among(directory, &pending.delivery.id, &mut listed)?
             && !directory.uncertain().join(format!("{}.json", pending.delivery.id)).exists()
         {
             all.push(pending);
@@ -291,6 +294,27 @@ fn settle_read(
         _ => {}
     }
     Ok(Some(pending))
+}
+
+/// As `delivered_here`, reading the `delivered` list into `listed` the first
+/// time it is needed.
+fn delivered_among(
+    directory: &ConversationDir,
+    id: &NoticeId,
+    listed: &mut Option<std::collections::HashSet<String>>,
+) -> io::Result<bool> {
+    if directory.delivery_receipts().join(id.as_str()).try_exists()? {
+        return Ok(true);
+    }
+    if listed.is_none() {
+        let text = match std::fs::read_to_string(directory.delivered()) {
+            Ok(text) => text,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => String::new(),
+            Err(error) => return Err(error),
+        };
+        *listed = Some(text.lines().map(str::to_string).collect());
+    }
+    Ok(listed.as_ref().is_some_and(|listed| listed.contains(id.as_str())))
 }
 
 /// Whether something with this id went into the resident's session.

@@ -24,6 +24,26 @@ use tokio::time::Instant;
 
 use crate::Node;
 
+/// How long a wait for a job's change goes before its record is read
+/// anyway: a supervisor tells the node of a change once, and a word lost
+/// on the way is not said again.
+pub(crate) const BACKSTOP: Duration = Duration::from_secs(2);
+
+/// Resolves once `job` changed as `changes` tells, `changes` may have
+/// missed one, or `within` passed; the changes of other jobs pass by.
+pub(crate) async fn changed_or(changes: &mut broadcast::Receiver<JobId>, job: &JobId, within: Duration) {
+    let deadline = Instant::now() + within;
+    loop {
+        tokio::select! {
+            change = changes.recv() => match change {
+                Ok(changed) if changed != *job => continue,
+                _ => return,
+            },
+            () = tokio::time::sleep_until(deadline) => return,
+        }
+    }
+}
+
 pub struct Jobs {
     changes: broadcast::Sender<JobId>,
 }
@@ -262,10 +282,7 @@ impl Jobs {
                 break;
             }
             tokio::select! {
-                change = changes.recv() => match change {
-                    Ok(_) | Err(broadcast::error::RecvError::Lagged(_)) => continue,
-                    Err(broadcast::error::RecvError::Closed) => unreachable!("the node holds the sender"),
-                },
+                () = changed_or(&mut changes, &launched.job, BACKSTOP) => continue,
                 () = came(&mut interrupted) => {
                     // Its end, as the stop records it, is what this call answers.
                     interrupted = None;

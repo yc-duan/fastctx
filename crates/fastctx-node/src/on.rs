@@ -1001,10 +1001,7 @@ async fn take_output(node: &Arc<Node>, producer: &OnOrigin, source: &OnSource, p
             if through(&record).is_some() {
                 break record;
             }
-            tokio::select! {
-                _ = changes.recv() => {}
-                () = tokio::time::sleep(LOOK_AGAIN) => {}
-            }
+            crate::jobs::changed_or(&mut changes, &source.job, crate::jobs::BACKSTOP).await;
         };
         let through = record.output_drained.filter(|_| record.end.is_none()).map(|boundary| boundary.stdout);
         let (from, to) = (PathBuf::from(&record.output), path.to_path_buf());

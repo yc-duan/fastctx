@@ -245,7 +245,14 @@ pub fn start(node: &Arc<Node>) -> std::io::Result<()> {
                     Some(first) => first,
                     None => break,
                 },
-                _ = retry.tick() => sessions.clone(),
+                // Only sessions whose host is not watched as a process are
+                // looked at for it: the others are heard of when it ends.
+                _ = retry.tick() => {
+                    for session in unwatched(&node) {
+                        look_soon(&node, sessions.join(session));
+                    }
+                    continue;
+                }
             };
             let mut directories = HashSet::from([first]);
             while let Ok(more) = changes.try_recv() {
@@ -268,8 +275,26 @@ pub fn start(node: &Arc<Node>) -> std::io::Result<()> {
     Ok(())
 }
 
+/// The sessions registered without a host process to watch, whose end is
+/// noticed only by looking.
+fn unwatched(node: &Node) -> Vec<String> {
+    let state = node.claude.state.lock().expect("never poisoned");
+    state
+        .sessions
+        .iter()
+        .filter(|(_, entry)| entry.registration.process.is_none())
+        .map(|(session, _)| session.clone())
+        .collect()
+}
+
+/// How long after a look that left something over the session is looked
+/// at again: twice as long each time, from `AGAIN_FIRST` to `AGAIN_LAST`.
+const AGAIN_FIRST: std::time::Duration = std::time::Duration::from_secs(5);
+const AGAIN_LAST: std::time::Duration = std::time::Duration::from_secs(300);
+
 /// Looks at one session's directory soon, beside the others but never twice
-/// at once: a change while it is looked at has it looked at again after.
+/// at once: a change while it is looked at has it looked at again after,
+/// and a look that left something over is tried again later on its own.
 fn look_soon(node: &Arc<Node>, directory: PathBuf) {
     {
         let mut looking = node.claude.looking.lock().expect("never poisoned");
@@ -281,32 +306,46 @@ fn look_soon(node: &Arc<Node>, directory: PathBuf) {
     }
     let node = node.clone();
     tokio::spawn(async move {
+        let mut wait = AGAIN_FIRST;
         loop {
-            {
+            let settled = {
                 let _room = node.claude.looks.clone().acquire_owned().await;
-                look_alone(&node, directory.clone()).await;
-            }
-            let mut looking = node.claude.looking.lock().expect("never poisoned");
-            match looking.get_mut(&directory) {
-                Some(again) if *again => *again = false,
-                _ => {
-                    looking.remove(&directory);
-                    if looking.is_empty() {
-                        *looking = HashMap::new();
+                look_alone(&node, directory.clone()).await
+            };
+            {
+                let mut looking = node.claude.looking.lock().expect("never poisoned");
+                match looking.get_mut(&directory) {
+                    Some(again) if *again => {
+                        *again = false;
+                        continue;
                     }
-                    return;
+                    _ if !settled => {}
+                    _ => {
+                        looking.remove(&directory);
+                        if looking.is_empty() {
+                            *looking = HashMap::new();
+                        }
+                        return;
+                    }
                 }
             }
+            tokio::time::sleep(wait).await;
+            wait = (wait * 2).min(AGAIN_LAST);
         }
     });
 }
 
 /// Looks at one session's directory in a task of its own: whatever goes
-/// wrong with one session stays with it, and the watching goes on.
-async fn look_alone(node: &Arc<Node>, directory: PathBuf) {
+/// wrong with one session stays with it, and the watching goes on. Whether
+/// it took everything the session left.
+async fn look_alone(node: &Arc<Node>, directory: PathBuf) -> bool {
     let (looking, path) = (node.clone(), directory.clone());
-    if let Err(error) = tokio::spawn(async move { look(&looking, &path).await }).await {
-        node.log.line(format_args!("looking at the Claude session {}: {error}", directory.display()));
+    match tokio::spawn(async move { look(&looking, &path).await }).await {
+        Ok(settled) => settled,
+        Err(error) => {
+            node.log.line(format_args!("looking at the Claude session {}: {error}", directory.display()));
+            false
+        }
     }
 }
 
@@ -440,27 +479,29 @@ fn session_directories(node: &Node, sessions: &Path) -> Vec<PathBuf> {
     directories
 }
 
-/// Takes what is new in one session's directory.
-async fn look(node: &Arc<Node>, directory: &Path) {
+/// Takes what is new in one session's directory; whether it took all of it,
+/// or left something to be tried again.
+async fn look(node: &Arc<Node>, directory: &Path) -> bool {
     let Some(session) = directory.file_name().and_then(|name| name.to_str()).map(str::to_string) else {
-        return;
+        return true;
     };
+    let mut settled = true;
     let _doing = fastctx_platform::doing::doing(format!("reading the reports of Claude session {session}"));
     // A session of a conversation deleted here: what it still reports is
     // dropped, and it is taken for nothing new.
     if node.residents.deleted_session(&session).is_some() {
-        return;
+        return true;
     }
     match exchange::registration(directory) {
         Ok(Some(registration)) if registration.session == session => hear(node, registration).await,
         Ok(Some(_)) => {
             node.log.line(format_args!("{} contains a registration for a different session", directory.display()));
-            return;
+            return true;
         }
-        Ok(None) => return,
+        Ok(None) => return true,
         Err(error) => {
             node.log.line(format_args!("reading {}: {error}", directory.display()));
-            return;
+            return false;
         }
     }
     // What it reports stays where it is until it is someone's: a node that
@@ -480,38 +521,41 @@ async fn look(node: &Arc<Node>, directory: &Path) {
             state.sessions.remove(&session);
             node.claude.changed.notify_waiters();
         }
-        return;
+        return true;
     };
     if let Err(error) = policy(node, &resident, directory) {
         node.log.line(format_args!("publishing Claude session policy for {session}: {error}"));
-        return;
+        return false;
     }
     // A session the user opened on their own, as one registered before the
     // World kept to that line, is known for its run and nothing more: its
     // record and controls are not the World's to read (`world-layers.md`).
     if node.residents.about(&resident).is_none_or(|(about, _)| !about.world_managed()) {
-        return;
+        return true;
     }
     if let Err(error) = settle::name_record(node, &resident, directory, &session) {
         node.log.line(format_args!("finding where Claude Code keeps {session}'s record: {error}"));
+        settled = false;
     }
     if let Err(error) = titles::start(node, &resident, directory).await {
         node.log.line(format_args!("watching Claude's title: {error}"));
+        settled = false;
     }
     if node.residents.removed(&resident).is_some() {
         let _births = node.claude.births.write().await;
         node.claude.state.lock().expect("never poisoned").sessions.remove(&session);
         node.claude.changed.notify_waiters();
-        return;
+        return settled;
     }
     let reading = reading(node, &session);
     let _reading = reading.lock().await;
     // Its conversation may have been deleted while this waited.
     if !node.residents.knows(&resident) || node.residents.deleted_session(&session).is_some() {
-        return;
+        return true;
     }
     if let Err(error) = control::look(node, &resident, directory).await {
         node.log.line(format_args!("reading Claude controls for {session}: {error}"));
+        settled = false;
     }
     let harvested = {
         let directory = directory.to_path_buf();
@@ -521,9 +565,9 @@ async fn look(node: &Arc<Node>, directory: &Path) {
         Ok(Ok(harvested)) => harvested,
         Ok(Err(error)) => {
             node.log.line(format_args!("reading what {session} reported: {error}"));
-            return;
+            return false;
         }
-        Err(_) => return,
+        Err(_) => return false,
     };
     for problem in problems {
         node.log.line(problem);
@@ -621,7 +665,7 @@ async fn look(node: &Arc<Node>, directory: &Path) {
                 "applying {} from {session}: {error}; the report remains for recovery",
                 report.name
             ));
-            return;
+            return false;
         }
     }
     match exchange::receipts(directory) {
@@ -631,22 +675,24 @@ async fn look(node: &Arc<Node>, directory: &Path) {
                     crate::inbox::reclaim(&node.world.conversation(&resident), std::slice::from_ref(&id))
                 {
                     node.log.line(format_args!("taking back the doubt about {id}: {error}"));
+                    settled = false;
                 }
                 if let Err(error) =
                     taken(node, &resident, &session, &turn, |pending| Ok(pending.delivery.id.as_str() == id)).await
                 {
                     node.log.line(format_args!("applying the receipt for {id}: {error}"));
-                    return;
+                    return false;
                 }
             }
         }
         Err(error) => {
             node.log.line(format_args!("reading consumption receipts for {session}: {error}"));
-            return;
+            return false;
         }
     }
     if let Err(error) = exchange::handed_over(directory) {
         node.log.line(format_args!("clearing what {session}'s mod handed over: {error}"));
+        settled = false;
     }
     settle::consider(node, &resident, &session, directory);
     // Births come before the session's own lock: it is let go and taken
@@ -662,20 +708,20 @@ async fn look(node: &Arc<Node>, directory: &Path) {
         .sessions
         .get(&session)
         .map(|entry| entry.registration.clone());
-    let Some(registration) = registration else { return };
+    let Some(registration) = registration else { return settled };
     match pairing::present(node, &registration) {
         Ok(false) => {}
-        Ok(true) => return,
+        Ok(true) => return settled,
         Err(error) => {
             node.log.line(format_args!("checking {session}'s lifetime: {error}"));
-            return;
+            return false;
         }
     }
     if let Err(error) =
         ended(node, &resident, &session, Some("its host activation ended".into()), registration.instance.clone()).await
     {
         node.log.line(format_args!("settling {session}: {error}"));
-        return;
+        return false;
     }
     let mut state = node.claude.state.lock().expect("never poisoned");
     if state.sessions.get(&session).is_some_and(|entry| entry.registration == registration) {
@@ -685,6 +731,7 @@ async fn look(node: &Arc<Node>, directory: &Path) {
         state.sessions = HashMap::new();
     }
     node.claude.changed.notify_waiters();
+    settled
 }
 
 // Register synchronously with the caller, without depending on a filesystem

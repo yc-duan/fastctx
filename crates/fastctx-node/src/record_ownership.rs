@@ -35,6 +35,21 @@ pub(crate) fn resident(node: &Node, id: &ResidentId, hub: &HubId, account: &Acco
     node.residents.about(id).is_some_and(|(about, _)| allows(node, &about, hub, account))
 }
 
+/// What each hub was told of each conversation here, on which connection:
+/// told again only when what would be told changes, or on a new connection.
+/// A conversation's records are registered at every full pass over the
+/// replicas and before every history call, and the hub keeps what it is told.
+#[derive(Default)]
+pub(crate) struct Registered(std::sync::Mutex<std::collections::HashMap<(HubId, ResidentId), Told>>);
+
+#[derive(PartialEq)]
+struct Told {
+    connection: jiff::Timestamp,
+    account: AccountName,
+    shared: bool,
+    previous: Option<fastctx_types::MachineName>,
+}
+
 /// Registration contains coordinates and birth mode only, never document text.
 pub(crate) async fn register(
     node: &Node,
@@ -50,16 +65,26 @@ pub(crate) async fn register(
         Some(assisted) => !assisted,
         None => matches!(acting, Acting::Here),
     };
+    let previous = node.residents.birth_machine(resident);
+    let key = (scope.hub.clone(), resident.clone());
+    let told = match link.status() {
+        fastctx_net::link::Status::Online { since, .. } => {
+            Some(Told { connection: since, account: scope.account.clone(), shared, previous: previous.clone() })
+        }
+        _ => None,
+    };
+    if told.is_some() && node.registered.0.lock().expect("never poisoned").get(&key) == told.as_ref() {
+        return Ok(());
+    }
     link.owned_records(
         &scope.account,
-        fastctx_types::owned_records::Request::Register {
-            resident: resident.clone(),
-            shared,
-            previous: node.residents.birth_machine(resident),
-        },
+        fastctx_types::owned_records::Request::Register { resident: resident.clone(), shared, previous },
     )
     .await
     .map_err(fastctx_types::ipc::Failure::new)?;
+    if let Some(told) = told {
+        node.registered.0.lock().expect("never poisoned").insert(key, told);
+    }
     Ok(())
 }
 

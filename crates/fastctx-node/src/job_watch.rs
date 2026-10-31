@@ -5,8 +5,8 @@
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
-use fastctx_types::ipc::Failure;
 use fastctx_types::{ProcessIdentity, run::JobRecord};
 
 use crate::Node;
@@ -75,39 +75,51 @@ fn remove(node: &Arc<Node>, path: PathBuf) {
     node.disk_changed.notify_one();
 }
 
+/// How often a supervisor is looked at where the system cannot say when a
+/// process ends.
+const LOOKED_AT: Duration = Duration::from_secs(1);
+
+/// The longest between looks at the record's lock of a supervisor whose
+/// identity is unknown.
+const LOCK_AT_MOST: Duration = Duration::from_secs(5);
+
 /// Without an identity, the supervisor lock witnesses whether an exited
 /// launch or an earlier node's unfinished startup still has a supervisor.
+/// With one, the watch waits on the supervisor's process itself, and wakes
+/// when it ends: a quiet job costs nothing while it runs.
 pub(crate) fn start(node: &Arc<Node>, path: &Path, identity: Option<ProcessIdentity>) {
     if !node.job_watches.0.lock().expect("never poisoned").watching.insert(path.to_path_buf()) {
         return;
     }
     let (node, path) = (node.clone(), path.to_path_buf());
     tokio::spawn(async move {
+        let mut identity = identity;
         let mut again = crate::again::Again::default();
+        let mut lock_wait = crate::on::LOOK_AGAIN;
         loop {
-            let result: Result<bool, Failure> = async {
-                let alive = identity
-                    .as_ref()
-                    .map(fastctx_platform::is_alive)
-                    .transpose()
-                    .map_err(|error| Failure::new(format!("observing the job's supervisor: {error}")))?
-                    .unwrap_or(false);
-                if alive {
-                    return Ok(false);
-                }
-                let record = crate::jobs::interrupt(&path, "its supervisor ended without finishing the record").await?;
-                if record.end.is_none() {
-                    return Ok(false);
-                }
-                node.jobs.changed(&node, record.id, record.owner, record.town).await?;
-                Ok(true)
+            if let Some(supervisor) = &identity {
+                ended(supervisor).await;
             }
-            .await;
-            match result {
-                Ok(true) => break,
-                // This is the existing observation cadence for a quiet job,
-                // not a deadline for its execution or for recovery.
-                Ok(false) => tokio::time::sleep(crate::on::LOOK_AGAIN).await,
+            match crate::jobs::interrupt(&path, "its supervisor ended without finishing the record").await {
+                Ok(record) if record.end.is_some() => {
+                    match node.jobs.changed(&node, record.id, record.owner, record.town).await {
+                        Ok(()) => break,
+                        Err(error) => {
+                            node.log.line(format_args!("recovering {} after its supervisor: {error}", path.display()));
+                            tokio::time::sleep(again.next()).await;
+                        }
+                    }
+                }
+                // A supervisor holds the record after all: the one it names
+                // is waited for now, or, unknown, its lock is tried again.
+                Ok(record) => match record.supervisor {
+                    Some(named) if identity.as_ref() != Some(&named) => identity = Some(named),
+                    _ => {
+                        identity = None;
+                        tokio::time::sleep(lock_wait).await;
+                        lock_wait = (lock_wait * 2).min(LOCK_AT_MOST);
+                    }
+                },
                 Err(error) => {
                     node.log.line(format_args!("recovering {} after its supervisor: {error}", path.display()));
                     tokio::time::sleep(again.next()).await;
@@ -123,4 +135,15 @@ pub(crate) fn start(node: &Arc<Node>, path: &Path, identity: Option<ProcessIdent
             remove(&node, path);
         }
     });
+}
+
+/// Resolves once the process `supervisor` has ended.
+async fn ended(supervisor: &ProcessIdentity) {
+    if fastctx_platform::host_process::exited(supervisor).await.is_ok() {
+        return;
+    }
+    // Where the system cannot say when a process ends, it is looked at.
+    while fastctx_platform::is_alive(supervisor).unwrap_or(false) {
+        tokio::time::sleep(LOOKED_AT).await;
+    }
 }

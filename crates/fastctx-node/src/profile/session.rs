@@ -204,8 +204,20 @@ pub(crate) fn hand_to_session(node: &Node, id: &ResidentId, session: &std::path:
     crate::context::hand_to_session(node, id, session)
 }
 
-pub(crate) async fn refresh(node: &Arc<Node>) {
-    for resident in node.residents.everyone() {
+/// How long after a refresh that found conversations busy, or could not
+/// collect the MCP commands given up, those are tried again.
+const AGAIN: std::time::Duration = std::time::Duration::from_secs(15);
+
+/// Brings the sessions' configuration of `only`'s conversations, or of every
+/// conversation, in line with the accounts' profiles. Returns those busy at
+/// the time, to be tried again.
+async fn refresh(node: &Arc<Node>, only: Option<&BTreeSet<ResidentId>>) -> BTreeSet<ResidentId> {
+    let residents: Vec<_> = match only {
+        None => node.residents.everyone().collect(),
+        Some(ids) => ids.iter().filter_map(|id| node.residents.on_record(id)).collect(),
+    };
+    let mut busy = BTreeSet::new();
+    for resident in residents {
         if resident.removed.is_some() || !resident.about.world_started {
             continue;
         }
@@ -213,6 +225,7 @@ pub(crate) async fn refresh(node: &Arc<Node>) {
             continue;
         };
         let Ok(_held) = tokio::time::timeout(std::time::Duration::from_millis(1), gate.read()).await else {
+            busy.insert(resident.id.clone());
             continue;
         };
         if node.residents.active(&resident.id).is_err() {
@@ -226,29 +239,46 @@ pub(crate) async fn refresh(node: &Arc<Node>) {
             crate::codex::moved(node, &resident.id).await;
         }
     }
+    busy
 }
 
+/// Collects the MCP commands each hub's profiles gave up; whether all of
+/// them were.
+fn sweep(node: &Node) -> bool {
+    let mut swept = true;
+    for link in node.links() {
+        let result = if matches!(link.status(), fastctx_net::link::Status::Stopped { .. }) {
+            crate::mcp::store::leave(node, &link.membership().id)
+        } else {
+            crate::mcp::store::sweep(node, &link.membership().id)
+        };
+        if let Err(error) = result {
+            node.log.line(format_args!("collecting MCP commands: {error}"));
+            swept = false;
+        }
+    }
+    swept
+}
+
+/// Follows the accounts' profiles as the views and ways change: every
+/// conversation when they do, and only those found busy, or the commands
+/// left uncollected, a while later.
 pub(crate) fn start(node: &Arc<Node>) {
     let node = node.clone();
     tokio::spawn(async move {
         let mut views = node.views.subscribe();
         let mut ways = node.ways.subscribe();
+        let (mut busy, mut swept, mut all) = (BTreeSet::new(), true, true);
         loop {
-            refresh(&node).await;
-            for link in node.links() {
-                let result = if matches!(link.status(), fastctx_net::link::Status::Stopped { .. }) {
-                    crate::mcp::store::leave(&node, &link.membership().id)
-                } else {
-                    crate::mcp::store::sweep(&node, &link.membership().id)
-                };
-                if let Err(error) = result {
-                    node.log.line(format_args!("collecting MCP commands: {error}"));
-                }
+            busy = refresh(&node, (!all).then_some(&busy)).await;
+            if all || !swept {
+                swept = sweep(&node);
             }
-            tokio::select! {
-                _=views.changed()=>{}, _=ways.changed()=>{},
-                _=tokio::time::sleep(std::time::Duration::from_secs(60))=>{},
-            }
+            all = tokio::select! {
+                _ = views.changed() => true,
+                _ = ways.changed() => true,
+                () = tokio::time::sleep(AGAIN), if !busy.is_empty() || !swept => false,
+            };
         }
     });
 }
