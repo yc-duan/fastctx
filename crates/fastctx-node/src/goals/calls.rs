@@ -25,7 +25,7 @@ pub(crate) async fn user(
         None => crate::colleagues::find_for(node, &Acting::Here, &resident).await?,
     };
     if node.is_here(&machine) {
-        let account = scope::resolve(node, &resident, account.as_ref())?;
+        let account = scope::user(node, &resident, account.as_ref())?;
         return user_here(node, resident, account, node.machine(), request).await;
     }
     let acting = account
@@ -82,10 +82,17 @@ pub(crate) async fn user_here(
     if matches!(request, Request::Mark { .. }) {
         return Err(Failure::refused(words::MAIN_ONLY));
     }
-    let account = scope::resolve(node, &resident, Some(&account))?;
+    let actor = account;
+    let account = scope::resolve(node, &resident, Some(&actor))?;
     require(node, &request)?;
     let address = Address { machine: node.machine(), resident };
-    operations::call(node, address, account, Author::User { machine }, None, request).await
+    let access = crate::record_access::Access { actor, owner: account.clone(), conversation: address.clone() };
+    let modern = node.link_of(&account.hub).is_some_and(|link| link.view().shared_records);
+    crate::record_access::within(
+        modern.then_some(access),
+        operations::call(node, address, account, Author::User { machine }, None, request),
+    )
+    .await
 }
 
 pub(crate) async fn command(

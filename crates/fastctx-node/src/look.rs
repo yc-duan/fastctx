@@ -119,6 +119,7 @@ pub(crate) fn read_here(
         jobs.sort_by_key(|job| job.started_at);
         Ok(Some(Looked::Resident(Box::new(ResidentDetail {
             resident: ResidentNow {
+                opened_by: None,
                 source: None,
                 last_action: actions.last().cloned(),
                 about: record.about.clone(),

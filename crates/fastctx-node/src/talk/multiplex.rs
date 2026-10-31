@@ -346,7 +346,7 @@ async fn run(
             event = events.recv() => match event {
                 Ok(Some(event)) => {
                     if request.goal && !crate::goals::watch::is_goal(&event) { continue; }
-                    if !crate::goals::visible(node, crate::admission::seen::Looker::Asker(&asker), &event) { continue; }
+                    if !crate::goals::visible(node, crate::admission::seen::Looker::Asker(&asker), &request.resident, &event) { continue; }
                     live(Arc::unwrap_or_clone(event), slim.as_ref()).map(|event| fastctx_types::session::Watched::Live { event })
                 }
                 Ok(None) => return Ok(()),

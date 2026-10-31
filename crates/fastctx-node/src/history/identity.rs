@@ -1,10 +1,10 @@
-//! Attribute a memory write to the actual conversation, including remote shell jobs.
+//! Attribute a history write to the actual conversation, including remote shell jobs.
 
 use crate::{Node, town::caller::Caller};
 use fastctx_types::{
     access::Purpose,
+    history::Author,
     ipc::Failure,
-    memory::Author,
     project::Stamp,
     remote::{RemoteCall, RemoteReply},
     residents::Origin,
@@ -22,13 +22,14 @@ pub(crate) async fn scoped(
 ) -> Result<Author, Failure> {
     let about = get(node, caller, acting).await?;
     if about.as_ref().is_some_and(|about| matches!(about.origin, Origin::Colleague { .. })) {
-        return Err(Failure::refused(fastctx_types::memory::words::COLLEAGUE_READ_ONLY));
+        return Err(Failure::refused(
+            "colleagues read plans and history; give findings to the conversation that asked you",
+        ));
     }
     Ok(Author {
         stamp: Stamp { by: caller.writer(), on: Some(node.machine()), at: jiff::Timestamp::now() },
         host: about.as_ref().map(|about| about.host.clone()),
         model: about.as_ref().and_then(|about| about.model.clone()),
-        session: about.and_then(|about| about.session),
     })
 }
 
@@ -67,7 +68,7 @@ async fn get(
                     .about,
             )
         }
-        _ => return Err(Failure::refused(fastctx_types::memory::words::PRIMARY_WRITER)),
+        _ => return Err(Failure::refused("only a user or a primary conversation writes history")),
     })
 }
 

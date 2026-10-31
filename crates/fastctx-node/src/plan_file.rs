@@ -53,7 +53,16 @@ fn stamp(path: &std::path::Path) -> Option<(SystemTime, u64)> {
     std::fs::metadata(path).ok().map(|meta| (meta.modified().unwrap_or(SystemTime::UNIX_EPOCH), meta.len()))
 }
 
-pub(crate) fn start(node: &Arc<Node>) {
+fn watch_legacy(node: &Arc<Node>) {
+    let links = node.links();
+    if !links.is_empty() && links.iter().all(|link| link.view().shared_records) {
+        let old = node.plan_files.2.lock().expect("never poisoned").take();
+        drop(old);
+        return;
+    }
+    if node.plan_files.2.lock().expect("never poisoned").is_some() {
+        return;
+    }
     let weak = Arc::downgrade(node);
     let runtime = tokio::runtime::Handle::current();
     let mut watcher = fastctx_watch::Watcher::new(move |event: fastctx_watch::Result<fastctx_watch::Event>| {
@@ -79,11 +88,16 @@ pub(crate) fn start(node: &Arc<Node>) {
         node.log.line(format_args!("watching legacy plan directories: {error}"));
     }
     *node.plan_files.2.lock().expect("never poisoned") = Some(watcher);
+}
+
+pub(crate) fn start(node: &Arc<Node>) {
+    watch_legacy(node);
     let weak = Arc::downgrade(node);
     let mut views = node.views.subscribe();
     tokio::spawn(async move {
         loop {
             let Some(node) = weak.upgrade() else { return };
+            watch_legacy(&node);
             for resident in node.residents.everyone().filter(|resident| resident.here && resident.removed.is_none()) {
                 request(&node, &resident.id);
             }
@@ -143,6 +157,13 @@ async fn look(node: &Arc<Node>, wanted: &ResidentId) {
         .map(|held| held.id)
         .collect();
     for id in held {
+        if let Some((about, _)) = node.residents.about(&id)
+            && let Ok(Some(account)) = crate::plan::file_account(node, &id, &about.acting)
+            && node.link_of(&account.hub).is_some_and(|link| link.view().shared_records)
+        {
+            node.plan_files.0.lock().expect("never poisoned").remove(&id);
+            continue;
+        }
         if allowed(node, &id) == Ok(true)
             && let Some((about, _)) = node.residents.about(&id)
             && let Ok(Some(account)) = crate::plan::file_account(node, &id, &about.acting)
@@ -205,7 +226,8 @@ async fn look(node: &Arc<Node>, wanted: &ResidentId) {
                 // Unreadable for now (held open, permissions): looked at
                 // again in a while rather than at once.
                 Err(_) => {
-                    let waiting = Synced { stamp: before.stamp, text: before.text, retry: Some(Instant::now() + RETRY) };
+                    let waiting =
+                        Synced { stamp: before.stamp, text: before.text, retry: Some(Instant::now() + RETRY) };
                     node.plan_files.0.lock().expect("never poisoned").insert(id.clone(), waiting);
                     continue;
                 }

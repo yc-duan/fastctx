@@ -15,6 +15,8 @@ pub(crate) struct Intent {
     pub resident: Address,
     pub input_hash: String,
     pub account: HubAccount,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub access: Option<crate::record_access::Access>,
     pub expected: Option<u64>,
     pub proposed: Option<Goal>,
     pub at: Timestamp,

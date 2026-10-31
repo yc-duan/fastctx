@@ -27,35 +27,36 @@ pub(super) const PLAN_UNAVAILABLE: &str = "The plan is unavailable.";
 pub(super) const PLAN_OLD_COMPUTER: &str = "The computer this conversation works from runs an older Fastctx that cannot keep the plan file, so there is no plan file to edit until it is updated.";
 pub(super) const PLAN_OLD_HUB: &str =
     "The account's hub runs an older Fastctx, so there is no plan file to edit until it is updated.";
-pub(super) const PLAN_NOT_PREPARED: &str = "The plan file could not be prepared, so there is no plan file to edit this turn.";
+pub(super) const PLAN_NOT_PREPARED: &str =
+    "The plan file could not be prepared, so there is no plan file to edit this turn.";
 
 /// How a conversation keeps its plan (`world-plan.md`, 交给模型的那段说明).
 /// How to keep a plan, for a conversation that keeps its own: the plan is
 /// the Markdown file at `path` on `machine` (`plan_file`).
-pub(super) fn plan_guide(path: &str, machine: &str) -> String {
-    // Sentinels and journals are not offered in a release yet (`world.md`,
+pub(super) fn plan_guide(path: &str, machine: &str, replicated: bool) -> String {
+    // Sentinels are not offered in a release yet (`world.md`,
     // 这一版不发的).
     let live = if fastctx_platform::preview() {
         "- For how a colleague, a sentinel or a job stands right now. Write its id
-  (codex-7f3a, s-a1b2c3, j-k3x9a2, or a journal entry such as
-  20261022T031205Z-desktop) and the panel shows its state, live."
+  (codex-7f3a, s-a1b2c3, j-k3x9a2) and the panel shows its state, live."
     } else {
         "- For how a colleague or a job stands right now. Write its id (codex-7f3a,
   j-k3x9a2) and the panel shows its state, live."
     };
-    format!(
+    let text = format!(
         r#"YOUR PLAN
 
-Your plan is the Markdown file {path} on {machine}. Plan your own work in it:
+Your plan is the Markdown file {path} on {machine}. It is the user's, shown to
+them beside the conversation, and Fastctx keeps it in sync on all their
+computers. Plan your own work in it:
 what the work is, its steps in the order you will take them, what has been
 decided. Unless the user set the order, choose it yourself rather than
 taking things as they were mentioned: first what later steps depend on and
 what could lose data or carries the most risk, polish last. Write it
 yourself, unasked, before you start anything that takes real effort, then
-work through it in that order. Change it as you change
-any file, with `edit`, `write` or anything else, on {machine}; each change
-you save is its next version, which the user sees in a panel beside the
-conversation and can change too. The colleagues you ask can read it.
+work through it in that order. Change it only with `edit` or
+`write`; each change you save is its next version, which reaches all their
+computers, and the user can change it too. The colleagues you ask can read it.
 
 ## Progress
 Progress is a checklist: `- [ ] step` for each step, `- [x] step` once it is
@@ -94,7 +95,13 @@ draw pictures; use one where it says more than sentences:
 ## Tips
 - Read the file before you change it; the user may have changed it.
 - Name a step the same way every time you write it."#
-    )
+    );
+    if replicated {
+        text
+    } else {
+        text.replace("It is the user's, shown to\nthem beside the conversation, and Fastctx keeps it in sync on all their\ncomputers.", "The user sees it beside the conversation.")
+            .replace("which reaches all their\ncomputers, and the user can change it too.", "and the user can change it too.")
+    }
 }
 
 pub(super) const USER: &str = "The user";

@@ -123,6 +123,7 @@ pub async fn watch(
         let node = node.clone();
         tokio::spawn(async move {
             let _lease = lease;
+            let mut views = node.views.subscribe();
             for piece in pieces.into_iter().chain(told.first()) {
                 if sender.send_wait(Ok(piece), std::time::Duration::from_secs(30)).await.is_err() {
                     return;
@@ -130,10 +131,18 @@ pub async fn watch(
             }
             loop {
                 tokio::select! {
+                    changed = views.changed() => {
+                        if changed.is_err() { return; }
+                        views.borrow_and_update();
+                        if !crate::admission::seen::resident(&node, crate::admission::seen::Looker::Here(&Acting::Here), &resident) {
+                            let _ = sender.send(Err(Failure::refused("access to this conversation was withdrawn")));
+                            return;
+                        }
+                    },
                     event = events.recv() => match event {
                         Ok(Some(event)) => {
                             if goal.is_some() && !crate::goals::watch::is_goal(&event) { continue; }
-                            if !crate::goals::visible(&node, crate::admission::seen::Looker::Here(&Acting::Here), &event) { continue; }
+                            if !crate::goals::visible(&node, crate::admission::seen::Looker::Here(&Acting::Here), &resident, &event) { continue; }
                             let Some(event) = live(Arc::unwrap_or_clone(event), slim.as_ref()) else { continue };
                             if sender.send(Ok(Watched::Live { event })).is_err() { return }
                         }
@@ -356,8 +365,8 @@ async fn read_here(node: &Arc<Node>, resident: &ResidentId) -> Result<HistoryRea
     };
     let mut hosted = hosted;
     if let Some(events) = &mut hosted {
-        let projection = crate::context::input::Projection::open(&directory)
-            .map_err(|error| Failure::new(error.to_string()))?;
+        let projection =
+            crate::context::input::Projection::open(&directory).map_err(|error| Failure::new(error.to_string()))?;
         for event in events {
             projection.restore(event).map_err(|error| Failure::new(error.to_string()))?;
         }
@@ -614,11 +623,17 @@ pub async fn serve_watch(
     };
     node.log.line(format_args!("{what} opened"));
     let Opening { pieces, mut events, slim } = opened;
+    let mut views = node.views.subscribe();
+    let allowed = || crate::admission::seen::resident(node, crate::admission::seen::Looker::Asker(asker), &resident);
     let mut n = 0;
     let mut next: std::collections::VecDeque<Watched> = pieces.into();
     next.extend(told.first());
     loop {
         while let Some(watched) = next.pop_front() {
+            if !allowed() {
+                stream.close().await;
+                return Err(Failure::refused("access to this conversation was withdrawn"));
+            }
             let piece = Piece { watch, n, watched };
             let sent = if packed {
                 // A history's segments take a while to pack (0.4 s for a
@@ -630,6 +645,10 @@ pub async fn serve_watch(
                         .await
                         .map_err(|error| Failure::new(format!("packing the history: {error}")))?,
                 };
+                if !allowed() {
+                    stream.close().await;
+                    return Err(Failure::refused("access to this conversation was withdrawn"));
+                }
                 let signed = link.sign_bytes(Domain::Event, bytes);
                 fastctx_net::watch_stream::send_bytes(&mut stream, &signed).await
             } else {
@@ -641,9 +660,14 @@ pub async fn serve_watch(
             n += 1;
         }
         tokio::select! {
+            changed = views.changed() => {
+                if changed.is_err() { return ended("the node stopped"); }
+                views.borrow_and_update();
+                if !allowed() { stream.close().await; return Err(Failure::refused("access to this conversation was withdrawn")); }
+            },
             event = events.recv() => match event {
                 Ok(Some(event)) => {
-                    if (!goal || crate::goals::watch::is_goal(&event)) && crate::goals::visible(node, crate::admission::seen::Looker::Asker(asker), &event) {
+                    if (!goal || crate::goals::watch::is_goal(&event)) && crate::goals::visible(node, crate::admission::seen::Looker::Asker(asker), &resident, &event) {
                         next.extend(live(Arc::unwrap_or_clone(event), slim.as_ref()).map(|event| Watched::Live { event }));
                     }
                 },

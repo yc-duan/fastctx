@@ -599,8 +599,9 @@ pub fn facts(node: &Node) -> MachineFacts {
         page_accounts: true,
         attachment_places: true,
         attachment_runs: true,
-        memory_folders: true,
+        memory_folders: false,
         plan_copies: true,
+        replicated_records: true,
         collaboration_tree: true,
         shell: shell(),
         form: Some(form()),
@@ -1085,8 +1086,8 @@ impl fastctx_net::link::Node for Handler {
                         .await
                         .map(|location| RemoteReply::WorkingCopy { location })
                 }
-                RemoteCall::MemoryFolders { town } => {
-                    crate::memory::folders::here_for(&node, &asker, &town).map(RemoteReply::MemoryFolders)
+                RemoteCall::MemoryFolders { .. } => {
+                    Err(Failure::not_run("project memory was replaced by history; update the requesting computer"))
                 }
                 RemoteCall::Plan { resident, operation } => {
                     let account =
@@ -1133,7 +1134,7 @@ impl fastctx_net::link::Node for Handler {
                 }
                 RemoteCall::SentinelHome { request } => {
                     let scope = fastctx_types::access::HubAccount { hub: hub.clone(), account: caller.account.clone() };
-                    crate::sentinels::home_call(&node, &scope, &request)
+                    crate::sentinels::home_call_for(&node, &scope, &from, &request)
                         .await
                         .map(|reply| RemoteReply::SentinelHome(Box::new(reply)))
                         .map_err(Failure::new)
@@ -1382,9 +1383,31 @@ impl fastctx_net::link::Node for Handler {
         })
     }
 
+    fn history_changed(&self, town: fastctx_types::access::TownId, name: String, version: u64) {
+        if let Some(node) = self.node.upgrade() {
+            crate::replicas::updates::schedule(
+                &node,
+                &self.hub,
+                crate::replicas::updates::Change::History { town, name, version },
+            );
+            node.memory_changed();
+        }
+    }
+    fn replicas_changed(&self) {
+        if let Some(node) = self.node.upgrade() {
+            crate::replicas::updates::schedule(&node, &self.hub, crate::replicas::updates::Change::All);
+            node.memory_changed();
+        }
+    }
+
     fn ledger_changed(&self, town: Option<fastctx_types::access::TownId>) {
         let Some(node) = self.node.upgrade() else { return };
-        crate::ledger::syncing::changed(&node, &self.hub, town);
+        crate::ledger::syncing::changed(&node, &self.hub, town.clone());
+        crate::replicas::updates::schedule(
+            &node,
+            &self.hub,
+            town.map_or(crate::replicas::updates::Change::All, crate::replicas::updates::Change::Project),
+        );
     }
 
     fn renamed(&self, from: &MachineName, to: &MachineName) {
@@ -1434,6 +1457,24 @@ impl fastctx_net::link::Node for Handler {
     /// to: its user is told who, from the views before and after.
     fn account_record_changed(&self, change: &fastctx_types::account_records::Changed) {
         if let Some(node) = self.node.upgrade() {
+            match change.metadata.kind.as_str() {
+                fastctx_types::owned_records::KIND => {
+                    crate::replicas::updates::schedule(&node, &self.hub, crate::replicas::updates::Change::All)
+                }
+                fastctx_types::history::RECORD_KIND | fastctx_types::plan::KIND => crate::replicas::updates::schedule(
+                    &node,
+                    &self.hub,
+                    crate::replicas::updates::Change::Record(change.clone()),
+                ),
+                _ => {}
+            }
+
+            if matches!(
+                change.metadata.kind.as_str(),
+                fastctx_types::history::RECORD_KIND | fastctx_types::owned_records::KIND
+            ) {
+                node.memory_changed();
+            }
             crate::placement::copies::changed(&node, &self.hub, change);
         }
         if let Some(node) = self.node.upgrade() {

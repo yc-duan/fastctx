@@ -122,18 +122,7 @@ async fn check(node: &Arc<Node>, town: &TownName) {
 async fn set_town_right(node: &Arc<Node>, town: &TownName) {
     let _syncing = node.syncing.lock().await;
     let (world, name) = (node.world.clone(), town.clone());
-    match tokio::task::spawn_blocking(move || {
-        let mut found = set_right(&world, &name)?;
-        found.extend(crate::memory::projection::restore(&world, &name)?.into_iter().map(|path| Tampered {
-            at: Timestamp::now(),
-            path,
-            what: "memory copy restored from the ledger",
-            found: None,
-        }));
-        io::Result::Ok(found)
-    })
-    .await
-    {
+    match tokio::task::spawn_blocking(move || set_right(&world, &name)).await {
         Ok(Ok(found)) => {
             for tampered in found {
                 node.log.line(format_args!("{town}'s ledger: {} {}", tampered.path, tampered.what));

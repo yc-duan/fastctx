@@ -13,6 +13,9 @@ use serde::{Deserialize, Serialize};
 use super::{Change, Receipt, words};
 
 pub(super) const BLOCK_BYTES: usize = 16 * 1024;
+fn block_bytes(name: &str) -> usize {
+    if name == "history" { fastctx_types::history::CATALOG_CONTEXT_BYTES + 8 * 1024 } else { BLOCK_BYTES }
+}
 const BLOCK_COUNT: usize = 12;
 const FACT_BYTES: usize = 1024;
 
@@ -108,6 +111,9 @@ fn blocks(
             {
                 let Some(text) = bodies.get(id, name, &block.source) else { continue };
                 block.text = text;
+                if let Some(fact) = bodies.get(id, &format!("{name}-fact"), &block.source) {
+                    block.fact = fact;
+                }
             }
             blocks.insert(name.to_string(), block);
         }
@@ -150,7 +156,9 @@ pub(super) fn set_memory(
     change: Change<'_>,
 ) -> io::Result<()> {
     let _transaction = crate::resident_storage::lock();
-    node.context_bodies.put(id, name, &crate::profile::session::hash(text), &bounded(text, BLOCK_BYTES));
+    let source = crate::profile::session::hash(text);
+    node.context_bodies.put(id, name, &source, &bounded(text, block_bytes(name)));
+    node.context_bodies.put(id, &format!("{name}-fact"), &source, &bounded(change.fact, FACT_BYTES));
     set_mode(&node.world, id, name, text, change, true)
 }
 
@@ -190,10 +198,10 @@ fn set_mode(
             written_epoch: state.epoch,
             source,
             version: change.version.into(),
-            text: if transient { String::new() } else { bounded(text, BLOCK_BYTES) },
+            text: if transient { String::new() } else { bounded(text, block_bytes(name)) },
             transient,
             by: change.by.cloned(),
-            fact: bounded(change.fact, FACT_BYTES),
+            fact: if transient { String::new() } else { bounded(change.fact, FACT_BYTES) },
             full: change.full,
         },
     )

@@ -135,7 +135,9 @@ pub(crate) async fn call_held(
     if operation.is_empty() {
         return Err(Failure::not_run(fastctx_types::goals::words::NO_OPERATION));
     }
-    let input_hash = fastctx_hands::files::content_hash(&serde_json::to_vec(&(&request, &author)).map_err(failure)?);
+    let input_hash = fastctx_hands::files::content_hash(
+        &serde_json::to_vec(&(&request, &author, crate::record_access::current())).map_err(failure)?,
+    );
     if let Some(mut intent) = intents::read(&directory, operation).map_err(failure)? {
         if intent.input_hash != input_hash {
             return Err(Failure::not_run(fastctx_types::goals::words::REUSED_OPERATION));
@@ -234,6 +236,7 @@ pub(crate) async fn call_held(
         operation: operation.clone(),
         resident: resident.clone(),
         input_hash,
+        access: crate::record_access::current(),
         account,
         expected: current.version,
         proposed,
@@ -247,6 +250,11 @@ pub(crate) async fn call_held(
 
 /// The caller holds the conversation's action gate; providers must not reacquire it.
 pub(crate) async fn finish(node: &Arc<Node>, intent: &mut Intent) -> Result<Updated, Failure> {
+    let access = matches!(intent.phase, Phase::Prepared).then(|| intent.access.clone()).flatten();
+    crate::record_access::within(access, finish_inner(node, intent)).await
+}
+
+async fn finish_inner(node: &Arc<Node>, intent: &mut Intent) -> Result<Updated, Failure> {
     let directory = node.world.owner(&node.names(), &intent.resident);
     if let Phase::Conflict { current } = intent.phase {
         return Ok(Updated::Conflict { current });
@@ -313,6 +321,9 @@ pub(crate) async fn finish(node: &Arc<Node>, intent: &mut Intent) -> Result<Upda
         }
     }
     let Phase::Accepted { version } = intent.phase else { unreachable!() };
+    if crate::record_access::current().is_some() {
+        return Box::pin(crate::record_access::within(None, finish_inner(node, intent))).await;
+    }
     if current.version.is_none_or(|current| current < version) {
         return Err(Failure::new(fastctx_types::goals::words::LOST_REVISION));
     }

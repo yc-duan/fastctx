@@ -120,6 +120,7 @@ pub(crate) async fn open(
     if !path.is_absolute() {
         return Err(failed("the text path must be absolute"));
     }
+    crate::replicas::sync::repair_paths(node, std::slice::from_ref(&path)).await.map_err(failed)?;
     let (job_record, notes_record) = match &decoding {
         Decoding::Output { job } => {
             let found = crate::look::look_here(node, job.as_str()).await?.0;
@@ -423,6 +424,7 @@ pub(crate) async fn call(
         .ok_or_else(|| failed("line source is closed or belongs to another caller"))?;
     let mut changes = source.changed.subscribe();
     let mut closed = source.closed.subscribe();
+    crate::replicas::sync::repair_paths(node, std::slice::from_ref(&source.path)).await.map_err(failed)?;
     refresh(source.clone(), None).await?;
     if let Request::Changed { version, .. } = &request {
         loop {

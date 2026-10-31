@@ -219,6 +219,7 @@ async fn commit(node: &Arc<Node>, view: &View, mut decision: policy::Decision) -
     let resident = decision.goal.resident.clone();
     let directory = node.world.owner(&node.names(), &resident);
     let mut intent = intents::Intent {
+        access: None,
         operation: operation.clone(),
         input_hash: operation,
         resident: resident.clone(),

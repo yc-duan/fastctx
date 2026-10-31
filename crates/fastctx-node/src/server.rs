@@ -209,10 +209,22 @@ async fn converse(node: &Arc<Node>, connection: Connection) -> std::io::Result<(
                 }
             }
         }
-        if let Call::WatchAccountRecords { hub, account, kind } = call {
-            return crate::account_records::watch(node, &hello.peer, hub, account, kind, id, reader, writer).await;
+        if let Call::WatchAccountRecords { hub, account, kind, owner } = call {
+            return crate::account_records::watch(
+                node,
+                &hello.peer,
+                hub,
+                account,
+                kind,
+                owner,
+                hello.shapes,
+                id,
+                reader,
+                writer,
+            )
+            .await;
         }
-        if let Call::WatchMemory { town } = &call {
+        if let Call::WatchHistory { scope } = &call {
             if let Err(failure) = users_voice(node, &hello.peer) {
                 writer.send(&json(&NodeFrame::Reply { id, reply: Err(failure) })).await?;
                 return writer.drain().await;
@@ -220,18 +232,21 @@ async fn converse(node: &Arc<Node>, connection: Connection) -> std::io::Result<(
             let mut changes = node.memory_changes.subscribe();
             let mut views = node.views.subscribe();
             let mut told = None;
-            let ready = crate::town::access::ready(node, &fastctx_types::access::Acting::Here, town).await;
-            if let Err(failure) = ready {
-                writer.send(&json(&NodeFrame::Reply { id, reply: Err(failure) })).await?;
-                return writer.drain().await;
-            }
             loop {
                 changes.borrow_and_update();
                 views.borrow_and_update();
-                match crate::memory::api::catalog(node, &Caller::User, town).await {
-                    Ok(catalog) if told.as_ref() != Some(&catalog) => {
+                match crate::history::api::call(
+                    node,
+                    &Caller::User,
+                    fastctx_types::history::HistoryCall::List { scope: scope.clone() },
+                )
+                .await
+                {
+                    Ok(fastctx_types::history::HistoryReply::Catalog { catalog })
+                        if told.as_ref() != Some(&catalog) =>
+                    {
                         let reply =
-                            Reply::Memory(fastctx_types::memory::MemoryReply::Catalog { catalog: catalog.clone() });
+                            Reply::History(fastctx_types::history::HistoryReply::Catalog { catalog: catalog.clone() });
                         writer.send(&json(&NodeFrame::Reply { id, reply: Ok(reply) })).await?;
                         told = Some(catalog);
                     }
@@ -247,6 +262,15 @@ async fn converse(node: &Arc<Node>, connection: Connection) -> std::io::Result<(
                     _ = reader.recv() => return Ok(()),
                 }
             }
+        }
+        if matches!(call, Call::WatchMemory { .. }) {
+            writer
+                .send(&json(&NodeFrame::Reply {
+                    id,
+                    reply: Err(Failure::not_run("project memory was replaced by history; update the app")),
+                }))
+                .await?;
+            return writer.drain().await;
         }
         if let Call::WatchFeatures = call {
             // An interface follows the switches for as long as it is open:
@@ -1113,7 +1137,14 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
             let told = crate::step_command::Told { job, town, id, began, ended, did };
             crate::step_command::stepped(node, peer, told).await.map(|()| Reply::Done)
         }
+        Call::PrepareCopies { paths } => {
+            let caller = caller::of(node, peer)?;
+            node.authorize_here(&crate::around::acting_of(node, &caller))?;
+            crate::replicas::sync::repair_paths(node, &paths).await.map_err(Failure::new)?;
+            Ok(Reply::Done)
+        }
         Call::Saw { owner, town: _, seen } => {
+            crate::replicas::writing::saw(node, &owner, &seen).await?;
             let (world, here) = (node.world.clone(), node.names());
             blocking("recording what was seen", move || crate::residents::record_seen(&world, &here, &owner, &seen))
                 .await
@@ -1435,10 +1466,7 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
             present(node, &resident)?;
             crate::voice::say(node, &resident, &message, status, &attachments).map(|()| Reply::Told)
         }
-        Call::MemorySettings { hub, account, enabled } => {
-            users_voice(node, peer)?;
-            crate::memory::settings::call(node, hub, account, enabled).await.map(Reply::MemorySettings)
-        }
+        Call::MemorySettings { .. } => Err(Failure::not_run("history has no per-account switch; update the app")),
         Call::Layer { hub, account, layer } => {
             users_voice(node, peer)?;
             crate::layers::call(node, hub, account, layer).await.map(Reply::Layer)
@@ -1454,11 +1482,13 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
             users_voice(node, peer)?;
             crate::layers::bring_in(node, &resident).map(|()| Reply::Told)
         }
-        Call::WatchMemory { .. } => Err(Failure::new("a memory watch is answered as it changes")),
-        Call::Memory(request) => {
-            let caller = caller::of(node, peer)?;
-            crate::memory::api::call(node, &caller, request).await.map(Reply::Memory)
+        Call::WatchHistory { .. } => Err(Failure::new("a history watch is answered as it changes")),
+        Call::History(request) => {
+            users_voice(node, peer)?;
+            crate::history::api::call(node, &Caller::User, request).await.map(Reply::History)
         }
+        Call::WatchMemory { .. } => Err(Failure::new("a memory watch is answered as it changes")),
+        Call::Memory(_) => Err(Failure::not_run("project memory was replaced by history; update the app")),
         Call::Project(call) => {
             let caller = caller::of(node, peer)?;
             if !matches!(call, fastctx_types::ProjectCall::Enter { .. }) {
@@ -1972,7 +2002,10 @@ async fn write(
     let turn = node.residents.now(&resident).and_then(|now| now.turn);
     let owner = Address { machine: here.clone(), resident: resident.clone() };
     let caller = Caller::Resident(owner.clone());
-    let memory = crate::memory::writing::intercept(node, &caller, &op, None, town.as_ref()).await?;
+    let memory = match crate::replicas::writing::intercept(node, &caller, &op, None, town.as_ref()).await? {
+        Some(outcome) => Some(outcome),
+        None => crate::history::local_copy::intercept(node, &caller, &op, None, town.as_ref()).await?,
+    };
     let (world, machine, writing, written) = (node.world.clone(), node.names(), town.clone(), op.clone());
     let outcome = match memory {
         Some(outcome) => outcome,

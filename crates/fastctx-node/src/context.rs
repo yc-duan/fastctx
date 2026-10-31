@@ -39,6 +39,10 @@ pub struct Receipt {
 }
 
 impl Receipt {
+    pub(crate) fn version(&self, name: &str) -> Option<&str> {
+        self.versions.get(name).map(String::as_str)
+    }
+
     pub(crate) fn preceded_by_identity(&mut self) {
         self.shown.start += 1;
         self.shown.end += 1;
@@ -65,6 +69,9 @@ pub(crate) fn set(node: &Node, id: &ResidentId, name: &str, text: &str, change: 
 /// whose things never land on the owner's disk (`world-placement.md`, 一条规则).
 /// While the account's view has not come it is held in memory.
 pub(crate) fn set_account(node: &Node, id: &ResidentId, name: &str, text: &str, change: Change<'_>) -> io::Result<()> {
+    if name == "history" || crate::assists::host::kept(node, id).ok().flatten() == Some(true) {
+        return storage::set_memory(node, id, name, text, change);
+    }
     let Some((about, _)) = node.residents.about(id) else {
         return storage::set(&node.world, id, name, text, change);
     };

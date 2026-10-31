@@ -6,6 +6,8 @@
 //! what it knows of those files: the new contents go on its `seen` record,
 //! so writing the same file again is not refused as a change it missed.
 
+pub(crate) mod record;
+
 use std::collections::BTreeMap;
 use std::io::{self, BufRead as _};
 use std::path::{Path, PathBuf};

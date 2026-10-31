@@ -92,12 +92,14 @@ pub(crate) fn start(node: &Arc<Node>) {
 pub(crate) fn visible(
     node: &Node,
     looker: crate::admission::seen::Looker<'_>,
+    resident: &fastctx_types::ResidentId,
     event: &fastctx_types::session::SessionEvent,
 ) -> bool {
     if let fastctx_types::session::Happened::Heard { notice: Some(notice), .. } = &event.happened
         && let Some(account) = notice.goal_account()
     {
-        return looker.sees_account(node, account);
+        let _ = account;
+        return crate::admission::seen::resident(node, looker, resident);
     }
     let fastctx_types::session::Happened::Changed {
         change: fastctx_types::session::SessionChange::Goal { goal }, ..
@@ -108,6 +110,5 @@ pub(crate) fn visible(
     if goal["world"] != true {
         return true;
     }
-    serde_json::from_value::<HubAccount>(goal["view"]["account"].clone())
-        .is_ok_and(|account| looker.sees_account(node, &account))
+    crate::admission::seen::resident(node, looker, resident)
 }

@@ -204,6 +204,7 @@ pub(crate) async fn reopen_blocked(
                     },
                 )?;
                 let mut intent = intents::Intent {
+                    access: None,
                     operation: pending.operation.clone(),
                     input_hash: pending.operation.clone(),
                     resident: address.clone(),

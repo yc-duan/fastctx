@@ -36,10 +36,8 @@ impl Records for AccountRecords {
     fn read<'a>(&'a self, account: &'a HubAccount, kind: &'a str, key: &'a str) -> Reply<'a, Option<Record>> {
         Box::pin(async move {
             let link = self.link(account)?;
-            match link
-                .account_records(&account.account, Request::Read { kind: kind.into(), key: key.into() })
-                .await
-                .map_err(Failure::new)?
+            match crate::record_access::ask(&link, account, Request::Read { kind: kind.into(), key: key.into() })
+                .await?
             {
                 Response::Read { record: Some(record) } => Ok(Some(Record {
                     version: record.metadata.version,
@@ -54,11 +52,7 @@ impl Records for AccountRecords {
     fn list<'a>(&'a self, account: &'a HubAccount, kind: &'a str) -> Reply<'a, Vec<Changed>> {
         Box::pin(async move {
             let link = self.link(account)?;
-            match link
-                .account_records(&account.account, Request::List { kind: kind.into() })
-                .await
-                .map_err(Failure::new)?
-            {
+            match crate::record_access::ask(&link, account, Request::List { kind: kind.into() }).await? {
                 Response::Listed { entries } => {
                     Ok(entries.into_iter().map(|m| Changed { key: m.key, version: m.version }).collect())
                 }
@@ -81,7 +75,7 @@ impl Records for AccountRecords {
                 Some(body) => Request::Write { kind: kind.into(), key: key.into(), expected, body },
                 None => Request::Delete { kind: kind.into(), key: key.into(), expected },
             };
-            match link.account_records(&account.account, request).await.map_err(Failure::new)? {
+            match crate::record_access::ask(&link, account, request).await? {
                 Response::Written { metadata } => Ok(Exchanged::Written { version: metadata.version }),
                 Response::Conflict { current } => Ok(Exchanged::Conflict { current: current.map(|m| m.version) }),
                 _ => Err(Failure::new("the hub answered another account-records reply")),

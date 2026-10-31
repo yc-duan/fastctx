@@ -47,7 +47,12 @@ pub use query::query;
 
 /// Opens the project `town`: at the hub, in `owner`'s account, or kept here
 /// when this computer is on no hub.
-pub async fn open(node: &Arc<Node>, town: &TownName, owner: Option<HubAccount>) -> Result<(), Failure> {
+pub async fn open(
+    node: &Arc<Node>,
+    town: &TownName,
+    owner: Option<HubAccount>,
+    shared_on: Option<MachineName>,
+) -> Result<(), Failure> {
     if names::place(&node.world, town).map_err(|error| Failure::new(error.to_string()))?.is_some() {
         return Err(Failure::new(format!("the project {town} exists already")));
     }
@@ -57,7 +62,10 @@ pub async fn open(node: &Arc<Node>, town: &TownName, owner: Option<HubAccount>) 
             let link = node
                 .link_of(&owner.hub)
                 .ok_or_else(|| Failure::new(format!("this computer is not on the hub {}", owner.hub)))?;
-            let change = fastctx_net::wire::Change::OpenProject { town: id.clone(), name: town.clone() };
+            if shared_on.is_some() && !link.view().shared_records {
+                return Err(Failure::not_run("update the hub to create projects with whole-machine record ownership"));
+            }
+            let change = fastctx_net::wire::Change::OpenProject { town: id.clone(), name: town.clone(), shared_on };
             link.manage(&owner.account, change).await.map_err(Failure::new)?;
             Place { hub: owner.hub, town: id }
         }
@@ -124,6 +132,9 @@ async fn write_for(
             check_size(&entry).map_err(Failure::new)?;
             let signed = link.sign_entry(&entry);
             let accepted = match account {
+                Some(account) if fastctx_net::topic_history::has_history(&entry.files) => {
+                    link.history_write(&account, &place.town, signed).await
+                }
                 Some(account) => link.memory_write(&account, &place.town, signed).await,
                 None => link.ledger_write(&place.town, signed).await,
             }
@@ -197,15 +208,19 @@ fn write_alone(
         files,
     };
     let mut memory = fastctx_net::memory::Index::default();
+    let mut history = fastctx_net::topic_history::Index::default();
     for (_, previous, _) in &entries {
         memory.take(previous)?;
+        history.take(previous)?;
     }
     memory.check(&entry.files)?;
+    if let Some(revision) = fastctx_net::topic_history::decode(&entry.files)? {
+        history.check(&revision)?;
+    }
     check_size(&entry)?;
     let signed = ledger::sign(&key, &entry);
     let seq = entries.last().map(|(seq, _, _)| *seq).unwrap_or(0) + 1;
     apply(world, town, seq, &entry, &signed).map_err(|error| format!("keeping the entry: {error}"))?;
-    crate::memory::projection::restore(world, town).map_err(|error| format!("restoring memory copies: {error}"))?;
     Ok(())
 }
 
@@ -301,8 +316,8 @@ pub(crate) async fn take(
     };
     let mut last_page = None;
     while after < latest {
-        let (items, more) = link.ledger_read(town, after).await?;
-        if items.is_empty() {
+        let (items, more, through) = link.ledger_projection(town, after).await?;
+        if items.is_empty() && through <= after {
             return Err(format!("the hub promised {latest} entries of {name}, but stopped after {after}"));
         }
         let _syncing = node.syncing.lock().await;
@@ -315,7 +330,7 @@ pub(crate) async fn take(
             if seq <= after {
                 continue;
             }
-            if seq != after + 1 {
+            if !link.view().shared_records && seq != after + 1 {
                 return Err(format!("the hub gave entry {seq} of {name} after {after}"));
             }
             match (taken.entry, taken.refused) {
@@ -330,6 +345,10 @@ pub(crate) async fn take(
             }
             after = seq;
         }
+        after = after.max(through);
+        ensure_private_dir(directory.path()).map_err(|error| error.to_string())?;
+        fastctx_net::link::state::write(&directory.path().join("projection-through.json"), &after)
+            .map_err(|error| error.to_string())?;
         if !more && after < latest {
             return Err(format!("the hub ended {name}'s ledger at {after}, before its promised {latest}"));
         }
@@ -343,11 +362,6 @@ pub(crate) async fn take(
         None => node.syncing.lock().await,
     };
     check_place(node, link, name, town)?;
-    let (world, town) = (node.world.clone(), name.clone());
-    tokio::task::spawn_blocking(move || crate::memory::projection::restore(&world, &town))
-        .await
-        .map_err(|error| error.to_string())?
-        .map_err(|error| error.to_string())?;
     node.memory_changed();
     Ok(())
 }
@@ -470,7 +484,11 @@ async fn carry_town(
     own: &fastctx_net::sign::PublicKey,
 ) -> Result<(), String> {
     let here = node.machine();
-    let open = fastctx_net::wire::Change::OpenProject { town: id.clone(), name: town.clone() };
+    let open = fastctx_net::wire::Change::OpenProject {
+        town: id.clone(),
+        name: town.clone(),
+        shared_on: link.view().shared_records.then(|| here.clone()),
+    };
     if let Err(error) = link.manage(home, open).await
         && link.view().project(id).is_none_or(|project| project.name != *town)
     {
@@ -582,9 +600,6 @@ pub fn finish(world: &WorldDir) -> io::Result<Vec<String>> {
                 problems.push(format!("entry {seq} of {town}: {error}"));
             }
         }
-        if let Err(error) = crate::memory::projection::restore(world, &town) {
-            problems.push(format!("memory copies of {town}: {error}"));
-        }
     }
     Ok(problems)
 }
@@ -621,7 +636,8 @@ pub fn entries_after(world: &WorldDir, town: &TownName, after: u64) -> io::Resul
 /// The last entry taken or refused.
 fn cursor(directory: &TownDir, refused: &BTreeMap<u64, String>) -> io::Result<u64> {
     let taken = numbered(&directory.signed())?.last().map(|(seq, _)| *seq).unwrap_or(0);
-    Ok(taken.max(refused.keys().next_back().copied().unwrap_or(0)))
+    let through: u64 = fastctx_net::link::state::read_or(&directory.path().join("projection-through.json"), 0)?;
+    Ok(taken.max(refused.keys().next_back().copied().unwrap_or(0)).max(through))
 }
 
 fn refused(directory: &TownDir) -> io::Result<BTreeMap<u64, String>> {

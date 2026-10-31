@@ -68,6 +68,7 @@ mod goals;
 pub mod handoff;
 mod held_history;
 mod here;
+mod history;
 mod homes;
 mod hub_arrival;
 mod hub_moving;
@@ -97,7 +98,6 @@ mod machine;
 mod managed;
 mod management;
 mod mcp;
-mod memory;
 mod memory_room;
 mod obligations;
 mod on;
@@ -117,11 +117,14 @@ mod proxy_setting;
 mod ranked;
 mod reach;
 mod received;
+mod record_access;
+mod record_ownership;
 mod recovery;
 mod removed;
 mod renewal;
 mod renewal_legacy;
 pub mod replacement;
+mod replicas;
 mod resident_storage;
 mod residents;
 mod retention;
@@ -206,6 +209,8 @@ pub(crate) struct Node {
     plan_files: plan_file::PlanFiles,
     copies: placement::copies::Copies,
     context_bodies: context::memory::Bodies,
+    replicas: replicas::Copies,
+    local_history: leases::Registry<String, tokio::sync::Mutex<()>>,
     plan_reads: plan_reads::Reads,
     skill_copies: skills::copies::Copies,
     skill_index: skills::cache::Cache,
@@ -270,7 +275,6 @@ pub(crate) struct Node {
     /// beyond the residents and jobs here (`shown`).
     shown: tokio::sync::watch::Sender<u64>,
     memory_changes: tokio::sync::watch::Sender<u64>,
-    folder_reads: memory::folder_reads::Reads,
     /// What the other machines said of themselves (`facts`).
     facts: facts::Facts,
     /// Deletions of conversations still to be asked of hubs (`forget`).
@@ -666,6 +670,8 @@ pub async fn run_prepared(
         plan_files: Default::default(),
         copies: Default::default(),
         context_bodies: Default::default(),
+        replicas: Default::default(),
+        local_history: Default::default(),
         plan_reads: Default::default(),
         skill_copies: Default::default(),
         skill_index: Default::default(),
@@ -706,7 +712,6 @@ pub async fn run_prepared(
         views: tokio::sync::watch::channel(0).0,
         shown: tokio::sync::watch::channel(0).0,
         memory_changes: tokio::sync::watch::channel(0).0,
-        folder_reads: Default::default(),
         facts: facts::Facts::default(),
         forget_asks: forget::Asks::default(),
         stuck: Default::default(),

@@ -26,7 +26,20 @@ pub(crate) fn resolve(
     selected: Option<&HubAccount>,
 ) -> Result<HubAccount, Failure> {
     let (about, _) = node.residents.about(resident).ok_or_else(|| crate::forget::gone(node, resident))?;
+    let requested_hub = selected.map(|account| account.hub.clone());
+    let selected = match selected {
+        Some(account) if !node.serves(&about.acting, &account.hub, &account.account) => {
+            if !crate::record_ownership::allows(node, &about, &account.hub, &account.account) {
+                return Err(Failure::refused("this account does not own the conversation's goal"));
+            }
+            None
+        }
+        selected => selected,
+    };
     let pinned = pinned(node, resident)?;
+    if pinned.as_ref().is_some_and(|pinned| requested_hub.as_ref().is_some_and(|hub| hub != &pinned.hub)) {
+        return Err(Failure::not_run(words::ACCOUNT_CHANGED));
+    }
     if let (Some(pinned), Some(selected)) = (&pinned, selected)
         && pinned != selected
     {
@@ -35,6 +48,7 @@ pub(crate) fn resolve(
     let choices: BTreeSet<_> = node
         .links()
         .iter()
+        .filter(|link| requested_hub.as_ref().is_none_or(|hub| link.membership().id == *hub))
         .flat_map(|link| {
             node.accounts_on(link, &about.acting)
                 .into_iter()
@@ -70,4 +84,27 @@ pub(crate) fn keep_at(directory: &fastctx_types::layout::ConversationDir, accoun
     let path = directory.books().join("goal-account.json");
     fastctx_platform::ensure_private_dir(path.parent().expect("goal binding directory"))?;
     fastctx_platform::publish(&path, &serde_json::to_vec(account)?, fastctx_platform::Permissions::Private)
+}
+
+pub(crate) fn user(node: &Node, resident: &ResidentId, selected: Option<&HubAccount>) -> Result<HubAccount, Failure> {
+    let (about, _) = node.residents.about(resident).ok_or_else(|| crate::forget::gone(node, resident))?;
+    let mut choices = Vec::new();
+    for link in node.links() {
+        for name in node.accounts_on(&link, &fastctx_types::access::Acting::Here) {
+            let account = HubAccount { hub: link.membership().id, account: name };
+            if selected.is_none_or(|selected| selected == &account)
+                && crate::record_ownership::allows(node, &about, &account.hub, &account.account)
+            {
+                choices.push(account);
+            }
+        }
+    }
+    if choices.len() == 1 {
+        return Ok(choices.remove(0));
+    }
+    let owner = resolve(node, resident, selected)?;
+    if choices.contains(&owner) {
+        return Ok(owner);
+    }
+    Err(Failure::refused(words::ACCOUNT_AMBIGUOUS))
 }

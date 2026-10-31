@@ -113,7 +113,6 @@ pub(crate) async fn here(
         Origin::Colleague { asked_by, .. } => (asked_by.clone(), true),
         Origin::User => (Address { machine: about.machine.clone(), resident: id.clone() }, false),
     };
-    let owner = whose.resident.clone();
     if colleague && matches!(operation, Operation::Write { .. }) {
         return Err(Failure::refused(words::READ_ONLY));
     }
@@ -124,7 +123,9 @@ pub(crate) async fn here(
     });
     let (link, account) = match selected {
         Some(acting) => {
-            if !node.serves(&about.acting, &acting.hub, &acting.account) {
+            if !node.serves(&about.acting, &acting.hub, &acting.account)
+                && !crate::record_ownership::allows(node, &about, &acting.hub, &acting.account)
+            {
                 return Err(Failure::refused(words::ROUTE));
             }
             let link = node.link_of(&acting.hub).ok_or_else(|| Failure::refused(words::ROUTE))?;
@@ -135,7 +136,7 @@ pub(crate) async fn here(
     let scope = HubAccount { hub: link.membership().id, account: account.clone() };
     let result = match operation {
         Operation::Read => {
-            let page = link.plan_read(&account, owner).await.map_err(Failure::new)?;
+            let page = link.plan_read_of(&account, &whose).await.map_err(Failure::new)?;
             if let Some(other) = link.plan_of_another(&page, &whose) {
                 return Err(Failure::not_run(words::elsewhere(other)));
             }
@@ -157,7 +158,9 @@ pub(crate) async fn here(
             )));
         }
     };
-    if let plan::Result::Page { page } = &result {
+    if let plan::Result::Page { page } = &result
+        && node.serves(&about.acting, &scope.hub, &scope.account)
+    {
         let version =
             serde_json::to_string(&Seen { account: scope.clone(), owner: page.owner.clone(), version: page.version() })
                 .map_err(|error| Failure::new(error.to_string()))?;
@@ -199,7 +202,7 @@ pub(crate) async fn context(
     let Some(generation) = node.plan_reads.begin(id, &scope, &whose) else { return Ok(()) };
     // A hub that does not answer now changed nothing: the conversation keeps
     // the plan it was told, and a later refresh reads it again.
-    let Ok(mut page) = link.plan_read(&scope.account, whose.resident.clone()).await else { return Ok(()) };
+    let Ok(mut page) = link.plan_read_of(&scope.account, &whose).await else { return Ok(()) };
     // Another's is not this one's to see, nor its version this one's to
     // write over.
     if link.plan_of_another(&page, &whose).is_some() {
@@ -307,6 +310,15 @@ pub(crate) async fn delete(node: &Arc<Node>, about: &About) -> Result<(), Failur
         link.refresh().await.map_err(Failure::new)?;
         // Earlier hubs never held plans; their conversations retain their former deletion behavior.
         if !link.view().conversation_plans {
+            continue;
+        }
+        if link.view().shared_records {
+            link.owned_records(
+                &scope.account,
+                fastctx_types::owned_records::Request::Delete { resident: about.id.clone() },
+            )
+            .await
+            .map_err(Failure::new)?;
             continue;
         }
         // Another conversation's of the same short name stays.

@@ -7,6 +7,7 @@ pub mod copy;
 pub mod encoding;
 pub mod files;
 pub mod folders;
+pub mod history;
 pub mod image;
 pub mod lines;
 pub mod memory;

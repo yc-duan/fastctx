@@ -56,7 +56,11 @@ fn of(node: &Node, link: &Link, reply: &WhoReply) -> Afoot {
         if !accounts.is_empty() {
             afoot.residents.insert(
                 resident.about.id.clone(),
-                AfootResident { resident: resident.clone().at_turn_grain(), accounts },
+                AfootResident {
+                    resident: resident.clone().at_turn_grain(),
+                    accounts,
+                    shared_on: crate::record_ownership::origin(node, &resident.about),
+                },
             );
         }
     }

@@ -642,13 +642,15 @@ impl Residents {
 
     /// Persists the restoration contract before the first native resumption.
     pub(crate) fn set_native_resumed(&self, world: &WorldDir, id: &ResidentId) -> io::Result<()> {
-        let mut state=self.lock();
-        let live=state.live.get_mut(id).ok_or_else(||io::Error::other("unknown conversation"))?;
-        if live.about.native_resumed {return Ok(());}
-        let mut about=live.about.clone();
-        about.native_resumed=true;
-        records::write_about(&world.conversation(id),&about)?;
-        live.about=about;
+        let mut state = self.lock();
+        let live = state.live.get_mut(id).ok_or_else(|| io::Error::other("unknown conversation"))?;
+        if live.about.native_resumed {
+            return Ok(());
+        }
+        let mut about = live.about.clone();
+        about.native_resumed = true;
+        records::write_about(&world.conversation(id), &about)?;
+        live.about = about;
         Ok(())
     }
 
@@ -698,6 +700,11 @@ impl Residents {
     /// such resident lives here.
     pub fn town_of(&self, id: &ResidentId) -> Option<Option<TownName>> {
         self.lock().live.get(id).map(Live::town)
+    }
+
+    /// The original recorded machine, retained when a conversation directory is moved.
+    pub(crate) fn birth_machine(&self, id: &ResidentId) -> Option<MachineName> {
+        self.lock().live.get(id).map(|live| live.about.machine.clone())
     }
 
     pub fn about(&self, id: &ResidentId) -> Option<(About, Option<TownName>)> {
@@ -1026,7 +1033,8 @@ fn here(live: &Live) -> bool {
         return false;
     }
     if live.about.world_managed() {
-        (live.about.native_resumed && live.connections > 0) || live.now.as_ref().is_none_or(|now| now.activity != Activity::Asleep)
+        (live.about.native_resumed && live.connections > 0)
+            || live.now.as_ref().is_none_or(|now| now.activity != Activity::Asleep)
     } else {
         live.host_present || live.connections > 0
     }

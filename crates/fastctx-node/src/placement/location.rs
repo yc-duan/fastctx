@@ -23,7 +23,9 @@ pub(crate) struct Locations {
     chosen: std::sync::Mutex<std::collections::HashMap<ResidentId, String>>,
     /// Computers found unable to keep plan copies, by when they came online:
     /// asked again only once they connect anew, as after an update.
-    outdated: std::sync::Mutex<std::collections::HashMap<(fastctx_types::access::HubId, MachineName), Option<jiff::Timestamp>>>,
+    outdated: std::sync::Mutex<
+        std::collections::HashMap<(fastctx_types::access::HubId, MachineName), Option<jiff::Timestamp>>,
+    >,
     /// What was last logged of each conversation's placement failing.
     told: std::sync::Mutex<std::collections::HashMap<ResidentId, String>>,
 }
@@ -111,6 +113,17 @@ pub(crate) async fn inherit(
     if !link.view().plan_copies {
         return Ok(());
     }
+    if link.view().shared_records {
+        if node.is_me(&requester.machine)
+            && let Some(location) = read::<Option<Location>>(
+                &node.world.conversation(&requester.resident).path().join("working-place.json"),
+            )?
+            .flatten()
+        {
+            speaking(node, id, &location.machine)?;
+        }
+        return Ok(());
+    }
     if let Some(machine) = read_place(&link, &scope, requester).await?.1.and_then(|place| place.machine) {
         speaking(node, id, &machine)?;
     }
@@ -135,6 +148,24 @@ pub(crate) async fn prepare(
         return Ok(None);
     };
     let link = node.link_of(&scope.hub).ok_or_else(|| failure("the plan's hub is unavailable"))?;
+    if link.view().shared_records {
+        let location = crate::replicas::location::prepare(
+            node,
+            id,
+            origin,
+            acting,
+            &scope,
+            fastctx_types::placement::Resource::Plan,
+        )
+        .await?;
+        fastctx_platform::publish(
+            &receipt,
+            &serde_json::to_vec(&location).map_err(failure)?,
+            fastctx_platform::Permissions::Private,
+        )
+        .map_err(failure)?;
+        return Ok(location);
+    }
     if !link.view().plan_copies {
         if crate::plan_file::allowed(node, id)? {
             crate::plan_file::request(node, id);

@@ -45,12 +45,16 @@ impl Jobs {
         owner: fastctx_types::run::JobOwner,
         town: Option<TownName>,
     ) -> Result<(), Failure> {
-        // With nobody waiting there is nobody to wake.
-        let _ = self.changes.send(job.clone());
         let path = node.world.job_record(&node.names(), town.as_ref(), &owner, &job);
         let record = read(&path).await.inspect_err(|_| {
             crate::inbox::retry_job(node, &path);
         })?;
+        if record.end.is_some()
+            && let Err(error) = crate::replicas::sync::repair(node).await
+        {
+            node.log.line(format_args!("restoring replicas after a job ended: {error}"));
+        }
+        let _ = self.changes.send(job.clone());
         let (writes, steps) = if record.end.is_some() && !record.is_sentinel() {
             (
                 crate::run_facts::writes(&path).map_err(|error| failure("reading write facts", error))?,
@@ -106,6 +110,7 @@ impl Jobs {
         answer_receipts: bool,
         dispatch: Option<fastctx_types::NoticeId>,
     ) -> Result<run::Launched, Failure> {
+        crate::replicas::sync::repair(node).await.map_err(Failure::new)?;
         let _place = match owner.resident().and_then(|address| crate::data::places::of_owner(node, address)) {
             Some(place) => Some(node.places.using(&place).await),
             None => None,
@@ -284,6 +289,9 @@ impl Jobs {
         if record.end.is_none() && supervisor_gone(&record, &launched).await {
             // It ended without saying how; the record says so now.
             record = interrupt(&launched.record, "its supervisor ended without finishing the record").await?;
+        }
+        if let Err(error) = crate::replicas::sync::repair(node).await {
+            node.log.line(format_args!("restoring replicas before returning a job: {error}"));
         }
         let output = {
             let log = PathBuf::from(&record.output);

@@ -132,6 +132,7 @@ pub(crate) fn stop(node: &Arc<Node>, id: &ResidentId, turn: Option<String>) -> R
         reason.clone(),
     );
     let intent = intents::Intent {
+        access: None,
         operation: operation.clone(),
         input_hash: operation.clone(),
         resident: goal.resident.clone(),
