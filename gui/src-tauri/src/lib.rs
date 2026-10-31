@@ -34,7 +34,6 @@ mod skills;
 mod startup;
 mod transcript;
 mod updates;
-mod world_delta;
 mod world_watch;
 
 #[cfg(desktop)]

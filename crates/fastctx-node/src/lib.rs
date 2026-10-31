@@ -283,6 +283,8 @@ pub(crate) struct Node {
     /// Moves whenever what an interface shows of the World may have changed,
     /// beyond the residents and jobs here (`shown`).
     shown: tokio::sync::watch::Sender<u64>,
+    /// The World as the interfaces watching it are told it (`shown::Shown`).
+    world_shown: shown::Shown,
     memory_changes: tokio::sync::watch::Sender<u64>,
     /// What the other machines said of themselves (`facts`).
     facts: facts::Facts,
@@ -735,6 +737,7 @@ pub async fn run_prepared(
         ways: tokio::sync::watch::channel(0).0,
         views: tokio::sync::watch::channel(0).0,
         shown: tokio::sync::watch::channel(0).0,
+        world_shown: Default::default(),
         memory_changes: tokio::sync::watch::channel(0).0,
         facts: facts::Facts::default(),
         forget_asks: forget::Asks::default(),

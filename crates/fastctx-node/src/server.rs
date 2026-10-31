@@ -303,48 +303,38 @@ async fn converse(node: &Arc<Node>, connection: Connection) -> std::io::Result<(
             // An interface follows the World for as long as it is open: as
             // it is first, then after each change (`world-network.md`, 近况).
             let _open = crate::updates::Open::new();
-            let mut residents = node.residents.changes();
-            let mut shown = node.shown.subscribe();
-            let mut jobs = node.jobs.subscribe();
+            // The World is worked out once for every interface watching it
+            // (`crate::shown::Shown`); each is told what it does not hold
+            // yet: what changed, when it reads that, else the whole.
+            let mut world = crate::shown::watch(node);
+            let mut held = None;
             let mut told = None;
-            // What could not be read is read again in a moment, the watch
-            // kept: the interface goes on showing what it was told, and the
-            // log says why, once for each reason.
-            let mut failing: Option<String> = None;
             loop {
-                let mut again = false;
-                if crate::shown::ready(node) {
-                    match crate::shown::now(node).await {
-                        Ok(mut world) => {
-                            crate::renewal_legacy::world(hello.shapes, &mut world);
-                            failing = None;
-                            let frame = json(&NodeFrame::World { id, world: Box::new(world) });
-                            if told.as_ref() != Some(&frame) {
-                                writer.send(&frame).await?;
-                                told = Some(frame);
+                let current = world.borrow_and_update().clone();
+                if let Some(current) = current {
+                    let mut now = fastctx_types::world::WorldNow::clone(&current);
+                    crate::renewal_legacy::world(hello.shapes, &mut now);
+                    if hello.shapes >= 3 {
+                        let value = serde_json::to_value(&now).map_err(std::io::Error::other)?;
+                        match fastctx_types::world_delta::tell(&mut held, value) {
+                            Some(fastctx_types::world_delta::Told::Whole(_)) => {
+                                writer.send(&json(&NodeFrame::World { id, world: Box::new(now) })).await?;
                             }
+                            Some(fastctx_types::world_delta::Told::Changed(change)) => {
+                                writer.send(&json(&NodeFrame::WorldChanged { id, change })).await?;
+                            }
+                            None => {}
                         }
-                        Err(failure) => {
-                            if failing.as_deref() != Some(failure.message.as_str()) {
-                                node.log.line(format_args!(
-                                    "reading the World for an interface: {}; reading it again in a moment",
-                                    failure.message
-                                ));
-                                failing = Some(failure.message);
-                            }
-                            again = true;
+                    } else {
+                        let frame = json(&NodeFrame::World { id, world: Box::new(now) });
+                        if told.as_ref() != Some(&frame) {
+                            writer.send(&frame).await?;
+                            told = Some(frame);
                         }
                     }
                 }
                 tokio::select! {
-                    () = tokio::time::sleep(std::time::Duration::from_secs(1)), if again => {}
-                    changed = residents.changed() => if changed.is_err() { return Ok(()) },
-                    changed = shown.changed() => if changed.is_err() { return Ok(()) },
-                    job = jobs.recv() => {
-                        if matches!(job, Err(tokio::sync::broadcast::error::RecvError::Closed)) {
-                            return Ok(());
-                        }
-                    }
+                    changed = world.changed() => if changed.is_err() { return Ok(()) },
                     _ = reader.recv() => return Ok(()),
                 }
             }

@@ -376,7 +376,8 @@ impl Client {
             | NodeFrame::On { .. }
             | NodeFrame::ToolsChanged { .. }
             | NodeFrame::Features { .. }
-            | NodeFrame::World { .. } => Err(broken("the node answered a call as a stream".to_string())),
+            | NodeFrame::World { .. }
+            | NodeFrame::WorldChanged { .. } => Err(broken("the node answered a call as a stream".to_string())),
             NodeFrame::FileRead { .. } => Err(broken("use read_file to consume a file byte stream".to_string())),
             NodeFrame::LinesRead { .. } => Err(broken("use World.lines to consume logical rows".to_string())),
         }

@@ -21,6 +21,7 @@ import type { SideSeams } from "./seams";
 import type { CollabNode, GoalShown, NodeState, PastGoal } from "./types";
 import type { SideWords } from "./words";
 import { sentinelList, type SentinelSummary } from "../world/sentinels";
+import { PREVIEW } from "../app/preview";
 
 /** The colleagues the conversation asked, as the World reports them, each
  *  with its goal and the agents it sent. The conversation's own agents come
@@ -219,15 +220,19 @@ export function liveSide(options: LiveSide): SideSeams {
         let alive = true;
         let watching: number | null = null;
         let shown: PlanShown | null = null;
+        // Sentinels are not offered in a release yet. Where they are, one the
+        // plan names says how it stands as its home last answered, asked one
+        // question at a time, and only while the plan names one.
+        const naming = () => PREVIEW && /s-[0-9a-z]{6,16}/.test(shown?.source ?? "");
         const refresh = () => {
           planRead(owner, at(), bareName(options.address.machine))
             .then((page) => {
-              if (alive) show((shown = planShownOf(page, options.words, Date.now())));
+              if (!alive) return;
+              show((shown = planShownOf(page, options.words, Date.now())));
+              if (naming()) void ask();
             })
             .catch((error) => console.error("the plan could not be read", error));
         };
-        // A sentinel the plan names says how it stands as its home last
-        // answered, asked one question at a time.
         let reading = false;
         const ask = () => {
           if (reading) return;
@@ -245,8 +250,7 @@ export function liveSide(options: LiveSide): SideSeams {
               reading = false;
             });
         };
-        void ask();
-        const asking = window.setInterval(() => void ask(), 30_000);
+        const asking = PREVIEW ? window.setInterval(() => naming() && void ask(), 30_000) : 0;
         refresh();
         watchPlan(
           owner,

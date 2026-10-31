@@ -153,13 +153,16 @@ async fn write_for(
                     "the project's ledger moved while the write was being prepared; read it again",
                 ));
             }
-            let node = node.clone();
+            let writer = node.clone();
             tokio::task::spawn_blocking(move || {
-                alone::write(&node.alone_ledgers, &world, &here, &town, &place, files, machines)
+                alone::write(&writer.alone_ledgers, &world, &here, &town, &place, files, machines)
             })
             .await
             .map_err(|error| Failure::new(format!("writing the ledger: {error}")))?
-            .map_err(Failure::new)
+            .map_err(Failure::new)?;
+            // The projects as the interfaces show them may have changed.
+            node.shown_changed();
+            Ok(())
         }
         None => Err(Failure::new(format!(
             "the project {town} is kept on the hub {}, which this computer is not logged in to",

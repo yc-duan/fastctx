@@ -91,6 +91,7 @@ pub mod usage_calls;
 pub mod voice;
 pub mod watching;
 pub mod world;
+pub mod world_delta;
 pub mod write;
 
 pub use calls::{Attach, Call, JournalCall, ProjectCall, Reply};
