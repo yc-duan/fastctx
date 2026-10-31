@@ -44,7 +44,8 @@ pub(super) async fn exercise(world: &World, host: &Path, plan: &Path, id: &Resid
     );
     let original_plan = std::fs::read_to_string(plan)?;
     let changed_plan = format!("{original_plan}ATTACH_CONTEXT\n");
-    std::fs::write(plan, &changed_plan)?;
+    let page = world.plan_read(None, None, id.clone(), Some(machine("host"))).await?;
+    world.plan_write(None, None, id.clone(), page.version(), changed_plan.clone(), Some(machine("host"))).await?;
     anyhow::ensure!(plan_is(world, id, &changed_plan).await, "attachment context did not sync");
     let relative = fastctx_types::session::attachments::place(&receipt);
     let command =
@@ -70,7 +71,8 @@ pub(super) async fn exercise(world: &World, host: &Path, plan: &Path, id: &Resid
         }),
         json!(null),
     );
-    std::fs::write(plan, &original_plan)?;
+    let page = world.plan_read(None, None, id.clone(), Some(machine("host"))).await?;
+    world.plan_write(None, None, id.clone(), page.version(), original_plan.clone(), Some(machine("host"))).await?;
     anyhow::ensure!(plan_is(world, id, &original_plan).await, "the attachment fixture did not restore its plan");
     let copy = plan.parent().unwrap().join("scratch").join(relative);
     let read = world.read_file(

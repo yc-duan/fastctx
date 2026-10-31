@@ -1,4 +1,4 @@
-//! A real delegated conversation reads the requester's plan without a writable copy.
+//! A real delegated conversation reads the requester's plan with read-only access to existing replicas.
 use super::*;
 use fastctx_types::{
     Address, Call, ResidentId,
@@ -46,14 +46,20 @@ pub(super) async fn exercise(
         pause().await;
     }
     anyhow::ensure!(configured, "the collaboration configuration did not reach its host");
-    let reply=ask(host,json!({"call":"ask","resident":parent,"label":"placement colleague","prompt":"COLLEAGUE_CASE [[run: on alice-two pwd]]","callee":"helper","login":null})).await?;
+    let requester_plan = plan_file(host, parent.as_str())?;
+    let prompt = format!(
+        "COLLEAGUE_CASE [[run: on alice-two <<'READONLY'\nfastctx view '{}'\nwrite '{}' <<'TEXT'\nCOLLEAGUE_UNAUTHORIZED_WRITE\nTEXT\nREADONLY]]",
+        requester_plan.display(),
+        requester_plan.display()
+    );
+    let reply=ask(host,json!({"call":"ask","resident":parent,"label":"placement colleague","prompt":prompt,"callee":"helper","login":null})).await?;
     let address: Address = serde_json::from_value(reply["colleague"].clone()).context("colleague address")?;
     anyhow::ensure!(idle(host, address.resident.as_str()).await, "the colleague did not settle");
     let path = plan_file(host, address.resident.as_str())?;
     record("a colleague inherits the requester's usable working computer", path.starts_with(working), json!(path));
     record(
-        "a colleague is given no writable plan copy",
-        !path.exists() && block(host, address.resident.as_str(), "plan-guide").is_empty(),
+        "a colleague reads the existing requester plan without a writing guide",
+        path.exists() && block(host, address.resident.as_str(), "plan-guide").is_empty(),
         json!(null),
     );
     record(
@@ -74,5 +80,10 @@ pub(super) async fn exercise(
         })
         .await;
     record("the colleague cannot write the requester's plan", written.is_err(), json!(null));
+    record(
+        "the colleague's actual replica write is refused",
+        !std::fs::read_to_string(requester_plan)?.contains("COLLEAGUE_UNAUTHORIZED_WRITE"),
+        json!(null),
+    );
     Ok(address.resident)
 }

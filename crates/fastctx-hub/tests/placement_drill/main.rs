@@ -3,7 +3,11 @@ mod attachments;
 mod colleagues;
 mod controls;
 mod goals;
-mod memory;
+mod history;
+mod lifecycle;
+mod scale;
+mod shared_controls;
+mod sharing;
 mod skills;
 use anyhow::{Context, Result};
 use fastctx_client::World;
@@ -207,6 +211,10 @@ async fn main() -> Result<()> {
     let base = PathBuf::from(std::env::args().nth(1).context("base")?);
     KERNEL.set(PathBuf::from(std::env::args().nth(2).context("kernel")?)).expect("one kernel");
     std::fs::create_dir_all(&base)?;
+    if std::env::args().any(|argument| argument == "--scale") {
+        return scale::run(&base).await;
+    }
+    let mock_configuration = std::fs::read(base.join("codex/config.toml"))?;
     let listener = std::net::TcpListener::bind("127.0.0.1:0")?;
     let listen = listener.local_addr()?;
     drop(listener);
@@ -241,12 +249,6 @@ async fn main() -> Result<()> {
     let (alice_pc, mut alice_node) = node(&base, "alice-pc", "alice", listen).await?;
     let (alice_two, mut alice_two_node) = node(&base, "alice-two", "alice", listen).await?;
     let (_bob_pc, mut bob_node) = node(&base, "bob-pc", "bob", listen).await?;
-    wo.account(
-        None,
-        name("owner"),
-        AccountChange::Share { machine: machine("host"), to: name("mobile"), shared: true, jobs: None },
-    )
-    .await?;
     let (alice_device, wa) = device(&base, "alice-phone", "alice", listen).await?;
     let (bob_device, wb) = device(&base, "bob-phone", "bob", listen).await?;
     let (mobile_device, wm) = device(&base, "mobile-phone", "mobile", listen).await?;
@@ -365,6 +367,12 @@ async fn main() -> Result<()> {
         block(&host, &m, "plan-guide").contains("no online working computer"),
         json!(block(&host, &m, "plan-guide")),
     );
+    wo.account(
+        None,
+        name("owner"),
+        AccountChange::Share { machine: machine("host"), to: name("mobile"), shared: true, jobs: None },
+    )
+    .await?;
     wm.talk(
         sm.to.resident.clone(),
         Some("host".parse()?),
@@ -396,10 +404,33 @@ async fn main() -> Result<()> {
         json!(null),
     );
     skills::exercise(&wa, &host, &alice_pc, &sa.to.resident, script).await?;
-    std::fs::write(&pa, "# Plan\nALICE_FILE_CANARY\n")?;
+    wa.talk(sa.to.resident.clone(), Some("host".parse()?), format!("ALICE_FILE_WRITE [[run: on alice-pc <<'WRITE'\nfastctx view '{}'\nwrite '{}' <<'TEXT'\n# Plan\nALICE_FILE_CANARY\nTEXT\nWRITE]]", pa.display(), pa.display())).await?;
+    anyhow::ensure!(idle(&host, &a).await, "the controlled plan write did not settle");
     record(
-        "native file save reaches the account",
+        "a world write reaches the account",
         plan_is(&wa, &sa.to.resident, "# Plan\nALICE_FILE_CANARY\n").await,
+        json!(null),
+    );
+    let second_plan = WorldDir::under(&alice_two)
+        .owner(&fastctx_types::layout::Names { me: machine("alice-two"), was: Vec::new(), renamed: Vec::new() }, &sa.to)
+        .path()
+        .join("plan.md");
+    record(
+        "every eligible computer keeps the plan before focus changes",
+        file_is(&second_plan, "# Plan\nALICE_FILE_CANARY\n").await,
+        json!(second_plan),
+    );
+    let permissions = std::fs::metadata(&pa)?.permissions();
+    let mut writable = permissions.clone();
+    #[allow(clippy::permissions_set_readonly_false)]
+    writable.set_readonly(false);
+    std::fs::set_permissions(&pa, writable)?;
+    std::fs::write(&pa, "UNCONTROLLED_TAMPERING")?;
+    ask(&alice_pc, json!({"call":"prepare_copies","paths":[pa]})).await?;
+    record(
+        "uncontrolled edits are restored without a new hub version",
+        file_is(&pa, "# Plan\nALICE_FILE_CANARY\n").await
+            && plan_is(&wa, &sa.to.resident, "# Plan\nALICE_FILE_CANARY\n").await,
         json!(null),
     );
     let page = wa.plan_read(None, None, sa.to.resident.clone(), Some(machine("host"))).await?;
@@ -431,61 +462,160 @@ async fn main() -> Result<()> {
     wa.talk(sa.to.resident.clone(), Some("host".parse()?), "ALICE_HOLD [[hang]]".into()).await?;
     wa.manage(sa.to.resident.clone(), Some("host".parse()?), Management::Focus { focus: focused("alice-two") }).await?;
     record(
-        "changing focus during a native turn does not move its working copy",
+        "changing focus during a native turn does not change the path told to it",
         plan_file(&host, &a)? == pa,
         json!(null),
     );
     wa.stop(sa.to.resident.clone(), Some("host".parse()?)).await?;
     anyhow::ensure!(idle(&host, &a).await, "the held turn did not stop");
-    alice_node.kill()?;
-    alice_node.wait()?;
+    let local_home = base.join("alice-codex");
+    std::fs::create_dir_all(&local_home)?;
+    std::fs::write(local_home.join("config.toml"), &mock_configuration)?;
+    wa.add_agent_login("alice-pc".parse()?, agent.clone(), local_home.clone()).await?;
+    let installed =
+        wa.change_agent_login("alice-pc".parse()?, agent.clone(), local_home.clone(), true, true, true).await?;
+    anyhow::ensure!(
+        matches!(installed.end, Some(fastctx_types::logins::ChangeEnd::Done { .. })),
+        "installing the local mock tools failed: {installed:?}"
+    );
+    let mut login_ready = false;
     for _ in 0..120 {
-        if !online_now(&host, "alice-pc").await {
+        let listed = serde_json::to_value(wa.agents(Some("alice-pc".parse()?)).await?)?;
+        if listed.to_string().contains(&local_home.to_string_lossy().to_string()) {
+            login_ready = true;
             break;
         }
         pause().await;
     }
-    std::fs::write(&pa, "# Plan\nALICE_UI_CANARY\nOFFLINE_EDIT\n")?;
-    wa.manage(sa.to.resident.clone(), Some("host".parse()?), Management::Focus { focus: focused("alice-two") }).await?;
-    wa.talk(sa.to.resident.clone(), Some("host".parse()?), "ALICE_NEW_PLACE".into()).await?;
-    idle(&host, &a).await;
-    let moved = plan_file(&host, &a)?;
-    record("the next turn gets the new place", moved.starts_with(&alice_two) && moved != pa, json!(moved));
-    record("the new copy begins with the hub text", file_is(&moved, "# Plan\nALICE_UI_CANARY\n").await, json!(null));
+    anyhow::ensure!(login_ready, "the local mock login was never advertised");
+    let writer = wa
+        .open_with(
+            agent.clone(),
+            None,
+            Some("alice-pc".parse()?),
+            "ALICE_LOCAL_WRITER".into(),
+            Default::default(),
+            fastctx_types::agents::Choices { home: Some(local_home), ..Default::default() },
+        )
+        .await?;
+    anyhow::ensure!(idle(&alice_pc, writer.to.resident.as_str()).await, "the offline writer did not settle");
+    let offline_scope = fastctx_types::history::Scope::Conversation {
+        resident: sa.to.resident.clone(),
+        machine: sa.to.machine.clone(),
+    };
+    let offline_original = "---\nname: offline-history\ndescription: Offline replay fixture\n---\nBASE\n";
+    wa.history(fastctx_types::history::HistoryCall::Save {
+        scope: offline_scope.clone(),
+        name: "offline-history".into(),
+        text: offline_original.into(),
+        expected: None,
+    })
+    .await?;
+    let offline_path = pa.parent().unwrap().join("history/offline-history.md");
+    anyhow::ensure!(file_is(&offline_path, offline_original).await, "offline history did not reach its computer");
+    hub.kill()?;
+    hub.wait()?;
+    for _ in 0..120 {
+        if !online_now(&alice_pc, "host").await {
+            break;
+        }
+        pause().await;
+    }
+    write_as(&alice_pc, &writer.to, &pa, "# Plan\nALICE_UI_CANARY\nOFFLINE_EDIT\n").await?;
+    record(
+        "a disconnected world write is durable locally",
+        file_is(&pa, "# Plan\nALICE_UI_CANARY\nOFFLINE_EDIT\n").await,
+        json!(null),
+    );
+    let offline_text = offline_original.replace("BASE", "OFFLINE_HISTORY");
+    write_as(&alice_pc, &writer.to, &offline_path, &offline_text).await?;
+    alice_node.kill()?;
+    alice_node.wait()?;
+    hub = serve(&base)?;
+    anyhow::ensure!(
+        plan_is(&wa, &sa.to.resident, "# Plan\nALICE_UI_CANARY\n").await,
+        "the hub did not return before replay"
+    );
+    let online_text = offline_original.replace("BASE", "ONLINE_HISTORY");
+    wa.history(fastctx_types::history::HistoryCall::Save {
+        scope: offline_scope.clone(),
+        name: "offline-history".into(),
+        text: online_text.clone(),
+        expected: Some(1),
+    })
+    .await?;
     alice_node = start(&alice_pc)?;
-    anyhow::ensure!(online(&alice_pc).await, "old computer did not restart");
+    anyhow::ensure!(online(&alice_pc).await, "the computer did not reconnect");
+    record(
+        "offline history survives node restart and publishes a conflicting draft as a new version",
+        file_is(&offline_path, &offline_text).await,
+        json!(null),
+    );
+    let mut replayed = false;
+    for _ in 0..240 {
+        if let Ok(fastctx_types::history::HistoryReply::Document { document }) = wa
+            .history(fastctx_types::history::HistoryCall::Read {
+                scope: offline_scope.clone(),
+                name: "offline-history".into(),
+                version: None,
+            })
+            .await
+            && document.revision.version == 3
+            && document.text == offline_text
+        {
+            replayed = true;
+            break;
+        }
+        pause().await;
+    }
+    let preserved = wa
+        .history(fastctx_types::history::HistoryCall::Read {
+            scope: offline_scope,
+            name: "offline-history".into(),
+            version: Some(2),
+        })
+        .await?;
+    record(
+        "offline conflict preserves the competing hub revision without duplicate replay",
+        replayed
+            && matches!(preserved, fastctx_types::history::HistoryReply::Document { document } if document.text == online_text && document.versions.len() == 3),
+        json!(null),
+    );
     record(
         "offline edits are submitted on return",
         plan_is(&wa, &sa.to.resident, "# Plan\nALICE_UI_CANARY\nOFFLINE_EDIT\n").await,
         json!(null),
     );
+    let mut reachable = false;
     for _ in 0..240 {
-        if !pa.exists() {
+        if wa.agents(Some("host".parse()?)).await.is_ok() {
+            reachable = true;
             break;
         }
         pause().await;
     }
-    record("the old writable copy is withdrawn", !pa.exists(), json!(pa));
+    anyhow::ensure!(reachable, "the assisting host did not reconnect");
+    wa.manage(sa.to.resident.clone(), Some("host".parse()?), Management::Focus { focus: focused("alice-two") }).await?;
+    wa.talk(sa.to.resident.clone(), Some("host".parse()?), "ALICE_NEW_PLACE".into()).await?;
+    anyhow::ensure!(idle(&host, &a).await, "the new-place turn did not settle");
+    let moved = plan_file(&host, &a)?;
+    record("the next turn gets the selected replica path", moved.starts_with(&alice_two) && moved != pa, json!(moved));
     record(
-        "the new copy receives the recovered edit",
-        file_is(&moved, "# Plan\nALICE_UI_CANARY\nOFFLINE_EDIT\n").await,
+        "both copies retain the recovered edit",
+        file_is(&pa, "# Plan\nALICE_UI_CANARY\nOFFLINE_EDIT\n").await
+            && file_is(&moved, "# Plan\nALICE_UI_CANARY\nOFFLINE_EDIT\n").await,
         json!(null),
     );
-    std::fs::write(&pa, "")?;
-    record("a late empty save at the withdrawn path is not lost", plan_is(&wa, &sa.to.resident, "").await, json!(null));
-    let restored = wa.plan_read(None, None, sa.to.resident.clone(), Some(machine("host"))).await?;
-    wa.plan_write(
-        None,
-        None,
-        sa.to.resident.clone(),
-        restored.version(),
-        "# Plan\nALICE_UI_CANARY\nOFFLINE_EDIT\n".into(),
-        Some(machine("host")),
-    )
-    .await?;
+    write_as(&alice_pc, &writer.to, &pa, "").await?;
+    record(
+        "the former selected copy remains writable through the world",
+        plan_is(&wa, &sa.to.resident, "").await && file_is(&moved, "").await,
+        json!(null),
+    );
+    write_as(&alice_pc, &writer.to, &pa, "# Plan\nALICE_UI_CANARY\nOFFLINE_EDIT\n").await?;
     anyhow::ensure!(
         file_is(&moved, "# Plan\nALICE_UI_CANARY\nOFFLINE_EDIT\n").await,
-        "the restored plan did not reach the new copy"
+        "the restored plan did not reach every copy"
     );
     attachments::exercise(&wa, &host, &moved, &sa.to.resident).await?;
     controls::exercise(&wa, &host, &alice_two, &sa.to.resident, &moved).await?;
@@ -493,7 +623,34 @@ async fn main() -> Result<()> {
     std::fs::write(base.join("colleague.json"), serde_json::to_vec(&colleague)?)?;
     let endpoint = std::env::args().nth(3).context("goal mock endpoint")?;
     goals::exercise(&wa, &host, &moved, &sa.to.resident, &endpoint).await?;
-    memory::exercise(&wa, &host, &alice_two, &sa.to.resident).await?;
+    history::exercise(&wa, &host, &alice_two, &sa.to.resident, &writer.to).await?;
+    sharing::exercise(&base, &host, &owner_pc, &wo, &wb, &so.to.resident, &sb.to, &home).await?;
+    host_node.kill()?;
+    host_node.wait()?;
+    let host_offline =
+        fastctx_types::history::Scope::Conversation { resident: sa.to.resident.clone(), machine: machine("host") };
+    let offline_saved = wa
+        .history(fastctx_types::history::HistoryCall::Save {
+            scope: host_offline.clone(),
+            name: "host-offline".into(),
+            text: "---\nname: host-offline\ndescription: Offline host access\n---\nHOST_OFFLINE_HISTORY\n".into(),
+            expected: None,
+        })
+        .await;
+    record(
+        "a phone reads and edits history while its model's computer is off",
+        offline_saved.is_ok()
+            && wa
+                .history(fastctx_types::history::HistoryCall::Read {
+                    scope: host_offline,
+                    name: "host-offline".into(),
+                    version: None,
+                })
+                .await
+                .is_ok(),
+        json!(null),
+    );
+    lifecycle::exercise(&base, &wa, &alice_pc, &alice_two, &mut alice_node, &mut alice_two_node, listen).await?;
     std::fs::write(
         base.join("expectations.json"),
         serde_json::to_vec(
@@ -519,4 +676,24 @@ async fn online_now(root: &Path, label: &str) -> bool {
         .await
         .ok()
         .is_some_and(|value| value.to_string().contains(&format!("\"name\":\"{label}\",\"online\":true")))
+}
+
+async fn write_as(root: &Path, owner: &fastctx_types::Address, path: &Path, text: &str) -> Result<()> {
+    operation_as(root, owner, json!({"tool":"write","file_path":path,"content":text})).await
+}
+
+async fn operation_as(root: &Path, owner: &fastctx_types::Address, operation: Value) -> Result<()> {
+    let mut client = fastctx_client::Client::connect(
+        &WorldDir::under(root),
+        Peer::Command { resident: Some(owner.clone()), session: None },
+    )
+    .await?;
+    let call = serde_json::from_value(
+        json!({"call":"write","resident":null,"node":null,"town":null,"job":null,"op":operation}),
+    )?;
+    let fastctx_types::Reply::Written { outcome } = client.call(call).await? else {
+        anyhow::bail!("the world did not answer the write")
+    };
+    outcome.map_err(|error| anyhow::anyhow!(error.message))?;
+    Ok(())
 }
