@@ -666,6 +666,12 @@ pub(crate) async fn bind(kept: Option<Kept>, listen: SocketAddr) -> anyhow::Resu
 /// standing by for a move here, or forwarding after a move away.
 pub async fn serve(dir: &Path, leave: Leave) -> anyhow::Result<()> {
     let log = Arc::new(log::Log::open(&dir.join("hub.log"))?);
+    // What went wrong, written down while it lasts, and how long tasks wait
+    // for a thread (`specs/world-engine.md`, 量与告警).
+    fastctx_platform::scene::set_place(dir.join("scenes"));
+    let tail = log.clone();
+    fastctx_platform::scene::set_tail(move || tail.recent());
+    fastctx_platform::task::watch("hub");
     let mut kept = None;
     loop {
         let next = match moving::mode(dir)? {

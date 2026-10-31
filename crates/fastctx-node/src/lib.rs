@@ -52,6 +52,7 @@ mod desk;
 mod devices;
 mod directory_changes;
 mod ending;
+pub use ending::flush_log;
 mod facts;
 mod features;
 mod file_events;
@@ -540,9 +541,13 @@ pub async fn run_prepared(
             .context("saying this node waits to take the World")?;
     }
     let supervision = match supervision {
-        Some(supervision) => {
-            Some(tokio::task::block_in_place(|| supervision.prepare()).context("talking to the guardian")?)
-        }
+        Some(supervision) => Some(
+            tokio::task::block_in_place(|| {
+                let _blocking = fastctx_platform::roles::scoped(fastctx_platform::roles::Role::Blocking);
+                supervision.prepare()
+            })
+            .context("talking to the guardian")?,
+        ),
         None => None,
     };
     ensure_private_dir(world.path()).with_context(|| format!("preparing {}", world.path().display()))?;
@@ -582,7 +587,16 @@ pub async fn run_prepared(
     // The node usually has no terminal: a panic in any of its tasks is
     // written to its log, or it would leave no trace.
     let panics = log.clone();
-    std::panic::set_hook(Box::new(move |info| panics.line(format_args!("panicked: {info}"))));
+    std::panic::set_hook(Box::new(move |info| {
+        panics.line(format_args!("panicked: {info}"));
+        panics.flush(std::time::Duration::from_millis(500));
+    }));
+    // What went wrong, written down while it lasts, and how long tasks wait
+    // for a thread (`specs/world-engine.md`, 量与告警).
+    fastctx_platform::scene::set_place(world.path().join("scenes"));
+    let tail = log.clone();
+    fastctx_platform::scene::set_tail(move || tail.recent());
+    fastctx_platform::task::watch("node");
     let machine = machine::names(&world)?;
     log.line(format_args!("node {} starting as {}", env!("CARGO_PKG_VERSION"), machine.name));
     let lifetime = lifetime::inspect(supervision.is_some())

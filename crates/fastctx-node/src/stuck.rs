@@ -75,7 +75,18 @@ pub(crate) fn start(node: &Arc<Node>) {
             }
             told.retain(|key, _| snapshot.stuck.iter().any(|stuck| &stuck.key == key));
             for stuck in &snapshot.stuck {
+                let first = !told.contains_key(&stuck.key);
                 let due = told.get(&stuck.key).is_none_or(|at| now.duration_since(*at) >= AGAIN);
+                if first {
+                    // While it is still stuck, the scene says who waits for
+                    // whom (`specs/world-engine.md`, 量与告警).
+                    fastctx_platform::scene::capture(format!(
+                        "stuck for {} s: {} {}",
+                        stuck.since.as_secs(),
+                        stuck.doing,
+                        stuck.what
+                    ));
+                }
                 if due {
                     told.insert(stuck.key.clone(), now);
                     node.log.line(format_args!(

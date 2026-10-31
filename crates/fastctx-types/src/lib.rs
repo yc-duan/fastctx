@@ -58,6 +58,7 @@ pub mod plan_copies;
 pub mod process;
 pub mod profile;
 pub mod project;
+pub mod readings;
 pub mod remote;
 pub mod renewal;
 pub mod repair;

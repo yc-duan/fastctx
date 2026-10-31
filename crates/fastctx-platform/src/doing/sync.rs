@@ -29,8 +29,11 @@ impl<T> SyncMutex<T> {
 impl<T: ?Sized> SyncMutex<T> {
     /// Blocks this thread until the lock is taken. A holder that panicked
     /// leaves the lock to the next: what these locks guard is on disk, where
-    /// a poisoned flag in memory protects nothing.
+    /// a poisoned flag in memory protects nothing. Taken on a thread that
+    /// must not block, it is noted as a violation (`crate::roles`).
+    #[track_caller]
     pub fn lock(&self) -> SyncMutexGuard<'_, T> {
+        crate::roles::blocking(self.name);
         let lock = registry::Lock { id: self.id, rank: self.rank, name: self.name, subject: &self.subject };
         let wait = Wait::begin_blocking(lock);
         let guard = self.inner.lock().unwrap_or_else(PoisonError::into_inner);

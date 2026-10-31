@@ -198,6 +198,13 @@ pub fn label() -> Arc<str> {
     }
 }
 
+/// What the current task, or blocking thread, said it is doing; nothing when
+/// it said nothing.
+pub fn said_label() -> Option<Arc<str>> {
+    let label = label();
+    said(&label).then_some(label)
+}
+
 /// What `label` names a task or thread by when it said nothing it does.
 const UNSAID_TASK: &str = "task ";
 const UNSAID_THREAD: &str = "a blocking thread";

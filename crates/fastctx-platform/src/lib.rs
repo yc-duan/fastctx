@@ -11,6 +11,7 @@ pub mod awake;
 pub mod bounded;
 #[cfg(any(target_os = "linux", target_os = "macos", windows))]
 pub mod child;
+pub mod conduct;
 pub mod cpu_share;
 #[cfg(target_os = "macos")]
 pub mod darwin_proc;
@@ -35,6 +36,7 @@ pub mod job_membership;
 pub mod legacy_text;
 pub mod limits;
 pub mod local_path;
+pub mod log_writer;
 pub mod lock;
 pub mod memory;
 #[cfg(target_os = "linux")]
@@ -49,11 +51,14 @@ pub mod privacy;
 pub mod private;
 #[cfg(target_os = "linux")]
 pub mod procfs;
+pub mod readings;
 #[cfg(windows)]
 pub mod protected_directory;
 #[cfg(windows)]
 pub mod registry;
+pub mod roles;
 pub mod rolling_log;
+pub mod scene;
 pub mod service_channel;
 #[cfg(windows)]
 pub mod shell_process;
@@ -61,6 +66,7 @@ pub mod shell_quote;
 pub mod space;
 pub mod system;
 pub mod system_home;
+pub mod task;
 #[cfg(any(target_os = "linux", target_os = "macos", windows))]
 pub mod terminate;
 #[cfg(any(target_os = "linux", target_os = "macos", windows))]
