@@ -23,6 +23,42 @@ const LATELY: SignedDuration = SignedDuration::from_hours(6);
 const COUNTED: [TroubleKind; 4] =
     [TroubleKind::Stuck, TroubleKind::Drops, TroubleKind::Silent, TroubleKind::Violations];
 
+/// The machine on the version, and its trouble, when more of the machines
+/// on it had trouble since they took it than of the rest lately: of the
+/// rest, only machines that said what they run count, as only they are
+/// counted among them. `took` says when each machine on the version took it,
+/// `running` what each machine said it runs; `troubles` are each machine's
+/// troubles lately, by key, kind and when.
+fn fared_worse<K: Copy + Eq + std::hash::Hash, V>(
+    took: &HashMap<K, Timestamp>,
+    reported: usize,
+    running: &HashMap<K, V>,
+    troubles: Vec<(K, TroubleKind, Timestamp)>,
+) -> Option<(K, TroubleKind)> {
+    // The first trouble of each machine on the version since it took it.
+    let mut on: HashMap<K, (TroubleKind, Timestamp)> = HashMap::new();
+    let mut others = std::collections::HashSet::new();
+    for (key, kind, at) in troubles {
+        match took.get(&key) {
+            Some(since) if at >= *since => {
+                on.entry(key).or_insert((kind, at));
+            }
+            Some(_) => {}
+            None if running.contains_key(&key) => {
+                others.insert(key);
+            }
+            None => {}
+        }
+    }
+    let rest = reported.saturating_sub(took.len());
+    // Each as a share of its own, cross-multiplied so none is divided by
+    // nothing: with no rest to compare with, nothing fared worse.
+    if on.is_empty() || on.len() * rest <= others.len() * took.len() {
+        return None;
+    }
+    on.into_iter().min_by_key(|(_, (_, at))| *at).map(|(key, (kind, _))| (key, kind))
+}
+
 /// Watches every rollout while the hub runs.
 pub(crate) async fn watch(hub: Weak<Hub>) {
     // When each machine was first seen running the version going out.
@@ -53,30 +89,7 @@ pub(crate) async fn watch(hub: Weak<Hub>) {
         }
         let lately = now.checked_sub(LATELY).unwrap_or(now);
         let troubles = hub.troubles.of_kinds_since(&COUNTED, lately);
-        // The first trouble of each machine on the version since it took it.
-        let mut on: HashMap<PublicKey, (TroubleKind, Timestamp)> = HashMap::new();
-        let mut others = std::collections::HashSet::new();
-        for (key, kind, at) in troubles {
-            match took.get(&key) {
-                Some(since) if at >= *since => {
-                    on.entry(key).or_insert((kind, at));
-                }
-                Some(_) => {}
-                None => {
-                    others.insert(key);
-                }
-            }
-        }
-        if on.is_empty() {
-            continue;
-        }
-        let rest = running.len().saturating_sub(took.len());
-        // More of the machines on the version than of the rest, each as a
-        // share of its own: cross-multiplied, so none is divided by nothing.
-        if on.len() * rest <= others.len() * took.len() {
-            continue;
-        }
-        let Some((key, (kind, _))) = on.into_iter().min_by_key(|(_, (_, at))| *at) else { continue };
+        let Some((key, kind)) = fared_worse(&took, running.len(), &running, troubles) else { continue };
         let Some(machine) = hub.store().indexed().by_key(&key).map(|member| member.name.clone()) else { continue };
         let version = rollout.version.clone();
         let stop = Stop { at: now, machine: machine.clone(), kind };
