@@ -104,7 +104,7 @@ pub(crate) async fn here(
         }
         actor.machine = node.machine();
     }
-    let account = scope::resolve(node, &resident, Some(&account))?;
+    let account = scope::resolve(node, &resident, Some(&account)).await?;
     let address = Address { machine: node.machine(), resident: resident.clone() };
     if matches!(request, AgentRequest::Read) {
         if !node.goals.records.available() {

@@ -632,7 +632,7 @@ async fn submit_thread(
     let count = batch.iter().position(|kept| kept.delivery.notice.along().is_none()).map_or(batch.len(), |at| at + 1);
     let left = batch.split_off(count);
     let audience = if batch.iter().any(|pending| pending.working)
-        && crate::goals::replies::inherits(node, id).map_err(|error| Failure::new(error.to_string()))?
+        && crate::goals::replies::inherits(node, id).await.map_err(|error| Failure::new(error.to_string()))?
     {
         node.residents.working_for(id)
     } else {

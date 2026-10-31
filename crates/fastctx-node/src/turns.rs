@@ -133,7 +133,7 @@ pub async fn apply(node: &Arc<Node>, id: &ResidentId, mut event: SessionEvent) -
             // What it asked without stopping goes where its words go: to the
             // conversation it works for, or to the user, as `message_user`'s.
             if let Some(said) = crate::asked::asked_without_stopping(item)
-                && !crate::goals::questions::route(node, id, item, event.at)?
+                && !crate::goals::questions::route(node, id, item, event.at).await?
                 && crate::voice::speaks(node, id)
                 && let Err(error) = crate::voice::say(node, id, &said, TellStatus::Info, &[])
             {

@@ -235,13 +235,15 @@ pub(crate) fn heard_at(directory: &ConversationDir, id: &NoticeId) -> io::Result
 }
 pub fn owe(directory: &ConversationDir, owing: &Owing) -> io::Result<()> {
     let (owing, bytes) = (owing.clone(), serde_json::to_vec(owing)?.len());
-    change(directory, bytes, move |rows| {
-        let key = owing.delivery.id.as_str();
-        if !storage::paid(rows, key)? && rows.get::<Owing>("outgoing-answers", key)?.is_none() {
-            rows.put_ordered("outgoing-answers", key, &owing, owing.delivery.at)?;
-        }
-        Ok(())
-    })
+    change(directory, bytes, move |rows| owe_in(rows, &owing))
+}
+/// Commit an outgoing answer with another record that creates its obligation.
+pub(crate) fn owe_in(rows: &crate::records::Rows<'_>, owing: &Owing) -> fastctx_storage::Result<()> {
+    let key = owing.delivery.id.as_str();
+    if !storage::paid(rows, key)? && rows.get::<Owing>("outgoing-answers", key)?.is_none() {
+        rows.put_ordered("outgoing-answers", key, owing, owing.delivery.at)?;
+    }
+    Ok(())
 }
 pub fn owing(directory: &ConversationDir) -> io::Result<Vec<Owing>> {
     read_rows(directory, |rows| rows.unsettled("outgoing-answers", "paid-answers", "undeliverable-answers"))

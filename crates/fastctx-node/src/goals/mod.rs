@@ -19,6 +19,7 @@ pub(crate) mod questions;
 pub(crate) mod records;
 mod recovery;
 pub(crate) mod replies;
+mod report_store;
 pub(crate) mod reports;
 pub(crate) mod reviewer;
 mod wiring;

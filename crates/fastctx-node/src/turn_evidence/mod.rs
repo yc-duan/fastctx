@@ -68,17 +68,24 @@ pub(crate) async fn snapshot_locked(
     let now = node.residents.now(resident);
     let mut turn = requested.or_else(|| now.as_ref().and_then(|now| now.turn.clone().or(now.last_turn.clone())));
     let directory = node.world.conversation(resident);
-    if turn.is_none() {
-        turn = crate::delivery::terminals(&directory)
-            .map_err(|error| Failure::new(error.to_string()))?
-            .into_iter()
-            .max_by_key(|finished| finished.queue_order)
-            .map(|finished| finished.turn);
-    }
-    let actions = records::actions(node, resident).map_err(|error| Failure::new(error.to_string()))?;
+    let (reading, subject, path) = (node.clone(), resident.clone(), directory.clone());
+    let (turn, actions) = tokio::task::spawn_blocking(move || -> std::io::Result<_> {
+        if turn.is_none() {
+            turn = crate::delivery::terminals(&path)?
+                .into_iter()
+                .max_by_key(|finished| finished.queue_order)
+                .map(|finished| finished.turn);
+        }
+        Ok((turn, records::actions(&reading, &subject)?))
+    })
+    .await
+    .map_err(|error| Failure::new(error.to_string()))?
+    .map_err(|error| Failure::new(error.to_string()))?;
     let mut waiting = waiting::collect(node, resident, &actions).await?;
-    waiting::measure_growth(node, resident, &mut waiting).map_err(|error| Failure::new(error.to_string()))?;
-    let read = || -> std::io::Result<_> {
+    let (reading, subject) = (node.clone(), resident.clone());
+    let read = move || -> std::io::Result<_> {
+        let (node, resident) = (&reading, &subject);
+        waiting::measure_growth(node, resident, &mut waiting)?;
         let finished = turn.as_deref().map(|turn| crate::delivery::terminal(&directory, turn)).transpose()?.flatten();
         let mut end = finished.as_ref().map(|finished| finished.end.clone());
         if let (Some(turn), Some(end)) = (turn.as_deref(), end.as_mut())
@@ -128,7 +135,10 @@ pub(crate) async fn snapshot_locked(
             quota: None,
         })
     };
-    let mut evidence = read().map_err(|error| Failure::new(error.to_string()))?;
+    let mut evidence = tokio::task::spawn_blocking(read)
+        .await
+        .map_err(|error| Failure::new(error.to_string()))?
+        .map_err(|error| Failure::new(error.to_string()))?;
     if refresh_limits && now.as_ref().is_some_and(|now| now.turn.is_none()) {
         evidence.quota = Some(quota::read(node, resident).await);
     }

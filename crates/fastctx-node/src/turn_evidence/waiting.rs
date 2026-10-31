@@ -145,8 +145,11 @@ pub(crate) async fn collect(
         Err(error) if error.kind() == io::ErrorKind::NotFound => {}
         Err(error) => return Err(failure(error)),
     }
-    let received =
-        Arc::new(if colleagues.is_empty() { Vec::new() } else { crate::goals::waiting::received(node, resident)? });
+    let received = Arc::new(if colleagues.is_empty() {
+        Vec::new()
+    } else {
+        crate::goals::waiting::received(node, resident).await?
+    });
     let mut queries = tokio::task::JoinSet::new();
     for (colleague, since) in colleagues {
         let (node, acting, owner, received) = (node.clone(), about.acting.clone(), owner.clone(), received.clone());

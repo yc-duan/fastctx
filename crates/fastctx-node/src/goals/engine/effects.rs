@@ -47,7 +47,7 @@ pub(crate) async fn fire(node: &Arc<Node>, store: &Arc<Store>, timer: &Timer) ->
         return Ok(());
     }
     let mut goal = view.goal.clone().expect("matched goal");
-    let restarted = checkpoint::restore(node, &mut goal)?;
+    let restarted = checkpoint::restore(node, &mut goal).await?;
     if matches!(work.task, Task::Tell { .. } | Task::Retry { .. })
         && crate::inbox::knows(&node.world.conversation(id), &work.id).map_err(failure)?
     {
@@ -134,7 +134,7 @@ pub(crate) async fn fire(node: &Arc<Node>, store: &Arc<Store>, timer: &Timer) ->
             if let Some(decision) = policy::quota_ready(
                 &goal,
                 &work.id,
-                driver::assistance(node, &goal)?,
+                driver::assistance(node, &goal).await?,
                 Some(&reading),
                 codex,
                 &clock(node),
@@ -188,7 +188,7 @@ pub(crate) async fn fire(node: &Arc<Node>, store: &Arc<Store>, timer: &Timer) ->
             }
         }
         Task::Compact => {
-            if !quiet && !super::compaction::started(node, id, &work)? {
+            if !quiet && !super::compaction::started(node, id, &work).await? {
                 return Err(Failure::new("goal compaction waits for queued input"));
             }
             drop(place);

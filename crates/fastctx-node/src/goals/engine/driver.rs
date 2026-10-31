@@ -22,14 +22,19 @@ pub(super) async fn quiet(node: &Arc<Node>, id: &ResidentId) -> Result<bool, Fai
         return Ok(false);
     }
     let directory = node.world.conversation(id);
-    let (pending, _) = crate::inbox::input_states(&directory).map_err(failure)?;
-    // Facts that ride along cannot start a turn or prevent the goal from starting one.
-    Ok(pending.iter().all(|input| input.delivery.notice.along().is_some())
-        && !crate::inbox::uncertain_lately(&directory, UNSETTLED).map_err(failure)?
-        && crate::control_queue::pending(node, id).await?.is_empty())
+    let clear = tokio::task::spawn_blocking(move || -> std::io::Result<bool> {
+        let (pending, _) = crate::inbox::input_states(&directory)?;
+        // Facts that ride along cannot start a turn or block autonomous work.
+        Ok(pending.iter().all(|input| input.delivery.notice.along().is_some())
+            && !crate::inbox::uncertain_lately(&directory, UNSETTLED)?)
+    })
+    .await
+    .map_err(failure)?
+    .map_err(failure)?;
+    Ok(clear && crate::control_queue::pending(node, id).await?.is_empty())
 }
 
-pub(super) fn assistance(node: &Node, goal: &Goal) -> Result<Option<policy::QuotaHold>, Failure> {
+fn assistance_now(node: &Node, goal: &Goal) -> Result<Option<policy::QuotaHold>, Failure> {
     let id = &goal.resident.resident;
     let (about, _) = node.residents.about(id).ok_or_else(|| Failure::new("unknown conversation"))?;
     let selected = crate::session_options::read(node, id)?.model.or(about.model.clone());
@@ -76,7 +81,7 @@ pub(super) async fn reconcile(node: &Arc<Node>, id: &ResidentId) -> Result<(), F
         return commit(node, &view, policy::host_refused(goal, error.failure.message)).await;
     }
     timing(node, id, &view).await?;
-    let restarted = checkpoint::restore(node, &mut goal)?;
+    let restarted = checkpoint::restore(node, &mut goal).await?;
     if goal.runtime.pending.as_ref().is_some_and(|work| matches!(work.task, Task::Compact)) {
         return Ok(());
     }
@@ -100,7 +105,7 @@ pub(super) async fn reconcile(node: &Arc<Node>, id: &ResidentId) -> Result<(), F
         None
     };
     if let Some(facts) = &observed
-        && let Some(decision) = super::returned::decision(node, &goal, facts, new_turn)?
+        && let Some(decision) = super::returned::decision(node, &goal, facts, new_turn).await?
     {
         return commit(node, &view, decision).await;
     }
@@ -130,7 +135,7 @@ pub(super) async fn reconcile(node: &Arc<Node>, id: &ResidentId) -> Result<(), F
             )
             .await;
         }
-        if let Some((key, _)) = materials::recent_owner(node, &goal)?.last()
+        if let Some((key, _)) = materials::recent_owner(node, &goal).await?.last()
             && let Some(decision) = policy::owner_spoke(&goal, key)
         {
             return commit(node, &view, decision).await;
@@ -148,9 +153,14 @@ pub(super) async fn reconcile(node: &Arc<Node>, id: &ResidentId) -> Result<(), F
             }) {
                 facts.quota = Some(crate::turn_evidence::quota::read(node, id).await);
             }
-            if let Some(decision) =
-                policy::ended(&goal, &facts, assistance(node, &goal)?, &clock(node), new_work(), generation(node, id))
-            {
+            if let Some(decision) = policy::ended(
+                &goal,
+                &facts,
+                assistance(node, &goal).await?,
+                &clock(node),
+                new_work(),
+                generation(node, id),
+            ) {
                 if matches!(decision.kind, "idle_window" | "review_requested" | "standing_remind" | "standing_unwoken")
                 {
                     waiting_known(&facts.waiting)?;
@@ -217,4 +227,9 @@ pub(super) fn waiting_known(handles: &[fastctx_types::turn_evidence::WaitHandle]
         )));
     }
     Ok(())
+}
+
+pub(super) async fn assistance(node: &Arc<Node>, goal: &Goal) -> Result<Option<policy::QuotaHold>, Failure> {
+    let (node, goal) = (node.clone(), goal.clone());
+    tokio::task::spawn_blocking(move || assistance_now(&node, &goal)).await.map_err(failure)?
 }

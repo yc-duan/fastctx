@@ -6,6 +6,7 @@
 pub(crate) mod drill;
 pub(crate) mod items;
 pub(crate) mod legacy;
+pub(crate) mod metadata;
 mod migration;
 pub(crate) use migration::{Source, ensure_each};
 

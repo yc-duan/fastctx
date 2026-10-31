@@ -21,7 +21,7 @@ pub(super) fn owns(node: &Node, goal: &Goal, speaker: &Speaker) -> bool {
         (Owner::Conversation { address: owner }, Speaker::Resident { address }) if super::super::same(node, owner, address))
 }
 
-pub(super) fn recent_owner(node: &Node, goal: &Goal) -> Result<Vec<(String, OwnerWords)>, Failure> {
+fn recent_owner_now(node: &Node, goal: &Goal) -> Result<Vec<(String, OwnerWords)>, Failure> {
     let mut words = Vec::new();
     for event in crate::delivery::history(&node.world.conversation(&goal.resident.resident)).map_err(failure)? {
         if let Happened::Heard { delivery, from: Some(speaker), text, .. } = &event.happened
@@ -110,7 +110,8 @@ pub(super) async fn build(
         truncated: false,
     };
     if cause == ReviewCause::Paused {
-        result.owner_words = recent_owner(node, goal)?.into_iter().rev().take(4).map(|(_, words)| words).collect();
+        result.owner_words =
+            recent_owner(node, goal).await?.into_iter().rev().take(4).map(|(_, words)| words).collect();
         result.owner_words.reverse();
     } else {
         let owner = match &goal.owner {
@@ -196,4 +197,9 @@ pub(super) async fn build(
     )
     .map_err(failure)?;
     Ok(result)
+}
+
+pub(super) async fn recent_owner(node: &Arc<Node>, goal: &Goal) -> Result<Vec<(String, OwnerWords)>, Failure> {
+    let (node, goal) = (node.clone(), goal.clone());
+    tokio::task::spawn_blocking(move || recent_owner_now(&node, &goal)).await.map_err(failure)?
 }

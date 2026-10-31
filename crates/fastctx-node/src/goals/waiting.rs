@@ -50,7 +50,7 @@ pub(crate) async fn debt(
     if !matches!(&about.origin, Origin::Colleague { asked_by, .. } if super::same(node, asked_by, requester)) {
         return Ok(None);
     }
-    let Some(account) = scope::pinned(node, resident)? else { return Ok(None) };
+    let Some(account) = scope::pinned(node, resident).await? else { return Ok(None) };
     if !node.serves(acting, &account.hub, &account.account) {
         return Ok(None);
     }
@@ -80,7 +80,7 @@ pub(crate) async fn debt(
 }
 
 /// Metadata already in this requester's custody, including reports not yet consumed by its model.
-pub(crate) fn received(node: &Node, resident: &ResidentId) -> Result<Vec<ReportDelivery>, Failure> {
+fn received_now(node: &Node, resident: &ResidentId) -> Result<Vec<ReportDelivery>, Failure> {
     let directory = node.world.conversation(resident);
     let mut received = Vec::new();
     // Read custody in its forward order: pending input is published into history before it is removed.
@@ -164,4 +164,9 @@ pub(crate) fn returned(
 
 fn fail(error: impl std::fmt::Display) -> Failure {
     Failure::new(error.to_string())
+}
+
+pub(crate) async fn received(node: &Arc<Node>, resident: &ResidentId) -> Result<Vec<ReportDelivery>, Failure> {
+    let (node, resident) = (node.clone(), resident.clone());
+    tokio::task::spawn_blocking(move || received_now(&node, &resident)).await.map_err(fail)?
 }

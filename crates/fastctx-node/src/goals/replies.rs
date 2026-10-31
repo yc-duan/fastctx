@@ -28,7 +28,7 @@ fn initialize(directory: &fastctx_types::layout::ConversationDir) -> io::Result<
 
 /// Record the accepted authority before context installation or other recoverable effects.
 /// An older observation cannot undo a newer goal or its explicit clearing.
-pub(crate) fn remember(node: &Node, resident: &ResidentId, view: &View) -> io::Result<()> {
+fn remember_now(node: &Node, resident: &ResidentId, view: &View) -> io::Result<()> {
     let Some(version) = view.version else { return Ok(()) };
     if !node.residents.about(resident).is_some_and(|(about, _)| matches!(about.origin, Origin::Colleague { .. })) {
         return Ok(());
@@ -55,7 +55,7 @@ pub(crate) fn remember(node: &Node, resident: &ResidentId, view: &View) -> io::R
 
 /// Explicit messages keep their recorded readers. This decision is only for automatic input,
 /// before its audience is frozen in a durable handover. A settled goal still owns its report.
-pub(crate) fn inherits(node: &Node, resident: &ResidentId) -> io::Result<bool> {
+fn inherits_now(node: &Node, resident: &ResidentId) -> io::Result<bool> {
     let Some((about, _)) = node.residents.about(resident) else { return Ok(true) };
     let Origin::Colleague { asked_by, .. } = about.origin else { return Ok(true) };
     if let Some(mode) = read(node, resident)? {
@@ -76,4 +76,13 @@ pub(crate) fn inherits(node: &Node, resident: &ResidentId) -> io::Result<bool> {
         }
     };
     Ok(!matches!(owner, Some(Owner::Conversation { address }) if super::same(node, &address, &asked_by)))
+}
+
+pub(crate) async fn remember(node: &std::sync::Arc<Node>, resident: &ResidentId, view: &View) -> io::Result<()> {
+    let (node, resident, view) = (node.clone(), resident.clone(), view.clone());
+    tokio::task::spawn_blocking(move || remember_now(&node, &resident, &view)).await.map_err(io::Error::other)?
+}
+pub(crate) async fn inherits(node: &std::sync::Arc<Node>, resident: &ResidentId) -> io::Result<bool> {
+    let (node, resident) = (node.clone(), resident.clone());
+    tokio::task::spawn_blocking(move || inherits_now(&node, &resident)).await.map_err(io::Error::other)?
 }

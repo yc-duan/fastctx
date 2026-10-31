@@ -922,6 +922,7 @@ async fn taken(
         {
             if pending.working {
                 pending.readers = if crate::goals::replies::inherits(node, &resident)
+                    .await
                     .map_err(|error| Failure::new(error.to_string()))?
                 {
                     node.residents.working_for(&resident)

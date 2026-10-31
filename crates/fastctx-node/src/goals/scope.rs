@@ -7,11 +7,23 @@ use fastctx_types::access::HubAccount;
 use fastctx_types::ipc::Failure;
 use std::collections::BTreeSet;
 
-pub(crate) fn pinned(node: &Node, resident: &ResidentId) -> Result<Option<HubAccount>, Failure> {
-    pinned_at(&node.world.conversation(resident))
+pub(crate) async fn pinned(node: &Node, resident: &ResidentId) -> Result<Option<HubAccount>, Failure> {
+    pinned_at(&node.world.conversation(resident)).await
 }
 
-pub(crate) fn pinned_at(directory: &fastctx_types::layout::ConversationDir) -> Result<Option<HubAccount>, Failure> {
+pub(crate) fn pinned_now(node: &Node, resident: &ResidentId) -> Result<Option<HubAccount>, Failure> {
+    pinned_at_now(&node.world.conversation(resident))
+}
+pub(crate) async fn pinned_at(
+    directory: &fastctx_types::layout::ConversationDir,
+) -> Result<Option<HubAccount>, Failure> {
+    let directory = directory.clone();
+    tokio::task::spawn_blocking(move || pinned_at_now(&directory))
+        .await
+        .map_err(|error| Failure::new(error.to_string()))?
+}
+
+fn pinned_at_now(directory: &fastctx_types::layout::ConversationDir) -> Result<Option<HubAccount>, Failure> {
     initialize(directory).map_err(|error| Failure::new(error.to_string()))?;
     crate::records::read(directory, |rows| rows.get("goal-account", "current"))
         .map_err(|error| Failure::new(error.to_string()))
@@ -24,7 +36,7 @@ fn initialize(directory: &fastctx_types::layout::ConversationDir) -> std::io::Re
     )
 }
 
-pub(crate) fn resolve(
+pub(crate) async fn resolve(
     node: &Node,
     resident: &ResidentId,
     selected: Option<&HubAccount>,
@@ -40,7 +52,7 @@ pub(crate) fn resolve(
         }
         selected => selected,
     };
-    let pinned = pinned(node, resident)?;
+    let pinned = pinned(node, resident).await?;
     if pinned.as_ref().is_some_and(|pinned| requested_hub.as_ref().is_some_and(|hub| hub != &pinned.hub)) {
         return Err(Failure::not_run(words::ACCOUNT_CHANGED));
     }
@@ -74,11 +86,19 @@ pub(crate) fn resolve(
     }
 }
 
-pub(crate) fn keep(node: &Node, resident: &ResidentId, account: &HubAccount) -> std::io::Result<()> {
-    keep_at(&node.world.conversation(resident), account)
+pub(crate) async fn keep(node: &Node, resident: &ResidentId, account: &HubAccount) -> std::io::Result<()> {
+    keep_at(&node.world.conversation(resident), account).await
 }
 
-pub(crate) fn keep_at(directory: &fastctx_types::layout::ConversationDir, account: &HubAccount) -> std::io::Result<()> {
+pub(crate) async fn keep_at(
+    directory: &fastctx_types::layout::ConversationDir,
+    account: &HubAccount,
+) -> std::io::Result<()> {
+    let (directory, account) = (directory.clone(), account.clone());
+    tokio::task::spawn_blocking(move || keep_at_now(&directory, &account)).await.map_err(std::io::Error::other)?
+}
+
+fn keep_at_now(directory: &fastctx_types::layout::ConversationDir, account: &HubAccount) -> std::io::Result<()> {
     initialize(directory)?;
     let account = account.clone();
     crate::records::write_at(directory, fastctx_storage::Priority::Interactive, 256, move |rows| {
@@ -89,7 +109,11 @@ pub(crate) fn keep_at(directory: &fastctx_types::layout::ConversationDir, accoun
     })
 }
 
-pub(crate) fn user(node: &Node, resident: &ResidentId, selected: Option<&HubAccount>) -> Result<HubAccount, Failure> {
+pub(crate) async fn user(
+    node: &Node,
+    resident: &ResidentId,
+    selected: Option<&HubAccount>,
+) -> Result<HubAccount, Failure> {
     let (about, _) = node.residents.about(resident).ok_or_else(|| crate::forget::gone(node, resident))?;
     let mut choices = Vec::new();
     for link in node.links() {
@@ -105,7 +129,7 @@ pub(crate) fn user(node: &Node, resident: &ResidentId, selected: Option<&HubAcco
     if choices.len() == 1 {
         return Ok(choices.remove(0));
     }
-    let owner = resolve(node, resident, selected)?;
+    let owner = resolve(node, resident, selected).await?;
     if choices.contains(&owner) {
         return Ok(owner);
     }

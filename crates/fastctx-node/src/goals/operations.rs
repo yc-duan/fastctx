@@ -125,7 +125,7 @@ pub(crate) async fn call_held(
         }
     }
     let directory = node.world.owner(&node.names(), &resident);
-    if super::scope::pinned_at(&directory)?.is_some_and(|pinned| pinned != account) {
+    if super::scope::pinned_at(&directory).await?.is_some_and(|pinned| pinned != account) {
         return Err(Failure::not_run(words::ACCOUNT_CHANGED));
     }
     let operation = match &request {
@@ -232,7 +232,7 @@ pub(crate) async fn call_held(
             .filter(|held| matches!(held.kind, super::lifecycle::HoldKind::UserStop))
             .map(|held| held.operation);
     }
-    super::scope::keep_at(&directory, &account).map_err(failure)?;
+    super::scope::keep_at(&directory, &account).await.map_err(failure)?;
     let mut intent = Intent {
         operation: operation.clone(),
         resident: resident.clone(),
@@ -329,10 +329,10 @@ async fn finish_inner(node: &Arc<Node>, intent: &mut Intent) -> Result<Updated, 
         return Err(Failure::new(fastctx_types::goals::words::LOST_REVISION));
     }
     if node.is_me(&intent.resident.machine) {
-        super::replies::remember(node, &intent.resident.resident, &current).map_err(failure)?;
+        super::replies::remember(node, &intent.resident.resident, &current).await.map_err(failure)?;
     }
     if let Some(goal) = &intent.proposed {
-        super::reports::keep(node, goal)?;
+        super::reports::keep(node, goal).await?;
     }
     super::archive::close(node, &intent.account, &intent.resident.resident, &intent.operation).await?;
     if intent.proposed.is_none() && current.goal.is_none() {
@@ -363,9 +363,9 @@ async fn finish_inner(node: &Arc<Node>, intent: &mut Intent) -> Result<Updated, 
 }
 
 pub(crate) async fn apply(node: &Arc<Node>, resident: &ResidentId, view: &View) -> Result<(), Failure> {
-    super::replies::remember(node, resident, view).map_err(failure)?;
+    super::replies::remember(node, resident, view).await.map_err(failure)?;
     if let Some(goal) = &view.goal {
-        super::reports::keep(node, goal)?;
+        super::reports::keep(node, goal).await?;
     }
     let mut installed = None;
     loop {

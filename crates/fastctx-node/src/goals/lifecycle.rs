@@ -253,12 +253,12 @@ async fn reconcile(node: &Arc<Node>, id: &ResidentId) -> Result<(), Failure> {
 
 /// Removal retains the goal's account identity until deletion has collected its account records.
 pub(crate) fn keeps_books(node: &Node, id: &ResidentId) -> Result<bool, Failure> {
-    Ok(scope::pinned(node, id)?.is_some())
+    Ok(scope::pinned_now(node, id)?.is_some())
 }
 
 /// Called inside the durable deletion transaction, with its place and management gates already held.
 pub(crate) async fn delete(node: &Arc<Node>, id: &ResidentId) -> Result<(), Failure> {
-    let Some(account) = scope::pinned(node, id)? else { return Ok(()) };
+    let Some(account) = scope::pinned(node, id).await? else { return Ok(()) };
     let resident = Address { machine: node.machine(), resident: id.clone() };
     super::past::forget(node, &account, &resident).await?;
     let current = operations::read(node, &resident, &account).await?;

@@ -841,7 +841,7 @@ async fn taken(
         return Ok(());
     }
     let mut audience = Vec::new();
-    if kept.iter().any(|pending| pending.working) && crate::goals::replies::inherits(node, resident)? {
+    if kept.iter().any(|pending| pending.working) && crate::goals::replies::inherits(node, resident).await? {
         audience = node.residents.readers(resident, turn);
         if audience.is_empty() {
             if let Some(finished) = crate::delivery::terminal(&directory, turn)? {

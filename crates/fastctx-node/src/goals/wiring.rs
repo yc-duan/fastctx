@@ -124,14 +124,19 @@ impl Context for NamedContext {
     fn set<'a>(&'a self, resident: &'a ResidentId, name: &'a str, text: &'a str, fact: &'a str) -> Reply<'a, ()> {
         Box::pin(async move {
             let node = self.node.upgrade().ok_or_else(|| Failure::new("the node has gone"))?;
-            let change = crate::context::Change { by: None, version: "", fact, full: true };
-            // An archived conversation still has its goal block taken down.
-            let result = if text.is_empty() {
-                crate::context::clear(&node, resident, name, change)
-            } else {
-                crate::context::set(&node, resident, name, text, change)
-            };
-            result.map_err(|error| Failure::new(error.to_string()))
+            let (resident, name, text, fact) = (resident.clone(), name.to_string(), text.to_string(), fact.to_string());
+            tokio::task::spawn_blocking(move || {
+                let change = crate::context::Change { by: None, version: "", fact: &fact, full: true };
+                // An archived conversation still has its goal block taken down.
+                if text.is_empty() {
+                    crate::context::clear(&node, &resident, &name, change)
+                } else {
+                    crate::context::set(&node, &resident, &name, &text, change)
+                }
+            })
+            .await
+            .map_err(|error| Failure::new(error.to_string()))?
+            .map_err(|error| Failure::new(error.to_string()))
         })
     }
 }
