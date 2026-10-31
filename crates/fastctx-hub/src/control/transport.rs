@@ -32,8 +32,22 @@ pub(super) struct Transport {
     pub incoming: mpsc::Receiver<Input>,
     pub outgoing: mpsc::Sender<Packet>,
     pub heartbeat: watch::Receiver<Option<Up>>,
-    pub ended: watch::Receiver<Option<String>>,
+    pub ended: watch::Receiver<Option<Ended>>,
     task: tokio::task::JoinHandle<()>,
+}
+
+/// Why a member's transport ended.
+#[derive(Clone, Debug)]
+pub(super) struct Ended {
+    pub reason: String,
+    /// Nothing was heard from the member for `SILENCE`.
+    pub silent: bool,
+}
+
+impl Ended {
+    fn of(reason: impl Into<String>) -> Self {
+        Self { reason: reason.into(), silent: false }
+    }
 }
 
 impl Transport {
@@ -61,7 +75,7 @@ async fn run(
     input: mpsc::Sender<Input>,
     mut output: mpsc::Receiver<Packet>,
     beats: watch::Sender<Option<Up>>,
-) -> String {
+) -> Ended {
     let pulse = crate::pulse_of(&socket);
     let (mut sink, stream) = socket.split();
     let (pongs, mut pong) = watch::channel(None);
@@ -100,8 +114,8 @@ async fn run(
         }
     };
     tokio::select! {
-        reason = reader => reason,
-        reason = writer => reason,
+        ended = reader => ended,
+        reason = writer => Ended::of(reason),
     }
 }
 
@@ -111,7 +125,7 @@ async fn read(
     input: mpsc::Sender<Input>,
     pongs: watch::Sender<Option<u64>>,
     beats: watch::Sender<Option<Up>>,
-) -> String {
+) -> Ended {
     let budget = Arc::new(tokio::sync::Semaphore::new(INPUT_BYTES));
     let mut heard = tokio::time::Instant::now();
     loop {
@@ -122,13 +136,13 @@ async fn read(
                     heard = at;
                     continue;
                 }
-                return format!("nothing was heard from it for {} s", SILENCE.as_secs());
+                return Ended { reason: format!("nothing was heard from it for {} s", SILENCE.as_secs()), silent: true };
             }
         };
         heard = tokio::time::Instant::now();
         let bytes = match next {
-            None | Some(Ok(Message::Close(_))) => return "peer closed".into(),
-            Some(Err(error)) => return fastctx_net::dial::describe(&error),
+            None | Some(Ok(Message::Close(_))) => return Ended::of("peer closed"),
+            Some(Err(error)) => return Ended::of(fastctx_net::dial::describe(&error)),
             Some(Ok(Message::Binary(bytes))) => bytes,
             Some(Ok(Message::Ping(bytes) | Message::Pong(bytes))) => {
                 if let Some(took) = fastctx_net::pulse::said(&bytes) {
@@ -139,7 +153,7 @@ async fn read(
             Some(Ok(_)) => continue,
         };
         if bytes.len() > wire::MAX_CONTROL_FRAME {
-            return "incoming control frame exceeds its byte limit".into();
+            return Ended::of("incoming control frame exceeds its byte limit");
         }
         // A heartbeat has bounded metadata and replaces its predecessor.
         // Preserve an unconsumed path change across later heartbeats that
@@ -161,10 +175,10 @@ async fn read(
             continue;
         }
         let Ok(permit) = budget.clone().try_acquire_many_owned(bytes.len().max(1) as u32) else {
-            return "member exceeded its pending input byte budget".into();
+            return Ended::of("member exceeded its pending input byte budget");
         };
         if input.try_send(Input { bytes, _budget: permit }).is_err() {
-            return "member exceeded its pending input frame budget".into();
+            return Ended::of("member exceeded its pending input frame budget");
         }
     }
 }

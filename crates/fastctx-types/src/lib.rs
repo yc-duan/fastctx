@@ -83,6 +83,7 @@ pub mod thumbnail;
 pub mod timers;
 pub mod tolerant;
 pub mod town;
+pub mod trouble;
 pub mod turn_evidence;
 pub mod uninstall;
 pub mod update;

@@ -2232,6 +2232,7 @@ async fn nodes(
                                     .is_some()
                         })
                     }),
+                    strain: seen.strain.filter(|_| online_known && seen.online),
                     allows_direct: !seen.direct.is_empty(),
                     path: Some(link.path_to(&name)),
                     facts,

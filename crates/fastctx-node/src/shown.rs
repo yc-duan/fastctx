@@ -298,6 +298,7 @@ fn nodes(node: &Arc<Node>) -> NodesReply {
                 online: current.then_some(machine.online),
                 since: machine.since,
                 through: machine.through.clone(),
+                strain: machine.strain.filter(|_| current && machine.online),
                 allows_direct: !machine.direct.is_empty(),
                 path: Some(link.path_to(&machine.name)),
                 facts,
@@ -309,7 +310,8 @@ fn nodes(node: &Arc<Node>) -> NodesReply {
         // This computer is decided as any machine is: a locked account
         // logged in here may not work on it either. The user at this
         // computer's own screen is another matter, and is not this.
-        let here = logins.iter().map(|account| (account.clone(), view.call_rights(&view.me, account, &view.me))).collect();
+        let here =
+            logins.iter().map(|account| (account.clone(), view.call_rights(&view.me, account, &view.me))).collect();
         hubs.push(fastctx_types::world::HubNodes {
             hub: link.membership().id.clone(),
             name: view.hub_name.clone(),

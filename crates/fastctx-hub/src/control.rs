@@ -215,6 +215,7 @@ pub(crate) async fn session(
     }
     // Whoever sees it sees it online now.
     hub.health.opened();
+    hub.troubles.connected(&hub, &name, key);
     hub.present(&name);
     if reads_afoot {
         crate::afoot::came(&hub, &name);
@@ -281,12 +282,16 @@ pub(crate) async fn session(
     // Whether the writer still has a refusal to deliver before closing.
     let mut uploads = crate::question_parts::Uploads::default();
     let mut upload_clock = tokio::time::interval(HEARTBEAT);
+    let mut heard = crate::strain::Heard::default();
     let (ended, refusing) = loop {
         let next = tokio::select! {
             next = transport.incoming.recv() => next.map(Ok),
             changed = transport.heartbeat.changed() => {
                 if changed.is_err() { break (None, false); }
                 let Some(frame) = transport.heartbeat.borrow_and_update().clone() else { continue };
+                if let Up::Ping { health, .. } = &frame {
+                    heard.heartbeat(&hub, &name, key, generation, health.as_ref());
+                }
                 Some(Err(frame))
             },
             _ = upload_clock.tick() => {
@@ -296,13 +301,13 @@ pub(crate) async fn session(
                 continue;
             }
             _ = transport.ended.changed() => {
-                break (transport.ended.borrow().clone(), false);
+                break (transport.ended.borrow().as_ref().map(|ended| ended.reason.clone()), false);
             }
             // The writer stopped: the connection was replaced or ended.
             _ = &mut writer_stopped => break (None, false),
         };
         let frame = match next {
-            None => break (transport.ended.borrow().clone(), false),
+            None => break (transport.ended.borrow().as_ref().map(|ended| ended.reason.clone()), false),
             Some(Err(frame)) => frame,
             Some(Ok(input)) => {
                 let bytes = input.bytes.clone();
@@ -389,6 +394,13 @@ pub(crate) async fn session(
         None => hub.log.line(format_args!("{name} disconnected")),
     }
     hub.present(&name);
+    // A machine meant to stay up that stopped answering is told of to those
+    // who hold it (`crate::troubles`).
+    if transport.ended.borrow().as_ref().is_some_and(|ended| ended.silent) {
+        let stays_up = hub.store().indexed().by_key(&key).is_some_and(|member| member.managed)
+            || crate::updates::reported_kind(&hub, &key) == Some(fastctx_types::update::Kind::Headless);
+        hub.troubles.silent(&hub, &name, key, stays_up, SILENCE.as_secs());
+    }
 }
 
 /// How many letters from a member may wait to be kept before its
@@ -565,6 +577,7 @@ async fn open(
             direct: said.direct,
             interfaces: said.interfaces,
             paths: None,
+            strain: None,
             afoot: said.afoot,
             forgets: said.forgets,
             versions: said.versions,

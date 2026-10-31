@@ -12,8 +12,9 @@ impl View {
         self.changed(previous, false)
     }
 
-    /// Whether connectivity or authority changed. Group labels and notices
-    /// still reach display consumers without waking callers waiting for a route.
+    /// Whether connectivity or authority changed. Group labels, notices and
+    /// troubles still reach display consumers without waking callers waiting
+    /// for a route.
     pub fn ways_changed(&self, previous: &View) -> bool {
         self.changed(previous, true)
     }
@@ -23,6 +24,7 @@ impl View {
         next.revision = previous.revision;
         next.presence = previous.presence;
         next.machine_notices.clone_from(&previous.machine_notices);
+        next.troubles.clone_from(&previous.troubles);
         for (now, was) in next.directory.members.iter_mut().zip(&previous.directory.members) {
             if now.name == was.name && now != was {
                 let now = Arc::make_mut(now);

@@ -85,6 +85,7 @@ pub fn prepare(
             through: None,
             reach: None,
             paths: None,
+            strain: None,
             settled: None,
         })?);
         identities.push(Arc::new(Identity {

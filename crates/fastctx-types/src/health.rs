@@ -37,6 +37,39 @@ pub struct Health {
     pub near: Option<Near>,
 }
 
+impl Health {
+    /// How the machine's own work goes, by these numbers: something stuck
+    /// says more than being busy.
+    pub fn strain(&self) -> Option<Strain> {
+        if self.stuck > 0 {
+            Some(Strain::Stuck)
+        } else if self.busy {
+            Some(Strain::Busy)
+        } else {
+            None
+        }
+    }
+}
+
+/// How a machine's own work goes, beside its being online, as its hub tells
+/// those who see it: none while its work goes as it should, or a machine
+/// does not tell.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Strain {
+    /// Its work waited for a thread past `BUSY_MS` within the window.
+    Busy,
+    /// Some of its work has not gone on for a while.
+    Stuck,
+}
+
+impl crate::tolerant::Tolerant for Strain {
+    const ALL: &'static [Self] = &[Strain::Busy, Strain::Stuck];
+    /// A strain a later release tells is read as busy: something is off,
+    /// and no more is claimed.
+    const UNKNOWN: Self = Strain::Busy;
+}
+
 /// A bound near its limit.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Near {

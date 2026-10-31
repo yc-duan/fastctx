@@ -65,7 +65,9 @@ mod sentinel_home;
 mod skill_files;
 mod skill_storage;
 mod store;
+mod strain;
 pub mod third;
+mod troubles;
 mod updates;
 mod upgrade;
 mod views;
@@ -291,6 +293,8 @@ pub(crate) struct Hub {
     watch: watchdog::Health,
     diagnostic_dir: PathBuf,
     account_records: account_records::Records,
+    /// What went wrong with the machines and the network lately (`troubles`).
+    troubles: troubles::Troubles,
 }
 
 /// The view a session that reads what changes in its view was last given
@@ -331,6 +335,8 @@ pub(crate) struct Session {
     interfaces: Vec<std::net::IpAddr>,
     /// How its lines go, as it last said.
     paths: Option<fastctx_net::directory::Paths>,
+    /// How its own work goes, as its last heartbeat said (`strain`).
+    strain: Option<fastctx_types::health::Strain>,
     /// Whether it reads what is afoot on other machines.
     afoot: bool,
     /// Whether it deletes what it keeps of a conversation when told.
@@ -792,6 +798,7 @@ async fn serving(
         outgoing.pending() || (outgoing.stage == fastctx_types::hub_move::MoveStage::Cancelled && outgoing.prepared)
     });
     let post = store.enable_runtime()?;
+    let troubles = troubles::Troubles::open(store.shelf.clone())?;
     let (switched, mut switch) = tokio::sync::oneshot::channel();
     let hub = Arc::new(Hub {
         releases: Arc::new(releases::Releases::new(dir, certificate.certificate.clone())?),
@@ -826,6 +833,7 @@ async fn serving(
         watch: watchdog::Health::default(),
         diagnostic_dir: dir.to_path_buf(),
         account_records,
+        troubles,
     });
     let _ = hub.this.set(Arc::downgrade(&hub));
     hub.post.attach(Arc::downgrade(&hub));
@@ -1150,5 +1158,6 @@ fn presence_of(session: &Session) -> views::Presence {
         through: session.through.clone(),
         reach: fastctx_net::directory::Reach { seen, interfaces: session.interfaces.clone() },
         paths: session.paths.clone(),
+        strain: session.strain,
     }
 }

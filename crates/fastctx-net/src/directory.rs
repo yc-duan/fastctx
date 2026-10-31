@@ -25,6 +25,7 @@ use crate::ids::HubId;
 use crate::sign::PublicKey;
 
 pub use fastctx_types::accounts::{Level, MemberKind as Kind, Paths, Reach};
+pub use fastctx_types::health::Strain;
 
 /// A computer, phone or web AI on the hub, under a name no other member
 /// on the hub has, nor had.
@@ -91,6 +92,14 @@ pub struct Member {
     /// How its lines go, as it last told the hub, while online.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub paths: Option<Paths>,
+    /// How its own work goes, as it last told the hub, while online: busy
+    /// or stuck, or none while its work goes as it should.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "fastctx_types::tolerant::read_option"
+    )]
+    pub strain: Option<Strain>,
     /// When the hub last set aside what waited for it, it having been away
     /// more than 30 days: a letter to it from before then that was not
     /// answered never will be, nor one from it to a machine away as long.
@@ -112,6 +121,12 @@ pub struct Presence {
     pub reach: Option<Reach>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub paths: Option<Paths>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "fastctx_types::tolerant::read_option"
+    )]
+    pub strain: Option<Strain>,
 }
 
 impl Presence {
@@ -123,6 +138,7 @@ impl Presence {
             through: member.through.clone(),
             reach: member.reach.clone(),
             paths: member.paths.clone(),
+            strain: member.strain,
         }
     }
 
@@ -133,6 +149,7 @@ impl Presence {
         member.through = self.through.clone();
         member.reach = self.reach.clone();
         member.paths = self.paths.clone();
+        member.strain = self.strain;
     }
 }
 
@@ -630,6 +647,10 @@ pub struct View {
     /// Committed changes delivered to accounts logged in on this device.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub machine_notices: Vec<fastctx_types::sharing::Notice>,
+    /// What went wrong lately with machines an account logged in on this
+    /// device holds, and with the network for its super administrator.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub troubles: Vec<fastctx_types::trouble::Trouble>,
     /// The member this view is for.
     pub me: MachineName,
     /// Whether accounts may be opened by anyone who reaches the hub.
@@ -817,6 +838,7 @@ impl View {
             hub_name,
             hub_machine: None,
             machine_notices: Vec::new(),
+            troubles: Vec::new(),
             me,
             self_registration: false,
             direct_links: false,

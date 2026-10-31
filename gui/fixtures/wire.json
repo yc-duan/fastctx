@@ -4418,6 +4418,31 @@
                 }
               }
             ],
+            "troubles": [
+              {
+                "id": 7,
+                "at": "2026-10-09T08:30:00Z",
+                "machine": "server",
+                "kind": "stuck",
+                "seconds": 75
+              },
+              {
+                "id": 8,
+                "at": "2026-10-09T08:30:00Z",
+                "machine": "laptop",
+                "kind": "near",
+                "near": {
+                  "bound": "log.waiting",
+                  "used": 93
+                }
+              },
+              {
+                "id": 9,
+                "at": "2026-10-09T08:30:00Z",
+                "kind": "outage",
+                "count": 12
+              }
+            ],
             "renames": true,
             "managed": true,
             "roles": true,
@@ -15450,6 +15475,7 @@
                 "written": "server",
                 "online": true,
                 "since": "2026-10-04T12:06:07Z",
+                "strain": "busy",
                 "allows_direct": true,
                 "path": {
                   "kind": "direct",
@@ -15624,6 +15650,7 @@
                 "written": "server",
                 "online": true,
                 "since": "2026-10-04T12:06:07Z",
+                "strain": "busy",
                 "allows_direct": true,
                 "path": {
                   "kind": "direct",
@@ -15798,6 +15825,7 @@
                 "written": "server",
                 "online": true,
                 "since": "2026-10-04T12:06:07Z",
+                "strain": "busy",
                 "allows_direct": true,
                 "path": {
                   "kind": "hub",
@@ -15971,6 +15999,7 @@
                 "written": "server",
                 "online": true,
                 "since": "2026-10-04T12:06:07Z",
+                "strain": "busy",
                 "allows_direct": true,
                 "path": {
                   "kind": "direct",
@@ -16145,6 +16174,7 @@
                 "written": "server",
                 "online": true,
                 "since": "2026-10-04T12:06:07Z",
+                "strain": "busy",
                 "allows_direct": true,
                 "path": {
                   "kind": "direct",
@@ -16322,6 +16352,7 @@
                 "written": "server",
                 "online": true,
                 "since": "2026-10-04T12:06:07Z",
+                "strain": "busy",
                 "allows_direct": true,
                 "path": {
                   "kind": "direct",
@@ -16500,6 +16531,7 @@
                 "written": "server",
                 "online": true,
                 "since": "2026-10-04T12:06:07Z",
+                "strain": "busy",
                 "allows_direct": true,
                 "path": {
                   "kind": "direct",
@@ -16678,6 +16710,7 @@
                 "written": "server",
                 "online": true,
                 "since": "2026-10-04T12:06:07Z",
+                "strain": "busy",
                 "allows_direct": true,
                 "path": {
                   "kind": "direct",
@@ -16855,6 +16888,7 @@
                 "written": "server",
                 "online": true,
                 "since": "2026-10-04T12:06:07Z",
+                "strain": "busy",
                 "allows_direct": true,
                 "path": {
                   "kind": "direct",
@@ -17034,6 +17068,7 @@
                 "written": "server",
                 "online": true,
                 "since": "2026-10-04T12:06:07Z",
+                "strain": "busy",
                 "allows_direct": true,
                 "path": {
                   "kind": "direct",

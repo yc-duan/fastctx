@@ -241,6 +241,10 @@ pub struct Node {
     /// The machine it reaches the hub through, when its own line is down.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub through: Option<String>,
+    /// How its own work goes while online, as its hub tells: busy or stuck,
+    /// or none while it goes as it should, or the hub does not tell.
+    #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "crate::tolerant::read_option")]
+    pub strain: Option<crate::health::Strain>,
     /// Whether the network's administrator allowed direct connections to
     /// it.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]

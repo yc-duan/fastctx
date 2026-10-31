@@ -472,6 +472,13 @@ pub(crate) fn opened(hub: &Hub, name: &MachineName) {
     tell(hub, Some(name));
 }
 
+/// What the machine of `key` said it is in its last report of its versions,
+/// kept while it is away: a computer someone sits at, a machine with no
+/// application, a managed machine or a phone.
+pub(crate) fn reported_kind(hub: &Hub, key: &fastctx_net::sign::PublicKey) -> Option<fastctx_types::update::Kind> {
+    hub.updates.lock().expect("never poisoned").last.get(key).and_then(|last| last.report.kind)
+}
+
 /// The session `generation` of `name` ended: what it reported goes, and
 /// whatever it was asked to fetch is asked of another.
 pub(crate) fn closed(hub: &Hub, name: &MachineName, generation: u64) {

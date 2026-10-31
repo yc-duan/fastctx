@@ -388,6 +388,7 @@ fn nodes() -> Vec<NodesReply> {
                         online: None,
                         since: None,
                         through: Some("server".into()),
+                        strain: None,
                         allows_direct: false,
                         path: Some(fastctx_types::world::Path::Hub { why: None }),
                         facts: Ok(facts("lab", "linux", false)),
@@ -401,6 +402,7 @@ fn nodes() -> Vec<NodesReply> {
                         online: Some(false),
                         since: Some(at()),
                         through: None,
+                        strain: None,
                         allows_direct: false,
                         path: None,
                         facts: Err("offline".into()),
@@ -414,6 +416,7 @@ fn nodes() -> Vec<NodesReply> {
                         online: Some(true),
                         since: Some(at()),
                         through: None,
+                        strain: Some(fastctx_types::health::Strain::Busy),
                         allows_direct: true,
                         path: Some(if i == 2 {
                             fastctx_types::world::Path::Hub {

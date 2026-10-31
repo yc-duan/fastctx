@@ -5,7 +5,7 @@
 // devices logged in, the projects, and who came into an account lately.
 // Serialized replies, before any presentation.
 
-import type { LinkState } from "./world";
+import type { LinkState, Strain } from "./world";
 import type { MachineName, Timestamp, TownName } from "./wire";
 
 export type AccountName = string;
@@ -106,6 +106,8 @@ export interface MemberSeen {
   reach?: Reach;
   /** How its lines go, as it last said, while it is online. */
   paths?: Paths;
+  /** How its own work goes while it is online (`Strain`). */
+  strain?: Strain;
   /** The start of its key, to tell two devices of one name apart. */
   key: string;
   /** A managed machine: registered under `home`, logged in to nothing
@@ -194,6 +196,25 @@ export interface MachineNotice {
     | { kind: "remove"; then: "uninstall" | "everything" | null }
     | { kind: "share"; to: AccountName; shared: boolean }
     | { kind: "assist"; to: AccountName; agent: string; home: string | null; assisting: boolean; until: Timestamp | null };
+}
+
+/** What went wrong with a machine an account holds, or with the network for
+ *  its super administrator (`specs/world-engine.md`, 量与告警); a device tells
+ *  each (hub, id) once. A kind a later hub tells reaches here as `other`. */
+export interface Trouble {
+  id: number;
+  at: Timestamp;
+  /** None for the network as a whole. */
+  machine?: MachineName;
+  kind: "silent" | "drops" | "stuck" | "near" | "violations" | "outage" | "hub" | "other";
+  /** The times it connected again within the hour, or the machines that
+   *  lost their line together. */
+  count?: number;
+  /** How long, in seconds, it has been stuck or nothing was heard. */
+  seconds?: number;
+  /** The bound that came near its limit, with how much was used in
+   *  hundredths. */
+  near?: { bound: string; used: number };
 }
 
 export interface Arrival {
@@ -305,6 +326,8 @@ export interface HubAccounts {
   hub_machine?: MachineName;
   /** What others did to machines this device's accounts hold. */
   machine_notices?: MachineNotice[];
+  /** What went wrong lately with machines this device's accounts hold. */
+  troubles?: Trouble[];
   assists: AssistSeen[];
   /** Plans the super administrator set on logins that name none. */
   plans: PlanSeen[];

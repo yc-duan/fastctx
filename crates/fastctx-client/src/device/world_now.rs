@@ -201,6 +201,7 @@ impl Device {
                     online: current.then_some(member.online),
                     since: member.since,
                     through: member.through.clone(),
+                    strain: member.strain.filter(|_| current && member.online),
                     allows_direct: !member.direct.is_empty(),
                     path: Some(session.link.path_to(&member.name)),
                     facts,

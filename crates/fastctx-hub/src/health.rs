@@ -90,6 +90,14 @@ pub(crate) async fn keep(hub: Weak<Hub>) {
             if log_due {
                 hub.log.line(format_args!("health: {now}"));
             }
+            // The hub's own work held up or stuck is the network's trouble,
+            // told to its super administrator (`crate::troubles`).
+            let own = fastctx_platform::health::summary();
+            if own.stuck > 0 || own.busy {
+                let seconds = Some(own.held_up_ms / 1000).filter(|seconds| *seconds > 0);
+                let detail = crate::troubles::Detail { seconds, ..crate::troubles::Detail::default() };
+                hub.troubles.raise(&hub, None, fastctx_types::trouble::TroubleKind::Hub, detail);
+            }
         })
         .await;
     }

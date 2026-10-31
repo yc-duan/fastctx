@@ -36,6 +36,7 @@ pub(crate) struct Presence {
     pub through: Option<String>,
     pub reach: Reach,
     pub paths: Option<Paths>,
+    pub strain: Option<fastctx_types::health::Strain>,
 }
 
 pub(crate) trait Online {
@@ -178,10 +179,13 @@ pub(crate) fn view_for_in(
         hub_machine: crate::hub_machine::current(hub, store)
             .filter(|machine| whole || mine.iter().any(|account| x.rights(account, machine).hands)),
         machine_notices: store.book.machine_log.notices(x, me).map_err(|e| e.to_string())?,
+        troubles: hub.troubles.for_member(x, me),
         me: me.clone(),
         self_registration: store.hub.self_registration,
         direct_links: true,
-        health: false,
+        // Its machines tell how their own work goes with each heartbeat
+        // (`crate::strain`).
+        health: true,
         trial,
         forwarders,
         moving: true,
@@ -451,6 +455,7 @@ fn present(store: &crate::store::Snapshot, online: &impl Online, member: &mut Me
             member.through = presence.through.clone();
             member.reach = (reach && member.kind.is_computer()).then(|| presence.reach.clone());
             member.paths = presence.paths.clone();
+            member.strain = presence.strain;
         }
         None => {
             member.online = false;
@@ -458,6 +463,7 @@ fn present(store: &crate::store::Snapshot, online: &impl Online, member: &mut Me
             member.through = None;
             member.reach = None;
             member.paths = None;
+            member.strain = None;
         }
     }
 }
