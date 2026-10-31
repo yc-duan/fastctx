@@ -2,9 +2,10 @@
 //! (`specs/world-concurrency.md`).
 //!
 //! The locks that guard more than a leaf of bookkeeping are made here: tokio's
-//! for tasks, and `SyncMutex` for the short work on the node's own records
-//! that blocks its thread. Each knows its place in the order locks are taken
-//! in (`Rank`); a task or thread that takes one while holding one of the same
+//! for tasks, `SyncMutex` for the short work on the node's own records that
+//! blocks its thread, and `MemoryMutex` for state only changed in memory, as
+//! the hub's is. Each knows its place in the order locks are taken in
+//! (`Rank`); a task or thread that takes one while holding one of the same
 //! or a later place is told about (`set_reporter`), as that is how two of
 //! them come to wait on each other.
 //! Every such lock held or waited for, and every wait on something outside
@@ -32,7 +33,7 @@ pub use registry::{
     Active, Cycle, OutsideWait, Snapshot, Stuck, Work, progress, set_reporter, snapshot, task_waits, try_task_waits,
     violations,
 };
-pub use sync::{SyncMutex, SyncMutexGuard};
+pub use sync::{MemoryMutex, MemoryMutexGuard, SyncMutex, SyncMutexGuard};
 
 /// A lock's place in the order locks are taken in: a task holding a lock
 /// takes only locks of later places, or of the same place with a later
@@ -112,6 +113,32 @@ impl Rank {
     pub const RECORDS: Rank = Rank(820);
     /// A command's write facts.
     pub const WRITE_FACTS: Rank = Rank(830);
+
+    // The hub's shared state: each lock guards memory only and is held for
+    // microseconds (`MemoryMutex`). The hub is a process of its own, so these
+    // places are ordered among themselves only.
+    /// Login tries counted by account and address.
+    pub const HUB_LIMITS: Rank = Rank(10);
+    /// Who came online or left since it was last told.
+    pub const HUB_PRESENCE: Rank = Rank(10);
+    /// Direct connections being tried.
+    pub const HUB_TRIALS: Rank = Rank(30);
+    /// Data connections registered and paired.
+    pub const HUB_DATA: Rank = Rank(700);
+    /// Calls on their way.
+    pub const HUB_CALLS: Rank = Rank(810);
+    /// The members' sessions.
+    pub const HUB_SESSIONS: Rank = Rank(820);
+    /// Where each machine's activity is kept.
+    pub const HUB_ACTIVITY: Rank = Rank(820);
+    /// The views each session was given.
+    pub const HUB_GIVEN: Rank = Rank(830);
+    /// The projects' ledgers.
+    pub const HUB_LEDGERS: Rank = Rank(830);
+    /// The network's versions and the packages kept.
+    pub const HUB_UPDATES: Rank = Rank(830);
+    /// One machine's activity as it told it.
+    pub const HUB_MACHINE_ACTIVITY: Rank = Rank(830);
 }
 
 /// What each task says it does, latest last, by the token of each saying.

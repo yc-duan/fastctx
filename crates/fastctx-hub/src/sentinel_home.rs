@@ -12,7 +12,7 @@ use serde_json::Value;
 pub(crate) fn chosen(hub: &Hub, by: &MachineName, account: &AccountName, body: &Value) {
     let Ok(Settings { home: Some(home), .. }) = serde_json::from_value::<Settings>(body.clone()) else { return };
     let noted = {
-        let mut store = hub.store();
+        let mut store = hub.edit_store();
         let directory = &store.book.directory;
         let Some(member) = directory.member(&home) else { return };
         let machine = member.name.clone();

@@ -77,13 +77,17 @@ impl LogWriter {
             }
             recent.push_back(line.clone());
         }
+        // Counted before it is handed over: the writer may write it and count
+        // it off before this thread goes on, and counted after, the count
+        // would go below nothing in between.
+        let waiting = self.waiting.fetch_add(1, Ordering::Relaxed) + 1;
         match self.sender.try_send(Message::Line(line)) {
-            Ok(()) => {
-                let waiting = self.waiting.fetch_add(1, Ordering::Relaxed) + 1;
-                crate::health::bound("log.waiting").note(waiting, WAITING);
+            Ok(()) => crate::health::bound("log.waiting").note(waiting, WAITING),
+            Err(TrySendError::Disconnected(_)) => {
+                self.waiting.fetch_sub(1, Ordering::Relaxed);
             }
-            Err(TrySendError::Disconnected(_)) => {}
             Err(TrySendError::Full(_)) => {
+                self.waiting.fetch_sub(1, Ordering::Relaxed);
                 self.dropped.fetch_add(1, Ordering::Relaxed);
                 crate::health::bound("log.waiting").note(WAITING, WAITING);
             }

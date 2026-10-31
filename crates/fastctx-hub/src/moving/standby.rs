@@ -93,12 +93,12 @@ pub fn prepare(dir: &Path, id: &str, to: &MachineName, identity: &Identity) -> a
     };
     ensure_private_dir(dir)?;
     ensure_private_dir(&dir.join("tls"))?;
-    publish(&Store::certificate_file(dir), &identity.certificate.0, Permissions::Private)?;
-    publish(&Store::key_file(dir), &identity.key.0, Permissions::Private)?;
-    publish(&Store::secrets_file(dir), &identity.secrets.0, Permissions::Private)?;
+    publish(&crate::store::Store::certificate_file(dir), &identity.certificate.0, Permissions::Private)?;
+    publish(&crate::store::Store::key_file(dir), &identity.key.0, Permissions::Private)?;
+    publish(&crate::store::Store::secrets_file(dir), &identity.secrets.0, Permissions::Private)?;
     publish(&dir.join(ARRIVING), &json(&arriving)?, Permissions::Private)?;
     // Last: a directory with `hub.json` is a hub.
-    publish(&Store::hub_file(dir), &json(&hub)?, Permissions::Private)?;
+    publish(&crate::store::Store::hub_file(dir), &json(&hub)?, Permissions::Private)?;
     Ok(())
 }
 
@@ -153,7 +153,7 @@ pub(crate) async fn run(
     log: Arc<Log>,
     leave: &Leave,
 ) -> anyhow::Result<Next> {
-    let hub: HubFile = read(&Store::hub_file(dir))?;
+    let hub: HubFile = read(&crate::store::Store::hub_file(dir))?;
     let certificate = fastctx_net::tls::HubCertificate {
         certificate: std::fs::read(Store::certificate_file(dir))?,
         key: std::fs::read(Store::key_file(dir))?,
@@ -413,9 +413,9 @@ fn commit(standby: &Standby, self_registration: bool, record: &frames::Record) -
     });
     let written = (|| {
         publish(&dir.join(MOVES), &json(&moves)?, Permissions::Private)?;
-        let mut hub: HubFile = read(&Store::hub_file(dir))?;
+        let mut hub: HubFile = read(&crate::store::Store::hub_file(dir))?;
         hub.self_registration = self_registration;
-        publish(&Store::hub_file(dir), &json(&hub)?, Permissions::Private)?;
+        publish(&crate::store::Store::hub_file(dir), &json(&hub)?, Permissions::Private)?;
         arriving.committed = true;
         publish(&dir.join(ARRIVING), &json(&arriving)?, Permissions::Private)
     })();

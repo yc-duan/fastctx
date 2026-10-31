@@ -83,3 +83,14 @@ pub fn blocking(what: &'static str) {
     }
     crate::conduct::blocked(role, what, Location::caller());
 }
+
+/// Notes `what`, a lock that guards only memory, about to be taken on this
+/// thread, when this thread keeps network lines alive: such a thread takes
+/// no lock of the work it carries. The place noted is the caller's.
+#[track_caller]
+pub fn locking(what: &'static str) {
+    let role = current();
+    if matches!(role, Role::Link | Role::Data) {
+        crate::conduct::blocked(role, what, Location::caller());
+    }
+}

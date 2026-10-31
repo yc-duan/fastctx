@@ -205,7 +205,7 @@ pub(crate) async fn ask(
                 let bytes = serde_json::to_vec(&changes).map_err(|error| error.to_string())?;
                 let (publishing, writer, who) = (hub.clone(), from.clone(), account.clone());
                 fastctx_platform::publish_checked(&path, &bytes, fastctx_platform::Permissions::Private, true, || {
-                    let store = publishing.store();
+                    let store = publishing.edit_store();
                     account_records::check(&store, &writer, &key, &who, opened).map_err(std::io::Error::other)?;
                     Ok(store)
                 })

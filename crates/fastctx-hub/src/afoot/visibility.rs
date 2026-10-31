@@ -2,17 +2,13 @@
 
 use super::{AccountName, Afoot, Arc, BTreeSet, MachineName, ResidentId, Seen};
 use fastctx_net::directory_index::Indexed;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 
 /// Candidates include every way an account can see a member; the policy still
 /// decides visibility, including locked accounts and expiring assistance.
-pub(super) fn candidates<'a>(
-    directory: &Indexed<'_>,
-    logins: &BTreeSet<AccountName>,
-    told: &'a HashMap<MachineName, Afoot>,
-) -> Vec<&'a MachineName> {
+pub(super) fn candidates(directory: &Indexed<'_>, logins: &BTreeSet<AccountName>) -> Vec<MachineName> {
     if logins.iter().any(|account| directory.is_super(account)) {
-        return told.keys().collect();
+        return directory.all.members.iter().map(|member| member.name.clone()).collect();
     }
     let mut positions = HashSet::new();
     for account in logins {
@@ -25,10 +21,7 @@ pub(super) fn candidates<'a>(
             positions.extend(directory.position(&directory.all.assists[at].machine));
         }
     }
-    positions
-        .into_iter()
-        .filter_map(|at| told.get_key_value(&directory.all.members[at].name).map(|(name, _)| name))
-        .collect()
+    positions.into_iter().map(|at| directory.all.members[at].name.clone()).collect()
 }
 
 /// Whether a member logged in to `logins` sees `machine` at all, as its

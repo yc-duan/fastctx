@@ -457,7 +457,11 @@ fn by_a_machine(
         attempt: attempt.clone(),
         progress,
     };
-    hub.updates.lock().expect("never poisoned").fetches.insert(id, fetching);
+    {
+        let mut updates = hub.updates.lock().expect("never poisoned");
+        updates.fetches_by_session.entry((helper.clone(), generation)).or_default().insert(id);
+        updates.fetches.insert(id, fetching);
+    }
     let fetch =
         Fetch { id, version: held.version.clone(), target: held.target.clone(), package: package.clone(), progress };
     let sent = hub
@@ -558,7 +562,18 @@ async fn settle(hub: &Hub, cache: &fastctx_update::Cache, held: &Held, try_: Goi
         attempt.revoke();
         attempt.ended().await;
     }
-    hub.updates.lock().expect("never poisoned").fetches.remove(&attempt.id);
+    {
+        let mut updates = hub.updates.lock().expect("never poisoned");
+        if let Some(fetching) = updates.fetches.remove(&attempt.id) {
+            let owner = (fetching.helper, fetching.generation);
+            if let Some(ids) = updates.fetches_by_session.get_mut(&owner) {
+                ids.remove(&attempt.id);
+                if ids.is_empty() {
+                    updates.fetches_by_session.remove(&owner);
+                }
+            }
+        }
+    }
     if attempt.is_over()
         && let Ok(left) = cache.attempt(&held.version, &held.target, attempt.id)
     {

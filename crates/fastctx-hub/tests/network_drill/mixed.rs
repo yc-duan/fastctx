@@ -144,7 +144,7 @@ pub async fn earlier_node(world: &World, program: &Path, report: &mut Report) ->
         _ => None,
     };
     report.check(
-        version.as_deref() == Some(crate::EXPECTED_EARLIER),
+        version.as_deref() == Some(crate::expected_earlier()),
         "it answered a call from this release, saying its own release",
         format!("{:?}", version.unwrap_or_else(|| format!("{facts:?}"))),
     );

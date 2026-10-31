@@ -8,10 +8,10 @@ use fastctx_net::authorization::Action;
 use fastctx_net::directory::Directory;
 
 use fastctx_net::wire::{Down, Question, Told};
+use fastctx_types::AccountName;
 use fastctx_types::access::TownId;
 use fastctx_types::memory::{Catalog, Evidence, ProjectIndex, Revision};
 use fastctx_types::project::{Record, Stamp, version_of};
-use fastctx_types::{AccountName, MachineName};
 
 use crate::outq::Outq;
 use crate::{Hub, Out};
@@ -20,11 +20,12 @@ static READERS: LazyLock<Arc<tokio::sync::Semaphore>> = LazyLock::new(|| Arc::ne
 
 pub(super) fn authorize(
     directory: &Directory,
-    from: &MachineName,
+    from: &crate::origin::Origin,
     account: &AccountName,
     town: &TownId,
     body: bool,
 ) -> Result<(), String> {
+    from.check(directory)?;
     directory.authorize(account, Action::ActFor(from)).map_err(|denial| denial.message)?;
     directory.authorize(account, Action::Project(town)).map_err(|denial| denial.message)?;
     if body && !directory.logged_in(from, account) {
@@ -48,7 +49,7 @@ enum Plan {
     },
 }
 
-pub(crate) fn ask(hub: &Arc<Hub>, from: &MachineName, out: &Outq, id: u64, question: Question) {
+pub(crate) fn ask(hub: &Arc<Hub>, from: &crate::origin::Origin, out: &Outq, id: u64, question: Question) {
     let (town, account, wanted) = match question {
         Question::ProjectIndex { town, account } => (town, account, None),
         Question::MemoryRead { town, account, name, version } => (town, account, Some((name, version))),

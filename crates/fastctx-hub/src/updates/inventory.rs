@@ -13,7 +13,7 @@ use crate::Hub;
 use crate::store::PackageTargets;
 
 pub(super) fn targets(hub: &Hub, name: &MachineName, report: &Report) {
-    let mut store = hub.store();
+    let mut store = hub.edit_store();
     let index = hub.index_of(&store);
     let directory = fastctx_net::directory_index::Indexed::new(&store.book.directory, &index);
     let Some(member) = directory.member(name) else { return };
@@ -352,7 +352,7 @@ pub(crate) fn prefetch(hub: &Arc<Hub>) {
                     Ok(()) => false,
                     Err(why) => {
                         hub.log.line(format_args!("preparing {version} for {machine}: {why}"));
-                        super::view::problem(&hub, &version, None, Some(why));
+                        hub.blocking(move |hub| super::view::problem(&hub, &version, None, Some(why))).await;
                         true
                     }
                 };
@@ -410,7 +410,7 @@ pub(crate) fn prefetch(hub: &Arc<Hub>) {
             let target = package.target.clone();
             let outcome = super::obtain::obtain(&hub, package, None).await;
             failed |= outcome.is_err();
-            super::view::problem(&hub, &version, Some(&target), outcome.err());
+            hub.blocking(move |hub| super::view::problem(&hub, &version, Some(&target), outcome.err())).await;
             super::tell(&hub, None);
         }
         if failed {
@@ -464,9 +464,13 @@ pub(crate) async fn prepare_update(hub: &Arc<Hub>, name: &MachineName, version: 
             fastctx_update::github::manifest_of(&releases, version).await?
         }
     };
-    cache.keep_manifest(&manifest)?;
-    hub.updates.lock().expect("never poisoned").catalog.insert(manifest.version.clone(), manifest.clone());
-    keep_prepared_manifest(hub, &manifest)?;
+    let prepared = manifest.clone();
+    hub.blocking(move |hub| {
+        cache.keep_manifest(&prepared)?;
+        hub.updates.lock().expect("never poisoned").catalog.insert(prepared.version.clone(), prepared.clone());
+        keep_prepared_manifest(&hub, &prepared)
+    })
+    .await?;
     if !needs_network(hub, name) {
         return Ok(());
     }
@@ -477,7 +481,7 @@ pub(crate) async fn prepare_update(hub: &Arc<Hub>, name: &MachineName, version: 
 }
 
 fn keep_prepared_manifest(hub: &Hub, manifest: &Manifest) -> Result<(), String> {
-    let mut store = hub.store();
+    let mut store = hub.edit_store();
     // A fetch begun before the move can finish after its final snapshot
     // (2026-10-29). The store lock also orders this check with freeze's flush.
     if hub.moving.frozen() {

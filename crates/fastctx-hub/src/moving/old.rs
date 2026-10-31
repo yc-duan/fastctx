@@ -41,7 +41,7 @@ pub(crate) async fn run(
         super::retire(dir, &why, &log, leave);
         return Ok(Next::Again(None));
     }
-    let hub: HubFile = read(&Store::hub_file(dir))?;
+    let hub: HubFile = read(&crate::store::Store::hub_file(dir))?;
     let pin = CertPin::of(&std::fs::read(Store::certificate_file(dir))?);
     let (stopper, stopped) = watch::channel(false);
     let forwarder = if matches!(outgoing.old, Some(OldPlace::Forwarding) | None) {

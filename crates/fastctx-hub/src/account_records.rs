@@ -31,7 +31,7 @@ pub(crate) fn authorized(
 }
 
 pub(crate) fn check(
-    store: &crate::Store,
+    store: &crate::store::Snapshot,
     from: &MachineName,
     key: &PublicKey,
     account: &AccountName,
@@ -439,7 +439,7 @@ pub(crate) async fn ask_as(
                         fastctx_platform::Permissions::Private,
                         true,
                         || {
-                            let store = publishing.store();
+                            let store = publishing.edit_store();
                             permitted(&publishing, &store, &author, &member_key, &owner, opened, access.as_ref())
                                 .map_err(std::io::Error::other)?;
                             Ok(store)
@@ -526,7 +526,7 @@ pub(crate) fn tell(hub: &Hub, account: &AccountName, opened: Timestamp, metadata
 
 fn permitted(
     hub: &Hub,
-    store: &crate::Store,
+    store: &crate::store::Snapshot,
     from: &MachineName,
     key: &PublicKey,
     account: &AccountName,

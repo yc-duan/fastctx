@@ -2,10 +2,10 @@
 
 use crate::Hub;
 use fastctx_net::wire::{Question, Told};
-use fastctx_types::{AccountName, MachineName, access::TownId};
+use fastctx_types::{AccountName, access::TownId};
 use std::sync::Arc;
 
-pub(crate) async fn ask(hub: &Arc<Hub>, from: &MachineName, question: Question) -> Result<Told, String> {
+pub(crate) async fn ask(hub: &Arc<Hub>, from: &crate::origin::Origin, question: Question) -> Result<Told, String> {
     if let Question::HistorySubmitted { town, account, name, submission } = &question {
         let store = hub.store();
         super::requests::authorize(&store.book.directory, from, account, town, false)?;
@@ -72,6 +72,12 @@ pub(crate) async fn ask(hub: &Arc<Hub>, from: &MachineName, question: Question) 
     Ok(Told::HistoryDocument { document: Box::new(document) })
 }
 
-fn authorize(hub: &Hub, from: &MachineName, account: &AccountName, town: &TownId, body: bool) -> Result<(), String> {
+fn authorize(
+    hub: &Hub,
+    from: &crate::origin::Origin,
+    account: &AccountName,
+    town: &TownId,
+    body: bool,
+) -> Result<(), String> {
     super::requests::authorize(&hub.store().book.directory, from, account, town, body)
 }
