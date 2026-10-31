@@ -287,10 +287,8 @@ pub(crate) struct Hub {
     /// queued, so that of two at once the later counted is queued later.
     pending_presence: Mutex<HashMap<MachineName, u64>>,
     presence_pending: Arc<tokio::sync::Notify>,
-    /// The directory's index for telling who is online (`Hub::index_of`).
     /// What the hub counts for its health (`health`).
     health: health::Health,
-    watch: watchdog::Health,
     diagnostic_dir: PathBuf,
     account_records: account_records::Records,
     /// What went wrong with the machines and the network lately (`troubles`).
@@ -726,12 +724,15 @@ pub async fn serve(dir: &Path, leave: Leave) -> anyhow::Result<()> {
     fastctx_platform::scene::set_place(dir.join("scenes"));
     let tail = log.clone();
     fastctx_platform::scene::set_tail(move || tail.recent());
-    fastctx_platform::task::watch("hub");
+    let work = fastctx_platform::task::watch("hub");
     let network = network::Network::new()?;
     let mut kept = None;
     loop {
         let next = match moving::mode(dir)? {
-            moving::Mode::Serving => serving(dir, kept.take(), log.clone(), network.handle()).await?,
+            moving::Mode::Serving => {
+                let watched = (work.clone(), network.watched());
+                serving(dir, kept.take(), log.clone(), network.handle(), watched).await?
+            }
             moving::Mode::Standby(arriving) => {
                 moving::standby::run(dir, kept.take(), arriving, log.clone(), &leave).await?
             }
@@ -756,6 +757,8 @@ async fn serving(
     kept: Option<Kept>,
     log: Arc<log::Log>,
     network: tokio::runtime::Handle,
+    // How far the work runtime and the network runtime ran (`watchdog`).
+    watched: (fastctx_platform::task::Watched, fastctx_platform::task::Watched),
 ) -> anyhow::Result<Next> {
     let mut store = Store::open(dir)?;
     // An assistance whose deadline passed while the hub was stopped is
@@ -830,14 +833,13 @@ async fn serving(
         pending_presence: Mutex::new("hub presence", Rank::HUB_PRESENCE, Default::default()),
         presence_pending: Arc::new(tokio::sync::Notify::new()),
         health: health::Health::default(),
-        watch: watchdog::Health::default(),
         diagnostic_dir: dir.to_path_buf(),
         account_records,
         troubles,
     });
     let _ = hub.this.set(Arc::downgrade(&hub));
     hub.post.attach(Arc::downgrade(&hub));
-    let _watchdog = watchdog::Watchdog::start(&hub)?;
+    let _watchdog = watchdog::Watchdog::start(&hub, watched.0, watched.1)?;
     if let Err(error) = hub.blocking(|hub| hub_machine::settle(&hub)).await {
         hub.log.line(format_args!("revoking shares of the hub machine: {error}"));
     }

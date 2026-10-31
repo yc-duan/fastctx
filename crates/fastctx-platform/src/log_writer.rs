@@ -29,6 +29,8 @@ pub struct LogWriter {
     dropped: Arc<AtomicU64>,
     /// Lines handed over and not yet written.
     waiting: Arc<std::sync::atomic::AtomicUsize>,
+    /// How many of `WAITING` are used, told in the machine's health.
+    used: &'static crate::health::Bound,
 }
 
 impl LogWriter {
@@ -65,7 +67,13 @@ impl LogWriter {
                 }
             }
         })?;
-        Ok(Self { sender, recent: Arc::new(Mutex::new(VecDeque::with_capacity(RECENT))), dropped, waiting })
+        Ok(Self {
+            sender,
+            recent: Arc::new(Mutex::new(VecDeque::with_capacity(RECENT))),
+            dropped,
+            waiting,
+            used: crate::health::bound("log.waiting"),
+        })
     }
 
     /// Hands `line`, ending in a newline, over to be written.
@@ -82,14 +90,14 @@ impl LogWriter {
         // would go below nothing in between.
         let waiting = self.waiting.fetch_add(1, Ordering::Relaxed) + 1;
         match self.sender.try_send(Message::Line(line)) {
-            Ok(()) => crate::health::bound("log.waiting").note(waiting, WAITING),
+            Ok(()) => self.used.note(waiting, WAITING),
             Err(TrySendError::Disconnected(_)) => {
                 self.waiting.fetch_sub(1, Ordering::Relaxed);
             }
             Err(TrySendError::Full(_)) => {
                 self.waiting.fetch_sub(1, Ordering::Relaxed);
                 self.dropped.fetch_add(1, Ordering::Relaxed);
-                crate::health::bound("log.waiting").note(WAITING, WAITING);
+                self.used.note(WAITING, WAITING);
             }
         }
     }

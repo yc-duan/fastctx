@@ -76,6 +76,18 @@ impl<F: Future> Future for Timed<F> {
     }
 }
 
+/// How far a watched runtime has run (`watch`).
+#[derive(Clone)]
+pub struct Watched(Arc<AtomicU64>);
+
+impl Watched {
+    /// How many ticks the runtime has run since it was first watched: a
+    /// count that stands still says its tasks get no thread.
+    pub fn ran(&self) -> u64 {
+        self.0.load(Ordering::Relaxed)
+    }
+}
+
 /// Keeps measuring how long the tasks of the current runtime, named
 /// `runtime`, wait for a thread. A thread of its own hands the runtime a
 /// timestamped tick every `TICK`, and a task records how long each waited to
@@ -83,12 +95,13 @@ impl<F: Future> Future for Timed<F> {
 /// thread sees a runtime fall behind while it is still held up, and writes
 /// the scene down then, while the tasks it waits on still hold what they
 /// hold.
-pub fn watch(runtime: &'static str) {
+pub fn watch(runtime: &'static str) -> Watched {
     let name: &'static str = Box::leak(format!("runtime.{runtime}.waited").into_boxed_str());
     let waited = readings::timing(name);
     let (ticks, mut arriving) = tokio::sync::mpsc::channel::<Instant>(QUEUED);
     let run = Arc::new(AtomicU64::new(0));
     let counted = run.clone();
+    let watched = Watched(run.clone());
     tokio::spawn(async move {
         while let Some(handed) = arriving.recv().await {
             waited.record(handed.elapsed());
@@ -137,4 +150,5 @@ pub fn watch(runtime: &'static str) {
     if let Err(error) = watching {
         eprintln!("watching the {runtime} runtime: {error}");
     }
+    watched
 }

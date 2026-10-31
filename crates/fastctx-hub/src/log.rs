@@ -24,4 +24,10 @@ impl Log {
     pub fn recent(&self) -> Vec<String> {
         self.0.recent()
     }
+
+    /// Waits at most `within` for every line handed over so far to be
+    /// written, as before the process ends.
+    pub fn flush(&self, within: std::time::Duration) {
+        self.0.flush(within);
+    }
 }

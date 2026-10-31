@@ -1,70 +1,94 @@
-//! Independent observation of both runtimes and the lock registry. A
-//! blocked business runtime cannot hide behind a healthy transport loop.
+//! The hub watching itself (`specs/world-engine.md`, 中枢): how far each of
+//! its runtimes ran, as the platform measures them
+//! (`fastctx_platform::task::watch`), and what its tasks wait for and hold
+//! (`fastctx_platform::doing`). What has gone on too long goes in its log,
+//! once and then again every ten minutes while it lasts, and counts in its
+//! health. A runtime that does not run at all for long, or tasks that wait on
+//! each other in a circle for a minute, end the hub for its service to start
+//! it again: a hub whose heartbeats are answered while its work stands still
+//! is worse than one started again. It looks from a thread of its own, which
+//! a stuck runtime cannot hold up.
 
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Weak, mpsc};
+use std::collections::HashMap;
+use std::sync::{Arc, mpsc};
 use std::time::{Duration, Instant};
 
 use fastctx_platform::doing;
+use fastctx_platform::task::Watched;
 
-#[derive(Default)]
-pub(crate) struct Health {
-    pub network_delay: crate::measure::Histogram,
-    pub work_delay: crate::measure::Histogram,
-    network: AtomicU64,
-    work: AtomicU64,
-    pub stalls: AtomicU64,
-}
+/// How often the hub looks at itself.
+const LOOK: Duration = Duration::from_secs(10);
+/// A wait for a lock, and a lock held, longer than this is told.
+const WAITS: Duration = Duration::from_secs(30);
+const HOLDS: Duration = Duration::from_secs(30);
+/// What is still stuck is told again after this long.
+const AGAIN: Duration = Duration::from_secs(600);
+/// A circle still there this long after it was first seen ends the hub.
+const CIRCLE: Duration = Duration::from_secs(60);
+/// How long each runtime may not run at all before it ends the hub: the
+/// network's lines are given up by their machines sooner than that.
+const NETWORK_STILL: Duration = Duration::from_secs(30);
+const WORK_STILL: Duration = Duration::from_secs(90);
 
 pub(crate) struct Watchdog {
     stop: mpsc::Sender<()>,
     thread: Option<std::thread::JoinHandle<()>>,
-    tasks: Vec<tokio::task::JoinHandle<()>>,
+}
+
+/// One runtime as the watchdog follows it.
+struct Followed {
+    name: &'static str,
+    watched: Watched,
+    still: Duration,
+    ran: u64,
+    quiet: Duration,
 }
 
 impl Watchdog {
-    pub(crate) fn start(hub: &Arc<crate::Hub>) -> std::io::Result<Self> {
+    pub(crate) fn start(hub: &Arc<crate::Hub>, work: Watched, network: Watched) -> std::io::Result<Self> {
         let log = hub.log.clone();
         doing::set_reporter(move |line| log.line(line));
         let (stop, stopped) = mpsc::channel();
-        let network = hub.network.spawn(beat(Arc::downgrade(hub), true));
-        let work = tokio::spawn(beat(Arc::downgrade(hub), false));
         let weak = Arc::downgrade(hub);
         let thread = std::thread::Builder::new().name("hub-watchdog".into()).spawn(move || {
+            let mut runtimes = [
+                Followed {
+                    name: "network",
+                    ran: network.ran(),
+                    watched: network,
+                    still: NETWORK_STILL,
+                    quiet: Duration::ZERO,
+                },
+                Followed { name: "work", ran: work.ran(), watched: work, still: WORK_STILL, quiet: Duration::ZERO },
+            ];
             let mut previous = fastctx_platform::awake::Sample::now().ok();
-            let mut before = [0, 0];
-            let mut silent = [0_u64, 0];
+            let mut told: HashMap<String, Instant> = HashMap::new();
             let mut circle: Option<(Vec<String>, Instant)> = None;
-            let mut told = std::collections::HashMap::new();
-            while matches!(stopped.recv_timeout(Duration::from_secs(10)), Err(mpsc::RecvTimeoutError::Timeout)) {
+            while matches!(stopped.recv_timeout(LOOK), Err(mpsc::RecvTimeoutError::Timeout)) {
                 let Some(hub) = weak.upgrade() else { break };
+                // A machine that slept stood still with every runtime on it.
                 let now_sample = fastctx_platform::awake::Sample::now().ok();
                 let suspended =
                     previous.as_ref().zip(now_sample.as_ref()).is_some_and(|(before, now)| now.suspended_since(before));
                 previous = now_sample;
-                let current = [hub.watch.network.load(Ordering::Acquire), hub.watch.work.load(Ordering::Acquire)];
-                for i in 0..2 {
-                    silent[i] = if !suspended && current[i] == before[i] { silent[i] + 10 } else { 0 };
-                    if silent[i] >= if i == 0 { 30 } else { 90 } {
+                for runtime in &mut runtimes {
+                    let ran = runtime.watched.ran();
+                    runtime.quiet =
+                        if !suspended && ran == runtime.ran { runtime.quiet + LOOK } else { Duration::ZERO };
+                    runtime.ran = ran;
+                    if runtime.quiet >= runtime.still {
                         fatal(
                             &hub,
-                            &format!(
-                                "watchdog: {} runtime made no progress for {} seconds",
-                                if i == 0 { "network" } else { "work" },
-                                silent[i]
-                            ),
+                            &format!("the {} runtime ran nothing for {} s", runtime.name, runtime.quiet.as_secs()),
                         );
                     }
                 }
-                before = current;
-                let snapshot = doing::snapshot(Duration::from_secs(30), Duration::from_secs(30));
+                let snapshot = doing::snapshot(WAITS, HOLDS);
+                fastctx_platform::health::set_stuck(snapshot.stuck.len());
                 let now = Instant::now();
                 told.retain(|key, _| snapshot.stuck.iter().any(|item| &item.key == key));
                 for item in &snapshot.stuck {
-                    if told
-                        .get(&item.key)
-                        .is_none_or(|at: &Instant| now.duration_since(*at) >= Duration::from_secs(600))
-                    {
+                    if told.get(&item.key).is_none_or(|at| now.duration_since(*at) >= AGAIN) {
                         told.insert(item.key.clone(), now);
                         hub.log.line(format_args!(
                             "stuck for {} s: {} {}",
@@ -72,74 +96,42 @@ impl Watchdog {
                             item.doing,
                             item.what
                         ));
-                        leave_scene(&hub, "stuck work");
+                        fastctx_platform::scene::capture(format!(
+                            "stuck for {} s: {}",
+                            item.since.as_secs(),
+                            item.doing
+                        ));
                     }
                 }
-                if let Some(cycle) = snapshot.cycles.first() {
-                    let mut links = cycle.links.clone();
-                    links.sort();
-                    match &circle {
-                        Some((known, since)) if *known == links && since.elapsed() >= Duration::from_secs(60) => {
-                            fatal(&hub, &format!("deadlock: {}", links.join("; ")))
-                        }
-                        Some((known, _)) if *known == links => {}
-                        _ => {
-                            hub.log.line(format_args!("tasks wait in a circle: {}", links.join("; ")));
-                            circle = Some((links, now));
+                match snapshot.cycles.first() {
+                    Some(cycle) => {
+                        let mut links = cycle.links.clone();
+                        links.sort();
+                        match &circle {
+                            Some((known, since)) if *known == links && since.elapsed() >= CIRCLE => {
+                                fatal(&hub, &format!("tasks waited on each other in a circle: {}", links.join("; ")))
+                            }
+                            Some((known, _)) if *known == links => {}
+                            _ => {
+                                hub.log.line(format_args!("tasks wait in a circle: {}", links.join("; ")));
+                                circle = Some((links, now));
+                            }
                         }
                     }
-                } else {
-                    circle = None;
+                    None => circle = None,
                 }
             }
         })?;
-        Ok(Self { stop, thread: Some(thread), tasks: vec![network, work] })
+        Ok(Self { stop, thread: Some(thread) })
     }
 }
 
-async fn beat(hub: Weak<crate::Hub>, network: bool) {
-    let spacing = Duration::from_millis(50);
-    loop {
-        let due = tokio::time::Instant::now() + spacing;
-        tokio::time::sleep_until(due).await;
-        let Some(hub) = hub.upgrade() else { return };
-        let delay = due.elapsed();
-        let (count, histogram) = if network {
-            (&hub.watch.network, &hub.watch.network_delay)
-        } else {
-            (&hub.watch.work, &hub.watch.work_delay)
-        };
-        count.fetch_add(1, Ordering::Release);
-        histogram.record(delay);
-        if delay > Duration::from_secs(1) {
-            hub.watch.stalls.fetch_add(1, Ordering::Relaxed);
-            let weak = Arc::downgrade(&hub);
-            tokio::task::spawn_blocking(move || {
-                if let Some(hub) = weak.upgrade() {
-                    leave_scene(&hub, "runtime delayed");
-                }
-            });
-        }
-    }
-}
-
-fn leave_scene(hub: &crate::Hub, why: &str) {
-    let snapshot = doing::snapshot(Duration::from_secs(30), Duration::from_secs(30));
-    let path = hub.diagnostic_dir.join(format!("stuck-{}.json", hub.watch.stalls.load(Ordering::Relaxed) % 4));
-    let text = serde_json::json!({
-        "at": jiff::Timestamp::now(), "reason": why,
-        "network_delay": hub.watch.network_delay.snapshot(), "work_delay": hub.watch.work_delay.snapshot(),
-        "stuck": snapshot.stuck.iter().map(|item| format!("{}: {} ({} s)", item.doing, item.what, item.since.as_secs())).collect::<Vec<_>>(),
-        "cycles": snapshot.cycles.iter().map(|cycle| &cycle.links).collect::<Vec<_>>(),
-    });
-    if let Ok(bytes) = serde_json::to_vec_pretty(&text) {
-        let _ = fastctx_platform::publish(&path, &bytes, fastctx_platform::Permissions::Private);
-    }
-}
-
+/// Ends the hub for its service to start it again, the scene and the reason
+/// written down first.
 fn fatal(hub: &crate::Hub, reason: &str) -> ! {
-    leave_scene(hub, reason);
-    hub.log.line(reason);
+    fastctx_platform::scene::capture_now(reason);
+    hub.log.line(format_args!("{reason}: the hub ends for its service to start it again"));
+    hub.log.flush(Duration::from_millis(500));
     eprintln!("fastctx hub: {reason}; exiting for its service to restart it");
     std::process::exit(1)
 }
@@ -147,9 +139,6 @@ fn fatal(hub: &crate::Hub, reason: &str) -> ! {
 impl Drop for Watchdog {
     fn drop(&mut self) {
         let _ = self.stop.send(());
-        for task in &self.tasks {
-            task.abort();
-        }
         if let Some(thread) = self.thread.take() {
             let _ = thread.join();
         }

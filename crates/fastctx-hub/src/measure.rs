@@ -1,5 +1,9 @@
 //! Allocation-free duration histograms. Buckets report upper bounds in
-//! microseconds; the maximum retains the exact largest observation.
+//! microseconds; the maximum retains the exact largest observation. They are
+//! finer than the platform's readings, whose smallest bucket is 50 µs, and
+//! keep each thread's CPU time beside the wall time: the hub scale drill
+//! compares views and presence costing a few tens of microseconds across
+//! network sizes, and locks held for a few (`tests/hub_scale`).
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;

@@ -11,6 +11,8 @@ use tokio::runtime::{Handle, Runtime};
 
 pub(crate) struct Network {
     runtime: Option<Runtime>,
+    /// How far its tasks ran (`crate::watchdog`).
+    watched: fastctx_platform::task::Watched,
 }
 
 impl Network {
@@ -24,15 +26,19 @@ impl Network {
             .on_thread_unpark(|| roles::set(Role::Link))
             .enable_all()
             .build()?;
-        {
+        let watched = {
             let _entered = runtime.enter();
-            fastctx_platform::task::watch("hub-network");
-        }
-        Ok(Self { runtime: Some(runtime) })
+            fastctx_platform::task::watch("hub-network")
+        };
+        Ok(Self { runtime: Some(runtime), watched })
     }
 
     pub(crate) fn handle(&self) -> Handle {
         self.runtime.as_ref().expect("network running").handle().clone()
+    }
+
+    pub(crate) fn watched(&self) -> fastctx_platform::task::Watched {
+        self.watched.clone()
     }
 }
 

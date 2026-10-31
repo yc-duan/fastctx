@@ -16,10 +16,38 @@ use tokio_tungstenite::tungstenite::Message;
 const INPUT_FRAMES: usize = 2048;
 const INPUT_BYTES: usize = 16 * 1024 * 1024;
 const OUTPUT_FRAMES: usize = 4;
+/// How long a member's frame waits for room among what every member has
+/// waiting before that member is let go; it reads no further meanwhile.
+const SHARED_WAIT: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// What every member together may have waiting to be handled: a sixteenth
+/// of the machine's memory, from 64 MiB to 512 MiB, so ten thousand members
+/// each sending up to its own budget cannot take the machine's memory
+/// (`specs/world-foundation.md`, 宪法第三条).
+struct Shared {
+    room: Arc<tokio::sync::Semaphore>,
+    bytes: usize,
+    /// How much of it was used, told in the hub's health.
+    used: &'static fastctx_platform::health::Bound,
+}
+
+fn shared() -> &'static Shared {
+    static SHARED: std::sync::OnceLock<Shared> = std::sync::OnceLock::new();
+    SHARED.get_or_init(|| {
+        let physical = fastctx_platform::memory::physical().unwrap_or(1 << 30);
+        let bytes = usize::try_from((physical / 16).clamp(64 << 20, 512 << 20)).unwrap_or(usize::MAX);
+        Shared {
+            room: Arc::new(tokio::sync::Semaphore::new(bytes)),
+            bytes,
+            used: fastctx_platform::health::bound("hub.input"),
+        }
+    })
+}
 
 pub(super) struct Input {
     pub bytes: bytes::Bytes,
     _budget: tokio::sync::OwnedSemaphorePermit,
+    _shared: tokio::sync::OwnedSemaphorePermit,
 }
 
 pub(super) struct Packet {
@@ -174,10 +202,16 @@ async fn read(
             });
             continue;
         }
-        let Ok(permit) = budget.clone().try_acquire_many_owned(bytes.len().max(1) as u32) else {
+        let size = u32::try_from(bytes.len().max(1)).unwrap_or(u32::MAX);
+        let Ok(permit) = budget.clone().try_acquire_many_owned(size) else {
             return Ended::of("member exceeded its pending input byte budget");
         };
-        if input.try_send(Input { bytes, _budget: permit }).is_err() {
+        let all = shared();
+        let Ok(Ok(room)) = tokio::time::timeout(SHARED_WAIT, all.room.clone().acquire_many_owned(size)).await else {
+            return Ended::of("what every member has waiting at the hub stayed full; letting this one go");
+        };
+        all.used.note(all.bytes.saturating_sub(all.room.available_permits()), all.bytes);
+        if input.try_send(Input { bytes, _budget: permit, _shared: room }).is_err() {
             return Ended::of("member exceeded its pending input frame budget");
         }
     }
