@@ -70,23 +70,16 @@ fn owes(node: &Node, owner: &Address, directory: &ConversationDir) -> io::Result
         return Ok(true);
     }
     for queue in ["job-deliveries", "on-deliveries", "on-stops", "run-stops", "received", "received-controls"] {
-        if crate::retention::entries(&directory.book(queue))?
+        if crate::records::items::page(&directory.book(queue), Some("json"), "", 1)?
             .iter()
             .any(|path| path.extension().is_some_and(|extension| extension == "json"))
         {
             return Ok(true);
         }
     }
-    let reports = directory.books().join("host-reports.json");
-    match std::fs::read(&reports) {
-        Ok(bytes) => {
-            let value: serde_json::Value = serde_json::from_slice(&bytes).map_err(io::Error::other)?;
-            if value.get("events").and_then(serde_json::Value::as_array).is_some_and(|events| !events.is_empty()) {
-                return Ok(true);
-            }
-        }
-        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-        Err(error) => return Err(error),
+    let thread = node.residents.about(&owner.resident).and_then(|(about, _)| about.session);
+    if crate::codex::pending(node, directory, thread.as_deref())? {
+        return Ok(true);
     }
     if !crate::inbox::owing(directory)?.is_empty() {
         return Ok(true);
@@ -94,7 +87,7 @@ fn owes(node: &Node, owner: &Address, directory: &ConversationDir) -> io::Result
     for jobs in node.world.job_directories(&owner.machine, owner)? {
         for path in crate::retention::entries(&jobs)? {
             match path.extension().and_then(|extension| extension.to_str()) {
-                Some("owed") => return Ok(true),
+                Some("json") if crate::job_metadata::exists(&path.with_extension("owed"))? => return Ok(true),
                 Some("json") if record::read(&path)?.end.is_none() => return Ok(true),
                 _ => {}
             }
