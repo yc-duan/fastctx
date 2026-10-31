@@ -122,8 +122,11 @@ def main():
           (first.poll(), applications()))
     marker = Path(os.environ["APPDATA"]) / "dev.fastctx.world" / "updated.json"
     reopened = time.monotonic()
-    while marker.exists() and time.monotonic() - reopened < 60:
+    # The new program takes the note among its first steps, but a freshly installed executable can
+    # take tens of seconds to start on a runner (31 to 40 s in October 2026), before any of it runs.
+    while marker.exists() and time.monotonic() - reopened < 180:
         time.sleep(1)
+    print(f"     the note was taken {time.monotonic() - reopened:.0f} s after the new start was seen", flush=True)
     check("the new start read what the update left for it", not marker.exists(), (marker, applications()))
     for pid in applications():
         subprocess.run(["taskkill", "/F", "/PID", str(pid)], capture_output=True)
