@@ -290,6 +290,14 @@ pub(crate) fn after_update(app: &tauri::AppHandle) {
     desktop::after_update(app);
 }
 
+/// Takes what an update left for this start as the program starts, before
+/// its window: a first start after an update can be slow to open one, and
+/// the note is acted on once the World is open (`after_update`).
+#[cfg(desktop)]
+pub(crate) fn take_left(identifier: &str) {
+    desktop::take_left(identifier);
+}
+
 #[cfg(desktop)]
 mod desktop {
     use std::path::{Path, PathBuf};
@@ -416,11 +424,27 @@ mod desktop {
     /// The new application's first start after an update puts the World
     /// program it carries in place; the renewal waits for the turns under
     /// way to end.
+    /// What the update left, once taken at the start.
+    static LEFT: std::sync::Mutex<Option<Updated>> = std::sync::Mutex::new(None);
+
+    /// The note in the application's data folder, as Tauri names it:
+    /// the platform's data directory and the application's identifier.
+    pub(super) fn take_left(identifier: &str) {
+        let Some(marker) = dirs::data_dir().map(|dir| dir.join(identifier).join("updated.json")) else { return };
+        if let Some(updated) = take(&marker) {
+            *LEFT.lock().unwrap_or_else(|error| error.into_inner()) = Some(updated);
+        }
+    }
+
+    fn take(marker: &Path) -> Option<Updated> {
+        let bytes = std::fs::read(marker).ok()?;
+        let _ = std::fs::remove_file(marker);
+        serde_json::from_slice::<Updated>(&bytes).ok()
+    }
+
     pub(super) fn after_update(app: &tauri::AppHandle) {
-        let Ok(marker) = marker(app) else { return };
-        let Ok(bytes) = std::fs::read(&marker) else { return };
-        let _ = std::fs::remove_file(&marker);
-        let Ok(updated) = serde_json::from_slice::<Updated>(&bytes) else { return };
+        let left = LEFT.lock().unwrap_or_else(|error| error.into_inner()).take();
+        let Some(updated) = left.or_else(|| marker(app).ok().and_then(|marker| take(&marker))) else { return };
         if updated.to != env!("CARGO_PKG_VERSION") {
             return;
         }

@@ -112,21 +112,36 @@ pub(crate) async fn plan_guide(node: &Arc<Node>, id: &ResidentId, origin: &Origi
     let (text, fact) = if own {
         (String::new(), String::new())
     } else if matches!(origin, Origin::Colleague { .. }) {
-        if let Err(error) = crate::placement::location::prepare(node, id, origin, acting).await {
-            node.log.line(format_args!("placing the colleague {id}: {}", error.message));
+        let placed = crate::placement::location::prepare(node, id, origin, acting).await;
+        let failure = placed.as_ref().err().map(|error| error.message.as_str());
+        if node.locations.tell(id, failure)
+            && let Some(failure) = failure
+        {
+            node.log.line(format_args!("placing the colleague {id}: {failure}"));
         }
         (String::new(), String::new())
     } else {
-        match crate::placement::location::prepare(node, id, origin, acting).await {
+        let placed = crate::placement::location::prepare(node, id, origin, acting).await;
+        // A failure is logged when it starts or changes, not at every refresh.
+        let failure = placed.as_ref().err().map(|error| error.message.as_str());
+        if node.locations.tell(id, failure)
+            && let Some(failure) = failure
+        {
+            node.log.line(format_args!("placing the plan of {id}: {failure}"));
+        }
+        match placed {
             Ok(Some(location)) => {
                 let path=crate::placement::plan_path(&location);
                 (words::plan_guide(&path,location.machine.as_str()),format!("The plan file is now on {} at {path}.",location.machine))
             },
             Ok(None) => ("YOUR PLAN\n\nYour plan remains in your account. There is no online working computer for its file now; the app can still read and edit it.".into(),"There is no online working computer for the plan file now.".into()),
             Err(error) => {
-                node.log.line(format_args!("placing the plan of {id}: {}", error.message));
-                let fact=if error.message.starts_with("update "){error.message}else{"The plan working copy could not be prepared; no writable file path is available this turn.".into()};
-                (format!("YOUR PLAN\n\nYour plan remains in your account. {fact} The app can still read and edit it."),fact)
+                let fact = match error.message.as_str() {
+                    crate::placement::location::OLD_COMPUTER => words::PLAN_OLD_COMPUTER,
+                    crate::placement::location::OLD_HUB => words::PLAN_OLD_HUB,
+                    _ => words::PLAN_NOT_PREPARED,
+                };
+                (format!("YOUR PLAN\n\nYour plan remains in your account; the app can still read and edit it. {fact}"), fact.to_string())
             }
         }
     };

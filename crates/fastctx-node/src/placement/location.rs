@@ -13,11 +13,40 @@ use fastctx_types::{
 };
 use std::sync::Arc;
 
+/// Why there is no plan file: the working computer, or the hub, runs an
+/// older Fastctx that cannot keep one.
+pub(crate) const OLD_COMPUTER: &str = "update the working computer to synchronize plan copies";
+pub(crate) const OLD_HUB: &str = "update the hub to place and synchronize this conversation's plan";
+
 #[derive(Default)]
-pub(crate) struct Locations(std::sync::Mutex<std::collections::HashMap<ResidentId, String>>);
+pub(crate) struct Locations {
+    chosen: std::sync::Mutex<std::collections::HashMap<ResidentId, String>>,
+    /// Computers found unable to keep plan copies, by when they came online:
+    /// asked again only once they connect anew, as after an update.
+    outdated: std::sync::Mutex<std::collections::HashMap<(fastctx_types::access::HubId, MachineName), Option<jiff::Timestamp>>>,
+    /// What was last logged of each conversation's placement failing.
+    told: std::sync::Mutex<std::collections::HashMap<ResidentId, String>>,
+}
 impl Locations {
     pub(crate) fn invalidate(&self, id: &ResidentId) {
-        self.0.lock().expect("never poisoned").remove(id);
+        self.chosen.lock().expect("never poisoned").remove(id);
+    }
+
+    /// Whether `failure` (none once placing works) is news for `id`, worth a
+    /// line in the log.
+    pub(crate) fn tell(&self, id: &ResidentId, failure: Option<&str>) -> bool {
+        let mut told = self.told.lock().expect("never poisoned");
+        match failure {
+            Some(failure) if told.get(id).is_some_and(|said| said == failure) => false,
+            Some(failure) => {
+                told.insert(id.clone(), failure.to_string());
+                true
+            }
+            None => {
+                told.remove(id);
+                false
+            }
+        }
     }
 }
 
@@ -111,7 +140,7 @@ pub(crate) async fn prepare(
             crate::plan_file::request(node, id);
             return Ok(Some(Location { machine: node.machine(), path: crate::world::native(room.path()) }));
         }
-        return Err(failure("update the hub to place and synchronize this conversation's plan"));
+        return Err(failure(OLD_HUB));
     }
     let choices = super::destinations(node, &Acting::one(scope.hub.clone(), scope.account.clone()))?;
     let focus = match node.residents.about(id) {
@@ -125,7 +154,7 @@ pub(crate) async fn prepare(
     let owner = Address { machine: node.machine(), resident: id.clone() };
     let names: Vec<&fastctx_types::access::Written> = candidates.iter().map(|choice| &choice.machine).collect();
     let signature = serde_json::to_string(&(&scope, &owner, names)).map_err(failure)?;
-    let known = node.locations.0.lock().expect("never poisoned").get(id) == Some(&signature);
+    let known = node.locations.chosen.lock().expect("never poisoned").get(id) == Some(&signature);
     if known && let Some(location) = read::<Option<Location>>(&receipt)? {
         return Ok(location);
     }
@@ -204,7 +233,7 @@ pub(crate) async fn prepare(
     )
     .map_err(failure)?;
     if settled {
-        node.locations.0.lock().expect("never poisoned").insert(id.clone(), signature);
+        node.locations.chosen.lock().expect("never poisoned").insert(id.clone(), signature);
     }
     Ok(location)
 }
@@ -224,11 +253,21 @@ async fn usable(
         if node.is_here(&candidate.machine) {
             return Ok((Some(candidate), passed.is_none()));
         }
+        let known = (scope.hub.clone(), candidate.machine.name.clone());
+        let since = link.view().member(&candidate.machine.name).and_then(|member| member.since);
+        if node.locations.outdated.lock().expect("never poisoned").get(&known) == Some(&since) {
+            passed.get_or_insert(failure(OLD_COMPUTER));
+            continue;
+        }
         let failed = match link.call(&candidate.machine.name, &scope.account, Purpose::Look, RemoteCall::Facts).await {
             Ok(Ok(RemoteReply::Facts(facts))) if facts.plan_copies => {
+                node.locations.outdated.lock().expect("never poisoned").remove(&known);
                 return Ok((Some(candidate), passed.is_none()));
             }
-            Ok(Ok(_)) => failure("update the working computer to synchronize plan copies"),
+            Ok(Ok(_)) => {
+                node.locations.outdated.lock().expect("never poisoned").insert(known, since);
+                failure(OLD_COMPUTER)
+            }
             Ok(Err(error)) => error,
             Err(error) => failure(error),
         };

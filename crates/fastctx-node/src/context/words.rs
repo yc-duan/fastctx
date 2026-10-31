@@ -22,6 +22,13 @@ pub(super) fn heading(name: &str, text: &str) -> String {
 
 pub(super) const PLAN_UNAVAILABLE: &str = "The plan is unavailable.";
 
+/// Why this turn has no plan file, when its working computer or the hub
+/// cannot keep one, or it could not be prepared.
+pub(super) const PLAN_OLD_COMPUTER: &str = "The computer this conversation works from runs an older Fastctx that cannot keep the plan file, so there is no plan file to edit until it is updated.";
+pub(super) const PLAN_OLD_HUB: &str =
+    "The account's hub runs an older Fastctx, so there is no plan file to edit until it is updated.";
+pub(super) const PLAN_NOT_PREPARED: &str = "The plan file could not be prepared, so there is no plan file to edit this turn.";
+
 /// How a conversation keeps its plan (`world-plan.md`, 交给模型的那段说明).
 /// How to keep a plan, for a conversation that keeps its own: the plan is
 /// the Markdown file at `path` on `machine` (`plan_file`).
