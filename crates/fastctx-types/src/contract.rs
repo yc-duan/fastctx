@@ -331,7 +331,7 @@ impl Call {
                     Leaving::Stop
                 }
             }
-            Self::DoctorCalls | Self::PlanRead { .. } | Self::Skill { .. } => Leaving::Stop,
+            Self::DoctorCalls | Self::DoctorReadings | Self::PlanRead { .. } | Self::Skill { .. } => Leaving::Stop,
             Self::Plan { .. } | Self::PlanWrite { .. } => Leaving::Finish,
             Self::AccountRecords {
                 request: crate::account_records::Request::Read { .. } | crate::account_records::Request::List { .. },

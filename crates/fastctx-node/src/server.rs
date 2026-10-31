@@ -1318,6 +1318,17 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
             users_voice(node, peer)?;
             Ok(Reply::DoctorCalls { calls: crate::intake::snapshot() })
         }
+        Call::DoctorReadings => {
+            users_voice(node, peer)?;
+            let scenes = tokio::task::spawn_blocking(fastctx_platform::scene::kept)
+                .await
+                .map_err(|error| Failure::new(error.to_string()))?;
+            Ok(Reply::DoctorReadings {
+                readings: Box::new(fastctx_platform::readings::snapshot()),
+                health: fastctx_platform::health::summary(),
+                scenes: scenes.into_iter().map(|scene| scene.display().to_string()).collect(),
+            })
+        }
         Call::Stats { machine, after, seen } => {
             users_voice(node, peer)?;
             let acting = crate::around::acting_of(node, &caller::of(node, peer)?);

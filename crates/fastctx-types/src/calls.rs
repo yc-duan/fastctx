@@ -31,6 +31,9 @@ pub enum Call {
     },
     /// Local operational diagnostics. Never relayed through another machine.
     DoctorCalls,
+    /// The node's measures of itself, its health and the scenes it left.
+    /// Never relayed through another machine.
+    DoctorReadings,
     Plan {
         hub: Option<crate::HubName>,
         account: Option<crate::AccountName>,
@@ -912,6 +915,12 @@ pub enum Reply {
     },
     DoctorCalls {
         calls: Vec<crate::stats::CallWork>,
+    },
+    DoctorReadings {
+        readings: Box<crate::readings::Readings>,
+        health: crate::health::Health,
+        /// The scenes kept, oldest first, as paths.
+        scenes: Vec<String>,
     },
     Plan {
         result: crate::plan::Result,
