@@ -4,6 +4,7 @@ mod activity;
 pub(crate) mod compact;
 pub(crate) mod debts;
 mod diagnostics;
+mod growth;
 mod identity;
 pub(crate) mod quota;
 mod records;
@@ -18,15 +19,15 @@ use crate::Node;
 use fastctx_types::ResidentId;
 use fastctx_types::session::{SessionEvent, TurnEnd};
 
-pub(crate) fn observe(node: &Node, resident: &ResidentId, event: &SessionEvent) -> std::io::Result<()> {
-    node.turn_activity.observe(resident, event);
+pub(crate) async fn observe(node: &Node, resident: &ResidentId, event: SessionEvent) -> std::io::Result<SessionEvent> {
+    node.turn_activity.observe(resident, &event);
     if matches!(
         event.happened,
         fastctx_types::session::Happened::TurnStarted { .. } | fastctx_types::session::Happened::Heard { .. }
     ) {
         crate::goals::engine::input_changed(node, resident);
     }
-    diagnostics::observe(node, resident, event)
+    diagnostics::observe(node, resident, event).await
 }
 
 pub(crate) fn freeze(node: &Node, resident: &ResidentId, turn: &str, end: &mut TurnEnd) {
@@ -61,24 +62,30 @@ pub(crate) async fn snapshot_locked(
     refresh_limits: bool,
 ) -> Result<fastctx_types::turn_evidence::TurnEvidence, fastctx_types::ipc::Failure> {
     use fastctx_types::ipc::Failure;
-    use fastctx_types::session::Happened;
     use fastctx_types::turn_evidence::TurnEvidence;
     node.residents.active(resident)?;
     let (about, _) = node.residents.about(resident).ok_or_else(|| Failure::new("unknown conversation"))?;
     let now = node.residents.now(resident);
     let mut turn = requested.or_else(|| now.as_ref().and_then(|now| now.turn.clone().or(now.last_turn.clone())));
     let directory = node.world.conversation(resident);
-    if turn.is_none() {
-        turn = crate::delivery::terminals(&directory)
-            .map_err(|error| Failure::new(error.to_string()))?
-            .into_iter()
-            .max_by_key(|finished| finished.queue_order)
-            .map(|finished| finished.turn);
-    }
-    let actions = records::actions(node, resident).map_err(|error| Failure::new(error.to_string()))?;
-    let mut waiting = waiting::collect(node, resident, &actions).await?;
-    waiting::measure_growth(node, resident, &mut waiting).map_err(|error| Failure::new(error.to_string()))?;
-    let read = || -> std::io::Result<_> {
+    let (reading, subject, path) = (node.clone(), resident.clone(), directory.clone());
+    let (turn, actions) = tokio::task::spawn_blocking(move || -> std::io::Result<_> {
+        if turn.is_none() {
+            turn = crate::delivery::terminals(&path)?
+                .into_iter()
+                .max_by_key(|finished| finished.queue_order)
+                .map(|finished| finished.turn);
+        }
+        Ok((turn, records::actions(&reading, &subject)?))
+    })
+    .await
+    .map_err(|error| Failure::new(error.to_string()))?
+    .map_err(|error| Failure::new(error.to_string()))?;
+    let waiting = waiting::collect(node, resident, &actions).await?;
+    let waiting = growth::measure(directory.clone(), waiting).await.map_err(|error| Failure::new(error.to_string()))?;
+    let (reading, subject) = (node.clone(), resident.clone());
+    let read = move || -> std::io::Result<_> {
+        let (node, resident) = (&reading, &subject);
         let finished = turn.as_deref().map(|turn| crate::delivery::terminal(&directory, turn)).transpose()?.flatten();
         let mut end = finished.as_ref().map(|finished| finished.end.clone());
         if let (Some(turn), Some(end)) = (turn.as_deref(), end.as_mut())
@@ -103,9 +110,14 @@ pub(crate) async fn snapshot_locked(
             .into_iter()
             .filter(|job| job.record.turn.is_some() && job.record.turn == turn)
             .collect();
-        let notices = crate::delivery::history(&directory)?.into_iter().filter(|event| {
-            matches!(&event.happened, Happened::Heard { turn: Some(at), from: Some(fastctx_types::session::Speaker::World), .. } if Some(at.as_str()) == turn.as_deref())
-        }).collect();
+        let notices = turn
+            .as_deref()
+            .map(|turn| crate::session_record::search::all(&directory, "world-turn", turn))
+            .transpose()?
+            .unwrap_or_default()
+            .into_iter()
+            .map(|(_, event)| event)
+            .collect();
         Ok(TurnEvidence {
             resident: resident.clone(),
             turn: turn.clone(),
@@ -118,16 +130,20 @@ pub(crate) async fn snapshot_locked(
             actions: actions.into_iter().filter(|action| action.turn.is_some() && action.turn == turn).collect(),
             calls,
             jobs,
-            job_updates: crate::run_facts::job_updates(&directory)?
-                .into_iter()
-                .filter(|update| update.turn.is_some() && update.turn == turn)
-                .collect(),
+            job_updates: turn
+                .as_deref()
+                .map(|turn| crate::run_facts::job_updates(&directory, Some(turn)))
+                .transpose()?
+                .unwrap_or_default(),
             notices,
             waiting,
             quota: None,
         })
     };
-    let mut evidence = read().map_err(|error| Failure::new(error.to_string()))?;
+    let mut evidence = tokio::task::spawn_blocking(read)
+        .await
+        .map_err(|error| Failure::new(error.to_string()))?
+        .map_err(|error| Failure::new(error.to_string()))?;
     if refresh_limits && now.as_ref().is_some_and(|now| now.turn.is_none()) {
         evidence.quota = Some(quota::read(node, resident).await);
     }

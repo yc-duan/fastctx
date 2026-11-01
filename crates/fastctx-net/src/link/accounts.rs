@@ -306,6 +306,8 @@ impl Link {
             me: Some(view.me.clone()),
             hub_machine: view.hub_machine.clone(),
             machine_notices: view.machine_notices.clone(),
+            troubles: view.troubles.clone(),
+            health: view.health,
             renames: view.renames,
             managed: view.managed,
             roles: view.roles,

@@ -21,6 +21,7 @@ import type { SideSeams } from "./seams";
 import type { CollabNode, GoalShown, NodeState, PastGoal } from "./types";
 import type { SideWords } from "./words";
 import { sentinelList, type SentinelSummary } from "../world/sentinels";
+import { PREVIEW } from "../app/preview";
 
 /** The colleagues the conversation asked, as the World reports them, each
  *  with its goal and the agents it sent. The conversation's own agents come
@@ -131,10 +132,45 @@ export interface LiveSide {
   address: Address;
   /** No goal is set here (`SideSeams.noGoal`). */
   noGoal?: boolean;
+  /** Its own history, where it is in no project (`SideSeams.history`). */
+  history?: SideSeams["history"];
   /** A span of time, short. */
   took(ms: number): string;
   /** Opens what one of the world's ids names, from the plan. */
   openId(id: string): void;
+}
+
+/** The colleagues the conversation at `address` asked, as the World pushes
+ *  them: who each is and how it stands, worked out as the tree does. Their
+ *  goals and the agents they sent come with the tree, while a page shows
+ *  them. */
+function worldColleagues(store: Store, address: Address, now: number): CollabNode[] {
+  return residentsOf(store.world.peek()).flatMap((r): CollabNode[] => {
+    const origin = r.about.origin;
+    if (origin.kind !== "colleague" || origin.asked_by.resident !== address.resident || origin.asked_by.machine !== address.machine) return [];
+    const agent = /codex/i.test(r.about.host.agent) ? "codex" : "claude";
+    const busy = r.now?.activity === "busy";
+    const born = Date.parse(r.about.born_at);
+    const since = r.now?.since ? Date.parse(r.now.since) : born;
+    const state: NodeState = r.now?.trouble ? "failed" : !r.now ? "unknown" : busy ? "working" : "done";
+    return [
+      {
+        id: r.about.id,
+        kind: "colleague",
+        agent,
+        name: r.about.model ? modelName(r.about.model) : (origin.label ?? agent),
+        task: origin.label ?? r.now?.title ?? "",
+        state,
+        why: null,
+        goal: null,
+        branchOf: null,
+        took: Number.isFinite(born) ? Math.max(0, (busy ? now : Number.isFinite(since) ? since : now) - born) : 0,
+        steps: null,
+        machine: r.about.machine,
+        children: [],
+      },
+    ];
+  });
 }
 
 /** The side conversations branched off the one at `address`, from the
@@ -209,6 +245,7 @@ export function liveSide(options: LiveSide): SideSeams {
     words: options.words,
     self: options.address,
     ...(options.noGoal ? { noGoal: true } : {}),
+    ...(options.history ? { history: options.history } : {}),
     plan: {
       words: options.planWords,
       seams: plan,
@@ -216,15 +253,19 @@ export function liveSide(options: LiveSide): SideSeams {
         let alive = true;
         let watching: number | null = null;
         let shown: PlanShown | null = null;
+        // Sentinels are not offered in a release yet. Where they are, one the
+        // plan names says how it stands as its home last answered, asked one
+        // question at a time, and only while the plan names one.
+        const naming = () => PREVIEW && /s-[0-9a-z]{6,16}/.test(shown?.source ?? "");
         const refresh = () => {
           planRead(owner, at(), bareName(options.address.machine))
             .then((page) => {
-              if (alive) show((shown = planShownOf(page, options.words, Date.now())));
+              if (!alive) return;
+              show((shown = planShownOf(page, options.words, Date.now())));
+              if (naming()) void ask();
             })
             .catch((error) => console.error("the plan could not be read", error));
         };
-        // A sentinel the plan names says how it stands as its home last
-        // answered, asked one question at a time.
         let reading = false;
         const ask = () => {
           if (reading) return;
@@ -242,8 +283,7 @@ export function liveSide(options: LiveSide): SideSeams {
               reading = false;
             });
         };
-        void ask();
-        const asking = window.setInterval(() => void ask(), 30_000);
+        const asking = PREVIEW ? window.setInterval(() => naming() && void ask(), 30_000) : 0;
         refresh();
         watchPlan(
           owner,
@@ -302,10 +342,18 @@ export function liveSide(options: LiveSide): SideSeams {
     },
     colleagues: (show) => {
       let alive = true;
+      let detail = false;
       let inflight = false;
       let again = false;
-      let last: CollabNode[] = [];
+      // The colleagues as the tree last told them, while a page shows them.
+      let told: CollabNode[] | null = null;
+      const draw = () => {
+        const now = Date.now();
+        const colleagues = told ?? worldColleagues(options.store, options.address, now);
+        show([...colleagues, ...sideNodes(options.store, options.address, options.words, now)]);
+      };
       const refresh = () => {
+        if (!detail) return;
         if (inflight) {
           again = true;
           return;
@@ -314,13 +362,16 @@ export function liveSide(options: LiveSide): SideSeams {
         again = false;
         collaborationTree(owner, options.address.machine)
           .then((tree) => {
-            const now = Date.now();
-            if (alive) show((last = [...treeNodes(tree, options.store, now), ...sideNodes(options.store, options.address, options.words, now)]));
+            if (!alive || !detail) return;
+            told = treeNodes(tree, options.store, Date.now());
+            draw();
           })
           .catch((error: unknown) => {
             // What was known stays, no longer said to stand as it did.
             const why = error instanceof Error ? error.message : String(error);
-            if (alive) show(last.map((node) => ({ ...node, state: "unknown", why })));
+            if (!alive || !detail || !told) return;
+            told = told.map((node) => ({ ...node, state: "unknown", why }));
+            draw();
           })
           .finally(() => {
             inflight = false;
@@ -329,24 +380,37 @@ export function liveSide(options: LiveSide): SideSeams {
       };
       const stop = effect(() => {
         options.store.world.get();
+        draw();
         refresh();
       });
-      return () => {
-        alive = false;
-        stop();
+      return {
+        stop: () => {
+          alive = false;
+          stop();
+        },
+        detail: (shown) => {
+          if (shown === detail) return;
+          detail = shown;
+          if (shown) refresh();
+          else {
+            told = null;
+            draw();
+          }
+        },
       };
     },
   };
 }
 
 /** A specimen conversation's side: a plan, a goal in the state `goal`
- *  names (under way at first) and a team. */
+ *  names (under way at first), a team, and its own history where it is in
+ *  no project. */
 export function specimenSide(
   words: SideWords,
   planWords: PlanWords,
   plan: PlanShown & { facts: PageSeams["facts"] },
   english: boolean,
-  side: { self: Address; goal?: string | null },
+  side: { self: Address; goal?: string | null; history?: SideSeams["history"] },
 ): SideSeams {
   let goal: GoalShown | null = side.goal === "none" ? null : (goalSamples(english, Date.now())[side.goal ?? "active"] ?? null);
   const past: PastGoal[] = pastSamples(english, Date.now());
@@ -363,6 +427,7 @@ export function specimenSide(
   return {
     words,
     self: side.self,
+    ...(side.history ? { history: side.history } : {}),
     plan: {
       words: planWords,
       seams: { facts: plan.facts, save: async () => ({ ok: true }) },
@@ -406,7 +471,7 @@ export function specimenSide(
     },
     colleagues: (show) => {
       show(teamSample(english).filter((node) => node.kind === "colleague"));
-      return () => {};
+      return { stop: () => {}, detail: () => {} };
     },
   };
 }

@@ -36,10 +36,10 @@ pub(crate) struct Telling {
 
 /// The telling of `request`, an `on` given in the job whose record is
 /// `parent`; none for an `on` no run gave.
-pub(crate) fn begin(node: &Arc<Node>, parent: Option<&PathBuf>, request: &OnRequest) -> Option<Steps> {
+pub(crate) async fn begin(node: &Arc<Node>, parent: Option<&PathBuf>, request: &OnRequest) -> Option<Steps> {
     let record = parent?.clone();
     let job = request.job.clone()?;
-    let command = std::fs::read_to_string(&request.package.script).unwrap_or_default();
+    let command = tokio::fs::read_to_string(&request.package.script).await.unwrap_or_default();
     let id = crate::speech::new_id("on").to_string();
     Some(Arc::new(Mutex::new(Telling {
         node: node.clone(),

@@ -18,6 +18,7 @@ fn checked(
     scope: &HubAccount,
     owner: &Address,
     create: bool,
+    previous: &[fastctx_types::MachineName],
 ) -> Result<Address, Failure> {
     let link = node.link_of(&scope.hub).ok_or_else(|| failure("the working directory's hub is unavailable"))?;
     let view = crate::authorization::current_view(&link)?;
@@ -37,19 +38,41 @@ fn checked(
             Err(error) => return Err(failure(error)),
         }
     }
-    let kept: Binding = serde_json::from_slice(&std::fs::read(path).map_err(failure)?).map_err(failure)?;
+    let kept: Binding = serde_json::from_slice(&std::fs::read(&path).map_err(failure)?).map_err(failure)?;
     if kept.account != *scope
         || kept.opened != opened
         || kept.owner.resident != owner.resident
-        || !view.same(&kept.owner.machine, &owner.machine)
+        || (!view.same(&kept.owner.machine, &owner.machine)
+            && !previous.iter().any(|machine| view.same(&kept.owner.machine, machine)))
     {
         return Err(Failure::refused("the working directory belongs to another account incarnation or conversation"));
     }
-    Ok(kept.owner)
+    if create && kept.owner != *owner {
+        fastctx_platform::publish(
+            &path,
+            &serde_json::to_vec(&binding).map_err(failure)?,
+            fastctx_platform::Permissions::Private,
+        )
+        .map_err(failure)?;
+    }
+    Ok(owner.clone())
 }
 pub(crate) fn bind(node: &Node, directory: &Path, scope: &HubAccount, owner: &Address) -> Result<Address, Failure> {
-    checked(node, directory, scope, owner, true)
+    checked(node, directory, scope, owner, true, &[])
 }
 pub(crate) fn verify(node: &Node, directory: &Path, scope: &HubAccount, owner: &Address) -> Result<(), Failure> {
-    checked(node, directory, scope, owner, false).map(drop)
+    checked(node, directory, scope, owner, false, &[]).map(drop)
+}
+
+/// Rebind a directory only across addresses confirmed by the hub's ownership record.
+pub(crate) fn bind_registered(
+    node: &Node,
+    directory: &Path,
+    scope: &HubAccount,
+    conversation: &fastctx_types::owned_records::Conversation,
+) -> Result<Address, Failure> {
+    if scope.account != conversation.account {
+        return Err(Failure::refused("the working directory's account differs from its conversation"));
+    }
+    checked(node, directory, scope, &conversation.address, true, &conversation.previous)
 }

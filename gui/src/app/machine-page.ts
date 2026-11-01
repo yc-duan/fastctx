@@ -19,6 +19,7 @@ import { loginsOf, names, type AccountChange, type HubAccounts, type Login, type
 import type { NameProblem, WorldNow } from "../world/bridge";
 import { agentName, osName, titleOf } from "../world/names";
 import type { Card, LimitUse, MachineStats, StatsSeen } from "../world/stats";
+import type { DoctorReadings } from "../world/doctor";
 import type { MachineFacts } from "../world/world";
 import type { AccessWords, MachinesWords } from "./account-words";
 import { AssistSheet, assistChange, assistancesIn, namesOn, type Assistance } from "./assist-sheet";
@@ -96,6 +97,11 @@ export interface MachinePageOptions {
   /** What the machine (this computer with none) keeps free in memory for
    *  its agents; set first when `bytes` is given. */
   memoryRoom?(machine: string | null, bytes: number | null): Promise<number>;
+  /** How this computer's Fastctx is doing, as its node says; none where
+   *  there is no node here to ask, as on a phone. */
+  doctor?: (() => Promise<DoctorReadings>) | undefined;
+  /** Shows a file this computer keeps in its folder. */
+  reveal?: ((path: string) => void) | undefined;
 }
 
 /** What a machine may keep free for its agents (`fastctx_types::stats`). */
@@ -112,6 +118,8 @@ const RANGE_KEY = "machine.range";
 /** How often the page asks the machine while it is in view: as often as
  *  the World itself is asked. */
 const EVERY_MS = 2_000;
+/** How often this computer's node is asked how its Fastctx is doing. */
+const HEALTH_EVERY_MS = 10_000;
 /** A trace breaks where readings are further apart than a few askings. */
 const READ_GAP_MS = 4.5 * EVERY_MS;
 /** A machine reads its limits once a minute; a few missed break the trace. */
@@ -177,6 +185,11 @@ export class MachinePage implements Page {
   /** How far it is toward its system's limits: each limit's row by its
    *  kind, its trace kept from one reading to the next. */
   private readonly limitsBox: HTMLElement;
+  /** How this computer's Fastctx is doing, when last asked. */
+  private readonly healthBox: HTMLElement;
+  private health: DoctorReadings | null = null;
+  private healthAt = 0;
+  private healthAsking = false;
   private limitRows = new Map<string, LimitRow>();
   private readonly presentBox: HTMLElement;
   private readonly whereBox: HTMLElement;
@@ -260,6 +273,7 @@ export class MachinePage implements Page {
             <section class="mp-sec mp-vitals-sec" hidden><div class="mp-vitals"></div></section>
             <section class="mp-sec mp-disks" hidden></section>
             <section class="mp-sec mp-limits" hidden></section>
+            <section class="mp-sec mp-health" hidden></section>
             <section class="mp-sec mp-present" hidden></section>
           </div>
           <div class="mp-pane" id="mp-pane-net" role="tabpanel" aria-labelledby="mp-tab-net" data-pane="net" hidden>
@@ -293,6 +307,12 @@ export class MachinePage implements Page {
     this.vitalsBox = part(".mp-vitals");
     this.disksBox = part(".mp-disks");
     this.limitsBox = part(".mp-limits");
+    this.healthBox = part(".mp-health");
+    this.healthBox.addEventListener("click", (event) => {
+      if (!(event.target as HTMLElement).closest("[data-mh-reveal]")) return;
+      const newest = this.health?.scenes.at(-1);
+      if (newest) this.options.reveal?.(newest);
+    });
     this.presentBox = part(".mp-present");
     this.whereBox = part(".mp-where");
     this.linesBox = part(".mp-lines");
@@ -367,6 +387,7 @@ export class MachinePage implements Page {
       this.timer = window.setTimeout(() => void this.ask(), EVERY_MS);
       return;
     }
+    this.askHealth(machine);
     this.asking = true;
     const began = Date.now();
     const kept = keptOf(machine.name);
@@ -460,6 +481,7 @@ export class MachinePage implements Page {
       this.limitsBox.hidden = true;
       this.linesBox.hidden = true;
     }
+    this.drawHealth(machine);
     this.drawPrivacy(machine, stats);
     this.drawPresent(machine, stats, world);
     this.drawWhere(machine, world);
@@ -602,6 +624,10 @@ export class MachinePage implements Page {
       const state = this.stateOf(machine);
       right = `<div class="mp-uptime ${state.kind}"><span class="mp-uptime-label">${escape(state.said)}</span></div>`;
     }
+    // Its Fastctx held up or stuck, as its hub hears it, before how long it
+    // has been up.
+    const strain = machine.strain && (machine.here || machine.online === true) ? machine.strain : null;
+    if (strain) right = `<div class="mp-state"><span class="mp-strain ${strain}" title="${escape(this.options.machines.strainWhy[strain])}">${escape(this.options.machines.strain[strain])}</span>${right}</div>`;
     this.put(
       "id",
       this.id,
@@ -990,6 +1016,60 @@ export class MachinePage implements Page {
       const points: [number, number | null][] = readings.map((reading) => [Date.parse(reading.at), reading.uses.find((one) => one.kind === use.kind)?.used ?? null]);
       row.spark.draw([{ points, max: use.limit, kind: "clay", area: true, gap: LIMIT_GAP_MS }], at - LIMITS_MS, at, use.limit);
     }
+  }
+
+  /** Asks this computer's node how its Fastctx is doing, at most every ten
+   *  seconds, while its page shows how it is now. */
+  private askHealth(machine: Machine): void {
+    const doctor = this.options.doctor;
+    if (!doctor || !machine.here || this.tab !== "now" || this.healthAsking || Date.now() - this.healthAt < HEALTH_EVERY_MS) return;
+    this.healthAsking = true;
+    this.healthAt = Date.now();
+    doctor()
+      .then(
+        (readings) => {
+          this.health = readings;
+        },
+        // A node too old to say has nothing to say here.
+        () => {
+          this.health = null;
+        },
+      )
+      .finally(() => {
+        this.healthAsking = false;
+        if (!this.left) this.render();
+      });
+  }
+
+  /** How this computer's Fastctx is doing, only where there is something to
+   *  say: held up or stuck, the rules it broke, a bound near its limit, and
+   *  the scenes it left (`fastctx doctor readings`). */
+  private drawHealth(machine: Machine): void {
+    const { words } = this.options;
+    const readings = machine.here ? this.health : null;
+    const health = readings?.health;
+    const rows: string[] = [];
+    const row = (name: string, value: string) => `<dt>${escape(name)}</dt><dd>${value}</dd>`;
+    if (health?.stuck) rows.push(row(words.healthState, `<span class="mh-stuck" title="${escape(words.healthStuckWhy)}">${escape(words.healthStuck(health.stuck))}</span>`));
+    else if (health?.busy) rows.push(row(words.healthState, `<span class="mh-busy" title="${escape(words.healthBusyWhy(health.held_up_ms ?? 0))}">${escape(words.healthBusy)}</span>`));
+    const broken = readings?.readings.violations_total ?? health?.violations ?? 0;
+    if (broken) {
+      // Where they were broken, the most first, for whoever looks into it.
+      const places = [...(readings?.readings.violations ?? [])]
+        .sort((a, b) => b.count - a.count)
+        .slice(0, 3)
+        .map((one) => `${one.kind} ${one.place} ×${one.count}`)
+        .join("\n");
+      rows.push(row(words.healthBroken, `<span${places ? ` title="${escape(places)}"` : ""}>${escape(words.healthBrokenCount(broken))}</span>`));
+    }
+    if (health?.near) rows.push(row(words.healthNear, `<span class="mh-near">${escape(words.healthNearUsed(health.near.bound, health.near.used))}</span>`));
+    const scenes = readings?.scenes ?? [];
+    if (scenes.length) {
+      const reveal = this.options.reveal ? `<button class="text-button quiet-button" type="button" data-mh-reveal>${escape(words.healthReveal)}</button>` : "";
+      rows.push(row(words.healthScenes, `<span title="${escape(words.healthScenesWhy)}">${escape(words.healthScenesCount(scenes.length))}</span>${reveal}`));
+    }
+    this.healthBox.hidden = !rows.length;
+    this.put("health", this.healthBox, rows.length ? `<h2 class="mp-sec-title">${escape(words.health)}</h2><dl class="mp-rows mh-rows">${rows.join("")}</dl>` : "");
   }
 
   /** Its name and the group its owner put it in, on each hub that says so. */

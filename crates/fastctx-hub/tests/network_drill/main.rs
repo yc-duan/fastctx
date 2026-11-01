@@ -10,21 +10,25 @@
 //! its trouble did happen, what must hold however it went, and, on this
 //! release's hub, that the hub was left as it was found.
 //!
-//!     network_drill [--root DIR] [--earlier FASTCTX] [--only NAME,...]
+//!     network_drill [--root DIR] [--earlier FASTCTX] [--earlier-version VERSION] [--only NAME,...]
 //!     network_drill hub DIR      (the hub, served in a child process)
 //!
 //! `DIR` and `FASTCTX` are absolute paths; the drill's directory is under
 //! `--root`, else `FASTCTX_TEST_ROOT`, else the system's temporary one, and
 //! is deleted when every check passed.
 
+// A drill drives the hub from outside it, and is not held to the roles of
+// the hub's threads (`clippy.toml`).
+#![allow(clippy::disallowed_methods)]
+
 mod health;
 mod lab;
 mod letters;
 mod mixed;
 mod plan_copies;
-mod record_following;
 mod process;
 mod proxy;
+mod record_following;
 mod report;
 mod scenarios;
 mod skill_folders;
@@ -61,7 +65,11 @@ const SCENARIOS: [&str; 17] = [
 
 /// The longest a scenario may take.
 const LONGEST: Duration = Duration::from_secs(8 * 60);
-pub const EXPECTED_EARLIER: &str = "1.0.1-beta.12";
+pub const EXPECTED_EARLIER: &str = "1.0.1-beta.13";
+static EARLIER_VERSION: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+pub fn expected_earlier() -> &'static str {
+    EARLIER_VERSION.get().map_or(EXPECTED_EARLIER, String::as_str)
+}
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -78,15 +86,11 @@ fn main() -> ExitCode {
     }
 }
 
-/// Serves the hub in `dir` until it is killed.
+/// Serves the hub in `dir` until it is killed, its threads in their roles as
+/// the command runs it.
 fn serve(dir: &Path) -> ExitCode {
     let leave = fastctx_hub::Leave { remove_service: Box::new(|_| Ok(String::new())) };
-    let served = tokio::runtime::Builder::new_multi_thread()
-        .enable_all()
-        .build()
-        .map_err(anyhow::Error::from)
-        .and_then(|runtime| runtime.block_on(fastctx_hub::serve(dir, leave)));
-    match served {
+    match fastctx_hub::run(dir, leave, tokio::runtime::Builder::new_multi_thread()) {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
             eprintln!("the drill's hub: {error:#}");
@@ -98,18 +102,21 @@ fn serve(dir: &Path) -> ExitCode {
 struct Options {
     root: PathBuf,
     earlier: Option<PathBuf>,
+    earlier_version: String,
     only: Option<Vec<String>>,
 }
 
 fn options(args: &[String]) -> anyhow::Result<Options> {
     let mut root = std::env::var_os("FASTCTX_TEST_ROOT").map(PathBuf::from).unwrap_or_else(std::env::temp_dir);
     let (mut earlier, mut only) = (None, None);
+    let mut earlier_version = EXPECTED_EARLIER.to_string();
     let mut args = args.iter();
     while let Some(arg) = args.next() {
         let mut value = || args.next().ok_or_else(|| anyhow::anyhow!("{arg} takes a value"));
         match arg.as_str() {
             "--root" => root = PathBuf::from(value()?),
             "--earlier" => earlier = Some(PathBuf::from(value()?)),
+            "--earlier-version" => earlier_version = value()?.clone(),
             "--only" => only = Some(value()?.split(',').map(str::to_string).collect::<Vec<_>>()),
             other => anyhow::bail!("unknown argument {other}"),
         }
@@ -124,11 +131,13 @@ fn options(args: &[String]) -> anyhow::Result<Options> {
             anyhow::ensure!(SCENARIOS.contains(&name.as_str()), "there is no scenario {name}");
         }
     }
-    Ok(Options { root, earlier, only })
+    Ok(Options { root, earlier, earlier_version, only })
 }
 
 fn drill(args: &[String]) -> anyhow::Result<bool> {
     let options = options(args)?;
+    let _ = EARLIER_VERSION.set(options.earlier_version.clone());
+    let expected = expected_earlier();
     let root = options.root.join(format!("fastctx-network-drill-{}", std::process::id()));
     std::fs::create_dir_all(&root)?;
     println!("network drill in {}", root.display());
@@ -138,9 +147,9 @@ fn drill(args: &[String]) -> anyhow::Result<bool> {
         let said = process::run(command, None, Duration::from_secs(10))?;
         anyhow::ensure!(
             said.status.success()
-                && said.out.split_whitespace().any(|word| word == EXPECTED_EARLIER)
+                && said.out.split_whitespace().any(|word| word == expected)
                 && !said.text().contains("development"),
-            "expected the released {EXPECTED_EARLIER} kernel, got {}",
+            "expected the released {expected} kernel, got {}",
             said.text()
         );
     }
@@ -159,7 +168,7 @@ fn drill(args: &[String]) -> anyhow::Result<bool> {
             }
             continue;
         }
-        let report = runtime
+        let mut report = runtime
             .block_on(
                 std::panic::AssertUnwindSafe(scenario(name, &root.join(name), options.earlier.as_deref()))
                     .catch_unwind(),
@@ -169,6 +178,7 @@ fn drill(args: &[String]) -> anyhow::Result<bool> {
                 report.check(false, "the scenario did not panic", "see the panic above");
                 report
             });
+        rules_kept(&mut report, world::violated());
         passed += report.passed;
         failed += report.failed;
         if report.failed == 0
@@ -178,8 +188,15 @@ fn drill(args: &[String]) -> anyhow::Result<bool> {
             println!("FAIL removing {name}'s completed workspace: {error}");
         }
     }
-    // What the links leave running ends with the runtime.
+    // What the links leave running ends with the runtime, and the hubs they
+    // kept with them.
     runtime.shutdown_timeout(Duration::from_secs(5));
+    let late = world::violated();
+    if !late.is_empty() {
+        let mut report = Report::new("hubs stopped last");
+        rules_kept(&mut report, late);
+        failed += report.failed;
+    }
     failed += process::CLEANUP_FAILURES.load(std::sync::atomic::Ordering::SeqCst);
     println!("network drill: {passed} passed, {failed} failed, {skipped} scenarios not run");
     if failed == 0 {
@@ -188,6 +205,27 @@ fn drill(args: &[String]) -> anyhow::Result<bool> {
         println!("what the failed scenarios left is in {}", root.display());
     }
     Ok(failed == 0)
+}
+
+/// Checks that the hubs of this release a scenario ran broke none of the
+/// threads' rules (`specs/world-engine.md`, 线程的三种角色), as each told in
+/// its health before it was stopped. A development build runs many times
+/// slower than the numbers the timed ones are set for: there, those are told
+/// and only blocking where a thread must not, or a nested read, fails.
+fn rules_kept(report: &mut Report, violated: Vec<(PathBuf, serde_json::Value)>) {
+    let mut broken = Vec::new();
+    for (dir, places) in &violated {
+        for place in places.as_array().into_iter().flatten() {
+            let told = format!("{}: {} {} x{}", dir.display(), place["kind"], place["place"], place["count"]);
+            let timed = !matches!(place["kind"].as_str(), Some("blocking" | "nested-read"));
+            if timed && cfg!(debug_assertions) {
+                report.note(format!("in a development build: {told}"));
+            } else {
+                broken.push(told);
+            }
+        }
+    }
+    report.check(broken.is_empty(), "this release's hubs broke none of the threads' rules", broken.join("; "));
 }
 
 /// Removes a finished scenario's directory. A link stopped in it can still

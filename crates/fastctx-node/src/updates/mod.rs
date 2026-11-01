@@ -610,6 +610,21 @@ async fn kernel(node: &Arc<Node>, version: Option<&str>, asker: Option<Asker>) -
             state(node).offer.ok_or("no release is known here yet; look again once GitHub or the network answers")?
         }
     };
+    // A release a network withdrew is taken by no machine, however asked for
+    // (`fastctx_types::update::Policy::withdrawn`).
+    if node
+        .links()
+        .iter()
+        .any(|link| link.versions().is_some_and(|network| network.policy.withdrawn.contains(&offer.version)))
+    {
+        return Err(reject_update(
+            node,
+            &offer.version,
+            &fastctx_update::kernel::target(),
+            fastctx_types::update::FailureReason::Withdrawn,
+            format!("the network's administrator withdrew {}", offer.version),
+        ));
+    }
     if !offer.newer_than(env!("CARGO_PKG_VERSION")) {
         let why = match version {
             Some(version) => format!("this machine runs {}; {version} is not newer", env!("CARGO_PKG_VERSION")),
@@ -934,7 +949,11 @@ fn auto(node: &Arc<Node>) {
         let failed = held.attempt.failed.as_ref()?;
         let refused = matches!(
             failed.reason,
-            Some(fastctx_types::update::FailureReason::NoPackage | fastctx_types::update::FailureReason::NotNewer)
+            Some(
+                fastctx_types::update::FailureReason::NoPackage
+                    | fastctx_types::update::FailureReason::NotNewer
+                    | fastctx_types::update::FailureReason::Withdrawn
+            )
         );
         (!refused && failed.target == state.kernel_target && fastctx_types::update::release(&failed.version) > running)
             .then(|| failed.version.clone())

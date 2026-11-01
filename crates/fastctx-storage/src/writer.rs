@@ -1,25 +1,43 @@
 //! A single writer batches ready operations without delaying an idle caller.
 
-use super::{Error, Result};
+use super::{Error, ErrorKind, Result};
+use crate::{
+    integrity::Damage,
+    metrics::Metrics,
+    queue::{Admission, Queue},
+};
 use rusqlite::{Connection, TransactionBehavior};
 use std::panic::{AssertUnwindSafe, catch_unwind};
-use tokio::sync::{OwnedSemaphorePermit, mpsc};
+use std::path::PathBuf;
+use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 pub(super) type Job = Box<dyn Work>;
 pub(super) trait Work: Send {
     fn apply(&mut self, connection: &Connection) -> bool;
+    /// Why the operation failed, once applied.
+    fn failure(&self) -> Option<&Error>;
     fn finish(self: Box<Self>, commit_error: Option<Error>);
 }
 
+thread_local! {
+    static WRITER: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Whether this thread is a database's writer.
+pub(super) fn on_writer() -> bool {
+    WRITER.with(std::cell::Cell::get)
+}
+
 struct Operation<T, F, C, R> {
-    _permit: OwnedSemaphorePermit,
+    _permit: Admission,
     write: Option<F>,
     committed: C,
     reply: R,
     result: Option<Result<T>>,
 }
 
-pub(super) fn job<T, F, C, R>(permit: OwnedSemaphorePermit, write: F, committed: C, reply: R) -> Job
+pub(super) fn job<T, F, C, R>(permit: Admission, write: F, committed: C, reply: R) -> Job
 where
     T: Send + 'static,
     F: FnOnce(&Connection) -> Result<T> + Send + 'static,
@@ -46,6 +64,9 @@ where
         self.result = Some(result);
         success
     }
+    fn failure(&self) -> Option<&Error> {
+        self.result.as_ref().and_then(|result| result.as_ref().err())
+    }
     fn finish(self: Box<Self>, commit_error: Option<Error>) {
         let Self { result, committed, reply, _permit, .. } = *self;
         let result = match result {
@@ -66,32 +87,103 @@ where
     }
 }
 
-pub(super) fn run(mut connection: Connection, mut receive: mpsc::Receiver<Job>) {
-    while let Some(first) = receive.blocking_recv() {
-        let mut batch = vec![first];
-        while batch.len() < 256 {
-            match receive.try_recv() {
-                Ok(job) => batch.push(job),
-                Err(_) => break,
+pub(super) fn run(
+    mut connection: Connection,
+    queue: Arc<Queue>,
+    metrics: Arc<Metrics>,
+    damage: Arc<Damage>,
+    path: PathBuf,
+) {
+    fastctx_platform::roles::set(fastctx_platform::roles::Role::Blocking);
+    WRITER.with(|writer| writer.set(true));
+    // The writer waits on the disk: one pass the disk keeps longer than a
+    // caller waits for its answer is stuck work of this process, told with
+    // the rest (`fastctx_platform::doing`).
+    let disk = format!("the disk, writing {}", path.file_name().unwrap_or_default().to_string_lossy());
+    let mut dirty = true;
+    loop {
+        let Some(first) = queue.pop(Duration::from_secs(1)) else {
+            if dirty {
+                let _disk = fastctx_platform::doing::waiting_outside(disk.clone(), super::ANSWER);
+                // A busy reader may retain a WAL snapshot. Do not wait for it:
+                // another idle pass retries the truncation.
+                let _ = connection.busy_timeout(Duration::ZERO);
+                let checkpoint =
+                    connection.query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |row| row.get::<_, i64>(0));
+                dirty = !matches!(checkpoint, Ok(0));
+                let _ = connection.busy_timeout(super::ADMISSION);
             }
+            metrics.sizes(
+                std::fs::metadata(&path).map_or(0, |m| m.len()),
+                std::fs::metadata(format!("{}-wal", path.display())).map_or(0, |m| m.len()),
+            );
+            if queue.finished() {
+                return;
+            }
+            continue;
+        };
+        let mut batch = vec![first];
+        let waiting = fastctx_platform::doing::waiting_outside(disk.clone(), super::ANSWER);
+        let result = commit(&mut connection, &queue, &metrics, &damage, &mut batch);
+        drop(waiting);
+        dirty = true;
+        if let Err(error) = &result {
+            damage.notice(error);
         }
-        let result = commit(&mut connection, &mut batch);
         for job in batch {
+            metrics.queue(-1);
             job.finish(result.as_ref().err().cloned());
         }
     }
 }
 
-fn commit(connection: &mut Connection, batch: &mut [Job]) -> Result<()> {
+fn commit(
+    connection: &mut Connection,
+    queue: &Queue,
+    metrics: &Metrics,
+    damage: &Damage,
+    batch: &mut Vec<Job>,
+) -> Result<()> {
     let mut transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
-    for job in batch {
+    let started = Instant::now();
+    loop {
+        let job = batch.last_mut().expect("a nonempty batch");
         let mut savepoint = transaction.savepoint()?;
-        if job.apply(&savepoint) {
+        let operation = Instant::now();
+        let success = job.apply(&savepoint);
+        if success {
             savepoint.commit()?;
         } else {
+            if let Some(error) = job.failure() {
+                damage.notice(error);
+            }
             savepoint.rollback()?;
         }
+        metrics.operation(operation.elapsed(), !success);
+        if batch.len() >= 32 || started.elapsed() >= Duration::from_millis(2) {
+            break;
+        }
+        match queue.pop(Duration::ZERO) {
+            Some(next) => batch.push(next),
+            None => break,
+        }
     }
-    transaction.commit()?;
-    Ok(())
+    let flush = Instant::now();
+    let result = transaction.commit();
+    metrics.commit(flush.elapsed());
+    result.map_err(|error| {
+        // A commit that failed busy or for want of space left nothing behind;
+        // any other may have reached the disk before it failed.
+        let error = Error::from(error);
+        match error.kind() {
+            ErrorKind::Busy | ErrorKind::Full => error,
+            _ => {
+                damage.notice(&error);
+                Error::with_kind(
+                    ErrorKind::OutcomeUnknown,
+                    format!("the database could not confirm its commit, which may or may not stand: {error}"),
+                )
+            }
+        }
+    })
 }

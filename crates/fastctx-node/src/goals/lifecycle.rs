@@ -10,62 +10,10 @@ use fastctx_types::goals::{Author, Retired, Retirement, Status, Stop, StopKind, 
 use fastctx_types::ipc::Failure;
 use fastctx_types::{Address, ResidentId};
 use jiff::Timestamp;
-use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::time::Duration;
 
-#[derive(Clone, Copy, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub(crate) enum HoldKind {
-    Archived,
-    Assistance,
-    UserStop,
-}
-
-#[derive(Serialize, Deserialize)]
-pub(crate) struct Hold {
-    pub base: Option<u64>,
-    pub kind: HoldKind,
-    pub at: Timestamp,
-    pub goal: String,
-    pub operation: String,
-    pub reason: String,
-}
-
-impl Hold {
-    pub(crate) fn pending(&self) -> fastctx_types::goals::Pending {
-        fastctx_types::goals::Pending {
-            action: match self.kind {
-                HoldKind::Archived => fastctx_types::goals::PendingAction::End,
-                HoldKind::Assistance | HoldKind::UserStop => fastctx_types::goals::PendingAction::Pause,
-            },
-            reason: self.reason.clone(),
-            at: self.at,
-        }
-    }
-
-    pub(crate) fn superseded(&self, view: &View) -> bool {
-        let Some(goal) = &view.goal else { return true };
-        goal.id != self.goal
-            || goal.operation == self.operation
-            || goal.status == Status::Complete
-            || goal.retired.is_some()
-            || (matches!(self.kind, HoldKind::UserStop)
-                && goal.status == Status::Paused
-                && goal.runtime.clears_stop.as_ref() == Some(&self.operation))
-            || (view.version > self.base
-                && goal.decisions.last().is_some_and(|decision| {
-                    decision.operation == goal.operation
-                        && (matches!(decision.by, Author::User { .. })
-                            || matches!((&decision.by, &goal.owner),
-                                (Author::Resident { address }, fastctx_types::goals::Owner::Conversation { address: owner }) if address == owner))
-                        && matches!(decision.kind.as_str(), "opened" | "resumed" | "paused")
-                        && (!matches!(self.kind, HoldKind::UserStop)
-                            || decision.kind == "paused"
-                            || goal.runtime.clears_stop.as_ref() == Some(&self.operation))
-                }))
-    }
-}
+pub(crate) use super::hold::{Hold, HoldKind};
 
 pub(crate) fn pending(
     node: &Node,
@@ -93,26 +41,19 @@ pub(crate) fn pending(
 /// Whether this conversation's goal still has a step to finish here: an
 /// operation not yet applied, or a hold not yet settled.
 pub(crate) fn unfinished(directory: &fastctx_types::layout::ConversationDir) -> std::io::Result<bool> {
-    Ok(directory.books().join("goal-hold.json").try_exists()? || !super::intents::pending(directory)?.is_empty())
+    super::local::prepare_hold(directory)?;
+    Ok(crate::records::read(directory, |rows| Ok(super::local::hold(rows)?.is_some()))?
+        || !super::intents::pending(directory)?.is_empty())
 }
 
-fn hold_path(node: &Node, id: &ResidentId) -> std::path::PathBuf {
-    node.world.conversation(id).books().join("goal-hold.json")
-}
-
-pub(crate) fn hold(node: &Node, id: &ResidentId) -> std::io::Result<Option<Hold>> {
-    match std::fs::read(hold_path(node, id)) {
-        Ok(bytes) => serde_json::from_slice(&bytes).map(Some).map_err(std::io::Error::other),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
-        Err(error) => Err(error),
-    }
-}
-
-pub(crate) fn clear_hold(node: &Node, id: &ResidentId) -> std::io::Result<()> {
-    match std::fs::remove_file(hold_path(node, id)) {
-        Err(error) if error.kind() != std::io::ErrorKind::NotFound => Err(error),
-        _ => Ok(()),
-    }
+pub(crate) async fn hold(node: &Arc<Node>, id: &ResidentId) -> std::io::Result<Option<Hold>> {
+    let directory = node.world.conversation(id);
+    tokio::task::spawn_blocking(move || {
+        super::local::prepare_hold(&directory)?;
+        crate::records::read(&directory, super::local::hold)
+    })
+    .await
+    .map_err(std::io::Error::other)?
 }
 
 pub(crate) fn start(node: &Arc<Node>) {
@@ -162,10 +103,14 @@ async fn reconcile(node: &Arc<Node>, id: &ResidentId) -> Result<(), Failure> {
         return Ok(());
     }
     let Some(view) = node.goals.views.lock().expect("goal views").get(id).cloned() else { return Ok(()) };
-    let mut held = hold(node, id).map_err(failure)?;
+    let mut held = hold(node, id).await.map_err(failure)?;
     let view = if let Some(held) = &held {
         let directory = node.world.conversation(id);
-        if intents::read(&directory, &held.operation).map_err(failure)?.is_some_and(|intent| intent.phase.pending()) {
+        if intents::read(&directory, &held.operation)
+            .await
+            .map_err(failure)?
+            .is_some_and(|intent| intent.phase.pending())
+        {
             super::recovery::schedule(node, Address { machine: node.machine(), resident: id.clone() });
             return Ok(());
         }
@@ -173,14 +118,21 @@ async fn reconcile(node: &Arc<Node>, id: &ResidentId) -> Result<(), Failure> {
     } else {
         view
     };
-    {
-        let _transaction = crate::resident_storage::lock();
-        held = hold(node, id).map_err(failure)?;
-        if held.as_ref().is_some_and(|held| held.superseded(&view)) {
-            clear_hold(node, id).map_err(failure)?;
-            held = None;
-        }
-    }
+    let (directory, checking) = (node.world.conversation(id), view.clone());
+    held = tokio::task::spawn_blocking(move || {
+        crate::records::write_at(&directory, fastctx_storage::Priority::Interactive, 1024, move |rows| {
+            let held = super::local::hold(rows)?;
+            if held.as_ref().is_some_and(|held| held.superseded(&checking)) {
+                super::local::clear_hold(rows)?;
+                Ok(None)
+            } else {
+                Ok(held)
+            }
+        })
+    })
+    .await
+    .map_err(failure)?
+    .map_err(failure)?;
     let Some(mut goal) = view.goal.clone() else { return Ok(()) };
     if goal.retired.is_some() {
         return Ok(());
@@ -258,6 +210,7 @@ async fn reconcile(node: &Arc<Node>, id: &ResidentId) -> Result<(), Failure> {
     );
     let directory = node.world.conversation(id);
     let intent = Intent {
+        access: None,
         operation: operation.clone(),
         resident: goal.resident.clone(),
         account: view.account.clone(),
@@ -267,28 +220,31 @@ async fn reconcile(node: &Arc<Node>, id: &ResidentId) -> Result<(), Failure> {
         at,
         phase: Phase::Prepared,
     };
-    intents::keep(&directory, &intent).map_err(failure)?;
-    fastctx_platform::ensure_private_dir(&directory.books()).map_err(failure)?;
-    {
-        let _transaction = crate::resident_storage::lock();
-        let current_hold = hold(node, id).map_err(failure)?;
-        if current_hold.as_ref().map(|hold| &hold.operation) == held.as_ref().map(|hold| &hold.operation) {
-            fastctx_platform::publish(
-                &hold_path(node, id),
-                &serde_json::to_vec(&Hold {
-                    goal: goal.id,
-                    operation: hold_operation,
-                    reason,
-                    base,
-                    at,
-                    kind: hold_kind,
-                })
-                .map_err(failure)?,
-                fastctx_platform::Permissions::Private,
-            )
-            .map_err(failure)?;
-        }
-    }
+    let expected = held.as_ref().map(|hold| hold.operation.clone());
+    let next = Hold { goal: goal.id, operation: hold_operation, reason, base, at, kind: hold_kind };
+    let saving = intent.clone();
+    let committed = intents::committed(node, &intent);
+    tokio::task::spawn_blocking(move || -> std::io::Result<()> {
+        super::local::prepare_hold(&directory)?;
+        intents::prepare(&directory)?;
+        let bytes = serde_json::to_vec(&saving)?.len() + serde_json::to_vec(&next)?.len();
+        crate::records::write_then_at(
+            &directory,
+            fastctx_storage::Priority::Interactive,
+            bytes,
+            move |rows| {
+                intents::keep_in(rows, &saving)?;
+                if super::local::hold(rows)?.as_ref().map(|hold| &hold.operation) == expected.as_ref() {
+                    super::local::put_hold(rows, &next)?;
+                }
+                Ok(())
+            },
+            committed,
+        )
+    })
+    .await
+    .map_err(failure)?
+    .map_err(failure)?;
     super::recovery::schedule(node, intent.resident.clone());
     operations::apply(node, id, &view).await?;
     let mut intent = intent;
@@ -297,12 +253,12 @@ async fn reconcile(node: &Arc<Node>, id: &ResidentId) -> Result<(), Failure> {
 
 /// Removal retains the goal's account identity until deletion has collected its account records.
 pub(crate) fn keeps_books(node: &Node, id: &ResidentId) -> Result<bool, Failure> {
-    Ok(scope::pinned(node, id)?.is_some())
+    Ok(scope::pinned_now(node, id)?.is_some())
 }
 
 /// Called inside the durable deletion transaction, with its place and management gates already held.
 pub(crate) async fn delete(node: &Arc<Node>, id: &ResidentId) -> Result<(), Failure> {
-    let Some(account) = scope::pinned(node, id)? else { return Ok(()) };
+    let Some(account) = scope::pinned(node, id).await? else { return Ok(()) };
     let resident = Address { machine: node.machine(), resident: id.clone() };
     super::past::forget(node, &account, &resident).await?;
     let current = operations::read(node, &resident, &account).await?;
@@ -314,10 +270,11 @@ pub(crate) async fn delete(node: &Arc<Node>, id: &ResidentId) -> Result<(), Fail
     }
     let operation = format!("goal-delete:{id}:{}", current.version.unwrap_or(0));
     let directory = node.world.conversation(id);
-    let mut intent = match intents::read(&directory, &operation).map_err(failure)? {
+    let mut intent = match intents::read(&directory, &operation).await.map_err(failure)? {
         Some(intent) => intent,
         None => {
             let intent = Intent {
+                access: None,
                 operation: operation.clone(),
                 input_hash: operation,
                 resident,
@@ -327,7 +284,7 @@ pub(crate) async fn delete(node: &Arc<Node>, id: &ResidentId) -> Result<(), Fail
                 at: Timestamp::now(),
                 phase: Phase::Prepared,
             };
-            intents::keep(&directory, &intent).map_err(failure)?;
+            intents::keep(node, &directory, &intent).await.map_err(failure)?;
             intent
         }
     };

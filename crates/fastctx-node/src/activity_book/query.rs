@@ -43,10 +43,15 @@ pub(crate) async fn answer_here(
     acting: Option<&Acting>,
     query: BookQuery,
 ) -> Result<BookAnswer, Failure> {
+    let preparing = node.clone();
+    tokio::task::spawn_blocking(move || super::migrate::ensure(&preparing))
+        .await
+        .map_err(|e| Failure::new(e.to_string()))?
+        .map_err(|e| Failure::new(e.to_string()))?;
     let visible = acting.map(|acting| visible(node, acting));
     let machine = node.machine();
     let answer = node
-        .database
+        .book_database
         .read(move |connection| match query {
             BookQuery::Deeds { from, to, limit } => {
                 let (deeds, more) =
@@ -100,7 +105,7 @@ fn deeds(
     let sql = format!(
         "SELECT job, began, ended, from_machine, session, agent, held, project, script, outcome, code, output,
                 went, looked, copied, deed
-         FROM book_deeds WHERE began >= ?1 AND began < ?2{} ORDER BY began DESC LIMIT {}",
+         FROM book_deeds WHERE NOT EXISTS (SELECT 1 FROM book_folding f WHERE f.deed=book_deeds.deed AND f.applied=1) AND began >= ?1 AND began < ?2{} ORDER BY began DESC LIMIT {}",
         filter(visible, 3),
         limit + 1
     );
@@ -111,24 +116,27 @@ fn deeds(
             // A row this release cannot read is left out, not the answer.
             let Ok(job) = row.get::<_, String>(0)?.parse() else { return Ok(None) };
             let key: String = row.get(15)?;
-            Ok(Some((key, Deed {
-                job,
-                began: at(row.get(1)?),
-                ended: row.get::<_, Option<i64>>(2)?.map(at),
-                from: row.get::<_, Option<String>>(3)?.and_then(|name| name.parse().ok()),
-                session: row.get(4)?,
-                agent: row.get::<_, Option<String>>(5)?.and_then(|agent| agent.parse().ok()),
-                held: row.get(6)?,
-                project: row.get::<_, Option<String>>(7)?.and_then(|town| town.parse().ok()),
-                script: row.get(8)?,
-                outcome: outcome(&row.get::<_, String>(9)?),
-                code: row.get(10)?,
-                output: row.get::<_, i64>(11)?.max(0) as u64,
-                went: row.get::<_, String>(12)?.split_whitespace().filter_map(|name| name.parse().ok()).collect(),
-                looked: row.get::<_, i64>(13)?.max(0) as u32,
-                copied: row.get::<_, i64>(14)?.max(0) as u32,
-                touched: Vec::new(),
-            })))
+            Ok(Some((
+                key,
+                Deed {
+                    job,
+                    began: at(row.get(1)?),
+                    ended: row.get::<_, Option<i64>>(2)?.map(at),
+                    from: row.get::<_, Option<String>>(3)?.and_then(|name| name.parse().ok()),
+                    session: row.get(4)?,
+                    agent: row.get::<_, Option<String>>(5)?.and_then(|agent| agent.parse().ok()),
+                    held: row.get(6)?,
+                    project: row.get::<_, Option<String>>(7)?.and_then(|town| town.parse().ok()),
+                    script: row.get(8)?,
+                    outcome: outcome(&row.get::<_, String>(9)?),
+                    code: row.get(10)?,
+                    output: row.get::<_, i64>(11)?.max(0) as u64,
+                    went: row.get::<_, String>(12)?.split_whitespace().filter_map(|name| name.parse().ok()).collect(),
+                    looked: row.get::<_, i64>(13)?.max(0) as u32,
+                    copied: row.get::<_, i64>(14)?.max(0) as u32,
+                    touched: Vec::new(),
+                },
+            )))
         })?
         .filter_map(Result::transpose)
         .collect::<Result<Vec<_>, _>>()?;
@@ -160,6 +168,11 @@ fn deeds(
             by_deed.entry(key).or_default().push(touched);
         }
         for (key, deed) in &mut deeds {
+            deed.went = connection
+                .prepare_cached("SELECT machine FROM book_visits WHERE deed=?1 ORDER BY machine")?
+                .query_map([key.as_str()], |row| row.get::<_, String>(0))?
+                .filter_map(|value| value.map(|value| value.parse().ok()).transpose())
+                .collect::<Result<Vec<_>, _>>()?;
             deed.touched = by_deed.remove(key.as_str()).unwrap_or_default();
         }
     }
@@ -179,7 +192,7 @@ fn hours(
                 SUM(CASE WHEN outcome IN ('failed', 'lost') THEN 1 ELSE 0 END),
                 SUM(MAX(COALESCE(ended, began) - began, 0)),
                 SUM((SELECT COUNT(*) FROM book_touches WHERE book_touches.deed = book_deeds.deed))
-         FROM book_deeds WHERE began >= ?1 AND began < ?2{accounts}
+         FROM book_deeds WHERE NOT EXISTS (SELECT 1 FROM book_folding f WHERE f.deed=book_deeds.deed AND f.applied=1) AND began >= ?1 AND began < ?2{accounts}
          GROUP BY 1, 2, 3, 4
          UNION ALL
          SELECT at, session, agent, held, SUM(runs), SUM(failed), SUM(busy), SUM(files)

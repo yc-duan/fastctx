@@ -3,15 +3,18 @@
 //! machines, then updated in place, and an earlier node on this release's
 //! hub.
 
+use std::collections::BTreeSet;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Stdio};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
+use fastctx_net::wire::Change;
 use fastctx_types::MachineName;
 use fastctx_types::access::Purpose;
 use fastctx_types::remote::{RemoteCall, RemoteReply};
+use fastctx_types::trouble::TroubleKind;
 use fastctx_types::update::UpdateCall;
 
 use crate::letters::{self, arrived, send};
@@ -27,6 +30,9 @@ use crate::world::{Said, World, earlier, until, with_password};
 /// them, and every one comes once.
 pub async fn earlier_hub(world: &World, report: &mut Report) -> anyhow::Result<()> {
     let (alpha, beta) = (world.machine("alpha"), world.machine("beta"));
+    // An earlier hub says nothing of taking health: this release's machines
+    // send none with their heartbeats.
+    report.check(!alpha.link().view().health, "this release's machines found the earlier hub takes no health", "");
     beta.lab.stall(true);
     let gave_up = give_up(world, "alpha", "beta", 3).await?;
     let link = alpha.link();
@@ -90,6 +96,12 @@ pub async fn earlier_hub(world: &World, report: &mut Report) -> anyhow::Result<(
         "this release's hub served the earlier one's directory, alpha and beta connected",
         serving.map_or("not within 60 s".to_string(), seconds),
     );
+    let healthy = until(Duration::from_secs(30), || alpha.link().view().health).await;
+    report.check(
+        healthy.is_some(),
+        "and alpha found this one takes health",
+        healthy.map_or("not within 30 s".to_string(), seconds),
+    );
     let moved = !world.hub.dir.join("outbox").exists() && world.hub.dir.join("outboxes").exists();
     report.check(moved, "and kept the letters waiting where this release keeps them", "");
     let mut after = send(world, &["alpha", "beta"], "gamma", "updated-after", 300);
@@ -144,9 +156,65 @@ pub async fn earlier_node(world: &World, program: &Path, report: &mut Report) ->
         _ => None,
     };
     report.check(
-        version.as_deref() == Some(crate::EXPECTED_EARLIER),
+        version.as_deref() == Some(crate::expected_earlier()),
         "it answered a call from this release, saying its own release",
         format!("{:?}", version.unwrap_or_else(|| format!("{facts:?}"))),
+    );
+
+    // A version going out in batches and one withdrawn reach every machine
+    // in the notice of the network's versions, the earlier node's too, which
+    // knows nothing of either: it reads on, on the same line.
+    let rollout = fastctx_types::update::Rollout {
+        version: "1.0.1-beta.99".into(),
+        first: BTreeSet::new(),
+        share: 50,
+        paused: false,
+        stopped: None,
+    };
+    let withdrawn = BTreeSet::from(["1.0.1-beta.12".to_string()]);
+    let set = alpha.link().manage(&world.account, Change::Rollout { rollout: Some(rollout), withdrawn }).await;
+    let told = until(Duration::from_secs(30), || {
+        alpha.link().versions().is_some_and(|network| {
+            network.policy.rollout.as_ref().is_some_and(|rollout| rollout.version == "1.0.1-beta.99")
+                && network.policy.withdrawn.contains("1.0.1-beta.12")
+                && network.rolled.is_some()
+        })
+    })
+    .await;
+    report.check(
+        set.is_ok() && told.is_some(),
+        "the hub told every machine of a rollout and a withdrawn version",
+        format!("{set:?}, told {}", told.map_or("not within 30 s".to_string(), seconds)),
+    );
+    tokio::time::sleep(Duration::from_secs(3)).await;
+    let sessions = world.hub.log().lines().filter(|line| line.contains("delta connected")).count();
+    let still = alpha.link().call(&delta, &world.account, Purpose::Look, RemoteCall::Facts).await;
+    report.check(
+        sessions == 1 && matches!(still, Ok(Ok(RemoteReply::Facts(_)))),
+        "the earlier node read on through them, on its first session, answering",
+        format!("{sessions} sessions of it, {}", if still.is_ok() { "answered" } else { "no answer" }),
+    );
+
+    // It sends no health with its heartbeats: this release's hub knows no
+    // strain of it and raises none of the troubles health would show.
+    let view = alpha.link().view();
+    let strain = view.member(&delta).and_then(|member| member.strain);
+    let raised: Vec<_> = view
+        .troubles
+        .iter()
+        .filter(|trouble| trouble.machine.as_ref() == Some(&delta))
+        .filter(|trouble| {
+            matches!(
+                trouble.kind,
+                TroubleKind::Stuck | TroubleKind::Violations | TroubleKind::Near | TroubleKind::Damaged
+            )
+        })
+        .map(|trouble| format!("{:?}", trouble.kind))
+        .collect();
+    report.check(
+        strain.is_none() && raised.is_empty(),
+        "the hub knows no strain of it, and raises no trouble health would show",
+        format!("strain {strain:?}, troubles {raised:?}"),
     );
 
     let numbered_before = next_for(world, "delta").unwrap_or(0);

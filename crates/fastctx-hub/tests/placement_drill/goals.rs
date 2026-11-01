@@ -76,12 +76,18 @@ pub(super) async fn exercise(
         material.join("world-facts.json").is_file(),
         json!(material),
     );
+    // A host that keeps its review records in its database has no folder of
+    // them at all.
     let original = host.join("world/conversations").join(id.as_str()).join("books/goal-reviews");
-    let leaked = std::fs::read_dir(original)?.filter_map(Result::ok).any(|entry| {
-        entry.path().join("full-materials.json").exists()
-            || entry.path().join("world-facts.json").exists()
-            || entry.path().join("previous-judgments.json").exists()
-    });
+    let leaked = match std::fs::read_dir(original) {
+        Ok(entries) => entries.filter_map(Result::ok).any(|entry| {
+            entry.path().join("full-materials.json").exists()
+                || entry.path().join("world-facts.json").exists()
+                || entry.path().join("previous-judgments.json").exists()
+        }),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => false,
+        Err(error) => return Err(error.into()),
+    };
     record("the assisting host keeps no extra complete goal-material files", !leaked, json!(null));
     Ok(())
 }

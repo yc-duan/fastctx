@@ -52,11 +52,9 @@ pub(crate) async fn observe(node: &Arc<Node>, id: &ResidentId) -> Result<(), Fai
     let result = tokio::task::spawn_blocking(move || -> io::Result<Observer> {
         let directory = node_read.world.conversation(&id_read);
         let observed_path = directory.path().join("codex-context-observed.json");
-        let previous: Option<Observed> = match std::fs::read(&observed_path) {
-            Ok(bytes) => Some(serde_json::from_slice(&bytes).map_err(io::Error::other)?),
-            Err(error) if error.kind() == io::ErrorKind::NotFound => None,
-            Err(error) => return Err(error),
-        };
+        crate::records::legacy::single::<Observed>(&directory, "native-context", &observed_path)?;
+        let previous: Option<Observed> =
+            crate::records::read(&directory, |rows| rows.get("native-context", "current"))?;
         let path_changed = observer.as_ref().is_some_and(|observer| observer.path != path);
         let mut observer = observer.filter(|observer| observer.path == path).unwrap_or_else(|| Observer {
             path: path.clone(),
@@ -80,22 +78,20 @@ pub(crate) async fn observe(node: &Arc<Node>, id: &ResidentId) -> Result<(), Fai
         })?;
         let changed = rewritten
             || previous.as_ref().is_some_and(|previous| previous.path != path || previous.last != observer.last)
-            || (previous.is_none() && directory.path().join("context-state.json").try_exists()?);
+            || (previous.is_none() && crate::context::initialized(&node_read, &id_read)?);
         let mut revision = previous.as_ref().map_or(0, |previous| previous.revision);
         if changed {
             revision =
                 revision.checked_add(1).ok_or_else(|| io::Error::other(crate::context::words::REVISION_EXHAUSTED))?;
-            crate::context::compacted(&node_read, &id_read, &format!("native:{revision}"))?;
-            node_read.residents.restore_opening_heard(&id_read);
         }
         if previous.is_none() || changed {
-            let _transaction = crate::resident_storage::lock();
             node_read.residents.active(&id_read).map_err(|error| io::Error::other(error.message))?;
-            fastctx_platform::publish(
-                &observed_path,
-                &serde_json::to_vec(&Observed { path: path.clone(), last: observer.last.clone(), revision })
-                    .map_err(io::Error::other)?,
-                fastctx_platform::Permissions::Private,
+            let observed = Observed { path: path.clone(), last: observer.last.clone(), revision };
+            crate::context::native_observed(
+                &node_read,
+                &id_read,
+                serde_json::to_value(&observed)?,
+                changed.then(|| format!("native:{revision}")),
             )?;
         }
         Ok(observer)

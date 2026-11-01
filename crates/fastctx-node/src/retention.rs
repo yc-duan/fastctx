@@ -12,7 +12,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use fastctx_hands::run::{program, record};
-use fastctx_platform::{Permissions, publish_new};
+use fastctx_platform::Permissions;
 use fastctx_types::run::JobDelivery;
 use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
@@ -55,7 +55,13 @@ pub(crate) fn set_days(world: &fastctx_types::layout::WorldDir, days: u32) -> io
 pub(crate) fn start(node: &Arc<Node>) -> io::Result<()> {
     crate::claude::claim_cleanup::start(node);
     let settings = node.world.retention();
-    create(&settings, &Settings::default())?;
+    // The settings are the world's own file, not a job's: an existing one is
+    // the user's and stays.
+    let defaults = serde_json::to_vec(&Settings::default()).map_err(io::Error::other)?;
+    match fastctx_platform::publish_new(&settings, &defaults, Permissions::Private) {
+        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
+        result => result?,
+    }
     let weak = Arc::downgrade(node);
     let settings_changed = Arc::new(tokio::sync::Notify::new());
     let changed = settings_changed.clone();
@@ -118,9 +124,30 @@ pub(crate) fn start(node: &Arc<Node>) -> io::Result<()> {
             }
             let retiring = node.clone();
             match tokio::task::spawn_blocking(move || {
+                let payloads = crate::record_payloads::maintain(&retiring.database, |scope, error| {
+                    retiring.log.line(format_args!("collecting conversation {scope} projections: {error}"))
+                })
+                .map_err(io::Error::other);
+                let maps = crate::records::maps::maintain(&retiring.database, |scope, error| {
+                    retiring.log.line(format_args!("collecting conversation {scope} map snapshots: {error}"))
+                })
+                .map_err(io::Error::other);
+                let requests = crate::claude::turn_facts::collect(&retiring.database, |scope, error| {
+                    retiring.log.line(format_args!("collecting conversation {scope} request observations: {error}"))
+                })
+                .map_err(io::Error::other);
+                let terminals = crate::delivery::terminals::collect(&retiring.database, |scope, error| {
+                    retiring.log.line(format_args!("collecting conversation {scope} staged terminal readers: {error}"))
+                })
+                .map_err(io::Error::other);
                 let _collecting = retiring.disk.lock();
                 // Each step is told on its own when it fails.
                 [
+                    ("collecting conversation projections", payloads),
+                    ("collecting conversation maps", maps),
+                    ("collecting staged terminal readers", terminals),
+                    ("collecting settled request observations", requests),
+                    ("collecting closed input memberships", crate::inbox::presence::collect(&retiring.database)),
                     ("retiring the bookkeeping of removed conversations", crate::books::retire(&retiring)),
                     ("collecting what Claude sessions left", crate::claude::garbage::collect(&retiring.world)),
                     (
@@ -177,7 +204,7 @@ fn collect_immediate(node: &Arc<Node>) -> io::Result<()> {
             node.disk_due.lock().expect("never poisoned").insert(path);
             continue;
         }
-        let collected = if path.with_extension("delivered").try_exists()? {
+        let collected = if crate::job_metadata::exists(&path.with_extension("delivered"))? {
             crate::job_watch::collect(node, &path)
         } else {
             Ok(())
@@ -252,7 +279,7 @@ fn collect_records(
                     continue;
                 }
                 let marker = path.with_extension("delivered");
-                let delivery = match fs::read(&marker) {
+                let delivery = match crate::job_metadata::read(&marker) {
                     Ok(bytes) => serde_json::from_slice::<JobDelivery>(&bytes).map_err(io::Error::other)?,
                     Err(error) if error.kind() == io::ErrorKind::NotFound => {
                         let Some(delivery) = legacy_delivery(world, &path, &job)? else {
@@ -269,7 +296,7 @@ fn collect_records(
                                     if job.end.is_none()
                                         || program::in_use(&job)?
                                         || !unfollowed(&path)
-                                        || path.with_extension("owed").try_exists()?
+                                        || crate::job_metadata::exists(&path.with_extension("owed"))?
                                         || !expired(now, delivery.at, lifetime)
                                         || !forget(&path)?
                                     {
@@ -293,7 +320,7 @@ fn collect_records(
                 if job.end.is_none()
                     || program::in_use(&job)?
                     || !unfollowed(&path)
-                    || path.with_extension("owed").try_exists()?
+                    || crate::job_metadata::exists(&path.with_extension("owed"))?
                 {
                     pending = true;
                     continue;
@@ -373,8 +400,8 @@ fn legacy_delivery(
 ) -> io::Result<Option<JobDelivery>> {
     let Some(owner) = job.owner.resident() else { return Ok(None) };
     if job.on.is_some()
-        || path.with_extension("wait-taken").try_exists()?
-        || path.with_extension("copied").try_exists()?
+        || crate::job_metadata::exists(&path.with_extension("wait-taken"))?
+        || crate::job_metadata::exists(&path.with_extension("copied"))?
     {
         return Ok(None);
     }
@@ -389,8 +416,7 @@ fn legacy_delivery(
     {
         return Ok(None);
     }
-    let Some(notice) =
-        fastctx_install::renewal::read_json::<fastctx_types::residents::Notice>(&path.with_extension("notice"))?
+    let Some(notice) = crate::job_metadata::get::<fastctx_types::residents::Notice>(&path.with_extension("notice"))?
     else {
         return Ok(None);
     };
@@ -399,19 +425,7 @@ fn legacy_delivery(
         return Ok(None);
     }
     let id = crate::inbox::end_id(owner, &job.machine, &job.id, job.on.as_ref().and_then(|on| on.request.as_ref()));
-    let receipt = world.conversation(&owner.resident).delivery_receipts().join(id.as_str());
-    let metadata = match fs::symlink_metadata(&receipt) {
-        Ok(metadata) => metadata,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
-        Err(error) => return Err(error),
-    };
-    if !metadata.is_file() || fastctx_platform::owned_directory::is_link(&metadata) {
-        return Err(io::Error::other("unexpected legacy delivery receipt"));
-    }
-    if !fs::read(&receipt)?.is_empty() {
-        return Ok(None);
-    }
-    let at = Timestamp::try_from(metadata.modified()?).map_err(io::Error::other)?;
+    let Some(at) = crate::inbox::heard_at(&world.conversation(&owner.resident), &id)? else { return Ok(None) };
     Ok(Some(JobDelivery { job: job.id.clone(), output: job.output.clone(), at, shown_whole: false }))
 }
 
@@ -441,8 +455,9 @@ fn collect_out(path: &Path, delivered: Timestamp) -> io::Result<()> {
     Ok(())
 }
 
+/// Writes a job's marker `path` unless it is there already.
 fn create(path: &Path, value: &impl Serialize) -> io::Result<()> {
-    match publish_new(path, &serde_json::to_vec(value).map_err(io::Error::other)?, Permissions::Private) {
+    match crate::job_metadata::create(path, &serde_json::to_vec(value).map_err(io::Error::other)?) {
         Err(error) if error.kind() == io::ErrorKind::AlreadyExists => Ok(()),
         result => result,
     }

@@ -37,6 +37,9 @@ pub enum RemoteCall {
     Plan {
         resident: ResidentId,
         operation: crate::plan::Operation,
+        /// Another conversation's plan to read; the resident's own when absent.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        of: Option<crate::plan::Of>,
     },
     Collaboration {
         resident: ResidentId,
@@ -598,6 +601,13 @@ impl RemoteCall {
             Self::EnterProject { .. } | Self::Plan { .. } => Purpose::Echo,
             Self::SentinelSettings { .. } | Self::SentinelControl { .. } | Self::SentinelKeys => Purpose::Look,
             Self::SentinelKey { .. } => Purpose::Hands,
+            Self::SentinelHome { request: crate::sentinel_control::HomeRequest::Conversation { request, .. } } => {
+                if matches!(request.as_ref(), crate::sentinel_control::HomeRequest::Withdraw { .. }) {
+                    Purpose::Hands
+                } else {
+                    Purpose::Look
+                }
+            }
             Self::SentinelHome {
                 request:
                     crate::sentinel_control::HomeRequest::Inspect { .. }

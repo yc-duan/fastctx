@@ -12,6 +12,20 @@ use crate::files::content_hash;
 use fastctx_types::files::{SeenFile, SeenFiles, SeenVersion};
 use parser::Hunk;
 
+pub(super) fn paths(input: &str) -> Result<Vec<std::path::PathBuf>, String> {
+    let mut paths = Vec::new();
+    for hunk in parser::parse_patch(input).map_err(|error| error.to_string())? {
+        match hunk {
+            Hunk::AddFile { path, .. } | Hunk::DeleteFile { path } => paths.push(path),
+            Hunk::UpdateFile { path, move_path, .. } => {
+                paths.push(path);
+                paths.extend(move_path);
+            }
+        }
+    }
+    Ok(paths)
+}
+
 pub(super) fn apply_patch(
     writer: &Writer,
     request: ApplyPatchRequest,

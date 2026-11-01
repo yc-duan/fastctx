@@ -53,7 +53,7 @@ impl Deliveries {
 }
 
 #[tauri::command]
-pub(crate) fn watch_delivery_read(
+pub(crate) async fn watch_delivery_read(
     shell: tauri::State<'_, crate::Shell>,
     id: u64,
     through: u64,

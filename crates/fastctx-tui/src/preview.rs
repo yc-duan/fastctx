@@ -61,6 +61,7 @@ fn resident(
     here_for: i64,
 ) -> ResidentNow {
     ResidentNow {
+        opened_by: None,
         source: None,
         about: About {
             side: false,

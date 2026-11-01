@@ -5,8 +5,8 @@ import type { Address } from "../world/events";
 import type { AgentSection, AgentTab } from "./profile-words";
 
 /** The features a World can turn on (`world-gui.md`, 功能). */
-export type Feature = "conversations" | "collaboration" | "memory" | "sentinels";
-const features: Feature[] = ["conversations", "collaboration", "memory", "sentinels"];
+export type Feature = "conversations" | "collaboration" | "sentinels";
+const features: Feature[] = ["conversations", "collaboration", "sentinels"];
 const sections: AgentSection[] = ["claude", "codex", "prompt", "skills", "mcp"];
 
 export type Place =
@@ -19,13 +19,15 @@ export type Place =
   /** Beginning a conversation, in a project or outside any. */
   | { kind: "new"; town: string | null }
   | { kind: "project"; town: string }
-  /** One of a project's journals or decisions. */
-  | { kind: "memory"; town: string; name: string }
+  /** One document of a project's history (`world-history.md`). */
+  | { kind: "history"; town: string; name: string }
+  /** One document of the history of a conversation outside any project. */
+  | { kind: "talk-history"; address: Address; name: string }
   /** A page of a project: a version of it, or the current one. */
   | { kind: "page"; town: string; page: string; version: number | null }
   /** The drawing of the machines, with one chosen when `focus` names it;
    *  or their update view, with that one ticked. */
-  | { kind: "machines"; focus?: string; updates?: boolean }
+  | { kind: "machines"; focus?: string; updates?: boolean; alerts?: boolean }
   /** Every project of the user's accounts, managed as a whole. */
   | { kind: "projects" }
   /** A machine's own page: how it is doing, and what is done to it. */
@@ -81,14 +83,17 @@ export function link(place: Place): string {
       return place.town === null ? "#/new" : `#/new/${part(place.town)}`;
     case "project":
       return `#/project/${part(place.town)}`;
-    case "memory":
-      return `#/memory/${part(place.town)}/${part(place.name)}`;
+    case "history":
+      return `#/history/${part(place.town)}/${part(place.name)}`;
+    case "talk-history":
+      return `#/talk-history/${part(`${place.address.resident}@${place.address.machine}`)}/${part(place.name)}`;
     case "page":
       return `#/page/${part(place.town)}/${part(place.page)}${place.version === null ? "" : `/${place.version}`}`;
     case "projects":
       return "#/projects";
     case "machines":
       if (place.updates) return place.focus ? `#/updates/${part(place.focus)}` : "#/updates";
+      if (place.alerts) return "#/alerts";
       return place.focus ? `#/machines/${part(place.focus)}` : "#/machines";
     case "machine":
       return `#/machine/${part(place.name)}`;
@@ -140,9 +145,14 @@ export function placeOf(hash: string): Place {
     case "project":
       if (parts[1]) return { kind: "project", town: parts[1] };
       break;
-    case "memory":
-      if (parts[1] && parts[2]) return { kind: "memory", town: parts[1], name: parts[2] };
+    case "history":
+      if (parts[1] && parts[2]) return { kind: "history", town: parts[1], name: parts[2] };
       break;
+    case "talk-history": {
+      const at = parts[1]?.lastIndexOf("@") ?? -1;
+      if (parts[1] && parts[2] && at > 0) return { kind: "talk-history", address: { resident: parts[1].slice(0, at), machine: parts[1].slice(at + 1) }, name: parts[2] };
+      break;
+    }
     case "page":
       if (parts[1] && parts[2]) {
         const version = parts[3] ? Number(parts[3]) : null;
@@ -155,6 +165,8 @@ export function placeOf(hash: string): Place {
       return parts[1] ? { kind: "machines", focus: parts[1] } : { kind: "machines" };
     case "updates":
       return parts[1] ? { kind: "machines", focus: parts[1], updates: true } : { kind: "machines", updates: true };
+    case "alerts":
+      return { kind: "machines", alerts: true };
     case "machine":
       if (parts[1]) return { kind: "machine", name: parts[1] };
       break;

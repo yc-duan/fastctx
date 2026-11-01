@@ -12,7 +12,6 @@ use fastctx_types::{Address, MachineName, ResidentId};
 use jiff::Timestamp;
 use std::collections::BTreeMap;
 use std::io;
-use std::path::Path;
 use std::pin::Pin;
 use std::sync::Arc;
 
@@ -105,7 +104,11 @@ pub(crate) async fn collect(
 ) -> Result<Vec<WaitHandle>, Failure> {
     let (about, _) = node.residents.about(resident).ok_or_else(|| Failure::new("unknown conversation"))?;
     let owner = Address { machine: node.machine(), resident: resident.clone() };
-    let mut result = jobs_here(node, &owner, None).map_err(failure)?;
+    let (reading, job_owner) = (node.clone(), owner.clone());
+    let mut result = tokio::task::spawn_blocking(move || jobs_here(&reading, &job_owner, None))
+        .await
+        .map_err(|e| Failure::new(e.to_string()))?
+        .map_err(failure)?;
     let mut colleagues = BTreeMap::<Address, Timestamp>::new();
     let mut machines = BTreeMap::<MachineName, Option<Timestamp>>::new();
     for action in actions {
@@ -115,20 +118,14 @@ pub(crate) async fn collect(
             colleagues.entry(Address { machine: action.machine.clone(), resident: id }).or_insert(action.at);
         }
     }
-    let unfinished = |state: &fastctx_types::run::RunState| {
-        matches!(
-            state,
-            fastctx_types::run::RunState::Running | fastctx_types::run::RunState::Exited { remaining: 1.., .. }
-        )
-    };
-    for call in crate::run_facts::evidence_all(&node.world.conversation(resident)).map_err(failure)? {
-        if !node.is_me(&call.facts.machine) && unfinished(&call.facts.state) {
-            machines.entry(call.facts.machine).or_insert(None);
-        }
-    }
-    for update in crate::run_facts::job_updates(&node.world.conversation(resident)).map_err(failure)? {
-        if !node.is_me(&update.machine) && update.state.as_ref().is_some_and(unfinished) {
-            machines.entry(update.machine).or_insert(update.started_at);
+    let directory = node.world.conversation(resident);
+    let unfinished = tokio::task::spawn_blocking(move || crate::run_facts::pending_machines(&directory))
+        .await
+        .map_err(|e| Failure::new(e.to_string()))?
+        .map_err(failure)?;
+    for (machine, started) in unfinished {
+        if !node.is_me(&machine) {
+            machines.entry(machine).or_insert(started);
         }
     }
     // A single-on run may not have returned its action yet. Its durable remote receipt also identifies the executor.
@@ -147,19 +144,28 @@ pub(crate) async fn collect(
         Err(error) if error.kind() == io::ErrorKind::NotFound => {}
         Err(error) => return Err(failure(error)),
     }
-    let received =
-        Arc::new(if colleagues.is_empty() { Vec::new() } else { crate::goals::waiting::received(node, resident)? });
+    let received = Arc::new(if colleagues.is_empty() {
+        BTreeMap::new()
+    } else {
+        crate::goals::waiting::pending_reports(node, resident).await?
+    });
     let mut queries = tokio::task::JoinSet::new();
     for (colleague, since) in colleagues {
         let (node, acting, owner, received) = (node.clone(), about.acting.clone(), owner.clone(), received.clone());
+        let requester = resident.clone();
         queries.spawn(async move {
             match super::debts::read(&node, &acting, &colleague, &owner).await {
                 Ok(debt) => {
                     let mut handles = Vec::new();
-                    if let Some(goal) = &debt.goal
-                        && let Some(handle) = crate::goals::waiting::handle(&node, &colleague, goal, &received)
-                    {
-                        handles.push(handle);
+                    if let Some(goal) = &debt.goal {
+                        let mut reports = Vec::new();
+                        if let Some(expected) = &goal.report {
+                            reports.extend(received.get(expected).into_iter().flatten().cloned());
+                            reports.extend(crate::goals::waiting::report(&node, &requester, expected).await?);
+                        }
+                        if let Some(handle) = crate::goals::waiting::handle(&node, &colleague, goal, &reports) {
+                            handles.push(handle);
+                        }
                     }
                     if debt.since().is_some() {
                         handles.push(WaitHandle {
@@ -185,15 +191,15 @@ pub(crate) async fn collect(
                             output_growth: None,
                         });
                     }
-                    handles
+                    Ok::<_, Failure>(handles)
                 }
-                Err(error) => vec![unknown(
+                Err(error) => Ok(vec![unknown(
                     colleague.resident.to_string(),
                     WaitKind::Colleague,
                     colleague.machine,
                     Some(since),
                     error.message,
-                )],
+                )]),
             }
         });
     }
@@ -219,15 +225,19 @@ pub(crate) async fn collect(
                 }
             }
             .await;
-            read.unwrap_or_else(|error| {
+            Ok(read.unwrap_or_else(|error| {
                 vec![unknown(format!("jobs@{machine}"), WaitKind::Job, machine, since, error.message)]
-            })
+            }))
         });
     }
     while let Some(query) = queries.join_next().await {
-        result.extend(query.map_err(|error| Failure::new(error.to_string()))?);
+        result.extend(query.map_err(|error| Failure::new(error.to_string()))??);
     }
-    for timer in crate::timers::table(node)?.list(Some(&Owner::Conversation { resident: resident.clone() })) {
+    for timer in crate::timers::table(node)?
+        .list(Some(&Owner::Conversation { resident: resident.clone() }))
+        .await
+        .map_err(|e| Failure::new(e.to_string()))?
+    {
         result.push(WaitHandle {
             id: timer.id,
             completion: Some(timer.delivery),
@@ -259,26 +269,6 @@ fn unknown(id: String, kind: WaitKind, machine: MachineName, since: Option<Times
         output: None,
         output_growth: None,
     }
-}
-
-pub(super) fn measure_growth(node: &Node, resident: &ResidentId, handles: &mut [WaitHandle]) -> io::Result<()> {
-    let path = node.world.conversation(resident).books().join("waiting-output.json");
-    let _transaction = crate::resident_storage::lock();
-    let previous: BTreeMap<String, u64> = match std::fs::read(&path) {
-        Ok(bytes) => serde_json::from_slice(&bytes)?,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => BTreeMap::new(),
-        Err(error) => return Err(error),
-    };
-    let mut next = BTreeMap::new();
-    for handle in handles {
-        if let Some(output) = &handle.output {
-            let key = format!("{}:{}", handle.machine, handle.id);
-            handle.output_growth = previous.get(&key).map(|bytes| output.bytes.saturating_sub(*bytes));
-            next.insert(key, output.bytes);
-        }
-    }
-    fastctx_platform::ensure_private_dir(path.parent().unwrap_or(Path::new(".")))?;
-    fastctx_platform::publish(&path, &serde_json::to_vec(&next)?, fastctx_platform::Permissions::Private)
 }
 
 fn failure(error: io::Error) -> Failure {

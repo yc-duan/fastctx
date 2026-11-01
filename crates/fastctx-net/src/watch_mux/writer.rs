@@ -33,7 +33,7 @@ pub async fn encode(link: Arc<Link>, packet: Packet) -> Result<Encoded, String> 
     if bytes <= QUANTUM {
         encode()
     } else {
-        tokio::task::spawn_blocking(encode).await.map_err(|e| format!("encoding the watch packet: {e}"))?
+        fastctx_platform::task::spawn_blocking(encode).await.map_err(|e| format!("encoding the watch packet: {e}"))?
     }
 }
 

@@ -148,6 +148,28 @@
   color: var(--text);
 }
 
+/* A row's second, quiet act (withdrawing a release), before its first: it
+   comes where the pointer rests on the row, and stays on a touch screen. */
+.vw-act {
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.vw-second {
+  visibility: hidden;
+}
+
+.vw-row:hover .vw-second,
+.vw-row:focus-within .vw-second {
+  visibility: visible;
+}
+
+@media (pointer: coarse) {
+  .vw-second {
+    visibility: visible;
+  }
+}
+
 .vw-none {
   color: var(--text-3);
 }

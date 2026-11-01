@@ -1,4 +1,4 @@
-//! `fastctx project`: the towns, their records and maps, and entering one
+//! `fastctx project`: the towns, their records, and entering one
 //! (`world-projects.md`).
 
 use clap::{ArgAction, Args, Subcommand};
@@ -8,7 +8,7 @@ use fastctx_types::{Call, MachineName, ProjectCall, Reply, TownName};
 
 use crate::ask;
 
-/// `show`'s help where project memory is not offered (`fastctx_platform::preview`).
+/// The project record shown by `show`.
 pub(crate) const SHOW_RECORD_HELP: &str = "A project's attributes.";
 
 /// The user's projects: list, show and enter them; open one or write
@@ -17,7 +17,7 @@ pub(crate) const SHOW_RECORD_HELP: &str = "A project's attributes.";
 pub enum ProjectCommand {
     /// The projects this machine is part of.
     List,
-    #[command(about = fastctx_types::memory::words::SHOW_HELP)]
+    #[command(about = SHOW_RECORD_HELP)]
     Show {
         /// The project; without it, the one you work in.
         #[arg(value_name = "NAME")]

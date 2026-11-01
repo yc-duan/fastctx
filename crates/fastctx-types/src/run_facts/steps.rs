@@ -300,3 +300,13 @@ pub fn merge_steps(steps: &mut Vec<RunStep>, incoming: &[RunStep]) {
         }
     }
 }
+
+/// A bounded summary of steps whose detailed rows are no longer in the hot view.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StepSummary {
+    pub machine: MachineName,
+    pub kind: String,
+    pub count: u64,
+    pub first: jiff::Timestamp,
+    pub last: jiff::Timestamp,
+}

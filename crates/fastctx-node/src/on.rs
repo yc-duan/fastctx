@@ -112,14 +112,20 @@ impl Pieces {
         Ok(())
     }
 
-    fn fact(&self, fact: &fastctx_types::run_facts::WriteFact) -> Result<(), String> {
+    async fn fact(&self, fact: &fastctx_types::run_facts::WriteFact) -> Result<(), String> {
         let (node, parent) = {
             let context = self.2.lock().expect("never poisoned");
             (context.node.clone(), context.parent.clone())
         };
         if let Some(record) = parent {
-            crate::run_facts::write(&record.with_extension("writes"), fact).map_err(|error| error.to_string())?;
-            crate::run_facts::update_job(&node, &record, vec![fact.clone()]).map_err(|error| error.to_string())?;
+            let fact = fact.clone();
+            tokio::task::spawn_blocking(move || {
+                crate::run_facts::write(&record.with_extension("writes"), &fact)?;
+                crate::run_facts::update_job(&node, &record)
+            })
+            .await
+            .map_err(|error| error.to_string())?
+            .map_err(|error| error.to_string())?;
         }
         Ok(())
     }
@@ -127,13 +133,21 @@ impl Pieces {
         if let Ok(OnPiece::Started { job, .. }) = &piece {
             self.2.lock().expect("never poisoned").job = Some(job.clone());
         }
-        if let Some(steps) = self.steps() {
-            let mut step = steps.lock().expect("never poisoned");
-            match &piece {
-                Ok(OnPiece::Started { job, .. }) => step.started(job),
-                Err(failure) => step.failed(failure),
-                Ok(_) => {}
-            }
+        let update = match &piece {
+            Ok(OnPiece::Started { job, .. }) => Some(Ok(job.clone())),
+            Err(failure) => Some(Err(failure.clone())),
+            Ok(_) => None,
+        };
+        if let (Some(steps), Some(update)) = (self.steps(), update) {
+            tokio::task::spawn_blocking(move || {
+                let mut step = steps.lock().expect("never poisoned");
+                match update {
+                    Ok(job) => step.started(&job),
+                    Err(failure) => step.failed(&failure),
+                }
+            })
+            .await
+            .map_err(|error| error.to_string())?;
         }
         self.0.send(Piece::Value(piece)).await.map_err(|_| "the on that sent it left".to_string())
     }
@@ -165,7 +179,10 @@ impl Pieces {
         // The step ends before the `on` that gave it is told, so the run
         // never ends ahead of it.
         if let Some(steps) = self.steps() {
-            steps.lock().expect("never poisoned").ended(&end);
+            let ended = end.clone();
+            tokio::task::spawn_blocking(move || steps.lock().expect("never poisoned").ended(&ended))
+                .await
+                .map_err(|error| error.to_string())?;
         }
         let (node, origin, consumed, through_exit) = {
             let context = self.2.lock().expect("never poisoned");
@@ -245,7 +262,8 @@ pub async fn send(node: &Arc<Node>, mut origin: OnOrigin, request: OnRequest) ->
         .job
         .as_ref()
         .map(|job| node.world.job_owner(&node.names(), &origin.resident.clone().into()).job_record(job));
-    let steps = if origin.sentinel.is_none() { crate::on_steps::begin(node, parent.as_ref(), &request) } else { None };
+    let steps =
+        if origin.sentinel.is_none() { crate::on_steps::begin(node, parent.as_ref(), &request).await } else { None };
     let context = ReceiptContext {
         scratch_hub: None,
         node: node.clone(),
@@ -393,8 +411,10 @@ async fn there(
     let machine = request.machine.clone();
     let written = request.written();
     let acting = acting(node, origin);
-    let (link, account) =
-        node.speaking(&acting, &written, Purpose::Hands).await.map_err(|failure| Failure::not_run(failure.to_string()))?;
+    let (link, account) = node
+        .speaking(&acting, &written, Purpose::Hands)
+        .await
+        .map_err(|failure| Failure::not_run(failure.to_string()))?;
     // Recorded here under its project; there, under it only on its hub.
     let local_origin = origin;
     let origin = &OnOrigin { town: node.town_across(&link, origin.town.as_ref())?, ..origin.clone() };
@@ -645,7 +665,7 @@ fn feed(
                     () = pieces.closed() => return Err("the on that sent it left".to_string()),
                 };
                 match word {
-                    OnWord::WriteFact { fact } => pieces.fact(&fact)?,
+                    OnWord::WriteFact { fact } => pieces.fact(&fact).await?,
                     OnWord::Refused { failure } => {
                         followed.lock().expect("never poisoned").refused = Some(failure);
                         return stream.say(&TAKEN).await;
@@ -786,26 +806,10 @@ async fn requested(node: &Arc<Node>, origin: &OnOrigin, request: &OnRequest) -> 
         result: String::new(),
     };
     let (world, origin) = (node.world.clone(), origin.clone());
-    tokio::task::spawn_blocking(move || {
-        let directory = world.conversation(&origin.resident.resident);
-        let _transaction = crate::resident_storage::lock();
-        let mut bytes = match std::fs::read(directory.actions()) {
-            Ok(bytes) => bytes,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Vec::new(),
-            Err(error) => return Err(error),
-        };
-        // A prior append may have failed mid-line. Preserve that fragment,
-        // but do not let it swallow the durable action for this request.
-        if !bytes.is_empty() && !bytes.ends_with(b"\n") {
-            bytes.push(b'\n');
-        }
-        bytes.extend(serde_json::to_vec(&action).map_err(std::io::Error::other)?);
-        bytes.push(b'\n');
-        fastctx_platform::publish(&directory.actions(), &bytes, fastctx_platform::Permissions::Private)
-    })
-    .await
-    .map_err(|error| Failure::not_run(format!("recording the request before sending it: {error}")))?
-    .map_err(|error| Failure::not_run(format!("recording the request before sending it: {error}")))
+    tokio::task::spawn_blocking(move || crate::residents::record_action(&world, &origin.resident.resident, &action))
+        .await
+        .map_err(|error| Failure::not_run(format!("recording the request before sending it: {error}")))?
+        .map_err(|error| Failure::not_run(format!("recording the request before sending it: {error}")))
 }
 
 async fn noted(node: &Arc<Node>, origin: &OnOrigin, request: &OnRequest, job: &JobId) -> Result<(), Failure> {
@@ -830,18 +834,13 @@ async fn noted(node: &Arc<Node>, origin: &OnOrigin, request: &OnRequest, job: &J
         if let Some(parent) = &request.job {
             let directory = world.job_owner(&here, &owner);
             let line = format!("{} {job}\n", request.machine);
-            append(&directory.jobs().join(format!("{parent}.on")), line.as_bytes())?;
+            crate::run_facts::record_visit(&directory.jobs().join(format!("{parent}.on")), line.as_bytes())?;
         }
         Ok(())
     })
     .await
     .map_err(|error| Failure::new(format!("recording the started job: {error}")))?
     .map_err(|error| Failure::new(format!("recording the started job: {error}")))
-}
-
-fn append(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
-    use std::io::Write as _;
-    std::fs::OpenOptions::new().create(true).append(true).open(path)?.write_all(bytes)
 }
 
 // The receiving side.
@@ -1001,10 +1000,7 @@ async fn take_output(node: &Arc<Node>, producer: &OnOrigin, source: &OnSource, p
             if through(&record).is_some() {
                 break record;
             }
-            tokio::select! {
-                _ = changes.recv() => {}
-                () = tokio::time::sleep(LOOK_AGAIN) => {}
-            }
+            crate::jobs::changed_or(&mut changes, &source.job, crate::jobs::BACKSTOP).await;
         };
         let through = record.output_drained.filter(|_| record.end.is_none()).map(|boundary| boundary.stdout);
         let (from, to) = (PathBuf::from(&record.output), path.to_path_buf());
@@ -1098,11 +1094,11 @@ async fn piped_record(record_path: &Path, origin: &OnOrigin) -> Result<(), Failu
 /// output is there now (`world-run.md`, 输出).
 fn piped_taken(node: &Arc<Node>, record_path: &Path) {
     let marker = record_path.with_extension("on-piped");
-    if let Err(error) = fastctx_platform::publish(&marker, b"", fastctx_platform::Permissions::Private) {
+    if let Err(error) = crate::job_metadata::put_raw(&marker, b"") {
         node.log.line(format_args!("noting that {} went on: {error}", record_path.display()));
         return;
     }
-    if record_path.with_extension("on-taken").exists() {
+    if crate::job_metadata::exists(&record_path.with_extension("on-taken")).unwrap_or(false) {
         crate::job_watch::copied(node, record_path);
     }
 }
@@ -1373,7 +1369,8 @@ impl Follower {
                     at: jiff::Timestamp::now(),
                     shown_whole: true,
                 };
-                fastctx_agent::state::save(&self.path.with_extension("delivered"), &receipt).map_err(Failure::new)?;
+                crate::job_metadata::put(&self.path.with_extension("delivered"), &receipt)
+                    .map_err(|e| Failure::new(e.to_string()))?;
                 self.node.disk_due.lock().expect("never poisoned").insert(self.path.clone());
                 self.node.disk_changed.notify_one();
             }
@@ -1382,12 +1379,8 @@ impl Follower {
         // A shell's background children still owe their eventual end,
         // even if they finished while the shell's receipt was in flight.
         if matches!(handed, Ok(Handed { taken: true, complete: true })) {
-            fastctx_platform::publish(
-                &self.path.with_extension("on-taken"),
-                b"",
-                fastctx_platform::Permissions::Private,
-            )
-            .map_err(|error| Failure::new(format!("keeping the completion receipt: {error}")))?;
+            crate::job_metadata::put_raw(&self.path.with_extension("on-taken"), b"")
+                .map_err(|error| Failure::new(format!("keeping the completion receipt: {error}")))?;
         }
         Ok(())
     }
@@ -1431,7 +1424,7 @@ impl Sink<'_> {
         for fact in facts {
             match self {
                 Sink::Stream(stream) => stream.say(&OnWord::WriteFact { fact: Box::new(fact) }).await?,
-                Sink::Local(pieces) => pieces.fact(&fact)?,
+                Sink::Local(pieces) => pieces.fact(&fact).await?,
             }
         }
         Ok(())
@@ -1530,10 +1523,20 @@ async fn hand_over(
             known_scratch = scratch;
         }
         if !record.is_sentinel() {
-            sink.facts(
-                crate::run_facts::read_since(record_path, &mut facts_cursor).map_err(|error| error.to_string())?,
-            )
-            .await?;
+            loop {
+                let (path, mut position) = (record_path.to_path_buf(), facts_cursor);
+                let (facts, next) = tokio::task::spawn_blocking(move || {
+                    crate::run_facts::read_since(&path, &mut position).map(|facts| (facts, position))
+                })
+                .await
+                .map_err(|error| error.to_string())?
+                .map_err(|error| error.to_string())?;
+                facts_cursor = next;
+                if facts.is_empty() {
+                    break;
+                }
+                sink.facts(facts).await?;
+            }
         }
         let errors = record.stderr.clone();
         let boundary = record.output_drained.filter(|_| record.end.is_none() && through(&record).is_some());

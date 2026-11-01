@@ -375,7 +375,7 @@ async fn hand_over_locked(
     }
     if pending.delivery.notice.along().is_none() {
         if node.residents.now(to).is_none_or(|now| now.turn.is_none())
-            && crate::control_queue::pending(node, to)?.iter().any(|row| {
+            && crate::control_queue::pending(node, to).await?.iter().any(|row| {
                 row.state == fastctx_types::session::control::ControlState::Waiting && row.at < pending.delivery.at
             })
         {
@@ -632,7 +632,7 @@ async fn submit_thread(
     let count = batch.iter().position(|kept| kept.delivery.notice.along().is_none()).map_or(batch.len(), |at| at + 1);
     let left = batch.split_off(count);
     let audience = if batch.iter().any(|pending| pending.working)
-        && crate::goals::replies::inherits(node, id).map_err(|error| Failure::new(error.to_string()))?
+        && crate::goals::replies::inherits(node, id).await.map_err(|error| Failure::new(error.to_string()))?
     {
         node.residents.working_for(id)
     } else {
@@ -802,10 +802,12 @@ pub async fn bind(
         crate::context::turn::accepted(node, id, receipt).map_err(|error| Failure::new(error.to_string()))?;
     }
     let readers: Vec<Address> = handover.inputs.iter().flat_map(|input| input.readers.iter().cloned()).collect();
-    if let Some(finished) =
-        crate::delivery::terminal(directory, turn).map_err(|error| Failure::new(error.to_string()))?
+    if crate::delivery::terminal_header(directory, turn)
+        .await
+        .map_err(|error| Failure::new(error.to_string()))?
+        .is_some()
     {
-        crate::turns::finish_locked(node, id, turn, finished.end, &readers)
+        crate::turns::add_readers_locked(node, id, turn, readers)
             .await
             .map_err(|error| Failure::new(error.to_string()))?;
     } else {
@@ -818,9 +820,12 @@ pub async fn bind(
     if let Some(source) = node
         .stops
         .started(node, id, handover.inputs.iter().map(|input| &input.delivery.id))
+        .await
         .map_err(|error| Failure::new(error.to_string()))?
     {
-        crate::turn_evidence::remember(node, id, turn, source).map_err(|error| Failure::new(error.to_string()))?;
+        crate::turn_evidence::remember(node, id, turn, source)
+            .await
+            .map_err(|error| Failure::new(error.to_string()))?;
         crate::stops::deliver(node, id, turn, handover.inputs.iter().map(|input| input.delivery.id.clone()).collect());
     }
     for input in &handover.inputs {
@@ -951,17 +956,10 @@ pub async fn restore(node: &Arc<Node>, residents: &[crate::residents::OnRecord])
         }
         let directory = node.world.conversation(&resident.id);
         let result = async {
-            // An older node may have saved only part of a terminal outbox.
-            // Its saved outcome remains authoritative for every reader.
-            for owing in crate::inbox::owing(&directory)? {
-                if let Notice::Answer { turn, end, .. } = owing.delivery.notice
-                    && !turn.is_empty()
-                {
-                    let mut readers = node.residents.readers(&resident.id, &turn);
-                    readers.push(owing.to);
-                    crate::delivery::finish(&directory, &turn, end, &readers)?;
-                }
-            }
+            let (working, id) = (node.clone(), resident.id.clone());
+            tokio::task::spawn_blocking(move || crate::delivery::recover_outgoing::run(&working, &id))
+                .await
+                .map_err(std::io::Error::other)??;
             // Deleted since it was listed: nothing of it is left to restore.
             let Some(speaking) = node.residents.speaking(&resident.id) else { return Ok(()) };
             let _speaking = speaking.lock().await;
@@ -972,10 +970,7 @@ pub async fn restore(node: &Arc<Node>, residents: &[crate::residents::OnRecord])
                         .map_err(|error| std::io::Error::other(error.message))?;
                 }
             }
-            for finished in crate::delivery::terminals(&directory)? {
-                crate::turns::finish_locked(node, &resident.id, &finished.turn, finished.end, &finished.readers)
-                    .await?;
-            }
+            crate::delivery::work::notification(node, &resident.id)?();
             Ok::<(), std::io::Error>(())
         }
         .await;

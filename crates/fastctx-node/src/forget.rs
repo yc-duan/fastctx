@@ -68,6 +68,20 @@ pub(crate) async fn ask(
 ) -> Result<How, Failure> {
     let _call = handing(node)?;
     if node.is_here(&machine) {
+        if node.residents.about(&resident).is_some()
+            && !crate::admission::seen::resident(node, crate::admission::seen::Looker::Here(&Acting::Here), &resident)
+        {
+            return Err(Failure::refused("this account does not own that conversation"));
+        }
+        let address = Address { machine: node.machine(), resident: resident.clone() };
+        for link in node.links().into_iter().filter(|link| link.view().shared_records) {
+            if node.residents.about(&resident).is_none() {
+                continue;
+            }
+            if let Ok((actor, current)) = link.record_actor(&address).await {
+                link.prepare_forget(&actor, &current).await.map_err(Failure::new)?;
+            }
+        }
         // Whom it works for is read before its records go.
         let asks: Vec<Ask> = match node.residents.about(&resident) {
             Some((about, _)) => pairs(node, &about.acting)
@@ -94,8 +108,10 @@ pub(crate) async fn ask(
         .into_iter()
         .next()
         .ok_or_else(|| Failure::new(format!("no hub this computer is on has a machine named {machine}")))?;
-    let account = link.account_of(&machine.name, &resident).map_err(Failure::new)?;
-    let conversation = Address { machine: machine.name.clone(), resident: resident.clone() };
+    let (account, conversation) = link
+        .record_actor(&Address { machine: machine.name.clone(), resident: resident.clone() })
+        .await
+        .map_err(Failure::new)?;
     match link.forget(&account, &conversation).await {
         Ok(true) => Ok(How::Asked),
         Ok(false) => {

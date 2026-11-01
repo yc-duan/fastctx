@@ -87,7 +87,45 @@ impl Looker<'_> {
 
 /// Whether `looker` sees the resident `id` of this machine.
 pub fn resident(node: &Node, looker: Looker, id: &ResidentId) -> bool {
-    node.residents.about(id).is_some_and(|(about, _)| looker.sees(node, &about.acting))
+    node.residents.about(id).is_some_and(|(about, _)| {
+        if looker.sees(node, &about.acting) {
+            return true;
+        }
+        match looker {
+            Looker::Asker(asker) => crate::record_ownership::allows(node, &about, &asker.hub, &asker.account),
+            Looker::Here(acting) => node.links().iter().any(|link| {
+                node.accounts_on(link, acting)
+                    .iter()
+                    .any(|account| crate::record_ownership::allows(node, &about, &link.membership().id, account))
+            }),
+        }
+    })
+}
+
+fn mark_openers(node: &Node, looker: Looker, residents: &mut [fastctx_types::town::ResidentNow]) {
+    for resident in residents {
+        resident.about.focus.machines.retain(|focused| match looker {
+            Looker::Asker(asker) => node.link_of(&asker.hub).is_some_and(|link| {
+                focused.machine.hub.as_ref().is_none_or(|hub| *hub == link.hub_name())
+                    && link.view().rights(&asker.account, &focused.machine.name).hands
+            }),
+            Looker::Here(acting) => {
+                node.links().iter().any(|link| {
+                    focused.machine.hub.as_ref().is_none_or(|hub| *hub == link.hub_name())
+                        && node
+                            .accounts_on(link, acting)
+                            .iter()
+                            .any(|account| link.view().rights(account, &focused.machine.name).hands)
+                }) || (!node.connected_anywhere() && node.is_here(&focused.machine))
+            }
+        });
+        resident.opened_by = if looker.sees(node, &resident.about.acting) {
+            None
+        } else {
+            account_of(node, None, &resident.about.id)
+                .map(|owner| fastctx_types::town::OpenedBy { account: owner.account })
+        };
+    }
 }
 
 /// Whether `looker` sees what the resident at `address` did here. This
@@ -116,6 +154,7 @@ pub fn who(node: &Node, asker: &Asker, mut reply: WhoReply) -> WhoReply {
     let looker = Looker::Asker(asker);
     unseen_by_account(node, looker, Some(&asker.hub), &mut reply);
     reply.residents.retain(|now| resident(node, looker, &now.about.id));
+    mark_openers(node, looker, &mut reply.residents);
     reply.jobs.retain(|job| running(node, asker, &job.owner, job.account.as_ref()));
     reply.history = reply.history.map(|history| since(node, looker, history));
     reply
@@ -131,6 +170,7 @@ pub fn who_here(node: &Node, acting: &Acting, mut reply: WhoReply) -> WhoReply {
     reply.history = reply.history.map(|history| since(node, looker, history));
     unseen_by_account(node, looker, None, &mut reply);
     reply.residents.retain(|now| resident(node, looker, &now.about.id));
+    mark_openers(node, looker, &mut reply.residents);
     if node.works_here(acting).is_err() {
         reply.jobs.retain(|job| owner(node, looker, &job.owner, job.account.as_ref()));
     }
@@ -280,8 +320,10 @@ pub fn looked(node: &Node, asker: &Asker, mut looked: Option<Looked>) -> Option<
 }
 
 fn goal_reports(node: &Node, looker: Looker<'_>, looked: &mut Option<Looked>) {
-    if let Some(Looked::Resident(detail)) = looked {
-        detail.goal_reports.retain(|report| looker.sees_account(node, &report.account));
+    if let Some(Looked::Resident(detail)) = looked
+        && !resident(node, looker, &detail.resident.about.id)
+    {
+        detail.goal_reports.clear();
     }
 }
 

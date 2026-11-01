@@ -10,24 +10,32 @@ const HEAD: usize = 96;
 /// The kind of call a frame carries, as the frame spells it
 /// (`"call":"watch"`); the frame is not parsed for it.
 pub(crate) fn call_in(frame: &[u8]) -> String {
-    const TAG: &[u8] = b"\"call\":\"";
-    frame
-        .windows(TAG.len())
-        .position(|window| window == TAG)
-        .and_then(|at| {
-            let rest = &frame[at + TAG.len()..];
-            let end = rest.iter().take(64).position(|byte| *byte == b'"')?;
-            std::str::from_utf8(&rest[..end]).ok().map(|kind| format!("the call {kind}"))
-        })
-        .unwrap_or_else(|| "a call".to_string())
+    tag(frame).map_or_else(|| "a call".to_string(), |kind| format!("the call {kind}"))
 }
 
 /// The kind of a call tagged `call`, from the start of its writing alone:
 /// the tag is written first, and writing stops once that is had.
 pub(crate) fn call_of(call: &impl serde::Serialize) -> String {
+    call_in(&head(call))
+}
+
+/// The kind of a call tagged `call` alone (`watch`), as `call_of` reads it.
+pub(crate) fn kind_of(call: &impl serde::Serialize) -> String {
+    tag(&head(call)).unwrap_or("call").to_string()
+}
+
+fn head(call: &impl serde::Serialize) -> Vec<u8> {
     let mut head = Head(Vec::with_capacity(HEAD));
     let _ = serde_json::to_writer(&mut head, call);
-    call_in(&head.0)
+    head.0
+}
+
+fn tag(frame: &[u8]) -> Option<&str> {
+    const TAG: &[u8] = b"\"call\":\"";
+    let at = frame.windows(TAG.len()).position(|window| window == TAG)?;
+    let rest = &frame[at + TAG.len()..];
+    let end = rest.iter().take(64).position(|byte| *byte == b'"')?;
+    std::str::from_utf8(&rest[..end]).ok()
 }
 
 /// A writer that takes the first `HEAD` bytes and refuses the rest.

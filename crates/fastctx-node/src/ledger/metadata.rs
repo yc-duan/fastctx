@@ -1,4 +1,4 @@
-//! An assisting host keeps only the project's attributes and memory catalog.
+//! An assisting host keeps project metadata in memory, never as a disk replica.
 
 use std::io;
 use std::sync::Arc;
@@ -11,13 +11,15 @@ use fastctx_types::memory::ProjectIndex;
 
 use crate::Node;
 
+type Indices = std::collections::HashMap<std::path::PathBuf, ProjectIndex>;
+static INDICES: std::sync::LazyLock<std::sync::Mutex<Indices>> = std::sync::LazyLock::new(Default::default);
+
 pub(crate) fn read(world: &WorldDir, town: &TownName) -> io::Result<Option<ProjectIndex>> {
-    let path = world.town(town).path().join("index.json");
-    match std::fs::read(path) {
-        Ok(bytes) => serde_json::from_slice(&bytes).map(Some).map_err(io::Error::other),
-        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
-        Err(error) => Err(error),
-    }
+    Ok(INDICES.lock().expect("never poisoned").get(world.town(town).path()).cloned())
+}
+
+pub(crate) fn forget(world: &WorldDir, town: &TownName) {
+    INDICES.lock().expect("never poisoned").remove(world.town(town).path());
 }
 
 /// Fetches without local gates, then applies under the synchronization gate.
@@ -48,6 +50,11 @@ pub(crate) async fn refresh(node: &Arc<Node>, link: &Arc<Link>, wanted: Option<&
             continue;
         }
         let town = super::local_name(node, link, &id)?;
+        match std::fs::remove_file(node.world.town(&town).path().join("index.json")) {
+            Ok(()) => {}
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error.to_string()),
+        }
         if read(&node.world, &town)
             .map_err(|error| error.to_string())?
             .as_ref()
@@ -57,7 +64,7 @@ pub(crate) async fn refresh(node: &Arc<Node>, link: &Arc<Link>, wanted: Option<&
         }
         let (node, world) = (node.clone(), node.world.clone());
         tokio::task::spawn_blocking(move || {
-            fastctx_net::link::state::write(&world.town(&town).path().join("index.json"), &index)?;
+            INDICES.lock().expect("never poisoned").insert(world.town(&town).path().to_path_buf(), index);
             crate::town::instructions::refresh(&node, &town);
             node.memory_changed();
             io::Result::Ok(())

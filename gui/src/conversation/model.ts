@@ -43,7 +43,19 @@ export type SendState =
   /** Its machine keeps them no more and no turn runs: they went in, and
    *  stand as said until the session's own telling of them comes. */
   | { state: "settled" }
+  /** No answer came within `ANSWER_WITHIN` (`world/again.ts`): they may or
+   *  may not have gone in. They are still said again, under the same id,
+   *  when the way opens. */
+  | { state: "unknown"; why: string }
   | { state: "failed"; why: string };
+
+/** What can be done with words that did not go, or of which it is not known
+ *  whether they went (`specs/world-foundation.md`, 宪法第十一条): sent again
+ *  under the same id, which goes in once, or taken away. */
+export interface Settler {
+  again?: () => void;
+  remove: () => void;
+}
 
 /** Words a conversation's machine keeps that no turn took yet, as it tells
  *  them (`Watched::Now`). */
@@ -297,6 +309,8 @@ export class Fold {
   private claimedHeard = new Set<string>();
   /** Entries by key, and by their turn and item; tools by their call. */
   private byKey = new Map<string, Entry>();
+  /** How words being sent are sent again or taken away, by their key. */
+  private settlers = new Map<string, Settler>();
   private byItem = new Map<string, Keyed>();
   private byCall = new Map<string, ToolEntry>();
   /** Each turn's entries, in the order they came. */
@@ -1291,7 +1305,20 @@ export class Fold {
 
   /** Words shown as being sent that went into the queue instead. */
   unsend(key: string): void {
+    this.settlers.delete(key);
     this.remove((entry) => entry.key === key);
+  }
+
+  /** Keeps how the words being sent under `key` are sent again or taken
+   *  away; none once nothing is left to do with them. */
+  settles(key: string, settler: Settler | null): void {
+    if (settler) this.settlers.set(key, settler);
+    else this.settlers.delete(key);
+  }
+
+  /** How the words being sent under `key` are sent again or taken away. */
+  settler(key: string): Settler | undefined {
+    return this.settlers.get(key);
   }
 
   /** What became of words being sent: they are kept, with how they stand,

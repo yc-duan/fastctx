@@ -27,14 +27,18 @@ pub enum Permissions {
 }
 
 /// Replaces `path` with `bytes`, or creates it.
+#[track_caller]
 pub fn publish(path: &Path, bytes: &[u8], permissions: Permissions) -> io::Result<()> {
-    publish_checked(path, bytes, permissions, true, || Ok(())).map_err(|failure| failure.error)
+    crate::roles::blocking("publish");
+    put(path, bytes, permissions, true, || Ok(())).map_err(|failure| failure.error)
 }
 
 /// Creates `path` with `bytes`, failing with `AlreadyExists` if something is
 /// there already: for records that are written once and never change.
+#[track_caller]
 pub fn publish_new(path: &Path, bytes: &[u8], permissions: Permissions) -> io::Result<()> {
-    publish_checked(path, bytes, permissions, false, || Ok(())).map_err(|failure| failure.error)
+    crate::roles::blocking("publish");
+    put(path, bytes, permissions, false, || Ok(())).map_err(|failure| failure.error)
 }
 
 /// A publication failure distinguishes a failed replacement from a failure to
@@ -49,7 +53,21 @@ pub struct PublishFailure {
 /// immediately before publication. The caller must serialize cooperating writers;
 /// operating systems do not offer a portable content-based compare-and-rename.
 /// A guard returned by `verify` remains held through publication and its durability check.
+#[track_caller]
 pub fn publish_checked<G>(
+    path: &Path,
+    bytes: &[u8],
+    permissions: Permissions,
+    replace: bool,
+    verify: impl FnOnce() -> io::Result<G>,
+) -> Result<(), PublishFailure> {
+    crate::roles::blocking("publish");
+    put(path, bytes, permissions, replace, verify)
+}
+
+/// Writes and flushes the file, then moves it into place (`publish_checked`):
+/// it blocks its thread, as each caller was told.
+fn put<G>(
     path: &Path,
     bytes: &[u8],
     permissions: Permissions,
@@ -71,7 +89,9 @@ pub struct Staged {
 impl Staged {
     /// Starts staging a new version of `target`. On Unix the file gets
     /// `mode`, or what the platform gives new files.
+    #[track_caller]
     pub fn create(target: &Path, mode: Option<u32>) -> io::Result<Self> {
+        crate::roles::blocking("staging a file");
         Ok(Self { inner: imp::Staged::create(target, temporary_beside(target)?, mode)? })
     }
 
@@ -84,13 +104,17 @@ impl Staged {
     /// after it, or it is made when there is none. Dropped uncommitted, it
     /// is kept for the next try (`world-network.md`, 断开不是结束); returns
     /// how many bytes it held already.
+    #[track_caller]
     pub fn resume(target: &Path, partial: PathBuf, mode: Option<u32>) -> io::Result<(Self, u64)> {
+        crate::roles::blocking("staging a file");
         let (inner, held) = imp::Staged::resume(target, partial, mode)?;
         Ok((Self { inner }, held))
     }
 
     /// Flushes the contents to disk and moves them over the target.
+    #[track_caller]
     pub fn commit(self) -> io::Result<()> {
+        crate::roles::blocking("staging a file");
         self.inner.commit()
     }
 

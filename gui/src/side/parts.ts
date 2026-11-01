@@ -14,12 +14,13 @@ import type { Address } from "../world/wire";
 import { CollabPage } from "./collab-page";
 import { GoalBar } from "./goal-bar";
 import { GoalPage } from "./goal-page";
+import { HistoryCard } from "./history-card";
 import type { PanePart, PartSet, PartState, Peek } from "./pane";
-import type { SideSeams } from "./seams";
+import type { Following, SideSeams } from "./seams";
 import type { CollabNode, GoalShown, NodeState } from "./types";
 
 /** The side's own parts, as their marks are named. */
-export const PART = { goal: "part:goal", plan: "part:plan", team: "part:team" } as const;
+export const PART = { goal: "part:goal", plan: "part:plan", team: "part:team", history: "part:history" } as const;
 
 export interface PartsContext {
   host: "claude" | "codex";
@@ -81,6 +82,10 @@ function nodeOf(run: AgentRun, host: "claude" | "codex", under: Map<string, Agen
   };
 }
 
+/** A node's time worked to the minute: the team is drawn again as a minute
+ *  passes, not as each second does. */
+const minutes = (name: string, value: unknown) => (name === "took" ? Math.floor((value as number) / 60_000) : value);
+
 export class SideParts implements PartSet {
   readonly parts: PanePart[];
   readonly env: HTMLElement | null;
@@ -98,8 +103,13 @@ export class SideParts implements PartSet {
   private planned = false;
   private readonly stops: (() => void)[] = [];
   private colleagues: CollabNode[] = [];
+  /** The colleagues followed, read in full while a page shows them. */
+  private following: Following | null = null;
+  private detailed = false;
   private runs: AgentRun[] = [];
   private drawnTeam = "";
+  /** The team as last drawn, in full. */
+  private shownTeam = "";
   /** The goal as last shown, whose version a change is made against. */
   private shownGoal: GoalShown | null = null;
   /** The box of the host's agent read over the parts, followed as it goes. */
@@ -146,14 +156,23 @@ export class SideParts implements PartSet {
       { id: PART.plan, name: words.pages.plan, glyph: "rows", page: this.planPage },
       { id: PART.team, name: words.pages.collab, glyph: "tree", page: { element: team, shown: () => this.collab.shown() } },
     ];
+    // A conversation in no project keeps its own history, a page of its own.
+    if (seams.history) {
+      const history = seams.history;
+      const card = new HistoryCard({ words: history.words, link: history.link, write: history.write });
+      this.parts.push({ id: PART.history, name: words.pages.history, glyph: "history", page: card });
+      this.stops.push(history.watch((catalog) => card.show(catalog)));
+    }
+    this.following = seams.colleagues((nodes) => {
+      this.colleagues = nodes;
+      this.goalPage.showTeam(nodes);
+      this.drawTeam();
+    });
+    const following = this.following;
     this.stops.push(
       seams.plan.watch((plan) => this.plan(plan)),
       seams.goal.watch((goal) => this.goal(goal)),
-      seams.colleagues((nodes) => {
-        this.colleagues = nodes;
-        this.goalPage.showTeam(nodes);
-        this.drawTeam();
-      }),
+      () => following.stop(),
     );
     this.drawTeam();
   }
@@ -182,6 +201,15 @@ export class SideParts implements PartSet {
     return true;
   }
 
+  /** A file read in the side over the parts, the side opened for it, over
+   *  the whole desk where there is no room beside; false where the side is
+   *  showing another conversation's parts. */
+  openFile(page: Peek): boolean {
+    if (!this.frame) return false;
+    this.frame.peek(page);
+    return true;
+  }
+
   /** Whether a goal may be set here, from the input among others. */
   get goals(): boolean {
     return !this.context.seams.noGoal;
@@ -199,6 +227,16 @@ export class SideParts implements PartSet {
     if (this.planned) return PART.plan;
     if (this.shownGoal && !this.context.seams.noGoal) return PART.goal;
     return PART.team;
+  }
+
+  /** The part in view, none while the side is shut or shows another
+   *  conversation's: the colleagues' goals and agents are read only while
+   *  a page shows them. */
+  seen(part: string | null): void {
+    const detailed = part === PART.team || part === PART.goal;
+    if (detailed === this.detailed) return;
+    this.detailed = detailed;
+    this.following?.detail(detailed);
   }
 
   leave(): void {
@@ -255,7 +293,8 @@ export class SideParts implements PartSet {
   private plan(plan: PlanShown | null): void {
     this.planPage.show(plan ?? { source: null, version: 0, when: "" });
     const shape = plan?.source ? planShape(plan.source) : null;
-    this.planned = !!shape && (shape.checks.length > 0 || shape.stops.length > 0 || shape.asks.length > 0 || !!shape.title);
+    // A plan takes whatever form its work asks for: any text is a plan.
+    this.planned = !!plan?.source?.trim();
     const words = this.context.seams.words;
     let count = "";
     if (shape?.checks.length) count = words.planCount(shape.checks.filter((check) => check.done).length, shape.checks.length);
@@ -301,9 +340,17 @@ export class SideParts implements PartSet {
       else top.push(run);
     }
     const nodes = [...this.colleagues, ...top.map((run) => nodeOf(run, this.context.host, under, now))];
-    const key = JSON.stringify(nodes, (name, value) => (name === "took" ? Math.floor((value as number) / 60_000) : value));
-    if (key === this.drawnTeam) return;
-    const fresh = this.drawnTeam !== "";
+    if (JSON.stringify(nodes, minutes) === this.shownTeam) return;
+    this.shownTeam = JSON.stringify(nodes, minutes);
+    // What is new is told by what the World pushes, the same whether a
+    // page reads the colleagues in full or not: a colleague's goal and its
+    // agents come and go with the page and tell nothing.
+    const colleagues = nodes
+      .filter((node) => node.kind === "colleague")
+      .map((node) => ({ ...node, goal: null, branchOf: null, why: null, children: [] }))
+      .sort((a, b) => `${a.machine}/${a.id}`.localeCompare(`${b.machine}/${b.id}`));
+    const key = JSON.stringify([...colleagues, ...nodes.filter((node) => node.kind !== "colleague")], minutes);
+    const fresh = this.drawnTeam !== "" && key !== this.drawnTeam;
     this.drawnTeam = key;
     this.collab.show({ agent: this.context.host, name: "" }, nodes);
     let all = 0;

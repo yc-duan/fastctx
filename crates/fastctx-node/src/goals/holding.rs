@@ -1,164 +1,188 @@
-//! A local user stop precedes the host abort, so Claude cannot flush queued work while its account is offline.
-
-use super::{intents, lifecycle, operations, state};
-use crate::Node;
-use fastctx_types::ResidentId;
-use fastctx_types::goals::{Author, Status, Stop, StopKind, View};
-use fastctx_types::ipc::Failure;
-use std::sync::Arc;
-
+//! A user stop commits its intent, local hold and frozen input revision together
+//! before the host abort. Projection repair never changes that authority.
+use super::{intents, lifecycle, local, operations, projection, state, words};
+use crate::{Node, records};
+use fastctx_types::{
+    ResidentId,
+    goals::{Author, Status, Stop, StopKind, View},
+    ipc::Failure,
+};
+use std::{io, path::Path, sync::Arc};
 fn failure(error: impl std::fmt::Display) -> Failure {
     Failure::new(error.to_string())
 }
-
-#[derive(serde::Serialize, serde::Deserialize)]
-struct BridgeState {
-    active: bool,
-    paused: bool,
-    held: Option<Vec<fastctx_types::NoticeId>>,
+async fn work<T: Send + 'static>(action: impl FnOnce() -> io::Result<T> + Send + 'static) -> Result<T, Failure> {
+    tokio::task::spawn_blocking(action).await.map_err(failure)?.map_err(failure)
 }
-
-#[derive(serde::Serialize, serde::Deserialize)]
-struct Local {
-    #[serde(flatten)]
-    view: View,
-    #[serde(default, rename = "_claude_goal", skip_serializing_if = "Option::is_none")]
-    bridge: Option<BridgeState>,
-}
-
-/// The caller holds the resident-storage transaction, which also orders new input.
-pub(crate) fn publish(node: &Node, id: &ResidentId, view: &View) -> Result<(), Failure> {
-    publish_mode(node, id, view, false)
-}
-
-fn publish_mode(node: &Node, id: &ResidentId, view: &View, refreeze: bool) -> Result<(), Failure> {
-    use fastctx_hosts::claude::control as files;
-    let path = node.world.conversation(id).books().join("goal-local.json");
-    let about = node.residents.about(id).map(|(about, _)| about).filter(|about| about.host.agent.as_str() == "claude");
-    let exchange = about
-        .as_ref()
-        .and_then(|about| about.session.as_ref())
-        .map(|session| fastctx_hosts::claude::exchange::sessions(node.world.path()).join(session));
-    let bridge = if about.is_some() {
-        let prior = files::read::<Local>(&path).map_err(failure)?.and_then(|local| local.bridge);
-        let prior = match (prior, exchange.as_ref()) {
-            (None, Some(exchange)) => files::read::<BridgeState>(&exchange.join("goal.json")).map_err(failure)?,
-            (prior, _) => prior,
-        };
-        Some(bridge_state(node, id, view, prior, refreeze)?)
-    } else {
-        None
-    };
-    // Frozen input IDs and the accepted local view must survive together,
-    // including the interval before a Claude session has a directory.
-    let local = Local { view: view.clone(), bridge };
-    files::write(&path, &local).map_err(failure)?;
-    if let (Some(exchange), Some(bridge)) = (exchange, &local.bridge)
-        && exchange.is_dir()
-    {
-        let exchange = std::fs::canonicalize(exchange).map_err(failure)?;
-        files::write(&exchange.join("goal.json"), bridge).map_err(failure)?;
-    }
-    Ok(())
-}
-
-/// Replays the latest local state into a newly identified Claude activation.
-/// It runs before that activation's initial policy is marked ready.
-pub(crate) fn registered(node: &Node, id: &ResidentId, exchange: &std::path::Path) -> Result<(), Failure> {
-    use fastctx_hosts::claude::control as files;
-    let _transaction = crate::resident_storage::lock();
-    let path = node.world.conversation(id).books().join("goal-local.json");
-    let Some(mut local) = files::read::<Local>(&path).map_err(failure)? else { return Ok(()) };
-    if local.bridge.is_none() {
-        let prior = files::read::<BridgeState>(&exchange.join("goal.json")).map_err(failure)?;
-        local.bridge = Some(bridge_state(node, id, &local.view, prior, false)?);
-        files::write(&path, &local).map_err(failure)?;
-    }
-    let exchange = std::fs::canonicalize(exchange).map_err(failure)?;
-    files::write(&exchange.join("goal.json"), local.bridge.as_ref().expect("known Claude goal state")).map_err(failure)
-}
-
-fn bridge_state(
+fn prepare(
     node: &Node,
     id: &ResidentId,
-    view: &View,
-    previous: Option<BridgeState>,
-    refreeze: bool,
-) -> Result<BridgeState, Failure> {
-    let paused = view.pending.is_some()
-        || view.goal.as_ref().is_some_and(|goal| goal.status == Status::Paused && goal.retired.is_none());
-    let held = if !paused {
-        Vec::new()
-    } else if !refreeze && previous.as_ref().is_some_and(|state| state.paused && state.held.is_some()) {
-        previous.and_then(|state| state.held).expect("known held inputs")
-    } else {
-        crate::inbox::pending_here(&node.world.conversation(id))
-            .map_err(failure)?
-            .into_iter()
-            .map(|pending| pending.delivery.id)
-            .collect()
-    };
-    Ok(BridgeState { active: view.active(), paused, held: Some(held) })
-}
-
-pub(crate) fn stop(node: &Arc<Node>, id: &ResidentId, turn: Option<String>) -> Result<(), Failure> {
-    let _transaction = crate::resident_storage::lock();
+) -> io::Result<(fastctx_types::layout::ConversationDir, bool, Option<local::PreparedBridge>)> {
     let directory = node.world.conversation(id);
-    let cached = node.goals.views.lock().expect("goal views").get(id).cloned();
-    let mut view = match cached {
-        Some(view) => view,
-        None => match std::fs::read(directory.books().join("goal-local.json")) {
-            Ok(bytes) => serde_json::from_slice::<View>(&bytes).map_err(failure)?,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
-            Err(error) => return Err(failure(error)),
-        },
-    };
-    let Some(mut goal) = view.goal.clone().filter(|goal| goal.retired.is_none() && goal.status != Status::Complete)
-    else {
-        return Ok(());
-    };
-    let operation = crate::speech::new_id("goal-stop").to_string();
-    let at = jiff::Timestamp::now();
-    let reason = "The user stopped this turn; the goal is paused.".to_string();
-    goal.status = Status::Paused;
-    goal.stop = Some(Stop { kind: StopKind::User, reason: reason.clone(), resume_at: None });
-    goal.claim = None;
-    goal.runtime.pending = None;
-    goal.runtime.retry = None;
-    state::remember(
-        &mut goal,
-        state::Change { operation: &operation, author: Author::World, turn, at },
-        "user_stopped",
-        reason.clone(),
-    );
-    let intent = intents::Intent {
-        operation: operation.clone(),
-        input_hash: operation.clone(),
-        resident: goal.resident.clone(),
-        account: view.account.clone(),
-        expected: view.version,
-        proposed: Some(goal.clone()),
-        at,
-        phase: intents::Phase::Prepared,
-    };
-    intents::keep(&directory, &intent).map_err(failure)?;
-    let held = lifecycle::Hold {
-        base: view.version,
-        kind: lifecycle::HoldKind::UserStop,
-        at,
-        goal: goal.id,
-        operation,
-        reason,
-    };
-    fastctx_platform::publish(
-        &directory.books().join("goal-hold.json"),
-        &serde_json::to_vec(&held).map_err(failure)?,
-        fastctx_platform::Permissions::Private,
-    )
-    .map_err(failure)?;
-    view.pending = Some(held.pending());
-    publish_mode(node, id, &view, true)?;
-    operations::publish(node, id, &view);
-    super::recovery::schedule(node, intent.resident);
+    local::prepare(&directory)?;
+    crate::inbox::presence::prepare(&directory)?;
+    let claude = node.residents.about(id).is_some_and(|(about, _)| about.host.agent.as_str() == "claude");
+    let fallback = if claude { local::fallback(&directory, projection::exchange(node, id).as_deref())? } else { None };
+    Ok((directory, claude, fallback))
+}
+/// Recheck the stop hold in the same transaction that accepts the local view.
+/// The caller installs context between passes and repeats if a stop intervened.
+pub(super) async fn apply(
+    node: &Arc<Node>,
+    id: &ResidentId,
+    view: &View,
+    installed: Option<&str>,
+) -> Result<(String, Option<View>), Failure> {
+    let (working, resident, view, installed) = (node.clone(), id.clone(), view.clone(), installed.map(str::to_string));
+    let (text, accepted, published) = work(move || {
+        let (directory, claude, fallback) = prepare(&working, &resident)?;
+        let (committed, shown) = (working.clone(), resident.clone());
+        records::write_then_at(
+            &directory,
+            fastctx_storage::Priority::Interactive,
+            serde_json::to_vec(&view)?.len(),
+            move |rows| {
+                let held = local::hold(rows)?;
+                let holds = held.as_ref().is_some_and(|held| !held.superseded(&view));
+                let text = if holds || working.residents.removed(&resident).is_some() {
+                    String::new()
+                } else {
+                    view.goal.as_ref().map(words::context).unwrap_or_default()
+                };
+                if held.is_some() && !holds {
+                    local::clear_hold(rows)?;
+                }
+                let mut view = view;
+                view.pending = lifecycle::pending(&working, &resident, &view, held.as_ref());
+                let accepted = installed.as_ref() == Some(&text);
+                let published = accepted
+                    || view.pending.is_some()
+                    || view.goal.as_ref().is_some_and(|goal| goal.status == Status::Paused);
+                if published {
+                    local::install(rows, &view, claude, false, fallback.as_ref())?;
+                } else if let Some(fallback) = &fallback {
+                    fallback.finish(rows)?;
+                }
+                Ok((text, accepted.then_some(view), published))
+            },
+            move |(_, accepted, published)| {
+                if let Some(view) = accepted {
+                    operations::publish(&committed, &shown, view);
+                }
+                if *published {
+                    committed.goals.projection_changed.notify_one();
+                }
+            },
+        )
+    })
+    .await?;
+    if published {
+        projection::repair(node, id, projection::exchange(node, id)).await.map_err(failure)?;
+    }
+    Ok((text, accepted))
+}
+/// Install the latest projection before a newly identified host becomes ready.
+pub(crate) async fn registered(node: &Arc<Node>, id: &ResidentId, exchange: &Path) -> Result<(), Failure> {
+    let (working, resident, path) = (node.clone(), id.clone(), exchange.to_path_buf());
+    work(move || {
+        let directory = working.world.conversation(&resident);
+        local::prepare(&directory)?;
+        crate::inbox::presence::prepare(&directory)?;
+        let fallback = local::fallback(&directory, Some(&path))?;
+        records::write_then_at(
+            &directory,
+            fastctx_storage::Priority::Interactive,
+            1024,
+            move |rows| local::registered(rows, fallback.as_ref()),
+            move |_| working.goals.projection_changed.notify_one(),
+        )
+    })
+    .await?;
+    projection::repair(node, id, Some(exchange.to_path_buf())).await.map_err(failure)
+}
+pub(crate) async fn stop(node: &Arc<Node>, id: &ResidentId, turn: Option<String>) -> Result<(), Failure> {
+    let (working, resident) = (node.clone(), id.clone());
+    let runtime = tokio::runtime::Handle::current();
+    let result = work(move || {
+        let (directory, claude, fallback) = prepare(&working, &resident)?;
+        intents::prepare(&directory)?;
+        let cached = working.goals.views.lock().expect("goal views").get(&resident).cloned();
+        let (committed, shown) = (working.clone(), resident.clone());
+        records::write_then_at(
+            &directory,
+            fastctx_storage::Priority::Control,
+            4096,
+            move |rows| {
+                let stopped = (|| {
+                    let Some(mut view) =
+                        rows.get::<local::Local>(local::LOCAL, "current")?.map(|local| local.view).or(cached)
+                    else {
+                        return Ok(None);
+                    };
+                    let Some(mut goal) =
+                        view.goal.clone().filter(|goal| goal.retired.is_none() && goal.status != Status::Complete)
+                    else {
+                        return Ok(None);
+                    };
+                    let operation = crate::speech::new_id("goal-stop").to_string();
+                    let at = jiff::Timestamp::now();
+                    let reason = "The user stopped this turn; the goal is paused.".to_string();
+                    goal.status = Status::Paused;
+                    goal.stop = Some(Stop { kind: StopKind::User, reason: reason.clone(), resume_at: None });
+                    goal.claim = None;
+                    goal.runtime.pending = None;
+                    goal.runtime.retry = None;
+                    state::remember(
+                        &mut goal,
+                        state::Change { operation: &operation, author: Author::World, turn, at },
+                        "user_stopped",
+                        reason.clone(),
+                    );
+                    let intent = intents::Intent {
+                        access: None,
+                        operation: operation.clone(),
+                        input_hash: operation.clone(),
+                        resident: goal.resident.clone(),
+                        account: view.account.clone(),
+                        expected: view.version,
+                        proposed: Some(goal.clone()),
+                        at,
+                        phase: intents::Phase::Prepared,
+                    };
+                    let held = lifecycle::Hold {
+                        base: view.version,
+                        kind: lifecycle::HoldKind::UserStop,
+                        at,
+                        goal: goal.id,
+                        operation,
+                        reason,
+                    };
+                    intents::keep_in(rows, &intent)?;
+                    local::put_hold(rows, &held)?;
+                    view.pending = Some(held.pending());
+                    local::install(rows, &view, claude, true, fallback.as_ref())?;
+                    Ok(Some((view, intent.resident)))
+                })();
+                if let Some(fallback) = &fallback {
+                    fallback.finish(rows)?;
+                }
+                stopped
+            },
+            move |result| {
+                if let Some((view, resident)) = result {
+                    operations::publish(&committed, &shown, view);
+                    committed.goals.projection_changed.notify_one();
+                    let (node, resident) = (committed.clone(), resident.clone());
+                    runtime.spawn(async move {
+                        super::recovery::schedule(&node, resident);
+                    });
+                }
+            },
+        )
+    })
+    .await?;
+    if result.is_some() {
+        projection::repair(node, id, projection::exchange(node, id)).await.map_err(failure)?;
+    }
     Ok(())
 }

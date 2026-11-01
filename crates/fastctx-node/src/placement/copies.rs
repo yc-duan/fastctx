@@ -15,6 +15,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 mod journal;
 mod retire;
+pub(crate) mod upgrade;
 
 use std::{
     collections::HashMap,
@@ -72,6 +73,8 @@ struct State {
     retirement_base: Option<u64>,
     #[serde(default)]
     retirement_digest: Option<String>,
+    #[serde(default)]
+    upgraded: bool,
 }
 fn failure(error: impl std::fmt::Display) -> Failure {
     Failure::new(error.to_string())
@@ -178,6 +181,7 @@ pub(crate) async fn activate(
             retiring: false,
             retirement_base: None,
             retirement_digest: None,
+            upgraded: false,
         },
     )?;
     synchronize(node, &slot).await?;
@@ -188,6 +192,9 @@ pub(crate) async fn activate(
 async fn synchronize(node: &Arc<Node>, slot: &Arc<Slot>) -> Result<(), Failure> {
     let mut state = slot.state.lock().await;
     let link = node.link_of(&state.account.hub).ok_or_else(|| failure("the copy's hub is unavailable"))?;
+    if link.view().shared_records {
+        return Ok(());
+    }
     let acting = Acting::one(state.account.hub.clone(), state.account.account.clone());
     node.authorize_machine(&acting, &node.machine().into())?;
     if !super::owned(crate::authorization::current_view(&link)?.member(&node.machine()), &state.account.account) {
@@ -392,7 +399,16 @@ pub(crate) fn changed(node: &Arc<Node>, hub: &fastctx_types::access::HubId, chan
     }
 }
 
-pub(crate) fn start(node: &Arc<Node>) {
+fn watch_legacy(node: &Arc<Node>) {
+    let links = node.links();
+    if !links.is_empty() && links.iter().all(|link| link.view().shared_records) {
+        let old = node.copies.watcher.lock().expect("never poisoned").take();
+        drop(old);
+        return;
+    }
+    if node.copies.watcher.lock().expect("never poisoned").is_some() {
+        return;
+    }
     let weak = Arc::downgrade(node);
     let runtime = tokio::runtime::Handle::current();
     let mut watcher = fastctx_watch::Watcher::new(move |event: fastctx_watch::Result<fastctx_watch::Event>| {
@@ -428,6 +444,10 @@ pub(crate) fn start(node: &Arc<Node>) {
         node.log.line(format_args!("watching working-copy directories: {error}"));
     }
     *node.copies.watcher.lock().expect("never poisoned") = Some(watcher);
+}
+
+pub(crate) fn start(node: &Arc<Node>) {
+    watch_legacy(node);
     let restored = (|| -> Result<(), Failure> {
         let entries = match std::fs::read_dir(directory(node)) {
             Ok(entries) => entries,
@@ -458,6 +478,7 @@ pub(crate) fn start(node: &Arc<Node>) {
 
 /// Reconnection recovers invalidations missed while this computer was away.
 pub(crate) fn refresh(node: &Arc<Node>, hub: &fastctx_types::access::HubId) {
+    watch_legacy(node);
     let slots: Vec<_> = node
         .copies
         .slots

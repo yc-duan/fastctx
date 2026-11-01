@@ -3,7 +3,7 @@
 //! every machine tells its hub of versions and what the hub tells back, and
 //! what an interface on a computer asks its node.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
@@ -280,12 +280,85 @@ pub struct Policy {
     /// its own change; a change of the rest leaves it as it was.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub intake: Option<u64>,
+    /// A version going out a batch at a time, while the super administrator
+    /// rolls one out; none while every machine takes a release as it comes.
+    /// Set by its own change, as `withdrawn` is.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rollout: Option<Rollout>,
+    /// Versions no machine takes by itself any more.
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub withdrawn: BTreeSet<String>,
 }
 
 impl Default for Policy {
     fn default() -> Self {
-        Self { channel: Channel::Stable, minimum: None, managed_auto: true, intake: None }
+        Self {
+            channel: Channel::Stable,
+            minimum: None,
+            managed_auto: true,
+            intake: None,
+            rollout: None,
+            withdrawn: BTreeSet::new(),
+        }
     }
+}
+
+/// A version going out to a network's machines a batch at a time
+/// (`specs/world-engine.md`, 发布与推广): the machines named first, then a
+/// share of the others, each by where its key falls among a hundred.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Rollout {
+    /// The version going out.
+    pub version: String,
+    /// The machines that take it first, whatever the share, by the keys
+    /// they joined the network with.
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub first: BTreeSet<String>,
+    /// How many of the other machines take it, in hundredths.
+    #[serde(default)]
+    pub share: u8,
+    /// Stopped where it is: no machine not on it yet takes it.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub paused: bool,
+    /// Why the hub stopped it by itself: the machines on it fared worse
+    /// than the others.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stopped: Option<Stop>,
+}
+
+/// Why the hub stopped a rollout by itself: a machine that took the version
+/// had trouble, more often than the machines that did not.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Stop {
+    pub at: jiff::Timestamp,
+    pub machine: MachineName,
+    #[serde(deserialize_with = "crate::tolerant::read")]
+    pub kind: crate::trouble::TroubleKind,
+}
+
+impl Rollout {
+    /// Whether the machine whose key is written `key` takes the version now.
+    pub fn takes(&self, key: &str) -> bool {
+        !self.paused && (self.first.contains(key) || bucket(key) < self.share)
+    }
+}
+
+/// Where a machine's key, as written, falls among a hundred: the same
+/// wherever and by whichever release it is worked out.
+pub fn bucket(key: &str) -> u8 {
+    use sha2::Digest as _;
+    let digest = sha2::Sha256::digest(key.as_bytes());
+    let mut first = [0; 8];
+    first.copy_from_slice(&digest[..8]);
+    (u64::from_be_bytes(first) % 100) as u8
+}
+
+/// A version going out a batch at a time, as it is for the machine told
+/// (`Rollout`): whether it takes it now.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Rolled {
+    pub version: String,
+    pub takes: bool,
 }
 
 impl Policy {
@@ -355,7 +428,10 @@ pub struct Network {
     pub repair_supported: bool,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub repairs: BTreeMap<MachineName, RepairDue>,
-
+    /// A version going out a batch at a time, and whether the machine told
+    /// takes it now; none while every machine takes a release as it comes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rolled: Option<Rolled>,
 }
 
 impl Network {
