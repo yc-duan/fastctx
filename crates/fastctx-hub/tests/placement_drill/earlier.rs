@@ -201,16 +201,13 @@ async fn upgrade(
         node.wait()?;
     }
     let mut node = start_with(old, &installed)?;
-    record(
-        "this release served the earlier machine's World, killed three times along its move",
-        online(old).await && seen_online(host, "old-pc").await,
-        json!(null),
-    );
+    let (served, seen) = serving(old, host).await;
+    record("this release served the earlier machine's World, killed three times along its move", served, seen);
     let after = history_again(world, resident, "old-pc").await?;
     record(
         "the earlier conversation's history reads the same after the move",
         before == after,
-        json!({"before": before.len(), "after": after.len(), "first difference": before.iter().zip(&after).position(|(a, b)| a != b)}),
+        differs(&before, &after),
     );
     record(
         "and its project's history, which the earlier release took as entries only, is there to read",
@@ -246,23 +243,72 @@ async fn upgrade(
 
     replace(&installed, this)?;
     let mut node = start_with(old, &installed)?;
-    let served = online(old).await && seen_online(host, "old-pc").await;
-    let again = served && history_again(world, resident, "old-pc").await? == after;
-    record("and this release served it again as before", again, json!(null));
+    let (served, seen) = serving(old, host).await;
+    let again = if served { history_again(world, resident, "old-pc").await? } else { Vec::new() };
+    record(
+        "and this release served it again as before",
+        served && again == after,
+        if served { differs(&after, &again) } else { seen },
+    );
     node.kill()?;
     node.wait()?;
     Ok(())
 }
 
-/// Waits for the machine at `host` to see `label` online through their hub.
-async fn seen_online(host: &Path, label: &str) -> bool {
-    for _ in 0..240 {
-        if online_now(host, label).await {
-            return true;
+/// Waits for the node at `old` to answer with its hub's view, and for the
+/// machine at `host` to see it online through their hub; says what it saw
+/// last when either does not come within a minute.
+async fn serving(old: &Path, host: &Path) -> (bool, Value) {
+    let began = std::time::Instant::now();
+    let mut last = json!(null);
+    while began.elapsed() < Duration::from_secs(60) {
+        match ask(old, json!({"call": "nodes"})).await {
+            Ok(answer) if answer.to_string().contains("\"online\"") => {
+                if online_now(host, "old-pc").await {
+                    return (true, json!({"seconds": began.elapsed().as_secs_f64()}));
+                }
+                last = json!("the host does not see old-pc online");
+            }
+            Ok(answer) => {
+                last =
+                    json!({"answered without the hub's view": answer.to_string().chars().take(300).collect::<String>()})
+            }
+            Err(error) => last = json!({"failed": error.to_string()}),
         }
         pause().await;
     }
-    false
+    (false, last)
+}
+
+/// Where `after` first reads otherwise than `before`, if it does.
+fn differs(before: &[Value], after: &[Value]) -> Value {
+    fn path(a: &Value, b: &Value, at: String) -> Value {
+        match (a, b) {
+            (Value::Object(a), Value::Object(b)) => {
+                for key in a.keys().chain(b.keys()) {
+                    let (x, y) = (a.get(key).unwrap_or(&Value::Null), b.get(key).unwrap_or(&Value::Null));
+                    if x != y {
+                        return path(x, y, format!("{at}.{key}"));
+                    }
+                }
+                json!(null)
+            }
+            (Value::Array(a), Value::Array(b)) if a.len() == b.len() => {
+                match a.iter().zip(b).position(|(x, y)| x != y) {
+                    Some(index) => path(&a[index], &b[index], format!("{at}[{index}]")),
+                    None => json!(null),
+                }
+            }
+            _ => {
+                let cut = |value: &Value| value.to_string().chars().take(300).collect::<String>();
+                json!({"at": at, "before": cut(a), "after": cut(b)})
+            }
+        }
+    }
+    match before.iter().zip(after).position(|(a, b)| a != b) {
+        Some(index) => path(&before[index], &after[index], format!("[{index}]")),
+        None => json!({"before": before.len(), "after": after.len()}),
+    }
 }
 
 /// Puts `program` where the World runs its node from.
