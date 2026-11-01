@@ -172,7 +172,12 @@ fn queues_and_jobs(
 ) -> std::result::Result<(), Box<dyn std::error::Error>> {
     let folder = directory.book("received");
     std::fs::create_dir_all(&folder)?;
-    std::fs::write(folder.join("first.json"), br#"{"order":5,"delivery":{"at":"2026-01-01T00:00:00Z"}}"#)?;
+    fastctx_platform::disk::write(
+        folder.join("first.json"),
+        serde_json::to_vec(
+            &serde_json::json!({"order":5,"to":"codex-a1b2c3","delivery":pending(5).delivery,"owed":crate::speech::Owed::Nobody}),
+        )?,
+    )?;
     std::fs::write(folder.join("sequence"), b"6")?;
     assert!(matches!(items::enqueue(&folder.join("second.json"), b"{}".to_vec(), None)?, items::Enqueued::Inserted));
     let queued = items::queued(&folder, &[], "", &items::queue_end(&folder)?)?;

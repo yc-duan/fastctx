@@ -76,8 +76,9 @@ pub(crate) fn run(root: &Path) -> std::result::Result<(), Box<dyn std::error::Er
         );
         Ok(())
     })?;
+    drop(_migration);
     drop(database);
-    let database = Database::open_initialized(&world.path().join("node.sqlite3"), &schema, schema::initialize)?;
+    let database = crate::storage_drill::reopen(&world)?;
     let _migration = crate::record_database::register(&world, &database)?;
     _migration.start()?;
     resume(&database)?;

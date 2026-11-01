@@ -43,7 +43,7 @@ pub(crate) fn run(root: &Path) -> Result<(), Box<dyn std::error::Error>> {
     let gathered = gather(&world)?;
     assert!(gathered.problems.is_empty(), "{:?}", gathered.problems);
     assert!(!old.join("drill-map.json").exists());
-    let database = crate::record_database::open(&world);
+    let database = crate::storage_drill::reopen(&world)?;
     let service = crate::record_database::register(&world, &database)?;
     assert!(
         sql::legacy::map::<u64>(&room, "gather-map", &map)
@@ -81,7 +81,7 @@ pub(crate) fn run(root: &Path) -> Result<(), Box<dyn std::error::Error>> {
         })?,
     )?;
     fastctx_platform::disk::remove_file(room.aliases())?;
-    let database = crate::record_database::open(&world);
+    let database = crate::storage_drill::reopen(&world)?;
     let service = crate::record_database::register(&world, &database)?;
     service.start()?;
     assert_eq!(crate::job_metadata::Job::of(&earlier, &record)?.family("notice"), second.family("notice"));
@@ -116,7 +116,7 @@ pub(crate) fn run(root: &Path) -> Result<(), Box<dyn std::error::Error>> {
     assert!(!conflict.exists() && !conflict.with_extension("retry").exists());
     assert!(home.path().join("recovered/queues/received-controls").is_dir());
     assert!(!home.book("received-controls").join("conflict.retry").exists());
-    let database = crate::record_database::open(&world);
+    let database = crate::storage_drill::reopen(&world)?;
     let service = crate::record_database::register(&world, &database)?;
     service.start()?;
     assert_eq!(crate::record_database::item(&conflict)?.1, "items/received-controls");
@@ -150,7 +150,7 @@ pub(crate) fn run(root: &Path) -> Result<(), Box<dyn std::error::Error>> {
     );
     drop(service);
     drop(database);
-    let database = crate::record_database::open(&world);
+    let database = crate::storage_drill::reopen(&world)?;
     let service = crate::record_database::register(&world, &database)?;
     service.start()?;
     assert!(crate::record_database::rejected_origin(&conflict_target));
