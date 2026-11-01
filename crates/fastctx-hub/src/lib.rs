@@ -722,6 +722,24 @@ pub(crate) async fn bind(kept: Option<Kept>, listen: SocketAddr) -> anyhow::Resu
     }
 }
 
+/// Runs the hub kept in `dir` until the process is stopped, on the runtime
+/// `threads` builds, its threads in their roles (`specs/world-engine.md`,
+/// 线程的三种角色): the command and every drill that serves a hub in its own
+/// process run it so.
+pub fn run(dir: &Path, leave: Leave, mut threads: tokio::runtime::Builder) -> anyhow::Result<()> {
+    let runtime = threads
+        .thread_name("fastctx-hub-work")
+        // A runtime's threads may block until they first wake to run tasks,
+        // which only the scheduler's threads do; its blocking pool never does.
+        .on_thread_start(|| fastctx_platform::roles::set(fastctx_platform::roles::Role::Blocking))
+        .on_thread_unpark(|| fastctx_platform::roles::set(fastctx_platform::roles::Role::Work))
+        .enable_all()
+        .build()?;
+    // This thread runs the hub's tasks as the runtime's own threads do.
+    fastctx_platform::roles::set(fastctx_platform::roles::Role::Work);
+    runtime.block_on(serve(dir, leave))
+}
+
 /// Runs the hub kept in `dir` until the process is stopped: serving, or
 /// standing by for a move here, or forwarding after a move away.
 pub async fn serve(dir: &Path, leave: Leave) -> anyhow::Result<()> {
@@ -735,7 +753,11 @@ pub async fn serve(dir: &Path, leave: Leave) -> anyhow::Result<()> {
     let network = network::Network::new()?;
     let mut kept = None;
     loop {
-        let next = match moving::mode(dir)? {
+        let mode = {
+            let dir = dir.to_path_buf();
+            fastctx_platform::task::spawn_blocking(move || moving::mode(&dir)).await??
+        };
+        let next = match mode {
             moving::Mode::Serving => {
                 let watched = (work.clone(), network.watched());
                 serving(dir, kept.take(), log.clone(), network.handle(), watched).await?
@@ -759,14 +781,30 @@ pub async fn serve(dir: &Path, leave: Leave) -> anyhow::Result<()> {
     }
 }
 
-async fn serving(
-    dir: &Path,
-    kept: Option<Kept>,
-    log: Arc<log::Log>,
-    network: tokio::runtime::Handle,
-    // How far the work runtime and the network runtime ran (`watchdog`).
-    watched: (fastctx_platform::task::Watched, fastctx_platform::task::Watched),
-) -> anyhow::Result<Next> {
+/// What the hub keeps in its directory, opened for serving, and what opening
+/// it found to tell once the hub listens.
+struct Opened {
+    catalog: catalog::Catalog,
+    post: Arc<post::Post>,
+    troubles: troubles::Troubles,
+    releases: releases::Releases,
+    updates: updates::Updates,
+    account_records: account_records::Records,
+    ledgers: ledger::Ledgers,
+    secrets: HubSecrets,
+    tls: releases::http::Tls,
+    pin: CertPin,
+    /// The hub's name, id and version, as its log tells them.
+    hub: String,
+    listen: SocketAddr,
+    said: Vec<String>,
+    /// A move under way goes on; one called off is told to the new place.
+    driven: bool,
+}
+
+/// Opens the hub kept in `dir` for serving: its files and databases read,
+/// written and set up, as only a blocking thread may.
+fn open(dir: &Path) -> anyhow::Result<Opened> {
     let mut store = Store::open(dir)?;
     // An assistance whose deadline passed while the hub was stopped is
     // ended before any member is heard.
@@ -781,44 +819,83 @@ async fn serving(
     let account_records = account_records::Records::open(dir, &store.book.directory)?;
     let mut ledgers = ledger::Ledgers::open(dir, &store.hub.id)?;
     let swept = ledgers.sweep(&store.book)?;
-    let listen = store.hub.listen;
-    let kept = bind(kept, listen).await?;
-    log.line(format_args!(
-        "hub {} ({}) {} listening on {listen}; certificate {}",
-        store.hub.name,
-        store.hub.id,
-        env!("CARGO_PKG_VERSION"),
-        certificate.pin()
-    ));
-    for town in &swept {
-        log.line(format_args!("deleted the ledger of {town}, a project deleted before the hub stopped"));
-    }
-    for line in &store.upgraded {
-        log.line(format_args!("took up the directory of an earlier fastctx: {line}"));
-    }
-    for line in &store.tidied {
-        log.line(format_args!("on opening, {line}"));
-    }
+    let mut said: Vec<String> = swept
+        .iter()
+        .map(|town| format!("deleted the ledger of {town}, a project deleted before the hub stopped"))
+        .collect();
+    said.extend(store.upgraded.iter().map(|line| format!("took up the directory of an earlier fastctx: {line}")));
+    said.extend(store.tidied.iter().map(|line| format!("on opening, {line}")));
     let mut left = Vec::new();
     let updates = updates::Updates::new(dir, &store.shelf, &store.hub.due, &mut left).map_err(anyhow::Error::msg)?;
-    for line in left {
-        log.line(format_args!("on opening, {line}"));
-    }
-    // A move under way goes on; one called off is told to the new place.
+    said.extend(left.into_iter().map(|line| format!("on opening, {line}")));
     let driven = store.outgoing.as_ref().is_some_and(|outgoing| {
         outgoing.pending() || (outgoing.stage == fastctx_types::hub_move::MoveStage::Cancelled && outgoing.prepared)
     });
     let post = store.enable_runtime()?;
     let troubles = troubles::Troubles::open(store.shelf.clone())?;
+    let releases = releases::Releases::new(dir, certificate.certificate.clone())?;
+    let hub = format!("hub {} ({}) {}", store.hub.name, store.hub.id, env!("CARGO_PKG_VERSION"));
+    let listen = store.hub.listen;
+    Ok(Opened {
+        catalog: catalog::Catalog::new(store)?,
+        post,
+        troubles,
+        releases,
+        updates,
+        account_records,
+        ledgers,
+        secrets,
+        tls,
+        pin: certificate.pin(),
+        hub,
+        listen,
+        said,
+        driven,
+    })
+}
+
+async fn serving(
+    dir: &Path,
+    kept: Option<Kept>,
+    log: Arc<log::Log>,
+    network: tokio::runtime::Handle,
+    // How far the work runtime and the network runtime ran (`watchdog`).
+    watched: (fastctx_platform::task::Watched, fastctx_platform::task::Watched),
+) -> anyhow::Result<Next> {
+    let opened = {
+        let dir = dir.to_path_buf();
+        fastctx_platform::task::spawn_blocking(move || open(&dir)).await??
+    };
+    let Opened {
+        catalog,
+        post,
+        troubles,
+        releases,
+        updates,
+        account_records,
+        ledgers,
+        secrets,
+        tls,
+        pin,
+        hub,
+        listen,
+        said,
+        driven,
+    } = opened;
+    let kept = bind(kept, listen).await?;
+    log.line(format_args!("{hub} listening on {listen}; certificate {pin}"));
+    for line in said {
+        log.line(format_args!("{line}"));
+    }
     let (switched, mut switch) = tokio::sync::oneshot::channel();
     let hub = Arc::new(Hub {
-        releases: Arc::new(releases::Releases::new(dir, certificate.certificate.clone())?),
-        catalog: catalog::Catalog::new(store)?,
+        releases: Arc::new(releases),
+        catalog,
         post,
         this: std::sync::OnceLock::new(),
         network,
         secrets,
-        pin: certificate.pin(),
+        pin,
         sessions: Mutex::new("hub sessions", Rank::HUB_SESSIONS, HashMap::new()),
         given: Mutex::new("hub given", Rank::HUB_GIVEN, HashMap::new()),
         trials: Mutex::new("hub trials", Rank::HUB_TRIALS, direct::Trials::default()),
