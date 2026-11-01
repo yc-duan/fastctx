@@ -337,8 +337,20 @@ impl Jobs {
                 }
             }
         }
-        // Beside its record, in whichever room the job went on (`run::launch`).
-        let visited = launched.record.parent().map(|jobs| visited(jobs, &launched.job)).unwrap_or_default();
+        // Where its `on`s went only adds to the answer, so the answer does
+        // not fail for want of it.
+        let path = launched.record.clone();
+        let visited = match tokio::task::spawn_blocking(move || crate::run_facts::visits(&path)).await {
+            Ok(Ok(visited)) => visited,
+            Ok(Err(error)) => {
+                node.log.line(format_args!("reading where job {} went: {error}", launched.job));
+                Vec::new()
+            }
+            Err(error) => {
+                node.log.line(format_args!("reading where job {} went: {error}", launched.job));
+                Vec::new()
+            }
+        };
         let state = state(&record);
         // Why it answered says something only of a job that still runs.
         let answered = answered.filter(|_| state == RunState::Running);
@@ -736,17 +748,6 @@ fn short(command: &str) -> String {
         Some((cut, _)) => format!("{} …", command[..cut].trim_end()),
         None => command.to_string(),
     }
-}
-
-/// The machines a job's `on`s went to, as `on` noted them beside it.
-pub(crate) fn visited(jobs: &Path, job: &JobId) -> Vec<(fastctx_types::MachineName, JobId)> {
-    let Ok(text) = std::fs::read_to_string(jobs.join(format!("{job}.on"))) else { return Vec::new() };
-    text.lines()
-        .filter_map(|line| {
-            let (machine, job) = line.split_once(' ')?;
-            Some((fastctx_types::MachineName::try_from(machine).ok()?, JobId::try_from(job).ok()?))
-        })
-        .collect()
 }
 
 pub(crate) async fn read(path: &Path) -> Result<JobRecord, Failure> {

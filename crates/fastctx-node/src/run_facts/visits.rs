@@ -44,3 +44,6 @@ pub(super) fn keep(path: &Path, bytes: &[u8]) -> io::Result<()> {
 pub(super) fn page(record: &Path, cursor: &mut u64) -> io::Result<Vec<Visit>> {
     prepare(record)?.page("visits", cursor)
 }
+pub(super) fn all(record: &Path) -> io::Result<Vec<Visit>> {
+    prepare(record)?.all("visits")
+}

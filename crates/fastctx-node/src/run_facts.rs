@@ -48,6 +48,12 @@ pub(crate) fn writes(record: &Path) -> io::Result<Vec<WriteFact>> {
     writing::prepare(record)?.all("writes")
 }
 
+/// The machines the job of `record` went to with `on`, and the jobs it
+/// started there.
+pub(crate) fn visits(record: &Path) -> io::Result<Vec<(fastctx_types::MachineName, fastctx_types::JobId)>> {
+    visits::all(record)
+}
+
 /// The most bytes of changes' rows one run keeps with the conversation.
 const RUN_INLINE: u64 = 256 * 1024;
 
