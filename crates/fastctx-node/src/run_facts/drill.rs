@@ -179,7 +179,11 @@ pub fn run(root: &Path) -> Result<(), Box<dyn std::error::Error>> {
     super::drill_mixed::run(&database, &ended)?;
     let stats = database.statistics();
     println!("SQL operations {}, over 2 ms {}", stats.operations, stats.writes_over_budget);
-    assert!(stats.writes_over_budget * 100 <= stats.operations, "SQL operation p99 exceeded 2 ms");
+    // The writer's budget is a property of the optimized program, which CI
+    // drills; a debug build's unoptimized code only reports its count.
+    if !cfg!(debug_assertions) {
+        assert!(stats.writes_over_budget * 100 <= stats.operations, "SQL operation p99 exceeded 2 ms");
+    }
     println!(
         "100000 steps: 200 hot, 99800 folded; call read p99 {:?}; 100 duplicates {:?}; slow operations {}",
         reads[197], repeated_in, stats.slow_operations
