@@ -6,6 +6,7 @@ mod legacy;
 mod migrate;
 pub(crate) mod search;
 mod sql;
+pub(crate) mod upgrade;
 pub(crate) use legacy::SCHEMA as MIGRATION_SCHEMA;
 pub(crate) use sql::SCHEMA;
 

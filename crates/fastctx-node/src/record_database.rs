@@ -1,5 +1,7 @@
 //! Path-based record entry points share the node's writer without owning it.
 
+mod upgrade;
+
 use fastctx_storage::{Database, WeakDatabase};
 use fastctx_types::layout::{ConversationDir, WorldDir};
 use std::collections::HashMap;
@@ -120,11 +122,8 @@ pub(crate) fn rejected_origin(path: &std::path::Path) -> bool {
 /// Opens the node schema on a blocking thread before registering its writer.
 pub(crate) fn open(world: &WorldDir) -> Database {
     fastctx_storage::Database::open_or_unavailable(&world.path().join("node.sqlite3"), crate::composer::SCHEMA, |db| {
-        fastctx_storage::versions::apply(
-            db,
-            "node.record-payloads",
-            &[fastctx_storage::versions::Migration { version: 1, sql: crate::record_payloads::SCHEMA }],
-        )?;
+        upgrade::payloads(db)?;
+        upgrade::records(db)?;
         fastctx_storage::versions::apply(
             db,
             "node.record-maps",
@@ -135,27 +134,8 @@ pub(crate) fn open(world: &WorldDir) -> Database {
             "node.terminals",
             &[fastctx_storage::versions::Migration { version: 1, sql: crate::delivery::terminals::SCHEMA }],
         )?;
-        fastctx_storage::versions::apply(
-            db,
-            "node.run-facts",
-            &[
-                fastctx_storage::versions::Migration { version: 1, sql: crate::run_facts::SCHEMA },
-                fastctx_storage::versions::Migration { version: 2, sql: crate::run_facts::SCHEMA },
-            ],
-        )?;
-        fastctx_storage::versions::apply(
-            db,
-            "node.session-events",
-            &[
-                fastctx_storage::versions::Migration { version: 1, sql: crate::session_record::SCHEMA },
-                fastctx_storage::versions::Migration { version: 2, sql: crate::session_record::SCHEMA },
-            ],
-        )?;
-        fastctx_storage::versions::apply(
-            db,
-            "node.records",
-            &[fastctx_storage::versions::Migration { version: 1, sql: crate::records::SCHEMA }],
-        )?;
+        upgrade::runs(db)?;
+        crate::session_record::upgrade::apply(db)?;
         fastctx_storage::versions::apply(
             db,
             "node.input-membership",
