@@ -1,0 +1,148 @@
+//! Input stop obligations remain until the exact consuming turn is stopped or settled.
+use crate::{leases, records};
+use fastctx_storage::Priority;
+use fastctx_types::{NoticeId, layout::ConversationDir, turn_evidence::StopSource};
+use std::{
+    io,
+    path::PathBuf,
+    sync::{Arc, LazyLock},
+};
+
+type Gate = Arc<tokio::sync::Mutex<()>>;
+static GATES: LazyLock<leases::Registry<PathBuf, Gate>> = LazyLock::new(Default::default);
+const FAMILY: &str = "input-stops";
+pub(super) struct Order {
+    _lease: leases::Lease<PathBuf, Gate>,
+    _permit: tokio::sync::OwnedMutexGuard<()>,
+}
+
+/// The worker owns ordering until it finishes, even if its caller is cancelled.
+pub(super) async fn ordered<T: Send + 'static>(
+    directory: ConversationDir,
+    action: impl FnOnce(&ConversationDir, &Arc<Order>) -> io::Result<T> + Send + 'static,
+) -> io::Result<T> {
+    let lease = GATES.get_or_insert_with(&directory.path().to_path_buf(), || Arc::new(tokio::sync::Mutex::new(())));
+    let permit = Arc::clone(&lease).lock_owned().await;
+    let order = Arc::new(Order { _lease: lease, _permit: permit });
+    tokio::task::spawn_blocking(move || action(&directory, &order)).await.map_err(io::Error::other)?
+}
+
+fn prepare(directory: &ConversationDir) -> io::Result<()> {
+    records::ensure_each(directory, FAMILY, |push| {
+        let entries = match std::fs::read_dir(directory.book("input-stops")) {
+            Ok(entries) => entries,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
+            Err(error) => return Err(error),
+        };
+        for entry in entries {
+            let entry = entry?;
+            if !entry.file_type()?.is_file() {
+                continue;
+            }
+            let Some(key) = entry.file_name().to_str().and_then(|key| key.parse::<NoticeId>().ok()) else { continue };
+            let bytes = std::fs::read(entry.path())?;
+            let source = if bytes.is_empty() { StopSource::User } else { serde_json::from_slice(&bytes)? };
+            push(records::Source::new(key.to_string(), entry.path(), serde_json::to_vec(&source)?)?)?;
+        }
+        Ok(())
+    })
+}
+
+pub(super) fn keep(
+    directory: &ConversationDir,
+    inputs: &[NoticeId],
+    source: StopSource,
+    order: &Arc<Order>,
+    committed: &Arc<dyn Fn() + Send + Sync>,
+) -> io::Result<()> {
+    prepare(directory)?;
+    for batch in inputs.chunks(16) {
+        let batch = batch.to_vec();
+        let order = order.clone();
+        let committed = committed.clone();
+        records::write_then_at(
+            directory,
+            Priority::Control,
+            batch.iter().map(|id| id.as_str().len() + 64).sum(),
+            move |rows| {
+                for input in batch {
+                    if rows.get::<StopSource>(FAMILY, input.as_str())? != Some(StopSource::User) {
+                        rows.put(FAMILY, input.as_str(), &source)?;
+                    }
+                }
+                Ok(())
+            },
+            move |_| {
+                committed();
+                drop(order);
+            },
+        )?;
+    }
+    Ok(())
+}
+
+pub(super) fn source(directory: &ConversationDir, inputs: &[NoticeId]) -> io::Result<Option<StopSource>> {
+    prepare(directory)?;
+    records::read_background(directory, |rows| {
+        let mut result = None;
+        for input in inputs {
+            if let Some(source) = rows.get::<StopSource>(FAMILY, input.as_str())? {
+                result = Some(source);
+            }
+            if result == Some(StopSource::User) {
+                break;
+            }
+        }
+        Ok(result)
+    })
+}
+
+/// A stronger stop arriving during host interruption is retained for the next attempt.
+pub(super) fn finish(
+    directory: &ConversationDir,
+    inputs: &[NoticeId],
+    applied: StopSource,
+    order: &Arc<Order>,
+) -> io::Result<bool> {
+    prepare(directory)?;
+    let mut finished = true;
+    for batch in inputs.chunks(16) {
+        let batch = batch.to_vec();
+        let order = order.clone();
+        finished &= records::write_then_at(
+            directory,
+            Priority::Control,
+            batch.iter().map(|id| id.as_str().len() + 64).sum(),
+            move |rows| {
+                let mut finished = true;
+                for input in batch {
+                    if applied != StopSource::User
+                        && rows.get::<StopSource>(FAMILY, input.as_str())? == Some(StopSource::User)
+                    {
+                        finished = false;
+                    } else {
+                        rows.delete(FAMILY, input.as_str())?;
+                    }
+                }
+                Ok(finished)
+            },
+            move |_| drop(order),
+        )?;
+    }
+    Ok(finished)
+}
+
+pub(super) fn pending(directory: &ConversationDir) -> io::Result<Vec<NoticeId>> {
+    prepare(directory)?;
+    let mut after = String::new();
+    let mut inputs = Vec::new();
+    loop {
+        let page = records::read(directory, |rows| rows.key_page::<StopSource>(FAMILY, &after, 128))?;
+        let Some(last) = page.last() else { break };
+        after = last.0.clone();
+        for (key, _) in page {
+            inputs.push(key.parse().map_err(io::Error::other)?);
+        }
+    }
+    Ok(inputs)
+}

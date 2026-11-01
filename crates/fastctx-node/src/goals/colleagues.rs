@@ -27,7 +27,7 @@ pub(crate) async fn summary(
     resident: &ResidentId,
 ) -> Result<Option<fastctx_types::collab::GoalSummary>, Failure> {
     use fastctx_types::collab::{GoalState, GoalSummary};
-    let account = scope::resolve(node, resident, None)?;
+    let account = scope::resolve(node, resident, None).await?;
     let address = Address { machine: node.machine(), resident: resident.clone() };
     let view = operations::read(node, &address, &account).await?;
     Ok(view.goal.map(|goal| {
@@ -67,10 +67,10 @@ pub(crate) async fn open(
     let gate = crate::control_queue::gate(node, resident);
     let _action = gate.lock().await;
     let _place = node.places.using(resident.as_str()).await;
-    let account = scope::resolve(node, resident, None)?;
+    let account = scope::resolve(node, resident, None).await?;
     let address = Address { machine: node.machine(), resident: resident.clone() };
     let operation = format!("colleague-open:{resident}");
-    if let Some(mut intent) = intents::read(&node.world.conversation(resident), &operation).map_err(failure)? {
+    if let Some(mut intent) = intents::read(&node.world.conversation(resident), &operation).await.map_err(failure)? {
         operations::finish(node, &mut intent).await?;
         return Ok(());
     }
@@ -148,34 +148,37 @@ pub(crate) async fn reopen_blocked(
     resident: &ResidentId,
     delivery: &NoticeId,
 ) -> Result<(), Failure> {
-    let Some(account) = scope::pinned(node, resident)? else { return Ok(()) };
+    let Some(account) = scope::pinned(node, resident).await? else { return Ok(()) };
     let directory = node.world.conversation(resident);
     let path = directory
         .books()
         .join("goal-inputs")
         .join(format!("{}.json", fastctx_hands::files::content_hash(delivery.as_str().as_bytes())));
     let address = Address { machine: node.machine(), resident: resident.clone() };
-    let mut receipt: Receipt = match std::fs::read(&path) {
-        Ok(bytes) => serde_json::from_slice(&bytes).map_err(failure)?,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+    let reading = path.clone();
+    let prior = tokio::task::spawn_blocking(move || crate::records::metadata::get::<Receipt>(&reading))
+        .await
+        .map_err(failure)?
+        .map_err(failure)?;
+    let mut receipt = match prior {
+        Some(receipt) => receipt,
+        None => {
             let view = operations::read(node, &address, &account).await?;
             let receipt = Receipt { delivery: delivery.clone(), attempt: attempt(&view, delivery) };
-            keep(&path, &receipt)?;
-            receipt
+            keep(&path, &receipt).await?
         }
-        Err(error) => return Err(failure(error)),
     };
     if receipt.delivery != *delivery {
         return Err(Failure::new(words::REUSED_OPERATION));
     }
     while let Some(pending) = &receipt.attempt {
-        let result = if let Some(mut intent) = intents::read(&directory, &pending.operation).map_err(failure)? {
+        let result = if let Some(mut intent) = intents::read(&directory, &pending.operation).await.map_err(failure)? {
             operations::finish(node, &mut intent).await?
         } else {
             let view = operations::read(node, &address, &account).await?;
             let Some(goal) = view.goal.as_ref().filter(|goal| goal.id == pending.goal) else {
                 receipt.attempt = None;
-                keep(&path, &receipt)?;
+                keep(&path, &receipt).await?;
                 return Ok(());
             };
             let Owner::Conversation { address: owner } = &goal.owner else {
@@ -183,7 +186,7 @@ pub(crate) async fn reopen_blocked(
             };
             if view.pending.is_some() {
                 receipt.attempt = None;
-                keep(&path, &receipt)?;
+                keep(&path, &receipt).await?;
                 return Ok(());
             }
             if view.version != pending.expected {
@@ -214,7 +217,7 @@ pub(crate) async fn reopen_blocked(
                     at,
                     phase: intents::Phase::Prepared,
                 };
-                intents::keep(&directory, &intent).map_err(failure)?;
+                intents::keep(node, &directory, &intent).await.map_err(failure)?;
                 super::recovery::schedule(node, address.clone());
                 operations::finish(node, &mut intent).await?
             }
@@ -225,18 +228,40 @@ pub(crate) async fn reopen_blocked(
         } else {
             None
         };
-        keep(&path, &receipt)?;
+        receipt = keep(&path, &receipt).await?;
     }
     Ok(())
 }
 
-fn keep(path: &std::path::Path, receipt: &Receipt) -> Result<(), Failure> {
-    fastctx_platform::ensure_private_dir(path.parent().expect("goal input directory")).map_err(failure)?;
-    fastctx_platform::publish(
-        path,
-        &serde_json::to_vec(receipt).map_err(failure)?,
-        fastctx_platform::Permissions::Private,
-    )
+async fn keep(path: &std::path::Path, receipt: &Receipt) -> Result<Receipt, Failure> {
+    let (path, bytes) = (path.to_path_buf(), serde_json::to_vec(receipt).map_err(failure)?);
+    tokio::task::spawn_blocking(move || {
+        let receipt: Receipt = serde_json::from_slice(&bytes)?;
+        crate::records::metadata::change(&path, bytes.len(), move |rows, family| {
+            if let Some(prior) = rows.get::<Receipt>(family, "value")? {
+                if prior.delivery != receipt.delivery {
+                    return Err(fastctx_storage::Error::new(words::REUSED_OPERATION));
+                }
+                // A completed input cannot become an instruction to reopen a
+                // later block when an older worker finishes after cancellation.
+                if prior.attempt.is_none() && receipt.attempt.is_some() {
+                    return Ok(prior);
+                }
+                if let (Some(previous), Some(next)) = (&prior.attempt, &receipt.attempt) {
+                    if previous.goal != next.goal {
+                        return Err(fastctx_storage::Error::new(words::REUSED_OPERATION));
+                    }
+                    if previous.expected > next.expected {
+                        return Ok(prior);
+                    }
+                }
+            }
+            rows.put(family, "value", &receipt)?;
+            Ok(receipt)
+        })
+    })
+    .await
+    .map_err(failure)?
     .map_err(failure)
 }
 

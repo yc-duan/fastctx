@@ -24,9 +24,12 @@ struct Watched {
 }
 
 /// Restores observation of jobs whose launching node has already exited.
-pub(crate) fn restore(node: &Arc<Node>, path: &Path, record: &JobRecord) -> std::io::Result<()> {
+pub(crate) async fn restore(node: &Arc<Node>, path: &Path, record: &JobRecord) -> std::io::Result<()> {
     if record.call_id.is_some() {
-        crate::run_facts::update_job_with(node, path, crate::run_facts::writes(path)?, crate::run_facts::steps(path)?)?;
+        let (node, path) = (node.clone(), path.to_path_buf());
+        tokio::task::spawn_blocking(move || crate::run_facts::update_job(&node, &path))
+            .await
+            .map_err(std::io::Error::other)??;
     }
     if let Some(identity) = &record.supervisor {
         start(node, path, Some(identity.clone()));
@@ -42,9 +45,7 @@ pub(crate) fn restore(node: &Arc<Node>, path: &Path, record: &JobRecord) -> std:
 /// scratch await the enclosing answer's host receipt.
 pub(crate) fn copied(node: &Arc<Node>, path: &Path) {
     let _gate = node.disk.lock();
-    if let Err(error) =
-        fastctx_platform::publish(&path.with_extension("copied"), b"", fastctx_platform::Permissions::Private)
-    {
+    if let Err(error) = crate::job_metadata::put_raw(&path.with_extension("copied"), b"") {
         node.log.line(format_args!("recording transferred command output: {error}"));
         return;
     }

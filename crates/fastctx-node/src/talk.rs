@@ -1032,14 +1032,12 @@ pub(crate) async fn stop_here_as(
     node.residents.stoppable(resident)?;
     let targeted = node.residents.now(resident).and_then(|now| now.turn);
     if source == fastctx_types::turn_evidence::StopSource::User {
-        crate::goals::holding::stop(node, resident, targeted.clone())?;
+        crate::goals::holding::stop(node, resident, targeted.clone()).await?;
     }
     if let Some(turn) = &targeted {
         crate::turn_evidence::remember(node, resident, turn, source)
+            .await
             .map_err(|error| Failure::new(format!("recording why the turn is stopped: {error}")))?;
-        if source == fastctx_types::turn_evidence::StopSource::User {
-            crate::stops::mark_turn(node, resident, turn).map_err(|error| Failure::new(error.to_string()))?;
-        }
     }
     let (about, _) = node
         .residents
@@ -1062,7 +1060,7 @@ pub(crate) async fn stop_here_as(
         .map(|pending| pending.delivery.id)
         .collect();
     if targeted.is_none()
-        && node.stops.coming(node, resident, coming, source).map_err(|error| Failure::new(error.to_string()))?
+        && node.stops.coming(node, resident, coming, source).await.map_err(|error| Failure::new(error.to_string()))?
     {
         return Ok(true);
     }
@@ -1073,10 +1071,8 @@ pub(crate) async fn stop_here_as(
     let targeted = targeted.or(current);
     if let Some(turn) = &targeted {
         crate::turn_evidence::remember(node, resident, turn, source)
+            .await
             .map_err(|error| Failure::new(format!("recording why the turn is stopped: {error}")))?;
-        if source == fastctx_types::turn_evidence::StopSource::User {
-            crate::stops::mark_turn(node, resident, turn).map_err(|error| Failure::new(error.to_string()))?;
-        }
     }
     match (about.host.agent.as_str(), about.world_managed(), &about.session) {
         ("codex", true, Some(thread)) => match targeted {

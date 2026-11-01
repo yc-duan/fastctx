@@ -180,10 +180,9 @@ impl Held {
             let cleared = async {
                 let _delivery = self.node.job_ends.lock(path).await;
                 let record = crate::jobs::read(path).await?;
-                fastctx_platform::publish(
+                crate::job_metadata::put_raw(
                     &path.with_extension("wait-taken"),
                     crate::inbox::job_notice_id(&record).as_str().as_bytes(),
-                    fastctx_platform::Permissions::Private,
                 )
                 .map_err(|error| Failure::new(error.to_string()))?;
                 for (followed, follower) in &self.followers {

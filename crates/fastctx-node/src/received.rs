@@ -3,13 +3,12 @@
 //! later letters, including the enclosing answer that may consume it.
 
 use std::collections::HashMap;
-use std::hash::{Hash as _, Hasher as _};
 use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use fastctx_platform::{Permissions, ensure_private_dir, publish, publish_new};
+use crate::records::items;
 use fastctx_types::ResidentId;
 use fastctx_types::residents::{Delivery, Notice};
 use jiff::Timestamp;
@@ -21,20 +20,12 @@ use crate::speech::Owed;
 
 #[derive(Default)]
 pub(crate) struct Received {
-    /// Each conversation's worker; whoever keeps a letter wakes it, or
-    /// starts one when none runs.
-    workers: Mutex<HashMap<ResidentId, Arc<Notify>>>,
-    /// A conversation's letters are numbered and kept one at a time, under
-    /// the one of these its id falls to; other conversations' go on.
-    keeping: [Mutex<()>; 16],
+    workers: Mutex<HashMap<ResidentId, Worker>>,
 }
 
-impl Received {
-    fn keeping(&self, to: &ResidentId) -> &Mutex<()> {
-        let mut hasher = std::collections::hash_map::DefaultHasher::new();
-        to.hash(&mut hasher);
-        &self.keeping[hasher.finish() as usize % self.keeping.len()]
-    }
+struct Worker {
+    wake: Arc<Notify>,
+    dirty: bool,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -63,44 +54,32 @@ pub(crate) fn keep(node: &Arc<Node>, to: &ResidentId, delivery: Delivery, owed: 
         return Err(io::Error::new(io::ErrorKind::NotFound, format!("no receiving conversation {to}")));
     }
     let directory = directory(node, to);
-    ensure_private_dir(&directory)?;
     let path = directory.join(format!("{}.json", delivery.id));
-    // A persisted sequence preserves arrival order even if the clock moves
-    // back. The letter is kept before its worker is woken, so a worker
-    // either finds it before it retires or a new one starts after.
-    let publishing = node.received.keeping(to).lock().expect("never poisoned");
-    let sequence = directory.join("sequence");
-    let order = match std::fs::read_to_string(&sequence) {
-        Ok(text) => text.parse::<u64>().map_err(io::Error::other)?,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => 0,
-        Err(error) => return Err(error),
-    };
-    let next = order.checked_add(1).ok_or_else(|| io::Error::other("received letter sequence exhausted"))?;
-    publish(&sequence, next.to_string().as_bytes(), Permissions::Private)?;
-    let entry = Entry { to: to.clone(), delivery, owed, order, decision: Default::default(), released: None };
-    let bytes = serde_json::to_vec(&entry).map_err(io::Error::other)?;
-    match publish_new(&path, &bytes, Permissions::Private) {
-        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
-            let prior: Entry = serde_json::from_slice(&std::fs::read(&path)?).map_err(io::Error::other)?;
+    let at = delivery.at;
+    let entry = Entry { to: to.clone(), delivery, owed, order: 0, decision: Default::default(), released: None };
+    match items::enqueue(&path, serde_json::to_vec(&entry)?, Some(at))? {
+        items::Enqueued::Inserted => {}
+        items::Enqueued::Finished => return Ok(()),
+        items::Enqueued::Existing(bytes) => {
+            let prior: Entry = serde_json::from_slice(&bytes)?;
             if prior.to != entry.to || prior.delivery.notice != entry.delivery.notice || prior.owed != entry.owed {
                 return Err(io::Error::other("the accepted letter changed under the same identity"));
             }
         }
-        result => result?,
     }
-    drop(publishing);
     wake(node, to);
     Ok(())
 }
 
 pub(crate) fn wake(node: &Arc<Node>, to: &ResidentId) {
     let mut workers = node.received.workers.lock().expect("never poisoned");
-    if let Some(wake) = workers.get(to) {
-        wake.notify_one();
+    if let Some(worker) = workers.get_mut(to) {
+        worker.dirty = true;
+        worker.wake.notify_one();
         return;
     }
     let wake = Arc::new(Notify::new());
-    workers.insert(to.clone(), wake.clone());
+    workers.insert(to.clone(), Worker { wake: wake.clone(), dirty: false });
     let (node, to) = (node.clone(), to.clone());
     tokio::spawn(async move { drain(node, to, wake).await });
 }
@@ -118,117 +97,143 @@ pub(crate) fn resume(node: &Arc<Node>) {
     }
 }
 
-fn paths(directory: &Path) -> io::Result<Vec<PathBuf>> {
-    Ok(crate::retention::entries(directory)?
-        .into_iter()
-        .filter(|path| path.extension().is_some_and(|extension| extension == "json"))
-        .filter(|path| !path.file_name().is_some_and(|name| name.to_string_lossy().starts_with('.')))
-        .collect())
-}
-
 async fn drain(node: Arc<Node>, to: ResidentId, wake: Arc<Notify>) {
     let mut ways = node.ways.subscribe();
     let mut errors = HashMap::new();
     let mut again = crate::again::Again::default();
-    // The letters read so far, by path: each wake lists the folder and reads
-    // only the letters new to it, so a backlog is read once, not once a wake.
-    let mut known: HashMap<PathBuf, Entry> = HashMap::new();
+    let (mut after, mut key) = (Vec::new(), String::new());
+    let mut through = Vec::new();
+    let mut pause = fastctx_net::again::LONGEST;
+    let mut failed = false;
     loop {
         let notified = wake.notified();
         tokio::pin!(notified);
         notified.as_mut().enable();
         ways.borrow_and_update();
-        match paths(&directory(&node, &to)) {
-            Ok(paths) => {
-                let listed: std::collections::HashSet<&PathBuf> = paths.iter().collect();
-                known.retain(|path, _| listed.contains(path));
-                for path in paths {
-                    if known.contains_key(&path) {
-                        continue;
-                    }
-                    match fastctx_install::renewal::read_json::<Entry>(&path) {
-                        Ok(Some(entry)) => {
-                            known.insert(path, entry);
-                        }
-                        Ok(None) => {}
-                        Err(error) => report(&node, &mut errors, &path, &error),
-                    }
+        if after.is_empty()
+            && let Some(worker) = node.received.workers.lock().expect("received workers").get_mut(&to)
+        {
+            worker.dirty = false;
+        }
+        if after.is_empty() {
+            let folder = directory(&node, &to);
+            match tokio::task::spawn_blocking(move || items::queue_end(&folder)).await {
+                Ok(Ok(end)) => through = end,
+                other => {
+                    node.log.line(format_args!("reading queue boundary: {other:?}"));
+                    tokio::time::sleep(again.next()).await;
+                    continue;
                 }
             }
-            Err(error) => report(&node, &mut errors, &directory(&node, &to), &error),
         }
-        let mut waiting: Vec<(PathBuf, u64, Timestamp)> =
-            known.iter().map(|(path, entry)| (path.clone(), entry.order, entry.delivery.at)).collect();
-        waiting.sort_by(|a, b| a.1.cmp(&b.1).then(a.2.cmp(&b.2)));
-        let mut pause = fastctx_net::again::LONGEST;
-        let mut failed = false;
-        for (path, _, _) in waiting {
-            let Some(mut entry) = known.remove(&path) else { continue };
-            match deliver(&node, &mut entry).await {
-                Ok(outcome) => {
-                    let done = !matches!(outcome, Handover::Waiting);
-                    let result = match outcome {
-                        Handover::Done => std::fs::remove_file(&path),
-                        Handover::Waiting => fastctx_install::renewal::write_json(&path, &entry),
-                        Handover::Refused(reason) => std::fs::read(&path).and_then(|bytes| {
-                            crate::obligations::finish(
-                                &node,
-                                &path,
-                                &bytes,
-                                crate::obligations::Outcome::Impossible,
-                                &reason,
-                            )
-                            .map(|_| ())
-                        }),
+        let upper = through.clone();
+        let (folder, cursor, last) = (directory(&node, &to), after.clone(), key.clone());
+        let loaded = tokio::task::spawn_blocking(move || {
+            items::queued(&folder, &cursor, &last, &upper).map(|rows| {
+                rows.into_iter()
+                    .map(|row| {
+                        let parsed = serde_json::from_slice::<Entry>(&row.bytes).map_err(io::Error::other);
+                        (row.order, row.path, parsed)
+                    })
+                    .collect::<Vec<_>>()
+            })
+        })
+        .await
+        .map_err(io::Error::other)
+        .and_then(|result| result);
+        let mut more = false;
+        match loaded {
+            Ok(rows) => {
+                more = !rows.is_empty();
+                for (order, path, parsed) in rows {
+                    after = order;
+                    key = path.file_name().and_then(|name| name.to_str()).expect("queue identity").to_string();
+                    let mut entry: Entry = match parsed {
+                        Ok(entry) => entry,
+                        Err(error) => {
+                            failed = true;
+                            report(&node, &mut errors, &path, &io::Error::other(error));
+                            continue;
+                        }
                     };
-                    let stored = result.is_ok();
-                    if let Err(error) = result {
+                    let result = deliver(&node, &mut entry).await;
+                    let due = entry.decision.due;
+                    let waiting = matches!(result, Ok(Handover::Waiting));
+                    let (working, record) = (node.clone(), path.clone());
+                    let saved = tokio::task::spawn_blocking(move || -> io::Result<()> {
+                        match result {
+                            Ok(Handover::Done) => items::delete_if_exists(&record),
+                            Ok(Handover::Waiting) => items::keep(&record, &entry),
+                            Ok(Handover::Refused(reason)) => {
+                                let bytes = items::read(&record)?;
+                                crate::obligations::finish_record(
+                                    &working,
+                                    &record,
+                                    &bytes,
+                                    crate::obligations::Outcome::Impossible,
+                                    &reason,
+                                )
+                                .map(|_| ())
+                            }
+                            Err(error) => {
+                                items::keep(&record, &entry)?;
+                                Err(error)
+                            }
+                        }
+                    })
+                    .await
+                    .map_err(io::Error::other)
+                    .and_then(|result| result);
+                    if let Err(error) = saved {
                         failed = true;
                         report(&node, &mut errors, &path, &error);
                     } else {
                         errors.remove(&path);
                     }
-                    if !done && let Some(due) = entry.decision.due {
-                        let millis = due.as_millisecond().saturating_sub(Timestamp::now().as_millisecond()).max(0);
-                        pause = pause.min(Duration::from_millis(millis as u64));
+                    if waiting && let Some(due) = due {
+                        pause = pause.min(Duration::from_millis(
+                            due.as_millisecond().saturating_sub(Timestamp::now().as_millisecond()).max(0) as u64,
+                        ));
                     }
-                    // A letter still waiting stays known as it was just kept;
-                    // one whose keeping failed is read again from disk.
-                    if !done && stored {
-                        known.insert(path, entry);
-                    }
-                }
-                Err(error) => {
-                    failed = true;
-                    match fastctx_install::renewal::write_json(&path, &entry) {
-                        Ok(()) => {
-                            known.insert(path.clone(), entry);
-                        }
-                        Err(storing) => report(&node, &mut errors, &path, &storing),
-                    }
-                    report(&node, &mut errors, &path, &error);
                 }
             }
+            Err(error) => {
+                failed = true;
+                report(&node, &mut errors, &directory(&node, &to), &error);
+            }
         }
-        // Recheck under the registry lock: an enqueue either precedes this
-        // read or starts a new worker after this one removes itself.
-        {
-            let mut workers = node.received.workers.lock().expect("never poisoned");
-            if paths(&directory(&node, &to)).is_ok_and(|paths| paths.is_empty()) {
+        if more {
+            tokio::task::yield_now().await;
+            continue;
+        }
+        after.clear();
+        key.clear();
+        let folder = directory(&node, &to);
+        let empty =
+            tokio::task::spawn_blocking(move || items::page(&folder, Some("json"), "", 1).map(|rows| rows.is_empty()))
+                .await
+                .is_ok_and(|result| result.is_ok_and(|empty| empty));
+        let dirty = {
+            let mut workers = node.received.workers.lock().expect("received workers");
+            let dirty = workers.get(&to).is_some_and(|worker| worker.dirty);
+            if empty && !dirty {
                 workers.remove(&to);
                 return;
             }
+            dirty
+        };
+        if dirty {
+            continue;
         }
         if failed || !errors.is_empty() {
             pause = pause.min(again.next());
         } else {
             again.reset();
         }
-        tokio::select! {
-            () = tokio::time::sleep(pause) => {}
-            () = &mut notified => {}
-            _ = ways.changed() => {}
-        }
+        let waiting = pause;
+        pause = fastctx_net::again::LONGEST;
+        failed = false;
+        tokio::select! {()=tokio::time::sleep(waiting)=>{},()=&mut notified=>{},_=ways.changed()=>{}}
     }
 }
 
@@ -251,7 +256,10 @@ async fn deliver(node: &Arc<Node>, entry: &mut Entry) -> io::Result<Handover> {
         return Ok(Handover::Refused("the receiving conversation was deleted".into()));
     }
     let result = if let Notice::JobEnded { consumed, .. } = &entry.delivery.notice {
-        crate::job_receipts::apply_consumed(&node.world.conversation(&entry.to), consumed)?;
+        let (directory, consumed) = (node.world.conversation(&entry.to), consumed.clone());
+        tokio::task::spawn_blocking(move || crate::job_receipts::apply_consumed(&directory, &consumed))
+            .await
+            .map_err(io::Error::other)??;
         if entry.released.is_none() {
             match crate::completion_delivery::decide(node, &entry.to, &entry.delivery, &mut entry.decision).await? {
                 crate::completion_delivery::Decision::Consumed => return Ok(Handover::Done),

@@ -408,7 +408,23 @@ pub(crate) fn recover_startups(node: &Arc<Node>, record: &crate::residents::OnRe
 /// that reports where the transcript is, so waiting for that would hold the
 /// first turn forever. The context fields come from the transcript when one
 /// is known; the mod's rewind and fork read the transcript themselves.
-fn policy(node: &Node, resident: &ResidentId, directory: &Path) -> std::io::Result<()> {
+async fn policy(node: &Arc<Node>, resident: &ResidentId, directory: &Path) -> std::io::Result<()> {
+    let (working, id, path) = (node.clone(), resident.clone(), directory.to_path_buf());
+    let bytes = tokio::task::spawn_blocking(move || prepare_policy(&working, &id, &path))
+        .await
+        .map_err(std::io::Error::other)??;
+    let Some(bytes) = bytes else { return Ok(()) };
+    crate::goals::holding::registered(node, resident, directory)
+        .await
+        .map_err(|error| std::io::Error::other(error.message))?;
+    let path = directory.join("policy.json");
+    tokio::task::spawn_blocking(move || {
+        fastctx_platform::publish(&path, &bytes, fastctx_platform::Permissions::Private)
+    })
+    .await
+    .map_err(std::io::Error::other)?
+}
+fn prepare_policy(node: &Node, resident: &ResidentId, directory: &Path) -> std::io::Result<Option<Vec<u8>>> {
     node.residents.about(resident).ok_or_else(|| std::io::Error::other("unknown Claude resident"))?;
     let options = crate::session_options::read(node, resident).map_err(|error| std::io::Error::other(error.message))?;
     let path = directory.join("policy.json");
@@ -418,7 +434,7 @@ fn policy(node: &Node, resident: &ResidentId, directory: &Path) -> std::io::Resu
     if let Some(prior) = claude::control::read::<serde_json::Value>(&path)?
         && prior["instance"] == serde_json::to_value(&registration.instance).map_err(std::io::Error::other)?
     {
-        return Ok(());
+        return Ok(None);
     }
     let mut last_uuid = None;
     let mut context_tail = None;
@@ -440,12 +456,10 @@ fn policy(node: &Node, resident: &ResidentId, directory: &Path) -> std::io::Resu
             }
         }
     }
-    crate::goals::holding::registered(node, resident, directory)
-        .map_err(|error| std::io::Error::other(error.message))?;
     let value = serde_json::json!({"instance": registration.instance, "model": options.model,
         "effort": options.reasoning_effort, "last_uuid": last_uuid, "context_uuids":context_uuids, "context_tail":context_tail});
     let bytes = serde_json::to_vec(&value).map_err(std::io::Error::other)?;
-    fastctx_platform::publish(&path, &bytes, fastctx_platform::Permissions::Private)
+    Ok(Some(bytes))
 }
 
 async fn look_all(node: &Arc<Node>, sessions: &Path) {
@@ -523,7 +537,7 @@ async fn look(node: &Arc<Node>, directory: &Path) -> bool {
         }
         return true;
     };
-    if let Err(error) = policy(node, &resident, directory) {
+    if let Err(error) = policy(node, &resident, directory).await {
         node.log.line(format_args!("publishing Claude session policy for {session}: {error}"));
         return false;
     }
@@ -874,7 +888,7 @@ async fn taken(
         return Ok(());
     }
     let mut audience = Vec::new();
-    if kept.iter().any(|pending| pending.working) && crate::goals::replies::inherits(node, resident)? {
+    if kept.iter().any(|pending| pending.working) && crate::goals::replies::inherits(node, resident).await? {
         audience = node.residents.readers(resident, turn);
         if audience.is_empty() {
             if let Some(finished) = crate::delivery::terminal(&directory, turn)? {

@@ -5,20 +5,26 @@ use crate::Node;
 use fastctx_types::{Address, ResidentId, TownName, access::Acting, ipc::Failure, project::Writer, residents::Origin};
 use std::{io, sync::Arc};
 
+static SOURCES: std::sync::LazyLock<crate::record_gates::Gates> = std::sync::LazyLock::new(|| {
+    crate::record_gates::Gates::new(fastctx_platform::doing::Rank::EMITTING, "local context source")
+});
+
 pub(crate) fn refresh_local(node: &Node, id: &ResidentId) -> io::Result<()> {
-    let _transaction = crate::resident_storage::lock();
+    let gate = SOURCES.get(node.world.conversation(id).path());
+    let _refreshing = gate.lock();
     let (about, town) = node.residents.about(id).ok_or_else(|| io::Error::other(words::UNKNOWN))?;
-    local_locked(node, id, town.as_ref(), &about.acting)
+    local_current(node, id, town.as_ref(), &about.acting)
 }
 
 fn local(node: &Node, id: &ResidentId, town: Option<&TownName>, acting: &Acting) -> io::Result<()> {
-    let _transaction = crate::resident_storage::lock();
-    local_locked(node, id, town, acting)
+    let gate = SOURCES.get(node.world.conversation(id).path());
+    let _refreshing = gate.lock();
+    local_current(node, id, town, acting)
 }
 
-fn local_locked(node: &Node, id: &ResidentId, town: Option<&TownName>, acting: &Acting) -> io::Result<()> {
+fn local_current(node: &Node, id: &ResidentId, town: Option<&TownName>, acting: &Acting) -> io::Result<()> {
     let prompt = crate::profile::session::text(&crate::profile::session::prompt(node, acting));
-    storage::set_locked(
+    storage::set(
         &node.world,
         id,
         "user",
@@ -40,7 +46,7 @@ fn local_locked(node: &Node, id: &ResidentId, town: Option<&TownName>, acting: &
         },
         None => (String::new(), None, String::new(), words::USER.into()),
     };
-    storage::set_locked(
+    storage::set(
         &node.world,
         id,
         "project",
@@ -52,7 +58,7 @@ fn local_locked(node: &Node, id: &ResidentId, town: Option<&TownName>, acting: &
         Err(error) if error.kind() == io::ErrorKind::NotFound => String::new(),
         Err(error) => return Err(error),
     };
-    storage::set_locked(
+    storage::set(
         &node.world,
         id,
         "focus",

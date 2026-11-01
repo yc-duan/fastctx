@@ -1,16 +1,21 @@
-//! Compact factual text for reviewers; evidence paths always accompany summaries.
+//! Compact factual text accompanies the complete structured evidence response.
 
 use fastctx_types::turn_evidence::TurnEvidence;
 use std::fmt::Write;
 
-pub(crate) fn render(evidence: &TurnEvidence, actions_path: &str) -> String {
+pub(crate) fn render(evidence: &TurnEvidence) -> String {
     let mut text = String::new();
     // How the turn ended, with the host's category and words only where it gave them.
     if let Some(stop) = &evidence.stop {
-        let kind = serde_json::to_value(stop.kind).ok().and_then(|kind| kind.as_str().map(str::to_owned)).unwrap_or_default();
+        let kind =
+            serde_json::to_value(stop.kind).ok().and_then(|kind| kind.as_str().map(str::to_owned)).unwrap_or_default();
         let category = stop.category.as_ref().map(|category| format!(" ({category})")).unwrap_or_default();
         let message = stop.message.as_deref().map(line).filter(|message| !message.is_empty());
-        let _ = writeln!(text, "A turn ended: {kind}{category}{}", message.map(|message| format!(": {message}")).unwrap_or_default());
+        let _ = writeln!(
+            text,
+            "A turn ended: {kind}{category}{}",
+            message.map(|message| format!(": {message}")).unwrap_or_default()
+        );
     }
     for call in &evidence.calls {
         let _ = writeln!(
@@ -66,13 +71,12 @@ pub(crate) fn render(evidence: &TurnEvidence, actions_path: &str) -> String {
     for action in evidence.actions.iter().filter(|action| action.hand != "run" || evidence.calls.is_empty()) {
         let _ = writeln!(
             text,
-            "{} {} {} {} -> {}; full action {}",
+            "{} {} {} {} -> {}; full action in the accompanying evidence",
             action.at,
             action.machine,
             action.hand,
             line(&action.what),
-            line(&action.result),
-            actions_path
+            line(&action.result)
         );
     }
     for event in &evidence.notices {

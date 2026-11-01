@@ -12,6 +12,14 @@ publish = false
 name = "own_lifetime"
 harness = false
 
+[[test]]
+name = "record_drill"
+harness = false
+required-features = ["storage-drill"]
+
+[features]
+storage-drill = []
+
 [dependencies]
 tempfile = "3"
 anyhow.workspace = true

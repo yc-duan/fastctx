@@ -52,8 +52,11 @@ pub(super) fn look(node: &Arc<Node>, record: &JobRecord) {
         }
         let size = noted.iter().map(|(path, ..)| path.len() + 48).sum();
         let result = node
-            .database
+            .book_database
             .write(size, move |connection| {
+                if super::frozen(connection, &deed)? {
+                    return Ok(());
+                }
                 for (path, how, added, removed) in &noted {
                     connection.execute(
                         "INSERT OR IGNORE INTO book_touches (deed, path, how, added, removed, seen)

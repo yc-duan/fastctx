@@ -86,7 +86,7 @@ pub async fn control_here(node: &Arc<Node>, resident: &ResidentId, control: Cont
         if !told {
             return Err(failure);
         }
-        let row = crate::control_queue::begin(node, resident, &control)?;
+        let row = crate::control_queue::begin(node, resident, &control).await?;
         return crate::control_queue::end(node, resident, row, Err(failure)).await;
     }
     if let Control::CancelControl { id } = &control {
@@ -110,7 +110,7 @@ pub async fn control_here(node: &Arc<Node>, resident: &ResidentId, control: Cont
         }
         return execute(node, resident, control).await;
     }
-    let row = crate::control_queue::begin(node, resident, &control)?;
+    let row = crate::control_queue::begin(node, resident, &control).await?;
     if let Err(error) = crate::control_queue::prepare(node, resident, &row).await {
         return crate::control_queue::end(node, resident, row, Err(error)).await;
     }
@@ -174,7 +174,7 @@ pub async fn offers_here(node: &Arc<Node>, resident: &ResidentId) -> Result<Offe
         "Claude" => crate::claude::control::offers(node, resident).await?,
         _ => Offers::default(),
     };
-    offers.pending_controls = crate::control_queue::pending(node, resident)?;
+    offers.pending_controls = crate::control_queue::pending(node, resident).await?;
     offers.control_queue = true;
     offers.controls_told = true;
     offers.control_reply_envelope = true;

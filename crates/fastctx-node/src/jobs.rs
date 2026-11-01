@@ -75,21 +75,14 @@ impl Jobs {
             node.log.line(format_args!("restoring replicas after a job ended: {error}"));
         }
         let _ = self.changes.send(job.clone());
-        let (writes, steps) = if record.end.is_some() && !record.is_sentinel() {
-            (
-                crate::run_facts::writes(&path).map_err(|error| failure("reading write facts", error))?,
-                crate::run_facts::steps(&path).map_err(|error| failure("reading step facts", error))?,
-            )
-        } else {
-            (Vec::new(), Vec::new())
-        };
         // Noting it and measuring an ended output read whole files: they
         // run beside the runtime, which others share.
         let noting = node.clone();
         let (noted, at) = (record.clone(), path.clone());
         tokio::task::spawn_blocking(move || {
-            crate::activity_book::note(&noting, &noted, &writes, &steps);
-            crate::run_facts::update_job_with(&noting, &at, writes, steps)
+            crate::run_facts::update_job(&noting, &at)?;
+            crate::activity_book::ended(&noting, &noted);
+            Ok::<_, std::io::Error>(())
         })
         .await
         .map_err(|error| failure("updating call facts", std::io::Error::other(error)))?
@@ -170,7 +163,6 @@ impl Jobs {
                 None => (None, fastctx_types::run::OutputMode::Merged, None),
             };
             let launch = Launch {
-                answer_receipts,
                 world: &world,
                 names: &names,
                 owner: &owner,
@@ -187,6 +179,14 @@ impl Jobs {
             let checked = launch.check()?;
             let _collecting = registering.disk.lock();
             let launched = checked.launch_with_io_registered(mode, input.as_deref(), |path| {
+                if owner.resident().is_some()
+                    && on.as_ref().is_none_or(|on| on.sentinel.is_none())
+                    && (on.is_some() || answer_receipts)
+                {
+                    let debt: &[u8] = if on.is_none() && answer_receipts { b"answer" } else { b"" };
+                    crate::job_metadata::put_raw(&path.with_extension("owed"), debt)
+                        .map_err(|e| failure("keeping completion debt", e))?;
+                }
                 if let Some(dispatch) = &dispatch {
                     crate::run_stops::register(&registering, path, dispatch)?;
                 }
@@ -201,7 +201,7 @@ impl Jobs {
             })?;
             starting.started(&launched.record);
             crate::job_watch::start(&registering, &launched.record, launched.supervisor.clone());
-            crate::run_facts::update_job(&registering, &launched.record, Vec::new())
+            crate::run_facts::update_job(&registering, &launched.record)
                 .map_err(|error| failure("updating call facts", error))?;
             Ok(launched)
         })
@@ -408,7 +408,7 @@ pub async fn forget(node: &Arc<Node>, town: Option<TownName>, owner: fastctx_typ
             Ok((record.owner == owner
                 && finished
                 && record.on.is_none()
-                && !path.with_extension("owed").try_exists()?)
+                && !crate::job_metadata::exists(&path.with_extension("owed"))?)
             .then_some(record))
         })
         .await
@@ -460,14 +460,15 @@ pub(crate) fn remove(path: &Path) -> std::io::Result<()> {
     {
         return Err(std::io::Error::new(std::io::ErrorKind::WouldBlock, "its supervisor has not exited"));
     }
-    let delivered =
-        fastctx_install::renewal::read_json::<fastctx_types::run::JobDelivery>(&path.with_extension("delivered"))?
-            .map(|delivery| delivery.at)
-            .unwrap_or_else(Timestamp::now);
+    let delivered = crate::job_metadata::get::<fastctx_types::run::JobDelivery>(&path.with_extension("delivered"))?
+        .map(|delivery| delivery.at)
+        .unwrap_or_else(Timestamp::now);
     retain_scratch(path, delivered)?;
-    match std::fs::remove_dir_all(path.with_extension("writes")) {
-        Err(error) if error.kind() != std::io::ErrorKind::NotFound => return Err(error),
-        _ => {}
+    for extension in ["writes", "steps"] {
+        match std::fs::remove_dir_all(path.with_extension(extension)) {
+            Err(error) if error.kind() != std::io::ErrorKind::NotFound => return Err(error),
+            _ => {}
+        }
     }
     // The record goes last: a log without one would be found by nobody.
     let mut files = vec![
@@ -475,8 +476,12 @@ pub(crate) fn remove(path: &Path) -> std::io::Result<()> {
         path.with_extension("sh"),
         path.with_extension("wait-taken"),
         path.with_extension("facts-state"),
+        path.with_extension("facts-output"),
         path.with_extension("facts-pending"),
         path.with_extension("writes.jsonl"),
+        path.with_extension("writes-pending"),
+        path.with_extension("steps.jsonl"),
+        path.with_extension("steps-index"),
         record::lock_path(path),
         path.with_extension("on"),
         path.with_extension("scratch"),
@@ -493,6 +498,7 @@ pub(crate) fn remove(path: &Path) -> std::io::Result<()> {
             .map(|extension| path.with_extension(extension)),
     );
     files.extend(["copied", "wait-taken", "consumed", "exit-receipt"].map(|extension| path.with_extension(extension)));
+    crate::job_metadata::Job::of(path, &record)?.delete_all()?;
     files.push(path.to_path_buf());
     for file in files {
         match std::fs::remove_file(&file) {

@@ -13,7 +13,7 @@ pub(crate) async fn opening(
     account: &HubAccount,
 ) -> Result<crate::talk::Opening, Failure> {
     let actor = account.clone();
-    let account = super::scope::resolve(node, resident, Some(account))?;
+    let account = super::scope::resolve(node, resident, Some(account)).await?;
     let events = node.watchers.watch(resident);
     let conversation = Address { machine: node.machine(), resident: resident.clone() };
     let access = crate::record_access::Access { actor, owner: account.clone(), conversation: conversation.clone() };

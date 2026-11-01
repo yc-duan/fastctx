@@ -1,9 +1,15 @@
 //! A single writer batches ready operations without delaying an idle caller.
 
 use super::{Error, Result};
+use crate::{
+    metrics::Metrics,
+    queue::{Admission, Queue},
+};
 use rusqlite::{Connection, TransactionBehavior};
 use std::panic::{AssertUnwindSafe, catch_unwind};
-use tokio::sync::{OwnedSemaphorePermit, mpsc};
+use std::path::PathBuf;
+use std::sync::{Arc, atomic::Ordering};
+use std::time::{Duration, Instant};
 
 pub(super) type Job = Box<dyn Work>;
 pub(super) trait Work: Send {
@@ -12,14 +18,14 @@ pub(super) trait Work: Send {
 }
 
 struct Operation<T, F, C, R> {
-    _permit: OwnedSemaphorePermit,
+    _permit: Admission,
     write: Option<F>,
     committed: C,
     reply: R,
     result: Option<Result<T>>,
 }
 
-pub(super) fn job<T, F, C, R>(permit: OwnedSemaphorePermit, write: F, committed: C, reply: R) -> Job
+pub(super) fn job<T, F, C, R>(permit: Admission, write: F, committed: C, reply: R) -> Job
 where
     T: Send + 'static,
     F: FnOnce(&Connection) -> Result<T> + Send + 'static,
@@ -66,32 +72,72 @@ where
     }
 }
 
-pub(super) fn run(mut connection: Connection, mut receive: mpsc::Receiver<Job>) {
-    while let Some(first) = receive.blocking_recv() {
-        let mut batch = vec![first];
-        while batch.len() < 256 {
-            match receive.try_recv() {
-                Ok(job) => batch.push(job),
-                Err(_) => break,
+pub(super) fn run(mut connection: Connection, queue: Arc<Queue>, metrics: Arc<Metrics>, path: PathBuf) {
+    let mut dirty = true;
+    loop {
+        let Some(first) = queue.pop(Duration::from_secs(1)) else {
+            if dirty {
+                // A busy reader may retain a WAL snapshot. Do not wait for it:
+                // another idle pass retries the truncation.
+                let _ = connection.busy_timeout(Duration::ZERO);
+                let checkpoint =
+                    connection.query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |row| row.get::<_, i64>(0));
+                dirty = !matches!(checkpoint, Ok(0));
+                let _ = connection.busy_timeout(super::ADMISSION);
             }
-        }
-        let result = commit(&mut connection, &mut batch);
+            metrics.database_bytes.store(std::fs::metadata(&path).map_or(0, |m| m.len()), Ordering::Relaxed);
+            metrics
+                .wal_bytes
+                .store(std::fs::metadata(format!("{}-wal", path.display())).map_or(0, |m| m.len()), Ordering::Relaxed);
+            if queue.finished() {
+                return;
+            }
+            continue;
+        };
+        let mut batch = vec![first];
+        let result = commit(&mut connection, &queue, &metrics, &mut batch);
+        dirty = true;
         for job in batch {
+            metrics.queued.fetch_sub(1, Ordering::Relaxed);
             job.finish(result.as_ref().err().cloned());
         }
     }
 }
 
-fn commit(connection: &mut Connection, batch: &mut [Job]) -> Result<()> {
+fn commit(connection: &mut Connection, queue: &Queue, metrics: &Metrics, batch: &mut Vec<Job>) -> Result<()> {
     let mut transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
-    for job in batch {
+    let started = Instant::now();
+    loop {
+        let job = batch.last_mut().expect("a nonempty batch");
         let mut savepoint = transaction.savepoint()?;
-        if job.apply(&savepoint) {
+        let operation = Instant::now();
+        let success = job.apply(&savepoint);
+        if success {
             savepoint.commit()?;
         } else {
+            metrics.failures.fetch_add(1, Ordering::Relaxed);
             savepoint.rollback()?;
         }
+        let elapsed = operation.elapsed();
+        metrics.write_micros.record(elapsed);
+        metrics.operations.fetch_add(1, Ordering::Relaxed);
+        if elapsed > Duration::from_millis(2) {
+            metrics.writes_over_budget.fetch_add(1, Ordering::Relaxed);
+        }
+        if elapsed > Duration::from_millis(20) {
+            metrics.slow_operations.fetch_add(1, Ordering::Relaxed);
+        }
+        if batch.len() >= 32 || started.elapsed() >= Duration::from_millis(2) {
+            break;
+        }
+        match queue.pop(Duration::ZERO) {
+            Some(next) => batch.push(next),
+            None => break,
+        }
     }
-    transaction.commit()?;
-    Ok(())
+    let flush = Instant::now();
+    let result = transaction.commit();
+    metrics.commit_micros.record(flush.elapsed());
+    metrics.commits.fetch_add(1, Ordering::Relaxed);
+    result.map_err(Into::into)
 }

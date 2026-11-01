@@ -7,8 +7,8 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use crate::records::items;
 use fastctx_net::link::Caller;
-use fastctx_platform::{Permissions, ensure_private_dir, publish, publish_new};
 use fastctx_types::access::{HubAccount, HubId};
 use fastctx_types::delivery_control::ControlLetter;
 use fastctx_types::ipc::Failure;
@@ -21,11 +21,16 @@ use crate::obligations::Outcome;
 
 #[derive(Default)]
 pub(crate) struct Receiving {
-    workers: Mutex<HashMap<Address, Arc<Notify>>>,
+    workers: Mutex<HashMap<Address, Worker>>,
     pub(crate) changed: Notify,
 }
 
-#[derive(Serialize, Deserialize)]
+struct Worker {
+    wake: Arc<Notify>,
+    dirty: bool,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
 struct Entry {
     scope: HubAccount,
     command: ControlLetter,
@@ -78,196 +83,237 @@ pub(crate) fn keep(
     }
     let owner = command.owner().clone();
     let directory = directory(node, &owner);
-    ensure_private_dir(&directory)?;
     let path = directory.join(format!("{}.json", identity.id));
-    let publishing = node.control_letters.workers.lock().expect("never poisoned");
-    if !path.with_extension("done").try_exists()? && !path.try_exists()? {
-        let sequence = directory.join("sequence");
-        let order = match std::fs::read_to_string(&sequence) {
-            Ok(text) => text.parse::<u64>().map_err(io::Error::other)?,
-            Err(error) if error.kind() == io::ErrorKind::NotFound => 0,
-            Err(error) => return Err(error),
-        };
-        let next = order.checked_add(1).ok_or_else(|| io::Error::other("control letter sequence exhausted"))?;
-        publish(&sequence, next.to_string().as_bytes(), Permissions::Private)?;
-        let bytes = serde_json::to_vec(&Entry {
-            scope,
-            command,
-            order,
-            from: caller.machine.clone(),
-            request: identity.original_id().parse().map_err(io::Error::other)?,
-            result: refused.map(Err),
-            posted: None,
-        })
-        .map_err(io::Error::other)?;
-        publish_new(&path, &bytes, Permissions::Private)?;
-    }
-    drop(publishing);
+    let entry = Entry {
+        scope,
+        command,
+        order: 0,
+        from: caller.machine.clone(),
+        request: identity.original_id().parse().map_err(io::Error::other)?,
+        result: refused.map(Err),
+        posted: None,
+    };
+    items::enqueue(&path, serde_json::to_vec(&entry)?, None)?;
     wake(node, &owner);
     Ok(())
 }
 
 fn wake(node: &Arc<Node>, owner: &Address) {
     let mut workers = node.control_letters.workers.lock().expect("never poisoned");
-    if let Some(wake) = workers.get(owner) {
-        wake.notify_one();
+    if let Some(worker) = workers.get_mut(owner) {
+        worker.dirty = true;
+        worker.wake.notify_one();
         return;
     }
     let wake = Arc::new(Notify::new());
-    workers.insert(owner.clone(), wake.clone());
+    workers.insert(owner.clone(), Worker { wake: wake.clone(), dirty: false });
     let (node, owner) = (node.clone(), owner.clone());
     tokio::spawn(async move { drain(node, owner, wake).await });
 }
 
-fn paths(directory: &Path) -> io::Result<Vec<PathBuf>> {
-    Ok(crate::retention::entries(directory)?
-        .into_iter()
-        .filter(|path| {
-            path.extension().is_some_and(|ext| ext == "json")
-                && !path.file_name().is_some_and(|name| name.to_string_lossy().starts_with('.'))
-        })
-        .collect())
-}
-
 pub(crate) fn resume(node: &Arc<Node>) {
-    let result = (|| -> io::Result<()> {
-        for directory in node.world.book_directories("received-controls")? {
-            for path in paths(&directory)? {
-                match fastctx_install::renewal::read_json::<Entry>(&path) {
-                    Ok(Some(entry)) => wake(node, entry.command.owner()),
-                    Ok(None) => {}
-                    Err(error) => {
-                        crate::obligations::retry(node, &path, &error.to_string())?;
+    let node = node.clone();
+    tokio::task::spawn_blocking(move || {
+        let result = (|| -> io::Result<()> {
+            for folder in node.world.book_directories("received-controls")? {
+                for path in items::entries(&folder, Some("json"))? {
+                    match items::get::<Entry>(&path) {
+                        Ok(Some(entry)) => wake(&node, entry.command.owner()),
+                        Ok(None) => {}
+                        Err(error) => crate::obligations::retry_record(&node, &path, &error.to_string())?,
                     }
                 }
             }
+            Ok(())
+        })();
+        if let Err(error) = result {
+            node.log.line(format_args!("recovering control mail: {error}"));
         }
-        Ok(())
-    })();
-    if let Err(error) = result {
-        node.log.line(format_args!("recovering control mail: {error}"));
-    }
+    });
 }
-
+async fn local<T: Send + 'static>(work: impl FnOnce() -> io::Result<T> + Send + 'static) -> io::Result<T> {
+    tokio::task::spawn_blocking(work).await.map_err(io::Error::other)?
+}
+async fn save(path: &Path, entry: &Entry) -> io::Result<()> {
+    let (path, entry) = (path.to_path_buf(), entry.clone());
+    local(move || items::keep(&path, &entry)).await
+}
+async fn retry(node: &Arc<Node>, path: &Path, reason: impl ToString) -> io::Result<()> {
+    let (node, path, reason) = (node.clone(), path.to_path_buf(), reason.to_string());
+    local(move || crate::obligations::retry_record(&node, &path, &reason)).await
+}
+async fn finish(node: &Arc<Node>, path: &Path, outcome: Outcome, reason: String) -> io::Result<()> {
+    let (node, path) = (node.clone(), path.to_path_buf());
+    local(move || {
+        let bytes = items::read(&path)?;
+        crate::obligations::finish_record(&node, &path, &bytes, outcome, &reason).map(|_| ())
+    })
+    .await
+}
 async fn drain(node: Arc<Node>, owner: Address, wake: Arc<Notify>) {
     let mut again = crate::again::Again::default();
+    let (mut after, mut key) = (Vec::new(), String::new());
+    let mut through = Vec::new();
     loop {
         let notified = wake.notified();
         tokio::pin!(notified);
         notified.as_mut().enable();
-        let result = async {
-            let mut entries = Vec::new();
-            for path in paths(&directory(&node, &owner))? {
-                let read = std::fs::read(&path).and_then(|bytes| {
-                    serde_json::from_slice::<Entry>(&bytes).map(|entry| (bytes, entry)).map_err(io::Error::other)
-                });
-                match read {
-                    Ok((bytes, entry)) => entries.push((path, bytes, entry)),
-                    Err(error) => {
-                        crate::obligations::retry(&node, &path, &error.to_string())?;
-                    }
-                }
-            }
-            entries.sort_by_key(|(_, _, entry)| entry.order);
-            for (path, _, mut entry) in entries {
-                if entry.result.is_none() {
-                    match tokio::time::timeout(Duration::from_secs(120), apply(&node, &entry)).await {
-                        Ok(Ok(())) => entry.result = Some(Ok(())),
-                        Ok(Err(error)) if crate::obligations::permanent(&error) => entry.result = Some(Err(error)),
-                        Ok(Err(error)) => {
-                            crate::obligations::retry(&node, &path, &error.message)?;
-                            continue;
-                        }
-                        Err(_) => {
-                            crate::obligations::retry(
-                                &node,
-                                &path,
-                                "the local control has not completed within 120 seconds",
-                            )?;
-                            continue;
-                        }
-                    }
-                    fastctx_install::renewal::write_json(&path, &entry)?;
-                }
-                let result = entry.result.clone().expect("applied control");
-                if entry.posted.is_none() {
-                    let acting =
-                        fastctx_types::access::Acting::one(entry.scope.hub.clone(), entry.scope.account.clone());
-                    let id = crate::speech::fixed_id("control-result", &[entry.request.as_str()]);
-                    let destination = fastctx_types::access::Written {
-                        name: entry.from.clone(),
-                        hub: node.link_of(&entry.scope.hub).map(|link| link.hub_name()),
-                    };
-                    if let Some(reason) = crate::obligations::impossible(&node, &acting, &destination)? {
-                        let reason = match &result {
-                            Ok(()) => format!("control applied; its result cannot be returned: {reason}"),
-                            Err(error) => format!("{}; the refusal cannot be returned: {reason}", error.message),
-                        };
-                        let bytes = std::fs::read(&path)?;
-                        crate::obligations::finish(&node, &path, &bytes, Outcome::Impossible, &reason)?;
-                        continue;
-                    }
-                    match crate::letters::post(
-                        &node,
-                        &acting,
-                        &destination,
-                        id,
-                        fastctx_types::remote::Letter::ControlResult {
-                            request: entry.request.clone(),
-                            result: result.clone(),
-                        },
-                    ) {
-                        Ok(posted) => {
-                            entry.posted = Some(posted);
-                            fastctx_install::renewal::write_json(&path, &entry)?;
-                        }
-                        Err(error) => {
-                            crate::obligations::retry(&node, &path, &error.to_string())?;
-                            continue;
-                        }
-                    }
-                }
-                let (outcome, reason) = match entry.posted.as_ref().expect("posted result").state(&node)? {
-                    fastctx_net::link::Posting::Pending => continue,
-                    fastctx_net::link::Posting::Replaced => {
-                        entry.posted = None;
-                        fastctx_install::renewal::write_json(&path, &entry)?;
-                        continue;
-                    }
-                    fastctx_net::link::Posting::Held => match result {
-                        Ok(()) => (Outcome::Delivered, "control applied and its result is held by the hub".to_string()),
-                        Err(error) => (Outcome::Impossible, error.message),
-                    },
-                    fastctx_net::link::Posting::Refused(reason) => (Outcome::Impossible, reason),
-                };
-                let bytes = std::fs::read(&path)?;
-                crate::obligations::finish(&node, &path, &bytes, outcome, &reason)?;
-            }
-            Ok::<(), io::Error>(())
-        }
-        .await;
-        if let Err(error) = result {
-            node.log.line(format_args!("processing control mail for {owner}: {error}"));
-        }
+        if after.is_empty()
+            && let Some(worker) = node.control_letters.workers.lock().expect("control workers").get_mut(&owner)
         {
-            let mut workers = node.control_letters.workers.lock().expect("never poisoned");
-            if paths(&directory(&node, &owner)).is_ok_and(|paths| paths.is_empty()) {
+            worker.dirty = false;
+        }
+        if after.is_empty() {
+            let folder = directory(&node, &owner);
+            match tokio::task::spawn_blocking(move || items::queue_end(&folder)).await {
+                Ok(Ok(end)) => through = end,
+                other => {
+                    node.log.line(format_args!("reading queue boundary: {other:?}"));
+                    tokio::time::sleep(again.next()).await;
+                    continue;
+                }
+            }
+        }
+        let upper = through.clone();
+        let (folder, cursor, last) = (directory(&node, &owner), after.clone(), key.clone());
+        let loaded = local(move || {
+            items::queued(&folder, &cursor, &last, &upper).map(|rows| {
+                rows.into_iter()
+                    .map(|row| {
+                        let parsed = serde_json::from_slice::<Entry>(&row.bytes).map_err(io::Error::other);
+                        (row.order, row.path, parsed)
+                    })
+                    .collect::<Vec<_>>()
+            })
+        })
+        .await;
+        let mut more = false;
+        match loaded {
+            Ok(rows) => {
+                more = !rows.is_empty();
+                for (order, path, entry) in rows {
+                    after = order;
+                    key = path.file_name().and_then(|name| name.to_str()).expect("control identity").to_string();
+                    let result = match entry {
+                        Ok(entry) => process(&node, &path, entry).await,
+                        Err(error) => Err(error),
+                    };
+                    if let Err(error) = result
+                        && let Err(error) = retry(&node, &path, error).await
+                    {
+                        node.log.line(format_args!("keeping control mail retry: {error}"));
+                    }
+                }
+            }
+            Err(error) => node.log.line(format_args!("processing control mail for {owner}: {error}")),
+        }
+        if more {
+            tokio::task::yield_now().await;
+            continue;
+        }
+        after.clear();
+        key.clear();
+        let folder = directory(&node, &owner);
+        let empty = local(move || items::page(&folder, Some("json"), "", 1).map(|rows| rows.is_empty()))
+            .await
+            .is_ok_and(|empty| empty);
+        let dirty = {
+            let mut workers = node.control_letters.workers.lock().expect("control workers");
+            let dirty = workers.get(&owner).is_some_and(|worker| worker.dirty);
+            if empty && !dirty {
                 workers.remove(&owner);
                 return;
             }
+            dirty
+        };
+        if dirty {
+            continue;
         }
-        tokio::select! {
-            () = tokio::time::sleep(again.next()) => {}
-            () = &mut notified => {}
+        tokio::select! {()=tokio::time::sleep(again.next())=>{},()=&mut notified=>{}}
+    }
+}
+
+async fn process(node: &Arc<Node>, path: &Path, mut entry: Entry) -> io::Result<()> {
+    if entry.result.is_none() {
+        match tokio::time::timeout(Duration::from_secs(120), apply(node, &entry)).await {
+            Ok(Ok(())) => entry.result = Some(Ok(())),
+            Ok(Err(error)) if crate::obligations::permanent(&error) => entry.result = Some(Err(error)),
+            Ok(Err(error)) => {
+                retry(node, path, &error.message).await?;
+                return Ok(());
+            }
+            Err(_) => {
+                retry(node, path, "the local control has not completed within 120 seconds").await?;
+                return Ok(());
+            }
+        }
+        save(path, &entry).await?;
+    }
+    let result = entry.result.clone().expect("applied control");
+    if entry.posted.is_none() {
+        let acting = fastctx_types::access::Acting::one(entry.scope.hub.clone(), entry.scope.account.clone());
+        let id = crate::speech::fixed_id("control-result", &[entry.request.as_str()]);
+        let destination = fastctx_types::access::Written {
+            name: entry.from.clone(),
+            hub: node.link_of(&entry.scope.hub).map(|link| link.hub_name()),
+        };
+        let (checking, account, recipient) = (node.clone(), acting.clone(), destination.clone());
+        if let Some(reason) = local(move || crate::obligations::impossible(&checking, &account, &recipient)).await? {
+            let reason = match &result {
+                Ok(()) => format!("control applied; its result cannot be returned: {reason}"),
+                Err(error) => format!("{}; the refusal cannot be returned: {reason}", error.message),
+            };
+            return finish(node, path, Outcome::Impossible, reason).await;
+        }
+        let (posting, request, outcome) = (node.clone(), entry.request.clone(), result.clone());
+        let posted = local(move || {
+            crate::letters::post(
+                &posting,
+                &acting,
+                &destination,
+                id,
+                fastctx_types::remote::Letter::ControlResult { request, result: outcome },
+            )
+        })
+        .await;
+        match posted {
+            Ok(posted) => {
+                entry.posted = Some(posted);
+                save(path, &entry).await?;
+            }
+            Err(error) => {
+                retry(node, path, error).await?;
+                return Ok(());
+            }
         }
     }
+    let (checking, posted) = (node.clone(), entry.posted.clone().expect("posted result"));
+    let (outcome, reason) = match local(move || posted.state(&checking)).await? {
+        fastctx_net::link::Posting::Pending => return Ok(()),
+        fastctx_net::link::Posting::Replaced => {
+            entry.posted = None;
+            save(path, &entry).await?;
+            return Ok(());
+        }
+        fastctx_net::link::Posting::Held => match result {
+            Ok(()) => (Outcome::Delivered, "control applied and its result is held by the hub".into()),
+            Err(error) => (Outcome::Impossible, error.message),
+        },
+        fastctx_net::link::Posting::Refused(reason) => (Outcome::Impossible, reason),
+    };
+    finish(node, path, outcome, reason).await
 }
 
 async fn apply(node: &Arc<Node>, entry: &Entry) -> Result<(), Failure> {
     match &entry.command {
         ControlLetter::CompletionReceipt { owner, delivery, origin, through_exit } => {
-            crate::retention::received_from(node, owner, delivery, origin.as_ref(), *through_exit, Some(&entry.scope))
-                .map_err(|error| Failure::new(error.to_string()))
+            let (node, owner, delivery, origin, through_exit, scope) =
+                (node.clone(), owner.clone(), delivery.clone(), origin.clone(), *through_exit, entry.scope.clone());
+            local(move || {
+                crate::retention::received_from(&node, &owner, &delivery, origin.as_ref(), through_exit, Some(&scope))
+            })
+            .await
+            .map_err(|error| Failure::new(error.to_string()))
         }
         ControlLetter::StopRun { owner, dispatch } => {
             crate::run_stops::serve(node, owner, dispatch, &entry.scope).await

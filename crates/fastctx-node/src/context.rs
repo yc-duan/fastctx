@@ -2,6 +2,7 @@
 
 pub(crate) mod input;
 pub(crate) mod memory;
+mod records;
 pub(crate) mod sources;
 mod storage;
 pub(crate) mod turn;
@@ -169,6 +170,7 @@ pub(crate) fn acknowledge(node: &Node, id: &ResidentId, heard: &mut crate::resid
 /// No body is copied to a second place that could lag after a failed refresh.
 pub(crate) fn hand_to_session(node: &Node, id: &ResidentId, session: &Path) -> io::Result<()> {
     storage::initialize(&node.world, id)?;
+    records::repair(&node.world, id)?;
     let path = session.join("context.json");
     let bytes = serde_json::to_vec(&serde_json::json!({
         "directory": storage::directory(&node.world, id),
@@ -219,4 +221,34 @@ pub(crate) fn plugin_heard(node: &Node, id: &ResidentId) -> io::Result<()> {
         sources::observed(node, id, &accepted)?;
     }
     Ok(())
+}
+
+pub(crate) fn initialized(node: &Node, id: &ResidentId) -> io::Result<bool> {
+    records::initialized(&node.world, id)
+}
+
+/// A native compaction observation and its context epoch advance together.
+pub(crate) fn native_observed(
+    node: &Node,
+    id: &ResidentId,
+    observed: serde_json::Value,
+    marker: Option<String>,
+) -> io::Result<()> {
+    let changed = marker.is_some();
+    records::commit(
+        &node.world,
+        id,
+        2048,
+        || {
+            if changed {
+                node.residents.restore_opening_heard(id);
+            }
+        },
+        move |rows| {
+            if let Some(marker) = marker {
+                storage::reset_in(rows, &marker)?;
+            }
+            rows.put("native-context", "current", &observed)
+        },
+    )
 }

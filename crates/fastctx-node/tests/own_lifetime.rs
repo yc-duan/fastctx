@@ -135,7 +135,6 @@ fn exercise() -> anyhow::Result<()> {
     let launched = {
         let _lock = FileLock::acquire(&world.node_lock())?;
         run::launch(&run::Launch {
-            answer_receipts: false,
             on: None,
             account: None,
             world: &world,

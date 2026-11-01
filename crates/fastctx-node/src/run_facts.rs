@@ -1,14 +1,29 @@
 //! Call facts survive their large artifacts and are attached by explicit host identity only.
 
+mod cursor;
+#[cfg(feature = "storage-drill")]
+pub(crate) mod drill;
+#[cfg(feature = "storage-drill")]
+mod drill_mixed;
+mod journal;
 mod log;
+mod migrate;
+mod projections;
+mod snapshot;
+mod sql;
 mod steps;
 mod storage;
+pub(crate) use sql::SCHEMA;
+mod output;
 mod updates;
-pub(crate) use storage::{
-    begin as begin_for, evidence, evidence_all, failed as failed_for, job_updates, legacy_reply, observations, receive, record_failure, stamp,
-};
-pub(crate) use steps::{steps, tell as tell_step};
-pub(crate) use updates::{job as update_job, job_with as update_job_with};
+mod visits;
+mod writing;
+pub(crate) use steps::tell as tell_step;
+pub(crate) use storage::{evidence, job_updates, observations, pending_machines, stamp};
+mod acceptance;
+mod asynchronous;
+pub(crate) use asynchronous::{begin_for, failed_for, keep_for, keep_reply, legacy_reply, receive, record_failure};
+pub(crate) use updates::job as update_job;
 
 use crate::Node;
 use fastctx_platform::{Permissions, publish, publish_new};
@@ -19,53 +34,18 @@ use fastctx_types::session::{Happened, SessionEvent, What};
 use std::io;
 use std::path::Path;
 
-static WRITING: std::sync::LazyLock<crate::ranked::WriteFacts> = std::sync::LazyLock::new(Default::default);
+static WRITING: std::sync::LazyLock<crate::record_gates::Gates> = std::sync::LazyLock::new(|| {
+    crate::record_gates::Gates::new(fastctx_platform::doing::Rank::WRITE_FACTS, "write facts")
+});
 
-pub(crate) fn write(directory: &Path, fact: &WriteFact) -> io::Result<()> {
-    let _writing = WRITING.lock();
-    if fact.id.is_empty() || !fact.id.bytes().all(|byte| byte.is_ascii_hexdigit() || byte == b'-') {
-        return Err(io::Error::new(io::ErrorKind::InvalidData, "invalid write fact identity"));
-    }
-    fastctx_platform::ensure_private_dir(directory)?;
-    let path = directory.join(format!("{}.json", fact.id));
-    let bytes = serde_json::to_vec(fact)?;
-    match publish_new(&path, &bytes, Permissions::Private) {
-        Ok(()) => {
-            let mut bytes = bytes;
-            bytes.push(b'\n');
-            log::append(&directory.with_extension("writes.jsonl"), &bytes)
-        }
-        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
-            if std::fs::read(path)? == bytes {
-                Ok(())
-            } else {
-                Err(io::Error::new(io::ErrorKind::InvalidData, "write fact identity changed"))
-            }
-        }
-        Err(error) => Err(error),
-    }
+pub(crate) use writing::keep as write;
+
+pub(crate) fn record_visit(path: &Path, bytes: &[u8]) -> io::Result<()> {
+    visits::keep(path, bytes)
 }
 
 pub(crate) fn writes(record: &Path) -> io::Result<Vec<WriteFact>> {
-    let mut facts = read_since(record, &mut 0)?;
-    let known: std::collections::HashSet<_> = facts.iter().map(|fact| fact.id.clone()).collect();
-    let entries = match std::fs::read_dir(record.with_extension("writes")) {
-        Ok(entries) => entries,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(facts),
-        Err(error) => return Err(error),
-    };
-    let mut recovered = Vec::new();
-    for entry in entries {
-        let path = entry?.path();
-        if path.file_stem().and_then(|name| name.to_str()).is_some_and(|id| known.contains(id)) {
-            continue;
-        }
-        recovered.push(serde_json::from_slice(&std::fs::read(path)?)?);
-    }
-    // A published fact survives an interrupted append; completed appends keep their order.
-    recovered.sort_by(|a: &WriteFact, b| a.id.cmp(&b.id));
-    facts.extend(recovered);
-    Ok(facts)
+    writing::prepare(record)?.all("writes")
 }
 
 /// The most bytes of changes' rows one run keeps with the conversation.
@@ -90,6 +70,7 @@ pub(crate) fn assemble(reply: &RunReply, record: &Path) -> io::Result<RunFacts> 
     }
     let (spans, notes) = fastctx_hands::run::projection::read_with_matches(&reply.output, &writes)?;
     Ok(RunFacts {
+        folded_steps: Vec::new(),
         turn: fastctx_hands::run::record::read(record)?.turn,
         record: Some(record.to_string_lossy().into_owned()),
         machine: reply.machine.clone(),
@@ -114,15 +95,6 @@ pub(crate) fn assemble(reply: &RunReply, record: &Path) -> io::Result<RunFacts> 
         notes,
         steps: steps::steps(record)?,
     })
-}
-
-fn path(directory: &ConversationDir, id: &str) -> std::path::PathBuf {
-    // Host ids are opaque input, never path components.
-    directory.calls().join(format!("{}.json", fastctx_hands::files::content_hash(id.as_bytes())))
-}
-
-pub(crate) fn keep(directory: &ConversationDir, id: &str, facts: &RunFacts) -> io::Result<()> {
-    storage::keep(directory, id, facts, false)
 }
 
 pub(crate) fn attach(directory: &ConversationDir, event: &mut SessionEvent) -> io::Result<()> {
@@ -159,49 +131,21 @@ pub(crate) fn attach(directory: &ConversationDir, event: &mut SessionEvent) -> i
     Ok(())
 }
 
-pub(crate) fn keep_for(
-    node: &Node,
-    resident: &fastctx_types::ResidentId,
-    id: &str,
-    facts: &RunFacts,
-) -> io::Result<()> {
-    if !node.residents.knows(resident) {
-        return Err(io::Error::other("unknown resident"));
-    }
-    storage::keep(&node.world.conversation(resident), id, facts, true)
-}
-
-pub(crate) fn keep_reply(
-    node: &Node,
-    resident: &fastctx_types::ResidentId,
-    id: &str,
-    facts: &RunFacts,
-) -> io::Result<()> {
-    if !node.residents.knows(resident) {
-        return Err(io::Error::other("unknown resident"));
-    }
-    keep(&node.world.conversation(resident), id, facts)
-}
-
 pub(crate) fn read_since(record: &Path, cursor: &mut u64) -> io::Result<Vec<WriteFact>> {
-    use std::io::{BufRead, Seek};
-    let mut file = match std::fs::File::open(record.with_extension("writes.jsonl")) {
-        Ok(file) => file,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
-        Err(error) => return Err(error),
-    };
-    file.seek(std::io::SeekFrom::Start(*cursor))?;
-    let mut reader = std::io::BufReader::new(file);
-    let mut facts = Vec::new();
-    let mut line = String::new();
-    loop {
-        line.clear();
-        let n = reader.read_line(&mut line)?;
-        if n == 0 || !line.ends_with('\n') {
-            break;
-        }
-        facts.push(serde_json::from_str(&line).map_err(io::Error::other)?);
-        *cursor += n as u64;
-    }
-    Ok(facts)
+    writing::prepare(record)?.page("writes", cursor)
+}
+
+/// The activity book has its own durable cursor, independent of fact delivery.
+pub(crate) fn book_since(
+    record: &Path,
+    cursor: &mut crate::activity_book::Cursor,
+) -> io::Result<(Vec<WriteFact>, Vec<fastctx_types::run_facts::RunStep>)> {
+    let writes = read_since(record, &mut cursor.writes_offset)?;
+    let gate = WRITING.get(&record.with_extension("facts"));
+    let _writing = gate.lock();
+    Ok((writes, journal::read_since(record, &mut cursor.steps_segment, &mut cursor.steps_offset)?))
+}
+
+pub(crate) fn repair_journal(record: &Path, legacy: bool) -> io::Result<()> {
+    writing::recover(record, legacy)
 }

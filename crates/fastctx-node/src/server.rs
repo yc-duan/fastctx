@@ -912,6 +912,7 @@ async fn taken(
         {
             if pending.working {
                 pending.readers = if crate::goals::replies::inherits(node, &resident)
+                    .await
                     .map_err(|error| Failure::new(error.to_string()))?
                 {
                     node.residents.working_for(&resident)
@@ -1012,10 +1013,7 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
         Call::TurnEvidence { resident, turn, refresh_limits } => {
             users_voice(node, peer)?;
             let evidence = crate::turn_evidence::snapshot(node, &resident, turn, refresh_limits).await?;
-            let text = crate::turn_evidence::words::render(
-                &evidence,
-                &node.world.conversation(&resident).actions().to_string_lossy(),
-            );
+            let text = crate::turn_evidence::words::render(&evidence);
             Ok(Reply::TurnEvidence { evidence: Box::new(evidence), text })
         }
         Call::CompactBetweenTurns { resident } => {
@@ -1099,6 +1097,7 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
                 return Err(Failure::new("tool call facts come from a session's adapter"));
             }
             crate::run_facts::keep_for(node, &resident, &call_id, &facts)
+                .await
                 .map_err(|error| Failure::new(format!("recording tool call facts: {error}")))?;
             Ok(Reply::Done)
         }
@@ -1107,6 +1106,7 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
                 return Err(Failure::new("tool call facts come from a session's adapter"));
             }
             crate::run_facts::record_failure(node, &resident, &call_id, &error)
+                .await
                 .map_err(|error| Failure::new(format!("recording tool call facts: {error}")))?;
             Ok(Reply::Done)
         }
@@ -1893,13 +1893,14 @@ async fn run(
     let machine = goes_to.as_ref().map(|place| place.name.clone()).unwrap_or_else(|| node.machine());
     if let Some(id) = call_id {
         crate::run_facts::begin_for(node, &resident, id, machine, request.turn.clone(), &request.script)
+            .await
             .map_err(|error| Failure::not_run(format!("recording tool call facts: {error}")))?;
     }
     let result = run_started(node, resident.clone(), town, request, goes_to, target, call_id).await;
     // The session is told what became of the script, not of its record.
     if let Err(failure) = &result
         && let Some(id) = call_id
-        && let Err(error) = crate::run_facts::failed_for(node, &resident, id, &failure.message)
+        && let Err(error) = crate::run_facts::failed_for(node, &resident, id, &failure.message).await
     {
         node.log.line(format_args!("recording that {resident}'s call {id} failed: {error}"));
     }
@@ -1938,10 +1939,10 @@ async fn run_started(
     };
     if let Some(id) = call_id {
         let kept = if let Some(facts) = &reply.run {
-            crate::run_facts::keep_reply(node, &resident, id, facts)
+            crate::run_facts::keep_reply(node, &resident, id, facts).await
         } else {
             // Its script and turn remain known, but missing observations are explicit.
-            crate::run_facts::legacy_reply(node, &resident, id, &reply)
+            crate::run_facts::legacy_reply(node, &resident, id, &reply).await
         };
         kept.map_err(|error| Failure::new(format!("recording tool call facts: {error}")))?;
     }

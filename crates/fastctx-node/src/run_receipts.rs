@@ -1,28 +1,43 @@
-//! A run answer becomes heard only when its host confirms that answer.
-//! Remember the authenticated completion identities before returning it;
-//! receiving an answer at the node alone must not suppress recovery mail.
+//! A run answer becomes heard only when its host confirms that answer. All
+//! authenticated aliases and retirement of the answer commit in one transaction.
 
-use std::io;
-use std::path::PathBuf;
-
-use fastctx_platform::{Permissions, ensure_private_dir, publish_new};
+use crate::{Node, records};
 use fastctx_types::run::{JobDelivery, RunReply, RunState};
-use fastctx_types::{Address, JobId, MachineName, NoticeId, ResidentId};
+use fastctx_types::{Address, JobId, MachineName, ResidentId};
 use serde::{Deserialize, Serialize};
-
-use crate::Node;
+use std::io;
 
 #[derive(Serialize, Deserialize)]
 struct Receipt {
     output: String,
-    ids: Vec<NoticeId>,
+    ids: Vec<fastctx_types::NoticeId>,
 }
 
-fn path(node: &Node, resident: &ResidentId, machine: &MachineName, job: &JobId) -> PathBuf {
-    let id = crate::speech::fixed_id("run", &[machine.key(), job.as_str()]);
-    node.world.conversation(resident).book("run-receipts").join(format!("{id}.json"))
+fn key(machine: &MachineName, job: &JobId) -> String {
+    crate::speech::fixed_id("run", &[machine.key(), job.as_str()]).to_string()
 }
-
+fn prepare(node: &Node, resident: &ResidentId) -> io::Result<fastctx_types::layout::ConversationDir> {
+    let directory = node.world.conversation(resident);
+    records::ensure_each(&directory, "run-receipts", |push| {
+        for path in crate::retention::entries(&directory.book("run-receipts"))? {
+            if path.extension().is_none_or(|extension| extension != "json")
+                || path.file_name().is_some_and(|name| name.to_string_lossy().starts_with('.'))
+            {
+                continue;
+            }
+            let row: Receipt = serde_json::from_slice(&std::fs::read(&path)?)?;
+            let key = path
+                .file_stem()
+                .and_then(|name| name.to_str())
+                .ok_or_else(|| io::Error::other("invalid run receipt"))?
+                .to_string();
+            push(records::Source::new(key, path, serde_json::to_vec(&row)?)?)?;
+        }
+        Ok(())
+    })?;
+    crate::inbox::storage::initialize(&directory)?;
+    Ok(directory)
+}
 pub(crate) fn remember(node: &Node, owner: &Address, reply: &RunReply) -> io::Result<()> {
     if !node.is_me(&owner.machine) || matches!(reply.state, RunState::Running | RunState::Exited { .. }) {
         return Ok(());
@@ -32,30 +47,35 @@ pub(crate) fn remember(node: &Node, owner: &Address, reply: &RunReply) -> io::Re
     if let Ok(identity) = crate::letters::Identity::at(node, &(&reply.machine).into(), id.as_str()) {
         ids.extend(identity.ids().cloned());
     }
-    let path = path(node, &owner.resident, &reply.machine, &reply.job);
-    ensure_private_dir(path.parent().expect("run receipt directory"))?;
-    let receipt = Receipt { output: reply.output.log.clone(), ids };
-    fastctx_install::renewal::write_json(&path, &receipt)
+    let directory = prepare(node, &owner.resident)?;
+    let (key, receipt) = (key(&reply.machine, &reply.job), Receipt { output: reply.output.log.clone(), ids });
+    let bytes = serde_json::to_vec(&receipt)?.len();
+    records::write_at(&directory, fastctx_storage::Priority::Normal, bytes, move |rows| {
+        rows.put_until(
+            "run-receipts",
+            &key,
+            &receipt,
+            Some(jiff::Timestamp::now() + jiff::SignedDuration::from_hours(30 * 24)),
+        )
+    })
 }
-
-/// The caller may already hold the records lock. Atomic receipt publication
-/// also suppresses an inbox entry concurrently kept under its original id.
 pub(crate) fn confirmed(node: &Node, owner: &Address, machine: &MachineName, delivery: &JobDelivery) -> io::Result<()> {
     if !node.is_me(&owner.machine) {
         return Ok(());
     }
-    let path = path(node, &owner.resident, machine, &delivery.job);
-    let Some(receipt) = fastctx_install::renewal::read_json::<Receipt>(&path)? else { return Ok(()) };
-    if receipt.output != delivery.output {
-        return Err(io::Error::other("the run answer receipt refers to another output"));
-    }
-    let directory = node.world.conversation(&owner.resident).delivery_receipts();
-    ensure_private_dir(&directory)?;
-    for id in receipt.ids {
-        match publish_new(&directory.join(id.as_str()), b"answered", Permissions::Private) {
-            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
-            result => result?,
+    let directory = prepare(node, &owner.resident)?;
+    let (key, output) = (key(machine, &delivery.job), delivery.output.clone());
+    records::write_at(&directory, fastctx_storage::Priority::Interactive, 512, move |rows| {
+        let Some(receipt) = rows.get::<Receipt>("run-receipts", &key)? else { return Ok(()) };
+        if receipt.output != output {
+            return Err(fastctx_storage::Error::new("the run answer receipt refers to another output"));
         }
-    }
-    std::fs::remove_file(path)
+        for id in receipt.ids {
+            if !crate::inbox::storage::delivered(rows, id.as_str())? {
+                rows.put("delivery-receipts", id.as_str(), &crate::inbox::storage::Receipt::Answered)?;
+            }
+        }
+        rows.delete("run-receipts", &key)?;
+        Ok(())
+    })
 }

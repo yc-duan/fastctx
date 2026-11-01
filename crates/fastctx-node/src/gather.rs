@@ -820,7 +820,6 @@ fn merge_lines(sources: &[Source], into: &ConversationDir) -> io::Result<()> {
             &serde_json::to_vec(&sequence).map_err(io::Error::other)?,
             Permissions::Private,
         )?;
-        crate::session_record::reset(&into.session_sequence());
     }
     Ok(())
 }

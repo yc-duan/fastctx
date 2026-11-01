@@ -23,7 +23,7 @@ pub(super) fn idle_delay() -> Duration {
     IDLE
 }
 
-pub(crate) fn held(node: &Node, id: &ResidentId) -> Result<bool, Failure> {
+pub(crate) async fn held(node: &Node, id: &ResidentId) -> Result<bool, Failure> {
     let Some(now) = node.residents.now(id) else { return Ok(true) };
     if now.activity == Activity::Busy
         || now.turn.is_some()
@@ -37,7 +37,8 @@ pub(crate) fn held(node: &Node, id: &ResidentId) -> Result<bool, Failure> {
     {
         return Ok(true);
     }
-    if crate::control_queue::pending(node, id)?
+    if crate::control_queue::pending(node, id)
+        .await?
         .iter()
         .any(|row| matches!(row.state, ControlState::Waiting | ControlState::Running))
     {
@@ -67,7 +68,7 @@ async fn consider(node: &Arc<Node>, id: &ResidentId) -> Result<(), Failure> {
         }
         return Ok(());
     }
-    if held(node, id)? {
+    if held(node, id).await? {
         return Ok(());
     }
     if adapter.candidate(node, &about).await?.is_none() {
@@ -77,7 +78,7 @@ async fn consider(node: &Arc<Node>, id: &ResidentId) -> Result<(), Failure> {
     let Ok(_action) = action.try_lock() else { return Ok(()) };
     let management = node.residents.management(id)?;
     let Ok(_exclusive) = management.try_write() else { return Ok(()) };
-    if node.residents.removed(id).is_some() || held(node, id)? {
+    if node.residents.removed(id).is_some() || held(node, id).await? {
         return Ok(());
     }
     let Some((current, _)) = node.residents.about(id) else { return Ok(()) };
@@ -85,7 +86,7 @@ async fn consider(node: &Arc<Node>, id: &ResidentId) -> Result<(), Failure> {
         return Ok(());
     }
     let Some(candidate) = adapter.candidate(node, &current).await? else { return Ok(()) };
-    if held(node, id)? {
+    if held(node, id).await? {
         return Ok(());
     }
     super::release_locked(node, &current, ReleaseReason::Idle, Some(&candidate)).await?;
