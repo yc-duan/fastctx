@@ -48,7 +48,7 @@ pub async fn ask(
     let turn = node.residents.now(&asker).and_then(|now| now.turn);
     let (about, _) =
         node.residents.about(&asker).ok_or_else(|| Failure::not_run(format!("no resident {asker} lives here")))?;
-    let choices = crate::collab::require(node, &asker, login)?;
+    let choices = crate::collab::require(node, &asker, login).await?;
     let mut matching: Vec<_> = choices
         .candidates
         .into_iter()
@@ -220,7 +220,7 @@ pub async fn ask_here(
             "this callee's Codex login is unavailable: {error}; the user changes it on the Model collaboration page"
         ))
     })?;
-    crate::collab::keep(node, &id, &started)?;
+    crate::collab::keep(node, &id, &started).await?;
     crate::session_options::keep(
         node,
         &id,
@@ -574,7 +574,7 @@ pub async fn message(
     text: String,
     login: Option<&fastctx_types::collab::Caller>,
 ) -> Result<(Address, Landed), Failure> {
-    let choices = crate::collab::require(node, &from, login)?;
+    let choices = crate::collab::require(node, &from, login).await?;
     let here = node.machine();
     let at = Timestamp::now();
     let turn = node.residents.now(&from).and_then(|now| now.turn);

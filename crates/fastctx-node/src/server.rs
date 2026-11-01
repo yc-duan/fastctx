@@ -2140,7 +2140,7 @@ async fn machines(
     let here_too = crate::around::works_here(node, &acting);
     let (here, others, groups) = crate::world::grouped_machines(node, &acting, here_too);
     let here = here_too.then(|| here.to_string());
-    let collab = crate::collab::choices(node, resident, login)?.map(|choices| choices.offered);
+    let collab = crate::collab::choices(node, resident, login).await?.map(|choices| choices.offered);
     let scratch = match resident.filter(|_| describe_scratch) {
         Some(id) => {
             let paths = crate::scratch::descriptions(
