@@ -96,7 +96,7 @@ pub(crate) async fn ask_as(
     let slot = hub.account_records.account(&account, opened);
     let mut records = slot.records.clone().lock_owned().await;
     let hub = hub.clone();
-    tokio::task::spawn_blocking(move || {
+    fastctx_platform::task::spawn_blocking(move || {
         permitted(&hub, &hub.store(), &from, &member_key, &account, opened, access.as_ref())?;
         for metadata in crate::skill_storage::recover(&slot, &mut records)? {
             tell(&hub, &account, opened, &metadata);

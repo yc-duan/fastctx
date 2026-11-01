@@ -588,7 +588,7 @@ impl Link {
         // this machine's network changing or waking, which only hastens a
         // reconnect: without it, heartbeats and retries still find the hub.
         let running = inner.clone();
-        let task = crate::threads::lines().spawn(async move {
+        let task = fastctx_platform::task::spawn_on(&crate::threads::lines(), async move {
             let changes = match watch_changes {
                 false => None,
                 true => match changes::Changes::new(running.node.clone()) {
@@ -803,7 +803,7 @@ impl Link {
     ) -> Result<T, String> {
         let key = self.inner.key_of(from).await.ok_or_else(|| format!("{from} is not a member of the hub"))?;
         let bytes = signed.verified(&key, domain).map_err(|error| format!("what came from {from}: {error}"))?.to_vec();
-        tokio::task::spawn_blocking(move || crate::history::unpack(&bytes))
+        fastctx_platform::task::spawn_blocking(move || crate::history::unpack(&bytes))
             .await
             .map_err(|error| format!("unpacking what came from {from}: {error}"))?
             .map_err(|error| format!("what came from {from}: {error}"))
@@ -1005,7 +1005,7 @@ impl Inner {
         F: Future + Send + 'static,
         F::Output: Send + 'static,
     {
-        self.node_runtime.spawn(work)
+        fastctx_platform::task::spawn_on(&self.node_runtime, work)
     }
 
     /// Runs `work`, which writes to disk or otherwise blocks, on a thread
@@ -1015,16 +1015,13 @@ impl Inner {
         F: FnOnce() -> R + Send + 'static,
         R: Send + 'static,
     {
-        self.node_runtime.spawn_blocking(fastctx_platform::doing::carried(move || {
-            let _blocking = fastctx_platform::roles::scoped(fastctx_platform::roles::Role::Blocking);
-            work()
-        }))
+        fastctx_platform::task::spawn_blocking_on(&self.node_runtime, work)
     }
 
     /// Tells the node what `tell` says, on the node's runtime.
     pub(crate) fn tell_node(&self, tell: impl FnOnce(&dyn Node) + Send + 'static) {
         let node = self.node.clone();
-        self.node_runtime.spawn(async move { tell(&*node) });
+        fastctx_platform::task::spawn_on(&self.node_runtime, async move { tell(&*node) });
     }
 
     /// This machine's name on the hub now.

@@ -321,7 +321,7 @@ async fn work(
     if !contract.cancellable {
         let kept = std::mem::take(&mut held.guards);
         let working_place = place.clone();
-        let worker = tokio::spawn(async move {
+        let worker = fastctx_platform::task::spawn(async move {
             working_place.started();
             let result = doing.await;
             (result, kept)
@@ -342,7 +342,7 @@ async fn work(
         // still reaches a caller whose own deadline may be longer.
         held.deadline = None;
         let node = inner.node.clone();
-        tokio::spawn(async move {
+        fastctx_platform::task::spawn(async move {
             match worker.await {
                 Ok((Err(error), _)) => node.log(format!("finishing {kind}: {}", error.message)),
                 Err(error) => node.log(format!("finishing {kind}: {error}")),

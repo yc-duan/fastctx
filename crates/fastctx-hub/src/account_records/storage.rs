@@ -61,7 +61,7 @@ impl Records {
         let records = Self { dir: dir.join("account-records"), accounts: Mutex::default(), owners: Mutex::default() };
         for owner in &directory.accounts {
             let slot = records.account(&owner.name, owner.opened);
-            let files = match std::fs::read_dir(&slot.dir) {
+            let files = match fastctx_platform::disk::read_dir(&slot.dir) {
                 Ok(files) => files,
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
                 Err(error) => return Err(error),
@@ -74,7 +74,7 @@ impl Records {
                 {
                     continue;
                 }
-                let bytes = std::fs::read(&path)?;
+                let bytes = fastctx_platform::disk::read(&path)?;
                 let record: Record = serde_json::from_slice(&bytes).map_err(std::io::Error::other)?;
                 let metadata = record.metadata.clone();
                 if metadata.kind == fastctx_types::owned_records::KIND && !metadata.deleted {
@@ -150,7 +150,7 @@ impl Records {
 }
 
 pub(crate) fn read(path: &Path) -> Result<Record, String> {
-    let bytes = std::fs::read(path).map_err(fastctx_types::account_records::words::read)?;
+    let bytes = fastctx_platform::disk::read(path).map_err(fastctx_types::account_records::words::read)?;
     serde_json::from_slice(&bytes).map_err(fastctx_types::account_records::words::read)
 }
 

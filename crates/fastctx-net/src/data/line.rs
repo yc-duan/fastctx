@@ -82,16 +82,14 @@ impl Line {
             stopped: stopped.clone(),
             over: over.clone(),
             outgoing,
-            reader: crate::threads::data().spawn(read(
-                stream,
-                received,
-                stopped.clone(),
-                cut,
-                ending.clone(),
-                pulse.clone(),
-                receipt.clone(),
-            )),
-            writer: crate::threads::data().spawn(write(sink, sending, over, stopped, ending, pulse, receipt.clone())),
+            reader: fastctx_platform::task::spawn_on(
+                &crate::threads::data(),
+                read(stream, received, stopped.clone(), cut, ending.clone(), pulse.clone(), receipt.clone()),
+            ),
+            writer: fastctx_platform::task::spawn_on(
+                &crate::threads::data(),
+                write(sink, sending, over, stopped, ending, pulse, receipt.clone()),
+            ),
             receipt,
         }
     }

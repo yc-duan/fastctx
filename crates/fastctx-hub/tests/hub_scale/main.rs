@@ -2,6 +2,10 @@
 //! to limit only the hub to two CPUs and 2 GiB; the generator stays outside.
 //! No node, model host, login account or system installation is used.
 
+// A drill drives the hub from outside it, and is not held to the roles of
+// the hub's threads (`clippy.toml`).
+#![allow(clippy::disallowed_methods)]
+
 mod client;
 mod fixture;
 mod lifecycle;

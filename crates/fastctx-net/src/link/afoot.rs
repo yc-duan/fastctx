@@ -99,7 +99,7 @@ impl Inner {
         }
         let Some(inner) = self.this.upgrade() else { return };
         here.sending = Some(generation);
-        tokio::spawn(async move {
+        fastctx_platform::task::spawn(async move {
             if let Err(reason) = inner.write_afoot(generation).await {
                 let mut here = inner.afoots.here.lock().expect("never poisoned");
                 if here.sending == Some(generation) {

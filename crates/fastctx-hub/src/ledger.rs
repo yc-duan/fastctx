@@ -86,7 +86,7 @@ impl Ledgers {
     pub fn open(hub: &Path, identity: &fastctx_net::ids::HubId) -> io::Result<Self> {
         let dir = hub.join("ledger");
         let mut towns = BTreeMap::new();
-        let entries = match std::fs::read_dir(&dir) {
+        let entries = match fastctx_platform::disk::read_dir(&dir) {
             Ok(entries) => entries,
             Err(error) if error.kind() == io::ErrorKind::NotFound => {
                 return Ok(Self { dir, towns, writing: BTreeMap::new() });
@@ -300,7 +300,7 @@ impl TownLedger {
 /// The numbered files in a directory, in order.
 fn numbered(directory: &Path) -> io::Result<Vec<(u64, PathBuf)>> {
     let mut found = Vec::new();
-    let entries = match std::fs::read_dir(directory) {
+    let entries = match fastctx_platform::disk::read_dir(directory) {
         Ok(entries) => entries,
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(found),
         Err(error) => return Err(error),
@@ -318,7 +318,7 @@ fn numbered(directory: &Path) -> io::Result<Vec<(u64, PathBuf)>> {
 }
 
 fn read<T: serde::de::DeserializeOwned>(path: &Path) -> io::Result<T> {
-    let bytes = std::fs::read(path)?;
+    let bytes = fastctx_platform::disk::read(path)?;
     serde_json::from_slice(&bytes)
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, format!("{}: {error}", path.display())))
 }
@@ -344,7 +344,7 @@ pub(crate) async fn write_as(
     account: Option<fastctx_types::AccountName>,
 ) -> Result<Told, String> {
     let (hub_id, project) = (hub.store().hub.id.clone(), town.clone());
-    let prepared = tokio::task::spawn_blocking(move || {
+    let prepared = fastctx_platform::task::spawn_blocking(move || {
         let size = fastctx_net::ledger::handed_size(&signed);
         if size > wire::PARTS_AT_MOST {
             return Err(format!("the entry is {size} bytes, more than the multipart limit ({})", wire::PARTS_AT_MOST));
@@ -368,7 +368,7 @@ pub(crate) async fn write_as(
     };
     let (path, proposed) = (checked.path.clone(), prepared.clone());
     let (publishing, author, project) = (hub.clone(), from.clone(), town.clone());
-    let published = tokio::task::spawn_blocking(move || {
+    let published = fastctx_platform::task::spawn_blocking(move || {
         let folder = path.parent().expect("an entry has a folder");
         ensure_private_dir(folder).map_err(|error| PublishFailure { error, published: false }).and_then(|()| {
             publish_checked(&path, &proposed.bytes, Permissions::Private, false, || {
@@ -438,7 +438,7 @@ pub(crate) fn delete(hub: &Hub, town: TownId) {
 
 fn remove_later(hub: &Hub, town: TownId, folder: PathBuf) {
     let log = hub.log.clone();
-    tokio::task::spawn_blocking(move || {
+    fastctx_platform::task::spawn_blocking(move || {
         if let Err(error) = remove_folder(&folder) {
             log.line(format_args!("deleting the ledger of {town}: {error}; done when the hub opens next"));
         }
@@ -446,7 +446,7 @@ fn remove_later(hub: &Hub, town: TownId, folder: PathBuf) {
 }
 
 fn remove_folder(folder: &Path) -> io::Result<()> {
-    match std::fs::remove_dir_all(folder) {
+    match fastctx_platform::disk::remove_dir_all(folder) {
         Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
         other => other,
     }

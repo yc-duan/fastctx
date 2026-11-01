@@ -15,7 +15,7 @@ use std::sync::Arc;
 
 pub(in crate::link) async fn take(inner: Arc<Inner>, epoch: u64, run: Vec<(u64, Envelope)>) -> io::Result<u64> {
     let held = inner.taking.lock_owned().await;
-    tokio::spawn(async move {
+    fastctx_platform::task::spawn(async move {
         let _doing = fastctx_platform::doing::doing(format!("persisting letters from {}", inner.hub));
         held.adopt();
         let _held = held;

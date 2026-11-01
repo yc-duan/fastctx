@@ -46,7 +46,7 @@ pub(crate) fn start(hub: &Arc<Hub>) {
     let changed = publishing.changed.clone();
     let state = Arc::downgrade(&publishing);
     let weak = Arc::downgrade(hub);
-    tokio::spawn(async move {
+    fastctx_platform::task::spawn(async move {
         let mut shown = HashMap::new();
         loop {
             changed.notified().await;
@@ -55,7 +55,7 @@ pub(crate) fn start(hub: &Arc<Hub>) {
             let pending = std::mem::take(&mut *publishing.pending.lock().expect("activity changes"));
             let Some(hub) = weak.upgrade() else { return };
             let log = hub.log.clone();
-            match tokio::task::spawn_blocking(move || {
+            match fastctx_platform::task::spawn_blocking(move || {
                 if pending.all {
                     super::tell(&hub, &mut shown, super::Scope::All);
                 } else {

@@ -35,7 +35,7 @@ pub(super) async fn list(
             })
             .map(|entry| slot.path("sentinel", &entry.metadata.key))
             .collect();
-        let found = tokio::task::spawn_blocking(move || {
+        let found = fastctx_platform::task::spawn_blocking(move || {
             let _records = records;
             paths
                 .into_iter()

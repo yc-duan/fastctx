@@ -59,7 +59,7 @@ fn serve(
     let deadline = tokio::time::Instant::now() + READ_WITHIN;
     let page = hub.ledgers.lock().expect("never poisoned").page(town.clone(), after);
     let (hub, name, out) = (hub.clone(), name.clone(), out.clone());
-    tokio::spawn(async move {
+    fastctx_platform::task::spawn(async move {
         // A read waits its turn among the others, within its own time.
         let place = tokio::select! {
             biased;
@@ -79,7 +79,7 @@ fn serve(
         // Dropping the receiver stops a running read between files. Aborting
         // its task also stops a read still waiting for a blocking thread.
         let (wanted, reader) = oneshot::channel::<()>();
-        let mut reading = tokio::task::spawn_blocking(move || {
+        let mut reading = fastctx_platform::task::spawn_blocking(move || {
             // A cancelled caller cannot return a place still occupied by disk I/O.
             let _place = place;
             page.read(&wanted, deadline, projection)
@@ -167,7 +167,7 @@ impl Page {
 /// A damaged file must not make a read allocate beyond the multipart limit.
 pub(super) fn entry(path: &Path) -> io::Result<Signed> {
     let mut bytes = Vec::new();
-    std::fs::File::open(path)?.take(wire::PARTS_AT_MOST as u64 + 1).read_to_end(&mut bytes)?;
+    fastctx_platform::disk::open(path)?.take(wire::PARTS_AT_MOST as u64 + 1).read_to_end(&mut bytes)?;
     if bytes.len() > wire::PARTS_AT_MOST {
         return Err(io::Error::new(io::ErrorKind::InvalidData, "the entry file is larger than the multipart limit"));
     }

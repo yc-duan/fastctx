@@ -257,7 +257,9 @@ pub(crate) fn arrival(hub: &Arc<Hub>, asker: &MachineName, request: ArrivalReque
         ArrivalRequest::Take { .. } => {
             let dir = store.dir().to_path_buf();
             let read = |path: std::path::PathBuf| {
-                std::fs::read(&path).map(Bytes).map_err(|error| format!("reading {}: {error}", path.display()))
+                fastctx_platform::disk::read(&path)
+                    .map(Bytes)
+                    .map_err(|error| format!("reading {}: {error}", path.display()))
             };
             let identity = Identity {
                 id: store.hub.id.clone(),

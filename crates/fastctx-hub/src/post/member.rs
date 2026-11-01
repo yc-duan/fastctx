@@ -167,7 +167,7 @@ impl State {
         self.loaded = false;
         self.files = blocking(move || {
             for seq in numbers {
-                match std::fs::remove_file(directory.join(format!("{seq:020}"))) {
+                match fastctx_platform::disk::remove_file(directory.join(format!("{seq:020}"))) {
                     Err(error) if error.kind() != std::io::ErrorKind::NotFound => return Err(error),
                     _ => {}
                 }
@@ -272,10 +272,10 @@ impl State {
             let boxes = root.join("outboxes").join(format!("{epoch:016x}"));
             let trash = root.join(crate::store::TRASH);
             fastctx_platform::ensure_private_dir(&trash)?;
-            if boxes.exists() {
-                std::fs::rename(&boxes, trash.join(format!("{epoch:016x}")))?;
+            if fastctx_platform::disk::is_there(&boxes) {
+                fastctx_platform::disk::rename(&boxes, trash.join(format!("{epoch:016x}")))?;
             }
-            match std::fs::remove_file(root.join("counts").join(format!("{epoch:016x}"))) {
+            match fastctx_platform::disk::remove_file(root.join("counts").join(format!("{epoch:016x}"))) {
                 Err(error) if error.kind() != std::io::ErrorKind::NotFound => return Err(error),
                 _ => {}
             }
@@ -352,7 +352,9 @@ impl State {
                         bytes: 0,
                     });
                     let record = self.record().clone();
-                    tokio::task::spawn_blocking(move || register(&record)).await.map_err(|e| e.to_string())??;
+                    fastctx_platform::task::spawn_blocking(move || register(&record))
+                        .await
+                        .map_err(|e| e.to_string())??;
                     Ok(self.record().clone())
                 }
                 .await;

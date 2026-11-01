@@ -47,7 +47,7 @@ pub(crate) fn change(
     };
     if ended.iter().any(|(_, refusal)| matches!(refusal, Refusal::Removed { .. })) {
         let (dir, log) = (hub.store().dir().to_path_buf(), hub.log.clone());
-        tokio::task::spawn_blocking(move || {
+        fastctx_platform::task::spawn_blocking(move || {
             if let Err(error) = crate::store::Store::clear_trash(&dir) {
                 log.line(format_args!(
                     "deleting the letters of machines taken off: {error}; done when the hub opens next"

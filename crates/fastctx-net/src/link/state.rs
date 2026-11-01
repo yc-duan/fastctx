@@ -158,14 +158,17 @@ pub struct Ended {
 /// the memberships under `net` keep them, while its place has not ended
 /// (`world-network.md`, 受管机器).
 pub fn managed_on(net: &Path) -> io::Result<Option<(HubName, fastctx_types::AccountName)>> {
-    let entries = match std::fs::read_dir(net) {
+    let entries = match fastctx_platform::disk::read_dir(net) {
         Ok(entries) => entries,
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
         Err(error) => return Err(error),
     };
     for entry in entries {
         let dir = NetDir::new(entry?.path());
-        if !dir.membership().is_file() || dir.ended().try_exists()? || older_view(&dir.view()) {
+        if !fastctx_platform::disk::is_file(dir.membership())
+            || fastctx_platform::disk::exists(dir.ended())?
+            || older_view(&dir.view())
+        {
             continue;
         }
         let membership: Membership = read(&dir.membership())?;
@@ -252,7 +255,7 @@ impl Counter {
 }
 
 pub fn read_or<T: DeserializeOwned>(path: &Path, default: T) -> io::Result<T> {
-    match std::fs::read(path) {
+    match fastctx_platform::disk::read(path) {
         Ok(bytes) => serde_json::from_slice(&bytes)
             .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, format!("{}: {error}", path.display()))),
         Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(default),
@@ -261,7 +264,7 @@ pub fn read_or<T: DeserializeOwned>(path: &Path, default: T) -> io::Result<T> {
 }
 
 pub fn read<T: DeserializeOwned>(path: &Path) -> io::Result<T> {
-    let bytes = std::fs::read(path)?;
+    let bytes = fastctx_platform::disk::read(path)?;
     serde_json::from_slice(&bytes)
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, format!("{}: {error}", path.display())))
 }
@@ -273,7 +276,7 @@ pub fn read<T: DeserializeOwned>(path: &Path) -> io::Result<T> {
 /// today's shape the way the hub reads its whole directory, so it is
 /// dropped and the hub gives the view again.
 pub fn older_view(path: &Path) -> bool {
-    let Ok(bytes) = std::fs::read(path) else { return false };
+    let Ok(bytes) = fastctx_platform::disk::read(path) else { return false };
     let Ok(serde_json::Value::Object(view)) = serde_json::from_slice::<serde_json::Value>(&bytes) else {
         return false;
     };

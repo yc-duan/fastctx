@@ -84,7 +84,7 @@ impl Transport {
         let (outgoing, output) = mpsc::channel(OUTPUT_FRAMES);
         let (end, ended) = watch::channel(None);
         let (beats, heartbeat) = watch::channel(None);
-        let task = runtime.spawn(async move {
+        let task = fastctx_platform::task::spawn_on(runtime, async move {
             let reason = run(socket, input, output, beats).await;
             end.send_replace(Some(reason));
         });

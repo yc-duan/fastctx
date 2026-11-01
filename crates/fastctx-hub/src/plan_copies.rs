@@ -65,7 +65,7 @@ pub(crate) async fn ask(
         let history = slot.history(plan::KIND, owner.resident.as_str());
         let exists = records.entries.contains_key(&(plan::KIND.into(), owner.resident.to_string()));
         let wanted = request.clone();
-        let (current, historical, submitted) = tokio::task::spawn_blocking(move || {
+        let (current, historical, submitted) = fastctx_platform::task::spawn_blocking(move || {
             let current = if exists { Some(storage::read(&current)?) } else { None };
             if let Request::Merge { submission: Some(id), .. } = &wanted
                 && let Some(submitted) = account_records::history::submitted(current.as_ref(), &history, id)?
@@ -77,7 +77,7 @@ pub(crate) async fn ask(
                 Request::Merge { base, .. } => base,
                 Request::Contains { ref markdown, .. } => {
                     let mut found = Vec::new();
-                    match std::fs::read_dir(history) {
+                    match fastctx_platform::disk::read_dir(history) {
                         Ok(entries) => {
                             for entry in entries {
                                 let path = entry.map_err(|error| error.to_string())?.path();
@@ -159,10 +159,12 @@ pub(crate) async fn ask(
                             metadata: current.metadata.clone().expect("a stored page has metadata"),
                             body: serde_json::to_value(&current.body).map_err(|error| error.to_string())?,
                         };
-                        tokio::task::spawn_blocking(move || account_records::history::receipt(&history, &id, &record))
-                            .await
-                            .map_err(|error| error.to_string())?
-                            .map_err(|error| error.to_string())?;
+                        fastctx_platform::task::spawn_blocking(move || {
+                            account_records::history::receipt(&history, &id, &record)
+                        })
+                        .await
+                        .map_err(|error| error.to_string())?
+                        .map_err(|error| error.to_string())?;
                     }
                     return Ok(Told::PlanCopies { reply: Reply::Page { page: Box::new(current) } });
                 }

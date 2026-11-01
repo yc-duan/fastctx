@@ -80,13 +80,13 @@ pub(crate) async fn serve(
         let updates = hub.updates.lock().expect("never poisoned");
         (updates.cache.clone(), updates.handing.clone())
     };
-    let kept = cache.path(&version, &target).ok().filter(|path| path.is_file());
+    let kept = cache.path(&version, &target).ok().filter(|path| fastctx_platform::disk::is_file(path));
     let held = Held { version: version.clone(), target: target.clone() };
     let placed = match &kept {
         Some(_) => None,
         None => {
             let hub = hub.clone();
-            tokio::task::spawn_blocking(move || super::placed(&hub, &held)).await.ok().flatten()
+            fastctx_platform::task::spawn_blocking(move || super::placed(&hub, &held)).await.ok().flatten()
         }
     };
     if kept.is_none() && placed.is_none() {
@@ -333,11 +333,12 @@ pub(super) async fn take_in(
 ) -> Result<u64, String> {
     let package = manifest.package(target).ok_or("the release has no such package")?;
     let (path, signature, version) = (incoming.to_path_buf(), package.signature.clone(), manifest.version.clone());
-    let checked = tokio::task::spawn_blocking(move || fastctx_update::verify::file(&path, &signature, &version)).await;
+    let checked =
+        fastctx_platform::task::spawn_blocking(move || fastctx_update::verify::file(&path, &signature, &version)).await;
     match checked {
         Ok(Ok(())) => {}
         Ok(Err(why)) => {
-            let _ = std::fs::remove_file(incoming);
+            let _ = fastctx_platform::disk::remove_file(incoming);
             return Err(why);
         }
         Err(error) => return Err(error.to_string()),
@@ -347,8 +348,8 @@ pub(super) async fn take_in(
     };
     let (publishing, kept_manifest, kept_target, received) =
         (cache.clone(), manifest.clone(), target.to_string(), incoming.to_path_buf());
-    let size = tokio::task::spawn_blocking(move || {
-        let size = std::fs::metadata(&received).map_err(|error| error.to_string())?.len();
+    let size = fastctx_platform::task::spawn_blocking(move || {
+        let size = fastctx_platform::disk::metadata(&received).map_err(|error| error.to_string())?.len();
         publishing.keep_manifest(&kept_manifest)?;
         publishing.keep(&kept_manifest.version, &kept_target, &received)?;
         *won = true;

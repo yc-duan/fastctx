@@ -66,9 +66,9 @@ pub(crate) async fn held_digest(hub: &Arc<Hub>, version: &str, archive: &str, br
         }
         return None;
     };
-    let hashed = tokio::task::spawn_blocking(move || -> std::io::Result<String> {
+    let hashed = fastctx_platform::task::spawn_blocking(move || -> std::io::Result<String> {
         use sha2::Digest as _;
-        let mut file = std::fs::File::open(path)?;
+        let mut file = fastctx_platform::disk::open(path)?;
         let mut hash = sha2::Sha256::new();
         std::io::copy(&mut file, &mut hash)?;
         Ok(format!("{:x}", hash.finalize()))

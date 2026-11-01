@@ -136,7 +136,7 @@ impl Inner {
             fetching.insert((generation, id), stop);
         }
         let inner = self.clone();
-        tokio::spawn(async move {
+        fastctx_platform::task::spawn(async move {
             let reports = fetch.progress;
             let (progress, mut changes) = tokio::sync::watch::channel(PackageProgress::default());
             let work = async {
@@ -188,7 +188,7 @@ impl Inner {
     }
 
     async fn deliver(&self, id: u64, path: &Path) -> Result<(), String> {
-        let mut file = std::fs::File::open(path).map_err(|error| format!("{}: {error}", path.display()))?;
+        let mut file = fastctx_platform::disk::open(path).map_err(|error| format!("{}: {error}", path.display()))?;
         let size = file.metadata().map_err(|error| error.to_string())?.len();
         let Endpoint::Hub { upstreams, hub, cert } = self.data_endpoint() else {
             return Err("packages go to the hub itself".to_string());
@@ -346,12 +346,11 @@ impl Link {
     ) -> Result<(), Problem> {
         // Written at the end it reaches, and cut back when it is longer than
         // the package: a file opened only to append cannot be cut on Windows.
-        let mut out = std::fs::OpenOptions::new()
-            .create(true)
-            .truncate(false)
-            .write(true)
-            .open(file)
-            .map_err(|error| Problem::new(FailureReason::Disk, format!("{}: {error}", file.display())))?;
+        let mut out = fastctx_platform::disk::open_with(
+            std::fs::OpenOptions::new().create(true).truncate(false).write(true),
+            file,
+        )
+        .map_err(|error| Problem::new(FailureReason::Disk, format!("{}: {error}", file.display())))?;
         let mut have = out
             .seek(std::io::SeekFrom::End(0))
             .map_err(|error| Problem::new(FailureReason::Disk, error.to_string()))?;

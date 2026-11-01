@@ -235,7 +235,7 @@ pub(crate) fn mode(dir: &Path) -> io::Result<Mode> {
 /// Whether `dir` holds nothing of a hub but the note that its data was
 /// deleted here.
 pub(crate) fn retired(dir: &Path) -> io::Result<bool> {
-    dir.join(RETIRED).try_exists()
+    fastctx_platform::disk::exists(dir.join(RETIRED))
 }
 
 #[derive(Serialize, Deserialize)]
@@ -259,7 +259,7 @@ pub(crate) fn retire(dir: &Path, why: &str, log: &crate::log::Log, leave: &crate
 }
 
 pub(crate) fn clear(dir: &Path, why: &str) -> io::Result<()> {
-    for entry in std::fs::read_dir(dir)? {
+    for entry in fastctx_platform::disk::read_dir(dir)? {
         let entry = entry?;
         let name = entry.file_name();
         let name = name.to_string_lossy();
@@ -267,14 +267,14 @@ pub(crate) fn clear(dir: &Path, why: &str) -> io::Result<()> {
             continue;
         }
         if entry.file_type()?.is_dir() {
-            std::fs::remove_dir_all(entry.path())?;
+            fastctx_platform::disk::remove_dir_all(entry.path())?;
         } else {
-            std::fs::remove_file(entry.path())?;
+            fastctx_platform::disk::remove_file(entry.path())?;
         }
     }
     let note = Retired { at: Timestamp::now(), why: why.to_string() };
     fastctx_platform::publish(&dir.join(RETIRED), &crate::store::json(&note)?, fastctx_platform::Permissions::Private)?;
-    match std::fs::remove_file(dir.join(OUTGOING)) {
+    match fastctx_platform::disk::remove_file(dir.join(OUTGOING)) {
         Err(error) if error.kind() != io::ErrorKind::NotFound => Err(error),
         _ => Ok(()),
     }

@@ -50,7 +50,7 @@ pub async fn open(
         })
     });
     let (sender, receiver) = tokio::sync::oneshot::channel();
-    let task = tokio::spawn(async move {
+    let task = fastctx_platform::task::spawn(async move {
         let call = link.call_with_stream(
             &machine,
             &account,

@@ -195,21 +195,24 @@ impl Post {
             send,
             hub: self.hub.clone(),
         });
-        self.runtime.spawn(member::run(
-            member::State::new(
-                self.dir.clone(),
-                self.shelf.clone(),
-                self.hub.clone(),
-                key,
-                name,
-                initial,
-                record,
-                generation,
-                retired,
-                backlog,
+        fastctx_platform::task::spawn_on(
+            &self.runtime,
+            member::run(
+                member::State::new(
+                    self.dir.clone(),
+                    self.shelf.clone(),
+                    self.hub.clone(),
+                    key,
+                    name,
+                    initial,
+                    record,
+                    generation,
+                    retired,
+                    backlog,
+                ),
+                receive,
             ),
-            receive,
-        ));
+        );
         member
     }
 
@@ -289,7 +292,7 @@ impl Member {
     pub(crate) fn later(self: &Arc<Self>, command: Command) {
         let member = self.clone();
         let queued = self.queued(command);
-        tokio::spawn(async move {
+        fastctx_platform::task::spawn(async move {
             let _ = member.send.send(queued).await;
         });
     }

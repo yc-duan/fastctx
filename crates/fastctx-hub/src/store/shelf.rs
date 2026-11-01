@@ -48,9 +48,9 @@ pub(crate) struct Shelf(pub(crate) Database);
 
 impl Shelf {
     pub(crate) fn open(dir: &Path) -> io::Result<Self> {
-        if !dir.join(FILE).try_exists()? {
+        if !fastctx_platform::disk::exists(dir.join(FILE))? {
             for name in ["hub.json", "directory.json"] {
-                if !dir.join(name).try_exists()? {
+                if !fastctx_platform::disk::exists(dir.join(name))? {
                     return Err(io::Error::new(io::ErrorKind::NotFound, format!("the hub's {name} is missing")));
                 }
             }

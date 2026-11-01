@@ -363,7 +363,10 @@ impl Inner {
                 continue;
             }
             // Kept on the control lines' thread (`crate::threads`).
-            let task = crate::threads::lines().spawn(peer::keep(self.clone(), peer.clone(), at.clone()));
+            let task = fastctx_platform::task::spawn_on(
+                &crate::threads::lines(),
+                peer::keep(self.clone(), peer.clone(), at.clone()),
+            );
             keepers.insert(peer, Keeper { at, task });
         }
     }

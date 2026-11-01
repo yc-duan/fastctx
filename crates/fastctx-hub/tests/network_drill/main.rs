@@ -17,6 +17,10 @@
 //! `--root`, else `FASTCTX_TEST_ROOT`, else the system's temporary one, and
 //! is deleted when every check passed.
 
+// A drill drives the hub from outside it, and is not held to the roles of
+// the hub's threads (`clippy.toml`).
+#![allow(clippy::disallowed_methods)]
+
 mod health;
 mod lab;
 mod letters;

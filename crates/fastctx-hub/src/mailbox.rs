@@ -47,7 +47,7 @@ pub(crate) fn opened(hub: &Arc<Hub>, name: &MachineName, generation: u64) {
 }
 fn release(hub: &Arc<Hub>, name: &MachineName, generation: u64, after: Duration) {
     let member = hub.store().letters.member(name);
-    tokio::spawn(async move {
+    fastctx_platform::task::spawn(async move {
         tokio::time::sleep(after).await;
         if let Some(member) = member {
             let _ = member.tell(Command::Viewed { generation }).await;

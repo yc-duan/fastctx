@@ -1,4 +1,9 @@
 //! Real nodes and an isolated hub, driven by scripts/placement.py and its loopback model.
+
+// A drill drives the hub from outside it, and is not held to the roles of
+// the hub's threads (`clippy.toml`).
+#![allow(clippy::disallowed_methods)]
+
 mod attachments;
 mod colleagues;
 mod controls;

@@ -77,7 +77,7 @@ pub(super) async fn delete(
             }
         }
         let history = slot.history(&metadata.kind, &metadata.key);
-        tokio::task::spawn_blocking(move || account_records::history::delete(&history))
+        fastctx_platform::task::spawn_blocking(move || account_records::history::delete(&history))
             .await
             .map_err(|error| error.to_string())?
             .map_err(|error| error.to_string())?;

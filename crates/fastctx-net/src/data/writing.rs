@@ -23,7 +23,7 @@ impl Stream {
             let here = count.min(self.pending.len() as u64) as usize;
             let bytes: Vec<u8> = self.pending.drain(..here).collect();
             let writing = self.settling();
-            let (back, written) = tokio::task::spawn_blocking(move || {
+            let (back, written) = fastctx_platform::task::spawn_blocking(move || {
                 let _writing = writing;
                 let written = write(&mut writer, &bytes);
                 (writer, written)

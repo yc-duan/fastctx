@@ -79,7 +79,7 @@ pub(crate) async fn keep(hub: Weak<Hub>) {
         if log_due {
             logged = Some(Instant::now());
         }
-        let _ = tokio::task::spawn_blocking(move || {
+        let _ = fastctx_platform::task::spawn_blocking(move || {
             let now = now(&hub);
             let path = hub.diagnostic_dir.join(FILE);
             let mut bytes = serde_json::to_vec_pretty(&now).expect("health serializes");

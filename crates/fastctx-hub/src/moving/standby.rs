@@ -42,12 +42,12 @@ pub fn prepare(dir: &Path, id: &str, to: &MachineName, identity: &Identity) -> a
         if found.id != id {
             anyhow::bail!("{} holds a hub arriving by another move", dir.display());
         }
-    } else if Store::hub_file(dir).exists() {
+    } else if fastctx_platform::disk::is_there(Store::hub_file(dir)) {
         anyhow::bail!("{} holds a hub already: this hub's old data, or another network's hub", dir.display());
     } else if super::retired(dir)? {
-        std::fs::remove_file(dir.join(super::RETIRED))?;
-    } else if dir.exists() {
-        for entry in std::fs::read_dir(dir)? {
+        fastctx_platform::disk::remove_file(dir.join(super::RETIRED))?;
+    } else if fastctx_platform::disk::is_there(dir) {
+        for entry in fastctx_platform::disk::read_dir(dir)? {
             if !entry?.file_name().to_string_lossy().starts_with("hub.log") {
                 anyhow::bail!("{} is not empty", dir.display());
             }
@@ -155,8 +155,8 @@ pub(crate) async fn run(
 ) -> anyhow::Result<Next> {
     let hub: HubFile = read(&crate::store::Store::hub_file(dir))?;
     let certificate = fastctx_net::tls::HubCertificate {
-        certificate: std::fs::read(Store::certificate_file(dir))?,
-        key: std::fs::read(Store::key_file(dir))?,
+        certificate: fastctx_platform::disk::read(Store::certificate_file(dir))?,
+        key: fastctx_platform::disk::read(Store::key_file(dir))?,
     };
     let tls = crate::releases::http::Tls::of(&certificate).map_err(anyhow::Error::msg)?;
     let kept = crate::bind(kept, hub.listen).await?;
@@ -184,7 +184,7 @@ pub(crate) async fn run(
                 Ok((tcp, peer)) => {
                     fastctx_net::dial::configure(&tcp);
                     let host = crate::releases::http::Host::Standby(standby.clone());
-                    tokio::spawn(crate::releases::http::serve(host, tls.clone(), tcp, peer));
+                    fastctx_platform::task::spawn(crate::releases::http::serve(host, tls.clone(), tcp, peer));
                 }
                 // Out of descriptors, for one: the next accept may succeed.
                 Err(error) => {
@@ -298,9 +298,9 @@ async fn sync(standby: &Standby, socket: &mut Socket) -> Result<(), String> {
             }
             ToNew::Remove { path } => {
                 let place = files::place(&dir, &path)?;
-                blocking(move || match std::fs::symlink_metadata(&place) {
-                    Ok(found) if found.is_dir() => std::fs::remove_dir_all(&place),
-                    Ok(_) => std::fs::remove_file(&place),
+                blocking(move || match fastctx_platform::disk::symlink_metadata(&place) {
+                    Ok(found) if found.is_dir() => fastctx_platform::disk::remove_dir_all(&place),
+                    Ok(_) => fastctx_platform::disk::remove_file(&place),
                     Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
                     Err(error) => Err(error),
                 })
@@ -429,7 +429,7 @@ fn confirm(standby: &Standby) -> Result<(), String> {
     if !standby.arriving().committed {
         return Err("this place has not taken the hub's records over".to_string());
     }
-    match std::fs::remove_file(standby.dir.join(ARRIVING)) {
+    match fastctx_platform::disk::remove_file(standby.dir.join(ARRIVING)) {
         Err(error) if error.kind() != std::io::ErrorKind::NotFound => Err(format!("recording the switch: {error}")),
         _ => Ok(()),
     }
@@ -455,7 +455,7 @@ fn make_dirs(base: &Path, place: &Path) -> std::io::Result<()> {
 }
 
 async fn blocking<T: Send + 'static>(work: impl FnOnce() -> std::io::Result<T> + Send + 'static) -> std::io::Result<T> {
-    tokio::task::spawn_blocking(work).await.map_err(std::io::Error::other)?
+    fastctx_platform::task::spawn_blocking(work).await.map_err(std::io::Error::other)?
 }
 
 fn list(addresses: &[SocketAddr]) -> String {

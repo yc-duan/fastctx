@@ -207,7 +207,7 @@ impl Inner {
                         self.direct.note_worked(Worked { to: to.clone(), account: account.clone(), purpose, resident });
                         if self.connection().is_some() && self.view().direct_links {
                             let inner = self.clone();
-                            tokio::spawn(async move { super::session::tell_worked(&inner).await });
+                            fastctx_platform::task::spawn(async move { super::session::tell_worked(&inner).await });
                         }
                     }
                 }
@@ -223,7 +223,7 @@ impl Inner {
             let message = envelope(&Body::StreamCall { call }, Some(ticket.clone()));
             let (opened, opening) = oneshot::channel();
             let (inner, endpoint) = (self.clone(), via.endpoint(self));
-            let task = tokio::spawn(async move {
+            let task = fastctx_platform::task::spawn(async move {
                 let _ = opened.send(Stream::open(&endpoint, &inner.key, ticket.stream, End::Source).await);
             });
             (message, Side::Opening(task, opening))
@@ -249,7 +249,7 @@ impl Inner {
                 });
             }
             let (inner, name, endpoint) = (self.clone(), to.clone(), via.endpoint(self));
-            let task = tokio::spawn(async move {
+            let task = fastctx_platform::task::spawn(async move {
                 if let Err(error) = crate::data::source(&endpoint, &inner.key, ticket.stream, &bytes).await {
                     inner.node.log(format!("sending a large call to {name}: {error}"));
                 }
@@ -357,7 +357,7 @@ impl Inner {
                             Ok(Ok(stream)) => {
                                 let feed = feed.take().expect("a call that opens a data connection has a feed");
                                 let (done, finished) = oneshot::channel();
-                                waiting.feeding = Some(tokio::spawn(async move {
+                                waiting.feeding = Some(fastctx_platform::task::spawn(async move {
                                     let _ = done.send(feed(stream).await);
                                 }));
                                 fed = Some(finished);

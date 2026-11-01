@@ -47,7 +47,7 @@ where
             self.0.abort();
         }
     }
-    let task = runtime.spawn(work);
+    let task = fastctx_platform::task::spawn_on(runtime, work);
     let stop = Stop(task.abort_handle());
     async move {
         let _stop = stop;

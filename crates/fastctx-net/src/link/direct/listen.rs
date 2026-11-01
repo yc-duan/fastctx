@@ -72,7 +72,7 @@ pub(super) fn follow(inner: &Arc<Inner>, listening: &mut Listening, wanted: &BTr
         let task = match bound {
             Ok(listener) => {
                 inner.node.log(format!("direct connections: listening at {address}"));
-                Ok(lines.spawn(accept(Arc::downgrade(inner), listener, tls)))
+                Ok(fastctx_platform::task::spawn_on(&lines, accept(Arc::downgrade(inner), listener, tls)))
             }
             Err(error) => {
                 let failed = format!("listening at {address}: {error}");
@@ -90,7 +90,7 @@ async fn accept(inner: Weak<Inner>, listener: TcpListener, tls: TlsAcceptor) {
         match listener.accept().await {
             Ok((tcp, from)) => {
                 crate::dial::configure(&tcp);
-                tokio::spawn(connected(inner.clone(), tcp, from, tls.clone()));
+                fastctx_platform::task::spawn(connected(inner.clone(), tcp, from, tls.clone()));
             }
             // Out of descriptors, for one: the next accept may succeed.
             Err(error) => {

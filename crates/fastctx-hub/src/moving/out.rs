@@ -38,7 +38,7 @@ pub(crate) fn drive(hub: &Arc<Hub>) {
         return;
     }
     let hub = hub.clone();
-    tokio::spawn(async move {
+    fastctx_platform::task::spawn(async move {
         loop {
             run(&hub).await;
             hub.moving.driving.store(false, Ordering::SeqCst);
@@ -326,7 +326,7 @@ async fn holds(socket: &mut HubSocket) -> Result<Vec<Entry>, String> {
 /// What is here, listed while the new place is told this end is working.
 async fn listing(socket: &mut HubSocket, dir: &std::path::Path) -> Result<Vec<Entry>, String> {
     let dir = dir.to_path_buf();
-    let listed = tokio::task::spawn_blocking(move || files::snapshot(&dir));
+    let listed = fastctx_platform::task::spawn_blocking(move || files::snapshot(&dir));
     frames::working::<_, ToNew, _>(socket, listed)
         .await?
         .map_err(|error| error.to_string())?

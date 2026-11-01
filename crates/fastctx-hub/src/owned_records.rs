@@ -179,7 +179,7 @@ pub(crate) async fn ask(
             check(hub, &hub.store(), &from, &key, &access.conversation.account, opened, &access)?;
             let exists = records.entries.contains_key(&(kind.clone(), record_key_name.clone()));
             let (path, history) = (slot.path(&kind, &record_key_name), slot.history(&kind, &record_key_name));
-            let record = tokio::task::spawn_blocking(move || {
+            let record = fastctx_platform::task::spawn_blocking(move || {
                 let current = if exists { Some(storage::read(&path)?) } else { None };
                 account_records::history::submitted(current.as_ref(), &history, &submission)
             })
@@ -266,7 +266,7 @@ pub(crate) async fn ask(
             } else {
                 slot.history(&kind, &record_key_name).join(format!("{version}.json"))
             };
-            let record = tokio::task::spawn_blocking(move || storage::read(&path))
+            let record = fastctx_platform::task::spawn_blocking(move || storage::read(&path))
                 .await
                 .map_err(|error| error.to_string())??;
             check(hub, &hub.store(), &from, &key, &access.conversation.account, opened, &access)?;
@@ -301,19 +301,19 @@ async fn revisions(
     let _gate = slot.records.lock().await;
     check(hub, &hub.store(), from, key, &access.conversation.account, opened, access)?;
     let (path, history) = (slot.path(kind, name), slot.history(kind, name));
-    let records = tokio::task::spawn_blocking(move || {
+    let records = fastctx_platform::task::spawn_blocking(move || {
         let mut records = Vec::new();
         let summary = |path: &std::path::Path| {
             let record = storage::read(path)?;
             let history = storage::history_head(&record).map_err(|error| error.to_string())?;
             Ok::<_, String>(fastctx_types::owned_records::Version { metadata: record.metadata, history })
         };
-        match std::fs::metadata(&path) {
+        match fastctx_platform::disk::metadata(&path) {
             Ok(_) => records.push(summary(&path)?),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
             Err(error) => return Err(error.to_string()),
         }
-        match std::fs::read_dir(history) {
+        match fastctx_platform::disk::read_dir(history) {
             Ok(files) => {
                 for file in files {
                     let path = file.map_err(|error| error.to_string())?.path();

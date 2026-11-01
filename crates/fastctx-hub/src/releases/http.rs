@@ -131,7 +131,7 @@ async fn respond(
                 return Ok(text(StatusCode::BAD_REQUEST, "Invalid WebSocket upgrade"));
             }
         };
-        tokio::spawn(async move {
+        fastctx_platform::task::spawn(async move {
             let opened = async {
                 let upgraded = upgrade.await.map_err(|error| error.to_string())?;
                 let parts = upgraded.downcast::<TokioIo<TlsStream>>().map_err(|_| "unexpected upgraded transport")?;
@@ -196,9 +196,9 @@ async fn respond(
     // A Windows or Mac archive placed by hand comes first, as Linux ones do;
     // else the one held among the update packages, checked when it came.
     let held = crate::updates::held_archive(&hub, &version, &name);
-    let opened = tokio::task::spawn_blocking(move || match releases.file(&version, &name) {
+    let opened = fastctx_platform::task::spawn_blocking(move || match releases.file(&version, &name) {
         Err(error) if error.kind() == io::ErrorKind::NotFound && held.is_some() => {
-            std::fs::File::open(held.expect("checked above"))
+            fastctx_platform::disk::open(held.expect("checked above"))
         }
         opened => opened,
     })

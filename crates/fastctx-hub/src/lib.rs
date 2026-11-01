@@ -23,6 +23,10 @@
 //! directory it runs from then stands by for the move, serves, or, at the
 //! old place, forwards to the new one, as its files say.
 
+// Held across an await, a lock holds up every task that waits for it; the
+// platform's and this crate's own lock guards are named in `clippy.toml`.
+#![deny(clippy::await_holding_lock, clippy::await_holding_refcell_ref, clippy::await_holding_invalid_type)]
+
 mod account_records;
 mod afoot;
 mod assists;
@@ -133,12 +137,14 @@ pub fn init(dir: &Path, new: New) -> anyhow::Result<CertPin> {
             dir.display()
         );
     }
-    if Store::hub_file(dir).exists() || dir.join(store::shelf::FILE).exists() {
+    if fastctx_platform::disk::is_there(Store::hub_file(dir))
+        || fastctx_platform::disk::is_there(dir.join(store::shelf::FILE))
+    {
         anyhow::bail!("{} already holds a hub", dir.display());
     }
     // A hub that moved away left only its log and a note here.
     if moving::retired(dir)? {
-        std::fs::remove_file(dir.join(moving::RETIRED))?;
+        fastctx_platform::disk::remove_file(dir.join(moving::RETIRED))?;
     }
     let certificate = HubCertificate::generate().map_err(anyhow::Error::msg)?;
     let secrets = HubSecrets::generate();
@@ -185,7 +191,8 @@ pub fn reset_password(dir: &Path, account: &AccountName, password: &str) -> anyh
     if store.book.directory.account(account).is_none() {
         anyhow::bail!("there is no account {account} on this hub");
     }
-    let secrets = HubSecrets::from_bytes(&std::fs::read(Store::secrets_file(dir))?).map_err(anyhow::Error::msg)?;
+    let secrets =
+        HubSecrets::from_bytes(&fastctx_platform::disk::read(Store::secrets_file(dir))?).map_err(anyhow::Error::msg)?;
     Arc::make_mut(&mut store.book.passwords)
         .insert(account.clone(), Bytes(password_record(&secrets, account, password)?));
     let directory = store.book.directory.clone();
@@ -214,7 +221,7 @@ fn password_record(secrets: &HubSecrets, account: &AccountName, password: &str) 
 /// The hub's settings and the pin of its certificate.
 pub fn describe(dir: &Path) -> anyhow::Result<(HubFile, CertPin)> {
     let hub = Store::read_hub(dir)?;
-    let certificate = std::fs::read(Store::certificate_file(dir))?;
+    let certificate = fastctx_platform::disk::read(Store::certificate_file(dir))?;
     Ok((hub, CertPin::of(&certificate)))
 }
 
@@ -765,10 +772,11 @@ async fn serving(
     // ended before any member is heard.
     assists::end_due(&mut store, Timestamp::now())?;
     let certificate = HubCertificate {
-        certificate: std::fs::read(Store::certificate_file(dir))?,
-        key: std::fs::read(Store::key_file(dir))?,
+        certificate: fastctx_platform::disk::read(Store::certificate_file(dir))?,
+        key: fastctx_platform::disk::read(Store::key_file(dir))?,
     };
-    let secrets = HubSecrets::from_bytes(&std::fs::read(Store::secrets_file(dir))?).map_err(anyhow::Error::msg)?;
+    let secrets =
+        HubSecrets::from_bytes(&fastctx_platform::disk::read(Store::secrets_file(dir))?).map_err(anyhow::Error::msg)?;
     let tls = releases::http::Tls::of(&certificate).map_err(anyhow::Error::msg)?;
     let account_records = account_records::Records::open(dir, &store.book.directory)?;
     let mut ledgers = ledger::Ledgers::open(dir, &store.hub.id)?;
@@ -843,13 +851,17 @@ async fn serving(
     if let Err(error) = hub.blocking(|hub| hub_machine::settle(&hub)).await {
         hub.log.line(format_args!("revoking shares of the hub machine: {error}"));
     }
-    tokio::spawn(health::keep(Arc::downgrade(&hub)));
-    tokio::spawn(data::expire(Arc::downgrade(&hub)));
-    tokio::spawn(expiry::settle(Arc::downgrade(&hub)));
-    tokio::spawn(updates::look_every(Arc::downgrade(&hub)));
+    fastctx_platform::task::spawn(health::keep(Arc::downgrade(&hub)));
+    fastctx_platform::task::spawn(data::expire(Arc::downgrade(&hub)));
+    fastctx_platform::task::spawn(expiry::settle(Arc::downgrade(&hub)));
+    fastctx_platform::task::spawn(updates::look_every(Arc::downgrade(&hub)));
     fastctx_platform::task::spawn(updates::watch_rollouts(Arc::downgrade(&hub)));
-    tokio::spawn(presence::run(Arc::downgrade(&hub), hub.presence_pending.clone()));
-    tokio::spawn(tell_directory(Arc::downgrade(&hub), hub.directory_changed.clone(), hub.presence_changed.clone()));
+    fastctx_platform::task::spawn(presence::run(Arc::downgrade(&hub), hub.presence_pending.clone()));
+    fastctx_platform::task::spawn(tell_directory(
+        Arc::downgrade(&hub),
+        hub.directory_changed.clone(),
+        hub.presence_changed.clone(),
+    ));
     updates::start(&hub);
     afoot::start(&hub);
     if driven {
@@ -871,7 +883,7 @@ async fn serving(
                 Ok((tcp, peer)) => {
                     fastctx_net::dial::configure(&tcp);
                     let host = releases::http::Host::Hub(hub.clone());
-                    tokio::spawn(releases::http::serve(host, tls.clone(), tcp, peer));
+                    fastctx_platform::task::spawn(releases::http::serve(host, tls.clone(), tcp, peer));
                 }
                 // Out of descriptors, for one: the next accept may succeed.
                 Err(error) => {

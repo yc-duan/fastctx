@@ -422,7 +422,7 @@ async fn serve(
     // No write goes on once nothing of it went for the silence, and the
     // link's end stops one under way: what it began is then not finished,
     // and nothing follows.
-    let writer = tokio::spawn(async move {
+    let writer = fastctx_platform::task::spawn(async move {
         let _done = writer_done;
         loop {
             tokio::select! {
@@ -457,7 +457,7 @@ async fn serve(
     let pinged: Arc<Mutex<HashMap<u64, Instant>>> = Arc::default();
     let heartbeat = {
         let (conn, pinged, pulse) = (conn.clone(), pinged.clone(), pulse.clone());
-        tokio::spawn(async move {
+        fastctx_platform::task::spawn(async move {
             let mut n = 0;
             loop {
                 tokio::time::sleep(HEARTBEAT).await;
@@ -581,7 +581,7 @@ async fn serve(
     // The writer says why and closes, or gives up within its own bounds;
     // past them it is stopped, so no task outlives its link for long.
     let stopping = writer.abort_handle();
-    tokio::spawn(async move {
+    fastctx_platform::task::spawn(async move {
         if tokio::time::timeout(SILENCE * 3, writer).await.is_err() {
             stopping.abort();
         }

@@ -61,7 +61,7 @@ pub(crate) fn ask(
         .insert((name.clone(), generation, id), (held.clone(), reports));
     let name = name.clone();
     let hub = hub.clone();
-    tokio::spawn(async move {
+    fastctx_platform::task::spawn(async move {
         let (progress, mut changes) = tokio::sync::watch::channel(Default::default());
         let work = obtain(&hub, held, Some(progress));
         tokio::pin!(work);
@@ -88,7 +88,7 @@ pub(crate) fn ask(
 /// whoever asks next finds it held, or joins the bringing in still going.
 pub(crate) fn bring_in(hub: &Arc<Hub>, version: String, target: String) {
     let hub = hub.clone();
-    tokio::spawn(async move {
+    fastctx_platform::task::spawn(async move {
         // Why it could not is in the hub's log already.
         let _ = obtain(&hub, Held { version, target }, None).await;
     });
@@ -146,7 +146,7 @@ pub(super) async fn obtain(
             None => {
                 let id = hub.next();
                 updates.obtaining.insert(held.clone(), Obtaining { waiters: vec![waiting], expired: false, id });
-                tokio::spawn(own(hub.clone(), held.clone(), id));
+                fastctx_platform::task::spawn(own(hub.clone(), held.clone(), id));
             }
         }
     }
@@ -160,7 +160,7 @@ async fn own(hub: Arc<Hub>, held: Held, id: u64) {
     let _turn = coming.lock_owned().await;
     // The timer remains runnable even while the owner enters synchronous
     // publication I/O. Its identity cannot expire a subsequent owner.
-    let timer = tokio::spawn(expire(hub.clone(), held.clone(), id));
+    let timer = fastctx_platform::task::spawn(expire(hub.clone(), held.clone(), id));
     let brought = bring(&hub, &held).await;
     timer.abort();
     if let Err(why) = &brought {
@@ -191,7 +191,10 @@ async fn expire(hub: Arc<Hub>, held: Held, id: u64) {
 
 fn size_of(cache: &fastctx_update::Cache, held: &Held) -> Result<Option<u64>, String> {
     cache.path(&held.version, &held.target)?;
-    Ok(cache.get(&held.version, &held.target).and_then(|path| std::fs::metadata(path).ok()).map(|meta| meta.len()))
+    Ok(cache
+        .get(&held.version, &held.target)
+        .and_then(|path| fastctx_platform::disk::metadata(path).ok())
+        .map(|meta| meta.len()))
 }
 
 async fn bring(hub: &Arc<Hub>, held: &Held) -> Result<u64, String> {
@@ -204,7 +207,9 @@ async fn bring(hub: &Arc<Hub>, held: &Held) -> Result<u64, String> {
     }
     // One placed by hand is handed out from where it is.
     let placing = (hub.clone(), held.clone());
-    if let Ok(Some((_, size))) = tokio::task::spawn_blocking(move || super::placed(&placing.0, &placing.1)).await {
+    if let Ok(Some((_, size))) =
+        fastctx_platform::task::spawn_blocking(move || super::placed(&placing.0, &placing.1)).await
+    {
         return Ok(size);
     }
     let manifest = manifest.ok_or_else(|| format!("no machine of the network knows the release {}", held.version))?;
@@ -401,7 +406,7 @@ fn by_the_hub(
     let (hub, cache, manifest, held, ended, intake) =
         (hub.clone(), cache.clone(), manifest.clone(), held.clone(), ended.clone(), intake.clone());
     let trying = attempt.clone();
-    tokio::spawn(async move {
+    fastctx_platform::task::spawn(async move {
         let outcome = async {
             let incoming = cache.attempt(&held.version, &held.target, id)?;
             let counting = trying.clone();
@@ -472,7 +477,7 @@ fn by_a_machine(
     let ended = ended.clone();
     if sent {
         hub.log.line(format_args!("asked {helper} to fetch {} of {}", held.target, held.version));
-        tokio::spawn(async move {
+        fastctx_platform::task::spawn(async move {
             let outcome = delivered.await.unwrap_or_else(|_| Err("the request was dropped".to_string()));
             let _ = ended.send((id, outcome));
         });

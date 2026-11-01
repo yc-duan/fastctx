@@ -576,7 +576,7 @@ impl Store {
         secrets: &[u8],
         book: &Book,
     ) -> io::Result<()> {
-        if dir.join(shelf::FILE).try_exists()? {
+        if fastctx_platform::disk::exists(dir.join(shelf::FILE))? {
             return Err(io::Error::new(io::ErrorKind::AlreadyExists, "the directory already holds a hub database"));
         }
         ensure_private_dir(dir)?;
@@ -711,12 +711,12 @@ impl Store {
         {
             said.push(format!("recording that: {error}"));
         }
-        if let Ok(counts) = std::fs::read_dir(self.dir.join(TAKEN)) {
+        if let Ok(counts) = fastctx_platform::disk::read_dir(self.dir.join(TAKEN)) {
             for count in counts.flatten() {
                 let name = count.file_name().to_string_lossy().into_owned();
                 if !name.starts_with('.')
                     && !members.contains(&name)
-                    && let Err(error) = std::fs::remove_file(count.path())
+                    && let Err(error) = fastctx_platform::disk::remove_file(count.path())
                 {
                     said.push(format!("deleting the count of {name}, no member of the hub: {error}"));
                 }
@@ -725,7 +725,7 @@ impl Store {
         // Kept by name, as before 1.0.1-beta.3: a member's were moved as the
         // hub opened, so what is left is no member's.
         let outbox = self.dir.join(OUTBOX);
-        match std::fs::read_dir(&outbox) {
+        match fastctx_platform::disk::read_dir(&outbox) {
             Ok(entries) => {
                 for entry in entries.flatten() {
                     let name = entry.file_name().to_string_lossy().into_owned();
@@ -737,14 +737,14 @@ impl Store {
                         Err(error) => said.push(format!("setting aside the letters kept for {name}: {error}")),
                     }
                 }
-                let _ = std::fs::remove_dir(&outbox);
+                let _ = fastctx_platform::disk::remove_dir(&outbox);
             }
             Err(error) if error.kind() == io::ErrorKind::NotFound => {}
             Err(error) => said.push(format!("reading {}: {error}", outbox.display())),
         }
         let numberings: std::collections::BTreeSet<String> =
             self.letters.values().map(|entry| format!("{:016x}", entry.out_epoch)).collect();
-        match std::fs::read_dir(self.dir.join(COUNTS)) {
+        match fastctx_platform::disk::read_dir(self.dir.join(COUNTS)) {
             Ok(entries) => {
                 for entry in entries {
                     let entry = match entry {
@@ -757,7 +757,7 @@ impl Store {
                     let name = entry.file_name().to_string_lossy().into_owned();
                     if !name.starts_with('.')
                         && !numberings.contains(&name)
-                        && let Err(error) = std::fs::remove_file(entry.path())
+                        && let Err(error) = fastctx_platform::disk::remove_file(entry.path())
                     {
                         said.push(format!("deleting the count of removed numbering {name}: {error}"));
                     }
@@ -767,7 +767,7 @@ impl Store {
             Err(error) => said.push(format!("reading sender counts: {error}")),
         }
         let boxes = self.dir.join(BOXES);
-        match std::fs::read_dir(&boxes) {
+        match fastctx_platform::disk::read_dir(&boxes) {
             Ok(entries) => {
                 for entry in entries.flatten() {
                     let numbering = entry.file_name().to_string_lossy().into_owned();
@@ -800,7 +800,7 @@ impl Store {
         let trash = self.dir.join(TRASH);
         ensure_private_dir(&trash)?;
         let unique = u64::from_le_bytes(fastctx_net::sign::random::<8>()?);
-        match std::fs::rename(path, trash.join(format!("{name}.{unique:016x}"))) {
+        match fastctx_platform::disk::rename(path, trash.join(format!("{name}.{unique:016x}"))) {
             Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
             other => other,
         }
@@ -809,7 +809,7 @@ impl Store {
     /// Deletes the letters set aside. A long removal is not done under any
     /// lock: whoever sets letters aside empties the trash after letting go.
     pub fn clear_trash(dir: &Path) -> io::Result<()> {
-        match std::fs::remove_dir_all(dir.join(TRASH)) {
+        match fastctx_platform::disk::remove_dir_all(dir.join(TRASH)) {
             Err(error) if error.kind() != io::ErrorKind::NotFound => Err(error),
             _ => Ok(()),
         }
@@ -928,7 +928,7 @@ impl Store {
         let path = self.dir.join(crate::moving::OUTGOING);
         let result = match &self.outgoing {
             Some(outgoing) => publish(&path, &json(outgoing)?, Permissions::Private),
-            None => match std::fs::remove_file(&path) {
+            None => match fastctx_platform::disk::remove_file(&path) {
                 Err(error) if error.kind() != io::ErrorKind::NotFound => Err(error),
                 _ => Ok(()),
             },
@@ -1088,13 +1088,13 @@ impl Store {
             fence.close();
         }
         self.save_letters()?;
-        match std::fs::remove_file(taken_path(&self.dir, name)) {
+        match fastctx_platform::disk::remove_file(taken_path(&self.dir, name)) {
             Err(error) if error.kind() != io::ErrorKind::NotFound => return Err(error),
             _ => {}
         }
         self.set_aside(&name.entry_in(&self.dir.join(OUTBOX))?, &name.file_name())?;
         if let Some(entry) = entry {
-            match std::fs::remove_file(count_path(&self.dir, entry.out_epoch)) {
+            match fastctx_platform::disk::remove_file(count_path(&self.dir, entry.out_epoch)) {
                 Err(error) if error.kind() != io::ErrorKind::NotFound => return Err(error),
                 _ => {}
             }
@@ -1161,7 +1161,7 @@ pub(crate) fn write_letter(path: &Path, message: &Envelope) -> io::Result<u64> {
 
 /// The numbers of the letter files in `directory`, and their sizes.
 pub(crate) fn letter_numbers(directory: &Path) -> io::Result<Vec<(u64, u64)>> {
-    let entries = match std::fs::read_dir(directory) {
+    let entries = match fastctx_platform::disk::read_dir(directory) {
         Ok(entries) => entries,
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
         Err(error) => return Err(error),
@@ -1200,7 +1200,7 @@ fn rehouse(
     shelf: &shelf::Shelf,
 ) -> io::Result<(bool, Vec<String>)> {
     let outbox = dir.join(OUTBOX);
-    if !std::fs::exists(&outbox)? {
+    if !fastctx_platform::disk::exists(&outbox)? {
         return Ok((false, Vec::new()));
     }
     let mut changed = false;
@@ -1211,7 +1211,7 @@ fn rehouse(
         if !recorded {
             let mut found = false;
             for name in std::iter::once(&member.name).chain(&member.was) {
-                found |= std::fs::exists(name.entry_in(&outbox)?)?;
+                found |= fastctx_platform::disk::exists(name.entry_in(&outbox)?)?;
             }
             if found {
                 letters.insert(member.name.clone(), Letters::fresh(None)?);
@@ -1236,22 +1236,22 @@ fn rehouse(
                 continue;
             }
             let old = alias.entry_in(&outbox)?;
-            if !std::fs::exists(&old)? {
+            if !fastctx_platform::disk::exists(&old)? {
                 continue;
             }
             let new = box_path(dir, entry.out_epoch);
             ensure_private_dir(&new)?;
             for (seq, path) in numbered_in(&old)? {
                 let to = new.join(format!("{seq:020}"));
-                let bytes = std::fs::read(&path)?;
-                match std::fs::read(&to) {
+                let bytes = fastctx_platform::disk::read(&path)?;
+                match fastctx_platform::disk::read(&to) {
                     Ok(kept) if kept != bytes => {
                         let record = conflicts::keep(dir, entry.out_epoch, seq, &path, &bytes, &to, &kept)?;
                         conflicts.push(format!(
                             "{} and {} disagree under letter {seq}; both copies and their locations are preserved in {}",
                             path.display(), to.display(), record.display()
                         ));
-                        std::fs::remove_file(&path)?;
+                        fastctx_platform::disk::remove_file(&path)?;
                         continue;
                     }
                     Ok(_) => {}
@@ -1261,10 +1261,10 @@ fn rehouse(
                 // Reconfirm an existing copy too: visibility after an interrupted
                 // publication does not prove the durability needed to delete its source.
                 publish(&to, &bytes, Permissions::Private)?;
-                std::fs::remove_file(&path)?;
+                fastctx_platform::disk::remove_file(&path)?;
             }
             // Only hidden temporary files may remain; startup cleanup owns those.
-            match std::fs::remove_dir(&old) {
+            match fastctx_platform::disk::remove_dir(&old) {
                 Err(error) if error.kind() != io::ErrorKind::DirectoryNotEmpty => return Err(error),
                 _ => {}
             }
@@ -1279,7 +1279,7 @@ fn box_entries(dir: &Path, epoch: u64) -> io::Result<Vec<(u64, PathBuf)>> {
 
 /// The letters in `directory`, by number.
 fn numbered_in(directory: &Path) -> io::Result<Vec<(u64, PathBuf)>> {
-    let entries = match std::fs::read_dir(directory) {
+    let entries = match fastctx_platform::disk::read_dir(directory) {
         Ok(entries) => entries,
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
         Err(error) => return Err(error),
@@ -1303,7 +1303,7 @@ pub(crate) fn json(value: &impl Serialize) -> io::Result<Vec<u8>> {
 }
 
 pub(crate) fn read<T: DeserializeOwned>(path: &Path) -> io::Result<T> {
-    let bytes = std::fs::read(path)?;
+    let bytes = fastctx_platform::disk::read(path)?;
     serde_json::from_slice(&bytes)
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, format!("{}: {error}", path.display())))
 }

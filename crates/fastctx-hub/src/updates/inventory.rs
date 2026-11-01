@@ -277,9 +277,9 @@ pub(crate) fn prune(hub: &Hub) {
     drop(updates);
     drop(store);
     let log = hub.log.clone();
-    tokio::task::spawn_blocking(move || {
+    fastctx_platform::task::spawn_blocking(move || {
         for path in retired {
-            if let Err(error) = std::fs::remove_dir_all(&path) {
+            if let Err(error) = fastctx_platform::disk::remove_dir_all(&path) {
                 log.line(format_args!("deleting retired packages {}: {error}", path.display()));
             }
         }
@@ -344,7 +344,7 @@ pub(crate) fn prefetch(hub: &Arc<Hub>) {
         };
         if start && let Some(machine) = machine {
             let hub = hub.clone();
-            tokio::spawn(async move {
+            fastctx_platform::task::spawn(async move {
                 if hub.moving.frozen() {
                     return;
                 }
@@ -399,7 +399,7 @@ pub(crate) fn prefetch(hub: &Arc<Hub>) {
     // One after another, each with the whole of the ceiling in its turn
     // (`super::obtain`); machines are told as each comes.
     let hub = hub.clone();
-    tokio::spawn(async move {
+    fastctx_platform::task::spawn(async move {
         let mut failed = false;
         for (package, _) in wanted {
             if hub.moving.frozen() {

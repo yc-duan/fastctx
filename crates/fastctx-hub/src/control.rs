@@ -227,25 +227,28 @@ pub(crate) async fn session(
     let output = transport.outgoing.clone();
     let (stopped, mut writer_stopped) = tokio::sync::oneshot::channel::<()>();
     let (telling, member, member_name, queue) = (hub.clone(), key, name.clone(), out.clone());
-    let writer = tokio::spawn(async move {
+    let writer = fastctx_platform::task::spawn(async move {
         // Dropped when the writer returns, which the reader notices.
         let _stopped = stopped;
         loop {
             let next = queue.next().await;
             let Some(next) = next else { break };
             let (preparing, reader) = (telling.clone(), member_name.clone());
-            let (frames, last) =
-                match tokio::task::spawn_blocking(move || encoding::prepare(&preparing, &reader, member, next)).await {
-                    Ok(Ok(prepared)) => prepared,
-                    Ok(Err(error)) => {
-                        telling.log.line(format_args!("{member_name}: {error}"));
-                        return;
-                    }
-                    Err(error) => {
-                        telling.log.line(format_args!("{member_name}: preparing outgoing frames: {error}"));
-                        return;
-                    }
-                };
+            let (frames, last) = match fastctx_platform::task::spawn_blocking(move || {
+                encoding::prepare(&preparing, &reader, member, next)
+            })
+            .await
+            {
+                Ok(Ok(prepared)) => prepared,
+                Ok(Err(error)) => {
+                    telling.log.line(format_args!("{member_name}: {error}"));
+                    return;
+                }
+                Err(error) => {
+                    telling.log.line(format_args!("{member_name}: preparing outgoing frames: {error}"));
+                    return;
+                }
+            };
             for (bytes, dissolved) in frames {
                 let (written, received) = tokio::sync::oneshot::channel();
                 tokio::select! {
@@ -270,7 +273,7 @@ pub(crate) async fn session(
     // The letters it sends are kept in order by a task of their own, so a
     // slow disk holds up no heartbeat or answer on this connection.
     let (letters_in, letters_coming) = mpsc::channel(LETTERS_IN);
-    let intake = tokio::spawn(intake(
+    let intake = fastctx_platform::task::spawn(intake(
         hub.clone(),
         name.clone(),
         generation,
@@ -311,11 +314,11 @@ pub(crate) async fn session(
             Some(Err(frame)) => frame,
             Some(Ok(input)) => {
                 let bytes = input.bytes.clone();
-                match tokio::task::spawn_blocking(move || serde_json::from_slice::<Up>(&bytes)).await {
+                match fastctx_platform::task::spawn_blocking(move || serde_json::from_slice::<Up>(&bytes)).await {
                     Ok(Ok(frame)) => frame,
                     Ok(Err(error)) => {
                         let (reading, member_name, queue) = (hub.clone(), name.clone(), out.clone());
-                        let _ = tokio::task::spawn_blocking(move || {
+                        let _ = fastctx_platform::task::spawn_blocking(move || {
                             unreadable(&reading, &member_name, &queue, &input.bytes, &error)
                         })
                         .await;
@@ -335,7 +338,7 @@ pub(crate) async fn session(
         }
         let (frame, reservation) = match frame {
             Up::QuestionPart { id, index, total, text } => {
-                let pushed = tokio::task::spawn_blocking(move || {
+                let pushed = fastctx_platform::task::spawn_blocking(move || {
                     let result = uploads.push(id, index, total, &text);
                     (uploads, result)
                 })
@@ -361,7 +364,7 @@ pub(crate) async fn session(
             frame => (frame, None),
         };
         let (handling, member_name, queue) = (hub.clone(), name.clone(), out.clone());
-        let handled = tokio::task::spawn_blocking(move || {
+        let handled = fastctx_platform::task::spawn_blocking(move || {
             handle(&handling, &member_name, key, generation, &queue, frame, reservation)
         })
         .await;
@@ -731,7 +734,7 @@ fn handle(
         Up::Ask { id, question: Question::Manage { account, change: Change::Direct { machine, at } } } => {
             let (hub, out) = (hub.clone(), out.clone());
             let held = crate::moving::Moving::hold(&hub);
-            tokio::spawn(async move {
+            fastctx_platform::task::spawn(async move {
                 let _held = held;
                 let answer = crate::direct::change(hub, origin, account, machine, at).await;
                 let _ = out.send(Out::Frame(Down::Told { id, answer }));
@@ -754,7 +757,7 @@ fn handle(
         Up::Ask { id, question: Question::NetworkUpdates { account, request } } => {
             let held = crate::moving::Moving::hold(hub);
             let (hub, out) = (hub.clone(), out.clone());
-            tokio::spawn(async move {
+            fastctx_platform::task::spawn(async move {
                 let _held = held;
                 let answer = crate::updates::view_request(&hub, &origin, &account, request).await;
                 let _ = out.send(Out::Frame(Down::Told { id, answer }));
@@ -763,7 +766,7 @@ fn handle(
         Up::Ask { id, question: Question::PrepareUpdate { machine, version } } => {
             let held = crate::moving::Moving::hold(hub);
             let (hub, out) = (hub.clone(), out.clone());
-            tokio::spawn(async move {
+            fastctx_platform::task::spawn(async move {
                 let _held = held;
                 let answer = crate::updates::prepare_update(&hub, &machine, &version).await.map(|()| Told::Done);
                 let _ = out.send(Out::Frame(Down::Told { id, answer }));
@@ -777,7 +780,7 @@ fn handle(
                 | Question::HistorySubmitted { .. }),
         } => {
             let (hub, out) = (hub.clone(), out.clone());
-            tokio::spawn(async move {
+            fastctx_platform::task::spawn(async move {
                 let _reservation = reservation;
                 let answer = crate::ledger::history_requests::ask(&hub, &origin, question).await;
                 let _ = out.send(Out::Frame(Down::Told { id, answer }));
@@ -792,7 +795,7 @@ fn handle(
         } => {
             let (hub, writer, out) = (hub.clone(), name.clone(), out.clone());
             let held = crate::moving::Moving::hold(&hub);
-            tokio::spawn(async move {
+            fastctx_platform::task::spawn(async move {
                 let (_held, _reservation) = (held, reservation);
                 let answer = crate::ledger::write_as(&hub, &writer, town, entry, Some(account)).await;
                 let _ = out.send(Out::Frame(Down::Told { id, answer }));
@@ -808,7 +811,7 @@ fn handle(
         Up::Ask { id, question: Question::LedgerWrite { town, entry } } => {
             let (hub, writer, out) = (hub.clone(), name.clone(), out.clone());
             let held = crate::moving::Moving::hold(&hub);
-            tokio::spawn(async move {
+            fastctx_platform::task::spawn(async move {
                 let _held = held;
                 let _reservation = reservation;
                 let answer = crate::ledger::write(&hub, &writer, town, entry).await;
@@ -837,7 +840,7 @@ fn handle(
         Up::Ask { id, question: Question::OwnedRecords { account, request } } => {
             let (hub, from, out) = (hub.clone(), name.clone(), out.clone());
             let held = crate::moving::Moving::hold(&hub);
-            tokio::spawn(async move {
+            fastctx_platform::task::spawn(async move {
                 let _held = held;
                 let _reservation = reservation;
                 let answer = crate::owned_records::ask(&hub, from, key, account, request).await;
@@ -854,7 +857,7 @@ fn handle(
             };
             let (hub, from, out) = (hub.clone(), name.clone(), out.clone());
             let held = crate::moving::Moving::hold(&hub);
-            tokio::spawn(async move {
+            fastctx_platform::task::spawn(async move {
                 let _held = held;
                 let _reservation = reservation;
                 let answer = crate::account_records::ask(&hub, from, key, account, opened, request).await;
@@ -883,7 +886,7 @@ fn handle(
             };
             let (hub, from, out) = (hub.clone(), name.clone(), out.clone());
             let held = crate::moving::Moving::hold(&hub);
-            tokio::spawn(async move {
+            fastctx_platform::task::spawn(async move {
                 let _held = held;
                 let answer = crate::plan_copies::ask(&hub, from, key, account, opened, request).await;
                 let _ = out.send(Out::Frame(Down::Told { id, answer }));
@@ -911,7 +914,7 @@ fn handle(
             };
             let (hub, from, out) = (hub.clone(), name.clone(), out.clone());
             let held = crate::moving::Moving::hold(&hub);
-            tokio::spawn(async move {
+            fastctx_platform::task::spawn(async move {
                 let _held = held;
                 let _reservation = reservation;
                 let answer = crate::skill_files::ask(&hub, from, key, account, opened, request).await;
@@ -932,28 +935,29 @@ fn handle(
             let releases = hub.releases.clone();
             let out = out.clone();
             let hub = hub.clone();
-            tokio::spawn(async move {
+            fastctx_platform::task::spawn(async move {
                 let read = releases.clone();
-                let answer = match tokio::task::spawn_blocking(move || read.ready(&version, allow_partial)).await {
-                    Ok(Ok(mut release)) => {
-                        let version = release.version.clone();
-                        for (archive, _) in fastctx_types::kernel::HELD_ARCHIVES {
-                            let bring = if wanted.is_empty() {
-                                archive == fastctx_types::kernel::WINDOWS_X86_64_ARCHIVE
-                            } else {
-                                wanted.iter().any(|wanted| wanted == archive)
-                            };
-                            if let Some(held) = release.held(archive)
-                                && held.is_none()
-                            {
-                                *held = crate::updates::held_digest(&hub, &version, archive, bring).await;
+                let answer =
+                    match fastctx_platform::task::spawn_blocking(move || read.ready(&version, allow_partial)).await {
+                        Ok(Ok(mut release)) => {
+                            let version = release.version.clone();
+                            for (archive, _) in fastctx_types::kernel::HELD_ARCHIVES {
+                                let bring = if wanted.is_empty() {
+                                    archive == fastctx_types::kernel::WINDOWS_X86_64_ARCHIVE
+                                } else {
+                                    wanted.iter().any(|wanted| wanted == archive)
+                                };
+                                if let Some(held) = release.held(archive)
+                                    && held.is_none()
+                                {
+                                    *held = crate::updates::held_digest(&hub, &version, archive, bring).await;
+                                }
                             }
+                            Ok(Told::KernelRelease { release, certificate: releases.certificate.clone() })
                         }
-                        Ok(Told::KernelRelease { release, certificate: releases.certificate.clone() })
-                    }
-                    Ok(Err(reason)) => Err(reason),
-                    Err(error) => Err(format!("reading the kernel release: {error}")),
-                };
+                        Ok(Err(reason)) => Err(reason),
+                        Err(error) => Err(format!("reading the kernel release: {error}")),
+                    };
                 let _ = out.send(Out::Frame(Down::Told { id, answer }));
             });
         }
@@ -1080,7 +1084,7 @@ async fn keep(
     }
     let failed = |error: std::io::Error| Stopped::Failed(storage_failure(hub, "keeping a letter", &error));
     let (routing, sender) = (hub.clone(), name.clone());
-    let (message, routed) = tokio::task::spawn_blocking(move || {
+    let (message, routed) = fastctx_platform::task::spawn_blocking(move || {
         let route = || {
             own(&store, &sender, &message)?;
             if message.kind != Kind::Letter {
@@ -1105,7 +1109,7 @@ async fn keep(
     let refused = match routed {
         Ok(receiver) => {
             let held = crate::moving::Moving::hold(hub);
-            let written = tokio::spawn(async move {
+            let written = fastctx_platform::task::spawn(async move {
                 let _held = held;
                 receiver.request(|reply| crate::post::Command::Put { message: Box::new(message), reply }).await
             })

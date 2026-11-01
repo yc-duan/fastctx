@@ -54,7 +54,7 @@ pub(crate) async fn run(hub: Weak<crate::Hub>, changed: Arc<tokio::sync::Notify>
         changed.notified().await;
         tokio::time::sleep(Duration::from_secs(1)).await;
         let Some(hub) = hub.upgrade() else { return };
-        let _ = tokio::task::spawn_blocking(move || {
+        let _ = fastctx_platform::task::spawn_blocking(move || {
             let names = std::mem::take(&mut *hub.pending_presence.lock().expect("presence changes"));
             for (name, rev) in names {
                 hub.publish_presence(&name, rev);

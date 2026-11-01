@@ -39,6 +39,23 @@ where
     tokio::spawn(Timed { future: Box::pin(future), started_at: Location::caller() })
 }
 
+/// Starts `future` on the runtime `handle` names, timed as `spawn` times it.
+#[track_caller]
+pub fn spawn_on<F>(handle: &tokio::runtime::Handle, future: F) -> JoinHandle<F::Output>
+where
+    F: Future + Send + 'static,
+    F::Output: Send + 'static,
+{
+    handle.spawn(Timed { future: Box::pin(future), started_at: Location::caller() })
+}
+
+/// `future`, timed as `spawn` times a task, for a set of tasks to start
+/// (`tokio::task::JoinSet::spawn`).
+#[track_caller]
+pub fn timed<F: Future>(future: F) -> impl Future<Output = F::Output> {
+    Timed { future: Box::pin(future), started_at: Location::caller() }
+}
+
 /// Runs `work` on the runtime's blocking pool, as doing what the current
 /// task does, on a thread that may block.
 pub fn spawn_blocking<F, R>(work: F) -> JoinHandle<R>
@@ -47,6 +64,19 @@ where
     R: Send + 'static,
 {
     tokio::task::spawn_blocking(crate::doing::carried(move || {
+        let _role = roles::scoped(Role::Blocking);
+        work()
+    }))
+}
+
+/// Runs `work` on the blocking pool of the runtime `handle` names, as
+/// `spawn_blocking` runs it on the current one's.
+pub fn spawn_blocking_on<F, R>(handle: &tokio::runtime::Handle, work: F) -> JoinHandle<R>
+where
+    F: FnOnce() -> R + Send + 'static,
+    R: Send + 'static,
+{
+    handle.spawn_blocking(crate::doing::carried(move || {
         let _role = roles::scoped(Role::Blocking);
         work()
     }))

@@ -266,7 +266,7 @@ impl Outq {
             // Asked for before looking, so a frame queued in between wakes it.
             let ready = self.0.ready.notified();
             let queue = self.clone();
-            let next = tokio::task::spawn_blocking(move || {
+            let next = fastctx_platform::task::spawn_blocking(move || {
                 let mut state = queue.0.state.lock().expect("never poisoned");
                 if state.shut { Some(None) } else { state.take().map(Some) }
             })

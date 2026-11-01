@@ -30,7 +30,7 @@ fn keep(net: &NetDir, failure: &Failure) -> io::Result<PathBuf> {
     match publish_new(&path, &bytes, Permissions::Private) {
         Ok(()) => {}
         Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
-            let previous = std::fs::read(&path)?;
+            let previous = fastctx_platform::disk::read(&path)?;
             let kept: Failure = serde_json::from_slice(&previous).map_err(io::Error::other)?;
             if kept.direction != failure.direction || kept.message != failure.message || kept.reason != failure.reason {
                 return Err(io::Error::new(
@@ -48,10 +48,10 @@ fn keep(net: &NetDir, failure: &Failure) -> io::Result<PathBuf> {
 
 fn import(net: &NetDir, log: &mut impl FnMut(String)) -> io::Result<()> {
     let marker = net.failures().join(".identified");
-    if marker.try_exists()? {
+    if fastctx_platform::disk::exists(&marker)? {
         return Ok(());
     }
-    for entry in std::fs::read_dir(net.failures())? {
+    for entry in fastctx_platform::disk::read_dir(net.failures())? {
         let path = entry?.path();
         if path.extension().is_none_or(|extension| extension != "json")
             || !path
@@ -62,7 +62,7 @@ fn import(net: &NetDir, log: &mut impl FnMut(String)) -> io::Result<()> {
             continue;
         }
         let migrate = || -> io::Result<()> {
-            let bytes = match std::fs::read(&path) {
+            let bytes = match fastctx_platform::disk::read(&path) {
                 Ok(bytes) => bytes,
                 Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
                 Err(error) => return Err(error),
@@ -70,7 +70,7 @@ fn import(net: &NetDir, log: &mut impl FnMut(String)) -> io::Result<()> {
             let failure =
                 serde_json::from_slice(&bytes).map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
             keep(net, &failure)?;
-            match std::fs::remove_file(&path) {
+            match fastctx_platform::disk::remove_file(&path) {
                 Err(error) if error.kind() != io::ErrorKind::NotFound => Err(error),
                 _ => Ok(()),
             }

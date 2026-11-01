@@ -160,7 +160,7 @@ impl Inner {
             pairing.arrived.insert(key.clone(), Arrived { end, socket, number });
         }
         let inner = Arc::downgrade(self);
-        tokio::spawn(async move {
+        fastctx_platform::task::spawn(async move {
             tokio::time::sleep(PAIRING).await;
             let Some(inner) = inner.upgrade() else { return };
             let mut pairing = inner.direct.pairing.lock().expect("never poisoned");

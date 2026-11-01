@@ -17,6 +17,7 @@ pub mod cpu_share;
 pub mod darwin_proc;
 pub mod detach;
 pub mod directory_alias;
+pub mod disk;
 pub mod disk_usage;
 pub mod disks;
 pub mod doing;

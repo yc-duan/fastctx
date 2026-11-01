@@ -396,7 +396,7 @@ async fn connected(
     // said it took nothing more, for the silence: a hub that takes nothing
     // is as gone as one that says nothing (`crate::pulse`).
     let writing = pulse.clone();
-    let writer = tokio::spawn(async move {
+    let writer = fastctx_platform::task::spawn(async move {
         let _done = writer_done;
         while let Some(frame) = outgoing.recv().await {
             let message = WsMessage::Binary(frame.bytes.into());
@@ -421,7 +421,7 @@ async fn connected(
     // taking the hub's, and doing what its frames say are the node's work.
     let mut tasks = Tasks(vec![
         writer,
-        tokio::spawn(heartbeat(inner.clone(), up.clone(), pinged.clone(), pulse.clone())),
+        fastctx_platform::task::spawn(heartbeat(inner.clone(), up.clone(), pinged.clone(), pulse.clone())),
         inner.on_node(flush(inner.clone(), up.clone(), taken, outbox_failed)),
         inner.on_node(take_letters(inner.clone(), up.clone(), hub_letters, delivered, view_current, letter_failed)),
         inner.on_node(handle_frames(inner.clone(), generation, up.clone(), deliveries, arriving, frames_failed)),
@@ -438,7 +438,7 @@ async fn connected(
     }
     if !preferred.is_empty() {
         let (hub, cert) = (inner.hub.clone(), inner.cert);
-        tasks.0.push(tokio::spawn(ask_preferred(preferred, hub, cert, returned)));
+        tasks.0.push(fastctx_platform::task::spawn(ask_preferred(preferred, hub, cert, returned)));
     }
     // What an earlier session was told of who is online is counted by that
     // run of the hub: this session's view and tellings count afresh.
@@ -758,13 +758,18 @@ async fn handle_frame(
         }
         Down::Incoming { call, message } => {
             let stop = inner.answers.open(inner, CallOn::Hub(generation), call);
-            tokio::spawn(super::answering::answer(inner.clone(), Replier::Hub(up.clone(), call), message, stop));
+            fastctx_platform::task::spawn(super::answering::answer(
+                inner.clone(),
+                Replier::Hub(up.clone(), call),
+                message,
+                stop,
+            ));
         }
         Down::Presence { machine, presence, rev } => inner.heard_presence(machine, presence, rev),
         Down::View { delta } => inner.heard_view(*delta),
         Down::DirectoryChanged => {
             let inner = inner.clone();
-            tokio::spawn(async move {
+            fastctx_platform::task::spawn(async move {
                 if let Err(error) = inner.refresh().await {
                     inner.node.log(format!("asking the hub for the view: {error}"));
                 }
@@ -781,7 +786,7 @@ async fn handle_frame(
         Down::Afoot { machine, busy, change } => inner.heard_afoot(machine, busy, *change),
         Down::Forget { forgetting } => {
             let (inner, up) = (inner.clone(), up.clone());
-            tokio::spawn(async move {
+            fastctx_platform::task::spawn(async move {
                 let id = forgetting.id;
                 let outcome = inner.node.forget(forgetting).await;
                 // A session ended meanwhile: the hub tells it again.

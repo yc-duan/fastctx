@@ -410,6 +410,30 @@ jobs:
           fi
           tests/network_drill --root "$RUNNER_TEMP" "${earlier[@]}"
 
+  # A real hub limited to two CPUs and 2 GiB under a systemd unit, a thousand members and then ten
+  # thousand over real TLS and WebSocket: no false alarms, every member back after a storm, and the
+  # cost of a view and of presence not growing with the network (`world-engine.md`, 验证的设施).
+  # As root, for the unit and the generator's descriptors.
+  scale-linux:
+    needs: kernel-linux
+    name: hub scale
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: tests-x86_64-unknown-linux-gnu
+          path: tests
+      - name: Restore executable permissions
+        run: chmod +x tests/*
+      - if: env.DRILLS == 'true'
+        name: Hub scale drill
+        run: |
+          root="$RUNNER_TEMP/scale"
+          sudo bash -c "ulimit -n 1048576 && tests/hub_scale --root '$root' --members 1000 --seconds 20 --cgroup && tests/hub_scale --root '$root' --members 10000 --seconds 20 --cgroup --baseline '$root/result-1000.json'"
+
   test-linux:
     needs: kernel-linux
     name: test ${{ matrix.target }}

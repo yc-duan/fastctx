@@ -103,7 +103,7 @@ pub(super) async fn request(
                         .ok_or("repair manifest is unavailable")?;
                     let cache = hub.updates.lock().expect("repair manifest cache").cache.clone();
                     let keeping = manifest.clone();
-                    tokio::task::spawn_blocking(move || cache.keep_manifest(&keeping))
+                    fastctx_platform::task::spawn_blocking(move || cache.keep_manifest(&keeping))
                         .await
                         .map_err(|e| e.to_string())??;
                     manifests.insert(version.clone(), Arc::new(manifest));

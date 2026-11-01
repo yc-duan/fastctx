@@ -13,7 +13,7 @@ pub struct Files {
 
 impl Files {
     pub fn new(root: &Path) -> io::Result<Self> {
-        let root = std::fs::canonicalize(root)?;
+        let root = fastctx_platform::disk::canonicalize(root)?;
         #[cfg(unix)]
         let directory = {
             use std::os::unix::fs::OpenOptionsExt as _;
@@ -69,11 +69,13 @@ impl Files {
             fn open(path: &Path) -> io::Result<File> {
                 // Denying delete sharing pins directories against a rename
                 // or junction replacement until the leaf has been opened.
-                std::fs::OpenOptions::new()
-                    .read(true)
-                    .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE)
-                    .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT)
-                    .open(path)
+                fastctx_platform::disk::open_with(
+                    std::fs::OpenOptions::new()
+                        .read(true)
+                        .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE)
+                        .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT),
+                    path,
+                )
             }
             let mut path = self.root.clone();
             let mut directories = Vec::new();

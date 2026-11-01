@@ -228,7 +228,7 @@ impl Drop for RecordWatch {
         if let Ok(runtime) = tokio::runtime::Handle::try_current() {
             let (link, account, kind, watch) =
                 (self.link.clone(), self.account.clone(), self.kind.clone(), self.watch.clone());
-            runtime.spawn(async move {
+            fastctx_platform::task::spawn_on(&runtime, async move {
                 let _ = link.watch_records(&account, &kind, watch.as_str(), false).await;
             });
         }

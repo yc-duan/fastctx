@@ -109,7 +109,7 @@ pub(crate) fn ask(hub: &Arc<Hub>, from: &crate::origin::Origin, out: &Outq, id: 
         }
     };
     let (hub, from, out) = (hub.clone(), from.clone(), out.clone());
-    tokio::spawn(async move {
+    fastctx_platform::task::spawn(async move {
         let deadline = tokio::time::Instant::now() + Duration::from_secs(55);
         // A read waits its turn among the others, within its own time.
         let permit = tokio::select! {
@@ -125,7 +125,7 @@ pub(crate) fn ask(hub: &Arc<Hub>, from: &crate::origin::Origin, out: &Outq, id: 
             },
         };
         let project = town.clone();
-        let reading = tokio::task::spawn_blocking(move || {
+        let reading = fastctx_platform::task::spawn_blocking(move || {
             let _permit = permit;
             plan.read(&hub_id, &project)
         });

@@ -519,7 +519,9 @@ pub(super) async fn read_manifest(hub: &Hub, version: &str) -> Result<(), String
     .await
     .map_err(|_| format!("reading the manifest of {version} took longer than 50 seconds"))??;
     let saving = manifest.clone();
-    tokio::task::spawn_blocking(move || cache.keep_manifest(&saving)).await.map_err(|error| error.to_string())??;
+    fastctx_platform::task::spawn_blocking(move || cache.keep_manifest(&saving))
+        .await
+        .map_err(|error| error.to_string())??;
     hub.updates.lock().expect("never poisoned").catalog.insert(manifest.version.clone(), manifest);
     Ok(())
 }

@@ -92,7 +92,7 @@ impl SecretKey {
 
     /// Reads a key written by `create`.
     pub fn load(path: &Path) -> io::Result<Self> {
-        let bytes = Zeroizing::new(std::fs::read(path)?);
+        let bytes = Zeroizing::new(fastctx_platform::disk::read(path)?);
         let file: KeyFile = serde_json::from_slice(&bytes)
             .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, format!("{}: {error}", path.display())))?;
         if file.kind != "ed25519" {
