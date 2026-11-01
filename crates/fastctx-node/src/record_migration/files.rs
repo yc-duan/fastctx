@@ -122,7 +122,20 @@ pub(crate) fn file(
                 },
             );
         }
-        through
+        // A development build before row proofs left checkpoints without
+        // them: such a file is read again from its start, keeping each row
+        // once more, with its proof.
+        let proven: i64 = context
+            .database
+            .read_background_now(|db| {
+                Ok(db.query_row(
+                    "SELECT COUNT(*) FROM migration_row_proofs WHERE family=?1 AND path=?2 AND ordinal<=?3",
+                    (&context.family, &key, through),
+                    |row| row.get(0),
+                )?)
+            })
+            .map_err(io::Error::other)?;
+        if proven < through { 0 } else { through }
     } else {
         0
     };

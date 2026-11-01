@@ -58,7 +58,15 @@ impl From<rusqlite::Error> for Error {
             Some(ErrorCode::DatabaseBusy | ErrorCode::DatabaseLocked) => ErrorKind::Busy,
             Some(ErrorCode::DatabaseCorrupt | ErrorCode::NotADatabase) => ErrorKind::Corrupt,
             Some(ErrorCode::DiskFull) => ErrorKind::Full,
-            Some(ErrorCode::CannotOpen | ErrorCode::SystemIoFailure) => ErrorKind::Unavailable,
+            Some(
+                ErrorCode::CannotOpen
+                | ErrorCode::SystemIoFailure
+                | ErrorCode::PermissionDenied
+                | ErrorCode::ReadOnly
+                | ErrorCode::FileLockingProtocolFailed
+                | ErrorCode::OutOfMemory
+                | ErrorCode::NoLargeFileSupport,
+            ) => ErrorKind::Unavailable,
             Some(ErrorCode::ConstraintViolation | ErrorCode::TypeMismatch) => ErrorKind::Invalid,
             _ => ErrorKind::Other,
         };

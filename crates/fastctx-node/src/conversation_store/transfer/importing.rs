@@ -39,12 +39,14 @@ pub(super) fn run(world: &Path, database: &Database, conversation: &str) -> io::
     }
 }
 
-// Only errors reading the offered database are attributed to its contents.
-// Target database damage and filesystem admission failures remain retryable.
+// Only errors reading the offered database that say what it holds is bad
+// are attributed to its contents. Target database damage, filesystem
+// admission failures and errors nobody classified remain retryable: a good
+// offer is never set aside for them.
 fn source_error(error: impl Into<Error>) -> Error {
     let error = error.into();
     match error.kind() {
-        ErrorKind::Invalid | ErrorKind::Corrupt | ErrorKind::Other => bundle::invalid(error.to_string()),
+        ErrorKind::Invalid | ErrorKind::Corrupt => bundle::invalid(error.to_string()),
         _ => error,
     }
 }
