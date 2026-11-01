@@ -62,7 +62,7 @@ pub async fn apply(node: &Arc<Node>, id: &ResidentId, mut event: SessionEvent) -
         return Ok(());
     }
     if about.host.agent.as_str() == "claude" {
-        crate::claude::turn_facts::observe(&directory, &event.happened)?;
+        event = crate::claude::turn_facts::observe(&directory, event).await?;
     }
     // Claude's durable event remains pending until its accounting row is committed.
     if let Err(error) = crate::usage::measurement(node, id, &about, &event).await {
@@ -98,7 +98,7 @@ pub async fn apply(node: &Arc<Node>, id: &ResidentId, mut event: SessionEvent) -
         }
     }
     if !matches!(event.happened, Happened::TurnStarted { .. }) {
-        crate::turn_evidence::observe(node, id, &event)?;
+        event = crate::turn_evidence::observe(node, id, event).await?;
     }
     crate::run_facts::attach(&directory, &mut event)?;
     if let Happened::Changed { change: SessionChange::Status { waiting_for_user: Some(waiting), .. }, .. } =
@@ -215,12 +215,13 @@ pub async fn apply(node: &Arc<Node>, id: &ResidentId, mut event: SessionEvent) -
                         return Ok(());
                     }
                     node.residents.turn_started(&node.world, id, turn, event.at)?;
+                    let key = format!("started:{turn}");
                     node.idle_probes.touched(id);
-                    crate::turn_evidence::observe(node, id, &event)?;
+                    event = crate::turn_evidence::observe(node, id, event).await?;
                     // What waited to ride with the next turn goes into this one.
                     let (node, id) = (node.clone(), id.clone());
                     tokio::spawn(async move { crate::speech::along(&node, &id).await });
-                    format!("started:{turn}")
+                    key
                 }
                 Happened::Finished { .. } if question_key.is_some() => question_key.expect("known question"),
                 _ => serde_json::to_string(&event).map_err(std::io::Error::other)?,
@@ -295,7 +296,7 @@ async fn finish_at(
     // Claude's host says what the turn cost; its plugin's observations of
     // each request say the rest.
     if about.host.agent.as_str() == "claude" && end.facts.as_ref().is_none_or(|facts| facts.tokens.is_none()) {
-        let observed = crate::claude::turn_facts::finish(&directory, turn)?;
+        let observed = crate::claude::turn_facts::finish(&directory, turn).await?;
         end.facts = match (end.facts.take(), observed) {
             (Some(mut facts), Some(observed)) => {
                 facts.models = observed.models;
@@ -361,7 +362,7 @@ async fn finish_at(
         return Ok(());
     }
     if about.host.agent.as_str() == "claude" {
-        crate::claude::turn_facts::settled(&directory, turn)?;
+        crate::claude::turn_facts::settled(&directory, turn).await?;
     }
     keep_answers(node, id, &about.origin, &directory, turn, turn, &finished.end, &finished.readers).await?;
     let (pay_node, pay_id, pay_directory) = (node.clone(), id.clone(), directory.clone());

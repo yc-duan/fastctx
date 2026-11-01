@@ -78,7 +78,7 @@ pub(crate) fn ensure_each(
     source(&mut |row| {
         bytes += row.body.len();
         pending.push(row);
-        if pending.len() >= 64 || bytes >= 256 * 1024 {
+        if pending.len() >= 16 || bytes >= 128 * 1024 {
             commit(&database, &conversation, family, std::mem::take(&mut pending))?;
             bytes = 0;
         }
@@ -120,8 +120,9 @@ fn commit(database: &Database, conversation: &str, family: &str, sources: Vec<So
     let bytes = rows.iter().map(|(key, body, _, _, _, _, _)| key.len() + body.len() + 128).sum();
     let group = family.clone();
     database.write_now_at(Priority::Background,bytes,move |connection| {
+        let mut insert=connection.prepare_cached("INSERT INTO conversation_records(conversation,family,identity,body,modified,arrival,category,expires) VALUES(?1,?2,?3,?4,?5,?6,?8,?9) ON CONFLICT(conversation,family,identity) DO UPDATE SET body=excluded.body,modified=excluded.modified,arrival=excluded.arrival,category=excluded.category,expires=excluded.expires WHERE ?7 AND (conversation_records.body!=excluded.body OR conversation_records.modified!=excluded.modified OR conversation_records.arrival IS NOT excluded.arrival OR conversation_records.category IS NOT excluded.category OR conversation_records.expires IS NOT excluded.expires)")?;
         for (key,body,modified,arrival,replace,category,expires) in rows {
-            connection.execute("INSERT INTO conversation_records(conversation,family,identity,body,modified,arrival,category,expires) VALUES(?1,?2,?3,?4,?5,?6,?8,?9) ON CONFLICT(conversation,family,identity) DO UPDATE SET body=excluded.body,modified=excluded.modified,arrival=excluded.arrival,category=excluded.category,expires=excluded.expires WHERE ?7 AND (conversation_records.body!=excluded.body OR conversation_records.modified!=excluded.modified OR conversation_records.arrival IS NOT excluded.arrival OR conversation_records.category IS NOT excluded.category OR conversation_records.expires IS NOT excluded.expires)",params![scope,group,key,body,modified,arrival,replace,category,expires])?;
+            insert.execute(params![scope,group,key,body,modified,arrival,replace,category,expires])?;
         }
         Ok(())
     }).map_err(io::Error::other)?;

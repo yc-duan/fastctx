@@ -19,15 +19,15 @@ use crate::Node;
 use fastctx_types::ResidentId;
 use fastctx_types::session::{SessionEvent, TurnEnd};
 
-pub(crate) fn observe(node: &Node, resident: &ResidentId, event: &SessionEvent) -> std::io::Result<()> {
-    node.turn_activity.observe(resident, event);
+pub(crate) async fn observe(node: &Node, resident: &ResidentId, event: SessionEvent) -> std::io::Result<SessionEvent> {
+    node.turn_activity.observe(resident, &event);
     if matches!(
         event.happened,
         fastctx_types::session::Happened::TurnStarted { .. } | fastctx_types::session::Happened::Heard { .. }
     ) {
         crate::goals::engine::input_changed(node, resident);
     }
-    diagnostics::observe(node, resident, event)
+    diagnostics::observe(node, resident, event).await
 }
 
 pub(crate) fn freeze(node: &Node, resident: &ResidentId, turn: &str, end: &mut TurnEnd) {

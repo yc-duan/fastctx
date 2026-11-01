@@ -125,6 +125,15 @@ impl Rows<'_> {
         self.conversation
     }
 
+    pub(crate) fn exists(&self, family: &str, key: &str) -> Result<bool> {
+        Ok(self
+            .connection
+            .prepare_cached(
+                "SELECT EXISTS(SELECT 1 FROM conversation_records WHERE conversation=?1 AND family=?2 AND identity=?3)",
+            )?
+            .query_row((self.conversation, family, key), |row| row.get(0))?)
+    }
+
     pub(crate) fn get_raw(&self, family: &str, key: &str) -> Result<Option<Vec<u8>>> {
         Ok(self
             .connection

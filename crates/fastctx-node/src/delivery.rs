@@ -246,3 +246,8 @@ pub fn handovers(directory: &ConversationDir) -> io::Result<Vec<Handover>> {
 pub fn terminal(directory: &ConversationDir, turn: &str) -> io::Result<Option<Finished>> {
     read_rows(directory, |rows| rows.get("terminals", turn))
 }
+
+/// Prepare legacy delivery families before another record joins their transaction.
+pub(crate) fn prepare(directory: &ConversationDir) -> io::Result<()> {
+    storage::initialize(directory)
+}
