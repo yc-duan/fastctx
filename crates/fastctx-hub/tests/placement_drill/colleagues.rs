@@ -54,7 +54,7 @@ pub(super) async fn exercise(
         format!("COLLEAGUE_CASE [[run: on alice-two <<'READ'\nfastctx plan {parent} > '{}'\nREAD]]", read.display());
     let reply=ask(host,json!({"call":"ask","resident":parent,"label":"placement colleague","prompt":prompt,"callee":"helper","login":null})).await?;
     let address: Address = serde_json::from_value(reply["colleague"].clone()).context("colleague address")?;
-    anyhow::ensure!(idle(host, address.resident.as_str()).await, "the colleague did not settle");
+    anyhow::ensure!(idle_after(host, address.resident.as_str(), None).await, "the colleague did not settle");
     let path = plan_file(host, address.resident.as_str())?;
     record("a colleague inherits the requester's usable working computer", path.starts_with(working), json!(path));
     let guide = block(host, address.resident.as_str(), "plan-guide");
@@ -76,6 +76,7 @@ pub(super) async fn exercise(
     );
     // Its first plan, written as a model writes it: from a job on its working
     // computer, before any file is there.
+    let before = last_turn(host, address.resident.as_str());
     world
         .talk(
             address.resident.clone(),
@@ -86,7 +87,10 @@ pub(super) async fn exercise(
             ),
         )
         .await?;
-    anyhow::ensure!(idle(host, address.resident.as_str()).await, "the colleague's plan write did not settle");
+    anyhow::ensure!(
+        idle_after(host, address.resident.as_str(), before).await,
+        "the colleague's plan write did not settle"
+    );
     record(
         "the colleague writes its own plan",
         plan_is(world, &address.resident, "# Part\nCOLLEAGUE_OWN_PLAN\n").await,

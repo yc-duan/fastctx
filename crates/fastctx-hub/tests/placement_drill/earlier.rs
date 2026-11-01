@@ -31,8 +31,12 @@ pub(super) async fn exercise(
 
     // The earlier machine runs the part, this release's conversation keeps
     // its facts.
+    let before = last_turn(host, conversation.as_str());
     world.talk(conversation.clone(), Some("host".parse()?), script("EARLIER_EXECUTOR", "old-pc", "alice-pc")).await?;
-    anyhow::ensure!(idle(host, conversation.as_str()).await, "the run on the earlier machine did not settle");
+    anyhow::ensure!(
+        idle_after(host, conversation.as_str(), before).await,
+        "the run on the earlier machine did not settle"
+    );
     let facts = last_run(world, conversation, "host").await?;
     steps(
         facts.as_ref(),
@@ -75,7 +79,10 @@ pub(super) async fn exercise(
         .await
         .context("opening a conversation on the earlier machine")?;
     let resident = opened.to.resident;
-    anyhow::ensure!(idle(&old, resident.as_str()).await, "the earlier machine's conversation did not settle");
+    anyhow::ensure!(
+        idle_after(&old, resident.as_str(), None).await,
+        "the earlier machine's conversation did not settle"
+    );
     let facts = last_run(world, &resident, "old-pc").await?;
     steps(
         facts.as_ref(),
