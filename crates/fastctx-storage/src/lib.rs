@@ -10,6 +10,7 @@ pub mod migration;
 mod queue;
 pub mod receipts;
 mod recovery;
+mod settled;
 pub mod versions;
 mod writer;
 
