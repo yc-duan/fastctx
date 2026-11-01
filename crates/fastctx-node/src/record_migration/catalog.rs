@@ -48,6 +48,10 @@ pub(super) fn scan(node: &Arc<Node>) -> io::Result<bool> {
         {
             continue;
         }
+        if let Err(error) = crate::record_database::get(directory) {
+            prepare(Err(error));
+            continue;
+        }
         prepare(crate::gather::queues::prepare_conflicts(directory));
         prepare(crate::session_record::prepare(directory));
         prepare(crate::run_facts::storage::database(directory).map(|_| ()));
@@ -109,9 +113,12 @@ pub(super) fn scan(node: &Arc<Node>) -> io::Result<bool> {
     }
     let unclaimed = node.world.path().join("codex-reports");
     let (machine, _, _, _) = crate::record_database::item(&unclaimed.join(".reports"))?;
+    let claiming = node.clone();
     prepare(crate::records::ensure_each(&machine, "unclaimed-host-reports", move |push| {
         for path in entries(&unclaimed)? {
-            if path.extension().is_some_and(|extension| extension == "json" || extension == "jsonl") {
+            if path.extension().is_some_and(|extension| extension == "json" || extension == "jsonl")
+                && !crate::codex::report_store::claimed_legacy(&claiming, &path)
+            {
                 super::file(&path, push, |_| {
                     Err(io::Error::new(
                         io::ErrorKind::InvalidData,
@@ -130,10 +137,12 @@ pub(super) fn scan(node: &Arc<Node>) -> io::Result<bool> {
                 if path.extension().is_none_or(|ext| ext != "json") || hidden(&path) {
                     continue;
                 }
-                let job = match crate::job_metadata::Job::open(&path) {
-                    Ok(job) => job,
+                let job = match super::jobs::open(node, &path) {
+                    Ok(Some(job)) => job,
+                    Ok(None) => continue,
                     Err(error) => {
                         node.log.line(format_args!("discovering legacy job metadata {}: {error}", path.display()));
+                        prepare(Err(error));
                         continue;
                     }
                 };

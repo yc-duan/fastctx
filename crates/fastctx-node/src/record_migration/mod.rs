@@ -42,6 +42,7 @@ pub(crate) fn failure(error: std::io::Error) -> fastctx_types::ipc::Failure {
 }
 
 mod catalog;
+mod jobs;
 mod maintenance;
 /// The first actual poll of the listener opens background migration. A bound
 /// socket alone does not prove that the node is servicing requests yet.

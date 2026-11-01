@@ -31,6 +31,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 #[cfg(feature = "storage-drill")]
 pub(crate) mod drill;
+mod layout;
 mod merge;
 pub(crate) mod queues;
 pub(crate) mod records;
@@ -218,7 +219,13 @@ pub fn gather(world: &WorldDir) -> io::Result<Gathered> {
         gathered.problems.push((world.path().to_path_buf(), error));
     }
     for kept in world.kept()? {
-        let aliases = read_optional::<BTreeMap<PathBuf, PathBuf>>(&kept.directory.aliases())?.unwrap_or_default();
+        let aliases = match read_optional::<BTreeMap<PathBuf, PathBuf>>(&kept.directory.aliases()) {
+            Ok(aliases) => aliases.unwrap_or_default(),
+            Err(error) => {
+                gathered.problems.push((kept.directory.aliases(), error));
+                continue;
+            }
+        };
         for (alias, destination) in aliases {
             if destination.is_dir()
                 && !alias.exists()

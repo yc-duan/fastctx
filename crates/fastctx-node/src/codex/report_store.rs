@@ -162,7 +162,7 @@ pub(super) fn discard_legacy(node: &Node) -> io::Result<()> {
     }
     Ok(())
 }
-fn claimed_legacy(node: &Node, path: &Path) -> bool {
+pub(crate) fn claimed_legacy(node: &Node, path: &Path) -> bool {
     node.residents.everyone().filter_map(|resident| resident.about.session).any(|thread| {
         path.file_stem().and_then(|s| s.to_str()) == Some(crate::speech::fixed_id("thread", &[&thread]).as_str())
     })

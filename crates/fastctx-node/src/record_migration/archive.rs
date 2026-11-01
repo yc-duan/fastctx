@@ -118,6 +118,24 @@ pub(crate) fn damaged(world: &Path, conversation: &str, family: &str, source: &P
     crate::conversation_store::with_live_files(&directory, || damaged_file(world, conversation, family, source, reason))
 }
 
+/// Layout repair cannot call the ordinary gate, which first waits for that same
+/// layout to become usable. Its registered database still enforces deletion.
+pub(crate) fn layout_metadata(
+    world: &Path,
+    database: &fastctx_storage::Database,
+    conversation: &str,
+    source: &Path,
+    reason: &str,
+) -> io::Result<()> {
+    let directory = fastctx_types::layout::ConversationDir::at(&world.join("conversations").join(conversation));
+    crate::conversation_store::with_file_gate(&directory, || {
+        database
+            .read_background_now(|db| crate::conversation_store::check(db, conversation))
+            .map_err(io::Error::other)?;
+        damaged_file(world, conversation, "layout-metadata", source, reason)
+    })
+}
+
 fn damaged_file(world: &Path, conversation: &str, family: &str, source: &Path, reason: &str) -> io::Result<()> {
     let relative = relative(world, conversation, source)?;
     let original = root(world).join("damaged").join(conversation).join(relative);
