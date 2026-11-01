@@ -1693,8 +1693,8 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
                 .await
                 .map(|configuration| Reply::ClaudeSubagents { configuration })
         }
-        Call::Plan { hub, account, operation } => {
-            crate::plan::call(node, &caller::of(node, peer)?, hub, account, operation)
+        Call::Plan { hub, account, operation, of } => {
+            crate::plan::call(node, &caller::of(node, peer)?, hub, account, operation, of)
                 .await
                 .map(|result| Reply::Plan { result })
         }

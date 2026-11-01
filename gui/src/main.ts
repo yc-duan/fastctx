@@ -1716,6 +1716,7 @@ function specimenFork(source: Address, sample: Specimen, through: string | null)
 }
 
 function specimenTalk(address: Address): DeskTalk {
+  const planSample = planSamples[params.get("plan") ?? "blog"] ?? planSamples.blog!;
   let queuedHere: PendingControl[] = [];
   let toldHere = 0;
   // The shared input kept in the page; `?queued` puts two in its queue.
@@ -1793,7 +1794,7 @@ function specimenTalk(address: Address): DeskTalk {
     listedTitle: () => listedTitle(address),
     toSource: (source, turn) => desk().toSource(address, source, turn),
     conversation,
-    side: specimenSide(sideWords, planWords, { ...planSamples.blog!, facts: (id) => planSamples.blog!.facts[id] ?? null }, english, {
+    side: specimenSide(sideWords, planWords, { ...planSample, facts: (id) => planSample.facts[id] ?? null }, english, {
       self: address,
       goal: params.get("goal"),
       // As the World lists it: one in no project keeps its own history.

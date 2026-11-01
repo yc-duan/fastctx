@@ -25,9 +25,11 @@ pub(crate) async fn prepare(
 ) -> Result<Option<Location>, Failure> {
     let link = node.link_of(&account.hub).ok_or_else(|| failure("the records' hub is unavailable"))?;
     let view = crate::authorization::current_view(&link)?;
-    let owner = match origin {
-        Origin::User => Address { resident: id.clone(), machine: node.machine() },
-        Origin::Colleague { asked_by, .. } => asked_by.clone(),
+    // A colleague works in the history of the conversation that asked it;
+    // its plan, like every conversation's, is its own.
+    let owner = match (origin, &resource) {
+        (Origin::Colleague { asked_by, .. }, Resource::History { .. }) => asked_by.clone(),
+        _ => Address { resident: id.clone(), machine: node.machine() },
     };
     let ownership = match &resource {
         Resource::History { scope: fastctx_types::history::Scope::Project { .. } } => None,

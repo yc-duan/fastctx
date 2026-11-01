@@ -272,7 +272,8 @@ export class SideParts implements PartSet {
   private plan(plan: PlanShown | null): void {
     this.planPage.show(plan ?? { source: null, version: 0, when: "" });
     const shape = plan?.source ? planShape(plan.source) : null;
-    this.planned = !!shape && (shape.checks.length > 0 || shape.stops.length > 0 || shape.asks.length > 0 || !!shape.title);
+    // A plan takes whatever form its work asks for: any text is a plan.
+    this.planned = !!plan?.source?.trim();
     const words = this.context.seams.words;
     let count = "";
     if (shape?.checks.length) count = words.planCount(shape.checks.filter((check) => check.done).length, shape.checks.length);

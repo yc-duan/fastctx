@@ -5,15 +5,6 @@ use fastctx_types::{TownName, access::Acting, ipc::Failure, project::MapView};
 use std::sync::Arc;
 
 pub async fn view(node: &Arc<Node>, town: &TownName, acting: &Acting) -> Result<MapView, Failure> {
-    view_for(node, town, acting, false).await
-}
-
-pub(crate) async fn view_for(
-    node: &Arc<Node>,
-    town: &TownName,
-    acting: &Acting,
-    _read_only: bool,
-) -> Result<MapView, Failure> {
     super::access::ready(node, acting, town).await?;
     let (world, name) = (node.world.clone(), town.clone());
     let (records, pages) = tokio::task::spawn_blocking(move || {
@@ -50,16 +41,7 @@ pub(crate) async fn view_for(
 }
 
 pub async fn brief(node: &Arc<Node>, town: &TownName, acting: &Acting) -> Result<String, Failure> {
-    brief_for(node, town, acting, false).await
-}
-
-pub(crate) async fn brief_for(
-    node: &Arc<Node>,
-    town: &TownName,
-    acting: &Acting,
-    read_only: bool,
-) -> Result<String, Failure> {
-    Ok(fastctx_hands::town::map(&view_for(node, town, acting, read_only).await?))
+    Ok(fastctx_hands::town::map(&view(node, town, acting).await?))
 }
 
 pub async fn query(node: &Arc<Node>, town: &TownName) -> Result<(), Failure> {

@@ -9,9 +9,7 @@ use std::sync::Arc;
 use fastctx_net::authorization::Action;
 use fastctx_net::sign::PublicKey;
 use fastctx_net::wire::{Down, Told};
-use fastctx_types::account_records::{
-    Changed, MAX_ACCOUNT_BYTES, MAX_KIND_KEYS, Metadata, Record, Request, Response, words,
-};
+use fastctx_types::account_records::{Changed, MAX_KIND_KEYS, Metadata, Record, Request, Response, words};
 use fastctx_types::{AccountName, MachineName};
 use jiff::Timestamp;
 use serde_json::Value;
@@ -362,35 +360,11 @@ pub(crate) async fn ask_as(
                 let bytes = serde_json::to_vec(&record).map_err(|error| error.to_string())?;
                 let size = bytes.len();
                 let total = records.bytes - before.map_or(0, |entry| entry.size) + size;
-                let ordinary = records
-                    .entries
-                    .values()
-                    .filter(|entry| {
-                        entry.metadata.kind != fastctx_types::skills::KIND
-                            && entry.metadata.kind != fastctx_types::skills::INDEX_KIND
-                            && !matches!(
-                                entry.metadata.kind.as_str(),
-                                fastctx_types::history::RECORD_KIND
-                                    | fastctx_types::owned_records::KIND
-                                    | fastctx_types::plan::KIND
-                            )
-                    })
-                    .map(|entry| entry.size)
-                    .sum::<usize>();
                 let specialized = record.metadata.kind == fastctx_types::skills::KIND
                     || record.metadata.kind == fastctx_types::skills::INDEX_KIND;
-                let replicated = matches!(
-                    record.metadata.kind.as_str(),
-                    fastctx_types::history::RECORD_KIND
-                        | fastctx_types::owned_records::KIND
-                        | fastctx_types::plan::KIND
-                );
-                let ordinary = if specialized || replicated {
-                    ordinary
-                } else {
-                    ordinary - before.map_or(0, |entry| entry.size) + size
-                };
-                if replicated && size > before.map_or(0, |entry| entry.size) {
+                // What a revision can fill is the hub's disk: one that grows a
+                // record leaves room to preserve the one before and publish it.
+                if size > before.map_or(0, |entry| entry.size) {
                     let available =
                         fastctx_platform::space::available(slot.root()).map_err(|error| error.to_string())?;
                     if (size as u64).saturating_mul(2) > available {
@@ -415,9 +389,6 @@ pub(crate) async fn ask_as(
                             limits.account_bytes
                         ));
                     }
-                }
-                if ordinary > MAX_ACCOUNT_BYTES {
-                    return Err(words::account_limit(total));
                 }
                 let path = slot.path(&record.metadata.kind, &record.metadata.key);
                 let (publishing, author, owner) = (hub.clone(), from.clone(), account.clone());

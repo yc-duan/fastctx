@@ -35,14 +35,8 @@ pub fn catalog(catalog: &Catalog, path: &str) -> String {
     kept.join("\n")
 }
 
-pub fn context(catalogue: &Catalog, path: &str, machine: &str, project: bool, read_only: bool) -> String {
-    let mut template = if read_only {
-        let intro =
-            words::TEMPLATE.split("\nThe history is how this work carries on").next().expect("history introduction");
-        format!("{intro}\n{}", words::READ_ONLY)
-    } else {
-        words::TEMPLATE.to_string()
-    };
+pub fn context(catalogue: &Catalog, path: &str, machine: &str, project: bool) -> String {
+    let mut template = words::TEMPLATE.to_string();
     if !project {
         template = template.replace("This project's history", "This conversation's history");
     }

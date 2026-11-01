@@ -64,7 +64,10 @@ def verify(requests, expectations):
           "a real model tool call read auxiliary files and executed the skill script on the working computer")
     colleagues = [body for body in serialized if "COLLEAGUE_CASE" in body]
     check(bool(colleagues), "a real delegated conversation reached the model")
-    check(any("OFFLINE_EDIT" in body for body in colleagues), "the colleague received its requester's current plan from the hub")
+    check(any("YOUR PLAN" in body and "the conversation that asked you" in body for body in colleagues),
+          "the colleague's model input tells it of a plan of its own, which its requester reads")
+    check(all("OFFLINE_EDIT" not in body for body in colleagues),
+          "the colleague's context carries its own plan, not its requester's")
     check(all("BOB_SKILL_DESCRIPTION" not in body and "OWNER_SKILL_DESCRIPTION" not in body for body in colleagues),
           "the delegated conversation retained its account isolation")
     memory = [body for body in serialized if "ALICE_HISTORY_CASE" in body]

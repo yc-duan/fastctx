@@ -8,10 +8,11 @@ use serde::{Deserialize, Serialize};
 
 use super::{Change, Receipt, words};
 
-pub(super) const BLOCK_BYTES: usize = 16 * 1024;
-fn block_bytes(name: &str) -> usize {
-    if name == "history" { fastctx_types::history::CATALOG_CONTEXT_BYTES + 8 * 1024 } else { BLOCK_BYTES }
-}
+/// The most a block may take as it is kept, its text escaped as JSON: the
+/// Claude Code plugin reads each block's file in one read of at most 4 MiB.
+/// Blocks reach the model whole; only one that otherwise could not reach it
+/// at all is cut.
+const BLOCK_KEPT_BYTES: usize = 4 * 1024 * 1024 - 64 * 1024;
 const BLOCK_COUNT: usize = 12;
 const FACT_BYTES: usize = 1024;
 
@@ -82,13 +83,28 @@ fn with_bodies(
         .collect()
 }
 
+fn kept(text: &str) -> usize {
+    serde_json::to_string(text).map_or(usize::MAX, |kept| kept.len())
+}
+
+/// `text` whole where it fits within `limit` as kept; else as much of its
+/// start as does, and a line that says how much that is.
 fn bounded(text: &str, limit: usize) -> String {
-    if text.len() <= limit {
+    if kept(text) <= limit {
         return text.into();
     }
-    let mut end = limit.saturating_sub(128);
-    while !text.is_char_boundary(end) {
-        end -= 1;
+    let mut end = text.len().min(limit);
+    loop {
+        while !text.is_char_boundary(end) {
+            end -= 1;
+        }
+        // A byte takes at least one as kept, so cutting the excess away
+        // brings the start within the limit in a few rounds.
+        let excess = kept(&text[..end]).saturating_sub(limit.saturating_sub(128));
+        if excess == 0 {
+            break;
+        }
+        end -= excess.min(end);
     }
     format!("{}{}", &text[..end], words::truncated(end, text.len()))
 }
@@ -118,7 +134,7 @@ fn set_mode(
     }
     exists(world, id)?;
     let source = crate::profile::session::hash(text);
-    let text = bounded(text, block_bytes(name));
+    let text = bounded(text, BLOCK_KEPT_BYTES);
     let fact = bounded(change.fact, FACT_BYTES);
     let mut incoming = Block {
         revision: 0,

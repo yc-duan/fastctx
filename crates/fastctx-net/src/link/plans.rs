@@ -32,6 +32,32 @@ impl Link {
         })
     }
 
+    /// The plan of the conversation `of` names among those the account
+    /// sees: the one on its machine where that is given, else the only one
+    /// of that short name.
+    pub async fn plan_read_named(&self, account: &AccountName, of: &plan::Of) -> Result<Page, String> {
+        if let Some(machine) = &of.machine {
+            let whose = Address { machine: machine.clone(), resident: of.resident.clone() };
+            return self.plan_read_of(account, &whose).await;
+        }
+        if !self.view().shared_records {
+            return self.plan_read(account, of.resident.clone()).await;
+        }
+        let response = self
+            .owned_records(
+                account,
+                fastctx_types::owned_records::Request::PlanHead { resident: of.resident.clone(), conversation: None },
+            )
+            .await?;
+        let fastctx_types::owned_records::Response::PlanHead { conversation, .. } = response else {
+            return Err(words::REPLY.into());
+        };
+        match conversation {
+            Some(conversation) => self.owned_plan_read(account, &conversation.address).await,
+            None => Ok(Page { owner: of.resident.clone(), metadata: None, body: None }),
+        }
+    }
+
     pub async fn plan_read(&self, account: &AccountName, owner: ResidentId) -> Result<Page, String> {
         if !self.view().conversation_plans {
             return Err(words::OLDER.into());

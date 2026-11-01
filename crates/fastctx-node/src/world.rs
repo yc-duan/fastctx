@@ -1090,10 +1090,10 @@ impl fastctx_net::link::Node for Handler {
                 RemoteCall::MemoryFolders { .. } => {
                     Err(Failure::not_run("project memory was replaced by history; update the requesting computer"))
                 }
-                RemoteCall::Plan { resident, operation } => {
+                RemoteCall::Plan { resident, operation, of } => {
                     let account =
                         fastctx_types::access::HubAccount { hub: hub.clone(), account: caller.account.clone() };
-                    crate::plan::here(&node, &resident, None, None, Some(&account), operation)
+                    crate::plan::here(&node, &resident, None, None, Some(&account), operation, of)
                         .await
                         .map(|result| RemoteReply::Plan { result })
                 }

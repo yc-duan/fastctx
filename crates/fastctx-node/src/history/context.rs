@@ -149,7 +149,7 @@ pub(crate) async fn refresh(
             .map(fastctx_hands::history::changed).collect::<Vec<_>>()
     });
     let mut text = match location {
-        Some(location) => fastctx_hands::history::context(&catalog, &location.path, location.machine.as_str(), town.is_some(), matches!(origin, Origin::Colleague { .. })),
+        Some(location) => fastctx_hands::history::context(&catalog, &location.path, location.machine.as_str(), town.is_some()),
         None => "HISTORY\nThe history remains in the user's account. No eligible computer is online for its files; the app can still read and edit it.".into(),
     };
     if town.is_some()
