@@ -35,6 +35,8 @@ struct Sending {
     hub: Option<HubName>,
     #[serde(default)]
     through_exit: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    town: Option<fastctx_types::TownName>,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -88,18 +90,21 @@ pub(crate) fn confirmed_under(
     acting: Option<&Acting>,
 ) -> io::Result<()> {
     crate::run_receipts::confirmed(node, &owner, &machine, &delivery)?;
-    let dispatched = crate::here::get_dispatched(node, &owner.resident, &delivery.job);
-    let destination = dispatched.map(|(destination, _)| destination).unwrap_or_else(|| machine.clone().into());
+    let dispatched = crate::here::get_dispatched(node, &owner, &machine, &delivery.job, &delivery.output)?;
+    let destination =
+        dispatched.as_ref().map(|route| route.destination.clone()).unwrap_or_else(|| machine.clone().into());
+    let route_owner = owner.clone();
+    let route_town = dispatched.as_ref().and_then(|route| route.town.clone());
     if node.is_here(&destination) {
         received_here(node, &owner, &delivery, None, false, None, &mut HashSet::new())?;
     } else {
         let hub = destination.hub;
         let acting =
             acting.cloned().ok_or_else(|| io::Error::other("the completion receipt has no account identity"))?;
-        let key = (owner.resident.clone(), delivery.job.clone());
         enqueue(
             node,
             Sending {
+                town: route_town,
                 owner,
                 machine,
                 acting,
@@ -110,7 +115,9 @@ pub(crate) fn confirmed_under(
                 through_exit: false,
             },
         )?;
-        crate::here::take_dispatched(node, &key.0, &key.1);
+    }
+    if let Some(route) = dispatched {
+        crate::here::delete_dispatched(node, &route_owner, &route.key)?;
     }
     node.disk_changed.notify_one();
     Ok(())
@@ -284,6 +291,7 @@ fn received_here(
                     enqueue(
                         node,
                         Sending {
+                            town: None,
                             owner: owner.clone(),
                             machine: child.destination.name,
                             acting: child.acting,
@@ -451,6 +459,7 @@ pub(crate) fn on_taken(
             enqueue(
                 node,
                 Sending {
+                    town: None,
                     owner: origin.resident.clone(),
                     machine: destination.name.clone(),
                     acting: acting.clone(),
@@ -582,6 +591,7 @@ pub(crate) fn consumed(node: &Node, owner: &Address, acting: &Acting, id: Notice
     enqueue(
         node,
         Sending {
+            town: None,
             owner: owner.clone(),
             machine: owner.machine.clone(),
             acting: acting.clone(),

@@ -33,17 +33,8 @@ pub(crate) fn jobs_here(
     let _disk = node.disk.lock();
     let mut result = Vec::new();
     for directory in node.world.job_directories(&names, owner)? {
-        let entries = match std::fs::read_dir(directory) {
-            Ok(entries) => entries,
-            Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
-            Err(error) => return Err(error),
-        };
-        for entry in entries {
-            let owed = entry?.path();
-            if owed.extension().is_none_or(|extension| extension != "owed") {
-                continue;
-            }
-            let record = fastctx_hands::run::record::read(&owed.with_extension("json"))?;
+        for path in owed_paths(&directory)? {
+            let record = fastctx_hands::run::record::read(&path)?;
             if !record.owner.resident().is_some_and(|recorded| super::identity::same(&names, recorded, owner)) {
                 continue;
             }
@@ -79,7 +70,7 @@ pub(crate) fn jobs_here(
                     None => Liveness::Unknown { reason: "the supervisor has not been identified".into() },
                 }
             };
-            let bytes = std::fs::metadata(&record.output)?.len();
+            let bytes = fastctx_platform::disk::metadata(&record.output)?.len();
             result.push(WaitHandle {
                 id: record.id.to_string(),
                 completion: Some(crate::inbox::job_notice_id(&record)),
@@ -97,6 +88,24 @@ pub(crate) fn jobs_here(
     Ok(result)
 }
 
+fn owed_paths(directory: &std::path::Path) -> io::Result<Vec<std::path::PathBuf>> {
+    let entries = match fastctx_platform::disk::read_dir(directory) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => return Err(error),
+    };
+    let mut paths = Vec::new();
+    for entry in entries {
+        let path = entry?.path();
+        if path.extension().is_some_and(|extension| extension == "json")
+            && crate::job_metadata::exists(&path.with_extension("owed"))?
+        {
+            paths.push(path);
+        }
+    }
+    Ok(paths)
+}
+
 pub(crate) async fn collect(
     node: &Arc<Node>,
     resident: &ResidentId,
@@ -105,7 +114,7 @@ pub(crate) async fn collect(
     let (about, _) = node.residents.about(resident).ok_or_else(|| Failure::new("unknown conversation"))?;
     let owner = Address { machine: node.machine(), resident: resident.clone() };
     let (reading, job_owner) = (node.clone(), owner.clone());
-    let mut result = tokio::task::spawn_blocking(move || jobs_here(&reading, &job_owner, None))
+    let mut result = fastctx_platform::task::spawn_blocking(move || jobs_here(&reading, &job_owner, None))
         .await
         .map_err(|e| Failure::new(e.to_string()))?
         .map_err(failure)?;
@@ -119,7 +128,7 @@ pub(crate) async fn collect(
         }
     }
     let directory = node.world.conversation(resident);
-    let unfinished = tokio::task::spawn_blocking(move || crate::run_facts::pending_machines(&directory))
+    let unfinished = fastctx_platform::task::spawn_blocking(move || crate::run_facts::pending_machines(&directory))
         .await
         .map_err(|e| Failure::new(e.to_string()))?
         .map_err(failure)?;
@@ -129,20 +138,13 @@ pub(crate) async fn collect(
         }
     }
     // A single-on run may not have returned its action yet. Its durable remote receipt also identifies the executor.
-    match std::fs::read_dir(node.world.conversation(resident).elsewhere()) {
-        Ok(entries) => {
-            for entry in entries {
-                let path = entry.map_err(failure)?.path();
-                if path.extension().is_none_or(|extension| extension != "json") {
-                    continue;
-                }
-                let kept: crate::here::Elsewhere = serde_json::from_slice(&std::fs::read(path).map_err(failure)?)
-                    .map_err(|error| failure(io::Error::other(error)))?;
-                machines.entry(kept.machine.name).or_insert(Some(kept.started_at));
-            }
-        }
-        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-        Err(error) => return Err(failure(error)),
+    let (working, id) = (node.clone(), resident.clone());
+    let elsewhere = fastctx_platform::task::spawn_blocking(move || crate::here::running_elsewhere(&working, &id))
+        .await
+        .map_err(|error| failure(io::Error::other(error)))?
+        .map_err(failure)?;
+    for kept in elsewhere {
+        machines.entry(kept.machine.name).or_insert(Some(kept.started_at));
     }
     let received = Arc::new(if colleagues.is_empty() {
         BTreeMap::new()

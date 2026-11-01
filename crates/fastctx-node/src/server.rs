@@ -860,7 +860,7 @@ async fn collect_notes(
             notes.push(format!("=== {warning} ==="));
         }
         // Those it left running where it works, too.
-        let elsewhere = crate::here::running_elsewhere(node, &id)
+        let elsewhere = crate::here::running_elsewhere(node, &id)?
             .into_iter()
             .filter(|job| Some(&job.job) != answering.as_ref())
             .map(|job| (format!("{} on {}", job.job, job.machine), job.started_at, job.command))
@@ -962,24 +962,29 @@ async fn taken(
     collected_notes.retain(|(owner, _)| *owner != resident);
     if let Some(completed) = completed {
         let owner = fastctx_types::Address { machine: node.machine(), resident: resident.clone() };
-        crate::retention::confirmed(
-            node,
-            owner,
-            completed.machine,
-            fastctx_types::run::JobDelivery {
-                shown_whole: shown.as_ref() == Some(&completed.job),
-                job: completed.job,
-                output: completed.output,
-                at: jiff::Timestamp::now(),
-            },
-            None,
-        )
+        let working = node.clone();
+        fastctx_platform::task::spawn_blocking(move || {
+            crate::retention::confirmed(
+                &working,
+                owner,
+                completed.machine,
+                fastctx_types::run::JobDelivery {
+                    shown_whole: shown.as_ref() == Some(&completed.job),
+                    job: completed.job,
+                    output: completed.output,
+                    at: jiff::Timestamp::now(),
+                },
+                None,
+            )
+        })
+        .await
+        .map_err(|error| Failure::new(error.to_string()))?
         .map_err(|error| Failure::new(format!("recording job delivery: {error}")))?;
     } else if let Some(job) = shown
-        && !crate::here::forget(node, &resident, &job)
+        && !crate::here::forget(node, &resident, &job).await?
     {
         let (node, owner) = (node.clone(), fastctx_types::Address { machine: node.machine(), resident });
-        tokio::spawn(async move { crate::jobs::forget(&node, town, owner, job).await });
+        fastctx_platform::task::spawn(async move { crate::jobs::forget(&node, town, owner, job).await });
     }
     Ok(Reply::Done)
 }

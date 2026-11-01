@@ -635,12 +635,17 @@ async fn look(node: &Arc<Node>, directory: &Path) -> bool {
                     }
                     exchange::Reported::Replaced { ids } => {
                         // Told again before they went in: they never will.
-                        let conversation = node.world.conversation(&resident);
-                        for id in ids {
-                            if let Ok(id) = fastctx_types::NoticeId::try_from(id.as_str()) {
-                                crate::inbox::settle(node, &conversation, &id)?;
+                        let (working, conversation) = (node.clone(), node.world.conversation(&resident));
+                        fastctx_platform::task::spawn_blocking(move || -> std::io::Result<()> {
+                            for id in ids {
+                                if let Ok(id) = fastctx_types::NoticeId::try_from(id.as_str()) {
+                                    crate::inbox::settle(&working, &conversation, &id)?;
+                                }
                             }
-                        }
+                            Ok(())
+                        })
+                        .await
+                        .map_err(std::io::Error::other)??;
                     }
                     exchange::Reported::Stored { uuid } => {
                         node.claude.state.lock().expect("never poisoned").stored.insert(session.clone(), uuid);

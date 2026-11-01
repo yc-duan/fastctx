@@ -370,37 +370,32 @@ fn retire_elsewhere(node: &std::sync::Arc<Node>) -> io::Result<bool> {
     for kept in node.world.kept()? {
         let fastctx_types::layout::Kind::Home(resident) = kept.kind else { continue };
         let Some((about, _)) = node.residents.about(&resident) else { continue };
-        for path in crate::retention::entries(&kept.directory.elsewhere())? {
-            if path.extension().is_some_and(|extension| extension == "done")
-                && path
-                    .metadata()?
-                    .modified()?
-                    .elapsed()
-                    .is_ok_and(|elapsed| elapsed >= Duration::from_secs(30 * 24 * 60 * 60))
-            {
-                std::fs::remove_file(&path)?;
-            }
-            if path.extension().is_none_or(|extension| extension != "json") {
-                continue;
-            }
-            let result = (|| -> io::Result<bool> {
-                let bytes = std::fs::read(&path)?;
-                let elsewhere: crate::here::Elsewhere = serde_json::from_slice(&bytes).map_err(io::Error::other)?;
-                let Some(reason) = impossible(node, &about.acting, &elsewhere.machine)? else { return Ok(false) };
-                let owner = fastctx_types::Address { machine: node.machine(), resident: resident.clone() };
-                tell_failure(
-                    node,
-                    &owner,
-                    &path,
-                    format!("The end of {} on {} cannot be delivered: {reason}.", elsewhere.job, elsewhere.machine),
-                )?;
-                finish(node, &path, &bytes, Outcome::Impossible, &reason)
-            })();
-            match result {
-                Ok(done) => pending |= !done,
-                Err(error) => {
-                    pending = true;
-                    retry(node, &path, &error.to_string())?;
+        let mut after = String::new();
+        loop {
+            let page = crate::here::remote_page(&kept.directory, &after)?;
+            let Some(last) = page.last() else { break };
+            after = last.0.clone();
+            for (key, elsewhere) in page {
+                let path = kept.directory.elsewhere().join(&key);
+                let result = (|| -> io::Result<bool> {
+                    let Some(reason) = impossible(node, &about.acting, &elsewhere.machine)? else { return Ok(false) };
+                    let owner = fastctx_types::Address { machine: node.machine(), resident: resident.clone() };
+                    tell_failure(
+                        node,
+                        &owner,
+                        &path,
+                        format!("The end of {} on {} cannot be delivered: {reason}.", elsewhere.job, elsewhere.machine),
+                    )?;
+                    crate::here::finish_remote(&kept.directory, &key, &elsewhere)
+                })();
+                match result {
+                    Ok(done) => pending |= !done,
+                    Err(error) => {
+                        pending = true;
+                        if crate::here::retry_remote(&kept.directory, &key, &error.to_string())? {
+                            node.log.line(format_args!("remote completion for {resident} remains pending: {error}"));
+                        }
+                    }
                 }
             }
         }

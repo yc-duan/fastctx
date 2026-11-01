@@ -402,10 +402,18 @@ impl Jobs {
             }
             reply.run = Some(Box::new(facts));
         }
-        if let Some(owner) = record.owner.resident() {
-            crate::run_receipts::remember(node, owner, &reply)
-                .map_err(|error| failure("remembering the run answer", error))?;
-        }
+        let reply = if let Some(owner) = record.owner.resident() {
+            let (working, owner) = (node.clone(), owner.clone());
+            fastctx_platform::task::spawn_blocking(move || {
+                crate::run_receipts::remember(&working, &owner, &reply)
+                    .map_err(|error| failure("remembering the run answer", error))?;
+                Ok::<_, Failure>(reply)
+            })
+            .await
+            .map_err(|error| Failure::new(error.to_string()))??
+        } else {
+            reply
+        };
         Ok((reply, record))
     }
 }

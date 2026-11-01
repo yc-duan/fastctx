@@ -158,7 +158,7 @@ async fn forward_one(node: &Arc<Node>, path: &Path) -> io::Result<bool> {
         if let Some(delivery) = whole {
             let call = fastctx_types::remote::RemoteCall::Forget {
                 resident: sending.owner.resident.clone(),
-                town: None,
+                town: sending.town.clone(),
                 job: delivery.job.clone(),
                 delivery: None,
                 origin: None,

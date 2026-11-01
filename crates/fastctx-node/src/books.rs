@@ -103,7 +103,5 @@ fn owes(node: &Node, owner: &Address, directory: &ConversationDir) -> io::Result
             }
         }
     }
-    Ok(crate::retention::entries(&directory.elsewhere())?
-        .iter()
-        .any(|path| path.extension().is_some_and(|ext| ext == "json")))
+    crate::here::has_pending(directory)
 }
