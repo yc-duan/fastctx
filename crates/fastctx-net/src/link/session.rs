@@ -255,6 +255,7 @@ async fn open(inner: &Arc<Inner>, upstream: &Upstream) -> Result<Opened, Ended> 
             project_deletes: true,
             project_entry: true,
             conversation_deletions: true,
+            forgets_accounts: true,
             profiles: true,
             account_records: true,
             record_keys: computer,
@@ -795,6 +796,15 @@ async fn handle_frame(
                 let outcome = inner.node.forget(forgetting).await;
                 // A session ended meanwhile: the hub tells it again.
                 let _ = up.send(Up::Forgot { id, outcome });
+            });
+        }
+        Down::ForgetAccount { forgetting } => {
+            let (inner, up) = (inner.clone(), up.clone());
+            fastctx_platform::task::spawn(async move {
+                let id = forgetting.id;
+                let outcome = inner.node.forget_account(forgetting).await;
+                // A session ended meanwhile: the hub tells it again.
+                let _ = up.send(Up::ForgotAccount { id, outcome });
             });
         }
         Down::Versions { network } => {

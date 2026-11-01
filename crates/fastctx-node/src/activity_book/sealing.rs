@@ -10,6 +10,10 @@
 //! (`MachineName::key`), for one that lived here, under each name this
 //! machine had; the room tag of its home for a room here of another
 //! machine's conversation, or both for a room from before room tags.
+//!
+//! An account the hub deleted is sealed the same way, by its key (`hub/name`):
+//! what was done for it before it went goes, as an account of the same name
+//! opened since is another.
 
 use std::collections::HashSet;
 use std::io;
@@ -28,6 +32,16 @@ CREATE TABLE IF NOT EXISTS book_sealed (
     PRIMARY KEY (resident, place)
 ) WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS book_hour_session ON book_hour(session);
+";
+
+pub(crate) const ACCOUNTS: &str = "
+CREATE TABLE IF NOT EXISTS book_sealed_accounts (
+    account TEXT PRIMARY KEY,
+    before INTEGER NOT NULL,
+    purged INTEGER NOT NULL DEFAULT 0
+) WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS book_deeds_account ON book_deeds(account, began);
+CREATE INDEX IF NOT EXISTS book_hour_account ON book_hour(account, at);
 ";
 
 /// The tables whose rows hang on a deed, by its key first.
@@ -102,6 +116,54 @@ fn keep(node: &Node, seals: Vec<(String, Vec<String>)>) -> io::Result<()> {
             Ok(())
         })
         .map_err(io::Error::other)
+}
+
+/// Seals what was done here for `account` of the hub `hub`, deleted at
+/// `at`, before it went. With the book unavailable it is not done, and the hub
+/// asks again.
+pub(crate) fn seal_account(
+    node: &Node,
+    hub: &impl std::fmt::Display,
+    account: &fastctx_types::AccountName,
+    at: jiff::Timestamp,
+) -> io::Result<()> {
+    if let Some(error) = node.book_database.fault() {
+        return Err(io::Error::other(format!("the activity book is unavailable: {error}")));
+    }
+    let (account, before) = (format!("{hub}/{account}"), at.as_millisecond());
+    node.book_database
+        .write_now_at(Priority::Control, account.len() + 64, move |db| {
+            db.execute(
+                "INSERT INTO book_sealed_accounts(account, before) VALUES (?1, ?2)
+                 ON CONFLICT(account) DO UPDATE SET before=max(before, excluded.before), purged=0",
+                (account, before),
+            )?;
+            Ok(())
+        })
+        .map_err(io::Error::other)
+}
+
+/// Whether what was done for `account` beginning at `began` is of an account
+/// deleted since.
+pub(super) fn account_sealed(db: &Connection, account: &str, began: i64) -> fastctx_storage::Result<bool> {
+    if account.is_empty() {
+        return Ok(false);
+    }
+    Ok(db.query_row(
+        "SELECT EXISTS(SELECT 1 FROM book_sealed_accounts WHERE account=?1 AND ?2<before)",
+        (account, began),
+        |row| row.get(0),
+    )?)
+}
+
+/// Whether the deed keyed `deed` was done for an account deleted since.
+pub(super) fn deed_account_sealed(db: &Connection, deed: &str) -> fastctx_storage::Result<bool> {
+    Ok(db.query_row(
+        "SELECT EXISTS(SELECT 1 FROM book_deeds d JOIN book_sealed_accounts s ON s.account=d.account
+         WHERE d.deed=?1 AND d.began<s.before)",
+        [deed],
+        |row| row.get(0),
+    )?)
 }
 
 /// Seals each conversation the node's records say was deleted, a page at a
@@ -179,7 +241,7 @@ pub(crate) fn purge(database: &Database) -> io::Result<()> {
             })
             .map_err(io::Error::other)?;
         if seals.is_empty() {
-            return Ok(());
+            return accounts(database);
         }
         for (resident, place) in seals {
             while deeds(database, &resident, &place)? {}
@@ -187,6 +249,76 @@ pub(crate) fn purge(database: &Database) -> io::Result<()> {
             database
                 .write_now_at(Priority::Background, 128, move |db| {
                     db.execute("UPDATE book_sealed SET purged=1 WHERE resident=?1 AND place=?2", (resident, place))?;
+                    Ok(())
+                })
+                .map_err(io::Error::other)?;
+        }
+    }
+}
+
+/// Lets go of what was done for the sealed accounts before they went, a few
+/// deeds and hours at a time; the seals stay.
+fn accounts(database: &Database) -> io::Result<()> {
+    loop {
+        let seals: Vec<(String, i64)> = database
+            .read_background_now(|db| {
+                Ok(db
+                    .prepare("SELECT account, before FROM book_sealed_accounts WHERE purged=0 LIMIT 16")?
+                    .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
+                    .collect::<Result<_, _>>()?)
+            })
+            .map_err(io::Error::other)?;
+        if seals.is_empty() {
+            return Ok(());
+        }
+        for (account, before) in seals {
+            loop {
+                let wanted = account.clone();
+                let deeds: Vec<String> = database
+                    .read_background_now(move |db| {
+                        Ok(db
+                            .prepare("SELECT deed FROM book_deeds WHERE account=?1 AND began<?2 LIMIT ?3")?
+                            .query_map((wanted, before, BATCH as i64), |row| row.get(0))?
+                            .collect::<Result<_, _>>()?)
+                    })
+                    .map_err(io::Error::other)?;
+                if deeds.is_empty() {
+                    break;
+                }
+                let bytes = deeds.iter().map(String::len).sum::<usize>() * BY_DEED.len();
+                database
+                    .write_now_at(Priority::Background, bytes, move |db| {
+                        for deed in &deeds {
+                            for table in BY_DEED {
+                                db.execute(&format!("DELETE FROM {table} WHERE deed=?1"), [deed])?;
+                            }
+                        }
+                        Ok(())
+                    })
+                    .map_err(io::Error::other)?;
+            }
+            loop {
+                let wanted = account.clone();
+                let went = database
+                    .write_now_at(Priority::Background, 256, move |db| {
+                        Ok(db.execute(
+                            "DELETE FROM book_hour WHERE (at, session, agent, held, account) IN
+                                (SELECT at, session, agent, held, account FROM book_hour
+                                 WHERE account=?1 AND at<?2 LIMIT ?3)",
+                            (wanted, before, BATCH as i64),
+                        )?)
+                    })
+                    .map_err(io::Error::other)?;
+                if went == 0 {
+                    break;
+                }
+            }
+            database
+                .write_now_at(Priority::Background, 128, move |db| {
+                    db.execute(
+                        "UPDATE book_sealed_accounts SET purged=1 WHERE account=?1 AND before=?2",
+                        (account, before),
+                    )?;
                     Ok(())
                 })
                 .map_err(io::Error::other)?;

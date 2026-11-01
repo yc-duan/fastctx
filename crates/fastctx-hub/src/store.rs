@@ -147,6 +147,10 @@ pub struct Book {
     /// them (`crate::forget`).
     #[serde(default)]
     pub(crate) forgetting: crate::forget::Forgettings,
+    /// Accounts deleted, which members that stay let go of
+    /// (`crate::forget::accounts`).
+    #[serde(default)]
+    pub(crate) account_forgetting: crate::forget::accounts::AccountForgettings,
 }
 
 /// An enrollment token, by the public half of its key.

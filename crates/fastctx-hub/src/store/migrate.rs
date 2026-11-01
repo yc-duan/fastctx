@@ -231,7 +231,7 @@ pub(super) fn key(kind: &str, value: &Value) -> String {
         "lends" => parts(&["machine", "account", "agent", "home"]),
         "plans" => parts(&["machine", "agent", "home"]),
         "project_deletions" => value["project"]["town"].clone(),
-        "forgetting" => value["forgetting"]["id"].clone(),
+        "forgetting" | "account_forgetting" => value["forgetting"]["id"].clone(),
         "machine_log" => value["record"]["id"].clone(),
         _ => value.clone(),
     };

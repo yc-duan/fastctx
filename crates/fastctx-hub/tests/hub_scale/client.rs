@@ -343,6 +343,7 @@ pub fn greeting(identity: &Identity, binding: &[u8; 32], position: Letters, addr
             project_deletes: true,
             project_entry: true,
             conversation_deletions: true,
+            forgets_accounts: false,
             profiles: true,
             account_records: false,
             record_keys: false,

@@ -13,7 +13,7 @@ mod query;
 pub(crate) use incremental::{Cursor, consumed, observe, segment};
 pub(crate) use maintenance::fold;
 mod sealing;
-pub(crate) use sealing::{SCHEMA as SEALS, seal, seal_elsewhere};
+pub(crate) use sealing::{ACCOUNTS as SEALED_ACCOUNTS, SCHEMA as SEALS, seal, seal_account, seal_elsewhere};
 mod seen;
 
 pub(crate) use query::{answer, answer_here};
@@ -263,7 +263,7 @@ pub(super) fn how_word(how: TouchHow) -> &'static str {
 /// Changes of one job may be told in any order: what is known of its end
 /// is never taken back by an earlier telling.
 fn keep(connection: &rusqlite::Connection, row: &Row) -> fastctx_storage::Result<()> {
-    if frozen(connection, &row.deed)? {
+    if frozen(connection, &row.deed)? || sealing::account_sealed(connection, &row.account, row.began)? {
         return Ok(());
     }
     connection.execute(
@@ -319,7 +319,14 @@ fn frozen(db: &rusqlite::Connection, deed: &str) -> fastctx_storage::Result<bool
         )
         .optional()?
         .is_some()
-        || sealing::sealed(db, deed)?)
+        || sealing::sealed(db, deed)?
+        || sealing::deed_account_sealed(db, deed)?)
+}
+
+/// Whether the deed keyed `deed` is in the book, what is told of it after
+/// its start having a place: one refused or let go of takes nothing more.
+fn kept(db: &rusqlite::Connection, deed: &str) -> fastctx_storage::Result<bool> {
+    Ok(db.query_row("SELECT EXISTS(SELECT 1 FROM book_deeds WHERE deed=?1)", [deed], |row| row.get(0))?)
 }
 
 /// Starts moving the book's earlier rows in, and seals the conversations

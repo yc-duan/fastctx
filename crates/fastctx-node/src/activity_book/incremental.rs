@@ -102,7 +102,7 @@ pub(crate) fn observe(node: &Node, path: &Path, record: &JobRecord) -> io::Resul
                 let key = key.clone();
                 node.book_database
                     .write_now_at(Priority::Background, key.len(), move |db| {
-                        if !super::frozen(db, &key)? {
+                        if !super::frozen(db, &key)? && super::kept(db, &key)? {
                             db.execute("INSERT OR IGNORE INTO book_complete(deed) VALUES(?1)", [key])?;
                         }
                         Ok(())
@@ -121,7 +121,7 @@ pub(crate) fn observe(node: &Node, path: &Path, record: &JobRecord) -> io::Resul
             let (key, machine) = (key.clone(), node.machine());
             let final_cursor = (index + 1 == count).then(|| position.clone());
             node.book_database.write_now_at(Priority::Background,bytes,move |db| {
-                if super::frozen(db,&key)? {return Ok(());}
+                if super::frozen(db,&key)? || !super::kept(db,&key)? {return Ok(());}
                 let mut current=cursor(db,&key)?;
                 for step in &steps {contribute(db,&key,&machine,step,&mut current)?;}
                 for write in writes.iter().filter(|write|write.machine==machine) {

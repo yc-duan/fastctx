@@ -72,7 +72,7 @@ pub(super) fn look(node: &Arc<Node>, record: &JobRecord) {
         let result = node
             .book_database
             .write(size, move |connection| {
-                if super::frozen(connection, &deed)? {
+                if super::frozen(connection, &deed)? || !super::kept(connection, &deed)? {
                     return Ok(());
                 }
                 for (path, how, added, removed) in &noted {

@@ -203,6 +203,14 @@ pub trait Node: Send + Sync + 'static {
     /// tells it again at the next session until it says it is done, so it
     /// may come for what is gone already.
     fn forget(&self, forgetting: crate::wire::Forgetting) -> BoxFuture<crate::wire::Forgot>;
+    /// Lets go of what this member keeps of an account the hub deleted, and
+    /// says how that went (`crate::wire::Down::ForgetAccount`). The hub tells
+    /// it again at the next session until it says it is done. A member that
+    /// keeps nothing done for an account is done at once.
+    fn forget_account(&self, forgetting: crate::wire::AccountForgetting) -> BoxFuture<crate::wire::Forgot> {
+        let _ = forgetting;
+        Box::pin(async { crate::wire::Forgot::Done })
+    }
     /// What the hub tells of the network's versions changed
     /// (`Link::versions`).
     fn versions_changed(&self) {}

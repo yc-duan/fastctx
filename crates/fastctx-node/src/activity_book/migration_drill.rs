@@ -9,7 +9,7 @@ pub(crate) fn run(root: &Path) -> Result<(), Box<dyn std::error::Error>> {
     let source = Database::open_initialized(&world.path().join("node.sqlite3"), super::SCHEMA, |_| Ok(()))?;
     let target = Database::open_initialized(
         &world.path().join("book.sqlite3"),
-        &format!("{}{}", super::SCHEMA, super::SEALS),
+        &format!("{}{}{}", super::SCHEMA, super::SEALS, super::SEALED_ACCOUNTS),
         |_| Ok(()),
     )?;
     let service = crate::record_database::register(&world, &source)?;
@@ -115,6 +115,82 @@ fn sealed(book: &Database) -> Result<(), Box<dyn std::error::Error>> {
     assert!(!book.read_now(move |db| super::frozen(db, &deed("codex-5ea1ed00 on gpu", 7)))?);
     println!(
         "book sealing: a deleted conversation's 300 deeds, their touches, steps, folded keys and 200 hours gone under another spelling of its machine's name; a late telling refused; another machine's conversation of the same id kept"
+    );
+    account_sealed(book)
+}
+
+/// What was done for an account the hub deleted goes, and nothing begun
+/// before it went is taken again; what an account of the same name does
+/// after stays.
+fn account_sealed(book: &Database) -> Result<(), Box<dyn std::error::Error>> {
+    let (session, account) = ("codex-0a0a0a0a@desk", "w-0000000000000000/alice");
+    book.write_now(1 << 16, move |db| {
+        for (deed, began) in [("codex-0a0a0a0a on desk j-0001 100", 100), ("codex-0a0a0a0a on desk j-0002 2000", 2000)] {
+            db.execute(
+                "INSERT INTO book_deeds(deed,job,began,session,account,script,outcome) VALUES(?1,'j',?2,?3,?4,'echo','done')",
+                (deed, began, session, account),
+            )?;
+            db.execute("INSERT INTO book_touches(deed,path,how) VALUES(?1,'file','changed')", [deed])?;
+        }
+        for at in [100, 2000] {
+            db.execute(
+                "INSERT INTO book_hour(at,session,account,runs,failed,busy,files) VALUES(?1,?2,?3,1,0,1,1)",
+                (at, session, account),
+            )?;
+        }
+        db.execute("INSERT INTO book_sealed_accounts(account,before) VALUES(?1,1000)", [account])?;
+        Ok(())
+    })?;
+    super::sealing::purge(book)?;
+    let row = |began: i64| super::Row {
+        deed: format!("codex-0a0a0a0a on desk j-0003 {began}"),
+        job: "j-0003".into(),
+        began,
+        ended: None,
+        from: None,
+        session: Some(session.into()),
+        agent: None,
+        held: false,
+        project: None,
+        account: account.into(),
+        script: "echo".into(),
+        outcome: fastctx_types::activity_book::Outcome::Running,
+        code: None,
+        output: 0,
+        went: String::new(),
+        looked: 0,
+        copied: 0,
+        touched: Vec::new(),
+    };
+    let (early, late) = (row(500), row(1500));
+    book.write_now(4096, move |db| {
+        super::keep(db, &early)?;
+        super::keep(db, &late)?;
+        Ok(())
+    })?;
+    let left = book.read_now(move |db| {
+        let deeds: Vec<String> = db
+            .prepare("SELECT deed FROM book_deeds WHERE account=?1 ORDER BY began")?
+            .query_map([account], |row| row.get(0))?
+            .collect::<Result<_, _>>()?;
+        let touches: i64 =
+            db.query_row("SELECT count(*) FROM book_touches WHERE deed LIKE 'codex-0a0a0a0a %'", [], |row| row.get(0))?;
+        let hours: Vec<i64> = db
+            .prepare("SELECT at FROM book_hour WHERE account=?1")?
+            .query_map([account], |row| row.get(0))?
+            .collect::<Result<_, _>>()?;
+        Ok((deeds, touches, hours))
+    })?;
+    assert_eq!(
+        left,
+        (
+            vec!["codex-0a0a0a0a on desk j-0003 1500".to_string(), "codex-0a0a0a0a on desk j-0002 2000".to_string()],
+            1,
+            vec![2000]
+        )
+    );
+    println!(
+        "book account sealing: what was done for a deleted account before it went is gone and refused again; what an account of its name did after stays"
     );
     Ok(())
 }

@@ -41,6 +41,7 @@ pub(crate) fn change(
         Change::DeleteProject { town } => Some(town.clone()),
         _ => None,
     };
+    let deleting_account = matches!(change, Change::DeleteAccount { .. });
     let told = match made(hub, asker, account, change, &mut ended, renaming) {
         Ok(told) => told,
         Err(reason) => return (Err(reason), Vec::new()),
@@ -57,6 +58,9 @@ pub(crate) fn change(
     }
     if let Some(town) = deleting {
         crate::ledger::delete(hub, town);
+    }
+    if deleting_account {
+        crate::forget::accounts::tell(hub, None);
     }
     hub.changed();
     if dissolving {
@@ -1208,6 +1212,10 @@ fn delete_account(
             "{name} is the hub's super administrator and cannot be deleted; hand that to another account first"
         ));
     }
+    // Who may keep something done for it, read before its logins, shares
+    // and assistances go: they let go of it once it is gone.
+    let forgetting = crate::forget::accounts::audience(store, name);
+    let directory = &store.book.directory;
     let reason = format!("the account {name} was deleted");
     let machines: Vec<MachineName> = directory
         .members
@@ -1229,6 +1237,7 @@ fn delete_account(
     for member in logged {
         log_out(store, &member, name, Some(by), &reason, ended)?;
     }
+    crate::forget::accounts::keep(store, name.clone(), forgetting);
     let book = &mut store.book;
     book.directory.accounts.retain(|account| account.name != *name);
     book.directory.shares.retain(|share| share.account != *name);

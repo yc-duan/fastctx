@@ -119,6 +119,9 @@ pub enum Up {
     /// What this member did with the deletion the hub numbered `id`
     /// (`Down::Forget`).
     Forgot { id: u64, outcome: Forgot },
+    /// What this member did with the account deletion the hub numbered `id`
+    /// (`Down::ForgetAccount`).
+    ForgotAccount { id: u64, outcome: Forgot },
     /// The versions this machine runs and knows of; sent only to a hub
     /// whose view says it takes them, when the session opens and whenever
     /// they change.
@@ -209,6 +212,11 @@ pub enum Intent {
         /// Understands shared attachment lifetimes and account-scoped project deletion.
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         conversation_deletions: bool,
+        /// The member lets go of what it keeps of an account deleted when
+        /// told (`Down::ForgetAccount`). Earlier releases do not say so, and
+        /// would end the session on a frame they cannot read.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        forgets_accounts: bool,
         /// The member reads the records of profiles written. Earlier
         /// releases do not say so, and could read nothing of a machine log
         /// page with one.
@@ -479,6 +487,13 @@ pub enum Down {
     Forget {
         forgetting: Forgetting,
     },
+    /// Let go of what this member keeps of an account deleted, and say how
+    /// that went (`Up::ForgotAccount`). Sent only to a member whose session
+    /// says it forgets accounts: now, and at each session it opens until it
+    /// says it is done.
+    ForgetAccount {
+        forgetting: AccountForgetting,
+    },
     /// The versions of the network as the hub knows them, sent when the
     /// session opens and whenever they change, only to a member whose
     /// session says it reads them.
@@ -557,6 +572,18 @@ pub struct Forgetting {
     pub conversation: fastctx_types::Address,
     /// The account it is deleted for: one it worked for.
     pub account: AccountName,
+}
+
+/// An account the hub deleted, which its members let go of what they keep
+/// of (`world-engine.md`, 对话作为一个整体): what was done for it before
+/// `at`, an account of the same name opened since being another.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AccountForgetting {
+    /// The hub's number of the deletion, which what a member says of it
+    /// names.
+    pub id: u64,
+    pub account: AccountName,
+    pub at: jiff::Timestamp,
 }
 
 /// What a member did with a deletion (`Down::Forget`).

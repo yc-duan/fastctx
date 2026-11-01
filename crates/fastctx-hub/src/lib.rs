@@ -346,6 +346,8 @@ pub(crate) struct Session {
     afoot: bool,
     /// Whether it deletes what it keeps of a conversation when told.
     forgets: bool,
+    /// Whether it lets go of what it keeps of an account deleted when told.
+    forgets_accounts: bool,
     /// Whether it reads the network's versions.
     versions: bool,
     version_parts: bool,
@@ -1115,6 +1117,7 @@ async fn intended(
                 renames,
                 afoot,
                 forgets,
+                forgets_accounts,
                 roles,
                 versions,
                 version_parts,
@@ -1146,6 +1149,7 @@ async fn intended(
                 renames,
                 afoot,
                 forgets,
+                forgets_accounts,
                 roles,
                 versions,
                 version_parts,

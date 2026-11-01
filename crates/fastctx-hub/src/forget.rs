@@ -13,6 +13,7 @@
 //! before asking. While a deletion is kept, no member is told of the
 //! conversation as afoot.
 
+pub(crate) mod accounts;
 mod ownership;
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
@@ -293,11 +294,12 @@ pub(crate) fn opened(hub: &Hub, name: &MachineName) {
 /// Lets go of the members that left the hub: a deletion waits no longer
 /// for them, and one whose conversation's machine left ends.
 pub(crate) fn prune(hub: &Hub) {
-    if hub.store().book.forgetting.pending.is_empty() {
+    if hub.store().book.forgetting.pending.is_empty() && hub.store().book.account_forgetting.pending.is_empty() {
         return;
     }
     let ended = {
         let mut store = hub.edit_store();
+        let accounts = accounts::prune(&mut store);
         let book = &mut *store.book;
         let directory = &book.directory;
         let before = book.forgetting.pending.len();
@@ -311,7 +313,7 @@ pub(crate) fn prune(hub: &Hub) {
             !gone && (pending.home || !pending.waiting.is_empty())
         });
         let ended = before != book.forgetting.pending.len();
-        if (changed || ended)
+        if (changed || ended || accounts)
             && let Err(error) = store.save_book()
         {
             hub.log.line(format_args!("keeping the deletions after members left: {error}"));

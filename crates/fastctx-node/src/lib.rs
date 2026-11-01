@@ -723,6 +723,7 @@ pub async fn run_prepared(
                         &[
                             fastctx_storage::versions::Migration { version: 1, sql: activity_book::SCHEMA },
                             fastctx_storage::versions::Migration { version: 2, sql: activity_book::SEALS },
+                            fastctx_storage::versions::Migration { version: 3, sql: activity_book::SEALED_ACCOUNTS },
                         ],
                     )
                 });
