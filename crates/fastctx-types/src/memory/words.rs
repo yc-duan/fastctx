@@ -1,43 +1,4 @@
-//! Project-memory guidance, replies and refusal text.
-
-pub const INTRO: &str = "PROJECT MEMORY\n\
-This project keeps journals and specs as Markdown files, each starting with\n\
----\n\
-name: <the file's name>\n\
-description: <one line: what it covers>\n\
----\n";
-pub const READ: &str = "Read them with `fastctx view` or `rg` when your work touches them.\n\n";
-pub const READ_ONLY: &str = "Project journals, specs and attributes are read-only for colleagues. Give findings and evidence paths to the conversation that asked you.\n";
-pub const UNAVAILABLE: &str = "Memory file locations are unavailable:";
-pub const WRITE: &str = "\
-Journals are records. Write one when whoever works here next needs something they cannot
-recover from the specs, the code or git: you tried something and it did not go as you meant,
-or you turned to another path; something you were finding out came out one way or another;
-you are stopping, handing off or stuck, and where the work stands. Routine work is not a
-record. Write sentences that will still be true a year from now: what you did, what you meant
-to find out, what you saw, under which conditions (versions, machine, inputs), with dates,
-never \"now\" or \"recently\". Quote the user verbatim; cite code as path@commit. Name a journal
-after a thing, not a conclusion. Look for earlier journals on the same thing first; when
-yours answers or corrects one, name it. Create a journal with `write` in the journals folder;
-it is never changed afterwards: to correct one, write a new one that names it. Files kept as
-evidence go in a folder of the same name.
-
-Specs hold only what the user has confirmed: one file per thing, the current understanding,
-told plainly. When a conclusion changes, edit the paragraphs it touches with `edit`; keep
-what is still open under its own heading.
-";
-
-pub fn older(count: usize) -> String {
-    format!("{count} older journals are in that folder.\n")
-}
-
-pub fn changed(by: &str, revision: &crate::memory::Revision) -> String {
-    let action = match revision.kind {
-        crate::memory::Kind::Journal => "wrote journal",
-        crate::memory::Kind::Spec => "saved spec",
-    };
-    format!("{by} {action} {} (version {}).", revision.name, revision.version)
-}
+//! Project-memory replies and refusal text.
 
 pub const NAME_LENGTH: &str = "a memory name must contain 1 to 240 UTF-8 bytes";
 pub const NAME_CHARACTERS: &str = "a memory name uses letters, numbers and hyphens; combining marks follow a letter";
@@ -71,12 +32,9 @@ pub const OTHER_DOCUMENT: &str = "this name belongs to a different memory docume
 pub const MISSING_SIGNED_TEXT: &str = "the signed memory text is missing";
 pub const UTF8_REQUIRED: &str = "memory Markdown must be UTF-8";
 pub const STALE_SPEC: &str = "this spec changed since you viewed it; read its latest version before saving";
-pub const COLLEAGUE_READ_ONLY: &str =
-    "colleagues read project memory; give findings to the conversation that asked you";
 pub const WRITER_GONE: &str = "the writing conversation no longer exists";
 pub const WRITER_UNANSWERED: &str = "the conversation's machine did not identify its writer";
 pub const WRITER_INVISIBLE: &str = "the remote writing conversation is not visible";
-pub const PRIMARY_WRITER: &str = "only a user or a primary conversation writes project memory";
 pub const HUB_GONE: &str = "the project's hub is no longer connected";
 pub const OWN_COMPUTER_PATHS: &str = "memory paths must come from the account's own computer";
 pub const REPLICA_NOT_READY: &str = "this computer has not synchronized the project's replica yet";
@@ -127,7 +85,6 @@ pub const REVISION_NO_MARKDOWN: &str = "a memory revision has no Markdown";
 pub const EVIDENCE_MISSING: &str = "journal evidence is missing";
 pub const EVIDENCE_NOT_FILE: &str = "the retained evidence is not a regular file";
 pub const EVIDENCE_CHANGED: &str = "the retained evidence differs from its ledger digest";
-pub const JOURNAL_HEADING: &str = "Journals, newest first:\n";
 
 pub fn header_value(key: &str) -> String {
     format!("{key} must be nonempty and on one line")
