@@ -346,18 +346,23 @@ mod platform {
             .collect())
     }
 
-    /// A real network card has a device node; tunnels, bridges and veth
-    /// pairs do not.
+    /// A real network card has a device node on Linux; tunnels, bridges and
+    /// veth pairs do not.
     fn hardware(name: &str) -> bool {
-        fastctx_platform::disk::exists(std::path::Path::new("/sys/class/net").join(name).join("device"))
-            .unwrap_or(false)
+        (cfg!(target_os = "linux")
+            && fastctx_platform::disk::kernel_exists(std::path::Path::new("/sys/class/net").join(name).join("device"))
+                .unwrap_or(false))
             || ["en", "eth", "wl", "ww", "usb"].iter().any(|prefix| name.starts_with(prefix))
     }
 
-    /// The interfaces with an IPv4 default route, and the route's metric.
+    /// The interfaces with an IPv4 default route, and the route's metric, as
+    /// Linux shows them; none elsewhere.
     fn default_routes() -> BTreeMap<String, u32> {
         let mut routes = BTreeMap::new();
-        let Ok(table) = fastctx_platform::disk::read_to_string("/proc/net/route") else { return routes };
+        if !cfg!(target_os = "linux") {
+            return routes;
+        }
+        let Ok(table) = fastctx_platform::disk::kernel_text("/proc/net/route") else { return routes };
         for line in table.lines().skip(1) {
             let fields: Vec<&str> = line.split_whitespace().collect();
             if fields.len() >= 8 && fields[1] == "00000000" {

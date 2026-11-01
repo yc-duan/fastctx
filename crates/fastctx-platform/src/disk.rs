@@ -148,3 +148,35 @@ pub fn hard_link(from: impl AsRef<Path>, to: impl AsRef<Path>) -> io::Result<()>
     blocks();
     fs::hard_link(from, to)
 }
+
+/// Whether reading `path` is reading a file the kernel writes as it is
+/// read, which never waits on a disk: under `/sys` or `/proc` on Linux,
+/// except `/proc`'s links into the files and directories of processes.
+fn kernel_written(path: &Path) -> bool {
+    const LINKS: [&str; 5] = ["root", "cwd", "exe", "fd", "map_files"];
+    cfg!(target_os = "linux")
+        && (path.starts_with("/sys")
+            || (path.starts_with("/proc")
+                && !path.components().any(|part| LINKS.iter().any(|link| part.as_os_str() == *link))))
+}
+
+/// The text of a file the kernel writes as it is read (`/proc/net/route`),
+/// which any thread may read; any other file is noted as
+/// `read_to_string` notes it.
+#[track_caller]
+pub fn kernel_text(path: impl AsRef<Path>) -> io::Result<String> {
+    if !kernel_written(path.as_ref()) {
+        blocks();
+    }
+    fs::read_to_string(path)
+}
+
+/// Whether the kernel shows something at `path` (`/sys/class/net/eth0`),
+/// which any thread may ask; any other path is noted as `exists` notes it.
+#[track_caller]
+pub fn kernel_exists(path: impl AsRef<Path>) -> io::Result<bool> {
+    if !kernel_written(path.as_ref()) {
+        blocks();
+    }
+    fs::exists(path)
+}
