@@ -8,9 +8,13 @@ use std::{
 
 type Visit = (MachineName, JobId);
 fn parse(bytes: &[u8]) -> io::Result<Visit> {
-    let text = std::str::from_utf8(bytes).map_err(io::Error::other)?.trim_end();
-    let (machine, job) = text.split_once(' ').ok_or_else(|| io::Error::other("invalid executor visit"))?;
-    Ok((machine.try_into().map_err(io::Error::other)?, job.try_into().map_err(io::Error::other)?))
+    let text = std::str::from_utf8(bytes).map_err(crate::record_migration::errors::invalid)?.trim_end();
+    let (machine, job) =
+        text.split_once(' ').ok_or_else(|| crate::record_migration::errors::invalid("invalid executor visit"))?;
+    Ok((
+        machine.try_into().map_err(crate::record_migration::errors::invalid)?,
+        job.try_into().map_err(crate::record_migration::errors::invalid)?,
+    ))
 }
 fn key(visit: &Visit) -> String {
     format!("{} {}", visit.0, visit.1)

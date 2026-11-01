@@ -92,9 +92,7 @@ pub(crate) fn file(
     let signature = match archive::fingerprint(path) {
         Ok(signature) => signature,
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
-        Err(error) => {
-            return archive::damaged(&context.world, &context.conversation, &context.family, path, &error.to_string());
-        }
+        Err(error) => return Err(super::errors::retry(error)),
     };
     let incarnation = match prior.as_ref() {
         Some((_, _, _, _, incarnation)) => incarnation.clone(),
@@ -165,10 +163,8 @@ pub(crate) fn file(
     } else {
         result
     };
-    if result.as_ref().is_err_and(|error| {
-        storage_error(error) || matches!(error.kind(), io::ErrorKind::WouldBlock | io::ErrorKind::Interrupted)
-    }) {
-        return result;
+    if result.as_ref().is_err_and(|error| !super::errors::damaged(error)) {
+        return result.map_err(super::errors::retry);
     }
     let damage = result.err().map(|error| error.to_string());
     if damage.is_none() && archive::fingerprint(path)? != signature {
@@ -239,19 +235,7 @@ pub(crate) fn archive_ready(context: &Context) -> io::Result<()> {
                 let result = crate::conversation_store::with_live_files(&directory, || {
                     archive::verified(&context.world, &owner, Path::new(&path), &signature)
                 });
-                match result {
-                    Ok(()) => {}
-                    Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
-                        archive::damaged(
-                            &context.world,
-                            &owner,
-                            &context.family,
-                            Path::new(&path),
-                            &error.to_string(),
-                        )?;
-                    }
-                    Err(error) => return Err(error),
-                }
+                result.map_err(super::errors::retry)?;
             }
             context
                 .database

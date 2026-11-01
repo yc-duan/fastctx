@@ -37,7 +37,7 @@ pub(super) struct Source {
 
 pub(super) fn read(path: &Path) -> io::Result<(Recorded, archive::Signature)> {
     let bytes = disk::read(path)?;
-    let record = serde_json::from_slice(&bytes)?;
+    let record = serde_json::from_slice(&bytes).map_err(crate::record_migration::errors::invalid)?;
     let signature = archive::Signature { bytes: bytes.len() as u64, digest: format!("{:x}", Sha256::digest(&bytes)) };
     Ok((record, signature))
 }
@@ -80,8 +80,11 @@ pub(super) fn scan(directory: &ConversationDir, database: &Database, conversatio
                 seconds: record.event.at.as_second(),
                 nanos: record.event.at.subsec_nanosecond(),
             }),
-            Err(error) if error.kind() == io::ErrorKind::WouldBlock => return Err(error),
-            Err(error) => archive::damaged(&world, conversation, "session-events", &path, &error.to_string())?,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
+            Err(error) if crate::record_migration::errors::damaged(&error) => {
+                archive::damaged(&world, conversation, "session-events", &path, &error.to_string())?;
+            }
+            Err(error) => return Err(crate::record_migration::errors::retry(error)),
         }
         if batch.len() == 128 {
             stage(database, conversation, std::mem::take(&mut batch))?;

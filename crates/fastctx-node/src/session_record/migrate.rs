@@ -75,11 +75,11 @@ fn import(directory: &ConversationDir, database: &Database, conversation: &str) 
                     )?;
                     finished.push(source.identity);
                 }
-                Err(error) if error.kind() == io::ErrorKind::WouldBlock => return Err(error),
-                Err(error) => {
+                Err(error) if crate::record_migration::errors::damaged(&error) => {
                     archive::damaged(&world, conversation, "session-events", &source.path, &error.to_string())?;
                     finished.push(source.identity);
                 }
+                Err(error) => return Err(crate::record_migration::errors::retry(error)),
             }
         }
         let scope = conversation.to_string();

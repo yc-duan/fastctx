@@ -51,7 +51,9 @@ pub(crate) fn prepare(conversation: &ConversationDir) -> io::Result<()> {
                 let bytes = fastctx_platform::disk::read(&path)?;
                 let frozen: Frozen = serde_json::from_slice(&bytes)?;
                 if path.file_stem().and_then(|stem| stem.to_str()) != Some(frozen.report.id.as_str()) {
-                    return Err(io::Error::other("goal report identity differs from its filename"));
+                    return Err(crate::record_migration::errors::invalid(
+                        "goal report identity differs from its filename",
+                    ));
                 }
                 push(
                     crate::records::Source::new(frozen.report.id.to_string(), path.clone(), bytes)?

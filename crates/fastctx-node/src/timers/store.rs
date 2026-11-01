@@ -48,7 +48,7 @@ impl Store {
                 crate::record_migration::file(&source, push, |push| {
                     let timer: Timer = serde_json::from_slice(&fastctx_platform::disk::read(&source)?)?;
                     if source != folder.join(format!("{:x}.json", Sha256::digest(timer.id.as_bytes()))) {
-                        return Err(io::Error::other("timer id does not match its file"));
+                        return Err(crate::record_migration::errors::invalid("timer id does not match its file"));
                     }
                     push(
                         Source::new(timer.id.clone(), source.clone(), serde_json::to_vec(&timer)?)?

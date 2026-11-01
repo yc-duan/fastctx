@@ -2,6 +2,7 @@
 pub(crate) mod archive;
 #[cfg(feature = "storage-drill")]
 pub(crate) mod drill;
+pub(crate) mod errors;
 pub(crate) mod files;
 pub(crate) mod scheduler;
 pub(crate) mod source;

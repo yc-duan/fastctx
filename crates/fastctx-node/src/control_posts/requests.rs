@@ -26,7 +26,7 @@ pub(crate) fn prepare(node: &Node) -> io::Result<ConversationDir> {
                 let key = path
                     .file_stem()
                     .and_then(|name| name.to_str())
-                    .ok_or_else(|| io::Error::other("invalid control request filename"))?
+                    .ok_or_else(|| crate::record_migration::errors::invalid("invalid control request filename"))?
                     .to_string();
                 push(records::Source::new(key, path.clone(), serde_json::to_vec(&request)?)?.scoped(conversation))
             })?;

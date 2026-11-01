@@ -13,7 +13,9 @@ pub(super) fn initialize(directory: &ConversationDir) -> io::Result<()> {
             crate::record_migration::file(&accepted, push, |_| {
                 let turn: String = read(&accepted)?;
                 if row.turn.as_ref().is_some_and(|prior| prior != &turn) {
-                    return Err(io::Error::other("a handover and its receipt disagree about their turn"));
+                    return Err(crate::record_migration::errors::invalid(
+                        "a handover and its receipt disagree about their turn",
+                    ));
                 }
                 row.turn = Some(turn);
                 Ok(())
@@ -39,7 +41,7 @@ pub(super) fn initialize(directory: &ConversationDir) -> io::Result<()> {
             let key = path
                 .file_stem()
                 .and_then(|name| name.to_str())
-                .ok_or_else(|| io::Error::other("invalid turn receipt"))?;
+                .ok_or_else(|| crate::record_migration::errors::invalid("invalid turn receipt"))?;
             push(Source::new(key.into(), path.to_path_buf(), serde_json::to_vec(&value)?)?)
         })
     })?;

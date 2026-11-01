@@ -175,7 +175,7 @@ pub(crate) fn directory<T: DeserializeOwned + Serialize>(
                 let key = path
                     .file_stem()
                     .and_then(|name| name.to_str())
-                    .ok_or_else(|| io::Error::other("invalid legacy record name"))?
+                    .ok_or_else(|| crate::record_migration::errors::invalid("invalid legacy record name"))?
                     .to_string();
                 let value: T = serde_json::from_slice(&fastctx_platform::disk::read(&path)?)?;
                 push(Source::new(key, path.clone(), serde_json::to_vec(&value)?)?)

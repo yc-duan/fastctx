@@ -22,11 +22,13 @@ pub(crate) fn prepare(directory: &ConversationDir) -> io::Result<()> {
                     let key = path
                         .file_stem()
                         .and_then(|name| name.to_str())
-                        .ok_or_else(|| io::Error::other("invalid answer diagnostic"))?
+                        .ok_or_else(|| crate::record_migration::errors::invalid("invalid answer diagnostic"))?
                         .to_string();
                     let bytes = fastctx_platform::disk::read(&path)?;
                     let body = if extension == "retry" {
-                        serde_json::to_vec(&String::from_utf8(bytes).map_err(io::Error::other)?)?
+                        serde_json::to_vec(
+                            &String::from_utf8(bytes).map_err(crate::record_migration::errors::invalid)?,
+                        )?
                     } else {
                         serde_json::to_vec(&serde_json::from_slice::<serde_json::Value>(&bytes)?)?
                     };

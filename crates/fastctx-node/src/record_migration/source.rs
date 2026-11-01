@@ -35,17 +35,11 @@ pub(crate) fn process(
     let signature = match archive::fingerprint(path) {
         Ok(signature) => signature,
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
-        Err(error) => {
-            return archive::damaged(&context.world, &context.conversation, &context.family, path, &error.to_string());
-        }
+        Err(error) => return Err(super::errors::retry(error)),
     };
     let result = import().and_then(|()| verify());
-    if result.as_ref().is_err_and(|error| {
-        files::storage_error(error)
-            || error.kind() == io::ErrorKind::WouldBlock
-            || error.kind() == io::ErrorKind::Interrupted
-    }) {
-        return result;
+    if result.as_ref().is_err_and(|error| !super::errors::damaged(error)) {
+        return result.map_err(super::errors::retry);
     }
     let damage = result.err().map(|error| error.to_string());
     if damage.is_none() && archive::fingerprint(path)? != signature {

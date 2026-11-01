@@ -59,7 +59,9 @@ pub(crate) fn prepare(conversation: &ConversationDir) -> io::Result<()> {
                 if path.file_stem().and_then(|stem| stem.to_str())
                     != Some(fastctx_hands::files::content_hash(intent.operation.as_bytes()).as_str())
                 {
-                    return Err(io::Error::other("goal operation identity differs from its record"));
+                    return Err(crate::record_migration::errors::invalid(
+                        "goal operation identity differs from its record",
+                    ));
                 }
                 let mut source =
                     crate::records::Source::new(intent.operation.clone(), path.clone(), serde_json::to_vec(&intent)?)?

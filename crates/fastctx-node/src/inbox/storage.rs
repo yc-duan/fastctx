@@ -39,13 +39,13 @@ pub(crate) fn initialize(directory: &ConversationDir) -> io::Result<()> {
                 let key = path
                     .file_name()
                     .and_then(|name| name.to_str())
-                    .ok_or_else(|| io::Error::other("invalid receipt"))?
+                    .ok_or_else(|| crate::record_migration::errors::invalid("invalid receipt"))?
                     .to_string();
                 let row = match fastctx_platform::disk::read(&path)?.as_slice() {
                     b"" => Receipt::Heard,
                     b"consumed" => Receipt::Consumed,
                     b"answered" => Receipt::Answered,
-                    _ => return Err(io::Error::other("unknown delivery receipt")),
+                    _ => return Err(crate::record_migration::errors::invalid("unknown delivery receipt")),
                 };
                 push(Source::new(key, path.clone(), serde_json::to_vec(&row)?)?)
             })?;
@@ -92,7 +92,7 @@ pub(crate) fn initialize(directory: &ConversationDir) -> io::Result<()> {
                 let key =
                     if path.parent() == Some(source.outbox().as_path()) { path.file_stem() } else { path.file_name() }
                         .and_then(|name| name.to_str())
-                        .ok_or_else(|| io::Error::other("invalid paid receipt"))?
+                        .ok_or_else(|| crate::record_migration::errors::invalid("invalid paid receipt"))?
                         .to_string();
                 push(Source::new(key, path.clone(), b"true".to_vec())?)
             })?;
@@ -112,7 +112,7 @@ pub(crate) fn initialize(directory: &ConversationDir) -> io::Result<()> {
                 let key = path
                     .file_name()
                     .and_then(|name| name.to_str())
-                    .ok_or_else(|| io::Error::other("invalid undeliverable receipt"))?
+                    .ok_or_else(|| crate::record_migration::errors::invalid("invalid undeliverable receipt"))?
                     .to_string();
                 push(Source::new(key, path.clone(), serde_json::to_vec(&row)?)?)
             })?;
