@@ -121,7 +121,7 @@ fn commit(context: &Context, sources: Vec<LegacyRow>) -> io::Result<()> {
     let conflict = context.database.write_now_at(scheduler::priority(), bytes, move |db| {
         db.execute_batch("SAVEPOINT legacy_record_batch")?;
         let mut insert = db.prepare_cached("INSERT INTO conversation_records(conversation,family,identity,body,modified,arrival,category,expires,position) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?10)
-            ON CONFLICT(conversation,family,identity) DO UPDATE SET body=excluded.body,modified=excluded.modified,arrival=excluded.arrival,category=excluded.category,expires=excluded.expires WHERE ?9")?;
+            ON CONFLICT(conversation,family,identity) DO UPDATE SET body=excluded.body,modified=excluded.modified,arrival=excluded.arrival,category=excluded.category,expires=excluded.expires WHERE ?9 AND conversation_records.position>COALESCE((SELECT boundary FROM conversation_record_gathering WHERE conversation=?1),-1)")?;
         let mut read = db.prepare_cached("SELECT body,modified,arrival,category,expires FROM conversation_records WHERE conversation=?1 AND family=?2 AND identity=?3")?;
         let mut files = std::collections::HashMap::new();
         for row in sources {

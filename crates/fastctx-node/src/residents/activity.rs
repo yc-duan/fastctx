@@ -36,21 +36,19 @@ pub(crate) fn prepare(directory: &ConversationDir, family: &'static str) -> io::
         };
         let mut reader = io::BufReader::new(file);
         let mut bytes = Vec::new();
-        let mut offset = 0u64;
         loop {
             bytes.clear();
             let count = reader.read_until(b'\n', &mut bytes)?;
             if count == 0 || bytes.last() != Some(&b'\n') {
                 break;
             }
-            offset += count as u64;
             if bytes.iter().all(u8::is_ascii_whitespace) {
                 continue;
             }
             let row = match family {
                 "actions" => {
                     let row: Action = serde_json::from_slice(&bytes)?;
-                    Source::new(format!("legacy-{offset:016x}"), path.to_path_buf(), serde_json::to_vec(&row)?)?
+                    Source::new(format!("legacy-{}", digest(&row)?), path.to_path_buf(), serde_json::to_vec(&row)?)?
                         .ordered(row.at)
                 }
                 "messages" => {

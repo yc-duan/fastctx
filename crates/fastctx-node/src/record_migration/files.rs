@@ -170,6 +170,9 @@ pub(crate) fn file(
 }
 
 pub(crate) fn complete(context: &Context, file: FileComplete) -> io::Result<()> {
+    if file.damage.is_some() {
+        crate::record_database::reject_origin(&context.world, &file.owner, Path::new(&file.row.path))?;
+    }
     let family = context.family.clone();
     let signature = serde_json::to_vec(&file.row.signature)?;
     context.database.write_now_at(scheduler::priority(), signature.len() + file.row.path.len(), move |db| {

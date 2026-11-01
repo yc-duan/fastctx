@@ -99,7 +99,7 @@ fn stage(database: &Database, conversation: &str, sources: Vec<Source>) -> io::R
         .map(|source| Ok((serde_json::to_vec(&source.signature)?, source)))
         .collect::<io::Result<Vec<_>>>()?;
     database.write_now_at(scheduler::priority(), sources.len() * 256, move |db| {
-        let mut insert = db.prepare_cached("INSERT INTO session_sources(conversation,identity,path,signature,sequence,seconds,nanos,assigned) VALUES(?1,?2,?3,?4,?5,?6,?7,?5) ON CONFLICT(conversation,identity) DO NOTHING")?;
+        let mut insert = db.prepare_cached("INSERT INTO session_sources(conversation,identity,path,signature,sequence,seconds,nanos,assigned) VALUES(?1,?2,?3,?4,?5,?6,?7,COALESCE(?5,(SELECT sequence FROM session_events WHERE conversation=?1 AND identity=?2))) ON CONFLICT(conversation,identity) DO NOTHING")?;
         for (signature, source) in sources { insert.execute(params![conversation, source.identity, source.path.to_string_lossy(), signature,
             source.sequence.map(|n| n.to_be_bytes().to_vec()), source.seconds, source.nanos])?; }
         Ok(())

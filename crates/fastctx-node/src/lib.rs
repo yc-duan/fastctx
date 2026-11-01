@@ -687,13 +687,16 @@ pub async fn run_prepared(
     let claude = claude::Claude::new(&world)?;
     let memory_room = memory_room::Room::new(&world);
     let opening = world.clone();
-    let database = fastctx_platform::task::spawn_blocking(move || record_database::open(&opening))
-        .await
-        .context("opening the node record database")?;
+    let (database, record_migration) = fastctx_platform::task::spawn_blocking(move || {
+        let database = record_database::open(&opening);
+        let service = record_database::register(&opening, &database)?;
+        Ok::<_, std::io::Error>((database, service))
+    })
+    .await
+    .context("opening the node record database")??;
     if let Some(error) = database.fault() {
         log.line(format_args!("node record storage unavailable: {error}"));
     }
-    let record_migration = record_database::register(&world, &database);
     let book_database = fastctx_storage::Database::open_or_unavailable(&world.path().join("book.sqlite3"), "", |db| {
         fastctx_storage::versions::apply(
             db,

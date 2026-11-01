@@ -7,13 +7,18 @@ use std::io;
 use std::path::PathBuf;
 use std::sync::{LazyLock, Mutex};
 
-static OPEN: LazyLock<Mutex<HashMap<PathBuf, WeakDatabase>>> = LazyLock::new(Default::default);
+struct Open {
+    database: WeakDatabase,
+    layout: std::sync::Arc<crate::gather::records::Layout>,
+}
+static OPEN: LazyLock<Mutex<HashMap<PathBuf, Open>>> = LazyLock::new(Default::default);
 
-pub(crate) fn register(world: &WorldDir, database: &Database) -> crate::record_migration::Service {
+pub(crate) fn register(world: &WorldDir, database: &Database) -> io::Result<crate::record_migration::Service> {
+    let layout = std::sync::Arc::new(crate::gather::records::Layout::load(world)?);
     let mut open = OPEN.lock().expect("record database registry");
-    open.retain(|_, database| database.upgrade().is_some());
-    open.insert(world.path().to_path_buf(), database.downgrade());
-    crate::record_migration::Service::register(world.path(), database)
+    open.retain(|_, entry| entry.database.upgrade().is_some());
+    open.insert(world.path().to_path_buf(), Open { database: database.downgrade(), layout });
+    Ok(crate::record_migration::Service::register(world.path(), database))
 }
 
 pub(crate) fn get(directory: &ConversationDir) -> io::Result<(Database, String)> {
@@ -24,6 +29,13 @@ pub(crate) fn get(directory: &ConversationDir) -> io::Result<(Database, String)>
         .and_then(std::path::Path::parent)
         .ok_or_else(|| io::Error::other("conversation has no world"))?;
     crate::conversation_store::transfer::ensure(world, &database, &key)?;
+    let layout = OPEN
+        .lock()
+        .expect("record database registry")
+        .get(world)
+        .map(|entry| entry.layout.clone())
+        .expect("registered layout");
+    layout.ensure(world, &database, &key)?;
     Ok((database, key))
 }
 
@@ -41,7 +53,7 @@ pub(crate) fn registered(directory: &ConversationDir) -> io::Result<(Database, S
         .lock()
         .expect("record database registry")
         .get(world)
-        .and_then(WeakDatabase::upgrade)
+        .and_then(|entry| entry.database.upgrade())
         .ok_or_else(|| io::Error::other("the conversation's database is not open"))?;
     Ok((database, key))
 }
@@ -52,12 +64,16 @@ pub(crate) fn item(path: &std::path::Path) -> io::Result<(ConversationDir, Strin
     if !path.is_absolute() || path.components().any(|part| matches!(part, std::path::Component::ParentDir)) {
         return Err(io::Error::new(io::ErrorKind::InvalidInput, "a record item needs an absolute normalized path"));
     }
-    let root = {
+    let (root, layout) = {
         let open = OPEN.lock().expect("record database registry");
-        open.keys().filter(|root| path.starts_with(root)).max_by_key(|root| root.components().count()).cloned()
+        open.iter()
+            .filter(|(root, _)| path.starts_with(root))
+            .max_by_key(|(root, _)| root.components().count())
+            .map(|(root, entry)| (root.clone(), entry.layout.clone()))
     }
     .ok_or_else(|| io::Error::other("the item's database is not open"))?;
-    let relative = path.strip_prefix(&root).expect("selected database root");
+    let logical = layout.logical(path);
+    let relative = logical.strip_prefix(&root).expect("selected database root");
     let mut parts = relative.components();
     let first = parts.next();
     let (directory, tail) = if first.is_some_and(|part| part.as_os_str() == "conversations") {
@@ -73,7 +89,32 @@ pub(crate) fn item(path: &std::path::Path) -> io::Result<(ConversationDir, Strin
         .to_string();
     let parent = tail.parent().ok_or_else(|| io::Error::other("record item has no family"))?;
     let family = format!("items/{}", parent.to_string_lossy().replace('\\', "/"));
-    Ok((directory, family, key, path.parent().expect("item parent").to_path_buf()))
+    let folder = if logical != path && layout.original(&logical) != logical {
+        logical.parent().expect("item parent")
+    } else {
+        path.parent().expect("item parent")
+    };
+    Ok((directory, family, key, folder.to_path_buf()))
+}
+
+/// Queue envelopes retain their original path-bound delivery identity.
+pub(crate) fn original(path: &std::path::Path) -> PathBuf {
+    let open = OPEN.lock().expect("record database registry");
+    open.iter()
+        .filter(|(root, _)| path.starts_with(root))
+        .max_by_key(|(root, _)| root.components().count())
+        .map_or_else(|| path.to_path_buf(), |(_, entry)| entry.layout.original(path))
+}
+
+pub(crate) fn reject_origin(world: &std::path::Path, owner: &str, path: &std::path::Path) -> io::Result<()> {
+    let layout = OPEN.lock().expect("record database registry").get(world).map(|entry| entry.layout.clone());
+    if let Some(layout) = layout {
+        layout.reject_origin(world, owner, path)?;
+    }
+    Ok(())
+}
+pub(crate) fn rejected_origin(path: &std::path::Path) -> bool {
+    OPEN.lock().expect("record database registry").values().any(|entry| entry.layout.rejected_origin(path))
 }
 
 /// Opens the node schema on a blocking thread before registering its writer.

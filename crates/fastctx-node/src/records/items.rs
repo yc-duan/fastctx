@@ -9,28 +9,41 @@ pub(crate) fn prepare(path: &Path) -> io::Result<(ConversationDir, String, Strin
     let (directory, family, key, folder) = crate::record_database::item(path)?;
     let group = family.clone();
     ensure_each(&directory, &family, move |push| {
-        let entries = match fastctx_platform::disk::read_dir(&folder) {
-            Ok(entries) => entries,
-            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
-            Err(error) => return Err(error),
-        };
-        for entry in entries {
-            let entry = entry?;
-            if !entry.file_type()?.is_file() {
-                continue;
-            }
-            let name =
-                entry.file_name().into_string().map_err(|_| io::Error::other("record item identity is not UTF-8"))?;
-            if name.starts_with('.') || name.ends_with(".lock") {
-                continue;
-            }
-            let path = entry.path();
-            crate::record_migration::file(&path, push, |push| {
-                let bytes = fastctx_platform::disk::read(&path)?;
-                super::item_legacy::validate(&group, &name, &bytes)?;
-                let category = path.extension().and_then(|extension| extension.to_str()).unwrap_or("").to_string();
-                let order =
-                    if category == "json" && (group.ends_with("/received") || group.ends_with("/received-controls")) {
+        for primary in [true, false] {
+            let entries = match fastctx_platform::disk::read_dir(&folder) {
+                Ok(entries) => entries,
+                Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
+                Err(error) => return Err(error),
+            };
+            for entry in entries {
+                let entry = entry?;
+                if !entry.file_type()?.is_file() {
+                    continue;
+                }
+                let name = entry
+                    .file_name()
+                    .into_string()
+                    .map_err(|_| io::Error::other("record item identity is not UTF-8"))?;
+                if name.starts_with('.') || name.ends_with(".lock") {
+                    continue;
+                }
+                let path = entry.path();
+                if path.extension().is_some_and(|extension| extension == "json") != primary {
+                    continue;
+                }
+                crate::record_migration::file(&path, push, |push| {
+                    if crate::record_database::rejected_origin(&path) {
+                        return Err(io::Error::new(
+                            io::ErrorKind::InvalidData,
+                            "the original queue envelope conflicts with the existing conversation record",
+                        ));
+                    }
+                    let bytes = fastctx_platform::disk::read(&path)?;
+                    super::item_legacy::validate(&group, &name, &bytes)?;
+                    let category = path.extension().and_then(|extension| extension.to_str()).unwrap_or("").to_string();
+                    let order = if category == "json"
+                        && (group.ends_with("/received") || group.ends_with("/received-controls"))
+                    {
                         let value = serde_json::from_slice::<serde_json::Value>(&bytes)?;
                         let sequence = value.get("order").and_then(serde_json::Value::as_u64).unwrap_or(0);
                         let at = value
@@ -41,17 +54,18 @@ pub(crate) fn prepare(path: &Path) -> io::Result<(ConversationDir, String, Strin
                     } else {
                         None
                     };
-                let terminal = matches!(category.as_str(), "done" | "taken" | "stopped");
-                let mut source = Source::new(name, path.clone(), bytes)?.categorized(category);
-                if terminal {
-                    let expires = source.modified() + jiff::SignedDuration::from_hours(30 * 24);
-                    source = source.expiring(expires);
-                }
-                if let Some(order) = order {
-                    source = source.ordered_bytes(order);
-                }
-                push(source)
-            })?;
+                    let terminal = matches!(category.as_str(), "done" | "taken" | "stopped");
+                    let mut source = Source::new(name, path.clone(), bytes)?.categorized(category);
+                    if terminal {
+                        let expires = source.modified() + jiff::SignedDuration::from_hours(30 * 24);
+                        source = source.expiring(expires);
+                    }
+                    if let Some(order) = order {
+                        source = source.ordered_bytes(order);
+                    }
+                    push(source)
+                })?;
+            }
         }
         Ok(())
     })?;
@@ -156,7 +170,7 @@ pub(crate) fn page(folder: &Path, category: Option<&str>, after: &str, limit: us
             })?
             .collect::<std::result::Result<Vec<_>, _>>()?)
     })?;
-    Ok(keys.into_iter().map(|key| folder.join(key)).collect())
+    Ok(keys.into_iter().map(|key| crate::record_database::original(&folder.join(key))).collect())
 }
 pub(crate) fn entries(folder: &Path, category: Option<&str>) -> io::Result<Vec<PathBuf>> {
     let mut result = Vec::new();
@@ -238,7 +252,7 @@ pub(crate) fn queued(folder: &Path, after: &[u8], key: &str, through: &[u8]) -> 
                 break;
             }
             bytes += body.len();
-            result.push(Queued { order, path: folder.join(key), bytes: body });
+            result.push(Queued { order, path: crate::record_database::original(&folder.join(key)), bytes: body });
         }
         Ok(result)
     })

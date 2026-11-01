@@ -12,7 +12,7 @@ use std::path::Path;
 pub(crate) fn run(root: &Path) -> Result<(), Box<dyn std::error::Error>> {
     let world = WorldDir::under(root);
     let database = crate::record_database::open(&world);
-    let service = crate::record_database::register(&world, &database);
+    let service = crate::record_database::register(&world, &database)?;
     service.start()?;
     let id = "codex-fac123".parse()?;
     let directory = world.conversation(&id);

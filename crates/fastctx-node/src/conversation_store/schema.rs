@@ -62,6 +62,7 @@ pub(crate) fn tables(db: &Connection) -> Result<Vec<Table>> {
 pub(crate) fn initialize(db: &Connection) -> Result<()> {
     db.execute_batch(crate::record_migration::SCHEMA)?;
     db.execute_batch(crate::context::records::SCHEMA)?;
+    db.execute_batch(crate::gather::records::SCHEMA)?;
     db.execute_batch(super::transfer::SCHEMA)?;
     db.execute_batch(crate::session_record::MIGRATION_SCHEMA)?;
     // Deletion watermarks belong to this node, not to the deleted data. They

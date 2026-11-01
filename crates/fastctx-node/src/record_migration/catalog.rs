@@ -48,6 +48,7 @@ pub(super) fn scan(node: &Arc<Node>) -> io::Result<bool> {
         {
             continue;
         }
+        prepare(crate::gather::queues::prepare_conflicts(directory));
         prepare(crate::session_record::prepare(directory));
         prepare(crate::run_facts::storage::database(directory).map(|_| ()));
         prepare(crate::delivery::prepare(directory));
@@ -106,6 +107,21 @@ pub(super) fn scan(node: &Arc<Node>) -> io::Result<bool> {
     for queue in QUEUES {
         prepare(crate::records::items::prepare(&node.world.path().join(queue).join(".items")).map(|_| ()));
     }
+    let unclaimed = node.world.path().join("codex-reports");
+    let (machine, _, _, _) = crate::record_database::item(&unclaimed.join(".reports"))?;
+    prepare(crate::records::ensure_each(&machine, "unclaimed-host-reports", move |push| {
+        for path in entries(&unclaimed)? {
+            if path.extension().is_some_and(|extension| extension == "json" || extension == "jsonl") {
+                super::file(&path, push, |_| {
+                    Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "legacy host report could not be assigned to a conversation during layout gathering",
+                    ))
+                })?;
+            }
+        }
+        Ok(())
+    }));
     prepare(crate::control_posts::requests::prepare(node).map(|_| ()));
     prepare(crate::timers::store::Store::open(&node.world.path().join("timers")).map(|_| ()));
     for parent in node.world.job_parents()? {

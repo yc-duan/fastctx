@@ -13,7 +13,7 @@ pub(crate) fn run(root: &Path) -> Result<(), Box<dyn std::error::Error>> {
     if let Some(error) = database.fault() {
         return Err(error.to_string().into());
     }
-    let service = crate::record_database::register(&world, &database);
+    let service = crate::record_database::register(&world, &database)?;
     let id: ResidentId = "codex-ab1234".parse()?;
     let directory = world.conversation(&id);
     disk::create_dir_all(directory.book("goal-operations"))?;

@@ -25,7 +25,7 @@ pub(crate) fn run(root: &Path) -> Result<(), Box<dyn std::error::Error>> {
         SCHEMA,
         crate::conversation_store::schema::initialize,
     )?;
-    let _migration = crate::record_database::register(&world, &database);
+    let _migration = crate::record_database::register(&world, &database)?;
     _migration.start()?;
     let id: ResidentId = "codex-a1b2c3".parse()?;
     let directory = world.conversation(&id);

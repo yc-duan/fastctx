@@ -8,7 +8,7 @@ pub(crate) fn run(root: &Path) -> Result<(), Box<dyn std::error::Error>> {
     let world = WorldDir::under(root);
     let source = Database::open_initialized(&world.path().join("node.sqlite3"), super::SCHEMA, |_| Ok(()))?;
     let target = Database::open_initialized(&world.path().join("book.sqlite3"), super::SCHEMA, |_| Ok(()))?;
-    let service = crate::record_database::register(&world, &source);
+    let service = crate::record_database::register(&world, &source)?;
     service.start()?;
     source.write_now(4096, |db| {
         for key in ["good", "bad"] {

@@ -19,7 +19,7 @@ pub(crate) fn run(root: &Path) -> std::result::Result<(), Box<dyn std::error::Er
         crate::goals::SCHEMA
     );
     let database = Database::open_initialized(&world.path().join("node.sqlite3"), &schema, schema::initialize)?;
-    let _migration = crate::record_database::register(&world, &database);
+    let _migration = crate::record_database::register(&world, &database)?;
     _migration.start()?;
     let directory = world.conversation(&"codex-aabbcc".parse()?);
     fastctx_platform::disk::create_dir_all(directory.path())?;
@@ -78,7 +78,7 @@ pub(crate) fn run(root: &Path) -> std::result::Result<(), Box<dyn std::error::Er
     })?;
     drop(database);
     let database = Database::open_initialized(&world.path().join("node.sqlite3"), &schema, schema::initialize)?;
-    let _migration = crate::record_database::register(&world, &database);
+    let _migration = crate::record_database::register(&world, &database)?;
     _migration.start()?;
     resume(&database)?;
     assert!(with_live_files(&directory, || fastctx_platform::disk::create_dir_all(directory.path())).is_err());

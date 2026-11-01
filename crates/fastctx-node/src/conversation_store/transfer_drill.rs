@@ -12,7 +12,7 @@ pub(crate) fn run(root: &Path) -> Result<(), Box<dyn std::error::Error>> {
     let source_world = WorldDir::under(&root.join("source"));
     let source = crate::record_database::open(&source_world);
     assert!(source.fault().is_none(), "{:?}", source.fault());
-    let _source_service = crate::record_database::register(&source_world, &source);
+    let _source_service = crate::record_database::register(&source_world, &source)?;
     let id: fastctx_types::ResidentId = "codex-abcdef".parse()?;
     let source_directory = source_world.conversation(&id);
     disk::create_dir_all(source_directory.path())?;
@@ -61,7 +61,7 @@ pub(crate) fn run(root: &Path) -> Result<(), Box<dyn std::error::Error>> {
     disk::copy(&bundle_path, target_directory.path().join(bundle::FILE))?;
     let target = crate::record_database::open(&target_world);
     assert!(target.fault().is_none(), "{:?}", target.fault());
-    let service = crate::record_database::register(&target_world, &target);
+    let service = crate::record_database::register(&target_world, &target)?;
     let other = target_world.conversation(&"codex-012345".parse()?);
     disk::create_dir_all(other.path())?;
     crate::records::write_at(&other, Priority::Normal, 64, |rows| rows.put("unrelated", "same-position", &true))?;
@@ -86,7 +86,7 @@ pub(crate) fn run(root: &Path) -> Result<(), Box<dyn std::error::Error>> {
     })?;
     assert_eq!(crate::records::read(&other, |rows| rows.get::<bool>("unrelated", "same-position"))?, Some(true));
     drop(service);
-    let service = crate::record_database::register(&target_world, &target);
+    let service = crate::record_database::register(&target_world, &target)?;
     service.start()?;
     // Restoring the identical snapshot again must not replay input triggers.
     disk::copy(&bundle_path, target_directory.path().join(bundle::FILE))?;
@@ -116,7 +116,7 @@ pub(crate) fn run(root: &Path) -> Result<(), Box<dyn std::error::Error>> {
     })?;
     assert!(position > high);
     drop(service);
-    let service = crate::record_database::register(&target_world, &target);
+    let service = crate::record_database::register(&target_world, &target)?;
     service.start()?;
     disk::copy(&bundle_path, target_directory.path().join(bundle::FILE))?;
     let preparing = target_world.clone();
