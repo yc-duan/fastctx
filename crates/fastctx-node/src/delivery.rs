@@ -2,10 +2,15 @@
 //! to the inbox, `now`, and outbox so each of those views can be repaired.
 
 use std::io;
+#[cfg(feature = "storage-drill")]
+pub(crate) mod drill;
+pub(crate) mod handovers;
+mod migrate_handovers;
 mod migrate_terminals;
 pub(crate) mod recover_outgoing;
 mod storage;
 pub(crate) mod terminals;
+mod value;
 pub(crate) mod work;
 use storage::{change, read_rows};
 
@@ -28,6 +33,8 @@ pub struct Handover {
     pub unresolved: Option<TurnEnd>,
     #[serde(default = "attempting")]
     pub attempting: bool,
+    #[serde(skip)]
+    pub(crate) revision: String,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -65,23 +72,22 @@ pub fn begin_with_context(
     crate::attachments::delivered::prepare(directory)?;
     let ids: Vec<&str> = inputs.iter().map(|input| input.delivery.id.as_str()).collect();
     let id = crate::speech::fixed_id("handover", &ids);
-    let handover = Handover { id, inputs, context, context_input, turn: None, unresolved: None, attempting: true };
-    let bytes = serde_json::to_vec(&handover)?.len();
-    change(directory, bytes, move |rows| {
-        crate::attachments::delivered::record_in(rows, &handover.inputs)?;
-        let mut prior = rows.get::<Handover>("handovers", handover.id.as_str())?.unwrap_or_else(|| handover.clone());
-        if prior.turn.is_none() && prior.unresolved.is_none() {
-            prior.attempting = true;
-            prior.inputs = handover.inputs;
-            prior.context = handover.context;
-            prior.context_input = handover.context_input;
-            rows.put("handovers", prior.id.as_str(), &prior)?;
-            for input in &prior.inputs {
-                rows.link("handovers", input.delivery.id.as_str(), prior.id.as_str())?;
-            }
-        }
-        Ok(prior)
-    })
+    storage::initialize(directory)?;
+    let handover = Handover {
+        id,
+        inputs,
+        context,
+        context_input,
+        turn: None,
+        unresolved: None,
+        attempting: true,
+        revision: String::new(),
+    };
+    let inputs = handover.inputs.clone();
+    change(directory, serde_json::to_vec(&inputs)?.len(), move |rows| {
+        crate::attachments::delivered::record_in(rows, &inputs)
+    })?;
+    handovers::put(directory, handover, None)
 }
 
 fn attempting() -> bool {
@@ -89,63 +95,22 @@ fn attempting() -> bool {
 }
 
 pub fn refused(directory: &ConversationDir, handover: &mut Handover) -> io::Result<()> {
-    update(directory, handover, false, |row| {
-        row.attempting = false;
-        Ok(())
-    })
+    handovers::update(directory, handover, handovers::Change::Refused)
 }
 pub fn accept(directory: &ConversationDir, handover: &mut Handover, turn: &str) -> io::Result<()> {
-    let turn = turn.to_string();
-    update(directory, handover, true, move |row| {
-        if row.turn.as_ref().is_some_and(|prior| prior != &turn) {
-            return Err(fastctx_storage::Error::new("one handover cannot belong to two turns"));
-        }
-        row.turn = Some(turn);
-        Ok(())
-    })
+    handovers::update(directory, handover, handovers::Change::Accepted(turn.to_string()))
 }
 pub fn unresolved(directory: &ConversationDir, handover: &mut Handover, end: TurnEnd) -> io::Result<()> {
-    update(directory, handover, false, move |row| {
-        if row.turn.is_some() {
-            return Err(fastctx_storage::Error::new("a handover with a known turn is not an unknown submission"));
-        }
-        row.unresolved.get_or_insert(end);
-        Ok(())
-    })
-}
-fn update(
-    directory: &ConversationDir,
-    handover: &mut Handover,
-    preserving_time: bool,
-    apply: impl FnOnce(&mut Handover) -> fastctx_storage::Result<()> + Send + 'static,
-) -> io::Result<()> {
-    let key = handover.id.clone();
-    *handover = change(directory, 512, move |rows| {
-        let mut row = rows
-            .get::<Handover>("handovers", key.as_str())?
-            .ok_or_else(|| fastctx_storage::Error::new("handover is unavailable"))?;
-        apply(&mut row)?;
-        if preserving_time {
-            rows.put_retaining_time("handovers", key.as_str(), &row)?;
-        } else {
-            rows.put("handovers", key.as_str(), &row)?;
-        }
-        Ok(row)
-    })?;
-    Ok(())
+    handovers::update(directory, handover, handovers::Change::Unresolved(end))
 }
 pub fn input_turn(directory: &ConversationDir, id: &NoticeId) -> io::Result<Option<String>> {
-    read_rows(directory, |rows| {
-        Ok(rows.linked::<Handover>("handovers", id.as_str())?.into_iter().find_map(|row| row.turn))
-    })
+    read_rows(directory, |rows| handovers::input_state(rows, id).map(|state| state.0))
 }
 pub fn input_uncertainty(directory: &ConversationDir, id: &NoticeId) -> io::Result<Option<String>> {
-    read_rows(directory, |rows| {
-        Ok(rows
-            .linked::<Handover>("handovers", id.as_str())?
-            .into_iter()
-            .find_map(|row| row.unresolved.and_then(|end| end.reason)))
-    })
+    read_rows(directory, |rows| handovers::input_state(rows, id).map(|state| state.1))
+}
+pub(crate) fn covers_input(directory: &ConversationDir, id: &NoticeId) -> io::Result<bool> {
+    read_rows(directory, |rows| handovers::input_state(rows, id).map(|state| state.2))
 }
 
 /// Compatibility projection used by the record-family drill.
@@ -216,7 +181,7 @@ pub fn history(directory: &ConversationDir) -> io::Result<Vec<SessionEvent>> {
 }
 
 pub fn handover(directory: &ConversationDir, id: &NoticeId) -> io::Result<Option<Handover>> {
-    read_rows(directory, |rows| rows.get("handovers", id.as_str()))
+    read_rows(directory, |rows| handovers::get(rows, id))
 }
 
 /// The write time of the durable intent, retained when importing old files.
@@ -227,10 +192,7 @@ pub fn written_before(
 ) -> io::Result<bool> {
     let Some(before) = before else { return Ok(true) };
     let before = Timestamp::try_from(before).map_err(io::Error::other)?;
-    read_rows(directory, |rows| Ok(rows.modified("handovers", id.as_str())?.is_some_and(|at| at < before)))
-}
-pub fn handovers(directory: &ConversationDir) -> io::Result<Vec<Handover>> {
-    read_rows(directory, |rows| rows.all("handovers"))
+    Ok(handovers::modified(directory, id)?.is_some_and(|at| at < before))
 }
 pub fn terminal(directory: &ConversationDir, turn: &str) -> io::Result<Option<Finished>> {
     storage::initialize(directory)?;
@@ -269,10 +231,35 @@ pub(crate) fn outcome(directory: &ConversationDir, turn: &str) -> io::Result<Opt
 }
 pub(crate) async fn terminal_header(directory: &ConversationDir, turn: &str) -> io::Result<Option<terminals::Header>> {
     let (directory, turn) = (directory.clone(), turn.to_string());
-    tokio::task::spawn_blocking(move || {
+    fastctx_platform::task::spawn_blocking(move || {
         storage::initialize(&directory)?;
         crate::records::read(&directory, |rows| terminals::header(rows, &turn))
     })
     .await
     .map_err(io::Error::other)?
+}
+
+/// Run a conversation-local record operation on a thread allowed to wait for IO.
+pub(crate) async fn local<T: Send + 'static>(
+    directory: &ConversationDir,
+    action: impl FnOnce(&ConversationDir) -> io::Result<T> + Send + 'static,
+) -> io::Result<T> {
+    let directory = directory.clone();
+    fastctx_platform::task::spawn_blocking(move || action(&directory)).await.map_err(io::Error::other)?
+}
+
+/// Publish an input snapshot while retaining the caller's speech permit through
+/// the actual write, including cancellation of the awaiting task.
+pub(crate) async fn begin_held(
+    node: &crate::Node,
+    resident: &fastctx_types::ResidentId,
+    directory: &ConversationDir,
+    inputs: Vec<Pending>,
+) -> io::Result<Handover> {
+    let held = node.residents.keep_speaking(resident)?;
+    local(directory, move |directory| {
+        let _held = held;
+        begin(directory, inputs)
+    })
+    .await
 }

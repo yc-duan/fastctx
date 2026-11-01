@@ -905,7 +905,7 @@ async fn taken(
             pending.working = false;
         }
     }
-    let mut handover = crate::delivery::begin(&directory, kept)?;
+    let mut handover = crate::delivery::begin_held(node, resident, &directory, kept).await?;
     crate::speech::bind(node, resident, &directory, &mut handover, turn)
         .await
         .map_err(|error| std::io::Error::other(error.message))
@@ -926,12 +926,13 @@ async fn uncertain_inputs(
         return Ok(());
     }
     let directory = node.world.conversation(resident);
-    let known: HashSet<_> = crate::delivery::handovers(&directory)?
-        .into_iter()
-        .filter(|handover| handover.turn.is_some())
-        .flat_map(|handover| handover.inputs.into_iter().map(|input| input.delivery.id))
-        .collect();
-    let pending = crate::inbox::pending(&directory)?
+    let (pending, known) = crate::delivery::local(&directory, |directory| {
+        let pending = crate::inbox::pending(directory)?;
+        let known = crate::delivery::handovers::accepted_inputs(directory, &pending, false)?;
+        Ok((pending, known))
+    })
+    .await?;
+    let pending = pending
         .into_iter()
         .filter(|pending| {
             pending.session.as_deref().is_some_and(|bound| crate::inbox::same_session(bound, session))
@@ -957,7 +958,7 @@ async fn uncertain_inputs(
     if unresolved.is_empty() {
         return Ok(());
     }
-    let mut handover = crate::delivery::begin(&directory, unresolved)?;
+    let mut handover = crate::delivery::begin_held(node, resident, &directory, unresolved).await?;
     if let Some(turn) = handover.turn.clone() {
         crate::speech::bind(node, resident, &directory, &mut handover, &turn)
             .await
@@ -1461,7 +1462,8 @@ async fn failed_wake(
     }
     let why = format!("the Claude command failed before identifying a consuming turn: {error}");
     if let Some(pending) = crate::inbox::read(directory, id).map_err(|error| Failure::new(error.to_string()))? {
-        let mut handover = crate::delivery::begin(directory, vec![pending])
+        let mut handover = crate::delivery::begin_held(node, resident, directory, vec![pending])
+            .await
             .map_err(|error| Failure::new(format!("recording interrupted Claude startup: {error}")))?;
         crate::turns::unresolved(
             node,

@@ -57,8 +57,8 @@ pub async fn apply(node: &Arc<Node>, id: &ResidentId, mut event: SessionEvent) -
         Happened::Finished { turn, item } => crate::goals::questions::key(turn, item),
         _ => None,
     };
-    if let Some(key) = &question_key
-        && crate::delivery::has_event(&directory, key)?
+    if let Some(key) = question_key.clone()
+        && crate::delivery::local(&directory, move |directory| crate::delivery::has_event(directory, &key)).await?
     {
         return Ok(());
     }
@@ -101,7 +101,11 @@ pub async fn apply(node: &Arc<Node>, id: &ResidentId, mut event: SessionEvent) -
     if !matches!(event.happened, Happened::TurnStarted { .. }) {
         event = crate::turn_evidence::observe(node, id, event).await?;
     }
-    crate::run_facts::attach(&directory, &mut event)?;
+    event = crate::delivery::local(&directory, move |directory| {
+        crate::run_facts::attach(directory, &mut event)?;
+        Ok(event)
+    })
+    .await?;
     if let Happened::Changed { change: SessionChange::Status { waiting_for_user: Some(waiting), .. }, .. } =
         &event.happened
     {
@@ -212,7 +216,7 @@ pub async fn apply(node: &Arc<Node>, id: &ResidentId, mut event: SessionEvent) -
         _ => {
             let key = match &event.happened {
                 Happened::TurnStarted { turn } => {
-                    if crate::delivery::terminal(&directory, turn)?.is_some() {
+                    if crate::delivery::terminal_header(&directory, turn).await?.is_some() {
                         return Ok(());
                     }
                     node.residents.turn_started(&node.world, id, turn, event.at)?;
@@ -221,14 +225,19 @@ pub async fn apply(node: &Arc<Node>, id: &ResidentId, mut event: SessionEvent) -
                     event = crate::turn_evidence::observe(node, id, event).await?;
                     // What waited to ride with the next turn goes into this one.
                     let (node, id) = (node.clone(), id.clone());
-                    tokio::spawn(async move { crate::speech::along(&node, &id).await });
+                    fastctx_platform::task::spawn(async move { crate::speech::along(&node, &id).await });
                     key
                 }
                 Happened::Finished { .. } if question_key.is_some() => question_key.expect("known question"),
                 _ => serde_json::to_string(&event).map_err(std::io::Error::other)?,
             };
-            if crate::delivery::event(&directory, &key, &event)? {
-                node.watchers.publish(id, &event);
+            let (recorded, kept) = crate::delivery::local(&directory, move |directory| {
+                let recorded = crate::delivery::event(directory, &key, &event)?;
+                Ok((recorded, event))
+            })
+            .await?;
+            if recorded {
+                node.watchers.publish(id, &kept);
             }
             Ok(())
         }
@@ -314,7 +323,7 @@ async fn finish_at(
     if about.host.agent.as_str() == "codex" && end.facts.is_none() && !matches!(end.how, TurnHow::Completed) {
         // Recovery is exceptional; normal host completions carry their facts
         // without reading the conversation's accumulated event record.
-        let events = crate::delivery::history(&directory)?;
+        let events = crate::delivery::local(&directory, crate::delivery::history).await?;
         let initially_empty = about.world_started
             && !events
                 .iter()
@@ -332,10 +341,10 @@ async fn finish_at(
     crate::turn_evidence::freeze(node, id, turn, &mut end);
     let mut readers = node.residents.readers(id, turn);
     readers.extend_from_slice(additional);
-    let accepted: Vec<_> = crate::delivery::handovers(&directory)?
-        .into_iter()
-        .filter(|handover| handover.turn.as_deref() == Some(turn))
-        .collect();
+    let key = turn.to_string();
+    let accepted =
+        crate::delivery::local(&directory, move |directory| crate::delivery::handovers::for_turn(directory, &key))
+            .await?;
     for handover in &accepted {
         readers.extend(handover.inputs.iter().flat_map(|input| input.readers.iter().cloned()));
     }
@@ -355,7 +364,7 @@ async fn finish_at(
     }
     let (working, resident, identity, ending) = (node.clone(), id.clone(), about.clone(), end.clone());
     let accounting_turn = turn.to_string();
-    let usage = tokio::task::spawn_blocking(move || {
+    let usage = fastctx_platform::task::spawn_blocking(move || {
         crate::usage::terminal_record(
             &working,
             &resident,
@@ -434,7 +443,7 @@ async fn keep_answers(
         })
         .collect();
     let directory = directory.clone();
-    tokio::task::spawn_blocking(move || {
+    fastctx_platform::task::spawn_blocking(move || {
         for answer in &answers {
             crate::inbox::owe(&directory, answer)?;
         }
@@ -465,7 +474,14 @@ pub async fn unsettled(
     why: String,
 ) {
     let result = async {
-        let mut handover = crate::delivery::begin(directory, vec![pending])?;
+        let speaking = node.residents.speaking(id).ok_or_else(|| deleted(id))?;
+        let _speaking = speaking.lock().await;
+        let held = node.residents.keep_speaking(id)?;
+        let mut handover = crate::delivery::local(directory, move |directory| {
+            let _held = held;
+            crate::delivery::begin(directory, vec![pending])
+        })
+        .await?;
         unresolved(node, id, directory, &mut handover, how, why, None).await
     }
     .await;
@@ -485,16 +501,22 @@ pub async fn unresolved(
     why: String,
     error: Option<serde_json::Value>,
 ) -> std::io::Result<()> {
-    let accepted: std::collections::HashSet<_> = crate::delivery::handovers(directory)?
-        .into_iter()
-        .filter(|handover| handover.turn.is_some())
-        .flat_map(|handover| handover.inputs.into_iter().map(|input| input.delivery.id))
-        .collect();
+    let inputs = handover.inputs.clone();
+    let accepted = crate::delivery::local(directory, move |directory| {
+        crate::delivery::handovers::accepted_inputs(directory, &inputs, false)
+    })
+    .await?;
     if handover.inputs.iter().all(|input| accepted.contains(&input.delivery.id)) {
         return Ok(());
     }
     let end = TurnEnd { facts: None, error, how, reason: Some(why), duration_ms: None, last_message: None };
-    crate::delivery::unresolved(directory, handover, end)?;
+    let (mut kept, held) = (handover.clone(), node.residents.keep_speaking(id)?);
+    *handover = crate::delivery::local(directory, move |directory| {
+        let _held = held;
+        crate::delivery::unresolved(directory, &mut kept, end)?;
+        Ok(kept)
+    })
+    .await?;
     let Some((about, _)) = node.residents.about(id) else { return Ok(()) };
     let readers: std::collections::BTreeSet<Address> = handover
         .inputs
@@ -545,8 +567,10 @@ pub async fn unresolved(
             now.since = Timestamp::now();
         }
     })?;
+    let key = handover.id.clone();
+    crate::delivery::local(directory, move |directory| crate::delivery::handovers::complete(directory, &key)).await?;
     let (node, id, directory) = (node.clone(), id.clone(), directory.clone());
-    tokio::spawn(async move { pay(&node, &id, &directory).await });
+    fastctx_platform::task::spawn(async move { pay(&node, &id, &directory).await });
     Ok(())
 }
 
@@ -613,7 +637,7 @@ fn health_event(
         crate::inbox::owe(&directory, &Owing { to: reader, delivery: Delivery { id, at, notice } })?;
     }
     let (node, id) = (node.clone(), id.clone());
-    tokio::spawn(async move { pay(&node, &id, &directory).await });
+    fastctx_platform::task::spawn(async move { pay(&node, &id, &directory).await });
     Ok(())
 }
 
@@ -627,7 +651,7 @@ pub async fn recover(node: &Arc<Node>, unfinished: Vec<(ResidentId, String)>) {
         if let Err(error) = recover_one(node, &id, &turn).await {
             node.log.line(format_args!("recovering {id}'s turn {turn}; will retry: {error}"));
             let node = node.clone();
-            tokio::spawn(async move {
+            fastctx_platform::task::spawn(async move {
                 let (mut again, mut told) = (crate::again::Again::default(), error.to_string());
                 loop {
                     tokio::time::sleep(again.next().max(std::time::Duration::from_secs(1))).await;

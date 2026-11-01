@@ -44,11 +44,12 @@ pub(crate) fn run(root: &Path) -> std::result::Result<(), Box<dyn std::error::Er
     let database = Database::open(
         &world.path().join("node.sqlite3"),
         &format!(
-            "{}{}{}{}",
+            "{}{}{}{}{}",
             SCHEMA,
             crate::session_record::SCHEMA,
             crate::record_payloads::SCHEMA,
-            crate::delivery::terminals::SCHEMA
+            crate::delivery::terminals::SCHEMA,
+            crate::delivery::handovers::SCHEMA
         ),
     )?;
     crate::record_database::register(&world, &database);
@@ -74,16 +75,16 @@ pub(crate) fn run(root: &Path) -> std::result::Result<(), Box<dyn std::error::Er
 
     let mut original = crate::delivery::begin(&directory, vec![later.clone()])?;
     let mut stale = original.clone();
-    let before = read(&directory, |rows| rows.modified("handovers", original.id.as_str()))?;
+    let before = crate::delivery::handovers::modified(&directory, &original.id)?;
     crate::delivery::accept(&directory, &mut original, "turn-a")?;
     crate::delivery::refused(&directory, &mut stale)?;
     assert_eq!(stale.turn.as_deref(), Some("turn-a"), "stale refusal erased accepted turn");
     assert!(crate::delivery::accept(&directory, &mut stale, "turn-b").is_err());
     assert_eq!(crate::delivery::input_turn(&directory, &later.delivery.id)?.as_deref(), Some("turn-a"));
     let mut same = crate::delivery::begin(&directory, vec![pending(2)])?;
-    let modified = read(&directory, |rows| rows.modified("handovers", same.id.as_str()))?;
+    let modified = crate::delivery::handovers::modified(&directory, &same.id)?;
     crate::delivery::accept(&directory, &mut same, "turn-c")?;
-    assert_eq!(modified, read(&directory, |rows| rows.modified("handovers", same.id.as_str()))?);
+    assert_eq!(modified, crate::delivery::handovers::modified(&directory, &same.id)?);
     assert!(before.is_some());
 
     let barrier = Arc::new(Barrier::new(4));

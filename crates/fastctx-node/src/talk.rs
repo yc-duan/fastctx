@@ -319,8 +319,10 @@ async fn read_here(node: &Arc<Node>, resident: &ResidentId) -> Result<HistoryRea
     }
     let mut events = node.watchers.watch(resident);
     let directory = node.world.conversation(resident);
-    let recorded = |directory: &ConversationDir| {
-        crate::delivery::history(directory).map_err(|error| Failure::new(error.to_string()))
+    let recorded = async |directory: &ConversationDir| {
+        crate::delivery::local(directory, crate::delivery::history)
+            .await
+            .map_err(|error| Failure::new(error.to_string()))
     };
     let owner = Address { machine: node.machine(), resident: resident.clone() };
     let mut unread = false;
@@ -335,7 +337,7 @@ async fn read_here(node: &Arc<Node>, resident: &ResidentId) -> Result<HistoryRea
             codex.flush_events(thread).await.map_err(Failure::new)?;
             // Reverted turns remain in the World's audit record, but no
             // longer belong to the host's current conversation.
-            let recorded = crate::codex::watch::recorded(recorded(&directory)?, &history);
+            let recorded = crate::codex::watch::recorded(recorded(&directory).await?, &history);
             // A request can arrive and resolve while history is loading.
             // Only currently unanswered requests may enter a new view; the
             // subscription already covers changes after this snapshot.
@@ -345,7 +347,7 @@ async fn read_here(node: &Arc<Node>, resident: &ResidentId) -> Result<HistoryRea
         // Claude Code's own record of the session, placed in the turns the
         // World saw, which the World's record says.
         _ if about.host.agent.as_str() == "claude" => {
-            let mut recorded = recorded(&directory)?;
+            let mut recorded = recorded(&directory).await?;
             let removed: std::collections::HashSet<_> = recorded
                 .iter()
                 .flat_map(|event| match &event.happened {
@@ -361,34 +363,39 @@ async fn read_here(node: &Arc<Node>, resident: &ResidentId) -> Result<HistoryRea
             unread = missing;
             (recorded, Some(hosted))
         }
-        _ => (recorded(&directory)?, None),
+        _ => (recorded(&directory).await?, None),
     };
-    let mut hosted = hosted;
-    if let Some(events) = &mut hosted {
-        let projection =
-            crate::context::input::Projection::open(&directory).map_err(|error| Failure::new(error.to_string()))?;
-        for event in events {
-            projection.restore(event).map_err(|error| Failure::new(error.to_string()))?;
-        }
-    }
-    let receipts = crate::attachments::delivered::of(node, resident);
-    let mut history = history(recorded, hosted, about.host.agent.as_str(), &receipts);
-    // A change of history tells a view already open to read again; the
-    // history read here is already what follows it. Kept in a view, an
-    // interface that reads it as news would read again on every event.
-    history.retain(|event| {
-        !matches!(
-            &event.happened,
-            fastctx_types::session::Happened::Changed {
-                change: fastctx_types::session::SessionChange::HistoryChanged
-                    | fastctx_types::session::SessionChange::HistoryCut { .. },
-                ..
+    let (working, resident_id, agent) = (node.clone(), resident.clone(), about.host.agent.clone());
+    let history = crate::delivery::local(&directory, move |directory| {
+        let mut hosted = hosted;
+        if let Some(events) = &mut hosted {
+            let projection = crate::context::input::Projection::open(directory)?;
+            for event in events {
+                projection.restore(event)?;
             }
-        )
-    });
-    for event in &mut history {
-        crate::run_facts::attach(&directory, event).map_err(|error| Failure::new(error.to_string()))?;
-    }
+        }
+        let receipts = crate::attachments::delivered::of(&working, &resident_id);
+        let mut history = history(recorded, hosted, agent.as_str(), &receipts);
+        // A change of history tells a view already open to read again; the
+        // history read here is already what follows it. Kept in a view, an
+        // interface that reads it as news would read again on every event.
+        history.retain(|event| {
+            !matches!(
+                &event.happened,
+                fastctx_types::session::Happened::Changed {
+                    change: fastctx_types::session::SessionChange::HistoryChanged
+                        | fastctx_types::session::SessionChange::HistoryCut { .. },
+                    ..
+                }
+            )
+        });
+        for event in &mut history {
+            crate::run_facts::attach(directory, event)?;
+        }
+        Ok(history)
+    })
+    .await
+    .map_err(|error| Failure::new(error.to_string()))?;
     let pending = match &about.session {
         Some(thread) if about.world_managed() && about.host.agent.as_str() == "codex" => {
             node.codex.of(node, &about)?.requests(thread)

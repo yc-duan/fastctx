@@ -697,6 +697,11 @@ pub async fn run_prepared(
         )?;
         fastctx_storage::versions::apply(
             db,
+            "node.handovers",
+            &[fastctx_storage::versions::Migration { version: 1, sql: delivery::handovers::SCHEMA }],
+        )?;
+        fastctx_storage::versions::apply(
+            db,
             "node.terminals",
             &[fastctx_storage::versions::Migration { version: 1, sql: delivery::terminals::SCHEMA }],
         )?;

@@ -215,16 +215,6 @@ impl Rows<'_> {
         Ok(())
     }
 
-    /// Replace an auxiliary receipt without changing the original intent time.
-    pub(crate) fn put_retaining_time<T: Serialize>(&self, family: &str, key: &str, value: &T) -> Result<()> {
-        let modified = self.modified(family, key)?;
-        self.put(family, key, value)?;
-        if let Some(modified) = modified {
-            self.connection.execute("UPDATE conversation_records SET modified=?4 WHERE conversation=?1 AND family=?2 AND identity=?3 AND modified!=?4",(self.conversation,family,key,modified.to_string()))?;
-        }
-        Ok(())
-    }
-
     pub(crate) fn delete(&self, family: &str, key: &str) -> Result<bool> {
         let changed = self.connection.execute(
             "DELETE FROM conversation_records WHERE conversation=?1 AND family=?2 AND identity=?3",
@@ -265,22 +255,6 @@ impl Rows<'_> {
             )
             .optional()?;
         value.map(|value| value.parse().map_err(|error: jiff::Error| Error::new(error.to_string()))).transpose()
-    }
-
-    pub(crate) fn link(&self, family: &str, member: &str, key: &str) -> Result<()> {
-        self.connection.execute(
-            "INSERT OR IGNORE INTO conversation_record_links(conversation,family,member,identity) VALUES(?1,?2,?3,?4)",
-            (self.conversation, family, member, key),
-        )?;
-        Ok(())
-    }
-
-    pub(crate) fn linked<T: DeserializeOwned>(&self, family: &str, member: &str) -> Result<Vec<T>> {
-        let mut query=self.connection.prepare_cached("SELECT r.body FROM conversation_record_links l JOIN conversation_records r ON r.conversation=l.conversation AND r.family=l.family AND r.identity=l.identity WHERE l.conversation=?1 AND l.family=?2 AND l.member=?3 ORDER BY l.identity")?;
-        query
-            .query_map((self.conversation, family, member), |row| row.get::<_, Vec<u8>>(0))?
-            .map(|row| decode(&row?))
-            .collect()
     }
 
     pub(crate) fn all<T: DeserializeOwned>(&self, family: &str) -> Result<Vec<T>> {

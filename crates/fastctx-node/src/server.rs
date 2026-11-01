@@ -926,8 +926,9 @@ async fn taken(
     }
     for (turn, inputs) in by_turn {
         if let Some(turn) = turn {
-            let mut handover =
-                crate::delivery::begin(&directory, inputs).map_err(|error| Failure::new(error.to_string()))?;
+            let mut handover = crate::delivery::begin_held(node, &resident, &directory, inputs)
+                .await
+                .map_err(|error| Failure::new(error.to_string()))?;
             crate::speech::bind(node, &resident, &directory, &mut handover, &turn).await?;
         } else {
             // A host that exposes no turn identity can acknowledge transport

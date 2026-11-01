@@ -41,31 +41,12 @@ pub(super) fn initialize(directory: &ConversationDir) -> io::Result<()> {
             push(Source::new(key.into(), path.to_path_buf(), serde_json::to_vec(&value)?)?)
         })
     })?;
-    records::ensure_each(directory, "handover-index", |_| {
-        let mut after = 0;
-        loop {
-            let page = records::read(directory, |rows| rows.page::<Handover>("handovers", after, 16))?;
-            let Some(last) = page.last() else { break };
-            after = last.0;
-            for (_, row) in page {
-                for inputs in row.inputs.chunks(16) {
-                    let (key, inputs) = (row.id.clone(), inputs.to_vec());
-                    records::write_at(directory, fastctx_storage::Priority::Background, 1024, move |rows| {
-                        for input in inputs {
-                            rows.link("handovers", input.delivery.id.as_str(), key.as_str())?;
-                        }
-                        Ok(())
-                    })?;
-                }
-            }
-        }
-        Ok(())
-    })?;
-    super::migrate_terminals::run(directory)
+    super::migrate_terminals::run(directory)?;
+    super::migrate_handovers::run(directory)
 }
 
 fn files(directory: &Path, mut apply: impl FnMut(&Path) -> io::Result<()>) -> io::Result<()> {
-    let entries = match std::fs::read_dir(directory) {
+    let entries = match fastctx_platform::disk::read_dir(directory) {
         Ok(entries) => entries,
         Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(()),
         Err(e) => return Err(e),
@@ -81,7 +62,7 @@ fn files(directory: &Path, mut apply: impl FnMut(&Path) -> io::Result<()>) -> io
     Ok(())
 }
 fn read<T: serde::de::DeserializeOwned>(path: &Path) -> io::Result<T> {
-    serde_json::from_slice(&std::fs::read(path)?).map_err(io::Error::other)
+    serde_json::from_slice(&fastctx_platform::disk::read(path)?).map_err(io::Error::other)
 }
 fn optional<T: serde::de::DeserializeOwned>(path: &Path) -> io::Result<Option<T>> {
     match read(path) {

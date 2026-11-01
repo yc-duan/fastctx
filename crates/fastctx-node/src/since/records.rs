@@ -389,7 +389,7 @@ impl Scan<'_> {
             }
             Err(error) => self.issue(&source, error),
         }
-        match crate::delivery::handovers(directory) {
+        match crate::delivery::handovers::uncertain(directory, self.cutoff) {
             Ok(rows) => {
                 for handover in rows {
                     if let Some(end) = handover.unresolved {

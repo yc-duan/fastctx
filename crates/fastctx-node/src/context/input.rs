@@ -43,7 +43,7 @@ impl<'a> Projection<'a> {
         }
         let Some(id) = client.strip_prefix(fastctx_hosts::codex::WORLD_CLIENT) else { return Ok(None) };
         let Ok(id) = id.parse::<NoticeId>() else { return Ok(None) };
-        Ok(crate::delivery::handover(self.directory, &id)?.and_then(|row| row.context_input))
+        crate::delivery::handovers::stamp(self.directory, &id)
     }
     pub(crate) fn restore(&self, event: &mut SessionEvent) -> io::Result<()> {
         let Happened::Heard { text, message: Some(message), .. } = &mut event.happened else { return Ok(()) };
