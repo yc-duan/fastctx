@@ -17,14 +17,39 @@ pub(crate) fn run(root: &Path) -> Result<(), Box<dyn std::error::Error>> {
     service.start()?;
     let map = room.path().join("drill-map.json");
     sql::legacy::map::<u64>(&room, "gather-map", &map)?;
+    let action = fastctx_types::residents::Action {
+        turn: None,
+        at: "2026-01-01T00:00:00Z".parse()?,
+        machine: "gpu-2".parse()?,
+        hand: "run".into(),
+        what: "same observation".into(),
+        result: "exit 0".into(),
+    };
+    let line = serde_json::to_string(&action)? + "\n";
+    fastctx_platform::disk::write(room.actions(), line.repeat(2))?;
+    crate::residents::activity::prepare(&room, "actions")?;
+    assert_eq!(sql::read(&room, |rows| rows.all::<fastctx_types::residents::Action>("actions"))?.len(), 2);
+
     crate::session_record::prepare(&room)?;
     crate::run_facts::storage::database(&room)?;
     sql::write_at(&room, Priority::Normal, 64, |rows| rows.put("gather-map", "present", &42u64))?;
+    let counted = room.path().join("counted.json");
+    fastctx_platform::disk::write(&counted, serde_json::to_vec(&vec![true; 64])?)?;
+    let interrupted =
+        sql::ensure_file(&room, "counted-actions", counted.clone(), |path, push| counted_rows(path, push, 32));
+    assert!(interrupted.is_err_and(|error| error.kind() == io::ErrorKind::WouldBlock));
+    assert_eq!(sql::read(&room, |rows| rows.all::<bool>("counted-actions"))?.len(), 32);
     drop(service);
     drop(database);
     let old = world.earlier().directory(None, "codex-a1b2c3@GPU-2");
     fastctx_platform::disk::create_dir_all(old.join("session-events"))?;
     fastctx_platform::disk::write(old.join("drill-map.json"), br#"{"new":7}"#)?;
+    let mut newer = action.clone();
+    newer.what = "new observation".into();
+    fastctx_platform::disk::write(
+        old.join("actions"),
+        format!("{}{}{}\n", line, line, serde_json::to_string(&newer)?),
+    )?;
     let event = SessionEvent {
         at: "2026-01-01T00:00:00Z".parse()?,
         happened: Happened::Changed {
@@ -43,6 +68,10 @@ pub(crate) fn run(root: &Path) -> Result<(), Box<dyn std::error::Error>> {
     let gathered = gather(&world)?;
     assert!(gathered.problems.is_empty(), "{:?}", gathered.problems);
     assert!(!old.join("drill-map.json").exists());
+    let artifact = room.path().join("out/conversations/user-folder");
+    fastctx_platform::disk::create_dir_all(&artifact)?;
+    records::moving(&artifact.join("piece.txt"))?;
+    assert!(!artifact.join(".record-generation").exists(), "an artifact name was mistaken for a conversation root");
     let database = crate::storage_drill::reopen(&world)?;
     let service = crate::record_database::register(&world, &database)?;
     assert!(
@@ -55,6 +84,18 @@ pub(crate) fn run(root: &Path) -> Result<(), Box<dyn std::error::Error>> {
     assert_eq!(sql::read(&room, |rows| rows.get::<u64>("gather-map", "present"))?, Some(42));
     assert_eq!(crate::session_record::history(&room)?.len(), 1);
     assert_eq!(crate::session_record::latest(&room)?, 400);
+    sql::ensure_file(&room, "counted-actions", counted, |path, push| counted_rows(path, push, usize::MAX))?;
+    assert_eq!(
+        sql::read(&room, |rows| rows.all::<bool>("counted-actions"))?.len(),
+        64,
+        "gather reset changed a partial source's occurrence sequence"
+    );
+    crate::residents::activity::prepare(&room, "actions")?;
+    assert_eq!(
+        sql::read(&room, |rows| rows.all::<fastctx_types::residents::Action>("actions"))?.len(),
+        3,
+        "gather lost an occurrence or duplicated an older copy"
+    );
     let canonical = room.path().join("legacy/0/jobs/j-a1b2c3.json");
     let earlier = old.join("jobs/j-a1b2c3.json");
     assert_eq!(crate::record_database::item(&earlier)?.1, crate::record_database::item(&canonical)?.1);
@@ -158,5 +199,16 @@ pub(crate) fn run(root: &Path) -> Result<(), Box<dyn std::error::Error>> {
     println!(
         "gather: completed imports reopened; late rows and old sequence retained; uppercase guest and live/finished aliases share job families and sequence; queue origin and sibling routing preserved"
     );
+    Ok(())
+}
+
+fn counted_rows(path: &Path, push: &mut dyn FnMut(sql::Source) -> io::Result<()>, stop: usize) -> io::Result<()> {
+    let values: Vec<bool> = serde_json::from_slice(&fastctx_platform::disk::read(path)?)?;
+    for (index, value) in values.into_iter().enumerate() {
+        push(sql::Source::new("same-action".into(), path.to_path_buf(), serde_json::to_vec(&value)?)?.counted())?;
+        if index + 1 == stop {
+            return Err(io::Error::new(io::ErrorKind::WouldBlock, "interrupted after a committed source batch"));
+        }
+    }
     Ok(())
 }

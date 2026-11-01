@@ -49,6 +49,7 @@ pub(crate) fn prepare(directory: &ConversationDir, family: &'static str) -> io::
                 "actions" => {
                     let row: Action = serde_json::from_slice(&bytes)?;
                     Source::new(format!("legacy-{}", digest(&row)?), path.to_path_buf(), serde_json::to_vec(&row)?)?
+                        .counted()
                         .ordered(row.at)
                 }
                 "messages" => {

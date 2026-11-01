@@ -53,7 +53,11 @@ pub(crate) fn process(
     }
     files::complete(
         context,
-        FileComplete { row: FileRow { path: key, signature, ordinal: 1 }, owner: context.conversation.clone(), damage },
+        FileComplete {
+            row: FileRow { path: key, signature, ordinal: 1, incarnation: String::new() },
+            owner: context.conversation.clone(),
+            damage,
+        },
     )?;
     files::archive_ready(context)
 }

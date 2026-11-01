@@ -1,4 +1,5 @@
 //! Request paths enqueue owned decoders; only migration workers import records.
+mod occurrences;
 mod source;
 use super::*;
 use crate::record_migration::{self as migration, files::Context, scheduler};
@@ -124,9 +125,12 @@ fn commit(context: &Context, sources: Vec<LegacyRow>) -> io::Result<()> {
             ON CONFLICT(conversation,family,identity) DO UPDATE SET body=excluded.body,modified=excluded.modified,arrival=excluded.arrival,category=excluded.category,expires=excluded.expires WHERE ?9 AND conversation_records.position>COALESCE((SELECT boundary FROM conversation_record_gathering WHERE conversation=?1),-1)")?;
         let mut read = db.prepare_cached("SELECT body,modified,arrival,category,expires FROM conversation_records WHERE conversation=?1 AND family=?2 AND identity=?3")?;
         let mut files = std::collections::HashMap::new();
-        for row in sources {
+        for mut row in sources {
             let owner = row.conversation.as_deref().unwrap_or(&conversation);
             if crate::conversation_store::deleted(db, owner)? { continue; }
+            let owner=owner.to_string();
+            occurrences::assign(db, &owner, &family, &mut row)?;
+            let owner=owner.as_str();
             let repeated = if let Some((hash, deduplicate)) = &row.content_key {
                 let inserted = db.execute("INSERT OR IGNORE INTO migration_content_keys(conversation,family,hash) VALUES(?1,?2,?3)", (owner, &family, hash))?;
                 *deduplicate && inserted == 0
@@ -140,9 +144,9 @@ fn commit(context: &Context, sources: Vec<LegacyRow>) -> io::Result<()> {
             if let Some(file) = row.file { files.insert(file.path.clone(), (owner.to_string(), file)); }
         }
         for (owner, file) in files.into_values() {
-            db.execute("INSERT INTO migration_files(conversation,family,path,signature,through) VALUES(?1,?2,?3,?4,?5)
+            db.execute("INSERT INTO migration_files(conversation,family,path,signature,through,incarnation) VALUES(?1,?2,?3,?4,?5,?6)
                 ON CONFLICT(family,path) DO UPDATE SET conversation=excluded.conversation,through=max(through,excluded.through)",
-                (owner, &family, file.path, encode(&file.signature)?, file.ordinal))?;
+                (owner, &family, file.path, encode(&file.signature)?, file.ordinal, file.incarnation))?;
         }
         db.execute_batch("RELEASE legacy_record_batch")?;
         Ok(None)

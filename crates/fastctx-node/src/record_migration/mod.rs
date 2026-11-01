@@ -11,12 +11,12 @@ pub(crate) use scheduler::Service;
 
 pub(crate) const SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS migration_content_keys (
-    conversation TEXT NOT NULL, family TEXT NOT NULL, hash TEXT NOT NULL,
+    conversation TEXT NOT NULL, family TEXT NOT NULL, hash TEXT NOT NULL, occurrences INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY(conversation,family,hash)
 ) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS migration_files (
     conversation TEXT NOT NULL, family TEXT NOT NULL, path TEXT NOT NULL,
-    signature BLOB NOT NULL, through INTEGER NOT NULL DEFAULT 0,
+    signature BLOB NOT NULL, through INTEGER NOT NULL DEFAULT 0, incarnation TEXT NOT NULL DEFAULT '',
     verified INTEGER NOT NULL DEFAULT 0, archived INTEGER NOT NULL DEFAULT 0, damage TEXT,
     PRIMARY KEY(family,path)
 ) WITHOUT ROWID;

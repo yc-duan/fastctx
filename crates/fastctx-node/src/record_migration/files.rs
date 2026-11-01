@@ -22,6 +22,7 @@ pub(crate) struct FileRow {
     pub path: String,
     pub signature: archive::Signature,
     pub ordinal: i64,
+    pub incarnation: String,
 }
 #[derive(Clone)]
 pub(crate) struct FileComplete {
@@ -70,7 +71,7 @@ pub(crate) fn file(
         .read_background_now(|db| {
             Ok(db
                 .query_row(
-                    "SELECT signature,through,verified,conversation FROM migration_files WHERE family=?1 AND path=?2",
+                    "SELECT signature,through,verified,conversation,incarnation FROM migration_files WHERE family=?1 AND path=?2",
                     (&context.family, &key),
                     |row| {
                         Ok((
@@ -78,13 +79,14 @@ pub(crate) fn file(
                             row.get::<_, i64>(1)?,
                             row.get::<_, bool>(2)?,
                             row.get::<_, String>(3)?,
+                            row.get::<_, String>(4)?,
                         ))
                     },
                 )
                 .optional()?)
         })
         .map_err(io::Error::other)?;
-    if prior.as_ref().is_some_and(|(_, through, verified, _)| *verified && *through > 0) {
+    if prior.as_ref().is_some_and(|(_, through, verified, _, _)| *verified && *through > 0) {
         return Ok(());
     }
     let signature = match archive::fingerprint(path) {
@@ -94,13 +96,21 @@ pub(crate) fn file(
             return archive::damaged(&context.world, &context.conversation, &context.family, path, &error.to_string());
         }
     };
-    let through = if let Some((bytes, through, _, owner)) = prior {
+    let incarnation = match prior.as_ref() {
+        Some((_, _, _, _, incarnation)) => incarnation.clone(),
+        None => {
+            let mut bytes = [0u8; 16];
+            getrandom::fill(&mut bytes).map_err(io::Error::other)?;
+            format!("{:032x}", u128::from_be_bytes(bytes))
+        }
+    };
+    let through = if let Some((bytes, through, _, owner, _)) = prior {
         let old: archive::Signature = serde_json::from_slice(&bytes)?;
         if old != signature {
             return complete(
                 &context,
                 FileComplete {
-                    row: FileRow { path: key, signature, ordinal: through },
+                    row: FileRow { path: key, signature, ordinal: through, incarnation: incarnation.clone() },
                     owner,
                     damage: Some("legacy source changed after a committed batch".into()),
                 },
@@ -132,7 +142,12 @@ pub(crate) fn file(
         if ordinal <= through {
             return Ok(());
         }
-        source.set_file(FileRow { path: key.clone(), signature: signature.clone(), ordinal });
+        source.set_file(FileRow {
+            path: key.clone(),
+            signature: signature.clone(),
+            ordinal,
+            incarnation: incarnation.clone(),
+        });
         match push(source) {
             Ok(()) => Ok(()),
             Err(error) => {
@@ -159,7 +174,7 @@ pub(crate) fn file(
     if damage.is_none() && archive::fingerprint(path)? != signature {
         return Err(io::Error::new(io::ErrorKind::WouldBlock, "a legacy source changed while it was decoded"));
     }
-    let mut complete = FileComplete { row: FileRow { path: key, signature, ordinal }, owner, damage };
+    let mut complete = FileComplete { row: FileRow { path: key, signature, ordinal, incarnation }, owner, damage };
     match push(Source::File(complete.clone())) {
         Err(error) if error.kind() == io::ErrorKind::InvalidData && !storage_error(&error) => {
             complete.damage = Some(error.to_string());
@@ -176,9 +191,9 @@ pub(crate) fn complete(context: &Context, file: FileComplete) -> io::Result<()> 
     let family = context.family.clone();
     let signature = serde_json::to_vec(&file.row.signature)?;
     context.database.write_now_at(scheduler::priority(), signature.len() + file.row.path.len(), move |db| {
-        db.execute("INSERT INTO migration_files(conversation,family,path,signature,through,verified,damage) VALUES(?1,?2,?3,?4,?5,1,?6)
-            ON CONFLICT(family,path) DO UPDATE SET conversation=excluded.conversation,signature=excluded.signature,through=excluded.through,verified=1,damage=excluded.damage",
-            (&file.owner, family, file.row.path, signature, file.row.ordinal, file.damage))?;
+        db.execute("INSERT INTO migration_files(conversation,family,path,signature,through,verified,damage,incarnation) VALUES(?1,?2,?3,?4,?5,1,?6,?7)
+            ON CONFLICT(family,path) DO UPDATE SET conversation=excluded.conversation,signature=excluded.signature,through=excluded.through,verified=1,damage=excluded.damage,incarnation=excluded.incarnation",
+            (&file.owner, family, file.row.path, signature, file.row.ordinal, file.damage, file.row.incarnation))?;
         Ok(())
     }).map_err(io::Error::other)
 }

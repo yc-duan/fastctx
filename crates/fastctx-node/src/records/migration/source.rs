@@ -18,6 +18,7 @@ pub(crate) struct LegacyRow {
     pub file: Option<FileRow>,
     pub discard: bool,
     pub content_key: Option<(String, bool)>,
+    pub counted: bool,
 }
 impl Source {
     fn row(&mut self) -> &mut LegacyRow {
@@ -34,6 +35,10 @@ impl Source {
     }
     pub(crate) fn set_file(&mut self, file: FileRow) {
         self.row().file = Some(file);
+    }
+    pub(crate) fn counted(mut self) -> Self {
+        self.row().counted = true;
+        self
     }
     pub(crate) fn content_key(mut self, deduplicate: bool) -> Self {
         use sha2::{Digest, Sha256};
@@ -89,6 +94,7 @@ impl Source {
             file: None,
             discard: false,
             content_key: None,
+            counted: false,
         }))
     }
 }

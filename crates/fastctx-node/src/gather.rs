@@ -86,7 +86,7 @@ const PLAN: &str = ".plan.json";
 /// conversation that cannot be gathered is reported and left as it was; the
 /// next start tries it again.
 pub fn gather(world: &WorldDir) -> io::Result<Gathered> {
-    records::begin();
+    records::begin(world);
     let mut gathered = Gathered::default();
     let earlier = world.earlier();
     let conversations = world.conversations();

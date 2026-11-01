@@ -12,22 +12,27 @@ pub(crate) const SCHEMA: &str = "CREATE TABLE IF NOT EXISTS conversation_record_
     conversation TEXT PRIMARY KEY, generation TEXT NOT NULL, boundary INTEGER NOT NULL,
     complete INTEGER NOT NULL DEFAULT 0
 ) WITHOUT ROWID;";
-thread_local! { static TOUCHED: RefCell<BTreeSet<PathBuf>> = const { RefCell::new(BTreeSet::new()) }; }
+thread_local! {
+    static TOUCHED: RefCell<BTreeSet<PathBuf>> = const { RefCell::new(BTreeSet::new()) };
+    static WORLD: RefCell<Option<PathBuf>> = const { RefCell::new(None) };
+}
 
-pub(super) fn begin() {
+pub(super) fn begin(world: &WorldDir) {
+    WORLD.with_borrow_mut(|current| *current = Some(world.path().to_path_buf()));
     TOUCHED.with_borrow_mut(BTreeSet::clear);
 }
 pub(super) fn moving(destination: &Path) -> io::Result<()> {
-    let Some(room) = destination
-        .ancestors()
-        .find(|path| path.parent().and_then(Path::file_name).is_some_and(|name| name == "conversations"))
-    else {
+    let Some(room) = WORLD.with_borrow(|world| {
+        let conversations = world.as_ref()?.join("conversations");
+        let first = destination.strip_prefix(&conversations).ok()?.components().next()?;
+        Some(conversations.join(first.as_os_str()))
+    }) else {
         return Ok(());
     };
-    if TOUCHED.with_borrow(|rooms| rooms.contains(room)) {
+    if TOUCHED.with_borrow(|rooms| rooms.contains(&room)) {
         return Ok(());
     }
-    ensure_private_dir(room)?;
+    ensure_private_dir(&room)?;
     publish(&room.join(GENERATION), crate::speech::new_id("gather").as_str().as_bytes(), Permissions::Private)?;
     TOUCHED.with_borrow_mut(|rooms| rooms.insert(room.to_path_buf()));
     Ok(())
