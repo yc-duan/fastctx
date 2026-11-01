@@ -16,6 +16,7 @@ pub(super) const MACHINE_TABLES: &[&str] = &[
     "book_deeds",
     "book_touches",
     "book_hour",
+    "book_deeds_began",
 ];
 
 #[derive(Clone, Debug)]

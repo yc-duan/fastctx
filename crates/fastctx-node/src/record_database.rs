@@ -125,6 +125,16 @@ pub(crate) fn rejected_origin(path: &std::path::Path) -> bool {
     OPEN.lock().expect("record database registry").values().any(|entry| entry.layout.rejected_origin(path))
 }
 
+/// The release before the World's format marker opens this database on every
+/// start and creates this index there; a table in its place makes that release
+/// stop where it opens, instead of serving a World whose files have moved here.
+const OLDER_RELEASES: &str = "
+DROP INDEX IF EXISTS book_deeds_began;
+CREATE TABLE IF NOT EXISTS book_deeds_began(why TEXT NOT NULL);
+INSERT INTO book_deeds_began(why) SELECT 'Fastctx 1.0.1-beta.13 and earlier kept these records in files; this World keeps them here'
+WHERE NOT EXISTS(SELECT 1 FROM book_deeds_began);
+";
+
 /// Opens the node schema on a blocking thread before registering its writer.
 pub(crate) fn open(world: &WorldDir) -> Database {
     fastctx_storage::Database::open_or_unavailable(&world.path().join("node.sqlite3"), crate::composer::SCHEMA, |db| {
@@ -161,6 +171,11 @@ pub(crate) fn open(world: &WorldDir) -> Database {
             db,
             "node.goal-projection",
             &[fastctx_storage::versions::Migration { version: 1, sql: crate::goals::SCHEMA }],
+        )?;
+        fastctx_storage::versions::apply(
+            db,
+            "node.older-releases",
+            &[fastctx_storage::versions::Migration { version: 1, sql: OLDER_RELEASES }],
         )?;
         crate::conversation_store::schema::initialize(db)?;
         crate::conversation_store::transfer::prepare(db, world)

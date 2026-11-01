@@ -176,6 +176,7 @@ mod watch;
 mod watchdog;
 mod who;
 mod world;
+mod world_format;
 mod world_program;
 mod write;
 mod write_command;
@@ -627,6 +628,11 @@ pub async fn run_prepared(
             let tail = log.clone();
             fastctx_platform::scene::set_tail(move || tail.recent());
             fastctx_platform::task::watch("node");
+            // Before anything moves into the World; a newer World is refused here.
+            if let Err(error) = world_format::claim(&world) {
+                log.line(format_args!("{error}"));
+                return Err(anyhow::Error::from(error).context("opening the World"));
+            }
             let machine = machine::names(&world)?;
             log.line(format_args!("node {} starting as {}", env!("CARGO_PKG_VERSION"), machine.name));
             let lifetime = lifetime::inspect(supervised)
@@ -1026,11 +1032,13 @@ pub use conversation_store::transfer::status::ConversationImport;
 
 /// Lists durable import progress and rejected offers without modifying the node.
 pub fn conversation_imports(root: &std::path::Path) -> std::io::Result<Vec<ConversationImport>> {
+    world_format::check(&WorldDir::under(root))?;
     conversation_store::transfer::status::list(root)
 }
 
 /// Exports every conversation-owned table into its directory while the node is
 /// stopped. Copy that directory with its host records before starting the target.
 pub fn export_conversation(root: &std::path::Path, conversation: &str) -> std::io::Result<std::path::PathBuf> {
+    world_format::check(&WorldDir::under(root))?;
     conversation_store::transfer::exporting::export(root, conversation)
 }
