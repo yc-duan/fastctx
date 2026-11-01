@@ -60,22 +60,24 @@ pub(crate) fn held_archive(hub: &Hub, version: &str, archive: &str) -> Option<st
 /// downloads it; none while it does not, and when `bring` it is brought in
 /// then, so that a line made a few minutes later finds it.
 pub(crate) async fn held_digest(hub: &Arc<Hub>, version: &str, archive: &str, bring: bool) -> Option<String> {
-    let Some(path) = held_archive(hub, version, archive) else {
-        if bring && let Some(package) = fastctx_types::kernel::held_package(archive) {
-            bring_in(hub, version.to_owned(), package.to_owned());
-        }
-        return None;
-    };
-    let hashed = fastctx_platform::task::spawn_blocking(move || -> std::io::Result<String> {
+    let (holder, held, named) = (hub.clone(), version.to_owned(), archive.to_owned());
+    let hashed = fastctx_platform::task::spawn_blocking(move || -> std::io::Result<Option<String>> {
         use sha2::Digest as _;
+        let Some(path) = held_archive(&holder, &held, &named) else { return Ok(None) };
         let mut file = fastctx_platform::disk::open(path)?;
         let mut hash = sha2::Sha256::new();
         std::io::copy(&mut file, &mut hash)?;
-        Ok(format!("{:x}", hash.finalize()))
+        Ok(Some(format!("{:x}", hash.finalize())))
     })
     .await;
     match hashed {
-        Ok(Ok(digest)) => Some(digest),
+        Ok(Ok(Some(digest))) => Some(digest),
+        Ok(Ok(None)) => {
+            if bring && let Some(package) = fastctx_types::kernel::held_package(archive) {
+                bring_in(hub, version.to_owned(), package.to_owned());
+            }
+            None
+        }
         Ok(Err(error)) => {
             hub.log.line(format_args!("reading the Windows archive of {version}: {error}"));
             None

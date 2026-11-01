@@ -139,9 +139,9 @@ pub(super) async fn request(
         }
         tokio::task::yield_now().await;
     }
-    super::prefetch(hub);
+    hub.blocking(|hub| super::prefetch(&hub)).await;
     super::tell(hub, None);
-    super::prune(hub);
+    hub.blocking(|hub| super::prune(&hub)).await;
     Ok(Told::NetworkUpdates { reply: ViewReply::Scheduled { results } })
 }
 

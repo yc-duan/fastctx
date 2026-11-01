@@ -38,11 +38,17 @@ pub(crate) async fn run(
 ) -> anyhow::Result<Next> {
     let why = format!("the hub moved to {} by the move {}", outgoing.to, outgoing.id);
     if matches!(outgoing.old, Some(OldPlace::Deleting { .. } | OldPlace::Deleted { .. })) {
-        super::retire(dir, &why, &log, leave);
+        super::retire(dir, &why, &log, leave).await;
         return Ok(Next::Again(None));
     }
-    let hub: HubFile = read(&crate::store::Store::hub_file(dir))?;
-    let pin = CertPin::of(&fastctx_platform::disk::read(Store::certificate_file(dir))?);
+    let (hub, pin) = {
+        let dir = dir.to_path_buf();
+        fastctx_platform::task::spawn_blocking(move || -> std::io::Result<(HubFile, CertPin)> {
+            let hub: HubFile = read(&crate::store::Store::hub_file(&dir))?;
+            Ok((hub, CertPin::of(&fastctx_platform::disk::read(Store::certificate_file(&dir))?)))
+        })
+        .await??
+    };
     let (stopper, stopped) = watch::channel(false);
     let forwarder = if matches!(outgoing.old, Some(OldPlace::Forwarding) | None) {
         let kept = crate::bind(kept, hub.listen).await?;
@@ -69,7 +75,7 @@ pub(crate) async fn run(
                     if let Some(forwarder) = forwarder {
                         forwarder.abort();
                     }
-                    super::retire(dir, &why, &log, leave);
+                    super::retire(dir, &why, &log, leave).await;
                     return Ok(Next::Again(None));
                 }
                 Err(reason) => {
@@ -128,7 +134,7 @@ async fn talk(
                 if record.remaining != Some((machines, devices)) {
                     log.line(format_args!("{machines} machines and {devices} devices still come through here"));
                     record.remaining = Some((machines, devices));
-                    keep(dir, record, log);
+                    keep(dir, record, log).await;
                 }
             }
             ToOld::Stop { early } => {
@@ -138,16 +144,20 @@ async fn talk(
                         if early { "the super administrator stopped this place" } else { "every machine followed" }
                     ));
                     record.old = Some(OldPlace::Stopped { at: Timestamp::now(), early });
-                    keep(dir, record, log);
+                    keep(dir, record, log).await;
                     stopper.send_replace(true);
                 }
             }
             ToOld::Delete => {
                 record.old = Some(OldPlace::Deleting { at: Timestamp::now() });
-                keep(dir, record, log);
+                keep(dir, record, log).await;
                 stopper.send_replace(true);
                 // The data goes before the new hub hears it went.
-                super::clear(dir, &format!("the hub moved to {}; its old data here was deleted", record.to))
+                let (place, why) =
+                    (dir.to_path_buf(), format!("the hub moved to {}; its old data here was deleted", record.to));
+                fastctx_platform::task::spawn_blocking(move || super::clear(&place, &why))
+                    .await
+                    .map_err(|error| format!("deleting the old data: {error}"))?
                     .map_err(|error| format!("deleting the old data: {error}"))?;
                 frames::send(&mut sink, &ToNew::Deleted).await?;
                 let _ = sink.close().await;
@@ -159,8 +169,14 @@ async fn talk(
     }
 }
 
-fn keep(dir: &Path, record: &Outgoing, log: &Log) {
-    let written = json(record).and_then(|bytes| publish(&dir.join(OUTGOING), &bytes, Permissions::Private));
+async fn keep(dir: &Path, record: &Outgoing, log: &Log) {
+    let place = dir.join(OUTGOING);
+    let written = match json(record) {
+        Ok(bytes) => fastctx_platform::task::spawn_blocking(move || publish(&place, &bytes, Permissions::Private))
+            .await
+            .unwrap_or_else(|error| Err(std::io::Error::other(error))),
+        Err(error) => Err(error),
+    };
     if let Err(error) = written {
         log.line(format_args!("recording how this place stands: {error}"));
     }

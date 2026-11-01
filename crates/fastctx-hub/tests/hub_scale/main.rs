@@ -37,7 +37,7 @@ fn main() -> anyhow::Result<()> {
     let mut threads = tokio::runtime::Builder::new_multi_thread();
     threads.worker_threads(if args.first().is_some_and(|arg| arg == "hub") { 2 } else { 4 }).max_blocking_threads(32);
     if args.first().is_some_and(|arg| arg == "hub") {
-        let leave = fastctx_hub::Leave { remove_service: Box::new(|_| Ok(String::new())) };
+        let leave = fastctx_hub::Leave { remove_service: std::sync::Arc::new(|_| Ok(String::new())) };
         return fastctx_hub::run(Path::new(&args[1]), leave, threads);
     }
     let runtime = threads.enable_all().build()?;

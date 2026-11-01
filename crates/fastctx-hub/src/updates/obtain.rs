@@ -122,7 +122,7 @@ pub(super) async fn obtain(
     progress: Option<tokio::sync::watch::Sender<fastctx_types::update::PackageProgress>>,
 ) -> Result<u64, String> {
     let cache = hub.updates.lock().expect("never poisoned").cache.clone();
-    if let Some(size) = size_of(&cache, &held)? {
+    if let Some(size) = size_of(&cache, &held).await? {
         return Ok(size);
     }
     let (answer, answered) = oneshot::channel();
@@ -189,12 +189,28 @@ async fn expire(hub: Arc<Hub>, held: Held, id: u64) {
     }
 }
 
-fn size_of(cache: &fastctx_update::Cache, held: &Held) -> Result<Option<u64>, String> {
-    cache.path(&held.version, &held.target)?;
-    Ok(cache
-        .get(&held.version, &held.target)
-        .and_then(|path| fastctx_platform::disk::metadata(path).ok())
-        .map(|meta| meta.len()))
+/// How large the package is where the hub keeps it, if it is whole there,
+/// looked up on a blocking thread.
+async fn size_of(cache: &fastctx_update::Cache, held: &Held) -> Result<Option<u64>, String> {
+    let (cache, held) = (cache.clone(), held.clone());
+    fastctx_platform::task::spawn_blocking(move || {
+        cache.path(&held.version, &held.target)?;
+        Ok(cache
+            .get(&held.version, &held.target)
+            .and_then(|path| fastctx_platform::disk::metadata(path).ok())
+            .map(|meta| meta.len()))
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+/// Where an attempt at the package is received, its directory made on a
+/// blocking thread.
+async fn attempt_path(cache: &fastctx_update::Cache, held: &Held, id: u64) -> Result<std::path::PathBuf, String> {
+    let (cache, held) = (cache.clone(), held.clone());
+    fastctx_platform::task::spawn_blocking(move || cache.attempt(&held.version, &held.target, id))
+        .await
+        .map_err(|error| error.to_string())?
 }
 
 async fn bring(hub: &Arc<Hub>, held: &Held) -> Result<u64, String> {
@@ -202,7 +218,7 @@ async fn bring(hub: &Arc<Hub>, held: &Held) -> Result<u64, String> {
         let updates = hub.updates.lock().expect("never poisoned");
         (updates.manifest(&held.version), updates.cache.clone(), updates.intake.clone())
     };
-    if let Some(size) = size_of(&cache, held)? {
+    if let Some(size) = size_of(&cache, held).await? {
         return Ok(size);
     }
     // One placed by hand is handed out from where it is.
@@ -228,7 +244,7 @@ async fn bring(hub: &Arc<Hub>, held: &Held) -> Result<u64, String> {
     let mut failures = Vec::new();
     let mut look = tokio::time::interval(Duration::from_secs(1));
     let size = loop {
-        if let Some(size) = size_of(&cache, held)? {
+        if let Some(size) = size_of(&cache, held).await? {
             break Some(size);
         }
         let now = Instant::now();
@@ -343,7 +359,7 @@ async fn bring(hub: &Arc<Hub>, held: &Held) -> Result<u64, String> {
         return Ok(size);
     }
     // Whatever was said, what one brought may be in place now.
-    if let Some(size) = size_of(&cache, held)? {
+    if let Some(size) = size_of(&cache, held).await? {
         return Ok(size);
     }
     if failures.is_empty() {
@@ -408,7 +424,7 @@ fn by_the_hub(
     let trying = attempt.clone();
     fastctx_platform::task::spawn(async move {
         let outcome = async {
-            let incoming = cache.attempt(&held.version, &held.target, id)?;
+            let incoming = attempt_path(&cache, &held, id).await?;
             let counting = trying.clone();
             let mut heard = move |brought, total| {
                 counting.brought.store(brought, Ordering::Relaxed);
@@ -580,7 +596,7 @@ async fn settle(hub: &Hub, cache: &fastctx_update::Cache, held: &Held, try_: Goi
         }
     }
     if attempt.is_over()
-        && let Ok(left) = cache.attempt(&held.version, &held.target, attempt.id)
+        && let Ok(left) = attempt_path(cache, held, attempt.id).await
     {
         super::cleanup::temporary(hub, &left).await;
     }

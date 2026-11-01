@@ -434,9 +434,9 @@ pub(crate) async fn request(
             ViewReply::Scheduled { results }
         }
     };
-    super::prefetch(hub);
+    hub.blocking(|hub| super::prefetch(&hub)).await;
     super::tell(hub, None);
-    super::prune(hub);
+    hub.blocking(|hub| super::prune(&hub)).await;
     Ok(Told::NetworkUpdates { reply })
 }
 

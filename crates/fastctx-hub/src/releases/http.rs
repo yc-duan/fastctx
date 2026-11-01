@@ -195,10 +195,13 @@ async fn respond(
     let releases = hub.releases.clone();
     // A Windows or Mac archive placed by hand comes first, as Linux ones do;
     // else the one held among the update packages, checked when it came.
-    let held = crate::updates::held_archive(&hub, &version, &name);
+    let holder = hub.clone();
     let opened = fastctx_platform::task::spawn_blocking(move || match releases.file(&version, &name) {
-        Err(error) if error.kind() == io::ErrorKind::NotFound && held.is_some() => {
-            fastctx_platform::disk::open(held.expect("checked above"))
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            match crate::updates::held_archive(&holder, &version, &name) {
+                Some(held) => fastctx_platform::disk::open(held),
+                None => Err(error),
+            }
         }
         opened => opened,
     })

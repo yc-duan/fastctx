@@ -80,14 +80,17 @@ pub(crate) async fn serve(
         let updates = hub.updates.lock().expect("never poisoned");
         (updates.cache.clone(), updates.handing.clone())
     };
-    let kept = cache.path(&version, &target).ok().filter(|path| fastctx_platform::disk::is_file(path));
     let held = Held { version: version.clone(), target: target.clone() };
-    let placed = match &kept {
-        Some(_) => None,
-        None => {
-            let hub = hub.clone();
-            fastctx_platform::task::spawn_blocking(move || super::placed(&hub, &held)).await.ok().flatten()
-        }
+    let (kept, placed) = {
+        let (hub, cache) = (hub.clone(), cache.clone());
+        fastctx_platform::task::spawn_blocking(move || {
+            match cache.path(&held.version, &held.target).ok().filter(|path| fastctx_platform::disk::is_file(path)) {
+                Some(path) => (Some(path), None),
+                None => (None, super::placed(&hub, &held)),
+            }
+        })
+        .await
+        .unwrap_or((None, None))
     };
     if kept.is_none() && placed.is_none() {
         let reason = format!("the hub does not hold {target} of {version}");
@@ -248,7 +251,12 @@ async fn take(hub: &Arc<Hub>, mut socket: Socket, held: &Held, attempt: &Arc<Att
         (updates.manifest(&held.version), updates.cache.clone(), updates.intake.clone())
     };
     let manifest = manifest.ok_or_else(|| format!("the hub no longer knows the release {}", held.version))?;
-    let incoming = cache.attempt(&held.version, &held.target, attempt.id)?;
+    let incoming = {
+        let (cache, version, target, id) = (cache.clone(), held.version.clone(), held.target.clone(), attempt.id);
+        fastctx_platform::task::spawn_blocking(move || cache.attempt(&version, &target, id))
+            .await
+            .map_err(|error| error.to_string())??
+    };
     tokio::time::timeout(SILENCE, send(&mut socket, &Down::Paired))
         .await
         .map_err(|_| format!("the member took nothing for {} s", SILENCE.as_secs()))??;
@@ -338,7 +346,9 @@ pub(super) async fn take_in(
     match checked {
         Ok(Ok(())) => {}
         Ok(Err(why)) => {
-            let _ = fastctx_platform::disk::remove_file(incoming);
+            let incoming = incoming.to_path_buf();
+            let _ =
+                fastctx_platform::task::spawn_blocking(move || fastctx_platform::disk::remove_file(&incoming)).await;
             return Err(why);
         }
         Err(error) => return Err(error.to_string()),
@@ -361,7 +371,7 @@ pub(super) async fn take_in(
     attempt.race.finished.notify_waiters();
     super::obtain::cancel_helpers(hub, &attempt.race, attempt.id);
     hub.log.line(format_args!("holds {target} of {} now, {size} bytes", manifest.version));
-    super::prune(hub);
+    hub.blocking(|hub| super::prune(&hub)).await;
     super::tell(hub, None);
     Ok(size)
 }

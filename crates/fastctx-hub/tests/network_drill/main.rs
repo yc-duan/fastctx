@@ -89,7 +89,7 @@ fn main() -> ExitCode {
 /// Serves the hub in `dir` until it is killed, its threads in their roles as
 /// the command runs it.
 fn serve(dir: &Path) -> ExitCode {
-    let leave = fastctx_hub::Leave { remove_service: Box::new(|_| Ok(String::new())) };
+    let leave = fastctx_hub::Leave { remove_service: std::sync::Arc::new(|_| Ok(String::new())) };
     match fastctx_hub::run(dir, leave, tokio::runtime::Builder::new_multi_thread()) {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {

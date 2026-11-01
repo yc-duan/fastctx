@@ -844,7 +844,7 @@ pub fn hub(command: HubCommand) -> anyhow::Result<()> {
             if let Err(error) = fastctx_platform::limits::raise_open_files() {
                 eprintln!("fastctx hub: the limit on open files stays as it was: {error}");
             }
-            let leave = fastctx_hub::Leave { remove_service: Box::new(remove_hub_service) };
+            let leave = fastctx_hub::Leave { remove_service: std::sync::Arc::new(remove_hub_service) };
             fastctx_hub::run(&dir, leave, tokio::runtime::Builder::new_multi_thread())?;
         }
         HubCommand::Arrive { dir: chosen } => {

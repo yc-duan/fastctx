@@ -424,7 +424,7 @@ pub(crate) fn prefetch(hub: &Arc<Hub>) {
 /// nobody to ask for it again, and may reach nothing but the hub.
 async fn again(hub: Arc<Hub>) {
     tokio::time::sleep(PREFETCH_AGAIN).await;
-    prefetch(&hub);
+    hub.blocking(|hub| prefetch(&hub)).await;
 }
 
 const PREFETCH_AGAIN: Duration = Duration::from_secs(5 * 60);

@@ -229,7 +229,7 @@ pub fn describe(dir: &Path) -> anyhow::Result<(HubFile, CertPin)> {
 /// machine: a hub that moved away, once its old data is deleted, has its
 /// system service removed, and says what came of that.
 pub struct Leave {
-    pub remove_service: Box<RemoveService>,
+    pub remove_service: Arc<RemoveService>,
 }
 
 /// Removes the system service of the hub kept in the directory given, and
@@ -743,7 +743,8 @@ pub fn run(dir: &Path, leave: Leave, mut threads: tokio::runtime::Builder) -> an
 /// Runs the hub kept in `dir` until the process is stopped: serving, or
 /// standing by for a move here, or forwarding after a move away.
 pub async fn serve(dir: &Path, leave: Leave) -> anyhow::Result<()> {
-    let log = Arc::new(log::Log::open(&dir.join("hub.log"))?);
+    let place = dir.join("hub.log");
+    let log = Arc::new(fastctx_platform::task::spawn_blocking(move || log::Log::open(&place)).await??);
     // What went wrong, written down while it lasts, and how long tasks wait
     // for a thread (`specs/world-engine.md`, 量与告警).
     fastctx_platform::scene::set_place(dir.join("scenes"));
@@ -776,7 +777,7 @@ pub async fn serve(dir: &Path, leave: Leave) -> anyhow::Result<()> {
         match next {
             Next::Stop => return Ok(()),
             Next::Again(listener) => kept = listener,
-            Next::Retire(why) => moving::retire(dir, &why, &log, &leave),
+            Next::Retire(why) => moving::retire(dir, &why, &log, &leave).await,
         }
     }
 }

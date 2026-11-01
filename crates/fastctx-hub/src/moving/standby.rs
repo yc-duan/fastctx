@@ -153,10 +153,17 @@ pub(crate) async fn run(
     log: Arc<Log>,
     leave: &Leave,
 ) -> anyhow::Result<Next> {
-    let hub: HubFile = read(&crate::store::Store::hub_file(dir))?;
-    let certificate = fastctx_net::tls::HubCertificate {
-        certificate: fastctx_platform::disk::read(Store::certificate_file(dir))?,
-        key: fastctx_platform::disk::read(Store::key_file(dir))?,
+    let (hub, certificate) = {
+        let dir = dir.to_path_buf();
+        fastctx_platform::task::spawn_blocking(move || -> std::io::Result<_> {
+            let hub: HubFile = read(&crate::store::Store::hub_file(&dir))?;
+            let certificate = fastctx_net::tls::HubCertificate {
+                certificate: fastctx_platform::disk::read(Store::certificate_file(&dir))?,
+                key: fastctx_platform::disk::read(Store::key_file(&dir))?,
+            };
+            Ok((hub, certificate))
+        })
+        .await??
     };
     let tls = crate::releases::http::Tls::of(&certificate).map_err(anyhow::Error::msg)?;
     let kept = crate::bind(kept, hub.listen).await?;
@@ -203,7 +210,7 @@ pub(crate) async fn run(
                 }
                 Ok(Done::CalledOff) | Err(_) => {
                     drop(kept);
-                    super::retire(dir, "the move that was to bring the hub here was called off", &log, leave);
+                    super::retire(dir, "the move that was to bring the hub here was called off", &log, leave).await;
                     return Ok(Next::Again(None));
                 }
             },
@@ -255,7 +262,7 @@ pub(crate) async fn connected(
         // confirmation did not come here.
         HandoverRole::Old if arriving.committed => {
             standby.log.line(format_args!("{peer}: the old place connected; it recorded the switch"));
-            match confirm(&standby) {
+            match confirmed(&standby).await {
                 Ok(()) => {
                     refuse(&mut socket, Refusal::Broken { reason: "this hub serves now; connect again".to_string() })
                         .await;
@@ -274,7 +281,7 @@ pub(crate) async fn connected(
 }
 
 /// Answers the old hub until it confirms the switch or calls the move off.
-async fn sync(standby: &Standby, socket: &mut Socket) -> Result<(), String> {
+async fn sync(standby: &Arc<Standby>, socket: &mut Socket) -> Result<(), String> {
     let dir = standby.dir.clone();
     loop {
         match frames::frame::<_, ToNew>(socket).await? {
@@ -318,7 +325,12 @@ async fn sync(standby: &Standby, socket: &mut Socket) -> Result<(), String> {
                     frames::send(socket, &ToOld::Refused { reason: reason.clone() }).await?;
                     return Err(reason);
                 }
-                if let Err(error) = commit(standby, self_registration, &record) {
+                let (holder, taken) = (standby.clone(), record.clone());
+                let committed =
+                    fastctx_platform::task::spawn_blocking(move || commit(&holder, self_registration, &taken))
+                        .await
+                        .unwrap_or_else(|error| Err(error.to_string()));
+                if let Err(error) = committed {
                     frames::send(socket, &ToOld::Refused { reason: error.clone() }).await?;
                     return Err(error);
                 }
@@ -326,7 +338,7 @@ async fn sync(standby: &Standby, socket: &mut Socket) -> Result<(), String> {
                 frames::send(socket, &ToOld::Committed).await?;
             }
             ToNew::Confirm => {
-                if let Err(error) = confirm(standby) {
+                if let Err(error) = confirmed(standby).await {
                     frames::send(socket, &ToOld::Refused { reason: error.clone() }).await?;
                     return Err(error);
                 }
@@ -422,6 +434,14 @@ fn commit(standby: &Standby, self_registration: bool, record: &frames::Record) -
     written.map_err(|error| format!("taking the records over: {error}"))?;
     *standby.arriving.lock().expect("never poisoned") = arriving;
     Ok(())
+}
+
+/// `confirm` on a blocking thread.
+async fn confirmed(standby: &Arc<Standby>) -> Result<(), String> {
+    let standby = standby.clone();
+    fastctx_platform::task::spawn_blocking(move || confirm(&standby))
+        .await
+        .unwrap_or_else(|error| Err(error.to_string()))
 }
 
 /// The old hub recorded the switch: nothing stands by any more.

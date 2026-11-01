@@ -245,16 +245,23 @@ struct Retired {
 }
 
 /// Deletes the hub's data in `dir`, all but its log, leaves a note why,
-/// and has its system service removed. The process then waits idle, as a
-/// service whose removal failed keeps starting it.
-pub(crate) fn retire(dir: &Path, why: &str, log: &crate::log::Log, leave: &crate::Leave) {
-    match clear(dir, why) {
-        Ok(()) => log.line(format_args!("the hub's data here is deleted: {why}")),
-        Err(error) => log.line(format_args!("deleting the hub's data here: {error}")),
-    }
-    match (leave.remove_service)(dir) {
-        Ok(said) => log.line(format_args!("{said}")),
-        Err(error) => log.line(format_args!("removing the hub's service: {error}")),
+/// and has its system service removed, on a blocking thread. The process
+/// then waits idle, as a service whose removal failed keeps starting it.
+pub(crate) async fn retire(dir: &Path, why: &str, log: &std::sync::Arc<crate::log::Log>, leave: &crate::Leave) {
+    let (dir, why, said, remove) = (dir.to_path_buf(), why.to_string(), log.clone(), leave.remove_service.clone());
+    let done = fastctx_platform::task::spawn_blocking(move || {
+        match clear(&dir, &why) {
+            Ok(()) => said.line(format_args!("the hub's data here is deleted: {why}")),
+            Err(error) => said.line(format_args!("deleting the hub's data here: {error}")),
+        }
+        match remove(&dir) {
+            Ok(removed) => said.line(format_args!("{removed}")),
+            Err(error) => said.line(format_args!("removing the hub's service: {error}")),
+        }
+    })
+    .await;
+    if let Err(error) = done {
+        log.line(format_args!("retiring the hub here: {error}"));
     }
 }
 

@@ -19,10 +19,10 @@ pub(crate) async fn replaced() -> String {
     if std::os::unix::process::parent_id() == 1
         && let Ok(path) = std::env::current_exe()
     {
-        let mut seen = shape(&path);
+        let mut seen = shape(&path).await;
         loop {
             tokio::time::sleep(LOOK).await;
-            let now = shape(&path);
+            let now = shape(&path).await;
             if now == seen {
                 continue;
             }
@@ -38,11 +38,18 @@ pub(crate) async fn replaced() -> String {
     std::future::pending().await
 }
 
-/// What tells a replaced file from the one there before without reading it.
+/// What tells a replaced file from the one there before without reading it,
+/// looked up on a blocking thread.
 #[cfg(unix)]
-fn shape(path: &std::path::Path) -> Option<(u64, std::time::SystemTime)> {
-    let metadata = fastctx_platform::disk::metadata(path).ok()?;
-    Some((metadata.len(), metadata.modified().ok()?))
+async fn shape(path: &std::path::Path) -> Option<(u64, std::time::SystemTime)> {
+    let path = path.to_path_buf();
+    fastctx_platform::task::spawn_blocking(move || {
+        let metadata = fastctx_platform::disk::metadata(&path).ok()?;
+        Some((metadata.len(), metadata.modified().ok()?))
+    })
+    .await
+    .ok()
+    .flatten()
 }
 
 /// How long the program is given to say what it is.
