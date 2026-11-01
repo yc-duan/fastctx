@@ -93,7 +93,98 @@ pub(super) async fn exercise(
     );
     old_node.kill()?;
     old_node.wait()?;
+    upgrade(&old, world, &resident, earlier).await
+}
+
+/// The earlier machine updated in place, as its user installing this release
+/// does: its World moves forward though killed along the way, answers as it
+/// did, and the earlier release installed again stops instead of misreading it.
+async fn upgrade(old: &Path, world: &World, resident: &ResidentId, earlier: &Path) -> Result<()> {
+    let before = history(world, resident, "old-pc").await?;
+    let installed = old.join("bin/fastctx");
+    let this = KERNEL.get().expect("kernel path");
+    replace(&installed, this)?;
+    // Killed outright, the first time early, the others while it moves the
+    // earlier records in.
+    for after in [300, 900, 1700] {
+        let mut node = start_with(old, &installed)?;
+        tokio::time::sleep(Duration::from_millis(after)).await;
+        node.kill()?;
+        node.wait()?;
+    }
+    let mut node = start_with(old, &installed)?;
+    record(
+        "this release served the earlier machine's World, killed three times along its move",
+        online(old).await,
+        json!(null),
+    );
+    let after = history(world, resident, "old-pc").await?;
+    record(
+        "the earlier conversation's history reads the same after the move",
+        before == after,
+        json!({"before": before.len(), "after": after.len(), "first difference": before.iter().zip(&after).position(|(a, b)| a != b)}),
+    );
+    node.kill()?;
+    node.wait()?;
+    let format = std::fs::read_to_string(old.join("world/format.json")).unwrap_or_default();
+    record("the World says the format this release wrote", format.contains("\"format\": 2"), json!(format));
+
+    replace(&installed, earlier)?;
+    let mut refused = start_with(old, &installed)?;
+    let mut ended = None;
+    for _ in 0..240 {
+        if let Some(status) = refused.try_wait()? {
+            ended = Some(status);
+            break;
+        }
+        pause().await;
+    }
+    if ended.is_none() {
+        refused.kill()?;
+        refused.wait()?;
+    }
+    let said = std::fs::read_to_string(old.join("stdout.log")).unwrap_or_default();
+    let tail: String = said.lines().rev().take(3).collect::<Vec<_>>().join(" | ");
+    record(
+        "the earlier release installed again stopped where it opens the moved World's database",
+        ended.is_some_and(|status| !status.success()) && said.contains("book_deeds_began"),
+        json!(tail),
+    );
+
+    replace(&installed, this)?;
+    let mut node = start_with(old, &installed)?;
+    let served = online(old).await;
+    let again = served && history(world, resident, "old-pc").await? == after;
+    record("and this release served it again as before", again, json!(null));
+    node.kill()?;
+    node.wait()?;
     Ok(())
+}
+
+/// Puts `program` where the World runs its node from.
+fn replace(installed: &Path, program: &Path) -> Result<()> {
+    match std::fs::remove_file(installed) {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error.into()),
+    }
+    std::fs::copy(program, installed)?;
+    Ok(())
+}
+
+/// The conversation's history on `machine`, each event as it reads without its time.
+async fn history(world: &World, id: &ResidentId, machine: &str) -> Result<Vec<Value>> {
+    let mut watch = world.watch(id.clone(), Some(machine.parse()?)).await?;
+    let events = tokio::time::timeout(Duration::from_secs(40), async {
+        while let Some(event) = watch.next().await? {
+            if let Watched::History { events } = event {
+                return Ok(events);
+            }
+        }
+        anyhow::bail!("the history stream ended before its snapshot")
+    })
+    .await??;
+    Ok(events.into_iter().map(|event| serde_json::to_value(event.happened)).collect::<Result<_, _>>()?)
 }
 
 /// The facts of the last run the conversation on `machine` finished, as its
