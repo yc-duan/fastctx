@@ -209,7 +209,7 @@ async fn upgrade(
     record(
         "the earlier conversation's history lost and changed nothing in the move",
         missing.is_null(),
-        json!({"lost": missing, "added": added(&before, &after)}),
+        json!({"lost": missing, "added": added(&recorded(&before), &recorded(&after))}),
     );
     record(
         "and its project's history, which the earlier release took as entries only, is there to read",
@@ -251,7 +251,7 @@ async fn upgrade(
         "and this release served it again as before",
         served && again == after,
         if served {
-            json!({"lost": lost(&recorded(&after), &recorded(&again)), "added": added(&after, &again)})
+            json!({"lost": lost(&recorded(&after), &recorded(&again)), "added": added(&recorded(&after), &recorded(&again))})
         } else {
             seen
         },
@@ -303,67 +303,62 @@ fn recorded(events: &[Value]) -> Vec<Value> {
 }
 
 /// Where `after` first lost or changed something `before` said, if it did:
-/// a field `before` gives the same in `after`, a list as long, each item
-/// alike. What `after` says that `before` left unsaid is not a loss.
+/// each event of `before` is found in `after`, in order, saying all it said
+/// the same (a list as long, each item alike), and more if it says more.
+/// Events between are what happened since, as a node started again and its
+/// host's thread taken up again.
 fn lost(before: &[Value], after: &[Value]) -> Value {
-    fn at(a: &Value, b: &Value, path: String) -> Value {
-        match (a, b) {
-            (Value::Null, _) => json!(null),
-            (Value::Object(a), Value::Object(b)) => {
-                for (key, value) in a {
-                    let found = at(value, b.get(key).unwrap_or(&Value::Null), format!("{path}.{key}"));
-                    if !found.is_null() {
-                        return found;
-                    }
-                }
-                json!(null)
-            }
-            (Value::Array(a), Value::Array(b)) if a.len() == b.len() => {
-                for (index, (x, y)) in a.iter().zip(b).enumerate() {
-                    let found = at(x, y, format!("{path}[{index}]"));
-                    if !found.is_null() {
-                        return found;
-                    }
-                }
-                json!(null)
-            }
-            _ if a == b => json!(null),
-            _ => {
-                let cut = |value: &Value| value.to_string().chars().take(300).collect::<String>();
-                json!({"at": path, "before": cut(a), "after": cut(b)})
-            }
+    let mut later = after.iter().enumerate();
+    for (index, event) in before.iter().enumerate() {
+        if !later.any(|(_, candidate)| missing(event, candidate, String::new()).is_null()) {
+            let nearest = after
+                .get(index)
+                .map_or(json!("no event there"), |candidate| missing(event, candidate, format!("[{index}]")));
+            return json!({"event": index, "not found after, nearest": nearest});
         }
     }
-    if before.len() != after.len() {
-        return json!({"events before": before.len(), "after": after.len()});
-    }
-    at(&Value::Array(before.to_vec()), &Value::Array(after.to_vec()), String::new())
+    json!(null)
 }
 
-/// Where `after` says more than `before` did, as paths.
-fn added(before: &[Value], after: &[Value]) -> Value {
-    fn at(a: &Value, b: &Value, path: String, found: &mut Vec<String>) {
-        match (a, b) {
-            (Value::Null, Value::Null) => {}
-            (Value::Null, _) => found.push(path),
-            (Value::Object(a), Value::Object(b)) => {
-                for (key, value) in b {
-                    at(a.get(key).unwrap_or(&Value::Null), value, format!("{path}.{key}"), found);
-                }
-            }
-            (Value::Array(a), Value::Array(b)) if a.len() == b.len() => {
-                for (index, (x, y)) in a.iter().zip(b).enumerate() {
-                    at(x, y, format!("{path}[{index}]"), found);
-                }
-            }
-            _ => {}
+/// What `a` says that `b` does not say the same, as its path; null when `b`
+/// says it all.
+fn missing(a: &Value, b: &Value, path: String) -> Value {
+    match (a, b) {
+        (Value::Null, _) => json!(null),
+        (Value::Object(a), Value::Object(b)) => a
+            .iter()
+            .map(|(key, value)| missing(value, b.get(key).unwrap_or(&Value::Null), format!("{path}.{key}")))
+            .find(|found| !found.is_null())
+            .unwrap_or(json!(null)),
+        (Value::Array(a), Value::Array(b)) if a.len() == b.len() => a
+            .iter()
+            .zip(b)
+            .enumerate()
+            .map(|(index, (x, y))| missing(x, y, format!("{path}[{index}]")))
+            .find(|found| !found.is_null())
+            .unwrap_or(json!(null)),
+        _ if a == b => json!(null),
+        _ => {
+            let cut = |value: &Value| value.to_string().chars().take(300).collect::<String>();
+            json!({"at": path, "before": cut(a), "after": cut(b)})
         }
     }
-    let mut found = Vec::new();
-    for (index, (a, b)) in before.iter().zip(after).enumerate() {
-        at(a, b, format!("[{index}]"), &mut found);
+}
+
+/// The kinds of the events `after` has beyond those of `before`, found as
+/// `lost` finds them.
+fn added(before: &[Value], after: &[Value]) -> Value {
+    let mut new = Vec::new();
+    let mut earlier = before.iter().peekable();
+    for event in after {
+        match earlier.peek() {
+            Some(old) if missing(old, event, String::new()).is_null() => {
+                earlier.next();
+            }
+            _ => new.push(event.get("event").cloned().unwrap_or(Value::Null)),
+        }
     }
-    json!(found)
+    json!(new)
 }
 
 /// Puts `program` where the World runs its node from.
