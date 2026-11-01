@@ -150,9 +150,10 @@ async fn delete_inner(node: &Arc<Node>, name: &str) -> Result<u64, Stop> {
         )));
     }
     let bytes = measured.records.bytes + measured.output.bytes + measured.host.bytes;
-    // Its activity here goes with it, and nothing told of it later is taken.
-    crate::activity_book::seal(node, name).map_err(|error| Stop::Failed(format!("sealing its activity: {error}")))?;
     let Kind::Home(id) = &kind else {
+        // Its activity here goes with it, and nothing told of it later is taken.
+        crate::activity_book::seal(node, name)
+            .map_err(|error| Stop::Failed(format!("sealing its activity: {error}")))?;
         let (retained, database_bytes) = remove_places(node, &measured).await?;
         return Ok(bytes.saturating_sub(retained).saturating_add(database_bytes));
     };
@@ -189,6 +190,8 @@ async fn delete_inner(node: &Arc<Node>, name: &str) -> Result<u64, Stop> {
                     .map_err(|error| Stop::Failed(error.to_string()))?;
             }
         }
+        crate::activity_book::seal(node, name)
+            .map_err(|error| Stop::Failed(format!("sealing its activity: {error}")))?;
         let (retained, database_bytes) = remove_places(node, &measured).await?;
         return Ok(bytes.saturating_sub(retained + host_kept).saturating_add(database_bytes));
     };
@@ -238,6 +241,8 @@ async fn delete_inner(node: &Arc<Node>, name: &str) -> Result<u64, Stop> {
         fastctx_platform::Permissions::Private,
     )
     .map_err(|error| Stop::Failed(format!("recording that it is being deleted: {error}")))?;
+    // Its activity here goes with it, and nothing told of it later is taken.
+    crate::activity_book::seal(node, name).map_err(|error| Stop::Failed(format!("sealing its activity: {error}")))?;
     let completed = node.world.conversation(id).path().join("host-deleted");
     let mut host_kept = 0;
     if !completed.try_exists().map_err(|error| Stop::Failed(error.to_string()))? {
