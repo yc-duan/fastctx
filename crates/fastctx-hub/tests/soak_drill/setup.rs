@@ -60,10 +60,13 @@ pub(crate) struct Config {
     pub watchers: usize,
     /// Phones watching and asking from afar.
     pub devices: usize,
-    /// The slice the node under test runs in, and the disk its World is on,
-    /// as `MAJOR:MINOR`.
+    /// The slice the node under test runs in, and the disk its World is on:
+    /// its device, which systemd's limits take (it takes no `MAJOR:MINOR`,
+    /// and says nothing of it), and its number, which the cgroup's own
+    /// limits name it by.
     pub slice: String,
     pub disk: String,
+    pub number: String,
     /// The disk's operations a second as a small server's is.
     pub iops: u64,
 }
@@ -341,7 +344,8 @@ impl Soak {
         })
     }
 
-    /// Sets the slice's limit on the disk's operations a second.
+    /// Sets the slice's limit on the disk's operations a second, and reads
+    /// it back from the cgroup: systemd says it set a limit it did not.
     pub fn disk(&self, iops: u64) -> Result<()> {
         let device = &self.config.disk;
         let status = Command::new("systemctl")
@@ -350,6 +354,15 @@ impl Soak {
             .arg(format!("IOWriteIOPSMax={device} {iops}"))
             .status()?;
         anyhow::ensure!(status.success(), "setting the disk's limit to {iops} operations a second");
+        let set = cgroup(&self.config.slice, "io.max");
+        anyhow::ensure!(
+            set.lines().any(|line| {
+                line.starts_with(&format!("{} ", self.config.number))
+                    && line.contains(&format!("riops={iops} "))
+                    && line.ends_with(&format!("wiops={iops}"))
+            }),
+            "the disk's limit of {iops} operations a second is not in the slice's io.max: {set:?}"
+        );
         Ok(())
     }
 

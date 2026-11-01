@@ -134,7 +134,7 @@ def main():
             path = world_path(args.codex.parent)
             config = dict(SCALES[args.scale], base=str(base), home=str(home), world=str(world), codex_home=str(codex_home),
                           kernel=str(args.kernel), path=path, minutes=args.minutes, slice=NODE_SLICE,
-                          disk=disk.number, iops=IOPS)
+                          disk=disk.device, number=disk.number, iops=IOPS)
             (base / "config.json").write_text(json.dumps(config, indent=2))
             (base / "user").mkdir()
             passwd = Path("/etc/passwd").read_text().splitlines()

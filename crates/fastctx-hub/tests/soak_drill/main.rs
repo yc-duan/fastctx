@@ -176,9 +176,10 @@ async fn main() -> Result<()> {
     let scenes = judge::readings(lab.soak.root()).await.map(|(_, _, scenes)| scenes).unwrap_or_default();
     let _ = all_stop.send(true);
 
-    let marks = marks.lock().expect("never poisoned").clone();
+    let (missed, marks) = (marks.missed(), marks.taken());
     let evidence = judge::Evidence {
         marks: &marks,
+        missed,
         faults: &faults.all(),
         samples: &seen.samples(),
         hung: seen.hung(),

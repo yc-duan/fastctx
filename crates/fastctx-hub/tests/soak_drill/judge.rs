@@ -59,20 +59,41 @@ pub(crate) struct Mark {
     pub name: String,
     pub readings: Readings,
     pub pid: u32,
+    pub at: Instant,
 }
 
-/// The marks taken, in the order they were.
-pub(crate) type Marks = Mutex<Vec<Mark>>;
+/// The marks taken, in the order they were, and those the node did not
+/// answer for.
+#[derive(Default)]
+pub(crate) struct Marks {
+    taken: Mutex<Vec<Mark>>,
+    missed: Mutex<Vec<String>>,
+}
+
+impl Marks {
+    pub fn taken(&self) -> Vec<Mark> {
+        self.taken.lock().expect("never poisoned").clone()
+    }
+
+    pub fn missed(&self) -> Vec<String> {
+        self.missed.lock().expect("never poisoned").clone()
+    }
+}
 
 /// Takes the readings of the node at `root` as `name`, while its process
-/// stays `pid`'s: none when it changed meanwhile.
+/// stays `pid`'s: missed when it changed meanwhile, or the node did not
+/// answer.
 pub(crate) async fn mark(root: &Path, pid: &AtomicU32, marks: &Marks, name: &str) {
     let before = pid.load(Ordering::Acquire);
     match readings(root).await {
         Some((readings, _, _)) if before != 0 && pid.load(Ordering::Acquire) == before => {
-            marks.lock().expect("never poisoned").push(Mark { name: name.to_string(), readings, pid: before });
+            let mark = Mark { name: name.to_string(), readings, pid: before, at: Instant::now() };
+            marks.taken.lock().expect("never poisoned").push(mark);
         }
-        _ => say(&format!("soak: the node's readings could not be taken at {name}")),
+        _ => {
+            say(&format!("soak: the node's readings could not be taken at {name}"));
+            marks.missed.lock().expect("never poisoned").push(name.to_string());
+        }
     }
 }
 
@@ -99,23 +120,35 @@ fn joined(a: &Readings, b: &Readings) -> Readings {
     joined
 }
 
-/// The readings of the stretches between the marks of each pair. A stretch
-/// the node ended within is measured from the first mark of the process
-/// that took its later mark: what the ended one did went with it.
-fn stretches(marks: &[Mark], pairs: &[(String, String)]) -> Option<Readings> {
-    let find = |name: &str| marks.iter().position(|mark| mark.name == name);
+/// The readings between each two marks of one process in a row, from the
+/// load's mark on, joined, of the stretches `counted` keeps. What a process
+/// that ended on its own did after its last mark went with it, and a mark
+/// the node did not answer for joins the stretches either side of it.
+fn stretches(marks: &[Mark], counted: impl Fn(&Mark, &Mark) -> bool) -> Option<Readings> {
+    let load = marks.iter().position(|mark| mark.name == "load")?;
     let mut total: Option<Readings> = None;
-    for (from, to) in pairs {
-        let (from, to) = (find(from)?, find(to)?);
-        let pid = marks.get(to)?.pid;
-        let first = (from..=to).find(|first| marks[*first..=to].iter().all(|mark| mark.pid == pid))?;
-        let stretch = marks[to].readings.since(&marks[first].readings);
+    for pair in marks[load..].windows(2) {
+        let (from, to) = (&pair[0], &pair[1]);
+        if from.pid != to.pid || !counted(from, to) {
+            continue;
+        }
+        let stretch = to.readings.since(&from.readings);
         total = Some(match total {
             Some(total) => joined(&total, &stretch),
             None => stretch,
         });
     }
     total
+}
+
+/// The stretches the disk was slowed past a small server's or hung, and the
+/// moments after while what waited on it catches up.
+fn rough(faults: &[Fault]) -> Vec<(Instant, Instant)> {
+    faults
+        .iter()
+        .filter(|fault| matches!(fault.kind, "slow" | "hang"))
+        .map(|fault| (fault.began, fault.ended.unwrap_or(fault.began) + Duration::from_secs(20)))
+        .collect()
 }
 
 fn timing<'a>(readings: &'a Readings, name: &str) -> Option<&'a Timing> {
@@ -241,6 +274,8 @@ fn line_events(hub_log: &str, machine: &str) -> Vec<(jiff::Timestamp, String)> {
 /// Everything the drill saw, to judge.
 pub(crate) struct Evidence<'a> {
     pub marks: &'a [Mark],
+    /// The marks the node did not answer for.
+    pub missed: Vec<String>,
     pub faults: &'a [Fault],
     pub samples: &'a [Sample],
     pub hung: BTreeMap<&'static str, u64>,
@@ -270,29 +305,17 @@ pub(crate) struct Evidence<'a> {
 
 /// Holds what was seen to the foundation's numbers.
 pub(crate) fn judge(evidence: &Evidence<'_>, checks: &mut Checks) {
-    let whole = stretches(evidence.marks, &[("load".into(), "end".into())]);
+    let whole = stretches(evidence.marks, |_, _| true);
     // The disk slowed past a small server's, or hung, is not the reference
     // machine: latencies are held to their numbers outside those stretches;
     // everything else, all the way through.
-    let mut calm_pairs = Vec::new();
-    let mut from = "load".to_string();
-    for mark in evidence.marks {
-        if let Some(cycle) = mark.name.strip_prefix("slow-") {
-            calm_pairs.push((from.clone(), mark.name.clone()));
-            from = format!("slowed-{cycle}");
-        } else if let Some(cycle) = mark.name.strip_prefix("hang-") {
-            calm_pairs.push((from.clone(), mark.name.clone()));
-            from = format!("hung-{cycle}");
-        }
-    }
-    calm_pairs.push((from, "end".into()));
-    let calm = stretches(evidence.marks, &calm_pairs);
-    // Two marks for the load, and two for each stretch of a slow or hung disk.
-    let expected = 2 + 2 * evidence.faults.iter().filter(|fault| matches!(fault.kind, "slow" | "hang")).count();
+    let rough = rough(evidence.faults);
+    let calm =
+        stretches(evidence.marks, |from, to| !rough.iter().any(|(began, ended)| from.at < *ended && to.at > *began));
     checks.check(
-        "the node's readings were taken at every mark",
-        whole.is_some() && evidence.marks.len() >= expected,
-        json!({"marks": evidence.marks.iter().map(|mark| mark.name.clone()).collect::<Vec<_>>(), "expected": expected}),
+        "the node answered for its readings at every mark",
+        whole.is_some() && evidence.missed.is_empty(),
+        json!({"taken": evidence.marks.iter().map(|mark| mark.name.clone()).collect::<Vec<_>>(), "missed": evidence.missed}),
     );
     if let Some(whole) = &whole {
         judge_readings(whole, calm.as_ref().unwrap_or(whole), checks);
@@ -483,11 +506,7 @@ fn judge_readings(whole: &Readings, calm: &Readings, checks: &mut Checks) {
 /// disk was slowed or hung: told as it is, the node's own numbers being
 /// what is held to the foundation's.
 fn judge_clients(evidence: &Evidence<'_>, checks: &mut Checks) {
-    let rough = |fault: &Fault| {
-        matches!(fault.kind, "slow" | "hang")
-            .then(|| (fault.began, fault.ended.unwrap_or(fault.began) + Duration::from_secs(20)))
-    };
-    let rough: Vec<(Instant, Instant)> = evidence.faults.iter().filter_map(rough).collect();
+    let rough = rough(evidence.faults);
     let mut kinds: BTreeMap<&str, Vec<Duration>> = BTreeMap::new();
     for sample in evidence.samples {
         if sample.ok && !rough.iter().any(|(from, to)| sample.at >= *from && sample.at <= *to) {
