@@ -16,7 +16,10 @@ pub(crate) struct Readings {
     pub write: &'static Timing,
     /// A batch's commit, its flush to disk included.
     pub commit: &'static Timing,
+    /// A read on its connection.
     pub read: &'static Timing,
+    /// A read's wait for a connection, given one or not.
+    pub read_wait: &'static Timing,
     pub operations: &'static Counter,
     pub commits: &'static Counter,
     pub failures: &'static Counter,
@@ -58,6 +61,7 @@ impl Readings {
             write: timing(name("write")),
             commit: timing(name("commit")),
             read: timing(name("read")),
+            read_wait: timing(name("read_wait")),
             operations: counter(name("operations")),
             commits: counter(name("commits")),
             failures: counter(name("failures")),

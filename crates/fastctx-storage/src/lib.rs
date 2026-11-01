@@ -234,14 +234,21 @@ impl Database {
         read: impl FnOnce(&rusqlite::Connection) -> Result<T> + Send + 'static,
     ) -> Result<T> {
         self.available()?;
-        let queued = tokio::time::timeout(QUEUE_WAIT, self.0.reads.clone().acquire_owned())
-            .await
-            .map_err(|_| busy("read admission"))?
-            .map_err(|_| unavailable())?;
-        let permit = tokio::time::timeout(QUEUE_WAIT, self.0.reading.clone().acquire_owned())
-            .await
-            .map_err(|_| busy("read connection"))?
-            .map_err(|_| unavailable())?;
+        let asked = Instant::now();
+        let admitted = async {
+            let queued = tokio::time::timeout(QUEUE_WAIT, self.0.reads.clone().acquire_owned())
+                .await
+                .map_err(|_| busy("read admission"))?
+                .map_err(|_| unavailable())?;
+            let permit = tokio::time::timeout(QUEUE_WAIT, self.0.reading.clone().acquire_owned())
+                .await
+                .map_err(|_| busy("read connection"))?
+                .map_err(|_| unavailable())?;
+            Ok::<_, Error>((queued, permit))
+        }
+        .await;
+        self.0.metrics.read_wait(asked.elapsed());
+        let (queued, permit) = admitted?;
         let database = self.clone();
         let work = tokio::task::spawn_blocking(move || {
             let _queued = queued;
@@ -257,9 +264,10 @@ impl Database {
     /// borrow its caller, and every caller shares the same connection admission.
     pub fn read_now<T>(&self, read: impl FnOnce(&rusqlite::Connection) -> Result<T>) -> Result<T> {
         self.available()?;
-        let permit = blocking::wait(self.0.reading.clone().acquire_owned(), QUEUE_WAIT)
-            .ok_or_else(|| busy("read connection"))?
-            .map_err(|_| unavailable())?;
+        let asked = Instant::now();
+        let permit = blocking::wait(self.0.reading.clone().acquire_owned(), QUEUE_WAIT);
+        self.0.metrics.read_wait(asked.elapsed());
+        let permit = permit.ok_or_else(|| busy("read connection"))?.map_err(|_| unavailable())?;
         self.with_reader(permit, read)
     }
 

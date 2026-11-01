@@ -108,6 +108,10 @@ impl Metrics {
         self.readings.read.record(took);
     }
 
+    pub fn read_wait(&self, took: Duration) {
+        self.readings.read_wait.record(took);
+    }
+
     /// Operations waiting for the writer, by `delta`.
     pub fn queue(&self, delta: isize) {
         if delta >= 0 {
