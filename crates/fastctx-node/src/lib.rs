@@ -737,6 +737,11 @@ pub async fn run_prepared(
                     )?;
                     fastctx_storage::versions::apply(
                         db,
+                        "node.attachment-pins",
+                        &[fastctx_storage::versions::Migration { version: 1, sql: attachments::index::SCHEMA }],
+                    )?;
+                    fastctx_storage::versions::apply(
+                        db,
                         "node.input-membership",
                         &[fastctx_storage::versions::Migration { version: 1, sql: inbox::presence::SCHEMA }],
                     )?;

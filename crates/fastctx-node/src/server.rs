@@ -110,7 +110,14 @@ async fn converse(node: &Arc<Node>, connection: Connection) -> std::io::Result<(
         }
         // A conversation of this machine is reached only by whom it works
         // for, as from another machine (`admission::local`).
-        if let Err(failure) = crate::admission::local::admit(node, &hello.peer, &call) {
+        let (working, peer) = (node.clone(), hello.peer.clone());
+        let (call, admission) = fastctx_platform::task::spawn_blocking(move || {
+            let admission = crate::admission::local::admit(&working, &peer, &call);
+            (call, admission)
+        })
+        .await
+        .map_err(std::io::Error::other)?;
+        if let Err(failure) = admission {
             writer.send(&json(&NodeFrame::Reply { id, reply: Err(failure) })).await?;
             writer.drain().await?;
             continue;

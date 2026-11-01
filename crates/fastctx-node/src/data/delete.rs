@@ -528,7 +528,7 @@ async fn remove_places(node: &Arc<Node>, measured: &Measured) -> Result<u64, Sto
     let (node, places) = (node.clone(), measured.places.clone());
     tokio::task::spawn_blocking(move || -> std::io::Result<u64> {
         let _collecting = node.disk.lock();
-        let _transaction = crate::resident_storage::lock();
+
         if places
             .iter()
             .any(|place| node.job_readers.lock().expect("never poisoned").keys().any(|path| path.starts_with(place)))
