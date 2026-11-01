@@ -4,7 +4,7 @@ use super::{PENDING, bundle, path, scheduler, schema};
 use fastctx_platform::disk;
 use fastctx_storage::{
     Database, Error, Priority, Result,
-    rusqlite::{Connection, OpenFlags, OptionalExtension, config::DbConfig, types::Value},
+    rusqlite::{Connection, OpenFlags, OptionalExtension, types::Value},
 };
 use sha2::{Digest, Sha256};
 use std::{io, path::Path};
@@ -76,21 +76,16 @@ fn import(world: &Path, database: &Database, conversation: &str) -> Result<()> {
             let (table, scope) = (table.clone(), conversation.to_string());
             database.write_now_at(scheduler::priority(), bytes, move |db| {
                 super::super::check(db, &scope)?;
-                let enabled = db.db_config(DbConfig::SQLITE_DBCONFIG_ENABLE_TRIGGER)?;
-                db.set_db_config(DbConfig::SQLITE_DBCONFIG_ENABLE_TRIGGER, false)?;
-                let result = (|| {
-                    for row in batch {
-                        bundle::put(db, &table, &row)?;
-                    }
-                    db.execute(
-                        "INSERT INTO node_conversation_transfer_progress(name,table_name,cursor) VALUES(?1,?2,?3)
-                        ON CONFLICT(name,table_name) DO UPDATE SET cursor=excluded.cursor",
-                        (&scope, &table.name, cursor),
-                    )?;
-                    Ok(())
-                })();
-                db.set_db_config(DbConfig::SQLITE_DBCONFIG_ENABLE_TRIGGER, enabled)?;
-                result
+                let _triggers = super::triggers::SuspendedTriggers::new(db)?;
+                for row in batch {
+                    bundle::put(db, &table, &row)?;
+                }
+                db.execute(
+                    "INSERT INTO node_conversation_transfer_progress(name,table_name,cursor) VALUES(?1,?2,?3)
+                    ON CONFLICT(name,table_name) DO UPDATE SET cursor=excluded.cursor",
+                    (&scope, &table.name, cursor),
+                )?;
+                Ok(())
             })?;
         }
     }

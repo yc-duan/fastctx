@@ -14,6 +14,7 @@ use std::{
 
 pub(crate) mod exporting;
 mod importing;
+mod triggers;
 static PENDING: LazyLock<Mutex<HashMap<std::path::PathBuf, HashSet<String>>>> = LazyLock::new(Default::default);
 
 pub(super) const SCHEMA: &str = "
