@@ -46,25 +46,22 @@ pub(super) async fn build(
 ) -> Result<Materials, Failure> {
     let _place = node.places.using(goal.resident.resident.as_str()).await;
     node.residents.active(&goal.resident.resident)?;
-    let directory =
-        node.world.conversation(&goal.resident.resident).books().join("goal-reviews").join(work.id.as_str());
-    let path = directory.join("materials.json");
-    match std::fs::read(&path) {
-        Ok(bytes) => {
-            let materials: Materials = serde_json::from_slice(&bytes).map_err(failure)?;
-            let (about, _) = node
-                .residents
-                .about(&goal.resident.resident)
-                .ok_or_else(|| Failure::new("the reviewed conversation is unavailable"))?;
-            if materials.full_machine.is_none() && !node.may_work_here(&about.acting)? {
-                return Err(Failure::not_run(
-                    "this legacy review points to the assisting host; create a new review on a working computer",
-                ));
-            }
-            return super::material_size::cached(materials);
+    let directory = node.world.conversation(&goal.resident.resident);
+    if let Some(materials) = super::material_store::cached(directory.clone(), work.id.to_string()).await? {
+        if materials.account != goal.account || materials.conversation != goal.resident || materials.goal_id != goal.id
+        {
+            return Err(Failure::new("the cached review belongs to a different goal"));
         }
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-        Err(error) => return Err(failure(error)),
+        let (about, _) = node
+            .residents
+            .about(&goal.resident.resident)
+            .ok_or_else(|| Failure::new("the reviewed conversation is unavailable"))?;
+        if materials.full_machine.is_none() && !node.may_work_here(&about.acting)? {
+            return Err(Failure::not_run(
+                "this legacy review points to the assisting host; create a new review on a working computer",
+            ));
+        }
+        return super::material_size::cached(materials);
     }
     let (about, _) = node
         .residents
@@ -84,10 +81,17 @@ pub(super) async fn build(
             matches!(decision.kind.as_str(), "review_sound" | "review_advice" | "review_obsolete" | "review_failed")
         })
         .collect();
-    files.push(File::text("previous-judgments.json", &serde_json::to_string(&judgments).map_err(failure)?));
-    fastctx_platform::ensure_private_dir(&directory).map_err(failure)?;
-    let previous_judgments =
-        judgments.iter().map(|decision| format!("{} {}: {}", decision.at, decision.kind, decision.reason)).collect();
+    let (judgments_file, previous_judgments) = tokio::task::spawn_blocking(move || {
+        let file = File::text("previous-judgments.json", &serde_json::to_string(&judgments).map_err(failure)?);
+        let words = judgments
+            .iter()
+            .map(|decision| format!("{} {}: {}", decision.at, decision.kind, decision.reason))
+            .collect();
+        Ok::<_, Failure>((file, words))
+    })
+    .await
+    .map_err(failure)??;
+    files.push(judgments_file);
     let mut result = Materials {
         account: goal.account.clone(),
         conversation: goal.resident.clone(),
@@ -109,6 +113,7 @@ pub(super) async fn build(
         full_machine: Some(place.location.machine.clone()),
         truncated: false,
     };
+    let mut observations = None;
     if cause == ReviewCause::Paused {
         result.owner_words =
             recent_owner(node, goal).await?.into_iter().rev().take(4).map(|(_, words)| words).collect();
@@ -139,16 +144,7 @@ pub(super) async fn build(
             .map(|machine| machine.name.clone())
             .collect();
         let previous = match &goal.runtime.reviewed_work {
-            Some(previous) => {
-                let path = node
-                    .world
-                    .conversation(&goal.resident.resident)
-                    .books()
-                    .join("goal-reviews")
-                    .join(previous.as_str())
-                    .join("observations.json");
-                serde_json::from_slice(&std::fs::read(path).map_err(failure)?).map_err(failure)?
-            }
+            Some(previous) => super::material_store::observations(directory.clone(), previous.to_string()).await?,
             None => crate::turn_evidence::review::Seen::default(),
         };
         let (seen, evidence) = {
@@ -160,14 +156,15 @@ pub(super) async fn build(
                 .map_err(failure)?
         };
         let full_path = place.file(&key, "world-facts.json")?;
-        let summary = evidence.summary(&full_path);
-        files.push(File::text("world-facts.json", &serde_json::to_string(&evidence).map_err(failure)?));
-        fastctx_platform::publish(
-            &directory.join("observations.json"),
-            &serde_json::to_vec(&seen).map_err(failure)?,
-            fastctx_platform::Permissions::Private,
-        )
-        .map_err(failure)?;
+        let (summary, evidence_file, full_path) = tokio::task::spawn_blocking(move || {
+            let summary = evidence.summary(&full_path);
+            let file = File::text("world-facts.json", &serde_json::to_string(&evidence).map_err(failure)?);
+            Ok::<_, Failure>((summary, file, full_path))
+        })
+        .await
+        .map_err(failure)??;
+        files.push(evidence_file);
+        observations = Some(super::material_store::stage(&directory, seen).await?);
         result.world_actions = Some(Evidence {
             since: goal.runtime.reviewed_work.as_ref().and(goal.runtime.reviewed_through),
             through: now,
@@ -186,17 +183,15 @@ pub(super) async fn build(
                 facts.end.and_then(|end| end.last_message).map(|text| text.chars().take(1200).collect());
         }
     }
-    fastctx_platform::ensure_private_dir(&directory).map_err(failure)?;
-    files.push(File::text("full-materials.json", &serde_json::to_string(&result).map_err(failure)?));
+    let (full, result) = tokio::task::spawn_blocking(move || {
+        let full = File::text("full-materials.json", &serde_json::to_string(&result).map_err(failure)?);
+        Ok::<_, Failure>((full, super::material_size::freeze(result)?))
+    })
+    .await
+    .map_err(failure)??;
+    files.push(full);
     place.publish(node, key, files).await?;
-    let result = super::material_size::freeze(result)?;
-    fastctx_platform::publish(
-        &path,
-        &serde_json::to_vec(&result).map_err(failure)?,
-        fastctx_platform::Permissions::Private,
-    )
-    .map_err(failure)?;
-    Ok(result)
+    super::material_store::install(directory, work.id.to_string(), result, observations).await
 }
 
 pub(super) async fn recent_owner(node: &Arc<Node>, goal: &Goal) -> Result<Vec<(String, OwnerWords)>, Failure> {

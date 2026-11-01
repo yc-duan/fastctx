@@ -664,6 +664,11 @@ pub async fn run_prepared(
         )?;
         fastctx_storage::versions::apply(
             db,
+            "node.record-maps",
+            &[fastctx_storage::versions::Migration { version: 1, sql: records::maps::SCHEMA }],
+        )?;
+        fastctx_storage::versions::apply(
+            db,
             "node.run-facts",
             &[
                 fastctx_storage::versions::Migration { version: 1, sql: run_facts::SCHEMA },

@@ -122,10 +122,15 @@ pub(crate) fn start(node: &Arc<Node>) -> io::Result<()> {
                     retiring.log.line(format_args!("collecting conversation {scope} projections: {error}"))
                 })
                 .map_err(io::Error::other);
+                let maps = crate::records::maps::maintain(&retiring.database, |scope, error| {
+                    retiring.log.line(format_args!("collecting conversation {scope} map snapshots: {error}"))
+                })
+                .map_err(io::Error::other);
                 let _collecting = retiring.disk.lock();
                 // Each step is told on its own when it fails.
                 [
                     ("collecting conversation projections", payloads),
+                    ("collecting conversation maps", maps),
                     ("collecting closed input memberships", crate::inbox::presence::collect(&retiring.database)),
                     ("retiring the bookkeeping of removed conversations", crate::books::retire(&retiring)),
                     ("collecting what Claude sessions left", crate::claude::garbage::collect(&retiring.world)),

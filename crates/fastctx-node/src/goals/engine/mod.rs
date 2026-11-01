@@ -6,6 +6,7 @@ mod driver;
 mod effects;
 mod judging;
 mod material_size;
+mod material_store;
 mod materials;
 mod policy;
 mod returned;

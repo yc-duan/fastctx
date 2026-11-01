@@ -4,6 +4,7 @@ mod activity;
 pub(crate) mod compact;
 pub(crate) mod debts;
 mod diagnostics;
+mod growth;
 mod identity;
 pub(crate) mod quota;
 mod records;
@@ -81,11 +82,11 @@ pub(crate) async fn snapshot_locked(
     .await
     .map_err(|error| Failure::new(error.to_string()))?
     .map_err(|error| Failure::new(error.to_string()))?;
-    let mut waiting = waiting::collect(node, resident, &actions).await?;
+    let waiting = waiting::collect(node, resident, &actions).await?;
+    let waiting = growth::measure(directory.clone(), waiting).await.map_err(|error| Failure::new(error.to_string()))?;
     let (reading, subject) = (node.clone(), resident.clone());
     let read = move || -> std::io::Result<_> {
         let (node, resident) = (&reading, &subject);
-        waiting::measure_growth(node, resident, &mut waiting)?;
         let finished = turn.as_deref().map(|turn| crate::delivery::terminal(&directory, turn)).transpose()?.flatten();
         let mut end = finished.as_ref().map(|finished| finished.end.clone());
         if let (Some(turn), Some(end)) = (turn.as_deref(), end.as_mut())

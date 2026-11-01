@@ -12,7 +12,6 @@ use fastctx_types::{Address, MachineName, ResidentId};
 use jiff::Timestamp;
 use std::collections::BTreeMap;
 use std::io;
-use std::path::Path;
 use std::pin::Pin;
 use std::sync::Arc;
 
@@ -264,26 +263,6 @@ fn unknown(id: String, kind: WaitKind, machine: MachineName, since: Option<Times
         output: None,
         output_growth: None,
     }
-}
-
-pub(super) fn measure_growth(node: &Node, resident: &ResidentId, handles: &mut [WaitHandle]) -> io::Result<()> {
-    let path = node.world.conversation(resident).books().join("waiting-output.json");
-    let _transaction = crate::resident_storage::lock();
-    let previous: BTreeMap<String, u64> = match std::fs::read(&path) {
-        Ok(bytes) => serde_json::from_slice(&bytes)?,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => BTreeMap::new(),
-        Err(error) => return Err(error),
-    };
-    let mut next = BTreeMap::new();
-    for handle in handles {
-        if let Some(output) = &handle.output {
-            let key = format!("{}:{}", handle.machine, handle.id);
-            handle.output_growth = previous.get(&key).map(|bytes| output.bytes.saturating_sub(*bytes));
-            next.insert(key, output.bytes);
-        }
-    }
-    fastctx_platform::ensure_private_dir(path.parent().unwrap_or(Path::new(".")))?;
-    fastctx_platform::publish(&path, &serde_json::to_vec(&next)?, fastctx_platform::Permissions::Private)
 }
 
 fn failure(error: io::Error) -> Failure {

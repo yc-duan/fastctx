@@ -42,6 +42,7 @@ struct Inner {
     writes: Arc<queue::Queue>,
     readers: Mutex<Vec<rusqlite::Connection>>,
     reading: Arc<Semaphore>,
+    background_reading: Arc<Semaphore>,
     reads: Arc<Semaphore>,
     metrics: Arc<metrics::Metrics>,
     path: PathBuf,
@@ -133,6 +134,7 @@ impl Database {
             writes,
             readers: Mutex::new(readers),
             reading: Arc::new(Semaphore::new(count)),
+            background_reading: Arc::new(Semaphore::new(count - 1)),
             reads: Arc::new(Semaphore::new(1024)),
             metrics,
             path: path.to_path_buf(),
@@ -171,6 +173,7 @@ impl Database {
                     writes,
                     readers: Mutex::new(Vec::new()),
                     reading: Arc::new(Semaphore::new(0)),
+                    background_reading: Arc::new(Semaphore::new(0)),
                     reads: Arc::new(Semaphore::new(0)),
                     metrics: Arc::new(metrics::Metrics {
                         failures: std::sync::atomic::AtomicU64::new(1),
@@ -237,6 +240,16 @@ impl Database {
             .ok_or_else(|| busy("read connection"))?
             .map_err(|_| unavailable())?;
         self.with_reader(permit, read)
+    }
+
+    /// A blocking background scan leaves one connection available to ordinary
+    /// reads. Acquire its budget before leasing a connection, never afterwards.
+    pub fn read_background_now<T>(&self, read: impl FnOnce(&rusqlite::Connection) -> Result<T>) -> Result<T> {
+        self.available()?;
+        let _background = blocking::wait(self.0.background_reading.clone().acquire_owned(), QUEUE_WAIT)
+            .ok_or_else(|| busy("background read admission"))?
+            .map_err(|_| unavailable())?;
+        self.read_now(read)
     }
 
     fn with_reader<T>(
