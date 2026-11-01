@@ -140,6 +140,12 @@ export class SidePane {
     return !this.element.hidden && !this.shutting;
   }
 
+  /** The part in view now: none while it is shut, or while a file is
+   *  read over the parts. */
+  get visible(): string | null {
+    return this.open ? this.shown() : null;
+  }
+
   /** Still drawn as it shuts. */
   get leaving(): boolean {
     return this.shutting !== 0;
