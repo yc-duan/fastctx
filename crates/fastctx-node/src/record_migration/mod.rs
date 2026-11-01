@@ -5,6 +5,7 @@ pub(crate) mod drill;
 pub(crate) mod files;
 pub(crate) mod scheduler;
 pub(crate) mod source;
+pub(crate) mod withdrawal;
 pub(crate) use files::{Context, FileComplete, FileRow, file};
 pub(crate) use scheduler::Service;
 

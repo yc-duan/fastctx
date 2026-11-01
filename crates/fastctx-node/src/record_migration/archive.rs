@@ -43,7 +43,7 @@ pub(crate) fn root(world: &Path) -> PathBuf {
     world.join("archive").join(env!("CARGO_PKG_VERSION"))
 }
 
-fn relative(world: &Path, conversation: &str, source: &Path) -> io::Result<PathBuf> {
+pub(super) fn relative(world: &Path, conversation: &str, source: &Path) -> io::Result<PathBuf> {
     if Path::new(conversation).components().count() != 1
         || source.components().any(|part| matches!(part, std::path::Component::ParentDir))
     {

@@ -1,8 +1,11 @@
 //! Named context shared by both hosts. Setting a block never starts a turn.
 
+mod archived;
 pub(crate) mod blocking;
 pub(crate) mod input;
 pub(crate) mod memory;
+#[cfg(feature = "storage-drill")]
+pub(crate) mod migration_drill;
 pub(crate) mod records;
 pub(crate) mod sources;
 mod storage;
@@ -248,7 +251,7 @@ pub(crate) fn native_observed(
         &node.world,
         id,
         2048,
-        || {
+        |_| {
             if changed {
                 node.residents.restore_opening_heard(id);
             }

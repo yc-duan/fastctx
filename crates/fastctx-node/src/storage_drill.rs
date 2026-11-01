@@ -7,6 +7,7 @@ pub fn run(root: &std::path::Path) -> Result<(), Box<dyn std::error::Error>> {
     crate::run_facts::migration_drill::run(&root.join("call-migration"))?;
     crate::activity_book::migration_drill::run(&root.join("book-migration"))?;
     crate::record_migration::drill::run(&root.join("migration"))?;
+    crate::context::migration_drill::run(&root.join("context-withdrawal"))?;
     crate::conversation_store::drill::run(&root.join("conversations"))?;
     crate::conversation_store::transfer_drill::run(&root.join("transfer"))?;
     crate::run_facts::drill::run(&root.join("facts"))?;
@@ -22,6 +23,7 @@ pub fn migration(root: &std::path::Path) -> Result<(), Box<dyn std::error::Error
     crate::run_facts::migration_drill::run(&root.join("call-migration"))?;
     crate::activity_book::migration_drill::run(&root.join("book-migration"))?;
     crate::record_migration::drill::run(&root.join("migration"))?;
+    crate::context::migration_drill::run(&root.join("context-withdrawal"))?;
     crate::session_record::drill::run(&root.join("events"))?;
     Ok(())
 }

@@ -9,6 +9,7 @@ use fastctx_types::{
 };
 use std::{collections::BTreeMap, io, path::Path, sync::LazyLock};
 
+pub(crate) const SCHEMA: &str = super::archived::SCHEMA;
 pub(super) const BLOCKS: &str = "context-blocks";
 pub(super) const STATE: &str = "context-state";
 
@@ -45,6 +46,23 @@ pub(crate) fn prepare(world: &WorldDir, id: &ResidentId) -> io::Result<Conversat
             Err(error) => Err(error),
         }
     })?;
+    let (projecting, waking) = (directory.clone(), world.clone());
+    families::ensure_step(&directory, "context-archive-projection", move || {
+        families::write_at(&projecting, fastctx_storage::Priority::Background, 1024, |rows| {
+            for (name, block) in blocks(rows)? {
+                if block.transient {
+                    super::archived::mark(rows, &name)?;
+                }
+            }
+            rows.connection().execute(
+                "INSERT OR IGNORE INTO context_projection_dirty(conversation) VALUES(?1)",
+                [rows.conversation()],
+            )?;
+            Ok(())
+        })?;
+        notify(&waking);
+        Ok(())
+    })?;
     Ok(directory)
 }
 
@@ -80,7 +98,7 @@ pub(super) fn commit<T: Send + 'static>(
     world: &WorldDir,
     id: &ResidentId,
     bytes: usize,
-    after: impl FnOnce(),
+    after: impl FnOnce(&T),
     action: impl FnOnce(&families::Rows<'_>) -> fastctx_storage::Result<T> + Send + 'static,
 ) -> io::Result<T> {
     let directory = prepare(world, id)?;
@@ -93,7 +111,7 @@ pub(super) fn commit<T: Send + 'static>(
             )?;
             Ok(result)
         })?;
-        after();
+        after(&result);
         if project_live(world, id, &directory).is_err() {
             notify(world);
         }
@@ -110,7 +128,7 @@ pub(super) fn state<T: Send + 'static>(
         world,
         id,
         4096,
-        || {},
+        |_| {},
         move |rows| {
             let mut state = rows.get(STATE, "current")?.unwrap_or_default();
             let result = action(rows, &mut state)?;
@@ -135,6 +153,7 @@ fn project_live(world: &WorldDir, id: &ResidentId, directory: &ConversationDir) 
         )?;
     }
     publish_changed(&super::storage::state_path(world, id), &serde_json::to_vec(&state)?)?;
+    super::archived::clear(world, id, directory)?;
     families::write_at(directory, fastctx_storage::Priority::Background, 64, |rows| {
         rows.connection()
             .execute("DELETE FROM context_projection_dirty WHERE conversation=?1", [rows.conversation()])?;
