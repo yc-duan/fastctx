@@ -818,9 +818,12 @@ pub async fn bind(
     if let Some(source) = node
         .stops
         .started(node, id, handover.inputs.iter().map(|input| &input.delivery.id))
+        .await
         .map_err(|error| Failure::new(error.to_string()))?
     {
-        crate::turn_evidence::remember(node, id, turn, source).map_err(|error| Failure::new(error.to_string()))?;
+        crate::turn_evidence::remember(node, id, turn, source)
+            .await
+            .map_err(|error| Failure::new(error.to_string()))?;
         crate::stops::deliver(node, id, turn, handover.inputs.iter().map(|input| input.delivery.id.clone()).collect());
     }
     for input in &handover.inputs {

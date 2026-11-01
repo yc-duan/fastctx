@@ -58,15 +58,29 @@ pub(crate) fn locate(directory: &ConversationDir) -> io::Result<(Database, Strin
 }
 
 pub(crate) fn read<T>(directory: &ConversationDir, action: impl FnOnce(&Rows<'_>) -> Result<T>) -> io::Result<T> {
+    read_using(directory, false, action)
+}
+
+pub(crate) fn read_background<T>(
+    directory: &ConversationDir,
+    action: impl FnOnce(&Rows<'_>) -> Result<T>,
+) -> io::Result<T> {
+    read_using(directory, true, action)
+}
+
+fn read_using<T>(
+    directory: &ConversationDir,
+    background: bool,
+    action: impl FnOnce(&Rows<'_>) -> Result<T>,
+) -> io::Result<T> {
     let (database, conversation) = locate(directory)?;
-    database
-        .read_now(|connection| {
-            let transaction = connection.unchecked_transaction()?;
-            let value = action(&Rows { connection: &transaction, conversation: &conversation })?;
-            transaction.commit()?;
-            Ok(value)
-        })
-        .map_err(io::Error::other)
+    let read = |connection: &Connection| {
+        let transaction = connection.unchecked_transaction()?;
+        let value = action(&Rows { connection: &transaction, conversation: &conversation })?;
+        transaction.commit()?;
+        Ok(value)
+    };
+    if background { database.read_background_now(read) } else { database.read_now(read) }.map_err(io::Error::other)
 }
 
 pub(crate) fn write_at<T: Send + 'static>(
