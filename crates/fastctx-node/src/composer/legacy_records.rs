@@ -29,7 +29,7 @@ pub(super) fn migrate(
     let mut count = 0;
     for kind in ["receipts", "uploads", "ended"] {
         let books = directory.composer_books(kind);
-        let entries = match std::fs::read_dir(&books) {
+        let entries = match fastctx_platform::disk::read_dir(&books) {
             Ok(entries) => entries,
             Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
             Err(error) => return Err(error),
@@ -41,20 +41,19 @@ pub(super) fn migrate(
                 continue;
             }
             let path = entry.path();
-            let bytes = match std::fs::read(&path) {
+            let bytes = match fastctx_platform::disk::read(&path) {
                 Ok(bytes) => bytes,
                 Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
                 Err(error) => return Err(error),
             };
             validate(kind, &bytes).map_err(|error| io::Error::other(format!("{}: {error}", path.display())))?;
             batch.push((path, bytes));
-            if batch.len() == 256 {
+            if batch.len() == 16 || batch.iter().map(|(_, bytes)| bytes.len()).sum::<usize>() >= 128 * 1024 {
                 count += commit(database, owner, kind, std::mem::take(&mut batch))?;
-                std::thread::sleep(std::time::Duration::from_millis(10));
             }
         }
         count += commit(database, owner, kind, batch)?;
-        match std::fs::remove_dir(&books) {
+        match fastctx_platform::disk::remove_dir(&books) {
             Ok(()) => {}
             Err(error) if matches!(error.kind(), io::ErrorKind::NotFound | io::ErrorKind::DirectoryNotEmpty) => {}
             Err(error) => return Err(error),
@@ -80,7 +79,7 @@ fn commit(database: &Database, owner: &str, kind: &'static str, batch: Vec<(Path
     }
     let bytes = batch.iter().map(|(path, bytes)| path.as_os_str().len() + bytes.len()).sum();
     let owner = owner.to_owned();
-    let batch = database.write_now(bytes, move |connection| {
+    let batch = database.write_now_at(fastctx_storage::Priority::Background, bytes, move |connection| {
         for (path, bytes) in &batch {
             let name = name(path)?;
             connection.execute(
@@ -101,8 +100,7 @@ fn commit(database: &Database, owner: &str, kind: &'static str, batch: Vec<(Path
     // operation can supersede the receipt, but does not remove its row here.
     let mut count = 0;
     for (path, _) in batch {
-        let _transition = crate::resident_storage::lock();
-        match std::fs::remove_file(path) {
+        match fastctx_platform::disk::remove_file(path) {
             Ok(()) => count += 1,
             Err(error) if error.kind() == io::ErrorKind::NotFound => {}
             Err(error) => return Err(error),
