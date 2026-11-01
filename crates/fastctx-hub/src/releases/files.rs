@@ -17,7 +17,10 @@ impl Files {
         #[cfg(unix)]
         let directory = {
             use std::os::unix::fs::OpenOptionsExt as _;
-            std::fs::OpenOptions::new().read(true).custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW).open(&root)?
+            fastctx_platform::disk::open_with(
+                std::fs::OpenOptions::new().read(true).custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW),
+                &root,
+            )?
         };
         Ok(Self {
             root,
