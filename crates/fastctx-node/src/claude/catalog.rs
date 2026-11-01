@@ -7,7 +7,7 @@ use fastctx_types::ipc::Failure;
 use fastctx_types::session::control::{ControlKind, Offers};
 use serde::{Deserialize, Serialize};
 
-#[derive(Deserialize, Serialize)]
+#[derive(Deserialize, PartialEq, Serialize)]
 struct Catalog {
     instance: Option<String>,
     offers: Offers,
@@ -22,7 +22,12 @@ pub(super) fn keep(node: &Node, resident: &ResidentId, offers: &Offers) -> Resul
         .map_err(failure)?
         .flatten();
     let catalog = Catalog { instance: host.as_ref().map(|host| host.instance.clone()), offers: offers.clone() };
-    files::write(&node.world.conversation(resident).path().join("claude-catalog.json"), &catalog).map_err(failure)?;
+    // Asked again and again, the session mostly offers what it did: the
+    // file is written only when that changed.
+    let path = node.world.conversation(resident).path().join("claude-catalog.json");
+    if files::read::<Catalog>(&path).map_err(failure)?.as_ref() != Some(&catalog) {
+        files::write(&path, &catalog).map_err(failure)?;
+    }
     if let (Some(session), Some(host)) = (session, host) {
         collect(&files::directory(node.world.path(), &session), &host.instance).map_err(failure)?;
     }

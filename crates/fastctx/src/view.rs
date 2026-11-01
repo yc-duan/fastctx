@@ -88,6 +88,14 @@ pub fn run(args: ViewArgs) -> anyhow::Result<std::process::ExitCode> {
         machine: if in_run { None } else { machine(&world) },
         in_run,
     };
+    if world.path().join("replicas").is_dir() {
+        let resident = std::env::var("FASTCTX_RESIDENT").ok().map(|resident| resident.parse()).transpose()?;
+        tokio::runtime::Builder::new_current_thread().enable_all().build()?.block_on(async {
+            let mut client = Client::connect(&world, Peer::Command { resident, session: None }).await?;
+            client.call(Call::PrepareCopies { paths: paths.clone() }).await?;
+            anyhow::Ok(())
+        })?;
+    }
     let began = crate::steps::began();
     let mut out = crate::output::out();
     let viewed = view(&paths, &options, &mut out)?;

@@ -55,6 +55,9 @@ export type Card =
          *  cannot be told apart, gathered on one row. */
         | { kind: "command"; command: string; commands?: string[]; exit: number | null; on: OnSaid | null }
         | { kind: "fan"; deed: FanDeed }
+        /** Steps of a run before those its deeds were read from, kept only
+         *  as counts: a row before the run's own, opening on the whole run. */
+        | { kind: "folded"; count: number }
         | { kind: "copy"; from: Place[]; to: Place; deed: CopyDeed | null }
         | { kind: "job"; deed: JobDeed; of: string | null }
         | { kind: "stop"; deed: StopDeed; of: string | null }
@@ -103,6 +106,10 @@ export function cardsOf(entry: ToolEntry, deedsOf: (entry: Entry) => Deed[] | nu
         const any = cards.some(going);
         cards.forEach((card, index) => (card.running = any ? going(card) : index === cards.length - 1));
       }
+      // Put first under a key of its own, so that the other cards keep
+      // theirs as steps come to be folded.
+      const folded = (tool.run?.folded_steps ?? []).reduce((sum, summary) => sum + summary.count, 0);
+      if (folded) cards.unshift({ key: `${entry.key}${CARD}folded`, machine: null, sources: [whole], running: false, failed: false, kind: "folded", count: folded });
       break;
     }
     case "edit":

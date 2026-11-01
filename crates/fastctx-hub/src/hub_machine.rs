@@ -1,13 +1,13 @@
 //! The current hub host is never shared. Identification and revocation use
 //! the same store lock as sharing and moving, so those operations cannot race.
 
-use crate::{Hub, store::Store};
+use crate::Hub;
 use fastctx_types::{
     MachineName,
     machine_log::{Action, Actor, Outcome},
 };
 
-pub(crate) fn current(hub: &Hub, store: &Store) -> Option<MachineName> {
+pub(crate) fn current(hub: &Hub, store: &crate::store::Snapshot) -> Option<MachineName> {
     let directory = &store.book.directory;
     // A completed move supersedes reports kept from the old hub host.
     if let Some(incoming) = store.moves.last() {
@@ -31,7 +31,7 @@ pub(crate) fn current(hub: &Hub, store: &Store) -> Option<MachineName> {
         .map(|at| directory.members[at].name.clone())
 }
 
-pub(crate) fn protected(hub: &Hub, store: &Store, machine: &MachineName) -> bool {
+pub(crate) fn protected(hub: &Hub, store: &crate::store::Snapshot, machine: &MachineName) -> bool {
     let directory = &store.book.directory;
     current(hub, store).is_some_and(|host| directory.same(&host, machine))
         || store.outgoing.as_ref().is_some_and(|moving| moving.pending() && directory.same(&moving.to, machine))
@@ -40,7 +40,7 @@ pub(crate) fn protected(hub: &Hub, store: &Store, machine: &MachineName) -> bool
 /// Removes legacy shares in the same commit as their change records. The
 /// ordinary directory push delivers the revocation to every affected device.
 pub(crate) fn settle(hub: &Hub) -> Result<(), String> {
-    let mut store = hub.store();
+    let mut store = hub.edit_store();
     let Some(machine) = current(hub, &store) else { return Ok(()) };
     let shares: Vec<_> = store
         .book

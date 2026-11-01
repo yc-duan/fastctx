@@ -1,16 +1,18 @@
 //! Account-scoped sentinel services and their integration ports.
 mod control;
+mod delivery;
+mod effects;
 pub(crate) mod goal;
 pub(crate) mod goal_seams;
-mod effects;
-mod delivery;
+mod shared;
+mod shared_home;
 mod worker;
-pub(crate) use worker::{start,report};
+pub(crate) use worker::{report, start};
 pub(crate) mod deletion;
-mod settings;
 pub(crate) mod keys;
 pub(crate) mod look;
 mod records;
+mod settings;
 pub(crate) mod timers;
 mod transport;
 pub(crate) use control::{control, list_all, overview_all, record_any, scope};
@@ -18,7 +20,7 @@ use fastctx_sentinel::{ports::Credentials, records::Records};
 use fastctx_types::ipc::Failure;
 pub(crate) use settings::settings;
 use std::sync::{Arc, OnceLock};
-pub(crate) use transport::home_call;
+pub(crate) use transport::home_call_for;
 
 /// The account record, secret and timer providers are attached by `connected`.
 /// Until attached, callers receive an explicit unavailable result.

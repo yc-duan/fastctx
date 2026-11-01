@@ -70,6 +70,7 @@ async fn open_saying(
     }
     let (mut connection, through) = reached.ok_or_else(|| anyhow::anyhow!("{}", failures.join("; ")))?;
     let intent = wire::Intent::Session {
+        replicated_records: false,
         key: key.public(),
         proof: key.sign(sign::Domain::Session, &connection.binding),
         letters: wire::Letters { epoch: letters.epoch, taken: letters.taken },

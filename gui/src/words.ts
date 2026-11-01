@@ -237,6 +237,8 @@ export interface Words {
     diffGone: string;
     reading: string;
     readFailed: string;
+    /** A file read from its machine that is not there. */
+    fileMissing: string;
   };
   /** How long something took: "1 分 12 秒". */
   took(ms: number): string;
@@ -286,6 +288,12 @@ export interface Words {
   notDone(why: string): string;
   /** Words with no answer yet, said again until one comes. */
   waitingToSend: string;
+  /** Words with no answer in two minutes: they may or may not have gone. */
+  notConfirmed: string;
+  /** Sends words that did not go, or are not known to have, again. */
+  sendAgain: string;
+  /** Takes such words away. */
+  takeAway: string;
   /** What the session's host said of its own health, in a plain line; the
    *  host's words go on hover. */
   health: Record<HealthKind, string>;
@@ -425,6 +433,9 @@ const hhmm = (at: Date) => `${String(at.getHours()).padStart(2, "0")}:${String(a
 /** Whole days from `at`'s day to `now`'s. */
 const daysBefore = (at: Date, now: Date) =>
   Math.round((Date.UTC(now.getFullYear(), now.getMonth(), now.getDate()) - Date.UTC(at.getFullYear(), at.getMonth(), at.getDate())) / 86_400_000);
+/** A moment as its day and its time of day, in `locale`. */
+const moment = (at: string, locale: string) =>
+  new Date(at).toLocaleString(locale, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", hourCycle: "h23" });
 const zhWeekdays = ["日", "一", "二", "三", "四", "五", "六"];
 
 export const zh: Words = {
@@ -562,6 +573,9 @@ export const zh: Words = {
   fullScreen: "查看全部",
   deeds: {
     raw: "原文",
+    folded: (steps) => `更早的 ${steps.toLocaleString("zh-CN")} 步`,
+    foldedTimes: (count) => `${count.toLocaleString("zh-CN")} 次`,
+    foldedSpan: (first, last) => `${moment(first, "zh-CN")} 至 ${moment(last, "zh-CN")}`,
     tests: (passed, failed, ignored) => [`${passed} 个通过`, failed ? `${failed} 个失败` : "", ignored ? `${ignored} 个跳过` : ""].filter(Boolean).join("，"),
     failed: (n) => `${n} 个失败`,
     passed: (n) => `${n} 个通过`,
@@ -633,6 +647,7 @@ export const zh: Words = {
     diffGone: "改动的细节已不在那台机器上",
     reading: "读取中…",
     readFailed: "读取失败",
+    fileMissing: "找不到这个文件",
   },
   turnInfo: {
     model: "模型",
@@ -673,6 +688,9 @@ export const zh: Words = {
   notSent: (why) => known(why, zhProblems) ?? "发送失败",
   notDone: (why) => known(why, zhProblems) ?? "没有做成",
   waitingToSend: "等待发送",
+  notConfirmed: "不知是否送到",
+  sendAgain: "重发",
+  takeAway: "移除",
   health: {
     reconnecting: "连接中断，正在重试",
     safety: "OpenAI 正在对这一轮的输出做额外的安全审查",
@@ -936,6 +954,9 @@ export const en: Words = {
   fullScreen: "View all",
   deeds: {
     raw: "Raw output",
+    folded: (steps) => (steps === 1 ? "1 earlier step" : `${steps.toLocaleString("en")} earlier steps`),
+    foldedTimes: (count) => (count === 1 ? "once" : `${count.toLocaleString("en")} times`),
+    foldedSpan: (first, last) => `${moment(first, "en")} to ${moment(last, "en")}`,
     tests: (passed, failed, ignored) => [`${passed} passed`, failed ? `${failed} failed` : "", ignored ? `${ignored} skipped` : ""].filter(Boolean).join(", "),
     failed: (n) => `${n} failed`,
     passed: (n) => `${n} passed`,
@@ -1009,6 +1030,7 @@ export const en: Words = {
     diffGone: "This change's details are no longer on that machine",
     reading: "Reading…",
     readFailed: "Couldn't read it",
+    fileMissing: "File not found",
   },
   turnInfo: {
     model: "Model",
@@ -1049,6 +1071,9 @@ export const en: Words = {
   notSent: (why) => known(why, enProblems) ?? "Couldn't send",
   notDone: (why) => known(why, enProblems) ?? "Couldn't do that",
   waitingToSend: "Waiting to send",
+  notConfirmed: "Delivery unknown",
+  sendAgain: "Resend",
+  takeAway: "Remove",
   health: {
     reconnecting: "Connection lost, retrying",
     safety: "OpenAI is giving this turn's output extra safety review",

@@ -634,7 +634,9 @@ fn observe_activation(node: &Arc<Node>, host: &Host, directory: &Path) {
             tokio::select! { () = &mut exited => break Ok(()), () = changed => {} }
         };
         match result {
-            Ok(()) => super::look(&node, &directory).await,
+            Ok(()) => {
+                super::look(&node, &directory).await;
+            }
             result => node.log.line(format_args!("observing Claude's control activation: {result:?}")),
         }
         let mut observed = node.claude.bridge.observed.lock().expect("never poisoned");

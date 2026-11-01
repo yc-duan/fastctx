@@ -43,7 +43,7 @@ impl Link {
             return Ok(Posting::Replaced);
         }
         let path = refused_path(&self.inner, posted);
-        match std::fs::read(&path) {
+        match fastctx_platform::disk::read(&path) {
             Ok(bytes) => {
                 let (_, reason): (jiff::Timestamp, String) =
                     serde_json::from_slice(&bytes).map_err(io::Error::other)?;

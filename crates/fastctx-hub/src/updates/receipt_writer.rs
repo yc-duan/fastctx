@@ -18,7 +18,7 @@ pub(super) struct Writer {
 impl Writer {
     pub fn new(mut sink: SplitSink<Socket, WsMessage>, pulse: Arc<Pulse>, work: ReceiptWork) -> Self {
         let (done, mut finish) = oneshot::channel::<String>();
-        let task = tokio::spawn(async move {
+        let task = fastctx_platform::task::spawn(async move {
             let mut completed = 0;
             let mut beat = tokio::time::interval_at(tokio::time::Instant::now() + HEARTBEAT, HEARTBEAT);
             beat.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);

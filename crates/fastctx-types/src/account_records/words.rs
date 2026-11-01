@@ -13,14 +13,11 @@ pub const WATCH_CONNECTION: &str = "account records require a watch connection";
 pub const NODE_OLD: &str = "upgrade this node to use account records";
 pub const CONFLICT: &str = "record version conflict";
 
-pub fn body_limit(size: usize) -> String {
-    format!("the record body is {size} bytes; the limit is {}", super::MAX_BODY_BYTES)
+pub fn body_limit(size: usize, limit: usize) -> String {
+    format!("the record body is {size} bytes; the limit is {limit}")
 }
 pub fn kind_limit() -> String {
     format!("this record kind has reached its limit of {} live records", super::MAX_KIND_KEYS)
-}
-pub fn account_limit(size: usize) -> String {
-    format!("the account records would occupy {size} bytes; the limit is {}", super::MAX_ACCOUNT_BYTES)
 }
 pub fn store(error: impl std::fmt::Display) -> String {
     format!("the hub could not store the record: {error}")

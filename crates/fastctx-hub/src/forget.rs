@@ -13,6 +13,8 @@
 //! before asking. While a deletion is kept, no member is told of the
 //! conversation as afoot.
 
+mod ownership;
+
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use fastctx_net::wire::{Down, Forgetting, Forgot, Told};
@@ -41,6 +43,10 @@ pub(crate) struct Pending {
     at: Timestamp,
     /// The machine it lives on has not said yet that it deleted it.
     home: bool,
+    #[serde(default)]
+    ownership: Option<fastctx_types::owned_records::Conversation>,
+    #[serde(default)]
+    audience: BTreeSet<MachineName>,
     /// The members still to say they deleted what they keep of it, once
     /// the machine it lives on did.
     #[serde(default)]
@@ -58,6 +64,26 @@ pub(crate) fn ask(
     account: AccountName,
     conversation: Address,
 ) -> Result<Told, String> {
+    ask_inner(hub, asker, account, conversation, false)
+}
+
+pub(crate) fn prepare(
+    hub: &std::sync::Arc<Hub>,
+    asker: &MachineName,
+    account: AccountName,
+    conversation: Address,
+) -> Result<Told, String> {
+    ask_inner(hub, asker, account, conversation, true)
+}
+
+fn ask_inner(
+    hub: &std::sync::Arc<Hub>,
+    asker: &MachineName,
+    account: AccountName,
+    conversation: Address,
+    preparing: bool,
+) -> Result<Told, String> {
+    let actor = account.clone();
     let conversation = {
         let store = hub.store();
         let directory = &store.book.directory;
@@ -72,19 +98,26 @@ pub(crate) fn ask(
             .ok_or_else(|| format!("there is no machine named {} on the hub", conversation.machine))?;
         Address { machine: home.name.clone(), resident: conversation.resident }
     };
+    let ownership = ownership::resolve(hub, &actor, &conversation);
+    let conversation = ownership.as_ref().map_or(conversation, |owner| owner.address.clone());
+    if preparing && (ownership.is_none() || !hub.store().book.directory.same(asker, &conversation.machine)) {
+        return Err("only the runtime host prepares a registered conversation's deletion".into());
+    }
+    let account = ownership.as_ref().map_or(account, |owner| owner.account.clone());
     // Of a conversation its machine told is afoot, the hub knows whom it
     // works for; the machine itself is asked of any other.
-    if let Some(accounts) = crate::afoot::accounts_of(hub, &conversation)
-        && !accounts.contains(&account)
-    {
+    if ownership.is_none() && crate::afoot::owned_by(hub, &conversation, &account) == Some(false) {
         return Err(format!(
             "the conversation {} on {} does not work for the account {account}",
             conversation.resident, conversation.machine
         ));
     }
     let tell = {
-        let mut store = hub.store();
-        let by_home = store.book.directory.same(asker, &conversation.machine);
+        let mut store = hub.edit_store();
+        if ownership.as_ref().is_some_and(|owner| !crate::owned_records::allows(&store.book.directory, &actor, owner)) {
+            return Err("this account no longer owns that conversation".into());
+        }
+        let by_home = !preparing && store.book.directory.same(asker, &conversation.machine);
         let kept = store.book.forgetting.pending.iter().position(|pending| {
             pending.forgetting.conversation == conversation && pending.forgetting.account == account
         });
@@ -103,21 +136,24 @@ pub(crate) fn ask(
                 store.book.forgetting.last += 1;
                 let forgetting =
                     Forgetting { id: store.book.forgetting.last, conversation: conversation.clone(), account };
+                let audience = ownership::targets(&store, &forgetting, ownership.as_ref());
                 let mut pending = Pending {
                     forgetting,
                     asked_by: asker.clone(),
                     at: Timestamp::now(),
                     home: true,
+                    ownership: ownership.clone(),
+                    audience,
                     waiting: BTreeSet::new(),
                     failed: BTreeMap::new(),
                 };
                 if by_home {
                     pending.home = false;
-                    pending.waiting = targets(&store, &pending.forgetting);
+                    pending.waiting = targets(&store, &pending);
                 }
                 let tell = told_now(&pending);
                 let actor = Actor {
-                    account: Some(pending.forgetting.account.clone()),
+                    account: Some(actor.clone()),
                     authenticated: true,
                     member: Some(asker.clone()),
                     peer: None,
@@ -141,7 +177,7 @@ pub(crate) fn ask(
                 // Letters held for it would only be set aside where it lived.
                 let (hub, conversation) = (hub.clone(), conversation.clone());
                 let held = crate::moving::Moving::hold(&hub);
-                tokio::spawn(async move {
+                fastctx_platform::task::spawn(async move {
                     let _held = held;
                     match crate::mailbox::drop_for(&hub, &conversation).await {
                         Ok(0) => {}
@@ -160,7 +196,9 @@ pub(crate) fn ask(
         }
     };
     hub.log.line(format_args!("{asker} asked that {} be deleted everywhere", conversation.key()));
-    send(hub, tell);
+    if !preparing {
+        send(hub, tell);
+    }
     crate::afoot::settle(hub);
     Ok(Told::Done)
 }
@@ -168,7 +206,7 @@ pub(crate) fn ask(
 /// What the member `member` did with the deletion `id`.
 pub(crate) fn forgot(hub: &Hub, member: &MachineName, id: u64, outcome: Forgot) {
     let (tell, ended) = {
-        let mut store = hub.store();
+        let mut store = hub.edit_store();
         let member = store.book.directory.canonical(member).clone();
         let Some(index) = store.book.forgetting.pending.iter().position(|pending| pending.forgetting.id == id) else {
             return;
@@ -255,9 +293,12 @@ pub(crate) fn opened(hub: &Hub, name: &MachineName) {
 /// Lets go of the members that left the hub: a deletion waits no longer
 /// for them, and one whose conversation's machine left ends.
 pub(crate) fn prune(hub: &Hub) {
+    if hub.store().book.forgetting.pending.is_empty() {
+        return;
+    }
     let ended = {
-        let mut store = hub.store();
-        let Store { book, .. } = &mut *store;
+        let mut store = hub.edit_store();
+        let book = &mut *store.book;
         let directory = &book.directory;
         let before = book.forgetting.pending.len();
         let mut changed = false;
@@ -284,7 +325,7 @@ pub(crate) fn prune(hub: &Hub) {
 
 /// The conversations being deleted, machine by machine: no member is told
 /// of them as afoot.
-pub(crate) fn hidden(store: &Store) -> HashMap<MachineName, BTreeSet<ResidentId>> {
+pub(crate) fn hidden(store: &crate::store::Snapshot) -> HashMap<MachineName, BTreeSet<ResidentId>> {
     let mut hidden: HashMap<MachineName, BTreeSet<ResidentId>> = HashMap::new();
     for pending in &store.book.forgetting.pending {
         let conversation = &pending.forgetting.conversation;
@@ -312,7 +353,7 @@ fn deleted_by_asker(store: &mut Store, asker: &MachineName, forgetting: &Forgett
 /// Its machine deleted what it kept: every other member that may keep
 /// something of it is to delete that now.
 fn done_at_home(store: &mut Store, index: usize) {
-    let waiting = targets(store, &store.book.forgetting.pending[index].forgetting);
+    let waiting = targets(store, &store.book.forgetting.pending[index]);
     let pending = std::sync::Arc::make_mut(&mut store.book.forgetting.pending[index]);
     pending.home = false;
     pending.waiting = waiting;
@@ -333,29 +374,11 @@ fn finish(hub: &Hub, store: &mut Store, index: usize) -> bool {
     true
 }
 
-/// The members that may keep something of the conversation besides the
-/// machine it lives on: every computer and phone logged in to the account,
-/// which may have kept a copy of it while showing it; every machine the
-/// account may work on, where it may have run commands; and every machine
-/// the hub noted it was called to work on.
-fn targets(store: &Store, forgetting: &Forgetting) -> BTreeSet<MachineName> {
-    let directory = &store.book.directory;
-    let (account, conversation) = (&forgetting.account, &forgetting.conversation);
-    let mut targets: BTreeSet<MachineName> = directory
-        .members
-        .iter()
-        .filter(|member| member.logins.contains(account) || directory.rights(account, &member.name).hands)
-        .map(|member| member.name.clone())
-        .collect();
-    for (machine, worked) in &store.worked {
-        if directory.same(&worked.machine, &conversation.machine)
-            && worked.resident == conversation.resident
-            && let Some(member) = directory.member(machine)
-        {
-            targets.insert(member.name.clone());
-        }
-    }
-    targets.retain(|member| !directory.same(member, &conversation.machine));
+/// Current and former asset readers, plus machines with recorded work, may
+/// need cleanup. Administrative machine access alone is not a recipient.
+fn targets(store: &crate::store::Snapshot, pending: &Pending) -> BTreeSet<MachineName> {
+    let mut targets = ownership::targets(store, &pending.forgetting, pending.ownership.as_ref());
+    targets.extend(pending.audience.iter().filter(|machine| store.book.directory.member(machine).is_some()).cloned());
     targets
 }
 

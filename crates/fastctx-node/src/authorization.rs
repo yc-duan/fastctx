@@ -72,7 +72,20 @@ impl Node {
                         "the account's hub is no longer connected",
                     ))
                 })?;
-                let view = current_view(&link)?;
+                let view = match current_view(&link) {
+                    Ok(view) => view,
+                    Err(error)
+                        if view_pending(&error)
+                            && link.view().me().is_some_and(|member| {
+                                !member.managed
+                                    && member.home.as_ref() == Some(&account.account)
+                                    && member.logins.contains(&account.account)
+                            }) =>
+                    {
+                        link.view()
+                    }
+                    Err(error) => return Err(error),
+                };
                 view.authorize(&account.account, Action::Work(&view.me)).map_err(Failure::from)
             })();
             match allowed {

@@ -224,7 +224,7 @@
   }
 }
 
-.start-journal {
+.start-history {
   margin: var(--space-2) 0 0 calc(-1 * var(--space-3));
 }
 

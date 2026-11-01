@@ -31,6 +31,7 @@ async fn here(
         .get(&key)
         .cloned()
         .ok_or_else(|| failed("line source is closed or belongs to another caller"))?;
+    crate::replicas::sync::repair_paths(node, std::slice::from_ref(&source.path)).await.map_err(failed)?;
     refresh(source.clone(), None).await?;
     let cancelled = Cancel::default();
     let cancel = cancelled.0.clone();

@@ -15,6 +15,8 @@ use std::borrow::Cow;
 mod elsewhere;
 #[path = "renewal_legacy/page_identity.rs"]
 mod page_identity;
+#[path = "renewal_legacy/records.rs"]
+mod records;
 
 pub(crate) fn enabled(protocol: u32, peer: &Peer) -> bool {
     (protocol == 10 && matches!(peer, Peer::Command { .. }))
@@ -186,12 +188,13 @@ pub(crate) fn notices(generation: u32, reply: &mut Reply) {
 /// machine is told them, said as text to a client that reads no such
 /// shape (`ipc::SHAPES`): truthful, and nothing more named than it says.
 pub(crate) fn shapes(generation: u32, reply: &mut Result<Reply, fastctx_types::ipc::Failure>) {
-    if generation >= 1 || !reply.as_ref().is_ok_and(elsewhere::present) {
+    let extended_record = generation < 2 && reply.as_ref().is_ok_and(records::present);
+    if !extended_record && (generation >= 1 || !reply.as_ref().is_ok_and(elsewhere::present)) {
         return;
     }
     let Ok(answer) = reply else { return };
     let failure = fastctx_types::ipc::Failure::new(format!(
-        "The call completed. This fastctx cannot display who wrote something on a machine it may not work on. The complete result follows as JSON (do not repeat the call):
+        "The call completed. Update this client to display the record and its reader-specific attribution. The complete result follows as JSON (do not repeat the call):
 {}",
         serde_json::to_string_pretty(answer).expect("JSON serializes")
     ));

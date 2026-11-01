@@ -42,6 +42,7 @@ pub fn retire(node: &Node) -> io::Result<()> {
                 continue 'conversation;
             }
         }
+        crate::delivery::prepare(directory)?;
         let _transaction = crate::resident_storage::lock();
         if owes(node, &owner, directory)? {
             continue;
@@ -62,6 +63,15 @@ pub fn retire(node: &Node) -> io::Result<()> {
 /// do not have yet, a job of its that runs here or whose end it is still
 /// owed, or a job it left running on another machine.
 fn owes(node: &Node, owner: &Address, directory: &ConversationDir) -> io::Result<bool> {
+    if crate::records::read(directory, |rows| {
+        Ok(rows.connection().query_row(
+            "SELECT EXISTS(SELECT 1 FROM terminal_work WHERE conversation=?1)",
+            [rows.conversation()],
+            |row| row.get::<_, bool>(0),
+        )?)
+    })? {
+        return Ok(true);
+    }
     // Goal bindings still identify records that deletion must collect (2026-10-23).
     if crate::goals::lifecycle::unfinished(directory)?
         || crate::goals::lifecycle::keeps_books(node, &owner.resident)
@@ -70,37 +80,24 @@ fn owes(node: &Node, owner: &Address, directory: &ConversationDir) -> io::Result
         return Ok(true);
     }
     for queue in ["job-deliveries", "on-deliveries", "on-stops", "run-stops", "received", "received-controls"] {
-        if crate::retention::entries(&directory.book(queue))?
+        if crate::records::items::page(&directory.book(queue), Some("json"), "", 1)?
             .iter()
             .any(|path| path.extension().is_some_and(|extension| extension == "json"))
         {
             return Ok(true);
         }
     }
-    let reports = directory.books().join("host-reports.json");
-    match std::fs::read(&reports) {
-        Ok(bytes) => {
-            let value: serde_json::Value = serde_json::from_slice(&bytes).map_err(io::Error::other)?;
-            if value.get("events").and_then(serde_json::Value::as_array).is_some_and(|events| !events.is_empty()) {
-                return Ok(true);
-            }
-        }
-        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-        Err(error) => return Err(error),
+    let thread = node.residents.about(&owner.resident).and_then(|(about, _)| about.session);
+    if crate::codex::pending(node, directory, thread.as_deref())? {
+        return Ok(true);
     }
-    for path in crate::retention::entries(&directory.outbox())? {
-        let Some(stem) = path.file_stem().and_then(|stem| stem.to_str()) else { continue };
-        if path.extension().is_some_and(|extension| extension == "json")
-            && !directory.paid().join(stem).try_exists()?
-            && !directory.outbox().join(format!("{stem}.paid")).try_exists()?
-        {
-            return Ok(true);
-        }
+    if crate::inbox::answers::has_pending(directory)? {
+        return Ok(true);
     }
     for jobs in node.world.job_directories(&owner.machine, owner)? {
         for path in crate::retention::entries(&jobs)? {
             match path.extension().and_then(|extension| extension.to_str()) {
-                Some("owed") => return Ok(true),
+                Some("json") if crate::job_metadata::exists(&path.with_extension("owed"))? => return Ok(true),
                 Some("json") if record::read(&path)?.end.is_none() => return Ok(true),
                 _ => {}
             }

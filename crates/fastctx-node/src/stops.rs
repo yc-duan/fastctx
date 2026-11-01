@@ -6,60 +6,51 @@ use fastctx_types::{NoticeId, ResidentId, ipc::Failure, turn_evidence::StopSourc
 use std::{io, sync::Arc, time::Duration};
 
 #[derive(Default)]
-pub(crate) struct Stops;
-
-fn marker(node: &Node, resident: &ResidentId, input: &NoticeId) -> std::path::PathBuf {
-    node.world.conversation(resident).book("input-stops").join(input.as_str())
+pub(crate) struct Stops {
+    recovering: std::sync::Mutex<std::collections::HashMap<ResidentId, bool>>,
 }
 
-/// The user's intent is separate from the host's interrupted outcome.
-/// Keeping it before the stop also lets a delayed terminal report classify it.
-pub(crate) fn mark_turn(node: &Node, resident: &ResidentId, turn: &str) -> io::Result<()> {
-    let key = crate::speech::fixed_id("stopped", &[turn]);
-    let path = node.world.conversation(resident).book("user-stops").join(key.as_str());
-    fastctx_platform::ensure_private_dir(path.parent().expect("user stop directory"))?;
-    fastctx_platform::publish(&path, b"", fastctx_platform::Permissions::Private)
-}
+mod recovery;
+mod settled;
+mod store;
 
 pub(crate) fn requested_turn(node: &Node, resident: &ResidentId, turn: &str) -> io::Result<bool> {
+    if crate::turn_evidence::source(node, resident, turn)? == Some(StopSource::User) {
+        return Ok(true);
+    }
     let key = crate::speech::fixed_id("stopped", &[turn]);
-    node.world.conversation(resident).book("user-stops").join(key.as_str()).try_exists()
+    crate::records::metadata::exists(&node.world.conversation(resident).book("user-stops").join(key.as_str()))
 }
 
 impl Stops {
-    /// The record lock and the turn check cover either ordering with `started`:
-    /// a turn already entered is stopped directly; otherwise its inputs carry it.
-    pub(crate) fn coming(&self, node: &Node, resident: &ResidentId, coming: Vec<NoticeId>, source: StopSource) -> io::Result<bool> {
-        let _transaction = crate::resident_storage::lock();
-        if coming.is_empty() || node.residents.now(resident).is_some_and(|now| now.turn.is_some()) {
-            return Ok(false);
-        }
-        for input in coming {
-            let path = marker(node, resident, &input);
-            fastctx_platform::ensure_private_dir(path.parent().expect("stop directory"))?;
-            if input_source(node, resident, &input)? != Some(StopSource::User) {
-                fastctx_platform::publish(&path, &serde_json::to_vec(&source)?, fastctx_platform::Permissions::Private)?;
-            }
-        }
-        Ok(true)
-    }
-
-    pub(crate) fn started<'a>(
+    /// A start publishes Now before reading these markers. The shared ordering
+    /// permit makes that read wait for a stop that observed an unbound turn.
+    pub(crate) async fn coming(
         &self,
-        node: &Node,
+        node: &Arc<Node>,
+        resident: &ResidentId,
+        coming: Vec<NoticeId>,
+        source: StopSource,
+    ) -> io::Result<bool> {
+        let committed = recovery::notification(node, resident);
+        let (node, resident) = (node.clone(), resident.clone());
+        store::ordered(node.world.conversation(&resident), move |directory, order| {
+            if coming.is_empty() || node.residents.now(&resident).is_some_and(|now| now.turn.is_some()) {
+                return Ok(false);
+            }
+            store::keep(directory, &coming, source, order, &committed)?;
+            Ok(true)
+        })
+        .await
+    }
+    pub(crate) async fn started<'a>(
+        &self,
+        node: &Arc<Node>,
         resident: &ResidentId,
         words: impl IntoIterator<Item = &'a NoticeId>,
     ) -> io::Result<Option<StopSource>> {
-        let _transaction = crate::resident_storage::lock();
-        let mut stopped = None;
-        for input in words {
-            if let Some(source) = input_source(node, resident, input)?
-                && stopped != Some(StopSource::User)
-            {
-                stopped = Some(source);
-            }
-        }
-        Ok(stopped)
+        let words = words.into_iter().cloned().collect::<Vec<_>>();
+        store::ordered(node.world.conversation(resident), move |directory, _| store::source(directory, &words)).await
     }
 }
 
@@ -87,81 +78,63 @@ pub(crate) fn deliver(node: &Arc<Node>, resident: &ResidentId, turn: &str, input
 }
 
 async fn apply(node: &Arc<Node>, resident: &ResidentId, turn: &str, inputs: &[NoticeId]) -> Result<(), Failure> {
-    let Some(source) = node.stops.started(node, resident, inputs).map_err(failure)? else {
+    let Some(source) = node.stops.started(node, resident, inputs).await.map_err(failure)? else {
         return Ok(());
     };
     let directory = node.world.conversation(resident);
-    if crate::delivery::terminal(&directory, turn).map_err(failure)?.is_none() {
+    crate::turn_evidence::remember(node, resident, turn, source).await.map_err(failure)?;
+    let (reading, requested) = (directory.clone(), turn.to_string());
+    let ended = tokio::task::spawn_blocking(move || crate::delivery::terminal(&reading, &requested))
+        .await
+        .map_err(failure)?
+        .map_err(failure)?;
+    if let Some(finished) = ended {
+        if source == StopSource::User {
+            let (node, resident, turn) = (node.clone(), resident.clone(), turn.to_string());
+            tokio::task::spawn_blocking(move || settled::user(&node, &resident, &turn, &finished))
+                .await
+                .map_err(failure)?
+                .map_err(failure)?;
+        }
+    } else {
         let speaking = node.residents.speaking(resident).ok_or_else(crate::authorization::no_subject)?;
         let guard = speaking.lock().await;
         if node.residents.now(resident).and_then(|now| now.turn).as_deref() != Some(turn) {
             return Err(Failure::new("the consuming turn has not become current or settled yet"));
-        }
-        crate::turn_evidence::remember(node, resident, turn, source).map_err(failure)?;
-        if source == StopSource::User {
-            mark_turn(node, resident, turn).map_err(failure)?;
         }
         node.interrupts.raise(&fastctx_types::Address { machine: node.machine(), resident: resident.clone() });
         drop(guard);
         let (about, _) = node.residents.about(resident).ok_or_else(crate::authorization::no_subject)?;
         let session = about.session.as_deref().ok_or_else(|| Failure::new("the consuming session is unknown"))?;
         match about.host.agent.as_str() {
-            "codex" => node.codex.of(node, &about)?.interrupt_turn(session, turn).await.map(|_| ()).map_err(Failure::new)?,
-            "claude" => fastctx_hosts::claude::exchange::stop(
-                &fastctx_hosts::claude::exchange::sessions(node.world.path()).join(session),
-                turn,
-            )
-            .map_err(failure)?,
+            "codex" => {
+                node.codex.of(node, &about)?.interrupt_turn(session, turn).await.map(|_| ()).map_err(Failure::new)?
+            }
+            "claude" => {
+                let exchange = fastctx_hosts::claude::exchange::sessions(node.world.path()).join(session);
+                let turn = turn.to_string();
+                tokio::task::spawn_blocking(move || fastctx_hosts::claude::exchange::stop(&exchange, &turn))
+                    .await
+                    .map_err(failure)?
+                    .map_err(failure)?;
+            }
             _ => return Err(Failure::new("the consuming host has no stop entrance")),
         }
     }
-    for input in inputs {
-        match std::fs::remove_file(marker(node, resident, input)) {
-            Err(error) if error.kind() != io::ErrorKind::NotFound => return Err(failure(error)),
-            _ => {}
-        }
+    let inputs = inputs.to_vec();
+    if !store::ordered(directory, move |directory, order| store::finish(directory, &inputs, source, order))
+        .await
+        .map_err(failure)?
+    {
+        return Err(Failure::new("a stronger stop arrived while the host was interrupted"));
     }
     Ok(())
 }
 
-/// A node may have stopped after binding a turn and before sending its stop.
 pub(crate) fn recover(node: &Arc<Node>) {
+    let runtime = tokio::runtime::Handle::current();
     for resident in node.residents.everyone().filter(|resident| resident.removed.is_none()) {
-        let directory = node.world.conversation(&resident.id);
-        let paths = match std::fs::read_dir(directory.book("input-stops")) {
-            Ok(paths) => paths,
-            Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
-            Err(error) => {
-                node.log.line(format_args!("recovering input stops: {error}"));
-                continue;
-            }
-        };
-        for path in paths {
-            let result = (|| -> io::Result<()> {
-                let path = path?.path();
-                let Some(input) =
-                    path.file_name().and_then(|name| name.to_str()).and_then(|name| name.parse::<NoticeId>().ok())
-                else {
-                    return Ok(());
-                };
-                if let Some(turn) = crate::delivery::input_turn(&directory, &input)? {
-                    deliver(node, &resident.id, &turn, vec![input]);
-                }
-                Ok(())
-            })();
-            if let Err(error) = result {
-                node.log.line(format_args!("recovering {}'s input stop: {error}", resident.id));
-            }
-        }
-    }
-}
-
-fn input_source(node: &Node, resident: &ResidentId, input: &NoticeId) -> io::Result<Option<StopSource>> {
-    match std::fs::read(marker(node, resident, input)) {
-        Ok(bytes) if bytes.is_empty() => Ok(Some(StopSource::User)),
-        Ok(bytes) => serde_json::from_slice(&bytes).map(Some).map_err(io::Error::other),
-        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
-        Err(error) => Err(error),
+        recovery::schedule(&runtime, node, &resident.id);
     }
 }
 

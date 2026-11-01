@@ -15,6 +15,8 @@ pub(crate) use publishing::start;
 mod history;
 mod repair;
 mod repair_batch;
+mod rollout;
+pub(crate) use rollout::watch as watch_rollouts;
 mod view;
 pub(crate) use view::request as view_request;
 mod attempt;
@@ -64,9 +66,9 @@ pub(crate) async fn held_digest(hub: &Arc<Hub>, version: &str, archive: &str, br
         }
         return None;
     };
-    let hashed = tokio::task::spawn_blocking(move || -> std::io::Result<String> {
+    let hashed = fastctx_platform::task::spawn_blocking(move || -> std::io::Result<String> {
         use sha2::Digest as _;
-        let mut file = std::fs::File::open(path)?;
+        let mut file = fastctx_platform::disk::open(path)?;
         let mut hash = sha2::Sha256::new();
         std::io::copy(&mut file, &mut hash)?;
         Ok(format!("{:x}", hash.finalize()))
@@ -101,10 +103,11 @@ pub(crate) struct Updates {
     told: HashMap<MachineName, crate::outq::VersionSnapshot>,
     /// The packages being brought in, and who waits for each.
     obtaining: HashMap<Held, obtain::Obtaining>,
-    requests: HashMap<(MachineName, u64, u64), (Held, bool)>,
+    requests: std::collections::BTreeMap<(MachineName, u64, u64), (Held, bool)>,
     serving: HashMap<Held, usize>,
     /// The requests machines were sent to fetch a package (`Down::Fetch`).
     fetches: HashMap<u64, Fetching>,
+    fetches_by_session: HashMap<(MachineName, u64), std::collections::HashSet<u64>>,
     cache: Cache,
     /// Places for the packages handed to machines at once, so updates leave
     /// the hub's line to everything else that passes on it.
@@ -174,9 +177,10 @@ impl Updates {
             check: Arc::new(tokio::sync::Mutex::new(())),
             told: HashMap::new(),
             obtaining: HashMap::new(),
-            requests: HashMap::new(),
+            requests: Default::default(),
             serving: HashMap::new(),
             fetches: HashMap::new(),
+            fetches_by_session: HashMap::new(),
             cache,
             handing: Arc::new(tokio::sync::Semaphore::new(HANDED_AT_ONCE)),
             coming: Arc::new(tokio::sync::Mutex::new(())),
@@ -228,6 +232,7 @@ impl Updates {
             updates_view: true,
             repair_supported: true,
             repairs: BTreeMap::new(),
+            rolled: None,
         }
     }
 
@@ -337,7 +342,7 @@ pub(crate) fn hub_hosts(hub: &Hub) -> std::collections::BTreeSet<fastctx_net::si
 /// Membership changes, not every report, retire records of removed devices.
 pub(crate) fn directory_changed(hub: &Hub) {
     let keys: std::collections::BTreeSet<_> = {
-        let mut store = hub.store();
+        let mut store = hub.edit_store();
         let keys = store.book.directory.members.iter().map(|m| m.key).collect::<std::collections::BTreeSet<_>>();
         let before = store.hub.package_targets.len();
         store.hub.package_targets.retain(|key, _| keys.contains(key));
@@ -401,7 +406,7 @@ pub(crate) fn heard(hub: &Arc<Hub>, name: &MachineName, generation: u64, mut rep
     let mut due_changed = false;
     let stage = hub.updates.lock().expect("never poisoned").last.get(&key).map(|last| last.report.stage.clone());
     if let Some(fastctx_types::update::Stage::Failed { version, problem }) = stage {
-        let mut store = hub.store();
+        let mut store = hub.edit_store();
         // A machine brought to a newer release than it was asked for fails
         // the arrangement all the same.
         let reached = fastctx_types::update::release(&version);
@@ -427,7 +432,7 @@ pub(crate) fn heard(hub: &Arc<Hub>, name: &MachineName, generation: u64, mut rep
 /// passes was made, and one it made as someone asked goes into the machine
 /// log, once.
 fn settle(hub: &Hub, name: &MachineName, kernel: &str, app: Option<&str>, asked: Option<Asked>) {
-    let mut store = hub.store();
+    let mut store = hub.edit_store();
     let Some(key) = store.book.directory.member(name).map(|member| member.key) else { return };
     let mut runs = fastctx_types::update::release(kernel);
     if let Some(app) = app {
@@ -441,7 +446,7 @@ fn settle(hub: &Hub, name: &MachineName, kernel: &str, app: Option<&str>, asked:
         }
         drop(store);
         prune(hub);
-        store = hub.store();
+        store = hub.edit_store();
     }
     let Some(asked) = asked.filter(|asked| asked.from != kernel) else { return };
     match store.book.machine_log.updated(&key, &asked.from, kernel) {
@@ -470,17 +475,40 @@ pub(crate) fn opened(hub: &Hub, name: &MachineName) {
     tell(hub, Some(name));
 }
 
+/// The release each machine runs, by its key, as its last report of its
+/// versions said.
+pub(crate) fn running_kernels(hub: &Hub) -> HashMap<fastctx_net::sign::PublicKey, String> {
+    let updates = hub.updates.lock().expect("never poisoned");
+    updates.last.iter().map(|(key, last)| (*key, last.report.kernel.clone())).collect()
+}
+
+/// What the machine of `key` said it is in its last report of its versions,
+/// kept while it is away: a computer someone sits at, a machine with no
+/// application, a managed machine or a phone.
+pub(crate) fn reported_kind(hub: &Hub, key: &fastctx_net::sign::PublicKey) -> Option<fastctx_types::update::Kind> {
+    hub.updates.lock().expect("never poisoned").last.get(key).and_then(|last| last.report.kind)
+}
+
+/// How many machines last reported they are of `kind`.
+pub(crate) fn reported_of_kind(hub: &Hub, kind: fastctx_types::update::Kind) -> usize {
+    hub.updates.lock().expect("never poisoned").last.values().filter(|last| last.report.kind == Some(kind)).count()
+}
+
 /// The session `generation` of `name` ended: what it reported goes, and
 /// whatever it was asked to fetch is asked of another.
 pub(crate) fn closed(hub: &Hub, name: &MachineName, generation: u64) {
     let had = {
         let mut updates = hub.updates.lock().expect("never poisoned");
-        updates.requests.retain(|(member, session, _), _| member != name || *session != generation);
-        for fetching in updates.fetches.values_mut() {
-            if fetching.helper == *name
-                && fetching.generation == generation
-                && let Some(done) = fetching.done.take()
-            {
+        let requests: Vec<_> = updates
+            .requests
+            .range((name.clone(), generation, 0)..=(name.clone(), generation, u64::MAX))
+            .map(|(key, _)| key.clone())
+            .collect();
+        for key in requests {
+            updates.requests.remove(&key);
+        }
+        for id in updates.fetches_by_session.remove(&(name.clone(), generation)).unwrap_or_default() {
+            if let Some(done) = updates.fetches.get_mut(&id).and_then(|fetching| fetching.done.take()) {
                 let _ = done.send(Err(format!("{name} left before it delivered")));
             }
         }

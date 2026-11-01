@@ -4,7 +4,7 @@
 // interface grouped by account.
 
 import type { Address } from "../world/events";
-import { LASTING, type AccountChange, type HubAccounts, type MemberSeen, type Paths, type Reach } from "../world/accounts";
+import { LASTING, type AccountChange, type HubAccounts, type MemberSeen, type Paths, type Reach, type Trouble } from "../world/accounts";
 import type { About, Action, HubNodes, LinkState, MachineFacts, MachineWho, Node, ProjectRecord, ResidentNow } from "../world/world";
 import type { Away, WorldState } from "../home/model";
 import type { AgentFacts, WorldAgents } from "../world/agents";
@@ -53,6 +53,7 @@ function resident(
     now: state.now ?? null,
     last_action: state.last_action ?? null,
     moved: state.moved ?? null,
+    ...(state.openedBy ? { openedBy: state.openedBy } : {}),
   };
 }
 
@@ -330,10 +331,31 @@ function many(): Node[] {
  *  「机房 A」, and has cy as a visitor, whose mac it sees only by name;
  *  and with `two`, a second one at work, where it is a member that ops
  *  shared build with and whom the Claude on render assists. */
+/** What home told of within the last week, unless ?troubles=0: a fault
+ *  and a warning or two on most days, today's newest. */
+function troubles(): Trouble[] {
+  if (new URLSearchParams(location.search).get("troubles") === "0") return [];
+  const hoursAgo = (hours: number) => new Date(Date.parse(at("13:40:00")) - hours * 3_600_000).toISOString();
+  return [
+    { id: 41, at: hoursAgo(150), machine: "lab", kind: "violations" },
+    { id: 42, at: hoursAgo(118), kind: "hub", seconds: 3 },
+    { id: 43, at: hoursAgo(97), kind: "outage", count: 6 },
+    { id: 44, at: hoursAgo(96.8), machine: "server", kind: "silent", seconds: 30 },
+    { id: 45, at: hoursAgo(70), machine: "gpu", kind: "near", near: { bound: "link.frames", used: 93 } },
+    { id: 46, at: hoursAgo(44), machine: "gpu", kind: "damaged" },
+    { id: 47, at: hoursAgo(30), machine: "lab", kind: "drops", count: 5 },
+    { id: 48, at: hoursAgo(26), machine: "server", kind: "silent", seconds: 30 },
+    { id: 49, at: hoursAgo(5), kind: "rollout", version: "1.1.0-beta.1" },
+    { id: 50, at: hoursAgo(1.2), machine: "laptop", kind: "stuck", seconds: 74 },
+    { id: 51, at: hoursAgo(0.4), machine: "server", kind: "stuck", seconds: 61 },
+  ];
+}
+
 function hubs(two: boolean): { nodes: HubNodes[]; accounts: HubAccounts[] } {
   // With ?hub=down, the line to home is down and reconnecting: its view
   // still has the machines, and the node leaves unsaid who is online now.
   const down = new URLSearchParams(location.search).get("hub") === "down";
+  const strained = new URLSearchParams(location.search).has("strain");
   const link: LinkState = down
     ? { kind: "connecting", since: at("13:41:20"), last_error: "its own line: 203.0.113.10:7443 card Ethernet: connection refused" }
     : { kind: "online", since: at("01:10:02"), hub: "203.0.113.10:7443", route: { kind: "card", name: "Ethernet" } };
@@ -353,7 +375,10 @@ function hubs(two: boolean): { nodes: HubNodes[]; accounts: HubAccounts[] } {
         node("lab-a-01", true, "11:02:00", "me", "windows", "C:/Users/lab", ["me", true, false]),
         node("lab-a-02", false, "12:31:00", "me", "windows", "C:/Users/lab", ["me", true, false]),
         ...many(),
-      ].map((machine) => (down ? { ...machine, online: null } : machine)),
+      ]
+        .map((machine) => (down ? { ...machine, online: null } : machine))
+        // With ?strain, lab's Fastctx is held up and server's stuck.
+        .map((machine) => (!strained ? machine : machine.name === "lab" ? { ...machine, strain: "busy" as const } : machine.name === "server" ? { ...machine, strain: "stuck" as const } : machine)),
     },
   ];
   // How the lines go: desktop and server take direct connections; laptop
@@ -394,6 +419,8 @@ function hubs(two: boolean): { nodes: HubNodes[]; accounts: HubAccounts[] } {
       versions: true,
       due: true,
       uninstalls: true,
+      health: true,
+      troubles: troubles(),
       accounts: [
         { name: "me", level: "super", locked: false, opened: at("00:00:00") },
         { name: "ada", level: "member", locked: false, opened: at("00:05:00") },
@@ -648,6 +675,8 @@ export function specimenWorld(): { world: WorldState; now: Date; lastVisit: Date
                 last_said: "Rotation now keeps 14 days of logs and compresses anything older than a day; the cron entry is in /etc/cron.d/app-logs.",
                 told: { id: "told-41aa-1", at: at("05:49:40"), status: "info", text: "日志轮转改好了：留 14 天，超过一天的压缩，定时任务在 /etc/cron.d/app-logs。", turn: "t2" },
               },
+              // Opened on this shared server by another who shares it.
+              openedBy: { account: "bob" },
             }),
           ],
           jobs: [],

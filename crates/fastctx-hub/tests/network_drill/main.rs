@@ -10,21 +10,25 @@
 //! its trouble did happen, what must hold however it went, and, on this
 //! release's hub, that the hub was left as it was found.
 //!
-//!     network_drill [--root DIR] [--earlier FASTCTX] [--only NAME,...]
+//!     network_drill [--root DIR] [--earlier FASTCTX] [--earlier-version VERSION] [--only NAME,...]
 //!     network_drill hub DIR      (the hub, served in a child process)
 //!
 //! `DIR` and `FASTCTX` are absolute paths; the drill's directory is under
 //! `--root`, else `FASTCTX_TEST_ROOT`, else the system's temporary one, and
 //! is deleted when every check passed.
 
+// A drill drives the hub from outside it, and is not held to the roles of
+// the hub's threads (`clippy.toml`).
+#![allow(clippy::disallowed_methods)]
+
 mod health;
 mod lab;
 mod letters;
 mod mixed;
 mod plan_copies;
-mod record_following;
 mod process;
 mod proxy;
+mod record_following;
 mod report;
 mod scenarios;
 mod skill_folders;
@@ -61,7 +65,11 @@ const SCENARIOS: [&str; 17] = [
 
 /// The longest a scenario may take.
 const LONGEST: Duration = Duration::from_secs(8 * 60);
-pub const EXPECTED_EARLIER: &str = "1.0.1-beta.12";
+pub const EXPECTED_EARLIER: &str = "1.0.1-beta.13";
+static EARLIER_VERSION: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+pub fn expected_earlier() -> &'static str {
+    EARLIER_VERSION.get().map_or(EXPECTED_EARLIER, String::as_str)
+}
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -98,18 +106,21 @@ fn serve(dir: &Path) -> ExitCode {
 struct Options {
     root: PathBuf,
     earlier: Option<PathBuf>,
+    earlier_version: String,
     only: Option<Vec<String>>,
 }
 
 fn options(args: &[String]) -> anyhow::Result<Options> {
     let mut root = std::env::var_os("FASTCTX_TEST_ROOT").map(PathBuf::from).unwrap_or_else(std::env::temp_dir);
     let (mut earlier, mut only) = (None, None);
+    let mut earlier_version = EXPECTED_EARLIER.to_string();
     let mut args = args.iter();
     while let Some(arg) = args.next() {
         let mut value = || args.next().ok_or_else(|| anyhow::anyhow!("{arg} takes a value"));
         match arg.as_str() {
             "--root" => root = PathBuf::from(value()?),
             "--earlier" => earlier = Some(PathBuf::from(value()?)),
+            "--earlier-version" => earlier_version = value()?.clone(),
             "--only" => only = Some(value()?.split(',').map(str::to_string).collect::<Vec<_>>()),
             other => anyhow::bail!("unknown argument {other}"),
         }
@@ -124,11 +135,13 @@ fn options(args: &[String]) -> anyhow::Result<Options> {
             anyhow::ensure!(SCENARIOS.contains(&name.as_str()), "there is no scenario {name}");
         }
     }
-    Ok(Options { root, earlier, only })
+    Ok(Options { root, earlier, earlier_version, only })
 }
 
 fn drill(args: &[String]) -> anyhow::Result<bool> {
     let options = options(args)?;
+    let _ = EARLIER_VERSION.set(options.earlier_version.clone());
+    let expected = expected_earlier();
     let root = options.root.join(format!("fastctx-network-drill-{}", std::process::id()));
     std::fs::create_dir_all(&root)?;
     println!("network drill in {}", root.display());
@@ -138,9 +151,9 @@ fn drill(args: &[String]) -> anyhow::Result<bool> {
         let said = process::run(command, None, Duration::from_secs(10))?;
         anyhow::ensure!(
             said.status.success()
-                && said.out.split_whitespace().any(|word| word == EXPECTED_EARLIER)
+                && said.out.split_whitespace().any(|word| word == expected)
                 && !said.text().contains("development"),
-            "expected the released {EXPECTED_EARLIER} kernel, got {}",
+            "expected the released {expected} kernel, got {}",
             said.text()
         );
     }

@@ -25,7 +25,7 @@ pub(crate) fn tells(refusal: &Refusal) -> bool {
 
 /// The machine or device holding `key` was told the network is dissolved.
 pub(crate) fn told(hub: &Hub, key: &PublicKey) {
-    let mut store = hub.store();
+    let mut store = hub.edit_store();
     let Some(dissolved) = store.hub.dissolved.as_mut() else { return };
     let before = dissolved.untold.len();
     dissolved.untold.retain(|untold| untold != key);
@@ -82,7 +82,9 @@ pub fn retire(dir: &Path) -> anyhow::Result<usize> {
 /// The network kept in `dir` and how many are still to be told, when it is
 /// a dissolved one.
 pub fn dissolved(dir: &Path) -> anyhow::Result<Option<(fastctx_types::HubName, usize)>> {
-    if !Store::hub_file(dir).try_exists()? && !dir.join(crate::store::shelf::FILE).try_exists()? {
+    if !fastctx_platform::disk::exists(Store::hub_file(dir))?
+        && !fastctx_platform::disk::exists(dir.join(crate::store::shelf::FILE))?
+    {
         return Ok(None);
     }
     let hub = Store::read_hub(dir)?;

@@ -20,13 +20,15 @@ pub(super) async fn locate(
         Caller::User => None,
         _ => return Err(Failure::refused("skill folders are read by an account's conversation or user")),
     };
-    if let Some(owner) = &owner
+    let prepared = if let Some(owner) = &owner
         && node.is_me(&owner.machine)
     {
         let (about, _) =
             node.residents.about(&owner.resident).ok_or_else(|| Failure::new("the conversation is unavailable"))?;
-        crate::placement::location::prepare(node, &owner.resident, &about.origin, &about.acting).await?;
-    }
+        crate::placement::location::prepare(node, &owner.resident, &about.origin, &about.acting).await?
+    } else {
+        None
+    };
     let asker = crate::admission::Asker {
         machine: node.machine(),
         hub: scope.hub.clone(),
@@ -36,11 +38,24 @@ pub(super) async fn locate(
     let Some(owner) = owner else {
         return copies::prepare(node, &asker, None, name, None).await.map(|(skill, path)| (skill, Some(path)));
     };
-    let (placement, place) = crate::placement::location::read_place(link, &scope, &owner).await?;
-    let placement = placement.ok_or_else(|| Failure::not_run("the conversation has no working-copy location yet"))?;
-    let machine = place
-        .and_then(|place| place.machine)
-        .ok_or_else(|| Failure::not_run("there is no online working computer for this skill folder"))?;
+    let (placement, machine) = if link.view().shared_records {
+        if crate::placement::owned(crate::authorization::current_view(link)?.me(), account) {
+            return copies::prepare(node, &asker, Some(&owner), name, None)
+                .await
+                .map(|(skill, path)| (skill, Some(path)));
+        }
+        let location =
+            prepared.ok_or_else(|| Failure::not_run("there is no eligible computer for this account's skill files"))?;
+        (0, location.machine)
+    } else {
+        let (placement, place) = crate::placement::location::read_place(link, &scope, &owner).await?;
+        let placement =
+            placement.ok_or_else(|| Failure::not_run("the conversation has no working-copy location yet"))?;
+        let machine = place
+            .and_then(|place| place.machine)
+            .ok_or_else(|| Failure::not_run("there is no online working computer for this skill folder"))?;
+        (placement, machine)
+    };
     node.authorize_machine(&Acting::one(scope.hub.clone(), scope.account.clone()), &machine.clone().into())?;
     let snapshot = match link
         .skill_files(account, Request::Read { name: name.into() })

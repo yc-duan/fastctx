@@ -34,7 +34,7 @@ export type Dock = "right" | "bottom" | "left";
 export interface PanePart {
   id: string;
   name: string;
-  glyph: "goal" | "rows" | "tree";
+  glyph: "goal" | "rows" | "tree" | "history";
   page: SidePage;
 }
 
@@ -138,6 +138,12 @@ export class SidePane {
   /** Open, or opening: not while it shuts. */
   get open(): boolean {
     return !this.element.hidden && !this.shutting;
+  }
+
+  /** The part in view now: none while it is shut, or while a file is
+   *  read over the parts. */
+  get visible(): string | null {
+    return this.open ? this.shown() : null;
   }
 
   /** Still drawn as it shuts. */

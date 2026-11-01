@@ -25,7 +25,7 @@ pub(crate) async fn user(
         None => crate::colleagues::find_for(node, &Acting::Here, &resident).await?,
     };
     if node.is_here(&machine) {
-        let account = scope::resolve(node, &resident, account.as_ref())?;
+        let account = scope::user(node, &resident, account.as_ref()).await?;
         return user_here(node, resident, account, node.machine(), request).await;
     }
     let acting = account
@@ -82,10 +82,17 @@ pub(crate) async fn user_here(
     if matches!(request, Request::Mark { .. }) {
         return Err(Failure::refused(words::MAIN_ONLY));
     }
-    let account = scope::resolve(node, &resident, Some(&account))?;
+    let actor = account;
+    let account = scope::resolve(node, &resident, Some(&actor)).await?;
     require(node, &request)?;
     let address = Address { machine: node.machine(), resident };
-    operations::call(node, address, account, Author::User { machine }, None, request).await
+    let access = crate::record_access::Access { actor, owner: account.clone(), conversation: address.clone() };
+    let modern = node.link_of(&account.hub).is_some_and(|link| link.view().shared_records);
+    crate::record_access::within(
+        modern.then_some(access),
+        operations::call(node, address, account, Author::User { machine }, None, request),
+    )
+    .await
 }
 
 pub(crate) async fn command(
@@ -102,7 +109,11 @@ pub(crate) async fn command(
 
     let (selected, turn) = if let Some(job) = job {
         let directory = node.world.owner(&node.names(), &address);
-        let record = fastctx_hands::run::record::read(&directory.job_record(&job)).map_err(failure)?;
+        let path = directory.job_record(&job);
+        let record = tokio::task::spawn_blocking(move || fastctx_hands::run::record::read(&path))
+            .await
+            .map_err(failure)?
+            .map_err(failure)?;
         if record.end.is_some() || record.owner.resident().is_none_or(|owner| !super::same(node, owner, &address)) {
             return Err(Failure::refused(fastctx_types::goals::words::INACTIVE_JOB));
         }
@@ -113,18 +124,24 @@ pub(crate) async fn command(
         return Err(Failure::refused(fastctx_types::goals::words::REMOTE_JOB));
     };
     let selected = choose(node, &address, hub.as_ref(), account.as_ref(), selected.as_ref())?;
-    if !node.is_me(&address.machine)
-        && selected
-            .as_ref()
-            .is_none_or(|selected| !crate::jobs::running_for(&node.world, &node.names(), &address).contains(selected))
-    {
-        return Err(Failure::refused(words::ACCOUNT_MISSING));
+    if !node.is_me(&address.machine) {
+        let (checking, owner, selected) = (node.clone(), address.clone(), selected.clone());
+        let running = tokio::task::spawn_blocking(move || {
+            selected.as_ref().is_some_and(|selected| {
+                crate::jobs::running_for(&checking.world, &checking.names(), &owner).contains(selected)
+            })
+        })
+        .await
+        .map_err(failure)?;
+        if !running {
+            return Err(Failure::refused(words::ACCOUNT_MISSING));
+        }
     }
     let (target, scope) = if let AgentRequest::ControlColleague { colleague, .. } = &request {
         super::commands::target(node, &address, colleague, selected).await?
     } else {
         let scope = if node.is_me(&address.machine) {
-            scope::resolve(node, &address.resident, selected.as_ref())?
+            scope::resolve(node, &address.resident, selected.as_ref()).await?
         } else {
             selected.ok_or_else(|| Failure::refused(words::ACCOUNT_MISSING))?
         };

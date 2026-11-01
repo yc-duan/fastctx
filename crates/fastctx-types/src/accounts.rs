@@ -373,6 +373,14 @@ pub struct HubAccounts {
     /// Changes to held machines by other accounts, keyed by hub/account/id.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub machine_notices: Vec<crate::sharing::Notice>,
+    /// What went wrong lately with held machines, or with the network for
+    /// its super administrator, keyed by hub/id (`crate::trouble`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub troubles: Vec<crate::trouble::Trouble>,
+    /// Whether the hub reads its machines' health and tells what goes wrong
+    /// with them (`troubles`); an older hub tells nothing.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub health: bool,
     /// Whether the hub renames machines.
     #[serde(default)]
     pub renames: bool,

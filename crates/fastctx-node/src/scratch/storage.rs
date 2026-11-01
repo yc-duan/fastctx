@@ -1,22 +1,21 @@
-//! Durable knowledge of scratch paths and the revisions actually delivered.
+//! One current scratch coordinate per machine, with monotonic delivery receipts.
+//! The pending projection is indexed separately, so collecting nothing never
+//! scans every machine this conversation has visited.
 
-use fastctx_types::{ResidentId, layout::WorldDir, scratch::Descriptions};
+use crate::records;
+use fastctx_types::{
+    ResidentId,
+    layout::{ConversationDir, WorldDir},
+    scratch::Descriptions,
+};
 use serde::{Deserialize, Serialize};
-use std::{collections::BTreeMap, io};
+use std::{collections::BTreeMap, io, sync::LazyLock};
 
-#[derive(Default, Serialize, Deserialize)]
-struct State {
-    #[serde(default)]
-    described: bool,
-    known: BTreeMap<String, Entry>,
-    seen: BTreeMap<String, u64>,
-}
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 struct Entry {
     revision: u64,
     path: Result<String, String>,
 }
-
 #[derive(Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct Receipt {
     revisions: BTreeMap<String, u64>,
@@ -25,99 +24,136 @@ pub(crate) struct Receipt {
     #[serde(skip)]
     pub(crate) reserved: bool,
 }
+static GATES: LazyLock<crate::record_gates::Gates> = LazyLock::new(|| {
+    crate::record_gates::Gates::new(fastctx_platform::doing::Rank::RECORDS, "scratch catalog observation")
+});
 
-fn read(world: &WorldDir, id: &ResidentId) -> io::Result<State> {
-    let home = world.conversation(id);
+fn prepare(world: &WorldDir, id: &ResidentId) -> io::Result<ConversationDir> {
+    let directory = world.conversation(id);
     if world.deleted().join(format!("{id}.json")).try_exists()?
-        || home.path().join("deleting").try_exists()?
-        || !home.path().try_exists()?
+        || directory.path().join("deleting").try_exists()?
+        || !directory.path().try_exists()?
     {
         return Err(io::Error::new(io::ErrorKind::NotFound, "the conversation is unavailable"));
     }
-    match std::fs::read(home.path().join("scratch-locations.json")) {
-        Ok(bytes) => serde_json::from_slice(&bytes).map_err(io::Error::other),
-        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(State::default()),
-        Err(error) => Err(error),
-    }
-}
-fn write(world: &WorldDir, id: &ResidentId, state: &State) -> io::Result<()> {
-    fastctx_platform::publish(
-        &world.conversation(id).path().join("scratch-locations.json"),
-        &serde_json::to_vec(state).map_err(io::Error::other)?,
-        fastctx_platform::Permissions::Private,
-    )
+    let path = directory.path().join("scratch-locations.json");
+    records::legacy::map_field::<Entry>(&directory, "scratch-known", &path, "known")?;
+    records::legacy::map_field::<u64>(&directory, "scratch-seen", &path, "seen")?;
+    records::ensure_each(&directory, "scratch-state", |push| {
+        if let Some(described) = records::legacy::field::<bool>(&path, "described")? {
+            push(records::Source::new("described".into(), path.clone(), serde_json::to_vec(&described)?)?)?;
+        }
+        Ok(())
+    })?;
+    records::ensure_each(&directory, "scratch-unseen", |push| {
+        let mut after = String::new();
+        loop {
+            let page = records::read(&directory, |rows| rows.key_page::<Entry>("scratch-known", &after, 16))?;
+            let Some(last) = page.last() else { break };
+            after = last.0.clone();
+            for (machine, entry) in page {
+                let seen = records::read(&directory, |rows| rows.get::<u64>("scratch-seen", &machine))?.unwrap_or(0);
+                if seen < entry.revision {
+                    push(records::Source::new(machine, path.clone(), serde_json::to_vec(&entry)?)?)?;
+                }
+            }
+        }
+        Ok(())
+    })?;
+    Ok(directory)
 }
 
 pub(super) fn observe(world: &WorldDir, id: &ResidentId, paths: Descriptions, described: bool) -> io::Result<()> {
-    let _transaction = crate::resident_storage::lock();
-    let mut state = read(world, id)?;
-    // Only the opening catalog proves a path reached the model. Hosts differ
-    // on whether later tools/list responses replace their retained definitions.
-    if described && state.described {
+    let directory = prepare(world, id)?;
+    let gate = GATES.get(directory.path());
+    let _observing = gate.lock();
+    if described && records::read(&directory, |rows| rows.get::<bool>("scratch-state", "described"))?.unwrap_or(false) {
         return Ok(());
     }
-    let mut changed = described;
-    if described {
-        state.described = true;
-    }
-    for (machine, path) in paths {
-        let revision = match state.known.get(&machine) {
-            Some(entry) if entry.path == path => entry.revision,
-            previous => {
-                let revision = previous.map_or(Ok(1), |entry| {
-                    entry.revision.checked_add(1).ok_or_else(|| io::Error::other("scratch revision exhausted"))
-                })?;
-                state.known.insert(machine.clone(), Entry { revision, path });
-                changed = true;
-                revision
-            }
-        };
-        if described && state.seen.get(&machine) != Some(&revision) {
-            state.seen.insert(machine, revision);
-            changed = true;
+    let mut paths = paths.into_iter();
+    loop {
+        let group: Vec<_> = paths.by_ref().take(16).collect();
+        if group.is_empty() {
+            break;
         }
+        let bytes = serde_json::to_vec(&group)?.len();
+        records::write_at(&directory, fastctx_storage::Priority::Normal, bytes, move |rows| {
+            for (machine, path) in group {
+                let prior = rows.get::<Entry>("scratch-known", &machine)?;
+                let revision = match prior {
+                    Some(entry) if entry.path == path => entry.revision,
+                    prior => {
+                        let revision = prior.map_or(Ok(1), |entry| {
+                            entry
+                                .revision
+                                .checked_add(1)
+                                .ok_or_else(|| fastctx_storage::Error::new("scratch revision exhausted"))
+                        })?;
+                        rows.put("scratch-known", &machine, &Entry { revision, path: path.clone() })?;
+                        revision
+                    }
+                };
+                let seen = rows.get::<u64>("scratch-seen", &machine)?.unwrap_or(0);
+                if described {
+                    rows.put("scratch-seen", &machine, &seen.max(revision))?;
+                    rows.delete("scratch-unseen", &machine)?;
+                } else if seen < revision {
+                    rows.put("scratch-unseen", &machine, &Entry { revision, path })?;
+                }
+            }
+            Ok(())
+        })?;
     }
-    if changed {
-        write(world, id, &state)?;
+    if described {
+        records::write_at(&directory, fastctx_storage::Priority::Normal, 16, |rows| {
+            rows.put("scratch-state", "described", &true)
+        })?;
     }
     Ok(())
 }
-
 pub(super) fn collect(world: &WorldDir, id: &ResidentId, start: usize) -> io::Result<(Vec<String>, Receipt)> {
-    let _transaction = crate::resident_storage::lock();
-    let state = read(world, id)?;
-    let mut receipt = Receipt::default();
-    let mut notes = Vec::new();
-    let mut bytes = 0;
-    for (machine, entry) in state.known {
-        if state.seen.get(&machine).is_some_and(|seen| *seen >= entry.revision) {
-            continue;
+    let directory = prepare(world, id)?;
+    records::read(&directory, |rows| {
+        let mut receipt = Receipt::default();
+        let mut notes = Vec::new();
+        let mut bytes = 0;
+        let mut after = String::new();
+        'pages: loop {
+            let page = rows.key_page::<Entry>("scratch-unseen", &after, 16)?;
+            let Some(last) = page.last() else { break };
+            after = last.0.clone();
+            for (machine, entry) in page {
+                let note = fastctx_types::scratch::words::note(&machine, &entry.path);
+                if bytes + note.len() > 32 * 1024 && !notes.is_empty() {
+                    break 'pages;
+                }
+                bytes += note.len();
+                notes.push(note);
+                receipt.revisions.insert(machine, entry.revision);
+            }
         }
-        let note = fastctx_types::scratch::words::note(&machine, &entry.path);
-        if bytes + note.len() > 32 * 1024 && !notes.is_empty() {
+        receipt.shown = start..start + notes.len();
+        Ok((notes, receipt))
+    })
+}
+pub(super) fn acknowledge(world: &WorldDir, id: &ResidentId, receipt: &Receipt) -> io::Result<()> {
+    let directory = prepare(world, id)?;
+    let mut revisions = receipt.revisions.iter();
+    loop {
+        let group: Vec<_> = revisions.by_ref().take(16).map(|(key, value)| (key.clone(), *value)).collect();
+        if group.is_empty() {
             break;
         }
-        bytes += note.len();
-        notes.push(note);
-        receipt.revisions.insert(machine, entry.revision);
-    }
-    receipt.shown = start..start + notes.len();
-    Ok((notes, receipt))
-}
-
-pub(super) fn acknowledge(world: &WorldDir, id: &ResidentId, receipt: &Receipt) -> io::Result<()> {
-    let _transaction = crate::resident_storage::lock();
-    let mut state = read(world, id)?;
-    let mut changed = false;
-    for (machine, revision) in &receipt.revisions {
-        let seen = state.seen.entry(machine.clone()).or_default();
-        if *seen < *revision {
-            *seen = *revision;
-            changed = true;
-        }
-    }
-    if changed {
-        write(world, id, &state)?;
+        records::write_at(&directory, fastctx_storage::Priority::Interactive, 1024, move |rows| {
+            for (machine, revision) in group {
+                let seen = rows.get::<u64>("scratch-seen", &machine)?.unwrap_or(0).max(revision);
+                rows.put("scratch-seen", &machine, &seen)?;
+                if rows.get::<Entry>("scratch-known", &machine)?.is_some_and(|entry| entry.revision <= seen) {
+                    rows.delete("scratch-unseen", &machine)?;
+                }
+            }
+            Ok(())
+        })?;
     }
     Ok(())
 }

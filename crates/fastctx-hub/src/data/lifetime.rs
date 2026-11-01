@@ -58,7 +58,7 @@ impl Drop for Active<'_> {
         let mut pairing = self.hub.data.lock().expect("never poisoned");
         if pairing.live.get(&self.stream).is_some_and(|live| live.serial == self.serial) {
             pairing.live.remove(&self.stream);
-            pairing.registered.remove(&self.stream);
+            pairing.delete_registration(self.stream);
         } else {
             pairing.forget_waiting(self.stream, self.serial, "the waiting data connection ended");
         }

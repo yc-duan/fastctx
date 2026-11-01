@@ -35,19 +35,15 @@ impl Inner {
             }
             std::mem::replace(&mut *held, view.hub_addresses.clone())
         };
-        match self.keep_membership(|kept| kept.addresses = view.hub_addresses.clone()) {
-            Ok(()) => self.node.log(format!(
-                "the hub is reached at {} now, no longer at {}",
-                list(&view.hub_addresses),
-                list(&before)
-            )),
-            // The new list holds while the node runs; after a restart the
-            // old one is dialed, and the hub gives the new one again.
-            Err(error) => self.node.log(format!(
-                "the hub is reached at {} now; recording that failed: {error}",
-                list(&view.hub_addresses)
-            )),
-        }
+        // The new list holds while the node runs, kept or not; after a
+        // restart that did not keep it, the old one is dialed, and the hub
+        // gives the new one again.
+        self.change_membership(|kept| kept.addresses = view.hub_addresses.clone());
+        self.node.log(format!(
+            "the hub is reached at {} now, no longer at {}",
+            list(&view.hub_addresses),
+            list(&before)
+        ));
         let mut connection = self.connection.lock().expect("never poisoned");
         if let Some(connection) = connection.as_mut()
             && matches!(connection.upstream, Upstream::Hub(_))
@@ -67,16 +63,8 @@ impl super::Link {
     pub fn reach_hub_at(&self, addresses: Vec<SocketAddr>) {
         let inner = &self.inner;
         let before = std::mem::replace(&mut *inner.addresses.lock().expect("never poisoned"), addresses.clone());
-        match inner.keep_membership(|kept| kept.addresses = addresses.clone()) {
-            Ok(()) => inner.node.log(format!(
-                "the hub is reached at {} now, no longer at {}",
-                list(&addresses),
-                list(&before)
-            )),
-            Err(error) => inner
-                .node
-                .log(format!("the hub is reached at {} now; recording that failed: {error}", list(&addresses))),
-        }
+        inner.change_membership(|kept| kept.addresses = addresses.clone());
+        inner.node.log(format!("the hub is reached at {} now, no longer at {}", list(&addresses), list(&before)));
         inner.rerouted.notify_waiters();
         inner.reconnect.notify_one();
     }

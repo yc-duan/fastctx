@@ -4,29 +4,10 @@ use crate::Node;
 use fastctx_types::residents::Action;
 use fastctx_types::turn_evidence::JobEvidence;
 use fastctx_types::{Address, ResidentId};
-use serde::de::DeserializeOwned;
 use std::io;
-use std::path::Path;
-
-pub(super) fn lines<T: DeserializeOwned>(path: &Path) -> io::Result<Vec<T>> {
-    let text = match std::fs::read_to_string(path) {
-        Ok(text) => text,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
-        Err(error) => return Err(error),
-    };
-    text.lines()
-        .enumerate()
-        .filter(|(_, line)| !line.trim().is_empty())
-        .map(|(index, line)| {
-            serde_json::from_str(line)
-                .map_err(|error| io::Error::other(format!("{} line {}: {error}", path.display(), index + 1)))
-        })
-        .collect()
-}
 
 pub(super) fn actions(node: &Node, resident: &ResidentId) -> io::Result<Vec<Action>> {
-    let _transaction = crate::resident_storage::lock();
-    lines(&node.world.conversation(resident).actions())
+    crate::residents::activity::lines(&node.world.conversation(resident).actions())
 }
 
 pub(super) fn jobs(node: &Node, resident: &ResidentId) -> io::Result<Vec<JobEvidence>> {

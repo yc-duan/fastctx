@@ -6,7 +6,7 @@
 // steps the World recorded as it did them.
 
 import type { Content, Does, SessionEvent, Speaker, Tool } from "../world/events";
-import type { RunFacts, RunStep, StepDid, WriteFact } from "../world/run-facts";
+import type { RunFacts, RunStep, StepDid, StepSummary, WriteFact } from "../world/run-facts";
 import { cut, hunk, put, same, wrote } from "./run-facts";
 import type { Specimen } from "./sessions";
 
@@ -34,11 +34,12 @@ export function trips(): Specimen {
   events.push({ at: at(1), event: "turn_started", turn });
   events.push({ at: at(2), event: "finished", turn, item: { id: id(), kind: "thinking", text: "**先跑数据，再测**\n\n拟合在 desktop 上做，数据经管道直接流过去。", duration_ms: 3400 } });
 
-  /** A run of `command` on the desktop, its steps as the World told them. */
-  const run = (command: string, steps: RunStep[], writes: WriteFact[], output: string, seconds: number) => {
+  /** A run of `command` on the desktop, its steps as the World told them:
+   *  the latest in full, those before them `folded` into counts. */
+  const run = (command: string, steps: RunStep[], writes: WriteFact[], output: string, seconds: number, folded: StepSummary[] = []) => {
     const item = id();
     const began = at(2);
-    const facts: RunFacts = { machine: "desktop", state: { kind: "ended", status: { code: 0 } }, job: `j-${item.slice(-4)}`, output: null, visited: [], writes, steps, spans: [{ piece: { kind: "text", first_line: 1, text: output } }] };
+    const facts: RunFacts = { machine: "desktop", state: { kind: "ended", status: { code: 0 } }, job: `j-${item.slice(-4)}`, output: null, visited: [], writes, steps, ...(folded.length ? { folded_steps: folded } : {}), spans: [{ piece: { kind: "text", first_line: 1, text: output } }] };
     const tool: Tool = {
       server: "fastctx",
       name: "run",
@@ -129,6 +130,21 @@ export function trips(): Specimen {
     [wrote("9e1f20aa", 0, "lab", "/srv/mark50/src/ctrl/fixed.rs", "modified", rows)],
     "=== edit lab:/srv/mark50/src/ctrl/fixed.rs (+1 −1) ===",
     5,
+  );
+
+  // A patrol that went round six machines of the server room for a day and
+  // a half: its last round in full, the rounds before it counted.
+  const room = Array.from({ length: 6 }, (_, n) => `机房-A${String(n + 1).padStart(2, "0")}`);
+  const hoursBefore = (hours: number) => new Date(clock - hours * 3_600_000).toISOString();
+  run(
+    `for round in $(seq 1 360); do\n  for m in ${room.join(" ")}; do\n    on "$m" systemctl is-active fastctx-node &\n  done\n  wait\n  sleep 300\ndone`,
+    room.map((machine, n): RunStep =>
+      step(`p${n + 1}`, "j-r9", "desktop", 1 + n * 0.05, 2 + n * 0.1, { kind: "on", to: machine, command: "systemctl is-active fastctx-node", sent: `j-p${n + 1}`, end: { kind: "exited", code: 0 }, tail: "active" }),
+    ),
+    [],
+    "active\n…",
+    3,
+    [{ machine: "desktop", kind: "on", count: 2_154, first: hoursBefore(30), last: hoursBefore(0.1) }],
   );
 
   events.push({ at: at(3), event: "finished", turn, item: { id: id(), kind: "message", text: "实验楼 3 层 12 台里 10 台装好了；AG05 还没装 git，AG09 跑到一半离线了，要我给它们补装吗？" } });

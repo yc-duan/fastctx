@@ -287,7 +287,9 @@ async fn delete_inner(node: &Arc<Node>, name: &str) -> Result<u64, Stop> {
     crate::composer::deleted(node, id).await.map_err(|error| Stop::Failed(error.message))?;
     crate::claude::removed(node, id);
     for session in &measured.sessions {
-        crate::codex::deleted(node, session);
+        crate::codex::deleted(node, session, &node.world.conversation(id))
+            .await
+            .map_err(|error| Stop::Failed(error.to_string()))?;
     }
     let retained = remove_places(node, &measured).await?;
     node.tools_changed(Some(id));

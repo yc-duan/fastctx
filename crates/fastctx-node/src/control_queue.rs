@@ -1,7 +1,7 @@
 //! Durable between-turn controls and a shared admission order for words and controls.
 
 use crate::Node;
-use fastctx_hosts::claude::control as files;
+mod storage;
 use fastctx_platform::doing::{Mutex, Rank};
 use fastctx_types::ipc::FailureCode;
 use fastctx_types::session::control::{Control, ControlState, Controlled, PendingControl};
@@ -9,6 +9,7 @@ use fastctx_types::session::{Happened, SessionChange, SessionEvent};
 use fastctx_types::{ResidentId, ipc::Failure};
 use std::sync::Arc;
 use std::time::Duration;
+pub(crate) use storage::pending;
 
 /// How long a Codex compaction may take before what came of it is not known.
 pub(crate) const COMPACTING: Duration = Duration::from_secs(30 * 60);
@@ -21,36 +22,8 @@ pub(crate) fn gate(node: &Node, id: &ResidentId) -> crate::leases::Lease<Residen
     node.actions.get_or_insert_with(id, || Mutex::new(Rank::ACTION, "conversation actions", id.to_string(), ()))
 }
 
-fn path(node: &Node, id: &ResidentId) -> std::path::PathBuf {
-    node.world.conversation(id).path().join("control-queue.json")
-}
-
-pub(crate) fn pending(node: &Node, id: &ResidentId) -> Result<Vec<PendingControl>, Failure> {
-    let _transaction = crate::resident_storage::lock();
-    read(node, id)
-}
-
-fn read(node: &Node, id: &ResidentId) -> Result<Vec<PendingControl>, Failure> {
-    files::read(&path(node, id)).map(|rows| rows.unwrap_or_default()).map_err(failure)
-}
-
-fn save(node: &Node, id: &ResidentId, rows: &[PendingControl]) -> Result<(), Failure> {
-    files::write(&path(node, id), &rows).map_err(failure)
-}
-
-fn event(node: &Node, id: &ResidentId, row: &PendingControl) -> Result<(), Failure> {
-    let event = SessionEvent {
-        at: jiff::Timestamp::now(),
-        happened: Happened::Changed {
-            turn: None,
-            change: SessionChange::Metadata { metadata: serde_json::json!({"fastctx_control": row}) },
-        },
-    };
-    let key = format!("{}:{:?}", row.id, row.state);
-    if crate::delivery::event(&node.world.conversation(id), &key, &event).map_err(failure)? {
-        node.watchers.publish(id, &event);
-    }
-    Ok(())
+async fn event(node: &Arc<Node>, id: &ResidentId, row: &PendingControl) -> Result<(), Failure> {
+    storage::tell(node, id, row, false, false).await
 }
 
 /// Whether a control is told in its conversation as it begins and as it
@@ -64,7 +37,7 @@ pub(crate) fn told(control: &Control) -> bool {
 }
 
 /// A control done now, told in its conversation as begun.
-pub(crate) fn begin(node: &Node, id: &ResidentId, control: &Control) -> Result<PendingControl, Failure> {
+pub(crate) async fn begin(node: &Arc<Node>, id: &ResidentId, control: &Control) -> Result<PendingControl, Failure> {
     let row = PendingControl {
         id: crate::speech::new_id("control").to_string(),
         control: control.clone(),
@@ -73,7 +46,7 @@ pub(crate) fn begin(node: &Node, id: &ResidentId, control: &Control) -> Result<P
         result: None,
         error: None,
     };
-    event(node, id, &row)?;
+    storage::tell(node, id, &row, false, true).await?;
     Ok(row)
 }
 
@@ -91,15 +64,9 @@ pub(crate) async fn end(
         defer_host(node, id, &row, &error.message).await?;
         return Ok(Controlled::Reported { said: None, queued: Some(row.id) });
     }
-    {
-        let _transaction = crate::resident_storage::lock();
-        let mut rows = read(node, id)?;
-        rows.retain(|saved| saved.id != row.id);
-        save(node, id, &rows)?;
-    }
+    settle(node, id, row.clone(), &result).await?;
     crate::composer::forget_command(node, id, &row.id).await?;
     crate::lifecycle::retry::clear(node, id, &control_key(&row)?).map_err(failure)?;
-    settle(node, id, row, &result);
     node.watchers.changed.notify_one();
     result.map_err(|mut failure| {
         failure.code.get_or_insert(FailureCode::Told);
@@ -116,14 +83,7 @@ fn control_key(row: &PendingControl) -> Result<fastctx_types::NoticeId, Failure>
 pub(crate) async fn prepare(node: &Arc<Node>, id: &ResidentId, row: &PendingControl) -> Result<(), Failure> {
     let mut waiting = row.clone();
     waiting.state = ControlState::Waiting;
-    {
-        let _transaction = crate::resident_storage::lock();
-        let mut rows = read(node, id)?;
-        if !rows.iter().any(|saved| saved.id == row.id) {
-            rows.push(waiting);
-        }
-        save(node, id, &rows)?;
-    }
+    storage::put(node, id, waiting).await?;
     crate::composer::place_command(node, id, &control_key(row)?).await?;
     ready(node, id, row).await
 }
@@ -141,28 +101,14 @@ async fn ready(node: &Arc<Node>, id: &ResidentId, row: &PendingControl) -> Resul
     crate::lifecycle::wake::wake(node, id, crate::lifecycle::wake::Source::Control, None)
         .await
         .map_err(crate::lifecycle::wake::WakeFailure::control)?;
-    let _transaction = crate::resident_storage::lock();
-    let mut rows = read(node, id)?;
-    if let Some(saved) = rows.iter_mut().find(|saved| saved.id == row.id) {
-        saved.state = ControlState::Running;
-    }
-    save(node, id, &rows)
+    storage::running(node, id, &row.id).await
 }
 
 async fn defer_host(node: &Arc<Node>, id: &ResidentId, row: &PendingControl, why: &str) -> Result<(), Failure> {
     let key = control_key(row)?;
-    {
-        let _transaction = crate::resident_storage::lock();
-        let mut rows = read(node, id)?;
-        let mut waiting = row.clone();
-        waiting.state = ControlState::Waiting;
-        if let Some(saved) = rows.iter_mut().find(|saved| saved.id == row.id) {
-            *saved = waiting;
-        } else {
-            rows.push(waiting);
-        }
-        save(node, id, &rows)?;
-    }
+    let mut waiting = row.clone();
+    waiting.state = ControlState::Waiting;
+    storage::put(node, id, waiting).await?;
     crate::composer::place_command(node, id, &key).await?;
     // One waiting for a turn of its login asks again soon, to keep its
     // place in line; a host that is not there is asked less and less often.
@@ -175,15 +121,21 @@ async fn defer_host(node: &Arc<Node>, id: &ResidentId, row: &PendingControl, why
     Ok(())
 }
 
-pub(crate) fn waiting_for_host(node: &Node, id: &ResidentId) -> Result<bool, Failure> {
-    for row in pending(node, id)? {
-        if row.state == ControlState::Waiting
-            && crate::lifecycle::retry::progress(node, id, &control_key(&row)?).map_err(failure)?.is_some()
-        {
-            return Ok(true);
+pub(crate) async fn waiting_for_host(node: &Arc<Node>, id: &ResidentId) -> Result<bool, Failure> {
+    let rows = pending(node, id).await?;
+    let (node, id) = (node.clone(), id.clone());
+    tokio::task::spawn_blocking(move || {
+        for row in rows {
+            if row.state == ControlState::Waiting
+                && crate::lifecycle::retry::progress(&node, &id, &control_key(&row)?).map_err(failure)?.is_some()
+            {
+                return Ok(true);
+            }
         }
-    }
-    Ok(false)
+        Ok(false)
+    })
+    .await
+    .map_err(|error| Failure::new(error.to_string()))?
 }
 
 pub(crate) async fn run_pending(node: &Arc<Node>, id: &ResidentId) -> Result<(), Failure> {
@@ -194,11 +146,16 @@ pub(crate) async fn run_pending(node: &Arc<Node>, id: &ResidentId) -> Result<(),
 
 /// Tells how a control ended: at once, or, for a Codex compaction, which
 /// its host only starts, once the turn it began has ended.
-fn settle(node: &Arc<Node>, id: &ResidentId, mut row: PendingControl, result: &Result<Controlled, Failure>) {
+async fn settle(
+    node: &Arc<Node>,
+    id: &ResidentId,
+    mut row: PendingControl,
+    result: &Result<Controlled, Failure>,
+) -> Result<(), Failure> {
     match result {
         Ok(done) if compacts_later(node, id, &row.control, done) => {
             after_compaction(node.clone(), id.clone(), row);
-            return;
+            return Ok(());
         }
         Ok(done) => {
             row.state = ControlState::Completed;
@@ -209,9 +166,7 @@ fn settle(node: &Arc<Node>, id: &ResidentId, mut row: PendingControl, result: &R
             row.error = Some(error.message.clone());
         }
     }
-    if let Err(error) = event(node, id, &row) {
-        node.log.line(format_args!("telling {id} how its control ended: {}", error.message));
-    }
+    finish(node, id, &row).await
 }
 
 /// Whether what a control answered is only the start of a compaction that
@@ -257,9 +212,10 @@ fn after_compaction(node: Arc<Node>, id: ResidentId, mut row: PendingControl) {
             }
             tokio::time::sleep(Duration::from_millis(500)).await;
         }
-        if let Err(error) = event(&node, &id, &row) {
+        if let Err(error) = finish(&node, &id, &row).await {
             node.log.line(format_args!("telling {id} how its compaction ended: {}", error.message));
         }
+        schedule(&node, &id);
     });
 }
 
@@ -309,7 +265,7 @@ pub(crate) async fn enqueue_if_busy(
     }
     // Ones still waiting behind queued words keep their place ahead of it;
     // words handed over whose turn has not begun yet are a turn under way.
-    if !busy(node, id)? && pending(node, id)?.is_empty() && !words_ahead(node, id, None)? {
+    if !busy(node, id)? && pending(node, id).await?.is_empty() && !words_ahead(node, id, None).await? {
         return Ok(None);
     }
     let row = PendingControl {
@@ -320,16 +276,11 @@ pub(crate) async fn enqueue_if_busy(
         result: None,
         error: None,
     };
-    {
-        let _transaction = crate::resident_storage::lock();
-        let mut rows = read(node, id)?;
-        rows.push(row.clone());
-        save(node, id, &rows)?;
-    }
+    storage::put(node, id, row.clone()).await?;
     // Its place among the words that wait: after them, until moved.
     let key = fastctx_types::NoticeId::try_from(row.id.clone()).map_err(|error| Failure::new(error.to_string()))?;
     crate::composer::place_command(node, id, &key).await?;
-    event(node, id, &row)?;
+    event(node, id, &row).await?;
     schedule(node, id);
     Ok(Some(Controlled::Reported { said: Some("Waiting for the current turn to end.".into()), queued: Some(row.id) }))
 }
@@ -337,31 +288,14 @@ pub(crate) async fn enqueue_if_busy(
 /// Cancellation competes with the durable claim, not the long-running host operation.
 pub(crate) async fn cancel(node: &Arc<Node>, id: &ResidentId, key: &str) -> Result<Controlled, Failure> {
     node.residents.active(id)?;
-    let row = {
-        let _transaction = crate::resident_storage::lock();
-        let mut rows = read(node, id)?;
-        let row =
-            rows.iter_mut().find(|row| row.id == key).ok_or_else(|| Failure::new("no waiting control with this id"))?;
-        if row.state != ControlState::Waiting {
-            return Err(Failure::new("this control has already entered the host and cannot be withdrawn"));
-        }
-        row.state = ControlState::Cancelled;
-        let row = row.clone();
-        save(node, id, &rows)?;
-        row
-    };
-    finish(node, id, &row)?;
+    let row = storage::cancel(node, id, key).await?;
     crate::composer::forget_command(node, id, &row.id).await?;
     schedule(node, id);
     Ok(Controlled::Done { said: Some("The waiting control was withdrawn.".into()) })
 }
 
-fn finish(node: &Node, id: &ResidentId, row: &PendingControl) -> Result<(), Failure> {
-    event(node, id, row)?;
-    let _transaction = crate::resident_storage::lock();
-    let mut rows = read(node, id)?;
-    rows.retain(|entry| entry.id != row.id);
-    save(node, id, &rows)
+async fn finish(node: &Arc<Node>, id: &ResidentId, row: &PendingControl) -> Result<(), Failure> {
+    storage::tell(node, id, row, true, false).await
 }
 
 /// Runs older waiting controls before a newly admitted action, while holding its action gate.
@@ -375,15 +309,15 @@ pub(crate) fn drain<'a>(
             if busy(node, id)? {
                 return Ok(());
             }
-            let rows = pending(node, id)?;
-            // One left from before that is not waiting is settled first.
+            let rows = pending(node, id).await?;
+            // Startup recovery settles abandoned attempts before admission opens.
+            // A running row here belongs to this process, including a compaction
+            // whose TurnStarted or completion notification has not arrived yet.
+            if rows.iter().any(|row| row.state == ControlState::Running) {
+                return Ok(());
+            }
             if let Some(row) = rows.iter().find(|row| row.state != ControlState::Waiting) {
-                let mut row = row.clone();
-                if row.state == ControlState::Running {
-                    row.state = ControlState::Uncertain;
-                    row.error = Some("the previous control attempt did not retain its result; its outcome is unknown and it was not repeated".into());
-                }
-                finish(node, id, &row)?;
+                finish(node, id, row).await?;
                 crate::composer::forget_command(node, id, &row.id).await?;
                 continue;
             }
@@ -396,7 +330,7 @@ pub(crate) fn drain<'a>(
             let Some(first) = rows.iter().find(|row| row.id == next) else {
                 return Ok(());
             };
-            if words_ahead(node, id, Some(first.at))? {
+            if words_ahead(node, id, Some(first.at)).await? {
                 return Ok(());
             }
             let key = control_key(first)?;
@@ -415,7 +349,7 @@ pub(crate) fn drain<'a>(
             }
             let mut row = first.clone();
             row.state = ControlState::Running;
-            event(node, id, &row)?;
+            event(node, id, &row).await?;
             // A long one runs on its own as one given directly does: the
             // gate let go, words and other controls waiting for it, the rest
             // of the queue taken up as it ends (`crate::control_long`).
@@ -433,57 +367,96 @@ pub(crate) fn drain<'a>(
     })))
 }
 
+struct Scheduled {
+    node: Arc<Node>,
+    id: ResidentId,
+    released: bool,
+}
+impl Drop for Scheduled {
+    fn drop(&mut self) {
+        if !self.released {
+            self.node.controls_due.lock().expect("control scheduling").remove(&self.id);
+        }
+    }
+}
+
 pub(crate) fn schedule(node: &Arc<Node>, id: &ResidentId) {
+    {
+        use std::collections::hash_map::Entry;
+        let mut due = node.controls_due.lock().expect("control scheduling");
+        match due.entry(id.clone()) {
+            Entry::Occupied(mut entry) => {
+                *entry.get_mut() = true;
+                return;
+            }
+            Entry::Vacant(entry) => {
+                entry.insert(false);
+            }
+        }
+    }
     let (node, id) = (node.clone(), id.clone());
     tokio::spawn(async move {
+        let mut scheduled = Scheduled { node: node.clone(), id: id.clone(), released: false };
         node.ready_for(&id).await;
-        let gate = gate(&node, &id);
-        let _action = gate.lock().await;
-        if node.residents.active(&id).is_ok()
-            && let Err(error) = drain(&node, &id).await
-        {
-            node.log.line(format_args!("executing {id}'s queued controls: {error}"));
+        loop {
+            {
+                let gate = gate(&node, &id);
+                let _action = gate.lock().await;
+                if node.residents.active(&id).is_ok()
+                    && let Err(error) = drain(&node, &id).await
+                {
+                    node.log.line(format_args!("executing {id}'s queued controls: {error}"));
+                }
+            }
+            let mut due = node.controls_due.lock().expect("control scheduling");
+            if due.get(&id) == Some(&true) {
+                due.insert(id.clone(), false);
+            } else {
+                due.remove(&id);
+                scheduled.released = true;
+                break;
+            }
         }
     });
 }
 
 /// Whether words handed to the host (before `before`, where given) have not
 /// been taken into a turn yet: a control waits for that turn.
-fn words_ahead(node: &Node, id: &ResidentId, before: Option<jiff::Timestamp>) -> Result<bool, Failure> {
+async fn words_ahead(node: &Node, id: &ResidentId, before: Option<jiff::Timestamp>) -> Result<bool, Failure> {
     let directory = node.world.conversation(id);
-    for words in crate::inbox::pending(&directory).map_err(failure)? {
-        if words.delivery.notice.along().is_none()
-            && before.is_none_or(|before| words.delivery.at < before)
-            && crate::delivery::input_turn(&directory, &words.delivery.id).map_err(failure)?.is_none()
-            && crate::delivery::input_uncertainty(&directory, &words.delivery.id).map_err(failure)?.is_none()
-        {
-            return Ok(true);
+    tokio::task::spawn_blocking(move || {
+        for words in crate::inbox::pending(&directory).map_err(failure)? {
+            if words.delivery.notice.along().is_none()
+                && before.is_none_or(|before| words.delivery.at < before)
+                && crate::delivery::input_turn(&directory, &words.delivery.id).map_err(failure)?.is_none()
+                && crate::delivery::input_uncertainty(&directory, &words.delivery.id).map_err(failure)?.is_none()
+            {
+                return Ok(true);
+            }
         }
-    }
-    Ok(false)
+        Ok(false)
+    })
+    .await
+    .map_err(|error| Failure::new(error.to_string()))?
 }
 
 /// Drains the controls waiting, if any: what held them back may have gone.
 pub(crate) fn poke(node: &Arc<Node>, id: &ResidentId) {
-    if pending(node, id).is_ok_and(|rows| !rows.is_empty()) {
-        schedule(node, id);
-    }
+    schedule(node, id);
 }
 
-pub(crate) fn recover(node: &Arc<Node>, id: &ResidentId) {
-    let recovered = (|| {
-        for mut row in pending(node, id)? {
-            if row.state == ControlState::Running {
-                row.state = ControlState::Uncertain;
-                row.error = Some("the node stopped while this control was entering the host; its outcome is unknown and it was not repeated".into());
-                finish(node, id, &row)?;
-            } else if row.state != ControlState::Waiting {
-                finish(node, id, &row)?;
-            }
+pub(crate) async fn recover(node: &Arc<Node>, id: &ResidentId) {
+    let result:Result<(),Failure>=async {
+        for mut row in pending(node,id).await? {
+            if row.state==ControlState::Running {
+                row.state=ControlState::Uncertain;
+                row.error=Some("the node stopped while this control was entering the host; its outcome is unknown and it was not repeated".into());
+                finish(node,id,&row).await?;
+            } else if row.state!=ControlState::Waiting {finish(node,id,&row).await?;}
         }
-        Ok::<_, Failure>(())
-    })();
-    if let Err(error) = recovered {
+        Ok(())
+    }.await;
+    if let Err(error) = result {
         node.log.line(format_args!("recovering {id}'s controls: {error}"));
     }
     schedule(node, id);

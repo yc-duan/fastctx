@@ -41,8 +41,8 @@ pub(crate) async fn run(
         super::retire(dir, &why, &log, leave);
         return Ok(Next::Again(None));
     }
-    let hub: HubFile = read(&Store::hub_file(dir))?;
-    let pin = CertPin::of(&std::fs::read(Store::certificate_file(dir))?);
+    let hub: HubFile = read(&crate::store::Store::hub_file(dir))?;
+    let pin = CertPin::of(&fastctx_platform::disk::read(Store::certificate_file(dir))?);
     let (stopper, stopped) = watch::channel(false);
     let forwarder = if matches!(outgoing.old, Some(OldPlace::Forwarding) | None) {
         let kept = crate::bind(kept, hub.listen).await?;
@@ -52,7 +52,7 @@ pub(crate) async fn run(
             list(&outgoing.addresses),
             hub.listen
         ));
-        Some(tokio::spawn(forward(kept.listener, outgoing.addresses.clone(), log.clone(), stopped)))
+        Some(fastctx_platform::task::spawn(forward(kept.listener, outgoing.addresses.clone(), log.clone(), stopped)))
     } else {
         log.line(format_args!("the hub moved to {}: this place keeps its old data, disabled", outgoing.to));
         None

@@ -53,7 +53,7 @@ fn metadata(
         kind: kind.into(),
         key: key.into(),
         version: previous.map_or(0, |metadata| metadata.version).checked_add(1).ok_or("skill revision exhausted")?,
-        by: from.clone(),
+        by: Some(from.clone()),
         at: Timestamp::now(),
         deleted,
     })
@@ -70,7 +70,7 @@ pub(crate) async fn ask(
     let slot = hub.account_records.account(&account, opened);
     let mut records = slot.records.clone().lock_owned().await;
     let hub = hub.clone();
-    tokio::task::spawn_blocking(move || {
+    fastctx_platform::task::spawn_blocking(move || {
         request.validate()?;
         account_records::authorized(&hub, &from, &key, &account, opened)?;
         for metadata in crate::skill_storage::recover(&slot, &mut records)? {
@@ -205,7 +205,7 @@ pub(crate) async fn ask(
                 let bytes = serde_json::to_vec(&changes).map_err(|error| error.to_string())?;
                 let (publishing, writer, who) = (hub.clone(), from.clone(), account.clone());
                 fastctx_platform::publish_checked(&path, &bytes, fastctx_platform::Permissions::Private, true, || {
-                    let store = publishing.store();
+                    let store = publishing.edit_store();
                     account_records::check(&store, &writer, &key, &who, opened).map_err(std::io::Error::other)?;
                     Ok(store)
                 })
