@@ -1,6 +1,6 @@
 //! A durable quarantine destination joins an explanation to its original across
 //! process death. A later file at the same source path gets a new destination.
-use super::{DAMAGED, DAMAGED_PENDING, disk};
+use super::{DAMAGED, DAMAGED_KEPT, disk};
 use serde::{Deserialize, Serialize};
 use std::{io, path::Path};
 
@@ -87,7 +87,7 @@ pub(super) fn quarantine(
         match disk::rename(source, &target) {
             Ok(()) => {
                 DAMAGED.add(1);
-                DAMAGED_PENDING.add(1);
+                DAMAGED_KEPT.add(1);
                 disk::remove_file(&journal)?;
                 return Ok(());
             }

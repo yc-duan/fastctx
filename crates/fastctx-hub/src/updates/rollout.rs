@@ -19,10 +19,17 @@ use crate::Hub;
 const EVERY: Duration = Duration::from_secs(60);
 /// How far back the machines not on it are looked at.
 const LATELY: SignedDuration = SignedDuration::from_hours(6);
-/// The troubles that count against a version; earlier records failing to move
-/// are the first sign of a version that cannot take its machines' records.
-const COUNTED: [TroubleKind; 5] =
-    [TroubleKind::Stuck, TroubleKind::Drops, TroubleKind::Silent, TroubleKind::Violations, TroubleKind::Migration];
+/// The troubles that count against a version; earlier records failing to
+/// move, or found unreadable, are the first sign of a version that cannot
+/// take its machines' records.
+const COUNTED: [TroubleKind; 6] = [
+    TroubleKind::Stuck,
+    TroubleKind::Drops,
+    TroubleKind::Silent,
+    TroubleKind::Violations,
+    TroubleKind::Migration,
+    TroubleKind::Damaged,
+];
 
 /// The machine on the version, and its trouble, when more of the machines
 /// on it had trouble since they took it than of the rest lately: of the

@@ -1,5 +1,6 @@
-//! Verified legacy bytes are archived, not discarded. Damaged inputs keep an
-//! adjacent explanation and are never removed by ordinary archive retention.
+//! Verified legacy bytes are archived, not discarded, for `RETENTION`.
+//! Damaged inputs are kept as long beside an explanation, and counted while
+//! they are, which the machine's health tells.
 use fastctx_platform::{disk, readings};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -16,8 +17,8 @@ pub(crate) use damaged::drill as damaged_drill;
 
 pub(crate) const RETENTION: Duration = Duration::from_secs(30 * 24 * 60 * 60);
 static DAMAGED: LazyLock<&'static readings::Counter> = LazyLock::new(|| readings::counter("migration.damaged_files"));
-static DAMAGED_PENDING: LazyLock<&'static readings::Gauge> =
-    LazyLock::new(|| readings::gauge("migration.damaged_pending"));
+pub(crate) static DAMAGED_KEPT: LazyLock<&'static readings::Gauge> =
+    LazyLock::new(|| readings::gauge("migration.damaged_kept"));
 static ARCHIVED: LazyLock<&'static readings::Counter> = LazyLock::new(|| readings::counter("migration.archived_files"));
 static REMOVED: LazyLock<&'static readings::Counter> = LazyLock::new(|| readings::counter("migration.expired_files"));
 
@@ -206,28 +207,67 @@ pub(crate) fn delete_conversation(world: &Path, conversation: &str) -> io::Resul
     Ok(())
 }
 
-/// Retained explanations remain visible after a process restart.
+/// The damaged originals kept, each with its explanation; counted again
+/// after a process restart.
+#[cfg(feature = "storage-drill")]
 pub(crate) fn damaged_count(world: &Path) -> io::Result<u64> {
-    fn count(path: &Path) -> io::Result<u64> {
+    damaged_kept(world, Duration::MAX)
+}
+
+/// Removes the damaged originals set aside `retention` ago or longer, each
+/// with its explanation, and counts those kept. Only the `damaged`
+/// directories are walked, however many verified originals the archive
+/// holds.
+pub(crate) fn damaged_kept(world: &Path, retention: Duration) -> io::Result<u64> {
+    fn walk(path: &Path, retention: Duration, kept: &mut u64) -> io::Result<()> {
         let entries = match disk::read_dir(path) {
             Ok(entries) => entries,
-            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(0),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
             Err(error) => return Err(error),
         };
-        let mut result = 0;
         for entry in entries {
             let entry = entry?;
+            let path = entry.path();
             if entry.file_type()?.is_dir() {
-                result += count(&entry.path())?;
-            } else if entry.file_name().to_string_lossy().ends_with(".why.json") {
-                result += 1;
+                walk(&path, retention, kept)?;
+                continue;
+            }
+            let name = entry.file_name().to_string_lossy().into_owned();
+            let Some(original) = name.strip_suffix(".why.json") else {
+                damaged::recover(&path)?;
+                continue;
+            };
+            // The explanation is written when its original is set aside.
+            if disk::symlink_metadata(&path)?.modified()?.elapsed().is_ok_and(|age| age >= retention) {
+                // The original first: an explanation left alone by a stop in
+                // between goes the next time.
+                match disk::remove_file(path.with_file_name(original)) {
+                    Err(error) if error.kind() != io::ErrorKind::NotFound => return Err(error),
+                    _ => {}
+                }
+                disk::remove_file(&path)?;
+                REMOVED.add(1);
             } else {
-                damaged::recover(&entry.path())?;
+                *kept += 1;
             }
         }
-        Ok(result)
+        Ok(())
     }
-    let result = count(&world.join("archive"))?;
-    DAMAGED_PENDING.set(result as i64);
-    Ok(result)
+    let versions = match disk::read_dir(world.join("archive")) {
+        Ok(versions) => versions,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            DAMAGED_KEPT.set(0);
+            return Ok(0);
+        }
+        Err(error) => return Err(error),
+    };
+    let mut kept = 0;
+    for version in versions {
+        let version = version?.path();
+        if disk::symlink_metadata(&version)?.is_dir() {
+            walk(&version.join("damaged"), retention, &mut kept)?;
+        }
+    }
+    DAMAGED_KEPT.set(kept as i64);
+    Ok(kept)
 }

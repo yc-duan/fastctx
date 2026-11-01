@@ -127,7 +127,7 @@ export const zhTroubles: TroubleWords = {
       case "near":
         return near;
       case "damaged":
-        return "部分记录可能已经丢失";
+        return trouble.count ? `${trouble.count} 份旧记录读不出，原件另存 30 天` : "部分记录可能已经丢失";
       case "violations":
         return "本机服务持续违反运行规则";
       case "hub":
@@ -188,7 +188,9 @@ export const enTroubles: TroubleWords = {
       case "near":
         return near;
       case "damaged":
-        return "Some records may be lost";
+        return trouble.count
+          ? `${trouble.count} earlier records unreadable; originals kept 30 days`
+          : "Some records may be lost";
       case "violations":
         return "Its local service keeps breaking its rules";
       case "hub":

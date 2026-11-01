@@ -33,6 +33,8 @@ pub(crate) struct Heard {
     near: Option<String>,
     /// Whether a damaged store of its records was told.
     damaged: bool,
+    /// How many earlier files it had set aside as unreadable when last heard.
+    set_aside: u32,
     /// Since when some of its earlier records fail to move, and whether that was told.
     migration: Option<(Instant, bool)>,
     /// Since when this window runs, the rules broken by its start, and in how
@@ -98,6 +100,18 @@ impl Heard {
             self.damaged = true;
             hub.troubles.raise(hub, machine, TroubleKind::Damaged, Detail::default());
         }
+        // Earlier files it could not read are records lost to it too: told
+        // as more are set aside, while their originals are kept to look at.
+        let set_aside = health.migrating.as_ref().map_or(0, |migrating| migrating.damaged);
+        if set_aside > self.set_aside {
+            hub.troubles.raise(
+                hub,
+                machine,
+                TroubleKind::Damaged,
+                Detail { count: Some(set_aside), ..Detail::default() },
+            );
+        }
+        self.set_aside = set_aside;
         match health.migrating.as_ref().map(|migrating| migrating.failed).filter(|failed| *failed > 0) {
             Some(failed) => {
                 let (since, told) = self.migration.get_or_insert((now, false));

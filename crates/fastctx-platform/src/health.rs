@@ -165,7 +165,7 @@ fn migrating() -> Option<Migrating> {
     let migrating = Migrating {
         remaining: read("migration.discovery_remaining"),
         failed: read("migration.failed_families").min(u64::from(u32::MAX)) as u32,
-        damaged: read("migration.damaged_pending").min(u64::from(u32::MAX)) as u32,
+        damaged: read("migration.damaged_kept").min(u64::from(u32::MAX)) as u32,
     };
     (migrating != Migrating::default()).then_some(migrating)
 }

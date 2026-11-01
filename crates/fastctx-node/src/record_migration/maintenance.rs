@@ -4,8 +4,8 @@ mod files;
 use fastctx_storage::{Database, Priority};
 use std::io;
 
-/// Archive retention and completed-proof cleanup do not wait for every source
-/// on the machine to become readable.
+/// Archive retention, damaged originals' too, and completed-proof cleanup do
+/// not wait for every source on the machine to become readable.
 pub(super) fn start(node: &std::sync::Arc<crate::Node>) {
     let node = node.clone();
     fastctx_platform::task::spawn(async move {
@@ -13,7 +13,7 @@ pub(super) fn start(node: &std::sync::Arc<crate::Node>) {
             let working = node.clone();
             let result = fastctx_platform::task::spawn_blocking(move || {
                 collect(&working.database)?;
-                super::archive::damaged_count(working.world.path())?;
+                super::archive::damaged_kept(working.world.path(), super::archive::RETENTION)?;
                 super::archive::collect(working.world.path(), super::archive::RETENTION)
             })
             .await;

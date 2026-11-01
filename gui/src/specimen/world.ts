@@ -345,6 +345,7 @@ function troubles(): Trouble[] {
     { id: 46, at: hoursAgo(44), machine: "gpu", kind: "damaged" },
     { id: 47, at: hoursAgo(30), machine: "lab", kind: "drops", count: 5 },
     { id: 48, at: hoursAgo(26), machine: "server", kind: "silent", seconds: 30 },
+    { id: 52, at: hoursAgo(12), machine: "lab", kind: "damaged", count: 3 },
     { id: 49, at: hoursAgo(5), kind: "rollout", version: "1.1.0-beta.1" },
     { id: 50, at: hoursAgo(1.2), machine: "laptop", kind: "stuck", seconds: 74 },
     { id: 51, at: hoursAgo(0.4), machine: "server", kind: "stuck", seconds: 61 },

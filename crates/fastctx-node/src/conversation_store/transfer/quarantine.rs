@@ -82,7 +82,7 @@ pub(super) fn keep(world: &Path, database: &Database, conversation: &str, reason
             readings::counter("migration.damaged_files").add(1);
         }
         if fresh {
-            readings::gauge("migration.damaged_pending").add(1);
+            crate::record_migration::archive::DAMAGED_KEPT.add(1);
         }
         Ok(())
     })
