@@ -61,6 +61,21 @@ pub(crate) async fn shared<'a>(
     }
 }
 
+/// Keeps a shared gate owned by work that must survive cancellation of its waiter.
+pub(crate) async fn shared_owned(
+    node: &Node,
+    id: &ResidentId,
+    gate: &RwLock<()>,
+) -> Result<fastctx_platform::doing::OwnedRwLockReadGuard<()>, Failure> {
+    match remaining() {
+        Some(within) if within.is_zero() => Err(told(node, id, Busy { doing: None })),
+        Some(within) => {
+            tokio::time::timeout(within, gate.read_owned()).await.map_err(|_| told(node, id, Busy { doing: None }))
+        }
+        None => Ok(gate.read_owned().await),
+    }
+}
+
 pub(crate) async fn alone<'a>(
     node: &Node,
     id: &ResidentId,
