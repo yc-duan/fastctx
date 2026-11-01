@@ -13,42 +13,27 @@ use fastctx_types::{
     remote::{RemoteCall, RemoteReply},
     residents::{About, Origin},
 };
-use serde::{Deserialize, Serialize};
-
-#[derive(Serialize, Deserialize)]
-struct Seen {
-    account: HubAccount,
-    owner: ResidentId,
-    version: Option<u64>,
-}
-
-fn seen(node: &Node, id: &ResidentId) -> Result<Option<Seen>, Failure> {
-    match std::fs::read(node.world.conversation(id).path().join("plan-seen.json")) {
-        Ok(bytes) => serde_json::from_slice(&bytes).map(Some).map_err(|error| Failure::new(error.to_string())),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
-        Err(error) => Err(Failure::new(error.to_string())),
-    }
-}
+mod observed;
+use observed::{Seen, keep as keep_seen, read as seen};
 
 fn remember(node: &Node, id: &ResidentId, account: HubAccount, page: &Page) -> Result<(), Failure> {
-    let observed = Seen { account, owner: page.owner.clone(), version: page.version() };
-    keep_seen(node, id, &observed)
+    keep_seen(node, id, &Seen { account, owner: page.owner.clone(), version: page.version() })
 }
 
-fn keep_seen(node: &Node, id: &ResidentId, observed: &Seen) -> Result<(), Failure> {
-    let _transaction = crate::resident_storage::lock();
-    if seen(node, id)?.is_some_and(|before| {
-        before.account == observed.account && before.owner == observed.owner && before.version >= observed.version
-    }) {
-        return Ok(());
-    }
-    let bytes = serde_json::to_vec(observed).map_err(|error| Failure::new(error.to_string()))?;
-    fastctx_platform::publish(
-        &node.world.conversation(id).path().join("plan-seen.json"),
-        &bytes,
-        fastctx_platform::Permissions::Private,
-    )
-    .map_err(|error| Failure::new(error.to_string()))
+async fn publish_observed(node: &Arc<Node>, id: &ResidentId, account: HubAccount, page: &Page) -> Result<(), Failure> {
+    let (node, id, page) = (node.clone(), id.clone(), page.clone());
+    fastctx_platform::task::spawn_blocking(move || {
+        let version = serde_json::to_string(&Seen {
+            account: account.clone(),
+            owner: page.owner.clone(),
+            version: page.version(),
+        })
+        .map_err(|error| Failure::new(error.to_string()))?;
+        crate::context::plan(&node, &id, &page, &version).map_err(|error| Failure::new(error.to_string()))?;
+        remember(&node, &id, account, &page)
+    })
+    .await
+    .map_err(|error| Failure::new(error.to_string()))?
 }
 
 pub(crate) async fn call(
@@ -65,7 +50,13 @@ pub(crate) async fn call(
         return here(node, &address.resident, hub.as_ref(), account.as_ref(), None, operation).await;
     }
     let mut choices = Vec::new();
-    for acting in crate::jobs::running_for(&node.world, &node.names(), address) {
+    let (reading, owner) = (node.clone(), address.clone());
+    let running = fastctx_platform::task::spawn_blocking(move || {
+        crate::jobs::running_for(&reading.world, &reading.names(), &owner)
+    })
+    .await
+    .map_err(|error| Failure::new(error.to_string()))?;
+    for acting in running {
         let Some(link) = node.link_of(&acting.hub) else { continue };
         if hub.as_ref().is_some_and(|hub| link.hub_name() != *hub)
             || account.as_ref().is_some_and(|account| *account != acting.account)
@@ -107,7 +98,11 @@ pub(crate) async fn here(
     let gate = node.residents.management(id)?;
     let _one = crate::gate_waits::alone(node, id, &gate).await?;
     node.residents.active(id)?;
-    crate::context::plugin_heard(node, id).map_err(|error| Failure::new(error.to_string()))?;
+    let (reading, resident) = (node.clone(), id.clone());
+    fastctx_platform::task::spawn_blocking(move || crate::context::plugin_heard(&reading, &resident))
+        .await
+        .map_err(|error| Failure::new(error.to_string()))?
+        .map_err(|error| Failure::new(error.to_string()))?;
     let (about, _) = node.residents.about(id).ok_or_else(|| Failure::refused(words::RESIDENT))?;
     let (whose, colleague) = match &about.origin {
         Origin::Colleague { asked_by, .. } => (asked_by.clone(), true),
@@ -116,7 +111,7 @@ pub(crate) async fn here(
     if colleague && matches!(operation, Operation::Write { .. }) {
         return Err(Failure::refused(words::READ_ONLY));
     }
-    let previous = seen(node, id)?;
+    let previous = observed::load(node, id).await?;
     let caller = Caller::Resident(Address { machine: node.machine(), resident: id.clone() });
     let selected = requesting.or_else(|| {
         if hub.is_none() && account.is_none() { previous.as_ref().map(|seen| &seen.account) } else { None }
@@ -161,11 +156,7 @@ pub(crate) async fn here(
     if let plan::Result::Page { page } = &result
         && node.serves(&about.acting, &scope.hub, &scope.account)
     {
-        let version =
-            serde_json::to_string(&Seen { account: scope.clone(), owner: page.owner.clone(), version: page.version() })
-                .map_err(|error| Failure::new(error.to_string()))?;
-        crate::context::plan(node, id, page, &version).map_err(|error| Failure::new(error.to_string()))?;
-        remember(node, id, scope, page)?;
+        publish_observed(node, id, scope, page).await?;
     }
     Ok(result)
 }
@@ -179,21 +170,20 @@ pub(crate) async fn context(
     origin: &Origin,
     acting: &Acting,
 ) -> Result<(), Failure> {
-    let previous = seen(node, id)?;
+    let previous = observed::load(node, id).await?;
     let selected = previous.as_ref().map(|seen| seen.account.clone()).or_else(|| only_account(node, acting));
-    let unavailable = || crate::context::plan_unavailable(node, id).map_err(|error| Failure::new(error.to_string()));
-    let Some(scope) = selected else { return unavailable() };
+    let Some(scope) = selected else { return unavailable(node, id).await };
     if !node.serves(acting, &scope.hub, &scope.account) {
-        unavailable()?;
+        unavailable(node, id).await?;
         return Err(Failure::refused(words::ROUTE));
     }
     let Some(link) = node.link_of(&scope.hub) else {
-        unavailable()?;
+        unavailable(node, id).await?;
         return Err(Failure::new(words::ROUTE));
     };
     let view = link.view();
     if !view.account_records || !view.conversation_plans {
-        return unavailable();
+        return unavailable(node, id).await;
     }
     let whose = match origin {
         Origin::User => Address { machine: node.machine(), resident: id.clone() },
@@ -212,9 +202,21 @@ pub(crate) async fn context(
     }
     let version = serde_json::to_string(&Seen { account: scope, owner: page.owner.clone(), version: page.version() })
         .map_err(|error| Failure::new(error.to_string()))?;
-    crate::context::plan(node, id, &page, &version).map_err(|error| Failure::new(error.to_string()))?;
+    let (recording, resident) = (node.clone(), id.clone());
+    fastctx_platform::task::spawn_blocking(move || crate::context::plan(&recording, &resident, &page, &version))
+        .await
+        .map_err(|error| Failure::new(error.to_string()))?
+        .map_err(|error| Failure::new(error.to_string()))?;
     node.plan_reads.done(id, generation);
     Ok(())
+}
+
+async fn unavailable(node: &Arc<Node>, id: &ResidentId) -> Result<(), Failure> {
+    let (node, id) = (node.clone(), id.clone());
+    fastctx_platform::task::spawn_blocking(move || crate::context::plan_unavailable(&node, &id))
+        .await
+        .map_err(|error| Failure::new(error.to_string()))?
+        .map_err(|error| Failure::new(error.to_string()))
 }
 
 /// Writes `markdown`, what the plan file of the conversation `id` holds
@@ -230,7 +232,7 @@ pub(crate) async fn save(node: &Arc<Node>, id: &ResidentId, markdown: String) ->
         return Ok(None);
     }
     let whose = Address { machine: about.machine.clone(), resident: id.clone() };
-    let previous = seen(node, id)?;
+    let previous = observed::load(node, id).await?;
     let selected = previous.as_ref().map(|seen| seen.account.clone()).or_else(|| only_account(node, &about.acting));
     let Some(scope) = selected else { return Ok(None) };
     let Some(link) = node.link_of(&scope.hub) else { return Ok(None) };
@@ -252,14 +254,7 @@ pub(crate) async fn save(node: &Arc<Node>, id: &ResidentId, markdown: String) ->
             .map_err(Failure::new)?
         {
             plan::Result::Page { page } => {
-                let version = serde_json::to_string(&Seen {
-                    account: scope.clone(),
-                    owner: page.owner.clone(),
-                    version: page.version(),
-                })
-                .map_err(|error| Failure::new(error.to_string()))?;
-                crate::context::plan(node, id, &page, &version).map_err(|error| Failure::new(error.to_string()))?;
-                remember(node, id, scope, &page)?;
+                publish_observed(node, id, scope, &page).await?;
                 return Ok(Some(page));
             }
             plan::Result::Conflict { .. } => {}
@@ -300,7 +295,7 @@ pub(crate) async fn delete(node: &Arc<Node>, about: &About) -> Result<(), Failur
             })
             .collect(),
     };
-    if let Some(seen) = seen(node, &about.id)?
+    if let Some(seen) = observed::load(node, &about.id).await?
         && !scopes.contains(&seen.account)
     {
         scopes.push(seen.account);
