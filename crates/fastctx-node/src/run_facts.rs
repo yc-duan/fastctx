@@ -11,10 +11,12 @@ mod migrate;
 #[cfg(feature = "storage-drill")]
 pub(crate) mod migration_drill;
 mod projections;
+mod retirement;
 mod snapshot;
 mod sql;
 mod steps;
 pub(crate) mod storage;
+pub(crate) use retirement::SCHEMA as RETIREMENT_SCHEMA;
 pub(crate) use sql::SCHEMA;
 pub(crate) mod output;
 pub(crate) mod updates;

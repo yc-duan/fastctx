@@ -92,6 +92,9 @@ pub(super) fn save(db: &Connection, conversation: &str, stored: &StoredCall) -> 
             (conversation, &stored.call_id, &stored.script),
         )?;
     }
+    if stored.unavailable.is_some() {
+        super::retirement::unavailable(db, conversation, &stored.call_id)?;
+    }
     let mut head = stored.clone();
     head.script.clear();
     head.facts.steps.clear();
@@ -227,6 +230,9 @@ pub(super) fn visits(
 }
 
 pub(super) fn steps(db: &Connection, conversation: &str, call: &str, incoming: &[RunStep]) -> Result<()> {
+    if incoming.is_empty() {
+        return Ok(());
+    }
     let mut query = db.prepare_cached(
         "SELECT fingerprint,finished,body IS NULL FROM run_steps WHERE conversation=?1 AND call=?2 AND id=?3",
     )?;
@@ -278,7 +284,9 @@ pub(super) fn steps(db: &Connection, conversation: &str, call: &str, incoming: &
             crate::records::positions::next(db, conversation, "run-steps")?
         ])?;
     }
-    let mut query=db.prepare_cached("SELECT position,machine,kind,first,last,length(body) FROM run_steps WHERE conversation=?1 AND call=?2 AND body IS NOT NULL ORDER BY position DESC")?;
+    // 2026-11-01: The scoped primary key satisfies ordering but scans retired rows.
+    // Keep retirement bounded by the hot-only index, independently of planner estimates.
+    let mut query=db.prepare_cached("SELECT position,machine,kind,first,last,length(body) FROM run_steps INDEXED BY run_steps_hot WHERE conversation=?1 AND call=?2 AND body IS NOT NULL ORDER BY position DESC")?;
     let old = query
         .query_map((conversation, call), |row| {
             Ok((
@@ -334,7 +342,7 @@ pub(super) fn load(db: &Connection, conversation: &str, call: &str) -> Result<Op
     )?;
     stored.facts.steps = values(
         db,
-        "SELECT body FROM run_steps WHERE conversation=?1 AND call=?2 AND body IS NOT NULL ORDER BY position",
+        "SELECT body FROM run_steps INDEXED BY run_steps_hot WHERE conversation=?1 AND call=?2 AND body IS NOT NULL ORDER BY position",
         conversation,
         call,
     )?;

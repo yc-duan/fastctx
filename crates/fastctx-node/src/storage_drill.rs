@@ -11,6 +11,7 @@ pub fn run(root: &std::path::Path) -> Result<(), Box<dyn std::error::Error>> {
     crate::gather::drill::run(&root.join("gather"))?;
     crate::conversation_store::drill::run(&root.join("conversations"))?;
     crate::conversation_store::transfer_drill::run(&root.join("transfer"))?;
+    crate::record_payloads::drill::run(&root.join("payload-gc"))?;
     crate::run_facts::drill::run(&root.join("facts"))?;
     crate::records::drill::run(&root.join("records"))?;
     Ok(())

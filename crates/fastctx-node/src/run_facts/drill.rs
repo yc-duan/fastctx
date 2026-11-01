@@ -191,6 +191,7 @@ pub fn run(root: &Path) -> Result<(), Box<dyn std::error::Error>> {
     let first = costs[..100].iter().map(Duration::as_micros).sum::<u128>() / 100;
     let last = costs[900..].iter().map(Duration::as_micros).sum::<u128>() / 100;
     println!("100-step commit mean: first {} us, last {} us; mutable head {} bytes", first, last, head_size);
+    super::retirement::drill(&database, &ended)?;
     database.write_now(64, |db| {
         db.execute("INSERT INTO node_conversation_deletions(name,started) VALUES('conversation',0)", [])?;
         Ok(())

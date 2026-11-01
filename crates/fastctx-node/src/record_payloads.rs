@@ -2,7 +2,13 @@
 //! writer. The mutable record holds only a reference. Equal prefixes share
 //! pieces, and replacement manifests are bounded by the 64 MiB admission limit.
 //! Staging pins survive cancellation through the writer closure; maintenance
-//! never removes a live pin or a root installed after its marking snapshot.
+//! never removes a live pin or a root committed before its deletion batch.
+mod collect;
+#[cfg(feature = "storage-drill")]
+pub(crate) use collect::collect;
+pub(crate) use collect::maintain;
+#[cfg(feature = "storage-drill")]
+pub(crate) mod drill;
 use fastctx_storage::{
     Database, Error, ErrorKind, Priority, Result,
     rusqlite::{Connection, OptionalExtension, params},
@@ -19,13 +25,14 @@ const LIMIT: usize = 64 * 1024 * 1024;
 const MANIFEST: usize = (LIMIT / PIECE) * 68 + 2;
 pub(crate) const SCHEMA:&str="
 CREATE TABLE IF NOT EXISTS record_payload_chunks(conversation TEXT NOT NULL,hash TEXT NOT NULL,body BLOB NOT NULL,PRIMARY KEY(conversation,hash)) WITHOUT ROWID;
-CREATE TABLE IF NOT EXISTS record_payload_manifests(conversation TEXT NOT NULL,hash TEXT NOT NULL,bytes INTEGER NOT NULL,body BLOB NOT NULL,PRIMARY KEY(conversation,hash)) WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS record_payload_manifests(conversation TEXT NOT NULL,hash TEXT NOT NULL,bytes INTEGER NOT NULL,body BLOB NOT NULL,complete INTEGER NOT NULL DEFAULT 0,PRIMARY KEY(conversation,hash)) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS record_payload_roots(conversation TEXT NOT NULL,family TEXT NOT NULL,identity TEXT NOT NULL,hash TEXT NOT NULL,PRIMARY KEY(conversation,family,identity)) WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS record_payload_root_hash ON record_payload_roots(conversation,hash);
 CREATE TABLE IF NOT EXISTS record_payload_leases(conversation TEXT NOT NULL,identity TEXT NOT NULL,hash TEXT NOT NULL,PRIMARY KEY(conversation,identity)) WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS record_payload_lease_hash ON record_payload_leases(conversation,hash);
 CREATE TABLE IF NOT EXISTS record_payload_versions(conversation TEXT PRIMARY KEY,version INTEGER NOT NULL) WITHOUT ROWID;
-CREATE TABLE IF NOT EXISTS record_payload_marks(conversation TEXT NOT NULL,kind INTEGER NOT NULL,hash TEXT NOT NULL,PRIMARY KEY(conversation,kind,hash)) WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS record_payload_members(conversation TEXT NOT NULL,manifest TEXT NOT NULL,chunk TEXT NOT NULL,PRIMARY KEY(conversation,manifest,chunk)) WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS record_payload_member_chunk ON record_payload_members(conversation,chunk,manifest);
 ";
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct Reference {
@@ -41,10 +48,14 @@ pub(crate) struct Staged {
 struct Pin(String);
 static LIVE: LazyLock<Mutex<HashMap<String, Weak<Pin>>>> = LazyLock::new(Default::default);
 static COLLECTING: LazyLock<Mutex<HashSet<(std::path::PathBuf, String)>>> = LazyLock::new(Default::default);
-struct Collecting((std::path::PathBuf, String));
+struct Collecting {
+    key: (std::path::PathBuf, String),
+    started: std::time::Instant,
+}
 impl Drop for Collecting {
     fn drop(&mut self) {
-        COLLECTING.lock().expect("payload collection").remove(&self.0);
+        COLLECTING.lock().expect("payload collection").remove(&self.key);
+        fastctx_platform::readings::timing("payload.collection").record(self.started.elapsed());
     }
 }
 impl Drop for Pin {
@@ -60,12 +71,6 @@ fn corrupt(message: impl Into<String>) -> Error {
 }
 fn encoded(value: &impl Serialize) -> Result<Vec<u8>> {
     serde_json::to_vec(value).map_err(|e| Error::new(e.to_string()))
-}
-fn version(db: &Connection, scope: &str) -> Result<i64> {
-    Ok(db
-        .query_row("SELECT version FROM record_payload_versions WHERE conversation=?1", [scope], |row| row.get(0))
-        .optional()?
-        .unwrap_or(0))
 }
 fn changed(db: &Connection, scope: &str) -> Result<()> {
     db.execute("INSERT INTO record_payload_versions(conversation,version) VALUES(?1,1) ON CONFLICT(conversation) DO UPDATE SET version=version+1",[scope])?;
@@ -83,74 +88,66 @@ pub(crate) fn stage(database: &Database, scope: &str, bytes: Vec<u8>, priority: 
     let pin = Arc::new(Pin(lease.clone()));
     LIVE.lock().expect("payload pins").insert(lease.clone(), Arc::downgrade(&pin));
     let staged = Staged { reference, lease, _pin: pin };
+    let manifest: Vec<_> = bytes.chunks(PIECE).map(hash).collect();
+    let body = encoded(&manifest)?;
+    if body.len() > MANIFEST {
+        return Err(Error::new("projection manifest exceeded its bound"));
+    }
     let (scope, kept) = (scope.to_string(), staged.clone());
     let registering = scope.clone();
-    database.write_now_at(priority, 256, move |db| {
+    database.write_now_at(priority, body.len() + 256, move |db| {
         let kept = kept;
         db.execute(
             "INSERT INTO record_payload_leases(conversation,identity,hash) VALUES(?1,?2,?3)",
             (&registering, &kept.lease, &kept.reference.hash),
         )?;
-        changed(db, &registering)
-    })?;
-    let mut manifest = Vec::new();
-    for group in bytes.chunks(PIECE * 4) {
-        let mut missing = Vec::new();
-        for piece in group.chunks(PIECE) {
-            let digest = hash(piece);
-            manifest.push(digest.clone());
-            let prior = database.read_now(|db| {
-                Ok(db
-                    .query_row(
-                        "SELECT CASE WHEN length(body)<=32768 THEN body ELSE NULL END FROM record_payload_chunks WHERE conversation=?1 AND hash=?2",
-                        (&scope, &digest),
-                        |row| row.get::<_, Option<Vec<u8>>>(0),
-                    )
-                    .optional()?)
-            })?;
-            match prior {
-                Some(None) => return Err(corrupt("record projection piece exceeds its bound")),
-                Some(Some(prior)) if prior != piece => {
-                    return Err(corrupt("record projection piece differs from its digest"));
-                }
-                Some(_) => {}
-                None => missing.push((digest, piece.to_vec())),
-            }
-        }
-        if missing.is_empty() {
-            continue;
-        }
-        let (scope, pin) = (scope.clone(), staged.clone());
-        database.write_now_at(priority, missing.iter().map(|(_, body)| body.len()).sum(), move |db| {
-            let _pin = pin;
-            for (digest, body) in missing {
-                db.execute(
-                    "INSERT OR IGNORE INTO record_payload_chunks(conversation,hash,body) VALUES(?1,?2,?3)",
-                    params![scope, digest, body],
-                )?;
-            }
-            Ok(())
-        })?;
-    }
-    let body = encoded(&manifest)?;
-    if body.len() > MANIFEST {
-        return Err(Error::new("projection manifest exceeded its bound"));
-    }
-    let (scope, pin) = (scope.clone(), staged.clone());
-    database.write_now_at(priority, body.len(), move |db| {
-        let pin = pin;
         db.execute(
             "INSERT OR IGNORE INTO record_payload_manifests(conversation,hash,bytes,body) VALUES(?1,?2,?3,?4)",
-            params![scope, pin.reference.hash, pin.reference.bytes as i64, body],
+            params![registering, kept.reference.hash, kept.reference.bytes as i64, body],
         )?;
         let matches: bool = db.query_row(
             "SELECT bytes=?3 AND body=?4 FROM record_payload_manifests WHERE conversation=?1 AND hash=?2",
-            params![scope, pin.reference.hash, pin.reference.bytes as i64, body],
+            params![registering, kept.reference.hash, kept.reference.bytes as i64, body],
             |row| row.get(0),
         )?;
         if !matches {
             return Err(corrupt("record projection manifest differs from its digest"));
         }
+        changed(db, &registering)
+    })?;
+    for (group, hashes) in bytes.chunks(PIECE * 4).zip(manifest.chunks(4)) {
+        let pieces: Vec<_> =
+            group.chunks(PIECE).zip(hashes).map(|(body, digest)| (digest.clone(), body.to_vec())).collect();
+        let (scope, pin) = (scope.clone(), staged.clone());
+        database.write_now_at(priority, group.len() + 512, move |db| {
+            let pin = pin;
+            let mut insert = db.prepare_cached(
+                "INSERT OR IGNORE INTO record_payload_chunks(conversation,hash,body) VALUES(?1,?2,?3)",
+            )?;
+            let mut verify =
+                db.prepare_cached("SELECT CASE WHEN length(body)<=32768 THEN body=?3 ELSE 0 END FROM record_payload_chunks WHERE conversation=?1 AND hash=?2")?;
+            let mut member = db.prepare_cached(
+                "INSERT OR IGNORE INTO record_payload_members(conversation,manifest,chunk) VALUES(?1,?2,?3)",
+            )?;
+            for (digest, body) in pieces {
+                // Recheck and reuse in the same transaction as the dependency.
+                // A preflight read alone can race with an orphan chunk sweep.
+                insert.execute(params![scope, digest, body])?;
+                if !verify.query_row(params![scope, digest, body], |row| row.get::<_, bool>(0))? {
+                    return Err(corrupt("record projection piece differs from its digest"));
+                }
+                member.execute((&scope, &pin.reference.hash, digest))?;
+            }
+            Ok(())
+        })?;
+    }
+    let (scope, pin) = (scope.clone(), staged.clone());
+    database.write_now_at(priority, 128, move |db| {
+        let pin = pin;
+        db.execute(
+            "UPDATE record_payload_manifests SET complete=1 WHERE conversation=?1 AND hash=?2 AND complete=0",
+            (scope, &pin.reference.hash),
+        )?;
         Ok(())
     })?;
     Ok(staged)
@@ -167,7 +164,7 @@ pub(crate) fn read(db: &Connection, scope: &str, reference: &Reference) -> Resul
     }
     let row: Option<(i64, Option<Vec<u8>>)> = db
         .query_row(
-            "SELECT bytes,CASE WHEN length(body)<=139266 THEN body ELSE NULL END FROM record_payload_manifests WHERE conversation=?1 AND hash=?2",
+            "SELECT bytes,CASE WHEN length(body)<=139266 THEN body ELSE NULL END FROM record_payload_manifests WHERE conversation=?1 AND hash=?2 AND complete=1",
             (scope, &reference.hash),
             |row| Ok((row.get(0)?, row.get(1)?)),
         )
@@ -206,7 +203,7 @@ pub(crate) fn read(db: &Connection, scope: &str, reference: &Reference) -> Resul
 /// Look up a small root without loading the projection. The caller uses the same
 /// transaction for its owning record and any subsequent read of the payload.
 pub(crate) fn root(db: &Connection, scope: &str, family: &str, key: &str) -> Result<Option<Reference>> {
-    let row:Option<(String,Option<i64>)>=db.query_row("SELECT r.hash,m.bytes FROM record_payload_roots r LEFT JOIN record_payload_manifests m ON m.conversation=r.conversation AND m.hash=r.hash WHERE r.conversation=?1 AND r.family=?2 AND r.identity=?3",(scope,family,key),|row|Ok((row.get(0)?,row.get(1)?))).optional()?;
+    let row:Option<(String,Option<i64>)>=db.query_row("SELECT r.hash,m.bytes FROM record_payload_roots r LEFT JOIN record_payload_manifests m ON m.conversation=r.conversation AND m.hash=r.hash AND m.complete=1 WHERE r.conversation=?1 AND r.family=?2 AND r.identity=?3",(scope,family,key),|row|Ok((row.get(0)?,row.get(1)?))).optional()?;
     row.map(|(hash, bytes)| {
         let bytes = bytes
             .filter(|bytes| *bytes >= 0 && *bytes <= LIMIT as i64)
@@ -229,7 +226,7 @@ pub(crate) fn link(db: &Connection, scope: &str, family: &str, key: &str, refere
     let count = if let Some(reference) = reference {
         if db
             .query_row(
-                "SELECT bytes FROM record_payload_manifests WHERE conversation=?1 AND hash=?2",
+                "SELECT bytes FROM record_payload_manifests WHERE conversation=?1 AND hash=?2 AND complete=1",
                 (scope, &reference.hash),
                 |row| row.get::<_, i64>(0),
             )
@@ -256,155 +253,6 @@ pub(crate) fn finish(db: &Connection, scope: &str, staged: &Staged) -> Result<()
         != 0
     {
         changed(db, scope)?;
-    }
-    Ok(())
-}
-
-/// Only the exclusive node owner runs this collector. A live staging handle is
-/// protected even when its caller cancelled while the writer still owns it.
-pub(crate) fn collect(database: &Database, scope: &str) -> Result<()> {
-    let key = (database.path().to_path_buf(), scope.to_string());
-    if !COLLECTING.lock().expect("payload collection").insert(key.clone()) {
-        return Ok(());
-    }
-    let _collecting = Collecting(key);
-    let mut after = String::new();
-    loop {
-        let leases=database.read_now(|db| {
-            let mut query=db.prepare_cached("SELECT identity FROM record_payload_leases WHERE conversation=?1 AND identity>?2 ORDER BY identity LIMIT 64")?;
-            Ok(query.query_map((scope,&after),|row|row.get::<_,String>(0))?.collect::<std::result::Result<Vec<_>,_>>()?)
-        })?;
-        let Some(last) = leases.last() else { break };
-        after = last.clone();
-        let abandoned: Vec<_> = {
-            let live = LIVE.lock().expect("payload pins");
-            leases.into_iter().filter(|id| live.get(id).is_none_or(|pin| pin.strong_count() == 0)).collect()
-        };
-        let scope = scope.to_string();
-        database.write_now_at(Priority::Background, 4096, move |db| {
-            for id in abandoned {
-                if db
-                    .execute("DELETE FROM record_payload_leases WHERE conversation=?1 AND identity=?2", (&scope, id))?
-                    != 0
-                {
-                    changed(db, &scope)?;
-                }
-            }
-            Ok(())
-        })?;
-    }
-    clear_marks(database, scope)?;
-    let expected = database.read_now(|db| version(db, scope))?;
-    let mut after = String::new();
-    loop {
-        let roots=database.read_now(|db| {
-            let mut query=db.prepare_cached("SELECT hash FROM record_payload_roots WHERE conversation=?1 AND hash>?2 UNION SELECT hash FROM record_payload_leases WHERE conversation=?1 AND hash>?2 ORDER BY hash LIMIT 32")?;
-            Ok(query.query_map((scope,&after),|row|row.get::<_,String>(0))?.collect::<std::result::Result<Vec<_>,_>>()?)
-        })?;
-        let Some(last) = roots.last() else { break };
-        after = last.clone();
-        for root in roots {
-            let body = database.read_now(|db| {
-                Ok(db
-                    .query_row(
-                        "SELECT CASE WHEN length(body)<=139266 THEN body ELSE NULL END FROM record_payload_manifests WHERE conversation=?1 AND hash=?2",
-                        (scope, &root),
-                        |row| row.get::<_, Option<Vec<u8>>>(0),
-                    )
-                    .optional()?)
-            })?;
-            let Some(body) = body else {
-                let missing_root = database.read_now(|db| {
-                    let tx = db.unchecked_transaction()?;
-                    if version(&tx, scope)? != expected {
-                        return Ok(false);
-                    }
-                    Ok(tx.query_row(
-                        "SELECT EXISTS(SELECT 1 FROM record_payload_roots WHERE conversation=?1 AND hash=?2)",
-                        (scope, &root),
-                        |row| row.get::<_, bool>(0),
-                    )?)
-                })?;
-                if missing_root {
-                    return Err(corrupt("record projection root manifest is missing"));
-                }
-                return Ok(());
-            };
-            let body = body.ok_or_else(|| corrupt("record projection manifest exceeds its bound"))?;
-            let chunks: Vec<String> = serde_json::from_slice(&body).map_err(|e| corrupt(e.to_string()))?;
-            let mut marks = vec![(1, root)];
-            marks.extend(chunks.into_iter().map(|hash| (0, hash)));
-            for batch in marks.chunks(64) {
-                let (scope, batch) = (scope.to_string(), batch.to_vec());
-                database.write_now_at(Priority::Background, 8192, move |db| {
-                    for (kind, hash) in batch {
-                        db.execute(
-                            "INSERT OR IGNORE INTO record_payload_marks(conversation,kind,hash) VALUES(?1,?2,?3)",
-                            (&scope, kind, hash),
-                        )?;
-                    }
-                    Ok(())
-                })?;
-            }
-        }
-    }
-    for (table, kind) in [("record_payload_chunks", 0), ("record_payload_manifests", 1)] {
-        let mut after = String::new();
-        loop {
-            let candidates = database.read_now(|db| {
-                let mut query = db.prepare(&format!(
-                    "SELECT hash FROM {table} WHERE conversation=?1 AND hash>?2 ORDER BY hash LIMIT 64"
-                ))?;
-                Ok(query
-                    .query_map((scope, &after), |row| row.get::<_, String>(0))?
-                    .collect::<std::result::Result<Vec<_>, _>>()?)
-            })?;
-            let Some(last) = candidates.last() else { break };
-            after = last.clone();
-            // Deleting a row also frees its blob pages: four pieces or one
-            // manifest keep a maintenance transaction near 128 KiB of payload.
-            for batch in candidates.chunks(if kind == 0 { 4 } else { 1 }) {
-                let (scope, batch) = (scope.to_string(), batch.to_vec());
-                let stable=database.write_now_at(Priority::Background,128*1024,move |db| {
-                    if version(db,&scope)?!=expected{return Ok(false);}
-                    for hash in batch {db.execute(&format!("DELETE FROM {table} WHERE conversation=?1 AND hash=?2 AND NOT EXISTS(SELECT 1 FROM record_payload_marks WHERE conversation=?1 AND kind=?3 AND hash=?2)"),(&scope,hash,kind))?;}Ok(true)
-                })?;
-                if !stable {
-                    return Ok(());
-                }
-            }
-        }
-    }
-    clear_marks(database, scope)
-}
-fn clear_marks(database: &Database, scope: &str) -> Result<()> {
-    loop {
-        let scope = scope.to_string();
-        let count=database.write_now_at(Priority::Background,2048,move |db|Ok(db.execute("DELETE FROM record_payload_marks WHERE (conversation,kind,hash) IN (SELECT conversation,kind,hash FROM record_payload_marks WHERE conversation=?1 LIMIT 64)",[scope])?))?;
-        if count == 0 {
-            return Ok(());
-        }
-    }
-}
-
-/// Visit scopes in bounded pages; a damaged conversation does not suppress the
-/// collection or diagnostics of the following conversations.
-pub(crate) fn maintain(database: &Database, mut report: impl FnMut(&str, &Error)) -> Result<()> {
-    let mut after = String::new();
-    loop {
-        let scopes = database.read_now(|db| {
-            let mut query = db.prepare_cached(
-                "SELECT conversation FROM record_payload_versions WHERE conversation>?1 ORDER BY conversation LIMIT 32",
-            )?;
-            Ok(query.query_map([&after], |row| row.get::<_, String>(0))?.collect::<std::result::Result<Vec<_>, _>>()?)
-        })?;
-        let Some(last) = scopes.last() else { break };
-        after = last.clone();
-        for scope in scopes {
-            if let Err(error) = collect(database, &scope) {
-                report(&scope, &error);
-            }
-        }
     }
     Ok(())
 }

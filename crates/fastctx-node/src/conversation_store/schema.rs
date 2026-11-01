@@ -65,6 +65,13 @@ pub(crate) fn initialize(db: &Connection) -> Result<()> {
     db.execute_batch(crate::gather::records::SCHEMA)?;
     db.execute_batch(super::transfer::SCHEMA)?;
     db.execute_batch(crate::session_record::MIGRATION_SCHEMA)?;
+    if db.query_row(
+        "SELECT EXISTS(SELECT 1 FROM sqlite_schema WHERE type='table' AND name='run_calls')",
+        [],
+        |row| row.get::<_, bool>(0),
+    )? {
+        db.execute_batch(crate::run_facts::RETIREMENT_SCHEMA)?;
+    }
     // Deletion watermarks belong to this node, not to the deleted data. They
     // never expire: an offline producer can return after an arbitrary interval.
     db.execute_batch(
