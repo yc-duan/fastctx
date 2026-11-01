@@ -74,6 +74,8 @@ const enTitle = (trouble: Trouble, what: string): string => {
       return `${machine} has damaged records`;
     case "violations":
       return `${machine} is misbehaving`;
+    case "migration":
+      return `${machine} can't move its earlier records`;
     default:
       return `${machine}: ${what.charAt(0).toLowerCase()}${what.slice(1)}`;
   }
@@ -107,6 +109,8 @@ export const zhTroubles: TroubleWords = {
         return trouble.near ? "中枢服务器快到上限" : "中枢服务器很忙";
       case "rollout":
         return trouble.version ? `${trouble.version} 的推广已停下` : "推广已停下";
+      case "migration":
+        return "旧记录迁不过去";
       default:
         return "出现异常";
     }
@@ -130,6 +134,8 @@ export const zhTroubles: TroubleWords = {
         return near || (trouble.seconds ? `任务最久等了 ${trouble.seconds} 秒` : "");
       case "rollout":
         return "换上这一版的机器出问题更多";
+      case "migration":
+        return trouble.count ? `有 ${trouble.count} 类旧记录迁移失败，正在重试` : "正在重试";
       default:
         return "";
     }
@@ -164,6 +170,8 @@ export const enTroubles: TroubleWords = {
         return trouble.near ? "Hub near a limit" : "Hub overloaded";
       case "rollout":
         return trouble.version ? `Rollout of ${trouble.version} stopped` : "Rollout stopped";
+      case "migration":
+        return "Earlier records not moving";
       default:
         return "Something went wrong";
     }
@@ -187,6 +195,10 @@ export const enTroubles: TroubleWords = {
         return near || (trouble.seconds ? `Work waited up to ${trouble.seconds} s` : "");
       case "rollout":
         return "Machines on it ran into more trouble than the rest";
+      case "migration":
+        return trouble.count
+          ? `${trouble.count} kinds of earlier records keep failing to move; still retrying`
+          : "Still retrying";
       default:
         return "";
     }

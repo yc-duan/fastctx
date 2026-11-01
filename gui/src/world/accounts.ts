@@ -206,7 +206,18 @@ export interface Trouble {
   at: Timestamp;
   /** None for the network as a whole. */
   machine?: MachineName;
-  kind: "silent" | "drops" | "stuck" | "near" | "damaged" | "violations" | "outage" | "hub" | "rollout" | "other";
+  kind:
+    | "silent"
+    | "drops"
+    | "stuck"
+    | "near"
+    | "damaged"
+    | "violations"
+    | "outage"
+    | "hub"
+    | "rollout"
+    | "migration"
+    | "other";
   /** The times it connected again within the hour, or the machines that
    *  lost their line together. */
   count?: number;

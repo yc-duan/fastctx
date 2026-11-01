@@ -1,7 +1,8 @@
 //! A machine's health in a few numbers, carried by its heartbeat
 //! (`specs/world-engine.md`, 量与告警): whether it is busy, how long its work
 //! waited lately, what is stuck, how often a rule was broken, the bound
-//! nearest its limit, and a store of its records found damaged. The hub shows
+//! nearest its limit, a store of its records found damaged, and records of an
+//! earlier version still moving in. The hub shows
 //! a machine as busy or stuck beside online from it, and gathers the
 //! network's health.
 
@@ -40,6 +41,24 @@ pub struct Health {
     /// (`storage.node`): some of what it kept may be lost.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub damaged: Option<String>,
+    /// Records of an earlier version still moving into its databases, while
+    /// any are left, failed or set aside (`specs/world-engine.md`, 兼容与迁移).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub migrating: Option<Migrating>,
+}
+
+/// How the move of a machine's earlier records goes.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Migrating {
+    /// Conversations and jobs whose earlier records are still to be looked at.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub remaining: u64,
+    /// Kinds of records that failed to move and wait to be tried again.
+    #[serde(default, skip_serializing_if = "is_zero_u32")]
+    pub failed: u32,
+    /// Earlier files that could not be read, set aside with their reason.
+    #[serde(default, skip_serializing_if = "is_zero_u32")]
+    pub damaged: u32,
 }
 
 impl Health {

@@ -59,7 +59,7 @@ const RECOUNT: Duration = Duration::from_secs(60);
 fn quiet(kind: TroubleKind) -> SignedDuration {
     match kind {
         TroubleKind::Near => SignedDuration::from_hours(6),
-        TroubleKind::Violations | TroubleKind::Damaged => SignedDuration::from_hours(24),
+        TroubleKind::Violations | TroubleKind::Damaged | TroubleKind::Migration => SignedDuration::from_hours(24),
         TroubleKind::Silent
         | TroubleKind::Drops
         | TroubleKind::Stuck

@@ -8,7 +8,7 @@ use std::sync::RwLock;
 use std::sync::atomic::{AtomicU32, AtomicU64, AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
-use fastctx_types::health::{BUSY_MS, Health, NEAR, Near, WINDOW_SECS};
+use fastctx_types::health::{BUSY_MS, Health, Migrating, NEAR, Near, WINDOW_SECS};
 
 const WINDOW: u64 = WINDOW_SECS * 1000;
 
@@ -154,5 +154,18 @@ pub fn summary() -> Health {
         violations: crate::conduct::total(),
         near,
         damaged: DAMAGED.read().unwrap_or_else(|poisoned| poisoned.into_inner()).map(str::to_string),
+        migrating: migrating(),
     }
+}
+
+/// How the move of earlier records goes, from what the node's migration reads
+/// (`migration.*`): told while any are left, failed or set aside.
+fn migrating() -> Option<Migrating> {
+    let read = |name| crate::readings::gauge(name).get().max(0) as u64;
+    let migrating = Migrating {
+        remaining: read("migration.discovery_remaining"),
+        failed: read("migration.failed_families").min(u64::from(u32::MAX)) as u32,
+        damaged: read("migration.damaged_pending").min(u64::from(u32::MAX)) as u32,
+    };
+    (migrating != Migrating::default()).then_some(migrating)
 }

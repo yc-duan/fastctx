@@ -17,6 +17,8 @@ use crate::troubles::Detail;
 
 /// Work stuck this long is told of.
 const STUCK: Duration = Duration::from_secs(60);
+/// Earlier records failing to move this long are told of.
+const MIGRATION: Duration = Duration::from_secs(10 * 60);
 /// Rules broken in each of this many windows of `WINDOW` running are told of.
 const BROKEN_WINDOWS: u32 = 3;
 const WINDOW: Duration = Duration::from_secs(5 * 60);
@@ -31,6 +33,8 @@ pub(crate) struct Heard {
     near: Option<String>,
     /// Whether a damaged store of its records was told.
     damaged: bool,
+    /// Since when some of its earlier records fail to move, and whether that was told.
+    migration: Option<(Instant, bool)>,
     /// Since when this window runs, the rules broken by its start, and in how
     /// many windows running more were broken; from the first health told.
     window: Option<(Instant, u64, u32)>,
@@ -93,6 +97,17 @@ impl Heard {
         if health.damaged.is_some() && !self.damaged {
             self.damaged = true;
             hub.troubles.raise(hub, machine, TroubleKind::Damaged, Detail::default());
+        }
+        match health.migrating.as_ref().map(|migrating| migrating.failed).filter(|failed| *failed > 0) {
+            Some(failed) => {
+                let (since, told) = self.migration.get_or_insert((now, false));
+                if !*told && now.duration_since(*since) >= MIGRATION {
+                    *told = true;
+                    let count = Some(failed);
+                    hub.troubles.raise(hub, machine, TroubleKind::Migration, Detail { count, ..Detail::default() });
+                }
+            }
+            None => self.migration = None,
         }
         let (began, broken, running) = self.window.get_or_insert((now, health.violations, 0));
         if now.duration_since(*began) >= WINDOW {
