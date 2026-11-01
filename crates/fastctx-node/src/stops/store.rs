@@ -24,12 +24,13 @@ pub(super) async fn ordered<T: Send + 'static>(
     let lease = GATES.get_or_insert_with(&directory.path().to_path_buf(), || Arc::new(tokio::sync::Mutex::new(())));
     let permit = Arc::clone(&lease).lock_owned().await;
     let order = Arc::new(Order { _lease: lease, _permit: permit });
-    tokio::task::spawn_blocking(move || action(&directory, &order)).await.map_err(io::Error::other)?
+    fastctx_platform::task::spawn_blocking(move || action(&directory, &order)).await.map_err(io::Error::other)?
 }
 
-fn prepare(directory: &ConversationDir) -> io::Result<()> {
-    records::ensure_each(directory, FAMILY, |push| {
-        let entries = match std::fs::read_dir(directory.book("input-stops")) {
+pub(crate) fn prepare(directory: &ConversationDir) -> io::Result<()> {
+    let folder = directory.book("input-stops");
+    records::ensure_each(directory, FAMILY, move |push| {
+        let entries = match fastctx_platform::disk::read_dir(&folder) {
             Ok(entries) => entries,
             Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
             Err(error) => return Err(error),
@@ -40,9 +41,11 @@ fn prepare(directory: &ConversationDir) -> io::Result<()> {
                 continue;
             }
             let Some(key) = entry.file_name().to_str().and_then(|key| key.parse::<NoticeId>().ok()) else { continue };
-            let bytes = std::fs::read(entry.path())?;
-            let source = if bytes.is_empty() { StopSource::User } else { serde_json::from_slice(&bytes)? };
-            push(records::Source::new(key.to_string(), entry.path(), serde_json::to_vec(&source)?)?)?;
+            crate::record_migration::file(&entry.path(), push, |push| {
+                let bytes = fastctx_platform::disk::read(entry.path())?;
+                let source = if bytes.is_empty() { StopSource::User } else { serde_json::from_slice(&bytes)? };
+                push(records::Source::new(key.to_string(), entry.path(), serde_json::to_vec(&source)?)?)
+            })?;
         }
         Ok(())
     })

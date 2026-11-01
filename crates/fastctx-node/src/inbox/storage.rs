@@ -16,9 +16,10 @@ pub(crate) enum Receipt {
 
 pub(crate) fn initialize(directory: &ConversationDir) -> io::Result<()> {
     for (family, folder) in [("pending-inputs", directory.inbox()), ("uncertain-inputs", directory.uncertain())] {
-        records::ensure_each(directory, family, |push| {
-            json_files(&folder, |path| {
-                let row = super::parse_pending(directory, path, &std::fs::read(path)?)?;
+        let source = directory.clone();
+        records::ensure_each(directory, family, move |push| {
+            json_files(&folder, push, |path, push| {
+                let row = super::parse_pending(&source, path, &fastctx_platform::disk::read(path)?)?;
                 push(
                     Source::new(row.delivery.id.to_string(), path.to_path_buf(), serde_json::to_vec(&row)?)?
                         .ordered(row.delivery.at),
@@ -26,89 +27,109 @@ pub(crate) fn initialize(directory: &ConversationDir) -> io::Result<()> {
             })
         })?;
     }
-    records::ensure_each(directory, "delivery-receipts", |push| {
-        for path in entries(&directory.delivery_receipts())? {
-            if !path.is_file() || path.file_name().is_some_and(|name| name.to_string_lossy().starts_with('.')) {
+    let source = directory.clone();
+    records::ensure_each(directory, "delivery-receipts", move |push| {
+        for path in entries(&source.delivery_receipts())? {
+            if !fastctx_platform::disk::is_file(&path)
+                || path.file_name().is_some_and(|name| name.to_string_lossy().starts_with('.'))
+            {
                 continue;
             }
-            let key = path
-                .file_name()
-                .and_then(|name| name.to_str())
-                .ok_or_else(|| io::Error::other("invalid receipt"))?
-                .to_string();
-            let row = match std::fs::read(&path)?.as_slice() {
-                b"" => Receipt::Heard,
-                b"consumed" => Receipt::Consumed,
-                b"answered" => Receipt::Answered,
-                _ => return Err(io::Error::other("unknown delivery receipt")),
-            };
-            push(Source::new(key, path, serde_json::to_vec(&row)?)?)?;
+            crate::record_migration::file(&path, push, |push| {
+                let key = path
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .ok_or_else(|| io::Error::other("invalid receipt"))?
+                    .to_string();
+                let row = match fastctx_platform::disk::read(&path)?.as_slice() {
+                    b"" => Receipt::Heard,
+                    b"consumed" => Receipt::Consumed,
+                    b"answered" => Receipt::Answered,
+                    _ => return Err(io::Error::other("unknown delivery receipt")),
+                };
+                push(Source::new(key, path.clone(), serde_json::to_vec(&row)?)?)
+            })?;
         }
-        let path = directory.delivered();
-        match std::fs::File::open(&path) {
-            Ok(file) => {
-                for line in io::BufReader::new(file).lines() {
-                    let key = line?;
-                    if !key.is_empty() && !directory.delivery_receipts().join(&key).try_exists()? {
-                        push(Source::new(key, path.clone(), serde_json::to_vec(&Receipt::LegacyDelivered)?)?)?;
-                    }
+        let path = source.delivered();
+        crate::record_migration::file(&path, push, |push| {
+            for line in io::BufReader::new(fastctx_platform::disk::open(&path)?).lines() {
+                let key = line?;
+                if key.is_empty() {
+                    continue;
                 }
+                let existing = records::read(&source, |rows| rows.get::<Receipt>("delivery-receipts", &key))?;
+                let row = if existing.is_some_and(|receipt| receipt != Receipt::LegacyDelivered) {
+                    Source::skip(path.clone())?
+                } else {
+                    Source::new(key, path.clone(), serde_json::to_vec(&Receipt::LegacyDelivered)?)?
+                };
+                push(row)?;
             }
-            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-            Err(error) => return Err(error),
-        }
-        Ok(())
+            Ok(())
+        })
     })?;
-    records::ensure_each(directory, "outgoing-answers", |push| {
-        json_files(&directory.outbox(), |path| {
-            let row: Owing = serde_json::from_slice(&std::fs::read(path)?)?;
+    let folder = directory.outbox();
+    records::ensure_each(directory, "outgoing-answers", move |push| {
+        json_files(&folder, push, |path, push| {
+            let row: Owing = serde_json::from_slice(&fastctx_platform::disk::read(path)?)?;
             push(
                 Source::new(row.delivery.id.to_string(), path.to_path_buf(), serde_json::to_vec(&row)?)?
                     .ordered(row.delivery.at),
             )
         })
     })?;
-    records::ensure_each(directory, "paid-answers", |push| {
-        for path in entries(&directory.paid())?.into_iter().chain(
-            entries(&directory.outbox())?.into_iter().filter(|path| path.extension().is_some_and(|ext| ext == "paid")),
+    let source = directory.clone();
+    records::ensure_each(directory, "paid-answers", move |push| {
+        for path in entries(&source.paid())?.into_iter().chain(
+            entries(&source.outbox())?.into_iter().filter(|path| path.extension().is_some_and(|ext| ext == "paid")),
         ) {
-            if !path.is_file() || path.file_name().is_some_and(|name| name.to_string_lossy().starts_with('.')) {
+            if !fastctx_platform::disk::is_file(&path)
+                || path.file_name().is_some_and(|name| name.to_string_lossy().starts_with('.'))
+            {
                 continue;
             }
-            let key =
-                if path.parent() == Some(directory.outbox().as_path()) { path.file_stem() } else { path.file_name() }
-                    .and_then(|name| name.to_str())
-                    .ok_or_else(|| io::Error::other("invalid paid receipt"))?
-                    .to_string();
-            if path.parent() == Some(directory.outbox().as_path()) && directory.paid().join(&key).try_exists()? {
-                continue;
-            }
-            push(Source::new(key, path, b"true".to_vec())?)?;
+            crate::record_migration::file(&path, push, |push| {
+                let key =
+                    if path.parent() == Some(source.outbox().as_path()) { path.file_stem() } else { path.file_name() }
+                        .and_then(|name| name.to_str())
+                        .ok_or_else(|| io::Error::other("invalid paid receipt"))?
+                        .to_string();
+                push(Source::new(key, path.clone(), b"true".to_vec())?)
+            })?;
         }
         Ok(())
     })?;
-    records::ensure_each(directory, "undeliverable-answers", |push| {
-        for path in entries(&directory.book("undeliverable"))? {
-            if !path.is_file() || path.file_name().is_some_and(|name| name.to_string_lossy().starts_with('.')) {
+    let folder = directory.book("undeliverable");
+    records::ensure_each(directory, "undeliverable-answers", move |push| {
+        for path in entries(&folder)? {
+            if !fastctx_platform::disk::is_file(&path)
+                || path.file_name().is_some_and(|name| name.to_string_lossy().starts_with('.'))
+            {
                 continue;
             }
-            let row: fastctx_types::Address = serde_json::from_slice(&std::fs::read(&path)?)?;
-            let key = path
-                .file_name()
-                .and_then(|name| name.to_str())
-                .ok_or_else(|| io::Error::other("invalid undeliverable receipt"))?
-                .to_string();
-            push(Source::new(key, path, serde_json::to_vec(&row)?)?)?;
+            crate::record_migration::file(&path, push, |push| {
+                let row: fastctx_types::Address = serde_json::from_slice(&fastctx_platform::disk::read(&path)?)?;
+                let key = path
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .ok_or_else(|| io::Error::other("invalid undeliverable receipt"))?
+                    .to_string();
+                push(Source::new(key, path.clone(), serde_json::to_vec(&row)?)?)
+            })?;
         }
         Ok(())
     })
 }
-fn json_files(folder: &Path, mut apply: impl FnMut(&Path) -> io::Result<()>) -> io::Result<()> {
+fn json_files(
+    folder: &Path,
+    push: &mut dyn FnMut(Source) -> io::Result<()>,
+    mut apply: impl FnMut(&Path, &mut dyn FnMut(Source) -> io::Result<()>) -> io::Result<()>,
+) -> io::Result<()> {
     for path in entries(folder)? {
         if path.extension().is_some_and(|extension| extension == "json")
             && !path.file_name().is_some_and(|name| name.to_string_lossy().starts_with('.'))
         {
-            apply(&path)?;
+            crate::record_migration::file(&path, push, |push| apply(&path, push))?;
         }
     }
     Ok(())

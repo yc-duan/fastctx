@@ -16,19 +16,19 @@ fn identity(process: &ProcessIdentity) -> String {
     use sha2::{Digest, Sha256};
     format!("{:x}", Sha256::digest(serde_json::to_vec(process).expect("process identity serializes")))
 }
-fn prepare(world: &WorldDir, id: &ResidentId) -> io::Result<ConversationDir> {
+pub(crate) fn prepare(world: &WorldDir, id: &ResidentId) -> io::Result<ConversationDir> {
     let directory = world.conversation(id);
     let path = directory.path().join("native-hosts.json");
-    records::ensure_each(&directory, "native-processes", |push| {
-        let Some(hosts) = fastctx_agent::state::load::<Hosts>(&path).map_err(io::Error::other)? else { return Ok(()) };
+    records::ensure_file(&directory, "native-processes", path.clone(), |path, push| {
+        let Some(hosts) = fastctx_agent::state::load::<Hosts>(path).map_err(io::Error::other)? else { return Ok(()) };
         for process in hosts.processes {
-            push(records::Source::new(identity(&process), path.clone(), serde_json::to_vec(&process)?)?)?;
+            push(records::Source::new(identity(&process), path.to_path_buf(), serde_json::to_vec(&process)?)?)?;
         }
         Ok(())
     })?;
-    records::ensure_each(&directory, "native-lifetime", |push| {
-        if let Some(unknown) = records::legacy::field::<bool>(&path, "unknown")? {
-            push(records::Source::new("unknown".into(), path.clone(), serde_json::to_vec(&unknown)?)?)?;
+    records::ensure_file(&directory, "native-lifetime", path, |path, push| {
+        if let Some(unknown) = records::legacy::field::<bool>(path, "unknown")? {
+            push(records::Source::new("unknown".into(), path.to_path_buf(), serde_json::to_vec(&unknown)?)?)?;
         }
         Ok(())
     })?;

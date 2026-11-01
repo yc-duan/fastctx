@@ -9,10 +9,9 @@ use std::io;
 const FAMILY: &str = "controls";
 const RESULTS: &str = "control-results";
 
-fn initialize(directory: &ConversationDir) -> io::Result<()> {
-    records::ensure_each(directory, FAMILY, |push| {
-        let path = directory.path().join("control-queue.json");
-        let file = match std::fs::File::open(&path) {
+pub(crate) fn initialize(directory: &ConversationDir) -> io::Result<()> {
+    records::ensure_file(directory, FAMILY, directory.path().join("control-queue.json"), |path, push| {
+        let file = match fastctx_platform::disk::open(path) {
             Ok(file) => file,
             Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
             Err(error) => return Err(error),
@@ -37,7 +36,7 @@ fn initialize(directory: &ConversationDir) -> io::Result<()> {
             }
         }
         serde_json::Deserializer::from_reader(io::BufReader::new(file))
-            .deserialize_seq(Controls { path, push })
+            .deserialize_seq(Controls { path: path.to_path_buf(), push })
             .map_err(io::Error::other)
     })?;
     crate::session_record::prepare(directory)
@@ -49,7 +48,7 @@ async fn work<T: Send + 'static>(
     action: impl FnOnce(&ConversationDir) -> io::Result<T> + Send + 'static,
 ) -> Result<T, Failure> {
     let directory = node.world.conversation(id);
-    tokio::task::spawn_blocking(move || {
+    fastctx_platform::task::spawn_blocking(move || {
         initialize(&directory)?;
         action(&directory)
     })
@@ -159,7 +158,7 @@ pub(super) async fn tell(
 ) -> Result<(), Failure> {
     let (node, id, row) = (node.clone(), id.clone(), row.clone());
     let directory = node.world.conversation(&id);
-    tokio::task::spawn_blocking(move || {
+    fastctx_platform::task::spawn_blocking(move || {
         initialize(&directory)?;
         let bytes = serde_json::to_vec(&row)?.len() + 512;
         let (event, changed) = transaction(&directory, bytes, move |rows| {

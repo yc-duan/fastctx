@@ -9,10 +9,11 @@ use std::sync::{LazyLock, Mutex};
 
 static OPEN: LazyLock<Mutex<HashMap<PathBuf, WeakDatabase>>> = LazyLock::new(Default::default);
 
-pub(crate) fn register(world: &WorldDir, database: &Database) {
+pub(crate) fn register(world: &WorldDir, database: &Database) -> crate::record_migration::Service {
     let mut open = OPEN.lock().expect("record database registry");
     open.retain(|_, database| database.upgrade().is_some());
     open.insert(world.path().to_path_buf(), database.downgrade());
+    crate::record_migration::Service::register(world.path(), database)
 }
 
 pub(crate) fn get(directory: &ConversationDir) -> io::Result<(Database, String)> {

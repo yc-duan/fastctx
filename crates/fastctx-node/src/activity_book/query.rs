@@ -44,10 +44,10 @@ pub(crate) async fn answer_here(
     query: BookQuery,
 ) -> Result<BookAnswer, Failure> {
     let preparing = node.clone();
-    tokio::task::spawn_blocking(move || super::migrate::ensure(&preparing))
+    fastctx_platform::task::spawn_blocking(move || super::migrate::ensure(&preparing))
         .await
         .map_err(|e| Failure::new(e.to_string()))?
-        .map_err(|e| Failure::new(e.to_string()))?;
+        .map_err(crate::record_migration::failure)?;
     let visible = acting.map(|acting| visible(node, acting));
     let machine = node.machine();
     let answer = node

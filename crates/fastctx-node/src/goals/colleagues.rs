@@ -132,6 +132,17 @@ struct Attempt {
     operation: String,
 }
 
+/// Validates the released delivery receipt before its source is archived.
+pub(crate) fn validate_legacy_receipt(path: &std::path::Path, bytes: &[u8]) -> std::io::Result<()> {
+    let receipt: Receipt = serde_json::from_slice(bytes)?;
+    if path.file_stem().and_then(|name| name.to_str())
+        != Some(fastctx_hands::files::content_hash(receipt.delivery.as_str().as_bytes()).as_str())
+    {
+        return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "goal input belongs to another delivery"));
+    }
+    Ok(())
+}
+
 fn attempt(view: &View, delivery: &NoticeId) -> Option<Attempt> {
     let goal = view.goal.as_ref()?;
     (view.pending.is_none() && goal.status == Status::Blocked && goal.retired.is_none()).then(|| Attempt {

@@ -22,7 +22,7 @@ fn read(node: &Node, resident: &ResidentId) -> io::Result<Option<Mode>> {
     initialize(&directory)?;
     crate::records::read(&directory, |rows| rows.get("goal-replies", "current"))
 }
-fn initialize(directory: &fastctx_types::layout::ConversationDir) -> io::Result<()> {
+pub(crate) fn initialize(directory: &fastctx_types::layout::ConversationDir) -> io::Result<()> {
     crate::records::legacy::single::<Mode>(directory, "goal-replies", &directory.books().join("goal-replies.json"))
 }
 

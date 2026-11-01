@@ -8,7 +8,7 @@ use fastctx_types::ipc::Failure;
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Serialize, Deserialize)]
-pub(super) struct Checkpoint {
+pub(crate) struct Checkpoint {
     goal: String,
     source: Retry,
     progress: Retry,

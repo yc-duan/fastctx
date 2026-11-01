@@ -12,7 +12,7 @@ pub(crate) struct Stops {
 
 mod recovery;
 mod settled;
-mod store;
+pub(crate) mod store;
 
 pub(crate) fn requested_turn(node: &Node, resident: &ResidentId, turn: &str) -> io::Result<bool> {
     if crate::turn_evidence::source(node, resident, turn)? == Some(StopSource::User) {

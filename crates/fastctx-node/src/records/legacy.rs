@@ -10,8 +10,8 @@ pub(crate) fn map<T: DeserializeOwned + Serialize>(
     family: &'static str,
     path: &Path,
 ) -> io::Result<()> {
-    ensure_each(directory, family, |push| {
-        let file = match std::fs::File::open(path) {
+    ensure_file(directory, family, path.to_path_buf(), move |path, push| {
+        let file = match fastctx_platform::disk::open(path) {
             Ok(file) => file,
             Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
             Err(error) => return Err(error),
@@ -52,8 +52,9 @@ pub(crate) fn map_field<T: DeserializeOwned + Serialize>(
     field: &str,
 ) -> io::Result<()> {
     use serde::de::DeserializeSeed;
-    ensure_each(directory, family, |push| {
-        let file = match std::fs::File::open(path) {
+    let field = field.to_string();
+    ensure_file(directory, family, path.to_path_buf(), move |path, push| {
+        let file = match fastctx_platform::disk::open(path) {
             Ok(file) => file,
             Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
             Err(error) => return Err(error),
@@ -111,13 +112,13 @@ pub(crate) fn map_field<T: DeserializeOwned + Serialize>(
             }
         }
         serde_json::Deserializer::from_reader(io::BufReader::new(file))
-            .deserialize_map(Field { field, entries: Entries::<T> { path, push, marker: PhantomData } })
+            .deserialize_map(Field { field: &field, entries: Entries::<T> { path, push, marker: PhantomData } })
             .map_err(io::Error::other)
     })
 }
 
 pub(crate) fn field<T: DeserializeOwned>(path: &Path, field: &str) -> io::Result<Option<T>> {
-    let file = match std::fs::File::open(path) {
+    let file = match fastctx_platform::disk::open(path) {
         Ok(file) => file,
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
         Err(error) => return Err(error),
@@ -156,8 +157,9 @@ pub(crate) fn directory<T: DeserializeOwned + Serialize>(
     family: &'static str,
     folder: &Path,
 ) -> io::Result<()> {
-    ensure_each(directory, family, |push| {
-        let entries = match std::fs::read_dir(folder) {
+    let folder = folder.to_path_buf();
+    ensure_each(directory, family, move |push| {
+        let entries = match fastctx_platform::disk::read_dir(&folder) {
             Ok(entries) => entries,
             Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
             Err(error) => return Err(error),
@@ -169,13 +171,15 @@ pub(crate) fn directory<T: DeserializeOwned + Serialize>(
             {
                 continue;
             }
-            let key = path
-                .file_stem()
-                .and_then(|name| name.to_str())
-                .ok_or_else(|| io::Error::other("invalid legacy record name"))?
-                .to_string();
-            let value: T = serde_json::from_slice(&std::fs::read(&path)?)?;
-            push(Source::new(key, path, serde_json::to_vec(&value)?)?)?;
+            crate::record_migration::file(&path, push, |push| {
+                let key = path
+                    .file_stem()
+                    .and_then(|name| name.to_str())
+                    .ok_or_else(|| io::Error::other("invalid legacy record name"))?
+                    .to_string();
+                let value: T = serde_json::from_slice(&fastctx_platform::disk::read(&path)?)?;
+                push(Source::new(key, path.clone(), serde_json::to_vec(&value)?)?)
+            })?;
         }
         Ok(())
     })
@@ -185,7 +189,7 @@ pub(crate) fn single<T: DeserializeOwned + Serialize>(
     family: &'static str,
     path: &Path,
 ) -> io::Result<()> {
-    ensure_each(directory, family, |push| match std::fs::read(path) {
+    ensure_file(directory, family, path.to_path_buf(), |path, push| match fastctx_platform::disk::read(path) {
         Ok(bytes) => {
             let value: T = serde_json::from_slice(&bytes)?;
             push(Source::new("current".into(), path.to_path_buf(), serde_json::to_vec(&value)?)?)
@@ -203,7 +207,7 @@ pub(crate) fn array<T: DeserializeOwned>(
     push: &mut dyn FnMut(T) -> io::Result<()>,
 ) -> io::Result<()> {
     use serde::de::{DeserializeSeed, SeqAccess};
-    let file = match std::fs::File::open(path) {
+    let file = match fastctx_platform::disk::open(path) {
         Ok(file) => file,
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
         Err(error) => return Err(error),

@@ -1,113 +1,109 @@
-//! Record families stream into restartable batches, verified before cutover.
-
+//! Request paths enqueue owned decoders; only migration workers import records.
+mod source;
 use super::*;
-use std::{path::PathBuf, sync::LazyLock};
-
-static GATES: LazyLock<crate::record_gates::Gates> = LazyLock::new(|| {
-    crate::record_gates::Gates::new(fastctx_platform::doing::Rank::RECORDS, "migrating record family")
-});
-
-pub(crate) struct Source {
-    pub key: String,
-    pub conversation: Option<String>,
-    pub path: PathBuf,
-    pub body: Vec<u8>,
-    pub modified: jiff::Timestamp,
-    pub arrival: Option<Vec<u8>>,
-    pub replace: bool,
-    pub category: Option<String>,
-    pub expires: Option<jiff::Timestamp>,
-}
-impl Source {
-    pub(crate) fn scoped(mut self, conversation: String) -> Self {
-        self.conversation = Some(conversation);
-        self
-    }
-
-    pub(crate) fn expiring(mut self, at: jiff::Timestamp) -> Self {
-        self.expires = Some(at);
-        self
-    }
-
-    pub(crate) fn ordered_bytes(mut self, order: Vec<u8>) -> Self {
-        self.arrival = Some(order);
-        self
-    }
-
-    pub(crate) fn categorized(mut self, category: String) -> Self {
-        self.category = Some(category);
-        self
-    }
-
-    pub(crate) fn replacing(mut self) -> Self {
-        self.replace = true;
-        self
-    }
-
-    pub(crate) fn ordered(mut self, at: jiff::Timestamp) -> Self {
-        self.arrival = Some((at.as_nanosecond() ^ i128::MIN).to_be_bytes().to_vec());
-        self
-    }
-
-    pub(crate) fn new(key: String, path: PathBuf, body: Vec<u8>) -> io::Result<Self> {
-        let modified = jiff::Timestamp::try_from(std::fs::metadata(&path)?.modified()?).map_err(io::Error::other)?;
-        Ok(Self {
-            key,
-            conversation: None,
-            path,
-            body,
-            modified,
-            arrival: None,
-            replace: false,
-            category: None,
-            expires: None,
-        })
-    }
-}
+use crate::record_migration::{self as migration, files::Context, scheduler};
+use source::LegacyRow;
+pub(crate) use source::Source;
 
 pub(crate) fn ensure_each(
     directory: &ConversationDir,
     family: &str,
-    source: impl FnOnce(&mut dyn FnMut(Source) -> io::Result<()>) -> io::Result<()>,
+    source: impl FnOnce(&mut dyn FnMut(Source) -> io::Result<()>) -> io::Result<()> + Send + 'static,
 ) -> io::Result<()> {
     let (database, conversation) = locate(directory)?;
-    let imported = |connection: &Connection| -> Result<bool> {
-        if crate::conversation_store::deleted(connection, &conversation)? {
-            return Ok(true);
-        }
-        Ok(connection
-            .query_row(
-                "SELECT 1 FROM conversation_record_imports WHERE conversation=?1 AND family=?2",
-                (&conversation, family),
-                |row| row.get::<_, i32>(0),
-            )
-            .optional()?
-            .is_some())
-    };
-    if database.read_now(imported).map_err(io::Error::other)? {
+    let world = migration::world(directory)?;
+    let context =
+        Context { database, world: world.clone(), conversation: conversation.clone(), family: family.to_string() };
+    if fastctx_platform::roles::current().may_block() && imported(&context)? {
+        scheduler::ready(&world, &conversation, family);
         return Ok(());
     }
-    let gate = GATES.get(&directory.path().join(format!("record-family-{family}")));
-    let _gate = gate.lock();
-    if database.read_now(imported).map_err(io::Error::other)? {
+    scheduler::request(&world, &conversation, family, move || context.within(|| import(&context, source)))
+}
+
+/// A derived SQL migration has no legacy file to archive. Its operation must be
+/// idempotent; completion is marked only after all its bounded commits succeed.
+pub(crate) fn ensure_step(
+    directory: &ConversationDir,
+    family: &str,
+    work: impl FnOnce() -> io::Result<()> + Send + 'static,
+) -> io::Result<()> {
+    ensure_each(directory, family, move |_| work())
+}
+
+pub(crate) fn ensure_file(
+    directory: &ConversationDir,
+    family: &str,
+    path: std::path::PathBuf,
+    source: impl FnOnce(&std::path::Path, &mut dyn FnMut(Source) -> io::Result<()>) -> io::Result<()> + Send + 'static,
+) -> io::Result<()> {
+    ensure_each(directory, family, move |push| migration::file(&path, push, |push| source(&path, push)))
+}
+
+fn imported(context: &Context) -> io::Result<bool> {
+    context
+        .database
+        .read_background_now(|db| {
+            Ok(crate::conversation_store::deleted(db, &context.conversation)?
+                || db.query_row(
+                    "SELECT EXISTS(SELECT 1 FROM conversation_record_imports WHERE conversation=?1 AND family=?2)",
+                    (&context.conversation, &context.family),
+                    |row| row.get(0),
+                )?)
+        })
+        .map_err(io::Error::other)
+}
+
+fn import(
+    context: &Context,
+    source: impl FnOnce(&mut dyn FnMut(Source) -> io::Result<()>) -> io::Result<()>,
+) -> io::Result<()> {
+    if imported(context)? {
         return Ok(());
     }
     let mut pending = Vec::new();
     let mut bytes = 0;
-    source(&mut |row| {
-        bytes += row.body.len();
-        pending.push(row);
-        if pending.len() >= 16 || bytes >= 128 * 1024 {
-            commit(&database, &conversation, family, std::mem::take(&mut pending))?;
-            bytes = 0;
+    source(&mut |source| {
+        scheduler::checkpoint()?;
+        match source {
+            Source::Row(row) => {
+                if row.file.is_none() {
+                    return Err(io::Error::other("a legacy decoder must declare the file it reads"));
+                }
+                bytes += row.body.len();
+                pending.push(row);
+                if pending.len() >= 16 || bytes >= 128 * 1024 {
+                    commit(context, std::mem::take(&mut pending))?;
+                    bytes = 0;
+                }
+                Ok(())
+            }
+            Source::File(file) => {
+                commit(context, std::mem::take(&mut pending))?;
+                bytes = 0;
+                if context
+                    .database
+                    .read_background_now(|db| crate::conversation_store::deleted(db, &file.owner))
+                    .map_err(io::Error::other)?
+                {
+                    match fastctx_platform::disk::remove_file(&file.row.path) {
+                        Ok(()) => {}
+                        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+                        Err(error) => return Err(error),
+                    }
+                    return Ok(());
+                }
+                migration::files::complete(context, file)
+            }
         }
-        Ok(())
     })?;
-    commit(&database, &conversation, family, pending)?;
-    let family = family.to_string();
-    database
-        .write_now_at(Priority::Background, 128, move |connection| {
-            connection.execute(
+    commit(context, pending)?;
+    migration::files::archive_ready(context)?;
+    let (conversation, family) = (context.conversation.clone(), context.family.clone());
+    context
+        .database
+        .write_now_at(scheduler::priority(), 128, move |db| {
+            db.execute(
                 "INSERT OR IGNORE INTO conversation_record_imports(conversation,family) VALUES(?1,?2)",
                 (conversation, family),
             )?;
@@ -116,53 +112,43 @@ pub(crate) fn ensure_each(
         .map_err(io::Error::other)
 }
 
-fn commit(database: &Database, conversation: &str, family: &str, sources: Vec<Source>) -> io::Result<()> {
+fn commit(context: &Context, sources: Vec<LegacyRow>) -> io::Result<()> {
     if sources.is_empty() {
         return Ok(());
     }
-    let scope = conversation.to_string();
-    let family = family.to_string();
-    let rows = sources
-        .iter()
-        .map(|source| {
-            (
-                source.conversation.clone().unwrap_or_else(|| scope.clone()),
-                source.key.clone(),
-                source.body.clone(),
-                source.modified.to_string(),
-                source.arrival.clone(),
-                source.replace,
-                source.category.clone(),
-                source.expires.map(|at| at.as_millisecond()),
-            )
-        })
-        .collect::<Vec<_>>();
-    let bytes = rows.iter().map(|(_, key, body, _, _, _, _, _)| key.len() + body.len() + 128).sum();
-    let group = family.clone();
-    database.write_now_at(Priority::Background,bytes,move |connection| {
-        let mut insert=connection.prepare_cached("INSERT INTO conversation_records(conversation,family,identity,body,modified,arrival,category,expires) VALUES(?1,?2,?3,?4,?5,?6,?8,?9) ON CONFLICT(conversation,family,identity) DO UPDATE SET body=excluded.body,modified=excluded.modified,arrival=excluded.arrival,category=excluded.category,expires=excluded.expires WHERE ?7 AND (conversation_records.body!=excluded.body OR conversation_records.modified!=excluded.modified OR conversation_records.arrival IS NOT excluded.arrival OR conversation_records.category IS NOT excluded.category OR conversation_records.expires IS NOT excluded.expires)")?;
-        for (scope,key,body,modified,arrival,replace,category,expires) in rows {
-            insert.execute(params![scope,group,key,body,modified,arrival,replace,category,expires])?;
-        }
-        Ok(())
-    }).map_err(io::Error::other)?;
-    database
-        .read_now(|connection| {
-            let mut checked = std::collections::HashSet::new();
-            for source in sources.iter().rev() {
-                if !checked.insert(&source.key) {
-                    continue;
-                }
-                let (body,modified,arrival,category,expires) = connection.query_row(
-                    "SELECT body,modified,arrival,category,expires FROM conversation_records WHERE conversation=?1 AND family=?2 AND identity=?3",
-                    (source.conversation.as_deref().unwrap_or(conversation), &family, &source.key),
-                    |row| Ok((row.get::<_,Vec<u8>>(0)?,row.get::<_,String>(1)?,row.get::<_,Option<Vec<u8>>>(2)?,row.get::<_,Option<String>>(3)?,row.get::<_,Option<i64>>(4)?)),
-                )?;
-                if body != source.body || modified!=source.modified.to_string() || arrival!=source.arrival || category!=source.category || expires!=source.expires.map(|at|at.as_millisecond()) {
-                    return Err(Error::new(format!("migrating {} did not verify", source.path.display())));
-                }
+    let bytes = sources.iter().map(|source| source.body.len() + source.key.len() + 256).sum();
+    let (conversation, family) = (context.conversation.clone(), context.family.clone());
+    let conflict = context.database.write_now_at(scheduler::priority(), bytes, move |db| {
+        db.execute_batch("SAVEPOINT legacy_record_batch")?;
+        let mut insert = db.prepare_cached("INSERT INTO conversation_records(conversation,family,identity,body,modified,arrival,category,expires) VALUES(?1,?2,?3,?4,?5,?6,?7,?8)
+            ON CONFLICT(conversation,family,identity) DO UPDATE SET body=excluded.body,modified=excluded.modified,arrival=excluded.arrival,category=excluded.category,expires=excluded.expires WHERE ?9")?;
+        let mut read = db.prepare_cached("SELECT body,modified,arrival,category,expires FROM conversation_records WHERE conversation=?1 AND family=?2 AND identity=?3")?;
+        let mut files = std::collections::HashMap::new();
+        for row in sources {
+            let owner = row.conversation.as_deref().unwrap_or(&conversation);
+            if crate::conversation_store::deleted(db, owner)? { continue; }
+            let repeated = if let Some((hash, deduplicate)) = &row.content_key {
+                let inserted = db.execute("INSERT OR IGNORE INTO migration_content_keys(conversation,family,hash) VALUES(?1,?2,?3)", (owner, &family, hash))?;
+                *deduplicate && inserted == 0
+            } else { false };
+            if !row.discard && !repeated {
+            let changed = insert.execute(params![owner, family, row.key, row.body, row.modified.to_string(), row.arrival, row.category,
+                row.expires.map(|at| at.as_millisecond()), row.replace])?;
+            let stored = read.query_row((owner, &family, &row.key), |row| Ok((row.get::<_, Vec<u8>>(0)?, row.get::<_, String>(1)?, row.get::<_, Option<Vec<u8>>>(2)?, row.get::<_, Option<String>>(3)?, row.get::<_, Option<i64>>(4)?)))?;
+            if stored.0 != row.body || (changed > 0 && (stored.1 != row.modified.to_string() || stored.2 != row.arrival || stored.3 != row.category || stored.4 != row.expires.map(|at| at.as_millisecond()))) { db.execute_batch("ROLLBACK TO legacy_record_batch; RELEASE legacy_record_batch")?; return Ok(Some(format!("legacy row {} conflicts with its stored value", row.key))); }
             }
-            Ok(())
-        })
-        .map_err(io::Error::other)
+            if let Some(file) = row.file { files.insert(file.path.clone(), (owner.to_string(), file)); }
+        }
+        for (owner, file) in files.into_values() {
+            db.execute("INSERT INTO migration_files(conversation,family,path,signature,through) VALUES(?1,?2,?3,?4,?5)
+                ON CONFLICT(family,path) DO UPDATE SET conversation=excluded.conversation,through=max(through,excluded.through)",
+                (owner, &family, file.path, encode(&file.signature)?, file.ordinal))?;
+        }
+        db.execute_batch("RELEASE legacy_record_batch")?;
+        Ok(None)
+    }).map_err(io::Error::other)?;
+    match conflict {
+        Some(message) => Err(io::Error::new(io::ErrorKind::InvalidData, message)),
+        None => Ok(()),
+    }
 }

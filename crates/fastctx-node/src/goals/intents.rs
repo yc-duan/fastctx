@@ -41,8 +41,8 @@ impl Phase {
 pub(crate) const FAMILY: &str = "goal-intents";
 pub(crate) fn prepare(conversation: &ConversationDir) -> io::Result<()> {
     let folder = conversation.books().join("goal-operations");
-    crate::records::ensure_each(conversation, FAMILY, |push| {
-        let entries = match std::fs::read_dir(&folder) {
+    crate::records::ensure_each(conversation, FAMILY, move |push| {
+        let entries = match fastctx_platform::disk::read_dir(&folder) {
             Ok(entries) => entries,
             Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
             Err(error) => return Err(error),
@@ -54,27 +54,30 @@ pub(crate) fn prepare(conversation: &ConversationDir) -> io::Result<()> {
             {
                 continue;
             }
-            let intent: Intent = serde_json::from_slice(&std::fs::read(&path)?)?;
-            if path.file_stem().and_then(|stem| stem.to_str())
-                != Some(fastctx_hands::files::content_hash(intent.operation.as_bytes()).as_str())
-            {
-                return Err(io::Error::other("goal operation identity differs from its record"));
-            }
-            let mut source = crate::records::Source::new(intent.operation.clone(), path, serde_json::to_vec(&intent)?)?
-                .ordered(intent.at)
-                .categorized(if intent.phase.pending() { "pending" } else { "terminal" }.into());
-            if !intent.phase.pending() {
-                let expiry = source.modified + jiff::SignedDuration::from_hours(30 * 24);
-                source = source.expiring(expiry);
-            }
-            push(source)?;
+            crate::record_migration::file(&path, push, |push| {
+                let intent: Intent = serde_json::from_slice(&fastctx_platform::disk::read(&path)?)?;
+                if path.file_stem().and_then(|stem| stem.to_str())
+                    != Some(fastctx_hands::files::content_hash(intent.operation.as_bytes()).as_str())
+                {
+                    return Err(io::Error::other("goal operation identity differs from its record"));
+                }
+                let mut source =
+                    crate::records::Source::new(intent.operation.clone(), path.clone(), serde_json::to_vec(&intent)?)?
+                        .ordered(intent.at)
+                        .categorized(if intent.phase.pending() { "pending" } else { "terminal" }.into());
+                if !intent.phase.pending() {
+                    let expiry = source.modified() + jiff::SignedDuration::from_hours(30 * 24);
+                    source = source.expiring(expiry);
+                }
+                push(source)
+            })?;
         }
         Ok(())
     })
 }
 pub(crate) async fn read(conversation: &ConversationDir, operation: &str) -> io::Result<Option<Intent>> {
     let (directory, operation) = (conversation.clone(), operation.to_string());
-    tokio::task::spawn_blocking(move || {
+    fastctx_platform::task::spawn_blocking(move || {
         prepare(&directory)?;
         crate::records::read(&directory, |rows| rows.get(FAMILY, &operation))
     })
@@ -126,7 +129,7 @@ pub(crate) fn committed(node: &std::sync::Arc<crate::Node>, intent: &Intent) -> 
     let runtime = tokio::runtime::Handle::current();
     move |_| {
         if pending {
-            runtime.spawn(async move {
+            fastctx_platform::task::spawn_on(&runtime, async move {
                 super::recovery::schedule(&node, resident);
             });
         }
@@ -139,7 +142,9 @@ pub(crate) async fn keep(
 ) -> io::Result<()> {
     let committed = committed(node, intent);
     let (directory, intent) = (conversation.clone(), intent.clone());
-    tokio::task::spawn_blocking(move || keep_now(&directory, &intent, committed)).await.map_err(io::Error::other)?
+    fastctx_platform::task::spawn_blocking(move || keep_now(&directory, &intent, committed))
+        .await
+        .map_err(io::Error::other)?
 }
 /// A bounded prefix. Recovery repeats until the pending family is empty.
 pub(crate) fn pending(conversation: &ConversationDir) -> io::Result<Vec<Intent>> {

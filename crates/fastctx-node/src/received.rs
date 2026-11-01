@@ -29,7 +29,7 @@ struct Worker {
 }
 
 #[derive(Serialize, Deserialize)]
-struct Entry {
+pub(crate) struct Entry {
     to: ResidentId,
     delivery: Delivery,
     owed: Owed,

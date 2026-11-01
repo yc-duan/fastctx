@@ -11,7 +11,7 @@ use fastctx_types::run_facts::JobFacts;
 use fastctx_types::{MachineName, ResidentId};
 use serde::Serialize;
 
-fn database(directory: &ConversationDir) -> io::Result<(Database, String)> {
+pub(crate) fn database(directory: &ConversationDir) -> io::Result<(Database, String)> {
     let (database, conversation) = crate::record_database::get(directory)?;
     super::migrate::ensure(directory, &database, &conversation)?;
     Ok((database, conversation))

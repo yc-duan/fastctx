@@ -5,7 +5,7 @@ use fastctx_storage::{
     rusqlite::{Connection, OptionalExtension, params},
 };
 
-pub(crate) const SCHEMA:&str="
+pub(crate) const SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS session_search_heads (conversation TEXT PRIMARY KEY, sequence BLOB NOT NULL) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS session_event_tags (
     conversation TEXT NOT NULL,tag TEXT NOT NULL,value TEXT NOT NULL,sequence BLOB NOT NULL,arrival BLOB NOT NULL,
@@ -20,12 +20,7 @@ CREATE TABLE IF NOT EXISTS session_events (
     conversation TEXT NOT NULL, sequence BLOB NOT NULL, identity TEXT NOT NULL, body BLOB NOT NULL,
     PRIMARY KEY(conversation,sequence), UNIQUE(conversation,identity)
 ) WITHOUT ROWID;
-CREATE TABLE IF NOT EXISTS session_legacy (
-    conversation TEXT NOT NULL, identity TEXT NOT NULL, sequenced INTEGER NOT NULL,
-    sequence BLOB NOT NULL, seconds INTEGER NOT NULL, nanos INTEGER NOT NULL, body BLOB NOT NULL,
-    PRIMARY KEY(conversation,identity)
-) WITHOUT ROWID;
-CREATE INDEX IF NOT EXISTS session_legacy_order ON session_legacy(conversation,sequenced,sequence,seconds,nanos,identity);
+
 ";
 
 pub(super) fn number(bytes: Vec<u8>) -> Result<u64> {

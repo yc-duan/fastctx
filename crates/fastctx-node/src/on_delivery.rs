@@ -124,7 +124,7 @@ fn release<K: Eq + std::hash::Hash>(counts: &mut HashMap<K, usize>, key: &K) {
 }
 
 #[derive(Serialize, Deserialize)]
-struct Parked {
+pub(crate) struct Parked {
     to: ResidentId,
     delivery: Delivery,
 }

@@ -1,7 +1,7 @@
 //! Drives durable goal decisions without holding shared locks across outside work.
 
-mod checkpoint;
-mod compaction;
+pub(crate) mod checkpoint;
+pub(crate) mod compaction;
 mod driver;
 mod effects;
 mod judging;

@@ -10,12 +10,11 @@ use std::{io, path::Path};
 fn key(location: &Location) -> io::Result<String> {
     Ok(serde_json::to_string(&(&location.hub, &location.machine))?)
 }
-fn prepare(record: &Path) -> io::Result<Job> {
+pub(crate) fn prepare(record: &Path) -> io::Result<Job> {
     let job = Job::open(record)?;
-    job.prepare("scratch", |push| {
-        let path = record.with_extension("scratch");
-        records::legacy::array::<Location>(&path, None, &mut |location| {
-            push(Source::new(key(&location)?, path.clone(), serde_json::to_vec(&location)?)?.replacing())
+    job.prepare_file("scratch", record.with_extension("scratch"), |path, push| {
+        records::legacy::array::<Location>(path, None, &mut |location| {
+            push(Source::new(key(&location)?, path.to_path_buf(), serde_json::to_vec(&location)?)?.replacing())
         })
     })?;
     Ok(job)

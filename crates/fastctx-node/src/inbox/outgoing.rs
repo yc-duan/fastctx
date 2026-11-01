@@ -5,30 +5,33 @@ use super::*;
 use crate::records;
 use fastctx_types::residents::Owing;
 
-fn prepare(directory: &ConversationDir) -> io::Result<()> {
+pub(crate) fn prepare(directory: &ConversationDir) -> io::Result<()> {
     storage::initialize(directory)?;
     for (family, extension) in
         [("answer-retries", "retry"), ("answer-outcomes", "done"), ("answer-attempts", "attempt")]
     {
-        records::ensure_each(directory, family, |push| {
-            for path in entries(&directory.outbox())? {
+        let folder = directory.outbox();
+        records::ensure_each(directory, family, move |push| {
+            for path in entries(&folder)? {
                 if path.extension().is_none_or(|found| found != extension)
                     || path.file_name().is_some_and(|name| name.to_string_lossy().starts_with('.'))
                 {
                     continue;
                 }
-                let key = path
-                    .file_stem()
-                    .and_then(|name| name.to_str())
-                    .ok_or_else(|| io::Error::other("invalid answer diagnostic"))?
-                    .to_string();
-                let bytes = std::fs::read(&path)?;
-                let body = if extension == "retry" {
-                    serde_json::to_vec(&String::from_utf8(bytes).map_err(io::Error::other)?)?
-                } else {
-                    serde_json::to_vec(&serde_json::from_slice::<serde_json::Value>(&bytes)?)?
-                };
-                push(records::Source::new(key, path, body)?)?;
+                crate::record_migration::file(&path, push, |push| {
+                    let key = path
+                        .file_stem()
+                        .and_then(|name| name.to_str())
+                        .ok_or_else(|| io::Error::other("invalid answer diagnostic"))?
+                        .to_string();
+                    let bytes = fastctx_platform::disk::read(&path)?;
+                    let body = if extension == "retry" {
+                        serde_json::to_vec(&String::from_utf8(bytes).map_err(io::Error::other)?)?
+                    } else {
+                        serde_json::to_vec(&serde_json::from_slice::<serde_json::Value>(&bytes)?)?
+                    };
+                    push(records::Source::new(key, path.clone(), body)?)
+                })?;
             }
             Ok(())
         })?;
@@ -42,7 +45,7 @@ pub(crate) async fn retry(node: &Arc<Node>, directory: &ConversationDir, path: &
         .and_then(|name| name.to_str())
         .ok_or_else(|| io::Error::other("invalid outgoing answer identity"))?
         .to_string();
-    tokio::task::spawn_blocking(move || {
+    fastctx_platform::task::spawn_blocking(move || {
         prepare(&directory)?;
         let changed = records::write_at(&directory, fastctx_storage::Priority::Background, reason.len(), {
             let (key, reason) = (key.clone(), reason.clone());
@@ -69,7 +72,7 @@ pub(crate) async fn abandon(
     reason: &str,
 ) -> io::Result<()> {
     let (node, directory, owing, reason) = (node.clone(), directory.clone(), owing.clone(), reason.to_string());
-    tokio::task::spawn_blocking(move || {
+    fastctx_platform::task::spawn_blocking(move || {
         prepare(&directory)?;
         let key = owing.delivery.id.to_string();
         let expected = records::read(&directory, |rows| {
@@ -114,7 +117,7 @@ pub(crate) async fn attempt(
     line: fastctx_types::residents::MessageLine,
 ) -> io::Result<()> {
     let (directory, key) = (directory.clone(), key.to_string());
-    tokio::task::spawn_blocking(move || {
+    fastctx_platform::task::spawn_blocking(move || {
         prepare(&directory)?;
         crate::residents::activity::prepare(&directory, "messages")?;
         let value = serde_json::to_value(&line.what)?;

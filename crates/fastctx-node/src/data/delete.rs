@@ -381,7 +381,9 @@ async fn finish_on_worker(node: &Arc<Node>) -> usize {
         match delete_one(node, &name).await {
             Ok(_) => node.log.line(format_args!("finished deleting {name}, which a stopped node began")),
             Err(Stop::Nothing(_)) => {
-                if let Err(error) = crate::conversation_store::finished(&node.database, name.clone()) {
+                if let Err(error) = crate::record_migration::archive::delete_conversation(node.world.path(), &name)
+                    .and_then(|()| crate::conversation_store::finished(&node.database, name.clone()))
+                {
                     unfinished += 1;
                     node.log.line(format_args!("finishing deletion of {name}: {error}"));
                 }
@@ -651,6 +653,7 @@ async fn remove_places(node: &Arc<Node>, measured: &Measured) -> Result<(u64, u6
         drop(_transaction);
         drop(_collecting);
         for scope in deleted_scopes {
+            crate::record_migration::archive::delete_conversation(node.world.path(), &scope)?;
             crate::conversation_store::finished(&node.database, scope)?;
         }
         Ok((retained_bytes, database_bytes))

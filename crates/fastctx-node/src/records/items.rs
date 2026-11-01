@@ -5,10 +5,11 @@
 use super::*;
 use std::path::{Path, PathBuf};
 
-fn prepare(path: &Path) -> io::Result<(ConversationDir, String, String)> {
+pub(crate) fn prepare(path: &Path) -> io::Result<(ConversationDir, String, String)> {
     let (directory, family, key, folder) = crate::record_database::item(path)?;
-    ensure_each(&directory, &family, |push| {
-        let entries = match std::fs::read_dir(&folder) {
+    let group = family.clone();
+    ensure_each(&directory, &family, move |push| {
+        let entries = match fastctx_platform::disk::read_dir(&folder) {
             Ok(entries) => entries,
             Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
             Err(error) => return Err(error),
@@ -24,29 +25,33 @@ fn prepare(path: &Path) -> io::Result<(ConversationDir, String, String)> {
                 continue;
             }
             let path = entry.path();
-            let bytes = std::fs::read(&path)?;
-            let category = path.extension().and_then(|extension| extension.to_str()).unwrap_or("").to_string();
-            let order = if category == "json"
-                && (family.ends_with("/received") || family.ends_with("/received-controls"))
-            {
-                let value = serde_json::from_slice::<serde_json::Value>(&bytes).unwrap_or_default();
-                let sequence = value.get("order").and_then(serde_json::Value::as_u64).unwrap_or(0);
-                let at =
-                    value.pointer("/delivery/at").and_then(serde_json::Value::as_str).and_then(|at| at.parse().ok());
-                Some(order_key(sequence, at))
-            } else {
-                None
-            };
-            let terminal = matches!(category.as_str(), "done" | "taken" | "stopped");
-            let mut source = Source::new(name, path, bytes)?.categorized(category);
-            if terminal {
-                let expires = source.modified + jiff::SignedDuration::from_hours(30 * 24);
-                source = source.expiring(expires);
-            }
-            if let Some(order) = order {
-                source = source.ordered_bytes(order);
-            }
-            push(source)?;
+            crate::record_migration::file(&path, push, |push| {
+                let bytes = fastctx_platform::disk::read(&path)?;
+                super::item_legacy::validate(&group, &name, &bytes)?;
+                let category = path.extension().and_then(|extension| extension.to_str()).unwrap_or("").to_string();
+                let order =
+                    if category == "json" && (group.ends_with("/received") || group.ends_with("/received-controls")) {
+                        let value = serde_json::from_slice::<serde_json::Value>(&bytes)?;
+                        let sequence = value.get("order").and_then(serde_json::Value::as_u64).unwrap_or(0);
+                        let at = value
+                            .pointer("/delivery/at")
+                            .and_then(serde_json::Value::as_str)
+                            .and_then(|at| at.parse().ok());
+                        Some(order_key(sequence, at))
+                    } else {
+                        None
+                    };
+                let terminal = matches!(category.as_str(), "done" | "taken" | "stopped");
+                let mut source = Source::new(name, path.clone(), bytes)?.categorized(category);
+                if terminal {
+                    let expires = source.modified() + jiff::SignedDuration::from_hours(30 * 24);
+                    source = source.expiring(expires);
+                }
+                if let Some(order) = order {
+                    source = source.ordered_bytes(order);
+                }
+                push(source)
+            })?;
         }
         Ok(())
     })?;

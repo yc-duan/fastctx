@@ -2,9 +2,11 @@
 
 #[cfg(feature = "storage-drill")]
 pub(crate) mod drill;
+mod legacy;
 mod migrate;
 pub(crate) mod search;
 mod sql;
+pub(crate) use legacy::SCHEMA as MIGRATION_SCHEMA;
 pub(crate) use sql::SCHEMA;
 
 use fastctx_storage::{

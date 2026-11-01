@@ -4,12 +4,14 @@
 
 #[cfg(feature = "storage-drill")]
 pub(crate) mod drill;
+mod item_legacy;
 pub(crate) mod items;
 pub(crate) mod legacy;
 pub(crate) mod maps;
 pub(crate) mod metadata;
+mod metadata_legacy;
 mod migration;
-pub(crate) use migration::{Source, ensure_each};
+pub(crate) use migration::{Source, ensure_each, ensure_file, ensure_step};
 
 use fastctx_storage::{
     Database, Error, Priority, Result,

@@ -9,7 +9,7 @@ mod identity;
 pub(crate) mod quota;
 mod records;
 pub(crate) mod review;
-mod stopping;
+pub(crate) mod stopping;
 pub(crate) mod waiting;
 pub(crate) mod words;
 pub(crate) use activity::Activities;

@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 use crate::Node;
 
 #[derive(Default, Serialize, Deserialize)]
-struct Waiting {
+pub(crate) struct Waiting {
     failures: u32,
     due: Option<Timestamp>,
 }

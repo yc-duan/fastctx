@@ -12,10 +12,11 @@ use std::{collections::BTreeMap, io, path::Path, sync::LazyLock};
 pub(super) const BLOCKS: &str = "context-blocks";
 pub(super) const STATE: &str = "context-state";
 
-fn prepare(world: &WorldDir, id: &ResidentId) -> io::Result<ConversationDir> {
+pub(crate) fn prepare(world: &WorldDir, id: &ResidentId) -> io::Result<ConversationDir> {
     let directory = world.conversation(id);
-    families::ensure_each(&directory, BLOCKS, |push| {
-        for path in crate::retention::entries(&super::storage::directory(world, id))? {
+    let folder = super::storage::directory(world, id);
+    families::ensure_each(&directory, BLOCKS, move |push| {
+        for path in crate::retention::entries(&folder)? {
             if path.extension().is_none_or(|extension| extension != "json") {
                 continue;
             }
@@ -23,21 +24,22 @@ fn prepare(world: &WorldDir, id: &ResidentId) -> io::Result<ConversationDir> {
             else {
                 continue;
             };
-            let mut row: Block = serde_json::from_slice(&fastctx_platform::disk::read(&path)?)?;
-            if row.transient {
-                row.text.clear();
-                row.fact.clear();
-            }
-            push(families::Source::new(name.into(), path.clone(), serde_json::to_vec(&row)?)?)?;
+            crate::record_migration::file(&path, push, |push| {
+                let mut row: Block = serde_json::from_slice(&fastctx_platform::disk::read(&path)?)?;
+                if row.transient {
+                    row.text.clear();
+                    row.fact.clear();
+                }
+                push(families::Source::new(name.into(), path.clone(), serde_json::to_vec(&row)?)?)
+            })?;
         }
         Ok(())
     })?;
-    families::ensure_each(&directory, STATE, |push| {
-        let path = super::storage::state_path(world, id);
-        match fastctx_platform::disk::read(&path) {
+    families::ensure_file(&directory, STATE, super::storage::state_path(world, id), |path, push| {
+        match fastctx_platform::disk::read(path) {
             Ok(bytes) => {
                 let state: State = serde_json::from_slice(&bytes)?;
-                push(families::Source::new("current".into(), path, serde_json::to_vec(&state)?)?)
+                push(families::Source::new("current".into(), path.to_path_buf(), serde_json::to_vec(&state)?)?)
             }
             Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
             Err(error) => Err(error),

@@ -33,8 +33,9 @@ pub struct Store {
 impl Store {
     pub fn open(path: &Path) -> io::Result<Self> {
         let (directory, _, _, _) = crate::record_database::item(&path.join(".timers"))?;
-        records::ensure_each(&directory, FAMILY, |push| {
-            let entries = match fastctx_platform::disk::read_dir(path) {
+        let folder = path.to_path_buf();
+        records::ensure_each(&directory, FAMILY, move |push| {
+            let entries = match fastctx_platform::disk::read_dir(&folder) {
                 Ok(entries) => entries,
                 Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
                 Err(error) => return Err(error),
@@ -44,16 +45,18 @@ impl Store {
                 if source.extension().is_none_or(|ext| ext != "json") {
                     continue;
                 }
-                let timer: Timer = serde_json::from_slice(&fastctx_platform::disk::read(&source)?)?;
-                if source != path.join(format!("{:x}.json", Sha256::digest(timer.id.as_bytes()))) {
-                    return Err(io::Error::other("timer id does not match its file"));
-                }
-                push(
-                    Source::new(timer.id.clone(), source, serde_json::to_vec(&timer)?)?
-                        .scoped(scope(&timer.owner).to_string())
-                        .ordered(timer.next_attempt)
-                        .categorized(serde_json::to_string(&timer.owner)?),
-                )?;
+                crate::record_migration::file(&source, push, |push| {
+                    let timer: Timer = serde_json::from_slice(&fastctx_platform::disk::read(&source)?)?;
+                    if source != folder.join(format!("{:x}.json", Sha256::digest(timer.id.as_bytes()))) {
+                        return Err(io::Error::other("timer id does not match its file"));
+                    }
+                    push(
+                        Source::new(timer.id.clone(), source.clone(), serde_json::to_vec(&timer)?)?
+                            .scoped(scope(&timer.owner).to_string())
+                            .ordered(timer.next_attempt)
+                            .categorized(serde_json::to_string(&timer.owner)?),
+                    )
+                })?;
             }
             Ok(())
         })?;

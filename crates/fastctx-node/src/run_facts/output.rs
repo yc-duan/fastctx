@@ -6,7 +6,7 @@ use fastctx_types::run_facts::OutputNoteMatch;
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize)]
-struct Measured {
+pub(crate) struct Measured {
     started: jiff::Timestamp,
     writes_bytes: u64,
     output: OutputRef,

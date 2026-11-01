@@ -5,10 +5,10 @@ use fastctx_storage::{Priority, rusqlite::OptionalExtension};
 use fastctx_types::{NoticeId, layout::ConversationDir};
 use std::io;
 
-fn prepare(node: &Node) -> io::Result<ConversationDir> {
+pub(crate) fn prepare(node: &Node) -> io::Result<ConversationDir> {
     let root = node.world.path().join("control-requests");
     let (directory, _, _, _) = crate::record_database::item(&root.join(".requests"))?;
-    records::ensure_each(&directory, "control-requests", |push| {
+    records::ensure_each(&directory, "control-requests", move |push| {
         let entries = match fastctx_platform::disk::read_dir(&root) {
             Ok(entries) => entries,
             Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
@@ -19,15 +19,17 @@ fn prepare(node: &Node) -> io::Result<ConversationDir> {
             if path.extension().is_none_or(|extension| extension != "json") {
                 continue;
             }
-            let request: Request = serde_json::from_slice(&fastctx_platform::disk::read(&path)?)?;
-            let (owner, _, _, _) = crate::record_database::item(&request.path)?;
-            let (_, conversation) = crate::record_database::get(&owner)?;
-            let key = path
-                .file_stem()
-                .and_then(|name| name.to_str())
-                .ok_or_else(|| io::Error::other("invalid control request filename"))?
-                .to_string();
-            push(records::Source::new(key, path, serde_json::to_vec(&request)?)?.scoped(conversation))?;
+            crate::record_migration::file(&path, push, |push| {
+                let request: Request = serde_json::from_slice(&fastctx_platform::disk::read(&path)?)?;
+                let (owner, _, _, _) = crate::record_database::item(&request.path)?;
+                let (_, conversation) = crate::record_database::get(&owner)?;
+                let key = path
+                    .file_stem()
+                    .and_then(|name| name.to_str())
+                    .ok_or_else(|| io::Error::other("invalid control request filename"))?
+                    .to_string();
+                push(records::Source::new(key, path.clone(), serde_json::to_vec(&request)?)?.scoped(conversation))
+            })?;
         }
         Ok(())
     })?;

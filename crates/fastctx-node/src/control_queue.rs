@@ -1,7 +1,7 @@
 //! Durable between-turn controls and a shared admission order for words and controls.
 
 use crate::Node;
-mod storage;
+pub(crate) mod storage;
 use fastctx_platform::doing::{Mutex, Rank};
 use fastctx_types::ipc::FailureCode;
 use fastctx_types::session::control::{Control, ControlState, Controlled, PendingControl};

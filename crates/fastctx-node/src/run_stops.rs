@@ -19,7 +19,7 @@ use crate::obligations::Outcome;
 use crate::records::items;
 
 #[derive(Serialize, Deserialize)]
-struct Pending {
+pub(crate) struct Pending {
     owner: Address,
     acting: Acting,
     destination: Written,
@@ -28,7 +28,7 @@ struct Pending {
 }
 
 #[derive(Serialize, Deserialize)]
-struct Incoming {
+pub(crate) struct Incoming {
     job: JobId,
     scope: HubAccount,
 }

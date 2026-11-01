@@ -15,11 +15,10 @@ fn parse(bytes: &[u8]) -> io::Result<Visit> {
 fn key(visit: &Visit) -> String {
     format!("{} {}", visit.0, visit.1)
 }
-fn prepare(record: &Path) -> io::Result<Job> {
+pub(crate) fn prepare(record: &Path) -> io::Result<Job> {
     let job = Job::open(record)?;
-    job.prepare("visits", |push| {
-        let path = record.with_extension("on");
-        let file = match std::fs::File::open(&path) {
+    job.prepare_file("visits", record.with_extension("on"), |path, push| {
+        let file = match fastctx_platform::disk::open(path) {
             Ok(file) => file,
             Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
             Err(error) => return Err(error),
@@ -30,7 +29,7 @@ fn prepare(record: &Path) -> io::Result<Job> {
                 continue;
             }
             let visit = parse(&line)?;
-            push(Source::new(key(&visit), path.clone(), serde_json::to_vec(&visit)?)?)?;
+            push(Source::new(key(&visit), path.to_path_buf(), serde_json::to_vec(&visit)?)?)?;
         }
         Ok(())
     })?;

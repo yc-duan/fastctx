@@ -22,7 +22,7 @@ pub mod hosts;
 pub(crate) mod native;
 pub(crate) mod native_context;
 pub(crate) mod native_lifetime;
-mod report_store;
+pub(crate) mod report_store;
 mod reports;
 pub mod spawned;
 pub(crate) mod submitted;

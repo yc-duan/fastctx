@@ -21,58 +21,48 @@ pub(crate) fn keep(directory: &Path, fact: &WriteFact) -> io::Result<()> {
     })
 }
 
-pub(super) fn prepare(record: &Path) -> io::Result<Job> {
+pub(crate) fn prepare(record: &Path) -> io::Result<Job> {
     let job = Job::open(record)?;
-    job.prepare("writes", |push| {
+    let record = record.to_path_buf();
+    job.prepare("writes", move |push| {
         let folder = record.with_extension("writes");
         let journal = record.with_extension("writes.jsonl");
-        match std::fs::File::open(&journal) {
-            Ok(file) => {
-                let mut reader = io::BufReader::new(file);
-                let mut line = Vec::new();
-                loop {
-                    line.clear();
-                    if reader.read_until(b'\n', &mut line)? == 0 || line.last() != Some(&b'\n') {
-                        break;
-                    }
-                    let fact: WriteFact = serde_json::from_slice(&line)?;
-                    valid(&fact)?;
-                    let artifact = folder.join(format!("{}.json", fact.id));
-                    let source = if artifact.try_exists()? { artifact } else { journal.clone() };
-                    push(Source::new(fact.id.clone(), source, serde_json::to_vec(&fact)?)?)?;
+        crate::record_migration::file(&journal, push, |push| {
+            let mut reader = io::BufReader::new(fastctx_platform::disk::open(&journal)?);
+            let mut line = Vec::new();
+            loop {
+                line.clear();
+                if reader.read_until(b'\n', &mut line)? == 0 || line.last() != Some(&b'\n') {
+                    break;
                 }
+                let fact: WriteFact = serde_json::from_slice(&line)?;
+                valid(&fact)?;
+                push(Source::new(fact.id.clone(), journal.clone(), serde_json::to_vec(&fact)?)?)?;
             }
-            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-            Err(error) => return Err(error),
-        }
-        match std::fs::read_dir(&folder) {
-            Ok(entries) => {
-                for entry in entries {
-                    let path = entry?.path();
-                    if path.extension().is_none_or(|ext| ext != "json") {
-                        continue;
-                    }
-                    let fact: WriteFact = serde_json::from_slice(&std::fs::read(&path)?)?;
-                    valid(&fact)?;
-                    push(Source::new(fact.id.clone(), path, serde_json::to_vec(&fact)?)?)?;
+            Ok(())
+        })?;
+        for path in crate::retention::entries(&folder)? {
+            if path.extension().is_none_or(|extension| extension != "json") {
+                continue;
+            }
+            crate::record_migration::file(&path, push, |push| {
+                let fact: WriteFact = serde_json::from_slice(&fastctx_platform::disk::read(&path)?)?;
+                valid(&fact)?;
+                if path.file_stem().and_then(|name| name.to_str()) != Some(fact.id.as_str()) {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "write fact identity differs from its filename",
+                    ));
                 }
-            }
-            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-            Err(error) => return Err(error),
+                push(Source::new(fact.id.clone(), path.clone(), serde_json::to_vec(&fact)?)?)
+            })?;
         }
         let pending = record.with_extension("writes-pending");
-        match std::fs::read(&pending) {
-            Ok(bytes) => {
-                let fact: WriteFact = serde_json::from_slice(&bytes)?;
-                valid(&fact)?;
-                let artifact = folder.join(format!("{}.json", fact.id));
-                let source = if artifact.try_exists()? { artifact } else { pending };
-                push(Source::new(fact.id.clone(), source, serde_json::to_vec(&fact)?)?)?;
-            }
-            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-            Err(error) => return Err(error),
-        }
-        Ok(())
+        crate::record_migration::file(&pending, push, |push| {
+            let fact: WriteFact = serde_json::from_slice(&fastctx_platform::disk::read(&pending)?)?;
+            valid(&fact)?;
+            push(Source::new(fact.id.clone(), pending.clone(), serde_json::to_vec(&fact)?)?)
+        })
     })?;
     Ok(job)
 }

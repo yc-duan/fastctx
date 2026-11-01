@@ -23,7 +23,7 @@ pub(crate) enum Outcome {
 }
 
 #[derive(Serialize, Deserialize)]
-struct Finished {
+pub(crate) struct Finished {
     at: Timestamp,
     digest: String,
     outcome: Outcome,

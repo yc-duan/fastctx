@@ -28,8 +28,8 @@ pub(crate) fn prepare(directory: &ConversationDir, family: &'static str) -> io::
         "seen" => directory.seen(),
         _ => return Err(io::Error::other("unknown resident activity family")),
     };
-    records::ensure_each(directory, family, |push| {
-        let file = match std::fs::File::open(&path) {
+    records::ensure_file(directory, family, path, move |path, push| {
+        let file = match fastctx_platform::disk::open(path) {
             Ok(file) => file,
             Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
             Err(error) => return Err(error),
@@ -50,18 +50,26 @@ pub(crate) fn prepare(directory: &ConversationDir, family: &'static str) -> io::
             let row = match family {
                 "actions" => {
                     let row: Action = serde_json::from_slice(&bytes)?;
-                    Source::new(format!("legacy-{offset:016x}"), path.clone(), serde_json::to_vec(&row)?)?
+                    Source::new(format!("legacy-{offset:016x}"), path.to_path_buf(), serde_json::to_vec(&row)?)?
                         .ordered(row.at)
                 }
                 "messages" => {
                     let row: MessageLine = serde_json::from_slice(&bytes)?;
-                    Source::new(digest(&row)?, path.clone(), serde_json::to_vec(&row)?)?.ordered(row.at)
+                    Source::new(digest(&row)?, path.to_path_buf(), serde_json::to_vec(&row)?)?.ordered(row.at)
                 }
                 "seen" => {
                     let mut row: Seen = serde_json::from_slice(&bytes)?;
-                    let Ok(canonical) = fastctx_hands::files::canonical_path(Path::new(&row.path)) else { continue };
+                    let canonical = match fastctx_hands::files::canonical_path(Path::new(&row.path)) {
+                        Ok(path) => path,
+                        Err(_) => {
+                            push(Source::skip(path.to_path_buf())?)?;
+                            continue;
+                        }
+                    };
                     row.path = canonical.to_string_lossy().into_owned();
-                    Source::new(row.path.clone(), path.clone(), serde_json::to_vec(&row)?)?.ordered(row.at).replacing()
+                    Source::new(row.path.clone(), path.to_path_buf(), serde_json::to_vec(&row)?)?
+                        .ordered(row.at)
+                        .replacing()
                 }
                 _ => unreachable!(),
             };

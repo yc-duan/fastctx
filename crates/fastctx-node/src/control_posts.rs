@@ -1,7 +1,7 @@
 //! Durable outgoing control requests and their authenticated business replies.
 //! Hub custody does not itself establish that a requested stop was applied.
 
-mod requests;
+pub(crate) mod requests;
 
 use std::io;
 use std::path::{Path, PathBuf};
@@ -27,7 +27,7 @@ struct Request {
 }
 
 #[derive(Serialize, Deserialize)]
-struct Posted {
+pub(crate) struct Posted {
     id: NoticeId,
     posted: crate::letters::Posted,
     /// When it was posted; an earlier release's marker says so by its
@@ -37,7 +37,7 @@ struct Posted {
 }
 
 #[derive(Serialize, Deserialize)]
-struct Reply {
+pub(crate) struct Reply {
     id: NoticeId,
     result: Result<(), Failure>,
 }

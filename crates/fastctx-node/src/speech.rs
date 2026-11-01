@@ -183,9 +183,13 @@ async fn receive_here_locked(
     if !about.world_managed() && !matches!(delivery.notice, Notice::JobEnded { .. }) {
         return Err(Failure::refused(OWN_SESSION));
     }
-    if let Some(error) =
-        crate::lifecycle::refused::get(node, to, &delivery.id).map_err(|error| Failure::new(error.to_string()))?
-    {
+    let (reading, recipient, input) = (node.clone(), to.clone(), delivery.id.clone());
+    let refusal =
+        fastctx_platform::task::spawn_blocking(move || crate::lifecycle::refused::get(&reading, &recipient, &input))
+            .await
+            .map_err(|error| Failure::new(error.to_string()))?
+            .map_err(crate::record_migration::failure)?;
+    if let Some(error) = refusal {
         return crate::lifecycle::refused::reject(node, to, &delivery.id, error).await;
     }
 

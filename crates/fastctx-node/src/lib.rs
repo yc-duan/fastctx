@@ -123,6 +123,7 @@ mod received;
 mod record_access;
 mod record_database;
 mod record_gates;
+mod record_migration;
 mod record_ownership;
 mod record_payloads;
 mod records;
@@ -199,6 +200,7 @@ pub(crate) struct Node {
     world: WorldDir,
     database: fastctx_storage::Database,
     book_database: fastctx_storage::Database,
+    record_migration: record_migration::Service,
     controls_due: std::sync::Mutex<std::collections::HashMap<fastctx_types::ResidentId, bool>>,
     /// This program's own copy under the World, which everything the node
     /// starts from itself runs from (`own.rs`).
@@ -691,7 +693,7 @@ pub async fn run_prepared(
     if let Some(error) = database.fault() {
         log.line(format_args!("node record storage unavailable: {error}"));
     }
-    record_database::register(&world, &database);
+    let record_migration = record_database::register(&world, &database);
     let book_database = fastctx_storage::Database::open_or_unavailable(&world.path().join("book.sqlite3"), "", |db| {
         fastctx_storage::versions::apply(
             db,
@@ -709,6 +711,7 @@ pub async fn run_prepared(
         world,
         database,
         book_database,
+        record_migration,
         controls_due: Default::default(),
         fastctx,
         machine: RwLock::new(machine),
@@ -810,11 +813,6 @@ pub async fn run_prepared(
         lifetime,
         started: jiff::Timestamp::now(),
     });
-    if node.database.fault().is_none() {
-        activity_book::start(&node);
-        context::migrate(&node);
-        letters::migrate(&node);
-    }
     // The third version's projects are kept as this computer's own, to be
     // carried into its account at its hub.
     let (kept, problems) =
@@ -833,10 +831,6 @@ pub async fn run_prepared(
         node.log.line(format_args!("on the hub {} ({}) as {}", membership.hub_name, membership.id, membership.name));
         world::start(&node, membership).context("starting a link to a hub")?;
     }
-    if node.database.fault().is_none() {
-        on_stop::resume(&node).await;
-        run_stops::resume(&node);
-    }
     codex::listen(node.clone(), codex_heard.events);
     logins::limits::listen(node.clone(), codex_heard.limits);
     logins::heard::listen(node.clone(), codex_heard.said);
@@ -846,8 +840,9 @@ pub async fn run_prepared(
         retention::start(&node).context("starting command artifact retention")?;
     }
     let recovering = node.clone();
-    tokio::spawn(async move {
+    fastctx_platform::task::spawn(async move {
         let node = recovering;
+        node.record_migration.wait_started().await;
         startup::recover(&node).await;
         node.effects_ready.store(true, std::sync::atomic::Ordering::Release);
         node.effects_changed.notify_waiters();
@@ -861,7 +856,6 @@ pub async fn run_prepared(
         composer::keep(&node);
         lifecycle::start(&node);
         recovery::start(&node, jobs_reconciled);
-        timers::start(&node);
         // Goals and sentinels are not offered in a release yet: what of them is
         // kept stays as it is, driven by nothing.
         if fastctx_platform::preview() {
@@ -885,7 +879,8 @@ pub async fn run_prepared(
         forget::start(&node);
     });
     let jobs_node = node.clone();
-    tokio::spawn(async move {
+    fastctx_platform::task::spawn(async move {
+        jobs_node.record_migration.wait_started().await;
         if jobs_node.database.fault().is_some() {
             return;
         }
@@ -955,7 +950,7 @@ pub async fn run_prepared(
                 }
                 continue;
             },
-            accepted = listener.accept() => accepted,
+            accepted = record_migration::after_open(&node, listener.accept()) => accepted,
         };
         match accepted {
             Ok(connection) => {
@@ -982,6 +977,6 @@ pub async fn run_prepared(
 
 #[cfg(feature = "storage-drill")]
 #[doc(hidden)]
-pub use storage_drill::run as record_drill;
+pub use storage_drill::{migration as record_migration_drill, run as record_drill};
 #[cfg(feature = "storage-drill")]
 mod storage_drill;

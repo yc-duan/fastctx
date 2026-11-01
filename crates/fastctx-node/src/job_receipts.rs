@@ -16,7 +16,7 @@ use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 
 use crate::Node;
-mod storage;
+pub(crate) mod storage;
 use crate::records::items;
 
 #[derive(Serialize, Deserialize)]
@@ -33,6 +33,14 @@ struct Sending {
     hub: Option<HubName>,
     #[serde(default)]
     through_exit: bool,
+}
+
+pub(crate) fn validate_legacy_sending(bytes: &[u8]) -> io::Result<()> {
+    let sending: Sending = serde_json::from_slice(bytes)?;
+    if sending.delivery.is_some() == sending.consumption.is_some() {
+        return Err(io::Error::new(io::ErrorKind::InvalidData, "job delivery must have exactly one phase"));
+    }
+    Ok(())
 }
 
 #[derive(Clone, Serialize, Deserialize)]

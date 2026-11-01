@@ -11,8 +11,11 @@ pub(crate) struct Entry {
 pub(crate) fn prepare(path: &Path) -> io::Result<Entry> {
     let (directory, parent, key, _) = crate::record_database::item(path)?;
     let family = format!("metadata/{}/{key}", parent.strip_prefix("items/").expect("logical item family"));
-    ensure_each(&directory, &family, |push| match std::fs::read(path) {
-        Ok(bytes) => push(Source::new("value".into(), path.to_path_buf(), bytes)?),
+    ensure_file(&directory, &family, path.to_path_buf(), |path, push| match fastctx_platform::disk::read(path) {
+        Ok(bytes) => {
+            super::metadata_legacy::validate(path, &bytes)?;
+            push(Source::new("value".into(), path.to_path_buf(), bytes)?)
+        }
         Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
         Err(error) => Err(error),
     })?;

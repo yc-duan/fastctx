@@ -52,7 +52,8 @@ pub(crate) fn run(root: &Path) -> std::result::Result<(), Box<dyn std::error::Er
         ),
         crate::conversation_store::schema::initialize,
     )?;
-    crate::record_database::register(&world, &database);
+    let _migration = crate::record_database::register(&world, &database);
+    _migration.start()?;
     let id: ResidentId = "codex-a1b2c3".parse()?;
     let directory = world.conversation(&id);
     std::fs::create_dir_all(directory.path())?;

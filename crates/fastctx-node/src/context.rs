@@ -2,7 +2,7 @@
 
 pub(crate) mod input;
 pub(crate) mod memory;
-mod records;
+pub(crate) mod records;
 pub(crate) mod sources;
 mod storage;
 pub(crate) mod turn;
