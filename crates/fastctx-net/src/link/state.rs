@@ -254,6 +254,7 @@ impl Counter {
     }
 }
 
+#[track_caller]
 pub fn read_or<T: DeserializeOwned>(path: &Path, default: T) -> io::Result<T> {
     match fastctx_platform::disk::read(path) {
         Ok(bytes) => serde_json::from_slice(&bytes)
@@ -263,6 +264,7 @@ pub fn read_or<T: DeserializeOwned>(path: &Path, default: T) -> io::Result<T> {
     }
 }
 
+#[track_caller]
 pub fn read<T: DeserializeOwned>(path: &Path) -> io::Result<T> {
     let bytes = fastctx_platform::disk::read(path)?;
     serde_json::from_slice(&bytes)
@@ -275,6 +277,7 @@ pub fn read<T: DeserializeOwned>(path: &Path) -> io::Result<T> {
 /// other things then, and the cut a member holds cannot be read into
 /// today's shape the way the hub reads its whole directory, so it is
 /// dropped and the hub gives the view again.
+#[track_caller]
 pub fn older_view(path: &Path) -> bool {
     let Ok(bytes) = fastctx_platform::disk::read(path) else { return false };
     let Ok(serde_json::Value::Object(view)) = serde_json::from_slice::<serde_json::Value>(&bytes) else {
@@ -289,6 +292,7 @@ pub fn older_view(path: &Path) -> bool {
 }
 
 /// Replaces the file at `path`, in a directory that exists.
+#[track_caller]
 pub fn write(path: &Path, value: &impl Serialize) -> io::Result<()> {
     let mut bytes = serde_json::to_vec_pretty(value).map_err(io::Error::other)?;
     bytes.push(b'\n');

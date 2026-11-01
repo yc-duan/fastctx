@@ -8,7 +8,6 @@ use crate::{MachineName, ResidentId, TownName, project::Stamp, residents::Host};
 use serde::{Deserialize, Serialize};
 
 pub const MAX_DOCUMENT_BYTES: usize = 512 * 1024;
-pub const CATALOG_CONTEXT_BYTES: usize = 24 * 1024;
 pub const RECORD_KIND: &str = "history";
 
 /// The public scope uses project names and conversation addresses. Resolution

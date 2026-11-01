@@ -147,10 +147,10 @@ for (const session of sessions) {
       const loaded = once("Page.loadEventFired");
       const two = session.endsWith("-2");
       const named = two ? session.slice(0, -2) : session;
-      const shown = named === "strain" || named === "strain-list" || named.startsWith("alerts") || named.startsWith("rollout") ? "machines" : named === "strain-machine" || named === "health" ? "machine" : named.startsWith("invite-") ? "invite" : named === "stop" || named === "program" || named === "read-card" || named === "late" ? "claude" : named === "late-straight" ? "voice" : named === "drawer" || named === "palette" ? "home" : named === "service" || named.startsWith("remove-") ? "settings" : named === "slash" || named === "mention" || named === "find" || named === "attach" || named === "rewind" || named === "usage" ? "codex" : named.startsWith("asks") ? "asks" : named === "new-codex" || named === "new-attach" || named === "new-lent" || named === "new-pick" ? "new" : named === "manage" ? "about" : named === "welcome" || named === "create" || named === "created" ? "login" : named === "share" || named === "relays" ? "machines" : named === "lend" || named.startsWith("ledger") ? "home" : named === "queue" ? "codex" : named.startsWith("page") ? "page" : named.startsWith("panel") && named !== "panel-agent" ? "claude" : named.startsWith("team") || named === "panel-agent" ? "stream" : named.startsWith("repair-") ? "home" : named === "updates-repair" ? "machines" : named === "journal-edit" || named === "journal-versions" ? "journal" : named === "project-write" || named === "project-history" ? "project" : named === "features" || named.startsWith("feature-") || named.startsWith("prefs-") || named.startsWith("activity") || named === "mode" || named === "sidebar-drag" ? "home" : named;
+      const shown = named === "strain" || named === "strain-list" || named.startsWith("alerts") || named.startsWith("rollout") ? "machines" : named === "strain-machine" || named === "health" ? "machine" : named.startsWith("patrol") ? "trips" : named.startsWith("invite-") ? "invite" : named === "stop" || named === "program" || named === "read-card" || named === "late" ? "claude" : named === "late-straight" ? "voice" : named === "drawer" || named === "palette" ? "home" : named === "service" || named.startsWith("remove-") ? "settings" : named === "slash" || named === "mention" || named === "find" || named === "attach" || named === "rewind" || named === "usage" ? "codex" : named.startsWith("asks") ? "asks" : named === "new-codex" || named === "new-attach" || named === "new-lent" || named === "new-pick" ? "new" : named === "manage" ? "about" : named === "welcome" || named === "create" || named === "created" ? "login" : named === "share" || named === "relays" ? "machines" : named === "lend" || named.startsWith("ledger") ? "home" : named === "queue" ? "codex" : named.startsWith("page") ? "page" : named.startsWith("panel") && named !== "panel-agent" ? "claude" : named.startsWith("team") || named === "panel-agent" ? "stream" : named.startsWith("repair-") ? "home" : named === "updates-repair" ? "machines" : named === "journal-edit" || named === "journal-versions" ? "journal" : named === "project-write" || named === "project-history" ? "project" : named === "features" || named.startsWith("feature-") || named.startsWith("prefs-") || named.startsWith("activity") || named === "mode" || named === "sidebar-drag" ? "home" : named;
       // `welcome` and `create` are a computer's first open, in no World yet.
       const alone = named === "welcome" || named === "create" || named === "created";
-      const ask = (named.startsWith("strain") ? `&strain${named === "strain-machine" ? "&m=server" : ""}` : "") + (named === "alerts-none" ? "&troubles=0" : "") + (named === "health" ? "&health=strained" : "") + (named === "rollout" || named === "rollout-page" ? "&rollout=stopped" : "") + (session.startsWith("asks-") ? `&ask=${session.slice(5)}` : "") + (named === "late" || named === "late-straight" ? "&slow=200,6000,999999&late=1500" : "") + (two ? "&accounts=2" : "") + (alone ? "&accounts=0" : "") + (named.startsWith("team") || named === "panel-agent" ? "&start=agents" : "") + (named.startsWith("repair-") ? `&repair=${named === "repair-broken" ? "broken" : "failed"}` : "") + (named.startsWith("panel-goal-") ? `&goal=${named.slice("panel-goal-".length)}` : "") + (named.startsWith("panel-goalpage-") ? `&goal=${named.slice("panel-goalpage-".length).replace(/-typed$/, "")}` : "");
+      const ask = (named.startsWith("strain") ? `&strain${named === "strain-machine" ? "&m=server" : ""}` : "") + (named === "alerts-none" ? "&troubles=0" : "") + (named === "health" ? "&health=strained" : "") + (named === "rollout" || named === "rollout-page" ? "&rollout=stopped" : "") + (session.startsWith("asks-") ? `&ask=${session.slice(5)}` : "") + (named === "late" || named === "late-straight" ? "&slow=200,6000,999999&late=1500" : "") + (two ? "&accounts=2" : "") + (alone ? "&accounts=0" : "") + (named.startsWith("team") || named === "panel-agent" ? "&start=agents" : "") + (named.startsWith("repair-") ? `&repair=${named === "repair-broken" ? "broken" : "failed"}` : "") + (named.startsWith("panel-goal-") ? `&goal=${named.slice("panel-goal-".length)}` : "") + (named.startsWith("panel-goalpage-") ? `&goal=${named.slice("panel-goalpage-".length).replace(/-typed$/, "")}` : "") + (named.startsWith("panel-plan-") ? `&plan=${named.slice("panel-plan-".length)}` : "");
       // A page an agent wrote is its own document, with a stand-in host.
       const written = session === "written";
       const specimen = named === "mapcanvas" ? "mapcanvas-specimen.html" : named === "longview" ? "longview-specimen.html" : written ? "page-specimen.html" : null;
@@ -321,6 +321,32 @@ for (const session of sessions) {
           }))`,
         });
       }
+      // `patrol` is the trips specimen's patrol of the server room opened:
+      // its last round drawn, the rounds before it counted above;
+      // `patrol-folded` those counted rounds opened, on the whole run.
+      if (named.startsWith("patrol")) {
+        await send("Runtime.evaluate", {
+          awaitPromise: true,
+          expression: `new Promise((r) => setTimeout(() => {
+            const steps = document.querySelector('.view-steps');
+            if (steps?.getAttribute('aria-pressed') !== 'true') steps?.click();
+            const find = () => [...document.querySelectorAll('.row-tool')].find((one) => (one.textContent ?? '').includes(${named === "patrol-folded" ? `'更早的'` : `'systemctl is-active'`}));
+            let tries = 0;
+            const look = () => {
+              for (const head of document.querySelectorAll('.group-head[aria-expanded="false"]')) head.click();
+              const row = find();
+              if (!row && tries++ < 30) return setTimeout(look, 400);
+              row?.scrollIntoView({ block: 'start' });
+              row?.querySelector('.row-line')?.click();
+              setTimeout(() => {
+                find()?.scrollIntoView({ block: 'start' });
+                setTimeout(r, 600);
+              }, 1200);
+            };
+            setTimeout(look, 600);
+          }, 2000))`,
+        });
+      }
       // `panel` is a conversation with its side open at its home;
       // `panel-goal-blocked` and the like with its goal in that state;
       // `panel-talk` with a colleague it asked opened beside it, and
@@ -335,7 +361,7 @@ for (const session of sessions) {
           expression: `new Promise((r) => setTimeout(() => { const name = document.querySelector('.sidebar .talk-item[data-resident] .talk-name'); const from = name.getBoundingClientRect(); const box = document.querySelector('.sp-split').getBoundingClientRect(); const x = box.left + box.width * ${at[0]}, y = box.top + box.height * ${at[1]}; const pointer = (type, cx, cy) => new PointerEvent(type, { bubbles: true, cancelable: true, pointerId: 7, pointerType: 'mouse', isPrimary: true, button: 0, buttons: 1, clientX: cx, clientY: cy }); name.dispatchEvent(pointer('pointerdown', from.left + 8, from.top + 8)); window.dispatchEvent(pointer('pointermove', from.left + 30, from.top + 20)); window.dispatchEvent(pointer('pointermove', x, y)); setTimeout(r, 600); }, 600))`,
         });
       } else if (named.startsWith("panel")) {
-        const opened = named === "panel-file" ? `'a[data-file$="控制环.md"]'` : named === "panel-talk" ? `'.cp-node[data-id="codex-b10g"]'` : named === "panel-agent" ? `'.cp-node[data-id="b7c1d9e4f2"]'` : named === "panel-plan" ? `'[data-part="part:plan"]'` : named === "panel-goal" ? `'.gb-act[data-act="expand"]'` : named === "panel-team" ? `'[data-part="part:team"]'` : named === "panel-menu" ? `'.sp-more'` : named === "panel-bottom" || named === "panel-left" ? `'.sp-menu-row[data-dock="${named.slice("panel-".length)}"]'` : named.startsWith("panel-goalpage-") ? `'[data-part="part:goal"]'` : null;
+        const opened = named === "panel-file" ? `'a[data-file$="控制环.md"]'` : named === "panel-talk" ? `'.cp-node[data-id="codex-b10g"]'` : named === "panel-agent" ? `'.cp-node[data-id="b7c1d9e4f2"]'` : named === "panel-plan" || named.startsWith("panel-plan-") ? `'[data-part="part:plan"]'` : named === "panel-goal" ? `'.gb-act[data-act="expand"]'` : named === "panel-team" ? `'[data-part="part:team"]'` : named === "panel-menu" ? `'.sp-more'` : named === "panel-bottom" || named === "panel-left" ? `'.sp-menu-row[data-dock="${named.slice("panel-".length)}"]'` : named.startsWith("panel-goalpage-") ? `'[data-part="part:goal"]'` : null;
         // Those who work with it are pressed on the team's part.
         if (named === "panel-talk" || named === "panel-agent") {
           await send("Runtime.evaluate", { awaitPromise: true, expression: `new Promise((r) => { if (!document.querySelector(".sp-host.sp-shown")) document.querySelector(".sp-toggle")?.click(); setTimeout(() => { document.querySelector('[data-part="part:team"]')?.click(); setTimeout(r, 300); }, 300); })` });

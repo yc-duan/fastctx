@@ -10,9 +10,9 @@ use serde_json::Value;
 use crate::{AccountName, MachineName};
 
 pub const MAX_BODY_BYTES: usize = 64 * 1024;
-pub const MAX_ACCOUNT_BYTES: usize = 16 * 1024 * 1024;
-/// Live records of one kind. Tombstones still count toward the account byte limit.
-pub const MAX_KIND_KEYS: usize = 1024;
+/// Live records of one kind: a listing answers with the metadata of each, well
+/// under 1 KiB apiece, in one answer of at most 16 MiB.
+pub const MAX_KIND_KEYS: usize = 16 * 1024;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Metadata {
@@ -86,11 +86,13 @@ impl Request {
                 crate::history::MAX_DOCUMENT_BYTES * 6 + 16 * 1024
             } else if self.kind() == crate::skills::KIND || self.kind() == crate::skills::INDEX_KIND {
                 crate::skill_files::ENCODED_LIMIT
+            } else if self.kind() == crate::plan::KIND {
+                crate::plan::MAX_KEPT_BYTES + 16 * 1024
             } else {
                 MAX_BODY_BYTES
             };
             if size > limit {
-                return Err(words::body_limit(size));
+                return Err(words::body_limit(size, limit));
             }
         }
         Ok(())

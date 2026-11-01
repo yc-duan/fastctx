@@ -5,12 +5,12 @@
 //! A measure is registered once by name and lives as long as the process;
 //! a caller on a hot path keeps the reference it got in a static.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
 use std::sync::{LazyLock, Mutex};
 use std::time::Duration;
 
-use fastctx_types::readings::{Count, Level, Readings, Timing as TimingReading};
+use fastctx_types::readings::{Count, Level, Readings, Timing as TimingReading, percentile};
 
 pub struct Counter(AtomicU64);
 
@@ -90,30 +90,19 @@ impl Timing {
     }
 
     fn reading(&self, name: &str) -> TimingReading {
-        let counts: Vec<u64> = self.buckets.iter().map(|bucket| bucket.load(Ordering::Relaxed)).collect();
-        let count: u64 = counts.iter().sum();
+        let buckets: Vec<u64> = self.buckets.iter().map(|bucket| bucket.load(Ordering::Relaxed)).collect();
+        let count: u64 = buckets.iter().sum();
         let max_us = self.max_us.load(Ordering::Relaxed);
-        let at = |share: f64| -> u64 {
-            if count == 0 {
-                return 0;
-            }
-            let wanted = ((count as f64) * share).ceil().max(1.0) as u64;
-            let mut seen = 0;
-            for (bucket, n) in counts.iter().enumerate() {
-                seen += n;
-                if seen >= wanted {
-                    return BOUNDS_US[bucket].min(max_us);
-                }
-            }
-            max_us
-        };
+        let sum_us = self.sum_us.load(Ordering::Relaxed);
         TimingReading {
             name: name.to_string(),
             count,
-            p50_us: at(0.5),
-            p99_us: at(0.99),
+            p50_us: percentile(&BOUNDS_US, &buckets, max_us, 0.5),
+            p99_us: percentile(&BOUNDS_US, &buckets, max_us, 0.99),
             max_us,
-            mean_us: self.sum_us.load(Ordering::Relaxed).checked_div(count).unwrap_or(0),
+            mean_us: sum_us.checked_div(count).unwrap_or(0),
+            sum_us,
+            buckets,
         }
     }
 }
@@ -156,9 +145,40 @@ pub fn timing(name: &'static str) -> &'static Timing {
     }
 }
 
+/// Kinds kept in one family of timings named as the program runs; past it,
+/// the rest share the family's `other`.
+const KINDS: usize = 256;
+
+/// The timing named `family.kind`, for what is known only as the program
+/// runs, such as a lock's name or a call's kind.
+pub fn timing_of(family: &'static str, kind: &str) -> &'static Timing {
+    static NAMED: LazyLock<Mutex<HashMap<&'static str, HashMap<String, &'static Timing>>>> =
+        LazyLock::new(Default::default);
+    let mut named = NAMED.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    let kinds = named.entry(family).or_default();
+    if let Some(timing) = kinds.get(kind) {
+        return timing;
+    }
+    let kind = if kinds.len() < KINDS { kind } else { "other" };
+    if let Some(timing) = kinds.get(kind) {
+        return timing;
+    }
+    let made = timing(Box::leak(format!("{family}.{kind}").into_boxed_str()));
+    kinds.insert(kind.to_string(), made);
+    made
+}
+
+/// The bytes of memory this process has resident now, `-1` where that is
+/// not known.
+fn resident() -> &'static Gauge {
+    static RESIDENT: LazyLock<&'static Gauge> = LazyLock::new(|| gauge("process.resident"));
+    &RESIDENT
+}
+
 /// Every measure as it stands, with the violations so far.
 pub fn snapshot() -> Readings {
-    let mut readings = Readings::default();
+    resident().set(crate::memory::resident().map_or(-1, |bytes| i64::try_from(bytes).unwrap_or(i64::MAX)));
+    let mut readings = Readings { bounds_us: BOUNDS_US.to_vec(), ..Readings::default() };
     for (name, measure) in measures().iter() {
         match measure {
             Measure::Counter(counter) => readings.counts.push(Count { name: name.to_string(), value: counter.get() }),

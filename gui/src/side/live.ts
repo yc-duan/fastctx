@@ -140,6 +140,39 @@ export interface LiveSide {
   openId(id: string): void;
 }
 
+/** The colleagues the conversation at `address` asked, as the World pushes
+ *  them: who each is and how it stands, worked out as the tree does. Their
+ *  goals and the agents they sent come with the tree, while a page shows
+ *  them. */
+function worldColleagues(store: Store, address: Address, now: number): CollabNode[] {
+  return residentsOf(store.world.peek()).flatMap((r): CollabNode[] => {
+    const origin = r.about.origin;
+    if (origin.kind !== "colleague" || origin.asked_by.resident !== address.resident || origin.asked_by.machine !== address.machine) return [];
+    const agent = /codex/i.test(r.about.host.agent) ? "codex" : "claude";
+    const busy = r.now?.activity === "busy";
+    const born = Date.parse(r.about.born_at);
+    const since = r.now?.since ? Date.parse(r.now.since) : born;
+    const state: NodeState = r.now?.trouble ? "failed" : !r.now ? "unknown" : busy ? "working" : "done";
+    return [
+      {
+        id: r.about.id,
+        kind: "colleague",
+        agent,
+        name: r.about.model ? modelName(r.about.model) : (origin.label ?? agent),
+        task: origin.label ?? r.now?.title ?? "",
+        state,
+        why: null,
+        goal: null,
+        branchOf: null,
+        took: Number.isFinite(born) ? Math.max(0, (busy ? now : Number.isFinite(since) ? since : now) - born) : 0,
+        steps: null,
+        machine: r.about.machine,
+        children: [],
+      },
+    ];
+  });
+}
+
 /** The side conversations branched off the one at `address`, from the
  *  World's list: each named by its model, with its title or what it is. */
 function sideNodes(store: Store, address: Address, words: SideWords, now: number): CollabNode[] {
@@ -309,10 +342,18 @@ export function liveSide(options: LiveSide): SideSeams {
     },
     colleagues: (show) => {
       let alive = true;
+      let detail = false;
       let inflight = false;
       let again = false;
-      let last: CollabNode[] = [];
+      // The colleagues as the tree last told them, while a page shows them.
+      let told: CollabNode[] | null = null;
+      const draw = () => {
+        const now = Date.now();
+        const colleagues = told ?? worldColleagues(options.store, options.address, now);
+        show([...colleagues, ...sideNodes(options.store, options.address, options.words, now)]);
+      };
       const refresh = () => {
+        if (!detail) return;
         if (inflight) {
           again = true;
           return;
@@ -321,13 +362,16 @@ export function liveSide(options: LiveSide): SideSeams {
         again = false;
         collaborationTree(owner, options.address.machine)
           .then((tree) => {
-            const now = Date.now();
-            if (alive) show((last = [...treeNodes(tree, options.store, now), ...sideNodes(options.store, options.address, options.words, now)]));
+            if (!alive || !detail) return;
+            told = treeNodes(tree, options.store, Date.now());
+            draw();
           })
           .catch((error: unknown) => {
             // What was known stays, no longer said to stand as it did.
             const why = error instanceof Error ? error.message : String(error);
-            if (alive) show(last.map((node) => ({ ...node, state: "unknown", why })));
+            if (!alive || !detail || !told) return;
+            told = told.map((node) => ({ ...node, state: "unknown", why }));
+            draw();
           })
           .finally(() => {
             inflight = false;
@@ -336,11 +380,23 @@ export function liveSide(options: LiveSide): SideSeams {
       };
       const stop = effect(() => {
         options.store.world.get();
+        draw();
         refresh();
       });
-      return () => {
-        alive = false;
-        stop();
+      return {
+        stop: () => {
+          alive = false;
+          stop();
+        },
+        detail: (shown) => {
+          if (shown === detail) return;
+          detail = shown;
+          if (shown) refresh();
+          else {
+            told = null;
+            draw();
+          }
+        },
       };
     },
   };
@@ -415,7 +471,7 @@ export function specimenSide(
     },
     colleagues: (show) => {
       show(teamSample(english).filter((node) => node.kind === "colleague"));
-      return () => {};
+      return { stop: () => {}, detail: () => {} };
     },
   };
 }

@@ -58,15 +58,7 @@ pub(super) async fn get(
                 return Err(Failed { error, news });
             }
         };
-        let mut text = fastctx_types::skills::context(&index);
-        if text.len() > 16 * 1024 {
-            let mut end = 16 * 1024 - 256;
-            while !text.is_char_boundary(end) {
-                end -= 1;
-            }
-            text.truncate(end);
-            text.push_str("\nThe skill list continues; `fastctx skill --list` reads all names and descriptions.");
-        }
+        let text = fastctx_types::skills::context(&index);
         if entry.epoch.load(Ordering::Acquire) != epoch {
             continue;
         }

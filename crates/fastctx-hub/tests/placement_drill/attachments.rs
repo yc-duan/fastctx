@@ -50,6 +50,7 @@ pub(super) async fn exercise(world: &World, host: &Path, plan: &Path, id: &Resid
     let relative = fastctx_types::session::attachments::place(&receipt);
     let command =
         format!("ALICE_ATTACHMENT [[run: on alice-two <<'ATTACH'\ncat \"$FASTCTX_SCRATCH/{relative}\"\nATTACH]]");
+    let before = last_turn(host, id.as_str());
     world
         .talk_with_attachments(
             id.clone(),
@@ -60,7 +61,7 @@ pub(super) async fn exercise(world: &World, host: &Path, plan: &Path, id: &Resid
             Some("placement-attachment".into()),
         )
         .await?;
-    anyhow::ensure!(idle(host, id.as_str()).await, "attachment turn did not finish");
+    anyhow::ensure!(idle_after(host, id.as_str(), before).await, "attachment turn did not finish");
     let shown = super::controls::shown(world, id).await?;
     record(
         "a changed context block does not hide or corrupt attachment history",

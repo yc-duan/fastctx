@@ -12,7 +12,7 @@ pub(super) struct Resume {
 impl Resume {
     pub fn new() -> Self {
         let (sender, receiver) = mpsc::unbounded_channel();
-        let task = tokio::spawn(async move {
+        let task = fastctx_platform::task::spawn(async move {
             let mut reported = None;
             loop {
                 match listen(&sender).await {

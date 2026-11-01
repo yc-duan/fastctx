@@ -46,6 +46,9 @@ pub enum TroubleKind {
     Stuck,
     /// One of the machine's bounds came near its limit.
     Near,
+    /// A store of the machine's records was found damaged: what could be
+    /// read of it is salvaged, and some of it may be lost.
+    Damaged,
     /// The machine went on breaking the rules of its threads.
     Violations,
     /// Many of the network's machines lost their line together.
@@ -65,6 +68,7 @@ impl crate::tolerant::Tolerant for TroubleKind {
         TroubleKind::Drops,
         TroubleKind::Stuck,
         TroubleKind::Near,
+        TroubleKind::Damaged,
         TroubleKind::Violations,
         TroubleKind::Outage,
         TroubleKind::Hub,

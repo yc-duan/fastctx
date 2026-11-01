@@ -46,7 +46,7 @@ pub(crate) async fn for_session(
     if about.host.agent.as_str() != "claude" {
         return Err(Failure::refused("this is not a Claude session"));
     }
-    crate::plan::context(node, &id, &about.origin, &about.acting).await?;
+    crate::plan::context(node, &id, &about.acting).await?;
     crate::context::sources::skills(node, &id, &about.acting).await?;
     if let Err(error) = crate::history::context::refresh(node, &id, town.as_ref(), &about.origin, &about.acting).await {
         node.log.line(format_args!("refreshing the history context of {id}: {error}"));

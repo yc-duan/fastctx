@@ -8,12 +8,19 @@
 //!   hub's shared state is changed (`specs/world-engine.md`, 中枢). A task
 //!   thread may take it; a thread that keeps network lines alive takes no
 //!   lock of the work it carries.
+//!
+//! Either is over one unit, a conversation's or a record's (`new`), or over
+//! many at once (`shared`): the machine's records, the hub's sessions. One
+//! over many is held only briefly, as everything of every unit it is over
+//! waits for it (`specs/world-foundation.md`, 宪法一): its holds are timed
+//! together, and one held too long is a violation (`crate::conduct`).
 
 use std::ops::{Deref, DerefMut};
 use std::sync::{Arc, PoisonError};
 
 use super::Rank;
 use super::registry::{self, Hold, Wait};
+use crate::readings::Timing;
 
 /// A std mutex that knows its place in the order of locks and tells the
 /// registry who waits for it and who holds it, as the task's locks do: a
@@ -24,12 +31,22 @@ struct Ranked<T: ?Sized> {
     rank: Rank,
     name: &'static str,
     subject: Arc<str>,
+    held: &'static Timing,
+    shared: bool,
     inner: std::sync::Mutex<T>,
 }
 
 impl<T> Ranked<T> {
-    fn new(rank: Rank, name: &'static str, subject: Arc<str>, value: T) -> Self {
-        Self { id: registry::next(), rank, name, subject, inner: std::sync::Mutex::new(value) }
+    fn new(rank: Rank, name: &'static str, subject: Arc<str>, shared: bool, value: T) -> Self {
+        Self {
+            id: registry::next(),
+            rank,
+            name,
+            subject,
+            held: registry::holds(name),
+            shared,
+            inner: std::sync::Mutex::new(value),
+        }
     }
 }
 
@@ -38,7 +55,14 @@ impl<T: ?Sized> Ranked<T> {
     /// leaves the lock to the next: one panic does not stop every later
     /// holder.
     fn take(&self) -> RankedGuard<'_, T> {
-        let lock = registry::Lock { id: self.id, rank: self.rank, name: self.name, subject: &self.subject };
+        let lock = registry::Lock {
+            id: self.id,
+            rank: self.rank,
+            name: self.name,
+            subject: &self.subject,
+            held: self.held,
+            shared: self.shared,
+        };
         let wait = Wait::begin_blocking(lock);
         let guard = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
         RankedGuard { guard, _hold: wait.held() }
@@ -49,8 +73,14 @@ impl<T: ?Sized> Ranked<T> {
 pub struct SyncMutex<T: ?Sized>(Ranked<T>);
 
 impl<T> SyncMutex<T> {
+    /// A lock over one unit, `subject`.
     pub fn new(rank: Rank, name: &'static str, subject: impl Into<Arc<str>>, value: T) -> Self {
-        Self(Ranked::new(rank, name, subject.into(), value))
+        Self(Ranked::new(rank, name, subject.into(), false, value))
+    }
+
+    /// A lock over many units at once.
+    pub fn shared(rank: Rank, name: &'static str, value: T) -> Self {
+        Self(Ranked::new(rank, name, name.into(), true, value))
     }
 }
 
@@ -68,8 +98,14 @@ impl<T: ?Sized> SyncMutex<T> {
 pub struct MemoryMutex<T: ?Sized>(Ranked<T>);
 
 impl<T> MemoryMutex<T> {
+    /// A lock over one unit, `subject`.
     pub fn new(rank: Rank, name: &'static str, subject: impl Into<Arc<str>>, value: T) -> Self {
-        Self(Ranked::new(rank, name, subject.into(), value))
+        Self(Ranked::new(rank, name, subject.into(), false, value))
+    }
+
+    /// A lock over many units at once.
+    pub fn shared(rank: Rank, name: &'static str, value: T) -> Self {
+        Self(Ranked::new(rank, name, name.into(), true, value))
     }
 }
 

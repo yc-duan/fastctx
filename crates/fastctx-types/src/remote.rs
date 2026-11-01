@@ -37,6 +37,9 @@ pub enum RemoteCall {
     Plan {
         resident: ResidentId,
         operation: crate::plan::Operation,
+        /// Another conversation's plan to read; the resident's own when absent.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        of: Option<crate::plan::Of>,
     },
     Collaboration {
         resident: ResidentId,

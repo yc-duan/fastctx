@@ -24,7 +24,7 @@ pub(in crate::link) async fn take(inner: Arc<Inner>, epoch: u64, run: Vec<(u64, 
         let mut recent = HashMap::new();
         let mut last = None;
         for (sequence, message) in run {
-            if !taken.is_some_and(|(known, taken)| known == epoch && sequence <= taken) {
+            if crate::window::unheld(taken, epoch, sequence) {
                 let reference = Reference { authority: inner.hub.as_str().to_owned(), epoch, sequence };
                 match one(&inner, &message, &mut recent, &reference).await {
                     Ok(Some((from, id, receipt))) => pending.push((from, id, receipt, reference)),
@@ -45,8 +45,7 @@ pub(in crate::link) async fn take(inner: Arc<Inner>, epoch: u64, run: Vec<(u64, 
         inner
             .blocking(move || {
                 keeping.change_letters(|letters| {
-                    let taken = letters.file.taken;
-                    let further = !taken.is_some_and(|(known, taken)| known == epoch && sequence <= taken);
+                    let further = crate::window::unheld(letters.file.taken, epoch, sequence);
                     if further {
                         letters.file.taken = Some((epoch, sequence));
                     }

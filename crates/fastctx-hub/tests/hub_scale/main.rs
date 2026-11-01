@@ -34,17 +34,13 @@ impl Drop for HubProcess {
 fn main() -> anyhow::Result<()> {
     fastctx_platform::limits::raise_open_files()?;
     let args: Vec<_> = std::env::args().skip(1).collect();
-    let runtime = tokio::runtime::Builder::new_multi_thread()
-        .worker_threads(if args.first().is_some_and(|arg| arg == "hub") { 2 } else { 4 })
-        .max_blocking_threads(32)
-        .enable_all()
-        .build()?;
+    let mut threads = tokio::runtime::Builder::new_multi_thread();
+    threads.worker_threads(if args.first().is_some_and(|arg| arg == "hub") { 2 } else { 4 }).max_blocking_threads(32);
     if args.first().is_some_and(|arg| arg == "hub") {
-        return runtime.block_on(fastctx_hub::serve(
-            Path::new(&args[1]),
-            fastctx_hub::Leave { remove_service: Box::new(|_| Ok(String::new())) },
-        ));
+        let leave = fastctx_hub::Leave { remove_service: Box::new(|_| Ok(String::new())) };
+        return fastctx_hub::run(Path::new(&args[1]), leave, threads);
     }
+    let runtime = threads.enable_all().build()?;
     let value =
         |flag: &str| args.iter().position(|arg| arg == flag).and_then(|at| args.get(at + 1)).map(String::as_str);
     let root = PathBuf::from(
@@ -255,6 +251,11 @@ async fn drill(
         );
     }
     anyhow::ensure!(final_health["lock_order_violations"].as_u64() == Some(0), "lock order violations occurred");
+    anyhow::ensure!(
+        final_health["violations"].as_u64() == Some(0),
+        "the hub broke the threads' rules: {}",
+        final_health["violated"]
+    );
     println!(
         "PASS hub scale: {count} reconnected in {reconnect_ms} ms, {STABLE} continuously connected members stayed online"
     );

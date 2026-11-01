@@ -129,6 +129,9 @@ fn now(hub: &Hub) -> serde_json::Value {
         "sessions": queues.len(),
         "locks": [hub.sessions.measurements(), hub.given.measurements(), hub.calls.measurements(), hub.data.measurements(), hub.ledgers.measurements(), hub.afoots.measurements(), hub.updates.measurements(), hub.pending_presence.measurements(), hub.troubles.measurements()],
         "lock_order_violations": fastctx_platform::doing::violations(),
+        // The threads' rules broken, by kind and place (`fastctx_platform::conduct`).
+        "violations": fastctx_platform::conduct::total(),
+        "violated": fastctx_platform::conduct::snapshot(),
         // How long tasks waited for a thread on each runtime (`fastctx_platform::task::watch`).
         "runtime": fastctx_platform::readings::snapshot().timings.into_iter().filter(|timing| timing.name.starts_with("runtime.hub")).collect::<Vec<_>>(),
         "opened_in_5_minutes": opened,

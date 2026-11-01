@@ -1,5 +1,7 @@
 //! Model-facing context wording, kept together for editorial changes.
 
+use fastctx_types::ResidentId;
+
 pub(super) fn changed(name: &str, by: &str) -> String {
     format!("{by} changed the {name} context; this replaces the previous version.")
 }
@@ -30,10 +32,10 @@ pub(super) const PLAN_OLD_HUB: &str =
 pub(super) const PLAN_NOT_PREPARED: &str =
     "The plan file could not be prepared, so there is no plan file to edit this turn.";
 
-/// How a conversation keeps its plan (`world-plan.md`, 交给模型的那段说明).
-/// How to keep a plan, for a conversation that keeps its own: the plan is
-/// the Markdown file at `path` on `machine` (`plan_file`).
-pub(super) fn plan_guide(path: &str, machine: &str, replicated: bool) -> String {
+/// How a conversation keeps its plan (`world-plan.md`, 交给模型的那段说明):
+/// the Markdown file at `path` on `machine`. `asker` is the conversation
+/// that asked a colleague, which reads the colleague's plan.
+pub(super) fn plan_guide(path: &str, machine: &str, replicated: bool, asker: Option<&ResidentId>) -> String {
     // Sentinels are not offered in a release yet (`world.md`,
     // 这一版不发的).
     let live = if fastctx_platform::preview() {
@@ -43,42 +45,63 @@ pub(super) fn plan_guide(path: &str, machine: &str, replicated: bool) -> String 
         "- For how a colleague or a job stands right now. Write its id (codex-7f3a,
   j-k3x9a2) and the panel shows its state, live."
     };
-    let text = format!(
+    let kept = if replicated {
+        "It is the user's, shown to them beside the conversation, and Fastctx keeps it in sync on all their computers."
+    } else {
+        "The user sees it beside the conversation."
+    };
+    let reaches = if replicated { ", which reaches all their computers," } else { "" };
+    let readers = match asker {
+        Some(asker) => format!("{asker}, the conversation that asked you"),
+        None => "the colleagues you ask".to_string(),
+    };
+    format!(
         r#"YOUR PLAN
 
-Your plan is the Markdown file {path} on {machine}. It is the user's, shown to
-them beside the conversation, and Fastctx keeps it in sync on all their
-computers. Plan your own work in it:
-what the work is, its steps in the order you will take them, what has been
-decided. Unless the user set the order, choose it yourself rather than
-taking things as they were mentioned: first what later steps depend on and
-what could lose data or carries the most risk, polish last. Write it
-yourself, unasked, before you start anything that takes real effort, then
-work through it in that order. Change it only with `edit` or
-`write`; each change you save is its next version, which reaches all their
-computers, and the user can change it too. The colleagues you ask can read it.
+Your plan is the Markdown file {path} on {machine}. {kept}
+It says where your work stands, for whoever picks it up next: you once your context is
+compacted or cleared, {readers}, and the user looking in. Write it so that
+any of them, reading only the plan, could carry on: what the work is for, how you are going
+about it and why in that order, what has been decided, what is done and what came of it,
+and for each part still open enough to start it: what it is, where, and how you will know
+it is done. Keep what you found that the work ahead depends on.
 
-## Progress
-Progress is a checklist: `- [ ] step` for each step, `- [x] step` once it is
-done. Tick a step when it is done; add, reword or drop steps as the work
-changes. Nothing else marks where the work stands.
+Unless the user set the order, choose it yourself rather than taking things as they were
+mentioned: first what later steps depend on and what could lose data or carries the most
+risk, polish last. Write the plan yourself, unasked, before you start anything that takes
+real effort, then work through it in that order. Change it only with `edit` or `write`;
+each change you save is its next version{reaches} and the user can change it too.
+
+## How to write it
+There is no set form; the work decides it. A checklist (`- [ ] step`, `- [x] step` once
+done) suits a run of steps, a few paragraphs suit one problem being worked out, a table
+suits things weighed side by side. Put first what a reader needs first, where the work
+stands and what comes next, and the detail after. Rewrite it in place as the work moves, so
+that it always reads as where things stand rather than as a log of how they got there, and
+say each thing once, where it belongs. When a part is done, keep what came of it and drop
+how you got there.
+
+The plan holds how this work stands, and changes as it moves. What will still matter when
+it is over, a decision of the user's, a finding that took real work, a path that failed and
+why, goes in the history, and a line here can point to it.
 
 ## When to change it
-- Before work that is more than a quick answer or a small change: lay out
-  its steps.
-- When a step is done, or the plan itself changes: a decision, a step
-  added, dropped or moved.
+- Before work that is more than a quick answer or a small change: lay it out.
+- When the work moves on: a part is done, something is decided, the way ahead changes, or
+  you find something the work ahead depends on.
 
 ## When not to
-- For what you can finish at once: a question answered, a quick look, a
-  small fix.
+- For what you can finish at once: a question answered, a quick look, a small fix.
+- When a turn settles nothing and moves nothing on, however much happened in it.
+- For the play-by-play: the commands you ran and what each printed stay in the
+  conversation.
 {live}
 
 ## What it can hold
-Markdown in the user's language, short enough to take in at a glance. A #
-line of a few words names the work; the user's request can stand under it
-as a > quote. Besides paragraphs, checklists, lists and tables, a few blocks
-draw pictures; use one where it says more than sentences:
+Markdown in the user's language, as long as someone needs to carry on from it and no
+longer. A # line of a few words names the work; the user's request can stand under it as a
+> quote. Besides paragraphs, checklists, lists and tables, a few blocks draw pictures; use
+one where it says more than sentences:
 
   ```flow       how the steps connect, best as one chain: A -> B -> C
                 A -> B: note   says something about the way into B.
@@ -94,14 +117,10 @@ draw pictures; use one where it says more than sentences:
 
 ## Tips
 - Read the file before you change it; the user may have changed it.
-- Name a step the same way every time you write it."#
-    );
-    if replicated {
-        text
-    } else {
-        text.replace("It is the user's, shown to\nthem beside the conversation, and Fastctx keeps it in sync on all their\ncomputers.", "The user sees it beside the conversation.")
-            .replace("which reaches all their\ncomputers, and the user can change it too.", "and the user can change it too.")
-    }
+- Write what holds whenever it is read: a date rather than "today", a part's name rather
+  than "this round", a file and a function rather than a line number, which moves.
+- Name a part the same way every time you write it."#
+    )
 }
 
 pub(super) const USER: &str = "The user";

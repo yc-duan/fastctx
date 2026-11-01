@@ -480,6 +480,9 @@ async fn connected(
     // wait behind letters and answers the hub queued before it.
     let mut heard = Instant::now();
     let mut last_ping = 0;
+    // The hub's answers to the heartbeats, which come as regularly as the
+    // hub answers.
+    let mut pongs = crate::beats::Beats::new("link.pong", "link.pong.late");
     // A check asked since the hub was last heard, and how long it waits;
     // and when it was asked.
     let mut checking: Option<Instant> = None;
@@ -582,6 +585,7 @@ async fn connected(
                 }
                 if n > last_ping {
                     last_ping = n;
+                    pongs.beat();
                     let mut pinged = pinged.lock().expect("never poisoned");
                     if let Some(sent) = pinged.remove(&n) {
                         let ms = super::line::millis(sent.elapsed());
@@ -868,8 +872,10 @@ async fn heartbeat(
     pulse: Arc<crate::pulse::Pulse>,
 ) {
     let mut n = 0;
+    let mut beats = crate::beats::Beats::from_now("link.heartbeat", "link.heartbeat.late");
     loop {
         tokio::time::sleep(HEARTBEAT).await;
+        beats.beat();
         n += 1;
         let paths = inner.view().direct_links.then(|| inner.paths());
         pinged.lock().expect("never poisoned").insert(n, Instant::now());
@@ -966,12 +972,6 @@ fn refused_letter(inner: &Inner, seq: u64, reason: &str) -> std::io::Result<()> 
     Ok(())
 }
 
-/// The most letters this machine has sent the hub that the hub has not yet
-/// said it holds, and the most bytes of them: the rest wait their turn on
-/// disk, so a long backlog never fills the connection.
-const WINDOW: usize = 256;
-const WINDOW_BYTES: usize = 8 * 1024 * 1024;
-
 /// How many of the hub's letters are taken before the hub is told, at once,
 /// that they are.
 const TAKEN_AT_ONCE: usize = 64;
@@ -981,12 +981,14 @@ const TAKEN_AT_ONCE: usize = 64;
 const DELIVERIES: usize = 1024;
 
 /// Sends the letters in the outbox past `sent`, in order, a window at a
-/// time, and each new one as there is room for it. Letters are numbered one
-/// after another, so the next is known without listing the outbox; one not
-/// there was held by the hub, or set aside, meanwhile.
-async fn flush(inner: Arc<Inner>, up: Outgoing, mut sent: u64, failed: oneshot::Sender<String>) {
+/// time (`crate::window`), and each new one as there is room for it: the
+/// rest wait their turn on disk, so a long backlog never fills the
+/// connection. Letters are numbered one after another, so the next is known
+/// without listing the outbox; one not there was held by the hub, or set
+/// aside, meanwhile.
+async fn flush(inner: Arc<Inner>, up: Outgoing, sent: u64, failed: oneshot::Sender<String>) {
     let outbox = Outbox::new(&inner.dir);
-    let mut on_way: std::collections::VecDeque<(u64, usize)> = std::collections::VecDeque::new();
+    let mut window = crate::window::Sending::from(sent);
     loop {
         // Asked for before looking: a letter put, or the hub holding some,
         // between the two wakes it all the same.
@@ -995,29 +997,22 @@ async fn flush(inner: Arc<Inner>, up: Outgoing, mut sent: u64, failed: oneshot::
             let letters = inner.letters.lock().expect("never poisoned");
             (letters.file.held, letters.next)
         };
-        while on_way.front().is_some_and(|(seq, _)| *seq <= held) {
-            on_way.pop_front();
-        }
-        sent = sent.max(held);
-        while sent + 1 < next
-            && on_way.len() < WINDOW
-            && on_way.iter().map(|(_, size)| size).sum::<usize>() < WINDOW_BYTES
-        {
-            let seq = sent + 1;
+        window.skip_through(held);
+        while window.sent() + 1 < next && window.room() {
+            let seq = window.sent() + 1;
             match outbox.get_sized(seq) {
                 Ok(Some((message, size))) => {
                     if up.send(Up::Send { seq, message }).is_err() {
                         return;
                     }
-                    on_way.push_back((seq, size));
+                    window.went(seq, Some(size as u64));
                 }
-                Ok(None) => {}
+                Ok(None) => window.went(seq, None),
                 Err(error) => {
                     let _ = failed.send(format!("reading letter {seq} from the outbox: {error}"));
                     return;
                 }
             }
-            sent = seq;
         }
         changed.await;
     }

@@ -342,11 +342,12 @@ function troubles(): Trouble[] {
     { id: 43, at: hoursAgo(97), kind: "outage", count: 6 },
     { id: 44, at: hoursAgo(96.8), machine: "server", kind: "silent", seconds: 30 },
     { id: 45, at: hoursAgo(70), machine: "gpu", kind: "near", near: { bound: "link.frames", used: 93 } },
-    { id: 46, at: hoursAgo(30), machine: "lab", kind: "drops", count: 5 },
-    { id: 47, at: hoursAgo(26), machine: "server", kind: "silent", seconds: 30 },
-    { id: 48, at: hoursAgo(5), kind: "rollout", version: "1.1.0-beta.1" },
-    { id: 49, at: hoursAgo(1.2), machine: "laptop", kind: "stuck", seconds: 74 },
-    { id: 50, at: hoursAgo(0.4), machine: "server", kind: "stuck", seconds: 61 },
+    { id: 46, at: hoursAgo(44), machine: "gpu", kind: "damaged" },
+    { id: 47, at: hoursAgo(30), machine: "lab", kind: "drops", count: 5 },
+    { id: 48, at: hoursAgo(26), machine: "server", kind: "silent", seconds: 30 },
+    { id: 49, at: hoursAgo(5), kind: "rollout", version: "1.1.0-beta.1" },
+    { id: 50, at: hoursAgo(1.2), machine: "laptop", kind: "stuck", seconds: 74 },
+    { id: 51, at: hoursAgo(0.4), machine: "server", kind: "stuck", seconds: 61 },
   ];
 }
 

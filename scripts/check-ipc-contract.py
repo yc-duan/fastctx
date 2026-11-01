@@ -14,6 +14,7 @@ replies, in the shapes they read, with the types they were built with
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 import sys
 
@@ -39,6 +40,13 @@ SHIPPED = {
 
 def git(*args):
     return subprocess.check_output(["git", *args], cwd=ROOT)
+
+
+def shapes_of(revision):
+    """The reply shapes an interface of the release at `revision` says it reads."""
+    source = git("show", f"{revision}:crates/fastctx-types/src/ipc.rs").decode()
+    found = re.search(r"pub const SHAPES: u32 = (\d+);", source)
+    return int(found.group(1)) if found else 0
 
 
 # The dependencies every reader takes as the workspace gave them; the rest a
@@ -110,6 +118,11 @@ jiff = { version = "0.2", features = ["serde"] }
     (WORK / "src").mkdir(exist_ok=True)
     source = (ROOT / "scripts/ipc-contract/readers.rs").read_text(encoding="utf-8")
     source = source.replace("COMPAT_PATH", (ROOT / "crates/fastctx-node/src/renewal_legacy.rs").as_posix())
+    # Every shipped release reads with its own types: its arms come from SHIPPED,
+    # so a release added there is checked without another list to keep.
+    for placeholder, call in (("// SHIPPED_DECODE", "read"), ("// SHIPPED_WELCOME", "welcome")):
+        assert source.count(placeholder) == 1, placeholder
+        source = source.replace(placeholder, " ".join(f'"{reader}" => {call}!({reader}),' for reader in SHIPPED))
     (WORK / "src/main.rs").write_text(source, encoding="utf-8")
     (WORK / "Cargo.lock").write_bytes((ROOT / "Cargo.lock").read_bytes())
     env = {key: value for key, value in os.environ.items() if not key.upper().startswith("CLAUDE")}
@@ -127,7 +140,7 @@ jiff = { version = "0.2", features = ["serde"] }
 def verify(reader):
     sys.path.insert(0, str(ROOT / "scripts/ipc-contract"))
     from samples import samples
-    corpus = list(samples(ROOT))
+    corpus = list(samples(ROOT, {reader: shapes_of(revision) for reader, revision in SHIPPED.items()}))
     process = subprocess.run([str(reader)], input="".join(json.dumps(case) + "\n" for case in corpus),
                              encoding="utf-8", capture_output=True)
     if process.returncode:
@@ -140,10 +153,16 @@ def verify(reader):
     for case, answer in zip(corpus, answers):
         if case["mode"] in ("request", "current_request"):
             assert answer["admitted"] == case["admitted"], (case, answer)
+        elif case["mode"] == "world":
+            # An interface of that release reads the whole World it is sent.
+            assert answer["read"]["world"]["here"] == case["value"]["here"], (case, answer)
         elif case["mode"] == "welcome":
-            # The node's lifetime is read from protocol 8 on; older readers drop it.
-            expected = {key: value for key, value in case["value"].items() if key != "node_lifetime" or case["protocol"] >= 8}
-            assert answer["read"] == expected, (case, answer)
+            # Each field a reader knows reads as the node sent it; the node's
+            # lifetime is read from protocol 8 on, and older readers drop it.
+            read, wire = answer["read"], answer["wire"]
+            assert all(wire.get(key) == value for key, value in read.items()), (case, answer)
+            assert {"kind", "machine", "version"} <= read.keys(), (case, answer)
+            assert ("node_lifetime" in read) == ("node_lifetime" in case["value"] and case["protocol"] >= 8), (case, answer)
         else:
             wire = answer["wire"]
             if case.get("text_result"):

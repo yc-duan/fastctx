@@ -12,7 +12,6 @@ use std::time::{Duration, Instant, SystemTime};
 
 use fastctx_types::ResidentId;
 use fastctx_types::plan::Page;
-use fastctx_types::residents::Origin;
 
 use crate::Node;
 
@@ -149,12 +148,7 @@ async fn look(node: &Arc<Node>, wanted: &ResidentId) {
     let held: Vec<ResidentId> = node
         .residents
         .on_record(wanted)
-        .filter(|held| {
-            held.here
-                && held.removed.is_none()
-                && held.about.world_managed()
-                && matches!(held.about.origin, Origin::User)
-        })
+        .filter(|held| held.here && held.removed.is_none() && held.about.world_managed())
         .map(|held| held.id)
         .into_iter()
         .collect();
@@ -208,7 +202,7 @@ async fn look(node: &Arc<Node>, wanted: &ResidentId) {
         // with no hub to keep it, the file is taken as it is.
         let Some(before) = before else {
             if let Some((about, _)) = node.residents.about(&id) {
-                let _ = crate::plan::context(node, &id, &about.origin, &about.acting).await;
+                let _ = crate::plan::context(node, &id, &about.acting).await;
             }
             let text = now.is_none().then(|| hash(""));
             node.plan_files.0.lock().expect("never poisoned").entry(id.clone()).or_insert(Synced {
@@ -265,7 +259,7 @@ async fn look(node: &Arc<Node>, wanted: &ResidentId) {
 /// what the file was last seen to hold.
 pub(crate) fn pulled(node: &Node, id: &ResidentId, page: &Page) {
     let Some((about, _)) = node.residents.about(id) else { return };
-    if !about.world_managed() || !matches!(about.origin, Origin::User) || allowed(node, id) != Ok(true) {
+    if !about.world_managed() || allowed(node, id) != Ok(true) {
         return;
     }
     if let Ok(Some(account)) = crate::plan::file_account(node, id, &about.acting)

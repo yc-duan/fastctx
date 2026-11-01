@@ -29,11 +29,25 @@ export interface TroubleWords {
 
 /** Whether a trouble is a fault, drawn in its colour, or a warning. */
 export function troubleTone(kind: Trouble["kind"]): "fault" | "warning" {
-  return kind === "silent" || kind === "stuck" || kind === "outage" ? "fault" : "warning";
+  return kind === "silent" || kind === "stuck" || kind === "outage" || kind === "damaged" ? "fault" : "warning";
 }
 
-const zhBounds: Record<string, string> = { "link.frames": "发往中枢服务器的队列", "log.waiting": "日志队列", "hub.input": "接收队列" };
-const enBounds: Record<string, string> = { "link.frames": "Queue to the hub", "log.waiting": "Log queue", "hub.input": "Incoming queue" };
+const zhBounds: Record<string, string> = {
+  "link.frames": "发往中枢服务器的队列",
+  "log.waiting": "日志队列",
+  "hub.input": "接收队列",
+  "storage.node.writes": "记录的写入队列",
+  "storage.book.writes": "活动账本的写入队列",
+  "storage.hub.writes": "中枢记录的写入队列",
+};
+const enBounds: Record<string, string> = {
+  "link.frames": "Queue to the hub",
+  "log.waiting": "Log queue",
+  "hub.input": "Incoming queue",
+  "storage.node.writes": "Record write queue",
+  "storage.book.writes": "Activity book write queue",
+  "storage.hub.writes": "Hub record write queue",
+};
 
 /** A bound by its plain name; one this release does not know, as named. */
 export const zhBound = (bound: string): string => zhBounds[bound] ?? bound;
@@ -56,6 +70,8 @@ const enTitle = (trouble: Trouble, what: string): string => {
       return `${machine} is stuck`;
     case "near":
       return `${machine} is near a limit`;
+    case "damaged":
+      return `${machine} has damaged records`;
     case "violations":
       return `${machine} is misbehaving`;
     default:
@@ -81,6 +97,8 @@ export const zhTroubles: TroubleWords = {
         return "卡住";
       case "near":
         return "快到上限";
+      case "damaged":
+        return "记录损坏";
       case "violations":
         return "运行异常";
       case "outage":
@@ -104,6 +122,8 @@ export const zhTroubles: TroubleWords = {
         return trouble.seconds ? `有任务 ${trouble.seconds} 秒没有进展` : "";
       case "near":
         return near;
+      case "damaged":
+        return "部分记录可能已经丢失";
       case "violations":
         return "本机服务持续违反运行规则";
       case "hub":
@@ -134,6 +154,8 @@ export const enTroubles: TroubleWords = {
         return "Stuck";
       case "near":
         return "Near a limit";
+      case "damaged":
+        return "Records damaged";
       case "violations":
         return "Misbehaving";
       case "outage":
@@ -157,6 +179,8 @@ export const enTroubles: TroubleWords = {
         return trouble.seconds ? `Work stalled for ${trouble.seconds} s` : "";
       case "near":
         return near;
+      case "damaged":
+        return "Some records may be lost";
       case "violations":
         return "Its local service keeps breaking its rules";
       case "hub":

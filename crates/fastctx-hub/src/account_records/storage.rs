@@ -143,7 +143,6 @@ impl Records {
             "keys": accounts.values().map(|slot| slot.count.load(Ordering::Relaxed)).sum::<usize>(),
             "bytes": accounts.values().map(|slot| slot.bytes.load(Ordering::Relaxed)).sum::<usize>(),
             "body_limit": fastctx_types::account_records::MAX_BODY_BYTES,
-            "account_limit": fastctx_types::account_records::MAX_ACCOUNT_BYTES,
             "kind_key_limit": fastctx_types::account_records::MAX_KIND_KEYS,
         })
     }

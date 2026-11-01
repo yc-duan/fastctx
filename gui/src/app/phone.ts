@@ -65,6 +65,7 @@ function troubleTemplates(words: TroubleWords): { titles: Record<string, string>
     ["drops", of("drops", true)],
     ["stuck", of("stuck", true)],
     ["near", of("near", true, true)],
+    ["damaged", of("damaged", true)],
     ["violations", of("violations", true)],
     ["other", of("other", true)],
     ["outage", of("outage", false)],

@@ -598,6 +598,8 @@ async fn converse(node: &Arc<Node>, connection: Connection) -> std::io::Result<(
             continue;
         }
         let arriving = matches!(&call, Call::Arrive { host, hints } if host.agent.as_str() != "claude" && hints.tool_use_id.is_none());
+        // From the door to the answer written, under the call's kind.
+        let timed = fastctx_platform::readings::timing_of("call", &crate::labels::kind_of(&call));
         // What only reads or waits stops once its client is gone; a change
         // is done whole (`Call::on_leaving`). A copy goes on through every
         // break while its caller waits for it, and stops once it is gone.
@@ -670,6 +672,7 @@ async fn converse(node: &Arc<Node>, connection: Connection) -> std::io::Result<(
         }
         writer.send(&crate::renewal_legacy::frame(hello.protocol, id, &reply)).await?;
         writer.drain().await?;
+        timed.record(requested.elapsed());
     }
     Ok(())
 }
@@ -1693,8 +1696,8 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
                 .await
                 .map(|configuration| Reply::ClaudeSubagents { configuration })
         }
-        Call::Plan { hub, account, operation } => {
-            crate::plan::call(node, &caller::of(node, peer)?, hub, account, operation)
+        Call::Plan { hub, account, operation, of } => {
+            crate::plan::call(node, &caller::of(node, peer)?, hub, account, operation, of)
                 .await
                 .map(|result| Reply::Plan { result })
         }

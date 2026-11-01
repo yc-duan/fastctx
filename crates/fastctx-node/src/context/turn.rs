@@ -14,7 +14,7 @@ pub(crate) async fn prepare(node: &Arc<Node>, id: &ResidentId) -> Result<(Vec<St
         .await
         .map_err(|error| Failure::new(error.to_string()))?;
     node.plan_reads.invalidate(id);
-    crate::plan::context(node, id, &about.origin, &about.acting).await?;
+    crate::plan::context(node, id, &about.acting).await?;
     super::sources::skills(node, id, &about.acting).await?;
     super::sources::map(node, id, town.as_ref(), &about.origin, &about.acting).await?;
     super::blocking::with(node, id, super::collect).await.map_err(crate::record_migration::failure)

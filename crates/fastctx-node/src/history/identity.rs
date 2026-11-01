@@ -7,7 +7,6 @@ use fastctx_types::{
     ipc::Failure,
     project::Stamp,
     remote::{RemoteCall, RemoteReply},
-    residents::Origin,
 };
 use std::sync::Arc;
 
@@ -21,11 +20,6 @@ pub(crate) async fn scoped(
     acting: &fastctx_types::access::Acting,
 ) -> Result<Author, Failure> {
     let about = get(node, caller, acting).await?;
-    if about.as_ref().is_some_and(|about| matches!(about.origin, Origin::Colleague { .. })) {
-        return Err(Failure::refused(
-            "colleagues read plans and history; give findings to the conversation that asked you",
-        ));
-    }
     Ok(Author {
         stamp: Stamp { by: caller.writer(), on: Some(node.machine()), at: jiff::Timestamp::now() },
         host: about.as_ref().map(|about| about.host.clone()),
@@ -68,16 +62,6 @@ async fn get(
                     .about,
             )
         }
-        _ => return Err(Failure::refused("only a user or a primary conversation writes history")),
+        _ => return Err(Failure::refused("only a user or a conversation writes history")),
     })
-}
-
-pub(crate) async fn read_only(node: &Arc<Node>, caller: &Caller) -> Result<bool, Failure> {
-    match caller {
-        Caller::User => Ok(false),
-        Caller::Resident(_) => Ok(get(node, caller, &crate::around::acting_of(node, caller))
-            .await?
-            .is_some_and(|about| matches!(about.origin, Origin::Colleague { .. }))),
-        _ => Ok(true),
-    }
 }

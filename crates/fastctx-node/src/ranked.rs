@@ -47,8 +47,29 @@ pub(crate) fn listing<T>(login: &impl Display) -> Mutex<Option<T>> {
 }
 
 /// A lock over many conversations, held by a struct that is made by
-/// `Default`: a named field type that makes the lock in its place.
+/// `Default`: a named field type that makes the lock in its place. A
+/// `shared` one guards records and is held only briefly
+/// (`fastctx_platform::doing::SyncMutex::shared`); the others keep one kind
+/// of work to one task at a time.
 macro_rules! machine_lock {
+    ($(#[$doc:meta])* $name:ident: shared $lock:ident = $rank:ident, $label:literal) => {
+        $(#[$doc])*
+        pub(crate) struct $name(fastctx_platform::doing::$lock<()>);
+
+        impl Default for $name {
+            fn default() -> Self {
+                Self(fastctx_platform::doing::$lock::shared(fastctx_platform::doing::Rank::$rank, $label, ()))
+            }
+        }
+
+        impl std::ops::Deref for $name {
+            type Target = fastctx_platform::doing::$lock<()>;
+
+            fn deref(&self) -> &Self::Target {
+                &self.0
+            }
+        }
+    };
     ($(#[$doc:meta])* $name:ident: $lock:ident = $rank:ident, $label:literal) => {
         $(#[$doc])*
         pub(crate) struct $name(fastctx_platform::doing::$lock<()>);
@@ -113,9 +134,9 @@ machine_lock!(
 machine_lock!(
     /// Jobs' records kept from collection while they are made, read or
     /// changed.
-    Disk: SyncMutex = DISK, "disk"
+    Disk: shared SyncMutex = DISK, "disk"
 );
 machine_lock!(
     /// Conversations' records, each read and written as one transaction.
-    Records: SyncMutex = RECORDS, "records"
+    Records: shared SyncMutex = RECORDS, "records"
 );

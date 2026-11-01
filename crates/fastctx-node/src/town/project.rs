@@ -38,8 +38,7 @@ pub async fn call(node: &Arc<Node>, caller: &Caller, call: ProjectCall) -> Resul
         ProjectCall::Map { town } => {
             let town = caller.town_or(node, town)?;
             map::query(node, &town).await?;
-            let read_only = crate::history::identity::read_only(node, caller).await?;
-            let mut map = map::view_for(node, &town, &crate::around::acting_of(node, caller), read_only).await?;
+            let mut map = map::view(node, &town, &crate::around::acting_of(node, caller)).await?;
             seen(node, caller, &town, &mut map.record)?;
             Ok(Reply::Map { map: Box::new(map) })
         }

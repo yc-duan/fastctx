@@ -71,6 +71,14 @@ impl Lag {
 
 static STUCK: AtomicU32 = AtomicU32::new(0);
 
+static DAMAGED: RwLock<Option<&'static str>> = RwLock::new(None);
+
+/// Notes that the store `name` of this process's records was found damaged;
+/// the health tells of it from then on.
+pub fn damaged(name: &'static str) {
+    *DAMAGED.write().unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(name);
+}
+
 /// How many of this process's tasks are stuck now.
 pub fn set_stuck(stuck: usize) {
     STUCK.store(u32::try_from(stuck).unwrap_or(u32::MAX), Ordering::Relaxed);
@@ -145,5 +153,6 @@ pub fn summary() -> Health {
         stuck: STUCK.load(Ordering::Relaxed),
         violations: crate::conduct::total(),
         near,
+        damaged: DAMAGED.read().unwrap_or_else(|poisoned| poisoned.into_inner()).map(str::to_string),
     }
 }

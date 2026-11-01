@@ -43,5 +43,3 @@ then add the words they may search with: how the trouble shows (symptoms, error 
 names in the code, the general term for it, and the same in the user's other language if
 there is one. When a search misses a file that you then find another way, add the words you
 searched with to its description."####;
-
-pub const READ_ONLY: &str = "READ ONLY: this history is for you to read. Give what should go in it, with the paths of the\nevidence, to the conversation that asked you.";

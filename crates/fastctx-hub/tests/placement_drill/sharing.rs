@@ -71,7 +71,7 @@ pub(super) async fn exercise(
             fastctx_types::agents::Choices { home: Some(home.to_path_buf()), ..Default::default() },
         )
         .await?;
-    anyhow::ensure!(idle(host, shared.to.resident.as_str()).await, "shared birth did not settle");
+    anyhow::ensure!(idle_after(host, shared.to.resident.as_str(), None).await, "shared birth did not settle");
     let scope = history(&shared.to);
     let mut watch = owner.watch_plan(None, None, shared.to.resident.clone()).await?;
     tokio::time::timeout(Duration::from_secs(20), watch.next()).await??;
@@ -179,7 +179,10 @@ pub(super) async fn exercise(
             fastctx_types::agents::Choices { home: Some(home.to_path_buf()), ..Default::default() },
         )
         .await?;
-    anyhow::ensure!(idle(host, doomed.to.resident.as_str()).await, "the shared deletion fixture did not settle");
+    anyhow::ensure!(
+        idle_after(host, doomed.to.resident.as_str(), None).await,
+        "the shared deletion fixture did not settle"
+    );
     bob.history(HistoryCall::Save {
         scope: history(&doomed.to),
         name: "delete-record".into(),

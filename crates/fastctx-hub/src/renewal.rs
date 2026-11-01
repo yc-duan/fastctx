@@ -41,7 +41,7 @@ pub(crate) async fn replaced() -> String {
 /// What tells a replaced file from the one there before without reading it.
 #[cfg(unix)]
 fn shape(path: &std::path::Path) -> Option<(u64, std::time::SystemTime)> {
-    let metadata = std::fs::metadata(path).ok()?;
+    let metadata = fastctx_platform::disk::metadata(path).ok()?;
     Some((metadata.len(), metadata.modified().ok()?))
 }
 

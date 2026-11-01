@@ -11,7 +11,7 @@ use fastctx_types::{
     ipc::Failure,
     plan::{self, Author, Operation, Page, words},
     remote::{RemoteCall, RemoteReply},
-    residents::{About, Origin},
+    residents::About,
 };
 use serde::{Deserialize, Serialize};
 
@@ -57,12 +57,13 @@ pub(crate) async fn call(
     hub: Option<HubName>,
     account: Option<AccountName>,
     operation: Operation,
+    of: Option<plan::Of>,
 ) -> Result<plan::Result, Failure> {
     let Caller::Resident(address) = caller else {
         return Err(Failure::not_run(words::RESIDENT));
     };
     if node.is_me(&address.machine) {
-        return here(node, &address.resident, hub.as_ref(), account.as_ref(), None, operation).await;
+        return here(node, &address.resident, hub.as_ref(), account.as_ref(), None, operation, of).await;
     }
     let mut choices = Vec::new();
     for acting in crate::jobs::running_for(&node.world, &node.names(), address) {
@@ -85,7 +86,7 @@ pub(crate) async fn call(
     if !link.view().conversation_plans {
         return Err(Failure::not_run(words::OLDER));
     }
-    let call = RemoteCall::Plan { resident: address.resident.clone(), operation };
+    let call = RemoteCall::Plan { resident: address.resident.clone(), operation, of };
     match link
         .call(&address.machine, &acting.account, Purpose::Echo, call)
         .await
@@ -103,19 +104,14 @@ pub(crate) async fn here(
     account: Option<&AccountName>,
     requesting: Option<&HubAccount>,
     operation: Operation,
+    of: Option<plan::Of>,
 ) -> Result<plan::Result, Failure> {
     let gate = node.residents.management(id)?;
     let _one = crate::gate_waits::alone(node, id, &gate).await?;
     node.residents.active(id)?;
     crate::context::plugin_heard(node, id).map_err(|error| Failure::new(error.to_string()))?;
     let (about, _) = node.residents.about(id).ok_or_else(|| Failure::refused(words::RESIDENT))?;
-    let (whose, colleague) = match &about.origin {
-        Origin::Colleague { asked_by, .. } => (asked_by.clone(), true),
-        Origin::User => (Address { machine: about.machine.clone(), resident: id.clone() }, false),
-    };
-    if colleague && matches!(operation, Operation::Write { .. }) {
-        return Err(Failure::refused(words::READ_ONLY));
-    }
+    let whose = Address { machine: about.machine.clone(), resident: id.clone() };
     let previous = seen(node, id)?;
     let caller = Caller::Resident(Address { machine: node.machine(), resident: id.clone() });
     let selected = requesting.or_else(|| {
@@ -136,6 +132,12 @@ pub(crate) async fn here(
     let scope = HubAccount { hub: link.membership().id, account: account.clone() };
     let result = match operation {
         Operation::Read => {
+            // Another conversation's plan is read as the account sees it, and
+            // is not this conversation's to remember or keep in its context.
+            if let Some(of) = &of {
+                let page = link.plan_read_named(&account, of).await.map_err(Failure::new)?;
+                return Ok(plan::Result::Page { page });
+            }
             let page = link.plan_read_of(&account, &whose).await.map_err(Failure::new)?;
             if let Some(other) = link.plan_of_another(&page, &whose) {
                 return Err(Failure::not_run(words::elsewhere(other)));
@@ -173,12 +175,7 @@ pub(crate) async fn here(
 /// Refreshes the plan projection without advancing the conversation's observed
 /// revision. A native conversation with several accounts selects one by reading
 /// its plan explicitly; context must not choose an account on its behalf.
-pub(crate) async fn context(
-    node: &Arc<Node>,
-    id: &ResidentId,
-    origin: &Origin,
-    acting: &Acting,
-) -> Result<(), Failure> {
+pub(crate) async fn context(node: &Arc<Node>, id: &ResidentId, acting: &Acting) -> Result<(), Failure> {
     let previous = seen(node, id)?;
     let selected = previous.as_ref().map(|seen| seen.account.clone()).or_else(|| only_account(node, acting));
     let unavailable =
@@ -196,10 +193,7 @@ pub(crate) async fn context(
     if !view.account_records || !view.conversation_plans {
         return unavailable().await;
     }
-    let whose = match origin {
-        Origin::User => Address { machine: node.machine(), resident: id.clone() },
-        Origin::Colleague { asked_by, .. } => asked_by.clone(),
-    };
+    let whose = Address { machine: node.machine(), resident: id.clone() };
     let Some(generation) = node.plan_reads.begin(id, &scope, &whose) else { return Ok(()) };
     // A hub that does not answer now changed nothing: the conversation keeps
     // the plan it was told, and a later refresh reads it again.
@@ -227,9 +221,6 @@ pub(crate) async fn save(node: &Arc<Node>, id: &ResidentId, markdown: String) ->
         return Err(Failure::not_run("this conversation has no plan file on this machine"));
     }
     let (about, _) = node.residents.about(id).ok_or_else(|| Failure::refused(words::RESIDENT))?;
-    if matches!(about.origin, Origin::Colleague { .. }) {
-        return Ok(None);
-    }
     let whose = Address { machine: about.machine.clone(), resident: id.clone() };
     let previous = seen(node, id)?;
     let selected = previous.as_ref().map(|seen| seen.account.clone()).or_else(|| only_account(node, &about.acting));
@@ -288,9 +279,6 @@ pub(crate) fn context_seen(node: &Node, id: &ResidentId, version: &str) -> Resul
 /// Before the identity record goes, remove the owner's plan at every account it
 /// can belong to. Failure retains the existing durable conversation-deletion intent.
 pub(crate) async fn delete(node: &Arc<Node>, about: &About) -> Result<(), Failure> {
-    if matches!(about.origin, Origin::Colleague { .. }) {
-        return Ok(());
-    }
     let mut scopes = match &about.acting {
         Acting::Accounts { accounts } => accounts.clone(),
         Acting::Here => node
@@ -337,7 +325,7 @@ pub(crate) async fn delete(node: &Arc<Node>, about: &About) -> Result<(), Failur
     Ok(())
 }
 
-/// Generic record calls must not turn a colleague's read-only plan into a write path.
+/// Generic record calls must not write what has a command or a file of its own.
 pub(crate) fn records_allowed(
     node: &Node,
     caller: &Caller,
@@ -371,17 +359,10 @@ pub(crate) fn records_allowed(
     if request.kind() != plan::KIND || matches!(request, Request::Read { .. } | Request::List { .. }) {
         return Ok(());
     }
-    if let Caller::Resident(address) = caller {
-        if !node.is_me(&address.machine) {
-            return Err(Failure::refused(words::RESIDENT));
-        }
-        if node
-            .residents
-            .about(&address.resident)
-            .is_some_and(|(about, _)| matches!(about.origin, Origin::Colleague { .. }))
-        {
-            return Err(Failure::refused(words::READ_ONLY));
-        }
+    if let Caller::Resident(address) = caller
+        && !node.is_me(&address.machine)
+    {
+        return Err(Failure::refused(words::RESIDENT));
     }
     Ok(())
 }

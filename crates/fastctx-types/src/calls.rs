@@ -38,6 +38,9 @@ pub enum Call {
         hub: Option<crate::HubName>,
         account: Option<crate::AccountName>,
         operation: crate::plan::Operation,
+        /// Another conversation's plan to read; the caller's own when absent.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        of: Option<crate::plan::Of>,
     },
     /// A skill of the account the caller works for, read whole by its name
     /// (`crate::skills`).

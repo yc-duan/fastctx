@@ -98,7 +98,7 @@ pub(crate) async fn prepare(
         node.log.line(format_args!("registering the records of {id}: {}", failure.message));
     }
     plan_guide(node, id, origin, acting).await.map_err(|error| Failure::new(error.to_string()))?;
-    crate::plan::context(node, id, origin, acting).await?;
+    crate::plan::context(node, id, acting).await?;
     map(node, id, town, origin, acting).await?;
     super::blocking::with(node, id, |node, id| storage::opening(&node.world, id, &node.context_bodies))
         .await
@@ -127,23 +127,18 @@ pub(crate) fn set_skills(node: &Node, id: &ResidentId, text: &str, version: &str
     super::set_account(node, id, "skills", text, change).map_err(|error| Failure::new(error.to_string()))
 }
 
-/// The single working-copy path for this turn; a colleague reads its
-/// requester's account record and never receives a writable plan path.
+/// The single working-copy path for this turn. Every conversation the World
+/// holds, a colleague as much as the one that asked it, keeps its own plan.
 pub(crate) async fn plan_guide(node: &Arc<Node>, id: &ResidentId, origin: &Origin, acting: &Acting) -> io::Result<()> {
     if node.residents.now(id).is_some_and(|now| now.turn.is_some()) {
         return Ok(());
     }
     let own = node.residents.about(id).is_some_and(|(about, _)| !about.world_managed());
+    let asker = match origin {
+        Origin::Colleague { asked_by, .. } => Some(&asked_by.resident),
+        Origin::User => None,
+    };
     let (text, fact) = if own {
-        (String::new(), String::new())
-    } else if matches!(origin, Origin::Colleague { .. }) {
-        let placed = crate::placement::location::prepare(node, id, origin, acting).await;
-        let failure = placed.as_ref().err().map(|error| error.message.as_str());
-        if node.locations.tell(id, failure)
-            && let Some(failure) = failure
-        {
-            node.log.line(format_args!("placing the colleague {id}: {failure}"));
-        }
         (String::new(), String::new())
     } else {
         let placed = crate::placement::location::prepare(node, id, origin, acting).await;
@@ -158,7 +153,7 @@ pub(crate) async fn plan_guide(node: &Arc<Node>, id: &ResidentId, origin: &Origi
             Ok(Some(location)) => {
                 let path=crate::placement::plan_path(&location);
                 let replicated = crate::plan::file_account(node, id, acting).ok().flatten().and_then(|account| node.link_of(&account.hub)).is_some_and(|link| link.view().shared_records);
-                (words::plan_guide(&path,location.machine.as_str(),replicated),format!("The plan file is now on {} at {path}.",location.machine))
+                (words::plan_guide(&path,location.machine.as_str(),replicated,asker),format!("The plan file is now on {} at {path}.",location.machine))
             },
             Ok(None) => ("YOUR PLAN\n\nYour plan remains in your account. There is no online working computer for its file now; the app can still read and edit it.".into(),"There is no online working computer for the plan file now.".into()),
             Err(error) => {

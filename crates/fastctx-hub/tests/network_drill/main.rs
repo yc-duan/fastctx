@@ -86,15 +86,11 @@ fn main() -> ExitCode {
     }
 }
 
-/// Serves the hub in `dir` until it is killed.
+/// Serves the hub in `dir` until it is killed, its threads in their roles as
+/// the command runs it.
 fn serve(dir: &Path) -> ExitCode {
     let leave = fastctx_hub::Leave { remove_service: Box::new(|_| Ok(String::new())) };
-    let served = tokio::runtime::Builder::new_multi_thread()
-        .enable_all()
-        .build()
-        .map_err(anyhow::Error::from)
-        .and_then(|runtime| runtime.block_on(fastctx_hub::serve(dir, leave)));
-    match served {
+    match fastctx_hub::run(dir, leave, tokio::runtime::Builder::new_multi_thread()) {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
             eprintln!("the drill's hub: {error:#}");
@@ -172,7 +168,7 @@ fn drill(args: &[String]) -> anyhow::Result<bool> {
             }
             continue;
         }
-        let report = runtime
+        let mut report = runtime
             .block_on(
                 std::panic::AssertUnwindSafe(scenario(name, &root.join(name), options.earlier.as_deref()))
                     .catch_unwind(),
@@ -182,6 +178,7 @@ fn drill(args: &[String]) -> anyhow::Result<bool> {
                 report.check(false, "the scenario did not panic", "see the panic above");
                 report
             });
+        rules_kept(&mut report, world::violated());
         passed += report.passed;
         failed += report.failed;
         if report.failed == 0
@@ -191,8 +188,15 @@ fn drill(args: &[String]) -> anyhow::Result<bool> {
             println!("FAIL removing {name}'s completed workspace: {error}");
         }
     }
-    // What the links leave running ends with the runtime.
+    // What the links leave running ends with the runtime, and the hubs they
+    // kept with them.
     runtime.shutdown_timeout(Duration::from_secs(5));
+    let late = world::violated();
+    if !late.is_empty() {
+        let mut report = Report::new("hubs stopped last");
+        rules_kept(&mut report, late);
+        failed += report.failed;
+    }
     failed += process::CLEANUP_FAILURES.load(std::sync::atomic::Ordering::SeqCst);
     println!("network drill: {passed} passed, {failed} failed, {skipped} scenarios not run");
     if failed == 0 {
@@ -201,6 +205,27 @@ fn drill(args: &[String]) -> anyhow::Result<bool> {
         println!("what the failed scenarios left is in {}", root.display());
     }
     Ok(failed == 0)
+}
+
+/// Checks that the hubs of this release a scenario ran broke none of the
+/// threads' rules (`specs/world-engine.md`, 线程的三种角色), as each told in
+/// its health before it was stopped. A development build runs many times
+/// slower than the numbers the timed ones are set for: there, those are told
+/// and only blocking where a thread must not, or a nested read, fails.
+fn rules_kept(report: &mut Report, violated: Vec<(PathBuf, serde_json::Value)>) {
+    let mut broken = Vec::new();
+    for (dir, places) in &violated {
+        for place in places.as_array().into_iter().flatten() {
+            let told = format!("{}: {} {} x{}", dir.display(), place["kind"], place["place"], place["count"]);
+            let timed = !matches!(place["kind"].as_str(), Some("blocking" | "nested-read"));
+            if timed && cfg!(debug_assertions) {
+                report.note(format!("in a development build: {told}"));
+            } else {
+                broken.push(told);
+            }
+        }
+    }
+    report.check(broken.is_empty(), "this release's hubs broke none of the threads' rules", broken.join("; "));
 }
 
 /// Removes a finished scenario's directory. A link stopped in it can still

@@ -225,11 +225,7 @@ pub(crate) async fn prepare(
     }
     let placement = placement.ok_or_else(|| failure("the working-copy location keeps changing"))?;
     let owner = desired.owner.clone();
-    let resource = if matches!(origin, Origin::User) {
-        fastctx_types::placement::Resource::Plan
-    } else {
-        fastctx_types::placement::Resource::Directory
-    };
+    let resource = fastctx_types::placement::Resource::Plan;
     let location = if let Some(selected) = selected {
         if node.is_here(&selected.machine) {
             let asker = crate::admission::Asker {

@@ -26,8 +26,9 @@ pub(super) async fn exercise(
 ) -> Result<()> {
     let original = folder(computer)?;
     std::fs::remove_file(original.join("references/note.txt"))?;
+    let before = last_turn(host, id.as_str());
     world.talk(id.clone(), Some("host".parse()?), read_script.into()).await?;
-    anyhow::ensure!(idle(host, id.as_str()).await, "repair turn did not finish");
+    anyhow::ensure!(idle_after(host, id.as_str(), before).await, "repair turn did not finish");
     record(
         "a missing auxiliary file is repaired before the folder is returned",
         file_is(&original.join("references/note.txt"), "ALICE_REFERENCE").await,

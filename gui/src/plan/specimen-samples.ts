@@ -79,6 +79,44 @@ s-pr1ce7 在看价格，降了就叫醒我。
 \`\`\`
 `,
   },
+  // A plan written to be carried on from: where it stands first, then the
+  // order and what each part needs, with no checklist for most of it.
+  audit: {
+    version: 7,
+    when: "12 分钟前",
+    facts: {
+      "codex-7f3a": busy("codex", "摸清 publication 锁的边界", "在干活，40 分钟"),
+    },
+    source: `# 节点同步文件 I/O 排查
+
+2026-11-01 前两处已改完并停下，下次从第 3 项副本发布开始。没有编译，类型检查留到合并前一起做。持久的约束与发现记在历史的 \`node-file-io\` 一篇。
+
+- [x] 盘点整个 crate 的同步文件操作，沿异步入口核对调用路径
+- [x] 第 1 处 \`usage::measurement\`：登录解析、账本锁、冷历史载入与 \`sync_data\` 整段移入阻塞池
+- [x] 第 2 处 \`usage::hold::refresh\`：额度刷新整段移入阻塞池，两个入口都等它完成
+- [ ] 第 3 处副本发布，交给 codex-7f3a
+
+## 风险顺序
+
+按触发频率、持锁范围、落盘与工作量随规模增长排，是静态判断，没有实测延迟。
+
+| 顺序 | 工作单元 | 做法与完成标准 |
+| --- | --- | --- |
+| 3 | \`replicas\` 的发布与修复 | publication 锁在阻塞线程里取，保留授权复查与撤销的原子边界；异步入口不再在工作线程上等锁或落盘 |
+| 4 | \`attachments\` 本地上传 | 准备、逐块写入、终结与失败清理交给一个阻塞写入器，背压与收据的先后不变 |
+| 5 | \`residents\` 缓存 | 冷读与释放落盘不在全局状态锁下等阻塞线程；落盘与内存更新的先后不变 |
+
+## 已经隔离的，别重复改
+
+\`Database::read\` 的闭包本来就在阻塞池，数据库写在独立的写线程，composer 与 \`material_store\` 闭包里读文件不是工作线程上的 I/O。\`who\`、\`since\`、保留期维护、技能解包都已有阻塞边界，只是它们前后的外围调用还要逐个核对。
+
+\`\`\`ask
+第 5 项等丁交回记录那一摊再做吗？
+* 等丁交回 | 两边都改 residents，先合他的少一次冲突
+- 现在就做
+\`\`\`
+`,
+  },
   move: {
     version: 5,
     when: "昨天 22:10",

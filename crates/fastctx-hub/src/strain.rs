@@ -29,6 +29,8 @@ pub(crate) struct Heard {
     stuck: Option<(Instant, bool)>,
     /// The bound near its limit last told, while one is.
     near: Option<String>,
+    /// Whether a damaged store of its records was told.
+    damaged: bool,
     /// Since when this window runs, the rules broken by its start, and in how
     /// many windows running more were broken; from the first health told.
     window: Option<(Instant, u64, u32)>,
@@ -87,6 +89,10 @@ impl Heard {
             }
             Some(_) => {}
             None => self.near = None,
+        }
+        if health.damaged.is_some() && !self.damaged {
+            self.damaged = true;
+            hub.troubles.raise(hub, machine, TroubleKind::Damaged, Detail::default());
         }
         let (began, broken, running) = self.window.get_or_insert((now, health.violations, 0));
         if now.duration_since(*began) >= WINDOW {

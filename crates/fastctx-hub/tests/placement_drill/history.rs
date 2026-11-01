@@ -70,8 +70,9 @@ pub(super) async fn exercise(
     anyhow::ensure!(journal.exists() && spec.exists(), "project history never reached the working computer");
     let command =
         format!("ALICE_HISTORY_CASE [[run: on alice-two fastctx view '{}' '{}']]", journal.display(), spec.display());
+    let before = last_turn(host, id.as_str());
     world.talk(id.clone(), Some("host".parse()?), command).await?;
-    anyhow::ensure!(idle(host, id.as_str()).await, "history turn did not settle");
+    anyhow::ensure!(idle_after(host, id.as_str(), before).await, "history turn did not settle");
     let host_folder = WorldDir::under(host).town(&town);
     record(
         "the assisting host has no project-history document replicas",
@@ -157,8 +158,9 @@ async fn current(world: &World, scope: &Scope, name: &str) -> Result<fastctx_typ
 }
 
 async fn turn(world: &World, host: &Path, id: &ResidentId, command: String) -> Result<()> {
+    let before = last_turn(host, id.as_str());
     world.talk(id.clone(), Some("host".parse()?), command).await?;
-    anyhow::ensure!(idle(host, id.as_str()).await, "the concurrent history turn did not settle");
+    anyhow::ensure!(idle_after(host, id.as_str(), before).await, "the concurrent history turn did not settle");
     Ok(())
 }
 
