@@ -22,7 +22,7 @@ impl<'a> SuspendedTriggers<'a> {
 impl Drop for SuspendedTriggers<'_> {
     fn drop(&mut self) {
         if let Err(error) = self.connection.set_db_config(DbConfig::SQLITE_DBCONFIG_ENABLE_TRIGGER, self.enabled) {
-            // 2026-11-01: Continuing on this connection would silently bypass
+            // Continuing on this connection would silently bypass
             // deletion fences; unwinding alone is caught by the writer.
             eprintln!("restoring SQLite triggers failed: {error}");
             std::process::abort();

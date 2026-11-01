@@ -87,7 +87,7 @@ async fn apply_inner(node: &Arc<Node>, id: &ResidentId, mut event: SessionEvent)
             return Err(error);
         }
     }
-    // 2026-10-20: hidden title threads feed only the ledger; publishing their
+    // Hidden title threads feed only the ledger; publishing their
     // internal-only usage would replace the main conversation's usage display.
     if about.host.agent.as_str() == "codex"
         && matches!(&event.happened, Happened::Changed { change: SessionChange::Usage { usage }, .. }

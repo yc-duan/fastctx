@@ -56,7 +56,7 @@ pub(super) async fn inherit(
             .map_err(failure)?;
         if let Some(path) = path {
             let copied = read(path).await?;
-            // 2026-10-20: creating the transcript precedes asynchronously saving
+            // Creating the transcript precedes asynchronously saving
             // the copied rows. Grant only the attachments in the confirmed context.
             let inherited = if copied.synthetic_tail && copied.context_messages.len() == expected.len() + 1 {
                 &copied.context_messages[..expected.len()]

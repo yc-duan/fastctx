@@ -636,7 +636,7 @@ fn read_entry(world: &WorldDir, path: &Path) -> io::Result<(Entry, Signed)> {
     if claimed.hub != place.hub || claimed.town != place.town {
         return Err(invalid("the signed entry belongs to another project or hub".into()));
     }
-    // Network-v3 imports used a zero author key but were signed by this device (2026-10-23).
+    // Network-v3 imports used a zero author key but were signed by this device.
     let entry = if claimed.key == fastctx_net::sign::PublicKey::from_bytes([0; 32])
         && !fastctx_net::memory::has_memory(&claimed.files)
     {

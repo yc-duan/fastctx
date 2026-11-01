@@ -109,7 +109,7 @@ fn owes(node: &Node, owner: &Address, directory: &ConversationDir) -> io::Result
     })? {
         return Ok(true);
     }
-    // Goal bindings still identify records that deletion must collect (2026-10-23).
+    // Goal bindings still identify records that deletion must collect.
     if crate::goals::lifecycle::unfinished(directory)?
         || crate::goals::lifecycle::keeps_books(node, &owner.resident)
             .map_err(|error| io::Error::other(error.message))?

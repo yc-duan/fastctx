@@ -80,7 +80,7 @@ pub(super) fn keep(node: &Node, report: LimitsReport) -> std::io::Result<bool> {
             }
         }
     }
-    // 2026-10-20: publish credits only after the matching windows are committed,
+    // Publish credits only after the matching windows are committed,
     // so a reader of the new snapshot cannot see the previous quota period.
     let changed = match raw_for(&kept, &home, &account) {
         Fact::Known { value } => crate::usage::codex_reading(node, &home, value.windows, at, account)?,

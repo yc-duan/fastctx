@@ -321,7 +321,7 @@ impl Book {
         {
             return Ok(());
         }
-        // 2026-10-20: reload ambiguous writes from disk, not a half-updated index.
+        // Reload ambiguous writes from disk, not a half-updated index.
         self.valid = false;
         append(path, &row)?;
         self.apply(&row);

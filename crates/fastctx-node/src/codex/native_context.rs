@@ -45,7 +45,7 @@ pub(crate) async fn observe(node: &Arc<Node>, id: &ResidentId) -> Result<(), Fai
         return Ok(());
     }
     let Some(thread) = about.session.as_ref() else { return Ok(()) };
-    // A loaded runtime reports compactions directly; its later rollout flush must not reset them twice (2026-10-25).
+    // A loaded runtime reports compactions directly; its later rollout flush must not reset them twice.
     if node.codex.of(node, &about)?.loaded(thread) {
         return Ok(());
     }

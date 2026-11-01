@@ -284,7 +284,7 @@ pub(super) fn steps(db: &Connection, conversation: &str, call: &str, incoming: &
             crate::records::positions::next(db, conversation, "run-steps")?
         ])?;
     }
-    // 2026-11-01: The scoped primary key satisfies ordering but scans retired rows.
+    // The scoped primary key satisfies the ordering but scans retired rows.
     // Keep retirement bounded by the hot-only index, independently of planner estimates.
     let mut query=db.prepare_cached("SELECT position,machine,kind,first,last,length(body) FROM run_steps INDEXED BY run_steps_hot WHERE conversation=?1 AND call=?2 AND body IS NOT NULL ORDER BY position DESC")?;
     let old = query

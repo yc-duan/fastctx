@@ -126,7 +126,7 @@ impl Serialize for Fields {
 }
 
 fn nesting(depth: usize) -> io::Result<()> {
-    // 2026-11-01: raw values bypass typed traversal, so bound recursive work here.
+    // Raw values bypass typed traversal, so recursive work is bounded here.
     if depth > 128 {
         return Err(crate::record_migration::errors::invalid("legacy JSON nesting exceeds its stack guard"));
     }

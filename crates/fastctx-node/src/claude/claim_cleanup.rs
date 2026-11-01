@@ -54,7 +54,7 @@ pub(crate) fn start(node: &Arc<Node>) {
             }
             drop(node);
             // A nonblocking lock can defer a record, and a directory being
-            // changed need not enumerate every entry in one pass (2026-10-29).
+            // changed need not enumerate every entry in one pass.
             // Revisit after progress instead of postponing upgrade leftovers.
             tokio::time::sleep(pause).await;
         }

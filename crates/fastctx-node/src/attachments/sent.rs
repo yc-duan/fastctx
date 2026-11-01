@@ -159,7 +159,7 @@ async fn commit_held(
         let directory = node.world.conversation(&resident).attachments().join(attachment.id.as_str());
         let reservation: Reservation = read_json(&directory.join("reservation.json"))?;
         let expected = &reservation.attachment;
-        // 2026-10-20: only the authenticated uploader may complete its own reservation.
+        // Only the authenticated uploader may complete its own reservation.
         if reservation.from != *from
             || reservation.acting.as_ref() != Some(acting)
             || expected.id != attachment.id

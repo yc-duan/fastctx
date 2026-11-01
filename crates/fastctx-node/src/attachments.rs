@@ -813,7 +813,7 @@ impl Arriving {
         index::prepare(&self.room).map_err(failure)?;
         self.output.take().expect("upload is open").sync_all().map_err(failure)?;
         if self.path.exists() {
-            // 2026-10-20: a crash can publish the bytes before their receipt.
+            // A crash can publish the bytes before their receipt.
             // Recover only those exact bytes; never replace a changed original.
             if !holds(&self.attachment, &mut vec![0; UPLOAD_CHUNK])? {
                 return Err(failure("the original at this upload's location has changed"));

@@ -255,7 +255,7 @@ pub(crate) async fn enqueue_if_busy(
     }
     // A fork through a turn already ended takes that turn's history as it
     // stands, which the turn under way does not change: it is made at once,
-    // the conversation going on undisturbed (user 2026-10-29). A fork of the
+    // the conversation going on undisturbed. A fork of the
     // whole, or through the turn under way, waits for that turn to end.
     if let Control::Fork { through: Some(turn), .. } = control
         && !node.long_controls.of(id)
