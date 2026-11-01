@@ -37,7 +37,7 @@ pub(crate) fn prepare(record: &Path) -> io::Result<Job> {
                 }
                 let fact: WriteFact = serde_json::from_slice(&line)?;
                 valid(&fact)?;
-                push(Source::new(fact.id.clone(), journal.clone(), serde_json::to_vec(&fact)?)?)?;
+                push(Source::new(fact.id.clone(), journal.clone(), line.clone())?)?;
             }
             Ok(())
         })?;
@@ -46,7 +46,8 @@ pub(crate) fn prepare(record: &Path) -> io::Result<Job> {
                 continue;
             }
             crate::record_migration::file(&path, push, |push| {
-                let fact: WriteFact = serde_json::from_slice(&fastctx_platform::disk::read(&path)?)?;
+                let bytes = fastctx_platform::disk::read(&path)?;
+                let fact: WriteFact = serde_json::from_slice(&bytes)?;
                 valid(&fact)?;
                 if path.file_stem().and_then(|name| name.to_str()) != Some(fact.id.as_str()) {
                     return Err(io::Error::new(
@@ -54,14 +55,15 @@ pub(crate) fn prepare(record: &Path) -> io::Result<Job> {
                         "write fact identity differs from its filename",
                     ));
                 }
-                push(Source::new(fact.id.clone(), path.clone(), serde_json::to_vec(&fact)?)?)
+                push(Source::new(fact.id.clone(), path.clone(), bytes)?)
             })?;
         }
         let pending = record.with_extension("writes-pending");
         crate::record_migration::file(&pending, push, |push| {
-            let fact: WriteFact = serde_json::from_slice(&fastctx_platform::disk::read(&pending)?)?;
+            let bytes = fastctx_platform::disk::read(&pending)?;
+            let fact: WriteFact = serde_json::from_slice(&bytes)?;
             valid(&fact)?;
-            push(Source::new(fact.id.clone(), pending.clone(), serde_json::to_vec(&fact)?)?)
+            push(Source::new(fact.id.clone(), pending.clone(), bytes)?)
         })
     })?;
     Ok(job)

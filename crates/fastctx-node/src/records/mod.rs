@@ -12,6 +12,7 @@ pub(crate) mod metadata;
 mod metadata_legacy;
 mod migration;
 pub(crate) mod positions;
+pub(crate) use migration::proofs::SCHEMA as MIGRATION_PROOF_SCHEMA;
 pub(crate) use migration::{Source, ensure_each, ensure_file, ensure_step};
 
 use fastctx_storage::{

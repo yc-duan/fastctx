@@ -1,5 +1,6 @@
 //! Request paths enqueue owned decoders; only migration workers import records.
 mod occurrences;
+pub(crate) mod proofs;
 mod source;
 use super::*;
 use crate::record_migration::{self as migration, files::Context, scheduler};
@@ -36,7 +37,7 @@ pub(crate) fn ensure_file(
     directory: &ConversationDir,
     family: &str,
     path: std::path::PathBuf,
-    source: impl FnOnce(&std::path::Path, &mut dyn FnMut(Source) -> io::Result<()>) -> io::Result<()> + Send + 'static,
+    mut source: impl FnMut(&std::path::Path, &mut dyn FnMut(Source) -> io::Result<()>) -> io::Result<()> + Send + 'static,
 ) -> io::Result<()> {
     ensure_each(directory, family, move |push| migration::file(&path, push, |push| source(&path, push)))
 }
@@ -63,6 +64,7 @@ fn import(
         return Ok(());
     }
     let mut pending = Vec::new();
+    let mut checking = Vec::new();
     let mut bytes = 0;
     source(&mut |source| {
         scheduler::checkpoint()?;
@@ -71,7 +73,7 @@ fn import(
                 if row.file.is_none() {
                     return Err(io::Error::other("a legacy decoder must declare the file it reads"));
                 }
-                bytes += row.body.len();
+                bytes += proofs::bytes(&row);
                 pending.push(row);
                 if pending.len() >= 16 || bytes >= 128 * 1024 {
                     commit(context, std::mem::take(&mut pending))?;
@@ -79,8 +81,23 @@ fn import(
                 }
                 Ok(())
             }
+            Source::Flush => {
+                commit(context, std::mem::take(&mut pending))?;
+                bytes = 0;
+                Ok(())
+            }
+            Source::Verify(row) => {
+                bytes += proofs::bytes(&row);
+                checking.push(row);
+                if checking.len() >= 16 || bytes >= 128 * 1024 {
+                    proofs::verify(context, std::mem::take(&mut checking))?;
+                    bytes = 0;
+                }
+                Ok(())
+            }
             Source::File(file) => {
                 commit(context, std::mem::take(&mut pending))?;
+                proofs::verify(context, std::mem::take(&mut checking))?;
                 bytes = 0;
                 if context
                     .database
@@ -99,6 +116,7 @@ fn import(
         }
     })?;
     commit(context, pending)?;
+    proofs::verify(context, checking)?;
     migration::files::archive_ready(context)?;
     let (conversation, family) = (context.conversation.clone(), context.family.clone());
     context
@@ -117,7 +135,7 @@ fn commit(context: &Context, sources: Vec<LegacyRow>) -> io::Result<()> {
     if sources.is_empty() {
         return Ok(());
     }
-    let bytes = sources.iter().map(|source| source.body.len() + source.key.len() + 256).sum();
+    let bytes = sources.iter().map(proofs::bytes).sum();
     let (conversation, family) = (context.conversation.clone(), context.family.clone());
     let conflict = context.database.write_now_at(scheduler::priority(), bytes, move |db| {
         db.execute_batch("SAVEPOINT legacy_record_batch")?;
@@ -129,6 +147,7 @@ fn commit(context: &Context, sources: Vec<LegacyRow>) -> io::Result<()> {
             let owner = row.conversation.as_deref().unwrap_or(&conversation);
             if crate::conversation_store::deleted(db, owner)? { continue; }
             let owner=owner.to_string();
+            let source_digest=proofs::digest(&row)?;
             occurrences::assign(db, &owner, &family, &mut row)?;
             let owner=owner.as_str();
             let repeated = if let Some((hash, deduplicate)) = &row.content_key {
@@ -141,6 +160,7 @@ fn commit(context: &Context, sources: Vec<LegacyRow>) -> io::Result<()> {
             let stored = read.query_row((owner, &family, &row.key), |row| Ok((row.get::<_, Vec<u8>>(0)?, row.get::<_, String>(1)?, row.get::<_, Option<Vec<u8>>>(2)?, row.get::<_, Option<String>>(3)?, row.get::<_, Option<i64>>(4)?)))?;
             if stored.0 != row.body || (changed > 0 && (stored.1 != row.modified.to_string() || stored.2 != row.arrival || stored.3 != row.category || stored.4 != row.expires.map(|at| at.as_millisecond()))) { db.execute_batch("ROLLBACK TO legacy_record_batch; RELEASE legacy_record_batch")?; return Ok(Some(format!("legacy row {} conflicts with its stored value", row.key))); }
             }
+            proofs::keep(db, owner, &family, &row, source_digest, repeated)?;
             if let Some(file) = row.file { files.insert(file.path.clone(), (owner.to_string(), file)); }
         }
         for (owner, file) in files.into_values() {

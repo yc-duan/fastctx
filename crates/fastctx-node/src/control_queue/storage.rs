@@ -26,8 +26,9 @@ pub(crate) fn initialize(directory: &ConversationDir) -> io::Result<()> {
                 formatter.write_str("an array of pending controls")
             }
             fn visit_seq<A: SeqAccess<'de>>(self, mut rows: A) -> Result<(), A::Error> {
-                while let Some(row) = rows.next_element::<PendingControl>()? {
-                    let body = serde_json::to_vec(&row).map_err(de::Error::custom)?;
+                while let Some(raw) = rows.next_element::<Box<serde_json::value::RawValue>>()? {
+                    let row: PendingControl = serde_json::from_str(raw.get()).map_err(de::Error::custom)?;
+                    let body = raw.get().as_bytes().to_vec();
                     let source =
                         records::Source::new(row.id.clone(), self.path.clone(), body).map_err(de::Error::custom)?;
                     (self.push)(source).map_err(de::Error::custom)?;
@@ -35,9 +36,9 @@ pub(crate) fn initialize(directory: &ConversationDir) -> io::Result<()> {
                 Ok(())
             }
         }
-        serde_json::Deserializer::from_reader(io::BufReader::new(file))
-            .deserialize_seq(Controls { path: path.to_path_buf(), push })
-            .map_err(io::Error::other)
+        let mut decoder = serde_json::Deserializer::from_reader(io::BufReader::new(file));
+        decoder.deserialize_seq(Controls { path: path.to_path_buf(), push }).map_err(io::Error::other)?;
+        decoder.end().map_err(io::Error::other)
     })?;
     crate::session_record::prepare(directory)
 }

@@ -9,8 +9,8 @@ use std::{collections::BTreeMap, io};
 const CLOSED: &str = "claude-turn-facts-closed";
 #[derive(Default, Deserialize)]
 struct Legacy {
-    efforts: BTreeMap<u64, Value>,
-    responses: BTreeMap<u64, RequestUsage>,
+    efforts: BTreeMap<u64, Box<serde_json::value::RawValue>>,
+    responses: BTreeMap<u64, Box<serde_json::value::RawValue>>,
 }
 #[derive(Serialize, Deserialize)]
 struct Closed {
@@ -36,10 +36,12 @@ fn prepare_path(directory: &ConversationDir, family: &str, path: std::path::Path
             Err(error) => return Err(error),
         };
         for (step, value) in legacy.efforts {
-            push(Source::new(format!("effort-{step:020}"), path.to_path_buf(), serde_json::to_vec(&value)?)?)?;
+            records::legacy::raw::validate::<Value>(&value)?;
+            push(Source::new(format!("effort-{step:020}"), path.to_path_buf(), value.get().as_bytes().to_vec())?)?;
         }
         for (step, value) in legacy.responses {
-            push(Source::new(format!("response-{step:020}"), path.to_path_buf(), serde_json::to_vec(&value)?)?)?;
+            records::legacy::raw::validate::<RequestUsage>(&value)?;
+            push(Source::new(format!("response-{step:020}"), path.to_path_buf(), value.get().as_bytes().to_vec())?)?;
         }
         Ok(())
     })

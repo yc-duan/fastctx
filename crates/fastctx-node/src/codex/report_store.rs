@@ -38,15 +38,16 @@ pub(crate) fn prepare(node: &Node, thread: &str) -> io::Result<(ConversationDir,
                     return Err(io::Error::new(io::ErrorKind::InvalidData, "legacy reports belong to another thread"));
                 }
                 let mut ordinal = 0u64;
-                records::legacy::array::<HostEvent>(&path, Some("events"), &mut |event| {
+                records::legacy::array::<Box<serde_json::value::RawValue>>(&path, Some("events"), &mut |event| {
+                    records::legacy::raw::validate::<HostEvent>(&event)?;
                     ordinal += 1;
                     push(
                         Source::new(
                             format!("legacy-{index}-{ordinal:020}"),
                             path.clone(),
-                            serde_json::to_vec(&event)?,
+                            event.get().as_bytes().to_vec(),
                         )?
-                        .content_key(index != first),
+                        .content_key(index != first)?,
                     )
                 })
             })?;
@@ -61,7 +62,7 @@ pub(crate) fn prepare(node: &Node, thread: &str) -> io::Result<(ConversationDir,
                     if reader.read_until(b'\n', &mut line)? == 0 {
                         break;
                     }
-                    let event: HostEvent = match serde_json::from_slice(&line) {
+                    let _event: HostEvent = match serde_json::from_slice(&line) {
                         Ok(event) => event,
                         Err(_) if line.last() != Some(&b'\n') => {
                             log.line(format_args!(
@@ -74,12 +75,8 @@ pub(crate) fn prepare(node: &Node, thread: &str) -> io::Result<(ConversationDir,
                     };
                     ordinal += 1;
                     push(
-                        Source::new(
-                            format!("legacy-journal-{index}-{ordinal:020}"),
-                            path.clone(),
-                            serde_json::to_vec(&event)?,
-                        )?
-                        .content_key(true),
+                        Source::new(format!("legacy-journal-{index}-{ordinal:020}"), path.clone(), line.clone())?
+                            .content_key(true)?,
                     )?;
                 }
                 Ok(())

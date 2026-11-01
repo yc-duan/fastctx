@@ -8,7 +8,8 @@ pub(super) fn initialize(directory: &ConversationDir) -> io::Result<()> {
     let folder = directory.handovers();
     records::ensure_each(directory, "handovers", move |push| {
         files(&folder, push, |path, push| {
-            let mut row: Handover = read(path)?;
+            let bytes = fastctx_platform::disk::read(path)?;
+            let mut row: Handover = serde_json::from_slice(&bytes)?;
             let accepted = path.with_extension("accepted");
             crate::record_migration::file(&accepted, push, |_| {
                 let turn: String = read(&accepted)?;
@@ -20,14 +21,15 @@ pub(super) fn initialize(directory: &ConversationDir) -> io::Result<()> {
                 row.turn = Some(turn);
                 Ok(())
             })?;
-            push(Source::new(row.id.to_string(), path.to_path_buf(), serde_json::to_vec(&row)?)?)
+            push(Source::new(row.id.to_string(), path.to_path_buf(), records::legacy::raw::merge(&bytes, &row)?)?)
         })
     })?;
     let folder = directory.turns();
     records::ensure_each(directory, "terminals", move |push| {
         files(&folder, push, |path, push| {
-            let row: Finished = read(path)?;
-            push(Source::new(row.turn.clone(), path.to_path_buf(), serde_json::to_vec(&row)?)?)
+            let bytes = fastctx_platform::disk::read(path)?;
+            let row: Finished = serde_json::from_slice(&bytes)?;
+            push(Source::new(row.turn.clone(), path.to_path_buf(), records::legacy::raw::merge(&bytes, &row)?)?)
         })
     })?;
     records::ensure_file(directory, "terminal-counter", directory.turns().join("order"), |path, push| {

@@ -19,10 +19,15 @@ pub(crate) fn initialize(directory: &ConversationDir) -> io::Result<()> {
         let source = directory.clone();
         records::ensure_each(directory, family, move |push| {
             json_files(&folder, push, |path, push| {
-                let row = super::parse_pending(&source, path, &fastctx_platform::disk::read(path)?)?;
+                let bytes = fastctx_platform::disk::read(path)?;
+                let row = super::parse_pending(&source, path, &bytes)?;
                 push(
-                    Source::new(row.delivery.id.to_string(), path.to_path_buf(), serde_json::to_vec(&row)?)?
-                        .ordered(row.delivery.at),
+                    Source::new(
+                        row.delivery.id.to_string(),
+                        path.to_path_buf(),
+                        records::legacy::raw::merge(&bytes, &row)?,
+                    )?
+                    .ordered(row.delivery.at),
                 )
             })
         })?;
@@ -71,10 +76,15 @@ pub(crate) fn initialize(directory: &ConversationDir) -> io::Result<()> {
     let folder = directory.outbox();
     records::ensure_each(directory, "outgoing-answers", move |push| {
         json_files(&folder, push, |path, push| {
-            let row: Owing = serde_json::from_slice(&fastctx_platform::disk::read(path)?)?;
+            let bytes = fastctx_platform::disk::read(path)?;
+            let row: Owing = serde_json::from_slice(&bytes)?;
             push(
-                Source::new(row.delivery.id.to_string(), path.to_path_buf(), serde_json::to_vec(&row)?)?
-                    .ordered(row.delivery.at),
+                Source::new(
+                    row.delivery.id.to_string(),
+                    path.to_path_buf(),
+                    records::legacy::raw::merge(&bytes, &row)?,
+                )?
+                .ordered(row.delivery.at),
             )
         })
     })?;

@@ -26,12 +26,13 @@ pub(crate) fn prepare(world: &WorldDir, id: &ResidentId) -> io::Result<Conversat
                 continue;
             };
             crate::record_migration::file(&path, push, |push| {
-                let mut row: Block = serde_json::from_slice(&fastctx_platform::disk::read(&path)?)?;
+                let bytes = fastctx_platform::disk::read(&path)?;
+                let mut row: Block = serde_json::from_slice(&bytes)?;
                 if row.transient {
                     row.text.clear();
                     row.fact.clear();
                 }
-                push(families::Source::new(name.into(), path.clone(), serde_json::to_vec(&row)?)?)
+                push(families::Source::new(name.into(), path.clone(), families::legacy::raw::merge(&bytes, &row)?)?)
             })?;
         }
         Ok(())
@@ -39,8 +40,8 @@ pub(crate) fn prepare(world: &WorldDir, id: &ResidentId) -> io::Result<Conversat
     families::ensure_file(&directory, STATE, super::storage::state_path(world, id), |path, push| {
         match fastctx_platform::disk::read(path) {
             Ok(bytes) => {
-                let state: State = serde_json::from_slice(&bytes)?;
-                push(families::Source::new("current".into(), path.to_path_buf(), serde_json::to_vec(&state)?)?)
+                let _: State = serde_json::from_slice(&bytes)?;
+                push(families::Source::new("current".into(), path.to_path_buf(), bytes)?)
             }
             Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
             Err(error) => Err(error),

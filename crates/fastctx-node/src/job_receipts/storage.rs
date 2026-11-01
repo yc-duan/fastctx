@@ -18,8 +18,8 @@ pub(crate) fn prepare(path: &Path) -> io::Result<Job> {
     let job = Job::open(path)?;
     for (kind, field, extension) in [("waited", None, "waited"), ("exit-children", Some("children"), "exit-receipt")] {
         job.prepare_file(kind, path.with_extension(extension), move |source, push| {
-            records::legacy::array::<Child>(source, field, &mut |child| {
-                push(Source::new(child_key(&child), source.to_path_buf(), serde_json::to_vec(&child)?)?)
+            records::legacy::raw_array::<Child>(source, field, &mut |child, body| {
+                push(Source::new(child_key(&child), source.to_path_buf(), body)?)
             })
         })?;
     }

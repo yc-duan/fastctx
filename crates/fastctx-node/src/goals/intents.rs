@@ -55,7 +55,8 @@ pub(crate) fn prepare(conversation: &ConversationDir) -> io::Result<()> {
                 continue;
             }
             crate::record_migration::file(&path, push, |push| {
-                let intent: Intent = serde_json::from_slice(&fastctx_platform::disk::read(&path)?)?;
+                let bytes = fastctx_platform::disk::read(&path)?;
+                let intent: Intent = serde_json::from_slice(&bytes)?;
                 if path.file_stem().and_then(|stem| stem.to_str())
                     != Some(fastctx_hands::files::content_hash(intent.operation.as_bytes()).as_str())
                 {
@@ -63,10 +64,9 @@ pub(crate) fn prepare(conversation: &ConversationDir) -> io::Result<()> {
                         "goal operation identity differs from its record",
                     ));
                 }
-                let mut source =
-                    crate::records::Source::new(intent.operation.clone(), path.clone(), serde_json::to_vec(&intent)?)?
-                        .ordered(intent.at)
-                        .categorized(if intent.phase.pending() { "pending" } else { "terminal" }.into());
+                let mut source = crate::records::Source::new(intent.operation.clone(), path.clone(), bytes)?
+                    .ordered(intent.at)
+                    .categorized(if intent.phase.pending() { "pending" } else { "terminal" }.into());
                 if !intent.phase.pending() {
                     let expiry = source.modified() + jiff::SignedDuration::from_hours(30 * 24);
                     source = source.expiring(expiry);

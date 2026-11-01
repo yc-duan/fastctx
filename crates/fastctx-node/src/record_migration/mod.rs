@@ -22,6 +22,7 @@ CREATE TABLE IF NOT EXISTS migration_files (
     PRIMARY KEY(family,path)
 ) WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS migration_files_owner ON migration_files(conversation,family,path);
+CREATE INDEX IF NOT EXISTS migration_files_archived ON migration_files(family,path,conversation) WHERE archived=1;
 ";
 
 pub(crate) fn world(directory: &fastctx_types::layout::ConversationDir) -> std::io::Result<std::path::PathBuf> {
@@ -67,6 +68,7 @@ fn start(node: &std::sync::Arc<crate::Node>) {
     crate::activity_book::start(node);
     crate::timers::start(node);
     crate::letters::migrate(node);
+    maintenance::start(node);
     let stopping = node.clone();
     fastctx_platform::task::spawn(async move {
         crate::on_stop::resume(&stopping).await;
@@ -74,13 +76,25 @@ fn start(node: &std::sync::Arc<crate::Node>) {
     });
     let node = node.clone();
     fastctx_platform::task::spawn(async move {
-        let reading = node.clone();
-        let _ = fastctx_platform::task::spawn_blocking(move || archive::damaged_count(reading.world.path())).await;
         let mut again = crate::again::Again::default();
+        let mut catalog = catalog::Catalog::default();
         loop {
             let working = node.clone();
-            let result =
-                fastctx_platform::task::spawn_blocking(move || scheduler::discovery(|| catalog::scan(&working))).await;
+            let next = fastctx_platform::task::spawn_blocking(move || {
+                let result = scheduler::discovery(|| catalog.scan(&working));
+                (catalog, result)
+            })
+            .await;
+            let result = match next {
+                Ok((state, result)) => {
+                    catalog = state;
+                    Ok(result)
+                }
+                Err(error) => {
+                    catalog = catalog::Catalog::default();
+                    Err(error)
+                }
+            };
             match result {
                 Ok(Ok(true)) => break,
                 Ok(Ok(false)) => {
@@ -102,21 +116,19 @@ fn start(node: &std::sync::Arc<crate::Node>) {
         loop {
             let working = node.clone();
             let result = fastctx_platform::task::spawn_blocking(move || {
-                maintenance::collect(&working.database)?;
                 working.database.write_now_at(fastctx_storage::Priority::Background, 64, |db| {
                     db.execute("INSERT INTO node_record_state(name,value) VALUES('legacy-discovery-complete',1) ON CONFLICT(name) DO UPDATE SET value=1", [])?;
                     Ok(())
                 }).map_err(std::io::Error::other)?;
-                archive::damaged_count(working.world.path())?;
-                archive::collect(working.world.path(), archive::RETENTION)
+                maintenance::collect(&working.database)
             })
             .await;
             match result {
-                Ok(Ok(_)) => {}
-                Ok(Err(error)) => node.log.line(format_args!("maintaining legacy archives: {error}")),
-                Err(error) => node.log.line(format_args!("archive maintenance worker: {error}")),
+                Ok(Ok(())) => break,
+                Ok(Err(error)) => node.log.line(format_args!("finishing legacy discovery: {error}")),
+                Err(error) => node.log.line(format_args!("discovery completion worker: {error}")),
             }
-            tokio::time::sleep(std::time::Duration::from_secs(60 * 60)).await;
+            tokio::time::sleep(again.next()).await;
         }
     });
 }

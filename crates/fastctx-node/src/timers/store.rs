@@ -46,12 +46,13 @@ impl Store {
                     continue;
                 }
                 crate::record_migration::file(&source, push, |push| {
-                    let timer: Timer = serde_json::from_slice(&fastctx_platform::disk::read(&source)?)?;
+                    let bytes = fastctx_platform::disk::read(&source)?;
+                    let timer: Timer = serde_json::from_slice(&bytes)?;
                     if source != folder.join(format!("{:x}.json", Sha256::digest(timer.id.as_bytes()))) {
                         return Err(crate::record_migration::errors::invalid("timer id does not match its file"));
                     }
                     push(
-                        Source::new(timer.id.clone(), source.clone(), serde_json::to_vec(&timer)?)?
+                        Source::new(timer.id.clone(), source.clone(), bytes)?
                             .scoped(scope(&timer.owner).to_string())
                             .ordered(timer.next_attempt)
                             .categorized(serde_json::to_string(&timer.owner)?),

@@ -33,6 +33,11 @@ pub(crate) struct FileComplete {
 thread_local! {
     static CONTEXT: RefCell<Option<Context>> = const { RefCell::new(None) };
     static MODIFIED: RefCell<Option<(PathBuf, jiff::Timestamp)>> = const { RefCell::new(None) };
+    static VERIFYING: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+pub(crate) fn verifying() -> bool {
+    VERIFYING.get()
 }
 
 impl Context {
@@ -59,9 +64,12 @@ pub(crate) fn modified(path: &Path) -> io::Result<jiff::Timestamp> {
 pub(crate) fn file(
     path: &Path,
     push: &mut dyn FnMut(Source) -> io::Result<()>,
-    read: impl FnOnce(&mut dyn FnMut(Source) -> io::Result<()>) -> io::Result<()>,
+    mut read: impl FnMut(&mut dyn FnMut(Source) -> io::Result<()>) -> io::Result<()>,
 ) -> io::Result<()> {
     scheduler::checkpoint()?;
+    if VERIFYING.get() {
+        return read(push);
+    }
     let context = CONTEXT
         .with_borrow(|context| context.clone())
         .ok_or_else(|| io::Error::other("legacy file has no migration context"))?;
@@ -130,7 +138,7 @@ pub(crate) fn file(
     let mut owner = context.conversation.clone();
     let mut failed = None;
     let result = read(&mut |mut source| {
-        if matches!(source, Source::File(_)) {
+        if !matches!(source, Source::Row(_)) {
             return push(source);
         }
         ordinal += 1;
@@ -166,7 +174,60 @@ pub(crate) fn file(
     if result.as_ref().is_err_and(|error| !super::errors::damaged(error)) {
         return result.map_err(super::errors::retry);
     }
-    let damage = result.err().map(|error| error.to_string());
+    let mut damage = result.err().map(|error| error.to_string());
+    if damage.is_none()
+        && let Err(error) = push(Source::Flush)
+    {
+        if super::errors::damaged(&error) {
+            damage = Some(error.to_string());
+        } else {
+            return Err(super::errors::retry(error));
+        }
+    }
+    if damage.is_none() {
+        let previous = VERIFYING.replace(true);
+        struct RestoreVerification(bool);
+        impl Drop for RestoreVerification {
+            fn drop(&mut self) {
+                VERIFYING.set(self.0);
+            }
+        }
+        let _verifying = RestoreVerification(previous);
+        let mut checked = 0;
+        let mut failed = None;
+        let result = read(&mut |mut source| {
+            let Source::Row(_) = &source else {
+                return Ok(());
+            };
+            checked += 1;
+            source.set_file(FileRow {
+                path: key.clone(),
+                signature: signature.clone(),
+                ordinal: checked,
+                incarnation: incarnation.clone(),
+            });
+            let Source::Row(row) = source else { unreachable!() };
+            match push(Source::Verify(row)) {
+                Ok(()) => Ok(()),
+                Err(error) => {
+                    let returned = io::Error::new(error.kind(), error.to_string());
+                    failed = Some(error);
+                    Err(returned)
+                }
+            }
+        });
+        let result = if let Some(error) = failed { Err(error) } else { result };
+        if result.as_ref().is_err_and(|error| !super::errors::damaged(error)) {
+            return result.map_err(super::errors::retry);
+        }
+        damage = result.err().map(|error| error.to_string());
+        if damage.is_none() && checked != ordinal {
+            return Err(io::Error::new(
+                io::ErrorKind::WouldBlock,
+                "the legacy source changed its row count when reread",
+            ));
+        }
+    }
     if damage.is_none() && archive::fingerprint(path)? != signature {
         return Err(io::Error::new(io::ErrorKind::WouldBlock, "a legacy source changed while it was decoded"));
     }

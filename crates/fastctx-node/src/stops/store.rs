@@ -43,8 +43,13 @@ pub(crate) fn prepare(directory: &ConversationDir) -> io::Result<()> {
             let Some(key) = entry.file_name().to_str().and_then(|key| key.parse::<NoticeId>().ok()) else { continue };
             crate::record_migration::file(&entry.path(), push, |push| {
                 let bytes = fastctx_platform::disk::read(entry.path())?;
-                let source = if bytes.is_empty() { StopSource::User } else { serde_json::from_slice(&bytes)? };
-                push(records::Source::new(key.to_string(), entry.path(), serde_json::to_vec(&source)?)?)
+                let body = if bytes.is_empty() {
+                    serde_json::to_vec(&StopSource::User)?
+                } else {
+                    let _: StopSource = serde_json::from_slice(&bytes)?;
+                    bytes
+                };
+                push(records::Source::new(key.to_string(), entry.path(), body)?)
             })?;
         }
         Ok(())

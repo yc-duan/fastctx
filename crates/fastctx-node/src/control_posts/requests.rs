@@ -20,7 +20,8 @@ pub(crate) fn prepare(node: &Node) -> io::Result<ConversationDir> {
                 continue;
             }
             crate::record_migration::file(&path, push, |push| {
-                let request: Request = serde_json::from_slice(&fastctx_platform::disk::read(&path)?)?;
+                let bytes = fastctx_platform::disk::read(&path)?;
+                let request: Request = serde_json::from_slice(&bytes)?;
                 let (owner, _, _, _) = crate::record_database::item(&request.path)?;
                 let (_, conversation) = crate::record_database::get(&owner)?;
                 let key = path
@@ -28,7 +29,7 @@ pub(crate) fn prepare(node: &Node) -> io::Result<ConversationDir> {
                     .and_then(|name| name.to_str())
                     .ok_or_else(|| crate::record_migration::errors::invalid("invalid control request filename"))?
                     .to_string();
-                push(records::Source::new(key, path.clone(), serde_json::to_vec(&request)?)?.scoped(conversation))
+                push(records::Source::new(key, path.clone(), bytes)?.scoped(conversation))
             })?;
         }
         Ok(())

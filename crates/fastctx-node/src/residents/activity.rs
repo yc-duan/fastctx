@@ -48,13 +48,18 @@ pub(crate) fn prepare(directory: &ConversationDir, family: &'static str) -> io::
             let row = match family {
                 "actions" => {
                     let row: Action = serde_json::from_slice(&bytes)?;
-                    Source::new(format!("legacy-{}", digest(&row)?), path.to_path_buf(), serde_json::to_vec(&row)?)?
-                        .counted()
-                        .ordered(row.at)
+                    Source::new(
+                        format!("legacy-{}", digest(&row)?),
+                        path.to_path_buf(),
+                        records::legacy::raw::merge(&bytes, &row)?,
+                    )?
+                    .counted()
+                    .ordered(row.at)
                 }
                 "messages" => {
                     let row: MessageLine = serde_json::from_slice(&bytes)?;
-                    Source::new(digest(&row)?, path.to_path_buf(), serde_json::to_vec(&row)?)?.ordered(row.at)
+                    Source::new(digest(&row)?, path.to_path_buf(), records::legacy::raw::merge(&bytes, &row)?)?
+                        .ordered(row.at)
                 }
                 "seen" => {
                     let mut row: Seen = serde_json::from_slice(&bytes)?;
@@ -66,7 +71,7 @@ pub(crate) fn prepare(directory: &ConversationDir, family: &'static str) -> io::
                         }
                     };
                     row.path = canonical.to_string_lossy().into_owned();
-                    Source::new(row.path.clone(), path.to_path_buf(), serde_json::to_vec(&row)?)?
+                    Source::new(row.path.clone(), path.to_path_buf(), records::legacy::raw::merge(&bytes, &row)?)?
                         .ordered(row.at)
                         .replacing()
                 }

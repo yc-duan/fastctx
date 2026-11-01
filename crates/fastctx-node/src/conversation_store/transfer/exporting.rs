@@ -31,7 +31,13 @@ pub(crate) fn export(root: &Path, conversation: &str) -> io::Result<PathBuf> {
                 "legacy discovery is not complete; let the source node finish migration before stopping it",
             ));
         }
-        for table in ["migration_files", "migration_content_keys", "session_sources", "session_migration_state"] {
+        for table in [
+            "migration_files",
+            "migration_row_proofs",
+            "migration_content_keys",
+            "session_sources",
+            "session_migration_state",
+        ] {
             let pending: bool = source.query_row(
                 &format!("SELECT EXISTS(SELECT 1 FROM {table} WHERE conversation=?1)"),
                 [conversation],

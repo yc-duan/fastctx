@@ -4,6 +4,8 @@ use std::{io, path::PathBuf};
 
 pub(crate) enum Source {
     Row(LegacyRow),
+    Verify(LegacyRow),
+    Flush,
     File(FileComplete),
 }
 pub(crate) struct LegacyRow {
@@ -23,14 +25,14 @@ pub(crate) struct LegacyRow {
 impl Source {
     fn row(&mut self) -> &mut LegacyRow {
         match self {
-            Self::Row(row) => row,
-            Self::File(_) => unreachable!("only decoded rows have record attributes"),
+            Self::Row(row) | Self::Verify(row) => row,
+            Self::File(_) | Self::Flush => unreachable!("only decoded rows have record attributes"),
         }
     }
     pub(crate) fn conversation(&self) -> Option<&str> {
         match self {
-            Self::Row(row) => row.conversation.as_deref(),
-            Self::File(_) => None,
+            Self::Row(row) | Self::Verify(row) => row.conversation.as_deref(),
+            Self::File(_) | Self::Flush => None,
         }
     }
     pub(crate) fn set_file(&mut self, file: FileRow) {
@@ -40,16 +42,15 @@ impl Source {
         self.row().counted = true;
         self
     }
-    pub(crate) fn content_key(mut self, deduplicate: bool) -> Self {
-        use sha2::{Digest, Sha256};
+    pub(crate) fn content_key(mut self, deduplicate: bool) -> io::Result<Self> {
         let row = self.row();
-        row.content_key = Some((format!("{:x}", Sha256::digest(&row.body)), deduplicate));
-        self
+        row.content_key = Some((crate::records::legacy::raw::digest(&row.body)?, deduplicate));
+        Ok(self)
     }
     pub(crate) fn modified(&self) -> jiff::Timestamp {
         match self {
-            Self::Row(row) => row.modified,
-            Self::File(_) => unreachable!("file boundaries have no record time"),
+            Self::Row(row) | Self::Verify(row) => row.modified,
+            Self::File(_) | Self::Flush => unreachable!("file boundaries have no record time"),
         }
     }
     pub(crate) fn scoped(mut self, conversation: String) -> Self {

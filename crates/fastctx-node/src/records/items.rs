@@ -55,7 +55,7 @@ pub(crate) fn prepare(path: &Path) -> io::Result<(ConversationDir, String, Strin
                         None
                     };
                     let terminal = matches!(category.as_str(), "done" | "taken" | "stopped");
-                    let mut source = Source::new(name, path.clone(), bytes)?.categorized(category);
+                    let mut source = Source::new(name.clone(), path.clone(), bytes)?.categorized(category);
                     if terminal {
                         let expires = source.modified() + jiff::SignedDuration::from_hours(30 * 24);
                         source = source.expiring(expires);

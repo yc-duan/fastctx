@@ -58,6 +58,7 @@ pub(super) fn reset(world: &Path, database: &Database, conversation: &str, gener
     for statement in [
         "DELETE FROM conversation_record_imports WHERE conversation=?1 AND family IN (SELECT family FROM conversation_record_imports WHERE conversation=?1 LIMIT 128)",
         "DELETE FROM session_sources WHERE conversation=?1 AND identity IN (SELECT identity FROM session_sources WHERE conversation=?1 AND finished=1 LIMIT 128)",
+        "DELETE FROM migration_row_proofs WHERE conversation=?1 AND (family,path,ordinal) IN (SELECT p.family,p.path,p.ordinal FROM migration_row_proofs p JOIN migration_files f ON f.family=p.family AND f.path=p.path WHERE p.conversation=?1 AND f.verified=1 LIMIT 128)",
         "DELETE FROM migration_files WHERE conversation=?1 AND (family,path) IN (SELECT family,path FROM migration_files WHERE conversation=?1 AND verified=1 LIMIT 128)",
     ] {
         loop {

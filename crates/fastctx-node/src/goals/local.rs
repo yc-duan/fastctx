@@ -102,19 +102,22 @@ pub(crate) fn prepare(directory: &ConversationDir) -> io::Result<()> {
         let old: Legacy = serde_json::from_slice(&bytes)?;
         let expected =
             old.bridge.as_ref().and_then(|bridge| bridge.held.as_ref()).map(serde_json::to_vec).transpose()?;
-        let prepared = old
-            .bridge
-            .map(|bridge| PreparedBridge::prepare_at(directory, bridge, crate::record_migration::scheduler::priority()))
-            .transpose()?;
-        let bridge = prepared.as_ref().map(|prepared| prepared.bridge.clone());
-        if let Some(prepared) = prepared {
-            records::write_at(directory, Priority::Background, 256, move |rows| {
-                if !rows.exists(LOCAL, "current")? {
-                    prepared.install(rows)?;
-                }
-                prepared.finish(rows)
-            })?;
-            // Verify the immutable set before the family can be marked ready.
+        let bridge = old.bridge.as_ref().map(|bridge| Bridge {
+            active: bridge.active,
+            paused: bridge.paused,
+            held: bridge.held.as_ref().map(|_| Held::Legacy),
+        });
+        if let Some(legacy) = old.bridge {
+            if !crate::record_migration::files::verifying() {
+                let prepared =
+                    PreparedBridge::prepare_at(directory, legacy, crate::record_migration::scheduler::priority())?;
+                records::write_at(directory, Priority::Background, 256, move |rows| {
+                    if !rows.exists(LOCAL, "current")? {
+                        prepared.install(rows)?;
+                    }
+                    prepared.finish(rows)
+                })?;
+            }
             let stored = records::read(directory, |rows| {
                 payloads::read_root(rows.connection(), rows.conversation(), HELD, "current")
             })?;
@@ -125,7 +128,7 @@ pub(crate) fn prepare(directory: &ConversationDir) -> io::Result<()> {
         push(records::Source::new(
             "current".into(),
             path.to_path_buf(),
-            serde_json::to_vec(&Local { view: old.view, bridge })?,
+            records::legacy::raw::merge(&bytes, &Local { view: old.view, bridge })?,
         )?)
     })
 }

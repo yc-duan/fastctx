@@ -56,7 +56,7 @@ impl Job {
         &self,
         kind: &str,
         path: PathBuf,
-        source: impl FnOnce(&Path, &mut dyn FnMut(Source) -> io::Result<()>) -> io::Result<()> + Send + 'static,
+        source: impl FnMut(&Path, &mut dyn FnMut(Source) -> io::Result<()>) -> io::Result<()> + Send + 'static,
     ) -> io::Result<()> {
         records::ensure_file(&self.directory, &self.family(kind), path, source)
     }

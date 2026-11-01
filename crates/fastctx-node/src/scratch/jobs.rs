@@ -13,8 +13,8 @@ fn key(location: &Location) -> io::Result<String> {
 pub(crate) fn prepare(record: &Path) -> io::Result<Job> {
     let job = Job::open(record)?;
     job.prepare_file("scratch", record.with_extension("scratch"), |path, push| {
-        records::legacy::array::<Location>(path, None, &mut |location| {
-            push(Source::new(key(&location)?, path.to_path_buf(), serde_json::to_vec(&location)?)?.replacing())
+        records::legacy::raw_array::<Location>(path, None, &mut |location, body| {
+            push(Source::new(key(&location)?, path.to_path_buf(), body)?.replacing())
         })
     })?;
     Ok(job)

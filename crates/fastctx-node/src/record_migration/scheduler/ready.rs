@@ -52,15 +52,40 @@ impl Ready {
 
 pub(super) fn load(db: &Connection, excluded: &HashSet<String>, scope: Option<&str>) -> Result<Ready> {
     let mut ready = Ready::default();
-    let mut query = db.prepare(
-        "SELECT conversation,family FROM (
-        SELECT conversation,family FROM conversation_record_imports
-        UNION ALL SELECT conversation,'session-events' FROM session_heads WHERE imported=1
-        UNION ALL SELECT conversation,'run-facts' FROM run_imported WHERE checked=1
-        UNION ALL SELECT conversation,'gather/'||generation FROM conversation_record_gathering WHERE complete=1
-    ) r WHERE (?1 IS NULL OR conversation=?1)
-        AND NOT EXISTS(SELECT 1 FROM node_conversation_transfers t WHERE t.name=r.conversation AND t.rejected=0)",
-    )?;
+    let exists = |table: &str| -> Result<bool> {
+        Ok(db.query_row(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_schema WHERE type='table' AND name=?1)",
+            [table],
+            |row| row.get(0),
+        )?)
+    };
+    let mut sources = Vec::new();
+    for (table, query) in [
+        ("conversation_record_imports", "SELECT conversation,family FROM conversation_record_imports"),
+        ("session_heads", "SELECT conversation,'session-events' AS family FROM session_heads WHERE imported=1"),
+        ("run_imported", "SELECT conversation,'run-facts' AS family FROM run_imported WHERE checked=1"),
+        (
+            "conversation_record_gathering",
+            "SELECT conversation,'gather/'||generation AS family FROM conversation_record_gathering WHERE complete=1",
+        ),
+    ] {
+        if exists(table)? {
+            sources.push(query);
+        }
+    }
+    if sources.is_empty() {
+        return Ok(ready);
+    }
+    let fence = if exists("node_conversation_transfers")? {
+        " AND NOT EXISTS(SELECT 1 FROM node_conversation_transfers t WHERE t.name=r.conversation AND t.rejected=0)"
+    } else {
+        ""
+    };
+    let sql = format!(
+        "SELECT conversation,family FROM ({}) r WHERE (?1 IS NULL OR conversation=?1){fence}",
+        sources.join(" UNION ALL ")
+    );
+    let mut query = db.prepare(&sql)?;
     for row in query.query_map([scope], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))? {
         let key = row?;
         if !excluded.contains(&key.0) {

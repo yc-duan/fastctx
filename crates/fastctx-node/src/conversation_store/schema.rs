@@ -3,6 +3,7 @@ use fastctx_storage::{Result, rusqlite::Connection};
 
 pub(super) const MACHINE_TABLES: &[&str] = &[
     "storage_versions",
+    "storage_salvaged",
     "receipts",
     "receipt_references",
     "receipt_watermarks",
@@ -62,6 +63,7 @@ pub(crate) fn tables(db: &Connection) -> Result<Vec<Table>> {
 
 pub(crate) fn initialize(db: &Connection) -> Result<()> {
     db.execute_batch(crate::record_migration::SCHEMA)?;
+    db.execute_batch(crate::records::MIGRATION_PROOF_SCHEMA)?;
     db.execute_batch(crate::context::records::SCHEMA)?;
     db.execute_batch(crate::gather::records::SCHEMA)?;
     super::transfer::initialize(db)?;

@@ -39,12 +39,21 @@ pub fn transfer(root: &std::path::Path) -> Result<(), Box<dyn std::error::Error>
     crate::conversation_store::transfer_drill::run(root)
 }
 
-/// Dropping the last handle asks the SQLite writer to close asynchronously.
-/// In-process restart drills wait for that close; a killed process has no such
-/// surviving thread. Only the engine's explicit Busy result is retried.
+/// In-process restarts wait for the old connections' final checkpoint and WAL
+/// removal. A killed process has no surviving closer and uses normal recovery.
 pub(crate) fn reopen(world: &fastctx_types::layout::WorldDir) -> fastctx_storage::Result<fastctx_storage::Database> {
     let started = std::time::Instant::now();
     loop {
+        if fastctx_platform::disk::exists(world.path().join("node.sqlite3-wal"))? {
+            if started.elapsed() >= std::time::Duration::from_secs(10) {
+                return Err(fastctx_storage::Error::with_kind(
+                    fastctx_storage::ErrorKind::Busy,
+                    "the old database connections have not closed",
+                ));
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+            continue;
+        }
         let database = crate::record_database::open(world);
         match database.fault().cloned() {
             None => return Ok(database),

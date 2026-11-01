@@ -4,14 +4,8 @@ use fastctx_types::{
     ProcessIdentity, ResidentId,
     layout::{ConversationDir, WorldDir},
 };
-use serde::{Deserialize, Serialize};
 use std::io;
 
-#[derive(Default, Serialize, Deserialize)]
-struct Hosts {
-    processes: Vec<ProcessIdentity>,
-    unknown: bool,
-}
 fn identity(process: &ProcessIdentity) -> String {
     use sha2::{Digest, Sha256};
     format!("{:x}", Sha256::digest(serde_json::to_vec(process).expect("process identity serializes")))
@@ -20,11 +14,9 @@ pub(crate) fn prepare(world: &WorldDir, id: &ResidentId) -> io::Result<Conversat
     let directory = world.conversation(id);
     let path = directory.path().join("native-hosts.json");
     records::ensure_file(&directory, "native-processes", path.clone(), |path, push| {
-        let Some(hosts) = fastctx_agent::state::load::<Hosts>(path).map_err(io::Error::other)? else { return Ok(()) };
-        for process in hosts.processes {
-            push(records::Source::new(identity(&process), path.to_path_buf(), serde_json::to_vec(&process)?)?)?;
-        }
-        Ok(())
+        records::legacy::raw_array::<ProcessIdentity>(path, Some("processes"), &mut |process, body| {
+            push(records::Source::new(identity(&process), path.to_path_buf(), body)?)
+        })
     })?;
     records::ensure_file(&directory, "native-lifetime", path, |path, push| {
         if let Some(unknown) = records::legacy::field::<bool>(path, "unknown")? {
