@@ -313,9 +313,6 @@ pub async fn ask_here(
         at: born_at,
         what: MessageKind::Asked { from: asker.clone(), text: prompt.clone(), requester_turn },
     };
-    if let Err(error) = crate::residents::append_message(&directory, &asked) {
-        node.log.line(format_args!("recording what {id} was asked: {error}"));
-    }
     // The request is kept before the asker hears of the colleague: a node
     // that stops before it goes in finds it, and puts it in then.
     let first = Pending {
@@ -335,7 +332,17 @@ pub async fn ask_here(
         session: None,
         since: None,
     };
-    if let Err(error) = crate::inbox::keep(&directory, &first) {
+    let (recording, kept_directory, kept_first) = (node.clone(), directory.clone(), first.clone());
+    let kept = fastctx_platform::task::spawn_blocking(move || {
+        if let Err(error) = crate::residents::append_message(&kept_directory, &asked) {
+            recording.log.line(format_args!("recording the colleague's first request: {error}"));
+        }
+        crate::inbox::keep(&kept_directory, &kept_first)
+    })
+    .await
+    .map_err(std::io::Error::other)
+    .and_then(|result| result);
+    if let Err(error) = kept {
         node.residents
             .change_now(&node.world, &id, |now| {
                 now.activity = Activity::Idle;
@@ -346,7 +353,7 @@ pub async fn ask_here(
     }
     let (node, colleague) = (node.clone(), id.clone());
     let answering = node.handoff.call();
-    tokio::spawn(async move {
+    fastctx_platform::task::spawn(async move {
         let Some(_answering) = answering else { return };
         let why = match speech::hand_over(&node, &colleague, &about, &directory, first.clone()).await {
             Ok(
