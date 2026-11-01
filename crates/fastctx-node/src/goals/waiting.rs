@@ -12,7 +12,7 @@ use fastctx_types::{
     session::{Happened, SessionEvent},
     turn_evidence::{GoalDebt, Liveness, WaitHandle, WaitKind},
 };
-use std::sync::Arc;
+use std::{collections::BTreeMap, sync::Arc};
 
 pub(crate) fn continues(goal: &Goal) -> bool {
     goal.retired.is_none()
@@ -80,20 +80,13 @@ pub(crate) async fn debt(
 }
 
 /// Metadata already in this requester's custody, including reports not yet consumed by its model.
-fn received_now(node: &Node, resident: &ResidentId) -> Result<Vec<ReportDelivery>, Failure> {
+fn pending_reports_now(node: &Node, resident: &ResidentId) -> Result<BTreeMap<NoticeId, Vec<ReportDelivery>>, Failure> {
     let directory = node.world.conversation(resident);
-    let mut received = Vec::new();
+    let mut received = BTreeMap::<_, Vec<_>>::new();
     // Read custody in its forward order: pending input is published into history before it is removed.
     for pending in crate::inbox::pending(&directory).map_err(fail)? {
         if let Notice::Words { goal_report: Some(report), .. } = pending.delivery.notice {
-            received.push(*report);
-        }
-    }
-    for event in crate::delivery::history(&directory).map_err(fail)? {
-        if let Happened::Heard { notice: Some(notice), .. } = event.happened
-            && let Notice::Words { goal_report: Some(report), .. } = *notice
-        {
-            received.push(*report);
+            received.entry(report.id.clone()).or_default().push(*report);
         }
     }
     Ok(received)
@@ -166,7 +159,33 @@ fn fail(error: impl std::fmt::Display) -> Failure {
     Failure::new(error.to_string())
 }
 
-pub(crate) async fn received(node: &Arc<Node>, resident: &ResidentId) -> Result<Vec<ReportDelivery>, Failure> {
+pub(crate) async fn pending_reports(
+    node: &Arc<Node>,
+    resident: &ResidentId,
+) -> Result<BTreeMap<NoticeId, Vec<ReportDelivery>>, Failure> {
     let (node, resident) = (node.clone(), resident.clone());
-    tokio::task::spawn_blocking(move || received_now(&node, &resident)).await.map_err(fail)?
+    tokio::task::spawn_blocking(move || pending_reports_now(&node, &resident)).await.map_err(fail)?
+}
+
+/// Read exactly the promised report after taking the pending-input snapshot.
+pub(crate) async fn report(
+    node: &Arc<Node>,
+    resident: &ResidentId,
+    id: &NoticeId,
+) -> Result<Vec<ReportDelivery>, Failure> {
+    let directory = node.world.conversation(resident);
+    let id = id.to_string();
+    tokio::task::spawn_blocking(move || {
+        let mut reports = Vec::new();
+        for (_, event) in crate::session_record::search::all(&directory, "report", &id).map_err(fail)? {
+            if let Happened::Heard { notice: Some(notice), .. } = event.happened
+                && let Notice::Words { goal_report: Some(report), .. } = *notice
+            {
+                reports.push(*report);
+            }
+        }
+        Ok(reports)
+    })
+    .await
+    .map_err(fail)?
 }

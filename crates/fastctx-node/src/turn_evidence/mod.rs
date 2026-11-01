@@ -62,7 +62,6 @@ pub(crate) async fn snapshot_locked(
     refresh_limits: bool,
 ) -> Result<fastctx_types::turn_evidence::TurnEvidence, fastctx_types::ipc::Failure> {
     use fastctx_types::ipc::Failure;
-    use fastctx_types::session::Happened;
     use fastctx_types::turn_evidence::TurnEvidence;
     node.residents.active(resident)?;
     let (about, _) = node.residents.about(resident).ok_or_else(|| Failure::new("unknown conversation"))?;
@@ -111,9 +110,14 @@ pub(crate) async fn snapshot_locked(
             .into_iter()
             .filter(|job| job.record.turn.is_some() && job.record.turn == turn)
             .collect();
-        let notices = crate::delivery::history(&directory)?.into_iter().filter(|event| {
-            matches!(&event.happened, Happened::Heard { turn: Some(at), from: Some(fastctx_types::session::Speaker::World), .. } if Some(at.as_str()) == turn.as_deref())
-        }).collect();
+        let notices = turn
+            .as_deref()
+            .map(|turn| crate::session_record::search::all(&directory, "world-turn", turn))
+            .transpose()?
+            .unwrap_or_default()
+            .into_iter()
+            .map(|(_, event)| event)
+            .collect();
         Ok(TurnEvidence {
             resident: resident.clone(),
             turn: turn.clone(),

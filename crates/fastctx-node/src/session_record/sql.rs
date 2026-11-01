@@ -6,6 +6,12 @@ use fastctx_storage::{
 };
 
 pub(crate) const SCHEMA:&str="
+CREATE TABLE IF NOT EXISTS session_search_heads (conversation TEXT PRIMARY KEY, sequence BLOB NOT NULL) WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS session_event_tags (
+    conversation TEXT NOT NULL,tag TEXT NOT NULL,value TEXT NOT NULL,sequence BLOB NOT NULL,arrival BLOB NOT NULL,
+    PRIMARY KEY(conversation,tag,value,sequence)
+) WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS session_event_tag_arrival ON session_event_tags(conversation,tag,value,arrival,sequence);
 CREATE TABLE IF NOT EXISTS session_heads (
     conversation TEXT PRIMARY KEY, allocated BLOB NOT NULL, latest BLOB NOT NULL,
     imported INTEGER NOT NULL DEFAULT 0
@@ -43,7 +49,13 @@ pub(super) fn set_head(db: &Connection, conversation: &str, allocated: u64, late
     Ok(())
 }
 
-pub(super) fn append(db: &Connection, conversation: &str, key: &str, body: &[u8]) -> Result<bool> {
+pub(super) fn append(
+    db: &Connection,
+    conversation: &str,
+    key: &str,
+    body: &[u8],
+    tags: &super::search::Tags,
+) -> Result<bool> {
     let exists = db
         .query_row("SELECT 1 FROM session_events WHERE conversation=?1 AND identity=?2", (conversation, key), |row| {
             row.get::<_, i32>(0)
@@ -53,12 +65,13 @@ pub(super) fn append(db: &Connection, conversation: &str, key: &str, body: &[u8]
     if exists {
         return Ok(false);
     }
-    let (previous, _, imported) = head(db, conversation)?;
+    let (previous, latest, imported) = head(db, conversation)?;
     let sequence = previous.checked_add(1).ok_or_else(|| Error::new("session event sequence exhausted"))?;
     db.execute(
         "INSERT INTO session_events(conversation,sequence,identity,body) VALUES(?1,?2,?3,?4)",
         params![conversation, sequence.to_be_bytes().as_slice(), key, body],
     )?;
+    super::search::appended(db, conversation, latest, sequence, tags)?;
     set_head(db, conversation, sequence, sequence, imported)?;
     Ok(true)
 }

@@ -145,21 +145,27 @@ pub(crate) async fn collect(
         Err(error) => return Err(failure(error)),
     }
     let received = Arc::new(if colleagues.is_empty() {
-        Vec::new()
+        BTreeMap::new()
     } else {
-        crate::goals::waiting::received(node, resident).await?
+        crate::goals::waiting::pending_reports(node, resident).await?
     });
     let mut queries = tokio::task::JoinSet::new();
     for (colleague, since) in colleagues {
         let (node, acting, owner, received) = (node.clone(), about.acting.clone(), owner.clone(), received.clone());
+        let requester = resident.clone();
         queries.spawn(async move {
             match super::debts::read(&node, &acting, &colleague, &owner).await {
                 Ok(debt) => {
                     let mut handles = Vec::new();
-                    if let Some(goal) = &debt.goal
-                        && let Some(handle) = crate::goals::waiting::handle(&node, &colleague, goal, &received)
-                    {
-                        handles.push(handle);
+                    if let Some(goal) = &debt.goal {
+                        let mut reports = Vec::new();
+                        if let Some(expected) = &goal.report {
+                            reports.extend(received.get(expected).into_iter().flatten().cloned());
+                            reports.extend(crate::goals::waiting::report(&node, &requester, expected).await?);
+                        }
+                        if let Some(handle) = crate::goals::waiting::handle(&node, &colleague, goal, &reports) {
+                            handles.push(handle);
+                        }
                     }
                     if debt.since().is_some() {
                         handles.push(WaitHandle {
@@ -185,15 +191,15 @@ pub(crate) async fn collect(
                             output_growth: None,
                         });
                     }
-                    handles
+                    Ok::<_, Failure>(handles)
                 }
-                Err(error) => vec![unknown(
+                Err(error) => Ok(vec![unknown(
                     colleague.resident.to_string(),
                     WaitKind::Colleague,
                     colleague.machine,
                     Some(since),
                     error.message,
-                )],
+                )]),
             }
         });
     }
@@ -219,13 +225,13 @@ pub(crate) async fn collect(
                 }
             }
             .await;
-            read.unwrap_or_else(|error| {
+            Ok(read.unwrap_or_else(|error| {
                 vec![unknown(format!("jobs@{machine}"), WaitKind::Job, machine, since, error.message)]
-            })
+            }))
         });
     }
     while let Some(query) = queries.join_next().await {
-        result.extend(query.map_err(|error| Failure::new(error.to_string()))?);
+        result.extend(query.map_err(|error| Failure::new(error.to_string()))??);
     }
     for timer in crate::timers::table(node)?
         .list(Some(&Owner::Conversation { resident: resident.clone() }))

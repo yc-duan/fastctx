@@ -678,7 +678,10 @@ pub async fn run_prepared(
         fastctx_storage::versions::apply(
             db,
             "node.session-events",
-            &[fastctx_storage::versions::Migration { version: 1, sql: session_record::SCHEMA }],
+            &[
+                fastctx_storage::versions::Migration { version: 1, sql: session_record::SCHEMA },
+                fastctx_storage::versions::Migration { version: 2, sql: session_record::SCHEMA },
+            ],
         )?;
         fastctx_storage::versions::apply(
             db,

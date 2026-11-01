@@ -35,7 +35,22 @@ fn decide(
             return Ok(policy::wait_returned(goal, waiting));
         }
     }
-    for event in crate::delivery::history(&node.world.conversation(&goal.resident.resident)).map_err(failure)? {
+    let directory = node.world.conversation(&goal.resident.resident);
+    let mut selections = std::collections::BTreeSet::new();
+    for waiting in &goal.runtime.waiting {
+        if let Some(completion) = &waiting.completion {
+            selections.insert(("delivery", completion.to_string()));
+            selections.insert(("completion", completion.to_string()));
+        } else if new_turn {
+            selections.insert(("answer-turn", crate::session_record::search::turn_key(current_turn.as_deref())));
+        }
+    }
+    let mut events = std::collections::BTreeMap::new();
+    let history = crate::session_record::search::open(&directory).map_err(failure)?;
+    for (tag, value) in selections {
+        events.extend(history.all(tag, &value).map_err(failure)?);
+    }
+    for (_, event) in events {
         let Happened::Heard { delivery, turn, notice, .. } = &event.happened else { continue };
         for waiting in &goal.runtime.waiting {
             let returned = if let Some(expected) = &waiting.completion {

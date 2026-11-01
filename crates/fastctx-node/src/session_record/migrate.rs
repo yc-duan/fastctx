@@ -12,7 +12,7 @@ use std::{io, sync::LazyLock};
 static GATES: LazyLock<crate::record_gates::Gates> = LazyLock::new(|| {
     crate::record_gates::Gates::new(fastctx_platform::doing::Rank::RECORDS, "migrating session events")
 });
-const BATCH: usize = 128;
+const BATCH: usize = 16;
 
 type Legacy = (String, bool, Vec<u8>, i64, i32, Vec<u8>);
 
@@ -72,7 +72,7 @@ pub(super) fn ensure(directory: &ConversationDir, database: &Database, conversat
                 let mut query = db.prepare_cached(
                     "SELECT identity,sequenced,sequence,seconds,nanos,body FROM session_legacy
                 WHERE conversation=?1 AND (sequenced,sequence,seconds,nanos,identity)>(?3,?4,?5,?6,?2)
-                ORDER BY sequenced,sequence,seconds,nanos,identity LIMIT 128",
+                ORDER BY sequenced,sequence,seconds,nanos,identity LIMIT 16",
                 )?;
                 Ok(query
                     .query_map(
@@ -102,11 +102,19 @@ pub(super) fn ensure(directory: &ConversationDir, database: &Database, conversat
             break;
         }
         cursor = rows.last().cloned();
+        let tags = rows
+            .iter()
+            .map(|row| {
+                serde_json::from_slice::<fastctx_types::session::SessionEvent>(&row.5)
+                    .map(|event| super::search::Tags::of(&event))
+                    .map_err(io::Error::other)
+            })
+            .collect::<io::Result<Vec<_>>>()?;
         let bytes = rows.iter().map(|row| row.5.len() + 128).sum();
         let scope = conversation.to_string();
         sequence = database
             .write_now_at(Priority::Background, bytes, move |db| {
-                for (key, sequenced, old, _, _, body) in rows {
+                for ((key, sequenced, old, _, _, body), tags) in rows.into_iter().zip(tags) {
                     let next = sequence
                         .checked_add(1)
                         .ok_or_else(|| fastctx_storage::Error::new("session event sequence exhausted"))?;
@@ -128,6 +136,7 @@ pub(super) fn ensure(directory: &ConversationDir, database: &Database, conversat
                             params![scope, sequence.to_be_bytes().as_slice(), key, body],
                         )?;
                     }
+                    tags.insert(db, &scope, sequence)?;
                 }
                 Ok(sequence)
             })
@@ -142,6 +151,7 @@ pub(super) fn ensure(directory: &ConversationDir, database: &Database, conversat
     let scope = conversation.to_string();
     database
         .write_now_at(Priority::Background, 128, move |db| {
+            super::search::advance(db, &scope, sequence)?;
             sql::set_head(db, &scope, reserved.max(sequence), sequence, true)
         })
         .map_err(io::Error::other)?;

@@ -3,6 +3,7 @@
 #[cfg(feature = "storage-drill")]
 pub(crate) mod drill;
 mod migrate;
+pub(crate) mod search;
 mod sql;
 pub(crate) use sql::SCHEMA;
 
@@ -31,9 +32,10 @@ fn database(directory: &ConversationDir) -> io::Result<(Database, String)> {
 pub fn append(directory: &ConversationDir, key: &str, event: &SessionEvent) -> io::Result<bool> {
     let (database, conversation) = database(directory)?;
     let (key, body) = (key.to_string(), serde_json::to_vec(event)?);
+    let tags = search::Tags::of(event);
     database
         .write_now_at(fastctx_storage::Priority::Interactive, body.len() + key.len(), move |db| {
-            sql::append(db, &conversation, &key, &body)
+            sql::append(db, &conversation, &key, &body, &tags)
         })
         .map_err(io::Error::other)
 }
@@ -126,5 +128,5 @@ pub(crate) fn append_in(
     event: &SessionEvent,
 ) -> fastctx_storage::Result<bool> {
     let body = serde_json::to_vec(event).map_err(|error| fastctx_storage::Error::new(error.to_string()))?;
-    sql::append(connection, conversation, key, &body)
+    sql::append(connection, conversation, key, &body, &search::Tags::of(event))
 }

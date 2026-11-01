@@ -11,6 +11,7 @@ use crate::Node;
 use fastctx_types::goals::runtime::{ReviewCause, Work};
 use fastctx_types::goals::{Goal, Owner};
 use fastctx_types::ipc::Failure;
+use fastctx_types::layout::Here;
 use fastctx_types::session::{Happened, Speaker};
 use fastctx_types::skill_files::File;
 use std::sync::Arc;
@@ -22,11 +23,31 @@ pub(super) fn owns(node: &Node, goal: &Goal, speaker: &Speaker) -> bool {
 }
 
 fn recent_owner_now(node: &Node, goal: &Goal) -> Result<Vec<(String, OwnerWords)>, Failure> {
+    let directory = node.world.conversation(&goal.resident.resident);
+    let since = goal.runtime.activated_at.unwrap_or(goal.created_at);
+    let history = crate::session_record::search::open(&directory).map_err(failure)?;
+    let mut events: std::collections::BTreeMap<_, _> =
+        history.recent("user", "", since, 4).map_err(failure)?.into_iter().collect();
+    if let Owner::Conversation { address } = &goal.owner {
+        let mut machines = node.names().names_of(&address.machine);
+        if !machines.contains(&address.machine) {
+            machines.push(address.machine.clone());
+        }
+        for machine in machines {
+            let address = fastctx_types::Address { machine, resident: address.resident.clone() };
+            events.extend(
+                history
+                    .recent("resident", &crate::session_record::search::address_key(&address), since, 4)
+                    .map_err(failure)?,
+            );
+        }
+    }
+    let mut events: Vec<_> = events.into_iter().collect();
+    events.sort_by_key(|(sequence, event)| (event.at, *sequence));
     let mut words = Vec::new();
-    for event in crate::delivery::history(&node.world.conversation(&goal.resident.resident)).map_err(failure)? {
+    for (_, event) in events.into_iter().rev().take(4).rev() {
         if let Happened::Heard { delivery, from: Some(speaker), text, .. } = &event.happened
             && owns(node, goal, speaker)
-            && event.at >= goal.runtime.activated_at.unwrap_or(goal.created_at)
         {
             let key = delivery.as_ref().map(ToString::to_string).unwrap_or_else(|| {
                 fastctx_hands::files::content_hash(&serde_json::to_vec(&event).expect("event serializes"))
@@ -34,7 +55,6 @@ fn recent_owner_now(node: &Node, goal: &Goal) -> Result<Vec<(String, OwnerWords)
             words.push((key, OwnerWords { at: event.at, speaker: speaker.clone(), text: text.clone() }));
         }
     }
-    words.sort_by_key(|(_, words)| words.at);
     Ok(words)
 }
 
