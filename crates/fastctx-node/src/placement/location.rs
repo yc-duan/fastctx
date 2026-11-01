@@ -141,7 +141,7 @@ pub(crate) async fn prepare(
     if node.residents.now(id).is_some_and(|now| now.turn.is_some()) {
         return Ok(read(&receipt)?.flatten());
     }
-    let Some(scope) = crate::plan::file_account(node, id, acting)? else {
+    let Some(scope) = crate::plan::load_account(node, id, acting).await? else {
         if node.links().is_empty() && matches!(acting, Acting::Here) {
             return Ok(Some(Location { machine: node.machine(), path: crate::world::native(room.path()) }));
         }

@@ -263,6 +263,17 @@ pub(crate) async fn save(node: &Arc<Node>, id: &ResidentId, markdown: String) ->
     Err(Failure::new(words::CONFLICT))
 }
 
+pub(crate) async fn load_account(
+    node: &Arc<Node>,
+    id: &ResidentId,
+    acting: &Acting,
+) -> Result<Option<HubAccount>, Failure> {
+    let (node, id, acting) = (node.clone(), id.clone(), acting.clone());
+    fastctx_platform::task::spawn_blocking(move || file_account(&node, &id, &acting))
+        .await
+        .map_err(|error| Failure::new(error.to_string()))?
+}
+
 pub(crate) fn file_account(node: &Node, id: &ResidentId, acting: &Acting) -> Result<Option<HubAccount>, Failure> {
     crate::placement::account(node, acting, seen(node, id)?.map(|seen| seen.account))
 }

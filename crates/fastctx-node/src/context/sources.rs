@@ -156,7 +156,7 @@ pub(crate) async fn plan_guide(node: &Arc<Node>, id: &ResidentId, origin: &Origi
         match placed {
             Ok(Some(location)) => {
                 let path=crate::placement::plan_path(&location);
-                let replicated = crate::plan::file_account(node, id, acting).ok().flatten().and_then(|account| node.link_of(&account.hub)).is_some_and(|link| link.view().shared_records);
+                let replicated = crate::plan::load_account(node, id, acting).await.ok().flatten().and_then(|account| node.link_of(&account.hub)).is_some_and(|link| link.view().shared_records);
                 (words::plan_guide(&path,location.machine.as_str(),replicated),format!("The plan file is now on {} at {path}.",location.machine))
             },
             Ok(None) => ("YOUR PLAN\n\nYour plan remains in your account. There is no online working computer for its file now; the app can still read and edit it.".into(),"There is no online working computer for the plan file now.".into()),
@@ -170,12 +170,17 @@ pub(crate) async fn plan_guide(node: &Arc<Node>, id: &ResidentId, origin: &Origi
             }
         }
     };
-    let change = Change { by: None, version: "", fact: &fact, full: false };
-    if node.residents.about(id).is_some() {
-        super::set(node, id, "plan-guide", &text, change)
-    } else {
-        storage::set(&node.world, id, "plan-guide", &text, change)
-    }
+    let (node, id) = (node.clone(), id.clone());
+    fastctx_platform::task::spawn_blocking(move || {
+        let change = Change { by: None, version: "", fact: &fact, full: false };
+        if node.residents.about(&id).is_some() {
+            super::set(&node, &id, "plan-guide", &text, change)
+        } else {
+            storage::set(&node.world, &id, "plan-guide", &text, change)
+        }
+    })
+    .await
+    .map_err(io::Error::other)?
 }
 
 /// Refreshes the history block through the shared context delivery path.
