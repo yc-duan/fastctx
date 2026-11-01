@@ -1,12 +1,16 @@
-//! Job progress between this release and the earlier one, as a network has
-//! it while its machines update one by one: a conversation of this release
-//! runs a script on a machine of the earlier release, and a conversation that
-//! lives on that machine runs one on a machine of this release. Each sees
-//! every step of the part run on the other side once, ended, with its output.
+//! A machine of the earlier release among this release's, as a network has
+//! it while its machines update one by one. A conversation of this release
+//! runs a script on it, and a conversation that lives on it runs one on a
+//! machine of this release: each sees every step of the part run on the
+//! other side once, ended, with its output. A project of the account spans
+//! it and a machine of this release, its ledger holding history: both take
+//! what the other writes. Then it is updated in place.
 use super::*;
+use fastctx_types::history::{HistoryCall, HistoryReply, Scope};
+use fastctx_types::project::{RecordFields, record_path};
 use fastctx_types::run_facts::{RunFacts, StepDid};
 use fastctx_types::session::{Happened, Watched, What};
-use fastctx_types::{AgentName, ResidentId};
+use fastctx_types::{AgentName, ResidentId, TownName};
 
 /// The script a conversation runs on `executor`: a file looked at there, then
 /// an `on` from there to `nested`, each a step of the job on `executor`.
@@ -91,16 +95,100 @@ pub(super) async fn exercise(
         "EARLIER_RECEIVER",
         "this release's steps of a job reached the earlier machine's conversation, each once",
     );
+    let town = project(base, world, &old).await?;
+    let before = history(world, &resident, "old-pc").await?;
     old_node.kill()?;
     old_node.wait()?;
-    upgrade(&old, world, &resident, earlier).await
+    upgrade(&old, host, world, &resident, &town, earlier, before).await
+}
+
+/// A project of the account spanning the earlier machine and a machine of
+/// this release, history appended to its ledger: the earlier machine takes
+/// the entries written after the history, and writes one of its own that
+/// this release's machine takes.
+async fn project(base: &Path, world: &World, old: &Path) -> Result<TownName> {
+    let town: TownName = "mixed-history".parse()?;
+    world
+        .open_town(
+            town.clone(),
+            RecordFields {
+                name: Some("Mixed history".into()),
+                what: Some("BEFORE_HISTORY".into()),
+                machines: Some(vec![machine("old-pc"), machine("alice-pc")]),
+                ..Default::default()
+            },
+            Some(name("alice")),
+            None,
+        )
+        .await?;
+    let saved = world
+        .history(HistoryCall::Save {
+            scope: Scope::Project { project: town.clone() },
+            name: "mixed-note".into(),
+            text: "---\nname: mixed-note\ndescription: Mixed fixture\n---\nMIXED_HISTORY\n".into(),
+            expected: None,
+        })
+        .await?;
+    anyhow::ensure!(matches!(saved, HistoryReply::Saved { .. }), "saving the project's history did not finish");
+    world
+        .edit_town(Some(town.clone()), RecordFields { what: Some("AFTER_HISTORY".into()), ..Default::default() })
+        .await?;
+    let version = |root: &Path, version: u32| WorldDir::under(root).town(&town).ledger().join(record_path(version));
+    record(
+        "an earlier machine took a project's entry written after history in its ledger",
+        holds(&version(old, 2), "AFTER_HISTORY").await,
+        json!(null),
+    );
+
+    let edited = command(old, &old.join("bin/fastctx"))
+        .args(["project", "edit", town.as_str(), "--what", "EARLIER_EDIT"])
+        .output()?;
+    let said = format!("{}{}", String::from_utf8_lossy(&edited.stdout), String::from_utf8_lossy(&edited.stderr));
+    let alice = base.join("alice-pc");
+    record(
+        "an earlier machine wrote to a project holding history, and this release's machine took it",
+        edited.status.success() && holds(&version(&alice, 3), "EARLIER_EDIT").await,
+        json!(said.trim()),
+    );
+    record(
+        "this release's machine reads the history of a project an earlier machine writes to",
+        holds(&projected(&alice, &town), "MIXED_HISTORY").await,
+        json!(null),
+    );
+    Ok(town)
+}
+
+/// Where a machine at `root` keeps the project history document the drill
+/// saves in `town`, for its residents to read.
+fn projected(root: &Path, town: &TownName) -> PathBuf {
+    WorldDir::under(root).town(town).path().join("history").join("mixed-note.md")
+}
+
+/// Waits for the file at `path` to hold `text`.
+async fn holds(path: &Path, text: &str) -> bool {
+    for _ in 0..240 {
+        if std::fs::read_to_string(path).is_ok_and(|read| read.contains(text)) {
+            return true;
+        }
+        pause().await;
+    }
+    false
 }
 
 /// The earlier machine updated in place, as its user installing this release
 /// does: its World moves forward though killed along the way, answers as it
-/// did, and the earlier release installed again stops instead of misreading it.
-async fn upgrade(old: &Path, world: &World, resident: &ResidentId, earlier: &Path) -> Result<()> {
-    let before = history(world, resident, "old-pc").await?;
+/// did, and the earlier release installed again stops instead of misreading
+/// it. `before` is its conversation's history as the earlier release read
+/// it; `town` a project whose history that release kept as entries only.
+async fn upgrade(
+    old: &Path,
+    host: &Path,
+    world: &World,
+    resident: &ResidentId,
+    town: &TownName,
+    earlier: &Path,
+    before: Vec<Value>,
+) -> Result<()> {
     let installed = old.join("bin/fastctx");
     let this = KERNEL.get().expect("kernel path");
     replace(&installed, this)?;
@@ -115,14 +203,19 @@ async fn upgrade(old: &Path, world: &World, resident: &ResidentId, earlier: &Pat
     let mut node = start_with(old, &installed)?;
     record(
         "this release served the earlier machine's World, killed three times along its move",
-        online(old).await,
+        online(old).await && seen_online(host, "old-pc").await,
         json!(null),
     );
-    let after = history(world, resident, "old-pc").await?;
+    let after = history_again(world, resident, "old-pc").await?;
     record(
         "the earlier conversation's history reads the same after the move",
         before == after,
         json!({"before": before.len(), "after": after.len(), "first difference": before.iter().zip(&after).position(|(a, b)| a != b)}),
+    );
+    record(
+        "and its project's history, which the earlier release took as entries only, is there to read",
+        holds(&projected(old, town), "MIXED_HISTORY").await,
+        json!(null),
     );
     node.kill()?;
     node.wait()?;
@@ -153,12 +246,23 @@ async fn upgrade(old: &Path, world: &World, resident: &ResidentId, earlier: &Pat
 
     replace(&installed, this)?;
     let mut node = start_with(old, &installed)?;
-    let served = online(old).await;
-    let again = served && history(world, resident, "old-pc").await? == after;
+    let served = online(old).await && seen_online(host, "old-pc").await;
+    let again = served && history_again(world, resident, "old-pc").await? == after;
     record("and this release served it again as before", again, json!(null));
     node.kill()?;
     node.wait()?;
     Ok(())
+}
+
+/// Waits for the machine at `host` to see `label` online through their hub.
+async fn seen_online(host: &Path, label: &str) -> bool {
+    for _ in 0..240 {
+        if online_now(host, label).await {
+            return true;
+        }
+        pause().await;
+    }
+    false
 }
 
 /// Puts `program` where the World runs its node from.
@@ -185,6 +289,19 @@ async fn history(world: &World, id: &ResidentId, machine: &str) -> Result<Vec<Va
     })
     .await??;
     Ok(events.into_iter().map(|event| serde_json::to_value(event.happened)).collect::<Result<_, _>>()?)
+}
+
+/// The history on `machine` once it answers again after a restart: until
+/// its hub has its session, a watch there is refused as offline.
+async fn history_again(world: &World, id: &ResidentId, machine: &str) -> Result<Vec<Value>> {
+    let began = std::time::Instant::now();
+    loop {
+        match history(world, id, machine).await {
+            Ok(events) => return Ok(events),
+            Err(error) if began.elapsed() > Duration::from_secs(60) => return Err(error),
+            Err(_) => pause().await,
+        }
+    }
 }
 
 /// The facts of the last run the conversation on `machine` finished, as its
