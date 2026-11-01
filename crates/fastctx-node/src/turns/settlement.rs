@@ -22,22 +22,6 @@ pub(crate) async fn settle_terminal_locked(
     let Some((about, _)) = node.residents.about(id) else { return Ok(()) };
     let directory = node.world.conversation(id);
     let Some(header) = delivery::terminal_header(&directory, turn).await? else { return Ok(()) };
-    let (checking, key) = (directory.clone(), turn.to_string());
-    let retired = fastctx_platform::task::spawn_blocking(move || {
-        if !checking.path().join("books-retired").try_exists()? {
-            return Ok(false);
-        }
-        records::write_at(&checking, Priority::Background, 256, move |rows| {
-            rows.connection()
-                .execute("DELETE FROM terminal_work WHERE conversation=?1 AND turn=?2", (rows.conversation(), key))?;
-            Ok(true)
-        })
-    })
-    .await
-    .map_err(io::Error::other)??;
-    if retired {
-        return Ok(());
-    }
     let (writing, key, colleague, label) = (
         directory.clone(),
         turn.to_string(),
@@ -47,37 +31,9 @@ pub(crate) async fn settle_terminal_locked(
             Origin::User => String::new(),
         },
     );
-    fastctx_platform::task::spawn_blocking(move || {
-        crate::inbox::storage::initialize(&writing)?;
-        loop {
-            let (key, colleague, label) = (key.clone(), colleague.clone(), label.clone());
-            let count = records::write_at(&writing, Priority::Normal, 16 * (512 + label.len()), move |rows| {
-                let Some(header) = terminals::header(rows, &key)? else { return Ok(0) };
-                let readers = terminals::unowed(rows, &key, 16)?;
-                for reader in &readers {
-                    crate::inbox::answers::owe(
-                        rows,
-                        crate::inbox::answers::Reference {
-                            to: reader.clone(),
-                            id: crate::speech::fixed_id("answer", &[&colleague.key(), &key, &reader.key()]),
-                            at: header.at,
-                            colleague: colleague.clone(),
-                            label: label.clone(),
-                            turn: key.clone(),
-                        },
-                    )?;
-                    terminals::owed(rows, &key, reader)?;
-                }
-                Ok(readers.len())
-            })?;
-            if count == 0 {
-                break;
-            }
-        }
-        Ok::<(), io::Error>(())
-    })
-    .await
-    .map_err(io::Error::other)??;
+    fastctx_platform::task::spawn_blocking(move || super::answers::create(&writing, &key, &colleague, &label))
+        .await
+        .map_err(io::Error::other)??;
     let (pay_node, pay_id, pay_directory) = (node.clone(), id.clone(), directory.clone());
     fastctx_platform::task::spawn(async move { crate::outbox::pay(&pay_node, &pay_id, &pay_directory).await });
     if header.effects_complete {

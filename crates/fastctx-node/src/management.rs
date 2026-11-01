@@ -72,7 +72,7 @@ pub async fn here(node: &Arc<Node>, id: &ResidentId, action: Management) -> Resu
     let (_shared, _exclusive) = if matches!(action, Management::Wake) {
         (Some(crate::gate_waits::shared(node, id, &gate).await?), None)
     } else {
-        (None, Some(crate::gate_waits::alone(node, id, &gate).await?))
+        (None, Some(Arc::new((gate.clone(), crate::gate_waits::alone_owned(node, id, &gate).await?))))
     };
     if !matches!(action, Management::Archive | Management::Restore) {
         node.residents.active(id)?;
@@ -154,7 +154,15 @@ pub async fn here(node: &Arc<Node>, id: &ResidentId, action: Management) -> Resu
                     "The host archived the thread or stopped its background session; World jobs keep running.",
                 );
             }
-            match node.residents.remove(&node.world, id) {
+            let (working, resident, held) = (node.clone(), id.clone(), _exclusive.clone());
+            let removed = fastctx_platform::task::spawn_blocking(move || {
+                let _held = held;
+                working.residents.remove(&working.world, &resident)
+            })
+            .await
+            .map_err(std::io::Error::other)
+            .and_then(|result| result);
+            match removed {
                 Ok(path) => step(
                     &mut result,
                     "records",
@@ -193,7 +201,15 @@ pub async fn here(node: &Arc<Node>, id: &ResidentId, action: Management) -> Resu
                 _ => Ok(()),
             };
             completed(&mut result, "host", host, "The host's record of it is out of its archive.");
-            match node.residents.restore(&node.world, id) {
+            let (working, resident, held) = (node.clone(), id.clone(), _exclusive.clone());
+            let restored = fastctx_platform::task::spawn_blocking(move || {
+                let _held = held;
+                working.residents.restore(&working.world, &resident)
+            })
+            .await
+            .map_err(std::io::Error::other)
+            .and_then(|result| result);
+            match restored {
                 Ok(()) => step(
                     &mut result,
                     "records",

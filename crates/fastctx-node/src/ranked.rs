@@ -115,7 +115,3 @@ machine_lock!(
     /// changed.
     Disk: SyncMutex = DISK, "disk"
 );
-machine_lock!(
-    /// Conversations' records, each read and written as one transaction.
-    Records: SyncMutex = RECORDS, "records"
-);

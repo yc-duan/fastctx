@@ -638,9 +638,9 @@ impl ConversationDir {
         self.jobs().join(format!("{job}.sh"))
     }
 
-    /// The conversation's bookkeeping, all of it: what keeps it from being
-    /// told the same thing twice, the settings of its host session, what it
-    /// saw of files. It goes once the conversation has ended and owes nothing.
+    /// Legacy bookkeeping sources. Each record family owns its lifetime:
+    /// rebuildable observations may retire after archive, while birth settings
+    /// and delivery proofs remain available for restoration and replay.
     pub fn books(&self) -> PathBuf {
         self.path.join("books")
     }

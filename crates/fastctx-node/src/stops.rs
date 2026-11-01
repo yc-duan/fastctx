@@ -141,3 +141,7 @@ pub(crate) fn recover(node: &Arc<Node>) {
 fn failure(error: impl std::fmt::Display) -> Failure {
     Failure::new(format!("keeping a stop for its input: {error}"))
 }
+
+pub(crate) fn has_pending(directory: &fastctx_types::layout::ConversationDir) -> io::Result<bool> {
+    store::has_pending(directory)
+}

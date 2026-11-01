@@ -132,7 +132,6 @@ mod renewal;
 mod renewal_legacy;
 pub mod replacement;
 mod replicas;
-mod resident_storage;
 mod residents;
 mod retention;
 mod run_facts;

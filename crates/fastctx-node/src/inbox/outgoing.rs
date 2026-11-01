@@ -5,7 +5,7 @@ use super::*;
 use crate::records;
 use fastctx_types::residents::Owing;
 
-fn prepare(directory: &ConversationDir) -> io::Result<()> {
+pub(crate) fn prepare(directory: &ConversationDir) -> io::Result<()> {
     storage::initialize(directory)?;
     for (family, extension) in
         [("answer-retries", "retry"), ("answer-outcomes", "done"), ("answer-attempts", "attempt")]

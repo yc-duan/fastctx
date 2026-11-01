@@ -117,6 +117,13 @@ pub(crate) fn write_then_at<T: Send + 'static>(
         .map_err(io::Error::other)
 }
 
+impl<'a> Rows<'a> {
+    /// Uses the caller's already-open transaction without nesting another read or write.
+    pub(crate) fn in_transaction(connection: &'a Connection, conversation: &'a str) -> Self {
+        Self { connection, conversation }
+    }
+}
+
 impl Rows<'_> {
     pub(crate) fn connection(&self) -> &Connection {
         self.connection

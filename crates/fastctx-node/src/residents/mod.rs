@@ -177,6 +177,9 @@ impl Heard {
 #[derive(serde::Serialize, serde::Deserialize)]
 struct Live {
     removed: Option<Timestamp>,
+    /// Invalidates background eligibility after an archive or restore in this process.
+    #[serde(default)]
+    availability_revision: u64,
     about: About,
     places: Places,
     /// A Claude session's inbox address, for commands from its native shell.
@@ -213,6 +216,7 @@ impl Live {
             .collect();
         Self {
             removed: None,
+            availability_revision: 0,
             about,
             places,
             inbox: None,

@@ -14,6 +14,7 @@
 //! goes into the resident's `now` and to everyone watching; what must be
 //! heard at once also goes to everyone owed the running turn's end.
 
+pub(crate) mod answers;
 mod settlement;
 pub(crate) use settlement::settle_terminal_locked;
 

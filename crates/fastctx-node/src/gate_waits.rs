@@ -88,6 +88,21 @@ pub(crate) async fn alone<'a>(
     }
 }
 
+/// Keeps exclusive lifecycle ownership with work after its waiter is cancelled.
+pub(crate) async fn alone_owned(
+    node: &Node,
+    id: &ResidentId,
+    gate: &RwLock<()>,
+) -> Result<fastctx_platform::doing::OwnedRwLockWriteGuard<()>, Failure> {
+    match remaining() {
+        Some(within) if within.is_zero() => Err(told(node, id, Busy { doing: None })),
+        Some(within) => {
+            tokio::time::timeout(within, gate.write_owned()).await.map_err(|_| told(node, id, Busy { doing: None }))
+        }
+        None => Ok(gate.write_owned().await),
+    }
+}
+
 fn told(node: &Node, id: &ResidentId, busy: Busy) -> Failure {
     if node.residents.is_deleting(id) {
         return Failure::new(format!("{id} is being deleted"));
