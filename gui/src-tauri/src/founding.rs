@@ -23,7 +23,13 @@ pub struct Address {
 
 /// This computer's IPv4 addresses, the physical ones with a gateway first.
 #[tauri::command]
-pub(crate) fn here_addresses() -> Result<Vec<Address>, String> {
+pub(crate) async fn here_addresses() -> Result<Vec<Address>, String> {
+    // Asking the system for its interfaces can take a while: never on the
+    // window's own thread.
+    tauri::async_runtime::spawn_blocking(addresses).await.map_err(|error| error.to_string())?
+}
+
+fn addresses() -> Result<Vec<Address>, String> {
     let mut interfaces = fastctx_net::route::interfaces()?;
     interfaces.sort_by_key(|interface| (!interface.physical, !interface.gateway, interface.metric));
     Ok(interfaces

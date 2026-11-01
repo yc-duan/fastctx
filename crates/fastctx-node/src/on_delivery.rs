@@ -2,12 +2,13 @@
 //! Network receipt is given only after the letter is durable. A separate,
 //! durable receipt suppresses every later copy of an end the CLI took.
 
+use fastctx_platform::doing::{MemoryMutex as Mutex, Rank};
 use std::collections::HashMap;
 use std::io;
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
-use fastctx_platform::{Permissions, ensure_private_dir, publish};
+use crate::records::items;
 use fastctx_types::on::OnOrigin;
 use fastctx_types::residents::{Delivery, Notice};
 use fastctx_types::{Address, JobId, MachineName, NoticeId, ResidentId};
@@ -20,15 +21,22 @@ type Source = (Address, MachineName);
 type Dispatch = (Address, MachineName, Option<NoticeId>);
 type Job = (Address, MachineName, JobId, Option<NoticeId>);
 
-#[derive(Default)]
 pub(crate) struct Deliveries {
     state: Mutex<State>,
+}
+
+impl Default for Deliveries {
+    fn default() -> Self {
+        Self { state: Mutex::new(Rank::RECORDS, "on delivery registry", "", State::default()) }
+    }
 }
 
 #[derive(Default)]
 struct State {
     starting: HashMap<Dispatch, usize>,
     following: HashMap<Job, usize>,
+    starting_sources: HashMap<Source, usize>,
+    following_jobs: HashMap<(Address, MachineName, JobId), usize>,
 }
 
 pub(crate) struct Following {
@@ -46,7 +54,9 @@ impl Following {
         let request = origin.request.clone();
         let dispatch = (source.0.clone(), source.1.clone(), request.clone());
         if origin.sentinel.is_none() {
-            *node.on_deliveries.state.lock().expect("never poisoned").starting.entry(dispatch).or_default() += 1;
+            let mut state = node.on_deliveries.state.lock();
+            *state.starting.entry(dispatch).or_default() += 1;
+            *state.starting_sources.entry(source.clone()).or_default() += 1;
         }
         Self { internal: origin.sentinel.is_some(), node: node.clone(), source, request, job: None }
     }
@@ -59,28 +69,34 @@ impl Following {
             return;
         }
         assert!(self.job.is_none(), "one on starts one job");
-        let mut state = self.node.on_deliveries.state.lock().expect("never poisoned");
+        let mut state = self.node.on_deliveries.state.lock();
         let key = (self.source.0.clone(), self.source.1.clone(), job.clone(), self.request.clone());
         *state.following.entry(key).or_default() += 1;
+        *state.following_jobs.entry((self.source.0.clone(), self.source.1.clone(), job.clone())).or_default() += 1;
         release(&mut state.starting, &(self.source.0.clone(), self.source.1.clone(), self.request.clone()));
+        release(&mut state.starting_sources, &self.source);
         self.job = Some(job.clone());
     }
 
     pub(crate) fn taken(&self, job: &JobId) -> io::Result<()> {
-        if self.internal {
-            return Ok(());
+        match self.receipt_path(job) {
+            Some(path) => items::write(&path, b""),
+            None => Ok(()),
         }
-        let _state = self.node.on_deliveries.state.lock().expect("never poisoned");
-        let path = receipt(
+    }
+
+    pub(crate) fn receipt_path(&self, job: &JobId) -> Option<PathBuf> {
+        if self.internal {
+            return None;
+        }
+        Some(receipt(
             &self.node,
             &self.source.0.machine,
             &self.source.0.resident,
             &self.source.1,
             job,
             self.request.as_ref(),
-        );
-        ensure_private_dir(path.parent().expect("receipt directory"))?;
-        publish(&path, b"", Permissions::Private)
+        ))
     }
 }
 
@@ -90,14 +106,18 @@ impl Drop for Following {
             return;
         }
         {
-            let mut state = self.node.on_deliveries.state.lock().expect("never poisoned");
+            let mut state = self.node.on_deliveries.state.lock();
             match &self.job {
-                Some(job) => release(
-                    &mut state.following,
-                    &(self.source.0.clone(), self.source.1.clone(), job.clone(), self.request.clone()),
-                ),
+                Some(job) => {
+                    release(
+                        &mut state.following,
+                        &(self.source.0.clone(), self.source.1.clone(), job.clone(), self.request.clone()),
+                    );
+                    release(&mut state.following_jobs, &(self.source.0.clone(), self.source.1.clone(), job.clone()));
+                }
                 None => {
-                    release(&mut state.starting, &(self.source.0.clone(), self.source.1.clone(), self.request.clone()))
+                    release(&mut state.starting, &(self.source.0.clone(), self.source.1.clone(), self.request.clone()));
+                    release(&mut state.starting_sources, &self.source);
                 }
             }
         }
@@ -116,7 +136,7 @@ fn release<K: Eq + std::hash::Hash>(counts: &mut HashMap<K, usize>, key: &K) {
 }
 
 #[derive(Serialize, Deserialize)]
-struct Parked {
+pub(crate) struct Parked {
     to: ResidentId,
     delivery: Delivery,
 }
@@ -160,10 +180,8 @@ pub(crate) fn cancelled(node: &Node, origin: &OnOrigin, machine: &MachineName) -
         return Ok(());
     }
     let Some(request) = &origin.request else { return Ok(()) };
-    let _state = node.on_deliveries.state.lock().expect("never poisoned");
     let path = cancellation(node, &origin.resident.machine, &origin.resident.resident, machine, request);
-    ensure_private_dir(path.parent().expect("receipt directory"))?;
-    publish(&path, b"", Permissions::Private)
+    items::write(&path, b"")
 }
 
 fn named(node: &Node, owner: &Address, parts: &[&str]) -> PathBuf {
@@ -177,8 +195,8 @@ fn named(node: &Node, owner: &Address, parts: &[&str]) -> PathBuf {
 }
 
 fn receipt_exists(node: &Node, path: &std::path::Path) -> io::Result<bool> {
-    Ok(path.try_exists()?
-        || node.world.path().join("on-deliveries").join(path.file_name().expect("receipt name")).try_exists()?)
+    Ok(items::exists(path)?
+        || items::exists(&node.world.path().join("on-deliveries").join(path.file_name().expect("receipt name")))?)
 }
 
 pub(crate) fn stopped(
@@ -199,16 +217,13 @@ pub(crate) fn stopped(
 fn held(state: &State, to: &Address, machine: &MachineName, job: &JobId, request: Option<&NoticeId>) -> bool {
     let starting = match request {
         Some(request) => state.starting.contains_key(&(to.clone(), machine.clone(), Some(request.clone()))),
-        None => state.starting.keys().any(|(resident, source, _)| resident == to && source == machine),
+        None => state.starting_sources.contains_key(&(to.clone(), machine.clone())),
     };
     let following = match request {
         Some(request) => {
             state.following.contains_key(&(to.clone(), machine.clone(), job.clone(), Some(request.clone())))
         }
-        None => state
-            .following
-            .keys()
-            .any(|(resident, source, followed, _)| resident == to && source == machine && followed == job),
+        None => state.following_jobs.contains_key(&(to.clone(), machine.clone(), job.clone())),
     };
     starting || following
 }
@@ -226,11 +241,9 @@ pub(crate) fn park_from(
     sender: Option<&crate::letters::Identity>,
 ) -> io::Result<bool> {
     let Notice::JobEnded { job, machine, request, taken, .. } = &delivery.notice else { return Ok(false) };
-    let _state = node.on_deliveries.state.lock().expect("never poisoned");
     let path = receipt(node, &node.machine(), to, machine, job, request.as_ref());
     if *taken {
-        ensure_private_dir(path.parent().expect("receipt directory"))?;
-        publish(&path, b"", Permissions::Private)?;
+        items::write(&path, b"")?;
         if !node.residents.knows(to) {
             return Err(io::Error::other("the completion owner is unknown"));
         }
@@ -260,7 +273,7 @@ pub(crate) fn park_from(
             return Ok(true);
         }
         if sender.is_some()
-            && let Some(parked) = fastctx_install::renewal::read_json::<Parked>(&previous.with_extension("json"))?
+            && let Some(parked) = items::get::<Parked>(&previous.with_extension("json"))?
         {
             if parked.to != *to || parked.delivery.notice != delivery.notice {
                 return Err(io::Error::new(
@@ -270,7 +283,7 @@ pub(crate) fn park_from(
             }
             // Preserve beta.2's delivery identity until its original handoff finishes.
             let bytes = serde_json::to_vec(&parked).map_err(io::Error::other)?;
-            publish(&previous.with_extension("json"), &bytes, Permissions::Private)?;
+            items::write(&previous.with_extension("json"), &bytes)?;
             resume(node);
             return Ok(true);
         }
@@ -286,20 +299,38 @@ fn local_owners(node: &Node, to: &ResidentId) -> Vec<Address> {
 
 /// Moves pre-upgrade held letters into the recoverable conversation queues.
 pub(crate) fn resume(node: &Arc<Node>) {
+    let node = node.clone();
+    fastctx_platform::task::spawn(async move {
+        let mut again = crate::again::Again::default();
+        loop {
+            let recovering = node.clone();
+            match fastctx_platform::task::spawn_blocking(move || resume_once(&recovering)).await {
+                Ok(true) => break,
+                Ok(false) => {}
+                Err(error) => node.log.line(format_args!("restoring held completions: {error}")),
+            }
+            tokio::time::sleep(again.next()).await;
+        }
+    });
+}
+
+fn resume_once(node: &Arc<Node>) -> bool {
+    let mut complete = true;
     let result = (|| -> io::Result<()> {
         for directory in node.world.book_directories("on-deliveries")? {
-            for path in crate::retention::entries(&directory)? {
+            for path in items::entries(&directory, Some("json"))? {
                 if path.extension().is_none_or(|extension| extension != "json")
                     || path.file_name().is_some_and(|name| name.to_string_lossy().starts_with('.'))
                 {
                     continue;
                 }
                 let result = (|| -> io::Result<()> {
-                    let Some(parked) = fastctx_install::renewal::read_json::<Parked>(&path)? else { return Ok(()) };
+                    let Some(parked) = items::get::<Parked>(&path)? else { return Ok(()) };
                     crate::received::keep(node, &parked.to, parked.delivery, crate::speech::Owed::Working)?;
-                    std::fs::remove_file(&path)
+                    items::delete(&path)
                 })();
                 if let Err(error) = result {
+                    complete = false;
                     node.log.line(format_args!("migrating held completion {}: {error}", path.display()));
                 }
             }
@@ -307,8 +338,10 @@ pub(crate) fn resume(node: &Arc<Node>) {
         Ok(())
     })();
     if let Err(error) = result {
+        complete = false;
         node.log.line(format_args!("finding held completions: {error}"));
     }
+    complete
 }
 
 /// Both the original completion id and its authenticated delivery aliases
@@ -339,7 +372,21 @@ pub(crate) fn status(
     job: &JobId,
     request: Option<&NoticeId>,
 ) -> io::Result<(bool, bool)> {
-    let state = node.on_deliveries.state.lock().expect("never poisoned");
-    let taken = receipt_exists(node, &receipt(node, &owner.machine, &owner.resident, machine, job, request))?;
-    Ok((taken, held(&state, owner, machine, job, request)))
+    let before = {
+        let state = node.on_deliveries.state.lock();
+        held(&state, owner, machine, job, request)
+    };
+    let path = receipt(node, &owner.machine, &owner.resident, machine, job, request);
+    let mut taken = receipt_exists(node, &path)?;
+    let following = {
+        let state = node.on_deliveries.state.lock();
+        held(&state, owner, machine, job, request)
+    };
+    // A follower commits its taken receipt before dropping its registration.
+    // If that handoff crossed the read, take the receipt once more without I/O
+    // under the registry lock. A newly registered follower only postpones mail.
+    if before && !following && !taken {
+        taken = receipt_exists(node, &path)?;
+    }
+    Ok((taken, following))
 }

@@ -21,14 +21,20 @@ const HEARTBEAT: Duration = Duration::from_secs(30);
 const CONCURRENT: usize = 32;
 
 pub(crate) fn table(node: &Node) -> Result<&Arc<Store>, Failure> {
-    node.timers.get().ok_or_else(|| Failure::new("the timer table is still recovering"))
+    node.timers.get().ok_or_else(|| {
+        Failure::not_run("the timer table is still recovering").capacity(fastctx_types::ipc::CapacityReason::Pending)
+    })
 }
 
 pub(crate) async fn call(node: &Arc<Node>, call: TimerCall) -> Result<Reply, Failure> {
     let store = table(node)?;
     if let TimerCall::List { owner } = call {
-        let timers =
-            store.list(owner.as_ref()).into_iter().filter(|timer| !matches!(timer.action, Action::Sentinel { .. }));
+        let timers = store
+            .list(owner.as_ref())
+            .await
+            .map_err(failure)?
+            .into_iter()
+            .filter(|timer| !matches!(timer.action, Action::Sentinel { .. }));
         return Ok(Reply::Timers { timers: timers.collect() });
     }
     let resident = match &call {
@@ -46,7 +52,7 @@ pub(crate) async fn call(node: &Arc<Node>, call: TimerCall) -> Result<Reply, Fai
             }
             resident.clone()
         }
-        TimerCall::Cancel { id } => match store.get(id) {
+        TimerCall::Cancel { id } => match store.get(id).await.map_err(failure)? {
             Some(timer) => match timer.action {
                 Action::Tell { resident, .. } => resident,
                 Action::Sentinel { .. } => {
@@ -64,14 +70,14 @@ pub(crate) async fn call(node: &Arc<Node>, call: TimerCall) -> Result<Reply, Fai
     match call {
         TimerCall::Set { id, owner, due, action } => {
             node.residents.active(&resident)?;
-            if store.get(&id).is_some_and(|timer| timer.owner != owner) {
+            if store.get(&id).await.map_err(failure)?.is_some_and(|timer| timer.owner != owner) {
                 return Err(Failure::new("cancel a timer before changing its owner"));
             }
-            let timer = store.set(id, owner, due, action, crate::speech::new_id("timer")).map_err(failure)?;
+            let timer = store.set(id, owner, due, action, crate::speech::new_id("timer")).await.map_err(failure)?;
             Ok(Reply::Timers { timers: vec![timer] })
         }
         TimerCall::Cancel { id } => {
-            store.cancel(&id).map_err(failure)?;
+            store.cancel(&id).await.map_err(failure)?;
             Ok(Reply::Done)
         }
         TimerCall::List { .. } => unreachable!(),
@@ -80,12 +86,12 @@ pub(crate) async fn call(node: &Arc<Node>, call: TimerCall) -> Result<Reply, Fai
 
 pub(crate) fn start(node: &Arc<Node>) {
     let node = node.clone();
-    tokio::spawn(async move {
+    fastctx_platform::task::spawn(async move {
         let mut again = crate::again::Again::default();
         let mut last_error = None;
         let store = loop {
             let path = node.world.path().join("timers");
-            match tokio::task::spawn_blocking(move || Store::open(&path)).await {
+            match fastctx_platform::task::spawn_blocking(move || Store::open(&path)).await {
                 Ok(Ok(store)) => break Arc::new(store),
                 result => {
                     let error = match result {
@@ -107,16 +113,24 @@ pub(crate) fn start(node: &Arc<Node>) {
             // notify_one retains a permit when a mutation happens before this is polled.
             let changed = store.changed.notified();
             while running.len() < CONCURRENT {
-                let Some(timer) = store.claim(Timestamp::now()) else { break };
+                let timer = match store.claim(Timestamp::now()).await {
+                    Ok(Some(timer)) => timer,
+                    Ok(None) => break,
+                    Err(error) => {
+                        node.log.line(format_args!("claiming timer: {error}"));
+                        break;
+                    }
+                };
                 let node = node.clone();
                 let store = store.clone();
                 running.spawn(async move {
+                    let _claim = Claimed(store.clone(), timer.clone());
                     let result = execute(&node, &store, &timer).await;
                     if let Err(error) = result {
                         if timer.error.as_deref() != Some(&error) {
                             node.log.line(format_args!("timer {}: {error}", timer.id));
                         }
-                        if let Err(error) = store.retry(&timer, Timestamp::now(), error) {
+                        if let Err(error) = store.retry(&timer, Timestamp::now(), error).await {
                             node.log.line(format_args!("keeping timer {} retry: {error}", timer.id));
                             store.release(&timer, Timestamp::now());
                         }
@@ -126,9 +140,17 @@ pub(crate) fn start(node: &Arc<Node>) {
             let wait = if running.len() == CONCURRENT {
                 HEARTBEAT
             } else {
-                store.next().map_or(HEARTBEAT, |at| {
-                    Duration::from_secs_f64(at.duration_since(Timestamp::now()).as_secs_f64().max(0.0)).min(HEARTBEAT)
-                })
+                store
+                    .next()
+                    .await
+                    .unwrap_or_else(|error| {
+                        node.log.line(format_args!("reading timer deadline: {error}"));
+                        None
+                    })
+                    .map_or(HEARTBEAT, |at| {
+                        Duration::from_secs_f64(at.duration_since(Timestamp::now()).as_secs_f64().max(0.0))
+                            .min(HEARTBEAT)
+                    })
             };
             tokio::select! {
                 () = changed => {},
@@ -143,19 +165,19 @@ pub(crate) fn start(node: &Arc<Node>) {
     });
 }
 
-async fn execute(node: &Arc<Node>, store: &Store, timer: &Timer) -> Result<(), String> {
+async fn execute(node: &Arc<Node>, store: &Arc<Store>, timer: &Timer) -> Result<(), String> {
     match &timer.action {
-        Action::Sentinel { .. } => crate::sentinels::timers::fire(node, store, timer),
+        Action::Sentinel { .. } => crate::sentinels::timers::fire(node, store, timer).await,
         Action::Goal { .. } => crate::goals::engine::fire(node, store, timer).await.map_err(|error| error.message),
         Action::Tell { resident, .. } => {
             let gate = crate::control_queue::gate(node, resident);
             let _action = gate.lock().await;
             let _place = node.places.using(resident.as_str()).await;
             if node.residents.deleted(resident).is_some() || node.residents.removed(resident).is_some() {
-                store.complete(timer).map_err(|error| error.to_string())?;
+                store.complete(timer).await.map_err(|error| error.to_string())?;
                 return Ok(());
             }
-            let Some(timer) = store.begin(timer, Timestamp::now()).map_err(|error| error.to_string())? else {
+            let Some(timer) = store.begin(timer, Timestamp::now()).await.map_err(|error| error.to_string())? else {
                 return Ok(());
             };
             node.residents.active(resident).map_err(|error| error.message)?;
@@ -181,16 +203,19 @@ async fn execute(node: &Arc<Node>, store: &Store, timer: &Timer) -> Result<(), S
                 }
                 node.log.line(format_args!("timer {} was not delivered: {error}", timer.id));
             }
-            store.complete(&timer).map_err(|error| error.to_string())?;
+            store.complete(&timer).await.map_err(|error| error.to_string())?;
             Ok(())
         }
     }
 }
 
-pub(crate) fn delete_conversation(node: &Node, resident: &fastctx_types::ResidentId) -> io::Result<()> {
-    table(node).map_err(|error| io::Error::other(error.message))?.delete_conversation(resident)
+fn failure(error: io::Error) -> Failure {
+    crate::record_migration::failure(error)
 }
 
-fn failure(error: io::Error) -> Failure {
-    Failure::new(format!("recording timers: {error}"))
+struct Claimed(Arc<Store>, Timer);
+impl Drop for Claimed {
+    fn drop(&mut self) {
+        self.0.unclaim(&self.1);
+    }
 }

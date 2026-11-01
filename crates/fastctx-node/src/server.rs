@@ -110,7 +110,14 @@ async fn converse(node: &Arc<Node>, connection: Connection) -> std::io::Result<(
         }
         // A conversation of this machine is reached only by whom it works
         // for, as from another machine (`admission::local`).
-        if let Err(failure) = crate::admission::local::admit(node, &hello.peer, &call) {
+        let (working, peer) = (node.clone(), hello.peer.clone());
+        let (call, admission) = fastctx_platform::task::spawn_blocking(move || {
+            let admission = crate::admission::local::admit(&working, &peer, &call);
+            (call, admission)
+        })
+        .await
+        .map_err(std::io::Error::other)?;
+        if let Err(failure) = admission {
             writer.send(&json(&NodeFrame::Reply { id, reply: Err(failure) })).await?;
             writer.drain().await?;
             continue;
@@ -209,10 +216,22 @@ async fn converse(node: &Arc<Node>, connection: Connection) -> std::io::Result<(
                 }
             }
         }
-        if let Call::WatchAccountRecords { hub, account, kind } = call {
-            return crate::account_records::watch(node, &hello.peer, hub, account, kind, id, reader, writer).await;
+        if let Call::WatchAccountRecords { hub, account, kind, owner } = call {
+            return crate::account_records::watch(
+                node,
+                &hello.peer,
+                hub,
+                account,
+                kind,
+                owner,
+                hello.shapes,
+                id,
+                reader,
+                writer,
+            )
+            .await;
         }
-        if let Call::WatchMemory { town } = &call {
+        if let Call::WatchHistory { scope } = &call {
             if let Err(failure) = users_voice(node, &hello.peer) {
                 writer.send(&json(&NodeFrame::Reply { id, reply: Err(failure) })).await?;
                 return writer.drain().await;
@@ -220,18 +239,21 @@ async fn converse(node: &Arc<Node>, connection: Connection) -> std::io::Result<(
             let mut changes = node.memory_changes.subscribe();
             let mut views = node.views.subscribe();
             let mut told = None;
-            let ready = crate::town::access::ready(node, &fastctx_types::access::Acting::Here, town).await;
-            if let Err(failure) = ready {
-                writer.send(&json(&NodeFrame::Reply { id, reply: Err(failure) })).await?;
-                return writer.drain().await;
-            }
             loop {
                 changes.borrow_and_update();
                 views.borrow_and_update();
-                match crate::memory::api::catalog(node, &Caller::User, town).await {
-                    Ok(catalog) if told.as_ref() != Some(&catalog) => {
+                match crate::history::api::call(
+                    node,
+                    &Caller::User,
+                    fastctx_types::history::HistoryCall::List { scope: scope.clone() },
+                )
+                .await
+                {
+                    Ok(fastctx_types::history::HistoryReply::Catalog { catalog })
+                        if told.as_ref() != Some(&catalog) =>
+                    {
                         let reply =
-                            Reply::Memory(fastctx_types::memory::MemoryReply::Catalog { catalog: catalog.clone() });
+                            Reply::History(fastctx_types::history::HistoryReply::Catalog { catalog: catalog.clone() });
                         writer.send(&json(&NodeFrame::Reply { id, reply: Ok(reply) })).await?;
                         told = Some(catalog);
                     }
@@ -247,6 +269,15 @@ async fn converse(node: &Arc<Node>, connection: Connection) -> std::io::Result<(
                     _ = reader.recv() => return Ok(()),
                 }
             }
+        }
+        if matches!(call, Call::WatchMemory { .. }) {
+            writer
+                .send(&json(&NodeFrame::Reply {
+                    id,
+                    reply: Err(Failure::not_run("project memory was replaced by history; update the app")),
+                }))
+                .await?;
+            return writer.drain().await;
         }
         if let Call::WatchFeatures = call {
             // An interface follows the switches for as long as it is open:
@@ -279,48 +310,38 @@ async fn converse(node: &Arc<Node>, connection: Connection) -> std::io::Result<(
             // An interface follows the World for as long as it is open: as
             // it is first, then after each change (`world-network.md`, 近况).
             let _open = crate::updates::Open::new();
-            let mut residents = node.residents.changes();
-            let mut shown = node.shown.subscribe();
-            let mut jobs = node.jobs.subscribe();
+            // The World is worked out once for every interface watching it
+            // (`crate::shown::Shown`); each is told what it does not hold
+            // yet: what changed, when it reads that, else the whole.
+            let mut world = crate::shown::watch(node);
+            let mut held = None;
             let mut told = None;
-            // What could not be read is read again in a moment, the watch
-            // kept: the interface goes on showing what it was told, and the
-            // log says why, once for each reason.
-            let mut failing: Option<String> = None;
             loop {
-                let mut again = false;
-                if crate::shown::ready(node) {
-                    match crate::shown::now(node).await {
-                        Ok(mut world) => {
-                            crate::renewal_legacy::world(hello.shapes, &mut world);
-                            failing = None;
-                            let frame = json(&NodeFrame::World { id, world: Box::new(world) });
-                            if told.as_ref() != Some(&frame) {
-                                writer.send(&frame).await?;
-                                told = Some(frame);
+                let current = world.borrow_and_update().clone();
+                if let Some(current) = current {
+                    let mut now = fastctx_types::world::WorldNow::clone(&current);
+                    crate::renewal_legacy::world(hello.shapes, &mut now);
+                    if hello.shapes >= 3 {
+                        let value = serde_json::to_value(&now).map_err(std::io::Error::other)?;
+                        match fastctx_types::world_delta::tell(&mut held, value) {
+                            Some(fastctx_types::world_delta::Told::Whole(_)) => {
+                                writer.send(&json(&NodeFrame::World { id, world: Box::new(now) })).await?;
                             }
+                            Some(fastctx_types::world_delta::Told::Changed(change)) => {
+                                writer.send(&json(&NodeFrame::WorldChanged { id, change })).await?;
+                            }
+                            None => {}
                         }
-                        Err(failure) => {
-                            if failing.as_deref() != Some(failure.message.as_str()) {
-                                node.log.line(format_args!(
-                                    "reading the World for an interface: {}; reading it again in a moment",
-                                    failure.message
-                                ));
-                                failing = Some(failure.message);
-                            }
-                            again = true;
+                    } else {
+                        let frame = json(&NodeFrame::World { id, world: Box::new(now) });
+                        if told.as_ref() != Some(&frame) {
+                            writer.send(&frame).await?;
+                            told = Some(frame);
                         }
                     }
                 }
                 tokio::select! {
-                    () = tokio::time::sleep(std::time::Duration::from_secs(1)), if again => {}
-                    changed = residents.changed() => if changed.is_err() { return Ok(()) },
-                    changed = shown.changed() => if changed.is_err() { return Ok(()) },
-                    job = jobs.recv() => {
-                        if matches!(job, Err(tokio::sync::broadcast::error::RecvError::Closed)) {
-                            return Ok(());
-                        }
-                    }
+                    changed = world.changed() => if changed.is_err() { return Ok(()) },
                     _ = reader.recv() => return Ok(()),
                 }
             }
@@ -584,6 +605,8 @@ async fn converse(node: &Arc<Node>, connection: Connection) -> std::io::Result<(
             continue;
         }
         let arriving = matches!(&call, Call::Arrive { host, hints } if host.agent.as_str() != "claude" && hints.tool_use_id.is_none());
+        // From the door to the answer written, under the call's kind.
+        let timed = fastctx_platform::readings::timing_of("call", &crate::labels::kind_of(&call));
         // What only reads or waits stops once its client is gone; a change
         // is done whole (`Call::on_leaving`). A copy goes on through every
         // break while its caller waits for it, and stops once it is gone.
@@ -656,6 +679,7 @@ async fn converse(node: &Arc<Node>, connection: Connection) -> std::io::Result<(
         }
         writer.send(&crate::renewal_legacy::frame(hello.protocol, id, &reply)).await?;
         writer.drain().await?;
+        timed.record(requested.elapsed());
     }
     Ok(())
 }
@@ -751,7 +775,8 @@ async fn collect(
     if let Err(failure) = crate::codex::native_context::observe(node, &resident).await {
         node.log.line(format_args!("{resident}: reading its host's context: {}", failure.message));
     }
-    crate::context::plugin_heard(node, &resident).map_err(|error| Failure::new(error.to_string()))?;
+    let (working, id) = (node.clone(), resident.clone());
+    blocking("reading the host's context receipt", move || crate::context::plugin_heard(&working, &id)).await?;
     if let Err(failure) = crate::context::refresh(node, &resident).await {
         node.log.line(format_args!("{resident}: refreshing its context: {}", failure.message));
     }
@@ -845,7 +870,7 @@ async fn collect_notes(
             notes.push(format!("=== {warning} ==="));
         }
         // Those it left running where it works, too.
-        let elsewhere = crate::here::running_elsewhere(node, &id)
+        let elsewhere = crate::here::running_elsewhere(node, &id)?
             .into_iter()
             .filter(|job| Some(&job.job) != answering.as_ref())
             .map(|job| (format!("{} on {}", job.job, job.machine), job.started_at, job.command))
@@ -898,6 +923,7 @@ async fn taken(
         {
             if pending.working {
                 pending.readers = if crate::goals::replies::inherits(node, &resident)
+                    .await
                     .map_err(|error| Failure::new(error.to_string()))?
                 {
                     node.residents.working_for(&resident)
@@ -911,8 +937,9 @@ async fn taken(
     }
     for (turn, inputs) in by_turn {
         if let Some(turn) = turn {
-            let mut handover =
-                crate::delivery::begin(&directory, inputs).map_err(|error| Failure::new(error.to_string()))?;
+            let mut handover = crate::delivery::begin_held(node, &resident, &directory, inputs)
+                .await
+                .map_err(|error| Failure::new(error.to_string()))?;
             crate::speech::bind(node, &resident, &directory, &mut handover, &turn).await?;
         } else {
             // A host that exposes no turn identity can acknowledge transport
@@ -927,31 +954,47 @@ async fn taken(
         node.taking.lock().expect("never poisoned").remove(&(resident.clone(), id));
     }
     for (owner, heard) in collected_notes.iter_mut().filter(|(owner, _)| *owner == resident) {
-        crate::context::acknowledge(node, owner, heard).map_err(|error| Failure::new(error.to_string()))?;
-        crate::scratch::acknowledge(node, owner, heard).map_err(|error| Failure::new(error.to_string()))?;
-        node.residents.acknowledge_heard(owner, heard.clone());
+        let (working, owner, mut receipt) = (node.clone(), owner.clone(), heard.clone());
+        let (result, updated) = fastctx_platform::task::spawn_blocking(move || {
+            let result = (|| -> std::io::Result<()> {
+                crate::context::acknowledge(&working, &owner, &mut receipt)?;
+                crate::scratch::acknowledge(&working, &owner, &mut receipt)?;
+                working.residents.acknowledge_heard(&owner, receipt.clone());
+                Ok(())
+            })();
+            (result, receipt)
+        })
+        .await
+        .map_err(|error| Failure::new(error.to_string()))?;
+        *heard = updated;
+        result.map_err(|error| Failure::new(error.to_string()))?;
     }
     collected_notes.retain(|(owner, _)| *owner != resident);
     if let Some(completed) = completed {
         let owner = fastctx_types::Address { machine: node.machine(), resident: resident.clone() };
-        crate::retention::confirmed(
-            node,
-            owner,
-            completed.machine,
-            fastctx_types::run::JobDelivery {
-                shown_whole: shown.as_ref() == Some(&completed.job),
-                job: completed.job,
-                output: completed.output,
-                at: jiff::Timestamp::now(),
-            },
-            None,
-        )
+        let working = node.clone();
+        fastctx_platform::task::spawn_blocking(move || {
+            crate::retention::confirmed(
+                &working,
+                owner,
+                completed.machine,
+                fastctx_types::run::JobDelivery {
+                    shown_whole: shown.as_ref() == Some(&completed.job),
+                    job: completed.job,
+                    output: completed.output,
+                    at: jiff::Timestamp::now(),
+                },
+                None,
+            )
+        })
+        .await
+        .map_err(|error| Failure::new(error.to_string()))?
         .map_err(|error| Failure::new(format!("recording job delivery: {error}")))?;
     } else if let Some(job) = shown
-        && !crate::here::forget(node, &resident, &job)
+        && !crate::here::forget(node, &resident, &job).await?
     {
         let (node, owner) = (node.clone(), fastctx_types::Address { machine: node.machine(), resident });
-        tokio::spawn(async move { crate::jobs::forget(&node, town, owner, job).await });
+        fastctx_platform::task::spawn(async move { crate::jobs::forget(&node, town, owner, job).await });
     }
     Ok(Reply::Done)
 }
@@ -998,10 +1041,7 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
         Call::TurnEvidence { resident, turn, refresh_limits } => {
             users_voice(node, peer)?;
             let evidence = crate::turn_evidence::snapshot(node, &resident, turn, refresh_limits).await?;
-            let text = crate::turn_evidence::words::render(
-                &evidence,
-                &node.world.conversation(&resident).actions().to_string_lossy(),
-            );
+            let text = crate::turn_evidence::words::render(&evidence);
             Ok(Reply::TurnEvidence { evidence: Box::new(evidence), text })
         }
         Call::CompactBetweenTurns { resident } => {
@@ -1085,6 +1125,7 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
                 return Err(Failure::new("tool call facts come from a session's adapter"));
             }
             crate::run_facts::keep_for(node, &resident, &call_id, &facts)
+                .await
                 .map_err(|error| Failure::new(format!("recording tool call facts: {error}")))?;
             Ok(Reply::Done)
         }
@@ -1093,6 +1134,7 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
                 return Err(Failure::new("tool call facts come from a session's adapter"));
             }
             crate::run_facts::record_failure(node, &resident, &call_id, &error)
+                .await
                 .map_err(|error| Failure::new(format!("recording tool call facts: {error}")))?;
             Ok(Reply::Done)
         }
@@ -1113,7 +1155,14 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
             let told = crate::step_command::Told { job, town, id, began, ended, did };
             crate::step_command::stepped(node, peer, told).await.map(|()| Reply::Done)
         }
+        Call::PrepareCopies { paths } => {
+            let caller = caller::of(node, peer)?;
+            node.authorize_here(&crate::around::acting_of(node, &caller))?;
+            crate::replicas::sync::repair_paths(node, &paths).await.map_err(Failure::new)?;
+            Ok(Reply::Done)
+        }
         Call::Saw { owner, town: _, seen } => {
+            crate::replicas::writing::saw(node, &owner, &seen).await?;
             let (world, here) = (node.world.clone(), node.names());
             blocking("recording what was seen", move || crate::residents::record_seen(&world, &here, &owner, &seen))
                 .await
@@ -1287,6 +1336,17 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
             users_voice(node, peer)?;
             Ok(Reply::DoctorCalls { calls: crate::intake::snapshot() })
         }
+        Call::DoctorReadings => {
+            users_voice(node, peer)?;
+            let scenes = tokio::task::spawn_blocking(fastctx_platform::scene::kept)
+                .await
+                .map_err(|error| Failure::new(error.to_string()))?;
+            Ok(Reply::DoctorReadings {
+                readings: Box::new(fastctx_platform::readings::snapshot()),
+                health: fastctx_platform::health::summary(),
+                scenes: scenes.into_iter().map(|scene| scene.display().to_string()).collect(),
+            })
+        }
         Call::Stats { machine, after, seen } => {
             users_voice(node, peer)?;
             let acting = crate::around::acting_of(node, &caller::of(node, peer)?);
@@ -1435,10 +1495,7 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
             present(node, &resident)?;
             crate::voice::say(node, &resident, &message, status, &attachments).map(|()| Reply::Told)
         }
-        Call::MemorySettings { hub, account, enabled } => {
-            users_voice(node, peer)?;
-            crate::memory::settings::call(node, hub, account, enabled).await.map(Reply::MemorySettings)
-        }
+        Call::MemorySettings { .. } => Err(Failure::not_run("history has no per-account switch; update the app")),
         Call::Layer { hub, account, layer } => {
             users_voice(node, peer)?;
             crate::layers::call(node, hub, account, layer).await.map(Reply::Layer)
@@ -1454,11 +1511,13 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
             users_voice(node, peer)?;
             crate::layers::bring_in(node, &resident).map(|()| Reply::Told)
         }
-        Call::WatchMemory { .. } => Err(Failure::new("a memory watch is answered as it changes")),
-        Call::Memory(request) => {
-            let caller = caller::of(node, peer)?;
-            crate::memory::api::call(node, &caller, request).await.map(Reply::Memory)
+        Call::WatchHistory { .. } => Err(Failure::new("a history watch is answered as it changes")),
+        Call::History(request) => {
+            users_voice(node, peer)?;
+            crate::history::api::call(node, &Caller::User, request).await.map(Reply::History)
         }
+        Call::WatchMemory { .. } => Err(Failure::new("a memory watch is answered as it changes")),
+        Call::Memory(_) => Err(Failure::not_run("project memory was replaced by history; update the app")),
         Call::Project(call) => {
             let caller = caller::of(node, peer)?;
             if !matches!(call, fastctx_types::ProjectCall::Enter { .. }) {
@@ -1662,8 +1721,8 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
                 .await
                 .map(|configuration| Reply::ClaudeSubagents { configuration })
         }
-        Call::Plan { hub, account, operation } => {
-            crate::plan::call(node, &caller::of(node, peer)?, hub, account, operation)
+        Call::Plan { hub, account, operation, of } => {
+            crate::plan::call(node, &caller::of(node, peer)?, hub, account, operation, of)
                 .await
                 .map(|result| Reply::Plan { result })
         }
@@ -1862,13 +1921,14 @@ async fn run(
     let machine = goes_to.as_ref().map(|place| place.name.clone()).unwrap_or_else(|| node.machine());
     if let Some(id) = call_id {
         crate::run_facts::begin_for(node, &resident, id, machine, request.turn.clone(), &request.script)
+            .await
             .map_err(|error| Failure::not_run(format!("recording tool call facts: {error}")))?;
     }
     let result = run_started(node, resident.clone(), town, request, goes_to, target, call_id).await;
     // The session is told what became of the script, not of its record.
     if let Err(failure) = &result
         && let Some(id) = call_id
-        && let Err(error) = crate::run_facts::failed_for(node, &resident, id, &failure.message)
+        && let Err(error) = crate::run_facts::failed_for(node, &resident, id, &failure.message).await
     {
         node.log.line(format_args!("recording that {resident}'s call {id} failed: {error}"));
     }
@@ -1900,17 +1960,17 @@ async fn run_started(
         (None, request) => {
             // Named like any machine, this one runs it only for whom may work on it.
             let acting = crate::authorization::resident(node, &resident)?;
-            node.authorize_here(&acting)?;
+            node.judged_afresh(&acting, || node.authorize_here(&acting)).await?;
             let owner = Address { machine: here.clone(), resident: resident.clone() };
             node.jobs.run(node, owner.into(), town.clone(), request, None, true, None).await?.0
         }
     };
     if let Some(id) = call_id {
         let kept = if let Some(facts) = &reply.run {
-            crate::run_facts::keep_reply(node, &resident, id, facts)
+            crate::run_facts::keep_reply(node, &resident, id, facts).await
         } else {
             // Its script and turn remain known, but missing observations are explicit.
-            crate::run_facts::legacy_reply(node, &resident, id, &reply)
+            crate::run_facts::legacy_reply(node, &resident, id, &reply).await
         };
         kept.map_err(|error| Failure::new(format!("recording tool call facts: {error}")))?;
     }
@@ -1966,13 +2026,16 @@ async fn write(
     // an agent assisting another account writes nothing on its owner's
     // computer.
     let acting = crate::authorization::resident(node, &resident)?;
-    node.authorize_here(&acting)?;
+    node.judged_afresh(&acting, || node.authorize_here(&acting)).await?;
     let here = node.machine();
     let started_at = jiff::Timestamp::now();
     let turn = node.residents.now(&resident).and_then(|now| now.turn);
     let owner = Address { machine: here.clone(), resident: resident.clone() };
     let caller = Caller::Resident(owner.clone());
-    let memory = crate::memory::writing::intercept(node, &caller, &op, None, town.as_ref()).await?;
+    let memory = match crate::replicas::writing::intercept(node, &caller, &op, None, town.as_ref()).await? {
+        Some(outcome) => Some(outcome),
+        None => crate::history::local_copy::intercept(node, &caller, &op, None, town.as_ref()).await?,
+    };
     let (world, machine, writing, written) = (node.world.clone(), node.names(), town.clone(), op.clone());
     let outcome = match memory {
         Some(outcome) => outcome,
@@ -2104,7 +2167,7 @@ async fn machines(
     let here_too = crate::around::works_here(node, &acting);
     let (here, others, groups) = crate::world::grouped_machines(node, &acting, here_too);
     let here = here_too.then(|| here.to_string());
-    let collab = crate::collab::choices(node, resident, login)?.map(|choices| choices.offered);
+    let collab = crate::collab::choices(node, resident, login).await?.map(|choices| choices.offered);
     let scratch = match resident.filter(|_| describe_scratch) {
         Some(id) => {
             let paths = crate::scratch::descriptions(
@@ -2114,7 +2177,11 @@ async fn machines(
                 here.iter().cloned().chain(others.iter().cloned()).collect(),
             )
             .await;
-            crate::scratch::described(node, id, paths.clone()).map_err(|error| Failure::new(error.to_string()))?;
+            let (writing, recipient, observed) = (node.clone(), id.clone(), paths.clone());
+            fastctx_platform::task::spawn_blocking(move || crate::scratch::described(&writing, &recipient, observed))
+                .await
+                .map_err(|error| Failure::new(error.to_string()))?
+                .map_err(crate::record_migration::failure)?;
             paths
         }
         None => Default::default(),
@@ -2198,6 +2265,7 @@ async fn nodes(
                                     .is_some()
                         })
                     }),
+                    strain: seen.strain.filter(|_| online_known && seen.online),
                     allows_direct: !seen.direct.is_empty(),
                     path: Some(link.path_to(&name)),
                     facts,
@@ -2233,7 +2301,7 @@ async fn blocking<T: Send + 'static>(
     what: &str,
     work: impl FnOnce() -> std::io::Result<T> + Send + 'static,
 ) -> Result<T, Failure> {
-    tokio::task::spawn_blocking(work)
+    fastctx_platform::task::spawn_blocking(work)
         .await
         .map_err(|error| Failure::new(format!("{what}: {error}")))?
         .map_err(|error| Failure::new(format!("{what}: {error}")))

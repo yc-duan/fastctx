@@ -44,7 +44,7 @@ pub(super) async fn finish(
         }
     }
     // Native scripts can keep a writable descriptor to the detached inode.
-    // Let their tracked jobs finish before removing it (2026-10-30).
+    // Let their tracked jobs finish before removing it.
     if crate::placement::jobs::busy(node, std::slice::from_ref(&state.owner))? {
         return Err(failure("the old working computer still has jobs; its detached plan waits for them"));
     }

@@ -12,12 +12,10 @@ use serde_json::Value;
 use std::{
     collections::HashMap,
     fmt,
-    fs::File,
     io::{self, BufReader},
     path::Path,
 };
 
-const VERSION: u64 = 1;
 const SOURCES: &[(&str, Route)] = &[
     ("directory.json", Route::Book),
     ("hub.json", Route::Hub),
@@ -38,13 +36,15 @@ enum Route {
 
 pub(super) fn import(c: &Connection, dir: &Path) -> fastctx_storage::Result<()> {
     match shelf::meta::<u64>(c, "format")? {
-        Some(VERSION) => return Ok(()),
+        Some(super::format::CURRENT) => return Ok(()),
+        // Format 1 holds the same rows; only beta.13 must not open it again.
+        Some(1) => return shelf::put_meta(c, "format", super::format::CURRENT.to_string().as_bytes()),
         Some(other) => return Err(Error::new(format!("hub database format {other} is not supported"))),
         None => {}
     }
     // A missing database must never make the retained sources into a new hub.
     for (name, _) in SOURCES {
-        if dir.join(backup_name(name)).try_exists()? {
+        if fastctx_platform::disk::exists(dir.join(backup_name(name)))? {
             return Err(Error::new(
                 "a pre-SQLite backup exists but its database is missing; restore the complete hub backup",
             ));
@@ -52,7 +52,7 @@ pub(super) fn import(c: &Connection, dir: &Path) -> fastctx_storage::Result<()> 
     }
     let mut sources = Vec::new();
     for &(name, route) in SOURCES {
-        if !dir.join(name).try_exists()? {
+        if !fastctx_platform::disk::exists(dir.join(name))? {
             if matches!(route, Route::Book | Route::Hub) {
                 return Err(Error::new(format!("the hub's {name} is missing")));
             }
@@ -68,11 +68,12 @@ pub(super) fn import(c: &Connection, dir: &Path) -> fastctx_storage::Result<()> 
     }
     super::legacy::normalize(c)?;
     shelf::put_meta(c, "legacy_sources", &serde_json::to_vec(&sources).map_err(error)?)?;
-    shelf::put_meta(c, "format", b"1")
+    shelf::put_meta(c, "format", super::format::CURRENT.to_string().as_bytes())
 }
 
 fn walk(c: &Connection, path: &Path, route: Route, verify: bool) -> fastctx_storage::Result<()> {
-    let mut decoder = serde_json::Deserializer::from_reader(BufReader::with_capacity(64 * 1024, File::open(path)?));
+    let mut decoder =
+        serde_json::Deserializer::from_reader(BufReader::with_capacity(64 * 1024, fastctx_platform::disk::open(path)?));
     Walk { c, route, verify }
         .deserialize(&mut decoder)
         .map_err(|e| Error::new(format!("reading {}: {e}", path.display())))?;
@@ -285,19 +286,19 @@ pub(super) fn back_up(shelf: &Shelf, dir: &Path) -> io::Result<()> {
     let sources = shelf.meta::<Vec<String>>("legacy_sources")?.unwrap_or_default();
     for name in sources.iter().filter(|n| n.as_str() != "hub.json") {
         let source = dir.join(name);
-        if !source.try_exists()? {
+        if !fastctx_platform::disk::exists(&source)? {
             continue;
         }
         let backup = dir.join(backup_name(name));
-        if backup.try_exists()? {
+        if fastctx_platform::disk::exists(&backup)? {
             return Err(io::Error::other("both a legacy source and its SQLite migration backup exist"));
         }
-        std::fs::rename(source, backup)?;
+        fastctx_platform::disk::rename(source, backup)?;
     }
     let hub = dir.join("hub.json");
     let backup = dir.join(backup_name("hub.json"));
-    if !backup.try_exists()? {
-        std::fs::rename(&hub, &backup)?;
+    if !fastctx_platform::disk::exists(&backup)? {
+        fastctx_platform::disk::rename(&hub, &backup)?;
     }
     let mut identity = serde_json::Map::new();
     for field in ["id", "name", "public", "listen"] {

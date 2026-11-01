@@ -1,0 +1,147 @@
+/* The sheet of a release going out a batch at a time (`rollout-window.ts`):
+   the release and the share of the other machines, how it stands, then the
+   machines named first, found by name; only that list scrolls, and the
+   sheet keeps its size as it changes. */
+
+.ro-sheet .sheet-body {
+  display: flex;
+  flex-direction: column;
+  height: min(640px, 84dvh);
+  overflow: hidden;
+}
+
+.ro-version {
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--space-4);
+  font-size: var(--size-text);
+  color: var(--text);
+}
+
+.ro-state {
+  margin: var(--space-1) 0 0;
+  font-size: var(--size-text);
+  color: var(--text-3);
+}
+
+/* Stopped by the hub, in the colour of a warning; why, behind the pointer. */
+.ro-state.caution {
+  color: var(--caution);
+  cursor: default;
+}
+
+.ro-first-head {
+  flex: none;
+  display: grid;
+  grid-template-columns: 6.5em minmax(0, 1fr);
+  column-gap: var(--space-4);
+  align-items: center;
+  margin-top: var(--space-4);
+  padding-bottom: var(--space-2);
+}
+
+.ro-machines {
+  flex: 1;
+  min-height: 0;
+  margin: 0 calc(-1 * var(--space-3));
+  padding: 0;
+  list-style: none;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+}
+
+/* A machine to name first: its box, what it is, its name and what it
+   runs. */
+.ro-machine {
+  display: grid;
+  grid-template-columns: 16px auto minmax(0, 1fr) auto;
+  align-items: center;
+  column-gap: var(--space-3);
+  width: 100%;
+  min-height: 40px;
+  padding: 0 var(--space-3);
+  border: 0;
+  border-radius: var(--radius-m);
+  background: none;
+  color: var(--text-2);
+  font: inherit;
+  font-size: var(--size-text);
+  text-align: left;
+  cursor: pointer;
+  transition: background-color var(--hover) var(--ease);
+}
+
+.ro-machine:hover,
+.ro-machine:focus-visible {
+  outline: 0;
+  background: var(--fill);
+}
+
+.ro-machine .glyph {
+  color: var(--text-3);
+}
+
+.ro-machine.away {
+  color: var(--text-3);
+}
+
+.ro-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ro-runs {
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* The box: a small solid fill, clay with a tick once named. */
+.ro-check {
+  display: grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  border-radius: 4px;
+  background: var(--fill-strong);
+  transition: background-color var(--hover) var(--ease);
+}
+
+.ro-machine[aria-checked="true"] .ro-check {
+  background: var(--accent);
+}
+
+.ro-machine[aria-checked="true"] .ro-check::after {
+  content: "";
+  width: 8px;
+  height: 4px;
+  margin-top: -2px;
+  border-left: 2px solid var(--bg);
+  border-bottom: 2px solid var(--bg);
+  transform: rotate(-45deg);
+}
+
+.ro-none {
+  padding: var(--space-4) var(--space-3);
+  color: var(--text-3);
+  font-size: var(--size-text);
+}
+
+.ro-acts {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+}
+
+.ro-sheet .sheet-foot {
+  flex: none;
+}
+
+@media (pointer: coarse) {
+  .ro-machine {
+    min-height: 44px;
+  }
+}

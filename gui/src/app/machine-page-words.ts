@@ -3,6 +3,7 @@
 // a pointer's rest.
 
 import { failure, enProblems, zhProblems } from "./problem";
+import { enBound, zhBound } from "./trouble-words";
 
 export interface MachinePageWords {
   /** The page's name where the machine is not known yet. */
@@ -60,6 +61,23 @@ export interface MachinePageWords {
    *  and how much of it is used. */
   limits: string;
   limitsSpan: string;
+  /** This computer's Fastctx, as its node says, when there is something to
+   *  say: held up or stuck, the rules it broke, a bound near its limit and
+   *  the scenes it left; what each means behind the pointer. */
+  health: string;
+  healthState: string;
+  healthBusy: string;
+  healthBusyWhy(ms: number): string;
+  healthStuck(count: number): string;
+  healthStuckWhy: string;
+  healthBroken: string;
+  healthBrokenCount(count: number): string;
+  healthNear: string;
+  healthNearUsed(bound: string, used: number): string;
+  healthScenes: string;
+  healthScenesCount(count: number): string;
+  healthScenesWhy: string;
+  healthReveal: string;
   limit: Record<"inotify_instances" | "inotify_watches" | "open_files" | "tasks", { name: string; why: string }>;
   limitUsed(used: string, limit: string): string;
 
@@ -196,6 +214,20 @@ export const zhMachinePage: MachinePageWords = {
   roomFailed: failure(zhProblems, "没能更改"),
   limits: "上限",
   limitsSpan: "近 24 小时",
+  health: "Fastctx",
+  healthState: "状态",
+  healthBusy: "很忙",
+  healthBusyWhy: (ms) => `最近一分钟内，任务最久等了 ${(ms / 1000).toFixed(1)} 秒`,
+  healthStuck: (count) => `卡住 ${count} 件`,
+  healthStuckWhy: "超过 30 秒没有进展",
+  healthBroken: "违规",
+  healthBrokenCount: (count) => `${count.toLocaleString()} 次`,
+  healthNear: "快到上限",
+  healthNearUsed: (bound, used) => `${zhBound(bound)} ${used}%`,
+  healthScenes: "现场",
+  healthScenesCount: (count) => `${count} 份`,
+  healthScenesWhy: "卡住时自动记下的现场，报告问题时附上",
+  healthReveal: "在文件夹中显示",
   limit: {
     inotify_instances: { name: "inotify 实例", why: "这个用户的程序合起来能开的 inotify 实例；用尽时开不出新的监视，对话的记录读不进来" },
     inotify_watches: { name: "inotify 监视", why: "这个用户的程序合起来能监视的文件与文件夹" },
@@ -311,6 +343,20 @@ export const enMachinePage: MachinePageWords = {
   roomFailed: failure(enProblems, "Not changed"),
   limits: "Limits",
   limitsSpan: "Last 24 hours",
+  health: "Fastctx",
+  healthState: "State",
+  healthBusy: "Busy",
+  healthBusyWhy: (ms) => `In the last minute, work waited up to ${(ms / 1000).toFixed(1)} s for its turn`,
+  healthStuck: (count) => `${count} stuck`,
+  healthStuckWhy: "No progress for over 30 seconds",
+  healthBroken: "Rules broken",
+  healthBrokenCount: (count) => `${count.toLocaleString()} times`,
+  healthNear: "Near a limit",
+  healthNearUsed: (bound, used) => `${enBound(bound)} ${used}%`,
+  healthScenes: "Scenes",
+  healthScenesCount: (count) => `${count} kept`,
+  healthScenesWhy: "What was going on when work got stuck, written down by itself; attach it when reporting a problem",
+  healthReveal: "Show in folder",
   limit: {
     inotify_instances: { name: "inotify instances", why: "What this user's programs may open together; used up, no new watch opens and conversations' records are not read" },
     inotify_watches: { name: "inotify watches", why: "The files and folders this user's programs may watch together" },

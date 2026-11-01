@@ -12,10 +12,12 @@ What the "model" does is said in the latest user input, by markers:
     [[fail]]           answer with an HTTP 500
 
 Without a marker it answers "ok". Every request is kept (`requests`) so a drill can see what a
-session sent: the tools it was given, the inputs it carried.
+session sent: the tools it was given, the inputs it carried; a long drill keeps only its last
+`keep`.
 
     python scripts/model_mock.py [PORT]   runs one in the foreground, for trying it by hand
 """
+import collections
 import json
 import re
 import sys
@@ -36,8 +38,8 @@ class Quiet(ThreadingHTTPServer):
 
 
 class Mock:
-    def __init__(self, port=0):
-        self.requests = []
+    def __init__(self, port=0, keep=None):
+        self.requests = [] if keep is None else collections.deque(maxlen=keep)
         self.lock = threading.Lock()
         mock = self
 

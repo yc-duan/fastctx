@@ -28,9 +28,12 @@ use crate::{Hub, Socket, refuse};
 /// Notes that `name` connected, dialing `dialed`.
 pub(crate) fn came(hub: &Hub, name: &MachineName, dialed: Option<SocketAddr>) {
     let Some(dialed) = dialed else { return };
+    if !hub.store().moves.iter().any(|incoming| incoming.forwarding()) {
+        return;
+    }
     let mut followed = false;
     {
-        let mut store = hub.store();
+        let mut store = hub.edit_store();
         for incoming in store.moves.iter_mut().filter(|incoming| incoming.forwarding()) {
             if !incoming.from.contains(&dialed)
                 && incoming.members.contains_key(name)
@@ -53,16 +56,20 @@ pub(crate) fn came(hub: &Hub, name: &MachineName, dialed: Option<SocketAddr>) {
 /// stops it when none is left.
 pub(crate) fn settle(hub: &Hub) {
     // Nothing changes while the hub hands its records over.
-    if hub.moving.frozen() {
+    if hub.moving.frozen() || !hub.store().moves.iter().any(|incoming| incoming.forwarding()) {
         return;
     }
     let mut told = Vec::new();
     let mut stopped = false;
     {
-        let mut store = hub.store();
+        let mut store = hub.edit_store();
+        if hub.moving.frozen() {
+            return;
+        }
         let store = &mut *store;
+        let directory = store.book.directory.clone();
         for incoming in store.moves.iter_mut().filter(|incoming| incoming.forwarding()) {
-            let (machines, devices) = incoming.remaining(&store.book.directory);
+            let (machines, devices) = incoming.remaining(&directory);
             if machines.is_empty() && devices.is_empty() {
                 hub.log.line(format_args!(
                     "every machine followed the hub here; the old place stops (move {})",
@@ -98,7 +105,7 @@ fn tell(hub: &Hub, id: &str, frame: ToOld) {
 /// The super administrator stops the old place of the move `id` now.
 pub(crate) fn stop_early(hub: &Hub, id: &str) -> Result<(), String> {
     {
-        let mut store = hub.store();
+        let mut store = hub.edit_store();
         let incoming = store.moves.iter_mut().find(|incoming| incoming.id == id).ok_or_else(|| unknown(id))?;
         if !incoming.forwarding() {
             return Err("the old place does not forward any more".to_string());
@@ -116,7 +123,7 @@ pub(crate) fn stop_early(hub: &Hub, id: &str) -> Result<(), String> {
 /// forwarding; it does when it is connected, now or later.
 pub(crate) fn delete_old(hub: &Hub, id: &str) -> Result<(), String> {
     {
-        let mut store = hub.store();
+        let mut store = hub.edit_store();
         let incoming = store.moves.iter_mut().find(|incoming| incoming.id == id).ok_or_else(|| unknown(id))?;
         match incoming.old {
             OldPlace::Forwarding => return Err("the old place still forwards; stop it first".to_string()),
@@ -174,7 +181,7 @@ pub(crate) async fn old_connected(
     };
     hub.log.line(format_args!("the old place of the move {id} is connected"));
     if deleted {
-        noted_deleted(&hub, &id);
+        noted_deleted(&hub, &id).await;
     }
     // What it is to do now, as this hub has it; what changes later comes
     // through the channel the hub keeps for it, which ends this connection
@@ -192,8 +199,7 @@ pub(crate) async fn old_connected(
     }
     let mine = out.downgrade();
     hub.moving.olds.lock().expect("never poisoned").insert(id.clone(), out);
-    settle(&hub);
-    hub.changed();
+    hub.changed_async().await;
     let (mut sink, mut stream) = socket.split();
     let mut heard = Instant::now();
     let mut beat = tokio::time::interval(HEARTBEAT);
@@ -212,7 +218,7 @@ pub(crate) async fn old_connected(
             message = stream.next() => {
                 heard = Instant::now();
                 match frames::parse::<ToNew>(message) {
-                    Ok(Some(ToNew::Deleted)) => noted_deleted(&hub, &id),
+                    Ok(Some(ToNew::Deleted)) => noted_deleted(&hub, &id).await,
                     Ok(Some(ToNew::Old { .. }) | None) => {}
                     Ok(Some(other)) => break format!("it said {other:?}"),
                     Err(error) => break error,
@@ -228,21 +234,25 @@ pub(crate) async fn old_connected(
     }
     hub.log.line(format_args!("the old place of the move {id} disconnected: {ended}"));
     let _ = sink.close().await;
-    hub.changed();
+    hub.changed_async().await;
 }
 
-fn noted_deleted(hub: &Hub, id: &str) {
-    {
-        let mut store = hub.store();
-        let Some(incoming) = store.moves.iter_mut().find(|incoming| incoming.id == id) else { return };
-        if matches!(incoming.old, OldPlace::Deleted { .. }) {
-            return;
+async fn noted_deleted(hub: &Hub, id: &str) {
+    let id = id.to_owned();
+    hub.blocking(move |hub| {
+        {
+            let mut store = hub.edit_store();
+            let Some(incoming) = store.moves.iter_mut().find(|incoming| incoming.id == id) else { return };
+            if matches!(incoming.old, OldPlace::Deleted { .. }) {
+                return;
+            }
+            incoming.old = OldPlace::Deleted { at: Timestamp::now() };
+            hub.log.line(format_args!("the old place of the move {id} deleted its data"));
+            if let Err(error) = store.save_moves() {
+                hub.log.line(format_args!("recording that the old data is deleted: {error}"));
+            }
         }
-        incoming.old = OldPlace::Deleted { at: Timestamp::now() };
-        hub.log.line(format_args!("the old place of the move {id} deleted its data"));
-        if let Err(error) = store.save_moves() {
-            hub.log.line(format_args!("recording that the old data is deleted: {error}"));
-        }
-    }
-    hub.changed();
+        hub.changed();
+    })
+    .await;
 }

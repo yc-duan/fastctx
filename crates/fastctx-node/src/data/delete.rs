@@ -71,6 +71,24 @@ const INTENT: &str = "deleting";
 /// Deletes everything of the conversation kept here under the name `name`,
 /// as the listing gives it; says how many bytes went.
 pub(crate) async fn delete_one(node: &Arc<Node>, name: &str) -> Result<u64, Stop> {
+    static SLOTS: std::sync::LazyLock<Arc<tokio::sync::Semaphore>> = std::sync::LazyLock::new(|| {
+        let slots = std::thread::available_parallelism().map_or(2, |cores| cores.get().clamp(2, 8));
+        Arc::new(tokio::sync::Semaphore::new(slots))
+    });
+    let permit = tokio::time::timeout(std::time::Duration::from_secs(10), SLOTS.clone().acquire_owned())
+        .await
+        .map_err(|_| Stop::Refused("conversation deletion is busy; retry shortly".into()))?
+        .expect("deletion slots remain open");
+    let (node, name, runtime) = (node.clone(), name.to_string(), tokio::runtime::Handle::current());
+    fastctx_platform::task::spawn_blocking(move || {
+        let _permit = permit;
+        runtime.block_on(delete_on_worker(&node, &name))
+    })
+    .await
+    .map_err(|error| Stop::Failed(error.to_string()))?
+}
+
+async fn delete_on_worker(node: &Arc<Node>, name: &str) -> Result<u64, Stop> {
     let mut releases = match Kind::of(name) {
         Some(Kind::Home(id)) => crate::forget::release_attachments(node, &id).await.map_err(Stop::Failed)?,
         _ => Vec::new(),
@@ -133,8 +151,8 @@ async fn delete_inner(node: &Arc<Node>, name: &str) -> Result<u64, Stop> {
     }
     let bytes = measured.records.bytes + measured.output.bytes + measured.host.bytes;
     let Kind::Home(id) = &kind else {
-        let retained = remove_places(node, &measured).await?;
-        return Ok(bytes.saturating_sub(retained));
+        let (retained, database_bytes) = remove_places(node, &measured).await?;
+        return Ok(bytes.saturating_sub(retained).saturating_add(database_bytes));
     };
     let directory = node.world.conversation(id);
     let _draft = if directory.draft().try_exists().map_err(|error| Stop::Failed(error.to_string()))?
@@ -149,7 +167,7 @@ async fn delete_inner(node: &Arc<Node>, name: &str) -> Result<u64, Stop> {
         None
     };
     let Some(resident) = node.residents.on_record(id) else {
-        crate::timers::delete_conversation(node, id).map_err(|error| Stop::Failed(error.to_string()))?;
+        crate::goals::lifecycle::prepare_delete(node, id).await.map_err(|error| Stop::Failed(error.message))?;
         crate::goals::lifecycle::delete(node, id).await.map_err(|error| Stop::Failed(error.message))?;
         let directory = node.world.conversation(id);
         if directory.about().try_exists().map_err(|error| Stop::Failed(error.to_string()))?
@@ -169,8 +187,8 @@ async fn delete_inner(node: &Arc<Node>, name: &str) -> Result<u64, Stop> {
                     .map_err(|error| Stop::Failed(error.to_string()))?;
             }
         }
-        let retained = remove_places(node, &measured).await?;
-        return Ok(bytes.saturating_sub(retained + host_kept));
+        let (retained, database_bytes) = remove_places(node, &measured).await?;
+        return Ok(bytes.saturating_sub(retained + host_kept).saturating_add(database_bytes));
     };
     let gate = node.residents.management(id).map_err(|failure| Stop::Failed(failure.message))?;
     let _exclusive =
@@ -209,6 +227,7 @@ async fn delete_inner(node: &Arc<Node>, name: &str) -> Result<u64, Stop> {
         return Err(Stop::Refused("its command output is being read; close that reader first".into()));
     }
     crate::attachments::lifetime::ensure_holders(node, id).await.map_err(|error| Stop::Failed(error.message))?;
+    crate::goals::lifecycle::prepare_delete(node, id).await.map_err(|error| Stop::Failed(error.message))?;
     // The intent: a node stopped from here on finishes the deletion when it
     // starts again (`finish_interrupted`).
     fastctx_platform::publish(
@@ -217,7 +236,6 @@ async fn delete_inner(node: &Arc<Node>, name: &str) -> Result<u64, Stop> {
         fastctx_platform::Permissions::Private,
     )
     .map_err(|error| Stop::Failed(format!("recording that it is being deleted: {error}")))?;
-    crate::timers::delete_conversation(node, id).map_err(|error| Stop::Failed(error.to_string()))?;
     let completed = node.world.conversation(id).path().join("host-deleted");
     let mut host_kept = 0;
     if !completed.try_exists().map_err(|error| Stop::Failed(error.to_string()))? {
@@ -270,7 +288,7 @@ async fn delete_inner(node: &Arc<Node>, name: &str) -> Result<u64, Stop> {
         let key = crate::speech::fixed_id("thread", &[thread]);
         for extension in ["json", "jsonl"] {
             let path = reports.join(format!("{key}.{extension}"));
-            match std::fs::remove_file(&path) {
+            match fastctx_platform::disk::remove_file(&path) {
                 Err(error) if error.kind() != std::io::ErrorKind::NotFound => {
                     return Err(Stop::Failed(format!("removing {}: {error}", path.display())));
                 }
@@ -279,6 +297,8 @@ async fn delete_inner(node: &Arc<Node>, name: &str) -> Result<u64, Stop> {
         }
     }
     crate::sentinels::deletion::note_deleted(node, id).map_err(Stop::Failed)?;
+    crate::conversation_store::begin(&directory).map_err(|error| Stop::Failed(error.to_string()))?;
+    crate::conversation_store::purge(&node.database, id.as_str()).map_err(|error| Stop::Failed(error.to_string()))?;
     node.residents
         .forget(&node.world, id, measured.sessions.clone())
         .map_err(|error| Stop::Failed(format!("recording its deletion: {error}")))?;
@@ -287,11 +307,13 @@ async fn delete_inner(node: &Arc<Node>, name: &str) -> Result<u64, Stop> {
     crate::composer::deleted(node, id).await.map_err(|error| Stop::Failed(error.message))?;
     crate::claude::removed(node, id);
     for session in &measured.sessions {
-        crate::codex::deleted(node, session);
+        crate::codex::deleted(node, session, &node.world.conversation(id))
+            .await
+            .map_err(|error| Stop::Failed(error.to_string()))?;
     }
-    let retained = remove_places(node, &measured).await?;
+    let (retained, database_bytes) = remove_places(node, &measured).await?;
     node.tools_changed(Some(id));
-    Ok(bytes.saturating_sub(retained + host_kept))
+    Ok(bytes.saturating_sub(retained + host_kept).saturating_add(database_bytes))
 }
 
 /// Finishes the deletions a node stopped halfway: what is left of a
@@ -299,10 +321,30 @@ async fn delete_inner(node: &Arc<Node>, name: &str) -> Result<u64, Stop> {
 /// its Claude sessions, which may no longer say whose they are. Says how
 /// many could not be finished now, including scans whose outcome is unknown.
 pub(crate) async fn finish_interrupted(node: &Arc<Node>) -> usize {
-    let mut unfinished = 0;
+    let (node, runtime) = (node.clone(), tokio::runtime::Handle::current());
+    fastctx_platform::task::spawn_blocking(move || runtime.block_on(finish_on_worker(&node))).await.unwrap_or(1)
+}
+
+async fn finish_on_worker(node: &Arc<Node>) -> usize {
+    let recovering = node.clone();
+    let result =
+        fastctx_platform::task::spawn_blocking(move || crate::conversation_store::resume(&recovering.database)).await;
+    let mut unfinished = usize::from(!matches!(result, Ok(Ok(()))));
     // Deletions that began outside and stopped before their tombstone.
-    let mut begun = Vec::new();
-    match std::fs::read_dir(node.world.conversations()) {
+    let mut begun = node
+        .database
+        .read_now(|db| {
+            Ok(db
+                .prepare("SELECT name FROM node_conversation_deletions WHERE finished=0 ORDER BY name")?
+                .query_map([], |row| row.get::<_, String>(0))?
+                .collect::<std::result::Result<Vec<_>, _>>()?)
+        })
+        .unwrap_or_else(|error| {
+            unfinished += 1;
+            node.log.line(format_args!("reading pending deletions: {error}"));
+            Vec::new()
+        });
+    match fastctx_platform::disk::read_dir(node.world.conversations()) {
         Ok(entries) => {
             for entry in entries {
                 let intent = entry.and_then(|entry| {
@@ -333,10 +375,19 @@ pub(crate) async fn finish_interrupted(node: &Arc<Node>) -> usize {
             node.log.line(format_args!("finding the deletions a stopped node began: {error}"));
         }
     }
+    begun.sort();
+    begun.dedup();
     for name in begun {
         match delete_one(node, &name).await {
             Ok(_) => node.log.line(format_args!("finished deleting {name}, which a stopped node began")),
-            Err(Stop::Nothing(_)) => {}
+            Err(Stop::Nothing(_)) => {
+                if let Err(error) = crate::record_migration::archive::delete_conversation(node.world.path(), &name)
+                    .and_then(|()| crate::conversation_store::finished(&node.database, name.clone()))
+                {
+                    unfinished += 1;
+                    node.log.line(format_args!("finishing deletion of {name}: {error}"));
+                }
+            }
             Err(stop) => {
                 unfinished += 1;
                 node.log.line(format_args!("finishing the deletion of {name}: {}", stop.why()));
@@ -353,7 +404,7 @@ pub(crate) async fn finish_interrupted(node: &Arc<Node>) -> usize {
             .collect();
         let left = std::iter::once(node.world.conversation(&id).path().to_path_buf())
             .chain(sessions.iter().cloned())
-            .try_fold(false, |left, path| match std::fs::symlink_metadata(&path) {
+            .try_fold(false, |left, path| match fastctx_platform::disk::symlink_metadata(&path) {
                 Ok(_) => Ok(true),
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(left),
                 Err(error) => Err(std::io::Error::new(error.kind(), format!("{}: {error}", path.display()))),
@@ -375,7 +426,7 @@ pub(crate) async fn finish_interrupted(node: &Arc<Node>) -> usize {
                 continue;
             }
         }
-        let removed = tokio::task::spawn_blocking(move || {
+        let removed = fastctx_platform::task::spawn_blocking(move || {
             sessions.iter().try_for_each(|session| fastctx_platform::owned_directory::delete(session))
         })
         .await;
@@ -396,7 +447,7 @@ pub(crate) async fn finish_interrupted(node: &Arc<Node>) -> usize {
 
 async fn measure(node: &Arc<Node>, name: &str) -> Result<Measured, Stop> {
     let (node, wanted) = (node.clone(), name.to_string());
-    tokio::task::spawn_blocking(move || {
+    fastctx_platform::task::spawn_blocking(move || {
         if let Some(measured) = super::space::conversation(&node, &wanted)? {
             if let Some(reason) = measured.unreadable_jobs.first() {
                 return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, reason.clone()));
@@ -405,7 +456,7 @@ async fn measure(node: &Arc<Node>, name: &str) -> Result<Measured, Stop> {
         }
         // Listing uses directory predicates; an inaccessible directory must
         // not become evidence that a deletion has already finished.
-        match std::fs::metadata(node.world.conversations().join(&wanted)) {
+        match fastctx_platform::disk::metadata(node.world.conversations().join(&wanted)) {
             Ok(metadata) if metadata.is_dir() => Err(std::io::Error::other(format!("{wanted} was not measured"))),
             Ok(_) => Ok(None),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
@@ -432,7 +483,7 @@ async fn host(node: &Arc<Node>, about: &About, measured: &Measured) -> Result<()
             // deleted it and stopped: what is left of its record goes too.
             if !deleted && !measured.host_files.is_empty() {
                 let files = measured.host_files.clone();
-                tokio::task::spawn_blocking(move || {
+                fastctx_platform::task::spawn_blocking(move || {
                     files.iter().try_for_each(|file| fastctx_platform::owned_directory::delete(file))
                 })
                 .await
@@ -449,7 +500,7 @@ async fn host(node: &Arc<Node>, about: &About, measured: &Measured) -> Result<()
                     })?;
             }
             let files = measured.host_files.clone();
-            tokio::task::spawn_blocking(move || -> std::io::Result<()> {
+            fastctx_platform::task::spawn_blocking(move || -> std::io::Result<()> {
                 for file in files {
                     fastctx_platform::owned_directory::delete(&file)?;
                 }
@@ -464,7 +515,7 @@ async fn host(node: &Arc<Node>, about: &About, measured: &Measured) -> Result<()
             if about.world_managed() {
                 let directory = node.world.conversation(&about.id).path().to_path_buf();
                 let home = about.home.clone();
-                tokio::task::spawn_blocking(move || crate::claude::untrust(&directory, home.as_deref()))
+                fastctx_platform::task::spawn_blocking(move || crate::claude::untrust(&directory, home.as_deref()))
                     .await
                     .map_err(|error| Stop::Failed(error.to_string()))?
                     .map_err(|error| {
@@ -485,7 +536,7 @@ async fn claude_temp(node: &Arc<Node>, measured: &Measured) -> Result<(), Stop> 
     let env = crate::claude::environment().map_err(|failure| Stop::Failed(failure.message))?;
     let root = fastctx_hosts::claude::exchange::sessions(node.world.path());
     let sessions = measured.sessions.clone();
-    tokio::task::spawn_blocking(move || -> std::io::Result<()> {
+    fastctx_platform::task::spawn_blocking(move || -> std::io::Result<()> {
         for session in sessions {
             let Some(registration) = fastctx_hosts::claude::exchange::registration(&root.join(&session))? else {
                 continue;
@@ -500,7 +551,7 @@ async fn claude_temp(node: &Arc<Node>, measured: &Measured) -> Result<(), Stop> 
             fastctx_platform::owned_directory::delete(&directory)?;
             // Empty now, unless another session ran in the same directory.
             if let Some(parent) = directory.parent() {
-                match std::fs::remove_dir(parent) {
+                match fastctx_platform::disk::remove_dir(parent) {
                     Ok(()) => {}
                     Err(error)
                         if matches!(
@@ -519,14 +570,25 @@ async fn claude_temp(node: &Arc<Node>, measured: &Measured) -> Result<(), Stop> 
 }
 
 /// Deletes every place that holds something of the conversation here.
-async fn remove_places(node: &Arc<Node>, measured: &Measured) -> Result<u64, Stop> {
+async fn remove_places(node: &Arc<Node>, measured: &Measured) -> Result<(u64, u64), Stop> {
     let remote = crate::attachments::lifetime::remote_retained(node, &measured.places)
         .await
         .map_err(|error| Stop::Failed(format!("checking attachment references: {}", error.message)))?;
     let (node, places) = (node.clone(), measured.places.clone());
-    tokio::task::spawn_blocking(move || -> std::io::Result<u64> {
+    fastctx_platform::task::spawn_blocking(move || -> std::io::Result<(u64, u64)> {
+        let mut database_bytes = 0;
+        let mut deleted_scopes = Vec::new();
+        for place in &places {
+            if place.parent() == Some(node.world.conversations().as_path()) {
+                let directory = fastctx_types::layout::ConversationDir::at(place);
+                crate::conversation_store::begin(&directory)?;
+                let (_, conversation) = crate::record_database::get(&directory)?;
+                database_bytes +=
+                    crate::conversation_store::purge(&node.database, &conversation).map_err(std::io::Error::other)?;
+                deleted_scopes.push(conversation);
+            }
+        }
         let _collecting = node.disk.lock();
-        let _transaction = crate::resident_storage::lock();
         if places
             .iter()
             .any(|place| node.job_readers.lock().expect("never poisoned").keys().any(|path| path.starts_with(place)))
@@ -536,7 +598,7 @@ async fn remove_places(node: &Arc<Node>, measured: &Measured) -> Result<u64, Sto
         let mut aliases = Vec::new();
         let mut directories = Vec::new();
         for place in places {
-            match std::fs::symlink_metadata(&place) {
+            match fastctx_platform::disk::symlink_metadata(&place) {
                 Ok(metadata) if fastctx_platform::owned_directory::is_link(&metadata) => aliases.push(place),
                 Ok(_) => {
                     let retained = crate::attachments::lifetime::remove(&node, &place, &remote)
@@ -579,7 +641,7 @@ async fn remove_places(node: &Arc<Node>, measured: &Measured) -> Result<u64, Sto
             if retained {
                 retained_bytes += super::space::tally(&place)?.bytes;
             } else {
-                std::fs::remove_dir(&place)?;
+                fastctx_platform::disk::remove_dir(&place)?;
             }
         }
         if retained {
@@ -587,7 +649,12 @@ async fn remove_places(node: &Arc<Node>, measured: &Measured) -> Result<u64, Sto
                 retained_bytes += super::space::tally(&alias)?.bytes;
             }
         }
-        Ok(retained_bytes)
+        drop(_collecting);
+        for scope in deleted_scopes {
+            crate::record_migration::archive::delete_conversation(node.world.path(), &scope)?;
+            crate::conversation_store::finished(&node.database, scope)?;
+        }
+        Ok((retained_bytes, database_bytes))
     })
     .await
     .map_err(|error| Stop::Failed(error.to_string()))?

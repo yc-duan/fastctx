@@ -192,7 +192,7 @@ pub async fn offers(node: &Arc<Node>, resident: &ResidentId) -> Result<Offers, F
             .transpose()
             .map_err(failure)?
             .flatten();
-        let initial = crate::session_options::read(node, resident)?;
+        let initial = crate::session_options::load(node, resident).await?;
         let checkpoints = about
             .session
             .as_ref()
@@ -313,7 +313,7 @@ pub(super) async fn selection(
     resident: &ResidentId,
     running: bool,
 ) -> Result<fastctx_types::agents::SessionOptions, Failure> {
-    let initial = crate::session_options::read(node, resident)?;
+    let initial = crate::session_options::load(node, resident).await?;
     let selected = if running {
         Some(invoke(node, resident, json!({"do":"selection"})).await?)
     } else {
@@ -634,7 +634,9 @@ fn observe_activation(node: &Arc<Node>, host: &Host, directory: &Path) {
             tokio::select! { () = &mut exited => break Ok(()), () = changed => {} }
         };
         match result {
-            Ok(()) => super::look(&node, &directory).await,
+            Ok(()) => {
+                super::look(&node, &directory).await;
+            }
             result => node.log.line(format_args!("observing Claude's control activation: {result:?}")),
         }
         let mut observed = node.claude.bridge.observed.lock().expect("never poisoned");

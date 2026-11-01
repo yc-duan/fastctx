@@ -15,6 +15,17 @@ struct Requested {
     at: jiff::Timestamp,
 }
 
+/// Validates the released stop record before its source is archived.
+pub(crate) fn validate_legacy(path: &std::path::Path, bytes: &[u8]) -> io::Result<()> {
+    let requested: Requested = serde_json::from_slice(bytes)?;
+    if path.file_stem().and_then(|name| name.to_str())
+        != Some(fastctx_hands::files::content_hash(requested.turn.as_bytes()).as_str())
+    {
+        return Err(io::Error::new(io::ErrorKind::InvalidData, "stop record belongs to another turn"));
+    }
+    Ok(())
+}
+
 fn path(node: &Node, resident: &ResidentId, turn: &str) -> std::path::PathBuf {
     node.world
         .conversation(resident)
@@ -23,32 +34,46 @@ fn path(node: &Node, resident: &ResidentId, turn: &str) -> std::path::PathBuf {
         .join(format!("{}.json", fastctx_hands::files::content_hash(turn.as_bytes())))
 }
 
-pub(crate) fn remember(node: &Node, resident: &ResidentId, turn: &str, source: StopSource) -> io::Result<()> {
-    let _transaction = crate::resident_storage::lock();
-    if self::source(node, resident, turn)? == Some(StopSource::User) {
-        return Ok(());
-    }
+pub(crate) async fn remember(
+    node: &std::sync::Arc<Node>,
+    resident: &ResidentId,
+    turn: &str,
+    source: StopSource,
+) -> io::Result<()> {
     let path = path(node, resident, turn);
-    fastctx_platform::ensure_private_dir(path.parent().expect("stop records have a directory"))?;
-    fastctx_platform::publish(
-        &path,
-        &serde_json::to_vec(&Requested { turn: turn.into(), source, at: jiff::Timestamp::now() })?,
-        fastctx_platform::Permissions::Private,
-    )
+    let turn = turn.to_string();
+    tokio::task::spawn_blocking(move || {
+        let entry = crate::records::metadata::prepare(&path)?;
+        crate::records::write_at(&entry.directory, fastctx_storage::Priority::Control, turn.len() + 256, move |rows| {
+            if let Some(previous) = rows.get::<Requested>(&entry.family, "value")? {
+                if previous.turn != turn {
+                    return Err(fastctx_storage::Error::with_kind(
+                        fastctx_storage::ErrorKind::Corrupt,
+                        "stop record belongs to a different turn",
+                    ));
+                }
+                if previous.source == StopSource::User {
+                    return Ok(());
+                }
+            }
+            rows.put(&entry.family, "value", &Requested { turn, source, at: jiff::Timestamp::now() })
+        })
+    })
+    .await
+    .map_err(io::Error::other)?
 }
 
 pub(crate) fn source(node: &Node, resident: &ResidentId, turn: &str) -> io::Result<Option<StopSource>> {
-    match std::fs::read(path(node, resident, turn)) {
-        Ok(bytes) => {
-            let record: Requested = serde_json::from_slice(&bytes)?;
+    let record = crate::records::metadata::get::<Requested>(&path(node, resident, turn))?;
+    record
+        .map(|record| {
             if record.turn != turn {
-                return Err(io::Error::other("stop record belongs to a different turn"));
+                Err(io::Error::other("stop record belongs to a different turn"))
+            } else {
+                Ok(record.source)
             }
-            Ok(Some(record.source))
-        }
-        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
-        Err(error) => Err(error),
-    }
+        })
+        .transpose()
 }
 
 pub(crate) fn classify(end: &TurnEnd, requested: Option<StopSource>, agent: &str) -> StopReason {

@@ -72,8 +72,12 @@ pub async fn live(node: &Node, resident: &ResidentId, mut event: SessionEvent) -
             node.log.line(format_args!("Claude's user picture record for {}: {error}", message.id));
         }
     }
-    crate::context::input::Projection::open(&node.world.conversation(resident))?.restore(&mut event)?;
-    let restored = attachments::restore(event, &crate::attachments::delivered::of(node, resident));
+    let receipts = crate::attachments::delivered::of(node, resident);
+    let restored = crate::delivery::local(&node.world.conversation(resident), move |directory| {
+        crate::context::input::Projection::open(directory)?.restore(&mut event)?;
+        Ok(attachments::restore(event, &receipts))
+    })
+    .await?;
     for event in restored {
         let Happened::Heard { text, message: Some(message), delivery, .. } = &event.happened else { continue };
         // The durable delivery already supplied the kept attachments. A

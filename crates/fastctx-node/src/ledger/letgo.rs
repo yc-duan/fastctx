@@ -85,6 +85,9 @@ pub async fn let_go(node: &Arc<Node>, link: &Arc<Link>) {
         if (used || stuck) && !holds_copy(node, &town) {
             continue;
         }
+        if !used {
+            super::metadata::forget(&node.world, &town);
+        }
         let removed = if used || stuck { remove_copy(node, &town).await } else { remove(node, &town).await };
         match removed {
             Ok(()) => {
@@ -109,14 +112,17 @@ pub(crate) async fn leave_kept(
     node.residents
         .relocate_kept(&node.world, id, None)
         .map_err(|error| fastctx_types::ipc::Failure::new(error.to_string()))?;
-    crate::town::instructions::hand_to_current(node, id)
+    let (working, resident) = (node.clone(), id.clone());
+    fastctx_platform::task::spawn_blocking(move || crate::town::instructions::hand_to_current(&working, &resident))
+        .await
+        .map_err(|error| fastctx_types::ipc::Failure::new(error.to_string()))?
         .map_err(|error| fastctx_types::ipc::Failure::new(error.to_string()))?;
     crate::codex::moved(node, id).await;
     Ok(())
 }
 
 /// What `remove_copy` takes of a project kept here, beside its signed entries.
-const COPY: [&str; 6] = ["ledger", "attachments", "journals", "specs", "pages", "tampering"];
+const COPY: [&str; 7] = ["ledger", "attachments", "journals", "specs", "pages", "tampering", "history"];
 
 /// Whether this computer still keeps any of what `remove_copy` takes of `town`.
 fn holds_copy(node: &Node, town: &TownName) -> bool {
@@ -156,10 +162,10 @@ pub(super) async fn remove(node: &Arc<Node>, town: &TownName) -> io::Result<()> 
         super::remove(&directory.signed())?;
         super::remove(&directory.ledger())?;
         super::remove(&directory.attachments())?;
-        for folder in ["journals", "specs", "pages", "tampering"] {
+        for folder in ["journals", "specs", "pages", "tampering", "history"] {
             super::remove(&directory.path().join(folder))?;
         }
-        for file in ["project.json", "refused.json", "index.json"] {
+        for file in ["project.json", "refused.json", "index.json", "projection-through.json"] {
             match std::fs::remove_file(directory.path().join(file)) {
                 Err(error) if error.kind() != io::ErrorKind::NotFound => return Err(error),
                 _ => {}

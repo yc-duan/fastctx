@@ -2,8 +2,9 @@
 // says which file it is and where, and the change itself beneath, scrolling
 // in its box from the start (`long-text.ts`). The head names the machine,
 // then the path, its folders quiet and cut from the front so the file's own
-// name always shows; at its end, a copy of the change as a unified diff, as
-// git writes one, and the way to the whole of it in a popup.
+// name always shows, and pressed opens the file; at its end, a copy of the
+// change as a unified diff, as git writes one, and the way to the whole of
+// it in a popup.
 
 import { glyph } from "./glyphs";
 import { escape } from "./prose";
@@ -27,8 +28,8 @@ export interface DiffCard {
 export type DiffKind = "added" | "deleted" | "modified";
 
 /** A card for the change to `path` on `machine`; `copy` gives its unified
- *  diff when asked. */
-export function diffCard(path: string, machine: string | null, words: DiffCardWords, copy: (signal: AbortSignal) => Promise<string>): DiffCard {
+ *  diff when asked, `open` opens the file from its name. */
+export function diffCard(path: string, machine: string | null, words: DiffCardWords, copy: (signal: AbortSignal) => Promise<string>, open?: () => void): DiffCard {
   const element = document.createElement("div");
   element.className = "diff-card";
   const cut = path.replace(/\\/g, "/").lastIndexOf("/");
@@ -36,10 +37,11 @@ export function diffCard(path: string, machine: string | null, words: DiffCardWo
   const name = cut < 0 ? path : path.slice(cut + 1);
   element.innerHTML = `<div class="diff-card-head" title="${escape(machine ? `${machine}  ${path}` : path)}">
       ${machine ? `<span class="diff-card-machine">${glyph("machine", 13)}<span>${escape(machine)}</span></span>` : ""}
-      <span class="diff-card-path"><span class="diff-card-folder"><bdi>${escape(folder)}</bdi></span><span class="diff-card-name">${escape(name)}</span></span>
+      <span class="diff-card-path"><span class="diff-card-folder"><bdi>${escape(folder)}</bdi></span>${open ? `<button class="diff-card-name diff-card-open" type="button">${escape(name)}</button>` : `<span class="diff-card-name">${escape(name)}</span>`}</span>
       <span class="diff-card-acts"><button class="icon-button diff-card-copy" type="button" aria-label="${escape(words.copy)}" title="${escape(words.copy)}">${glyph("copy", 15)}</button></span>
     </div><div class="diff-card-body"></div>`;
   const acts = element.querySelector<HTMLElement>(".diff-card-acts")!;
+  if (open) element.querySelector(".diff-card-open")!.addEventListener("click", open);
   const button = element.querySelector<HTMLButtonElement>(".diff-card-copy")!;
   let request: AbortController | null = null;
   button.addEventListener("click", () => {

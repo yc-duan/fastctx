@@ -45,7 +45,7 @@ pub(crate) async fn stepped(node: &std::sync::Arc<Node>, peer: &Peer, told: Told
         did: told.did,
     };
     let (node, owner) = (node.clone(), owner.clone());
-    tokio::task::spawn_blocking(move || {
+    fastctx_platform::task::spawn_blocking(move || {
         let record = fastctx_hands::run::record::read(&path)?;
         if record.owner.resident() != Some(&owner) || record.end.is_some() {
             return Err(std::io::Error::new(

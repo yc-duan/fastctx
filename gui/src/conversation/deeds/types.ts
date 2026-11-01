@@ -230,6 +230,11 @@ export type OutputLines = readonly (string | null)[];
 export interface DeedWords {
   /** The run's own words, under what was drawn of them. */
   raw: string;
+  /** Steps before those drawn, kept only as counts. */
+  folded(steps: number): string;
+  /** How many of one kind, and from when to when, on their card. */
+  foldedTimes(count: number): string;
+  foldedSpan(first: string, last: string): string;
   tests(passed: number, failed: number, ignored: number): string;
   failed(count: number): string;
   /** Tests that passed, as a note under their card. */

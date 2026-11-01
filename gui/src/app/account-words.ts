@@ -7,6 +7,7 @@
 // (`world-gui.md`, 用词).
 
 import { wholeDollars } from "../world/money";
+import type { Strain } from "../world/world";
 import type { MachineFindWords } from "./machine-find";
 import type { GroupWords } from "./machine-groups";
 import type { PasswordProblem } from "./password";
@@ -474,6 +475,10 @@ export interface MachinesWords {
   superShort(admin: string): string;
   online(since: string): string;
   onlineNow: string;
+  /** Its Fastctx held up or stuck, as its hub hears it (`world-engine.md`,
+   *  量与告警), and what that means, for the pointer's rest. */
+  strain: Record<Strain, string>;
+  strainWhy: Record<Strain, string>;
   offline(since: string | null): string;
   unknown: string;
   factsUnknown(why: string): string;
@@ -623,6 +628,9 @@ export interface MachinesWords {
   groups: GroupWords;
   /** Under a group's name on the drawing: how many, how many online. */
   groupSub(count: number, online: number): string;
+  /** How many online, as it follows `groupCount` in `groupSub`: for a row
+   *  that may keep only how many. */
+  groupOnline(online: number): string;
   /** On a box seen from afar, after its name: how many; its bar says how
    *  many are online. */
   groupCount(count: number): string;
@@ -777,6 +785,8 @@ export const zhMachines: MachinesWords = {
   superShort: (admin) => `管理员 ${admin}`,
   online: (since) => `${since} 起在线`,
   onlineNow: "在线",
+  strain: { busy: "很忙", stuck: "卡住" },
+  strainWhy: { busy: "很忙：最近一分钟内，任务排队等待超过 1 秒", stuck: "卡住：有任务超过 30 秒没有进展" },
   offline: (since) => (since ? `${since} 起离线` : "离线"),
   unknown: "状态未知",
   factsUnknown: () => "无法获取状态",
@@ -909,6 +919,7 @@ export const zhMachines: MachinesWords = {
     groupNameEmpty: "写一个组名",
   },
   groupSub: (count, online) => `${count} 台　${online} 在线`,
+  groupOnline: (online) => `　${online} 在线`,
   groupCount: (count) => `${count} 台`,
   sharedSection: "共享给我的",
   membersSection: "其他成员的",
@@ -1114,6 +1125,8 @@ export const enMachines: MachinesWords = {
   superShort: (admin) => `Admin ${admin}`,
   online: (since) => `online since ${since}`,
   onlineNow: "online",
+  strain: { busy: "busy", stuck: "stuck" },
+  strainWhy: { busy: "Busy: work waited over a second for its turn in the last minute", stuck: "Stuck: some work has not moved for over 30 seconds" },
   offline: (since) => (since ? `offline since ${since}` : "offline"),
   unknown: "status unknown",
   factsUnknown: () => "Couldn't load status",
@@ -1246,6 +1259,7 @@ export const enMachines: MachinesWords = {
     groupNameEmpty: "Give the group a name",
   },
   groupSub: (count, online) => `${count}, ${online} online`,
+  groupOnline: (online) => `, ${online} online`,
   groupCount: (count) => String(count),
   sharedSection: "Shared with me",
   membersSection: "Other members'",

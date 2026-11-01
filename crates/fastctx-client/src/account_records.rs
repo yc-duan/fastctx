@@ -26,8 +26,18 @@ impl World {
         account: Option<AccountName>,
         kind: String,
     ) -> Result<RecordsWatch, Error> {
+        self.watch_records_for(hub, account, kind, None).await
+    }
+
+    pub(crate) async fn watch_records_for(
+        &self,
+        hub: Option<HubName>,
+        account: Option<AccountName>,
+        kind: String,
+        owner: Option<fastctx_types::ResidentId>,
+    ) -> Result<RecordsWatch, Error> {
         if let Some(device) = self.device() {
-            return Ok(RecordsWatch::Device(device.record_watch(hub.as_ref(), account, kind)?));
+            return Ok(RecordsWatch::Device(device.record_watch(hub.as_ref(), account, kind)?.for_plan(owner)));
         }
         let mut client = self.connect().await?;
         if !client.account_records {
@@ -35,7 +45,7 @@ impl World {
         }
         client.next += 1;
         let id = client.next;
-        let call = Call::WatchAccountRecords { hub, account, kind };
+        let call = Call::WatchAccountRecords { hub, account, kind, owner };
         client.connection.send(&crate::to_json(&ClientFrame::Call { id, call })).await.map_err(CallError::Broken)?;
         Ok(RecordsWatch::Local { client, id })
     }

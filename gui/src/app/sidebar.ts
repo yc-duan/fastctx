@@ -426,7 +426,7 @@ export class Sidebar {
         const inside = talks.filter((r) => r.town === town);
         const shut = folded.has(town);
         const asking = inside.some((r) => r.now?.waiting_for_user);
-        const current = (place.kind === "project" || place.kind === "memory" || place.kind === "page") && place.town === town;
+        const current = (place.kind === "project" || place.kind === "history" || place.kind === "page") && place.town === town;
         // Its folder and its name alike open and close it on its
         // conversations where it is; its overview is in its "⋯" (user
         // 2026-10-29). Shut, it says how many are in it, in clay while one

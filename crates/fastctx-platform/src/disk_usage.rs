@@ -76,10 +76,9 @@ fn apparent(path: &Path, metadata: &std::fs::Metadata, link: bool) -> io::Result
 
 #[cfg(windows)]
 fn reparse_tag(path: &Path) -> io::Result<u32> {
-    use std::os::windows::ffi::OsStrExt as _;
     use windows_sys::Win32::Foundation::INVALID_HANDLE_VALUE;
     use windows_sys::Win32::Storage::FileSystem::{FindClose, FindFirstFileW, WIN32_FIND_DATAW};
-    let name: Vec<u16> = path.as_os_str().encode_wide().chain([0]).collect();
+    let name = crate::win32_path::wide(path)?;
     let mut information: WIN32_FIND_DATAW = unsafe { std::mem::zeroed() };
     // SAFETY: the name and output buffer live through this synchronous call.
     let handle = unsafe { FindFirstFileW(name.as_ptr(), &mut information) };

@@ -374,6 +374,15 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* Its Fastctx held up, in the colour of a warning; stuck, of a fault. */
+.ml-strain.busy {
+  color: var(--caution);
+}
+
+.ml-strain.stuck {
+  color: var(--wrong);
+}
+
 .ml-busy {
   display: flex;
   justify-content: flex-end;
@@ -535,18 +544,32 @@
   user-select: none;
 }
 
-/* On a phone the head keeps the two marks without their names. */
+/* On a phone the head keeps the page's name, finding and adding, and the
+   views are a row of their own under it, as wide as the page: four of them
+   and the rest do not fit on one line of a narrow phone. */
 @media (max-width: 760px) {
-  .ml-view span {
-    display: none;
+  .machines-page .page-head {
+    flex-wrap: wrap;
+    row-gap: var(--space-2);
   }
 
-  .ml-view {
-    min-height: 36px;
-    padding: 0 10px;
+  .machines-page .page-head-actions {
+    display: contents;
   }
 
   .ml-views {
-    margin-right: var(--space-1);
+    order: 1;
+    flex: 1 0 100%;
+    margin-right: 0;
+  }
+
+  .ml-view {
+    flex: 1;
+    justify-content: center;
+    gap: 4px;
+    min-width: 0;
+    min-height: 36px;
+    padding: 0 4px;
+    white-space: nowrap;
   }
 }

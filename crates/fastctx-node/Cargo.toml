@@ -12,6 +12,14 @@ publish = false
 name = "own_lifetime"
 harness = false
 
+[[test]]
+name = "record_drill"
+harness = false
+required-features = ["storage-drill"]
+
+[features]
+storage-drill = []
+
 [dependencies]
 tempfile = "3"
 anyhow.workspace = true
@@ -39,6 +47,6 @@ jiff.workspace = true
 notify = "8"
 quick-xml = "0.42"
 serde.workspace = true
-serde_json.workspace = true
+serde_json = { workspace = true, features = ["raw_value"] }
 sha2 = "0.10"
 tokio = { workspace = true, features = ["fs", "io-util", "macros", "rt-multi-thread", "sync", "time", "signal"] }

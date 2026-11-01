@@ -13,9 +13,10 @@ use fastctx_types::{Address, JobId, MachineName, NoticeId, ResidentId};
 use crate::Node;
 use crate::again::Again;
 use crate::on::LOOK_AGAIN;
+use crate::records::items;
 
 /// A stop of a job on another machine that has not reached it yet.
-#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 struct PendingStop {
     machine: MachineName,
     /// The hub of `machine`, when it was written as `name.hub`.
@@ -23,6 +24,14 @@ struct PendingStop {
     hub: Option<fastctx_types::HubName>,
     job: Option<JobId>,
     origin: OnOrigin,
+}
+
+pub(crate) fn validate_legacy_pending(bytes: &[u8]) -> std::io::Result<()> {
+    let pending: PendingStop = serde_json::from_slice(bytes)?;
+    if pending.job.is_none() && pending.origin.request.is_none() {
+        return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "on stop has neither a job nor a request"));
+    }
+    Ok(())
 }
 
 impl PendingStop {
@@ -48,8 +57,8 @@ pub(crate) fn pending_cancellation(
 ) -> std::io::Result<bool> {
     let owner = Address { machine: node.machine(), resident: to.clone() };
     let path = pending_path(node, &owner, machine, request.as_str());
-    Ok(path.try_exists()?
-        || node.world.path().join("on-stops").join(path.file_name().expect("pending stop name")).try_exists()?)
+    Ok(items::exists(&path)?
+        || items::exists(&node.world.path().join("on-stops").join(path.file_name().expect("pending stop name")))?)
 }
 
 /// Asks `machine` to stop `job`, until it has or the job is gone: the stop
@@ -72,7 +81,7 @@ pub(crate) async fn send(node: &Arc<Node>, written: &crate::reach::Written, orig
             match keep_stop(&pending, &path).await {
                 Ok(()) => return,
                 Err(error) => {
-                    let _ = crate::obligations::retry(node, &path, &format!("keeping the stop: {error}"));
+                    let _ = crate::obligations::retry_record(node, &path, &format!("keeping the stop: {error}"));
                 }
             }
             tokio::time::sleep(again.next()).await;
@@ -91,15 +100,11 @@ pub(crate) async fn send(node: &Arc<Node>, written: &crate::reach::Written, orig
 }
 
 async fn keep_stop(pending: &PendingStop, path: &Path) -> std::io::Result<()> {
-    let directory = path.parent().expect("pending stop directory").to_path_buf();
     let bytes = serde_json::to_vec(pending).map_err(std::io::Error::other)?;
     let written = path.to_path_buf();
-    tokio::task::spawn_blocking(move || {
-        fastctx_platform::ensure_private_dir(&directory)?;
-        fastctx_platform::publish(&written, &bytes, fastctx_platform::Permissions::Private)
-    })
-    .await
-    .map_err(std::io::Error::other)?
+    fastctx_platform::task::spawn_blocking(move || items::write(&written, &bytes))
+        .await
+        .map_err(std::io::Error::other)?
 }
 
 async fn settle_stop(node: &Arc<Node>, pending: &PendingStop, path: &Path, impossible: Option<String>) {
@@ -109,7 +114,7 @@ async fn settle_stop(node: &Arc<Node>, pending: &PendingStop, path: &Path, impos
             if impossible.is_none() {
                 crate::on_delivery::cancelled(node, &pending.origin, &pending.machine)?;
             }
-            let bytes = match std::fs::read(path) {
+            let bytes = match items::read(path) {
                 Ok(bytes) => bytes,
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
                 Err(error) => return Err(error),
@@ -126,13 +131,13 @@ async fn settle_stop(node: &Arc<Node>, pending: &PendingStop, path: &Path, impos
                 Some(reason) => (crate::obligations::Outcome::Impossible, reason.as_str()),
                 None => (crate::obligations::Outcome::Delivered, "the stop was applied or its job is already gone"),
             };
-            crate::obligations::finish(node, path, &bytes, outcome, reason)?;
+            crate::obligations::finish_record(node, path, &bytes, outcome, reason)?;
             Ok(())
         })();
         match settled {
             Ok(()) => return,
             Err(error) => {
-                let _ = crate::obligations::retry(node, path, &format!("settling the stop: {error}"));
+                let _ = crate::obligations::retry_record(node, path, &format!("settling the stop: {error}"));
             }
         }
         tokio::time::sleep(again.next()).await;
@@ -184,7 +189,7 @@ async fn deliver_stop(node: &Arc<Node>, pending: &PendingStop, path: &Path) -> R
             Ok(()) => return Ok(()),
             Err(error) if crate::obligations::permanent(&error) => return Err(error),
             Err(error) => {
-                crate::obligations::retry(node, path, &error.message)
+                crate::obligations::retry_record(node, path, &error.message)
                     .map_err(|error| Failure::new(error.to_string()))?;
             }
         }
@@ -198,34 +203,44 @@ async fn deliver_stop(node: &Arc<Node>, pending: &PendingStop, path: &Path) -> R
 /// Sends again the stops a node that stopped had not delivered.
 pub(crate) async fn resume(node: &Arc<Node>) {
     let recovering = node.clone();
-    tokio::spawn(async move {
+    fastctx_platform::task::spawn(async move {
         let mut again = Again::default();
         loop {
-            match resume_local_stops(&recovering) {
-                Ok(()) => break,
-                Err(error) => {
+            let working = recovering.clone();
+            let result = fastctx_platform::task::spawn_blocking(move || {
+                resume_local_stops(&working).inspect_err(|error| {
                     let _ = crate::obligations::retry(
-                        &recovering,
-                        &recovering.world.path().join("local-stop-recovery"),
+                        &working,
+                        &working.world.path().join("local-stop-recovery"),
                         &error.to_string(),
                     );
-                }
+                })
+            })
+            .await;
+            match result {
+                Ok(Ok(())) => break,
+                Ok(Err(_)) => {}
+                Err(error) => recovering.log.line(format_args!("recovering local stops: {error}")),
             }
             tokio::time::sleep(again.next()).await;
         }
     });
     let recovering = node.clone();
-    tokio::spawn(async move {
+    fastctx_platform::task::spawn(async move {
         let mut again = Again::default();
         loop {
             match resume_pending_stops(&recovering).await {
                 Ok(()) => break,
                 Err(error) => {
-                    let _ = crate::obligations::retry(
-                        &recovering,
-                        &recovering.world.path().join("outgoing-stop-recovery"),
-                        &error.to_string(),
-                    );
+                    let working = recovering.clone();
+                    let _ = fastctx_platform::task::spawn_blocking(move || {
+                        crate::obligations::retry(
+                            &working,
+                            &working.world.path().join("outgoing-stop-recovery"),
+                            &error.to_string(),
+                        )
+                    })
+                    .await;
                 }
             }
             tokio::time::sleep(again.next()).await;
@@ -234,57 +249,52 @@ pub(crate) async fn resume(node: &Arc<Node>) {
 }
 
 async fn resume_pending_stops(node: &Arc<Node>) -> std::io::Result<()> {
-    let directories = node.world.book_directories("on-stops")?;
+    let working = node.clone();
+    let directories = fastctx_platform::task::spawn_blocking(move || working.world.book_directories("on-stops"))
+        .await
+        .map_err(std::io::Error::other)??;
     let mut problems = Vec::new();
     for directory in directories {
-        let mut entries = match tokio::fs::read_dir(&directory).await {
-            Ok(entries) => entries,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
-            Err(error) => return Err(error),
-        };
+        let mut after = String::new();
         loop {
-            let entry = match entries.next_entry().await {
-                Ok(Some(entry)) => entry,
-                Ok(None) => break,
-                Err(error) => {
-                    problems.push(format!("{}: {error}", directory.display()));
-                    break;
-                }
-            };
-            let path = entry.path();
-            if path.extension().is_none_or(|extension| extension != "json") {
-                continue;
-            }
-            if node.on_delivering.lock().expect("never poisoned").contains(&path) {
-                continue;
-            }
-            let read = match tokio::fs::read(&path).await {
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
-                bytes => bytes
-                    .map_err(|error| error.to_string())
-                    .and_then(|bytes| serde_json::from_slice::<PendingStop>(&bytes).map_err(|error| error.to_string())),
-            };
-            let pending = match read {
-                Ok(pending) => pending,
-                Err(error) => {
-                    problems.push(format!("{}: {error}", path.display()));
+            let (folder, cursor) = (directory.clone(), after.clone());
+            let paths =
+                fastctx_platform::task::spawn_blocking(move || items::page(&folder, Some("json"), &cursor, 128))
+                    .await
+                    .map_err(std::io::Error::other)??;
+            let Some(last) = paths.last() else { break };
+            after = last.file_name().and_then(|name| name.to_str()).expect("stop identity").to_string();
+            for path in paths {
+                if node.on_delivering.lock().expect("never poisoned").contains(&path) {
                     continue;
                 }
-            };
-            if !node.on_delivering.lock().expect("never poisoned").insert(path.clone()) {
-                continue;
-            }
-            let node = node.clone();
-            tokio::spawn(async move {
-                match deliver_stop(&node, &pending, &path).await {
-                    Ok(()) => settle_stop(&node, &pending, &path, None).await,
-                    Err(error) if crate::obligations::permanent(&error) => {
-                        settle_stop(&node, &pending, &path, Some(error.message)).await;
+                let reading = path.clone();
+                let pending = fastctx_platform::task::spawn_blocking(move || items::get::<PendingStop>(&reading))
+                    .await
+                    .map_err(std::io::Error::other)?;
+                let pending = match pending {
+                    Ok(Some(pending)) => pending,
+                    Ok(None) => continue,
+                    Err(error) => {
+                        problems.push(format!("{}: {error}", path.display()));
+                        continue;
                     }
-                    Err(error) => node.log.line(format_args!("{} remains pending: {error}", path.display())),
+                };
+                if !node.on_delivering.lock().expect("never poisoned").insert(path.clone()) {
+                    continue;
                 }
-                node.on_delivering.lock().expect("never poisoned").remove(&path);
-            });
+                let node = node.clone();
+                fastctx_platform::task::spawn(async move {
+                    match deliver_stop(&node, &pending, &path).await {
+                        Ok(()) => settle_stop(&node, &pending, &path, None).await,
+                        Err(error) if crate::obligations::permanent(&error) => {
+                            settle_stop(&node, &pending, &path, Some(error.message)).await
+                        }
+                        Err(error) => node.log.line(format_args!("{} remains pending: {error}", path.display())),
+                    }
+                    node.on_delivering.lock().expect("never poisoned").remove(&path);
+                });
+            }
         }
     }
     if problems.is_empty() { Ok(()) } else { Err(std::io::Error::other(problems.join("\n"))) }
@@ -361,12 +371,8 @@ pub(crate) async fn serve(node: &Arc<Node>, origin: OnOrigin, job: Option<JobId>
     let by = format!("{} on {}", origin.resident.resident, origin.resident.machine);
     let request = fastctx_types::run::StopRequest { by, reason: "the on that sent it stopped".to_string() };
     let bytes = serde_json::to_vec(&request).map_err(|error| Failure::new(error.to_string()))?;
-    fastctx_platform::publish(
-        &record_path.with_extension("on-stopped"),
-        &bytes,
-        fastctx_platform::Permissions::Private,
-    )
-    .map_err(|error| Failure::new(format!("keeping the accepted stop: {error}")))?;
+    crate::job_metadata::put_raw(&record_path.with_extension("on-stopped"), &bytes)
+        .map_err(|error| Failure::new(format!("keeping the accepted stop: {error}")))?;
     stop_worker(node, &record_path, request);
     loop {
         let record = crate::jobs::read(&record_path).await?;
@@ -384,7 +390,7 @@ fn stop_worker(node: &Arc<Node>, path: &Path, request: fastctx_types::run::StopR
         return;
     }
     let (node, path) = (node.clone(), path.to_path_buf());
-    tokio::spawn(async move {
+    fastctx_platform::task::spawn(async move {
         let mut again = Again::default();
         loop {
             if path.try_exists().is_ok_and(|exists| !exists) {
@@ -394,14 +400,15 @@ fn stop_worker(node: &Arc<Node>, path: &Path, request: fastctx_types::run::StopR
                 Ok(record) => match stopped(&record) {
                     Ok(()) => break,
                     Err(error) => {
-                        let _ = crate::obligations::retry(&node, &path.with_extension("on-stopped"), &error.message);
+                        let _ =
+                            crate::obligations::retry_job(&node, &path.with_extension("on-stopped"), &error.message);
                         if crate::obligations::permanent(&error) {
                             break;
                         }
                     }
                 },
                 Err(error) => {
-                    let _ = crate::obligations::retry(&node, &path.with_extension("on-stopped"), &error.message);
+                    let _ = crate::obligations::retry_job(&node, &path.with_extension("on-stopped"), &error.message);
                 }
             }
             tokio::time::sleep(again.next()).await;
@@ -468,10 +475,11 @@ fn resume_local_stops(node: &Arc<Node>) -> std::io::Result<()> {
 }
 
 fn resume_local_stop(node: &Arc<Node>, path: &Path) -> std::io::Result<()> {
-    if path.extension().is_some_and(|extension| extension == "on-stopped") {
-        let request = serde_json::from_slice(&std::fs::read(path)?).map_err(std::io::Error::other)?;
-        stop_worker(node, &path.with_extension("json"), request);
-    } else if path.extension().is_some_and(|extension| extension == "json") {
+    if path.extension().is_some_and(|extension| extension == "json") {
+        if let Some(request) = crate::job_metadata::get(&path.with_extension("on-stopped"))? {
+            stop_worker(node, path, request);
+            return Ok(());
+        }
         let record = fastctx_hands::run::record::read(path)?;
         if let Some(request) = record.on.as_ref().and_then(|on| on.request.as_ref())
             && path.parent().expect("jobs directory").join(format!("request-{request}.stopped")).try_exists()?

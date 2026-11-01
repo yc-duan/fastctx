@@ -1,5 +1,5 @@
 // What changed in the World between two pieces of its watch, as the shell
-// works it out (`gui/src-tauri/src/world_delta.rs`), put into the World the
+// works it out (`crates/fastctx-types/src/world_delta.rs`), put into the World the
 // page holds. What did not change keeps the very objects it was, so what is
 // drawn from it is drawn again only where something changed.
 

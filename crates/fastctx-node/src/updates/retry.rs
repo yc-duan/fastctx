@@ -1,6 +1,6 @@
 //! Keeps failed acquisitions visible and spaces automatic attempts across restarts.
 
-use fastctx_types::update::{Failed, release};
+use fastctx_types::update::{Failed, FailureReason, Via, release};
 use serde::{Deserialize, Serialize};
 
 use crate::Node;
@@ -18,13 +18,25 @@ pub(super) fn save(node: &Node, attempt: &Attempt) {
     }
 }
 
+/// The first wait after a failure only for want of the line to the hub: the
+/// network is asked again soon after the line is back (an update does not
+/// begin while it is down), not an hour on, as when a room's machines all
+/// come up at once and their lines come and go.
+const UNCONNECTED: std::time::Duration = std::time::Duration::from_secs(120);
+
 pub(super) fn failed(node: &Node, failure: Failed) {
+    let unconnected = matches!(&failure.reason, Some(FailureReason::Sources { sources })
+        if sources.iter().any(|source| source.via == Via::Network && source.unconnected));
     let mut held = node.updates.held.lock().expect("never poisoned");
     if held.attempt.version.as_deref() != Some(&failure.version) {
         held.attempt.version = Some(failure.version.clone());
         held.attempt.delay = Default::default();
     }
-    held.attempt.delay.postpone(jiff::Timestamp::now());
+    if unconnected {
+        held.attempt.delay.postpone_from(jiff::Timestamp::now(), UNCONNECTED);
+    } else {
+        held.attempt.delay.postpone(jiff::Timestamp::now());
+    }
     held.attempt.failed = Some(failure);
     save(node, &held.attempt);
 }

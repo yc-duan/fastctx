@@ -6,16 +6,22 @@ run commands through the World's `run`, are deleted while they work and opened a
 is ended at random moments and started again. Then the node is left to settle, and the drill checks:
 
 - sampled plain calls answered within a few seconds outside restarts;
+- after each restart, the node takes requests again within five seconds (`specs/world-foundation.md`);
 - commands left running end, and their ends go into their conversations as notices;
 - its log has no lock taken out of order, nothing stuck, no tasks waiting on each other in a circle;
 - every conversation settles: none is left working, no words are left on their way in;
 - each confirmed deletion leaves no directory, data listing or Codex rollout file;
 - no deletion intent remains after the node has had time to recover.
 
-    python scripts/concurrency.py PROGRAM [--codex CODEX] [--minutes N] [--restarts] [--seed N]
+    python scripts/concurrency.py PROGRAM [--codex CODEX] [--minutes N] [--restarts] [--faults [--clock]] [--seed N]
 
 PROGRAM is a fastctx build; CODEX the `codex` program to run (found on PATH without it). Nothing
 outside a fresh directory is used, and no `claude` is on the PATH the World sees.
+
+With --faults, on Linux and as root, the node's World is on a small disk of its own, which is
+slowed down and filled up for a while now and then; with --clock the system's clock is also moved
+ten minutes forward and back, so only on a machine of its own. Afterwards nothing on that disk may
+be found damaged or set aside.
 """
 import argparse
 import json
@@ -39,6 +45,8 @@ RESULTS = []
 PRINTING = threading.Lock()
 # How long a plain call may take, outside the moments the node is being ended and started.
 ANSWERS_WITHIN = 5.0
+# How soon a node ended at once takes requests again, without waiting for its background recovery.
+RESTARTED_WITHIN = 5.0
 # Background deletion recovery retries every 300 s (fastctx-node/src/recovery.rs); allow its next attempt to finish.
 RECOVERY_OBSERVATION = 300 + 180
 # What the node's log must never say.
@@ -76,6 +84,12 @@ class Lab:
             encoding="utf-8")
         self.codex_dir = Path(codex).parent
         self.node = None
+        # How long each restart took, from ending the node to its answering again.
+        self.restart_seconds = []
+        self.faults = None
+        # While its disk is full, what the node is asked to keep may fail; each fill begun and ended counts.
+        self.filling = threading.Event()
+        self.fills = 0
         self.restarting = threading.Event()
         self.ending = threading.Event()
         self.restarter = None
@@ -135,8 +149,11 @@ class Lab:
         if self.ending.is_set():
             raise RuntimeError("the drill is ending; no new node can start")
         listened = self.listened()
+        command = [str(self.program), "node"]
+        if self.faults:
+            command = self.faults.command(command)
         with open(self.root / "node.out", "ab") as log:
-            self.node = subprocess.Popen([str(self.program), "node"], env=self.env(), stdout=log,
+            self.node = subprocess.Popen(command, env=self.env(), stdout=log,
                                          stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL)
         until("a node listens", lambda: self.listened() > listened or self.node.poll() is not None, limit=60)
         if self.node.poll() is not None:
@@ -251,7 +268,11 @@ class Lab:
                 deadline = time.monotonic() + 120
                 while True:
                     self.end_node()
-                    if self.start_node() and self.settled():
+                    began = time.monotonic()
+                    started = self.start_node()
+                    took = time.monotonic() - began
+                    if started and self.settled():
+                        self.restart_seconds.append(took)
                         break
                     if time.monotonic() >= deadline:
                         raise RuntimeError("a node started by a command kept taking this lab's World")
@@ -278,6 +299,89 @@ class Lab:
     def node_log(self):
         path = self.home / "world" / "node.log"
         return path.read_text(encoding="utf-8", errors="replace")
+
+
+class Faults:
+    """What the node is put through on Linux, as root: its World on a small disk of its own, slowed
+    down and filled up for a while, and the system's clock moved forward and back. The node runs in
+    a slice of its own, which keeps the disk's limits across its restarts."""
+
+    SLOW_IOPS = 25
+
+    def __init__(self, lab, clock):
+        self.lab = lab
+        self.clock = clock
+        self.image = lab.root / "disk.img"
+        self.device = None
+        self.mounted = False
+        self.slice = f"fastctx-drill-{os.getpid()}.slice"
+        self.moved = 0
+        self.ntp = False
+        self.done = []
+
+    def prepare(self):
+        # Sparse, and roomy enough for a development build, which the node stages in its World.
+        subprocess.run(["truncate", "-s", "4G", str(self.image)], check=True)
+        subprocess.run(["mkfs.ext4", "-q", "-F", str(self.image)], check=True)
+        self.device = subprocess.check_output(["losetup", "--find", "--show", str(self.image)], text=True).strip()
+        subprocess.run(["mount", self.device, str(self.lab.home)], check=True)
+        self.mounted = True
+        if self.clock:
+            # The system's time service would put a moved clock back.
+            self.ntp = subprocess.run(["timedatectl", "set-ntp", "false"], capture_output=True).returncode == 0
+
+    def command(self, command):
+        return ["systemd-run", "--scope", "--quiet", f"--slice={self.slice}", "--", *command]
+
+    def limit(self, iops):
+        value = f"{self.device} {iops}" if iops else ""
+        subprocess.run(["systemctl", "set-property", "--runtime", self.slice,
+                        f"IOReadIOPSMax={value}", f"IOWriteIOPSMax={value}"], check=True, capture_output=True)
+
+    def slow(self, seconds):
+        self.limit(self.SLOW_IOPS)
+        try:
+            time.sleep(seconds)
+        finally:
+            self.limit(None)
+        self.done.append("slow")
+
+    def full(self, seconds):
+        filler = self.lab.home / "filler"
+        self.lab.fills += 1
+        self.lab.filling.set()
+        space = os.statvfs(self.lab.home)
+        subprocess.run(["fallocate", "-l", str(max(space.f_bavail * space.f_frsize - 4096, 4096)), str(filler)],
+                       capture_output=True)
+        try:
+            time.sleep(seconds)
+        finally:
+            filler.unlink(missing_ok=True)
+            self.lab.fills += 1
+            self.lab.filling.clear()
+        self.done.append("full")
+
+    def jump(self, by):
+        subprocess.run(["date", "-s", f"@{int(time.time()) + by}"], check=True, capture_output=True)
+        self.moved += by
+        self.done.append("clock forward" if by > 0 else "clock back")
+
+    def damaged(self):
+        """Stores the node found damaged or set aside, on its disk."""
+        return [str(path) for path in self.lab.home.rglob("*") if path.name.endswith((".damaged", ".unavailable"))]
+
+    def end(self):
+        if self.moved:
+            subprocess.run(["date", "-s", f"@{int(time.time()) - self.moved}"], capture_output=True)
+            self.moved = 0
+        if self.ntp:
+            subprocess.run(["timedatectl", "set-ntp", "true"], capture_output=True)
+        if self.mounted:
+            subprocess.run(["umount", "-l", str(self.lab.home)], capture_output=True)
+            self.mounted = False
+        if self.device:
+            subprocess.run(["losetup", "-d", self.device], capture_output=True)
+            self.device = None
 
 
 def until(label, probe, limit=90, every=0.5):
@@ -328,15 +432,20 @@ class Drill:
                 self.background_failures.append((label, f"{type(error).__name__}: {error}"))
             self.stop.set()
 
+    def injected(self, generation, restarting, fills):
+        """Whether a restart or a full disk came while a call went on."""
+        return (restarting or generation != self.lab.generation or self.lab.restarting.is_set()
+                or fills != self.lab.fills or self.lab.filling.is_set())
+
     def open(self):
-        generation = self.lab.generation
-        restarting = self.lab.restarting.is_set()
+        generation, fills = self.lab.generation, self.lab.fills
+        restarting = self.lab.restarting.is_set() or self.lab.filling.is_set()
         code, out = self.lab.run("talk", "--open", "codex", "hello", timeout=240)
         found = re.search(r"=== opened (\S+) on ", out)
         if code != 0 or not found:
             self.note(("open failed", code, out[-400:]))
-            if not restarting and generation == self.lab.generation and not self.lab.restarting.is_set():
-                raise RuntimeError(f"open failed without an injected restart ({code}): {out[-1000:]}")
+            if not self.injected(generation, restarting, fills):
+                raise RuntimeError(f"open failed without an injected restart or full disk ({code}): {out[-1000:]}")
             return None
         talk = found.group(1)
         thread = thread_of(self.lab, talk)
@@ -350,13 +459,13 @@ class Drill:
 
     def speak(self, talk, words, timeout=240, deleting=False):
         started = time.monotonic()
-        generation = self.lab.generation
-        restarting = self.lab.restarting.is_set()
+        generation, fills = self.lab.generation, self.lab.fills
+        restarting = self.lab.restarting.is_set() or self.lab.filling.is_set()
         code, out = self.lab.run("talk", talk, words, timeout=timeout)
         took = time.monotonic() - started
         self.note(("said", talk, words[:30], code, round(took, 1), out.strip()[-160:] if code else ""))
-        if code != 0 and not deleting and not restarting and generation == self.lab.generation and not self.lab.restarting.is_set():
-            raise RuntimeError(f"speak failed without an injected restart or deletion ({code}): {out[-1000:]}")
+        if code != 0 and not deleting and not self.injected(generation, restarting, fills):
+            raise RuntimeError(f"speak failed without an injected restart, full disk or deletion ({code}): {out[-1000:]}")
         return code, out
 
     def delete(self, talk, timeout=180):
@@ -476,6 +585,23 @@ class Drill:
             say("  ending the node and starting it again")
             self.lab.restart()
             self.note(("restarted",))
+
+    def faulted(self, faults):
+        # Every kind in turn, in an order of the seed's, so that a short run has each.
+        kinds = ["slow", "full"] + (["forward", "back"] if faults.clock else [])
+        self.rng.shuffle(kinds)
+        turn = 0
+        while not self.stop.wait(self.rng.uniform(15, 35)):
+            kind = kinds[turn % len(kinds)]
+            turn += 1
+            say(f"  fault: {kind}")
+            if kind == "slow":
+                faults.slow(20)
+            elif kind == "full":
+                faults.full(20)
+            else:
+                faults.jump(600 if kind == "forward" else -600)
+            self.note(("fault", kind))
 
 
 def present(path):
@@ -608,19 +734,27 @@ def main():
     parser.add_argument("--minutes", type=float, default=4)
     parser.add_argument("--workers", type=int, default=4)
     parser.add_argument("--restarts", action="store_true")
+    parser.add_argument("--faults", action="store_true", help="on Linux as root, a slow and a full disk now and then")
+    parser.add_argument("--clock", action="store_true", help="with --faults, the system's clock moved both ways too")
     parser.add_argument("--seed", type=int, default=int(time.time()))
     parser.add_argument("--root", help="where the lab's directory goes; the system's temporary directory without it")
     args = parser.parse_args()
     if not args.codex:
         sys.exit("no codex program: give --codex")
+    if args.faults and (os.name == "nt" or os.geteuid() != 0):
+        sys.exit("--faults needs Linux and root")
     say(f"seed {args.seed}")
     rng = random.Random(args.seed)
     root = Path(tempfile.mkdtemp(prefix="fastctx-concurrency-", dir=args.root))
-    mock = lab = drill = None
+    mock = lab = drill = faults = None
     threads = []
     try:
         mock = Mock()
         lab = Lab(args.program, args.codex, root, mock)
+        if args.faults:
+            faults = Faults(lab, args.clock)
+            faults.prepare()
+            lab.faults = faults
         if not lab.start_node():
             raise RuntimeError("this lab's node did not take its World")
         code, out = lab.run("apply", "--target", "codex", "--home", str(lab.codex_home), timeout=180)
@@ -632,6 +766,9 @@ def main():
         threads.append(threading.Thread(target=drill.guarded, args=("plain-call probe", drill.probe), daemon=True))
         if args.restarts:
             threads.append(threading.Thread(target=drill.guarded, args=("node restarter", drill.chaos), daemon=True))
+        if faults:
+            threads.append(threading.Thread(target=drill.guarded, args=("fault injector", drill.faulted, faults),
+                                            daemon=True))
         for thread in threads:
             thread.start()
         drill.stop.wait(args.minutes * 60)
@@ -656,6 +793,14 @@ def main():
               bool(drill.deleted) and not drill.undeleted, drill.undeleted[:5] or "no deletion completed")
         if args.restarts:
             check("the node was restarted", any(outcome[0] == "restarted" for outcome in drill.outcomes))
+            say(f"  restarts answered again after {', '.join(f'{seconds:.1f}' for seconds in lab.restart_seconds)} s")
+            check(f"the node took requests again within {RESTARTED_WITHIN:.0f} s of each restart",
+                  bool(lab.restart_seconds) and max(lab.restart_seconds) <= RESTARTED_WITHIN,
+                  [round(seconds, 1) for seconds in lab.restart_seconds])
+        if faults:
+            wanted = {"slow", "full"} | ({"clock forward", "clock back"} if args.clock else set())
+            check("the node was put through every fault asked for", wanted <= set(faults.done), faults.done)
+            check_empty("no store on the node's disk was found damaged or set aside", faults.damaged)
         unsaid = [outcome for outcome in drill.outcomes if outcome[0] == "said" and outcome[3] != 0]
         reasons = {}
         for outcome in unsaid:
@@ -711,6 +856,9 @@ def main():
                 say("\n".join(lab.node_log().splitlines()[-80:]))
             except OSError as error:
                 say(f"could not read node.log: {error}")
+        if faults:
+            # The node's World stays in the disk image, kept with the lab.
+            faults.end()
         say(f"lab: {root}")
     return 0 if all(RESULTS) else 1
 

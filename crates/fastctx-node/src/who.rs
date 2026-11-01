@@ -44,6 +44,7 @@ pub fn who(
             continue;
         }
         residents.push(ResidentNow {
+            opened_by: None,
             source: None,
             about: resident.about,
             town: resident.town,
@@ -88,6 +89,7 @@ pub fn who(
                 continue;
             }
             residents.push(ResidentNow {
+                opened_by: None,
                 source: None,
                 about,
                 town: former.town,

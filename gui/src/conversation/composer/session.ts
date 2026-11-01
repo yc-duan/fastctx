@@ -8,7 +8,7 @@ import type { ComposerJournal, Seal } from "./document";
 import { composerJournalStore } from "./journal";
 import type { ComposerJournalStore } from "./journal";
 import { composerWriter } from "./writer";
-import { after, unanswered } from "../../world/again";
+import { ANSWER_WITHIN, after, unanswered } from "../../world/again";
 
 export interface ComposerOperation {
   readonly id: string;
@@ -47,6 +47,35 @@ export class Withdrawn extends Error {
 /** The draft words were pressed in was sent from another device before
  *  they went: its next draft is not theirs to send. */
 const SENT_ELSEWHERE = "the draft was sent from another device";
+
+/** Words not handed to the node by the time an answer was due: they did
+ *  not go. */
+const NOT_HANDED = "the conversation's computer could not be reached in time";
+
+/** Words sent from the input (`ComposerSession::send`): what the node made
+ *  of them, and what can be done with them while that is not known
+ *  (`specs/world-foundation.md`, 宪法第十一条). */
+export interface Sending {
+  sent: Promise<ComposerUpdated>;
+  /** Sends them again at once, under their own id, while the line is up. */
+  again(): void;
+  /** Takes them back into the input: what the node makes of them is not
+   *  waited for any more, and they are not sent again. */
+  withdraw(): void;
+}
+
+/** What words on their way hear and can be told. */
+interface Outcome {
+  /** When they were sent. */
+  readonly began: number;
+  /** Told once when no answer came within `ANSWER_WITHIN`. */
+  readonly late: (why: string) => void;
+  told: boolean;
+  /** Resolves once they are taken back. */
+  readonly stop: Promise<void>;
+  /** The operation that hands them to the node, once there is one. */
+  operation?: Operation;
+}
 
 export interface ComposerSessionOptions {
   readonly transport?: ComposerTransport;
@@ -254,21 +283,25 @@ export class ComposerSession {
   /** Runs an operation until the node answers it: one that broke goes
    *  again, as it was, once the connection is back, or after the core's
    *  wait when the connection never went (the way beyond it broke). */
-  private async lasting(operation: Operation): Promise<ComposerUpdated | ComposerAttachmentAdded> {
+  private async lasting(operation: Operation, outcome?: Outcome): Promise<ComposerUpdated | ComposerAttachmentAdded> {
+    // Words on their way hear when they are late, and stop when taken back.
+    const wait = <T>(waiting: Promise<T>): Promise<T> => (outcome ? this.meanwhile(waiting, outcome, true) : waiting);
     for (let tries = 1; ; tries += 1) {
       try {
-        return await this.run(operation);
+        return await wait(this.run(operation));
       } catch (error) {
+        if (error instanceof Withdrawn) throw error;
         const forgotten = () => this.operations.get(operation.id) !== operation;
         if (!operation.broken || this.closed || this.closing || forgotten()) throw error;
-        if (this.connected) await new Promise<void>((resolve) => after(tries + 1, resolve, this.machine));
-        await this.untilConnected();
+        if (this.connected) await wait(new Promise<void>((resolve) => after(tries + 1, resolve, this.machine)));
+        await wait(this.untilConnected());
         if (forgotten()) throw error;
         if (operation.status === "completed") return operation.result!;
         if (operation.flight) {
           try {
-            return await operation.flight;
-          } catch {
+            return await wait(operation.flight);
+          } catch (error) {
+            if (error instanceof Withdrawn) throw error;
             if (!operation.broken) throw operation.error;
           }
         }
@@ -406,7 +439,7 @@ export class ComposerSession {
    * its own id, so the node sends it once. Words that did not go are back in
    * the input, ahead of what was typed since, with any sent after them
    * (which fail as `Withdrawn`). */
-  send(): Promise<ComposerUpdated> {
+  send(late: (why: string) => void = () => {}): Sending {
     const document = this.draft;
     // Changes asked of the draft before these words go before them.
     const prepared = [...this.preparing];
@@ -419,7 +452,7 @@ export class ComposerSession {
       if (document.view.state.composing) throw new Error("finish the input composition before sending");
       seal = document.seal();
     } catch (error) {
-      return Promise.reject(error);
+      return { sent: Promise.reject(error), again: () => {}, withdraw: () => {} };
     }
     const before = this.sends;
     this.sends = seal.settled;
@@ -428,7 +461,57 @@ export class ComposerSession {
       this.emit();
     });
     this.emit();
-    return before.then(() => this.sendSealed(document, seal, prepared, pressed));
+    let withdraw = () => {};
+    const stop = new Promise<void>((resolve) => {
+      withdraw = resolve;
+    });
+    const outcome: Outcome = { began: Date.now(), late, told: false, stop };
+    // Words waiting behind words sent before them are not handed to the node
+    // yet: no answer to those by the time one is due, and they did not go.
+    const behind = this.meanwhile(before, outcome, false).catch((error: unknown) => {
+      document.unseal(seal);
+      throw error;
+    });
+    const sent = behind.then(() => this.sendSealed(document, seal, prepared, pressed, outcome));
+    return {
+      sent,
+      again: () => {
+        const operation = outcome.operation;
+        if (operation && this.connected && operation.status === "failed" && operation.broken) {
+          void this.run(operation).catch(() => {});
+        }
+      },
+      withdraw: () => withdraw(),
+    };
+  }
+
+  /** Waits for `waiting` as words on their way do: taken back, they stop
+   *  waiting. Past the time an answer is due, words not yet `handed` to the
+   *  node did not go; words handed to it are told late once and go on
+   *  waiting, to be settled when the line is back. */
+  private meanwhile<T>(waiting: Promise<T>, outcome: Outcome, handed: boolean): Promise<T> {
+    return new Promise<T>((resolve, reject) => {
+      let settled = false;
+      const finish = (act: () => void) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(due);
+        act();
+      };
+      const due = window.setTimeout(() => {
+        if (!handed) {
+          finish(() => reject(new Error(this.error?.message || NOT_HANDED)));
+        } else if (!outcome.told) {
+          outcome.told = true;
+          outcome.late(this.error?.message ?? "");
+        }
+      }, Math.max(0, outcome.began + ANSWER_WITHIN - Date.now()));
+      waiting.then(
+        (value) => finish(() => resolve(value)),
+        (error: unknown) => finish(() => reject(error)),
+      );
+      void outcome.stop.then(() => finish(() => reject(new Withdrawn())));
+    });
   }
 
   private async sendSealed(
@@ -436,17 +519,20 @@ export class ComposerSession {
     seal: Seal,
     prepared: readonly Promise<unknown>[],
     pressed: { epoch: number; taken: number },
+    outcome: Outcome,
   ): Promise<ComposerUpdated> {
     if (!document.sealed(seal)) throw new Withdrawn();
     await Promise.allSettled(prepared);
     let epoch: number;
     try {
       for (;;) {
-        await this.untilConnected();
+        await this.meanwhile(this.untilConnected(), outcome, false);
         epoch = document.view.state.epoch;
         try {
-          await this.flushMetadata({ kind: "draft" }, epoch);
-          await this.flushDocuments({ kind: "draft" });
+          // What was typed goes to the node before the words are sent; a node
+          // that does not take it in time leaves them not sent.
+          await this.meanwhile(this.flushMetadata({ kind: "draft" }, epoch), outcome, false);
+          await this.meanwhile(this.flushDocuments({ kind: "draft" }), outcome, false);
           break;
         } catch (error) {
           if (this.connected || this.closed || this.closing) throw error;
@@ -468,11 +554,14 @@ export class ComposerSession {
     const operation: Operation = { id: mutation.operation, change: { do: "send", epoch }, status: "pending", error: null, result: null, attempt: 0,
       run: () => this.transport.update(mutation) };
     this.operations.set(operation.id, operation);
+    outcome.operation = operation;
     try {
-      const updated = await this.lasting(operation) as ComposerUpdated;
+      const updated = await this.lasting(operation, outcome) as ComposerUpdated;
       document.taken(seal);
       return updated;
     } catch (error) {
+      // Taken back, they are not sent again when the line is back.
+      if (error instanceof Withdrawn) this.operations.delete(operation.id);
       document.unseal(seal);
       throw error;
     }

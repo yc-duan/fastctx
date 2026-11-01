@@ -63,7 +63,7 @@ async fn consume(node: &Arc<Node>, account: &HubAccount) -> Result<(), Failure> 
     }
     let pinned: Vec<_> = node.residents.everyone().map(|record| record.about.id).collect();
     for resident in pinned {
-        if scope::pinned(node, &resident)?.as_ref() == Some(account) {
+        if scope::pinned(node, &resident).await?.as_ref() == Some(account) {
             refresh_one(node, account, Changed { key: resident.to_string(), version: 0 }).await;
         }
     }
@@ -113,7 +113,7 @@ async fn refresh(node: &Arc<Node>, account: &HubAccount, row: Changed) -> Result
     if !node.residents.knows(&resident) {
         return Ok(());
     }
-    if scope::pinned(node, &resident)?.is_some_and(|pinned| &pinned != account) {
+    if scope::pinned(node, &resident).await?.is_some_and(|pinned| &pinned != account) {
         return Ok(());
     }
     if row.version != 0
@@ -132,16 +132,16 @@ async fn refresh(node: &Arc<Node>, account: &HubAccount, row: Changed) -> Result
     let _place = node.places.using(resident.as_str()).await;
     let Some((about, _)) = node.residents.about(&resident) else { return Ok(()) };
     if !node.serves(&about.acting, &account.hub, &account.account)
-        || scope::pinned(node, &resident)?.is_some_and(|pinned| &pinned != account)
+        || scope::pinned(node, &resident).await?.is_some_and(|pinned| &pinned != account)
     {
         return Ok(());
     }
     let address = Address { machine: node.machine(), resident: resident.clone() };
     let view = operations::read(node, &address, account).await?;
-    if view.goal.is_none() && scope::pinned(node, &resident)?.is_none() {
+    if view.goal.is_none() && scope::pinned(node, &resident).await?.is_none() {
         return Ok(());
     }
-    scope::keep(node, &resident, account).map_err(|error| Failure::new(error.to_string()))?;
+    scope::keep(node, &resident, account).await.map_err(|error| Failure::new(error.to_string()))?;
     let previous = node
         .goals
         .views

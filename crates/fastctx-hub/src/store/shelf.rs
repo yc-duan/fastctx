@@ -48,16 +48,20 @@ pub(crate) struct Shelf(pub(crate) Database);
 
 impl Shelf {
     pub(crate) fn open(dir: &Path) -> io::Result<Self> {
-        if !dir.join(FILE).try_exists()? {
+        if !fastctx_platform::disk::exists(dir.join(FILE))? {
             for name in ["hub.json", "directory.json"] {
-                if !dir.join(name).try_exists()? {
+                if !fastctx_platform::disk::exists(dir.join(name))? {
                     return Err(io::Error::new(io::ErrorKind::NotFound, format!("the hub's {name} is missing")));
                 }
             }
         }
+        super::format::prepare(dir)?;
         let database =
             Database::open_initialized(&dir.join(FILE), SCHEMA, |connection| super::migrate::import(connection, dir))
                 .map_err(other)?;
+        if let Some(report) = database.salvaged() {
+            eprintln!("the hub's database was damaged and set aside; what could be read was salvaged:\n{report}");
+        }
         let shelf = Self(database);
         super::migrate::back_up(&shelf, dir)?;
         Ok(shelf)
@@ -82,6 +86,13 @@ impl Shelf {
                 Ok(found)
             })
             .map_err(other)
+    }
+
+    pub(crate) async fn write_async(&self, changes: Changes) -> io::Result<()> {
+        if changes.is_empty() {
+            return Ok(());
+        }
+        self.0.write(changes.bytes(), move |c| apply(c, &changes)).await.map_err(other)
     }
 
     pub(crate) fn write(&self, changes: Changes) -> io::Result<()> {
@@ -113,6 +124,7 @@ pub(crate) fn put(c: &Connection, kind: &str, key: &str, position: i64, body: &[
 }
 
 fn apply(c: &Connection, changes: &Changes) -> fastctx_storage::Result<()> {
+    reconcile_letters(c, changes)?;
     for kind in &changes.cleared {
         c.prepare_cached("DELETE FROM hub_rows WHERE kind=?1")?.execute([kind])?;
     }
@@ -150,4 +162,61 @@ pub(crate) fn decode<T: DeserializeOwned>(bytes: &[u8]) -> fastctx_storage::Resu
 }
 pub(crate) fn other(error: Error) -> io::Error {
     io::Error::other(error.to_string())
+}
+
+/// Catalog renames and removals change the durable mail row in the same
+/// transaction. File cleanup can lag without assigning an old epoch to a
+/// replacement identity on restart. Renames retain the outbox epoch.
+fn reconcile_letters(c: &Connection, changes: &Changes) -> fastctx_storage::Result<()> {
+    let mut removed = Vec::new();
+    for (_, key) in changes.deleted.iter().filter(|(kind, _)| *kind == "members") {
+        let before: Option<Vec<u8>> = c
+            .query_row("SELECT body FROM hub_rows WHERE kind='members' AND key=?1", [&**key], |row| row.get(0))
+            .optional()?;
+        if let Some(before) = before {
+            removed.push(decode::<fastctx_net::directory::Member>(&before)?.name);
+        }
+    }
+    if changes.cleared.contains(&"members") {
+        let kept: std::collections::HashSet<_> =
+            changes.put.iter().filter(|row| row.kind == "members").map(|row| &*row.key).collect();
+        let mut query = c.prepare("SELECT key, body FROM hub_rows WHERE kind='members'")?;
+        let rows = query.query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, Vec<u8>>(1)?)))?;
+        for row in rows {
+            let (key, bytes) = row?;
+            if !kept.contains(key.as_str()) {
+                removed.push(decode::<fastctx_net::directory::Member>(&bytes)?.name);
+            }
+        }
+    }
+    for name in removed {
+        c.execute("DELETE FROM hub_rows WHERE kind='letters' AND key=?1", [name.as_str()])?;
+    }
+    let mut moving = Vec::new();
+    for row in changes.put.iter().filter(|row| row.kind == "members") {
+        let before: Option<Vec<u8>> = c
+            .query_row("SELECT body FROM hub_rows WHERE kind='members' AND key=?1", [&*row.key], |row| row.get(0))
+            .optional()?;
+        let Some(before) = before else { continue };
+        let before = decode::<fastctx_net::directory::Member>(&before)?;
+        let after = decode::<fastctx_net::directory::Member>(&row.body)?;
+        if before.name.as_str() == after.name.as_str() {
+            continue;
+        }
+        let bytes: Option<Vec<u8>> = c
+            .query_row("SELECT body FROM hub_rows WHERE kind='letters' AND key=?1", [before.name.as_str()], |row| {
+                row.get(0)
+            })
+            .optional()?;
+        if let Some(bytes) = bytes {
+            moving.push((before.name, after.name, bytes));
+        }
+    }
+    for (before, _, _) in &moving {
+        c.execute("DELETE FROM hub_rows WHERE kind='letters' AND key=?1", [before.as_str()])?;
+    }
+    for (_, after, bytes) in moving {
+        put(c, "letters", after.as_str(), 0, &bytes)?;
+    }
+    Ok(())
 }

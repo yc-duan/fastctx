@@ -1,10 +1,12 @@
 // Links an agent writes to files (`[the report](C:/Users/…/report.html)`):
-// pressed, the file opens with this device's program for its kind, brought
-// here first when it is on another machine; right-clicked or held, a small
-// menu shows it in its folder, where it is on this computer, or copies its
-// path as that machine writes it. A file that takes longer than a glance
-// to come says how it comes beside the composer; one whose way broke goes
-// on once the way is back, while the page is open.
+// pressed, a file that reads as text opens in the side and a picture in the
+// viewer, as the page routes them (`file-kind.ts`); anything else opens with
+// this device's program for its kind, brought here first when it is on
+// another machine. Right-clicked or held, a small menu shows it in its
+// folder, where it is on this computer, or copies its path as that machine
+// writes it. A file that takes longer than a glance to come says how it
+// comes beside the composer; one whose way broke goes on once the way is
+// back, while the page is open.
 
 import { layerOpened } from "../app/back";
 import { onHeld } from "../app/press";
@@ -39,6 +41,9 @@ export interface FileLinkOptions {
   /** The machine the file `path` that `link` names is on, as the turn its
    *  words are in says; absent where it says nothing. */
   machineFor?: ((link: HTMLElement, path: string) => MachineName | null) | undefined;
+  /** Takes a file pressed where it goes other than to this device's
+   *  program: true where it went there. */
+  elsewhere?: ((machine: MachineName, path: string, attachment: AttachmentSource | null) => boolean) | undefined;
   /** Opens a file on `machine` here, bringing it over first when needed,
    *  as the read `held`. */
   open(machine: MachineName, path: string, held: HeldRead): Promise<void>;
@@ -80,7 +85,11 @@ export class FileLinks {
       event.preventDefault();
       event.stopPropagation();
       this.closeMenu();
-      this.open(link);
+      const attachment = this.attachmentOf(link);
+      const machine = this.machineOf(link);
+      const path = link.dataset.file!;
+      if (options.elsewhere?.(machine, path, attachment)) return;
+      this.openOutside(machine, path, attachment, attachment ? (link.textContent?.trim() ?? null) : null);
     });
     onHeld(root, "a[data-file]", (link, event, input) => {
       event.stopPropagation();
@@ -102,18 +111,24 @@ export class FileLinks {
     return link.dataset.fileMachine ?? options.machineFor?.(link, link.dataset.file!) ?? options.machine;
   }
 
+  /** A file the user sent that `link` names, where it is one. */
+  private attachmentOf(link: HTMLElement): AttachmentSource | null {
+    return link.dataset.attachment && this.options.openAttachment ? (JSON.parse(link.dataset.attachment) as AttachmentSource) : null;
+  }
+
   /** The page went: the files still coming are not wanted. */
   release(): void {
     this.reads.release();
     this.closeMenu();
   }
 
-  private open(link: HTMLElement): void {
+  /** Opens a file with this device's program for its kind: one the user
+   *  sent as the World keeps it, another brought here from `machine`
+   *  first; `named` is what the conversation calls it. */
+  openOutside(machine: MachineName, path: string, sent: AttachmentSource | null = null, named: string | null = null): void {
     const { options } = this;
     const { words } = options;
-    const sent = link.dataset.attachment && options.openAttachment ? (JSON.parse(link.dataset.attachment) as AttachmentSource) : null;
-    const path = link.dataset.file!;
-    const name = (sent ? link.textContent?.trim() : null) || path.split(/[\\/]/).pop() || path;
+    const name = named || path.split(/[\\/]/).pop() || path;
     let progress: ReadProgress | null = null;
     let said: string | null = null;
     const tell = () => {
@@ -126,8 +141,7 @@ export class FileLinks {
       said = "";
       tell();
     }, SAY_AFTER);
-    const opening = (held: HeldRead) =>
-      sent && options.openAttachment ? options.openAttachment(sent, held) : options.open(this.machineOf(link), path, held);
+    const opening = (held: HeldRead) => (sent && options.openAttachment ? options.openAttachment(sent, held) : options.open(machine, path, held));
     void this.reads
       .hold(opening, (now) => {
         progress = now;

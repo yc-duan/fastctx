@@ -45,7 +45,7 @@ pub async fn open(
             Ok(())
         })
     });
-    let task = tokio::spawn(async move {
+    let task = fastctx_platform::task::spawn(async move {
         let open = RemoteCall::FindFiles { request: FileSearchRequest::Open { scope } };
         let call = link.call_with_stream(&machine, &account, Purpose::Hands, open, feed);
         tokio::pin!(call);

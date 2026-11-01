@@ -31,6 +31,8 @@ export interface TalkRowWords {
   device(form: "desktop" | "laptop" | "server"): string;
   /** It was forked from another conversation. */
   forked: string;
+  /** Another account opened it, on a machine shared with the user. */
+  openedBy(account: string): string;
 }
 
 /** What a row says of the user's own acts on it. */
@@ -99,10 +101,15 @@ export function talkRow(r: ResidentNow, place: Place, now: Date, facts: Map<stri
     acts?.renaming !== null && acts?.renaming !== undefined
       ? `<input class="talk-rename" value="${escape(acts.renaming)}" aria-label="${escape(name)}" spellcheck="false" autocomplete="off">`
       : `<span class="talk-name" title="${escape([name, name === someone ? "" : someone].filter(Boolean).join("\n"))}">${escape(name)}</span>`;
-  // A fork says so beside its name, quietly.
-  const titled = r.about.forked_from && !acts?.renaming
-    ? `<span class="talk-named">${named}<span class="talk-forked" title="${escape(words.forked)}" aria-label="${escape(words.forked)}">${glyph("fork", 13)}</span></span>`
-    : named;
+  // A fork, or one another account opened on a shared machine, says so
+  // beside its name, quietly; who opened it is said where the pointer rests.
+  const marks = acts?.renaming
+    ? ""
+    : [
+        r.about.forked_from ? `<span class="talk-forked" title="${escape(words.forked)}" aria-label="${escape(words.forked)}">${glyph("fork", 13)}</span>` : "",
+        r.openedBy ? `<span class="talk-forked talk-shared" title="${escape(words.openedBy(r.openedBy.account))}" aria-label="${escape(words.openedBy(r.openedBy.account))}">${glyph("person", 13)}</span>` : "",
+      ].join("");
+  const titled = marks ? `<span class="talk-named">${named}${marks}</span>` : named;
   // How it stands is its family's mark, written as by hand while it works
   // and in clay while it waits on the user; said in words to a screen reader
   // and on a pointer's rest over the mark. Being deleted says so in its place.

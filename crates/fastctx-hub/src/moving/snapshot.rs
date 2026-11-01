@@ -24,7 +24,7 @@ pub(super) fn capture(dir: &Path) -> io::Result<()> {
         .query_row("SELECT count(*) FROM sqlite_master", [], |r| r.get::<_, i64>(0))
         .map_err(io::Error::other)?;
     let snapshot = path(dir);
-    match std::fs::remove_file(&snapshot) {
+    match fastctx_platform::disk::remove_file(&snapshot) {
         Err(e) if e.kind() != io::ErrorKind::NotFound => return Err(e),
         _ => {}
     }

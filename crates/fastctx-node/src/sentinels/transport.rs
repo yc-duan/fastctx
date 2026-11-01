@@ -14,7 +14,14 @@ impl Homes for Transport {
     fn begin<'a>(&'a self, registration: &'a Registration, version: u64) -> FutureResult<'a, Summary> {
         Box::pin(async move {
             match self
-                .send(registration, HomeRequest::Begin { id: registration.definition.id.clone(), version, owner: registration.definition.owner.clone() })
+                .send(
+                    registration,
+                    HomeRequest::Begin {
+                        id: registration.definition.id.clone(),
+                        version,
+                        owner: registration.definition.owner.clone(),
+                    },
+                )
                 .await?
             {
                 HomeReply::Summary { sentinel } if sentinel.definition == registration.definition => Ok(*sentinel),
@@ -52,13 +59,34 @@ impl Transport {
         home: &fastctx_types::MachineName,
         request: HomeRequest,
     ) -> Result<HomeReply, String> {
+        let request = if let Some(access) = crate::record_access::current() {
+            if &access.owner != scope {
+                return Err("a shared sentinel request changed its owning account".into());
+            }
+            if !matches!(
+                request,
+                HomeRequest::Inspect { .. }
+                    | HomeRequest::Withdraw { .. }
+                    | HomeRequest::Record { .. }
+                    | HomeRequest::Overview
+            ) {
+                return Err("this sentinel operation cannot be shared".into());
+            }
+            HomeRequest::Conversation {
+                actor: access.actor.account,
+                owner: access.conversation,
+                request: Box::new(request),
+            }
+        } else {
+            request
+        };
         let link = self.0.link_of(&scope.hub).ok_or("the sentinel account's network is not connected")?;
         let view = crate::authorization::current_view(&link).map_err(|e| e.message)?;
         if !view.call_rights(&view.me, &scope.account, home).hands {
             return Err("this account may not use the sentinel home".into());
         }
         if view.is_me(home) {
-            return home_call(&self.0, scope, &request).await;
+            return home_call_for(&self.0, scope, &self.0.machine(), &request).await;
         }
         if !view.member(home).is_some_and(|member| member.online) {
             return Err("the sentinel home is offline".into());
@@ -84,11 +112,15 @@ impl Transport {
         }
     }
 }
-pub(crate) async fn home_call(
+pub(crate) async fn home_call_for(
     node: &Arc<Node>,
     scope: &HubAccount,
+    from: &fastctx_types::MachineName,
     request: &HomeRequest,
 ) -> Result<HomeReply, String> {
+    if let HomeRequest::Conversation { actor, owner, request } = request {
+        return super::shared_home::call(node, scope, from, actor, owner, request).await;
+    }
     let host = super::worker::engine(node)?;
     host.call(scope, request).await
 }

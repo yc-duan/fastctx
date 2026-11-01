@@ -36,9 +36,20 @@ impl Device {
             return Err(failed(format!("only an interface on {machine} says what it is or brings packages there")));
         }
         if let Call::MachineUpdates { machine, update: fastctx_types::update::UpdateCall::Repair { .. } } = &call {
-            let (reply, _) = self.call(Call::MachineUpdates { machine: machine.clone(), update: fastctx_types::update::UpdateCall::State }).await?;
-            let Reply::Update(current) = reply else { return Err(failed("the machine did not report its repair capability")); };
-            if !current.repair_supported { return Err(failed(format!("{machine} runs a version too old to accept repair; arrange repair through a newer hub"))); }
+            let (reply, _) = self
+                .call(Call::MachineUpdates {
+                    machine: machine.clone(),
+                    update: fastctx_types::update::UpdateCall::State,
+                })
+                .await?;
+            let Reply::Update(current) = reply else {
+                return Err(failed("the machine did not report its repair capability"));
+            };
+            if !current.repair_supported {
+                return Err(failed(format!(
+                    "{machine} runs a version too old to accept repair; arrange repair through a newer hub"
+                )));
+            }
             if !self.reaching(machine)?.link.versions().is_some_and(|n| n.repair_supported) {
                 return Err(failed("the hub is too old to route repair; update it first"));
             }
@@ -157,21 +168,46 @@ impl Device {
                 return Ok((Reply::AccountRecords { response }, here()));
             }
             Call::Sentinel { hub, account, request } => {
-                if matches!(request, fastctx_types::sentinel_control::Request::Create { .. }) {return Err(failed("a device cannot create a conversation's sentinel"));}
+                if matches!(request, fastctx_types::sentinel_control::Request::Create { .. }) {
+                    return Err(failed("a device cannot create a conversation's sentinel"));
+                }
                 let session = self.on_hub(hub.as_ref())?;
                 let account = profile_account(&session, account)?;
                 let view = session.link.view();
-                let candidates: Vec<_> = view.machines().filter(|m| m.online && view.may_act_for(&account, &m.name) && view.rights(&account, &m.name).any()).map(|m|m.name.clone()).collect();
+                let candidates: Vec<_> = view
+                    .machines()
+                    .filter(|m| m.online && view.may_act_for(&account, &m.name) && view.rights(&account, &m.name).any())
+                    .map(|m| m.name.clone())
+                    .collect();
                 let mut unavailable = Vec::new();
                 for machine in candidates {
-                    match session.link.call(&machine, &account, fastctx_types::access::Purpose::Look, RemoteCall::Facts).await {
-                        Ok(Ok(RemoteReply::Facts(facts))) if facts.sentinels => {},
-                        Ok(Ok(_)) => { unavailable.push(format!("upgrade {machine} to use sentinels")); continue; },
-                        Ok(Err(error)) => { unavailable.push(error.to_string()); continue; },
-                        Err(error) => { unavailable.push(error.to_string()); continue; },
+                    match session
+                        .link
+                        .call(&machine, &account, fastctx_types::access::Purpose::Look, RemoteCall::Facts)
+                        .await
+                    {
+                        Ok(Ok(RemoteReply::Facts(facts))) if facts.sentinels => {}
+                        Ok(Ok(_)) => {
+                            unavailable.push(format!("upgrade {machine} to use sentinels"));
+                            continue;
+                        }
+                        Ok(Err(error)) => {
+                            unavailable.push(error.to_string());
+                            continue;
+                        }
+                        Err(error) => {
+                            unavailable.push(error.to_string());
+                            continue;
+                        }
                     }
                     let call = RemoteCall::SentinelControl { request };
-                    return match session.link.call(&machine, &account, call.purpose(), call).await.map_err(failed)?.map_err(failed)? {
+                    return match session
+                        .link
+                        .call(&machine, &account, call.purpose(), call)
+                        .await
+                        .map_err(failed)?
+                        .map_err(failed)?
+                    {
                         RemoteReply::SentinelControl(reply) => Ok((Reply::Sentinel(reply), machine)),
                         _ => Err(failed("the machine did not answer sentinel control")),
                     };
@@ -182,22 +218,48 @@ impl Device {
                 let session = self.on_hub(hub.as_ref())?;
                 let account = profile_account(&session, account)?;
                 let view = session.link.view();
-                let candidates: Vec<_> = view.machines().filter(|m| m.online && view.may_act_for(&account, &m.name) && view.rights(&account, &m.name).any()).map(|m|m.name.clone()).collect();
+                let candidates: Vec<_> = view
+                    .machines()
+                    .filter(|m| m.online && view.may_act_for(&account, &m.name) && view.rights(&account, &m.name).any())
+                    .map(|m| m.name.clone())
+                    .collect();
                 let mut unavailable = Vec::new();
                 for machine in candidates {
-                    match session.link.call(&machine, &account, fastctx_types::access::Purpose::Look, RemoteCall::Facts).await {
-                        Ok(Ok(RemoteReply::Facts(facts))) if facts.sentinels => {},
-                        Ok(Ok(_)) => { unavailable.push(format!("upgrade {machine} to use sentinels")); continue; },
-                        Ok(Err(error)) => { unavailable.push(error.to_string()); continue; },
-                        Err(error) => { unavailable.push(error.to_string()); continue; },
+                    match session
+                        .link
+                        .call(&machine, &account, fastctx_types::access::Purpose::Look, RemoteCall::Facts)
+                        .await
+                    {
+                        Ok(Ok(RemoteReply::Facts(facts))) if facts.sentinels => {}
+                        Ok(Ok(_)) => {
+                            unavailable.push(format!("upgrade {machine} to use sentinels"));
+                            continue;
+                        }
+                        Ok(Err(error)) => {
+                            unavailable.push(error.to_string());
+                            continue;
+                        }
+                        Err(error) => {
+                            unavailable.push(error.to_string());
+                            continue;
+                        }
                     }
                     let call = RemoteCall::SentinelSettings { change };
-                    return match session.link.call(&machine, &account, call.purpose(), call).await.map_err(failed)?.map_err(failed)? {
+                    return match session
+                        .link
+                        .call(&machine, &account, call.purpose(), call)
+                        .await
+                        .map_err(failed)?
+                        .map_err(failed)?
+                    {
                         RemoteReply::SentinelSettings(reply) => Ok((Reply::SentinelSettings(reply), machine)),
                         _ => Err(failed("the machine did not answer sentinel settings")),
                     };
                 }
-                return Err(failed(format!("no online sentinel-capable machine can read this account's settings: {}", unavailable.join("; "))));
+                return Err(failed(format!(
+                    "no online sentinel-capable machine can read this account's settings: {}",
+                    unavailable.join("; ")
+                )));
             }
             Call::SentinelKey { hub, account, key, value } => {
                 // The key goes from this device straight to the home, through the hub alone.
@@ -208,7 +270,9 @@ impl Device {
                     key: fastctx_types::sentinel_settings::RECORD_KEY.into(),
                 };
                 let home = match session.link.account_records(&account, request).await.map_err(failed)? {
-                    fastctx_types::account_records::Response::Read { record: Some(record) } if !record.metadata.deleted => {
+                    fastctx_types::account_records::Response::Read { record: Some(record) }
+                        if !record.metadata.deleted =>
+                    {
                         serde_json::from_value::<fastctx_types::sentinel_settings::Settings>(record.body)
                             .map_err(failed)?
                             .home
@@ -218,7 +282,13 @@ impl Device {
                 };
                 let home = home.ok_or_else(|| failed("choose the sentinel home first"))?;
                 let call = RemoteCall::SentinelKey { key, value };
-                return match session.link.call(&home, &account, call.purpose(), call).await.map_err(failed)?.map_err(failed)? {
+                return match session
+                    .link
+                    .call(&home, &account, call.purpose(), call)
+                    .await
+                    .map_err(failed)?
+                    .map_err(failed)?
+                {
                     RemoteReply::SentinelKeys(_) => Ok((Reply::Done, home)),
                     _ => Err(failed("the sentinel home did not answer the key")),
                 };
@@ -318,7 +388,8 @@ impl Device {
                 (machine, RemoteCall::Stats { after, seen }, None)
             }
             Call::Book { machine, query } => {
-                let machine = machine.ok_or_else(|| failed("choose a machine; a device keeps no activity of its own"))?;
+                let machine =
+                    machine.ok_or_else(|| failed("choose a machine; a device keeps no activity of its own"))?;
                 (machine, RemoteCall::Book { query }, None)
             }
             Call::UpdateMachine { machine } => (machine, RemoteCall::UpdateWorld, None),
@@ -480,13 +551,9 @@ impl Device {
                 return Ok((Reply::AgentLogins(self.agent_logins(machine).await?), here()));
             }
             Call::Nodes => return Ok((Reply::Nodes(self.nodes().await?), here())),
-            Call::Memory(request) => return Ok((Reply::Memory(self.memory(request).await?), here())),
-            Call::MemorySettings { hub, account, enabled } => {
-                let (link, account) = self.project_account(hub.as_ref(), account.as_ref())?;
-                return Ok((
-                    Reply::MemorySettings(link.memory_settings(&account, enabled).await.map_err(failed)?),
-                    here(),
-                ));
+            Call::History(request) => return Ok((Reply::History(self.history(request).await?), here())),
+            Call::Memory(_) | Call::MemorySettings { .. } | Call::WatchMemory { .. } => {
+                return Err(failed("project memory was replaced by history; update the app"));
             }
             Call::Layer { hub, account, layer } => {
                 let (link, account) = self.project_account(hub.as_ref(), account.as_ref())?;
@@ -526,8 +593,15 @@ impl Device {
             None => session.account_for(&machine, purpose)?,
         };
         if matches!(&remote, RemoteCall::Goal { .. }) {
-            if !session.link.view().goal_control { return Err(failed(fastctx_types::goals::words::OLDER_HUB)); }
-            let facts = session.link.call(&machine, &account, fastctx_types::access::Purpose::Look, RemoteCall::Facts).await.map_err(failed)?.map_err(failed)?;
+            if !session.link.view().goal_control {
+                return Err(failed(fastctx_types::goals::words::OLDER_HUB));
+            }
+            let facts = session
+                .link
+                .call(&machine, &account, fastctx_types::access::Purpose::Look, RemoteCall::Facts)
+                .await
+                .map_err(failed)?
+                .map_err(failed)?;
             if !matches!(facts, RemoteReply::Facts(facts) if facts.goal_runtime) {
                 return Err(failed(fastctx_types::goals::words::OLDER_NODE));
             }
@@ -674,8 +748,11 @@ impl Device {
         machine: &Written,
     ) -> Result<fastctx_types::management::Forgetting, Error> {
         let session = self.reaching(machine)?;
-        let account = session.link.account_of(&machine.name, resident).map_err(failed)?;
-        let conversation = Address { machine: machine.name.clone(), resident: resident.clone() };
+        let (account, conversation) = session
+            .link
+            .record_actor(&Address { machine: machine.name.clone(), resident: resident.clone() })
+            .await
+            .map_err(failed)?;
         match session.link.forget(&account, &conversation).await.map_err(failed)? {
             true => Ok(fastctx_types::management::Forgetting::Asked),
             false => Err(failed("not connected to the hub now; nothing was deleted, try again once connected")),

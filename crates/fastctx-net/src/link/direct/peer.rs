@@ -10,7 +10,7 @@ use std::sync::{Arc, Mutex};
 use fastctx_types::access::Purpose;
 use fastctx_types::{AccountName, MachineName};
 use futures_util::{SinkExt as _, StreamExt as _};
-use tokio::sync::{oneshot, watch};
+use tokio::sync::{mpsc, oneshot, watch};
 use tokio::time::Instant;
 use tokio_tungstenite::tungstenite::Message as WsMessage;
 
@@ -51,6 +51,9 @@ pub(crate) struct PeerConn {
     pub cancels: bool,
     /// Frames for the writer, as they are written.
     out: crate::queue::Sender<Queued>,
+    /// Heartbeats and their answers, written ahead of what waits in `out`:
+    /// one every few seconds each way, so this way needs no bound.
+    first: mpsc::UnboundedSender<Queued>,
     ms: Mutex<Option<u32>>,
     closed: watch::Sender<Option<String>>,
 }
@@ -62,8 +65,9 @@ impl PeerConn {
         dialed: bool,
         at: Vec<SocketAddr>,
         cancels: bool,
-    ) -> (Arc<Self>, crate::queue::Receiver<Queued>) {
-        let (out, frames) = crate::queue::bounded(QUEUED, QUEUED_BYTES);
+    ) -> (Arc<Self>, Writing) {
+        let (out, frames) = crate::queue::bounded(QUEUED, QUEUED_BYTES, "direct.outgoing");
+        let (first, firsts) = mpsc::unbounded_channel();
         let (closed, _) = watch::channel(None);
         let conn = Self {
             name,
@@ -73,10 +77,11 @@ impl PeerConn {
             at,
             cancels,
             out,
+            first,
             ms: Mutex::new(None),
             closed,
         };
-        (Arc::new(conn), frames)
+        (Arc::new(conn), Writing { frames, firsts })
     }
 
     pub fn send(&self, frame: Frame) -> Result<(), ()> {
@@ -96,6 +101,11 @@ impl PeerConn {
         let bytes = peer::encode(frame);
         let size = bytes.len();
         self.out.send(Queued { bytes, written }, size).map_err(|_| ())
+    }
+
+    /// Sends a heartbeat or its answer ahead of everything queued.
+    fn send_first(&self, frame: Frame) -> Result<(), ()> {
+        self.first.send(Queued { bytes: peer::encode(&frame), written: None }).map_err(|_| ())
     }
 
     /// The round trip as last measured.
@@ -129,6 +139,23 @@ impl PeerConn {
 
     pub fn on(&self) -> CallOn {
         CallOn::Peer(self.name.clone(), self.generation)
+    }
+}
+
+/// The writer's end of a direct link: heartbeats first, then the rest in the
+/// order queued.
+pub(crate) struct Writing {
+    frames: crate::queue::Receiver<Queued>,
+    firsts: mpsc::UnboundedReceiver<Queued>,
+}
+
+impl Writing {
+    async fn recv(&mut self) -> Option<Queued> {
+        tokio::select! {
+            biased;
+            Some(frame) = self.firsts.recv() => Some(frame),
+            frame = self.frames.recv() => frame,
+        }
     }
 }
 
@@ -254,7 +281,7 @@ pub(super) async fn keep(inner: Arc<Inner>, peer: MachineName, at: Vec<SocketAdd
     }
 }
 
-type Linked = (Arc<PeerConn>, Socket, crate::queue::Receiver<Queued>, SocketAddr, fastctx_types::world::Route);
+type Linked = (Arc<PeerConn>, Socket, Writing, SocketAddr, fastctx_types::world::Route);
 
 /// Dials `peer` at `at` and has it prove who it is.
 async fn dial(inner: &Inner, peer: &MachineName, at: &[SocketAddr]) -> Result<Linked, String> {
@@ -382,7 +409,7 @@ async fn serve(
     inner: Arc<Inner>,
     conn: Arc<PeerConn>,
     socket: Socket,
-    mut frames: crate::queue::Receiver<Queued>,
+    mut frames: Writing,
     mut network: Option<&mut watch::Receiver<u64>>,
 ) -> (String, bool) {
     let pulse = crate::transport::pulse_of(&socket);
@@ -395,7 +422,7 @@ async fn serve(
     // No write goes on once nothing of it went for the silence, and the
     // link's end stops one under way: what it began is then not finished,
     // and nothing follows.
-    let writer = tokio::spawn(async move {
+    let writer = fastctx_platform::task::spawn(async move {
         let _done = writer_done;
         loop {
             tokio::select! {
@@ -430,13 +457,15 @@ async fn serve(
     let pinged: Arc<Mutex<HashMap<u64, Instant>>> = Arc::default();
     let heartbeat = {
         let (conn, pinged, pulse) = (conn.clone(), pinged.clone(), pulse.clone());
-        tokio::spawn(async move {
+        fastctx_platform::task::spawn(async move {
             let mut n = 0;
+            let mut beats = crate::beats::Beats::from_now("direct.heartbeat", "direct.heartbeat.late");
             loop {
                 tokio::time::sleep(HEARTBEAT).await;
+                beats.beat();
                 n += 1;
                 pinged.lock().expect("never poisoned").insert(n, Instant::now());
-                if conn.send(Frame::Ping { n, took: Some(pulse.taken()) }).is_err() {
+                if conn.send_first(Frame::Ping { n, took: Some(pulse.taken()) }).is_err() {
                     return;
                 }
             }
@@ -509,7 +538,7 @@ async fn serve(
                 if let Some(took) = took {
                     pulse.told(took);
                 }
-                let _ = conn.send(Frame::Pong { n, took: Some(pulse.taken()) });
+                let _ = conn.send_first(Frame::Pong { n, took: Some(pulse.taken()) });
             }
             Frame::Pong { n, took } => {
                 if let Some(took) = took {
@@ -524,9 +553,10 @@ async fn serve(
                     pinged.lock().expect("never poisoned").retain(|sent, _| *sent > n);
                 }
             }
+            // Answered on the node's runtime, as a call through the hub is.
             Frame::Call { id, message } => {
                 let stop = inner.answers.open(&inner, conn.on(), id);
-                tokio::spawn(super::super::answering::answer(
+                inner.on_node(super::super::answering::answer(
                     inner.clone(),
                     super::super::Replier::Peer(conn.clone(), id),
                     message,
@@ -553,7 +583,7 @@ async fn serve(
     // The writer says why and closes, or gives up within its own bounds;
     // past them it is stopped, so no task outlives its link for long.
     let stopping = writer.abort_handle();
-    tokio::spawn(async move {
+    fastctx_platform::task::spawn(async move {
         if tokio::time::timeout(SILENCE * 3, writer).await.is_err() {
             stopping.abort();
         }

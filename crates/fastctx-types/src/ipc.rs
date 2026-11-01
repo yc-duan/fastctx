@@ -36,8 +36,9 @@ pub const NOTICES: u32 = 1;
 /// and a writer told only as a conversation or a page elsewhere, what
 /// whoever may not work on that machine is told (`project::Writer`). A
 /// client that says none is told such a reply as text instead
-/// (`fastctx-node`'s `renewal_legacy`).
-pub const SHAPES: u32 = 1;
+/// (`fastctx-node`'s `renewal_legacy`). From three it reads a World watch
+/// told what changed (`NodeFrame::WorldChanged`) rather than whole each time.
+pub const SHAPES: u32 = 3;
 
 /// The first frame on every connection.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -191,6 +192,12 @@ pub enum NodeFrame {
     World {
         id: u64,
         world: Box<crate::world::WorldNow>,
+    },
+    /// What changed in the World since the last piece of a `WatchWorld`
+    /// call (`crate::world_delta`), to a client reading shapes from three.
+    WorldChanged {
+        id: u64,
+        change: serde_json::Value,
     },
 }
 

@@ -5,12 +5,12 @@ use crate::Node;
 use fastctx_types::{ipc::Failure, residents::About};
 use std::{sync::Arc, time::Duration};
 
-fn eligible(node: &Node, about: &About) -> Result<bool, Failure> {
+async fn eligible(node: &Node, about: &About) -> Result<bool, Failure> {
     Ok(about.world_started
         && about.host.agent.as_str() == "claude"
         && node.residents.removed(&about.id).is_none()
         && node.residents.host_present(&about.id)
-        && !retention::held(node, &about.id)?
+        && !retention::held(node, &about.id).await?
         && node.residents.now(&about.id).is_some_and(|now| {
             jiff::Timestamp::now().as_second().saturating_sub(now.since.as_second())
                 >= retention::idle_delay().as_secs() as i64
@@ -18,7 +18,7 @@ fn eligible(node: &Node, about: &About) -> Result<bool, Failure> {
 }
 
 async fn consider(node: &Arc<Node>, about: &About, scan: &mut crate::claude::lifecycle::Scan) -> Result<(), Failure> {
-    if !eligible(node, about)? {
+    if !eligible(node, about).await? {
         return Ok(());
     }
     let id = &about.id;
@@ -36,7 +36,7 @@ async fn consider(node: &Arc<Node>, about: &About, scan: &mut crate::claude::lif
     let management = node.residents.management(id)?;
     let Ok(_exclusive) = management.try_write() else { return Ok(()) };
     let Some((current, _)) = node.residents.about(id) else { return Ok(()) };
-    if current.session != about.session || current.home != about.home || !eligible(node, &current)? {
+    if current.session != about.session || current.home != about.home || !eligible(node, &current).await? {
         return Ok(());
     }
     let Some(token) = node.idle_probes.begin(id) else { return Ok(()) };
@@ -47,7 +47,7 @@ async fn consider(node: &Arc<Node>, about: &About, scan: &mut crate::claude::lif
             result?.expect("a positive idle observation")
         }
     };
-    if eligible(node, &current)? {
+    if eligible(node, &current).await? {
         super::release_locked(node, &current, ReleaseReason::Idle, Some(&Candidate::Worker(worker))).await?;
     }
     Ok(())
