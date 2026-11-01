@@ -1935,7 +1935,7 @@ async fn run_started(
         (None, request) => {
             // Named like any machine, this one runs it only for whom may work on it.
             let acting = crate::authorization::resident(node, &resident)?;
-            node.authorize_here(&acting)?;
+            node.judged_afresh(&acting, || node.authorize_here(&acting)).await?;
             let owner = Address { machine: here.clone(), resident: resident.clone() };
             node.jobs.run(node, owner.into(), town.clone(), request, None, true, None).await?.0
         }
@@ -2001,7 +2001,7 @@ async fn write(
     // an agent assisting another account writes nothing on its owner's
     // computer.
     let acting = crate::authorization::resident(node, &resident)?;
-    node.authorize_here(&acting)?;
+    node.judged_afresh(&acting, || node.authorize_here(&acting)).await?;
     let here = node.machine();
     let started_at = jiff::Timestamp::now();
     let turn = node.residents.now(&resident).and_then(|now| now.turn);
