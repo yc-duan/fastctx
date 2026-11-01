@@ -434,6 +434,29 @@ jobs:
           root="$RUNNER_TEMP/scale"
           sudo bash -c "ulimit -n 1048576 && tests/hub_scale --root '$root' --members 1000 --seconds 20 --cgroup && tests/hub_scale --root '$root' --members 10000 --seconds 20 --cgroup --baseline '$root/result-1000.json'"
 
+  # The node's storage held to the constitution's numbers where its engine and its records are: a
+  # hundred thousand events paged, a write's transaction within two milliseconds, a writer killed
+  # at random losing no acknowledged row, a damaged database salvaged, and a hundred thousand
+  # steps of a job written and read (`world-engine.md`, 验证的设施). The records drill needs the
+  # node's drill feature, so both are built here, beside the kernel rather than with it.
+  storage-linux:
+    if: github.ref_type == 'branch'
+    name: storage drills
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.92.0
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: storage-linux
+          save-if: false
+      - if: env.DRILLS == 'true'
+        name: Storage engine drill
+        run: cargo test --release --locked -p fastctx-storage --test storage_drill -- --root "$RUNNER_TEMP/storage-drill"
+      - if: env.DRILLS == 'true'
+        name: Node records drill
+        run: cargo test --release --locked -p fastctx-node --features storage-drill --test record_drill -- --root "$RUNNER_TEMP/record-drill"
+
   test-linux:
     needs: kernel-linux
     name: test ${{ matrix.target }}
