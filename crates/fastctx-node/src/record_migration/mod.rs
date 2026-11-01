@@ -34,6 +34,11 @@ pub(crate) fn world(directory: &fastctx_types::layout::ConversationDir) -> std::
         .ok_or_else(|| std::io::Error::other("conversation has no world"))
 }
 
+/// Notes a conversation this release is creating, before anything is kept for it.
+pub(crate) fn born(node: &crate::Node, id: &fastctx_types::ResidentId) {
+    scheduler::born(node.world.path(), id.as_str());
+}
+
 /// A derived step that reads a legacy file nothing else uses sets a malformed
 /// one aside with its reason, as a decoder's damaged file is, and goes on.
 pub(crate) fn set_aside(

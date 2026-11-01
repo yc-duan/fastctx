@@ -589,6 +589,7 @@ async fn prepare(
             getrandom::fill(&mut identity).map_err(failure)?;
             let resident: ResidentId =
                 format!("{agent}-{:032x}", u128::from_be_bytes(identity)).parse().map_err(failure)?;
+            crate::record_migration::born(node, &resident);
             let directory = node.world.conversation(&resident);
             std::fs::create_dir_all(directory.path()).map_err(failure)?;
             write_new(
@@ -1312,7 +1313,9 @@ pub async fn opening(
     attachments: &[Attachment],
 ) -> Result<(ResidentId, Opening), Failure> {
     let Some(first) = attachments.first() else {
-        return Ok((node.residents.new_id(agent)?, Opening { lock: None, directory: None }));
+        let id = node.residents.new_id(agent)?;
+        crate::record_migration::born(node, &id);
+        return Ok((id, Opening { lock: None, directory: None }));
     };
     let id = first.conversation().resident.clone();
     if !node.is_me(&first.conversation().machine) || first.town.as_ref() != town {

@@ -63,6 +63,10 @@ pub(crate) async fn reserve(
             let digest = format!("{:x}", Sha256::digest(format!("{}\0{operation}", from.key())));
             let resident: ResidentId = format!("{agent}-{}", &digest[..32]).parse().map_err(failure)?;
             let room = node.world.conversation(&resident);
+            // A retried upload finds its draft again; only a new one is born here.
+            if !fastctx_platform::disk::exists(room.path()).map_err(failure)? {
+                crate::record_migration::born(node, &resident);
+            }
             fastctx_platform::ensure_private_dir(room.path()).map_err(failure)?;
             let draft = Draft {
                 agent: agent.clone(),

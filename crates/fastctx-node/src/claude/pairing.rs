@@ -267,6 +267,7 @@ pub(super) fn resident(
             let first = chain.last().expect("the chain includes this registration");
             let agent = AgentName::try_from("claude").expect("a valid agent name");
             let id = node.residents.new_id(&agent).map_err(io::Error::other)?;
+            crate::record_migration::born(node, &id);
             let at = first.at.unwrap_or_else(Timestamp::now);
             let about = About {
                 side: false,

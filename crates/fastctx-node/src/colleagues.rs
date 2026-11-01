@@ -231,6 +231,7 @@ pub async fn ask_here(
     })?;
     let agent = AgentName::try_from("codex").expect("a valid agent name");
     let id = node.residents.new_id(&agent)?;
+    crate::record_migration::born(node, &id);
     node.codex.home(home.as_deref())?.require_login().await.map_err(|error| {
         Failure::not_run(format!(
             "this callee's Codex login is unavailable: {error}; the user changes it on the Model collaboration page"

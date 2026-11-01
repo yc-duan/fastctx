@@ -79,6 +79,7 @@ pub async fn fork(
     .await
     .map_err(|error| Failure::new(error.to_string()))??;
     let id = node.residents.new_id(&source.host.agent)?;
+    crate::record_migration::born(node, &id);
     let target_place = Arc::new(node.places.using(id.as_str()).await);
     let launching = super::command(node, source.home.as_deref())?;
     super::oldest::check(node, &launching).await?;

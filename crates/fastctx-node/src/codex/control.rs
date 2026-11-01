@@ -279,6 +279,7 @@ async fn fork(
     let (source, town) = node.residents.about(parent).ok_or_else(|| Failure::new("unknown source resident"))?;
     crate::layers::may_start(node, &source.acting)?;
     let id = node.residents.new_id(&source.host.agent)?;
+    crate::record_migration::born(node, &id);
     let target_place = Arc::new(node.places.using(id.as_str()).await);
     let gate = node.residents.management(parent)?;
     let source_guard = crate::gate_waits::shared_owned(node, parent, &gate).await?;

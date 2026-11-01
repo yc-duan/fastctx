@@ -49,6 +49,8 @@ struct Queue {
     pending: HashMap<Key, Weak<Cell>>,
     ready: ready::Ready,
     failed: HashMap<Key, Failed>,
+    /// Conversations this process created: they hold no earlier records.
+    born: HashSet<String>,
 }
 /// A family that failed for a reason other than being busy or stopped waits
 /// before it runs again, so a lasting fault neither spins a worker nor fills
@@ -174,6 +176,15 @@ pub(crate) fn checkpoint() -> io::Result<()> {
     })
 }
 
+/// A conversation this release creates has no earlier records, so none of
+/// its families waits for a migration, on any thread. After a restart the
+/// discovery marks them ready as it finds them.
+pub(crate) fn born(world: &Path, conversation: &str) {
+    if let Some(engine) = ENGINES.lock().expect("migration registry").get(world).and_then(Weak::upgrade) {
+        engine.queue.lock().expect("migration queue").born.insert(conversation.to_string());
+    }
+}
+
 /// A blocking reader has already checked the durable completion marker.
 pub(crate) fn ready(world: &Path, conversation: &str, family: &str) {
     if let Some(engine) = ENGINES.lock().expect("migration registry").get(world).and_then(Weak::upgrade) {
@@ -203,6 +214,7 @@ pub(crate) fn invalidate(world: &Path, conversation: &str) {
     };
     let mut queue = engine.queue.lock().expect("migration queue");
     queue.ready.delete(conversation);
+    queue.born.remove(conversation);
     queue.failed.retain(|key, _| key.0 != conversation);
     FAILED.set(queue.failed.len() as i64);
     let current = CURRENT.with_borrow(|current| current.as_ref().map(|(_, cell)| Arc::downgrade(cell)));
@@ -250,7 +262,7 @@ pub(crate) fn request(
     let nested = CURRENT.with_borrow(|current| current.is_some());
     let cell = {
         let mut queue = engine.queue.lock().expect("migration queue");
-        if queue.ready.contains(&key) {
+        if queue.ready.contains(&key) || queue.born.contains(&key.0) {
             return Ok(());
         }
         if engine.closed.load(Ordering::Acquire) {
