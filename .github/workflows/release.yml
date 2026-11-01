@@ -515,6 +515,32 @@ jobs:
         name: Node records drill
         run: cargo test --release --locked -p fastctx-node --features storage-drill --test record_drill -- --root "$RUNNER_TEMP/record-drill"
 
+  # The same on Windows, under a directory long enough that the archive of a moved record passes the
+  # length Windows' own calls take, and with a record another program holds open as a scanner does.
+  storage-windows:
+    if: github.ref_type == 'branch'
+    name: storage drills on Windows
+    runs-on: windows-2025
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - name: Keep the antivirus off the build's and the drills' files
+        shell: pwsh
+        run: Add-MpPreference -ExclusionPath $env:GITHUB_WORKSPACE, $env:RUNNER_TEMP, "$env:USERPROFILE\.cargo", "$env:USERPROFILE\.rustup"
+      - uses: dtolnay/rust-toolchain@1.92.0
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: storage-windows
+          save-if: false
+      - if: env.DRILLS == 'true'
+        name: Storage engine drill
+        run: cargo test --release --locked -p fastctx-storage --test storage_drill -- --root "$(cygpath -m "$RUNNER_TEMP")/storage-drill"
+      - if: env.DRILLS == 'true'
+        name: Node records drill
+        run: cargo test --release --locked -p fastctx-node --features storage-drill --test record_drill -- --root "$(cygpath -m "$RUNNER_TEMP")/record-drill-under-a-directory-named-long-enough-to-matter"
+
   # What each crate may touch and on which threads is kept by clippy (`clippy.toml` in the hub, the
   # link and the node; `specs/world-engine.md`, 线程的三种角色), on every system: each has code paths
   # no other system's build reaches.

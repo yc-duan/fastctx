@@ -117,6 +117,27 @@ jobs:
           cargo test --release --locked -p fastctx-storage --test storage_drill --no-run
           cargo test --release --locked -p fastctx-node --features storage-drill --test record_drill --no-run
 
+  storage-windows:
+    name: storage drills on Windows
+    runs-on: windows-2025
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - name: Keep the antivirus off the build's and the drills' files
+        shell: pwsh
+        run: Add-MpPreference -ExclusionPath $env:GITHUB_WORKSPACE, $env:RUNNER_TEMP, "$env:USERPROFILE\.cargo", "$env:USERPROFILE\.rustup"
+      - uses: dtolnay/rust-toolchain@1.92.0
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: storage-windows
+          cache-on-failure: true
+      - name: Build the storage drills
+        run: |
+          cargo test --release --locked -p fastctx-storage --test storage_drill --no-run
+          cargo test --release --locked -p fastctx-node --features storage-drill --test record_drill --no-run
+
   clippy:
     name: clippy ${{ matrix.os }}
     strategy:
