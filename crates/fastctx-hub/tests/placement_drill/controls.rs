@@ -39,14 +39,16 @@ pub(super) async fn exercise(
         }),
         json!(null),
     );
+    let before = last_turn(host, child.resident.as_str());
     let said = world.talk(child.resident.clone(), Some("host".parse()?), "ALICE_FORK_CASE".into()).await?;
-    anyhow::ensure!(idle(host, child.resident.as_str()).await, "the fork did not settle");
+    anyhow::ensure!(idle_after(host, child.resident.as_str(), before).await, "the fork did not settle");
     let child_plan = plan_file(host, child.resident.as_str())?;
     record(
         "a fork keeps the account's working computer and gets its own plan path",
         child_plan.starts_with(working) && child_plan != parent_plan,
         json!(child_plan),
     );
+    let before = last_turn(host, child.resident.as_str());
     world
         .talk(
             child.resident.clone(),
@@ -57,7 +59,7 @@ pub(super) async fn exercise(
             ),
         )
         .await?;
-    anyhow::ensure!(idle(host, child.resident.as_str()).await, "the fork write did not settle");
+    anyhow::ensure!(idle_after(host, child.resident.as_str(), before).await, "the fork write did not settle");
     anyhow::ensure!(plan_is(world, &child.resident, "FORK_FILES_STAY\n").await, "the fork's file did not sync");
     let turn = match said.landed {
         Landed::NewTurn { turn } | Landed::JoinedTurn { turn } => turn,

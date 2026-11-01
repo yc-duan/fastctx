@@ -152,12 +152,36 @@ fn block(host: &Path, resident: &str, name: &str) -> String {
     )
     .unwrap_or_default()
 }
-async fn idle(host: &Path, resident: &str) -> bool {
+/// The conversation's state, as its `now` file on `host` tells it.
+fn now(host: &Path, resident: &str) -> Value {
+    std::fs::read(host.join("world/conversations").join(resident).join("now"))
+        .ok()
+        .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+        .unwrap_or(Value::Null)
+}
+
+/// The last turn the conversation took, before it is spoken to or opened.
+fn last_turn(host: &Path, resident: &str) -> Option<String> {
+    now(host, resident)["last_turn"].as_str().map(str::to_string)
+}
+
+/// Waits for the conversation to be idle after a turn other than `before`:
+/// until the turn it was given begins, it is idle from the one before.
+async fn idle_after(host: &Path, resident: &str, before: Option<String>) -> bool {
     for _ in 0..480 {
-        if std::fs::read_to_string(host.join("world/conversations").join(resident).join("now"))
-            .unwrap_or_default()
-            .contains("\"idle\"")
-        {
+        let now = now(host, resident);
+        if now["activity"] == "idle" && now["last_turn"].as_str().is_some_and(|last| Some(last) != before.as_deref()) {
+            return true;
+        }
+        pause().await;
+    }
+    false
+}
+
+/// Waits for the conversation to be in a turn.
+async fn working(host: &Path, resident: &str) -> bool {
+    for _ in 0..480 {
+        if !now(host, resident)["turn"].is_null() {
             return true;
         }
         pause().await;
@@ -338,7 +362,10 @@ async fn main() -> Result<()> {
     );
     record(
         "four conversations settle",
-        idle(&host, &a).await && idle(&host, &b).await && idle(&host, &o).await && idle(&host, &m).await,
+        idle_after(&host, &a, None).await
+            && idle_after(&host, &b, None).await
+            && idle_after(&host, &o, None).await
+            && idle_after(&host, &m, None).await,
         json!([a, b, o, m]),
     );
     let pa = plan_file(&host, &a)?;
@@ -351,8 +378,9 @@ async fn main() -> Result<()> {
         json!(po),
     );
     let owner_terminal = World::new(WorldDir::under(&owner_pc), Peer::Command { resident: None, session: None });
+    let before = last_turn(&host, &o);
     owner_terminal.talk(so.to.resident.clone(), Some("host".parse()?), "OWNER_FROM_SECOND_COMPUTER".into()).await?;
-    anyhow::ensure!(idle(&host, &o).await, "owner's second input did not settle");
+    anyhow::ensure!(idle_after(&host, &o, before).await, "owner's second input did not settle");
     let spoken: MachineName =
         serde_json::from_slice(&std::fs::read(host.join("world/conversations").join(&o).join("working-from.json"))?)?;
     record(
@@ -378,13 +406,14 @@ async fn main() -> Result<()> {
         AccountChange::Share { machine: machine("host"), to: name("mobile"), shared: true, jobs: None },
     )
     .await?;
+    let before = last_turn(&host, &m);
     wm.talk(
         sm.to.resident.clone(),
         Some("host".parse()?),
         "MOBILE_SHARED_SKILL [[run: on host <<'SHARED'\nprintf reached > \"$FASTCTX_SCRATCH/shared-ran\"\nfastctx skill kit\nSHARED]]".into(),
     )
     .await?;
-    anyhow::ensure!(idle(&host, &m).await, "the shared-computer skill probe did not settle");
+    anyhow::ensure!(idle_after(&host, &m, before).await, "the shared-computer skill probe did not settle");
     record(
         "shared-machine work permission is unchanged",
         host.join("world/conversations").join(&m).join("scratch/shared-ran").exists(),
@@ -396,8 +425,9 @@ async fn main() -> Result<()> {
         json!(null),
     );
     let script = "ALICE_SKILL_RUN [[run: on alice-pc <<'SKILL'\nset -e\ntext=$(fastctx skill kit)\nprintf '%s\\n' \"$text\"\nfolder=$(printf '%s\\n' \"$text\" | sed -n 's/^Skill folder on [^:]*: //p')\n\"$folder/scripts/run.sh\"\ncat \"$folder/references/note.txt\"\nSKILL]]";
+    let before = last_turn(&host, &a);
     wa.talk(sa.to.resident.clone(), Some("host".parse()?), script.into()).await?;
-    anyhow::ensure!(idle(&host, &a).await, "skill turn did not finish");
+    anyhow::ensure!(idle_after(&host, &a, before).await, "skill turn did not finish");
     record(
         "skill bodies are absent from the assisted host's context cache",
         !block(&host, &a, "skills").contains("ALICE_SKILL_DESCRIPTION"),
@@ -409,8 +439,9 @@ async fn main() -> Result<()> {
         json!(null),
     );
     skills::exercise(&wa, &host, &alice_pc, &sa.to.resident, script).await?;
+    let before = last_turn(&host, &a);
     wa.talk(sa.to.resident.clone(), Some("host".parse()?), format!("ALICE_FILE_WRITE [[run: on alice-pc <<'WRITE'\nfastctx view '{}'\nwrite '{}' <<'TEXT'\n# Plan\nALICE_FILE_CANARY\nTEXT\nWRITE]]", pa.display(), pa.display())).await?;
-    anyhow::ensure!(idle(&host, &a).await, "the controlled plan write did not settle");
+    anyhow::ensure!(idle_after(&host, &a, before).await, "the controlled plan write did not settle");
     record(
         "a world write reaches the account",
         plan_is(&wa, &sa.to.resident, "# Plan\nALICE_FILE_CANARY\n").await,
@@ -449,8 +480,9 @@ async fn main() -> Result<()> {
     )
     .await?;
     record("panel save reaches the copy", file_is(&pa, "# Plan\nALICE_UI_CANARY\n").await, json!(null));
+    let before = last_turn(&host, &a);
     wa.talk(sa.to.resident.clone(), Some("host".parse()?), "ALICE_READ_AFTER_UI".into()).await?;
-    idle(&host, &a).await;
+    anyhow::ensure!(idle_after(&host, &a, before).await, "the read after the panel's save did not settle");
     record(
         "plan projection stores no body on the host",
         !block(&host, &a, "plan").contains("ALICE_UI_CANARY"),
@@ -464,7 +496,9 @@ async fn main() -> Result<()> {
         matches!(mobile, fastctx_types::plan::Result::Page { .. }),
         json!(null),
     );
+    let before = last_turn(&host, &a);
     wa.talk(sa.to.resident.clone(), Some("host".parse()?), "ALICE_HOLD [[hang]]".into()).await?;
+    anyhow::ensure!(working(&host, &a).await, "the held turn did not begin");
     wa.manage(sa.to.resident.clone(), Some("host".parse()?), Management::Focus { focus: focused("alice-two") }).await?;
     record(
         "changing focus during a native turn does not change the path told to it",
@@ -472,7 +506,7 @@ async fn main() -> Result<()> {
         json!(null),
     );
     wa.stop(sa.to.resident.clone(), Some("host".parse()?)).await?;
-    anyhow::ensure!(idle(&host, &a).await, "the held turn did not stop");
+    anyhow::ensure!(idle_after(&host, &a, before).await, "the held turn did not stop");
     let local_home = base.join("alice-codex");
     std::fs::create_dir_all(&local_home)?;
     std::fs::write(local_home.join("config.toml"), &mock_configuration)?;
@@ -503,7 +537,10 @@ async fn main() -> Result<()> {
             fastctx_types::agents::Choices { home: Some(local_home), ..Default::default() },
         )
         .await?;
-    anyhow::ensure!(idle(&alice_pc, writer.to.resident.as_str()).await, "the offline writer did not settle");
+    anyhow::ensure!(
+        idle_after(&alice_pc, writer.to.resident.as_str(), None).await,
+        "the offline writer did not settle"
+    );
     let offline_scope = fastctx_types::history::Scope::Conversation {
         resident: sa.to.resident.clone(),
         machine: sa.to.machine.clone(),
@@ -601,8 +638,9 @@ async fn main() -> Result<()> {
     }
     anyhow::ensure!(reachable, "the assisting host did not reconnect");
     wa.manage(sa.to.resident.clone(), Some("host".parse()?), Management::Focus { focus: focused("alice-two") }).await?;
+    let before = last_turn(&host, &a);
     wa.talk(sa.to.resident.clone(), Some("host".parse()?), "ALICE_NEW_PLACE".into()).await?;
-    anyhow::ensure!(idle(&host, &a).await, "the new-place turn did not settle");
+    anyhow::ensure!(idle_after(&host, &a, before).await, "the new-place turn did not settle");
     let moved = plan_file(&host, &a)?;
     record("the next turn gets the selected replica path", moved.starts_with(&alice_two) && moved != pa, json!(moved));
     record(

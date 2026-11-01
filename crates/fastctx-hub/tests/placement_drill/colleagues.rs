@@ -54,7 +54,7 @@ pub(super) async fn exercise(
     );
     let reply=ask(host,json!({"call":"ask","resident":parent,"label":"placement colleague","prompt":prompt,"callee":"helper","login":null})).await?;
     let address: Address = serde_json::from_value(reply["colleague"].clone()).context("colleague address")?;
-    anyhow::ensure!(idle(host, address.resident.as_str()).await, "the colleague did not settle");
+    anyhow::ensure!(idle_after(host, address.resident.as_str(), None).await, "the colleague did not settle");
     let path = plan_file(host, address.resident.as_str())?;
     record("a colleague inherits the requester's usable working computer", path.starts_with(working), json!(path));
     record(
