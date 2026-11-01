@@ -121,18 +121,21 @@ pub(crate) fn run(root: &Path) -> Result<(), Box<dyn std::error::Error>> {
     disk::copy(&bundle_path, target_directory.path().join(bundle::FILE))?;
     let preparing = target_world.clone();
     target.write_now(128, move |db| transfer::prepare(db, &preparing))?;
-    let conflict = wait(&target_world, &target, id.as_str()).expect_err("different target rows must conflict");
-    assert_ne!(conflict.kind(), std::io::ErrorKind::WouldBlock);
-    assert!(
-        conflict.to_string().contains("conflicts") || conflict.to_string().contains("row proof differs"),
-        "{conflict}"
-    );
-    assert!(disk::exists(target_directory.path().join(bundle::FILE))?);
+    wait(&target_world, &target, id.as_str())?;
+    let conflict =
+        transfer::rejection(target_world.path(), id.as_str()).expect("different target rows must be rejected");
+    assert!(conflict.contains("conflicts") || conflict.contains("row proof differs"), "{conflict}");
+    assert!(!disk::exists(target_directory.path().join(bundle::FILE))?);
+    assert!(!transfer::pending(target_world.path(), id.as_str()));
+    crate::records::write_at(&target_directory, Priority::Normal, 64, |rows| {
+        rows.put("new", "after-rejection", &true)
+    })?;
+    assert_eq!(crate::records::read(&target_directory, |rows| rows.get::<bool>("new", "after-moving"))?, Some(true));
     super::begin(&target_directory)?;
     super::purge(&target, id.as_str())?;
     assert!(!transfer::pending(target_world.path(), id.as_str()));
     println!(
-        "conversation transfer: {} table proofs and 100000 events preserved; input revisions unchanged on replay; overlapping node cursors isolated; deleted tail not reused; conflicts fenced and deletion can cancel import; {:?}",
+        "conversation transfer: {} table proofs and 100000 events preserved; input revisions unchanged on replay; overlapping node cursors isolated; deleted tail not reused; conflicts quarantined without fencing existing rows; {:?}",
         manifest.tables.len(),
         began.elapsed()
     );

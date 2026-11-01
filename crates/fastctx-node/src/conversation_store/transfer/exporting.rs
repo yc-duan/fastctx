@@ -44,7 +44,7 @@ pub(crate) fn export(root: &Path, conversation: &str) -> io::Result<PathBuf> {
             }
         }
         let pending: bool = source.query_row(
-            "SELECT EXISTS(SELECT 1 FROM node_conversation_transfers WHERE name=?1)",
+            "SELECT EXISTS(SELECT 1 FROM node_conversation_transfers WHERE name=?1 AND rejected=0)",
             [conversation],
             |row| row.get(0),
         )?;

@@ -107,6 +107,7 @@ pub(crate) fn purge(database: &Database, conversation: &str) -> Result<u64> {
             }
         }
     }
+    super::transfer::discard_journal(database, conversation)?;
     let conversation = conversation.to_string();
     database.write_now_at(Priority::Background, conversation.len(), move |db| {
         db.execute("UPDATE node_conversation_deletions SET purged=1 WHERE name=?1", [&conversation])?;

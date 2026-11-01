@@ -994,6 +994,13 @@ pub use storage_drill::{migration as record_migration_drill, run as record_drill
 #[cfg(feature = "storage-drill")]
 mod storage_drill;
 
+pub use conversation_store::transfer::status::ConversationImport;
+
+/// Lists durable import progress and rejected offers without modifying the node.
+pub fn conversation_imports(root: &std::path::Path) -> std::io::Result<Vec<ConversationImport>> {
+    conversation_store::transfer::status::list(root)
+}
+
 /// Exports every conversation-owned table into its directory while the node is
 /// stopped. Copy that directory with its host records before starting the target.
 pub fn export_conversation(root: &std::path::Path, conversation: &str) -> std::io::Result<std::path::PathBuf> {

@@ -2,7 +2,7 @@
 use super::schema::{self, Table, quote};
 use fastctx_platform::disk;
 use fastctx_storage::{
-    Error, Result,
+    Error, ErrorKind, Result,
     rusqlite::{Connection, OptionalExtension, Row, params_from_iter, types::Value},
 };
 use serde::{Deserialize, Serialize};
@@ -116,14 +116,14 @@ pub(super) fn manifest(source: &Connection, conversation: &str, target: &[Table]
         .query_map([], |row| row.get::<_, Vec<u8>>(0))?
         .collect::<std::result::Result<Vec<_>, _>>()?;
     if bodies.len() != 1 {
-        return Err(Error::new("conversation bundle needs exactly one manifest"));
+        return Err(invalid("conversation bundle needs exactly one manifest"));
     }
-    let manifest: Manifest = serde_json::from_slice(&bodies[0]).map_err(|error| Error::new(error.to_string()))?;
+    let manifest: Manifest = serde_json::from_slice(&bodies[0]).map_err(|error| invalid(error.to_string()))?;
     if manifest.format != FORMAT || manifest.conversation != conversation {
-        return Err(Error::new("conversation bundle format or identity differs"));
+        return Err(invalid("conversation bundle format or identity differs"));
     }
     if manifest.tables.len() != target.len() {
-        return Err(Error::new("conversation bundle table set differs from this node"));
+        return Err(invalid("conversation bundle table set differs from this node"));
     }
     for (proof, table) in manifest.tables.iter().zip(target) {
         if proof.name != table.name
@@ -131,7 +131,7 @@ pub(super) fn manifest(source: &Connection, conversation: &str, target: &[Table]
             || proof.primary != table.primary
             || table.primary.is_empty()
         {
-            return Err(Error::new(format!("conversation bundle schema differs for {}", table.name)));
+            return Err(invalid(format!("conversation bundle schema differs for {}", table.name)));
         }
         let columns = source
             .prepare(&format!("PRAGMA table_xinfo({})", quote(&table.name)))?
@@ -140,7 +140,7 @@ pub(super) fn manifest(source: &Connection, conversation: &str, target: &[Table]
         if columns.into_iter().filter_map(|(name, hidden)| (hidden == 0).then_some(name)).collect::<Vec<_>>()
             != table.writable
         {
-            return Err(Error::new(format!("conversation bundle columns differ for {}", table.name)));
+            return Err(invalid(format!("conversation bundle columns differ for {}", table.name)));
         }
     }
     Ok(manifest)
@@ -156,7 +156,7 @@ pub(super) fn verify(db: &Connection, conversation: &str, proof: &Proof) -> Resu
         count += 1;
     }
     if count != proof.rows || format!("{:x}", digest.finalize()) != proof.digest {
-        return Err(Error::new(format!("conversation bundle row proof differs for {}", table.name)));
+        return Err(invalid(format!("conversation bundle row proof differs for {}", table.name)));
     }
     Ok(())
 }
@@ -192,12 +192,12 @@ pub(super) fn key(table: &Table, values: &[Value]) -> Result<Vec<Value>> {
                 .iter()
                 .position(|column| column == name)
                 .map(|index| values[index].clone())
-                .ok_or_else(|| Error::new("generated primary keys cannot be imported"))
+                .ok_or_else(|| invalid("generated primary keys cannot be imported"))
         })
         .collect()
 }
 
-pub(super) fn put(db: &Connection, table: &Table, row: &[Value]) -> Result<()> {
+pub(super) fn put(db: &Connection, table: &Table, row: &[Value]) -> Result<bool> {
     let key = key(table, row)?;
     let terms = table.primary.iter().map(|column| format!("{} IS ?", quote(column))).collect::<Vec<_>>().join(" AND ");
     let sql = format!("SELECT {} FROM {} WHERE {terms}", columns(&table.writable), quote(&table.name));
@@ -207,12 +207,17 @@ pub(super) fn put(db: &Connection, table: &Table, row: &[Value]) -> Result<()> {
         .optional()?;
     if let Some(stored) = stored {
         if stored != row {
-            return Err(Error::new(format!("conversation import conflicts in {}", table.name)));
+            return Err(invalid(format!("conversation import conflicts in {}", table.name)));
         }
+        Ok(false)
     } else {
         db.prepare_cached(&insert_sql(table))?.execute(params_from_iter(row))?;
+        Ok(true)
     }
-    Ok(())
+}
+
+pub(super) fn invalid(reason: impl Into<String>) -> Error {
+    Error::with_kind(ErrorKind::Invalid, reason)
 }
 
 pub(super) fn value_bytes(value: &Value) -> usize {

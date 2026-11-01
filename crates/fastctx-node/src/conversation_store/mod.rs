@@ -23,7 +23,10 @@ pub(crate) fn check(db: &Connection, conversation: &str) -> Result<()> {
         |row| row.get(0),
     )?;
     if deleted {
-        return Err(fastctx_storage::Error::new("the conversation was deleted"));
+        return Err(fastctx_storage::Error::with_kind(
+            fastctx_storage::ErrorKind::Invalid,
+            "the conversation was deleted",
+        ));
     }
     Ok(())
 }
@@ -31,10 +34,18 @@ pub(crate) fn check(db: &Connection, conversation: &str) -> Result<()> {
 /// Runs file publication only while deletion cannot install its fence.
 /// Callers must be on a blocking thread and must not reenter this gate.
 pub(crate) fn with_live_files<T>(directory: &ConversationDir, work: impl FnOnce() -> io::Result<T>) -> io::Result<T> {
+    let (database, conversation) = crate::record_database::get(directory)?;
     let gate = FILES.get(directory.path());
     let _files = gate.lock();
-    let (database, conversation) = crate::record_database::get(directory)?;
     database.read_now(|db| check(db, &conversation)).map_err(io::Error::other)?;
+    work()
+}
+
+/// Serializes lifecycle file changes, including quarantining an offer to a
+/// deleted conversation. The caller must check its durable intent inside it.
+pub(crate) fn with_file_gate<T>(directory: &ConversationDir, work: impl FnOnce() -> io::Result<T>) -> io::Result<T> {
+    let gate = FILES.get(directory.path());
+    let _files = gate.lock();
     work()
 }
 

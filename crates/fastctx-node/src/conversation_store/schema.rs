@@ -10,6 +10,7 @@ pub(super) const MACHINE_TABLES: &[&str] = &[
     "node_conversation_deletions",
     "node_conversation_transfers",
     "node_conversation_transfer_progress",
+    "node_conversation_import_rows",
     "node_record_state",
     "book_deeds",
     "book_touches",
@@ -63,7 +64,7 @@ pub(crate) fn initialize(db: &Connection) -> Result<()> {
     db.execute_batch(crate::record_migration::SCHEMA)?;
     db.execute_batch(crate::context::records::SCHEMA)?;
     db.execute_batch(crate::gather::records::SCHEMA)?;
-    db.execute_batch(super::transfer::SCHEMA)?;
+    super::transfer::initialize(db)?;
     db.execute_batch(crate::session_record::MIGRATION_SCHEMA)?;
     if db.query_row(
         "SELECT EXISTS(SELECT 1 FROM sqlite_schema WHERE type='table' AND name='run_calls')",
