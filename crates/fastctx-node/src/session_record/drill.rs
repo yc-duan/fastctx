@@ -20,7 +20,11 @@ fn event(index: u64) -> SessionEvent {
 
 pub(crate) fn run(root: &Path) -> Result<(), Box<dyn std::error::Error>> {
     let world = WorldDir::under(root);
-    let database = Database::open(&world.path().join("node.sqlite3"), SCHEMA)?;
+    let database = Database::open_initialized(
+        &world.path().join("node.sqlite3"),
+        SCHEMA,
+        crate::conversation_store::schema::initialize,
+    )?;
     crate::record_database::register(&world, &database);
     let id: ResidentId = "codex-a1b2c3".parse()?;
     let directory = world.conversation(&id);

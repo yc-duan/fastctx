@@ -15,8 +15,11 @@ pub fn run(root: &Path) -> Result<(), Box<dyn std::error::Error>> {
         return Err("the drill needs an absolute, absent root".into());
     }
     std::fs::create_dir_all(root)?;
-    let database =
-        Database::open(&root.join("node.sqlite3"), &format!("{}{}", sql::SCHEMA, crate::record_payloads::SCHEMA))?;
+    let database = Database::open_initialized(
+        &root.join("node.sqlite3"),
+        &format!("{}{}", sql::SCHEMA, crate::record_payloads::SCHEMA),
+        crate::conversation_store::schema::initialize,
+    )?;
     let machine: MachineName = "executor".parse()?;
     let job: JobId = "j-123456".parse()?;
     let at: jiff::Timestamp = "2026-01-01T00:00:00Z".parse()?;
@@ -188,6 +191,34 @@ pub fn run(root: &Path) -> Result<(), Box<dyn std::error::Error>> {
     let first = costs[..100].iter().map(Duration::as_micros).sum::<u128>() / 100;
     let last = costs[900..].iter().map(Duration::as_micros).sum::<u128>() / 100;
     println!("100-step commit mean: first {} us, last {} us; mutable head {} bytes", first, last, head_size);
+    database.write_now(64, |db| {
+        db.execute("INSERT INTO node_conversation_deletions(name,started) VALUES('conversation',0)", [])?;
+        Ok(())
+    })?;
+    let deleted = crate::conversation_store::purge(&database, "conversation")?;
+    let mut after_deletion = ended.clone();
+    after_deletion.sequence += 1;
+    assert!(
+        super::acceptance::receive(&database, "conversation", &after_deletion, |_| panic!(
+            "a deleted job was published"
+        ))
+        .is_err()
+    );
+    database.read_now(|db| {
+        for table in crate::conversation_store::schema::tables(db)? {
+            let count: i64 = db.query_row(
+                &format!(
+                    "SELECT count(*) FROM {} WHERE conversation='conversation'",
+                    crate::conversation_store::schema::quote(&table.name)
+                ),
+                [],
+                |row| row.get(0),
+            )?;
+            assert_eq!(count, 0, "{} retained job facts", table.name);
+        }
+        Ok(())
+    })?;
+    println!("100000-step conversation deleted: {deleted} logical bytes; late job facts rejected");
     crate::session_record::drill::run(&root.join("events"))?;
     Ok(())
 }

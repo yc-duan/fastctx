@@ -9,8 +9,6 @@ use fastctx_types::{
 };
 use std::{collections::BTreeMap, io, path::Path, sync::LazyLock};
 
-static GATES: LazyLock<crate::record_gates::Gates> =
-    LazyLock::new(|| crate::record_gates::Gates::new(fastctx_platform::doing::Rank::RECORDS, "context projection"));
 pub(super) const BLOCKS: &str = "context-blocks";
 pub(super) const STATE: &str = "context-state";
 
@@ -25,7 +23,7 @@ fn prepare(world: &WorldDir, id: &ResidentId) -> io::Result<ConversationDir> {
             else {
                 continue;
             };
-            let mut row: Block = serde_json::from_slice(&std::fs::read(&path)?)?;
+            let mut row: Block = serde_json::from_slice(&fastctx_platform::disk::read(&path)?)?;
             if row.transient {
                 row.text.clear();
                 row.fact.clear();
@@ -36,7 +34,7 @@ fn prepare(world: &WorldDir, id: &ResidentId) -> io::Result<ConversationDir> {
     })?;
     families::ensure_each(&directory, STATE, |push| {
         let path = super::storage::state_path(world, id);
-        match std::fs::read(&path) {
+        match fastctx_platform::disk::read(&path) {
             Ok(bytes) => {
                 let state: State = serde_json::from_slice(&bytes)?;
                 push(families::Source::new("current".into(), path, serde_json::to_vec(&state)?)?)
@@ -72,8 +70,6 @@ pub(super) fn read<T>(
     action: impl FnOnce(State, BTreeMap<String, Block>) -> io::Result<T>,
 ) -> io::Result<T> {
     let directory = prepare(world, id)?;
-    let gate = GATES.get(directory.path());
-    let _reading = gate.lock();
     let (state, blocks) = snapshot(&directory)?;
     action(state, blocks)
 }
@@ -86,21 +82,21 @@ pub(super) fn commit<T: Send + 'static>(
     action: impl FnOnce(&families::Rows<'_>) -> fastctx_storage::Result<T> + Send + 'static,
 ) -> io::Result<T> {
     let directory = prepare(world, id)?;
-    let gate = GATES.get(directory.path());
-    let _projecting = gate.lock();
-    let result = families::write_at(&directory, fastctx_storage::Priority::Interactive, bytes, move |rows| {
-        let result = action(rows)?;
-        rows.connection().execute(
-            "INSERT OR IGNORE INTO context_projection_dirty(conversation) VALUES(?1)",
-            [rows.conversation()],
-        )?;
+    crate::conversation_store::with_live_files(&directory, || {
+        let result = families::write_at(&directory, fastctx_storage::Priority::Interactive, bytes, move |rows| {
+            let result = action(rows)?;
+            rows.connection().execute(
+                "INSERT OR IGNORE INTO context_projection_dirty(conversation) VALUES(?1)",
+                [rows.conversation()],
+            )?;
+            Ok(result)
+        })?;
+        after();
+        if project_live(world, id, &directory).is_err() {
+            notify(world);
+        }
         Ok(result)
-    })?;
-    after();
-    if project(world, id, &directory).is_err() {
-        notify(world);
-    }
-    Ok(result)
+    })
 }
 
 pub(super) fn state<T: Send + 'static>(
@@ -123,6 +119,10 @@ pub(super) fn state<T: Send + 'static>(
 }
 
 fn project(world: &WorldDir, id: &ResidentId, directory: &ConversationDir) -> io::Result<()> {
+    crate::conversation_store::with_live_files(directory, || project_live(world, id, directory))
+}
+
+fn project_live(world: &WorldDir, id: &ResidentId, directory: &ConversationDir) -> io::Result<()> {
     let (state, blocks) = snapshot(directory)?;
     fastctx_platform::ensure_private_dir(&super::storage::directory(world, id))?;
     for (name, block) in blocks {
@@ -140,7 +140,7 @@ fn project(world: &WorldDir, id: &ResidentId, directory: &ConversationDir) -> io
     })
 }
 fn publish_changed(path: &Path, bytes: &[u8]) -> io::Result<()> {
-    match std::fs::read(path) {
+    match fastctx_platform::disk::read(path) {
         Ok(previous) if previous == bytes => return Ok(()),
         Ok(_) => {}
         Err(error) if error.kind() == io::ErrorKind::NotFound => {}
@@ -167,8 +167,6 @@ fn notify(world: &WorldDir) {
 /// Pairing needs a readable projection before handing a pointer to the plugin.
 pub(super) fn repair(world: &WorldDir, id: &ResidentId) -> io::Result<()> {
     let directory = prepare(world, id)?;
-    let gate = GATES.get(directory.path());
-    let _projecting = gate.lock();
     project(world, id, &directory)
 }
 pub(super) fn start(node: &std::sync::Arc<crate::Node>) {
@@ -179,13 +177,13 @@ pub(super) fn start(node: &std::sync::Arc<crate::Node>) {
         signals.insert(node.world.path().to_path_buf(), std::sync::Arc::downgrade(&signal));
     }
     let node = node.clone();
-    tokio::spawn(async move {
+    fastctx_platform::task::spawn(async move {
         loop {
             let notified = signal.notified();
             tokio::pin!(notified);
             notified.as_mut().enable();
             let working = node.clone();
-            let result=tokio::task::spawn_blocking(move ||->io::Result<bool> {
+            let result=fastctx_platform::task::spawn_blocking(move ||->io::Result<bool> {
                 let mut after=String::new();let mut failed=false;
                 loop {
                     let keys=working.database.read_now(|db| {

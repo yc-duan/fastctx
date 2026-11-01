@@ -207,10 +207,6 @@ async fn execute(node: &Arc<Node>, store: &Arc<Store>, timer: &Timer) -> Result<
     }
 }
 
-pub(crate) fn delete_conversation(node: &Node, resident: &fastctx_types::ResidentId) -> io::Result<()> {
-    table(node).map_err(|error| io::Error::other(error.message))?.delete_conversation(resident)
-}
-
 fn failure(error: io::Error) -> Failure {
     Failure::new(format!("recording timers: {error}"))
 }

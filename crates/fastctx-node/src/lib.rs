@@ -53,6 +53,7 @@ mod devices;
 mod directory_changes;
 mod ending;
 pub use ending::flush_log;
+mod conversation_store;
 mod facts;
 mod features;
 mod file_events;
@@ -683,55 +684,10 @@ pub async fn run_prepared(
     );
     let claude = claude::Claude::new(&world)?;
     let memory_room = memory_room::Room::new(&world);
-    let schema = composer::SCHEMA;
-    let database = fastctx_storage::Database::open_or_unavailable(&world.path().join("node.sqlite3"), schema, |db| {
-        fastctx_storage::versions::apply(
-            db,
-            "node.record-payloads",
-            &[fastctx_storage::versions::Migration { version: 1, sql: record_payloads::SCHEMA }],
-        )?;
-        fastctx_storage::versions::apply(
-            db,
-            "node.record-maps",
-            &[fastctx_storage::versions::Migration { version: 1, sql: records::maps::SCHEMA }],
-        )?;
-        fastctx_storage::versions::apply(
-            db,
-            "node.terminals",
-            &[fastctx_storage::versions::Migration { version: 1, sql: delivery::terminals::SCHEMA }],
-        )?;
-        fastctx_storage::versions::apply(
-            db,
-            "node.run-facts",
-            &[
-                fastctx_storage::versions::Migration { version: 1, sql: run_facts::SCHEMA },
-                fastctx_storage::versions::Migration { version: 2, sql: run_facts::SCHEMA },
-            ],
-        )?;
-        fastctx_storage::versions::apply(
-            db,
-            "node.session-events",
-            &[
-                fastctx_storage::versions::Migration { version: 1, sql: session_record::SCHEMA },
-                fastctx_storage::versions::Migration { version: 2, sql: session_record::SCHEMA },
-            ],
-        )?;
-        fastctx_storage::versions::apply(
-            db,
-            "node.records",
-            &[fastctx_storage::versions::Migration { version: 1, sql: records::SCHEMA }],
-        )?;
-        fastctx_storage::versions::apply(
-            db,
-            "node.input-membership",
-            &[fastctx_storage::versions::Migration { version: 1, sql: inbox::presence::SCHEMA }],
-        )?;
-        fastctx_storage::versions::apply(
-            db,
-            "node.goal-projection",
-            &[fastctx_storage::versions::Migration { version: 1, sql: goals::SCHEMA }],
-        )
-    });
+    let opening = world.clone();
+    let database = fastctx_platform::task::spawn_blocking(move || record_database::open(&opening))
+        .await
+        .context("opening the node record database")?;
     if let Some(error) = database.fault() {
         log.line(format_args!("node record storage unavailable: {error}"));
     }

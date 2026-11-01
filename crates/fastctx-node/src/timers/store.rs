@@ -4,7 +4,7 @@
 use crate::records::{self, Source};
 use fastctx_storage::{Priority, Result};
 use fastctx_types::{
-    NoticeId, ResidentId,
+    NoticeId,
     layout::ConversationDir,
     timers::{Action, Owner, Timer},
 };
@@ -34,7 +34,7 @@ impl Store {
     pub fn open(path: &Path) -> io::Result<Self> {
         let (directory, _, _, _) = crate::record_database::item(&path.join(".timers"))?;
         records::ensure_each(&directory, FAMILY, |push| {
-            let entries = match std::fs::read_dir(path) {
+            let entries = match fastctx_platform::disk::read_dir(path) {
                 Ok(entries) => entries,
                 Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
                 Err(error) => return Err(error),
@@ -44,12 +44,13 @@ impl Store {
                 if source.extension().is_none_or(|ext| ext != "json") {
                     continue;
                 }
-                let timer: Timer = serde_json::from_slice(&std::fs::read(&source)?)?;
+                let timer: Timer = serde_json::from_slice(&fastctx_platform::disk::read(&source)?)?;
                 if source != path.join(format!("{:x}.json", Sha256::digest(timer.id.as_bytes()))) {
                     return Err(io::Error::other("timer id does not match its file"));
                 }
                 push(
                     Source::new(timer.id.clone(), source, serde_json::to_vec(&timer)?)?
+                        .scoped(scope(&timer.owner).to_string())
                         .ordered(timer.next_attempt)
                         .categorized(serde_json::to_string(&timer.owner)?),
                 )?;
@@ -63,7 +64,7 @@ impl Store {
         action: impl FnOnce(&Self) -> io::Result<T> + Send + 'static,
     ) -> io::Result<T> {
         let store = self.clone();
-        tokio::task::spawn_blocking(move || action(&store)).await.map_err(io::Error::other)?
+        fastctx_platform::task::spawn_blocking(move || action(&store)).await.map_err(io::Error::other)?
     }
     pub async fn set(
         self: &Arc<Self>,
@@ -94,7 +95,7 @@ impl Store {
                 Priority::Interactive,
                 serde_json::to_vec(&timer)?.len(),
                 move |rows| {
-                    if rows.get::<Timer>(FAMILY, &timer.id)?.is_some_and(|old| old.owner != timer.owner) {
+                    if get_timer(rows, &timer.id)?.is_some_and(|old| old.owner != timer.owner) {
                         return Err(fastctx_storage::Error::new("cancel a timer before changing its owner"));
                     }
                     save(rows, &timer)?;
@@ -108,7 +109,7 @@ impl Store {
     }
     pub async fn get(self: &Arc<Self>, id: &str) -> io::Result<Option<Timer>> {
         let id = id.to_string();
-        self.work(move |store| records::read(&store.directory, |rows| rows.get(FAMILY, &id))).await
+        self.work(move |store| records::read(&store.directory, |rows| get_timer(rows, &id))).await
     }
     pub async fn list(self: &Arc<Self>, owner: Option<&Owner>) -> io::Result<Vec<Timer>> {
         let owner = owner.cloned();
@@ -117,11 +118,8 @@ impl Store {
     fn list_now(&self, owner: Option<&Owner>) -> io::Result<Vec<Timer>> {
         let category = owner.map(serde_json::to_string).transpose()?;
         records::read(&self.directory, |rows| {
-            let mut query=rows.connection().prepare_cached("SELECT body FROM conversation_records WHERE conversation=?1 AND family='timers' AND (?2 IS NULL OR category=?2) ORDER BY identity")?;
-            query
-                .query_map((rows.conversation(), category), |row| row.get::<_, Vec<u8>>(0))?
-                .map(|row| records::decode(&row?))
-                .collect()
+            let mut query=rows.connection().prepare_cached("SELECT body FROM conversation_records WHERE family='timers' AND (?1 IS NULL OR category=?1) ORDER BY identity")?;
+            query.query_map([category], |row| row.get::<_, Vec<u8>>(0))?.map(|row| records::decode(&row?)).collect()
         })
     }
     fn candidate(&self) -> io::Result<Option<(Timestamp, Timer)>> {
@@ -130,9 +128,11 @@ impl Store {
         // skipped. The next unexcluded row bounds every later candidate.
         let limit = claims.active.len() + claims.delayed.len() + 1;
         let rows = records::read(&self.directory, |rows| {
-            let mut query=rows.connection().prepare_cached("SELECT body FROM conversation_records WHERE conversation=?1 AND family='timers' ORDER BY arrival,identity LIMIT ?2")?;
+            let mut query = rows.connection().prepare_cached(
+                "SELECT body FROM conversation_records WHERE family='timers' ORDER BY arrival,identity LIMIT ?1",
+            )?;
             query
-                .query_map((rows.conversation(), limit as i64), |row| row.get::<_, Vec<u8>>(0))?
+                .query_map([limit as i64], |row| row.get::<_, Vec<u8>>(0))?
                 .map(|row| records::decode::<Timer>(&row?))
                 .collect::<Result<Vec<_>>>()
         })?;
@@ -186,7 +186,7 @@ impl Store {
         let (id, delivery) = (timer.id.clone(), timer.delivery.clone());
         self.work(move |store| {
             let result = records::write_at(&store.directory, Priority::Interactive, 512, move |rows| {
-                let Some(mut timer) = rows.get::<Timer>(FAMILY, &id)?.filter(|row| row.delivery == delivery) else {
+                let Some(mut timer) = get_timer(rows, &id)?.filter(|row| row.delivery == delivery) else {
                     return Ok(None);
                 };
                 action(&mut timer)?;
@@ -238,10 +238,10 @@ impl Store {
         let (id, delivery) = (timer.id.clone(), timer.delivery.clone());
         self.work(move |store| {
             let removed = records::write_at(&store.directory, Priority::Interactive, 128, move |rows| {
-                if rows.get::<Timer>(FAMILY, &id)?.is_none_or(|row| row.delivery != delivery) {
+                if get_timer(rows, &id)?.is_none_or(|row| row.delivery != delivery) {
                     return Ok(false);
                 }
-                rows.delete(FAMILY, &id)
+                delete_timer(rows, &id)
             })?;
             store.changed.notify_one();
             Ok(removed)
@@ -252,30 +252,15 @@ impl Store {
         let id = id.to_string();
         self.work(move |store| {
             let removed =
-                records::write_at(&store.directory, Priority::Control, 128, move |rows| rows.delete(FAMILY, &id))?;
+                records::write_at(&store.directory, Priority::Control, 128, move |rows| delete_timer(rows, &id))?;
             store.changed.notify_one();
             Ok(removed)
         })
         .await
     }
-    pub fn delete_conversation(&self, resident: &ResidentId) -> io::Result<()> {
-        for owner in [Owner::Conversation { resident: resident.clone() }, Owner::Goal { resident: resident.clone() }] {
-            let category = serde_json::to_string(&owner)?;
-            loop {
-                let category = category.clone();
-                let count = records::write_at(&self.directory, Priority::Background, 4096, move |rows| {
-                    Ok(rows.connection().execute("DELETE FROM conversation_records WHERE position IN (SELECT position FROM conversation_records WHERE conversation=?1 AND family='timers' AND category=?2 LIMIT 64)",(rows.conversation(),category))?)
-                })?;
-                if count == 0 {
-                    break;
-                }
-            }
-        }
-        self.changed.notify_one();
-        Ok(())
-    }
 }
 fn save(rows: &records::Rows<'_>, timer: &Timer) -> Result<()> {
+    let rows = rows.scoped(scope(&timer.owner));
     rows.put_ordered(FAMILY, &timer.id, timer, timer.next_attempt)?;
     rows.connection().execute(
         "UPDATE conversation_records SET category=?3 WHERE conversation=?1 AND family='timers' AND identity=?2",
@@ -286,4 +271,24 @@ fn save(rows: &records::Rows<'_>, timer: &Timer) -> Result<()> {
         ),
     )?;
     Ok(())
+}
+
+fn scope(owner: &Owner) -> &str {
+    match owner {
+        Owner::Conversation { resident } | Owner::Goal { resident } => resident.as_str(),
+        _ => "@node",
+    }
+}
+fn get_timer(rows: &records::Rows<'_>, id: &str) -> Result<Option<Timer>> {
+    use fastctx_storage::rusqlite::OptionalExtension;
+    let bytes: Option<Vec<u8>> = rows
+        .connection()
+        .query_row("SELECT body FROM conversation_records WHERE family='timers' AND identity=?1", [id], |row| {
+            row.get(0)
+        })
+        .optional()?;
+    bytes.map(|bytes| records::decode(&bytes)).transpose()
+}
+fn delete_timer(rows: &records::Rows<'_>, id: &str) -> Result<bool> {
+    Ok(rows.connection().execute("DELETE FROM conversation_records WHERE family='timers' AND identity=?1", [id])? > 0)
 }

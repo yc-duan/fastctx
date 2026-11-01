@@ -22,12 +22,16 @@ fn imported(database: &Database, conversation: &str) -> io::Result<bool> {
 }
 
 pub(super) fn ensure(directory: &ConversationDir, database: &Database, conversation: &str) -> io::Result<()> {
-    if imported(database, conversation)? {
+    if database.read_now(|db| crate::conversation_store::deleted(db, conversation)).map_err(io::Error::other)?
+        || imported(database, conversation)?
+    {
         return Ok(());
     }
     let gate = MIGRATING.get(directory.path());
     let _gate = gate.lock();
-    if imported(database, conversation)? {
+    if database.read_now(|db| crate::conversation_store::deleted(db, conversation)).map_err(io::Error::other)?
+        || imported(database, conversation)?
+    {
         return Ok(());
     }
     let entries = match std::fs::read_dir(directory.calls()) {

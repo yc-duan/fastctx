@@ -25,8 +25,12 @@ pub(super) fn receive_at(
     priority: fastctx_storage::Priority,
     mut publish: impl FnMut(JobFacts),
 ) -> io::Result<bool> {
-    let Some(mut incoming) =
-        database.read_now(|db| sql::additions(db, conversation, update)).map_err(io::Error::other)?
+    let Some(mut incoming) = database
+        .read_now(|db| {
+            crate::conversation_store::check(db, conversation)?;
+            sql::additions(db, conversation, update)
+        })
+        .map_err(io::Error::other)?
     else {
         return Ok(false);
     };
@@ -54,6 +58,7 @@ pub(super) fn receive_at(
         let bytes = sql::encode(&part).map_err(io::Error::other)?.len();
         let changed = database
             .write_now_at(priority, bytes, move |db| {
+                crate::conversation_store::check(db, &scope)?;
                 let Some(mut head) = sql::head(db, &scope, &saved.call_id)? else { return Ok(None) };
                 snapshot::validate(&head, &saved)?;
                 let before = db.total_changes();
@@ -110,6 +115,7 @@ pub(super) fn receive_at(
     let bytes = sql::encode(&saved).map_err(io::Error::other)?.len();
     let changed = database
         .write_now_at(priority, bytes, move |db| {
+            crate::conversation_store::check(db, &scope)?;
             let changed = snapshot::receive_in(db, &scope, &saved, staged.as_ref().map(|staged| &staged.reference))?;
             if let Some(staged) = &staged {
                 crate::record_payloads::finish(db, &scope, staged)?;

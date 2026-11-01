@@ -41,7 +41,7 @@ fn end() -> TurnEnd {
 
 pub(crate) fn run(root: &Path) -> std::result::Result<(), Box<dyn std::error::Error>> {
     let world = WorldDir::under(root);
-    let database = Database::open(
+    let database = Database::open_initialized(
         &world.path().join("node.sqlite3"),
         &format!(
             "{}{}{}{}",
@@ -50,6 +50,7 @@ pub(crate) fn run(root: &Path) -> std::result::Result<(), Box<dyn std::error::Er
             crate::record_payloads::SCHEMA,
             crate::delivery::terminals::SCHEMA
         ),
+        crate::conversation_store::schema::initialize,
     )?;
     crate::record_database::register(&world, &database);
     let id: ResidentId = "codex-a1b2c3".parse()?;

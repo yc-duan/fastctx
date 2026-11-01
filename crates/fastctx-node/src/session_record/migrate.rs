@@ -17,12 +17,18 @@ const BATCH: usize = 16;
 type Legacy = (String, bool, Vec<u8>, i64, i32, Vec<u8>);
 
 pub(super) fn ensure(directory: &ConversationDir, database: &Database, conversation: &str) -> io::Result<()> {
-    if database.read_now(|db| Ok(sql::head(db, conversation)?.2)).map_err(io::Error::other)? {
+    if database
+        .read_now(|db| Ok(crate::conversation_store::deleted(db, conversation)? || sql::head(db, conversation)?.2))
+        .map_err(io::Error::other)?
+    {
         return Ok(());
     }
     let gate = GATES.get(directory.path());
     let _gate = gate.lock();
-    if database.read_now(|db| Ok(sql::head(db, conversation)?.2)).map_err(io::Error::other)? {
+    if database
+        .read_now(|db| Ok(crate::conversation_store::deleted(db, conversation)? || sql::head(db, conversation)?.2))
+        .map_err(io::Error::other)?
+    {
         return Ok(());
     }
     let mut batch = Vec::new();

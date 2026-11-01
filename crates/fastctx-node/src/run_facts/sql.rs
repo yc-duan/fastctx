@@ -288,15 +288,16 @@ pub(super) fn steps(db: &Connection, conversation: &str, call: &str, incoming: &
         })?
         .collect::<std::result::Result<Vec<_>, _>>()?;
     let mut retained = 0i64;
+    let mut fold = db.prepare_cached("INSERT INTO run_folded(conversation,call,machine,kind,count,first,last) VALUES(?1,?2,?3,?4,1,?5,?6)
+        ON CONFLICT(conversation,call,machine,kind) DO UPDATE SET count=count+1,first=min(first,excluded.first),last=max(last,excluded.last)")?;
+    let mut retire = db.prepare_cached("UPDATE run_steps SET body=NULL WHERE conversation=?1 AND position=?2")?;
     for (index, (position, machine, kind, first, last, bytes)) in old.into_iter().enumerate() {
         retained += bytes;
         if index < 200 && retained <= 2 * 1024 * 1024 {
             continue;
         }
-        db.execute("INSERT INTO run_folded(conversation,call,machine,kind,count,first,last) VALUES(?1,?2,?3,?4,1,?5,?6)
-            ON CONFLICT(conversation,call,machine,kind) DO UPDATE SET count=count+1,first=min(first,excluded.first),last=max(last,excluded.last)",
-            (conversation,call,machine,kind,first,last))?;
-        db.execute("UPDATE run_steps SET body=NULL WHERE position=?1", [position])?;
+        fold.execute((conversation, call, machine, kind, first, last))?;
+        retire.execute((conversation, position))?;
     }
     Ok(())
 }

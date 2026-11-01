@@ -62,3 +62,56 @@ pub(crate) fn item(path: &std::path::Path) -> io::Result<(ConversationDir, Strin
     let family = format!("items/{}", parent.to_string_lossy().replace('\\', "/"));
     Ok((directory, family, key, path.parent().expect("item parent").to_path_buf()))
 }
+
+/// Opens the node schema on a blocking thread before registering its writer.
+pub(crate) fn open(world: &WorldDir) -> Database {
+    fastctx_storage::Database::open_or_unavailable(&world.path().join("node.sqlite3"), crate::composer::SCHEMA, |db| {
+        fastctx_storage::versions::apply(
+            db,
+            "node.record-payloads",
+            &[fastctx_storage::versions::Migration { version: 1, sql: crate::record_payloads::SCHEMA }],
+        )?;
+        fastctx_storage::versions::apply(
+            db,
+            "node.record-maps",
+            &[fastctx_storage::versions::Migration { version: 1, sql: crate::records::maps::SCHEMA }],
+        )?;
+        fastctx_storage::versions::apply(
+            db,
+            "node.terminals",
+            &[fastctx_storage::versions::Migration { version: 1, sql: crate::delivery::terminals::SCHEMA }],
+        )?;
+        fastctx_storage::versions::apply(
+            db,
+            "node.run-facts",
+            &[
+                fastctx_storage::versions::Migration { version: 1, sql: crate::run_facts::SCHEMA },
+                fastctx_storage::versions::Migration { version: 2, sql: crate::run_facts::SCHEMA },
+            ],
+        )?;
+        fastctx_storage::versions::apply(
+            db,
+            "node.session-events",
+            &[
+                fastctx_storage::versions::Migration { version: 1, sql: crate::session_record::SCHEMA },
+                fastctx_storage::versions::Migration { version: 2, sql: crate::session_record::SCHEMA },
+            ],
+        )?;
+        fastctx_storage::versions::apply(
+            db,
+            "node.records",
+            &[fastctx_storage::versions::Migration { version: 1, sql: crate::records::SCHEMA }],
+        )?;
+        fastctx_storage::versions::apply(
+            db,
+            "node.input-membership",
+            &[fastctx_storage::versions::Migration { version: 1, sql: crate::inbox::presence::SCHEMA }],
+        )?;
+        fastctx_storage::versions::apply(
+            db,
+            "node.goal-projection",
+            &[fastctx_storage::versions::Migration { version: 1, sql: crate::goals::SCHEMA }],
+        )?;
+        crate::conversation_store::schema::initialize(db)
+    })
+}

@@ -20,7 +20,7 @@ pub(super) async fn repair(node: &Arc<Node>, id: &ResidentId, exchange: Option<P
     let lease = node.goals.projecting.get_or_insert_with(id, || Arc::new(tokio::sync::Mutex::new(())));
     let permit = Arc::clone(&lease).lock_owned().await;
     let (node, id) = (node.clone(), id.clone());
-    tokio::task::spawn_blocking(move || {
+    fastctx_platform::task::spawn_blocking(move || {
         let _lease = lease;
         let _permit = permit;
         project(&node, &id, exchange.as_deref())
@@ -30,12 +30,16 @@ pub(super) async fn repair(node: &Arc<Node>, id: &ResidentId, exchange: Option<P
 }
 fn project(node: &Node, id: &ResidentId, exchange: Option<&Path>) -> io::Result<()> {
     let directory = node.world.conversation(id);
+    crate::conversation_store::with_live_files(&directory, || project_live(node, id, exchange))
+}
+fn project_live(node: &Node, id: &ResidentId, exchange: Option<&Path>) -> io::Result<()> {
+    let directory = node.world.conversation(id);
     loop {
         let (version, bridge) = local::projection(&directory)?;
         if let (Some(exchange), Some(bridge)) = (exchange, bridge)
             && exchange.try_exists()?
         {
-            let exchange = std::fs::canonicalize(exchange)?;
+            let exchange = fastctx_platform::disk::canonicalize(exchange)?;
             fastctx_hosts::claude::control::write(&exchange.join("goal.json"), &bridge)?;
         }
         if local::projected(&directory, version)? {
@@ -45,7 +49,7 @@ fn project(node: &Node, id: &ResidentId, exchange: Option<&Path>) -> io::Result<
 }
 pub(super) fn start(node: &Arc<Node>) {
     let node = node.clone();
-    tokio::spawn(async move {
+    fastctx_platform::task::spawn(async move {
         loop {
             let notified = node.goals.projection_changed.notified();
             tokio::pin!(notified);
@@ -54,7 +58,7 @@ pub(super) fn start(node: &Arc<Node>) {
             let mut failed = false;
             loop {
                 let (reading, cursor) = (node.clone(), after.clone());
-                let rows=tokio::task::spawn_blocking(move||reading.database.read_now(|db|{
+                let rows=fastctx_platform::task::spawn_blocking(move||reading.database.read_now(|db|{
                     let mut query=db.prepare_cached("SELECT conversation FROM goal_projection_dirty WHERE conversation>?1 ORDER BY conversation LIMIT 16")?;
                     Ok(query.query_map([cursor],|row|row.get::<_,String>(0))?.collect::<std::result::Result<Vec<_>,_>>()?)
                 })).await;

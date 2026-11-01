@@ -9,6 +9,7 @@ static GATES: LazyLock<crate::record_gates::Gates> = LazyLock::new(|| {
 
 pub(crate) struct Source {
     pub key: String,
+    pub conversation: Option<String>,
     pub path: PathBuf,
     pub body: Vec<u8>,
     pub modified: jiff::Timestamp,
@@ -18,6 +19,11 @@ pub(crate) struct Source {
     pub expires: Option<jiff::Timestamp>,
 }
 impl Source {
+    pub(crate) fn scoped(mut self, conversation: String) -> Self {
+        self.conversation = Some(conversation);
+        self
+    }
+
     pub(crate) fn expiring(mut self, at: jiff::Timestamp) -> Self {
         self.expires = Some(at);
         self
@@ -45,7 +51,17 @@ impl Source {
 
     pub(crate) fn new(key: String, path: PathBuf, body: Vec<u8>) -> io::Result<Self> {
         let modified = jiff::Timestamp::try_from(std::fs::metadata(&path)?.modified()?).map_err(io::Error::other)?;
-        Ok(Self { key, path, body, modified, arrival: None, replace: false, category: None, expires: None })
+        Ok(Self {
+            key,
+            conversation: None,
+            path,
+            body,
+            modified,
+            arrival: None,
+            replace: false,
+            category: None,
+            expires: None,
+        })
     }
 }
 
@@ -56,6 +72,9 @@ pub(crate) fn ensure_each(
 ) -> io::Result<()> {
     let (database, conversation) = locate(directory)?;
     let imported = |connection: &Connection| -> Result<bool> {
+        if crate::conversation_store::deleted(connection, &conversation)? {
+            return Ok(true);
+        }
         Ok(connection
             .query_row(
                 "SELECT 1 FROM conversation_record_imports WHERE conversation=?1 AND family=?2",
@@ -107,6 +126,7 @@ fn commit(database: &Database, conversation: &str, family: &str, sources: Vec<So
         .iter()
         .map(|source| {
             (
+                source.conversation.clone().unwrap_or_else(|| scope.clone()),
                 source.key.clone(),
                 source.body.clone(),
                 source.modified.to_string(),
@@ -117,11 +137,11 @@ fn commit(database: &Database, conversation: &str, family: &str, sources: Vec<So
             )
         })
         .collect::<Vec<_>>();
-    let bytes = rows.iter().map(|(key, body, _, _, _, _, _)| key.len() + body.len() + 128).sum();
+    let bytes = rows.iter().map(|(_, key, body, _, _, _, _, _)| key.len() + body.len() + 128).sum();
     let group = family.clone();
     database.write_now_at(Priority::Background,bytes,move |connection| {
         let mut insert=connection.prepare_cached("INSERT INTO conversation_records(conversation,family,identity,body,modified,arrival,category,expires) VALUES(?1,?2,?3,?4,?5,?6,?8,?9) ON CONFLICT(conversation,family,identity) DO UPDATE SET body=excluded.body,modified=excluded.modified,arrival=excluded.arrival,category=excluded.category,expires=excluded.expires WHERE ?7 AND (conversation_records.body!=excluded.body OR conversation_records.modified!=excluded.modified OR conversation_records.arrival IS NOT excluded.arrival OR conversation_records.category IS NOT excluded.category OR conversation_records.expires IS NOT excluded.expires)")?;
-        for (key,body,modified,arrival,replace,category,expires) in rows {
+        for (scope,key,body,modified,arrival,replace,category,expires) in rows {
             insert.execute(params![scope,group,key,body,modified,arrival,replace,category,expires])?;
         }
         Ok(())
@@ -135,7 +155,7 @@ fn commit(database: &Database, conversation: &str, family: &str, sources: Vec<So
                 }
                 let (body,modified,arrival,category,expires) = connection.query_row(
                     "SELECT body,modified,arrival,category,expires FROM conversation_records WHERE conversation=?1 AND family=?2 AND identity=?3",
-                    (conversation, &family, &source.key),
+                    (source.conversation.as_deref().unwrap_or(conversation), &family, &source.key),
                     |row| Ok((row.get::<_,Vec<u8>>(0)?,row.get::<_,String>(1)?,row.get::<_,Option<Vec<u8>>>(2)?,row.get::<_,Option<String>>(3)?,row.get::<_,Option<i64>>(4)?)),
                 )?;
                 if body != source.body || modified!=source.modified.to_string() || arrival!=source.arrival || category!=source.category || expires!=source.expires.map(|at|at.as_millisecond()) {

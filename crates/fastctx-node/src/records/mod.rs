@@ -33,6 +33,9 @@ CREATE INDEX IF NOT EXISTS conversation_records_order ON conversation_records(co
 CREATE INDEX IF NOT EXISTS conversation_records_arrival ON conversation_records(conversation,family,arrival,identity);
 CREATE INDEX IF NOT EXISTS conversation_records_action ON conversation_records(conversation,json_extract(body,'$.hand'),json_extract(body,'$.result'),position) WHERE family='actions';
 CREATE INDEX IF NOT EXISTS conversation_records_message ON conversation_records(conversation,json_extract(body,'$.kind'),json_extract(body,'$.turn')) WHERE family='messages';
+CREATE UNIQUE INDEX IF NOT EXISTS conversation_timer_id ON conversation_records(identity) WHERE family='timers';
+CREATE INDEX IF NOT EXISTS conversation_timers_due ON conversation_records(arrival,identity) WHERE family='timers';
+CREATE UNIQUE INDEX IF NOT EXISTS conversation_control_request_id ON conversation_records(identity) WHERE family='control-requests';
 CREATE INDEX IF NOT EXISTS conversation_records_expiry ON conversation_records(expires) WHERE expires IS NOT NULL;
 CREATE TABLE IF NOT EXISTS conversation_record_links (
     conversation TEXT NOT NULL,family TEXT NOT NULL,member TEXT NOT NULL,identity TEXT NOT NULL,
@@ -103,9 +106,6 @@ pub(crate) fn write_then_at<T: Send + 'static>(
     if let Some(error) = database.fault() {
         return Err(io::Error::other(error.clone()));
     }
-    if !directory.path().try_exists()? {
-        fastctx_platform::ensure_private_dir(directory.path())?;
-    }
 
     database
         .write_now_then_at(
@@ -117,7 +117,10 @@ pub(crate) fn write_then_at<T: Send + 'static>(
         .map_err(io::Error::other)
 }
 
-impl Rows<'_> {
+impl<'a> Rows<'a> {
+    pub(crate) fn scoped<'b>(&'b self, conversation: &'b str) -> Rows<'b> {
+        Rows { connection: self.connection, conversation }
+    }
     pub(crate) fn connection(&self) -> &Connection {
         self.connection
     }

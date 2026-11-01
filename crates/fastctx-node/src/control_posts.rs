@@ -1,6 +1,8 @@
 //! Durable outgoing control requests and their authenticated business replies.
 //! Hub custody does not itself establish that a requested stop was applied.
 
+mod requests;
+
 use std::io;
 use std::path::{Path, PathBuf};
 
@@ -40,10 +42,6 @@ struct Reply {
     result: Result<(), Failure>,
 }
 
-fn request_path(node: &Node, id: &NoticeId) -> PathBuf {
-    node.world.path().join("control-requests").join(format!("{id}.json"))
-}
-
 pub(crate) fn send(
     node: &Node,
     path: &Path,
@@ -71,8 +69,7 @@ pub(crate) fn send(
                 path: path.to_path_buf(),
                 digest: fastctx_hands::files::content_hash(bytes),
             };
-            let request_file = request_path(node, &id);
-            items::keep(&request_file, &request)?;
+            requests::keep(node, &id, &request)?;
             let posted = crate::letters::post(
                 node,
                 acting,
@@ -132,7 +129,7 @@ pub(crate) fn receive(
     id: &NoticeId,
     result: Result<(), Failure>,
 ) -> io::Result<Result<(), String>> {
-    let Some(request) = items::get::<Request>(&request_path(node, id))? else {
+    let Some(request) = requests::get(node, id)? else {
         return Ok(Err("this node has no such outgoing control request".into()));
     };
     let same = node.link_of(hub).is_some_and(|link| link.view().same(&request.machine, &caller.machine));
@@ -156,27 +153,23 @@ pub(crate) fn receive(
 }
 
 pub(crate) fn collect(node: &Node, age: std::time::Duration) -> io::Result<()> {
-    for path in items::entries(&node.world.path().join("control-requests"), Some("json"))? {
-        if path.extension().is_none_or(|extension| extension != "json") {
-            continue;
-        }
-        let request = match items::get::<Request>(&path) {
-            Ok(Some(request)) => request,
-            Ok(None) => continue,
-            Err(error) => {
-                crate::obligations::retry_record(node, &path, &error.to_string())?;
-                continue;
-            }
-        };
-        if !items::exists(&request.path)? && items::modified(&path)?.elapsed().is_ok_and(|elapsed| elapsed >= age) {
-            for extension in ["reply", "posted"] {
-                match items::delete(&request.path.with_extension(extension)) {
-                    Err(error) if error.kind() != io::ErrorKind::NotFound => return Err(error),
-                    _ => {}
+    let mut after = String::new();
+    loop {
+        let page = requests::page(node, &after)?;
+        let Some(last) = page.last() else { return Ok(()) };
+        after = last.0.clone();
+        for (id, modified, request) in page {
+            if !items::exists(&request.path)?
+                && jiff::Timestamp::now().as_second().saturating_sub(modified.as_second()) >= age.as_secs() as i64
+            {
+                for extension in ["reply", "posted"] {
+                    match items::delete(&request.path.with_extension(extension)) {
+                        Err(error) if error.kind() != io::ErrorKind::NotFound => return Err(error),
+                        _ => {}
+                    }
                 }
+                requests::delete(node, id)?;
             }
-            items::delete(&path)?;
         }
     }
-    Ok(())
 }
