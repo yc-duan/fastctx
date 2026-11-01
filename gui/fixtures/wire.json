@@ -4499,6 +4499,13 @@
                 "at": "2026-10-09T08:30:00Z",
                 "machine": "server",
                 "kind": "damaged"
+              },
+              {
+                "id": 12,
+                "at": "2026-10-09T08:30:00Z",
+                "machine": "server",
+                "kind": "migration",
+                "count": 3
               }
             ],
             "health": true,
