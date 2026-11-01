@@ -42,7 +42,7 @@ pub async fn send(output: &mpsc::Sender<Output>, packet: Packet) -> io::Result<(
     let encoded = if size <= QUANTUM {
         encode()?
     } else {
-        tokio::task::spawn_blocking(encode).await.map_err(io::Error::other)??
+        fastctx_platform::task::spawn_blocking(encode).await.map_err(io::Error::other)??
     };
     let (sent, written) = oneshot::channel();
     tokio::time::timeout(TIMEOUT, async {

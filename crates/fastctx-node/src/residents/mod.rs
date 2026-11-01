@@ -16,10 +16,12 @@
 //! A resident has one directory, its conversation's home; which project it
 //! is in is one record there (`town`), so changing projects moves nothing.
 
+pub(crate) mod activity;
 pub(crate) mod cache;
 mod departures;
 mod records;
 mod removal;
+pub(crate) mod speaking;
 mod tombstones;
 pub use removal::removal;
 pub use tombstones::Tombstone;
@@ -49,7 +51,7 @@ pub struct Residents {
     /// This machine's name now, which every resident living here is told as
     /// living on, whatever the machine was called when it was born.
     here: std::sync::RwLock<Option<fastctx_types::MachineName>>,
-    speaking: crate::leases::Registry<ResidentId, fastctx_platform::doing::Mutex<()>>,
+    speaking: crate::leases::Registry<ResidentId, speaking::Speaking>,
     paying: crate::leases::Registry<ResidentId, fastctx_platform::doing::Mutex<()>>,
     management: crate::leases::Registry<ResidentId, fastctx_platform::doing::RwLock<()>>,
 }
@@ -642,13 +644,15 @@ impl Residents {
 
     /// Persists the restoration contract before the first native resumption.
     pub(crate) fn set_native_resumed(&self, world: &WorldDir, id: &ResidentId) -> io::Result<()> {
-        let mut state=self.lock();
-        let live=state.live.get_mut(id).ok_or_else(||io::Error::other("unknown conversation"))?;
-        if live.about.native_resumed {return Ok(());}
-        let mut about=live.about.clone();
-        about.native_resumed=true;
-        records::write_about(&world.conversation(id),&about)?;
-        live.about=about;
+        let mut state = self.lock();
+        let live = state.live.get_mut(id).ok_or_else(|| io::Error::other("unknown conversation"))?;
+        if live.about.native_resumed {
+            return Ok(());
+        }
+        let mut about = live.about.clone();
+        about.native_resumed = true;
+        records::write_about(&world.conversation(id), &about)?;
+        live.about = about;
         Ok(())
     }
 
@@ -700,6 +704,11 @@ impl Residents {
         self.lock().live.get(id).map(Live::town)
     }
 
+    /// The original recorded machine, retained when a conversation directory is moved.
+    pub(crate) fn birth_machine(&self, id: &ResidentId) -> Option<MachineName> {
+        self.lock().live.get(id).map(|live| live.about.machine.clone())
+    }
+
     pub fn about(&self, id: &ResidentId) -> Option<(About, Option<TownName>)> {
         self.lock().live.get(id).map(|live| (self.placed(live.about.clone()), live.town()))
     }
@@ -731,11 +740,16 @@ impl Residents {
         self.lock().current_sessions.get(session).unwrap_or(0)
     }
 
-    pub fn speaking(
-        &self,
-        id: &ResidentId,
-    ) -> Option<crate::leases::Lease<ResidentId, fastctx_platform::doing::Mutex<()>>> {
-        self.lock().live.contains_key(id).then(|| self.speaking.get_or_insert_with(id, || crate::ranked::speaking(id)))
+    pub fn speaking(&self, id: &ResidentId) -> Option<speaking::Lease> {
+        self.lock()
+            .live
+            .contains_key(id)
+            .then(|| speaking::Lease::new(self.speaking.get_or_insert_with(id, || speaking::Speaking::new(id))))
+    }
+
+    /// Retain the caller's speech order for a worker that may outlive its future.
+    pub(crate) fn keep_speaking(&self, id: &ResidentId) -> io::Result<std::sync::Arc<speaking::Held>> {
+        speaking::Held::new(self.speaking.get(id).ok_or_else(|| io::Error::other("speech permit is unavailable"))?)
     }
 
     pub fn paying(
@@ -1026,7 +1040,8 @@ fn here(live: &Live) -> bool {
         return false;
     }
     if live.about.world_managed() {
-        (live.about.native_resumed && live.connections > 0) || live.now.as_ref().is_none_or(|now| now.activity != Activity::Asleep)
+        (live.about.native_resumed && live.connections > 0)
+            || live.now.as_ref().is_none_or(|now| now.activity != Activity::Asleep)
     } else {
         live.host_present || live.connections > 0
     }

@@ -15,7 +15,7 @@ use std::sync::Arc;
 
 pub(in crate::link) async fn take(inner: Arc<Inner>, epoch: u64, run: Vec<(u64, Envelope)>) -> io::Result<u64> {
     let held = inner.taking.lock_owned().await;
-    tokio::spawn(async move {
+    fastctx_platform::task::spawn(async move {
         let _doing = fastctx_platform::doing::doing(format!("persisting letters from {}", inner.hub));
         held.adopt();
         let _held = held;
@@ -24,7 +24,7 @@ pub(in crate::link) async fn take(inner: Arc<Inner>, epoch: u64, run: Vec<(u64, 
         let mut recent = HashMap::new();
         let mut last = None;
         for (sequence, message) in run {
-            if !taken.is_some_and(|(known, taken)| known == epoch && sequence <= taken) {
+            if crate::window::unheld(taken, epoch, sequence) {
                 let reference = Reference { authority: inner.hub.as_str().to_owned(), epoch, sequence };
                 match one(&inner, &message, &mut recent, &reference).await {
                     Ok(Some((from, id, receipt))) => pending.push((from, id, receipt, reference)),
@@ -41,13 +41,19 @@ pub(in crate::link) async fn take(inner: Arc<Inner>, epoch: u64, run: Vec<(u64, 
         }
         receipts::keep_batch(&inner.dir, pending).await?;
         let sequence = last.expect("receive windows are nonempty");
-        let mut letters = inner.letters.lock().expect("never poisoned");
-        if !letters.file.taken.is_some_and(|(known, taken)| known == epoch && sequence <= taken) {
-            let mut next = letters.file;
-            next.taken = Some((epoch, sequence));
-            super::super::state::write(&inner.dir.letters(), &next)?;
-            letters.file = next;
-        }
+        let keeping = inner.clone();
+        inner
+            .blocking(move || {
+                keeping.change_letters(|letters| {
+                    let further = crate::window::unheld(letters.file.taken, epoch, sequence);
+                    if further {
+                        letters.file.taken = Some((epoch, sequence));
+                    }
+                    further
+                })
+            })
+            .await
+            .map_err(io::Error::other)??;
         Ok(sequence)
     })
     .await

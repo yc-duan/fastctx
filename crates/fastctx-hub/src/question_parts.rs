@@ -81,8 +81,10 @@ impl Uploads {
             question,
             Question::LedgerWrite { .. }
                 | Question::MemoryWrite { .. }
+                | Question::HistoryWrite { .. }
                 | Question::SkillFiles { .. }
                 | Question::AccountRecords { .. }
+                | Question::OwnedRecords { .. }
         ) {
             return Err("only ledger appends can be uploaded in parts".into());
         }

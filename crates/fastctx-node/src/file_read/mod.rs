@@ -31,6 +31,8 @@ fn start(node: Arc<Node>, acting: Acting, machine: Option<Written>, request: Rea
                 match machine.filter(|machine| !node.is_here(machine)) {
                     None => {
                         let path = request.path.clone();
+                        crate::replicas::sync::repair_paths(&node, &[std::path::PathBuf::from(&path)])
+                            .await.map_err(Failure::new)?;
                         Ok(local::read(node.machine(), request, &sender).await.map_err(|mut error| {
                             error.message = format!("{}:{path}: {}", node.machine(), error.message);
                             error

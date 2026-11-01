@@ -9,6 +9,7 @@ mod connection_state;
 mod features;
 pub(crate) mod file_read;
 mod file_search;
+mod history;
 mod lines;
 mod mcp;
 mod project_memory;
@@ -463,6 +464,14 @@ impl fastctx_net::link::Node for Handler {
 
     fn ledger_changed(&self, _: Option<fastctx_types::access::TownId>) {
         self.towns_changed();
+    }
+
+    /// A conversation's history changed on some machine: the history the
+    /// device follows is read again.
+    fn account_record_changed(&self, change: &fastctx_types::account_records::Changed) {
+        if change.metadata.kind == fastctx_types::history::RECORD_KIND {
+            changed(&self.shown);
+        }
     }
 
     fn directory_changed(&self) {

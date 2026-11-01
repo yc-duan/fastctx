@@ -1,0 +1,86 @@
+name: Soak
+
+# The long soak before a release, started by hand on the ci/ branch being released: the Linux kernel
+# and drills that branch's run built, held to the foundation's numbers under the worst case for four
+# hours (`world-engine.md`, 验证的设施). Nothing is built here; it waits for that run's kernel and
+# drills, so it can be started as soon as the branch is pushed. Every ci/ run soaks half an hour in
+# `release.yml` with the same drill.
+
+on:
+  workflow_dispatch:
+    inputs:
+      minutes:
+        description: Minutes under load
+        type: number
+        default: 240
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  soak:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 350
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - name: Find the run that built this commit
+        id: built
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          run="$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/release.yml/runs?head_sha=$GITHUB_SHA&event=push&per_page=100" \
+            --jq '[.workflow_runs[] | select(.head_branch | startswith("ci/"))] | first | .id // empty')"
+          if [ -z "$run" ]; then
+            echo "no ci/ run of $GITHUB_SHA: start this on the ci/ branch being released"
+            exit 1
+          fi
+          # Its Linux kernel and drills, once that run has built them.
+          for _ in $(seq 90); do
+            status="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run" --jq .status)"
+            names="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run/artifacts?per_page=100" --jq '.artifacts[].name')"
+            if grep -qx kernel-x86_64-unknown-linux-gnu <<<"$names" && grep -qx tests-x86_64-unknown-linux-gnu <<<"$names"; then
+              echo "run=$run" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            if [ "$status" = completed ]; then
+              break
+            fi
+            sleep 60
+          done
+          echo "run $run of $GITHUB_SHA has no Linux kernel and drills"
+          exit 1
+      - uses: actions/download-artifact@v4
+        with:
+          name: kernel-x86_64-unknown-linux-gnu
+          path: kernel
+          run-id: ${{ steps.built.outputs.run }}
+          github-token: ${{ github.token }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: tests-x86_64-unknown-linux-gnu
+          path: tests
+          run-id: ${{ steps.built.outputs.run }}
+          github-token: ${{ github.token }}
+      - name: Restore executable permissions
+        run: chmod +x kernel/fastctx tests/*
+      - name: Soak drill
+        env:
+          MINUTES: ${{ inputs.minutes }}
+        run: |
+          curl -fsSL "https://github.com/openai/codex/releases/download/rust-v0.160.0/codex-x86_64-unknown-linux-musl.tar.gz" | tar -xz -C "$RUNNER_TEMP"
+          sudo install -m 0755 "$RUNNER_TEMP/codex-x86_64-unknown-linux-musl" /usr/local/bin/codex
+          sudo python3 scripts/soak.py --kernel kernel/fastctx --drill tests/soak_drill --codex /usr/local/bin/codex --minutes "$MINUTES" --scale full --root "$RUNNER_TEMP/soak"
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: soak-result
+          path: |
+            ${{ runner.temp }}/soak/soak-result.json
+            ${{ runner.temp }}/soak/node.log
+            ${{ runner.temp }}/soak/drill.err
+            ${{ runner.temp }}/soak/drill/hub/hub.log
+          if-no-files-found: ignore

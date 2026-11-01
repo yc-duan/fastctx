@@ -122,11 +122,24 @@ pub(crate) async fn control(
     if !fastctx_platform::preview() {
         return Err(Failure::not_run(fastctx_types::sentinel_words::UNOFFERED));
     }
+    if link.view().shared_records
+        && matches!(
+            request,
+            Request::Conversation { .. }
+                | Request::List { .. }
+                | Request::Stop { .. }
+                | Request::Record { .. }
+                | Request::Overview
+        )
+    {
+        return super::shared::route(node, caller, link, account, request).await;
+    }
     let scope = HubAccount { hub: link.membership().id.clone(), account: account.clone() };
     let records = node.sentinels.records()?;
     let homes = Transport(node.clone());
     let fail = |error: fastctx_sentinel::records::Error| Failure::new(error.to_string());
     match request {
+        Request::Conversation { .. } => Err(Failure::not_run("update the hub to manage shared sentinels")),
         Request::Help => {
             let (_, settings) = fastctx_sentinel::settings::read(records, &scope).await.map_err(fail)?;
             // Without a home the help still reads true, and says what is missing first.

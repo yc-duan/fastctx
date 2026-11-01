@@ -5,20 +5,26 @@ use crate::Node;
 use fastctx_types::{Address, ResidentId, TownName, access::Acting, ipc::Failure, project::Writer, residents::Origin};
 use std::{io, sync::Arc};
 
+static SOURCES: std::sync::LazyLock<crate::record_gates::Gates> = std::sync::LazyLock::new(|| {
+    crate::record_gates::Gates::new(fastctx_platform::doing::Rank::EMITTING, "local context source")
+});
+
 pub(crate) fn refresh_local(node: &Node, id: &ResidentId) -> io::Result<()> {
-    let _transaction = crate::resident_storage::lock();
+    let gate = SOURCES.get(node.world.conversation(id).path());
+    let _refreshing = gate.lock();
     let (about, town) = node.residents.about(id).ok_or_else(|| io::Error::other(words::UNKNOWN))?;
-    local_locked(node, id, town.as_ref(), &about.acting)
+    local_current(node, id, town.as_ref(), &about.acting)
 }
 
 fn local(node: &Node, id: &ResidentId, town: Option<&TownName>, acting: &Acting) -> io::Result<()> {
-    let _transaction = crate::resident_storage::lock();
-    local_locked(node, id, town, acting)
+    let gate = SOURCES.get(node.world.conversation(id).path());
+    let _refreshing = gate.lock();
+    local_current(node, id, town, acting)
 }
 
-fn local_locked(node: &Node, id: &ResidentId, town: Option<&TownName>, acting: &Acting) -> io::Result<()> {
+fn local_current(node: &Node, id: &ResidentId, town: Option<&TownName>, acting: &Acting) -> io::Result<()> {
     let prompt = crate::profile::session::text(&crate::profile::session::prompt(node, acting));
-    storage::set_locked(
+    storage::set(
         &node.world,
         id,
         "user",
@@ -40,7 +46,7 @@ fn local_locked(node: &Node, id: &ResidentId, town: Option<&TownName>, acting: &
         },
         None => (String::new(), None, String::new(), words::USER.into()),
     };
-    storage::set_locked(
+    storage::set(
         &node.world,
         id,
         "project",
@@ -52,7 +58,7 @@ fn local_locked(node: &Node, id: &ResidentId, town: Option<&TownName>, acting: &
         Err(error) if error.kind() == io::ErrorKind::NotFound => String::new(),
         Err(error) => return Err(error),
     };
-    storage::set_locked(
+    storage::set(
         &node.world,
         id,
         "focus",
@@ -82,8 +88,11 @@ pub(crate) async fn prepare(
     if let Err(failure) = skills(node, id, acting).await {
         node.log.line(format_args!("telling {id} its skills: {}", failure.message));
     }
+    if let Err(failure) = crate::record_ownership::register(node, id, acting).await {
+        node.log.line(format_args!("registering the records of {id}: {}", failure.message));
+    }
     plan_guide(node, id, origin, acting).await.map_err(|error| Failure::new(error.to_string()))?;
-    crate::plan::context(node, id, origin, acting).await?;
+    crate::plan::context(node, id, acting).await?;
     map(node, id, town, origin, acting).await?;
     storage::opening(&node.world, id, &node.context_bodies).map_err(|error| Failure::new(error.to_string()))
 }
@@ -102,31 +111,42 @@ pub(crate) fn set_skills(node: &Node, id: &ResidentId, text: &str, version: &str
     super::set_account(node, id, "skills", text, change).map_err(|error| Failure::new(error.to_string()))
 }
 
-/// The single working-copy path for this turn; a colleague reads its
-/// requester's account record and never receives a writable plan path.
+/// The single working-copy path for this turn. Every conversation the World
+/// holds, a colleague as much as the one that asked it, keeps its own plan.
 pub(crate) async fn plan_guide(node: &Arc<Node>, id: &ResidentId, origin: &Origin, acting: &Acting) -> io::Result<()> {
     if node.residents.now(id).is_some_and(|now| now.turn.is_some()) {
         return Ok(());
     }
     let own = node.residents.about(id).is_some_and(|(about, _)| !about.world_managed());
+    let asker = match origin {
+        Origin::Colleague { asked_by, .. } => Some(&asked_by.resident),
+        Origin::User => None,
+    };
     let (text, fact) = if own {
         (String::new(), String::new())
-    } else if matches!(origin, Origin::Colleague { .. }) {
-        if let Err(error) = crate::placement::location::prepare(node, id, origin, acting).await {
-            node.log.line(format_args!("placing the colleague {id}: {}", error.message));
-        }
-        (String::new(), String::new())
     } else {
-        match crate::placement::location::prepare(node, id, origin, acting).await {
+        let placed = crate::placement::location::prepare(node, id, origin, acting).await;
+        // A failure is logged when it starts or changes, not at every refresh.
+        let failure = placed.as_ref().err().map(|error| error.message.as_str());
+        if node.locations.tell(id, failure)
+            && let Some(failure) = failure
+        {
+            node.log.line(format_args!("placing the plan of {id}: {failure}"));
+        }
+        match placed {
             Ok(Some(location)) => {
                 let path=crate::placement::plan_path(&location);
-                (words::plan_guide(&path,location.machine.as_str()),format!("The plan file is now on {} at {path}.",location.machine))
+                let replicated = crate::plan::file_account(node, id, acting).ok().flatten().and_then(|account| node.link_of(&account.hub)).is_some_and(|link| link.view().shared_records);
+                (words::plan_guide(&path,location.machine.as_str(),replicated,asker),format!("The plan file is now on {} at {path}.",location.machine))
             },
             Ok(None) => ("YOUR PLAN\n\nYour plan remains in your account. There is no online working computer for its file now; the app can still read and edit it.".into(),"There is no online working computer for the plan file now.".into()),
             Err(error) => {
-                node.log.line(format_args!("placing the plan of {id}: {}", error.message));
-                let fact=if error.message.starts_with("update "){error.message}else{"The plan working copy could not be prepared; no writable file path is available this turn.".into()};
-                (format!("YOUR PLAN\n\nYour plan remains in your account. {fact} The app can still read and edit it."),fact)
+                let fact = match error.message.as_str() {
+                    crate::placement::location::OLD_COMPUTER => words::PLAN_OLD_COMPUTER,
+                    crate::placement::location::OLD_HUB => words::PLAN_OLD_HUB,
+                    _ => words::PLAN_NOT_PREPARED,
+                };
+                (format!("YOUR PLAN\n\nYour plan remains in your account; the app can still read and edit it. {fact}"), fact.to_string())
             }
         }
     };
@@ -138,12 +158,7 @@ pub(crate) async fn plan_guide(node: &Arc<Node>, id: &ResidentId, origin: &Origi
     }
 }
 
-/// The project's memory index as the "map" block. The project instructions
-/// ride the "project" block, so this carries only the journals and decisions
-/// the project keeps; it is empty when memory is off or there is no project.
-/// What the conversation wrote itself is not told back to it; what another
-/// wrote is told as one fact a document, and the whole index goes with the
-/// opening, a compaction or a change of project (`world-memory.md`, 地图).
+/// Refreshes the history block through the shared context delivery path.
 pub(crate) async fn map(
     node: &Arc<Node>,
     id: &ResidentId,
@@ -151,102 +166,11 @@ pub(crate) async fn map(
     origin: &Origin,
     acting: &Acting,
 ) -> Result<(), Failure> {
-    let read_only = matches!(origin, Origin::Colleague { .. });
-    let snapshot = match town {
-        Some(town) => crate::memory::context::text(node, Some((id, origin)), town, acting, read_only).await?,
-        None => None,
-    };
-    let directory = node.world.conversation(id);
-    let before = map_cursor::load(&directory).map_err(|error| Failure::new(error.to_string()))?;
-    let after = map_cursor::Cursor::of(town, snapshot.as_ref().map(|(_, catalog)| catalog));
-    let me = Address { machine: node.machine(), resident: id.clone() };
-    let told = match (&before, &snapshot) {
-        (Some(before), Some((_, catalog))) if before.town == after.town => {
-            Some(map_cursor::facts(node, before, catalog, id))
-        }
-        _ => None,
-    };
-    let fact = match &told {
-        Some(facts) if !facts.is_empty() => facts.join("\n"),
-        _ => words::changed("map", words::USER),
-    };
-    // A change with no one else's document in it is this conversation's own.
-    let own = told.as_ref().is_some_and(Vec::is_empty);
-    let version = serde_json::to_string(&after).map_err(|error| Failure::new(error.to_string()))?;
-    let change = Change { by: own.then_some(&me), version: &version, fact: &fact, full: told.is_none() };
-    let text = snapshot.as_ref().map(|(text, _)| text.as_str()).unwrap_or("");
-    // Opening instructions are prepared before the conversation is born.
-    if node.residents.about(id).is_some() {
-        super::set(node, id, "map", text, change)
-    } else {
-        storage::set(&node.world, id, "map", text, change)
-    }
-    .map_err(|error| Failure::new(error.to_string()))
-}
-
-/// Which version of each project document a conversation's map has shown it.
-mod map_cursor {
-    use crate::Node;
-    use fastctx_types::{ResidentId, TownName, layout::ConversationDir, memory::Catalog, project::Writer};
-    use serde::{Deserialize, Serialize};
-    use std::{collections::BTreeMap, io};
-
-    #[derive(Serialize, Deserialize)]
-    pub(super) struct Cursor {
-        pub town: Option<TownName>,
-        versions: BTreeMap<String, u32>,
-    }
-    impl Cursor {
-        pub fn of(town: Option<&TownName>, catalog: Option<&Catalog>) -> Self {
-            let versions = catalog
-                .map(|catalog| catalog.journals.iter().chain(&catalog.specs))
-                .into_iter()
-                .flatten()
-                .map(|revision| (revision.name.clone(), revision.version))
-                .collect();
-            Self { town: town.cloned(), versions }
-        }
-    }
-
-    fn path(directory: &ConversationDir) -> std::path::PathBuf {
-        directory.books().join("map-heard.json")
-    }
-    pub fn load(directory: &ConversationDir) -> io::Result<Option<Cursor>> {
-        match std::fs::read(path(directory)) {
-            Ok(bytes) => Ok(Some(serde_json::from_slice(&bytes)?)),
-            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
-            Err(error) => Err(error),
-        }
-    }
-    pub fn keep(directory: &ConversationDir, cursor: &Cursor) -> io::Result<()> {
-        fastctx_platform::ensure_private_dir(&directory.books())?;
-        fastctx_platform::publish(
-            &path(directory),
-            &serde_json::to_vec(cursor)?,
-            fastctx_platform::Permissions::Private,
-        )
-    }
-    /// One fact for each document someone other than `id` wrote since `before`.
-    pub fn facts(node: &Node, before: &Cursor, after: &Catalog, id: &ResidentId) -> Vec<String> {
-        after
-            .journals
-            .iter()
-            .chain(&after.specs)
-            .filter(|revision| before.versions.get(&revision.name) != Some(&revision.version))
-            .filter(|revision| {
-                !matches!(&revision.author.stamp.by, Writer::Resident { address }
-                    if address.resident == *id && node.is_me(&address.machine))
-            })
-            .map(fastctx_hands::memory::changed)
-            .collect()
-    }
+    crate::history::context::refresh(node, id, town, origin, acting).await
 }
 
 pub(super) fn observed(node: &Node, id: &ResidentId, receipt: &Receipt) -> io::Result<()> {
-    if let Some(version) = receipt.versions.get("map").filter(|version| !version.is_empty()) {
-        let cursor = serde_json::from_str(version).map_err(io::Error::other)?;
-        map_cursor::keep(&node.world.conversation(id), &cursor)?;
-    }
+    crate::history::context::observed(node, id, receipt)?;
     if let Some(version) = receipt.versions.get("plan").filter(|version| !version.is_empty()) {
         crate::plan::context_seen(node, id, version).map_err(|error| io::Error::other(error.message))?;
     }
@@ -256,7 +180,7 @@ pub(super) fn observed(node: &Node, id: &ResidentId, receipt: &Receipt) -> io::R
 pub(crate) fn plan(node: &Node, id: &ResidentId, page: &fastctx_types::plan::Page, version: &str) -> io::Result<()> {
     let by: Option<&Address> = page.body.as_ref().and_then(|body| match &body.author {
         fastctx_types::plan::Author::Resident { address } => Some(address),
-        fastctx_types::plan::Author::User => None,
+        fastctx_types::plan::Author::User | fastctx_types::plan::Author::Elsewhere => None,
     });
     let who = by.map(|by| by.resident.to_string()).unwrap_or_else(|| words::USER.into());
     super::set_account(

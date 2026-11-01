@@ -205,7 +205,7 @@ where
     let (mut sender, connection) = hyper::client::conn::http1::handshake(TokioIo::new(io))
         .await
         .map_err(|error| format!("HTTP with {host}: {error}"))?;
-    tokio::spawn(async move {
+    fastctx_platform::task::spawn(async move {
         let _ = connection.await;
     });
     let host = if host.contains(':') { format!("[{host}]") } else { host.to_string() };

@@ -5,7 +5,9 @@ import type { GoalStatus, NodeState, PausedBy } from "./types";
 
 export interface SideWords {
   /** The conversation's own parts, each a word in the side's first line. */
-  pages: { plan: string; goal: string; collab: string };
+  pages: { plan: string; goal: string; collab: string; history: string };
+  /** A file read in the side, over the parts. */
+  file: FileWords;
   /** The switch that opens the side, and the act that shuts it. */
   panel: string;
   shut: string;
@@ -27,6 +29,18 @@ export interface SideWords {
   sideTalk: string;
   goal: GoalWords;
   collab: CollabWords;
+}
+
+export interface FileWords {
+  /** Opens the file with this device's program for its kind. */
+  outside: string;
+  reading: string;
+  /** The machine has no file there. */
+  missing: string;
+  /** It could not be read; the original goes on hover. */
+  failed: string;
+  /** The way to it broke; it comes on once the way is back. */
+  interrupted: string;
 }
 
 export interface GoalWords {
@@ -102,7 +116,8 @@ function clock(ms: number, now: number, locale: string, today: string, tomorrow:
 }
 
 export const zhSide: SideWords = {
-  pages: { plan: "计划", goal: "目标", collab: "协作" },
+  pages: { plan: "计划", goal: "目标", collab: "协作", history: "历史" },
+  file: { outside: "用默认程序打开", reading: "读取中…", missing: "找不到这个文件", failed: "读取失败", interrupted: "连接中断，正在重连…" },
   panel: "侧面板",
   shut: "收起侧面板",
   resize: "调整侧面板宽度",
@@ -178,7 +193,8 @@ export const zhSide: SideWords = {
 };
 
 export const enSide: SideWords = {
-  pages: { plan: "Plan", goal: "Goal", collab: "Team" },
+  pages: { plan: "Plan", goal: "Goal", collab: "Team", history: "History" },
+  file: { outside: "Open with default app", reading: "Reading…", missing: "File not found", failed: "Couldn't read this file", interrupted: "Disconnected, reconnecting…" },
   panel: "Side panel",
   shut: "Close the side panel",
   resize: "Resize the side panel",

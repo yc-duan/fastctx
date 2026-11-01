@@ -7,7 +7,6 @@ use fastctx_types::layout::ConversationDir;
 use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 use std::io;
-use std::path::{Path, PathBuf};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub(crate) struct Intent {
@@ -15,6 +14,8 @@ pub(crate) struct Intent {
     pub resident: Address,
     pub input_hash: String,
     pub account: HubAccount,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub access: Option<crate::record_access::Access>,
     pub expected: Option<u64>,
     pub proposed: Option<Goal>,
     pub at: Timestamp,
@@ -37,53 +38,124 @@ impl Phase {
     }
 }
 
-fn directory(conversation: &ConversationDir) -> PathBuf {
-    conversation.books().join("goal-operations")
+pub(crate) const FAMILY: &str = "goal-intents";
+pub(crate) fn prepare(conversation: &ConversationDir) -> io::Result<()> {
+    let folder = conversation.books().join("goal-operations");
+    crate::records::ensure_each(conversation, FAMILY, |push| {
+        let entries = match std::fs::read_dir(&folder) {
+            Ok(entries) => entries,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
+            Err(error) => return Err(error),
+        };
+        for entry in entries {
+            let path = entry?.path();
+            if path.extension().is_none_or(|ext| ext != "json")
+                || path.file_name().is_some_and(|name| name.to_string_lossy().starts_with('.'))
+            {
+                continue;
+            }
+            let intent: Intent = serde_json::from_slice(&std::fs::read(&path)?)?;
+            if path.file_stem().and_then(|stem| stem.to_str())
+                != Some(fastctx_hands::files::content_hash(intent.operation.as_bytes()).as_str())
+            {
+                return Err(io::Error::other("goal operation identity differs from its record"));
+            }
+            let mut source = crate::records::Source::new(intent.operation.clone(), path, serde_json::to_vec(&intent)?)?
+                .ordered(intent.at)
+                .categorized(if intent.phase.pending() { "pending" } else { "terminal" }.into());
+            if !intent.phase.pending() {
+                let expiry = source.modified + jiff::SignedDuration::from_hours(30 * 24);
+                source = source.expiring(expiry);
+            }
+            push(source)?;
+        }
+        Ok(())
+    })
 }
-
-fn path(conversation: &ConversationDir, operation: &str) -> PathBuf {
-    directory(conversation).join(format!("{}.json", fastctx_hands::files::content_hash(operation.as_bytes())))
+pub(crate) async fn read(conversation: &ConversationDir, operation: &str) -> io::Result<Option<Intent>> {
+    let (directory, operation) = (conversation.clone(), operation.to_string());
+    tokio::task::spawn_blocking(move || {
+        prepare(&directory)?;
+        crate::records::read(&directory, |rows| rows.get(FAMILY, &operation))
+    })
+    .await
+    .map_err(io::Error::other)?
 }
-
-pub(crate) fn read(conversation: &ConversationDir, operation: &str) -> io::Result<Option<Intent>> {
-    let intent: Option<Intent> = match std::fs::read(path(conversation, operation)) {
-        Ok(bytes) => Some(serde_json::from_slice(&bytes)?),
-        Err(error) if error.kind() == io::ErrorKind::NotFound => None,
-        Err(error) => return Err(error),
-    };
-    if intent.as_ref().is_some_and(|intent| intent.operation != operation) {
-        return Err(io::Error::other("goal operation identity differs from its record"));
+pub(crate) fn keep_in(rows: &crate::records::Rows<'_>, intent: &Intent) -> fastctx_storage::Result<()> {
+    if let Some(prior) = rows.get::<Intent>(FAMILY, &intent.operation)?
+        && (prior.input_hash != intent.input_hash
+            || prior.account != intent.account
+            || prior.resident != intent.resident)
+    {
+        return Err(fastctx_storage::Error::new("goal operation identity changed"));
     }
-    Ok(intent)
+    let pending = intent.phase.pending();
+    let expiry = (!pending).then(|| Timestamp::now() + jiff::SignedDuration::from_hours(30 * 24));
+    rows.put_until(FAMILY, &intent.operation, intent, expiry)?;
+    rows.connection().execute(
+        "UPDATE conversation_records SET category=?4,arrival=?5 WHERE conversation=?1 AND family=?2 AND identity=?3",
+        (
+            rows.conversation(),
+            FAMILY,
+            &intent.operation,
+            if pending { "pending" } else { "terminal" },
+            (intent.at.as_nanosecond() ^ i128::MIN).to_be_bytes().as_slice(),
+        ),
+    )?;
+    Ok(())
 }
-
-pub(crate) fn keep(conversation: &ConversationDir, intent: &Intent) -> io::Result<()> {
-    let path = path(conversation, &intent.operation);
-    fastctx_platform::ensure_private_dir(path.parent().expect("goal operation directory"))?;
-    fastctx_platform::publish(&path, &serde_json::to_vec(intent)?, fastctx_platform::Permissions::Private)
+fn keep_now(
+    conversation: &ConversationDir,
+    intent: &Intent,
+    committed: impl FnOnce(&()) + Send + 'static,
+) -> io::Result<()> {
+    prepare(conversation)?;
+    let intent = intent.clone();
+    crate::records::write_then_at(
+        conversation,
+        fastctx_storage::Priority::Interactive,
+        serde_json::to_vec(&intent)?.len(),
+        move |rows| keep_in(rows, &intent),
+        committed,
+    )
 }
-
+/// Schedule unfinished authority changes from the commit notification, so an
+/// abandoned caller cannot leave a durable operation asleep until restart.
+pub(crate) fn committed(node: &std::sync::Arc<crate::Node>, intent: &Intent) -> impl FnOnce(&()) + Send + 'static {
+    let (node, resident, pending) = (node.clone(), intent.resident.clone(), intent.phase.pending());
+    let runtime = tokio::runtime::Handle::current();
+    move |_| {
+        if pending {
+            runtime.spawn(async move {
+                super::recovery::schedule(&node, resident);
+            });
+        }
+    }
+}
+pub(crate) async fn keep(
+    node: &std::sync::Arc<crate::Node>,
+    conversation: &ConversationDir,
+    intent: &Intent,
+) -> io::Result<()> {
+    let committed = committed(node, intent);
+    let (directory, intent) = (conversation.clone(), intent.clone());
+    tokio::task::spawn_blocking(move || keep_now(&directory, &intent, committed)).await.map_err(io::Error::other)?
+}
+/// A bounded prefix. Recovery repeats until the pending family is empty.
 pub(crate) fn pending(conversation: &ConversationDir) -> io::Result<Vec<Intent>> {
-    let mut result = Vec::new();
-    for path in entries(&directory(conversation))? {
-        if path.file_name().is_some_and(|name| name.to_string_lossy().starts_with('.'))
-            || path.extension().is_none_or(|extension| extension != "json")
-        {
-            continue;
+    prepare(conversation)?;
+    crate::records::read(conversation, |rows| {
+        let mut query=rows.connection().prepare_cached("SELECT body FROM conversation_records WHERE conversation=?1 AND family=?2 AND category='pending' ORDER BY arrival,identity LIMIT 32")?;
+        let mut result = Vec::new();
+        let mut bytes = 0;
+        for row in query.query_map((rows.conversation(), FAMILY), |row| row.get::<_, Vec<u8>>(0))? {
+            let body = row?;
+            if !result.is_empty() && bytes + body.len() > 2 * 1024 * 1024 {
+                break;
+            }
+            bytes += body.len();
+            result.push(crate::records::decode(&body)?);
         }
-        let intent: Intent = serde_json::from_slice(&std::fs::read(path)?)?;
-        if intent.phase.pending() {
-            result.push(intent);
-        }
-    }
-    result.sort_by(|a, b| a.at.cmp(&b.at).then(a.operation.cmp(&b.operation)));
-    Ok(result)
-}
-
-fn entries(path: &Path) -> io::Result<Vec<PathBuf>> {
-    match std::fs::read_dir(path) {
-        Ok(entries) => entries.map(|entry| entry.map(|entry| entry.path())).collect(),
-        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(Vec::new()),
-        Err(error) => Err(error),
-    }
+        Ok(result)
+    })
 }

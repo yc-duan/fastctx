@@ -3,6 +3,8 @@
 // in to the account, the direct links between machines, and for the
 // network's administrator every person.
 
+import type { Strain } from "../world/world";
+
 export interface MapHub {
   id: string;
   name: string;
@@ -26,6 +28,9 @@ export interface MapNode {
    *  are: given to its owner alone, none for anyone else (`world-gui.md`,
    *  机器页). */
   busy: number;
+  /** Its Fastctx held up or stuck while online (`world-engine.md`, 量与告警):
+   *  its ring is drawn in the colour of a warning or of a fault. */
+  strain?: Strain;
   /** What it is, said whole, for a pointer resting on it. */
   title: string;
   /** The keys it had under the names it had: renamed, it keeps the place

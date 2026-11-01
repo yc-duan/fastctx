@@ -72,7 +72,7 @@ pub(super) fn snapshot(dir: &Path) -> io::Result<Vec<Entry>> {
 }
 
 fn walk(dir: &Path, prefix: &str, entries: &mut Vec<Entry>, snapshot: bool) -> io::Result<()> {
-    for found in std::fs::read_dir(dir)? {
+    for found in fastctx_platform::disk::read_dir(dir)? {
         let found = found?;
         let name = found.file_name();
         let name = name.to_str().ok_or_else(|| {
@@ -104,7 +104,7 @@ fn walk(dir: &Path, prefix: &str, entries: &mut Vec<Entry>, snapshot: bool) -> i
 }
 
 fn sum(path: &Path) -> io::Result<Sum> {
-    let mut file = std::fs::File::open(path)?;
+    let mut file = fastctx_platform::disk::open(path)?;
     let mut hasher = sha2::Sha256::new();
     let mut buffer = vec![0; 1 << 16];
     let mut bytes = 0;

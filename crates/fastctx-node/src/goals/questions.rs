@@ -18,7 +18,7 @@ pub(crate) fn key(turn: &str, item: &Item) -> Option<String> {
 
 /// Returns true when a requesting conversation owns this question instead of the user.
 /// Publication precedes delivery; the existing outbox recovers across restart and disconnection.
-pub(crate) fn route(node: &Arc<Node>, id: &ResidentId, item: &Item, at: Timestamp) -> io::Result<bool> {
+pub(crate) async fn route(node: &Arc<Node>, id: &ResidentId, item: &Item, at: Timestamp) -> io::Result<bool> {
     let owner = node
         .goals
         .views
@@ -64,8 +64,24 @@ pub(crate) fn route(node: &Arc<Node>, id: &ResidentId, item: &Item, at: Timestam
         },
     };
     let directory = node.world.conversation(id);
-    crate::inbox::owe(&directory, &owing)?;
-    let (node, id) = (node.clone(), id.clone());
-    tokio::spawn(async move { crate::turns::pay(&node, &id, &directory).await });
+    let (node, id, runtime) = (node.clone(), id.clone(), tokio::runtime::Handle::current());
+    tokio::task::spawn_blocking(move || -> io::Result<()> {
+        crate::inbox::storage::initialize(&directory)?;
+        let bytes = serde_json::to_vec(&owing)?.len();
+        let paying = directory.clone();
+        crate::records::write_then_at(
+            &directory,
+            fastctx_storage::Priority::Normal,
+            bytes,
+            move |rows| crate::inbox::owe_in(rows, &owing),
+            move |_| {
+                runtime.spawn(async move {
+                    crate::turns::pay(&node, &id, &paying).await;
+                });
+            },
+        )
+    })
+    .await
+    .map_err(io::Error::other)??;
     Ok(true)
 }

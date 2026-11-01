@@ -121,11 +121,19 @@ async fn stamp(node: &Arc<Node>, resident: &ResidentId) -> Result<Option<String>
     take(env!("CARGO_PKG_VERSION").as_bytes());
     take(&serde_json::to_vec(&about).map_err(|error| Failure::new(error.to_string()))?);
     let failed = |error: std::io::Error| Failure::new(format!("reading {resident}'s records: {error}"));
-    {
-        let directory = node.world.conversation(resident);
-        let _transaction = crate::resident_storage::lock();
-        crate::session_record::stamp(directory.path(), &mut take).map_err(failed)?;
-        crate::run_facts::stamp(&directory, &mut take).map_err(failed)?;
+    let directory = node.world.conversation(resident);
+    let records = tokio::task::spawn_blocking(move || {
+        let mut records = Vec::new();
+        let mut collect = |bytes: &[u8]| records.push(bytes.to_vec());
+        crate::session_record::stamp(directory.path(), &mut collect)?;
+        crate::run_facts::stamp(&directory, &mut collect)?;
+        Ok::<_, std::io::Error>(records)
+    })
+    .await
+    .map_err(|error| Failure::new(error.to_string()))?
+    .map_err(failed)?;
+    for record in records {
+        take(&record);
     }
     match (about.host.agent.as_str(), &about.session) {
         // A thread the user opened in the Codex command line runs turns the

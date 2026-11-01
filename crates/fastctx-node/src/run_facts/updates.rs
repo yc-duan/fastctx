@@ -6,156 +6,140 @@ use fastctx_types::run_facts::JobFacts;
 use serde::{Deserialize, Serialize};
 use std::sync::LazyLock;
 
-static EMITTING: LazyLock<crate::ranked::Emitting> = LazyLock::new(Default::default);
+static EMITTING: LazyLock<crate::record_gates::Gates> =
+    LazyLock::new(|| crate::record_gates::Gates::new(fastctx_platform::doing::Rank::EMITTING, "call facts"));
 
-#[derive(Default, Serialize, Deserialize)]
+#[derive(Clone, Default, Serialize, Deserialize)]
 struct Emitted {
     sequence: u64,
+    #[serde(default)]
+    journal_version: u8,
     state: Option<RunState>,
     #[serde(default)]
     output_ended: bool,
+    #[serde(default)]
+    writes_offset: u64,
+    #[serde(default)]
+    steps_offset: u64,
+    #[serde(default)]
+    steps_segment: u64,
+    #[serde(default)]
+    visits_offset: u64,
+    #[serde(default)]
+    sql_members: bool,
+    #[serde(default)]
+    metadata_sent: bool,
 }
 
-pub(crate) fn job(node: &Node, record_path: &Path, writes: Vec<WriteFact>) -> io::Result<()> {
-    job_with(node, record_path, writes, Vec::new())
+#[derive(Serialize, Deserialize)]
+struct Pending {
+    update: JobFacts,
+    emitted: Emitted,
 }
 
-/// An ended output's measures: its reference, and where the writes it
-/// tells of stand in it.
-type Measured = (OutputRef, Vec<fastctx_types::run_facts::OutputNoteMatch>);
-
-/// What an output that has ended is, measured whole: its fingerprint, its
-/// lines, the writes noted in it. The output no longer changes once it has
-/// ended, so this is done before the facts are put in order: a large one
-/// can take long enough that holding every job's facts behind it would
-/// keep the next job from confirming its start.
-fn measure(node: &Node, record_path: &Path, record: &JobRecord) -> io::Result<(Measured, Vec<u8>)> {
-    let content = fastctx_hands::files::content_fingerprint(Path::new(&record.output))?;
-    let index = fastctx_hands::lines::Index::open(
-        Path::new(&record.output),
-        node.world.path(),
-        true,
-        None,
-        std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
-    )
-    .map_err(io::Error::other)?;
-    let writes = super::writes(record_path)?;
-    let notes = fastctx_hands::run::projection::CapturedNotes::read(Path::new(&record.output), content.size, &writes)?
-        .matches();
-    let output = OutputRef {
-        policy: Some(fastctx_hands::lines::output_policy()),
-        machine: record.machine.clone(),
-        path: record.output.clone(),
-        bytes: content.size,
-        lines: index.length,
-        cut: false,
-        content: Some(content),
-    };
-    Ok(((output, notes), serde_json::to_vec(&writes)?))
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum Recovery {
+    Current(Box<Pending>),
+    Legacy(Box<JobFacts>),
 }
 
-/// Whether the job's owner was last told it as it stands now.
-fn told(record_path: &Path, record: &JobRecord) -> io::Result<bool> {
-    let emitted: Emitted = match std::fs::read(record_path.with_extension("facts-state")) {
-        Ok(bytes) => serde_json::from_slice(&bytes)?,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(false),
-        Err(error) => return Err(error),
-    };
-    Ok(emitted.state.as_ref() == Some(&crate::jobs::state(record))
-        && emitted.output_ended == record.output_ended_at.is_some())
-}
-
-/// Tells the job's owner what changed of it, with the writes and steps
-/// just told.
-pub(crate) fn job_with(
-    node: &Node,
-    record_path: &Path,
-    writes: Vec<WriteFact>,
-    steps: Vec<fastctx_types::run_facts::RunStep>,
-) -> io::Result<()> {
+/// Emits only journal rows not already placed in the durable transport.
+/// The pending letter and its cursor are published before delivery, so a crash
+/// can replay the same sequence without skipping any committed row.
+pub(crate) fn job(node: &Node, record_path: &Path) -> io::Result<()> {
     let before = fastctx_hands::run::record::read(record_path)?;
-    let measured = if before.call_id.is_some()
-        && before.owner.resident().is_some()
-        && before.output_ended_at.is_some()
-        && !(writes.is_empty() && steps.is_empty() && told(record_path, &before)?)
-    {
-        Some(measure(node, record_path, &before)?)
-    } else {
-        None
-    };
-    let _emitting = EMITTING.lock();
+    crate::activity_book::observe(node, record_path, &before)?;
+    if before.call_id.is_none() || before.owner.resident().is_none() {
+        return Ok(());
+    }
+    let gate = EMITTING.get(record_path);
+    let _emitting = gate.lock();
     let record = fastctx_hands::run::record::read(record_path)?;
-    let Some(call_id) = record.call_id.clone() else {
-        return Ok(());
-    };
-    if record.owner.resident().is_none() {
-        return Ok(());
-    }
-    let pending = record_path.with_extension("facts-pending");
-    match std::fs::read(&pending) {
-        Ok(bytes) => {
-            let update: JobFacts = serde_json::from_slice(&bytes)?;
-            deliver(node, &record, &update)?;
-            std::fs::remove_file(&pending)?;
-        }
-        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-        Err(error) => return Err(error),
-    }
-    let state = crate::jobs::state(&record);
-    let saved = record_path.with_extension("facts-state");
-    let mut emitted: Emitted = match std::fs::read(&saved) {
-        Ok(bytes) => serde_json::from_slice(&bytes)?,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => Emitted::default(),
-        Err(error) => return Err(error),
-    };
-    let output_ended = record.output_ended_at.is_some();
-    // A stopped capture can finish draining without changing its RunState.
-    if writes.is_empty()
-        && steps.is_empty()
-        && emitted.state.as_ref() == Some(&state)
-        && emitted.output_ended == output_ended
-    {
-        return Ok(());
-    }
-    emitted.sequence =
-        emitted.sequence.checked_add(1).ok_or_else(|| io::Error::other("job facts sequence exhausted"))?;
-    emitted.state = Some(state.clone());
-    emitted.output_ended = output_ended;
-    let (output, notes) = if record.output_ended_at.is_some() {
-        // Measured before the lock, unless the output ended since or a
-        // write was noted since: then it is measured here.
-        let (output, notes) = match measured {
-            Some((measured, noted)) if noted == serde_json::to_vec(&super::writes(record_path)?)? => measured,
-            _ => measure(node, record_path, &record)?.0,
+    let call_id = record.call_id.clone().expect("a call was recorded");
+    let metadata = crate::job_metadata::Job::of(record_path, &record)?;
+    if let Some(bytes) = metadata.raw("facts-pending")? {
+        let update = match serde_json::from_slice::<Recovery>(&bytes)? {
+            Recovery::Current(pending) => {
+                metadata.put("facts-state", &pending.emitted)?;
+                pending.update
+            }
+            Recovery::Legacy(update) => {
+                let mut emitted = metadata.get::<Emitted>("facts-state")?.unwrap_or_default();
+                if emitted.sequence < update.sequence {
+                    emitted.sequence = update.sequence;
+                    emitted.state = update.state.clone();
+                    emitted.output_ended = update.output.is_some();
+                    metadata.put("facts-state", &emitted)?;
+                }
+                *update
+            }
         };
-        (Some(output), Some(notes))
-    } else {
-        (None, None)
-    };
-    let update = JobFacts {
-        record: Some(record_path.to_string_lossy().into_owned()),
-        script: Some(record.script.clone()),
-        started_at: Some(record.started_at),
-        finished_at: record.end.as_ref().map(|end| end.at),
-        turn: record.turn.clone(),
-        call_id,
-        primary: record.on.is_none(),
-        output,
-        notes,
-        visited: crate::jobs::visited(record_path.parent().expect("job record has a directory"), &record.id),
-        machine: record.machine.clone(),
-        job: record.id.clone(),
-        sequence: emitted.sequence,
-        state: Some(state),
-        writes,
-        steps,
-    };
-    let pending = record_path.with_extension("facts-pending");
-    publish(&pending, &serde_json::to_vec(&update)?, Permissions::Private)?;
-    publish(&saved, &serde_json::to_vec(&emitted)?, Permissions::Private)?;
-    deliver(node, &record, &update)?;
-    std::fs::remove_file(pending)?;
-    Ok(())
+        deliver(node, &record, &update)?;
+        metadata.delete("facts-pending")?;
+    }
+    let mut emitted = metadata.get::<Emitted>("facts-state")?.unwrap_or_default();
+    super::writing::recover(record_path, emitted.journal_version == 0)?;
+    if !emitted.sql_members {
+        emitted.writes_offset = 0;
+        emitted.visits_offset = 0;
+        emitted.sql_members = true;
+        emitted.metadata_sent = emitted.sequence > 0;
+        emitted.journal_version = 1;
+        metadata.put("facts-state", &emitted)?;
+    }
+    loop {
+        let writes = super::read_since(record_path, &mut emitted.writes_offset)?;
+        let visited = super::visits::page(record_path, &mut emitted.visits_offset)?;
+        let steps = {
+            let gate = WRITING.get(&record_path.with_extension("facts"));
+            let _writing = gate.lock();
+            super::journal::read_since(record_path, &mut emitted.steps_segment, &mut emitted.steps_offset)?
+        };
+        let state = crate::jobs::state(&record);
+        let output_ended = record.output_ended_at.is_some();
+        let changed = emitted.state.as_ref() != Some(&state) || emitted.output_ended != output_ended;
+        if writes.is_empty() && steps.is_empty() && visited.is_empty() && !changed {
+            return Ok(());
+        }
+        let owner = record.owner.resident().expect("a resident owns the facts");
+        let incremental = node.is_me(&owner.machine)
+            || crate::facts::cached(node, &owner.machine.clone().into()).is_some_and(|facts| facts.job_fact_deltas);
+        let initial = !emitted.metadata_sent || !incremental;
+        let (output, notes) = if output_ended && (!emitted.output_ended || !incremental || !writes.is_empty()) {
+            let (output, notes) = super::output::ended(node, record_path, &record)?;
+            (Some(output), Some(notes))
+        } else {
+            (None, None)
+        };
+        emitted.sequence = metadata.next_sequence(emitted.sequence)?;
+        emitted.metadata_sent = true;
+        emitted.state = Some(state.clone());
+        emitted.output_ended = output_ended;
+        let update = JobFacts {
+            record: initial.then(|| record_path.to_string_lossy().into_owned()),
+            script: initial.then(|| record.script.clone()),
+            started_at: initial.then_some(record.started_at),
+            finished_at: record.end.as_ref().map(|end| end.at),
+            turn: record.turn.clone(),
+            call_id: call_id.clone(),
+            primary: record.on.is_none(),
+            output,
+            notes,
+            visited,
+            machine: record.machine.clone(),
+            job: record.id.clone(),
+            sequence: emitted.sequence,
+            state: Some(state),
+            writes,
+            steps,
+        };
+        let pending_record = Pending { update: update.clone(), emitted: emitted.clone() };
+        metadata.put("facts-pending", &pending_record)?;
+        metadata.put("facts-state", &emitted)?;
+        deliver(node, &record, &update)?;
+        metadata.delete("facts-pending")?;
+    }
 }
 
 fn deliver(node: &Node, record: &JobRecord, update: &JobFacts) -> io::Result<()> {
@@ -170,8 +154,17 @@ fn deliver(node: &Node, record: &JobRecord, update: &JobFacts) -> io::Result<()>
         .or_else(|| record.account.clone())
         .map(|account| fastctx_types::access::Acting::one(account.hub, account.account))
         .unwrap_or_default();
-    let id =
-        crate::speech::fixed_id("runfacts", &[record.machine.key(), record.id.as_str(), &update.sequence.to_string()]);
+    let id = crate::speech::fixed_id(
+        "runfacts",
+        &[
+            record.machine.key(),
+            owner.machine.key(),
+            owner.resident.as_str(),
+            record.id.as_str(),
+            &record.started_at.to_string(),
+            &update.sequence.to_string(),
+        ],
+    );
     crate::letters::send(
         node,
         &acting,
@@ -179,4 +172,8 @@ fn deliver(node: &Node, record: &JobRecord, update: &JobFacts) -> io::Result<()>
         id,
         fastctx_types::remote::Letter::JobFacts { to: owner.resident.clone(), update: Box::new(update.clone()) },
     )
+}
+
+pub(super) fn segment(record: &Path) -> io::Result<u64> {
+    Ok(crate::job_metadata::Job::open(record)?.get::<Emitted>("facts-state")?.unwrap_or_default().steps_segment)
 }

@@ -1,8 +1,8 @@
 // A project's overview, on one screen: what waits for the user, the work
 // in it drawn as each conversation's way with the machines it stands on
 // (`hub-view.ts`), the pages its residents wrote and where its things are,
-// as its record has them; where project memory is on, its decisions and
-// journals beside its record (`world-memory.md`). Its "⋯" shares it and
+// as its record has them, and its history beside its record
+// (`world-history.md`). Its "⋯" shares it and
 // hands it on, where the reader may (`../app/project-acts.ts`).
 // Side by side where there is room, each column scrolling on its own;
 // behind tabs on a narrow screen. Like the front page, every line is the
@@ -19,8 +19,8 @@ import type { PageWords } from "../pages/words";
 import type { HomeWords } from "../home/words";
 import type { ProjectWords } from "./words";
 import { agentName } from "../world/names";
-import type { MemoryAuthor, MemoryCatalog, MemoryRevision } from "../world/memory";
-import type { MemoryWords } from "./memory-words";
+import type { HistoryAuthor, HistoryCatalog, HistoryRevision } from "../world/history";
+import type { HistoryWords } from "./history-words";
 import type { SentinelPhase, SentinelSummary } from "../world/sentinels";
 import { hubOf } from "./hub-model";
 import { hubPicture, type HubViewOptions } from "./hub-view";
@@ -45,9 +45,9 @@ export interface ProjectOptions {
   /** The project's "⋯": whether it has anything for the reader, opening
    *  it, and whose the project is where it is another's. */
   more?: { label: string; shown(town: string): boolean; open(town: string, name: string, anchor: HTMLElement): void; sharedBy(town: string): string | null };
-  /** The project's memory, where the feature is on: where a document is
-   *  read, and writing a journal. */
-  memory?: { words: MemoryWords; link(town: string, name: string): string; write(town: string): void; writer(author: MemoryAuthor): string };
+  /** The project's history, where it is offered: where a document is
+   *  read, and writing a new one. */
+  history?: { words: HistoryWords; link(town: string, name: string): string; write(town: string): void; writer(author: HistoryAuthor): string };
   /** A machine's own page. */
   machineLink(machine: string): string;
   /** A watcher's own page. */
@@ -59,7 +59,7 @@ export interface ProjectOptions {
   seenTold(key: string): string | null;
 }
 
-type Tab = "instructions" | "specs" | "journals" | "pages" | "places";
+type Tab = "instructions" | "history" | "pages" | "places";
 /** The page's two views: the work now, drawn; and what the project keeps. */
 type View = "now" | "reference";
 
@@ -91,8 +91,8 @@ export class ProjectPage {
   private view: View;
   private record: ProjectRecord | null = null;
   private drawn = "";
-  /** Its memory as last read; none while the feature is off or unread. */
-  private catalog: MemoryCatalog | null = null;
+  /** Its history as last read; none while it is not offered or unread. */
+  private catalog: HistoryCatalog | null = null;
   private last: { map: MapView; who: WorldWho; now: Date } | null = null;
   /** Each conversation's plan as last read, by `resident@machine`. */
   private plans: ReadonlyMap<string, string | null> = new Map();
@@ -124,7 +124,7 @@ export class ProjectPage {
       if (this.record) options.revise(options.town, this.record);
     });
     this.element.addEventListener("click", (event) => {
-      if ((event.target as HTMLElement).closest("[data-write-journal]")) options.memory?.write(options.town);
+      if ((event.target as HTMLElement).closest("[data-write-history]")) options.history?.write(options.town);
       // A watcher's mark, in its conversation's row, opens its own page.
       const sense = (event.target as HTMLElement).closest<HTMLElement>("[data-sense]");
       if (sense) {
@@ -153,8 +153,8 @@ export class ProjectPage {
     this.choose();
   }
 
-  /** The project's memory, read again; null where it is off. */
-  showMemory(catalog: MemoryCatalog | null): void {
+  /** The project's history, read again; null where it is not offered. */
+  showHistory(catalog: HistoryCatalog | null): void {
     this.catalog = catalog;
     if (this.last) this.update(this.last.map, this.last.who, this.last.now);
   }
@@ -196,15 +196,15 @@ export class ProjectPage {
           ? `<p class="project-instructions">${escape(record.what.trim())}</p>`
           : `<p class="quiet">${escape(words.noInstructions)}</p>`,
       ],
-      ...this.memorySections(map.town, now),
+      ...this.historySection(map.town, now),
       ["pages", this.options.pageWords.pages, this.pages(map.town, map.pages, now)],
       ["places", words.places, record.places.length ? this.places(map) : `<p class="quiet">${escape(words.noPlaces)}</p>`],
     ];
     const section = ([tab, title, body]: [Tab, string, string]) =>
       `<section class="home-section" data-tab="${tab}"><h2 class="section-title">${escape(title)}</h2>${body}</section>`;
-    // What the project keeps: what it is and what was decided beside, what
-    // was written along the way and where its things are on the other side.
-    const first: Tab[] = ["instructions", "specs"];
+    // What the project keeps: its history on one side; what it asks of
+    // everyone working in it, its pages and where its things are on the other.
+    const first: Tab[] = sections.some(([tab]) => tab === "history") ? ["history"] : ["instructions"];
     const reference = `<div class="ph-reference">${facts}<div class="board-column">${sections
       .filter(([tab]) => first.includes(tab))
       .map(section)
@@ -272,36 +272,30 @@ export class ProjectPage {
       .join("")}</ul>`;
   }
 
-  /** Its decisions, then its journals, the latest written first. */
-  private memorySections(town: string, now: Date): [Tab, string, string][] {
-    const memory = this.options.memory;
+  /** Its documents, the latest changed first; one taken down stays at
+   *  the end, marked, so it can be read and brought back. */
+  private historySection(town: string, now: Date): [Tab, string, string][] {
+    const history = this.options.history;
     const catalog = this.catalog;
-    if (!memory || !catalog) return [];
-    const words = memory.words;
-    const list = (revisions: MemoryRevision[], icon: "spec" | "journal", empty: string) => {
-      if (!revisions.length) return `<p class="quiet">${escape(empty)}</p>`;
-      const sorted = [...revisions].sort((a, b) => Date.parse(b.author.at) - Date.parse(a.author.at));
-      return `<ul class="page-links">${sorted
-        .map((one) => {
-          const facts = [
-            ...(one.kind === "spec" ? [words.version(one.version)] : []),
-            this.options.pageWords.written(memory.writer(one.author), this.options.home.ago(now.getTime() - Date.parse(one.author.at))),
-          ];
-          return `<li><a class="page-link" href="${escape(memory.link(town, one.name))}" title="${escape(facts.join("　"))}">
-          <span class="page-link-glyph">${glyph(icon, 18)}</span>
+    if (!history || !catalog) return [];
+    const words = history.words;
+    const write = `<button class="text-button start-history" type="button" data-write-history>${glyph("plus", 16)}<span>${escape(words.newDocument)}</span></button>`;
+    if (!catalog.documents.length) return [["history", words.history, `<p class="quiet">${escape(words.noDocuments)}</p>${write}`]];
+    const changed = (one: HistoryRevision) => Date.parse(one.author.at);
+    const sorted = [...catalog.documents].sort((a, b) => Number(a.retired === true) - Number(b.retired === true) || changed(b) - changed(a));
+    const rows = sorted
+      .map((one) => {
+        const said = words.changed(history.writer(one.author), this.options.home.ago(now.getTime() - changed(one)));
+        return `<li><a class="page-link history-link" href="${escape(history.link(town, one.name))}" title="${escape(said)}">
+          <span class="page-link-glyph">${glyph("history", 18)}</span>
           <span class="page-link-body">
-            <span class="page-link-title">${escape(one.name)}</span>
+            <span class="page-link-title">${escape(one.name)}${one.retired ? `<span class="tag">${escape(words.retired)}</span>` : ""}</span>
             <span class="page-link-about">${escape(one.description)}</span>
           </span>
         </a></li>`;
-        })
-        .join("")}</ul>`;
-    };
-    const write = `<button class="text-button start-journal" type="button" data-write-journal>${glyph("plus", 16)}<span>${escape(words.newJournal)}</span></button>`;
-    return [
-      ["specs", words.specs, list(catalog.specs, "spec", words.noSpecs)],
-      ["journals", words.journals, list(catalog.journals, "journal", words.noJournals) + write],
-    ];
+      })
+      .join("");
+    return [["history", words.history, `<ul class="page-links">${rows}</ul>${write}`]];
   }
 
   private places(map: MapView): string {

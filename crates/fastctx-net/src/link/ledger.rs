@@ -74,6 +74,31 @@ impl Link {
         self.page(town, answer)
     }
 
+    /// History's old revisions stay at the hub; current documents have their
+    /// own replica stream. The cursor accounts for omitted history entries.
+    pub async fn ledger_projection(&self, town: &TownId, after: u64) -> Result<(Vec<PageItem>, bool, u64), String> {
+        if !self.view().shared_records {
+            let (items, more) = self.ledger_read(town, after).await?;
+            let through = items.last().map_or(after, |item| item.seq);
+            return Ok((items, more, through));
+        }
+        let answer = self.inner.ask(Question::LedgerProjection { town: town.clone(), after }).await?;
+        let Told::LedgerProjection { entries, through, more } = answer else {
+            return Err("the hub did not return a project projection".into());
+        };
+        if through < after || entries.iter().any(|(seq, _)| *seq <= after || *seq > through) {
+            return Err("the project projection has an invalid cursor".into());
+        }
+        let (items, more) = self.page(town, Told::Entries { entries, more })?;
+        if items
+            .iter()
+            .any(|item| item.entry.as_ref().is_some_and(|entry| crate::topic_history::has_history(&entry.files)))
+        {
+            return Err("the project projection unexpectedly included historical document bodies".into());
+        }
+        Ok((items, more, through))
+    }
+
     /// None means no control connection, or that it ended before answering.
     /// Refusals and invalid answers remain errors, not offline cache hits.
     pub async fn try_ledger_catalog(&self) -> Result<Option<Vec<(TownId, u64)>>, String> {

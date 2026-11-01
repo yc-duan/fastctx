@@ -47,8 +47,18 @@ pub(super) async fn exercise(
         child_plan.starts_with(working) && child_plan != parent_plan,
         json!(child_plan),
     );
-    std::fs::write(&child_plan, "FORK_FILES_STAY")?;
-    anyhow::ensure!(plan_is(world, &child.resident, "FORK_FILES_STAY").await, "the fork's file did not sync");
+    world
+        .talk(
+            child.resident.clone(),
+            Some("host".parse()?),
+            format!(
+                "ALICE_FORK_WRITE [[run: on alice-two write '{}' <<'PLAN'\nFORK_FILES_STAY\nPLAN]]",
+                child_plan.display()
+            ),
+        )
+        .await?;
+    anyhow::ensure!(idle(host, child.resident.as_str()).await, "the fork write did not settle");
+    anyhow::ensure!(plan_is(world, &child.resident, "FORK_FILES_STAY\n").await, "the fork's file did not sync");
     let turn = match said.landed {
         Landed::NewTurn { turn } | Landed::JoinedTurn { turn } => turn,
         other => anyhow::bail!("the fork's input was not accepted: {other:?}"),
@@ -58,7 +68,7 @@ pub(super) async fn exercise(
     record(
         "native rewind leaves the account's working files unchanged",
         matches!(result, Controlled::Done { .. } | Controlled::Rewound { .. })
-            && std::fs::read_to_string(&child_plan)? == "FORK_FILES_STAY",
+            && std::fs::read_to_string(&child_plan)? == "FORK_FILES_STAY\n",
         json!(null),
     );
     record(

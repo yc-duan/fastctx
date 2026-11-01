@@ -9,7 +9,7 @@ use crate::Hub;
 
 pub(super) fn read(root: &Path) -> Result<Looked, String> {
     let path = root.join("looked.json");
-    match std::fs::read(&path) {
+    match fastctx_platform::disk::read(&path) {
         Ok(bytes) => serde_json::from_slice(&bytes).map_err(|error| format!("{}: {error}", path.display())),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(Looked::default()),
         Err(error) => Err(format!("{}: {error}", path.display())),

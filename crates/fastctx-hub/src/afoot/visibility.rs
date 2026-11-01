@@ -2,17 +2,13 @@
 
 use super::{AccountName, Afoot, Arc, BTreeSet, MachineName, ResidentId, Seen};
 use fastctx_net::directory_index::Indexed;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 
 /// Candidates include every way an account can see a member; the policy still
 /// decides visibility, including locked accounts and expiring assistance.
-pub(super) fn candidates<'a>(
-    directory: &Indexed<'_>,
-    logins: &BTreeSet<AccountName>,
-    told: &'a HashMap<MachineName, Afoot>,
-) -> Vec<&'a MachineName> {
+pub(super) fn candidates(directory: &Indexed<'_>, logins: &BTreeSet<AccountName>) -> Vec<MachineName> {
     if logins.iter().any(|account| directory.is_super(account)) {
-        return told.keys().collect();
+        return directory.all.members.iter().map(|member| member.name.clone()).collect();
     }
     let mut positions = HashSet::new();
     for account in logins {
@@ -25,10 +21,7 @@ pub(super) fn candidates<'a>(
             positions.extend(directory.position(&directory.all.assists[at].machine));
         }
     }
-    positions
-        .into_iter()
-        .filter_map(|at| told.get_key_value(&directory.all.members[at].name).map(|(name, _)| name))
-        .collect()
+    positions.into_iter().map(|at| directory.all.members[at].name.clone()).collect()
 }
 
 /// Whether a member logged in to `logins` sees `machine` at all, as its
@@ -48,6 +41,7 @@ pub(super) fn seen(
     machine: &MachineName,
     afoot: &Afoot,
     hidden: Option<&BTreeSet<ResidentId>>,
+    replicated_records: bool,
 ) -> Seen {
     let theirs = |accounts: &[AccountName]| accounts.iter().any(|account| logins.contains(account));
     let shown = |id: &ResidentId| hidden.is_none_or(|hidden| !hidden.contains(id));
@@ -56,8 +50,29 @@ pub(super) fn seen(
     let mut seen = Seen::default();
     let projected = Arc::make_mut(&mut seen.afoot);
     for (id, resident) in &afoot.residents {
-        if theirs(&resident.accounts) && shown(id) {
-            projected.residents.insert(id.clone(), resident.resident.clone());
+        // Born on a machine that is still the one, and still its owner's.
+        let born = resident.shared_on.as_ref().filter(|born| {
+            resident.born_seal.as_deref().is_some_and(|seal| {
+                directory.member(born).and_then(fastctx_net::record_ownership::seal).is_some_and(|now| now == seal)
+            })
+        });
+        if shown(id)
+            && (replicated_records || theirs(&resident.accounts))
+            && logins
+                .iter()
+                .any(|account| fastctx_net::record_ownership::allows(directory, account, &resident.accounts, born))
+        {
+            let mut summary = resident.resident.clone();
+            summary.about.focus.machines.retain(|focused| {
+                focused.machine.hub.is_none()
+                    && logins.iter().any(|account| directory.rights(account, &focused.machine.name).hands)
+            });
+            summary.opened_by = if theirs(&resident.accounts) {
+                None
+            } else {
+                resident.accounts.first().cloned().map(|account| fastctx_types::town::OpenedBy { account })
+            };
+            projected.residents.insert(id.clone(), summary);
         }
     }
     for (id, job) in &afoot.jobs {

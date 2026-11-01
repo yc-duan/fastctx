@@ -9,6 +9,7 @@ import type { SaidWords } from "../conversation/said";
 import type { CommandWords } from "../conversation/commands";
 import type { FileWords } from "../conversation/mention";
 import type { PresenceWords } from "./presence";
+import { enTroubles, zhTroubles } from "./trouble-words";
 import type { ReaderWords } from "./reader";
 import { sizeOf, type AttachWords } from "../conversation/attach";
 import { enProblems, failure, zhProblems } from "./problem";
@@ -20,6 +21,8 @@ export interface ShellWords {
   someoneAssisting(agent: string, owner: string): string;
   /** A conversation forked from another. */
   forked: string;
+  /** Another account opened it, on a machine shared with the user. */
+  openedBy(account: string): string;
   app: string;
   world: string;
   projects: string;
@@ -365,6 +368,7 @@ export const enNewTalk: NewTalkWords = {
 };
 
 export const zhPresence: PresenceWords = {
+  troubles: zhTroubles,
   asked: (who, what) =>
     `${who} ${{ answer: "问你", command: "想运行命令", change: "想改文件", tool: "想用工具", plan: "想按计划动手", form: "等你填写", other: "等你允许", waiting: "等你回复" }[what]}`,
   finished: (who) => `${who} 回复了`,
@@ -396,6 +400,7 @@ export const zhPresence: PresenceWords = {
 };
 
 export const enPresence: PresenceWords = {
+  troubles: enTroubles,
   asked: (who, what) =>
     `${who} ${{ answer: "asks", command: "wants to run a command", change: "wants to change files", tool: "wants to use a tool", plan: "wants to start on its plan", form: "needs a form filled in", other: "needs your OK", waiting: "is waiting for your reply" }[what]}`,
   finished: (who) => `${who} replied`,
@@ -545,7 +550,7 @@ export const zhSettings: SettingsWords = {
     ["Esc", "关闭菜单与查找"],
   ],
   notify: "通知",
-  notifyOn: "等待回复或回复完成时通知",
+  notifyOn: "开启",
   notifyOff: "关闭",
   retention: "命令输出保留",
   data: "本机数据",
@@ -667,7 +672,7 @@ export const enSettings: SettingsWords = {
     ["Esc", "Close menus and find"],
   ],
   notify: "Notifications",
-  notifyOn: "Notify when waiting or replied",
+  notifyOn: "On",
   notifyOff: "Off",
   retention: "Keep command output",
   data: "Data",
@@ -1719,6 +1724,7 @@ export const zhShell: ShellWords = {
   someone: (agent, machine) => `${machine} 上的 ${agent}`,
   someoneAssisting: (agent, owner) => `${owner} 的 ${agent}`,
   forked: "分叉出来的对话",
+  openedBy: (account) => `${account} 开的`,
   colleagueFor: (asker) => `${asker} 调用的模型`,
   busy: (lasted) => `工作中　${lasted}`,
   idle: "空闲",
@@ -1776,6 +1782,7 @@ export const enShell: ShellWords = {
   someone: (agent, machine) => `${agent} on ${machine}`,
   someoneAssisting: (agent, owner) => `${owner}'s ${agent}`,
   forked: "Forked from another conversation",
+  openedBy: (account) => `Opened by ${account}`,
   colleagueFor: (asker) => `called by ${asker}`,
   busy: (lasted) => `working, ${lasted}`,
   idle: "idle",

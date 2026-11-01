@@ -52,6 +52,7 @@ mod desk;
 mod devices;
 mod directory_changes;
 mod ending;
+pub use ending::flush_log;
 mod facts;
 mod features;
 mod file_events;
@@ -68,6 +69,7 @@ mod goals;
 pub mod handoff;
 mod held_history;
 mod here;
+mod history;
 mod homes;
 mod hub_arrival;
 mod hub_moving;
@@ -75,6 +77,7 @@ mod inbox;
 mod initializing;
 mod intake;
 mod job_accounts;
+mod job_metadata;
 mod job_reader;
 mod job_receipts;
 mod job_watch;
@@ -97,7 +100,6 @@ mod machine;
 mod managed;
 mod management;
 mod mcp;
-mod memory;
 mod memory_room;
 mod obligations;
 mod on;
@@ -117,11 +119,18 @@ mod proxy_setting;
 mod ranked;
 mod reach;
 mod received;
+mod record_access;
+mod record_database;
+mod record_gates;
+mod record_ownership;
+mod record_payloads;
+mod records;
 mod recovery;
 mod removed;
 mod renewal;
 mod renewal_legacy;
 pub mod replacement;
+mod replicas;
 mod resident_storage;
 mod residents;
 mod retention;
@@ -188,6 +197,8 @@ pub(crate) struct Node {
     root: PathBuf,
     world: WorldDir,
     database: fastctx_storage::Database,
+    book_database: fastctx_storage::Database,
+    controls_due: std::sync::Mutex<std::collections::HashMap<fastctx_types::ResidentId, bool>>,
     /// This program's own copy under the World, which everything the node
     /// starts from itself runs from (`own.rs`).
     fastctx: PathBuf,
@@ -206,6 +217,19 @@ pub(crate) struct Node {
     plan_files: plan_file::PlanFiles,
     copies: placement::copies::Copies,
     context_bodies: context::memory::Bodies,
+    replicas: replicas::Copies,
+    /// What this machine keeps in memory of each history scope, when it
+    /// has no network (`history::shelf`).
+    history_shelves: history::shelf::Shelves,
+    /// What this machine keeps in memory of the ledgers it writes alone
+    /// (`ledger::alone`).
+    alone_ledgers: ledger::alone::Ledgers,
+    /// What each hub was last told of each conversation's records
+    /// (`record_ownership::Registered`).
+    registered: record_ownership::Registered,
+    /// The latest read of each conversation's collaboration asked for here
+    /// (`colleagues::tree::Reads`).
+    collaboration_reads: colleagues::tree::Reads,
     plan_reads: plan_reads::Reads,
     skill_copies: skills::copies::Copies,
     skill_index: skills::cache::Cache,
@@ -269,8 +293,9 @@ pub(crate) struct Node {
     /// Moves whenever what an interface shows of the World may have changed,
     /// beyond the residents and jobs here (`shown`).
     shown: tokio::sync::watch::Sender<u64>,
+    /// The World as the interfaces watching it are told it (`shown::Shown`).
+    world_shown: shown::Shown,
     memory_changes: tokio::sync::watch::Sender<u64>,
-    folder_reads: memory::folder_reads::Reads,
     /// What the other machines said of themselves (`facts`).
     facts: facts::Facts,
     /// Deletions of conversations still to be asked of hubs (`forget`).
@@ -316,6 +341,7 @@ pub(crate) struct Node {
     control_letters: control_letters::Receiving,
     receipts_changed: tokio::sync::Notify,
     outbox: outbox::Outbox,
+    delivery_work: delivery::work::Work,
     on_stopping: std::sync::Mutex<std::collections::HashSet<PathBuf>>,
     on_delivering: std::sync::Mutex<std::collections::HashSet<PathBuf>>,
     notifying_jobs: std::sync::Mutex<std::collections::HashSet<PathBuf>>,
@@ -536,9 +562,13 @@ pub async fn run_prepared(
             .context("saying this node waits to take the World")?;
     }
     let supervision = match supervision {
-        Some(supervision) => {
-            Some(tokio::task::block_in_place(|| supervision.prepare()).context("talking to the guardian")?)
-        }
+        Some(supervision) => Some(
+            tokio::task::block_in_place(|| {
+                let _blocking = fastctx_platform::roles::scoped(fastctx_platform::roles::Role::Blocking);
+                supervision.prepare()
+            })
+            .context("talking to the guardian")?,
+        ),
         None => None,
     };
     ensure_private_dir(world.path()).with_context(|| format!("preparing {}", world.path().display()))?;
@@ -578,7 +608,16 @@ pub async fn run_prepared(
     // The node usually has no terminal: a panic in any of its tasks is
     // written to its log, or it would leave no trace.
     let panics = log.clone();
-    std::panic::set_hook(Box::new(move |info| panics.line(format_args!("panicked: {info}"))));
+    std::panic::set_hook(Box::new(move |info| {
+        panics.line(format_args!("panicked: {info}"));
+        panics.flush(std::time::Duration::from_millis(500));
+    }));
+    // What went wrong, written down while it lasts, and how long tasks wait
+    // for a thread (`specs/world-engine.md`, 量与告警).
+    fastctx_platform::scene::set_place(world.path().join("scenes"));
+    let tail = log.clone();
+    fastctx_platform::scene::set_tail(move || tail.recent());
+    fastctx_platform::task::watch("node");
     let machine = machine::names(&world)?;
     log.line(format_args!("node {} starting as {}", env!("CARGO_PKG_VERSION"), machine.name));
     let lifetime = lifetime::inspect(supervision.is_some())
@@ -644,15 +683,87 @@ pub async fn run_prepared(
     );
     let claude = claude::Claude::new(&world)?;
     let memory_room = memory_room::Room::new(&world);
-    let schema = format!("{}{}", composer::SCHEMA, activity_book::SCHEMA);
-    let database = fastctx_storage::Database::open(&world.path().join("node.sqlite3"), &schema)
-        .context("opening the node database")?;
+    let schema = composer::SCHEMA;
+    let database = fastctx_storage::Database::open_or_unavailable(&world.path().join("node.sqlite3"), schema, |db| {
+        fastctx_storage::versions::apply(
+            db,
+            "node.record-payloads",
+            &[fastctx_storage::versions::Migration { version: 1, sql: record_payloads::SCHEMA }],
+        )?;
+        fastctx_storage::versions::apply(
+            db,
+            "node.record-maps",
+            &[fastctx_storage::versions::Migration { version: 1, sql: records::maps::SCHEMA }],
+        )?;
+        fastctx_storage::versions::apply(
+            db,
+            "node.terminals",
+            &[fastctx_storage::versions::Migration { version: 1, sql: delivery::terminals::SCHEMA }],
+        )?;
+        fastctx_storage::versions::apply(
+            db,
+            "node.run-facts",
+            &[
+                fastctx_storage::versions::Migration { version: 1, sql: run_facts::SCHEMA },
+                fastctx_storage::versions::Migration { version: 2, sql: run_facts::SCHEMA },
+            ],
+        )?;
+        fastctx_storage::versions::apply(
+            db,
+            "node.session-events",
+            &[
+                fastctx_storage::versions::Migration { version: 1, sql: session_record::SCHEMA },
+                fastctx_storage::versions::Migration { version: 2, sql: session_record::SCHEMA },
+            ],
+        )?;
+        fastctx_storage::versions::apply(
+            db,
+            "node.records",
+            &[fastctx_storage::versions::Migration { version: 1, sql: records::SCHEMA }],
+        )?;
+        fastctx_storage::versions::apply(
+            db,
+            "node.input-membership",
+            &[fastctx_storage::versions::Migration { version: 1, sql: inbox::presence::SCHEMA }],
+        )?;
+        fastctx_storage::versions::apply(
+            db,
+            "node.goal-projection",
+            &[fastctx_storage::versions::Migration { version: 1, sql: goals::SCHEMA }],
+        )
+    });
+    if let Some(error) = database.fault() {
+        log.line(format_args!("node record storage unavailable: {error}"));
+    }
+    if let Some(report) = database.salvaged() {
+        log.line(format_args!(
+            "node record storage was damaged and set aside; what could be read was salvaged:\n{report}"
+        ));
+    }
+    record_database::register(&world, &database);
+    let book_database = fastctx_storage::Database::open_or_unavailable(&world.path().join("book.sqlite3"), "", |db| {
+        fastctx_storage::versions::apply(
+            db,
+            "node.activity-book",
+            &[fastctx_storage::versions::Migration { version: 1, sql: activity_book::SCHEMA }],
+        )
+    });
+    if let Some(error) = book_database.fault() {
+        log.line(format_args!("activity book storage unavailable: {error}"));
+    }
+    if let Some(report) = book_database.salvaged() {
+        log.line(format_args!(
+            "activity book storage was damaged and set aside; what could be read was salvaged:\n{report}"
+        ));
+    }
     // Built cyclically so the goal services can hold a weak handle back to the
     // node they reach account records and context through.
     let node = Arc::new_cyclic(|weak: &std::sync::Weak<Node>| Node {
         root: fastctx_root.to_path_buf(),
         world,
         database,
+        book_database,
+        controls_due: Default::default(),
         fastctx,
         machine: RwLock::new(machine),
         jobs: jobs::Jobs::new(),
@@ -666,6 +777,11 @@ pub async fn run_prepared(
         plan_files: Default::default(),
         copies: Default::default(),
         context_bodies: Default::default(),
+        replicas: Default::default(),
+        history_shelves: Default::default(),
+        alone_ledgers: Default::default(),
+        registered: Default::default(),
+        collaboration_reads: Default::default(),
         plan_reads: Default::default(),
         skill_copies: Default::default(),
         skill_index: Default::default(),
@@ -705,8 +821,8 @@ pub async fn run_prepared(
         ways: tokio::sync::watch::channel(0).0,
         views: tokio::sync::watch::channel(0).0,
         shown: tokio::sync::watch::channel(0).0,
+        world_shown: Default::default(),
         memory_changes: tokio::sync::watch::channel(0).0,
-        folder_reads: Default::default(),
         facts: facts::Facts::default(),
         forget_asks: forget::Asks::default(),
         stuck: Default::default(),
@@ -729,6 +845,7 @@ pub async fn run_prepared(
         control_letters: Default::default(),
         receipts_changed: Default::default(),
         outbox: Default::default(),
+        delivery_work: Default::default(),
         on_stopping: Default::default(),
         on_delivering: Default::default(),
         notifying_jobs: Default::default(),
@@ -747,8 +864,11 @@ pub async fn run_prepared(
         lifetime,
         started: jiff::Timestamp::now(),
     });
-    context::migrate(&node);
-    letters::migrate(&node);
+    if node.database.fault().is_none() {
+        activity_book::start(&node);
+        context::migrate(&node);
+        letters::migrate(&node);
+    }
     // The third version's projects are kept as this computer's own, to be
     // carried into its account at its hub.
     let (kept, problems) =
@@ -767,21 +887,30 @@ pub async fn run_prepared(
         node.log.line(format_args!("on the hub {} ({}) as {}", membership.hub_name, membership.id, membership.name));
         world::start(&node, membership).context("starting a link to a hub")?;
     }
-    on_stop::resume(&node).await;
-    run_stops::resume(&node);
+    if node.database.fault().is_none() {
+        on_stop::resume(&node).await;
+        run_stops::resume(&node);
+    }
     codex::listen(node.clone(), codex_heard.events);
     logins::limits::listen(node.clone(), codex_heard.limits);
     logins::heard::listen(node.clone(), codex_heard.said);
     claude::start(&node).context("writing the World's Claude Code plugin")?;
     composer::prepare_recovery(&node);
-    retention::start(&node).context("starting command artifact retention")?;
+    if node.database.fault().is_none() {
+        retention::start(&node).context("starting command artifact retention")?;
+    }
     let recovering = node.clone();
     tokio::spawn(async move {
         let node = recovering;
         startup::recover(&node).await;
         node.effects_ready.store(true, std::sync::atomic::Ordering::Release);
         node.effects_changed.notify_waiters();
+        if node.database.fault().is_some() {
+            node.log.line("record recovery is unavailable; durable work remains pending until storage is repaired");
+            return;
+        }
         stops::recover(&node);
+        delivery::work::recover(&node);
         composer::resume(&node);
         composer::keep(&node);
         lifecycle::start(&node);
@@ -811,6 +940,9 @@ pub async fn run_prepared(
     });
     let jobs_node = node.clone();
     tokio::spawn(async move {
+        if jobs_node.database.fault().is_some() {
+            return;
+        }
         let mut again = again::Again::default();
         loop {
             match inbox::settle_jobs(&jobs_node).await {
@@ -901,3 +1033,9 @@ pub async fn run_prepared(
         }
     }
 }
+
+#[cfg(feature = "storage-drill")]
+#[doc(hidden)]
+pub use storage_drill::run as record_drill;
+#[cfg(feature = "storage-drill")]
+mod storage_drill;

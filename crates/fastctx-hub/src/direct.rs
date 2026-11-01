@@ -34,7 +34,7 @@ struct Trial {
 }
 
 impl Hub {
-    fn trials(&self) -> std::sync::MutexGuard<'_, Trials> {
+    fn trials(&self) -> crate::locks::Guard<'_, Trials> {
         self.trials.lock().expect("never poisoned")
     }
 
@@ -63,48 +63,53 @@ impl Hub {
 /// longer: the change `asker` makes as `account`.
 pub(crate) async fn change(
     hub: Arc<Hub>,
-    asker: MachineName,
+    asker: crate::origin::Origin,
     account: AccountName,
     machine: MachineName,
     at: Vec<SocketAddr>,
 ) -> Result<Told, String> {
     let machine = hub.store().book.directory.canonical(&machine).clone();
     let action = Action::Direct { machine: machine.clone(), at: at.clone() };
-    let actor = Actor { account: Some(account.clone()), authenticated: true, member: Some(asker.clone()), peer: None };
+    let actor =
+        Actor { account: Some(account.clone()), authenticated: true, member: Some(asker.name.clone()), peer: None };
     let outcome = allow(&hub, &asker, &account, &machine, &at).await;
-    let mut store = hub.store();
-    let directory = store.book.directory.clone();
-    let kept = match &outcome {
-        Ok(_) => crate::machine_log::keep(&mut store, &directory, actor, action, Outcome::Done),
-        Err(reason) => crate::machine_log::keep(
-            &mut store,
-            &directory,
-            Actor { authenticated: directory.logged_in(&asker, &account), ..actor },
-            action,
-            Outcome::Refused { reason: reason.clone() },
-        ),
-    };
-    drop(store);
-    match &outcome {
-        Ok(_) if at.is_empty() => hub.log.line(format_args!("{machine} no longer takes direct connections")),
-        Ok(_) => hub.log.line(format_args!(
-            "{machine} takes direct connections at {}",
-            at.iter().map(ToString::to_string).collect::<Vec<_>>().join(", ")
-        )),
-        Err(reason) => hub.log.line(format_args!("direct connections to {machine} were not allowed: {reason}")),
-    }
-    hub.changed();
-    kept?;
-    outcome
+    hub.blocking(move |hub| {
+        let mut store = hub.edit_store();
+        let directory = store.book.directory.clone();
+        let kept = match &outcome {
+            Ok(_) => crate::machine_log::keep(&mut store, &directory, actor, action, Outcome::Done),
+            Err(reason) => crate::machine_log::keep(
+                &mut store,
+                &directory,
+                Actor { authenticated: directory.logged_in(&asker, &account), ..actor },
+                action,
+                Outcome::Refused { reason: reason.clone() },
+            ),
+        };
+        drop(store);
+        match &outcome {
+            Ok(_) if at.is_empty() => hub.log.line(format_args!("{machine} no longer takes direct connections")),
+            Ok(_) => hub.log.line(format_args!(
+                "{machine} takes direct connections at {}",
+                at.iter().map(ToString::to_string).collect::<Vec<_>>().join(", ")
+            )),
+            Err(reason) => hub.log.line(format_args!("direct connections to {machine} were not allowed: {reason}")),
+        }
+        hub.changed();
+        kept?;
+        outcome
+    })
+    .await
 }
 
 fn authorized(
     directory: &fastctx_net::directory::Directory,
-    asker: &MachineName,
+    asker: &crate::origin::Origin,
     account: &AccountName,
     machine: &MachineName,
     at: &[SocketAddr],
 ) -> Result<fastctx_net::sign::PublicKey, String> {
+    asker.check(directory)?;
     if !directory.logged_in(asker, account) {
         return Err(format!("{asker} is not logged in to the account {account}"));
     }
@@ -128,28 +133,14 @@ fn authorized(
 
 async fn allow(
     hub: &Arc<Hub>,
-    asker: &MachineName,
+    asker: &crate::origin::Origin,
     account: &AccountName,
     machine: &MachineName,
     at: &[SocketAddr],
 ) -> Result<Told, String> {
     let key = authorized(&hub.store().book.directory, asker, account, machine, at)?;
     if at.is_empty() {
-        let mut store = hub.store();
-        if authorized(&store.book.directory, asker, account, machine, at)? != key {
-            return Err("the machine's identity changed while direct connections were being changed".into());
-        }
-        let member = store
-            .book
-            .directory
-            .members
-            .iter_mut()
-            .find(|member| member.name == *machine)
-            .map(Arc::make_mut)
-            .ok_or_else(|| format!("the machine {machine} was removed"))?;
-        member.direct.clear();
-        store.save_book().map_err(|error| format!("keeping the change: {error}"))?;
-        return Ok(Told::Done);
+        return persist_direct(hub, asker, account, machine, at, key).await;
     }
     match hub.sessions().get(machine) {
         None => {
@@ -178,7 +169,7 @@ async fn allow(
     }
     let _done = Done(hub, machine);
     // The machine sees the check in its view, listens, and says so.
-    hub.changed();
+    hub.changed_async().await;
     // A machine that stays connected and never says so holds the check no
     // longer than this.
     const LISTENS_WITHIN: std::time::Duration = std::time::Duration::from_secs(60);
@@ -208,21 +199,36 @@ async fn allow(
     if !failures.is_empty() {
         return Err(failures.join("; "));
     }
-    let mut store = hub.store();
-    if authorized(&store.book.directory, asker, account, machine, at)? != key {
-        return Err("the machine's identity changed while its direct address was checked".into());
-    }
-    let member = store
-        .book
-        .directory
-        .members
-        .iter_mut()
-        .find(|member| member.name == *machine)
-        .map(Arc::make_mut)
-        .ok_or_else(|| format!("the machine {machine} was removed"))?;
-    member.direct = at.to_vec();
-    store.save_book().map_err(|error| format!("keeping the change: {error}"))?;
-    Ok(Told::Done)
+    persist_direct(hub, asker, account, machine, at, key).await
+}
+
+async fn persist_direct(
+    hub: &Hub,
+    asker: &crate::origin::Origin,
+    account: &AccountName,
+    machine: &MachineName,
+    at: &[SocketAddr],
+    key: fastctx_net::sign::PublicKey,
+) -> Result<Told, String> {
+    let (asker, account, machine, at) = (asker.clone(), account.clone(), machine.clone(), at.to_vec());
+    hub.blocking(move |hub| {
+        let mut store = hub.edit_store();
+        if authorized(&store.book.directory, &asker, &account, &machine, &at)? != key {
+            return Err("the machine's identity changed while its direct address was checked".into());
+        }
+        let member = store
+            .book
+            .directory
+            .members
+            .iter_mut()
+            .find(|member| member.name == machine)
+            .map(Arc::make_mut)
+            .ok_or_else(|| format!("the machine {machine} was removed"))?;
+        member.direct = at.to_vec();
+        store.save_book().map_err(|error| format!("keeping the change: {error}"))?;
+        Ok(Told::Done)
+    })
+    .await
 }
 
 /// Why the hub did not reach `machine` at `address`, by the layer that kept

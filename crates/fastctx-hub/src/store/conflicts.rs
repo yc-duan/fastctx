@@ -16,7 +16,7 @@ pub(super) fn keep(
     let keep = |bytes: &[u8]| -> io::Result<PathBuf> {
         let digest: String = fastctx_net::sign::sha256(bytes).iter().map(|byte| format!("{byte:02x}")).collect();
         let path = directory.join(format!("{digest}.json"));
-        match std::fs::read(&path) {
+        match fastctx_platform::disk::read(&path) {
             Ok(kept) if kept != bytes => {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidData,

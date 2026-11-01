@@ -141,6 +141,20 @@ fn drive_checked(node: &Arc<Node>) -> Result<bool, String> {
         log_progress(node, report);
     }
     let mut pending = read_json::<Pending>(&path(node)).map_err(|e| e.to_string())?;
+    if let Some(stale) = report.as_ref().filter(|report| overtaken(node, report)) {
+        if let Some(request) = pending.as_ref().filter(|request| request.id == stale.id) {
+            if !cleanup(node, request)? {
+                return Ok(true);
+            }
+            remove(&path(node))?;
+        }
+        remove(&super::dir(node).join("repair.json"))?;
+        node.log.line(format_args!(
+            "set aside the failed repair of {}: that program runs here now, its handover complete",
+            stale.version
+        ));
+        return Ok(false);
+    }
     if let Some(request) = pending.as_mut() {
         if let Some(origin) = &request.origin
             && let Some(link) = node.links().iter().find(|link| link.hub() == origin).cloned()
@@ -488,6 +502,44 @@ async fn prepare(node: &Arc<Node>, pending: &Pending) -> Result<(), String> {
     })
     .await
     .map_err(|e| e.to_string())?
+}
+
+/// The layers a completed handover to a program proves sound: its package,
+/// the records, the program and the service that runs it. The application's
+/// own layers are not, and a failure in them stands.
+const PROVED_BY_HANDOVER: [&str; 6] = ["package", "records", "program", "service", "node", "controller"];
+
+/// Whether a failed repair was overtaken: it was to put in place the very
+/// program that runs here now, its handover complete, it ended before this
+/// node started, and it failed only where that handover proves things sound
+/// (as a repair refused by a lock an earlier handover held, 10-31).
+fn overtaken(node: &Node, report: &Report) -> bool {
+    if report.success || report.finished.is_none_or(|finished| finished >= node.started) {
+        return false;
+    }
+    if !report
+        .steps
+        .iter()
+        .filter(|step| step.outcome == Outcome::Failed)
+        .all(|step| PROVED_BY_HANDOVER.contains(&step.layer.as_str()))
+    {
+        return false;
+    }
+    let (Ok(running), Ok(Some(plan))) = (fastctx_install::renewal::build(), fastctx_install::renewal::read(&node.root))
+    else {
+        return false;
+    };
+    running.version == report.version
+        && plan.phase == fastctx_types::renewal::Phase::Complete
+        && plan.candidate.build == running
+}
+
+fn remove(path: &std::path::Path) -> Result<(), String> {
+    match std::fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(format!("deleting {}: {error}", path.display())),
+    }
 }
 
 fn cleanup(node: &Node, request: &Pending) -> Result<bool, String> {

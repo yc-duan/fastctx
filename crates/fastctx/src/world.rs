@@ -845,10 +845,17 @@ pub fn hub(command: HubCommand) -> anyhow::Result<()> {
                 eprintln!("fastctx hub: the limit on open files stays as it was: {error}");
             }
             let leave = fastctx_hub::Leave { remove_service: Box::new(remove_hub_service) };
-            tokio::runtime::Builder::new_multi_thread()
+            let runtime = tokio::runtime::Builder::new_multi_thread()
+                .thread_name("fastctx-hub-work")
+                // A runtime's threads may block until they first wake to run
+                // tasks, which only the scheduler's threads do; its blocking
+                // pool never does (`specs/world-engine.md`).
+                .on_thread_start(|| fastctx_platform::roles::set(fastctx_platform::roles::Role::Blocking))
+                .on_thread_unpark(|| fastctx_platform::roles::set(fastctx_platform::roles::Role::Work))
                 .enable_all()
-                .build()?
-                .block_on(fastctx_hub::serve(&dir, leave))?;
+                .build()?;
+            fastctx_platform::roles::set(fastctx_platform::roles::Role::Work);
+            runtime.block_on(fastctx_hub::serve(&dir, leave))?;
         }
         HubCommand::Arrive { dir: chosen } => {
             let dir = dir(chosen);

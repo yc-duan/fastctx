@@ -221,6 +221,24 @@ export class Pictures {
     this.made.clear();
   }
 
+  /** Opens the viewer on a picture the conversation names by its path, as
+   *  a row's name does: among the conversation's pictures where it is one
+   *  of them, else alone, asked of the machine holding it. */
+  showFile(machine: MachineName, path: string): void {
+    const shown = [...this.root.querySelectorAll<HTMLImageElement>("img[data-picture][src]")].find((image) => image.dataset.path === path && this.pictureOf(image).machine === machine);
+    if (shown) return this.open(shown);
+    const element = document.createElement("img");
+    element.alt = path.split(/[\\/]/).pop() ?? path;
+    element.dataset.path = path;
+    element.dataset.machine = machine;
+    const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    this.viewer?.close();
+    this.viewer = new PictureViewer([this.pictureOf(element)], 0, this, this.options, () => {
+      this.viewer = null;
+      opener?.focus({ preventScroll: true });
+    });
+  }
+
   private open(image: HTMLImageElement): void {
     const all = [...this.root.querySelectorAll<HTMLImageElement>("img[data-picture][src]")];
     this.viewer?.close();
@@ -504,6 +522,8 @@ class PictureViewer {
     if (!this.camera) return;
     const { x, y, scale } = this.camera.view;
     this.image.style.transform = `translate(${x}px, ${y}px) scale(${scale})`;
+    // The hand shows only where there is something to drag.
+    this.stage.classList.toggle("pv-closer", scale > this.fitted * 1.01);
   }
 
   private local(event: MouseEvent): [number, number] {
@@ -513,7 +533,12 @@ class PictureViewer {
 
   private down(event: PointerEvent): void {
     if (event.button !== 0 && event.pointerType === "mouse") return;
+    // A press on one of the stage's own buttons is that button's: capturing
+    // it here would send its click to the stage, and the button would never
+    // hear it.
+    if ((event.target as Element).closest("button")) return;
     this.stage.setPointerCapture(event.pointerId);
+    if (event.pointerType === "mouse") this.stage.classList.add("pv-dragging");
     this.pointers.set(event.pointerId, this.local(event));
     this.swipe =
       this.pointers.size === 1 && this.camera ? { start: this.local(event), fitted: this.camera.view.scale <= this.fitted * 1.01 } : null;
@@ -524,7 +549,8 @@ class PictureViewer {
     if (!before || !this.camera) return;
     const now = this.local(event);
     if (this.pointers.size === 1) {
-      // At its fitted size a picture turns over rather than moving.
+      // At its fitted size a touch turns the picture over and a mouse holds
+      // it still; brought closer, either drags it, as Windows' Photos does.
       if (!this.swipe?.fitted) this.camera.pan(now[0] - before[0], now[1] - before[1]);
     } else if (this.pointers.size === 2) {
       const other = [...this.pointers].find(([id]) => id !== event.pointerId)![1];
@@ -543,7 +569,8 @@ class PictureViewer {
   private up(event: PointerEvent): void {
     const at = this.pointers.get(event.pointerId);
     this.pointers.delete(event.pointerId);
-    if (this.swipe?.fitted && at && this.pointers.size === 0) {
+    if (this.pointers.size === 0) this.stage.classList.remove("pv-dragging");
+    if (this.swipe?.fitted && at && this.pointers.size === 0 && event.pointerType !== "mouse") {
       const dx = at[0] - this.swipe.start[0];
       const dy = at[1] - this.swipe.start[1];
       if (Math.abs(dx) > 64 && Math.abs(dx) > Math.abs(dy) * 1.5) this.go(dx < 0 ? 1 : -1);
@@ -557,10 +584,12 @@ class PictureViewer {
   private wheel(event: WheelEvent): void {
     if (!this.camera) return;
     event.preventDefault();
-    // A trackpad's pinch comes as the wheel with Ctrl.
-    if (event.ctrlKey) this.zoom(Math.exp(-event.deltaY / 240), this.local(event));
+    // The wheel brings the picture closer or takes it away around the
+    // pointer, as Windows' Photos does; a trackpad's pinch comes as the wheel
+    // with Ctrl and does the same. A sideways swipe moves it.
+    if (event.deltaY !== 0 || event.ctrlKey) this.zoom(Math.exp(-event.deltaY / 240), this.local(event));
     else {
-      this.camera.pan(-event.deltaX, -event.deltaY);
+      this.camera.pan(-event.deltaX, 0);
       this.paint();
     }
   }

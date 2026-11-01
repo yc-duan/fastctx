@@ -8,7 +8,7 @@ use std::io;
 use std::path::Path;
 
 fn entries(path: &Path) -> io::Result<Option<std::fs::ReadDir>> {
-    match std::fs::read_dir(path) {
+    match fastctx_platform::disk::read_dir(path) {
         Ok(entries) => Ok(Some(entries)),
         Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
         Err(error) => Err(error),
@@ -42,7 +42,7 @@ pub(super) fn run(net: &NetDir) -> io::Result<usize> {
                 if id.starts_with('.') {
                     continue;
                 }
-                let bytes = match std::fs::read(file.path()) {
+                let bytes = match fastctx_platform::disk::read(file.path()) {
                     Ok(bytes) => bytes,
                     Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
                     Err(error) => return Err(error),
@@ -62,7 +62,7 @@ pub(super) fn run(net: &NetDir) -> io::Result<usize> {
                 }
             }
             count += migration::receipts(net.database(), batch).map_err(io::Error::other)?;
-            match std::fs::remove_dir(sender.path()) {
+            match fastctx_platform::disk::remove_dir(sender.path()) {
                 Ok(()) => {}
                 Err(error) if matches!(error.kind(), io::ErrorKind::NotFound | io::ErrorKind::DirectoryNotEmpty) => {}
                 Err(error) => return Err(error),

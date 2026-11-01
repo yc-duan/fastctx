@@ -721,26 +721,17 @@ pub fn departed(node: &Node, asker: Address, letter: (&str, &crate::letters::Ide
 
 /// The machines a resident asked colleagues on, from its `actions`.
 fn asked_machines(actions: &std::path::Path) -> Vec<MachineName> {
-    let Ok(text) = std::fs::read_to_string(actions) else { return Vec::new() };
-    let mut machines: Vec<MachineName> = text
-        .lines()
-        .filter_map(|line| serde_json::from_str::<Action>(line).ok())
-        .filter(|action| action.hand == "ask_colleague")
+    let mut machines: Vec<_> = crate::residents::activity::asked(actions, None)
+        .unwrap_or_default()
+        .into_iter()
         .map(|action| action.machine)
         .collect();
     machines.sort();
     machines.dedup();
     machines
 }
-
-/// The machine `to` was asked on, from the asker's `actions`.
 fn asked_on(actions: &std::path::Path, to: &str) -> Option<MachineName> {
-    let text = std::fs::read_to_string(actions).ok()?;
-    text.lines()
-        .rev()
-        .filter_map(|line| serde_json::from_str::<Action>(line).ok())
-        .find(|action| action.hand == "ask_colleague" && action.result == to)
-        .map(|action| action.machine)
+    crate::residents::activity::asked(actions, Some(to)).ok()?.into_iter().next().map(|action| action.machine)
 }
 
 async fn record(node: &Arc<Node>, resident: &ResidentId, action: Action) {

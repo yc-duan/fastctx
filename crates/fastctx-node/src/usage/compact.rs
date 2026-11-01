@@ -4,7 +4,7 @@ use crate::Node;
 use fastctx_types::access::HubAccount;
 use fastctx_types::usage::{KindsUsd, Tokens};
 use jiff::{SignedDuration, Timestamp};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::io;
 
 pub(crate) fn collect(node: &Node) -> io::Result<()> {
@@ -24,6 +24,14 @@ pub(crate) fn collect(node: &Node) -> io::Result<()> {
             continue;
         }
         super::with_book(node, &path, |book| {
+            let ledger = path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .ok_or_else(|| io::Error::other("invalid usage ledger"))?;
+            let pending = node.database.read_background_now(|db| {
+                let mut query = db.prepare_cached("SELECT identity FROM terminal_usage INDEXED BY terminal_usage_pending WHERE ledger=?1 AND complete=0")?;
+                Ok(query.query_map([ledger], |row| row.get::<_, String>(0))?.collect::<std::result::Result<HashSet<_>, _>>()?)
+            }).map_err(io::Error::other)?;
             if let Some((since, account)) = book.accounts.last().cloned()
                 && since.strftime("%Y-%m-%d").to_string() < oldest
             {
@@ -34,7 +42,7 @@ pub(crate) fn collect(node: &Node) -> io::Result<()> {
             let boundaries = super::report::boundaries(&super::report::spans(&all, week), week);
             for day in ledger::days(&path, Timestamp::MIN)? {
                 let date = day.file_stem().and_then(|s| s.to_str()).unwrap_or_default();
-                if date < oldest.as_str() {
+                if date < oldest.as_str() && !ledger::read(&day)?.iter().any(|row| pending_receipt(row, &pending)) {
                     std::fs::remove_file(&day)?;
                     continue;
                 }
@@ -43,7 +51,7 @@ pub(crate) fn collect(node: &Node) -> io::Result<()> {
                 }
                 let (old, mut recent): (Vec<_>, Vec<_>) =
                     ledger::read(&day)?.into_iter().partition(|row| row.at() < detail_since);
-                let mut rows = fold(&old, &boundaries, now);
+                let mut rows = fold(&old, &boundaries, now, &pending);
                 rows.append(&mut recent);
                 rows.sort_by_key(Entry::at);
                 let bytes = encode(&rows)?;
@@ -60,7 +68,7 @@ pub(crate) fn collect(node: &Node) -> io::Result<()> {
 
 type HourUses = BTreeMap<(Timestamp, String, String, bool), (Option<HubAccount>, Use)>;
 
-pub(super) fn fold(rows: &[Entry], boundaries: &[Timestamp], now: Timestamp) -> Vec<Entry> {
+pub(super) fn fold(rows: &[Entry], boundaries: &[Timestamp], now: Timestamp, pending: &HashSet<String>) -> Vec<Entry> {
     let mut uses = HourUses::new();
     let mut checkpoints: BTreeMap<Identity, (Timestamp, fastctx_types::usage::Usd, Vec<Timestamp>)> = BTreeMap::new();
     let mut readings: BTreeMap<String, Entry> = BTreeMap::new();
@@ -110,12 +118,12 @@ pub(super) fn fold(rows: &[Entry], boundaries: &[Timestamp], now: Timestamp) -> 
                     meters.insert(key, checkpoint);
                 }
             }
-            Entry::Tokens { at, key: Some(key), .. } if *at >= month => {
+            Entry::Tokens { at, key: Some(key), .. } if *at >= month || pending.contains(key) => {
                 receipts.push(key.clone());
                 receipts_at = receipts_at.max(*at);
             }
-            Entry::Receipts { at, keys } if *at >= month => {
-                receipts.extend(keys.iter().cloned());
+            Entry::Receipts { at, keys } => {
+                receipts.extend(keys.iter().filter(|key| *at >= month || pending.contains(*key)).cloned());
                 receipts_at = receipts_at.max(*at);
             }
             Entry::Spent { at, session, process, total, .. }
@@ -204,4 +212,12 @@ fn encode(rows: &[Entry]) -> io::Result<Vec<u8>> {
         bytes.push(b'\n');
     }
     Ok(bytes)
+}
+
+fn pending_receipt(row: &Entry, pending: &HashSet<String>) -> bool {
+    match row {
+        Entry::Tokens { key: Some(key), .. } => pending.contains(key),
+        Entry::Receipts { keys, .. } => keys.iter().any(|key| pending.contains(key)),
+        _ => false,
+    }
 }

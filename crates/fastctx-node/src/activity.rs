@@ -87,11 +87,7 @@ pub fn who(
             let mut towns = Vec::new();
             for town in world.towns()? {
                 if let Some(record) = crate::town::read::latest(world, &town)? {
-                    towns.push(TownSummary {
-                        journals: crate::memory::store::catalog(world, &town)?.journals.len(),
-                        town,
-                        record,
-                    });
+                    towns.push(TownSummary { journals: 0, town, record });
                 }
             }
             WhoScope::World { towns }

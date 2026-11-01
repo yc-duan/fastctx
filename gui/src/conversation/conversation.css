@@ -189,7 +189,8 @@
 }
 
 .bubble.going,
-.bubble.queued {
+.bubble.queued,
+.bubble.unknown {
   --shown: 0.62;
 }
 
@@ -211,6 +212,19 @@
 
 .bubble-note.wrong {
   color: var(--wrong);
+}
+
+/* Sending again or taking away words that did not go: plain words beside
+   what became of them, the line's own colour kept. */
+.bubble-settle {
+  display: inline-flex;
+  align-items: baseline;
+  margin-left: var(--space-2);
+}
+
+.bubble-settle .text-button {
+  height: 28px;
+  padding: 0 var(--space-2);
 }
 
 .bubble-from {
@@ -1073,11 +1087,25 @@
 }
 
 .diff-card-name {
-  flex: 0 1 auto;
-  min-width: 0;
+  flex: none;
+  max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
   color: var(--text-2);
+}
+
+/* The name that opens the file: pointed at, a field's shade of its own. */
+.diff-card-open {
+  margin: 0 -3px;
+  padding: 1px 3px;
+  border-radius: var(--radius-s);
+  font: inherit;
+  transition: background-color var(--hover) var(--ease), color var(--hover) var(--ease);
+}
+
+.diff-card-open:hover {
+  background: var(--hairline);
+  color: var(--text);
 }
 
 .diff-card-acts {
@@ -1981,10 +2009,14 @@ a.bubble-file:hover {
   border-radius: var(--radius-m);
   background: var(--fill);
   touch-action: none;
+}
+
+/* Brought closer, the picture can be dragged, and the pointer says so. */
+.pv-stage.pv-closer {
   cursor: grab;
 }
 
-.pv-stage:active {
+.pv-stage.pv-closer.pv-dragging {
   cursor: grabbing;
 }
 

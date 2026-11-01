@@ -1,15 +1,19 @@
-//! Session events in their durable acceptance order. The caller holds the
-//! resident storage lock, including while allocating a sequence number.
+//! Indexed session events, with a durable per-conversation acceptance sequence.
 
-use std::collections::HashMap;
-use std::io;
-use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+#[cfg(feature = "storage-drill")]
+pub(crate) mod drill;
+mod migrate;
+pub(crate) mod search;
+mod sql;
+pub(crate) use sql::SCHEMA;
 
-use fastctx_platform::{Permissions, ensure_private_dir, publish, publish_new};
-use fastctx_types::layout::ConversationDir;
-use fastctx_types::session::SessionEvent;
+use fastctx_storage::{
+    Database,
+    rusqlite::{OptionalExtension, params},
+};
+use fastctx_types::{layout::ConversationDir, session::SessionEvent};
 use serde::{Deserialize, Serialize};
+use std::{io, path::Path};
 
 #[derive(Serialize, Deserialize)]
 struct Recorded {
@@ -19,124 +23,110 @@ struct Recorded {
     event: SessionEvent,
 }
 
-/// Positions are reserved this many at a time: the counter on disk names
-/// the last one reserved, not the last one used.
-const RESERVED: u64 = 64;
-
-/// For each conversation's counter, the next position to give and the last
-/// one this node reserved there, as it last wrote the counter.
-static RESERVATIONS: Mutex<Option<HashMap<PathBuf, (u64, u64)>>> = Mutex::new(None);
+fn database(directory: &ConversationDir) -> io::Result<(Database, String)> {
+    let (database, conversation) = crate::record_database::get(directory)?;
+    migrate::ensure(directory, &database, &conversation)?;
+    Ok((database, conversation))
+}
 
 pub fn append(directory: &ConversationDir, key: &str, event: &SessionEvent) -> io::Result<bool> {
-    let records = directory.session_events();
-    let path = records.join(format!("{key}.json"));
-    if path.try_exists()? {
-        return Ok(false);
-    }
-    ensure_private_dir(&records)?;
-    let counter = directory.session_sequence();
-    let written: Option<u64> = match std::fs::read(&counter) {
-        Ok(bytes) => Some(serde_json::from_slice(&bytes).map_err(io::Error::other)?),
-        Err(error) if error.kind() == io::ErrorKind::NotFound => None,
-        Err(error) => return Err(error),
-    };
-    let mut reservations = RESERVATIONS.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-    let reservations = reservations.get_or_insert_with(HashMap::new);
-    // A counter that is not as this node last left it was reset, moved or
-    // advanced by someone else: positions start again after what it says,
-    // or after every event on record where it is missing.
-    let (next, reserved) = match reservations.get(&counter) {
-        Some(&(next, reserved)) if written == Some(reserved) => (next, reserved),
-        _ => {
-            let previous = match written {
-                Some(previous) => previous,
-                None => read(&records)?.iter().filter_map(|(_, record)| record.sequence).max().unwrap_or(0),
-            };
-            (previous.checked_add(1).ok_or_else(exhausted)?, previous)
+    let (database, conversation) = database(directory)?;
+    let (key, body) = (key.to_string(), serde_json::to_vec(event)?);
+    let tags = search::Tags::of(event);
+    database
+        .write_now_at(fastctx_storage::Priority::Interactive, body.len() + key.len(), move |db| {
+            sql::append(db, &conversation, &key, &body, &tags)
+        })
+        .map_err(io::Error::other)
+}
+
+pub(crate) fn contains(directory: &ConversationDir, key: &str) -> io::Result<bool> {
+    let (database, conversation) = database(directory)?;
+    database
+        .read_now(|db| {
+            Ok(db
+                .query_row(
+                    "SELECT 1 FROM session_events WHERE conversation=?1 AND identity=?2",
+                    (&conversation, key),
+                    |row| row.get::<_, i32>(0),
+                )
+                .optional()?
+                .is_some())
+        })
+        .map_err(io::Error::other)
+}
+
+/// One immutable page and the high-water mark of the snapshot it came from.
+pub(crate) struct Page {
+    pub latest: u64,
+    pub next: u64,
+    pub events: Vec<(u64, SessionEvent)>,
+}
+
+/// Reads at most 512 events strictly after `after`, through the supplied fence.
+/// An absent fence captures the latest accepted sequence in this read snapshot.
+pub(crate) fn page(directory: &ConversationDir, after: u64, through: Option<u64>, limit: usize) -> io::Result<Page> {
+    let (database, conversation) = database(directory)?;
+    database.read_now(|db| {
+        let transaction=db.unchecked_transaction()?;
+        let (_,latest,_)=sql::head(&transaction,&conversation)?;
+        let fence=through.unwrap_or(latest).min(latest);
+        let mut query=transaction.prepare_cached("SELECT sequence,body FROM session_events WHERE conversation=?1 AND sequence>?2 AND sequence<=?3 ORDER BY sequence LIMIT ?4")?;
+        let rows=query.query_map(params![conversation,after.to_be_bytes().as_slice(),fence.to_be_bytes().as_slice(),limit.clamp(1,512) as i64],|row|Ok((row.get::<_,Vec<u8>>(0)?,row.get::<_,Vec<u8>>(1)?)))?;
+        let mut events=Vec::new();
+        for row in rows {
+            let (sequence,body)=row?;
+            let event=serde_json::from_slice(&body).map_err(|error|fastctx_storage::Error::with_kind(fastctx_storage::ErrorKind::Corrupt,error.to_string()))?;
+            events.push((sql::number(sequence)?,event));
         }
-    };
-    // Reserve before publishing. A crash can leave a gap, never duplicate
-    // the position of an event that already reached disk.
-    let reserved = if next > reserved {
-        let until = next.checked_add(RESERVED - 1).ok_or_else(exhausted)?;
-        publish(&counter, &serde_json::to_vec(&until).map_err(io::Error::other)?, Permissions::Private)?;
-        until
-    } else {
-        reserved
-    };
-    reservations.insert(counter, (next + 1, reserved));
-    let record = Recorded { sequence: Some(next), event: event.clone() };
-    publish_new(&path, &serde_json::to_vec(&record).map_err(io::Error::other)?, Permissions::Private)?;
-    Ok(true)
+        drop(query);
+        transaction.commit()?;
+        let next=events.last().map_or(after,|row|row.0);
+        Ok(Page{latest:fence,next,events})
+    }).map_err(io::Error::other)
 }
 
-/// Forgets what this node reserved at a counter someone else just wrote, so
-/// the next position follows what it says.
-pub(crate) fn reset(counter: &Path) {
-    if let Some(reservations) = RESERVATIONS.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).as_mut() {
-        reservations.remove(counter);
-    }
+pub(crate) fn latest(directory: &ConversationDir) -> io::Result<u64> {
+    let (database, conversation) = database(directory)?;
+    database.read_now(|db| Ok(sql::head(db, &conversation)?.1)).map_err(io::Error::other)
 }
 
-fn exhausted() -> io::Error {
-    io::Error::other("session event sequence exhausted")
-}
-
+/// Compatibility for consumers of a complete history. New subscriptions read
+/// `page` and keep its sequence fence, without materializing earlier pages.
 pub fn history(directory: &ConversationDir) -> io::Result<Vec<SessionEvent>> {
-    let mut records = read(&directory.session_events())?;
-    // Old files cannot tell the order of equal timestamps. Their filename
-    // supplies a deterministic tie break; new files carry the actual order.
-    records.sort_by(|(left_name, left), (right_name, right)| {
-        left.sequence
-            .cmp(&right.sequence)
-            .then_with(|| left.event.at.cmp(&right.event.at))
-            .then_with(|| left_name.cmp(right_name))
-    });
-    Ok(records.into_iter().map(|(_, record)| record.event).collect())
-}
-
-fn read(directory: &Path) -> io::Result<Vec<(String, Recorded)>> {
-    let entries = match std::fs::read_dir(directory) {
-        Ok(entries) => entries,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
-        Err(error) => return Err(error),
-    };
-    let mut records = Vec::new();
-    for entry in entries {
-        let path = entry?.path();
-        if path.extension().is_some_and(|extension| extension == "json")
-            && !path.file_name().is_some_and(|name| name.to_string_lossy().starts_with('.'))
-        {
-            let record = serde_json::from_slice(&std::fs::read(&path)?).map_err(io::Error::other)?;
-            records.push((path.file_name().expect("directory entry").to_string_lossy().into_owned(), record));
+    let mut result = Vec::new();
+    let mut after = 0;
+    let mut through = None;
+    loop {
+        let page = page(directory, after, through, 512)?;
+        through = Some(page.latest);
+        if page.events.is_empty() {
+            break;
+        }
+        after = page.next;
+        result.extend(page.events.into_iter().map(|(_, event)| event));
+        if after >= page.latest {
+            break;
         }
     }
-    Ok(records)
+    Ok(result)
 }
 
-/// What `history` reads, told by the files it reads: each event is a file
-/// written once.
 pub fn stamp(directory: &Path, digest: &mut impl FnMut(&[u8])) -> io::Result<()> {
-    stamp_files(&directory.join("session-events"), digest)
+    digest(&latest(&ConversationDir::at(directory))?.to_be_bytes());
+    Ok(())
 }
 
-/// The files of `directory` by name, size and time of change, in name order;
-/// a directory that is not there is told as empty.
-pub fn stamp_files(directory: &Path, digest: &mut impl FnMut(&[u8])) -> io::Result<()> {
-    let entries = match std::fs::read_dir(directory) {
-        Ok(entries) => entries,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
-        Err(error) => return Err(error),
-    };
-    let mut files = Vec::new();
-    for entry in entries {
-        let entry = entry?;
-        let meta = entry.metadata()?;
-        files.push(format!("{}|{}|{:?}", entry.file_name().to_string_lossy(), meta.len(), meta.modified().ok()));
-    }
-    files.sort();
-    for file in files {
-        digest(file.as_bytes());
-    }
-    Ok(())
+pub(crate) fn prepare(directory: &ConversationDir) -> io::Result<()> {
+    database(directory).map(|_| ())
+}
+
+pub(crate) fn append_in(
+    connection: &fastctx_storage::rusqlite::Connection,
+    conversation: &str,
+    key: &str,
+    event: &SessionEvent,
+) -> fastctx_storage::Result<bool> {
+    let body = serde_json::to_vec(event).map_err(|error| fastctx_storage::Error::new(error.to_string()))?;
+    sql::append(connection, conversation, key, &body, &search::Tags::of(event))
 }

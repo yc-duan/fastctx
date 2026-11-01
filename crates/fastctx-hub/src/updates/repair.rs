@@ -11,7 +11,7 @@ use std::sync::Arc;
 
 pub(super) async fn request(
     hub: &Arc<Hub>,
-    asker: &MachineName,
+    asker: &crate::origin::Origin,
     account: &AccountName,
     call: ViewCall,
 ) -> Result<Told, String> {
@@ -34,7 +34,8 @@ pub(super) async fn request(
                 return Err("this repair arrangement was cancelled or replaced".into());
             }
         }
-        record_helper_result(hub, &machine, *result)?;
+        let (asker, account) = (asker.clone(), account.clone());
+        hub.blocking(move |hub| record_helper_result(&hub, &asker, &account, &machine, *result)).await?;
         super::tell(hub, None);
         return Ok(Told::NetworkUpdates { reply: ViewReply::Done });
     }
@@ -102,7 +103,7 @@ pub(super) async fn request(
                         .ok_or("repair manifest is unavailable")?;
                     let cache = hub.updates.lock().expect("repair manifest cache").cache.clone();
                     let keeping = manifest.clone();
-                    tokio::task::spawn_blocking(move || cache.keep_manifest(&keeping))
+                    fastctx_platform::task::spawn_blocking(move || cache.keep_manifest(&keeping))
                         .await
                         .map_err(|e| e.to_string())??;
                     manifests.insert(version.clone(), Arc::new(manifest));
@@ -125,7 +126,8 @@ pub(super) async fn request(
         });
     }
     for chunk in pending.chunks(64) {
-        let committed = super::repair_batch::apply(hub, asker, account, chunk);
+        let (asker, account, chunk_owned) = (asker.clone(), account.clone(), chunk.to_vec());
+        let committed = hub.blocking(move |hub| super::repair_batch::apply(&hub, &asker, &account, &chunk_owned)).await;
         for ((at, _, _), result) in chunk.iter().zip(committed) {
             match result {
                 Ok(()) => results[*at].done = true,
@@ -147,7 +149,16 @@ pub(super) fn settle(hub: &Hub, machine: &MachineName, result: &fastctx_types::r
     if result.finished.is_none() {
         return;
     }
-    let mut store = hub.store();
+    let mut store = hub.edit_store();
+    settle_in(hub, &mut store, machine, result);
+}
+
+fn settle_in(
+    hub: &Hub,
+    store: &mut crate::store::Store,
+    machine: &MachineName,
+    result: &fastctx_types::repair::Report,
+) {
     let Some(key) = store.book.directory.member(machine).map(|m| m.key) else { return };
     let Some(index) = store.hub.repairs.iter().position(|r| {
         r.key == key
@@ -197,9 +208,30 @@ fn stage(report: &fastctx_types::repair::Report) -> Stage {
     }
 }
 
-fn record_helper_result(hub: &Hub, machine: &MachineName, report: fastctx_types::repair::Report) -> Result<(), String> {
-    let key = hub.store().book.directory.member(machine).ok_or("repair target disappeared")?.key;
-    settle(hub, machine, &report);
+fn record_helper_result(
+    hub: &Hub,
+    asker: &crate::origin::Origin,
+    account: &AccountName,
+    machine: &MachineName,
+    report: fastctx_types::repair::Report,
+) -> Result<(), String> {
+    let mut store = hub.edit_store();
+    let directory = &store.book.directory;
+    super::view::authenticate(directory, asker, account)?;
+    if !directory.may_update(account, machine) {
+        return Err(fastctx_types::sharing::MANAGER_REQUIRED.into());
+    }
+    let key = directory.member(machine).ok_or("repair target disappeared")?.key;
+    if !hub.updates.lock().expect("repair helper identity").last.get(&asker.key).is_some_and(|r| r.report.hub_here) {
+        return Err("only the node on this hub's machine reports legacy repairs".into());
+    }
+    if !store.hub.repairs.iter().any(|r| r.key == key && r.due.id == report.id) {
+        return Err("this repair arrangement was cancelled or replaced".into());
+    }
+    if report.finished.is_some() {
+        settle_in(hub, &mut store, machine, &report);
+    }
+    drop(store);
     let mut updates = hub.updates.lock().expect("repair result");
     let last = updates.last.get_mut(&key).ok_or("the legacy machine has never reported its version")?;
     let last = std::sync::Arc::make_mut(last);
