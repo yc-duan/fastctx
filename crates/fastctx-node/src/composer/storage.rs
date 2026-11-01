@@ -28,6 +28,7 @@ pub(super) fn existing<'a>(node: &'a Node, id: &'a ResidentId) -> Future<'a, Opt
 
 pub(super) fn load<'a>(node: &'a Arc<Node>, id: &'a ResidentId, cell: &'a mut Option<Stored>) -> Future<'a, ()> {
     Box::pin(async move {
+        crate::conversation_store::transfer::wait(node, id).await?;
         let recover = super::recovery::pending(node, id);
         if cell.is_some() && !recover {
             return Ok(());

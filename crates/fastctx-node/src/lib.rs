@@ -977,6 +977,12 @@ pub async fn run_prepared(
 
 #[cfg(feature = "storage-drill")]
 #[doc(hidden)]
-pub use storage_drill::{migration as record_migration_drill, run as record_drill};
+pub use storage_drill::{migration as record_migration_drill, run as record_drill, transfer as record_transfer_drill};
 #[cfg(feature = "storage-drill")]
 mod storage_drill;
+
+/// Exports every conversation-owned table into its directory while the node is
+/// stopped. Copy that directory with its host records before starting the target.
+pub fn export_conversation(root: &std::path::Path, conversation: &str) -> std::io::Result<std::path::PathBuf> {
+    conversation_store::transfer::exporting::export(root, conversation)
+}

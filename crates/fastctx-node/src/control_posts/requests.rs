@@ -50,7 +50,7 @@ pub(super) fn get(node: &Node, id: &NoticeId) -> io::Result<Option<Request>> {
         let body: Option<Vec<u8>> = rows
             .connection()
             .query_row(
-                "SELECT body FROM conversation_records WHERE family='control-requests' AND identity=?1",
+                "SELECT body FROM conversation_records r WHERE family='control-requests' AND identity=?1 AND NOT EXISTS(SELECT 1 FROM node_conversation_transfers t WHERE t.name=r.conversation)",
                 [id.as_str()],
                 |row| row.get(0),
             )
@@ -61,7 +61,7 @@ pub(super) fn get(node: &Node, id: &NoticeId) -> io::Result<Option<Request>> {
 
 pub(super) fn page(node: &Node, after: &str) -> io::Result<Vec<(String, jiff::Timestamp, Request)>> {
     records::read(&prepare(node)?, |rows| {
-        rows.connection().prepare_cached("SELECT identity,modified,body FROM conversation_records WHERE family='control-requests' AND identity>?1 ORDER BY identity LIMIT 128")?
+        rows.connection().prepare_cached("SELECT identity,modified,body FROM conversation_records r WHERE family='control-requests' AND identity>?1 AND NOT EXISTS(SELECT 1 FROM node_conversation_transfers t WHERE t.name=r.conversation) ORDER BY identity LIMIT 128")?
             .query_map([after], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, Vec<u8>>(2)?)))?
             .map(|row| { let (key, modified, body) = row?; Ok((key, modified.parse().map_err(|error: jiff::Error| fastctx_storage::Error::new(error.to_string()))?, records::decode(&body)?)) }).collect()
     })

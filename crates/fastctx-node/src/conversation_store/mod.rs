@@ -1,9 +1,13 @@
 //! Whole-conversation storage lifecycle. SQL fences writes; a per-conversation
 //! gate also fences file projections before any directory can be recreated.
+mod bundle;
 mod deletion;
 #[cfg(feature = "storage-drill")]
 pub(crate) mod drill;
 pub(crate) mod schema;
+pub(crate) mod transfer;
+#[cfg(feature = "storage-drill")]
+pub(crate) mod transfer_drill;
 pub(crate) use deletion::{begin, begin_with_account, finished, purge, resume};
 use fastctx_storage::{Result, rusqlite::Connection};
 use fastctx_types::layout::ConversationDir;

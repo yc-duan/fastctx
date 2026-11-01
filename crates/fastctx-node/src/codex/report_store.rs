@@ -176,7 +176,7 @@ pub(super) fn delete(directory: &ConversationDir, thread: &str) -> io::Result<()
     loop {
         let family = family.clone();
         let count = records::write_at(directory, Priority::Background, 4096, move |rows| {
-            Ok(rows.connection().execute("DELETE FROM conversation_records WHERE position IN (SELECT position FROM conversation_records WHERE conversation=?1 AND family=?2 LIMIT 64)",(rows.conversation(),family))?)
+            Ok(rows.connection().execute("DELETE FROM conversation_records WHERE conversation=?1 AND position IN (SELECT position FROM conversation_records WHERE conversation=?1 AND family=?2 LIMIT 64)",(rows.conversation(),family))?)
         })?;
         if count == 0 {
             return Ok(());

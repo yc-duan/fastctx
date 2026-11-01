@@ -100,6 +100,10 @@ fn start(node: &std::sync::Arc<crate::Node>) {
             let working = node.clone();
             let result = fastctx_platform::task::spawn_blocking(move || {
                 maintenance::collect(&working.database)?;
+                working.database.write_now_at(fastctx_storage::Priority::Background, 64, |db| {
+                    db.execute("INSERT INTO node_record_state(name,value) VALUES('legacy-discovery-complete',1) ON CONFLICT(name) DO UPDATE SET value=1", [])?;
+                    Ok(())
+                }).map_err(std::io::Error::other)?;
                 archive::damaged_count(working.world.path())?;
                 archive::collect(working.world.path(), archive::RETENTION)
             })

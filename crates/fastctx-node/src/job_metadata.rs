@@ -150,7 +150,7 @@ impl Job {
         loop {
             let prefix = self.prefix.clone();
             let count = records::write_at(&self.directory, Priority::Background, 4096, move |rows| {
-                Ok(rows.connection().execute("DELETE FROM conversation_records WHERE position IN (SELECT position FROM conversation_records WHERE conversation=?1 AND family>=?2 AND family<?3 LIMIT 64)",(rows.conversation(),&prefix,format!("{prefix}\u{10ffff}")))?)
+                Ok(rows.connection().execute("DELETE FROM conversation_records WHERE conversation=?1 AND position IN (SELECT position FROM conversation_records WHERE conversation=?1 AND family>=?2 AND family<?3 LIMIT 64)",(rows.conversation(),&prefix,format!("{prefix}\u{10ffff}")))?)
             })?;
             if count == 0 {
                 break;

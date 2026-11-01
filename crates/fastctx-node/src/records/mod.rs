@@ -11,6 +11,7 @@ pub(crate) mod maps;
 pub(crate) mod metadata;
 mod metadata_legacy;
 mod migration;
+pub(crate) mod positions;
 pub(crate) use migration::{Source, ensure_each, ensure_file, ensure_step};
 
 use fastctx_storage::{
@@ -24,11 +25,15 @@ use std::io;
 pub(crate) const SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS context_projection_dirty(conversation TEXT PRIMARY KEY) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS conversation_records (
-    position INTEGER PRIMARY KEY AUTOINCREMENT,
+    position INTEGER NOT NULL,
     conversation TEXT NOT NULL, family TEXT NOT NULL, identity TEXT NOT NULL,
     body BLOB NOT NULL, modified TEXT NOT NULL, expires INTEGER, arrival BLOB, category TEXT,
-    UNIQUE(conversation,family,identity)
-);
+    PRIMARY KEY(conversation,position), UNIQUE(conversation,family,identity)
+) WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS conversation_record_positions (
+    conversation TEXT NOT NULL, stream TEXT NOT NULL, position INTEGER NOT NULL,
+    PRIMARY KEY(conversation,stream)
+) WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS conversation_records_queue ON conversation_records(conversation,family,category,arrival,identity);
 CREATE INDEX IF NOT EXISTS conversation_records_category ON conversation_records(conversation,family,category,identity);
 CREATE INDEX IF NOT EXISTS conversation_records_order ON conversation_records(conversation,family,position);
@@ -151,8 +156,9 @@ impl<'a> Rows<'a> {
     }
     pub(crate) fn put_raw(&self, family: &str, key: &str, body: &[u8]) -> Result<()> {
         let category = std::path::Path::new(key).extension().and_then(|extension| extension.to_str()).unwrap_or("");
-        let changed=self.connection.execute("INSERT INTO conversation_records(conversation,family,identity,body,modified,category) VALUES(?1,?2,?3,?4,?5,?6)
-            ON CONFLICT(conversation,family,identity) DO UPDATE SET body=excluded.body,modified=excluded.modified,category=excluded.category WHERE conversation_records.body!=excluded.body",(self.conversation,family,key,body,jiff::Timestamp::now().to_string(),category))?;
+        let position = positions::next(self.connection, self.conversation, "records")?;
+        let changed=self.connection.execute("INSERT INTO conversation_records(conversation,family,identity,body,modified,category,position) VALUES(?1,?2,?3,?4,?5,?6,?7)
+            ON CONFLICT(conversation,family,identity) DO UPDATE SET body=excluded.body,modified=excluded.modified,category=excluded.category WHERE conversation_records.body!=excluded.body",(self.conversation,family,key,body,jiff::Timestamp::now().to_string(),category,position))?;
         if changed != 0 {
             self.changed(family)?;
         }
@@ -197,10 +203,11 @@ impl<'a> Rows<'a> {
         expires: Option<jiff::Timestamp>,
     ) -> Result<()> {
         let bytes = encode(value)?;
-        let changed=self.connection.execute("INSERT INTO conversation_records(conversation,family,identity,body,modified,expires) VALUES(?1,?2,?3,?4,?5,?6)
+        let position = positions::next(self.connection, self.conversation, "records")?;
+        let changed=self.connection.execute("INSERT INTO conversation_records(conversation,family,identity,body,modified,expires,position) VALUES(?1,?2,?3,?4,?5,?6,?7)
             ON CONFLICT(conversation,family,identity) DO UPDATE SET body=excluded.body,modified=excluded.modified,expires=excluded.expires
             WHERE conversation_records.body!=excluded.body OR conversation_records.expires IS NOT excluded.expires",
-            params![self.conversation,family,key,bytes,jiff::Timestamp::now().to_string(),expires.map(|at|at.as_millisecond())])?;
+            params![self.conversation,family,key,bytes,jiff::Timestamp::now().to_string(),expires.map(|at|at.as_millisecond()),position])?;
         if changed != 0 {
             self.changed(family)?;
         }

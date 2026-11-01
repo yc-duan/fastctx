@@ -31,19 +31,19 @@ CREATE TABLE IF NOT EXISTS run_versions (
 CREATE TABLE IF NOT EXISTS run_inline_budget (conversation TEXT NOT NULL, call TEXT NOT NULL, used INTEGER NOT NULL, PRIMARY KEY(conversation,call)) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS run_inline_hashes (conversation TEXT NOT NULL, call TEXT NOT NULL, id TEXT NOT NULL, hash TEXT NOT NULL, PRIMARY KEY(conversation,call,id)) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS run_writes (
-    position INTEGER PRIMARY KEY, conversation TEXT NOT NULL, call TEXT NOT NULL,
-    id TEXT NOT NULL, body BLOB NOT NULL, UNIQUE(conversation,call,id)
-);
+    position INTEGER NOT NULL, conversation TEXT NOT NULL, call TEXT NOT NULL,
+    id TEXT NOT NULL, body BLOB NOT NULL, PRIMARY KEY(conversation,position), UNIQUE(conversation,call,id)
+) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS run_visits (
-    position INTEGER PRIMARY KEY, conversation TEXT NOT NULL, call TEXT NOT NULL,
-    machine TEXT NOT NULL, job TEXT NOT NULL, UNIQUE(conversation,call,machine,job)
-);
+    position INTEGER NOT NULL, conversation TEXT NOT NULL, call TEXT NOT NULL,
+    machine TEXT NOT NULL, job TEXT NOT NULL, PRIMARY KEY(conversation,position), UNIQUE(conversation,call,machine,job)
+) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS run_steps (
-    position INTEGER PRIMARY KEY, conversation TEXT NOT NULL, call TEXT NOT NULL,
+    position INTEGER NOT NULL, conversation TEXT NOT NULL, call TEXT NOT NULL,
     id TEXT NOT NULL, body BLOB, fingerprint TEXT NOT NULL, finished INTEGER NOT NULL,
     machine TEXT NOT NULL, kind TEXT NOT NULL, first INTEGER NOT NULL, last INTEGER NOT NULL,
-    UNIQUE(conversation,call,id)
-);
+    PRIMARY KEY(conversation,position), UNIQUE(conversation,call,id)
+) WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS run_steps_hot ON run_steps(conversation,call,position) WHERE body IS NOT NULL;
 CREATE TABLE IF NOT EXISTS run_folded (
     conversation TEXT NOT NULL, call TEXT NOT NULL, machine TEXT NOT NULL, kind TEXT NOT NULL,
@@ -200,7 +200,8 @@ pub(super) fn writes(db: &Connection, conversation: &str, call: &str, incoming: 
         if let Some(hash) = hash {
             db.execute("INSERT INTO run_inline_hashes(conversation,call,id,hash) VALUES(?1,?2,?3,?4) ON CONFLICT(conversation,call,id) DO NOTHING",(conversation,call,&fact.id,hash))?;
         }
-        db.execute("INSERT INTO run_writes(conversation,call,id,body) VALUES(?1,?2,?3,?4) ON CONFLICT(conversation,call,id) DO UPDATE SET body=excluded.body",params![conversation,call,fact.id,encode(&kept)?])?;
+        let position = crate::records::positions::next(db, conversation, "run-writes")?;
+        db.execute("INSERT INTO run_writes(conversation,call,id,body,position) VALUES(?1,?2,?3,?4,?5) ON CONFLICT(conversation,call,id) DO UPDATE SET body=excluded.body",params![conversation,call,fact.id,encode(&kept)?,position])?;
     }
     db.execute(
         "UPDATE run_inline_budget SET used=?3 WHERE conversation=?1 AND call=?2 AND used!=?3",
@@ -215,10 +216,12 @@ pub(super) fn visits(
     call: &str,
     incoming: &[(fastctx_types::MachineName, fastctx_types::JobId)],
 ) -> Result<()> {
-    let mut insert =
-        db.prepare_cached("INSERT OR IGNORE INTO run_visits(conversation,call,machine,job) VALUES(?1,?2,?3,?4)")?;
+    let mut insert = db.prepare_cached(
+        "INSERT OR IGNORE INTO run_visits(conversation,call,machine,job,position) VALUES(?1,?2,?3,?4,?5)",
+    )?;
     for (machine, job) in incoming {
-        insert.execute((conversation, call, machine.as_str(), job.as_str()))?;
+        let position = crate::records::positions::next(db, conversation, "run-visits")?;
+        insert.execute((conversation, call, machine.as_str(), job.as_str(), position))?;
     }
     Ok(())
 }
@@ -227,8 +230,8 @@ pub(super) fn steps(db: &Connection, conversation: &str, call: &str, incoming: &
     let mut query = db.prepare_cached(
         "SELECT fingerprint,finished,body IS NULL FROM run_steps WHERE conversation=?1 AND call=?2 AND id=?3",
     )?;
-    let mut insert = db.prepare_cached("INSERT INTO run_steps(conversation,call,id,body,fingerprint,finished,machine,kind,first,last)
-        VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)
+    let mut insert = db.prepare_cached("INSERT INTO run_steps(conversation,call,id,body,fingerprint,finished,machine,kind,first,last,position)
+        VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11)
         ON CONFLICT(conversation,call,id) DO UPDATE SET body=excluded.body,fingerprint=excluded.fingerprint,
             finished=excluded.finished,machine=excluded.machine,kind=excluded.kind,first=excluded.first,last=excluded.last")?;
     for step in incoming {
@@ -271,7 +274,8 @@ pub(super) fn steps(db: &Connection, conversation: &str, call: &str, incoming: &
             step.machine.as_str(),
             kind,
             first,
-            last
+            last,
+            crate::records::positions::next(db, conversation, "run-steps")?
         ])?;
     }
     let mut query=db.prepare_cached("SELECT position,machine,kind,first,last,length(body) FROM run_steps WHERE conversation=?1 AND call=?2 AND body IS NOT NULL ORDER BY position DESC")?;

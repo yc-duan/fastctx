@@ -120,7 +120,7 @@ fn commit(context: &Context, sources: Vec<LegacyRow>) -> io::Result<()> {
     let (conversation, family) = (context.conversation.clone(), context.family.clone());
     let conflict = context.database.write_now_at(scheduler::priority(), bytes, move |db| {
         db.execute_batch("SAVEPOINT legacy_record_batch")?;
-        let mut insert = db.prepare_cached("INSERT INTO conversation_records(conversation,family,identity,body,modified,arrival,category,expires) VALUES(?1,?2,?3,?4,?5,?6,?7,?8)
+        let mut insert = db.prepare_cached("INSERT INTO conversation_records(conversation,family,identity,body,modified,arrival,category,expires,position) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?10)
             ON CONFLICT(conversation,family,identity) DO UPDATE SET body=excluded.body,modified=excluded.modified,arrival=excluded.arrival,category=excluded.category,expires=excluded.expires WHERE ?9")?;
         let mut read = db.prepare_cached("SELECT body,modified,arrival,category,expires FROM conversation_records WHERE conversation=?1 AND family=?2 AND identity=?3")?;
         let mut files = std::collections::HashMap::new();
@@ -133,7 +133,7 @@ fn commit(context: &Context, sources: Vec<LegacyRow>) -> io::Result<()> {
             } else { false };
             if !row.discard && !repeated {
             let changed = insert.execute(params![owner, family, row.key, row.body, row.modified.to_string(), row.arrival, row.category,
-                row.expires.map(|at| at.as_millisecond()), row.replace])?;
+                row.expires.map(|at| at.as_millisecond()), row.replace, super::positions::next(db, owner, "records")?])?;
             let stored = read.query_row((owner, &family, &row.key), |row| Ok((row.get::<_, Vec<u8>>(0)?, row.get::<_, String>(1)?, row.get::<_, Option<Vec<u8>>>(2)?, row.get::<_, Option<String>>(3)?, row.get::<_, Option<i64>>(4)?)))?;
             if stored.0 != row.body || (changed > 0 && (stored.1 != row.modified.to_string() || stored.2 != row.arrival || stored.3 != row.category || stored.4 != row.expires.map(|at| at.as_millisecond()))) { db.execute_batch("ROLLBACK TO legacy_record_batch; RELEASE legacy_record_batch")?; return Ok(Some(format!("legacy row {} conflicts with its stored value", row.key))); }
             }

@@ -8,6 +8,9 @@ pub(super) const MACHINE_TABLES: &[&str] = &[
     "receipt_watermarks",
     "sqlite_sequence",
     "node_conversation_deletions",
+    "node_conversation_transfers",
+    "node_conversation_transfer_progress",
+    "node_record_state",
     "book_deeds",
     "book_touches",
     "book_hour",
@@ -58,6 +61,7 @@ pub(crate) fn tables(db: &Connection) -> Result<Vec<Table>> {
 
 pub(crate) fn initialize(db: &Connection) -> Result<()> {
     db.execute_batch(crate::record_migration::SCHEMA)?;
+    db.execute_batch(super::transfer::SCHEMA)?;
     db.execute_batch(crate::session_record::MIGRATION_SCHEMA)?;
     // Deletion watermarks belong to this node, not to the deleted data. They
     // never expire: an offline producer can return after an arbitrary interval.
@@ -105,6 +109,7 @@ pub(crate) fn initialize(db: &Connection) -> Result<()> {
         }
     }
     for table in tables(db)? {
+        super::transfer::install_fences(db, &table)?;
         let name = quote(&table.name);
         let indexed: bool = db.query_row(
             "SELECT EXISTS(SELECT 1 FROM pragma_index_list(?1) i JOIN pragma_index_info(i.name) c WHERE c.seqno=0 AND c.name='conversation')",

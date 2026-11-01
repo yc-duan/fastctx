@@ -17,7 +17,7 @@ pub fn run(root: &Path) -> Result<(), Box<dyn std::error::Error>> {
     std::fs::create_dir_all(root)?;
     let database = Database::open_initialized(
         &root.join("node.sqlite3"),
-        &format!("{}{}", sql::SCHEMA, crate::record_payloads::SCHEMA),
+        &format!("{}{}{}", sql::SCHEMA, crate::record_payloads::SCHEMA, crate::records::SCHEMA),
         crate::conversation_store::schema::initialize,
     )?;
     let machine: MachineName = "executor".parse()?;

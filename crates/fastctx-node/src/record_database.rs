@@ -17,6 +17,18 @@ pub(crate) fn register(world: &WorldDir, database: &Database) -> crate::record_m
 }
 
 pub(crate) fn get(directory: &ConversationDir) -> io::Result<(Database, String)> {
+    let (database, key) = registered(directory)?;
+    let world = directory
+        .path()
+        .parent()
+        .and_then(std::path::Path::parent)
+        .ok_or_else(|| io::Error::other("conversation has no world"))?;
+    crate::conversation_store::transfer::ensure(world, &database, &key)?;
+    Ok((database, key))
+}
+
+/// Lifecycle owners may cancel an import without waiting for it to finish.
+pub(crate) fn registered(directory: &ConversationDir) -> io::Result<(Database, String)> {
     let conversations = directory.path().parent().ok_or_else(|| io::Error::other("conversation has no parent"))?;
     let world = conversations.parent().ok_or_else(|| io::Error::other("conversation has no world"))?;
     let key = directory
@@ -113,6 +125,7 @@ pub(crate) fn open(world: &WorldDir) -> Database {
             "node.goal-projection",
             &[fastctx_storage::versions::Migration { version: 1, sql: crate::goals::SCHEMA }],
         )?;
-        crate::conversation_store::schema::initialize(db)
+        crate::conversation_store::schema::initialize(db)?;
+        crate::conversation_store::transfer::prepare(db, world)
     })
 }

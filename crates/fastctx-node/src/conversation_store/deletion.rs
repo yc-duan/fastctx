@@ -21,16 +21,21 @@ pub(crate) fn begin_with_account(
 ) -> io::Result<()> {
     let gate = FILES.get(directory.path());
     let _files = gate.lock();
-    let (database, conversation) = crate::record_database::get(directory)?;
+    let (database, conversation) = crate::record_database::registered(directory)?;
+    let completed = conversation.clone();
     database
         .write_now_at(Priority::Control, conversation.len(), move |db| {
             db.execute(
                 "INSERT OR IGNORE INTO node_conversation_deletions(name,started,account,fork_source) VALUES(?1,?2,?3,?4)",
                 (&conversation, jiff::Timestamp::now().as_millisecond(), account, fork_source),
             )?;
+            db.execute("DELETE FROM node_conversation_transfer_progress WHERE name=?1", [&conversation])?;
+            db.execute("DELETE FROM node_conversation_transfers WHERE name=?1", [&conversation])?;
             Ok(())
         })
-        .map_err(io::Error::other)
+        .map_err(io::Error::other)?;
+    super::transfer::cancelled(&crate::record_migration::world(directory)?, &completed);
+    Ok(())
 }
 
 pub(crate) fn purge(database: &Database, conversation: &str) -> Result<u64> {

@@ -27,7 +27,7 @@ const SCALARS: &[&str] = &[
 ];
 
 pub(super) fn scan(node: &Arc<Node>) -> io::Result<bool> {
-    let mut ready = true;
+    let mut ready = crate::conversation_store::transfer::scan(node)?;
     let mut prepare = |result: io::Result<()>| match result {
         Ok(()) => {}
         Err(error) if error.kind() == io::ErrorKind::WouldBlock => ready = false,
@@ -38,6 +38,9 @@ pub(super) fn scan(node: &Arc<Node>) -> io::Result<bool> {
     };
     for kept in node.world.kept()? {
         let directory = &kept.directory;
+        if crate::conversation_store::transfer::pending(node.world.path(), &kept.name) {
+            continue;
+        }
         if node
             .database
             .read_background_now(|db| crate::conversation_store::deleted(db, &kept.name))

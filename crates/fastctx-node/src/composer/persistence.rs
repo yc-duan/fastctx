@@ -37,6 +37,7 @@ fn key(owner: &str, name: &str) -> documents::Key {
 }
 
 pub(super) async fn exists(node: &Node, id: &ResidentId) -> Result<bool, Failure> {
+    crate::conversation_store::transfer::wait(node, id).await?;
     let owner = id.to_string();
     node.database
         .read(move |connection| {
@@ -50,6 +51,7 @@ pub(super) async fn exists(node: &Node, id: &ResidentId) -> Result<bool, Failure
 }
 
 pub(super) async fn read(node: &Node, id: &ResidentId) -> Result<Stored, Failure> {
+    crate::conversation_store::transfer::wait(node, id).await?;
     let owner = id.to_string();
     let directory = node.world.conversation(id);
     node.database
@@ -72,7 +74,7 @@ pub(super) async fn read(node: &Node, id: &ResidentId) -> Result<Stored, Failure
             } else {
                 // Only the old node wrote this file; the conversation's cell
                 // serializes its migration with edits and deletion now.
-                match std::fs::read(directory.composer()) {
+                match fastctx_platform::disk::read(directory.composer()) {
                     Ok(bytes) => serde_json::from_slice(&bytes).map_err(error)?,
                     Err(reason) if reason.kind() == std::io::ErrorKind::NotFound => Stored::default(),
                     Err(reason) => return Err(error(reason)),
