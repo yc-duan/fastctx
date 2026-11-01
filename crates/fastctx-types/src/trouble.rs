@@ -30,6 +30,9 @@ pub struct Trouble {
     /// The bound that came near its limit.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub near: Option<Near>,
+    /// The version a stopped rollout was of.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub version: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]

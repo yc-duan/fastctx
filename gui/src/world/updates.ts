@@ -278,6 +278,8 @@ export interface UpdatesView {
   repair_supported?: boolean;
   /** The hub rolls versions out a batch at a time and withdraws them. */
   rollouts?: boolean;
+  /** The machines the rollout names first, by their names now. */
+  rollout_first?: string[];
 }
 export type UpdatesViewCall =
   | { do: "view" }

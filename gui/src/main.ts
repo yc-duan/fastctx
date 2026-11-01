@@ -37,6 +37,8 @@ import "./app/machine-list.css";
 import "./app/machine-spot.css";
 import "./app/machine-find.css";
 import "./app/update-view.css";
+import "./app/trouble-view.css";
+import "./app/rollout.css";
 import "./app/machine-page.css";
 import "./app/machine-manage.css";
 import "./app/agents.css";
@@ -126,8 +128,11 @@ import { fileLink, link, placeOf, talkLink, type Place } from "./app/places";
 import { enMachinePage, zhMachinePage } from "./app/machine-page-words";
 import { enManage, zhManage } from "./app/machine-manage-words";
 import { enBatch, zhBatch } from "./app/machine-batch-words";
+import { enTroubles, zhTroubles } from "./app/trouble-words";
 import { enNameSaid, zhNameSaid } from "./app/name-words";
 import { specimenStats } from "./specimen/stats";
+import { specimenDoctor } from "./specimen/doctor";
+import { doctorReadings } from "./world/doctor";
 import { SettingsPage } from "./app/settings";
 import { DataPage, enData, totalOf, zhData } from "./app/data-page";
 import { data } from "./world/data";
@@ -327,7 +332,7 @@ import { en, zh } from "./words";
 import { updates as updateSeam } from "./world/updates";
 import { Updates } from "./app/updates";
 import { UpdateCard } from "./app/update-card";
-import { VersionWindow } from "./app/version-window";
+import { VersionWindow, type RolloutPurpose } from "./app/version-window";
 import { showAttachedWith } from "./conversation/attached-pictures";
 import { viewPictures } from "./conversation/pictures";
 import { enUpdate, zhUpdate } from "./app/update-words";
@@ -1221,6 +1226,14 @@ function minimumVersions(current: string | null, pick: (version: string | null) 
     { who: null, running: appUpdates.version, state, look: () => appUpdates.look().then(() => appUpdates.state.peek() ?? state) },
     { kind: "minimum", current, pick: async (version) => pick(version) },
   );
+}
+
+/** The window of versions on the release a network rolls out a batch at
+ *  a time, as this device knows of releases. */
+function rolloutVersions(purpose: RolloutPurpose): void {
+  const state = appUpdates.state.peek();
+  if (!state) return;
+  versionWindow.open({ who: null, running: appUpdates.version, state, look: () => appUpdates.look().then(() => appUpdates.state.peek() ?? state) }, purpose);
 }
 
 /** The window of versions for this device: a version picked comes as the
@@ -2870,6 +2883,9 @@ function show(next: Place): void {
         ago: (ms) => homeWords.ago(ms),
         stats: (machine, after, seen) => (live ? machineStats(machine, after, seen) : specimenStats(machine, after)),
         memoryRoom: (machine, bytes) => (live ? machineMemoryRoom(machine, bytes) : Promise.resolve(bytes ?? 1.5 * 2 ** 30)),
+        // A phone has no node of its own to ask.
+        doctor: live ? (onPhone() ? undefined : doctorReadings) : specimenDoctor,
+        reveal: live ? (path) => void reveal(path).catch(() => {}) : () => {},
         nameProblem: (text) => (live ? nameProblem("machine", text) : specimenNameProblem("machine", text)),
         change,
         log: live ? machineLog : specimenMachineLog,
@@ -2914,6 +2930,7 @@ function show(next: Place): void {
           view: english ? enUpdateView : zhUpdateView,
           ask: askUpdatesView,
           minimum: minimumVersions,
+          rollout: rolloutVersions,
           state: appUpdates.state,
           remote: (name, call) => updatesAsked.remote(name, call),
           older: updateOlderMachine,
@@ -2921,12 +2938,14 @@ function show(next: Place): void {
         },
         batch: english ? enBatch : zhBatch,
         manage: english ? enManage : zhManage,
+        troubles: english ? enTroubles : zhTroubles,
         words: english ? enMachines : zhMachines,
         access: english ? enAccess : zhAccess,
         people: english ? enPeople : zhPeople,
         head,
         focus: next.focus ?? null,
         ticked: !!next.updates,
+        alerts: !!next.alerts,
         when,
         change,
         invite: (login) => tokens.open(login),

@@ -40,6 +40,17 @@ export interface VersionWords {
   ask: string;
   asked: string;
   askNone: string;
+  /** Picking the release to roll out a batch at a time, the one going out,
+   *  and withdrawing a release or taking it back, asked first. */
+  rolloutTitle: string;
+  rolloutNow(version: string | null): string;
+  rolloutPick: string;
+  rolling: string;
+  withdraw: string;
+  restore: string;
+  withdrawn: string;
+  withdrawAsk(version: string): string;
+  withdrawWhat: string;
 }
 
 const ago = (iso: string, zh: boolean): string => {
@@ -86,6 +97,15 @@ export const zhVersions: VersionWords = {
   ask: "设为最低",
   asked: "当前要求",
   askNone: "不要求最低版本",
+  rolloutTitle: "推广哪一版",
+  rolloutNow: (version) => (version ? `正在推广 ${version}` : "现在不分批"),
+  rolloutPick: "推广这一版",
+  rolling: "推广中",
+  withdraw: "撤回",
+  restore: "恢复",
+  withdrawn: "已撤回",
+  withdrawAsk: (version) => `撤回 ${version}？`,
+  withdrawWhat: "任何机器都不会再换到这一版，明确要求的也不换；已经换上的不受影响。",
 };
 
 export const enVersions: VersionWords = {
@@ -120,6 +140,15 @@ export const enVersions: VersionWords = {
   ask: "Set as minimum",
   asked: "Asked for now",
   askNone: "Ask for no minimum",
+  rolloutTitle: "Version to roll out",
+  rolloutNow: (version) => (version ? `Rolling out ${version}` : "Releases go out all at once"),
+  rolloutPick: "Roll out",
+  rolling: "Rolling out",
+  withdraw: "Withdraw",
+  restore: "Restore",
+  withdrawn: "Withdrawn",
+  withdrawAsk: (version) => `Withdraw ${version}?`,
+  withdrawWhat: "No machine will take this version any more, even when asked to; those already on it stay.",
 };
 
 export interface UpdateWords {

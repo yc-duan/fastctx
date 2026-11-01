@@ -25,6 +25,15 @@ const actions = (online: boolean): UpdateActions => ({
 export function specimenUpdateView(world: () => WorldNow | null): (hub: string, account: string, call: UpdatesViewCall) => Promise<UpdatesViewReply> {
   const due = new Map<string, Due>([["lab-a-01", { version: v(8), by: "me", at: "2026-10-20T09:00:00Z" }]]);
   const policy: Policy = { minimum: v(6), managed_auto: true };
+  // The machines named first, by name, as the hub tells them beside its
+  // policy; with ?rollout=stopped, beta 8 goes out to a quarter, stopped
+  // by the hub over lab-a-01, and beta 5 is withdrawn.
+  let rolloutFirst: string[] = [];
+  if (new URLSearchParams(location.search).get("rollout") === "stopped") {
+    policy.rollout = { version: v(8), share: 25, paused: true, stopped: { at: "2026-10-04T11:52:00Z", machine: "lab-a-01", kind: "stuck" } };
+    policy.withdrawn = [v(5)];
+    rolloutFirst = ["lab-a-01", "server"];
+  }
   const auto = new Map<string, boolean>();
   const stageOf = (name: string, here: boolean): { running: string; stage: UpdateStage } => {
     if (here) return { running: v(8), stage: { kind: "idle" } };
@@ -104,7 +113,19 @@ export function specimenUpdateView(world: () => WorldNow | null): (hub: string, 
     }
     const releases = [8, 7, 6, 5].map((n) => manifest(v(n)));
     const versions = releases.map((one) => ({ version: one.version, published: one.pub_date ?? null, summary: one.notes ?? null, manifest: one, problem: null }));
-    return { hub: v(7), stable: null, beta: manifest(v(8)), releases, versions, policy: { ...policy }, machines, available: machines.filter((one) => one.offer && one.actions.schedule.allowed).length, repair_supported: true };
+    return {
+      hub: v(7),
+      stable: null,
+      beta: manifest(v(8)),
+      releases,
+      versions,
+      policy: { ...policy },
+      machines,
+      available: machines.filter((one) => one.offer && one.actions.schedule.allowed).length,
+      repair_supported: true,
+      rollouts: true,
+      rollout_first: [...rolloutFirst],
+    };
   };
   return async (hub, _account, call) => {
     // A node knows its hubs by name, not by id: asked by anything else, the
@@ -123,13 +144,17 @@ export function specimenUpdateView(world: () => WorldNow | null): (hub: string, 
     }
     if (call.do === "repair" || call.do === "cancel_repair") return { kind: "scheduled", results: call.machines.map((machine) => ({ machine, done: true, reason: null, why: null })) };
     if (call.do === "rollout") {
-      if (call.version) policy.rollout = { version: call.version, first: call.first, share: call.share };
+      // The same release stays paused, or stopped, as it was.
+      const same = policy.rollout?.version === call.version ? policy.rollout : undefined;
+      if (call.version) policy.rollout = { version: call.version, share: call.share, ...(same?.paused ? { paused: true } : {}), ...(same?.stopped ? { stopped: same.stopped } : {}) };
       else delete policy.rollout;
+      rolloutFirst = call.version ? [...call.first] : [];
       return { kind: "done" };
     }
     if (call.do === "pause") {
       if (policy.rollout) {
         const { stopped, ...rest } = policy.rollout;
+        // Going on again lets go of why the hub stopped it.
         policy.rollout = call.paused && stopped ? { ...rest, paused: true, stopped } : { ...rest, paused: call.paused };
       }
       return { kind: "done" };

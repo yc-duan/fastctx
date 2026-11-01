@@ -342,7 +342,7 @@ class Drawing {
       const shown = versions.length ? (versions.length === 1 ? shortVersion(versions[0]!, updates.line) : `${shortVersion(versions[0]!, updates.line)}–${shortVersion(versions[versions.length - 1]!, updates.line)}`) : "";
       const row = `<button class="ml-row ml-fold${open ? " open" : ""}${faint ? " visitor" : ""}" type="button" data-ml-fold="${escape(key)}" aria-expanded="${open}"${indent(depth)}>
       ${box(`list:${key}`, label, nodes, now) || `<span class="ml-pick none" aria-hidden="true"></span>`}
-      ${nameCell(icon, `<span class="ml-name-text">${escape(label)}</span>${tags}<span class="ml-count">${escape(words.groupSub(nodes.length, online(nodes)))}</span>`, true)}
+      ${nameCell(icon, `<span class="ml-name-text">${escape(label)}</span>${tags}<span class="ml-count">${escape(words.groupCount(nodes.length))}<span class="ml-online">${escape(words.groupOnline(online(nodes)))}</span></span>`, true)}
       <span class="ml-system uv-version"${span ? ` title="${escape(updates.words.runs(span))}"` : ""}>${escape(shown)}</span>
       ${markCell(groupMark(known, updates.line, updates.words))}
       <span class="ml-given"></span>
@@ -472,6 +472,8 @@ function linkSaid(node: MapNode, machine: Machine | null, now: ListNow, words: M
     return escape(words.offline(since ? now.when(new Date(since), now.now) : null));
   }
   if (node.online === null) return escape(words.unknown);
+  // Its Fastctx held up or stuck says more than how its line goes.
+  if (node.strain) return `<span class="ml-strain ${node.strain}" title="${escape(words.strainWhy[node.strain])}">${escape(words.strain[node.strain])}</span>`;
   // While no hub it is on is connected, how its line goes now is not known:
   // this computer says it is reconnecting, the others stand as they were.
   const heard = node.hubs.some((id) => now.world.accounts.hubs.find((hub) => hub.hub === id)?.link.kind === "online");
@@ -508,6 +510,6 @@ export function isManaged(world: WorldNow, name: string): boolean {
 }
 
 /** The hub's small knot, as the drawing marks it. */
-function knot(): string {
+export function knot(): string {
   return `<svg class="ml-knot" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="5" fill="none" stroke="currentColor" stroke-width="1.3"/><circle cx="8" cy="8" r="1.8" fill="currentColor"/></svg>`;
 }

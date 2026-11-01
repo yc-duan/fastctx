@@ -178,17 +178,34 @@ pub(super) fn snapshot(hub: &Hub, asker: &crate::origin::Origin, account: &Accou
     }
     let available = machines.iter().filter(|m| m.offer.is_some() && m.actions.update.allowed).count();
     let beta = network.on(Channel::Beta).cloned();
+    let policy = directory.is_super(account).then(|| store.hub.updates.clone());
+    // The machines a rollout names first, by the names they have now: the
+    // policy keeps their keys.
+    let mut rollout_first: Vec<_> = policy
+        .as_ref()
+        .and_then(|policy| policy.rollout.as_ref())
+        .map(|rollout| {
+            directory
+                .members
+                .iter()
+                .filter(|member| rollout.first.contains(&member.key.to_string()))
+                .map(|member| member.name.clone())
+                .collect()
+        })
+        .unwrap_or_default();
+    rollout_first.sort();
     Ok(View {
         hub: env!("CARGO_PKG_VERSION").into(),
         stable: network.stable,
         beta,
         releases,
         versions,
-        policy: directory.is_super(account).then(|| store.hub.updates.clone()),
+        policy,
         machines,
         available,
         repair_supported: true,
         rollouts: true,
+        rollout_first,
     })
 }
 
@@ -291,7 +308,17 @@ pub(crate) async fn request(
                                 .ok_or_else(|| format!("{name} is not a machine of this network"))
                         })
                         .collect::<Result<std::collections::BTreeSet<_>, String>>()?;
-                    Some(fastctx_types::update::Rollout { version, first, share, paused: false, stopped: None })
+                    // The same version with other machines or another share
+                    // stays paused, or stopped, as it was: going on again is
+                    // asked for by itself (`ViewCall::Pause`).
+                    let (paused, stopped) = store
+                        .hub
+                        .updates
+                        .rollout
+                        .as_ref()
+                        .filter(|current| current.version == version)
+                        .map_or((false, None), |current| (current.paused, current.stopped.clone()));
+                    Some(fastctx_types::update::Rollout { version, first, share, paused, stopped })
                 }
             };
             let withdrawn = hub.store().hub.updates.withdrawn.clone();

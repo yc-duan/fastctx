@@ -1154,7 +1154,10 @@
           ],
           "available": 1,
           "repair_supported": true,
-          "rollouts": true
+          "rollouts": true,
+          "rollout_first": [
+            "server"
+          ]
         }
       },
       {
@@ -4484,8 +4487,15 @@
                 "at": "2026-10-09T08:30:00Z",
                 "kind": "outage",
                 "count": 12
+              },
+              {
+                "id": 10,
+                "at": "2026-10-09T08:30:00Z",
+                "kind": "rollout",
+                "version": "1.0.2"
               }
             ],
+            "health": true,
             "renames": true,
             "managed": true,
             "roles": true,

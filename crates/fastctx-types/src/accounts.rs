@@ -377,6 +377,10 @@ pub struct HubAccounts {
     /// its super administrator, keyed by hub/id (`crate::trouble`).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub troubles: Vec<crate::trouble::Trouble>,
+    /// Whether the hub reads its machines' health and tells what goes wrong
+    /// with them (`troubles`); an older hub tells nothing.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub health: bool,
     /// Whether the hub renames machines.
     #[serde(default)]
     pub renames: bool,

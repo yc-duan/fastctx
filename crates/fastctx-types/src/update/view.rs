@@ -108,6 +108,10 @@ pub struct View {
     /// versions (`ViewCall::Rollout`, `Pause`, `Withdraw`).
     #[serde(default)]
     pub rollouts: bool,
+    /// The machines the rollout names first, by their names now; the policy
+    /// keeps their keys.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub rollout_first: Vec<MachineName>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

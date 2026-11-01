@@ -196,6 +196,7 @@ pub fn fixtures() -> Fixtures {
                     }),
                     machines: vec![machine],
                     available: 1,
+                    rollout_first: vec!["server".parse().unwrap()],
                 }),
             },
             ViewReply::Scheduled {

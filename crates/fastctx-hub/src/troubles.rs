@@ -344,6 +344,7 @@ impl Troubles {
             count: detail.count,
             seconds: detail.seconds,
             near: detail.near,
+            version: detail.version,
         };
         hub.log.line(format_args!(
             "trouble {}: {:?}{}",
@@ -430,6 +431,7 @@ pub(crate) struct Detail {
     pub count: Option<u32>,
     pub seconds: Option<u64>,
     pub near: Option<Near>,
+    pub version: Option<String>,
 }
 
 fn row_key(id: u64) -> String {

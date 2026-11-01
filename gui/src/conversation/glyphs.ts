@@ -13,15 +13,15 @@ type Named = Glyph | "thinking" | "chevron" | "copy" | "check" | "expand" | "sto
  *  and letting them in, signing up; a conversation's context, the
  *  provider's cache and how long it stays; saving a copy, a file's path,
  *  and opening it with this device's program; the machines as a drawing
- *  and as a list; a new version; a
- *  conversation's goal, pausing and resuming it, and the panel beside it;
+ *  and as a list; a new version; what went
+ *  wrong with them; a conversation's goal, pausing and resuming it, and the panel beside it;
  *  a repair; a project's journal and decision; a sentinel; a
  *  conversation's every step; one of the account's skills. */
 type Frame =
   | "menu" | "plus" | "minus" | "settings" | "sidebar" | "machine" | "close" | "more" | "back" | "sleep" | "wake" | "move"
   | "archive" | "unarchive" | "trash" | "reread" | "scan" | "grip" | "page" | "versions" | "history" | "person" | "key" | "phone"
   | "logout" | "shield" | "lock" | "unlock" | "signup" | "relay" | "save" | "link" | "launch"
-  | "context" | "cache" | "clock" | "tree" | "rows" | "update"
+  | "context" | "cache" | "clock" | "tree" | "rows" | "update" | "bell"
   | "note" | "plug" | "tune" | "skill"
   | "goal" | "pause" | "resume" | "panel" | "repair" | "journal" | "spec" | "sentinel" | "steps" | "dock-right" | "dock-bottom" | "dock-left" | "split"
   | Marks;
@@ -157,6 +157,7 @@ const paths: Record<Named, string> = {
   steps: '<path d="M3.75 5h12.5M3.75 15h12.5"/><circle cx="7" cy="10" r="0.9" fill="currentColor"/><circle cx="10" cy="10" r="0.9" fill="currentColor"/><circle cx="13" cy="10" r="0.9" fill="currentColor"/>',
   rows: '<circle cx="5" cy="5.75" r="0.9" fill="currentColor"/><circle cx="5" cy="10" r="0.9" fill="currentColor"/><circle cx="5" cy="14.25" r="0.9" fill="currentColor"/><path d="M8.25 5.75h7.5M8.25 10h7.5M8.25 14.25h7.5"/>',
   clock: '<circle cx="10" cy="10" r="6.25"/><path d="M10 6.4V10l2.5 1.6"/>',
+  bell: '<path d="M5.75 13V8.35a4.25 4.25 0 0 1 8.5 0V13l1.25 1.5h-11z"/><path d="M8.4 14.5a1.7 1.7 0 0 0 3.2 0"/>',
   relay: '<circle cx="4.5" cy="10" r="1.5"/><circle cx="15.5" cy="10" r="1.5"/><path d="M6 10h2.25M11.75 10H14"/><rect x="8.25" y="8" width="3.5" height="4" rx="0.75"/>',
   // Where a folder walk starts: a machine's home, and each of its disks.
   home: '<path d="M4 9.25L10 4.25l6 5"/><path d="M5.75 8v7.25a.75.75 0 0 0 .75.75h7a.75.75 0 0 0 .75-.75V8"/><path d="M8.5 16v-3.5h3V16"/>',

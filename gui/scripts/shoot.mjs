@@ -47,10 +47,12 @@ const widths = [
   { name: "phone", width: 390, height: 844, scale: 3, mobile: true },
   { name: "tablet", width: 820, height: 1180, scale: 2, mobile: true },
   { name: "desktop", width: 1280, height: 860, scale: 1.5, mobile: false },
+  // The narrowest phones in use, shot only when named.
+  { name: "narrow", width: 360, height: 780, scale: 3, mobile: true },
 ];
 const themes = option("theme", null) ? [option("theme")] : ["warm-black", "ink-black", "warm-white"];
 const sessions = only ? only.split(",") : ["welcome", "create", "created", "home", "claude", "codex", "project", "journal", "machines", "settings", "new", "new-project", "invite", "invite-windows", "invite-windows-made", "share", "lend", "relays", "palette", "login", "account", "admin", "home-2", "machines-2", "new-2", "slash", "drawer", "about", "manage", "asks", "asks-question", "asks-form", "asks-link", "asks-claude-permission", "asks-claude-question", "asks-claude-plan", "asks-claude-form", "stop", "new-codex", "new-attach", "new-lent-2", "new-pick-2", "find", "attach", "queue", "rewind", "usage", "service", "remove-keep", "remove-erase", "remove-run", "program", "mention", "decision", "log", "written", "page", "page-ask", "page-versions", "read-card", "panel-code", "panel-file"];
-const sizes = option("width", null) ? widths.filter((size) => option("width").split(",").includes(size.name)) : widths;
+const sizes = option("width", null) ? widths.filter((size) => option("width").split(",").includes(size.name)) : widths.filter((size) => size.name !== "narrow");
 
 const profile = mkdtempSync(join(tmpdir(), "shoot-"));
 const port = 9300 + Math.floor(Math.random() * 500);
@@ -145,10 +147,10 @@ for (const session of sessions) {
       const loaded = once("Page.loadEventFired");
       const two = session.endsWith("-2");
       const named = two ? session.slice(0, -2) : session;
-      const shown = named.startsWith("invite-") ? "invite" : named === "stop" || named === "program" || named === "read-card" || named === "late" ? "claude" : named === "late-straight" ? "voice" : named === "drawer" || named === "palette" ? "home" : named === "service" || named.startsWith("remove-") ? "settings" : named === "slash" || named === "mention" || named === "find" || named === "attach" || named === "rewind" || named === "usage" ? "codex" : named.startsWith("asks") ? "asks" : named === "new-codex" || named === "new-attach" || named === "new-lent" || named === "new-pick" ? "new" : named === "manage" ? "about" : named === "welcome" || named === "create" || named === "created" ? "login" : named === "share" || named === "relays" ? "machines" : named === "lend" || named.startsWith("ledger") ? "home" : named === "queue" ? "codex" : named.startsWith("page") ? "page" : named.startsWith("panel") && named !== "panel-agent" ? "claude" : named.startsWith("team") || named === "panel-agent" ? "stream" : named.startsWith("repair-") ? "home" : named === "updates-repair" ? "machines" : named === "journal-edit" || named === "journal-versions" ? "journal" : named === "project-write" || named === "project-history" ? "project" : named === "features" || named.startsWith("feature-") || named.startsWith("prefs-") || named.startsWith("activity") || named === "mode" || named === "sidebar-drag" ? "home" : named;
+      const shown = named === "strain" || named === "strain-list" || named.startsWith("alerts") || named.startsWith("rollout") ? "machines" : named === "strain-machine" || named === "health" ? "machine" : named.startsWith("invite-") ? "invite" : named === "stop" || named === "program" || named === "read-card" || named === "late" ? "claude" : named === "late-straight" ? "voice" : named === "drawer" || named === "palette" ? "home" : named === "service" || named.startsWith("remove-") ? "settings" : named === "slash" || named === "mention" || named === "find" || named === "attach" || named === "rewind" || named === "usage" ? "codex" : named.startsWith("asks") ? "asks" : named === "new-codex" || named === "new-attach" || named === "new-lent" || named === "new-pick" ? "new" : named === "manage" ? "about" : named === "welcome" || named === "create" || named === "created" ? "login" : named === "share" || named === "relays" ? "machines" : named === "lend" || named.startsWith("ledger") ? "home" : named === "queue" ? "codex" : named.startsWith("page") ? "page" : named.startsWith("panel") && named !== "panel-agent" ? "claude" : named.startsWith("team") || named === "panel-agent" ? "stream" : named.startsWith("repair-") ? "home" : named === "updates-repair" ? "machines" : named === "journal-edit" || named === "journal-versions" ? "journal" : named === "project-write" || named === "project-history" ? "project" : named === "features" || named.startsWith("feature-") || named.startsWith("prefs-") || named.startsWith("activity") || named === "mode" || named === "sidebar-drag" ? "home" : named;
       // `welcome` and `create` are a computer's first open, in no World yet.
       const alone = named === "welcome" || named === "create" || named === "created";
-      const ask = (session.startsWith("asks-") ? `&ask=${session.slice(5)}` : "") + (named === "late" || named === "late-straight" ? "&slow=200,6000,999999&late=1500" : "") + (two ? "&accounts=2" : "") + (alone ? "&accounts=0" : "") + (named.startsWith("team") || named === "panel-agent" ? "&start=agents" : "") + (named.startsWith("repair-") ? `&repair=${named === "repair-broken" ? "broken" : "failed"}` : "") + (named.startsWith("panel-goal-") ? `&goal=${named.slice("panel-goal-".length)}` : "") + (named.startsWith("panel-goalpage-") ? `&goal=${named.slice("panel-goalpage-".length).replace(/-typed$/, "")}` : "");
+      const ask = (named.startsWith("strain") ? `&strain${named === "strain-machine" ? "&m=server" : ""}` : "") + (named === "alerts-none" ? "&troubles=0" : "") + (named === "health" ? "&health=strained" : "") + (named === "rollout" || named === "rollout-page" ? "&rollout=stopped" : "") + (session.startsWith("asks-") ? `&ask=${session.slice(5)}` : "") + (named === "late" || named === "late-straight" ? "&slow=200,6000,999999&late=1500" : "") + (two ? "&accounts=2" : "") + (alone ? "&accounts=0" : "") + (named.startsWith("team") || named === "panel-agent" ? "&start=agents" : "") + (named.startsWith("repair-") ? `&repair=${named === "repair-broken" ? "broken" : "failed"}` : "") + (named.startsWith("panel-goal-") ? `&goal=${named.slice("panel-goal-".length)}` : "") + (named.startsWith("panel-goalpage-") ? `&goal=${named.slice("panel-goalpage-".length).replace(/-typed$/, "")}` : "");
       // A page an agent wrote is its own document, with a stand-in host.
       const written = session === "written";
       const specimen = named === "mapcanvas" ? "mapcanvas-specimen.html" : named === "longview" ? "longview-specimen.html" : written ? "page-specimen.html" : null;
@@ -230,6 +232,32 @@ for (const session of sessions) {
         await send("Runtime.evaluate", {
           awaitPromise: true,
           expression: `new Promise((r) => setTimeout(() => { document.querySelector('[data-view="reference"]')?.click(); setTimeout(() => { ${named === "project-write" ? 'document.querySelector("[data-write-history]")?.click();' : ""} setTimeout(r, 700); }, 500); }, 900))`,
+        });
+      }
+      // `alerts` is what went wrong lately, as the machines page shows it;
+      // `alerts-none` the same where nothing did.
+      if (named.startsWith("alerts")) {
+        await send("Runtime.evaluate", {
+          awaitPromise: true,
+          expression: `new Promise((r) => setTimeout(() => { document.querySelector('.ml-view[data-view="alerts"]')?.click(); setTimeout(r, 900); }, 900))`,
+        });
+      }
+      // `rollout-page` is the update view with beta 8 going out, stopped by the
+      // hub, and beta 5 withdrawn; `rollout` its sheet; `rollout-versions`
+      // the versions to roll out where none goes out; `rollout-new` the sheet
+      // of the newest picked there.
+      if (named.startsWith("rollout")) {
+        const open = named === "rollout-page" ? "" : `document.querySelector(".uv-policy-fold:not([open]) > summary")?.click(); setTimeout(() => { document.querySelector("[data-uv-rollout]")?.click(); ${named === "rollout-new" ? 'setTimeout(() => document.querySelector("[data-vw-pick]")?.click(), 700);' : ""} }, 400);`;
+        await send("Runtime.evaluate", {
+          awaitPromise: true,
+          expression: `new Promise((r) => { location.hash = "#/updates"; setTimeout(() => { ${open} setTimeout(r, 1800); }, 1400); })`,
+        });
+      }
+      // `strain-list` is the machines as a list, lab held up and server stuck.
+      if (named === "strain-list") {
+        await send("Runtime.evaluate", {
+          awaitPromise: true,
+          expression: `new Promise((r) => setTimeout(() => { document.querySelector('.ml-view[data-view="list"]')?.click(); setTimeout(r, 900); }, 900))`,
         });
       }
       // `updates-repair` is the machines' update view with two machines picked,

@@ -215,6 +215,8 @@ export interface Trouble {
   /** The bound that came near its limit, with how much was used in
    *  hundredths. */
   near?: { bound: string; used: number };
+  /** The version a stopped rollout was of. */
+  version?: string;
 }
 
 export interface Arrival {
@@ -328,6 +330,9 @@ export interface HubAccounts {
   machine_notices?: MachineNotice[];
   /** What went wrong lately with machines this device's accounts hold. */
   troubles?: Trouble[];
+  /** The hub reads its machines' health and tells what goes wrong with
+   *  them; an older hub tells nothing. */
+  health?: boolean;
   assists: AssistSeen[];
   /** Plans the super administrator set on logins that name none. */
   plans: PlanSeen[];

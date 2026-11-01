@@ -116,7 +116,11 @@ pub(crate) async fn watch(hub: Weak<Hub>) {
                     rollout.version
                 ));
                 super::tell(&hub, None);
-                hub.troubles.raise(&hub, None, TroubleKind::Rollout, crate::troubles::Detail::default());
+                let detail = crate::troubles::Detail {
+                    version: Some(rollout.version.clone()),
+                    ..crate::troubles::Detail::default()
+                };
+                hub.troubles.raise(&hub, None, TroubleKind::Rollout, detail);
             }
             Ok(false) => {}
             Err(error) => hub.log.line(format_args!("stopping the rollout of {}: {error}", rollout.version)),

@@ -14,6 +14,8 @@ mod composer;
 mod connection;
 #[cfg(desktop)]
 mod data;
+#[cfg(desktop)]
+mod doctor;
 mod features;
 mod goals;
 mod held_events;
@@ -1273,6 +1275,8 @@ pub fn run() {
             features::features_watch,
             #[cfg(desktop)]
             data::data,
+            #[cfg(desktop)]
+            doctor::doctor_readings,
             accounts::account_change,
             accounts::server_command,
             hub_moving::hub_move,

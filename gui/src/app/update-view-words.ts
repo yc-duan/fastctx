@@ -5,6 +5,7 @@
 import type { ActionReason, FailureReason } from "../world/updates";
 import { enProblems, zhProblems, type ProblemWords } from "./problem";
 import { enRepair, zhRepair, type RepairWords } from "./repair-words";
+import { enTroubles, zhTroubles, type TroubleWords } from "./trouble-words";
 
 export interface UpdateViewWords {
   /** The kernel's errors, in plain words (`problem.ts`). */
@@ -44,6 +45,34 @@ export interface UpdateViewWords {
   minimum: string;
   noMinimum: string;
   managedAuto: string;
+  /** A release going out a batch at a time (`rollout-window.ts`): the
+   *  policy's item and the sheet's title, none, how it stands, and the
+   *  ruler's notes of it and of a withdrawn release. */
+  rollout: string;
+  noRollout: string;
+  rolloutPaused: string;
+  rolloutStopped: string;
+  rolloutMark(share: number): string;
+  withdrawnMark: string;
+  /** The rollout's sheet: its version, the share of the other machines,
+   *  the machines that take it first and finding them, what is done. */
+  rolloutVersion: string;
+  rolloutAnother: string;
+  rolloutShare: string;
+  rolloutFirst: string;
+  rolloutFind: string;
+  rolloutFound: string;
+  rolloutStart: string;
+  rolloutSave: string;
+  rolloutEnd: string;
+  rolloutPause: string;
+  rolloutResume: string;
+  /** Why the hub stopped it: the machine and what went wrong there, and
+   *  what that means behind the pointer. */
+  rolloutStoppedBy(machine: string, what: string): string;
+  rolloutStoppedWhy: string;
+  /** What went wrong, as the alerts say it. */
+  troubles: TroubleWords;
   /** A switch of a machine's own updating by itself. */
   auto: string;
   /** A hub too old to tell the view; a view not read for another reason,
@@ -101,6 +130,26 @@ export const zhUpdateView: UpdateViewWords = {
   minimum: "网络要求至少",
   noMinimum: "不要求",
   managedAuto: "受管机器自动更新",
+  rollout: "分批推广",
+  noRollout: "不分批",
+  rolloutPaused: "已暂停",
+  rolloutStopped: "已停下",
+  rolloutMark: (share) => `推广 ${share}%`,
+  withdrawnMark: "已撤回",
+  rolloutVersion: "版本",
+  rolloutAnother: "换一版",
+  rolloutShare: "其余机器",
+  rolloutFirst: "先给",
+  rolloutFind: "查找机器",
+  rolloutFound: "没有对得上的机器",
+  rolloutStart: "开始推广",
+  rolloutSave: "保存",
+  rolloutEnd: "结束推广",
+  rolloutPause: "暂停",
+  rolloutResume: "继续",
+  rolloutStoppedBy: (machine, what) => `${machine} ${what}，推广已停下`,
+  rolloutStoppedWhy: "换上这一版的机器出问题的比例高于其余机器",
+  troubles: zhTroubles,
   auto: "自动更新",
   hubOld: "中枢还是旧版本，换上新版后这里才能管更新",
   unread: "没读到中枢的更新情况",
@@ -169,6 +218,26 @@ export const enUpdateView: UpdateViewWords = {
   minimum: "Network requires at least",
   noMinimum: "None",
   managedAuto: "Managed machines update by themselves",
+  rollout: "Staged rollout",
+  noRollout: "All at once",
+  rolloutPaused: "Paused",
+  rolloutStopped: "Stopped",
+  rolloutMark: (share) => `Rollout ${share}%`,
+  withdrawnMark: "Withdrawn",
+  rolloutVersion: "Version",
+  rolloutAnother: "Another version",
+  rolloutShare: "Other machines",
+  rolloutFirst: "First",
+  rolloutFind: "Find machines",
+  rolloutFound: "No machines match",
+  rolloutStart: "Start rollout",
+  rolloutSave: "Save",
+  rolloutEnd: "End rollout",
+  rolloutPause: "Pause",
+  rolloutResume: "Resume",
+  rolloutStoppedBy: (machine, what) => `${machine}: ${what.toLowerCase()}. The rollout stopped`,
+  rolloutStoppedWhy: "Machines on this version had trouble more often than the rest",
+  troubles: enTroubles,
   auto: "Update automatically",
   hubOld: "The hub runs an older version; updates can be managed here once it is updated",
   unread: "Couldn't read the hub's updates",

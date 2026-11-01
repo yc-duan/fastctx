@@ -4,7 +4,9 @@
 // bar swept with a marker as tall as how many machines run that release, the
 // part of it online in ink; a machine on its way a clay dot travelling the
 // rule toward the release it goes to; the network's minimum a pencilled line,
-// the hub's release marked under its tick. The page's one bold thing.
+// the hub's release marked under its tick, and so the release going out a
+// batch at a time; a withdrawn release crossed out. The page's one bold
+// thing.
 
 import { escape } from "../conversation/prose";
 import { dashed, dot, ruled, seeded, swatch } from "../pen/shapes";
@@ -18,6 +20,10 @@ export interface RulerNow {
   newest: string[];
   hub: string | null;
   minimum: string | null;
+  /** The release going out a batch at a time, and how far. */
+  rollout: { version: string; share: number; paused: boolean; stopped: boolean } | null;
+  /** Releases no machine takes any more. */
+  withdrawn: ReadonlySet<string>;
   /** The release line every version shown shares. */
   line: string | null;
   width: number;
@@ -35,7 +41,7 @@ export function rulerOf(now: RulerNow, words: UpdateViewWords): string {
   const baseline = height - (phone ? 44 : 52);
   const tall = baseline - (phone ? 34 : 44);
   const running = now.machines.map(runningOf).filter((version): version is string => !!version);
-  let versions = [...new Set([...running, ...now.newest, ...(now.hub ? [now.hub] : [])])].sort(compareVersions);
+  let versions = [...new Set([...running, ...now.newest, ...(now.hub ? [now.hub] : []), ...(now.rollout ? [now.rollout.version] : [])])].sort(compareVersions);
   if (!versions.length || width < 160) return "";
   const most = phone ? TICKS.phone : TICKS.desk;
   const older = versions.length > most ? versions.slice(0, versions.length - most + 1) : [];
@@ -58,7 +64,8 @@ export function rulerOf(now: RulerNow, words: UpdateViewWords): string {
     const x = xOf(index);
     svg.push(path(ruled([x, baseline - 4], [x, baseline + 6], 1.2, seeded(`uv-t-${tick.label}`)), "uv-rule"));
     const label = tick.versions.length > 1 ? tick.label : shortVersion(tick.label, index === 0 && !phone ? null : line);
-    notes.push(`<span class="uv-tick${tick.label === newest ? " newest" : ""}" style="left:${x}px;top:${baseline + 12}px">${escape(label)}</span>`);
+    const withdrawn = tick.versions.length === 1 && now.withdrawn.has(tick.label);
+    notes.push(`<span class="uv-tick${tick.label === newest ? " newest" : ""}${withdrawn ? " withdrawn" : ""}" style="left:${x}px;top:${baseline + 12}px"${withdrawn ? ` title="${escape(words.withdrawnMark)}"` : ""}>${escape(label)}</span>`);
     const here = counts[index]!;
     if (!here.length) return;
     const awake = here.filter((machine) => machine.online).length;
@@ -95,6 +102,14 @@ export function rulerOf(now: RulerNow, words: UpdateViewWords): string {
   if (hub >= 0 && !phone) {
     const below = minimum === hub ? 52 : 34;
     notes.push(`<span class="uv-note" style="left:${xOf(hub)}px;top:${baseline + below}px">${escape(words.hubMark)}</span>`);
+  }
+  // The release going out, how far, or that it stands still.
+  const rollout = now.rollout;
+  const rolling = rollout ? tickOf(rollout.version) : -1;
+  if (rollout && rolling >= 0 && !phone) {
+    const below = 34 + 18 * [minimum, hub].filter((tick) => tick === rolling).length;
+    const said = rollout.stopped ? words.rolloutStopped : rollout.paused ? words.rolloutPaused : words.rolloutMark(rollout.share);
+    notes.push(`<span class="uv-note${rollout.stopped ? " caution" : ""}" style="left:${xOf(rolling)}px;top:${baseline + below}px">${escape(said)}</span>`);
   }
   return `<div class="uv-ruler" style="height:${height}px"><svg width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" aria-hidden="true">${svg.join("")}</svg>${notes.join("")}</div>`;
 }

@@ -46,6 +46,14 @@
     min-height: 44px;
   }
 
+  /* The network's update policy and a version's act: the target grows,
+     the line keeps its height. */
+  .uv-chip,
+  .vw-go {
+    height: 44px;
+    margin-block: -7px;
+  }
+
   .logins-candidate,
   .logins-folder-head {
     min-height: 44px;
