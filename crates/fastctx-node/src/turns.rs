@@ -14,6 +14,7 @@
 //! goes into the resident's `now` and to everyone watching; what must be
 //! heard at once also goes to everyone owed the running turn's end.
 
+pub(crate) mod answers;
 mod settlement;
 pub(crate) use settlement::settle_terminal_locked;
 
@@ -71,8 +72,8 @@ async fn apply_inner(node: &Arc<Node>, id: &ResidentId, mut event: SessionEvent)
         Happened::Finished { turn, item } => crate::goals::questions::key(turn, item),
         _ => None,
     };
-    if let Some(key) = &question_key
-        && crate::delivery::has_event(&directory, key)?
+    if let Some(key) = question_key.clone()
+        && crate::delivery::local(&directory, move |directory| crate::delivery::has_event(directory, &key)).await?
     {
         return Ok(());
     }
@@ -115,7 +116,11 @@ async fn apply_inner(node: &Arc<Node>, id: &ResidentId, mut event: SessionEvent)
     if !matches!(event.happened, Happened::TurnStarted { .. }) {
         event = crate::turn_evidence::observe(node, id, event).await?;
     }
-    crate::run_facts::attach(&directory, &mut event)?;
+    event = crate::delivery::local(&directory, move |directory| {
+        crate::run_facts::attach(directory, &mut event)?;
+        Ok(event)
+    })
+    .await?;
     if let Happened::Changed { change: SessionChange::Status { waiting_for_user: Some(waiting), .. }, .. } =
         &event.happened
     {
@@ -226,7 +231,7 @@ async fn apply_inner(node: &Arc<Node>, id: &ResidentId, mut event: SessionEvent)
         _ => {
             let key = match &event.happened {
                 Happened::TurnStarted { turn } => {
-                    if crate::delivery::terminal(&directory, turn)?.is_some() {
+                    if crate::delivery::terminal_header(&directory, turn).await?.is_some() {
                         return Ok(());
                     }
                     node.residents.turn_started(&node.world, id, turn, event.at)?;
@@ -241,8 +246,13 @@ async fn apply_inner(node: &Arc<Node>, id: &ResidentId, mut event: SessionEvent)
                 Happened::Finished { .. } if question_key.is_some() => question_key.expect("known question"),
                 _ => serde_json::to_string(&event).map_err(std::io::Error::other)?,
             };
-            if crate::delivery::event(&directory, &key, &event)? {
-                node.watchers.publish(id, &event);
+            let (recorded, kept) = crate::delivery::local(&directory, move |directory| {
+                let recorded = crate::delivery::event(directory, &key, &event)?;
+                Ok((recorded, event))
+            })
+            .await?;
+            if recorded {
+                node.watchers.publish(id, &kept);
             }
             Ok(())
         }
@@ -328,7 +338,7 @@ async fn finish_at(
     if about.host.agent.as_str() == "codex" && end.facts.is_none() && !matches!(end.how, TurnHow::Completed) {
         // Recovery is exceptional; normal host completions carry their facts
         // without reading the conversation's accumulated event record.
-        let events = crate::delivery::history(&directory)?;
+        let events = crate::delivery::local(&directory, crate::delivery::history).await?;
         let initially_empty = about.world_started
             && !events
                 .iter()
@@ -346,10 +356,10 @@ async fn finish_at(
     crate::turn_evidence::freeze(node, id, turn, &mut end);
     let mut readers = node.residents.readers(id, turn);
     readers.extend_from_slice(additional);
-    let accepted: Vec<_> = crate::delivery::handovers(&directory)?
-        .into_iter()
-        .filter(|handover| handover.turn.as_deref() == Some(turn))
-        .collect();
+    let key = turn.to_string();
+    let accepted =
+        crate::delivery::local(&directory, move |directory| crate::delivery::handovers::for_turn(directory, &key))
+            .await?;
     for handover in &accepted {
         readers.extend(handover.inputs.iter().flat_map(|input| input.readers.iter().cloned()));
     }
@@ -479,7 +489,14 @@ pub async fn unsettled(
     why: String,
 ) {
     let result = async {
-        let mut handover = crate::delivery::begin(directory, vec![pending])?;
+        let speaking = node.residents.speaking(id).ok_or_else(|| deleted(id))?;
+        let _speaking = speaking.lock().await;
+        let held = node.residents.keep_speaking(id)?;
+        let mut handover = crate::delivery::local(directory, move |directory| {
+            let _held = held;
+            crate::delivery::begin(directory, vec![pending])
+        })
+        .await?;
         unresolved(node, id, directory, &mut handover, how, why, None).await
     }
     .await;
@@ -499,16 +516,22 @@ pub async fn unresolved(
     why: String,
     error: Option<serde_json::Value>,
 ) -> std::io::Result<()> {
-    let accepted: std::collections::HashSet<_> = crate::delivery::handovers(directory)?
-        .into_iter()
-        .filter(|handover| handover.turn.is_some())
-        .flat_map(|handover| handover.inputs.into_iter().map(|input| input.delivery.id))
-        .collect();
+    let inputs = handover.inputs.clone();
+    let accepted = crate::delivery::local(directory, move |directory| {
+        crate::delivery::handovers::accepted_inputs(directory, &inputs, false)
+    })
+    .await?;
     if handover.inputs.iter().all(|input| accepted.contains(&input.delivery.id)) {
         return Ok(());
     }
     let end = TurnEnd { facts: None, error, how, reason: Some(why), duration_ms: None, last_message: None };
-    crate::delivery::unresolved(directory, handover, end)?;
+    let (mut kept, held) = (handover.clone(), node.residents.keep_speaking(id)?);
+    *handover = crate::delivery::local(directory, move |directory| {
+        let _held = held;
+        crate::delivery::unresolved(directory, &mut kept, end)?;
+        Ok(kept)
+    })
+    .await?;
     let Some((about, _)) = node.residents.about(id) else { return Ok(()) };
     let readers: std::collections::BTreeSet<Address> = handover
         .inputs
@@ -559,6 +582,8 @@ pub async fn unresolved(
             now.since = Timestamp::now();
         }
     })?;
+    let key = handover.id.clone();
+    crate::delivery::local(directory, move |directory| crate::delivery::handovers::complete(directory, &key)).await?;
     let (node, id, directory) = (node.clone(), id.clone(), directory.clone());
     fastctx_platform::task::spawn(async move { pay(&node, &id, &directory).await });
     Ok(())

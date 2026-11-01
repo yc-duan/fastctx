@@ -1,6 +1,8 @@
 //! Display projection of context sent with a native input. Only a durable
 //! handover identity and a byte-exact digest authorize hiding the first block.
 //! Forks inherit these small receipts, never another copy of account bodies.
+pub(crate) mod stamps;
+
 use fastctx_types::{
     NoticeId,
     layout::ConversationDir,
@@ -26,24 +28,19 @@ pub(crate) fn stamp(notes: &[String]) -> Option<Stamp> {
 
 pub(crate) struct Projection<'a> {
     directory: &'a ConversationDir,
-    inherited: BTreeMap<String, Stamp>,
 }
 impl<'a> Projection<'a> {
     pub(crate) fn open(directory: &'a ConversationDir) -> io::Result<Self> {
-        let inherited = match std::fs::read(directory.books().join("context-inputs.json")) {
-            Ok(bytes) => serde_json::from_slice(&bytes).map_err(io::Error::other)?,
-            Err(error) if error.kind() == io::ErrorKind::NotFound => BTreeMap::new(),
-            Err(error) => return Err(error),
-        };
-        Ok(Self { directory, inherited })
+        stamps::prepare(directory)?;
+        Ok(Self { directory })
     }
     fn get(&self, client: &str) -> io::Result<Option<Stamp>> {
-        if let Some(stamp) = self.inherited.get(client) {
-            return Ok(Some(stamp.clone()));
+        if let Some(stamp) = stamps::get(self.directory, client)? {
+            return Ok(Some(stamp));
         }
         let Some(id) = client.strip_prefix(fastctx_hosts::codex::WORLD_CLIENT) else { return Ok(None) };
         let Ok(id) = id.parse::<NoticeId>() else { return Ok(None) };
-        Ok(crate::delivery::handover(self.directory, &id)?.and_then(|row| row.context_input))
+        crate::delivery::handovers::stamp(self.directory, &id)
     }
     pub(crate) fn restore(&self, event: &mut SessionEvent) -> io::Result<()> {
         let Happened::Heard { text, message: Some(message), .. } = &mut event.happened else { return Ok(()) };
@@ -76,15 +73,10 @@ pub(crate) fn inherit(parent: &ConversationDir, child: &ConversationDir, events:
             && let Some(stamp) = source.get(client)?
         {
             inherited.insert(client.clone(), stamp);
+            if inherited.len() > stamps::ROWS {
+                return Err(io::Error::new(io::ErrorKind::StorageFull, "too many inherited context input proofs"));
+            }
         }
     }
-    if !inherited.is_empty() {
-        fastctx_platform::ensure_private_dir(&child.books())?;
-        fastctx_platform::publish(
-            &child.books().join("context-inputs.json"),
-            &serde_json::to_vec(&inherited).map_err(io::Error::other)?,
-            fastctx_platform::Permissions::Private,
-        )?;
-    }
-    Ok(())
+    stamps::keep(child, inherited)
 }

@@ -727,7 +727,14 @@ impl fastctx_net::link::Node for Handler {
             {
                 link.refresh().await.map_err(Failure::not_run)?;
             }
-            let asker = match crate::admission::admit(&node, &link, &caller, &call) {
+            let (working, connection, authenticated) = (node.clone(), link.clone(), caller.clone());
+            let (call, admission) = fastctx_platform::task::spawn_blocking(move || {
+                let admission = crate::admission::admit(&working, &connection, &authenticated, &call);
+                (call, admission)
+            })
+            .await
+            .map_err(|error| Failure::not_run(error.to_string()))?;
+            let asker = match admission {
                 Ok(asker) => asker,
                 Err(refused) => {
                     // Its data connection is closed, not dropped: the other
@@ -1324,15 +1331,29 @@ impl fastctx_net::link::Node for Handler {
                         Ok(Ok(()))
                     }
                     Letter::Notice { to, notice } => {
-                        let notice = *notice;
-                        if let Notice::JobEnded { job, machine, scratch, .. } = &notice {
-                            if !scratch.is_empty() {
-                                let link = node
-                                    .link_of(&hub)
-                                    .ok_or_else(|| io::Error::other("the sending hub is no longer connected"))?;
-                                crate::scratch::observed(&node, &to, &node.written(&link, &from), scratch)?;
-                            }
-                            crate::here::ended_elsewhere(&node, &to, machine, job);
+                        let mut notice = *notice;
+                        if matches!(notice, Notice::JobEnded { .. }) {
+                            let (working, resident, hub, from) = (node.clone(), to.clone(), hub.clone(), from.clone());
+                            let computer = identity.with_id(&node, "").id;
+                            notice = fastctx_platform::task::spawn_blocking(move || -> io::Result<_> {
+                                if let Notice::JobEnded { job, machine, scratch, .. } = &notice {
+                                    if !scratch.is_empty() {
+                                        let link = working.link_of(&hub).ok_or_else(|| {
+                                            io::Error::other("the sending hub is no longer connected")
+                                        })?;
+                                        crate::scratch::observed(
+                                            &working,
+                                            &resident,
+                                            &working.written(&link, &from),
+                                            scratch,
+                                        )?;
+                                    }
+                                    crate::here::ended_elsewhere(&working, &resident, machine, job, &computer)?;
+                                }
+                                Ok(notice)
+                            })
+                            .await
+                            .map_err(io::Error::other)??;
                         }
                         // A colleague's question, a sentinel's finding and a goal's
                         // report are owed no answer.

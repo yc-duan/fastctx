@@ -180,12 +180,16 @@ async fn concurrent(world: &World, host: &Path, working: &Path, id: &ResidentId,
     );
     let mut watch = world.watch_history(scope.clone()).await?;
     tokio::time::timeout(Duration::from_secs(20), watch.next()).await??;
+    let completed = host.parent().unwrap().join("alice-pc/history-append-completed");
     let command = format!(
-        "HISTORY_APPEND_PAIR [[run: on alice-pc <<'PAIR'\nset -e\nfastctx view '{left}'\non alice-two fastctx view '{right}'\nwrite '{left}' <<'LEFT' &\n{original}LEFT_APPEND\nLEFT\nl=$!\non alice-two write '{right}' <<'RIGHT' &\n{original}RIGHT_APPEND\nRIGHT\nr=$!\nwait \"$l\"\nwait \"$r\"\nPAIR]]",
+        "HISTORY_APPEND_PAIR [[run: on alice-pc <<'PAIR'\nset -e\nfastctx view '{left}'\non alice-two fastctx view '{right}'\nwrite '{left}' <<'LEFT' &\n{original}LEFT_APPEND\nLEFT\nl=$!\non alice-two write '{right}' <<'RIGHT' &\n{original}RIGHT_APPEND\nRIGHT\nr=$!\nwait \"$l\"\nwait \"$r\"\nprintf done > '{completed}'\nPAIR]]",
         left = left.display(),
-        right = right.display()
+        right = right.display(),
+        completed = completed.display()
     );
     turn(world, host, id, command).await?;
+    // A notice can end run's wait and the mock turn before its job finishes.
+    anyhow::ensure!(file_is(&completed, "done").await, "the concurrent history job did not finish");
     let appended = current(world, &scope, name).await?;
     record(
         "concurrent whole-file appends retain both tails exactly once",
@@ -214,12 +218,16 @@ async fn concurrent(world: &World, host: &Path, working: &Path, id: &ResidentId,
             .is_some_and(|error| error.to_string().contains('3')),
         json!(null),
     );
+    let completed = host.parent().unwrap().join("alice-pc/history-edit-completed");
     let command = format!(
-        "HISTORY_EDIT_PAIR [[run: on alice-pc <<'PAIR'\nset -e\nedit '{left}' <<'LEFT' &\n<<<<<<< SEARCH\nBASE_ALPHA\n=======\nEDIT_ALPHA\n>>>>>>> REPLACE\nLEFT\nl=$!\non alice-two edit '{right}' <<'RIGHT' &\n<<<<<<< SEARCH\nBASE_BETA\n=======\nEDIT_BETA\n>>>>>>> REPLACE\nRIGHT\nr=$!\nwait \"$l\"\nwait \"$r\"\nPAIR]]",
+        "HISTORY_EDIT_PAIR [[run: on alice-pc <<'PAIR'\nset -e\nedit '{left}' <<'LEFT' &\n<<<<<<< SEARCH\nBASE_ALPHA\n=======\nEDIT_ALPHA\n>>>>>>> REPLACE\nLEFT\nl=$!\non alice-two edit '{right}' <<'RIGHT' &\n<<<<<<< SEARCH\nBASE_BETA\n=======\nEDIT_BETA\n>>>>>>> REPLACE\nRIGHT\nr=$!\nwait \"$l\"\nwait \"$r\"\nprintf done > '{completed}'\nPAIR]]",
         left = left.display(),
-        right = right.display()
+        right = right.display(),
+        completed = completed.display()
     );
     turn(world, host, id, command).await?;
+    // A notice can end run's wait and the mock turn before its job finishes.
+    anyhow::ensure!(file_is(&completed, "done").await, "the concurrent history job did not finish");
     let edited = current(world, &scope, name).await?;
     record(
         "concurrent exact edits rebase on the latest document",
@@ -236,12 +244,16 @@ async fn concurrent(world: &World, host: &Path, working: &Path, id: &ResidentId,
     );
     let a = edited.text.replace("EDIT_ALPHA", "CONFLICT_LEFT");
     let b = edited.text.replace("EDIT_ALPHA", "CONFLICT_RIGHT");
+    let completed = host.parent().unwrap().join("alice-pc/history-conflict-completed");
     let command = format!(
-        "HISTORY_CONFLICT_PAIR [[run: on alice-pc <<'PAIR'\nfastctx view '{left}'\non alice-two fastctx view '{right}'\nwrite '{left}' <<'LEFT' &\n{a}LEFT\nl=$!\non alice-two write '{right}' <<'RIGHT' &\n{b}RIGHT\nr=$!\nwait \"$l\"; l=$?\nwait \"$r\"; r=$?\nprintf 'HISTORY_CONFLICT_STATUS %s %s\\n' \"$l\" \"$r\"\nPAIR]]",
+        "HISTORY_CONFLICT_PAIR [[run: on alice-pc <<'PAIR'\nfastctx view '{left}'\non alice-two fastctx view '{right}'\nwrite '{left}' <<'LEFT' &\n{a}LEFT\nl=$!\non alice-two write '{right}' <<'RIGHT' &\n{b}RIGHT\nr=$!\nwait \"$l\"; l=$?\nwait \"$r\"; r=$?\nprintf 'HISTORY_CONFLICT_STATUS %s %s\\n' \"$l\" \"$r\"\nprintf done > '{completed}'\nPAIR]]",
         left = left.display(),
-        right = right.display()
+        right = right.display(),
+        completed = completed.display()
     );
     turn(world, host, id, command).await?;
+    // A notice can end run's wait and the mock turn before its job finishes.
+    anyhow::ensure!(file_is(&completed, "done").await, "the concurrent history job did not finish");
     let conflict = current(world, &scope, name).await?;
     record(
         "a true concurrent conflict commits one revision",

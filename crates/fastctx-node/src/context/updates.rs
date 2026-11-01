@@ -43,7 +43,7 @@ pub(crate) async fn refresh(node: &Arc<Node>, id: &ResidentId) -> Result<(), Fai
     node.residents.active(id)?;
     let (about, town) = node.residents.about(id).ok_or_else(|| Failure::new(super::words::UNKNOWN))?;
     crate::focus::refresh(node, id).await?;
-    super::refresh_local(node, id).map_err(|error| Failure::new(error.to_string()))?;
+    super::refresh_local(node, id).await.map_err(|error| Failure::new(error.to_string()))?;
     super::sources::plan_guide(node, id, &about.origin, &about.acting)
         .await
         .map_err(|error| Failure::new(error.to_string()))?;
@@ -135,7 +135,10 @@ pub(crate) fn start(node: &Arc<Node>) {
         let mut memory = node.memory_changes.subscribe();
         let mut plan = true;
         loop {
-            request_each(&node, plan);
+            let working = node.clone();
+            if let Err(error) = fastctx_platform::task::spawn_blocking(move || request_each(&working, plan)).await {
+                node.log.line(format_args!("refreshing conversation contexts: {error}"));
+            }
             // Connectivity changes the authorized focus and memory paths, but
             // never the plan. Plan records and reconnects invalidate it
             // separately; a refresh that fails is tried again on its own.

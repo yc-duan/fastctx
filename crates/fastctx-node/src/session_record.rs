@@ -8,6 +8,7 @@ pub(crate) mod search;
 mod sql;
 pub(crate) mod upgrade;
 pub(crate) use legacy::SCHEMA as MIGRATION_SCHEMA;
+#[cfg(feature = "storage-drill")]
 pub(crate) use sql::SCHEMA;
 
 use fastctx_storage::{

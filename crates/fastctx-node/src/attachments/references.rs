@@ -13,16 +13,7 @@ pub(crate) fn reference(
         }
         return Ok(Some(original));
     }
-    let room = node.world.conversation(resident);
-    let path = room.attachments().join(wanted.id.as_str()).join("reference.json");
-    if let Some(kept) = optional::<Attachment>(&path)? {
-        if kept != *wanted {
-            return Err(failure("the attachment differs from its registered original"));
-        }
-        return Ok(Some(kept));
-    }
-    let inherited = optional::<Vec<Attachment>>(&room.attachments().join("inherited.json"))?.unwrap_or_default();
-    Ok(inherited.into_iter().find(|kept| kept == wanted))
+    super::index::reference(&node.world.conversation(resident), wanted).map_err(failure)
 }
 
 pub(crate) fn preview(node: &Node, wanted: &Attachment) -> Result<fastctx_types::thumbnail::Thumbnail, Failure> {
@@ -32,27 +23,7 @@ pub(crate) fn preview(node: &Node, wanted: &Attachment) -> Result<fastctx_types:
 }
 
 pub(crate) fn listed(node: &Node, resident: &ResidentId) -> Result<Vec<Attachment>, Failure> {
-    let base = node.world.conversation(resident).attachments();
-    let mut files = optional::<Vec<Attachment>>(&base.join("inherited.json"))?.unwrap_or_default();
-    let entries = match std::fs::read_dir(&base) {
-        Ok(entries) => entries,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(files),
-        Err(error) => return Err(failure(error)),
-    };
-    for entry in entries {
-        let entry = entry.map_err(failure)?;
-        if !entry.file_type().map_err(failure)?.is_dir() {
-            continue;
-        }
-        for name in ["receipt.json", "reference.json"] {
-            if let Some(file) = optional::<Attachment>(&entry.path().join(name))?
-                && !files.contains(&file)
-            {
-                files.push(file);
-            }
-        }
-    }
-    Ok(files)
+    super::index::listed(&node.world.conversation(resident)).map_err(failure)
 }
 
 pub(crate) fn inherit(
@@ -115,24 +86,11 @@ fn keep_inherited(
     child: &ResidentId,
     retained: &[Attachment],
 ) -> Result<(), Failure> {
-    let _transaction = crate::resident_storage::lock();
-    if node.world.deleted().join(format!("{parent}.json")).try_exists().map_err(failure)?
-        || node.world.deleted().join(format!("{child}.json")).try_exists().map_err(failure)?
-    {
-        return Err(failure("the source conversation was deleted before its attachments were inherited"));
+    node.residents.active(parent)?;
+    if node.residents.deleted(child).is_some() || node.residents.is_deleting(child) {
+        return Err(failure("the destination conversation was deleted before its attachments were inherited"));
     }
-    let files: Vec<_> = listed(node, parent)?.into_iter().filter(|file| retained.contains(file)).collect();
-    if files.is_empty() {
-        return Ok(());
-    }
-    let base = node.world.conversation(child).attachments();
-    fastctx_platform::ensure_private_dir(&base).map_err(failure)?;
-    fastctx_platform::publish(
-        &base.join("inherited.json"),
-        &serde_json::to_vec(&files).map_err(failure)?,
-        fastctx_platform::Permissions::Private,
-    )
-    .map_err(failure)
+    super::index::inherit(&node.world.conversation(parent), &node.world.conversation(child), retained).map_err(failure)
 }
 
 pub(super) fn optional<T: serde::de::DeserializeOwned>(path: &Path) -> Result<Option<T>, Failure> {

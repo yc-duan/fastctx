@@ -635,12 +635,17 @@ async fn look(node: &Arc<Node>, directory: &Path) -> bool {
                     }
                     exchange::Reported::Replaced { ids } => {
                         // Told again before they went in: they never will.
-                        let conversation = node.world.conversation(&resident);
-                        for id in ids {
-                            if let Ok(id) = fastctx_types::NoticeId::try_from(id.as_str()) {
-                                crate::inbox::settle(node, &conversation, &id)?;
+                        let (working, conversation) = (node.clone(), node.world.conversation(&resident));
+                        fastctx_platform::task::spawn_blocking(move || -> std::io::Result<()> {
+                            for id in ids {
+                                if let Ok(id) = fastctx_types::NoticeId::try_from(id.as_str()) {
+                                    crate::inbox::settle(&working, &conversation, &id)?;
+                                }
                             }
-                        }
+                            Ok(())
+                        })
+                        .await
+                        .map_err(std::io::Error::other)??;
                     }
                     exchange::Reported::Stored { uuid } => {
                         node.claude.state.lock().expect("never poisoned").stored.insert(session.clone(), uuid);
@@ -905,7 +910,7 @@ async fn taken(
             pending.working = false;
         }
     }
-    let mut handover = crate::delivery::begin(&directory, kept)?;
+    let mut handover = crate::delivery::begin_held(node, resident, &directory, kept).await?;
     crate::speech::bind(node, resident, &directory, &mut handover, turn)
         .await
         .map_err(|error| std::io::Error::other(error.message))
@@ -926,12 +931,13 @@ async fn uncertain_inputs(
         return Ok(());
     }
     let directory = node.world.conversation(resident);
-    let known: HashSet<_> = crate::delivery::handovers(&directory)?
-        .into_iter()
-        .filter(|handover| handover.turn.is_some())
-        .flat_map(|handover| handover.inputs.into_iter().map(|input| input.delivery.id))
-        .collect();
-    let pending = crate::inbox::pending(&directory)?
+    let (pending, known) = crate::delivery::local(&directory, |directory| {
+        let pending = crate::inbox::pending(directory)?;
+        let known = crate::delivery::handovers::accepted_inputs(directory, &pending, false)?;
+        Ok((pending, known))
+    })
+    .await?;
+    let pending = pending
         .into_iter()
         .filter(|pending| {
             pending.session.as_deref().is_some_and(|bound| crate::inbox::same_session(bound, session))
@@ -957,7 +963,7 @@ async fn uncertain_inputs(
     if unresolved.is_empty() {
         return Ok(());
     }
-    let mut handover = crate::delivery::begin(&directory, unresolved)?;
+    let mut handover = crate::delivery::begin_held(node, resident, &directory, unresolved).await?;
     if let Some(turn) = handover.turn.clone() {
         crate::speech::bind(node, resident, &directory, &mut handover, &turn)
             .await
@@ -1338,7 +1344,7 @@ pub async fn deliver(
         Some((about, _)) => about,
         None => return Some(Err(crate::authorization::no_subject())),
     };
-    if let Err(error) = crate::lifecycle::wake::check(node, to, &current) {
+    if let Err(error) = crate::lifecycle::wake::check(node, to, &current).await {
         return Some(crate::lifecycle::retry::unavailable(node, to, &pending.delivery.id, error).await);
     }
     let alive = match isolation::prepare(node, to, alive).await {
@@ -1461,7 +1467,8 @@ async fn failed_wake(
     }
     let why = format!("the Claude command failed before identifying a consuming turn: {error}");
     if let Some(pending) = crate::inbox::read(directory, id).map_err(|error| Failure::new(error.to_string()))? {
-        let mut handover = crate::delivery::begin(directory, vec![pending])
+        let mut handover = crate::delivery::begin_held(node, resident, directory, vec![pending])
+            .await
             .map_err(|error| Failure::new(format!("recording interrupted Claude startup: {error}")))?;
         crate::turns::unresolved(
             node,
@@ -1649,7 +1656,7 @@ pub(crate) async fn wake(
 
     let Command { program, cwd, env } = launching;
     if let Some(resident) = node.residents.resident_of_thread(session) {
-        crate::profile::session::claude(node, &resident, false)?;
+        crate::profile::session::load_claude(node, &resident, false).await?;
     }
     let args = background::wake_args(session, &words);
     let (launch_node, launch_resident, launch_id) = (node.clone(), resident.clone(), id.clone());
@@ -1868,7 +1875,7 @@ pub async fn open_here(
         .map_err(|error| Failure::new(format!("recording the session: {error}")))?;
     crate::context::instructed(node, &id, &heard).await.map_err(|error| Failure::new(error.to_string()))?;
     node.residents.set_instructed(&id, heard);
-    crate::session_options::keep(node, &id, &options)?;
+    crate::session_options::keep(node, &id, &options).await?;
     let directory = node.world.conversation(&id);
     let settings = directory.claude_settings();
     let instructions = directory.claude_instructions();
@@ -1907,7 +1914,7 @@ pub async fn open_here(
 /// its first turn having its login's turn: at once, or once one is free
 /// (`queued`).
 async fn launch(node: &Arc<Node>, id: &ResidentId) -> Result<Landed, Failure> {
-    let prepared = prepare_launch(node, id)?;
+    let prepared = prepare_launch(node, id).await?;
     begin_launch(node, id, prepared).await
 }
 
@@ -1926,7 +1933,14 @@ pub(super) struct Prepared {
     text: String,
 }
 
-pub(super) fn prepare_launch(node: &Arc<Node>, id: &ResidentId) -> Result<Prepared, Failure> {
+pub(super) async fn prepare_launch(node: &Arc<Node>, id: &ResidentId) -> Result<Prepared, Failure> {
+    let (node, id) = (node.clone(), id.clone());
+    fastctx_platform::task::spawn_blocking(move || prepare_launch_now(&node, &id))
+        .await
+        .map_err(|error| Failure::new(error.to_string()))?
+}
+
+fn prepare_launch_now(node: &Arc<Node>, id: &ResidentId) -> Result<Prepared, Failure> {
     let (about, town) = node.residents.about(id).ok_or_else(|| Failure::new(format!("{id} was deleted")))?;
     let Command { program, env, .. } = command(node, about.home.as_deref())?;
     let assisting = crate::assists::host::starting(node, id, &about.acting)?;

@@ -112,7 +112,10 @@ pub(crate) async fn leave_kept(
     node.residents
         .relocate_kept(&node.world, id, None)
         .map_err(|error| fastctx_types::ipc::Failure::new(error.to_string()))?;
-    crate::town::instructions::hand_to_current(node, id)
+    let (working, resident) = (node.clone(), id.clone());
+    fastctx_platform::task::spawn_blocking(move || crate::town::instructions::hand_to_current(&working, &resident))
+        .await
+        .map_err(|error| fastctx_types::ipc::Failure::new(error.to_string()))?
         .map_err(|error| fastctx_types::ipc::Failure::new(error.to_string()))?;
     crate::codex::moved(node, id).await;
     Ok(())

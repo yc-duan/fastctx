@@ -132,8 +132,18 @@ pub(crate) fn open(world: &WorldDir) -> Database {
         upgrade::records(db)?;
         fastctx_storage::versions::apply(
             db,
+            "node.attachment-pins",
+            &[fastctx_storage::versions::Migration { version: 1, sql: crate::attachments::index::SCHEMA }],
+        )?;
+        fastctx_storage::versions::apply(
+            db,
             "node.record-maps",
             &[fastctx_storage::versions::Migration { version: 1, sql: crate::records::maps::SCHEMA }],
+        )?;
+        fastctx_storage::versions::apply(
+            db,
+            "node.handovers",
+            &[fastctx_storage::versions::Migration { version: 1, sql: crate::delivery::handovers::SCHEMA }],
         )?;
         fastctx_storage::versions::apply(
             db,

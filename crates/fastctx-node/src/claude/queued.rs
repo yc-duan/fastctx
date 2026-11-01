@@ -48,7 +48,7 @@ fn unmark(directory: &ConversationDir) -> std::io::Result<()> {
 /// words. A conversation deleted meanwhile is let go.
 pub(super) fn wait(node: &Arc<Node>, id: ResidentId) {
     let node = node.clone();
-    tokio::spawn(async move {
+    fastctx_platform::task::spawn(async move {
         node.ready_for(&id).await;
         let directory = node.world.conversation(&id);
         let mut again = ASK_AGAIN;
@@ -60,13 +60,13 @@ pub(super) fn wait(node: &Arc<Node>, id: ResidentId) {
             // Held back as any wake is: while its account is in Connect, its
             // home is away, its assistance or its project's access does not
             // hold.
-            if crate::lifecycle::wake::check(&node, &id, &about).is_err()
+            if crate::lifecycle::wake::check(&node, &id, &about).await.is_err()
                 || crate::turn_slots::admit(&node, &id, &about).is_err()
             {
                 tokio::time::sleep(ASK_AGAIN).await;
                 continue;
             }
-            let prepared = match super::prepare_launch(&node, &id) {
+            let prepared = match super::prepare_launch(&node, &id).await {
                 Ok(prepared) => prepared,
                 Err(failure) => {
                     node.log.line(format_args!(

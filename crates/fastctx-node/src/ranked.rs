@@ -136,7 +136,3 @@ machine_lock!(
     /// changed.
     Disk: shared SyncMutex = DISK, "disk"
 );
-machine_lock!(
-    /// Conversations' records, each read and written as one transaction.
-    Records: shared SyncMutex = RECORDS, "records"
-);

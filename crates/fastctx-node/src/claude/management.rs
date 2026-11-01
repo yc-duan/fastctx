@@ -176,7 +176,7 @@ pub async fn wake(node: &Arc<Node>, home: Option<&Path>, session: &str) -> Resul
     // other way a session starts.
     super::oldest::check(node, &super::command(node, home)?).await?;
     if let Some(resident) = node.residents.resident_of_thread(session) {
-        crate::profile::session::claude(node, &resident, false)?;
+        crate::profile::session::load_claude(node, &resident, false).await?;
     }
     let mut command = super::command(node, home)?;
     // A foreground history has no saved supervisor cwd: it is resumed where

@@ -314,6 +314,10 @@ pub(super) fn collect(
         Ok((notes, Receipt { epoch: state.epoch, revisions, versions, reserved: false, shown }))
     })
 }
+pub(super) fn seen_revision(rows: &crate::records::Rows<'_>, name: &str) -> fastctx_storage::Result<Option<u64>> {
+    Ok(rows.get::<State>(super::records::STATE, "current")?.and_then(|state| state.seen.get(name).copied()))
+}
+
 pub(super) fn acknowledge(world: &WorldDir, id: &ResidentId, receipt: &Receipt) -> io::Result<Option<Receipt>> {
     exists(world, id)?;
     let receipt = receipt.clone();

@@ -9,7 +9,12 @@ static SOURCES: std::sync::LazyLock<crate::record_gates::Gates> = std::sync::Laz
     crate::record_gates::Gates::new(fastctx_platform::doing::Rank::EMITTING, "local context source")
 });
 
-pub(crate) fn refresh_local(node: &Node, id: &ResidentId) -> io::Result<()> {
+pub(crate) async fn refresh_local(node: &Arc<Node>, id: &ResidentId) -> io::Result<()> {
+    let (node, id) = (node.clone(), id.clone());
+    fastctx_platform::task::spawn_blocking(move || refresh_local_now(&node, &id)).await.map_err(io::Error::other)?
+}
+
+pub(crate) fn refresh_local_now(node: &Node, id: &ResidentId) -> io::Result<()> {
     let gate = SOURCES.get(node.world.conversation(id).path());
     let _refreshing = gate.lock();
     let (about, town) = node.residents.about(id).ok_or_else(|| io::Error::other(words::UNKNOWN))?;
@@ -53,11 +58,7 @@ fn local_current(node: &Node, id: &ResidentId, town: Option<&TownName>, acting: 
         &text,
         Change { by: author.as_ref(), version: &version, fact: &words::changed("project", &by), full: true },
     )?;
-    let focus = match fastctx_platform::disk::read_to_string(node.world.conversation(id).focus()) {
-        Ok(text) => text,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => String::new(),
-        Err(error) => return Err(error),
-    };
+    let focus = crate::focus::text(&node.world.conversation(id))?;
     storage::set(
         &node.world,
         id,
@@ -152,7 +153,7 @@ pub(crate) async fn plan_guide(node: &Arc<Node>, id: &ResidentId, origin: &Origi
         match placed {
             Ok(Some(location)) => {
                 let path=crate::placement::plan_path(&location);
-                let replicated = crate::plan::file_account(node, id, acting).ok().flatten().and_then(|account| node.link_of(&account.hub)).is_some_and(|link| link.view().shared_records);
+                let replicated = crate::plan::load_account(node, id, acting).await.ok().flatten().and_then(|account| node.link_of(&account.hub)).is_some_and(|link| link.view().shared_records);
                 (words::plan_guide(&path,location.machine.as_str(),replicated,asker),format!("The plan file is now on {} at {path}.",location.machine))
             },
             Ok(None) => ("YOUR PLAN\n\nYour plan remains in your account. There is no online working computer for its file now; the app can still read and edit it.".into(),"There is no online working computer for the plan file now.".into()),

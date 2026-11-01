@@ -1,6 +1,8 @@
 //! History is a host context block; durable receipts contain hashes, never its catalog text.
 
+pub(crate) mod heard;
 use crate::{Node, context::Change};
+use fastctx_platform::task;
 use fastctx_types::{
     Address, ResidentId, TownName,
     access::Acting,
@@ -13,7 +15,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{collections::BTreeMap, io, sync::Arc};
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, PartialEq, Eq)]
 struct Cursor {
     scope: String,
     topics: BTreeMap<String, String>,
@@ -61,7 +63,7 @@ pub(crate) async fn refresh(
         Some(project) => Scope::Project { project: project.clone() },
         None => Scope::Conversation { resident: owner.resident.clone(), machine: owner.machine.clone() },
     };
-    let account = crate::plan::file_account(node, id, acting)?;
+    let account = crate::plan::load_account(node, id, acting).await?;
     let (mut catalog, location) = if let Some(account) = &account {
         let Some(link) = node.link_of(&account.hub) else { return Ok(()) };
         if !link.view().shared_records {
@@ -70,7 +72,10 @@ pub(crate) async fn refresh(
         }
         let catalog = match &scope {
             Scope::Project { project } => {
-                let place = crate::ledger::names::place(&node.world, project)
+                let (world, project) = (node.world.clone(), project.clone());
+                let place = task::spawn_blocking(move || crate::ledger::names::place(&world, &project))
+                    .await
+                    .map_err(failure)?
                     .map_err(failure)?
                     .ok_or_else(|| failure("the history's project identity is unavailable"))?;
                 link.history_catalog(&account.account, &place.town).await
@@ -120,7 +125,11 @@ pub(crate) async fn refresh(
                 .path()
                 .join("history"),
         };
-        fastctx_platform::ensure_private_dir(&path).map_err(failure)?;
+        let creating = path.clone();
+        task::spawn_blocking(move || fastctx_platform::ensure_private_dir(&creating))
+            .await
+            .map_err(failure)?
+            .map_err(failure)?;
         (
             catalog,
             Some(fastctx_types::placement::Location { machine: node.machine(), path: crate::world::native(&path) }),
@@ -147,12 +156,8 @@ pub(crate) async fn refresh(
             .map(|revision| (hash(&revision.name), hash(&format!("{}:{}", revision.retired, revision.description))))
             .collect(),
     };
-    let path = node.world.conversation(id).books().join("history-heard.json");
-    let before: Option<Cursor> = match std::fs::read(&path) {
-        Ok(bytes) => Some(serde_json::from_slice(&bytes).map_err(failure)?),
-        Err(error) if error.kind() == io::ErrorKind::NotFound => None,
-        Err(error) => return Err(failure(error)),
-    };
+    let directory = node.world.conversation(id);
+    let before = task::spawn_blocking(move || heard::read(&directory)).await.map_err(failure)?.map_err(failure)?;
     let changed = before.as_ref().filter(|before| before.scope == cursor.scope).map(|before| {
         catalog.documents.iter().filter(|revision| before.topics.get(&hash(&revision.name)) != cursor.topics.get(&hash(&revision.name)))
             .filter(|revision| !matches!(&revision.author.stamp.by, Writer::Resident { address } if address.resident == *id && node.is_me(&address.machine)))
@@ -217,14 +222,11 @@ async fn unavailable(node: &Arc<Node>, id: &ResidentId, me: &Address, text: &str
 
 pub(crate) fn observed(node: &Node, id: &ResidentId, receipt: &crate::context::Receipt) -> io::Result<()> {
     if let Some(version) = receipt.version("history").filter(|version| !version.is_empty()) {
-        let cursor: Cursor = serde_json::from_str(version).map_err(io::Error::other)?;
-        let directory = node.world.conversation(id).books();
-        fastctx_platform::ensure_private_dir(&directory)?;
-        fastctx_platform::publish(
-            &directory.join("history-heard.json"),
-            &serde_json::to_vec(&cursor)?,
-            fastctx_platform::Permissions::Private,
-        )?;
+        let cursor = heard::decode(version.as_bytes())?;
+        let revision = receipt
+            .revision("history")
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "history receipt has no revision"))?;
+        heard::keep(&node.world.conversation(id), &cursor, revision)?;
     }
     Ok(())
 }

@@ -34,6 +34,22 @@ pub(crate) fn world(directory: &fastctx_types::layout::ConversationDir) -> std::
         .ok_or_else(|| std::io::Error::other("conversation has no world"))
 }
 
+/// A derived step that reads a legacy file nothing else uses sets a malformed
+/// one aside with its reason, as a decoder's damaged file is, and goes on.
+pub(crate) fn set_aside(
+    directory: &fastctx_types::layout::ConversationDir,
+    family: &str,
+    path: &std::path::Path,
+    error: &std::io::Error,
+) -> std::io::Result<()> {
+    let conversation = directory
+        .path()
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| std::io::Error::other("invalid conversation identity"))?;
+    archive::damaged(&world(directory)?, conversation, family, path, &error.to_string())
+}
+
 pub(crate) fn failure(error: std::io::Error) -> fastctx_types::ipc::Failure {
     use fastctx_types::ipc::{CapacityReason, Failure};
     if error.kind() == std::io::ErrorKind::WouldBlock {

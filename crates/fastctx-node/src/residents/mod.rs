@@ -166,9 +166,20 @@ pub struct Heard {
     pub ledger: u64,
 }
 
+impl Heard {
+    /// Full context and scratch receipts have already been acknowledged by their
+    /// durable stores. Runtime presence and compaction retain only town position.
+    fn position(self) -> Self {
+        Self { scratch: None, context: None, user_prompt: None, town: self.town, ledger: self.ledger }
+    }
+}
+
 #[derive(serde::Serialize, serde::Deserialize)]
 struct Live {
     removed: Option<Timestamp>,
+    /// Invalidates background eligibility after an archive or restore in this process.
+    #[serde(default)]
+    availability_revision: u64,
     about: About,
     places: Places,
     /// A Claude session's inbox address, for commands from its native shell.
@@ -205,6 +216,7 @@ impl Live {
             .collect();
         Self {
             removed: None,
+            availability_revision: 0,
             about,
             places,
             inbox: None,
@@ -396,13 +408,14 @@ impl Residents {
 
     pub fn set_heard(&self, id: &ResidentId, heard: Heard) {
         if let Some(live) = self.lock().live.get_mut(id) {
-            live.heard = Some(heard);
+            live.heard = Some(heard.position());
         }
     }
 
     /// The session of `id` starts with instructions that tell it `heard` of
     /// its town: it has heard that, and is back there when it compacts.
     pub fn set_instructed(&self, id: &ResidentId, heard: Heard) {
+        let heard = heard.position();
         if let Some(live) = self.lock().live.get_mut(id) {
             live.heard = Some(heard.clone());
             live.instructed = Some(heard);
@@ -436,7 +449,7 @@ impl Residents {
             && live.town() == heard.town
             && live.heard.as_ref().is_none_or(|prior| prior.town != heard.town || prior.ledger <= heard.ledger)
         {
-            live.heard = Some(heard);
+            live.heard = Some(heard.position());
         }
     }
 

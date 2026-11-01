@@ -79,6 +79,7 @@ pub async fn fork(
     .await
     .map_err(|error| Failure::new(error.to_string()))??;
     let id = node.residents.new_id(&source.host.agent)?;
+    let target_place = Arc::new(node.places.using(id.as_str()).await);
     let launching = super::command(node, source.home.as_deref())?;
     super::oldest::check(node, &launching).await?;
     let super::Command { program, env, .. } = launching;
@@ -127,13 +128,14 @@ pub async fn fork(
                 reasoning_effort: effort.clone(),
                 mcp_off: source.mcp_off.clone(),
             },
-        )?;
+        )
+        .await?;
         let settings = directory.claude_settings();
         let instructions = directory.claude_instructions();
         std::fs::write(&settings, super::settings_json(&id))
             .and_then(|()| std::fs::write(&instructions, words))
             .map_err(failure)?;
-        let mcp = crate::profile::session::claude(node, &id, true)?;
+        let mcp = crate::profile::session::load_claude(node, &id, true).await?;
         let plugin = claude::plugin_dir(node.world.path());
         let world = node.world.path().to_path_buf();
         let snapshot = checkpoint
@@ -152,7 +154,7 @@ pub async fn fork(
 
         let birth = node.claude.births.read().await;
         let gate = node.residents.management(resident)?;
-        let source_guard = crate::gate_waits::shared(node, resident, &gate).await?;
+        let source_guard = std::sync::Arc::new(crate::gate_waits::shared_owned(node, resident, &gate).await?);
         node.residents.active(resident)?;
         if let Some(town) = &town {
             crate::town::access::check(node, &source.acting, town)?;
@@ -214,7 +216,18 @@ pub async fn fork(
                         .await;
                 imported?;
             }
-            super::fork_attachments::inherit(node, resident, &id, &expected_attachments).await?;
+            super::fork_attachments::inherit(
+                node,
+                resident,
+                &id,
+                &expected_attachments,
+                super::fork_attachments::Inheritance {
+                    _source_gate: gate.clone(),
+                    _source: source_guard.clone(),
+                    _target: target_place.clone(),
+                },
+            )
+            .await?;
             if let Some(snapshot) = snapshot {
                 std::fs::remove_file(&snapshot).map_err(failure)?;
                 std::fs::remove_dir(snapshot.parent().expect("fork source directory")).map_err(failure)?;

@@ -136,6 +136,15 @@ fn room(node: &Arc<Node>, kept: &Kept) -> io::Result<bool> {
         prepare(crate::goals::replies::initialize(directory));
         prepare(crate::goals::scope::initialize(directory));
         prepare(crate::lifecycle::refused::prepare(directory));
+        prepare(crate::attachments::index::prepare(directory));
+        prepare(crate::books::cleanup::prepare(directory));
+        prepare(crate::collab::asked::prepare(directory));
+        prepare(crate::collab::birth::prepare(directory));
+        prepare(crate::context::input::stamps::prepare(directory));
+        prepare(crate::focus::storage::prepare(directory));
+        prepare(crate::here::records::prepare(directory));
+        prepare(crate::history::context::heard::prepare(directory));
+        prepare(crate::session_options::prepare(directory));
         for folder in ["user-stops", "turn-stops", "turn-failures", "goal-compactions", "goal-inputs"] {
             for path in entries(&directory.book(folder))? {
                 if folder == "goal-compactions"
@@ -198,6 +207,7 @@ fn shared(node: &Arc<Node>) -> io::Result<bool> {
             Ok(())
         }));
         prepare(crate::control_posts::requests::prepare(node).map(|_| ()));
+        prepare(crate::attachments::index::prepare_all(node).map(|_| ()));
         prepare(crate::timers::store::Store::open(&node.world.path().join("timers")).map(|_| ()));
         Ok(())
     })

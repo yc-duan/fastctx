@@ -11,7 +11,7 @@ pub(super) fn read<T>(
     offset: &mut u64,
     mut decode: impl FnMut(&[u8]) -> io::Result<T>,
 ) -> io::Result<Vec<T>> {
-    let file = match std::fs::File::open(path) {
+    let file = match fastctx_platform::disk::open(path) {
         Ok(file) => file,
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
         Err(error) => return Err(error),

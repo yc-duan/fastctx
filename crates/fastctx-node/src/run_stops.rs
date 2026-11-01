@@ -84,7 +84,7 @@ pub(crate) async fn keep(
         // later turn; the job named in the run's answer completes the stop.
         let (node, acting, destination) = (node.clone(), acting.clone(), destination.clone());
         let stop = RemoteCall::TurnInterrupted { resident: owner.resident.clone(), dispatch: None };
-        tokio::spawn(async move {
+        fastctx_platform::task::spawn(async move {
             if let Err(failure) = node.call(&acting, &destination, Purpose::Hands, stop).await {
                 node.log.line(format_args!("telling {} that the turn was interrupted: {failure}", destination.name));
             }
@@ -159,7 +159,7 @@ fn start(node: &Arc<Node>, path: PathBuf, recovered: bool) {
         return;
     }
     let node = node.clone();
-    tokio::spawn(async move {
+    fastctx_platform::task::spawn(async move {
         let _doing = fastctx_platform::doing::doing("delivering a turn's addressed stop");
         let mut again = crate::again::Again::default();
         loop {

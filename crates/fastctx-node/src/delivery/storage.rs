@@ -47,28 +47,8 @@ pub(super) fn initialize(directory: &ConversationDir) -> io::Result<()> {
             push(Source::new(key.into(), path.to_path_buf(), serde_json::to_vec(&value)?)?)
         })
     })?;
-    let source = directory.clone();
-    records::ensure_step(directory, "handover-index", move || {
-        let mut after = 0;
-        loop {
-            let page = records::read(&source, |rows| rows.page::<Handover>("handovers", after, 16))?;
-            let Some(last) = page.last() else { break };
-            after = last.0;
-            for (_, row) in page {
-                for inputs in row.inputs.chunks(16) {
-                    let (key, inputs) = (row.id.clone(), inputs.to_vec());
-                    records::write_at(&source, crate::record_migration::scheduler::priority(), 1024, move |rows| {
-                        for input in inputs {
-                            rows.link("handovers", input.delivery.id.as_str(), key.as_str())?;
-                        }
-                        Ok(())
-                    })?;
-                }
-            }
-        }
-        Ok(())
-    })?;
-    super::migrate_terminals::run(directory)
+    super::migrate_terminals::run(directory)?;
+    super::migrate_handovers::run(directory)
 }
 
 fn files(

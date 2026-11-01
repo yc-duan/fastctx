@@ -4,7 +4,13 @@ mod cursor;
 #[cfg(feature = "storage-drill")]
 pub(crate) mod drill;
 #[cfg(feature = "storage-drill")]
+pub(crate) mod drill_executor;
+#[cfg(feature = "storage-drill")]
+mod drill_frames;
+#[cfg(feature = "storage-drill")]
 mod drill_mixed;
+mod frame_queue;
+mod frames;
 mod journal;
 mod log;
 mod migrate;
@@ -14,10 +20,12 @@ mod projections;
 mod retirement;
 mod snapshot;
 mod sql;
+mod step_view;
 mod steps;
 pub(crate) mod storage;
 pub(crate) use retirement::SCHEMA as RETIREMENT_SCHEMA;
 pub(crate) use sql::SCHEMA;
+pub(crate) use step_view::delete as delete_step_view;
 pub(crate) mod output;
 pub(crate) mod updates;
 pub(crate) mod visits;
@@ -79,8 +87,9 @@ pub(crate) fn assemble(reply: &RunReply, record: &Path) -> io::Result<RunFacts> 
         }
     }
     let (spans, notes) = fastctx_hands::run::projection::read_with_matches(&reply.output, &writes)?;
+    let (steps, folded_steps) = step_view::read(record)?;
     Ok(RunFacts {
-        folded_steps: Vec::new(),
+        folded_steps,
         turn: fastctx_hands::run::record::read(record)?.turn,
         record: Some(record.to_string_lossy().into_owned()),
         machine: reply.machine.clone(),
@@ -103,7 +112,7 @@ pub(crate) fn assemble(reply: &RunReply, record: &Path) -> io::Result<RunFacts> 
         writes,
         spans,
         notes,
-        steps: steps::steps(record)?,
+        steps,
     })
 }
 

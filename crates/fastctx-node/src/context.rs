@@ -44,6 +44,10 @@ pub struct Receipt {
 }
 
 impl Receipt {
+    pub(crate) fn revision(&self, name: &str) -> Option<u64> {
+        self.revisions.get(name).copied()
+    }
+
     pub(crate) fn version(&self, name: &str) -> Option<&str> {
         self.versions.get(name).map(String::as_str)
     }
@@ -93,7 +97,12 @@ pub(crate) fn clear(node: &Node, id: &ResidentId, name: &str, change: Change<'_>
     storage::set(&node.world, id, name, "", change)
 }
 
-pub(crate) use sources::{map, plan, plan_unavailable, prepare, refresh_local};
+pub(crate) use sources::{map, plan, plan_unavailable, prepare, refresh_local, refresh_local_now};
+
+/// The revision the current context epoch records as heard, in the caller's transaction.
+pub(crate) fn seen_revision(rows: &crate::records::Rows<'_>, name: &str) -> fastctx_storage::Result<Option<u64>> {
+    storage::seen_revision(rows, name)
+}
 
 /// Moves the account blocks of conversations known to assist another account
 /// off this disk; the owner's own keep theirs here (`set_account`).

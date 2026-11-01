@@ -275,16 +275,18 @@ async fn fork(
     through: Option<String>,
     side: bool,
 ) -> Result<Controlled, Failure> {
-    let gate = node.residents.management(parent)?;
-    let source_guard = crate::gate_waits::shared(node, parent, &gate).await?;
     node.residents.active(parent)?;
     let (source, town) = node.residents.about(parent).ok_or_else(|| Failure::new("unknown source resident"))?;
-
     crate::layers::may_start(node, &source.acting)?;
     let id = node.residents.new_id(&source.host.agent)?;
+    let target_place = Arc::new(node.places.using(id.as_str()).await);
+    let gate = node.residents.management(parent)?;
+    let source_guard = crate::gate_waits::shared_owned(node, parent, &gate).await?;
+    node.residents.active(parent)?;
     let _birth = crate::here::born(node, &id, source.acting.clone(), &Origin::User);
     crate::assists::host::inherit(node, codex.assisted_cwd().is_some(), &id)?;
-    crate::session_options::keep(node, &id, &crate::session_options::read(node, parent)?)?;
+    let options = crate::session_options::load(node, parent).await?;
+    crate::session_options::keep(node, &id, &options).await?;
     crate::focus::open(node, &node.world.conversation(&id), &source.acting, &source.focus).await?;
     let (spec, heard) =
         crate::colleagues::thread_spec(node, &id, &Origin::User, town.as_ref(), &source.acting, source.home.as_deref())
@@ -340,19 +342,19 @@ async fn fork(
     })?;
     let inherited =
         codex.history(&fork, &Address { machine: node.machine(), resident: id.clone() }).await.map_err(Failure::new)?;
-    let (inheriting, parent_id, child) = (node.clone(), parent.clone(), id.clone());
+    let (working, source, child, held_target) = (node.clone(), parent.clone(), id.clone(), target_place.clone());
     fastctx_platform::task::spawn_blocking(move || {
-        crate::attachments::inherit(&inheriting, &parent_id, &child, &inherited)?;
+        let (_gate, _source_guard, _target) = (gate, source_guard, held_target);
+        crate::attachments::inherit(&working, &source, &child, &inherited)?;
         crate::context::input::inherit(
-            &inheriting.world.conversation(&parent_id),
-            &inheriting.world.conversation(&child),
+            &working.world.conversation(&source),
+            &working.world.conversation(&child),
             &inherited,
         )
         .map_err(|error| Failure::new(error.to_string()))
     })
     .await
     .map_err(|error| Failure::new(error.to_string()))??;
-    drop(source_guard);
     crate::context::instructed(node, &id, &heard).await.map_err(|error| Failure::new(error.to_string()))?;
     node.residents.set_instructed(&id, heard);
     let event = SessionEvent {

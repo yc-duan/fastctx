@@ -154,3 +154,14 @@ pub(super) fn pending(directory: &ConversationDir) -> io::Result<Vec<NoticeId>> 
     }
     Ok(inputs)
 }
+
+pub(super) fn has_pending(directory: &ConversationDir) -> io::Result<bool> {
+    prepare(directory)?;
+    records::read(directory, |rows| {
+        Ok(rows.connection().query_row(
+            "SELECT EXISTS(SELECT 1 FROM conversation_records WHERE conversation=?1 AND family='input-stops')",
+            [rows.conversation()],
+            |row| row.get(0),
+        )?)
+    })
+}

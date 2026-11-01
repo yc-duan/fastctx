@@ -22,22 +22,6 @@ pub(crate) async fn settle_terminal_locked(
     let Some((about, _)) = node.residents.about(id) else { return Ok(()) };
     let directory = node.world.conversation(id);
     let Some(header) = delivery::terminal_header(&directory, turn).await? else { return Ok(()) };
-    let (checking, key) = (directory.clone(), turn.to_string());
-    let retired = tokio::task::spawn_blocking(move || {
-        if !checking.path().join("books-retired").try_exists()? {
-            return Ok(false);
-        }
-        records::write_at(&checking, Priority::Background, 256, move |rows| {
-            rows.connection()
-                .execute("DELETE FROM terminal_work WHERE conversation=?1 AND turn=?2", (rows.conversation(), key))?;
-            Ok(true)
-        })
-    })
-    .await
-    .map_err(io::Error::other)??;
-    if retired {
-        return Ok(());
-    }
     let (writing, key, colleague, label) = (
         directory.clone(),
         turn.to_string(),
@@ -47,45 +31,17 @@ pub(crate) async fn settle_terminal_locked(
             Origin::User => String::new(),
         },
     );
-    tokio::task::spawn_blocking(move || {
-        crate::inbox::storage::initialize(&writing)?;
-        loop {
-            let (key, colleague, label) = (key.clone(), colleague.clone(), label.clone());
-            let count = records::write_at(&writing, Priority::Normal, 16 * (512 + label.len()), move |rows| {
-                let Some(header) = terminals::header(rows, &key)? else { return Ok(0) };
-                let readers = terminals::unowed(rows, &key, 16)?;
-                for reader in &readers {
-                    crate::inbox::answers::owe(
-                        rows,
-                        crate::inbox::answers::Reference {
-                            to: reader.clone(),
-                            id: crate::speech::fixed_id("answer", &[&colleague.key(), &key, &reader.key()]),
-                            at: header.at,
-                            colleague: colleague.clone(),
-                            label: label.clone(),
-                            turn: key.clone(),
-                        },
-                    )?;
-                    terminals::owed(rows, &key, reader)?;
-                }
-                Ok(readers.len())
-            })?;
-            if count == 0 {
-                break;
-            }
-        }
-        Ok::<(), io::Error>(())
-    })
-    .await
-    .map_err(io::Error::other)??;
+    fastctx_platform::task::spawn_blocking(move || super::answers::create(&writing, &key, &colleague, &label))
+        .await
+        .map_err(io::Error::other)??;
     let (pay_node, pay_id, pay_directory) = (node.clone(), id.clone(), directory.clone());
-    tokio::spawn(async move { crate::outbox::pay(&pay_node, &pay_id, &pay_directory).await });
+    fastctx_platform::task::spawn(async move { crate::outbox::pay(&pay_node, &pay_id, &pay_directory).await });
     if header.effects_complete {
         return complete(directory, turn.to_string()).await;
     }
     let (working, resident, key, identity) = (node.clone(), id.clone(), turn.to_string(), about.clone());
     let held = node.residents.keep_speaking(id)?;
-    let (header, end, recorded, current, inputs) = tokio::task::spawn_blocking(move || {
+    let (header, end, recorded, current, inputs) = fastctx_platform::task::spawn_blocking(move || {
         let _held = held;
         let directory = working.world.conversation(&resident);
         let (header, end) =
@@ -94,10 +50,7 @@ pub(crate) async fn settle_terminal_locked(
         if let Some(usage) = usage {
             crate::usage::record_terminal(&working, &directory, &key, usage)?;
         }
-        let accepted: Vec<_> = delivery::handovers(&directory)?
-            .into_iter()
-            .filter(|handover| handover.turn.as_deref() == Some(&key))
-            .collect();
+        let accepted = delivery::handovers::for_turn(&directory, &key)?;
         let current = working.residents.now(&resident).is_some_and(|now| {
             now.turn.as_deref() == Some(&key)
                 || (key.is_empty() && now.turn.is_none() && now.activity == fastctx_types::residents::Activity::Busy)
@@ -121,7 +74,7 @@ pub(crate) async fn settle_terminal_locked(
         let mut inputs = Vec::new();
         for handover in accepted {
             for input in handover.inputs {
-                crate::speech::heard(&working, &resident, &input.delivery, &key);
+                crate::speech::heard(&working, &resident, &input.delivery, &key)?;
                 inputs.push(input.delivery.id);
             }
         }
@@ -160,7 +113,7 @@ pub(crate) async fn settle_terminal_locked(
     settled.map_err(io::Error::other)?;
     let (settling, working) = (directory.clone(), node.clone());
     let held = node.residents.keep_speaking(id)?;
-    tokio::task::spawn_blocking(move || {
+    fastctx_platform::task::spawn_blocking(move || {
         let _held = held;
         for input in inputs {
             crate::inbox::settle(&working, &settling, &input)?;
@@ -171,7 +124,7 @@ pub(crate) async fn settle_terminal_locked(
     .map_err(io::Error::other)??;
     if matches!(about.origin, Origin::Colleague { .. }) {
         let (writing, key) = (directory.clone(), turn.to_string());
-        tokio::task::spawn_blocking(move || {
+        fastctx_platform::task::spawn_blocking(move || {
             let (_, _, readers) =
                 terminals::read(&writing, &key)?.ok_or_else(|| io::Error::other("terminal disappeared"))?;
             crate::residents::append_message(
@@ -185,9 +138,10 @@ pub(crate) async fn settle_terminal_locked(
     complete(directory, turn.to_string()).await
 }
 async fn complete(directory: fastctx_types::layout::ConversationDir, turn: String) -> io::Result<()> {
-    tokio::task::spawn_blocking(move || {
+    fastctx_platform::task::spawn_blocking(move || {
         records::write_at(&directory, Priority::Normal, 8192, move |rows| {
             terminals::effects_complete(rows, &turn)?;
+            delivery::handovers::complete_turn(rows, &turn)?;
             terminals::settle_work(rows, &turn).map(|_| ())
         })
     })

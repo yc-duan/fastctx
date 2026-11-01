@@ -27,7 +27,7 @@ struct Watched {
 pub(crate) async fn restore(node: &Arc<Node>, path: &Path, record: &JobRecord) -> std::io::Result<()> {
     if record.call_id.is_some() {
         let (node, path) = (node.clone(), path.to_path_buf());
-        tokio::task::spawn_blocking(move || crate::run_facts::update_job(&node, &path))
+        fastctx_platform::task::spawn_blocking(move || crate::run_facts::update_job(&node, &path))
             .await
             .map_err(std::io::Error::other)??;
     }
@@ -43,20 +43,18 @@ pub(crate) async fn restore(node: &Arc<Node>, path: &Path, record: &JobRecord) -
 
 /// Releases transferred bytes after the final reader leaves. Metadata and
 /// scratch await the enclosing answer's host receipt.
-pub(crate) fn copied(node: &Arc<Node>, path: &Path) {
+pub(crate) fn copied(node: &Arc<Node>, path: &Path) -> std::io::Result<()> {
     let _gate = node.disk.lock();
-    if let Err(error) = crate::job_metadata::put_raw(&path.with_extension("copied"), b"") {
-        node.log.line(format_args!("recording transferred command output: {error}"));
-        return;
-    }
+    crate::job_metadata::put_raw(&path.with_extension("copied"), b"")?;
     {
         let mut watched = node.job_watches.0.lock().expect("never poisoned");
         if watched.watching.contains(path) {
             watched.forgetting.insert(path.to_path_buf());
-            return;
+            return Ok(());
         }
     }
     remove(node, path.to_path_buf());
+    Ok(())
 }
 
 /// A maintenance pass already runs off the control loop. Remove settled
@@ -68,6 +66,21 @@ pub(crate) fn collect(node: &Node, path: &Path) -> std::io::Result<()> {
         return Ok(());
     }
     drop(watched);
+    match fastctx_hands::run::record::read(path) {
+        Ok(record) => match crate::activity_book::consumed(node, &record) {
+            Ok(true) => {}
+            result => {
+                node.disk_due.lock().expect("never poisoned").insert(path.to_path_buf());
+                result?;
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::WouldBlock,
+                    "the activity book still needs this job",
+                ));
+            }
+        },
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error),
+    }
     crate::jobs::remove(path)
 }
 
@@ -93,7 +106,7 @@ pub(crate) fn start(node: &Arc<Node>, path: &Path, identity: Option<ProcessIdent
         return;
     }
     let (node, path) = (node.clone(), path.to_path_buf());
-    tokio::spawn(async move {
+    fastctx_platform::task::spawn(async move {
         let mut identity = identity;
         let mut again = crate::again::Again::default();
         let mut lock_wait = crate::on::LOOK_AGAIN;
@@ -144,7 +157,14 @@ async fn ended(supervisor: &ProcessIdentity) {
         return;
     }
     // Where the system cannot say when a process ends, it is looked at.
-    while fastctx_platform::is_alive(supervisor).unwrap_or(false) {
+    loop {
+        let supervisor = supervisor.clone();
+        let alive = fastctx_platform::task::spawn_blocking(move || fastctx_platform::is_alive(&supervisor))
+            .await
+            .is_ok_and(|result| result.unwrap_or(false));
+        if !alive {
+            break;
+        }
         tokio::time::sleep(LOOKED_AT).await;
     }
 }

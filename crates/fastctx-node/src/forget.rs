@@ -133,7 +133,7 @@ pub(crate) fn wake(node: &Node) {
 /// Recheck deleted originals after this conversation releases its inherited references.
 pub(crate) async fn release_attachments(node: &Arc<Node>, id: &ResidentId) -> Result<Vec<Address>, String> {
     let Some((about, _)) = node.residents.about(id) else { return Ok(Vec::new()) };
-    let owners = crate::attachments::lifetime::releasing(node, id).map_err(|error| error.message)?;
+    let owners = crate::attachments::lifetime::releasing(node, id).await.map_err(|error| error.message)?;
     let mut asks = Vec::new();
     for conversation in &owners {
         for (hub, account) in pairs(node, &about.acting) {

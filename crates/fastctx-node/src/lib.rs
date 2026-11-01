@@ -126,6 +126,7 @@ mod record_gates;
 mod record_migration;
 mod record_ownership;
 mod record_payloads;
+mod record_value;
 mod records;
 mod recovery;
 mod removed;
@@ -133,7 +134,6 @@ mod renewal;
 mod renewal_legacy;
 pub mod replacement;
 mod replicas;
-mod resident_storage;
 mod residents;
 mod retention;
 mod run_facts;
@@ -335,7 +335,6 @@ pub(crate) struct Node {
     interrupts: signals::Signals,
     /// Jobs run for residents here on the machines they work on, answered
     /// whole, until their hosts have the answers (`here`).
-    dispatched: here::Dispatched,
     births: here::Births,
     /// The jobs `on` sent from here to other machines, by machine and id,
     /// as a letter telling one's end finds them (`on`).
@@ -580,7 +579,7 @@ pub async fn run_prepared(
         // node before it to let the World go.
         true => {
             let lock = world.node_lock();
-            tokio::task::spawn_blocking(move || FileLock::acquire(&lock)).await??
+            fastctx_platform::task::spawn_blocking(move || FileLock::acquire(&lock)).await??
         }
         // A Linux service manager starts its node again the moment one
         // ends, as when a node hands the World to the newer program it
@@ -607,251 +606,272 @@ pub async fn run_prepared(
         return Ok(());
     }
     renewal.acquired();
-    let log = Arc::new(log::Log::open(&world.node_log())?);
-    // The node usually has no terminal: a panic in any of its tasks is
-    // written to its log, or it would leave no trace.
-    let panics = log.clone();
-    std::panic::set_hook(Box::new(move |info| {
-        panics.line(format_args!("panicked: {info}"));
-        panics.flush(std::time::Duration::from_millis(500));
-    }));
-    // What went wrong, written down while it lasts, and how long tasks wait
-    // for a thread (`specs/world-engine.md`, 量与告警).
-    fastctx_platform::scene::set_place(world.path().join("scenes"));
-    let tail = log.clone();
-    fastctx_platform::scene::set_tail(move || tail.recent());
-    fastctx_platform::task::watch("node");
-    let machine = machine::names(&world)?;
-    log.line(format_args!("node {} starting as {}", env!("CARGO_PKG_VERSION"), machine.name));
-    let lifetime = lifetime::inspect(supervision.is_some())
-        .inspect_err(|error| log.line(format_args!("could not check the node's process containment: {error}")))
-        .context("checking the node's process containment")?;
-    if let Some(warning) = lifetime.warning() {
-        log.line(&warning);
-        eprintln!("fastctx: {warning}");
-    }
-    let fastctx = world_program::prepare(fastctx_root).context("preparing the stable World program")?;
+    let supervised = supervision.is_some();
+    let root = fastctx_root.to_path_buf();
+    let (node, mut listener, memberships, codex_heard, jobs_reconciled, _lock) =
+        fastctx_platform::task::spawn_blocking(move || {
+            // Ownership stays with preparation even if its waiter is cancelled.
+            let ownership = _lock;
+            let fastctx_root = root;
+            let log = Arc::new(log::Log::open(&world.node_log())?);
+            // The node usually has no terminal: a panic in any of its tasks is
+            // written to its log, or it would leave no trace.
+            let panics = log.clone();
+            std::panic::set_hook(Box::new(move |info| {
+                panics.line(format_args!("panicked: {info}"));
+                panics.flush(std::time::Duration::from_millis(500));
+            }));
+            // What went wrong, written down while it lasts, and how long tasks wait
+            // for a thread (`specs/world-engine.md`, 量与告警).
+            fastctx_platform::scene::set_place(world.path().join("scenes"));
+            let tail = log.clone();
+            fastctx_platform::scene::set_tail(move || tail.recent());
+            fastctx_platform::task::watch("node");
+            let machine = machine::names(&world)?;
+            log.line(format_args!("node {} starting as {}", env!("CARGO_PKG_VERSION"), machine.name));
+            let lifetime = lifetime::inspect(supervised)
+                .inspect_err(|error| log.line(format_args!("could not check the node's process containment: {error}")))
+                .context("checking the node's process containment")?;
+            if let Some(warning) = lifetime.warning() {
+                log.line(&warning);
+                eprintln!("fastctx: {warning}");
+            }
+            let fastctx = world_program::prepare(&fastctx_root).context("preparing the stable World program")?;
 
-    // An older World's records go into one directory per conversation before
-    // anything reads them.
-    recovery::prepare(&world, &log);
-    let jobs_reconciled = recovery::reconcile(&world, &log);
+            // An older World's records go into one directory per conversation before
+            // anything reads them.
+            recovery::prepare(&world, &log);
+            let jobs_reconciled = recovery::reconcile(&world, &log);
 
-    let (residents, problems) = residents::Residents::load(&world)?;
-    residents.set_here(machine.name.clone());
-    let startup = startup::Recovery::new(&residents);
-    for (path, error) in &problems {
-        log.line(format_args!("could not read {}: {error}", path.display()));
-    }
+            let (residents, problems) = residents::Residents::load(&world)?;
+            residents.set_here(machine.name.clone());
+            let startup = startup::Recovery::new(&residents);
+            for (path, error) in &problems {
+                log.line(format_args!("could not read {}: {error}", path.display()));
+            }
 
-    // The proxy chosen in Fastctx goes before any hub is dialled.
-    if let Err(error) = proxy_setting::take_kept(&world) {
-        log.line(format_args!("{error}; the system's proxy is used"));
-    }
-    let memberships = world::load(&world).context("reading this computer's memberships")?;
-    let endpoint = Endpoint::for_world(world.path())?;
-    let mut listener = Listener::bind(&endpoint)?;
-    log.line(format_args!("listening at {endpoint}"));
-    // The processors shared evenly among the accounts whose jobs run here,
-    // where the service was given its cgroup (`fastctx_platform::cpu_share`).
-    let cpu_shares = match fastctx_platform::cpu_share::Shares::take_up(world.path()) {
-        Ok(shares) => shares,
-        Err(error) => {
-            log.line(format_args!("sharing the processors among the accounts' jobs: {error}"));
-            None
+            // The proxy chosen in Fastctx goes before any hub is dialled.
+            if let Err(error) = proxy_setting::take_kept(&world) {
+                log.line(format_args!("{error}; the system's proxy is used"));
+            }
+            let memberships = world::load(&world).context("reading this computer's memberships")?;
+            let endpoint = Endpoint::for_world(world.path())?;
+            let listener = Listener::bind(&endpoint)?;
+            log.line(format_args!("listening at {endpoint}"));
+            // The processors shared evenly among the accounts whose jobs run here,
+            // where the service was given its cgroup (`fastctx_platform::cpu_share`).
+            let cpu_shares = match fastctx_platform::cpu_share::Shares::take_up(world.path()) {
+                Ok(shares) => shares,
+                Err(error) => {
+                    log.line(format_args!("sharing the processors among the accounts' jobs: {error}"));
+                    None
+                }
+            };
+            if waits {
+                no_longer_waiting(&world);
+            }
+            drop(startup_gate);
+
+            // The app-server runs with the user's own environment, as every program
+            // the node starts does, never with whatever started the node. The one
+            // exception is which Codex: a `CODEX_HOME` the node itself was given
+            // names it, for the node as for the app-server, which reads the same
+            // variable.
+            let mut environment =
+                fastctx_platform::world_process_environment().context("reading the user's environment")?;
+            if let Some(codex_home) = std::env::var_os("CODEX_HOME") {
+                environment.retain(|(name, _)| !name.eq_ignore_ascii_case("CODEX_HOME"));
+                environment.push(("CODEX_HOME".into(), codex_home));
+            }
+            let home = fastctx_platform::user_home().context("finding the home directory")?;
+            let codex_log = log.clone();
+            let (codex, codex_heard) = codex::hosts::CodexHosts::new(
+                launch::codex_home(&home, &environment),
+                world.path().join("codex"),
+                environment,
+                Arc::new(move |line| codex_log.line(line)),
+            );
+            let claude = claude::Claude::new(&world)?;
+            let memory_room = memory_room::Room::new(&world);
+            let database = record_database::open(&world);
+            if let Some(error) = database.fault() {
+                log.line(format_args!("node record storage unavailable: {error}"));
+            }
+            if let Some(report) = database.salvaged() {
+                log.line(format_args!(
+                    "node record storage was damaged and set aside; what could be read was salvaged:
+{report}"
+                ));
+            }
+            let record_migration =
+                record_database::register(&world, &database).context("opening the node record database")?;
+            let book_database =
+                fastctx_storage::Database::open_or_unavailable(&world.path().join("book.sqlite3"), "", |db| {
+                    fastctx_storage::versions::apply(
+                        db,
+                        "node.activity-book",
+                        &[fastctx_storage::versions::Migration { version: 1, sql: activity_book::SCHEMA }],
+                    )
+                });
+            if let Some(error) = book_database.fault() {
+                log.line(format_args!("activity book storage unavailable: {error}"));
+            }
+            if let Some(report) = book_database.salvaged() {
+                log.line(format_args!(
+                    "activity book storage was damaged and set aside; what could be read was salvaged:
+{report}"
+                ));
+            }
+            // Built cyclically so the goal services can hold a weak handle back to the
+            // node they reach account records and context through.
+            let node = Arc::new_cyclic(|weak: &std::sync::Weak<Node>| Node {
+                root: fastctx_root.to_path_buf(),
+                world,
+                database,
+                book_database,
+                record_migration,
+                controls_due: Default::default(),
+                fastctx,
+                machine: RwLock::new(machine),
+                jobs: jobs::Jobs::new(),
+                timers: Default::default(),
+                turn_activity: Default::default(),
+                goals: goals::connected(weak.clone()),
+                sentinel_waits: Arc::new(sentinels::goal_seams::Waits(weak.clone())),
+                sentinels: sentinels::connected(weak.clone()),
+                mcp_keeping: std::sync::Mutex::new(()),
+                job_watches: Default::default(),
+                plan_files: Default::default(),
+                copies: Default::default(),
+                context_bodies: Default::default(),
+                replicas: Default::default(),
+                history_shelves: Default::default(),
+                alone_ledgers: Default::default(),
+                registered: Default::default(),
+                collaboration_reads: Default::default(),
+                plan_reads: Default::default(),
+                skill_copies: Default::default(),
+                skill_index: Default::default(),
+                locations: Default::default(),
+                contexts: Default::default(),
+                context_deliveries: Default::default(),
+                scratch_deliveries: Default::default(),
+                native_context: Default::default(),
+                disk: Default::default(),
+                places: Default::default(),
+                disk_changed: Default::default(),
+                disk_due: Default::default(),
+                job_readers: Default::default(),
+                residents,
+                codex,
+                logins: logins::Logins::default(),
+                unclaimed: codex::Unclaimed::default(),
+                codex_agents: Default::default(),
+                claude,
+                desk: desk::Desk::default(),
+                watchers: watch::Watchers::default(),
+                attached: Default::default(),
+                idle_probes: Default::default(),
+                retrying: Default::default(),
+                composers: composer::Composers::default(),
+                actions: Default::default(),
+                long_controls: Default::default(),
+                turn_slots: Default::default(),
+                memory_room,
+                limits: Default::default(),
+                job_accounts: Default::default(),
+                cpu_shares,
+                file_searches: file_search::Searches::default(),
+                line_sources: lines::Sources::default(),
+                log,
+                links: RwLock::new(std::collections::BTreeMap::new()),
+                ways: tokio::sync::watch::channel(0).0,
+                views: tokio::sync::watch::channel(0).0,
+                shown: tokio::sync::watch::channel(0).0,
+                world_shown: Default::default(),
+                memory_changes: tokio::sync::watch::channel(0).0,
+                facts: facts::Facts::default(),
+                forget_asks: forget::Asks::default(),
+                stuck: Default::default(),
+                usage: usage::Usage::default(),
+                syncing: Default::default(),
+                ledger_updates: Default::default(),
+                writing: Default::default(),
+                taking: Default::default(),
+                stops: Default::default(),
+                following: Default::default(),
+                job_ends: gates::Gates::new(fastctx_platform::doing::Rank::JOB_END, "job end"),
+                copying: gates::Gates::new(fastctx_platform::doing::Rank::COPYING, "copying"),
+                learned: Default::default(),
+                words: Default::default(),
+                interrupts: Default::default(),
+                births: Default::default(),
+                on_deliveries: Default::default(),
+                received: Default::default(),
+                control_letters: Default::default(),
+                receipts_changed: Default::default(),
+                outbox: Default::default(),
+                delivery_work: Default::default(),
+                on_stopping: Default::default(),
+                on_delivering: Default::default(),
+                notifying_jobs: Default::default(),
+                startup,
+                effects_ready: std::sync::atomic::AtomicBool::new(false),
+                effects_changed: tokio::sync::Notify::new(),
+                // A watcher that falls behind tells its session to list again, so
+                // the capacity only bounds how many changes are told one by one.
+                tools: tokio::sync::broadcast::channel(64).0,
+                handoff: Arc::new(handoff::Handoff::default()),
+                features: features::Switches::default(),
+                own_collab: own_collab::Keeping::default(),
+                renewal,
+                updates: Default::default(),
+                supervised,
+                lifetime,
+                started: jiff::Timestamp::now(),
+            });
+            Ok::<_, anyhow::Error>((node, listener, memberships, codex_heard, jobs_reconciled, ownership))
+        })
+        .await??;
+    let preparing = node.clone();
+    fastctx_platform::task::spawn_blocking(move || {
+        let node = preparing;
+        // The third version's projects are kept as this computer's own, to be
+        // carried into its account at its hub.
+        let (kept, problems) =
+            ledger::third::migrate(&node.world, &node.machine()).context("keeping the third version's projects")?;
+        for town in kept {
+            node.log.line(format_args!("kept {town}, a project of the network's third version, to carry into the hub"));
         }
-    };
-    if waits {
-        no_longer_waiting(&world);
-    }
-    drop(startup_gate);
-
-    // The app-server runs with the user's own environment, as every program
-    // the node starts does, never with whatever started the node. The one
-    // exception is which Codex: a `CODEX_HOME` the node itself was given
-    // names it, for the node as for the app-server, which reads the same
-    // variable.
-    let mut environment = fastctx_platform::world_process_environment().context("reading the user's environment")?;
-    if let Some(codex_home) = std::env::var_os("CODEX_HOME") {
-        environment.retain(|(name, _)| !name.eq_ignore_ascii_case("CODEX_HOME"));
-        environment.push(("CODEX_HOME".into(), codex_home));
-    }
-    let home = fastctx_platform::user_home().context("finding the home directory")?;
-    let codex_log = log.clone();
-    let (codex, codex_heard) = codex::hosts::CodexHosts::new(
-        launch::codex_home(&home, &environment),
-        world.path().join("codex"),
-        environment,
-        Arc::new(move |line| codex_log.line(line)),
-    );
-    let claude = claude::Claude::new(&world)?;
-    let memory_room = memory_room::Room::new(&world);
-    let opening = world.clone();
-    let (database, record_migration) = fastctx_platform::task::spawn_blocking(move || {
-        let database = record_database::open(&opening);
-        let service = record_database::register(&opening, &database)?;
-        Ok::<_, std::io::Error>((database, service))
+        for problem in problems {
+            node.log.line(format_args!("could not keep a project of the network's third version: {problem}"));
+        }
+        for problem in ledger::finish(&node.world).context("reading the towns' ledgers")? {
+            node.log.line(format_args!("could not finish a ledger entry: {problem}"));
+        }
+        town::guard::start(&node).context("watching the towns' ledgers")?;
+        for membership in memberships {
+            node.log
+                .line(format_args!("on the hub {} ({}) as {}", membership.hub_name, membership.id, membership.name));
+            world::start(&node, membership).context("starting a link to a hub")?;
+        }
+        Ok::<_, anyhow::Error>(())
     })
-    .await
-    .context("opening the node record database")??;
-    if let Some(error) = database.fault() {
-        log.line(format_args!("node record storage unavailable: {error}"));
-    }
-    if let Some(report) = database.salvaged() {
-        log.line(format_args!(
-            "node record storage was damaged and set aside; what could be read was salvaged:\n{report}"
-        ));
-    }
-    let book_database = fastctx_storage::Database::open_or_unavailable(&world.path().join("book.sqlite3"), "", |db| {
-        fastctx_storage::versions::apply(
-            db,
-            "node.activity-book",
-            &[fastctx_storage::versions::Migration { version: 1, sql: activity_book::SCHEMA }],
-        )
-    });
-    if let Some(error) = book_database.fault() {
-        log.line(format_args!("activity book storage unavailable: {error}"));
-    }
-    if let Some(report) = book_database.salvaged() {
-        log.line(format_args!(
-            "activity book storage was damaged and set aside; what could be read was salvaged:\n{report}"
-        ));
-    }
-    // Built cyclically so the goal services can hold a weak handle back to the
-    // node they reach account records and context through.
-    let node = Arc::new_cyclic(|weak: &std::sync::Weak<Node>| Node {
-        root: fastctx_root.to_path_buf(),
-        world,
-        database,
-        book_database,
-        record_migration,
-        controls_due: Default::default(),
-        fastctx,
-        machine: RwLock::new(machine),
-        jobs: jobs::Jobs::new(),
-        timers: Default::default(),
-        turn_activity: Default::default(),
-        goals: goals::connected(weak.clone()),
-        sentinel_waits: Arc::new(sentinels::goal_seams::Waits(weak.clone())),
-        sentinels: sentinels::connected(weak.clone()),
-        mcp_keeping: std::sync::Mutex::new(()),
-        job_watches: Default::default(),
-        plan_files: Default::default(),
-        copies: Default::default(),
-        context_bodies: Default::default(),
-        replicas: Default::default(),
-        history_shelves: Default::default(),
-        alone_ledgers: Default::default(),
-        registered: Default::default(),
-        collaboration_reads: Default::default(),
-        plan_reads: Default::default(),
-        skill_copies: Default::default(),
-        skill_index: Default::default(),
-        locations: Default::default(),
-        contexts: Default::default(),
-        context_deliveries: Default::default(),
-        scratch_deliveries: Default::default(),
-        native_context: Default::default(),
-        disk: Default::default(),
-        places: Default::default(),
-        disk_changed: Default::default(),
-        disk_due: Default::default(),
-        job_readers: Default::default(),
-        residents,
-        codex,
-        logins: logins::Logins::default(),
-        unclaimed: codex::Unclaimed::default(),
-        codex_agents: Default::default(),
-        claude,
-        desk: desk::Desk::default(),
-        watchers: watch::Watchers::default(),
-        attached: Default::default(),
-        idle_probes: Default::default(),
-        retrying: Default::default(),
-        composers: composer::Composers::default(),
-        actions: Default::default(),
-        long_controls: Default::default(),
-        turn_slots: Default::default(),
-        memory_room,
-        limits: Default::default(),
-        job_accounts: Default::default(),
-        cpu_shares,
-        file_searches: file_search::Searches::default(),
-        line_sources: lines::Sources::default(),
-        log,
-        links: RwLock::new(std::collections::BTreeMap::new()),
-        ways: tokio::sync::watch::channel(0).0,
-        views: tokio::sync::watch::channel(0).0,
-        shown: tokio::sync::watch::channel(0).0,
-        world_shown: Default::default(),
-        memory_changes: tokio::sync::watch::channel(0).0,
-        facts: facts::Facts::default(),
-        forget_asks: forget::Asks::default(),
-        stuck: Default::default(),
-        usage: usage::Usage::default(),
-        syncing: Default::default(),
-        ledger_updates: Default::default(),
-        writing: Default::default(),
-        taking: Default::default(),
-        stops: Default::default(),
-        following: Default::default(),
-        job_ends: gates::Gates::new(fastctx_platform::doing::Rank::JOB_END, "job end"),
-        copying: gates::Gates::new(fastctx_platform::doing::Rank::COPYING, "copying"),
-        learned: Default::default(),
-        words: Default::default(),
-        interrupts: Default::default(),
-        dispatched: Default::default(),
-        births: Default::default(),
-        on_deliveries: Default::default(),
-        received: Default::default(),
-        control_letters: Default::default(),
-        receipts_changed: Default::default(),
-        outbox: Default::default(),
-        delivery_work: Default::default(),
-        on_stopping: Default::default(),
-        on_delivering: Default::default(),
-        notifying_jobs: Default::default(),
-        startup,
-        effects_ready: std::sync::atomic::AtomicBool::new(false),
-        effects_changed: tokio::sync::Notify::new(),
-        // A watcher that falls behind tells its session to list again, so
-        // the capacity only bounds how many changes are told one by one.
-        tools: tokio::sync::broadcast::channel(64).0,
-        handoff: Arc::new(handoff::Handoff::default()),
-        features: features::Switches::default(),
-        own_collab: own_collab::Keeping::default(),
-        renewal,
-        updates: Default::default(),
-        supervised: supervision.is_some(),
-        lifetime,
-        started: jiff::Timestamp::now(),
-    });
-    // The third version's projects are kept as this computer's own, to be
-    // carried into its account at its hub.
-    let (kept, problems) =
-        ledger::third::migrate(&node.world, &node.machine()).context("keeping the third version's projects")?;
-    for town in kept {
-        node.log.line(format_args!("kept {town}, a project of the network's third version, to carry into the hub"));
-    }
-    for problem in problems {
-        node.log.line(format_args!("could not keep a project of the network's third version: {problem}"));
-    }
-    for problem in ledger::finish(&node.world).context("reading the towns' ledgers")? {
-        node.log.line(format_args!("could not finish a ledger entry: {problem}"));
-    }
-    town::guard::start(&node).context("watching the towns' ledgers")?;
-    for membership in memberships {
-        node.log.line(format_args!("on the hub {} ({}) as {}", membership.hub_name, membership.id, membership.name));
-        world::start(&node, membership).context("starting a link to a hub")?;
-    }
+    .await??;
     codex::listen(node.clone(), codex_heard.events);
     logins::limits::listen(node.clone(), codex_heard.limits);
     logins::heard::listen(node.clone(), codex_heard.said);
-    claude::start(&node).context("writing the World's Claude Code plugin")?;
-    composer::prepare_recovery(&node);
-    if node.database.fault().is_none() {
-        retention::start(&node).context("starting command artifact retention")?;
-    }
+    let preparing = node.clone();
+    fastctx_platform::task::spawn_blocking(move || {
+        let node = preparing;
+        claude::start(&node).context("writing the World's Claude Code plugin")?;
+        composer::prepare_recovery(&node);
+        if node.database.fault().is_none() {
+            retention::start(&node).context("starting command artifact retention")?;
+        }
+        Ok::<_, anyhow::Error>(())
+    })
+    .await??;
     let recovering = node.clone();
     fastctx_platform::task::spawn(async move {
         let node = recovering;
@@ -863,33 +883,40 @@ pub async fn run_prepared(
             node.log.line("record recovery is unavailable; durable work remains pending until storage is repaired");
             return;
         }
-        stops::recover(&node);
-        delivery::work::recover(&node);
-        composer::resume(&node);
-        composer::keep(&node);
-        lifecycle::start(&node);
-        recovery::start(&node, jobs_reconciled);
-        // Goals and sentinels are not offered in a release yet: what of them is
-        // kept stays as it is, driven by nothing.
-        if fastctx_platform::preview() {
-            goals::start(&node);
-            sentinels::start(&node);
+        let log = node.log.clone();
+        if let Err(error) = fastctx_platform::task::spawn_blocking(move || {
+            stops::recover(&node);
+            delivery::work::recover(&node);
+            composer::resume(&node);
+            composer::keep(&node);
+            lifecycle::start(&node);
+            recovery::start(&node, jobs_reconciled);
+            // Goals and sentinels are not offered in a release yet: what of them is
+            // kept stays as it is, driven by nothing.
+            if fastctx_platform::preview() {
+                goals::start(&node);
+                sentinels::start(&node);
+            }
+            skills::follow(&node);
+            on_delivery::resume(&node);
+            received::resume(&node);
+            control_letters::resume(&node);
+            job_receipts::start(&node);
+            obligations::start(&node);
+            placement::copies::start(&node);
+            skills::copies::start(&node);
+            plan_file::start(&node);
+            profile::session::start(&node);
+            context::start(&node);
+            updates::start(&node);
+            afoot::start(&node);
+            usage::watch(&node);
+            forget::start(&node);
+        })
+        .await
+        {
+            log.line(format_args!("starting recovered work: {error}"));
         }
-        skills::follow(&node);
-        on_delivery::resume(&node);
-        received::resume(&node);
-        control_letters::resume(&node);
-        job_receipts::start(&node);
-        obligations::start(&node);
-        placement::copies::start(&node);
-        skills::copies::start(&node);
-        plan_file::start(&node);
-        profile::session::start(&node);
-        context::start(&node);
-        updates::start(&node);
-        afoot::start(&node);
-        usage::watch(&node);
-        forget::start(&node);
     });
     let jobs_node = node.clone();
     fastctx_platform::task::spawn(async move {
@@ -915,16 +942,16 @@ pub async fn run_prepared(
     // What an old fastctx left here is put away in the background; nothing
     // still in use is touched (`world-upgrade.md`).
     let cleaning = node.clone();
-    tokio::task::spawn_blocking(move || legacy(&cleaning));
+    fastctx_platform::task::spawn_blocking(move || legacy(&cleaning));
 
     // An apply cut short holds copies of the hosts' settings until it is
     // finished; they go as soon as the node is up (`world-run.md`, apply).
     // Then the World's tools in each login are brought up to what this
     // fastctx writes (`world-agent-logins.md`, 接入跟着版本走).
     let integrating = node.clone();
-    tokio::spawn(async move {
+    fastctx_platform::task::spawn(async move {
         let settling = integrating.clone();
-        let settled = tokio::task::spawn_blocking(move || {
+        let settled = fastctx_platform::task::spawn_blocking(move || {
             for problem in fastctx_install::apply::settle(&settling.root) {
                 settling.log.line(format_args!("settling an interrupted apply: {problem}"));
             }
@@ -969,7 +996,7 @@ pub async fn run_prepared(
             Ok(connection) => {
                 refused = 0;
                 watchdog.progress();
-                tokio::spawn(server::serve(node.clone(), connection));
+                fastctx_platform::task::spawn(server::serve(node.clone(), connection));
             }
             // One client failing to connect does not stop the others.
             Err(error) => {

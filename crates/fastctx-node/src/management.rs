@@ -30,8 +30,10 @@ pub async fn manage(
         here(node, &resident, action).await?
     } else {
         if matches!(action, Management::Mcp { .. }) {
-            let (link, account) =
-                node.speaking(&Acting::Here, &machine, Purpose::Agents).await.map_err(|e| Failure::new(e.to_string()))?;
+            let (link, account) = node
+                .speaking(&Acting::Here, &machine, Purpose::Agents)
+                .await
+                .map_err(|e| Failure::new(e.to_string()))?;
             crate::mcp::supports(node, &link, &account, &machine.name).await?;
         }
         let call = RemoteCall::Manage { resident: resident.clone(), action };
@@ -70,7 +72,7 @@ pub async fn here(node: &Arc<Node>, id: &ResidentId, action: Management) -> Resu
     let (_shared, _exclusive) = if matches!(action, Management::Wake) {
         (Some(crate::gate_waits::shared(node, id, &gate).await?), None)
     } else {
-        (None, Some(crate::gate_waits::alone(node, id, &gate).await?))
+        (None, Some(Arc::new((gate.clone(), crate::gate_waits::alone_owned(node, id, &gate).await?))))
     };
     if !matches!(action, Management::Archive | Management::Restore) {
         node.residents.active(id)?;
@@ -152,7 +154,15 @@ pub async fn here(node: &Arc<Node>, id: &ResidentId, action: Management) -> Resu
                     "The host archived the thread or stopped its background session; World jobs keep running.",
                 );
             }
-            match node.residents.remove(&node.world, id) {
+            let (working, resident, held) = (node.clone(), id.clone(), _exclusive.clone());
+            let removed = fastctx_platform::task::spawn_blocking(move || {
+                let _held = held;
+                working.residents.remove(&working.world, &resident)
+            })
+            .await
+            .map_err(std::io::Error::other)
+            .and_then(|result| result);
+            match removed {
                 Ok(path) => step(
                     &mut result,
                     "records",
@@ -191,7 +201,15 @@ pub async fn here(node: &Arc<Node>, id: &ResidentId, action: Management) -> Resu
                 _ => Ok(()),
             };
             completed(&mut result, "host", host, "The host's record of it is out of its archive.");
-            match node.residents.restore(&node.world, id) {
+            let (working, resident, held) = (node.clone(), id.clone(), _exclusive.clone());
+            let restored = fastctx_platform::task::spawn_blocking(move || {
+                let _held = held;
+                working.residents.restore(&working.world, &resident)
+            })
+            .await
+            .map_err(std::io::Error::other)
+            .and_then(|result| result);
+            match restored {
                 Ok(()) => step(
                     &mut result,
                     "records",
@@ -317,7 +335,15 @@ pub async fn here(node: &Arc<Node>, id: &ResidentId, action: Management) -> Resu
             completed(
                 &mut result,
                 "context",
-                crate::town::instructions::hand_to_current(node, id).map_err(|error| Failure::new(error.to_string())),
+                {
+                    let (node, id) = (node.clone(), id.clone());
+                    fastctx_platform::task::spawn_blocking(move || {
+                        crate::town::instructions::hand_to_current(&node, &id)
+                    })
+                    .await
+                    .map_err(|error| Failure::new(error.to_string()))?
+                    .map_err(|error| Failure::new(error.to_string()))
+                },
                 "Project instructions refreshed.",
             );
             step(
@@ -377,22 +403,9 @@ pub async fn here(node: &Arc<Node>, id: &ResidentId, action: Management) -> Resu
             for name in &off {
                 fastctx_types::profile::name_of(name).map_err(Failure::not_run)?;
             }
-            let mut options = crate::session_options::read(node, id)?;
-            options.mcp_off = off.clone();
-            // About is authoritative once the conversation exists. A restart
-            // reads it even if writing the secondary options file was interrupted.
-            node.residents.set_mcp_off(&node.world, id, off).map_err(|e| Failure::new(e.to_string()))?;
-            let options_path = node.world.conversation(id).session_options();
-            fastctx_platform::ensure_private_dir(options_path.parent().expect("options directory"))
-                .map_err(|e| Failure::new(e.to_string()))?;
-            fastctx_platform::publish(
-                &options_path,
-                &serde_json::to_vec(&options).unwrap(),
-                fastctx_platform::Permissions::Private,
-            )
-            .map_err(|e| Failure::new(e.to_string()))?;
+            crate::session_options::set_mcp(node, id, off).await?;
             if about.host.agent.as_str() == "claude" {
-                crate::profile::session::claude(node, id, false)?;
+                crate::profile::session::load_claude(node, id, false).await?;
             } else {
                 crate::codex::moved(node, id).await;
             }
@@ -420,7 +433,7 @@ pub async fn here(node: &Arc<Node>, id: &ResidentId, action: Management) -> Resu
                     .into(),
             );
             if changed {
-                match crate::focus::changed(node, id, &about, &focus).await {
+                match crate::focus::changed(node, id).await {
                     Ok(()) => {}
                     Err(error) => step(&mut result, "notification", Outcome::Failed, error.message),
                 }

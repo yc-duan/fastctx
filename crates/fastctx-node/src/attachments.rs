@@ -4,6 +4,7 @@ pub(crate) mod delivered;
 pub(crate) mod destinations;
 pub(crate) mod follow;
 pub(crate) mod forwarded;
+pub(crate) mod index;
 pub(crate) mod lifetime;
 mod references;
 pub(crate) mod sent;
@@ -170,12 +171,13 @@ pub async fn upload(
             )
             .await;
         }
-        let _place = using_target(node, &target).await;
+        let place = using_target(node, &target).await.map(Arc::new);
         let (mut arriving, mut guard) =
             match arrival(node, &node.machine(), &acting, target, file, composer.as_ref(), true).await? {
                 Arrival::Ended(uploaded) => return Ok(uploaded),
                 Arrival::Going(arriving, guard) => (arriving, guard),
             };
+        arriving.place = place;
         let mut held = Skipping(arriving.received);
         let result = async {
             loop {
@@ -312,6 +314,7 @@ async fn arrival(
             };
             match arriving {
                 Ok(mut arriving) => {
+                    arriving.room = node.world.conversation(&resident);
                     arriving.keep = true;
                     Ok(Arrival::Going(arriving, Some(guard)))
                 }
@@ -335,16 +338,13 @@ async fn finish(
     guard: Option<&mut crate::composer::uploads::Guard>,
     work: Option<fastctx_net::data::ReceiptWork>,
 ) -> Result<Uploaded, Failure> {
-    let attachment = if let Some(writing) = work.as_ref().map(|work| work.begin()) {
-        tokio::task::spawn_blocking(move || {
-            let _settling = writing;
-            arriving.finish()
-        })
-        .await
-        .map_err(failure)??
-    } else {
-        arriving.finish()?
-    };
+    let writing = work.as_ref().map(|work| work.begin());
+    let attachment = fastctx_platform::task::spawn_blocking(move || {
+        let _settling = writing;
+        arriving.finish()
+    })
+    .await
+    .map_err(failure)??;
     let _settling = work.as_ref().map(|work| work.begin());
     let composer = match guard {
         Some(guard) => Some(guard.finish(&attachment).await),
@@ -476,7 +476,7 @@ pub async fn receive(
         )
         .await;
     }
-    let _place = using_target(node, &target).await;
+    let place = using_target(node, &target).await.map(Arc::new);
     validate_file(&file)?;
     let size = file.size;
     let (mut arriving, mut guard) = match arrival(node, from, &acting, target, file, composer.as_ref(), resumes).await?
@@ -484,6 +484,7 @@ pub async fn receive(
         Arrival::Ended(uploaded) => return Ok(uploaded),
         Arrival::Going(arriving, guard) => (arriving, guard),
     };
+    arriving.place = place;
     let result = async {
         if resumes {
             stream.say(&UploadStart { from: arriving.received }).await.map_err(broke)?;
@@ -624,6 +625,9 @@ async fn prepare(
 /// path it gives; going on from the part an earlier try left there when
 /// `resume`, else from nothing.
 fn arriving_in(directory: &Path, mut attachment: Attachment, resume: bool) -> Result<Arriving, Failure> {
+    let room = ConversationDir::at(
+        directory.parent().and_then(Path::parent).ok_or_else(|| failure("attachment has no room"))?,
+    );
     let directory = std::fs::canonicalize(directory).map_err(failure)?;
     let temporary = directory.join("upload.part");
     let kept = if resume { held(&temporary, attachment.file.size)? } else { None };
@@ -678,6 +682,8 @@ fn arriving_in(directory: &Path, mut attachment: Attachment, resume: bool) -> Re
         check_image(&header, &attachment.file.media_type)?;
     }
     Ok(Arriving {
+        place: None,
+        room,
         attachment,
         temporary,
         path,
@@ -718,6 +724,8 @@ fn held(temporary: &Path, size: u64) -> Result<Option<(std::fs::File, u64, Sha25
 }
 
 struct Arriving {
+    place: Option<Arc<crate::data::places::Using>>,
+    room: ConversationDir,
     attachment: Attachment,
     temporary: PathBuf,
     path: PathBuf,
@@ -802,6 +810,7 @@ impl Arriving {
         if format!("{:x}", self.hash.clone().finalize()) != self.attachment.file.sha256 {
             return Err(failure("the file's SHA-256 does not match the uploaded bytes"));
         }
+        index::prepare(&self.room).map_err(failure)?;
         self.output.take().expect("upload is open").sync_all().map_err(failure)?;
         if self.path.exists() {
             // 2026-10-20: a crash can publish the bytes before their receipt.
@@ -814,8 +823,31 @@ impl Arriving {
             std::fs::rename(&self.temporary, &self.path).map_err(failure)?;
             self.unpublished = true;
         }
-        write_new(&self.path.parent().expect("attachment directory").join("receipt.json"), &self.attachment)?;
+        let receipt = self.path.parent().expect("attachment directory").join("receipt.json");
+        let replace = match references::optional::<Attachment>(&receipt)? {
+            Some(kept) if kept != self.attachment => {
+                return Err(failure("the original differs from its published receipt"));
+            }
+            Some(_) => {
+                self.unpublished = false;
+                true
+            }
+            None => false,
+        };
+        if let Err(error) = fastctx_platform::atomic::publish_checked(
+            &receipt,
+            &serde_json::to_vec(&self.attachment).map_err(failure)?,
+            fastctx_platform::Permissions::Private,
+            replace,
+            || Ok(()),
+        ) {
+            if error.published {
+                self.unpublished = false;
+            }
+            return Err(failure(error.error));
+        }
         self.unpublished = false;
+        index::put(&self.room, &self.attachment, false).map_err(failure)?;
         Ok(self.attachment.clone())
     }
 }
@@ -1058,14 +1090,23 @@ pub async fn place(
     let assisting = !node.may_work_here(&acting)?;
     let mut given = Vec::with_capacity(attachments.len());
     for attachment in attachments {
-        if let Some(kept) = references::reference(node, resident, &attachment)? {
+        let (working, id) = (node.clone(), resident.clone());
+        let (kept, referenced) = fastctx_platform::task::spawn_blocking(move || {
+            if let Some(kept) = references::reference(&working, &id, &attachment)? {
+                Ok::<_, Failure>((kept, true))
+            } else {
+                kept_here(&working, &id, &attachment).map(|kept| (kept, false))
+            }
+        })
+        .await
+        .map_err(failure)??;
+        if referenced {
             if assisting && !kept.is_image() {
                 destinations::validate_original(node, &acting, &kept)?;
             }
             given.push(kept);
             continue;
         }
-        let kept = kept_here(node, resident, &attachment)?;
         given.push(match files_on {
             _ if !assisting || kept.is_image() => kept,
             Some(goes_to) if !node.is_here(goes_to) => send_placed(node, &acting, goes_to, resident, kept).await?,
@@ -1157,8 +1198,8 @@ pub async fn take_placed(
 ) -> Result<Attachment, Failure> {
     validate_file(&attachment.file)?;
     let origin = Address { machine: from.clone(), resident: resident.clone() };
-    let _place = match crate::data::places::of_owner(node, &origin) {
-        Some(place) => Some(node.places.using(&place).await),
+    let place = match crate::data::places::of_owner(node, &origin) {
+        Some(place) => Some(Arc::new(node.places.using(&place).await)),
         None => None,
     };
     if attachment.owner != origin {
@@ -1184,7 +1225,13 @@ pub async fn take_placed(
     }
     stream.say(&Need { bytes: true }).await.map_err(failure)?;
     let size = wanted.file.size;
-    let arriving = arriving_in(&directory, wanted, false)?;
+    let arriving = fastctx_platform::task::spawn_blocking(move || {
+        let mut arriving = arriving_in(&directory, wanted, false)?;
+        arriving.place = place;
+        Ok::<_, Failure>(arriving)
+    })
+    .await
+    .map_err(failure)??;
     let (arriving, taken) = stream
         .take_writing(size, arriving, |arriving, piece| arriving.write(piece).map_err(|error| error.message))
         .await
@@ -1222,6 +1269,8 @@ fn slot(base: &Path, wanted: &Attachment) -> Result<(PathBuf, Option<Attachment>
         match read_json::<Attachment>(&directory.join("receipt.json")) {
             Ok(kept) if kept.id == wanted.id && kept.owner == wanted.owner && kept.file == wanted.file => {
                 if holds(&kept, &mut buffer).unwrap_or(false) {
+                    let room = ConversationDir::at(base.parent().ok_or_else(|| failure("attachment has no room"))?);
+                    index::put(&room, &kept, false).map_err(failure)?;
                     return Ok((directory, Some(kept)));
                 }
             }

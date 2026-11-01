@@ -94,6 +94,10 @@ impl Residents {
         self.lock().tombstones.all().map(|(id, tombstone)| (id.clone(), tombstone.clone())).collect()
     }
 
+    pub(crate) fn archived_revision(&self, id: &ResidentId) -> Option<u64> {
+        self.lock().live.get(id).filter(|live| live.removed.is_some()).map(|live| live.availability_revision)
+    }
+
     pub fn removed(&self, id: &ResidentId) -> Option<Timestamp> {
         self.lock().live.get(id).and_then(|live| live.removed)
     }
@@ -113,7 +117,6 @@ impl Residents {
     /// back into an arrival. Returns its directory, where its records stay.
     pub fn remove(&self, world: &WorldDir, id: &ResidentId) -> io::Result<String> {
         let mut state = self.lock();
-        let _transaction = crate::resident_storage::lock();
         let live = state.live.get_mut(id).ok_or_else(|| io::Error::other("unknown resident"))?;
         let directory = world.conversation(id);
         if live.removed.is_none() {
@@ -130,6 +133,8 @@ impl Residents {
                 }
                 Err(error) => return Err(error),
             }
+            live.availability_revision =
+                live.availability_revision.checked_add(1).expect("resident availability revision exhausted");
         }
         Ok(crate::world::native(directory.path()))
     }
@@ -137,14 +142,20 @@ impl Residents {
     /// Brings back a resident the user archived: it is listed again, its
     /// session may use World tools and be woken again.
     pub fn restore(&self, world: &WorldDir, id: &ResidentId) -> io::Result<()> {
+        if !self.knows(id) {
+            return Err(io::Error::other("unknown resident"));
+        }
+        crate::books::resume(&world.conversation(id))?;
         let mut state = self.lock();
-        let _transaction = crate::resident_storage::lock();
         let live = state.live.get_mut(id).ok_or_else(|| io::Error::other("unknown resident"))?;
-        match std::fs::remove_file(world.conversation(id).removed()) {
+        match fastctx_platform::disk::remove_file(world.conversation(id).removed()) {
             Err(error) if error.kind() != io::ErrorKind::NotFound => return Err(error),
             _ => {}
         }
-        live.removed = None;
+        if live.removed.take().is_some() {
+            live.availability_revision =
+                live.availability_revision.checked_add(1).expect("resident availability revision exhausted");
+        }
         Ok(())
     }
 

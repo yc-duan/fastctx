@@ -9,7 +9,7 @@ use std::sync::Arc;
 /// confirmed that neither the node nor the native host has a running turn.
 pub(crate) async fn prepare(node: &Arc<Node>, id: &ResidentId) -> Result<(Vec<String>, super::Receipt), Failure> {
     let (about, town) = node.residents.about(id).ok_or_else(|| Failure::new("the conversation is unavailable"))?;
-    super::blocking::with(node, id, super::refresh_local).await.map_err(crate::record_migration::failure)?;
+    super::blocking::with(node, id, super::refresh_local_now).await.map_err(crate::record_migration::failure)?;
     super::sources::plan_guide(node, id, &about.origin, &about.acting)
         .await
         .map_err(|error| Failure::new(error.to_string()))?;

@@ -42,6 +42,10 @@ impl Job {
             Ok(next)
         })
     }
+    pub(crate) fn stage(&self, bytes: Vec<u8>) -> io::Result<crate::record_payloads::Staged> {
+        let (database, scope) = records::locate(&self.directory)?;
+        crate::record_payloads::stage(&database, &scope, bytes, Priority::Normal).map_err(io::Error::other)
+    }
     pub(crate) fn family(&self, kind: &str) -> String {
         format!("{}{kind}", self.prefix)
     }
@@ -147,6 +151,25 @@ impl Job {
     /// Called while artifact deletion owns the disk gate, before deleting the
     /// supervisor record. Small transactions keep unrelated writers moving.
     pub(crate) fn delete_all(&self) -> io::Result<()> {
+        crate::run_facts::delete_step_view(self)?;
+        loop {
+            let prefix = self.prefix.clone();
+            let count = records::write_at(&self.directory, Priority::Background, 4096, move |rows| {
+                let mut query = rows.connection().prepare_cached("SELECT family,identity FROM record_payload_roots WHERE conversation=?1 AND family>=?2 AND family<?3 LIMIT 16")?;
+                let keys = query
+                    .query_map((rows.conversation(), &prefix, format!("{prefix}\u{10ffff}")), |row| {
+                        Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+                    })?
+                    .collect::<std::result::Result<Vec<_>, _>>()?;
+                for (family, key) in &keys {
+                    crate::record_payloads::link(rows.connection(), rows.conversation(), family, key, None)?;
+                }
+                Ok(keys.len())
+            })?;
+            if count == 0 {
+                break;
+            }
+        }
         loop {
             let prefix = self.prefix.clone();
             let count = records::write_at(&self.directory, Priority::Background, 4096, move |rows| {

@@ -33,15 +33,41 @@ fn cursor(db: &Connection, deed: &str) -> fastctx_storage::Result<Cursor> {
 }
 
 pub(crate) fn segment(node: &Node, record: &JobRecord) -> io::Result<u64> {
-    if record.is_sentinel() || node.book_database.fault().is_some() {
+    if record.is_sentinel() {
         return Ok(u64::MAX);
+    }
+    if node.book_database.fault().is_some() {
+        return Ok(0);
     }
     node.book_database.read_now(|db| Ok(cursor(db, &deed(record))?.steps_segment)).map_err(io::Error::other)
 }
 
+/// Whole-job collection obeys the same independent consumer as segment retention.
+/// A failed database is never evidence that its source has been consumed.
+pub(crate) fn consumed(node: &Node, record: &JobRecord) -> io::Result<bool> {
+    if record.is_sentinel() {
+        return Ok(true);
+    }
+    if node.book_database.fault().is_some() {
+        return Ok(false);
+    }
+    node.book_database
+        .read_now(|db| {
+            let key = deed(record);
+            Ok(super::frozen(db, &key)?
+                || db.query_row("SELECT EXISTS(SELECT 1 FROM book_complete WHERE deed=?1)", [&key], |row| {
+                    row.get::<_, bool>(0)
+                })?)
+        })
+        .map_err(io::Error::other)
+}
+
 pub(crate) fn observe(node: &Node, path: &Path, record: &JobRecord) -> io::Result<()> {
-    if record.is_sentinel() || node.book_database.fault().is_some() {
+    if record.is_sentinel() {
         return Ok(());
+    }
+    if let Some(error) = node.book_database.fault() {
+        return Err(io::Error::other(error.clone()));
     }
     let gate = GATES.get(path);
     let _reading = gate.lock();

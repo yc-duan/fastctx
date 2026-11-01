@@ -14,15 +14,17 @@ use std::sync::Arc;
 /// the user sees and decides on, and the goal goes on.
 const UNSETTLED: std::time::Duration = std::time::Duration::from_secs(5 * 60);
 
+async fn busy(node: &Arc<Node>, id: &ResidentId) -> Result<bool, Failure> {
+    let (node, id) = (node.clone(), id.clone());
+    fastctx_platform::task::spawn_blocking(move || crate::control_queue::busy(&node, &id)).await.map_err(failure)?
+}
+
 pub(super) async fn quiet(node: &Arc<Node>, id: &ResidentId) -> Result<bool, Failure> {
-    if crate::here::being_born(node, id)
-        || crate::control_queue::busy(node, id)?
-        || crate::composer::input_busy(node, id).await?
-    {
+    if crate::here::being_born(node, id) || busy(node, id).await? || crate::composer::input_busy(node, id).await? {
         return Ok(false);
     }
     let directory = node.world.conversation(id);
-    let clear = tokio::task::spawn_blocking(move || -> std::io::Result<bool> {
+    let clear = fastctx_platform::task::spawn_blocking(move || -> std::io::Result<bool> {
         let (pending, _) = crate::inbox::input_states(&directory)?;
         // Facts that ride along cannot start a turn or block autonomous work.
         Ok(pending.iter().all(|input| input.delivery.notice.along().is_some())
@@ -75,7 +77,7 @@ pub(super) async fn reconcile(node: &Arc<Node>, id: &ResidentId) -> Result<(), F
     }
     if goal.active()
         && let Some((about, _)) = node.residents.about(id)
-        && let Err(error) = crate::assists::check_turn(node, id, &about)
+        && let Err(error) = crate::assists::admit_turn(node, id, &about).await
         && error.permanent
     {
         return commit(node, &view, policy::host_refused(goal, error.failure.message)).await;
@@ -85,7 +87,7 @@ pub(super) async fn reconcile(node: &Arc<Node>, id: &ResidentId) -> Result<(), F
     if goal.runtime.pending.as_ref().is_some_and(|work| matches!(work.task, Task::Compact)) {
         return Ok(());
     }
-    if crate::control_queue::busy(node, id)? {
+    if busy(node, id).await? {
         if goal.active()
             && node.turn_activity.get(id).is_some_and(|activity| activity.meaningful)
             && let Some(decision) = policy::healthy(&goal)
@@ -231,5 +233,5 @@ pub(super) fn waiting_known(handles: &[fastctx_types::turn_evidence::WaitHandle]
 
 pub(super) async fn assistance(node: &Arc<Node>, goal: &Goal) -> Result<Option<policy::QuotaHold>, Failure> {
     let (node, goal) = (node.clone(), goal.clone());
-    tokio::task::spawn_blocking(move || assistance_now(&node, &goal)).await.map_err(failure)?
+    fastctx_platform::task::spawn_blocking(move || assistance_now(&node, &goal)).await.map_err(failure)?
 }

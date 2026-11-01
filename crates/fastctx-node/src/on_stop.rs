@@ -102,7 +102,9 @@ pub(crate) async fn send(node: &Arc<Node>, written: &crate::reach::Written, orig
 async fn keep_stop(pending: &PendingStop, path: &Path) -> std::io::Result<()> {
     let bytes = serde_json::to_vec(pending).map_err(std::io::Error::other)?;
     let written = path.to_path_buf();
-    tokio::task::spawn_blocking(move || items::write(&written, &bytes)).await.map_err(std::io::Error::other)?
+    fastctx_platform::task::spawn_blocking(move || items::write(&written, &bytes))
+        .await
+        .map_err(std::io::Error::other)?
 }
 
 async fn settle_stop(node: &Arc<Node>, pending: &PendingStop, path: &Path, impossible: Option<String>) {
@@ -201,34 +203,44 @@ async fn deliver_stop(node: &Arc<Node>, pending: &PendingStop, path: &Path) -> R
 /// Sends again the stops a node that stopped had not delivered.
 pub(crate) async fn resume(node: &Arc<Node>) {
     let recovering = node.clone();
-    tokio::spawn(async move {
+    fastctx_platform::task::spawn(async move {
         let mut again = Again::default();
         loop {
-            match resume_local_stops(&recovering) {
-                Ok(()) => break,
-                Err(error) => {
+            let working = recovering.clone();
+            let result = fastctx_platform::task::spawn_blocking(move || {
+                resume_local_stops(&working).inspect_err(|error| {
                     let _ = crate::obligations::retry(
-                        &recovering,
-                        &recovering.world.path().join("local-stop-recovery"),
+                        &working,
+                        &working.world.path().join("local-stop-recovery"),
                         &error.to_string(),
                     );
-                }
+                })
+            })
+            .await;
+            match result {
+                Ok(Ok(())) => break,
+                Ok(Err(_)) => {}
+                Err(error) => recovering.log.line(format_args!("recovering local stops: {error}")),
             }
             tokio::time::sleep(again.next()).await;
         }
     });
     let recovering = node.clone();
-    tokio::spawn(async move {
+    fastctx_platform::task::spawn(async move {
         let mut again = Again::default();
         loop {
             match resume_pending_stops(&recovering).await {
                 Ok(()) => break,
                 Err(error) => {
-                    let _ = crate::obligations::retry(
-                        &recovering,
-                        &recovering.world.path().join("outgoing-stop-recovery"),
-                        &error.to_string(),
-                    );
+                    let working = recovering.clone();
+                    let _ = fastctx_platform::task::spawn_blocking(move || {
+                        crate::obligations::retry(
+                            &working,
+                            &working.world.path().join("outgoing-stop-recovery"),
+                            &error.to_string(),
+                        )
+                    })
+                    .await;
                 }
             }
             tokio::time::sleep(again.next()).await;
@@ -238,7 +250,7 @@ pub(crate) async fn resume(node: &Arc<Node>) {
 
 async fn resume_pending_stops(node: &Arc<Node>) -> std::io::Result<()> {
     let working = node.clone();
-    let directories = tokio::task::spawn_blocking(move || working.world.book_directories("on-stops"))
+    let directories = fastctx_platform::task::spawn_blocking(move || working.world.book_directories("on-stops"))
         .await
         .map_err(std::io::Error::other)??;
     let mut problems = Vec::new();
@@ -246,9 +258,10 @@ async fn resume_pending_stops(node: &Arc<Node>) -> std::io::Result<()> {
         let mut after = String::new();
         loop {
             let (folder, cursor) = (directory.clone(), after.clone());
-            let paths = tokio::task::spawn_blocking(move || items::page(&folder, Some("json"), &cursor, 128))
-                .await
-                .map_err(std::io::Error::other)??;
+            let paths =
+                fastctx_platform::task::spawn_blocking(move || items::page(&folder, Some("json"), &cursor, 128))
+                    .await
+                    .map_err(std::io::Error::other)??;
             let Some(last) = paths.last() else { break };
             after = last.file_name().and_then(|name| name.to_str()).expect("stop identity").to_string();
             for path in paths {
@@ -256,7 +269,7 @@ async fn resume_pending_stops(node: &Arc<Node>) -> std::io::Result<()> {
                     continue;
                 }
                 let reading = path.clone();
-                let pending = tokio::task::spawn_blocking(move || items::get::<PendingStop>(&reading))
+                let pending = fastctx_platform::task::spawn_blocking(move || items::get::<PendingStop>(&reading))
                     .await
                     .map_err(std::io::Error::other)?;
                 let pending = match pending {
@@ -271,7 +284,7 @@ async fn resume_pending_stops(node: &Arc<Node>) -> std::io::Result<()> {
                     continue;
                 }
                 let node = node.clone();
-                tokio::spawn(async move {
+                fastctx_platform::task::spawn(async move {
                     match deliver_stop(&node, &pending, &path).await {
                         Ok(()) => settle_stop(&node, &pending, &path, None).await,
                         Err(error) if crate::obligations::permanent(&error) => {
@@ -377,7 +390,7 @@ fn stop_worker(node: &Arc<Node>, path: &Path, request: fastctx_types::run::StopR
         return;
     }
     let (node, path) = (node.clone(), path.to_path_buf());
-    tokio::spawn(async move {
+    fastctx_platform::task::spawn(async move {
         let mut again = Again::default();
         loop {
             if path.try_exists().is_ok_and(|exists| !exists) {

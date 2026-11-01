@@ -13,6 +13,7 @@ mod queue;
 mod readings;
 pub mod receipts;
 mod recovery;
+mod settled;
 pub mod versions;
 mod writer;
 

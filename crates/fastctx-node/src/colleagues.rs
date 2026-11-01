@@ -48,7 +48,7 @@ pub async fn ask(
     let turn = node.residents.now(&asker).and_then(|now| now.turn);
     let (about, _) =
         node.residents.about(&asker).ok_or_else(|| Failure::not_run(format!("no resident {asker} lives here")))?;
-    let choices = crate::collab::require(node, &asker, login)?;
+    let choices = crate::collab::require(node, &asker, login).await?;
     let mut matching: Vec<_> = choices
         .candidates
         .into_iter()
@@ -67,6 +67,7 @@ pub async fn ask(
             ));
         }
     };
+    crate::collab::room_for_ask(node, &asker).await?;
     let (colleague, account) = match chosen.whose {
         Whose::Account { link, account } => {
             let request =
@@ -87,7 +88,7 @@ pub async fn ask(
         result: colleague.resident.to_string(),
     };
     if let Some(account) = &account {
-        crate::collab::keep_asked(node, &asker, &colleague, account)?;
+        crate::collab::keep_asked(node, &asker, &colleague, account).await?;
     }
     record(node, &asker, action).await;
     Ok(colleague)
@@ -220,7 +221,7 @@ pub async fn ask_here(
             "this callee's Codex login is unavailable: {error}; the user changes it on the Model collaboration page"
         ))
     })?;
-    crate::collab::keep(node, &id, &started)?;
+    crate::collab::keep(node, &id, &started).await?;
     crate::session_options::keep(
         node,
         &id,
@@ -229,7 +230,8 @@ pub async fn ask_here(
             model: started.callee.model.clone(),
             reasoning_effort: started.callee.effort.clone(),
         },
-    )?;
+    )
+    .await?;
     // Where the requester works is only a first guess at where the colleague
     // speaks from; without it the colleague still chooses its own place.
     if let Err(error) = crate::placement::location::inherit(node, &id, &acting, &asker).await {
@@ -405,12 +407,19 @@ pub async fn thread_spec(
 ) -> Result<(ThreadSpec, Heard), Failure> {
     let here = node.machine();
     crate::profile::session::ready(node, acting).await?;
-    let assisting = crate::assists::host::starting(node, id, acting)?;
-    let host = node.codex.session(home, assisting)?;
-    let cwd = match host.assisted_cwd() {
-        Some(cwd) => cwd.to_path_buf(),
-        None => standing(node, town)?,
-    };
+    let (preparing, resident, scope, login, project) =
+        (node.clone(), id.clone(), acting.clone(), home.map(std::path::Path::to_path_buf), town.cloned());
+    let (assisting, cwd) = fastctx_platform::task::spawn_blocking(move || {
+        let assisting = crate::assists::host::starting(&preparing, &resident, &scope)?;
+        let host = preparing.codex.session(login.as_deref(), assisting)?;
+        let cwd = match host.assisted_cwd() {
+            Some(cwd) => cwd.to_path_buf(),
+            None => standing(&preparing, project.as_ref())?,
+        };
+        Ok::<_, Failure>((assisting, cwd))
+    })
+    .await
+    .map_err(|error| Failure::new(error.to_string()))??;
     let binary = node.fastctx.clone();
     let address = Address { machine: here.clone(), resident: id.clone() };
     let env = vec![
@@ -428,24 +437,32 @@ pub async fn thread_spec(
             None
         }
     };
-    let mut config = codex::world_tools(&binary, &env, &tools, fastctx_hands::run::window::BUDGET);
-    let started = crate::collab::started(node, id)?;
-    if !assisting && started.as_ref().is_some_and(|started| !started.callee.screen) {
-        let config_home = home.unwrap_or_else(|| node.codex.default().config_home());
-        let (servers, plugins) = codex::desktop_hands(config_home).map_err(Failure::new)?;
-        codex::without_desktop(&mut config, &servers, &plugins);
-    }
-    let user_mcp = crate::profile::session::codex(node, id, acting, &mut config)?;
-    crate::session_options::configure(&mut config, crate::session_options::read(node, id)?);
-    if assisting {
-        codex::assisted::configure_thread(&mut config);
-    }
-    // Codex's memories are its login's, kept only for threads of this
-    // computer's own accounts (`crate::assists::own_accounts`).
-    if !crate::assists::own_accounts(node, acting) {
-        config["features"]["memories"] = false.into();
-        config["memories"] = serde_json::json!({"generate_memories": false, "use_memories": false});
-    }
+    let config = codex::world_tools(&binary, &env, &tools, fastctx_hands::run::window::BUDGET);
+    let (preparing, resident, scope, login) =
+        (node.clone(), id.clone(), acting.clone(), home.map(std::path::Path::to_path_buf));
+    let (config, user_mcp, started) = fastctx_platform::task::spawn_blocking(move || {
+        let mut config = config;
+        let started = crate::collab::started(&preparing, &resident)?;
+        if !assisting && started.as_ref().is_some_and(|started| !started.callee.screen) {
+            let config_home = login.as_deref().unwrap_or_else(|| preparing.codex.default().config_home());
+            let (servers, plugins) = codex::desktop_hands(config_home).map_err(Failure::new)?;
+            codex::without_desktop(&mut config, &servers, &plugins);
+        }
+        let user_mcp = crate::profile::session::codex(&preparing, &resident, &scope, &mut config)?;
+        crate::session_options::configure(&mut config, crate::session_options::read(&preparing, &resident)?);
+        if assisting {
+            codex::assisted::configure_thread(&mut config);
+        }
+        // Codex's memories are its login's, kept only for threads of this
+        // computer's own accounts (`crate::assists::own_accounts`).
+        if !crate::assists::own_accounts(&preparing, &scope) {
+            config["features"]["memories"] = false.into();
+            config["memories"] = serde_json::json!({"generate_memories": false, "use_memories": false});
+        }
+        Ok::<_, Failure>((config, user_mcp, started))
+    })
+    .await
+    .map_err(|error| Failure::new(error.to_string()))??;
     let (mut developer_instructions, heard) = instructions(node, id, town, origin, acting, true).await?;
 
     if let Some(started) = started.filter(|started| !started.rules.is_empty()) {
@@ -565,7 +582,7 @@ pub async fn message(
     text: String,
     login: Option<&fastctx_types::collab::Caller>,
 ) -> Result<(Address, Landed), Failure> {
-    let choices = crate::collab::require(node, &from, login)?;
+    let choices = crate::collab::require(node, &from, login).await?;
     let here = node.machine();
     let at = Timestamp::now();
     let turn = node.residents.now(&from).and_then(|now| now.turn);
@@ -575,7 +592,7 @@ pub async fn message(
     };
     let to = Address { machine: machine.name.clone(), resident: to };
     let sender = Address { machine: here, resident: from.clone() };
-    let acting = match crate::collab::asked_account(node, &from, &to)? {
+    let acting = match crate::collab::asked_account(node, &from, &to).await? {
         Some(account) if node.serves(&choices.acting, &account.hub, &account.account) => {
             Acting::one(account.hub, account.account)
         }

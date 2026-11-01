@@ -93,12 +93,21 @@ pub(crate) fn start(node: &Arc<Node>) {
     watch_legacy(node);
     let weak = Arc::downgrade(node);
     let mut views = node.views.subscribe();
-    tokio::spawn(async move {
+    fastctx_platform::task::spawn(async move {
         loop {
             let Some(node) = weak.upgrade() else { return };
-            watch_legacy(&node);
-            for resident in node.residents.everyone().filter(|resident| resident.here && resident.removed.is_none()) {
-                request(&node, &resident.id);
+            let working = node.clone();
+            if let Err(error) = fastctx_platform::task::spawn_blocking(move || {
+                watch_legacy(&working);
+                for resident in
+                    working.residents.everyone().filter(|resident| resident.here && resident.removed.is_none())
+                {
+                    request(&working, &resident.id);
+                }
+            })
+            .await
+            {
+                node.log.line(format_args!("watching legacy plans: {error}"));
             }
             drop(node);
             if views.changed().await.is_err() {
@@ -113,7 +122,7 @@ pub(crate) fn request(node: &Arc<Node>, id: &ResidentId) {
         return;
     }
     let (weak, id) = (Arc::downgrade(node), id.clone());
-    tokio::spawn(async move {
+    fastctx_platform::task::spawn(async move {
         loop {
             let Some(node) = weak.upgrade() else { return };
             node.plan_files.1.lock().expect("never poisoned").insert(id.clone(), false);

@@ -110,7 +110,14 @@ async fn converse(node: &Arc<Node>, connection: Connection) -> std::io::Result<(
         }
         // A conversation of this machine is reached only by whom it works
         // for, as from another machine (`admission::local`).
-        if let Err(failure) = crate::admission::local::admit(node, &hello.peer, &call) {
+        let (working, peer) = (node.clone(), hello.peer.clone());
+        let (call, admission) = fastctx_platform::task::spawn_blocking(move || {
+            let admission = crate::admission::local::admit(&working, &peer, &call);
+            (call, admission)
+        })
+        .await
+        .map_err(std::io::Error::other)?;
+        if let Err(failure) = admission {
             writer.send(&json(&NodeFrame::Reply { id, reply: Err(failure) })).await?;
             writer.drain().await?;
             continue;
@@ -768,7 +775,8 @@ async fn collect(
     if let Err(failure) = crate::codex::native_context::observe(node, &resident).await {
         node.log.line(format_args!("{resident}: reading its host's context: {}", failure.message));
     }
-    crate::context::plugin_heard(node, &resident).map_err(|error| Failure::new(error.to_string()))?;
+    let (working, id) = (node.clone(), resident.clone());
+    blocking("reading the host's context receipt", move || crate::context::plugin_heard(&working, &id)).await?;
     if let Err(failure) = crate::context::refresh(node, &resident).await {
         node.log.line(format_args!("{resident}: refreshing its context: {}", failure.message));
     }
@@ -862,7 +870,7 @@ async fn collect_notes(
             notes.push(format!("=== {warning} ==="));
         }
         // Those it left running where it works, too.
-        let elsewhere = crate::here::running_elsewhere(node, &id)
+        let elsewhere = crate::here::running_elsewhere(node, &id)?
             .into_iter()
             .filter(|job| Some(&job.job) != answering.as_ref())
             .map(|job| (format!("{} on {}", job.job, job.machine), job.started_at, job.command))
@@ -929,8 +937,9 @@ async fn taken(
     }
     for (turn, inputs) in by_turn {
         if let Some(turn) = turn {
-            let mut handover =
-                crate::delivery::begin(&directory, inputs).map_err(|error| Failure::new(error.to_string()))?;
+            let mut handover = crate::delivery::begin_held(node, &resident, &directory, inputs)
+                .await
+                .map_err(|error| Failure::new(error.to_string()))?;
             crate::speech::bind(node, &resident, &directory, &mut handover, &turn).await?;
         } else {
             // A host that exposes no turn identity can acknowledge transport
@@ -945,31 +954,47 @@ async fn taken(
         node.taking.lock().expect("never poisoned").remove(&(resident.clone(), id));
     }
     for (owner, heard) in collected_notes.iter_mut().filter(|(owner, _)| *owner == resident) {
-        crate::context::acknowledge(node, owner, heard).map_err(|error| Failure::new(error.to_string()))?;
-        crate::scratch::acknowledge(node, owner, heard).map_err(|error| Failure::new(error.to_string()))?;
-        node.residents.acknowledge_heard(owner, heard.clone());
+        let (working, owner, mut receipt) = (node.clone(), owner.clone(), heard.clone());
+        let (result, updated) = fastctx_platform::task::spawn_blocking(move || {
+            let result = (|| -> std::io::Result<()> {
+                crate::context::acknowledge(&working, &owner, &mut receipt)?;
+                crate::scratch::acknowledge(&working, &owner, &mut receipt)?;
+                working.residents.acknowledge_heard(&owner, receipt.clone());
+                Ok(())
+            })();
+            (result, receipt)
+        })
+        .await
+        .map_err(|error| Failure::new(error.to_string()))?;
+        *heard = updated;
+        result.map_err(|error| Failure::new(error.to_string()))?;
     }
     collected_notes.retain(|(owner, _)| *owner != resident);
     if let Some(completed) = completed {
         let owner = fastctx_types::Address { machine: node.machine(), resident: resident.clone() };
-        crate::retention::confirmed(
-            node,
-            owner,
-            completed.machine,
-            fastctx_types::run::JobDelivery {
-                shown_whole: shown.as_ref() == Some(&completed.job),
-                job: completed.job,
-                output: completed.output,
-                at: jiff::Timestamp::now(),
-            },
-            None,
-        )
+        let working = node.clone();
+        fastctx_platform::task::spawn_blocking(move || {
+            crate::retention::confirmed(
+                &working,
+                owner,
+                completed.machine,
+                fastctx_types::run::JobDelivery {
+                    shown_whole: shown.as_ref() == Some(&completed.job),
+                    job: completed.job,
+                    output: completed.output,
+                    at: jiff::Timestamp::now(),
+                },
+                None,
+            )
+        })
+        .await
+        .map_err(|error| Failure::new(error.to_string()))?
         .map_err(|error| Failure::new(format!("recording job delivery: {error}")))?;
     } else if let Some(job) = shown
-        && !crate::here::forget(node, &resident, &job)
+        && !crate::here::forget(node, &resident, &job).await?
     {
         let (node, owner) = (node.clone(), fastctx_types::Address { machine: node.machine(), resident });
-        tokio::spawn(async move { crate::jobs::forget(&node, town, owner, job).await });
+        fastctx_platform::task::spawn(async move { crate::jobs::forget(&node, town, owner, job).await });
     }
     Ok(Reply::Done)
 }
@@ -2142,7 +2167,7 @@ async fn machines(
     let here_too = crate::around::works_here(node, &acting);
     let (here, others, groups) = crate::world::grouped_machines(node, &acting, here_too);
     let here = here_too.then(|| here.to_string());
-    let collab = crate::collab::choices(node, resident, login)?.map(|choices| choices.offered);
+    let collab = crate::collab::choices(node, resident, login).await?.map(|choices| choices.offered);
     let scratch = match resident.filter(|_| describe_scratch) {
         Some(id) => {
             let paths = crate::scratch::descriptions(
@@ -2276,7 +2301,7 @@ async fn blocking<T: Send + 'static>(
     what: &str,
     work: impl FnOnce() -> std::io::Result<T> + Send + 'static,
 ) -> Result<T, Failure> {
-    tokio::task::spawn_blocking(work)
+    fastctx_platform::task::spawn_blocking(work)
         .await
         .map_err(|error| Failure::new(format!("{what}: {error}")))?
         .map_err(|error| Failure::new(format!("{what}: {error}")))

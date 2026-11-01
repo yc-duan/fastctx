@@ -37,8 +37,10 @@ pub(super) fn ended(
     )
     .map_err(io::Error::other)?;
     let writes = super::writes(record_path)?;
-    let notes = fastctx_hands::run::projection::CapturedNotes::read(Path::new(&record.output), content.size, &writes)?
-        .matches();
+    let mut notes =
+        fastctx_hands::run::projection::CapturedNotes::read(Path::new(&record.output), content.size, &writes)?
+            .matches();
+    super::frames::notes(&mut notes)?;
     let output = OutputRef {
         policy: Some(fastctx_hands::lines::output_policy()),
         machine: record.machine.clone(),

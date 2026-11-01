@@ -589,7 +589,6 @@ async fn remove_places(node: &Arc<Node>, measured: &Measured) -> Result<(u64, u6
             }
         }
         let _collecting = node.disk.lock();
-        let _transaction = crate::resident_storage::lock();
         if places
             .iter()
             .any(|place| node.job_readers.lock().expect("never poisoned").keys().any(|path| path.starts_with(place)))
@@ -650,7 +649,6 @@ async fn remove_places(node: &Arc<Node>, measured: &Measured) -> Result<(u64, u6
                 retained_bytes += super::space::tally(&alias)?.bytes;
             }
         }
-        drop(_transaction);
         drop(_collecting);
         for scope in deleted_scopes {
             crate::record_migration::archive::delete_conversation(node.world.path(), &scope)?;

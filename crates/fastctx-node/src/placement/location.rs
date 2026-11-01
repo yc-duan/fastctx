@@ -141,7 +141,7 @@ pub(crate) async fn prepare(
     if node.residents.now(id).is_some_and(|now| now.turn.is_some()) {
         return Ok(read(&receipt)?.flatten());
     }
-    let Some(scope) = crate::plan::file_account(node, id, acting)? else {
+    let Some(scope) = crate::plan::load_account(node, id, acting).await? else {
         if node.links().is_empty() && matches!(acting, Acting::Here) {
             return Ok(Some(Location { machine: node.machine(), path: crate::world::native(room.path()) }));
         }
@@ -176,7 +176,7 @@ pub(crate) async fn prepare(
     let choices = super::destinations(node, &Acting::one(scope.hub.clone(), scope.account.clone()))?;
     let focus = match node.residents.about(id) {
         Some((about, _)) => about.focus,
-        None => crate::focus::opening(&room)?.map(|opening| opening.focus).unwrap_or_default(),
+        None => crate::focus::opening(&room).await?.map(|opening| opening.focus).unwrap_or_default(),
     };
     let from: Option<MachineName> = read(&room.path().join("working-from.json"))?;
     let local = node.machine();
