@@ -2,10 +2,11 @@
 //! Network receipt is given only after the letter is durable. A separate,
 //! durable receipt suppresses every later copy of an end the CLI took.
 
+use fastctx_platform::doing::{MemoryMutex as Mutex, Rank};
 use std::collections::HashMap;
 use std::io;
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use crate::records::items;
 use fastctx_types::on::OnOrigin;
@@ -20,9 +21,14 @@ type Source = (Address, MachineName);
 type Dispatch = (Address, MachineName, Option<NoticeId>);
 type Job = (Address, MachineName, JobId, Option<NoticeId>);
 
-#[derive(Default)]
 pub(crate) struct Deliveries {
     state: Mutex<State>,
+}
+
+impl Default for Deliveries {
+    fn default() -> Self {
+        Self { state: Mutex::new(Rank::RECORDS, "on delivery registry", "", State::default()) }
+    }
 }
 
 #[derive(Default)]
@@ -48,7 +54,7 @@ impl Following {
         let request = origin.request.clone();
         let dispatch = (source.0.clone(), source.1.clone(), request.clone());
         if origin.sentinel.is_none() {
-            let mut state = node.on_deliveries.state.lock().expect("never poisoned");
+            let mut state = node.on_deliveries.state.lock();
             *state.starting.entry(dispatch).or_default() += 1;
             *state.starting_sources.entry(source.clone()).or_default() += 1;
         }
@@ -63,7 +69,7 @@ impl Following {
             return;
         }
         assert!(self.job.is_none(), "one on starts one job");
-        let mut state = self.node.on_deliveries.state.lock().expect("never poisoned");
+        let mut state = self.node.on_deliveries.state.lock();
         let key = (self.source.0.clone(), self.source.1.clone(), job.clone(), self.request.clone());
         *state.following.entry(key).or_default() += 1;
         *state.following_jobs.entry((self.source.0.clone(), self.source.1.clone(), job.clone())).or_default() += 1;
@@ -73,18 +79,24 @@ impl Following {
     }
 
     pub(crate) fn taken(&self, job: &JobId) -> io::Result<()> {
-        if self.internal {
-            return Ok(());
+        match self.receipt_path(job) {
+            Some(path) => items::write(&path, b""),
+            None => Ok(()),
         }
-        let path = receipt(
+    }
+
+    pub(crate) fn receipt_path(&self, job: &JobId) -> Option<PathBuf> {
+        if self.internal {
+            return None;
+        }
+        Some(receipt(
             &self.node,
             &self.source.0.machine,
             &self.source.0.resident,
             &self.source.1,
             job,
             self.request.as_ref(),
-        );
-        items::write(&path, b"")
+        ))
     }
 }
 
@@ -94,7 +106,7 @@ impl Drop for Following {
             return;
         }
         {
-            let mut state = self.node.on_deliveries.state.lock().expect("never poisoned");
+            let mut state = self.node.on_deliveries.state.lock();
             match &self.job {
                 Some(job) => {
                     release(
@@ -341,13 +353,13 @@ pub(crate) fn status(
     request: Option<&NoticeId>,
 ) -> io::Result<(bool, bool)> {
     let before = {
-        let state = node.on_deliveries.state.lock().expect("never poisoned");
+        let state = node.on_deliveries.state.lock();
         held(&state, owner, machine, job, request)
     };
     let path = receipt(node, &owner.machine, &owner.resident, machine, job, request);
     let mut taken = receipt_exists(node, &path)?;
     let following = {
-        let state = node.on_deliveries.state.lock().expect("never poisoned");
+        let state = node.on_deliveries.state.lock();
         held(&state, owner, machine, job, request)
     };
     // A follower commits its taken receipt before dropping its registration.

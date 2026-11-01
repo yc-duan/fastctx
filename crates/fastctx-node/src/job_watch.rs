@@ -159,7 +159,14 @@ async fn ended(supervisor: &ProcessIdentity) {
         return;
     }
     // Where the system cannot say when a process ends, it is looked at.
-    while fastctx_platform::is_alive(supervisor).unwrap_or(false) {
+    loop {
+        let supervisor = supervisor.clone();
+        let alive = fastctx_platform::task::spawn_blocking(move || fastctx_platform::is_alive(&supervisor))
+            .await
+            .is_ok_and(|result| result.unwrap_or(false));
+        if !alive {
+            break;
+        }
         tokio::time::sleep(LOOKED_AT).await;
     }
 }

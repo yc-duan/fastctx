@@ -191,7 +191,7 @@ impl Jobs {
                     crate::run_stops::register(&registering, path, dispatch)?;
                 }
                 if let Some(registration) = registration {
-                    *registration.lock().expect("never poisoned") = Some(crate::on::Follower::reserved(
+                    *registration.lock() = Some(crate::on::Follower::reserved(
                         &registering,
                         path,
                         on.as_ref().is_some_and(|on| on.sentinel.is_some()),
@@ -432,17 +432,24 @@ pub async fn forget(node: &Arc<Node>, town: Option<TownName>, owner: fastctx_typ
     };
     match checked {
         Ok(Ok(Some(record))) => {
-            let owner = record.owner.resident().expect("checked resident");
-            if let Err(error) = crate::retention::received(
-                node,
-                owner,
-                &fastctx_types::run::JobDelivery {
-                    job: record.id.clone(),
-                    output: record.output.clone(),
-                    at: Timestamp::now(),
-                    shown_whole: true,
-                },
-            ) {
+            let noting = node.clone();
+            let saved = fastctx_platform::task::spawn_blocking(move || {
+                let owner = record.owner.resident().expect("checked resident");
+                crate::retention::received(
+                    &noting,
+                    owner,
+                    &fastctx_types::run::JobDelivery {
+                        job: record.id.clone(),
+                        output: record.output.clone(),
+                        at: Timestamp::now(),
+                        shown_whole: true,
+                    },
+                )
+            })
+            .await
+            .map_err(|error| error.to_string())
+            .and_then(|result| result.map_err(|error| error.to_string()));
+            if let Err(error) = saved {
                 node.log.line(format_args!("recording job delivery: {error}"));
             }
         }
@@ -452,10 +459,9 @@ pub async fn forget(node: &Arc<Node>, town: Option<TownName>, owner: fastctx_typ
     }
 }
 
-/// How long collection, holding the disk's lock, waits for an ended job's
-/// supervisor to exit: it exits as soon as it has written the end, and one
-/// that has not by then is left for a later pass.
-const SUPERVISOR_EXIT: Duration = Duration::from_secs(5);
+/// Collection never waits for a supervisor while holding the shared disk gate.
+/// A process still exiting leaves its artifacts for the next maintenance round.
+const SUPERVISOR_EXIT: Duration = Duration::ZERO;
 
 /// Removes the files of the ended job whose record is at `path`; those of
 /// a job an `on` sent here include the package it came in and what was
