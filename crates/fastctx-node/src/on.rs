@@ -703,7 +703,12 @@ fn feed(
                             followed.lock().refused = Some(Failure::new(error.clone()));
                             return Err(error);
                         }
-                        pieces.send(Ok(OnPiece::Started { machine: machine.clone(), job: job.clone() })).await?;
+                        if let Err(error) =
+                            pieces.send(Ok(OnPiece::Started { machine: machine.clone(), job: job.clone() })).await
+                        {
+                            followed.lock().refused = Some(Failure::new(error.clone()));
+                            return Err(error);
+                        }
                         if let Some(request) = &piping {
                             let source = OnSource { machine: machine.clone(), job, request: request.clone() };
                             let _ = pieces.send(Ok(OnPiece::Piped { source })).await;
@@ -1124,6 +1129,7 @@ pub async fn serve_pipe(
     mut stream: Stream,
 ) -> Result<RemoteReply, Failure> {
     let record_path = recording::job(node, &origin, &job).await?;
+    let _reading = crate::job_reader::open(node, &record_path).await?;
     piped_record(&record_path, &origin).await?;
     let failed = |error: String| Failure::new(format!("handing over the output of {job}: {error}"));
     let mut changes = node.jobs.subscribe();

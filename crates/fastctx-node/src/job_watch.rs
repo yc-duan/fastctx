@@ -43,20 +43,18 @@ pub(crate) async fn restore(node: &Arc<Node>, path: &Path, record: &JobRecord) -
 
 /// Releases transferred bytes after the final reader leaves. Metadata and
 /// scratch await the enclosing answer's host receipt.
-pub(crate) fn copied(node: &Arc<Node>, path: &Path) {
+pub(crate) fn copied(node: &Arc<Node>, path: &Path) -> std::io::Result<()> {
     let _gate = node.disk.lock();
-    if let Err(error) = crate::job_metadata::put_raw(&path.with_extension("copied"), b"") {
-        node.log.line(format_args!("recording transferred command output: {error}"));
-        return;
-    }
+    crate::job_metadata::put_raw(&path.with_extension("copied"), b"")?;
     {
         let mut watched = node.job_watches.0.lock().expect("never poisoned");
         if watched.watching.contains(path) {
             watched.forgetting.insert(path.to_path_buf());
-            return;
+            return Ok(());
         }
     }
     remove(node, path.to_path_buf());
+    Ok(())
 }
 
 /// A maintenance pass already runs off the control loop. Remove settled

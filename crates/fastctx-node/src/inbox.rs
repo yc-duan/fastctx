@@ -396,17 +396,17 @@ fn prepare_job_end(node: &Arc<Node>, record_path: &Path, record: &JobRecord) -> 
         .unwrap_or(false);
     let taken = crate::job_metadata::exists(&record_path.with_extension("on-taken"))?;
     if taken || crate::job_metadata::exists(&record_path.with_extension("on-stopped"))? || cancelled {
-        match crate::job_metadata::delete(&owed) {
-            Err(error) if error.kind() != io::ErrorKind::NotFound => return Err(error),
-            _ => {}
-        }
         // Whoever followed it took every byte and its end, so they are
         // part of the hop that followed it now: one copy of an output stays,
         // there (`world-run.md`, 输出).
         // Output that went straight on goes once it got there too.
         let piped = record.on.as_ref().is_some_and(|on| on.piped);
         if taken && (!piped || crate::job_metadata::exists(&record_path.with_extension("on-piped"))?) {
-            crate::job_watch::copied(node, record_path);
+            crate::job_watch::copied(node, record_path)?;
+        }
+        match crate::job_metadata::delete(&owed) {
+            Err(error) if error.kind() != io::ErrorKind::NotFound => return Err(error),
+            _ => {}
         }
         return Ok(None);
     }
