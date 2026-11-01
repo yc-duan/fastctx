@@ -8,6 +8,7 @@ use std::{
 };
 
 pub(crate) fn run(root: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    super::archive::damaged_drill(&root.join("quarantine-recovery"))?;
     let world = WorldDir::under(root);
     let database = crate::record_database::open(&world);
     if let Some(error) = database.fault() {

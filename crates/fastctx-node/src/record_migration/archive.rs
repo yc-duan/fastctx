@@ -10,6 +10,10 @@ use std::{
     time::{Duration, SystemTime},
 };
 
+mod damaged;
+#[cfg(feature = "storage-drill")]
+pub(crate) use damaged::drill as damaged_drill;
+
 pub(crate) const RETENTION: Duration = Duration::from_secs(30 * 24 * 60 * 60);
 static DAMAGED: LazyLock<&'static readings::Counter> = LazyLock::new(|| readings::counter("migration.damaged_files"));
 static DAMAGED_PENDING: LazyLock<&'static readings::Gauge> =
@@ -117,33 +121,7 @@ pub(crate) fn damaged(world: &Path, conversation: &str, family: &str, source: &P
 fn damaged_file(world: &Path, conversation: &str, family: &str, source: &Path, reason: &str) -> io::Result<()> {
     let relative = relative(world, conversation, source)?;
     let original = root(world).join("damaged").join(conversation).join(relative);
-    let at = jiff::Timestamp::now();
-    let target = original.with_file_name(format!(
-        "{}.{}",
-        original.file_name().expect("damaged filename").to_string_lossy(),
-        at.as_nanosecond()
-    ));
-    let note =
-        target.with_file_name(format!("{}.why.json", target.file_name().expect("damaged filename").to_string_lossy()));
-    fastctx_platform::ensure_private_dir(target.parent().expect("damaged parent"))?;
-    let explanation = serde_json::to_vec_pretty(&serde_json::json!({
-        "conversation": conversation, "family": family,
-        "source": source, "reason": reason, "at": at,
-    }))?;
-    fastctx_platform::publish(&note, &explanation, fastctx_platform::Permissions::Private)?;
-    match disk::rename(source, &target) {
-        Ok(()) => {
-            DAMAGED.add(1);
-            DAMAGED_PENDING.add(1);
-            Ok(())
-        }
-        Err(error) if error.kind() == io::ErrorKind::NotFound => {
-            DAMAGED.add(1);
-            DAMAGED_PENDING.add(1);
-            Ok(())
-        }
-        Err(error) => Err(error),
-    }
+    damaged::quarantine(&original, conversation, family, source, reason)
 }
 
 pub(crate) fn collect(world: &Path, retention: Duration) -> io::Result<u64> {
@@ -216,6 +194,8 @@ pub(crate) fn damaged_count(world: &Path) -> io::Result<u64> {
                 result += count(&entry.path())?;
             } else if entry.file_name().to_string_lossy().ends_with(".why.json") {
                 result += 1;
+            } else {
+                damaged::recover(&entry.path())?;
             }
         }
         Ok(result)
