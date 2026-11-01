@@ -13,6 +13,7 @@ use fastctx_types::residents::Origin;
 use fastctx_types::{AccountName, AgentName, ResidentId};
 
 use crate::Node;
+mod asked;
 mod birth;
 
 /// Accounts still opt in and select each calling login.
@@ -261,49 +262,42 @@ fn require_now(node: &Arc<Node>, resident: &ResidentId, login: Option<&Caller>) 
     })
 }
 
-fn asked_path(node: &Node, asker: &ResidentId, colleague: &fastctx_types::Address) -> PathBuf {
-    node.world
-        .conversation(asker)
-        .asked()
-        .join(&*colleague.machine.file_name())
-        .join(format!("{}.json", colleague.resident))
+/// Checks the durable relationship budget before starting another colleague.
+pub(crate) async fn room_for_ask(node: &Arc<Node>, asker: &ResidentId) -> Result<(), Failure> {
+    let directory = node.world.conversation(asker);
+    fastctx_platform::task::spawn_blocking(move || asked::available(&directory))
+        .await
+        .map_err(|error| Failure::not_run(error.to_string()))?
+        .map_err(|error| Failure::not_run(error.to_string()))
 }
 
-/// Remember the selected account so later messages use the same hub, even
-/// when the physical colleague machine belongs to several hubs.
-pub(crate) fn keep_asked(
-    node: &Node,
+/// Pins the chosen account for future messages to this colleague.
+pub(crate) async fn keep_asked(
+    node: &Arc<Node>,
     asker: &ResidentId,
     colleague: &fastctx_types::Address,
     account: &HubAccount,
 ) -> Result<(), Failure> {
-    let path = asked_path(node, asker, colleague);
-    fastctx_platform::ensure_private_dir(path.parent().expect("asked directory"))
-        .and_then(|()| {
-            fastctx_platform::publish_new(
-                &path,
-                &serde_json::to_vec(account).expect("account serializes"),
-                fastctx_platform::Permissions::Private,
-            )
-        })
-        .map_err(|error| {
+    let (directory, colleague, account) = (node.world.conversation(asker), colleague.clone(), account.clone());
+    fastctx_platform::task::spawn_blocking(move || {
+        asked::keep(&directory, &colleague, &account).map_err(|error| {
             Failure::new(format!("colleague {colleague} started, but recording its account failed: {error}"))
         })
+    })
+    .await
+    .map_err(|error| Failure::new(error.to_string()))?
 }
 
-pub(crate) fn asked_account(
-    node: &Node,
+pub(crate) async fn asked_account(
+    node: &Arc<Node>,
     asker: &ResidentId,
     colleague: &fastctx_types::Address,
 ) -> Result<Option<HubAccount>, Failure> {
-    let path = asked_path(node, asker, colleague);
-    match std::fs::read(path) {
-        Ok(bytes) => serde_json::from_slice(&bytes)
-            .map(Some)
-            .map_err(|error| Failure::new(format!("reading the colleague's account: {error}"))),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
-        Err(error) => Err(Failure::new(format!("reading the colleague's account: {error}"))),
-    }
+    let (directory, colleague) = (node.world.conversation(asker), colleague.clone());
+    fastctx_platform::task::spawn_blocking(move || asked::get(&directory, &colleague))
+        .await
+        .map_err(|error| Failure::new(error.to_string()))?
+        .map_err(|error| Failure::new(format!("reading the colleague's account: {error}")))
 }
 
 pub(crate) async fn keep(node: &Arc<Node>, resident: &ResidentId, started: &Started) -> Result<(), Failure> {

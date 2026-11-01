@@ -141,7 +141,7 @@ pub(crate) async fn here(
                             branch(&node, &address.resident, &acting, deadline).await
                         } else {
                             let mut machine = Written::from(&address.machine);
-                            if let Some(account) = crate::collab::asked_account(&node, &parent, &address)? {
+                            if let Some(account) = crate::collab::asked_account(&node, &parent, &address).await? {
                                 machine.hub = node.link_of(&account.hub).map(|link| link.hub_name());
                                 let acting = Acting::one(account.hub, account.account);
                                 remote(&node, &acting, &machine, address.resident.clone(), false)
@@ -234,7 +234,7 @@ async fn targets(node: &Arc<Node>, owner: &Address, acting: &Acting) -> Result<B
                 .parse()
                 .map_err(|error| Failure::new(fastctx_types::collab_prompt::recorded_colleague(error)))?,
         };
-        if let Some(account) = crate::collab::asked_account(node, &owner.resident, &address)?
+        if let Some(account) = crate::collab::asked_account(node, &owner.resident, &address).await?
             && !node
                 .link_of(&account.hub)
                 .is_some_and(|link| node.accounts_on(&link, acting).contains(&account.account))

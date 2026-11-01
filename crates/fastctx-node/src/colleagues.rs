@@ -67,6 +67,7 @@ pub async fn ask(
             ));
         }
     };
+    crate::collab::room_for_ask(node, &asker).await?;
     let (colleague, account) = match chosen.whose {
         Whose::Account { link, account } => {
             let request =
@@ -87,7 +88,7 @@ pub async fn ask(
         result: colleague.resident.to_string(),
     };
     if let Some(account) = &account {
-        crate::collab::keep_asked(node, &asker, &colleague, account)?;
+        crate::collab::keep_asked(node, &asker, &colleague, account).await?;
     }
     record(node, &asker, action).await;
     Ok(colleague)
@@ -584,7 +585,7 @@ pub async fn message(
     };
     let to = Address { machine: machine.name.clone(), resident: to };
     let sender = Address { machine: here, resident: from.clone() };
-    let acting = match crate::collab::asked_account(node, &from, &to)? {
+    let acting = match crate::collab::asked_account(node, &from, &to).await? {
         Some(account) if node.serves(&choices.acting, &account.hub, &account.account) => {
             Acting::one(account.hub, account.account)
         }
