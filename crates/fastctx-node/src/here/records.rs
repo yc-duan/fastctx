@@ -140,13 +140,14 @@ pub(super) fn put(
                 .ok_or_else(|| Error::new("remote route count exhausted"))?,
             bytes: prior
                 .bytes
-                .checked_sub(old.unwrap_or(0) as u64)
-                .ok_or_else(|| Error::new("remote route budget is inconsistent"))?
+                .saturating_sub(old.unwrap_or(0) as u64)
                 .checked_add(body.len() as u64)
                 .ok_or_else(|| Error::new("remote route bytes exhausted"))?,
         };
+        // The other machine already holds the job, so its route is kept even past
+        // the budget; admission (`available`) refuses new dispatches meanwhile.
         if (next.rows > ROWS && next.rows > prior.rows) || (next.bytes > BYTES && next.bytes > prior.bytes) {
-            return Err(Error::new(full().to_string()));
+            fastctx_platform::readings::counter("node.remote_routes.over_budget").add(1);
         }
         rows.put_raw(family, &key, &body)?;
         rows.delete("remote-route-retries", &key)?;
@@ -169,12 +170,11 @@ pub(super) fn delete(
         move |rows| {
             let bytes: Option<i64> = rows.connection().query_row("SELECT length(body) FROM conversation_records WHERE conversation=?1 AND family=?2 AND identity=?3 AND (?4 IS NULL OR body=?4)", (rows.conversation(), family, &key, &expected), |row| row.get(0)).optional()?;
             let Some(bytes) = bytes else { return Ok(false) };
+            // The budget only admits new routes; a count behind its rows, as one
+            // taken while an import was still adding them, never holds back a removal.
             let mut budget = rows.get::<Budget>(COUNTS, "current")?.unwrap_or_default();
-            budget.rows = budget.rows.checked_sub(1).ok_or_else(|| Error::new("remote route count is inconsistent"))?;
-            budget.bytes = budget
-                .bytes
-                .checked_sub(bytes as u64)
-                .ok_or_else(|| Error::new("remote route bytes are inconsistent"))?;
+            budget.rows = budget.rows.saturating_sub(1);
+            budget.bytes = budget.bytes.saturating_sub(bytes as u64);
             rows.delete(family, &key)?;
             rows.delete("remote-route-retries", &key)?;
             rows.put(COUNTS, "current", &budget)?;
@@ -183,15 +183,11 @@ pub(super) fn delete(
     )
 }
 
+/// Admission keeps the routes near their budget; the few past it, kept for jobs
+/// the other machine already held, are still listed.
 pub(super) fn running(directory: &ConversationDir) -> io::Result<Vec<Elsewhere>> {
     prepare(directory)?;
-    records::read(directory, |rows| {
-        let budget = rows.get::<Budget>(COUNTS, "current")?.unwrap_or_default();
-        if budget.rows > ROWS || budget.bytes > BYTES {
-            return Err(Error::new(full().to_string()));
-        }
-        rows.all(RUNNING)
-    })
+    records::read(directory, |rows| rows.all(RUNNING))
 }
 
 pub(super) fn has_pending(directory: &ConversationDir) -> io::Result<bool> {

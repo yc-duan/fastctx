@@ -22,7 +22,7 @@ pub(crate) fn tell(node: &Node, record: &Path, step: RunStep) -> io::Result<()> 
         let mut row = serde_json::to_vec(&step)?;
         row.push(b'\n');
         super::journal::append(record, &row, sent)?;
-        super::step_view::refresh_locked(record)?;
+        super::step_view::report(node, super::step_view::refresh_locked(record));
     }
     super::update_job(node, record)
 }

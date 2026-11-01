@@ -15,6 +15,21 @@ struct Cursor {
     offset: u64,
 }
 
+/// Replies read the view, but the journal it is built from stays pinned until
+/// it catches up, so a failure here never holds back a step or a job's facts.
+pub(super) fn report(node: &crate::Node, result: io::Result<()>) {
+    static LAST: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+    if let Err(error) = result {
+        fastctx_platform::readings::counter("run_facts.step_view_failures").add(1);
+        let reason = error.to_string();
+        let mut last = LAST.lock().expect("step view failure");
+        if last.as_deref() != Some(reason.as_str()) {
+            node.log.line(format_args!("refreshing a job's step view: {reason}"));
+            *last = Some(reason);
+        }
+    }
+}
+
 pub(super) fn refresh(record: &Path) -> io::Result<()> {
     let gate = WRITING.get(&record.with_extension("facts"));
     let _writing = gate.lock();

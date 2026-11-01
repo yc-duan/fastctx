@@ -370,37 +370,54 @@ fn retire_elsewhere(node: &std::sync::Arc<Node>) -> io::Result<bool> {
     for kept in node.world.kept()? {
         let fastctx_types::layout::Kind::Home(resident) = kept.kind else { continue };
         let Some((about, _)) = node.residents.about(&resident) else { continue };
-        let mut after = String::new();
-        loop {
-            let page = crate::here::remote_page(&kept.directory, &after)?;
-            let Some(last) = page.last() else { break };
-            after = last.0.clone();
-            for (key, elsewhere) in page {
-                let path = kept.directory.elsewhere().join(&key);
-                let result = (|| -> io::Result<bool> {
-                    let Some(reason) = impossible(node, &about.acting, &elsewhere.machine)? else { return Ok(false) };
-                    let owner = fastctx_types::Address { machine: node.machine(), resident: resident.clone() };
-                    tell_failure(
-                        node,
-                        &owner,
-                        &path,
-                        format!("The end of {} on {} cannot be delivered: {reason}.", elsewhere.job, elsewhere.machine),
-                    )?;
-                    crate::here::finish_remote(&kept.directory, &key, &elsewhere)
-                })();
-                match result {
-                    Ok(done) => pending |= !done,
-                    Err(error) => {
-                        pending = true;
-                        if crate::here::retry_remote(&kept.directory, &key, &error.to_string())? {
-                            node.log.line(format_args!("remote completion for {resident} remains pending: {error}"));
-                        }
+        // One conversation that cannot be read now waits for the next sweep
+        // without holding back the others.
+        if let Err(error) = retire_conversation(node, &kept.directory, &resident, &about.acting, &mut pending) {
+            pending = true;
+            if error.kind() != io::ErrorKind::WouldBlock {
+                node.log.line(format_args!("remote completions for {resident} remain pending: {error}"));
+            }
+        }
+    }
+    Ok(pending)
+}
+
+fn retire_conversation(
+    node: &std::sync::Arc<Node>,
+    directory: &fastctx_types::layout::ConversationDir,
+    resident: &fastctx_types::ResidentId,
+    acting: &Acting,
+    pending: &mut bool,
+) -> io::Result<()> {
+    let mut after = String::new();
+    loop {
+        let page = crate::here::remote_page(directory, &after)?;
+        let Some(last) = page.last() else { return Ok(()) };
+        after = last.0.clone();
+        for (key, elsewhere) in page {
+            let path = directory.elsewhere().join(&key);
+            let result = (|| -> io::Result<bool> {
+                let Some(reason) = impossible(node, acting, &elsewhere.machine)? else { return Ok(false) };
+                let owner = fastctx_types::Address { machine: node.machine(), resident: resident.clone() };
+                tell_failure(
+                    node,
+                    &owner,
+                    &path,
+                    format!("The end of {} on {} cannot be delivered: {reason}.", elsewhere.job, elsewhere.machine),
+                )?;
+                crate::here::finish_remote(directory, &key, &elsewhere)
+            })();
+            match result {
+                Ok(done) => *pending |= !done,
+                Err(error) => {
+                    *pending = true;
+                    if crate::here::retry_remote(directory, &key, &error.to_string())? {
+                        node.log.line(format_args!("remote completion for {resident} remains pending: {error}"));
                     }
                 }
             }
         }
     }
-    Ok(pending)
 }
 
 pub(crate) fn control_impossible(node: &Node, acting: &Acting, destination: &Written) -> io::Result<Option<String>> {

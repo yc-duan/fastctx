@@ -3,7 +3,10 @@
 use crate::Node;
 use fastctx_platform::doing::{MemoryMutex, Rank};
 use fastctx_types::ResidentId;
-use std::{collections::HashMap, io, sync::Arc, time::Duration};
+use std::{collections::HashMap, io, sync::Arc};
+
+static RETRIED: std::sync::LazyLock<&'static fastctx_platform::readings::Counter> =
+    std::sync::LazyLock::new(|| fastctx_platform::readings::counter("node.terminal_settlements.retried"));
 
 pub(crate) struct Work {
     running: MemoryMutex<HashMap<ResidentId, bool>>,
@@ -39,6 +42,7 @@ fn schedule(runtime: &tokio::runtime::Handle, node: &Arc<Node>, id: &ResidentId)
         node.ready_for(&id).await;
         let mut problem = None;
         let mut failed_turns = HashMap::<String, String>::new();
+        let mut again = crate::again::Again::default();
         loop {
             let Some(speaking) = node.residents.speaking(&id) else {
                 node.delivery_work.running.lock().remove(&id);
@@ -87,13 +91,16 @@ fn schedule(runtime: &tokio::runtime::Handle, node: &Arc<Node>, id: &ResidentId)
                     node.log.line(format_args!("settling {id}'s terminal records: {error}"));
                     problem = Some(error);
                 }
-                tokio::time::sleep(Duration::from_secs(3)).await;
+                RETRIED.add(1);
+                tokio::time::sleep(again.next()).await;
                 continue;
             }
             if failed {
-                tokio::time::sleep(Duration::from_secs(3)).await;
+                RETRIED.add(1);
+                tokio::time::sleep(again.next()).await;
                 continue;
             }
+            again.reset();
             let mut running = node.delivery_work.running.lock();
             if running.get_mut(&id).is_some_and(std::mem::take) {
                 continue;
@@ -109,6 +116,7 @@ pub(crate) fn recover(node: &Arc<Node>) {
     fastctx_platform::task::spawn(async move {
         let mut after = (String::new(), String::new());
         let mut last = String::new();
+        let (mut again, mut problem) = (crate::again::Again::default(), String::new());
         loop {
             let (database, cursor) = (node.database.clone(), after.clone());
             let page =
@@ -117,8 +125,12 @@ pub(crate) fn recover(node: &Arc<Node>) {
                 {
                     Ok(Ok(page)) => page,
                     result => {
-                        node.log.line(format_args!("listing pending terminal records: {result:?}"));
-                        tokio::time::sleep(Duration::from_secs(3)).await;
+                        let error = format!("{result:?}");
+                        if error != problem {
+                            node.log.line(format_args!("listing pending terminal records: {error}"));
+                            problem = error;
+                        }
+                        tokio::time::sleep(again.next()).await;
                         continue;
                     }
                 };

@@ -1,6 +1,6 @@
 //! A fact update is a bounded sequence of independently acknowledged letters.
 //! Member identity is unchanged; only the final frame publishes completion.
-use fastctx_types::run_facts::{JobFacts, OutputNoteMatch};
+use fastctx_types::run_facts::{JobFacts, OutputNoteMatch, WriteFact, WriteNote};
 use serde::Serialize;
 use std::io;
 
@@ -8,6 +8,8 @@ static OMITTED_NOTES: std::sync::LazyLock<&'static fastctx_platform::readings::C
     std::sync::LazyLock::new(|| fastctx_platform::readings::counter("node.facts.notes.folded"));
 static CLIPPED_SCRIPTS: std::sync::LazyLock<&'static fastctx_platform::readings::Counter> =
     std::sync::LazyLock::new(|| fastctx_platform::readings::counter("node.facts.scripts.clipped"));
+static SHORTENED_NOTES: std::sync::LazyLock<&'static fastctx_platform::readings::Counter> =
+    std::sync::LazyLock::new(|| fastctx_platform::readings::counter("node.facts.write_notes.shortened"));
 
 const TARGET: usize = 1024 * 1024;
 const MAXIMUM: usize = 12 * 1024 * 1024;
@@ -32,6 +34,20 @@ pub(super) fn notes(notes: &mut Vec<OutputNoteMatch>) -> io::Result<()> {
     Ok(())
 }
 
+/// A write's note is what its command printed, and its caller already has it.
+/// One too large for any frame travels as its size, so it cannot hold back the
+/// job's other facts.
+fn shorten(item: &mut WriteFact, base: usize) -> io::Result<()> {
+    if serde_json::to_vec(item)?.len() + 1 + base <= MAXIMUM {
+        return Ok(());
+    }
+    if let Some(WriteNote::Text { text, .. }) = &mut item.note {
+        SHORTENED_NOTES.add(1);
+        *text = format!("… (this note is {} bytes, too large to travel with the job's facts)\n", text.len());
+    }
+    Ok(())
+}
+
 pub(super) fn split(mut update: JobFacts) -> io::Result<Vec<JobFacts>> {
     if let Some(script) = &mut update.script
         && script.len() > SCRIPT
@@ -41,8 +57,10 @@ pub(super) fn split(mut update: JobFacts) -> io::Result<Vec<JobFacts>> {
             end -= 1;
         }
         CLIPPED_SCRIPTS.add(1);
+        let length = script.len();
         script.truncate(end);
-        script.push_str("\n… (complete script in the job record)");
+        // The sender wrote the script and has it whole; only this echo is short.
+        script.push_str(&format!("\n… (the script is {length} bytes; the rest stays with the job where it ran)"));
     }
     if let Some(notes) = &mut update.notes {
         self::notes(notes)?;
@@ -86,7 +104,8 @@ pub(super) fn split(mut update: JobFacts) -> io::Result<Vec<JobFacts>> {
         *bytes += size;
         Ok(())
     }
-    for item in writes {
+    for mut item in writes {
+        shorten(&mut item, base)?;
         add(item, &mut frames, &mut frame, &empty, &mut bytes, base, |frame, item| frame.writes.push(item))?;
     }
     for item in steps {

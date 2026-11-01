@@ -155,7 +155,12 @@ impl Pieces {
             if let Err(error) = recorded {
                 match &mut piece {
                     Err(failure) => failure.message.push_str(&format!("; recording the on step: {error}")),
-                    Ok(_) => return Err(error),
+                    // The job already runs, so its caller still needs its id;
+                    // the step keeps it in memory and its end records it.
+                    Ok(_) => {
+                        let node = self.2.lock().node.clone();
+                        node.log.line(format_args!("recording the start of an on step: {error}"));
+                    }
                 }
             }
         }

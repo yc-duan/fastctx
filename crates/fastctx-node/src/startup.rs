@@ -86,15 +86,20 @@ pub(crate) async fn recover(node: &Arc<Node>) {
         let node = node.clone();
         let slots = slots.clone();
         workers.spawn(async move {
-            let _slot = slots.acquire_owned().await.expect("never closed");
             let id = resident.id.clone();
             let finished = Finished { node: &node, id: id.clone() };
-            let began = std::time::Instant::now();
             let mut again = crate::again::Again::default();
+            let mut told = None;
+            // An import that cannot finish yet holds no recovery place meanwhile.
             while let Err(error) = crate::conversation_store::transfer::wait(&node, &id).await {
-                node.log.line(format_args!("waiting for conversation import {id}: {}", error.message));
+                if told.as_ref() != Some(&error.message) {
+                    node.log.line(format_args!("waiting for conversation import {id}: {}", error.message));
+                    told = Some(error.message);
+                }
                 tokio::time::sleep(again.next()).await;
             }
+            let _slot = slots.acquire_owned().await.expect("never closed");
+            let began = std::time::Instant::now();
             if let Some(reason) = crate::conversation_store::transfer::rejection(node.world.path(), id.as_str()) {
                 node.log
                     .line(format_args!("conversation import {id} was rejected: {reason}; startup recovery skipped"));

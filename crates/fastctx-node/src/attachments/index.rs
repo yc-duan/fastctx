@@ -196,12 +196,8 @@ pub(super) fn put(directory: &ConversationDir, file: &Attachment, reference: boo
             let old: Option<(String, i64)> = rows.connection().query_row("SELECT identity,length(body) FROM conversation_records WHERE conversation=?1 AND family='attachment-pins' AND category='reference' AND json_extract(body,'$.id')=?2 AND identity!=?3", (rows.conversation(), &id, format!("reference:{identity}")), |row| Ok((row.get(0)?,row.get(1)?))).optional()?;
             if let Some((old, bytes)) = old {
                 let mut budget = rows.get::<Budget>(BUDGET, "current")?.unwrap_or_default();
-                budget.rows =
-                    budget.rows.checked_sub(1).ok_or_else(|| Error::new("attachment count is inconsistent"))?;
-                budget.bytes = budget
-                    .bytes
-                    .checked_sub(bytes as u64)
-                    .ok_or_else(|| Error::new("attachment size is inconsistent"))?;
+                budget.rows = budget.rows.saturating_sub(1);
+                budget.bytes = budget.bytes.saturating_sub(bytes as u64);
                 rows.delete(FAMILY, &old)?;
                 rows.put(BUDGET, "current", &budget)?;
             }

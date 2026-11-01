@@ -640,6 +640,7 @@ async fn submit_thread(
     // separately, preserving both order and each message's speaker framing.
     // Facts that only ride with a turn may precede its first actual input.
     let count = batch.iter().position(|kept| kept.delivery.notice.along().is_none()).map_or(batch.len(), |at| at + 1);
+    let count = admitted(&batch[..count]);
     let left = batch.split_off(count);
     let audience = if batch.iter().any(|pending| pending.working)
         && crate::goals::replies::inherits(node, id).await.map_err(|error| Failure::new(error.to_string()))?
@@ -1109,6 +1110,19 @@ static SETTLING: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(8);
 /// before they are tried again.
 const RECOVER_AGAIN: std::time::Duration = std::time::Duration::from_secs(60);
 
+/// How many of `batch` one handover takes; a longer wait goes over several turns.
+fn admitted(batch: &[Pending]) -> usize {
+    let mut bytes = 0;
+    for (index, input) in batch.iter().enumerate() {
+        bytes += serde_json::to_vec(input).map_or(0, |encoded| encoded.len());
+        // The handover's own fields and framing keep a tenth of its budget.
+        if index == crate::delivery::handovers::INPUTS || bytes > crate::delivery::handovers::BYTES / 10 * 9 {
+            return index.max(1);
+        }
+    }
+    batch.len()
+}
+
 async fn recover_later(node: Arc<Node>, mut failed: Vec<ResidentId>, before: std::time::SystemTime) {
     while !failed.is_empty() {
         tokio::time::sleep(RECOVER_AGAIN).await;
@@ -1188,6 +1202,20 @@ async fn recover_held(
             continue;
         }
         if handover.turn.is_none() && (handover.attempting || handover.unresolved.is_some()) && written_before {
+            // A stop before all of its inputs were marked as being sent came
+            // before any of them went: they wait again, as after a refusal.
+            let id = handover.id.clone();
+            if handover.unresolved.is_none()
+                && crate::delivery::local(&directory, move |directory| {
+                    crate::delivery::handovers::unsent(directory, &id)
+                })
+                .await?
+            {
+                let mut released = handover.clone();
+                crate::delivery::local(&directory, move |directory| crate::delivery::refused(directory, &mut released))
+                    .await?;
+                continue;
+            }
             // Codex keeps words with the id they were sent under: found in
             // the thread, they are bound to the turn that took them.
             if handover.unresolved.is_none()

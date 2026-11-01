@@ -189,6 +189,21 @@ pub(crate) struct Requester {
 /// another, with `prompt` as its first words. Returns its id once its
 /// thread exists; the words go in after, as its tools may take a while to
 /// start.
+/// Leaves a colleague whose start failed idle, with the reason it shows.
+async fn troubled(node: &Arc<Node>, id: &ResidentId, text: String) -> Result<(), Failure> {
+    let (node, id) = (node.clone(), id.clone());
+    fastctx_platform::task::spawn_blocking(move || {
+        node.residents.change_now(&node.world, &id, |now| {
+            now.activity = Activity::Idle;
+            now.trouble = Some(fastctx_types::residents::Trouble { at: Timestamp::now(), text });
+        })
+    })
+    .await
+    .map_err(std::io::Error::other)
+    .and_then(|result| result)
+    .map_err(|error| Failure::new(error.to_string()))
+}
+
 pub async fn ask_here(
     node: &Arc<Node>,
     requester: Requester,
@@ -294,18 +309,15 @@ pub async fn ask_here(
     if let Some(town) = &town {
         crate::town::access::check(node, &about.acting, town)?;
     }
-    node.residents
-        .create(&node.world, about.clone(), town.clone(), now)
+    let (creating, born, at) = (node.clone(), about.clone(), town.clone());
+    fastctx_platform::task::spawn_blocking(move || creating.residents.create(&creating.world, born, at, now))
+        .await
+        .map_err(std::io::Error::other)
+        .and_then(|result| result)
         .map_err(|error| Failure::new(format!("recording the colleague: {error}")))?;
     crate::context::instructed(node, &id, &heard).await.map_err(|error| Failure::new(error.to_string()))?;
     if let Err(failure) = crate::goals::colleagues::open(node, &id, &asker, &prompt).await {
-        node.residents
-            .change_now(&node.world, &id, |now| {
-                now.activity = Activity::Idle;
-                now.trouble =
-                    Some(fastctx_types::residents::Trouble { at: Timestamp::now(), text: failure.message.clone() });
-            })
-            .map_err(|error| Failure::new(error.to_string()))?;
+        troubled(node, &id, failure.message.clone()).await?;
         return Err(Failure::new(fastctx_types::collab_prompt::goal_failed(&id, failure)));
     }
     node.residents.set_instructed(&id, heard);
@@ -345,12 +357,7 @@ pub async fn ask_here(
     .map_err(std::io::Error::other)
     .and_then(|result| result);
     if let Err(error) = kept {
-        node.residents
-            .change_now(&node.world, &id, |now| {
-                now.activity = Activity::Idle;
-                now.trouble = Some(fastctx_types::residents::Trouble { at: Timestamp::now(), text: error.to_string() });
-            })
-            .map_err(|error| Failure::new(error.to_string()))?;
+        troubled(node, &id, error.to_string()).await?;
         return Err(Failure::new(fastctx_types::collab_prompt::first_request_failed(&id, error)));
     }
     let (node, colleague) = (node.clone(), id.clone());

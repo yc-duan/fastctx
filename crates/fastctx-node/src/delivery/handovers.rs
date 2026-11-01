@@ -99,6 +99,10 @@ fn root(id: &str, revision: &str, ordinal: usize) -> String {
     format!("{id}/{revision}/{ordinal}")
 }
 
+/// What one handover's record admits; a longer wait goes in several.
+pub(crate) const INPUTS: usize = 16_384;
+pub(crate) const BYTES: usize = 64 * 1024 * 1024;
+
 pub(super) fn put(
     directory: &ConversationDir,
     handover: Handover,
@@ -115,7 +119,7 @@ pub(super) fn put(
             get(rows, &handover.id)?.ok_or_else(|| Error::new("handover disappeared"))
         });
     }
-    if handover.inputs.len() > 16_384 || serde_json::to_vec(&handover)?.len() > 64 * 1024 * 1024 {
+    if handover.inputs.len() > INPUTS || serde_json::to_vec(&handover)?.len() > BYTES {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
             "handover exceeds its 16,384 input / 64 MiB admission budget",
@@ -256,14 +260,43 @@ fn select(directory: &ConversationDir, condition: &str, parameter: Option<&str>)
         let ids = query
             .query_map((rows.conversation(), parameter), |row| row.get::<_, String>(0))?
             .collect::<std::result::Result<Vec<_>, _>>()?;
-        ids.into_iter()
-            .map(|id| {
-                get(rows, &id.parse().map_err(|e| Error::new(format!("invalid handover: {e}")))?)?
-                    .ok_or_else(|| Error::new("handover disappeared"))
-            })
-            .collect()
+        // One unreadable handover is counted and left where it is; it does not
+        // hold back the conversation's other handovers.
+        let mut handovers = Vec::with_capacity(ids.len());
+        for id in ids {
+            let read = id
+                .parse()
+                .map_err(|error| {
+                    Error::with_kind(fastctx_storage::ErrorKind::Corrupt, format!("invalid handover: {error}"))
+                })
+                .and_then(|id| get(rows, &id));
+            match read {
+                Ok(Some(handover)) => handovers.push(handover),
+                Ok(None) => {}
+                Err(error) if error.kind() == fastctx_storage::ErrorKind::Corrupt && !error.is_database_damage() => {
+                    fastctx_platform::readings::counter("node.handovers.unreadable").add(1);
+                }
+                Err(error) => return Err(error),
+            }
+        }
+        Ok(handovers)
     })
 }
+/// Inputs are marked as being sent only once all of them are, and only then go
+/// to the host: one of this handover's still waiting means none of them went.
+pub(crate) fn unsent(directory: &ConversationDir, id: &NoticeId) -> io::Result<bool> {
+    super::storage::initialize(directory)?;
+    crate::inbox::storage::initialize(directory)?;
+    records::read(directory, |rows| {
+        let Some(head) = header(rows, id.as_str())? else { return Ok(false) };
+        Ok(rows.connection().query_row(
+            "SELECT EXISTS(SELECT 1 FROM conversation_records WHERE conversation=?1 AND family='pending-inputs' AND identity IN (SELECT identity FROM handover_inputs WHERE conversation=?1 AND handover=?2 AND revision=?3) AND json_extract(body,'$.state')='waiting')",
+            (rows.conversation(), id.as_str(), &head.revision),
+            |row| row.get(0),
+        )?)
+    })
+}
+
 pub(crate) fn has_active(directory: &ConversationDir) -> io::Result<bool> {
     super::storage::initialize(directory)?;
     records::read(directory, |rows| {

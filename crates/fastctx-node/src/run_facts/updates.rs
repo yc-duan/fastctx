@@ -49,7 +49,7 @@ pub(crate) enum Recovery {
 /// can replay the same sequence without skipping any committed row.
 pub(crate) fn job(node: &Node, record_path: &Path) -> io::Result<()> {
     let before = fastctx_hands::run::record::read(record_path)?;
-    super::step_view::refresh(record_path)?;
+    super::step_view::report(node, super::step_view::refresh(record_path));
     if let Err(error) = crate::activity_book::observe(node, record_path, &before) {
         // The journal remains pinned by the book cursor; its separate database
         // must not prevent the job's owner from hearing progress or completion.
