@@ -422,33 +422,42 @@ fn judge_readings(whole: &Readings, calm: &Readings, checks: &mut Checks) {
             && whole.count("link.pong.late").unwrap_or(0) == 0,
         json!({"heartbeat": shown(beats), "pong": shown(pongs), "late": whole.count("link.heartbeat.late"), "pong_late": whole.count("link.pong.late")}),
     );
+    // A reading not there was never made: the node holds these all through.
     let shared = timing(whole, "locks.shared");
     checks.check(
         "locks over many units held at most 1 ms at the 99th percentile and 10 ms at the longest",
-        shared.is_none_or(|shared| shared.p99_us <= 1_000 && shared.max_us <= 10_000),
+        shared.is_some_and(|shared| shared.count > 0 && shared.p99_us <= 1_000 && shared.max_us <= 10_000),
         json!({"shared": shown(shared), "locks": whole.timings.iter().filter(|timing| timing.name.starts_with("lock.")).map(|timing| json!({"name": timing.name, "p99_us": timing.p99_us, "max_us": timing.max_us, "count": timing.count})).collect::<Vec<_>>()}),
     );
-    for store in ["node.sqlite3", "book.sqlite3"] {
+    // A database's measures go by its file's stem: `storage.node.*` for
+    // `node.sqlite3`. The node writes its own all through; its ledger, when
+    // anything was spent.
+    for (store, needed) in [("node", true), ("book", false)] {
         let operations = calm.count(&format!("storage.{store}.operations")).unwrap_or(0);
         let over = calm.count(&format!("storage.{store}.over_budget")).unwrap_or(0);
         let slow = calm.count(&format!("storage.{store}.slow")).unwrap_or(0);
         checks.check(
-            &format!("{store}: writes over 2 ms at most one in a hundred, none over 20 ms, on a small server's disk"),
-            over * 100 <= operations && slow == 0,
+            &format!(
+                "{store}.sqlite3: writes over 2 ms at most one in a hundred, none over 20 ms, on a small server's disk"
+            ),
+            (!needed || operations > 0) && over * 100 <= operations && slow == 0,
             json!({"operations": operations, "over_2ms": over, "over_20ms": slow, "write": shown(timing(calm, &format!("storage.{store}.write")))}),
         );
     }
-    // Typing and sending go through the shared input, stopping on its own;
-    // words said straight in are held to the same when any were.
-    for (kind, needed) in [("composer", true), ("stop", true), ("talk", false)] {
+    // Typing and sending go through the shared input, here and from phones;
+    // stopping, here; words said straight in are held to the same when any
+    // were.
+    for (kind, here, phones) in [("composer", true, true), ("stop", true, false), ("talk", false, false)] {
         let local = timing(calm, &format!("call.{kind}"));
         let remote = timing(calm, &format!("remote.{kind}"));
-        let held = |timing: Option<&Timing>| timing.is_none_or(|timing| timing.p99_us <= 100_000);
+        let held = |timing: Option<&Timing>, needed: bool| {
+            timing.map_or(!needed, |timing| (!needed || timing.count > 0) && timing.p99_us <= 100_000)
+        };
         checks.check(
             &format!(
                 "{kind}, from the node's door to its answer, here and from phones: within 100 ms at the 99th percentile"
             ),
-            held(local) && held(remote) && (!needed || local.is_some_and(|local| local.count > 0)),
+            held(local, here) && held(remote, phones),
             json!({"here": shown(local), "phones": shown(remote)}),
         );
     }
@@ -456,6 +465,17 @@ fn judge_readings(whole: &Readings, calm: &Readings, checks: &mut Checks) {
     println!(
         "OPENING {}",
         json!({"here": shown(timing(calm, "call.open")), "phones": shown(timing(calm, "remote.open"))})
+    );
+    // The databases' reads, their waits for a connection and their commits,
+    // all through: told, for what the rest is judged on to be read by.
+    println!(
+        "STORAGE {}",
+        json!(["node", "book"].map(|store| json!({
+            "store": store,
+            "read": shown(timing(whole, &format!("storage.{store}.read"))),
+            "read_wait": shown(timing(whole, &format!("storage.{store}.read_wait"))),
+            "commit": shown(timing(whole, &format!("storage.{store}.commit"))),
+        })))
     );
 }
 
