@@ -3,6 +3,32 @@
 use fastctx_storage::{Database, Priority};
 use std::io;
 
+/// The verified sources of completed families that were not moved yet, as
+/// another program held them open then: each family's, a few at a time.
+pub(super) fn archive_left(database: &Database, world: &std::path::Path) -> io::Result<()> {
+    let families = database
+        .read_background_now(|db| {
+            Ok(db
+                .prepare(
+                    "SELECT DISTINCT f.conversation,f.family FROM migration_files f WHERE f.verified=1 AND f.archived=0
+                AND EXISTS(SELECT 1 FROM conversation_record_imports i WHERE i.family=f.family AND (i.conversation=f.conversation OR i.conversation='@node')) LIMIT 64",
+                )?
+                .query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))?
+                .collect::<std::result::Result<Vec<_>, _>>()?)
+        })
+        .map_err(io::Error::other)?;
+    for (conversation, family) in families {
+        let context = crate::record_migration::files::Context {
+            database: database.clone(),
+            world: world.to_path_buf(),
+            conversation,
+            family,
+        };
+        crate::record_migration::files::archive_ready(&context)?;
+    }
+    Ok(())
+}
+
 pub(super) fn collect(database: &Database) -> io::Result<()> {
     loop {
         let files=database.read_background_now(|db| {

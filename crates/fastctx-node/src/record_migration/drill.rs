@@ -66,6 +66,9 @@ pub(crate) fn run(root: &Path) -> Result<(), Box<dyn std::error::Error>> {
     crate::records::items::prepare(&received.join(".items"))?;
     assert_eq!(super::archive::damaged_count(world.path())?, 5);
     assert!(crate::records::items::exists(&received.join("presence.taken"))?);
+    #[cfg(windows)]
+    held(&world, &database, &directory)?;
+    assert_eq!(super::archive::damaged_count(world.path())?, 5);
     let (entered, started) = std::sync::mpsc::channel();
     let (release, held) = std::sync::mpsc::channel();
     assert!(
@@ -115,5 +118,31 @@ pub(crate) fn run(root: &Path) -> Result<(), Box<dyn std::error::Error>> {
     println!(
         "migration: pre-open admission refused; 5 damaged sources isolated including a row conflict and missing fields; raw presence marker preserved; 1000 map rows verified and archived; demand deadline {busy:?}; job continued after caller left"
     );
+    Ok(())
+}
+
+/// A source held open as a scanner or an editor on Windows holds one, letting
+/// others read it but not move it: its family serves its records at once,
+/// nothing is set aside, and the hourly maintenance archives it once let go.
+#[cfg(windows)]
+fn held(
+    world: &WorldDir,
+    database: &fastctx_storage::Database,
+    directory: &fastctx_types::layout::ConversationDir,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use std::os::windows::fs::OpenOptionsExt;
+    let source = directory.path().join("held-map.json");
+    disk::write(&source, br#"{"a":1,"b":2}"#)?;
+    // FILE_SHARE_READ alone: nobody renames or deletes it meanwhile.
+    let holder = disk::open_with(std::fs::OpenOptions::new().read(true).share_mode(1), &source)?;
+    crate::records::legacy::map::<u64>(directory, "drill-held", &source)?;
+    assert_eq!(crate::records::read(directory, |rows| rows.get::<u64>("drill-held", "b"))?, Some(2));
+    assert!(disk::exists(&source)?);
+    super::maintenance::archive_left(database, world.path())?;
+    assert!(disk::exists(&source)?);
+    drop(holder);
+    super::maintenance::archive_left(database, world.path())?;
+    assert!(!disk::exists(&source)?);
+    println!("held source: served while held open, archived once let go");
     Ok(())
 }

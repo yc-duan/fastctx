@@ -13,6 +13,7 @@ pub(super) fn start(node: &std::sync::Arc<crate::Node>) {
             let working = node.clone();
             let result = fastctx_platform::task::spawn_blocking(move || {
                 collect(&working.database)?;
+                archive_left(&working.database, working.world.path())?;
                 super::archive::damaged_kept(working.world.path(), super::archive::RETENTION)?;
                 super::archive::collect(working.world.path(), super::archive::RETENTION)
             })
@@ -25,6 +26,12 @@ pub(super) fn start(node: &std::sync::Arc<crate::Node>) {
             tokio::time::sleep(std::time::Duration::from_secs(60 * 60)).await;
         }
     });
+}
+
+/// Moves the sources completed families left in place while another program
+/// held them open.
+pub(super) fn archive_left(database: &Database, world: &std::path::Path) -> io::Result<()> {
+    files::archive_left(database, world)
 }
 
 pub(super) fn collect(database: &Database) -> io::Result<()> {

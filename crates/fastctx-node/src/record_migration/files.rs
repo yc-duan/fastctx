@@ -303,13 +303,22 @@ pub(crate) fn archive_ready(context: &Context) -> io::Result<()> {
             }
             let directory =
                 fastctx_types::layout::ConversationDir::at(&context.world.join("conversations").join(&owner));
-            if let Some(reason) = &damage {
-                archive::damaged(&context.world, &owner, &context.family, Path::new(&path), reason)?;
+            let moved = if let Some(reason) = &damage {
+                archive::damaged(&context.world, &owner, &context.family, Path::new(&path), reason)
             } else {
-                let result = crate::conversation_store::with_live_files(&directory, || {
+                crate::conversation_store::with_live_files(&directory, || {
                     archive::verified(&context.world, &owner, Path::new(&path), &signature)
-                });
-                result.map_err(super::errors::retry)?;
+                })
+            };
+            match moved {
+                Ok(()) => {}
+                // Left where it is for the hourly maintenance to move once
+                // let go (`super::maintenance`): its family does not wait.
+                Err(error) if super::errors::held(&error) => {
+                    fastctx_platform::readings::counter("migration.sources_held").add(1);
+                    continue;
+                }
+                Err(error) => return Err(super::errors::retry(error)),
             }
             context
                 .database

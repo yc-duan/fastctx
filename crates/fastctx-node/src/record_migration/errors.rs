@@ -27,6 +27,14 @@ pub(crate) fn retry(error: io::Error) -> io::Error {
     error
 }
 
+/// Whether moving a source failed because another program holds it open, as
+/// a scanner or an editor on Windows does, or because this one may not move
+/// it now. Its records are verified and serve all the same.
+pub(crate) fn held(error: &io::Error) -> bool {
+    // ERROR_SHARING_VIOLATION and ERROR_LOCK_VIOLATION.
+    error.kind() == io::ErrorKind::PermissionDenied || (cfg!(windows) && matches!(error.raw_os_error(), Some(32 | 33)))
+}
+
 pub(crate) fn invalid(reason: impl Into<Box<dyn std::error::Error + Send + Sync>>) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidData, reason)
 }
