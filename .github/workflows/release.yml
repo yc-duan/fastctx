@@ -510,6 +510,35 @@ jobs:
         name: Node records drill
         run: cargo test --release --locked -p fastctx-node --features storage-drill --test record_drill -- --root "$RUNNER_TEMP/record-drill"
 
+  # What each crate may touch and on which threads is kept by clippy (`clippy.toml` in the hub, the
+  # link and the node; `specs/world-engine.md`, 线程的三种角色), on every system: each has code paths
+  # no other system's build reaches.
+  clippy:
+    if: github.ref_type == 'branch'
+    name: clippy ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: linux
+            runner: ubuntu-24.04
+          - os: macos
+            runner: macos-15
+          - os: windows
+            runner: windows-2025
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.92.0
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: clippy-${{ matrix.os }}
+          save-if: false
+      - run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - run: cargo clippy -p fastctx-node --features storage-drill --all-targets --locked -- -D warnings
+
   test-linux:
     needs: kernel-linux
     name: test ${{ matrix.target }}

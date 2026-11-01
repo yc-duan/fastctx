@@ -117,6 +117,31 @@ jobs:
           cargo test --release --locked -p fastctx-storage --test storage_drill --no-run
           cargo test --release --locked -p fastctx-node --features storage-drill --test record_drill --no-run
 
+  clippy:
+    name: clippy ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: linux
+            runner: ubuntu-24.04
+          - os: macos
+            runner: macos-15
+          - os: windows
+            runner: windows-2025
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.92.0
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: clippy-${{ matrix.os }}
+          cache-on-failure: true
+      - run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - run: cargo clippy -p fastctx-node --features storage-drill --all-targets --locked -- -D warnings
+
   kernel-macos:
     name: kernel ${{ matrix.target }}
     strategy:
