@@ -38,8 +38,8 @@ pub mod job_membership;
 pub mod legacy_text;
 pub mod limits;
 pub mod local_path;
-pub mod log_writer;
 pub mod lock;
+pub mod log_writer;
 pub mod memory;
 #[cfg(target_os = "linux")]
 pub mod mountinfo;
@@ -53,9 +53,9 @@ pub mod privacy;
 pub mod private;
 #[cfg(target_os = "linux")]
 pub mod procfs;
-pub mod readings;
 #[cfg(windows)]
 pub mod protected_directory;
+pub mod readings;
 #[cfg(windows)]
 pub mod registry;
 pub mod roles;
@@ -83,6 +83,8 @@ pub mod unix_executable;
 mod unix_fds;
 pub mod unix_socket;
 pub mod viewed_cache;
+#[cfg(windows)]
+pub mod win32_path;
 #[cfg(windows)]
 mod windows_job;
 #[cfg(windows)]

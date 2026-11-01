@@ -306,10 +306,8 @@ mod imp {
 
 #[cfg(windows)]
 mod imp {
-    use std::ffi::OsStr;
     use std::io;
     use std::mem::size_of;
-    use std::os::windows::ffi::OsStrExt as _;
     use std::path::Path;
     use std::ptr;
 
@@ -423,12 +421,8 @@ mod imp {
         }
     }
 
-    fn wide(text: &OsStr) -> Vec<u16> {
-        text.encode_wide().chain([0]).collect()
-    }
-
     fn create_temporary(path: &Path) -> io::Result<HANDLE> {
-        let name = wide(path.as_os_str());
+        let name = crate::win32_path::wide(path)?;
         // DELETE access is what lets the handle rename itself over the target.
         // SAFETY: a NUL-terminated path and no security attributes.
         let handle = unsafe {
@@ -451,7 +445,7 @@ mod imp {
     /// Opens what an earlier try staged at `path`, or makes it, to write on
     /// at its end; with DELETE access, as `create_temporary`'s.
     fn open_partial(path: &Path) -> io::Result<HANDLE> {
-        let name = wide(path.as_os_str());
+        let name = crate::win32_path::wide(path)?;
         // SAFETY: a NUL-terminated path and no security attributes.
         let handle = unsafe {
             CreateFileW(
@@ -491,7 +485,7 @@ mod imp {
     fn rename_by_handle(handle: HANDLE, target: &Path, replace: bool) -> io::Result<()> {
         // The Win32 layer reads the name up to its NUL even though the length
         // is given; without the NUL the new name gains whatever follows.
-        let name = wide(target.as_os_str());
+        let name = crate::win32_path::wide(target)?;
         let name_bytes = (name.len() - 1) * size_of::<u16>();
         let header = std::mem::offset_of!(FILE_RENAME_INFO, FileName);
         let total = header + (name.len() * size_of::<u16>());

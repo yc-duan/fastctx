@@ -2,7 +2,7 @@ use std::ffi::OsString;
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read};
 use std::mem::{offset_of, size_of};
-use std::os::windows::ffi::{OsStrExt, OsStringExt};
+use std::os::windows::ffi::OsStringExt;
 use std::os::windows::fs::{MetadataExt, OpenOptionsExt};
 use std::os::windows::io::AsRawHandle;
 use std::path::Path;
@@ -274,7 +274,7 @@ pub(crate) fn is_link(metadata: &fs::Metadata) -> bool {
 }
 
 pub(crate) fn publish(file: &File, _stage: &Path, target: &Path, replace: bool) -> io::Result<()> {
-    let name = wide(target);
+    let name = wide(target)?;
     let total = offset_of!(FILE_RENAME_INFO, FileName) + name.len() * size_of::<u16>();
     let mut buffer = vec![0u64; total.div_ceil(size_of::<u64>())];
     let info = buffer.as_mut_ptr().cast::<FILE_RENAME_INFO>();
@@ -391,7 +391,7 @@ pub(crate) fn sync_directory(path: &Path) -> io::Result<()> {
 /// Keeps the actual displaced object, including writes through old handles.
 /// ReplaceFile can partially complete on error; callers must inspect all names.
 pub(crate) fn replace_preserving(source: &Path, target: &Path, displaced: &Path) -> io::Result<()> {
-    let (source, target, displaced) = (wide(source), wide(target), wide(displaced));
+    let (source, target, displaced) = (wide(source)?, wide(target)?, wide(displaced)?);
     // SAFETY: all three names are terminated, distinct paths on the same volume.
     check(unsafe { ReplaceFileW(target.as_ptr(), source.as_ptr(), displaced.as_ptr(), 0, ptr::null(), ptr::null()) })
 }
@@ -406,8 +406,8 @@ pub(crate) fn move_preserving(source: &Path, destination: &Path) -> io::Result<(
     publish(&file, source, destination, false)
 }
 
-fn wide(path: &Path) -> Vec<u16> {
-    path.as_os_str().encode_wide().chain([0]).collect()
+fn wide(path: &Path) -> io::Result<Vec<u16>> {
+    fastctx_platform::win32_path::wide(path)
 }
 
 fn check(result: i32) -> io::Result<()> {
