@@ -205,7 +205,7 @@ async fn upgrade(
     let (served, seen) = serving(old, peer).await;
     record("this release served the earlier machine's World, killed three times along its move", served, seen);
     let after = history_again(world, resident, "old-pc").await?;
-    let missing = lost(&before, &after);
+    let missing = lost(&recorded(&before), &recorded(&after));
     record(
         "the earlier conversation's history lost and changed nothing in the move",
         missing.is_null(),
@@ -250,7 +250,11 @@ async fn upgrade(
     record(
         "and this release served it again as before",
         served && again == after,
-        if served { json!({"lost": lost(&after, &again), "added": added(&after, &again)}) } else { seen },
+        if served {
+            json!({"lost": lost(&recorded(&after), &recorded(&again)), "added": added(&after, &again)})
+        } else {
+            seen
+        },
     );
     node.kill()?;
     node.wait()?;
@@ -280,6 +284,22 @@ async fn serving(old: &Path, peer: &Path) -> (bool, Value) {
         pause().await;
     }
     (false, last)
+}
+
+/// A history as it is kept: the host's thread object a Codex conversation's
+/// history carries is what its app-server says as it is read, live state
+/// such as whether it takes input now, kept by neither release.
+fn recorded(events: &[Value]) -> Vec<Value> {
+    events
+        .iter()
+        .cloned()
+        .map(|mut event| {
+            if let Some(change) = event.get_mut("change").and_then(Value::as_object_mut) {
+                change.remove("metadata");
+            }
+            event
+        })
+        .collect()
 }
 
 /// Where `after` first lost or changed something `before` said, if it did:
