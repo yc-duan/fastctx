@@ -37,8 +37,8 @@ permissions:
 env:
   CARGO_TERM_COLOR: always
   TAURI_CLI: '@tauri-apps/cli@2.12.1'
-  # The release before this one: the network drill runs its hub with this one's machines, and its
-  # node on this one's hub, from its Linux package.
+  # The release before this one: the network drill runs its hub with this one's machines on every
+  # system it was published for, and its node on this one's hub on Linux.
   EARLIER_RELEASE: 1.0.1-beta.13
   # The drills run on a ci/ branch, never for a version tag.
   DRILLS: ${{ github.ref_type == 'branch' }}
@@ -169,9 +169,18 @@ jobs:
         with:
           name: tests-${{ matrix.target }}
           path: tests
+      # With the earlier release's hub too, where it was published for this system.
       - if: env.DRILLS == 'true'
         name: Network drill
-        run: tests/network_drill.exe --root "$(cygpath -m "$RUNNER_TEMP")"
+        run: |
+          earlier=()
+          if [[ '${{ matrix.target }}' == x86_64-pc-windows-msvc ]]; then
+            curl -fsSL -o "$RUNNER_TEMP/earlier.zip" \
+              "https://github.com/${{ github.repository }}/releases/download/v$EARLIER_RELEASE/fastctx-${{ matrix.target }}.zip"
+            unzip -q -o "$RUNNER_TEMP/earlier.zip" -d "$RUNNER_TEMP/earlier"
+            earlier=(--earlier "$(cygpath -m "$RUNNER_TEMP/earlier/fastctx.exe")")
+          fi
+          tests/network_drill.exe --root "$(cygpath -m "$RUNNER_TEMP")" "${earlier[@]}"
 
   test-windows-arm:
     needs: kernel-windows
@@ -401,18 +410,14 @@ jobs:
           path: tests
       - name: Restore executable permissions
         run: chmod +x tests/*
-      # With the earlier release's hub and node too, where its Linux package runs.
+      # With the earlier release's hub and node too.
       - if: env.DRILLS == 'true'
         name: Network drill
         run: |
-          earlier=()
-          if [[ "$(uname -m)" == x86_64 ]]; then
-            curl -fsSL -o "$RUNNER_TEMP/earlier.deb" \
-              "https://github.com/${{ github.repository }}/releases/download/v$EARLIER_RELEASE/Fastctx_${EARLIER_RELEASE}_amd64.deb"
-            dpkg-deb -x "$RUNNER_TEMP/earlier.deb" "$RUNNER_TEMP/earlier"
-            earlier=(--earlier "$RUNNER_TEMP/earlier/usr/bin/fastctx")
-          fi
-          tests/network_drill --root "$RUNNER_TEMP" "${earlier[@]}"
+          mkdir -p "$RUNNER_TEMP/earlier"
+          curl -fsSL "https://github.com/${{ github.repository }}/releases/download/v$EARLIER_RELEASE/fastctx-${{ matrix.target }}.tar.gz" \
+            | tar xz -C "$RUNNER_TEMP/earlier"
+          tests/network_drill --root "$RUNNER_TEMP" --earlier "$RUNNER_TEMP/earlier/fastctx"
       # The letter window between machines and their hub, by seed, through every fault of a line
       # and a process: nothing lost, each letter's effect once and in order, no window overrun.
       - if: env.DRILLS == 'true'
@@ -730,9 +735,14 @@ jobs:
           path: tests
       - name: Restore executable permissions
         run: chmod +x tests/*
+      # With the earlier release's hub too.
       - if: env.DRILLS == 'true'
         name: Network drill
-        run: tests/network_drill --root "$RUNNER_TEMP"
+        run: |
+          mkdir -p "$RUNNER_TEMP/earlier"
+          curl -fsSL "https://github.com/${{ github.repository }}/releases/download/v$EARLIER_RELEASE/fastctx-${{ matrix.target }}.tar.gz" \
+            | tar xz -C "$RUNNER_TEMP/earlier"
+          tests/network_drill --root "$RUNNER_TEMP" --earlier "$RUNNER_TEMP/earlier/fastctx"
 
   test-macos-arm:
     needs: kernel-macos
