@@ -58,6 +58,13 @@ pub(crate) fn run(root: &Path) -> Result<(), Box<dyn std::error::Error>> {
     crate::records::legacy::map::<u64>(&directory, "drill-conflict", &conflicting)?;
     assert_eq!(crate::records::read(&directory, |rows| rows.get::<u64>("drill-conflict", "kept"))?, Some(2));
     assert_eq!(super::archive::damaged_count(world.path())?, 4);
+    let received = directory.book("received");
+    disk::create_dir_all(&received)?;
+    disk::write(received.join("missing-fields.json"), b"{}")?;
+    disk::write(received.join("presence.taken"), [0xff, 0xfe])?;
+    crate::records::items::prepare(&received.join(".items"))?;
+    assert_eq!(super::archive::damaged_count(world.path())?, 5);
+    assert!(crate::records::items::exists(&received.join("presence.taken"))?);
     let (entered, started) = std::sync::mpsc::channel();
     let (release, held) = std::sync::mpsc::channel();
     assert!(
@@ -105,7 +112,7 @@ pub(crate) fn run(root: &Path) -> Result<(), Box<dyn std::error::Error>> {
     let busy = before.elapsed();
     super::scheduler::request(world.path(), id.as_str(), "slow-drill", || panic!("duplicate decoder ran"))?;
     println!(
-        "migration: pre-open admission refused; 3 damaged sources isolated; 1000 map rows verified and archived; demand deadline {busy:?}; job continued after caller left"
+        "migration: pre-open admission refused; 5 damaged sources isolated including a row conflict and missing fields; raw presence marker preserved; 1000 map rows verified and archived; demand deadline {busy:?}; job continued after caller left"
     );
     Ok(())
 }

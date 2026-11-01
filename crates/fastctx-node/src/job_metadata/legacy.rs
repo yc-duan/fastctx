@@ -24,6 +24,10 @@ pub(super) fn validate(kind: &str, bytes: &[u8]) -> io::Result<()> {
                     .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))
             }
         }
+        "run-request" => text(bytes)?
+            .parse::<fastctx_types::NoticeId>()
+            .map(|_| ())
+            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error)),
         "on-stopped" => json::<fastctx_types::run::StopRequest>(bytes),
         "answer-wait" => json::<crate::completion_debt::Waiting>(bytes),
         "posted" => json::<crate::letters::Posted>(bytes),
