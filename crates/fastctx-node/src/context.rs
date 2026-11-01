@@ -89,7 +89,7 @@ pub(crate) fn clear(node: &Node, id: &ResidentId, name: &str, change: Change<'_>
     storage::set(&node.world, id, name, "", change)
 }
 
-pub(crate) use sources::{map, plan, plan_unavailable, prepare, refresh_local};
+pub(crate) use sources::{map, plan, plan_unavailable, prepare, refresh_local, refresh_local_now};
 
 /// Moves the account blocks of conversations known to assist another account
 /// off this disk; the owner's own keep theirs here (`set_account`).

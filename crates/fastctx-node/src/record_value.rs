@@ -7,11 +7,11 @@ use std::io;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "storage", content = "value", rename_all = "snake_case")]
-pub(super) enum Value {
+pub(crate) enum Value {
     Inline(serde_json::Value),
     Payload(record_payloads::Reference),
 }
-pub(super) struct Prepared {
+pub(crate) struct Prepared {
     pub value: Value,
     staged: Option<record_payloads::Staged>,
 }

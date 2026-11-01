@@ -124,6 +124,7 @@ mod record_database;
 mod record_gates;
 mod record_ownership;
 mod record_payloads;
+mod record_value;
 mod records;
 mod recovery;
 mod removed;

@@ -176,7 +176,7 @@ pub(crate) async fn prepare(
     let choices = super::destinations(node, &Acting::one(scope.hub.clone(), scope.account.clone()))?;
     let focus = match node.residents.about(id) {
         Some((about, _)) => about.focus,
-        None => crate::focus::opening(&room)?.map(|opening| opening.focus).unwrap_or_default(),
+        None => crate::focus::opening(&room).await?.map(|opening| opening.focus).unwrap_or_default(),
     };
     let from: Option<MachineName> = read(&room.path().join("working-from.json"))?;
     let local = node.machine();

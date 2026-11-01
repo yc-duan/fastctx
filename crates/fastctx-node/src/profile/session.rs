@@ -211,7 +211,7 @@ pub(crate) fn claude(node: &Node, id: &ResidentId, creating: bool) -> Result<std
 /// already: once its records are gathered into the conversation, that path
 /// is the room's alias, which is made private as the room is.
 pub(crate) fn hand_to_session(node: &Node, id: &ResidentId, session: &std::path::Path) -> std::io::Result<()> {
-    crate::context::refresh_local(node, id)?;
+    crate::context::refresh_local_now(node, id)?;
     crate::context::hand_to_session(node, id, session)
 }
 

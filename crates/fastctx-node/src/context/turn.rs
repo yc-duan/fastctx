@@ -9,7 +9,7 @@ use std::sync::Arc;
 /// confirmed that neither the node nor the native host has a running turn.
 pub(crate) async fn prepare(node: &Arc<Node>, id: &ResidentId) -> Result<(Vec<String>, super::Receipt), Failure> {
     let (about, town) = node.residents.about(id).ok_or_else(|| Failure::new("the conversation is unavailable"))?;
-    super::refresh_local(node, id).map_err(|error| Failure::new(error.to_string()))?;
+    super::refresh_local(node, id).await.map_err(|error| Failure::new(error.to_string()))?;
     super::sources::plan_guide(node, id, &about.origin, &about.acting)
         .await
         .map_err(|error| Failure::new(error.to_string()))?;
@@ -17,7 +17,11 @@ pub(crate) async fn prepare(node: &Arc<Node>, id: &ResidentId) -> Result<(Vec<St
     crate::plan::context(node, id, &about.origin, &about.acting).await?;
     super::sources::skills(node, id, &about.acting).await?;
     super::sources::map(node, id, town.as_ref(), &about.origin, &about.acting).await?;
-    super::collect(node, id).map_err(|error| Failure::new(error.to_string()))
+    let (node, id) = (node.clone(), id.clone());
+    fastctx_platform::task::spawn_blocking(move || super::collect(&node, &id))
+        .await
+        .map_err(|error| Failure::new(error.to_string()))?
+        .map_err(|error| Failure::new(error.to_string()))
 }
 
 pub(crate) fn prepend(input: &mut fastctx_hosts::codex::Input, notes: &[String]) {

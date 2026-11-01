@@ -82,12 +82,15 @@ pub(crate) async fn directory(
     // A World launch holds births.read until the background CLI returns.
     // Its settings already name its conversation, independently of that ID.
     // Births come before the session's own lock (`fastctx_platform::doing::Rank`).
-    let _births = if known.is_none() { Some(node.claude.births.write().await) } else { None };
+    let _births = if known.is_none() { Some(node.claude.births.write_owned().await) } else { None };
     let reading = super::reading(node, &session);
-    let _reading = reading.lock().await;
+    let _reading = reading.lock_owned().await;
     let observing = process.clone();
     let reported = session.clone();
-    let reserve = || -> io::Result<String> {
+    let working = node.clone();
+    let reserve = move || -> io::Result<String> {
+        let node = &working;
+        let (_place, _births, _reading, _reading_gate) = (_place, _births, _reading, reading);
         validate_session(&session)?;
         let source = exchange::sessions(node.world.path()).join(&session);
         // A session resumed once its records were gathered into its
@@ -130,7 +133,7 @@ pub(crate) async fn directory(
             None => resident(node, &registration, &arrival)?,
         };
         node.residents.active(&id).map_err(|failure| io::Error::other(failure.message))?;
-        crate::context::refresh_local(node, &id)?;
+        crate::context::refresh_local_now(node, &id)?;
         crate::context::hand_to_session(node, &id, &source)?;
         if registration.process.is_some() {
             fastctx_platform::publish(
@@ -148,16 +151,19 @@ pub(crate) async fn directory(
         {
             state.sessions.insert(registration.session.clone(), super::Session { registration, resident: Some(id) });
         }
-        Ok(crate::world::native(&std::fs::canonicalize(&source)?))
+        drop(state);
+        let directory = crate::world::native(&std::fs::canonicalize(&source)?);
+        super::process::observe(node, observing);
+        node.claude.changed.notify_waiters();
+        Ok(directory)
     };
-    let result = reserve()
+    let result = fastctx_platform::task::spawn_blocking(reserve)
+        .await
+        .map_err(io::Error::other)
+        .and_then(|result| result)
         .map_err(|error| fastctx_types::ipc::Failure::new(format!("reserving the Claude session directory: {error}")));
     if let Err(failure) = &result {
         node.log.line(format_args!("Claude session {reported}: {}", failure.message));
-    }
-    if result.is_ok() {
-        super::process::observe(node, observing);
-        node.claude.changed.notify_waiters();
     }
     result
 }

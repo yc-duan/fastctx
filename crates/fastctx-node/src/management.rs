@@ -319,7 +319,15 @@ pub async fn here(node: &Arc<Node>, id: &ResidentId, action: Management) -> Resu
             completed(
                 &mut result,
                 "context",
-                crate::town::instructions::hand_to_current(node, id).map_err(|error| Failure::new(error.to_string())),
+                {
+                    let (node, id) = (node.clone(), id.clone());
+                    fastctx_platform::task::spawn_blocking(move || {
+                        crate::town::instructions::hand_to_current(&node, &id)
+                    })
+                    .await
+                    .map_err(|error| Failure::new(error.to_string()))?
+                    .map_err(|error| Failure::new(error.to_string()))
+                },
                 "Project instructions refreshed.",
             );
             step(
@@ -409,7 +417,7 @@ pub async fn here(node: &Arc<Node>, id: &ResidentId, action: Management) -> Resu
                     .into(),
             );
             if changed {
-                match crate::focus::changed(node, id, &about, &focus).await {
+                match crate::focus::changed(node, id).await {
                     Ok(()) => {}
                     Err(error) => step(&mut result, "notification", Outcome::Failed, error.message),
                 }

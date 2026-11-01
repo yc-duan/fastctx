@@ -10,7 +10,7 @@ mod migrate_terminals;
 pub(crate) mod recover_outgoing;
 mod storage;
 pub(crate) mod terminals;
-mod value;
+use crate::record_value as value;
 pub(crate) mod work;
 use storage::{change, read_rows};
 

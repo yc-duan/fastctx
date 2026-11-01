@@ -65,12 +65,10 @@ pub(crate) async fn prepare(
         }
     }
     let room = node.world.conversation(id);
-    let focus = node
-        .residents
-        .about(id)
-        .map(|(about, _)| about.focus)
-        .or_else(|| crate::focus::opening(&room).ok().flatten().map(|opening| opening.focus))
-        .unwrap_or_default();
+    let focus = match node.residents.about(id) {
+        Some((about, _)) => about.focus,
+        None => crate::focus::opening(&room).await?.map(|opening| opening.focus).unwrap_or_default(),
+    };
     let speaking: Option<fastctx_types::MachineName> = match std::fs::read(room.path().join("working-from.json")) {
         Ok(bytes) => Some(serde_json::from_slice(&bytes).map_err(failure)?),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,

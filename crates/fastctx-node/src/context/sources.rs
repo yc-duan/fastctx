@@ -9,7 +9,12 @@ static SOURCES: std::sync::LazyLock<crate::record_gates::Gates> = std::sync::Laz
     crate::record_gates::Gates::new(fastctx_platform::doing::Rank::EMITTING, "local context source")
 });
 
-pub(crate) fn refresh_local(node: &Node, id: &ResidentId) -> io::Result<()> {
+pub(crate) async fn refresh_local(node: &Arc<Node>, id: &ResidentId) -> io::Result<()> {
+    let (node, id) = (node.clone(), id.clone());
+    fastctx_platform::task::spawn_blocking(move || refresh_local_now(&node, &id)).await.map_err(io::Error::other)?
+}
+
+pub(crate) fn refresh_local_now(node: &Node, id: &ResidentId) -> io::Result<()> {
     let gate = SOURCES.get(node.world.conversation(id).path());
     let _refreshing = gate.lock();
     let (about, town) = node.residents.about(id).ok_or_else(|| io::Error::other(words::UNKNOWN))?;
@@ -53,11 +58,7 @@ fn local_current(node: &Node, id: &ResidentId, town: Option<&TownName>, acting: 
         &text,
         Change { by: author.as_ref(), version: &version, fact: &words::changed("project", &by), full: true },
     )?;
-    let focus = match std::fs::read_to_string(node.world.conversation(id).focus()) {
-        Ok(text) => text,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => String::new(),
-        Err(error) => return Err(error),
-    };
+    let focus = crate::focus::text(&node.world.conversation(id))?;
     storage::set(
         &node.world,
         id,
@@ -75,14 +76,21 @@ pub(crate) async fn prepare(
     acting: &Acting,
 ) -> Result<(String, Receipt), Failure> {
     let directory = node.world.conversation(id);
-    fastctx_platform::ensure_private_dir(directory.path()).map_err(|error| Failure::new(error.to_string()))?;
+    fastctx_platform::task::spawn_blocking(move || fastctx_platform::ensure_private_dir(directory.path()))
+        .await
+        .map_err(|error| Failure::new(error.to_string()))?
+        .map_err(|error| Failure::new(error.to_string()))?;
     if let Some(town) = town {
         crate::town::access::ready(node, acting, town).await?;
     }
     if node.residents.about(id).is_some() {
         crate::focus::refresh(node, id).await?;
     }
-    local(node, id, town, acting).map_err(|error| Failure::new(error.to_string()))?;
+    let (working, resident, project, subject) = (node.clone(), id.clone(), town.cloned(), acting.clone());
+    fastctx_platform::task::spawn_blocking(move || local(&working, &resident, project.as_ref(), &subject))
+        .await
+        .map_err(|error| Failure::new(error.to_string()))?
+        .map_err(|error| Failure::new(error.to_string()))?;
     // Skills are the account's; one whose hub cannot be asked now keeps what
     // it was told, and the conversation goes on without waiting for it.
     if let Err(failure) = skills(node, id, acting).await {
@@ -94,15 +102,22 @@ pub(crate) async fn prepare(
     plan_guide(node, id, origin, acting).await.map_err(|error| Failure::new(error.to_string()))?;
     crate::plan::context(node, id, origin, acting).await?;
     map(node, id, town, origin, acting).await?;
-    storage::opening(&node.world, id, &node.context_bodies).map_err(|error| Failure::new(error.to_string()))
+    let (working, resident) = (node.clone(), id.clone());
+    fastctx_platform::task::spawn_blocking(move || storage::opening(&working.world, &resident, &working.context_bodies))
+        .await
+        .map_err(|error| Failure::new(error.to_string()))?
+        .map_err(|error| Failure::new(error.to_string()))
 }
 
 /// The names and sentences of the skills of the account the conversation
 /// works for, as the "skills" block (`crate::skills`); kept as it was where
 /// the hub cannot be asked now.
-pub(crate) async fn skills(node: &Node, id: &ResidentId, acting: &Acting) -> Result<(), Failure> {
+pub(crate) async fn skills(node: &Arc<Node>, id: &ResidentId, acting: &Acting) -> Result<(), Failure> {
     let Some((text, version)) = crate::skills::context(node, acting).await else { return Ok(()) };
-    set_skills(node, id, &text, &version)
+    let (node, id) = (node.clone(), id.clone());
+    fastctx_platform::task::spawn_blocking(move || set_skills(&node, &id, &text, &version))
+        .await
+        .map_err(|error| Failure::new(error.to_string()))?
 }
 
 /// The skills block, as `version` of the account's index has it.
