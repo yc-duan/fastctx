@@ -54,6 +54,9 @@ pub struct Residents {
     speaking: crate::leases::Registry<ResidentId, speaking::Speaking>,
     paying: crate::leases::Registry<ResidentId, fastctx_platform::doing::Mutex<()>>,
     management: crate::leases::Registry<ResidentId, fastctx_platform::doing::RwLock<()>>,
+    /// Whether some conversation's records could not be read when the node
+    /// started: what looks like nobody's may be its.
+    unread: bool,
 }
 
 struct State {
@@ -346,9 +349,15 @@ impl Residents {
                 speaking: Default::default(),
                 paying: Default::default(),
                 management: Default::default(),
+                unread: !problems.is_empty(),
             },
             problems,
         ))
+    }
+
+    /// Whether every conversation's records were read when the node started.
+    pub(crate) fn all_read(&self) -> bool {
+        !self.unread
     }
 
     /// The resident `id` lives in `town` from now on. Returns whether it
@@ -704,6 +713,19 @@ impl Residents {
     /// A new id for a resident of `agent`, unused on this machine.
     pub fn new_id(&self, agent: &AgentName) -> Result<ResidentId, Failure> {
         new_id(agent, &self.lock())
+    }
+
+    /// Learns the conversations the node's database keeps as deleted, whose
+    /// tombstones here may be gone: their ids go to no new conversation.
+    pub(crate) fn seal(&self, database: &fastctx_storage::Database) -> fastctx_storage::Result<()> {
+        let keys = tombstones::sealed(database)?;
+        self.lock().tombstones.seal(keys);
+        Ok(())
+    }
+
+    /// Whether `id` was ever deleted from this machine.
+    pub(crate) fn ever_deleted(&self, id: &ResidentId) -> bool {
+        self.lock().tombstones.ever(id)
     }
 
     /// Whether the resident `id` lives on this machine, removed or not.
@@ -1104,7 +1126,7 @@ pub fn idle(since: Timestamp) -> Now {
 }
 
 /// A fresh id for a resident of `agent`: its name and eight hex digits,
-/// unused on this machine, and by no conversation deleted from it lately.
+/// unused on this machine, and by no conversation ever deleted from it.
 /// Ids are unique on their machine alone; eight digits keep two machines'
 /// from meeting where a record names a conversation by its id only, as
 /// four did one time in fifteen among a hundred conversations.
@@ -1114,7 +1136,7 @@ fn new_id(agent: &AgentName, state: &State) -> Result<ResidentId, Failure> {
         getrandom::fill(&mut bytes).map_err(|error| Failure::new(format!("choosing a resident id: {error}")))?;
         let digits: String = bytes.iter().map(|byte| format!("{byte:02x}")).collect();
         let id = ResidentId::try_from(format!("{agent}-{digits}")).expect("an agent name and eight hex digits");
-        if !state.live.contains_key(&id) && state.tombstones.of(&id).is_none() {
+        if !state.live.contains_key(&id) && !state.tombstones.ever(&id) {
             return Ok(id);
         }
     }

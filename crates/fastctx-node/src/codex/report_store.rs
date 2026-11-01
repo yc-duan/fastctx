@@ -159,10 +159,14 @@ pub(super) fn discard_legacy(node: &Node) -> io::Result<()> {
     }
     Ok(())
 }
+/// Whether a conversation owns the legacy reports at `path`. While some
+/// conversation's records could not be read, any may be its, and all are
+/// left where they are.
 pub(crate) fn claimed_legacy(node: &Node, path: &Path) -> bool {
-    node.residents.everyone().filter_map(|resident| resident.about.session).any(|thread| {
-        path.file_stem().and_then(|s| s.to_str()) == Some(crate::speech::fixed_id("thread", &[&thread]).as_str())
-    })
+    !node.residents.all_read()
+        || node.residents.everyone().filter_map(|resident| resident.about.session).any(|thread| {
+            path.file_stem().and_then(|s| s.to_str()) == Some(crate::speech::fixed_id("thread", &[&thread]).as_str())
+        })
 }
 
 pub(super) fn pending_thread(node: &Node, thread: &str) -> io::Result<bool> {
