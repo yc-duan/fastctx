@@ -323,6 +323,9 @@ function counted(card: Card, tally: Tally, changed: Set<string>): void {
     case "fan":
       tally.ran += card.deed.steps.length;
       break;
+    case "folded":
+      tally.ran += card.count;
+      break;
     case "web":
       tally.searched += 1;
       break;

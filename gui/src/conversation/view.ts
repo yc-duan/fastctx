@@ -57,7 +57,7 @@ import { numbered, parse } from "./diff";
 import { DiffLines, RemoteDiff, diffPaint, encodeRow, keptDiff, memoryDiff } from "./diff-lines";
 import { readRun } from "./deeds/read";
 import { scriptSaid } from "./deeds/script";
-import { drawDeeds, goingOn, type DeedTools } from "./deeds/draw";
+import { drawDeeds, foldedCard, goingOn, type DeedTools } from "./deeds/draw";
 import type { Deed, FileDeed, PlainDeed } from "./deeds/types";
 import { numberedFile } from "./deeds/files";
 import { whyOf } from "../world/again";
@@ -2118,6 +2118,12 @@ export class ConversationView {
       this.fillRead(key, thing, content);
       return;
     }
+    if (thing.kind === "folded") {
+      const entry = this.conversation.get(thing.sources[0]?.entry ?? "");
+      const tool = entry?.kind === "tool" ? entry.tool : null;
+      content.append(foldedCard(tool?.run?.folded_steps ?? [], this.context.words.deeds, tool?.machine ?? this.context.residentMachine ?? null));
+      return;
+    }
     // The deeds read from one run are drawn together, under its own words.
     const deeds = new Map<string, number[]>();
     const order: (string | { write: string; entry: string } | { change: number; entry: string })[] = [];
@@ -2966,7 +2972,8 @@ export class ConversationView {
       later.push(...sides);
       return element;
     };
-    const cards = drawDeeds(drawn, this.deedTools(tool), printed, ending);
+    const folded = only ? [] : (tool.run?.folded_steps ?? []);
+    const cards = drawDeeds(drawn, this.deedTools(tool), printed, ending, folded, tool.machine ?? this.context.residentMachine ?? null);
     const raw = cards.element.querySelector<HTMLButtonElement>(".dd-raw");
     const opened = (side: number): OpenedText => ({
       get element() {

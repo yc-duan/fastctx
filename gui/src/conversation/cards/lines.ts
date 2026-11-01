@@ -107,6 +107,8 @@ function cardSaid(card: Card, words: Words): Said {
       if (look) return plainSaid(look.glyph, deeds.world.look, look.object, { outcome: ended, lead });
       return plainSaid("command", verb, shortCommand(card.command), { outcome: ended, lead });
     }
+    case "folded":
+      return plainSaid("steps", deeds.folded(card.count), "");
     case "fan": {
       const bad = card.deed.steps.filter((step) => troubled(step.end)).length;
       const many = `<span class="row-machine">${glyph("group", 12)}${escape(deeds.machines(card.deed.steps.length))}</span>`;

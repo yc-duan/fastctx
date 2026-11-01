@@ -433,6 +433,9 @@ const hhmm = (at: Date) => `${String(at.getHours()).padStart(2, "0")}:${String(a
 /** Whole days from `at`'s day to `now`'s. */
 const daysBefore = (at: Date, now: Date) =>
   Math.round((Date.UTC(now.getFullYear(), now.getMonth(), now.getDate()) - Date.UTC(at.getFullYear(), at.getMonth(), at.getDate())) / 86_400_000);
+/** A moment as its day and its time of day, in `locale`. */
+const moment = (at: string, locale: string) =>
+  new Date(at).toLocaleString(locale, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", hourCycle: "h23" });
 const zhWeekdays = ["日", "一", "二", "三", "四", "五", "六"];
 
 export const zh: Words = {
@@ -570,6 +573,9 @@ export const zh: Words = {
   fullScreen: "查看全部",
   deeds: {
     raw: "原文",
+    folded: (steps) => `更早的 ${steps.toLocaleString("zh-CN")} 步`,
+    foldedTimes: (count) => `${count.toLocaleString("zh-CN")} 次`,
+    foldedSpan: (first, last) => `${moment(first, "zh-CN")} 至 ${moment(last, "zh-CN")}`,
     tests: (passed, failed, ignored) => [`${passed} 个通过`, failed ? `${failed} 个失败` : "", ignored ? `${ignored} 个跳过` : ""].filter(Boolean).join("，"),
     failed: (n) => `${n} 个失败`,
     passed: (n) => `${n} 个通过`,
@@ -948,6 +954,9 @@ export const en: Words = {
   fullScreen: "View all",
   deeds: {
     raw: "Raw output",
+    folded: (steps) => (steps === 1 ? "1 earlier step" : `${steps.toLocaleString("en")} earlier steps`),
+    foldedTimes: (count) => (count === 1 ? "once" : `${count.toLocaleString("en")} times`),
+    foldedSpan: (first, last) => `${moment(first, "en")} to ${moment(last, "en")}`,
     tests: (passed, failed, ignored) => [`${passed} passed`, failed ? `${failed} failed` : "", ignored ? `${ignored} skipped` : ""].filter(Boolean).join(", "),
     failed: (n) => `${n} failed`,
     passed: (n) => `${n} passed`,
