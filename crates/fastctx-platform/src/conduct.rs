@@ -1,7 +1,8 @@
 //! What this process did against its own rules (`specs/world-foundation.md`,
 //! 规矩由机器守): work that blocked a thread that must not block, a task that
 //! kept its thread too long at once, a runtime whose tasks waited too long
-//! for a thread, a lock over many units held too long.
+//! for a thread, a lock over many units held too long, a thread holding a
+//! database's read connection asking for another.
 //!
 //! Each kind at each place is counted, with its latest occurrence. A
 //! released build only counts: on someone's machine, stopping is worse than
@@ -24,6 +25,7 @@ enum Kind {
     SlowPoll,
     HeldUp,
     HeldLong,
+    NestedRead,
 }
 
 impl Kind {
@@ -33,6 +35,7 @@ impl Kind {
             Kind::SlowPoll => "slow-poll",
             Kind::HeldUp => "held-up",
             Kind::HeldLong => "held-long",
+            Kind::NestedRead => "nested-read",
         }
     }
 }
@@ -101,6 +104,21 @@ pub fn held_up(runtime: &str, by: Duration) {
 /// by a task or thread doing `doing`.
 pub(crate) fn held_long(lock: &str, doing: &str, took: Duration) {
     note(Kind::HeldLong, lock.to_string(), doing.to_string(), took);
+}
+
+/// A thread holding a read connection of a database asked at `at` for
+/// another of `database`'s: with every connection of a pool so held, each
+/// waits on the others until its wait runs out.
+pub fn nested_read(database: &str, at: &Location<'_>) {
+    let place = format!("a second read of {database} at {}:{}", at.file(), at.line());
+    let doing = match crate::doing::said_label() {
+        Some(label) => label.to_string(),
+        None => "unlabeled work".to_string(),
+    };
+    if strict() {
+        panic!("{place}, while {doing}: a thread holding a read connection asked for another (specs/world-engine.md)");
+    }
+    note(Kind::NestedRead, place, doing, Duration::ZERO);
 }
 
 /// Every violation since the process started.

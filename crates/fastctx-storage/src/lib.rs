@@ -21,6 +21,8 @@ pub use queue::Priority;
 pub use rusqlite;
 pub type Result<T> = std::result::Result<T, Error>;
 
+use std::cell::Cell;
+use std::panic::Location;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -69,6 +71,27 @@ struct Reader<'a> {
     connection: Option<rusqlite::Connection>,
     _permit: OwnedSemaphorePermit,
 }
+
+thread_local! {
+    /// The read connections, of any database, this thread holds now.
+    static HOLDING: Cell<u32> = const { Cell::new(0) };
+}
+
+/// A read connection held on this thread, until dropped.
+struct Holding;
+
+impl Holding {
+    fn begin() -> Self {
+        HOLDING.with(|held| held.set(held.get() + 1));
+        Self
+    }
+}
+
+impl Drop for Holding {
+    fn drop(&mut self) {
+        HOLDING.with(|held| held.set(held.get() - 1));
+    }
+}
 impl Drop for Reader<'_> {
     fn drop(&mut self) {
         if let Some(connection) = self.connection.take() {
@@ -83,17 +106,20 @@ impl Database {
     }
 
     /// Opens a private database. Call on a blocking thread, without business locks.
+    #[track_caller]
     pub fn open(path: &Path, schema: &str) -> Result<Self> {
         Self::open_initialized(path, schema, |_| Ok(()))
     }
 
     /// Installs the schema and initializer atomically. Legacy callers retain
     /// this entry point; services with multiple versions use `versions::apply`.
+    #[track_caller]
     pub fn open_initialized(
         path: &Path,
         schema: &str,
         initialize: impl Fn(&rusqlite::Connection) -> Result<()>,
     ) -> Result<Self> {
+        fastctx_platform::roles::blocking("opening a database");
         match Self::open_once(path, schema, &initialize) {
             // Damage the cheap checks did not see is set aside and salvaged
             // as theirs is, and the salvage opened instead.
@@ -171,6 +197,7 @@ impl Database {
     /// with its cause. A damaged one has been set aside and salvaged by then
     /// (`open_initialized`); its files are kept, never rebuilt empty unsaid.
     /// The caller must exclusively own the service database during startup.
+    #[track_caller]
     pub fn open_or_unavailable(
         path: &Path,
         schema: &str,
@@ -262,23 +289,44 @@ impl Database {
 
     /// Synchronous reads belong exclusively on blocking threads. The closure may
     /// borrow its caller, and every caller shares the same connection admission.
+    #[track_caller]
     pub fn read_now<T>(&self, read: impl FnOnce(&rusqlite::Connection) -> Result<T>) -> Result<T> {
+        self.reading_here();
+        self.read_held(read)
+    }
+
+    /// A blocking background scan leaves one connection available to ordinary
+    /// reads. Acquire its budget before leasing a connection, never afterwards.
+    #[track_caller]
+    pub fn read_background_now<T>(&self, read: impl FnOnce(&rusqlite::Connection) -> Result<T>) -> Result<T> {
+        self.reading_here();
+        self.available()?;
+        let _background = blocking::wait(self.0.background_reading.clone().acquire_owned(), QUEUE_WAIT)
+            .ok_or_else(|| busy("background read admission"))?
+            .map_err(|_| unavailable())?;
+        self.read_held(read)
+    }
+
+    /// Notes a synchronous read asked where it must not be: on a thread that
+    /// must not block, or by one that holds a read connection of this pool
+    /// already, which with every connection so held waits on the others
+    /// until its wait runs out. The place noted is the caller's.
+    #[track_caller]
+    fn reading_here(&self) {
+        fastctx_platform::roles::blocking("a database read");
+        if HOLDING.with(Cell::get) > 0 {
+            let name = self.0.path.file_name().unwrap_or(self.0.path.as_os_str()).to_string_lossy();
+            fastctx_platform::conduct::nested_read(&name, Location::caller());
+        }
+    }
+
+    fn read_held<T>(&self, read: impl FnOnce(&rusqlite::Connection) -> Result<T>) -> Result<T> {
         self.available()?;
         let asked = Instant::now();
         let permit = blocking::wait(self.0.reading.clone().acquire_owned(), QUEUE_WAIT);
         self.0.metrics.read_wait(asked.elapsed());
         let permit = permit.ok_or_else(|| busy("read connection"))?.map_err(|_| unavailable())?;
         self.with_reader(permit, read)
-    }
-
-    /// A blocking background scan leaves one connection available to ordinary
-    /// reads. Acquire its budget before leasing a connection, never afterwards.
-    pub fn read_background_now<T>(&self, read: impl FnOnce(&rusqlite::Connection) -> Result<T>) -> Result<T> {
-        self.available()?;
-        let _background = blocking::wait(self.0.background_reading.clone().acquire_owned(), QUEUE_WAIT)
-            .ok_or_else(|| busy("background read admission"))?
-            .map_err(|_| unavailable())?;
-        self.read_now(read)
     }
 
     fn with_reader<T>(
@@ -288,6 +336,7 @@ impl Database {
     ) -> Result<T> {
         let connection = self.0.readers.lock().expect("reader pool").pop().expect("a permit reserves a connection");
         let reader = Reader { inner: &self.0, connection: Some(connection), _permit: permit };
+        let _holding = Holding::begin();
         let start = Instant::now();
         let result = read(reader.connection.as_ref().expect("leased connection"));
         self.0.metrics.read(start.elapsed());
@@ -351,6 +400,7 @@ impl Database {
 
     /// Blocking-thread compatibility; it parks on the same admission and commit
     /// notifications as asynchronous callers, never sleeps in a polling loop.
+    #[track_caller]
     pub fn write_now<T: Send + 'static>(
         &self,
         bytes: usize,
@@ -359,6 +409,7 @@ impl Database {
         self.write_now_at(Priority::Normal, bytes, write)
     }
 
+    #[track_caller]
     pub fn write_now_at<T: Send + 'static>(
         &self,
         priority: Priority,
@@ -370,6 +421,7 @@ impl Database {
 
     /// A blocking caller parks until commit. Its memory-only notification runs
     /// in writer order after durability, even if the caller no longer waits.
+    #[track_caller]
     pub fn write_now_then_at<T: Send + 'static>(
         &self,
         priority: Priority,
@@ -377,6 +429,7 @@ impl Database {
         write: impl FnOnce(&rusqlite::Connection) -> Result<T> + Send + 'static,
         committed: impl FnOnce(&T) + Send + 'static,
     ) -> Result<T> {
+        fastctx_platform::roles::blocking("a database write");
         self.available()?;
         if writer::on_writer() {
             // A writer waiting for a write waits for itself, or for another

@@ -61,7 +61,8 @@ pub struct Violation {
     /// `blocking`: work that blocks its thread on a thread that must not
     /// block; `slow-poll`: a task kept its thread too long at once;
     /// `held-up`: a runtime's tasks waited too long for a thread;
-    /// `held-long`: a lock over many units was held too long.
+    /// `held-long`: a lock over many units was held too long; `nested-read`:
+    /// a thread holding a database's read connection asked for another.
     pub kind: String,
     /// Where: the source location, the task, the runtime, or the lock.
     pub place: String,
