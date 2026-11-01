@@ -1265,7 +1265,7 @@ impl fastctx_net::link::Node for Handler {
         let received = caller.received.clone();
         let node = self.node.upgrade();
         let hub = self.hub.clone();
-        Box::pin(async move {
+        let taking = async move {
             let Some(node) = node else {
                 return Err(io::Error::other("the node is stopping"));
             };
@@ -1402,6 +1402,12 @@ impl fastctx_net::link::Node for Handler {
                 }
             }
             result
+        };
+        // Taking a letter reaches records that may still be moving in, which
+        // only a blocking thread may wait for; its asynchronous parts run there too.
+        Box::pin(async move {
+            let runtime = tokio::runtime::Handle::current();
+            fastctx_platform::task::spawn_blocking(move || runtime.block_on(taking)).await.map_err(io::Error::other)?
         })
     }
 
