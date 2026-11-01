@@ -34,7 +34,9 @@ pub(crate) fn begin_with_account(
             Ok(())
         })
         .map_err(io::Error::other)?;
-    super::transfer::cancelled(&crate::record_migration::world(directory)?, &completed);
+    let world = crate::record_migration::world(directory)?;
+    crate::record_migration::scheduler::invalidate(&world, &completed);
+    super::transfer::cancelled(&world, &completed);
     Ok(())
 }
 

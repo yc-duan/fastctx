@@ -87,6 +87,9 @@ pub(crate) fn prepare(db: &Connection, world: &WorldDir) -> Result<()> {
         }
         pending.insert(name);
     }
+    for conversation in &pending {
+        scheduler::invalidate(world.path(), conversation);
+    }
     PENDING.lock().expect("conversation transfers").insert(world.path().to_path_buf(), pending);
     fastctx_platform::readings::gauge("migration.rejected_imports").set(rejected.len() as i64);
     REJECTED.lock().expect("rejected imports").insert(world.path().to_path_buf(), rejected);

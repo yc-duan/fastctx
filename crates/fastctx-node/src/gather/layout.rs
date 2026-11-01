@@ -122,6 +122,29 @@ impl Layout {
         }
         Ok(layout)
     }
+    pub(crate) fn hydration_exclusions(
+        &self,
+        db: &fastctx_storage::rusqlite::Connection,
+    ) -> fastctx_storage::Result<std::collections::HashSet<String>> {
+        use fastctx_storage::rusqlite::OptionalExtension;
+        let mut excluded: std::collections::HashSet<_> =
+            self.pending.lock().expect("pending layout").keys().cloned().collect();
+        let generations = self.mappings.read().expect("record layout").generations.clone();
+        for (conversation, generation) in generations {
+            let prior = db
+                .query_row(
+                    "SELECT generation,complete FROM conversation_record_gathering WHERE conversation=?1",
+                    [&conversation],
+                    |row| Ok((row.get::<_, String>(0)?, row.get::<_, bool>(1)?)),
+                )
+                .optional()?;
+            if prior != Some((generation, true)) {
+                excluded.insert(conversation);
+            }
+        }
+        Ok(excluded)
+    }
+
     /// No filesystem resolution: live jobs can still write through an old path.
     pub(crate) fn logical(&self, path: &Path) -> PathBuf {
         let maps = self.mappings.read().expect("record layout");
@@ -183,9 +206,9 @@ impl Layout {
         let Some(generation) = generation else {
             return Ok(());
         };
-        let (database, scope) = (database.clone(), conversation.to_string());
+        let (root, database, scope) = (world.to_path_buf(), database.clone(), conversation.to_string());
         scheduler::request(world, conversation, &format!("gather/{generation}"), move || {
-            super::records::reset(&database, &scope, &generation)
+            super::records::reset(&root, &database, &scope, &generation)
         })
     }
     fn retry(&self, world: &Path, database: &Database, conversation: &str) -> io::Result<()> {

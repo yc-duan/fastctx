@@ -166,6 +166,7 @@ fn complete(world: &Path, database: &Database, conversation: &str) -> Result<()>
         db.execute("DELETE FROM node_conversation_transfer_progress WHERE name=?1", [&scope])?;
         Ok(db.execute("DELETE FROM node_conversation_transfers WHERE name=?1", [&scope])? != 0)
     })?;
+    scheduler::hydrate(world, database, &std::collections::HashSet::new(), Some(conversation)).map_err(Error::from)?;
     super::cancelled(world, conversation);
     if removed {
         fastctx_platform::readings::counter("storage.conversations_imported").add(1);

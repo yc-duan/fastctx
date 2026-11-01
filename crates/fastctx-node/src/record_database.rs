@@ -19,8 +19,14 @@ pub(crate) fn register(world: &WorldDir, database: &Database) -> io::Result<crat
     let layout = std::sync::Arc::new(crate::gather::records::Layout::load(world)?);
     let mut open = OPEN.lock().expect("record database registry");
     open.retain(|_, entry| entry.database.upgrade().is_some());
-    open.insert(world.path().to_path_buf(), Open { database: database.downgrade(), layout });
-    Ok(crate::record_migration::Service::register(world.path(), database))
+    open.insert(world.path().to_path_buf(), Open { database: database.downgrade(), layout: layout.clone() });
+    drop(open);
+    let service = crate::record_migration::Service::register(world.path(), database);
+    if database.fault().is_none() {
+        let excluded = database.read_background_now(|db| layout.hydration_exclusions(db)).map_err(io::Error::other)?;
+        crate::record_migration::scheduler::hydrate(world.path(), database, &excluded, None)?;
+    }
+    Ok(service)
 }
 
 pub(crate) fn get(directory: &ConversationDir) -> io::Result<(Database, String)> {

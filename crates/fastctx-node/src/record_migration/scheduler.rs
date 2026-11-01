@@ -1,5 +1,6 @@
 //! Bounded background migration jobs, promoted by demand. Waiting callers may
 //! leave; owned jobs continue and durable batch checkpoints survive a restart.
+mod ready;
 use fastctx_platform::{readings, roles};
 use fastctx_storage::{Priority, WeakDatabase};
 use std::{
@@ -15,7 +16,6 @@ use std::{
 };
 
 const QUEUED: usize = 128;
-const READY: usize = 8192;
 const WAIT: Duration = Duration::from_secs(10);
 const WORKERS: usize = 2;
 type Key = (String, String);
@@ -33,6 +33,7 @@ thread_local! {
 
 struct Cell {
     urgent: AtomicBool,
+    cancelled: AtomicBool,
     result: Mutex<Option<Outcome>>,
     changed: Condvar,
 }
@@ -45,8 +46,7 @@ struct Job {
 struct Queue {
     jobs: VecDeque<Job>,
     pending: HashMap<Key, Weak<Cell>>,
-    ready: HashSet<Key>,
-    oldest: VecDeque<Key>,
+    ready: ready::Ready,
 }
 struct Engine {
     database: WeakDatabase,
@@ -146,10 +146,10 @@ pub(crate) fn priority() -> Priority {
 /// A batch cooperates with shutdown without treating cancellation as completion.
 pub(crate) fn checkpoint() -> io::Result<()> {
     CURRENT.with_borrow(|current| {
-        if current
-            .as_ref()
-            .is_some_and(|(engine, _)| engine.upgrade().is_none_or(|engine| engine.closed.load(Ordering::Acquire)))
-        {
+        if current.as_ref().is_some_and(|(engine, cell)| {
+            cell.cancelled.load(Ordering::Acquire)
+                || engine.upgrade().is_none_or(|engine| engine.closed.load(Ordering::Acquire))
+        }) {
             Err(io::Error::new(io::ErrorKind::Interrupted, "migration is stopping at its batch boundary"))
         } else {
             Ok(())
@@ -158,10 +158,56 @@ pub(crate) fn checkpoint() -> io::Result<()> {
 }
 
 /// A blocking reader has already checked the durable completion marker.
-pub(crate) fn ready(world: &Path, conversation: &str, family: &str) {
+pub(crate) fn ready(world: &Path, conversation: &str, family: &str) -> io::Result<()> {
     if let Some(engine) = ENGINES.lock().expect("migration registry").get(world).and_then(Weak::upgrade) {
-        engine.remember((conversation.to_string(), family.to_string()));
+        engine.remember((conversation.to_string(), family.to_string()))?;
     }
+    Ok(())
+}
+
+/// Loads completed families while registration is still on a blocking thread.
+pub(crate) fn hydrate(
+    world: &Path,
+    database: &fastctx_storage::Database,
+    excluded: &HashSet<String>,
+    scope: Option<&str>,
+) -> io::Result<()> {
+    let ready = database.read_background_now(|db| ready::load(db, excluded, scope)).map_err(io::Error::other)?;
+    if let Some(engine) = ENGINES.lock().expect("migration registry").get(world).and_then(Weak::upgrade) {
+        engine.queue.lock().expect("migration queue").ready.extend(ready)?;
+    }
+    Ok(())
+}
+
+/// Discards admission facts before a gather, transfer or deletion changes scope.
+pub(crate) fn invalidate(world: &Path, conversation: &str) {
+    let engine = ENGINES.lock().expect("migration registry").get(world).and_then(Weak::upgrade);
+    let Some(engine) = engine else {
+        return;
+    };
+    let mut queue = engine.queue.lock().expect("migration queue");
+    queue.ready.delete(conversation);
+    let current = CURRENT.with_borrow(|current| current.as_ref().map(|(_, cell)| Arc::downgrade(cell)));
+    queue.pending.retain(|key, cell| {
+        if key.0 != conversation || current.as_ref().is_some_and(|current| current.ptr_eq(cell)) {
+            return true;
+        }
+        if let Some(cell) = cell.upgrade() {
+            cell.cancelled.store(true, Ordering::Release);
+        }
+        false
+    });
+    queue.jobs.retain(|job| {
+        if job.key.0 != conversation {
+            return true;
+        }
+        *job.cell.result.lock().expect("migration result") =
+            Some(Err((io::ErrorKind::Interrupted, "migration generation changed".into())));
+        job.cell.changed.notify_all();
+        DEPTH.add(-1);
+        false
+    });
+    engine.progress.notify_one();
 }
 
 pub(crate) fn request(
@@ -211,6 +257,7 @@ pub(crate) fn request(
             if nested {
                 let cell = Arc::new(Cell {
                     urgent: AtomicBool::new(urgent),
+                    cancelled: AtomicBool::new(false),
                     result: Mutex::new(None),
                     changed: Condvar::new(),
                 });
@@ -224,8 +271,12 @@ pub(crate) fn request(
             if queue.jobs.len() >= if urgent { QUEUED } else { QUEUED - 32 } {
                 return Err(busy("the migration queue is full"));
             }
-            let cell =
-                Arc::new(Cell { urgent: AtomicBool::new(urgent), result: Mutex::new(None), changed: Condvar::new() });
+            let cell = Arc::new(Cell {
+                urgent: AtomicBool::new(urgent),
+                cancelled: AtomicBool::new(false),
+                result: Mutex::new(None),
+                changed: Condvar::new(),
+            });
             queue.pending.insert(key.clone(), Arc::downgrade(&cell));
             queue.jobs.push_back(Job { key, cell: cell.clone(), work: Box::new(work) });
             DEPTH.add(1);
@@ -252,16 +303,8 @@ pub(crate) fn request(
 }
 
 impl Engine {
-    fn remember(&self, key: Key) {
-        let mut queue = self.queue.lock().expect("migration queue");
-        if queue.ready.insert(key.clone()) {
-            queue.oldest.push_back(key);
-        }
-        while queue.oldest.len() > READY {
-            if let Some(oldest) = queue.oldest.pop_front() {
-                queue.ready.remove(&oldest);
-            }
-        }
+    fn remember(&self, key: Key) -> io::Result<()> {
+        self.queue.lock().expect("migration queue").ready.insert(key)
     }
     fn close(&self) {
         self.closed.store(true, Ordering::Release);
@@ -312,16 +355,28 @@ impl Engine {
         let started = Instant::now();
         ACTIVE.add(1);
         let previous = CURRENT.replace(Some((Arc::downgrade(self), job.cell.clone())));
-        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(job.work))
-            .unwrap_or_else(|_| Err(io::Error::other("migration worker panicked")));
+        let mut result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            checkpoint()?;
+            (job.work)()
+        }))
+        .unwrap_or_else(|_| Err(io::Error::other("migration worker panicked")));
         CURRENT.set(previous);
         ACTIVE.add(-1);
         ELAPSED.record(started.elapsed());
-        if result.is_ok() {
-            self.remember(job.key.clone());
-            self.progress.notify_one();
+        {
+            let mut queue = self.queue.lock().expect("migration queue");
+            if result.is_ok() {
+                if job.cell.cancelled.load(Ordering::Acquire) {
+                    result = Err(io::Error::new(io::ErrorKind::Interrupted, "migration generation changed"));
+                } else {
+                    result = queue.ready.insert(job.key.clone());
+                }
+            }
+            if queue.pending.get(&job.key).is_some_and(|cell| cell.ptr_eq(&Arc::downgrade(&job.cell))) {
+                queue.pending.remove(&job.key);
+            }
         }
-        self.queue.lock().expect("migration queue").pending.remove(&job.key);
+        self.progress.notify_one();
         *job.cell.result.lock().expect("migration result") =
             Some(result.as_ref().map(|_| ()).map_err(|error| (error.kind(), error.to_string())));
         job.cell.changed.notify_all();

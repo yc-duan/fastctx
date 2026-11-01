@@ -40,7 +40,7 @@ pub(super) fn moving(destination: &Path) -> io::Result<()> {
 
 pub(crate) use super::layout::Layout;
 
-pub(super) fn reset(database: &Database, conversation: &str, generation: &str) -> io::Result<()> {
+pub(super) fn reset(world: &Path, database: &Database, conversation: &str, generation: &str) -> io::Result<()> {
     let (scope, token) = (conversation.to_string(), generation.to_string());
     let complete = database.write_now_at(scheduler::priority(), 256, move |db| {
         if crate::conversation_store::deleted(db, &scope)? { return Ok(true); }
@@ -52,6 +52,9 @@ pub(super) fn reset(database: &Database, conversation: &str, generation: &str) -
     if complete {
         return Ok(());
     }
+    // This generation is not usable until all its durable completion marks reset.
+    // The current gather job keeps running; other in-flight families are cancelled.
+    scheduler::invalidate(world, conversation);
     for statement in [
         "DELETE FROM conversation_record_imports WHERE conversation=?1 AND family IN (SELECT family FROM conversation_record_imports WHERE conversation=?1 LIMIT 128)",
         "DELETE FROM session_sources WHERE conversation=?1 AND identity IN (SELECT identity FROM session_sources WHERE conversation=?1 AND finished=1 LIMIT 128)",

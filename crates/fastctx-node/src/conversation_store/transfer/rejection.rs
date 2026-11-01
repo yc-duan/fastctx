@@ -32,6 +32,7 @@ pub(super) fn resume(world: &Path, database: &Database, conversation: &str, reas
                 != 0)
         })
         .map_err(io::Error::other)?;
+    super::scheduler::hydrate(world, database, &std::collections::HashSet::new(), Some(conversation))?;
     if finished {
         readings::counter("migration.imports_rejected").add(1);
         super::record_rejection(world, conversation, reason);
