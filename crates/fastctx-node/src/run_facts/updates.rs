@@ -10,7 +10,7 @@ static EMITTING: LazyLock<crate::record_gates::Gates> =
     LazyLock::new(|| crate::record_gates::Gates::new(fastctx_platform::doing::Rank::EMITTING, "call facts"));
 
 #[derive(Clone, Default, Serialize, Deserialize)]
-struct Emitted {
+pub(crate) struct Emitted {
     sequence: u64,
     #[serde(default)]
     journal_version: u8,
@@ -32,14 +32,14 @@ struct Emitted {
 }
 
 #[derive(Serialize, Deserialize)]
-struct Pending {
+pub(crate) struct Pending {
     update: JobFacts,
     emitted: Emitted,
 }
 
 #[derive(Deserialize)]
 #[serde(untagged)]
-enum Recovery {
+pub(crate) enum Recovery {
     Current(Box<Pending>),
     Legacy(Box<JobFacts>),
 }

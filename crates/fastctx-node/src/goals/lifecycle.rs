@@ -256,47 +256,7 @@ pub(crate) fn keeps_books(node: &Node, id: &ResidentId) -> Result<bool, Failure>
     Ok(scope::pinned_now(node, id)?.is_some())
 }
 
-/// Called inside the durable deletion transaction, with its place and management gates already held.
-pub(crate) async fn delete(node: &Arc<Node>, id: &ResidentId) -> Result<(), Failure> {
-    let Some(account) = scope::pinned(node, id).await? else { return Ok(()) };
-    let resident = Address { machine: node.machine(), resident: id.clone() };
-    super::past::forget(node, &account, &resident).await?;
-    let current = operations::read(node, &resident, &account).await?;
-    if current.goal.is_none() && current.version.is_some() {
-        super::archive::for_resident(node, &account, id).await?;
-        operations::publish(node, id, &current);
-        node.goals.views.lock().expect("goal views").remove(id);
-        return Ok(());
-    }
-    let operation = format!("goal-delete:{id}:{}", current.version.unwrap_or(0));
-    let directory = node.world.conversation(id);
-    let mut intent = match intents::read(&directory, &operation).await.map_err(failure)? {
-        Some(intent) => intent,
-        None => {
-            let intent = Intent {
-                access: None,
-                operation: operation.clone(),
-                input_hash: operation,
-                resident,
-                account,
-                expected: current.version,
-                proposed: None,
-                at: Timestamp::now(),
-                phase: Phase::Prepared,
-            };
-            intents::keep(node, &directory, &intent).await.map_err(failure)?;
-            intent
-        }
-    };
-    match operations::finish(node, &mut intent).await? {
-        fastctx_types::goals::Updated::Goal { view } if view.goal.is_none() => {
-            operations::publish(node, id, &view);
-            node.goals.views.lock().expect("goal views").remove(id);
-            Ok(())
-        }
-        _ => Err(Failure::new(words::DELETE_CHANGED)),
-    }
-}
+pub(crate) use super::deletion::{apply as delete, prepare as prepare_delete};
 
 fn failure(error: impl std::fmt::Display) -> Failure {
     Failure::new(error.to_string())

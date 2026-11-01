@@ -166,7 +166,7 @@ pub(crate) async fn here(
         let version =
             serde_json::to_string(&Seen { account: scope.clone(), owner: page.owner.clone(), version: page.version() })
                 .map_err(|error| Failure::new(error.to_string()))?;
-        crate::context::plan(node, id, page, &version).map_err(|error| Failure::new(error.to_string()))?;
+        crate::context::plan(node, id, page, &version).await.map_err(|error| Failure::new(error.to_string()))?;
         remember(node, id, scope, page)?;
     }
     Ok(result)
@@ -178,19 +178,20 @@ pub(crate) async fn here(
 pub(crate) async fn context(node: &Arc<Node>, id: &ResidentId, acting: &Acting) -> Result<(), Failure> {
     let previous = seen(node, id)?;
     let selected = previous.as_ref().map(|seen| seen.account.clone()).or_else(|| only_account(node, acting));
-    let unavailable = || crate::context::plan_unavailable(node, id).map_err(|error| Failure::new(error.to_string()));
-    let Some(scope) = selected else { return unavailable() };
+    let unavailable =
+        async || crate::context::plan_unavailable(node, id).await.map_err(|error| Failure::new(error.to_string()));
+    let Some(scope) = selected else { return unavailable().await };
     if !node.serves(acting, &scope.hub, &scope.account) {
-        unavailable()?;
+        unavailable().await?;
         return Err(Failure::refused(words::ROUTE));
     }
     let Some(link) = node.link_of(&scope.hub) else {
-        unavailable()?;
+        unavailable().await?;
         return Err(Failure::new(words::ROUTE));
     };
     let view = link.view();
     if !view.account_records || !view.conversation_plans {
-        return unavailable();
+        return unavailable().await;
     }
     let whose = Address { machine: node.machine(), resident: id.clone() };
     let Some(generation) = node.plan_reads.begin(id, &scope, &whose) else { return Ok(()) };
@@ -206,7 +207,7 @@ pub(crate) async fn context(node: &Arc<Node>, id: &ResidentId, acting: &Acting) 
     }
     let version = serde_json::to_string(&Seen { account: scope, owner: page.owner.clone(), version: page.version() })
         .map_err(|error| Failure::new(error.to_string()))?;
-    crate::context::plan(node, id, &page, &version).map_err(|error| Failure::new(error.to_string()))?;
+    crate::context::plan(node, id, &page, &version).await.map_err(|error| Failure::new(error.to_string()))?;
     node.plan_reads.done(id, generation);
     Ok(())
 }
@@ -249,7 +250,9 @@ pub(crate) async fn save(node: &Arc<Node>, id: &ResidentId, markdown: String) ->
                     version: page.version(),
                 })
                 .map_err(|error| Failure::new(error.to_string()))?;
-                crate::context::plan(node, id, &page, &version).map_err(|error| Failure::new(error.to_string()))?;
+                crate::context::plan(node, id, &page, &version)
+                    .await
+                    .map_err(|error| Failure::new(error.to_string()))?;
                 remember(node, id, scope, &page)?;
                 return Ok(Some(page));
             }

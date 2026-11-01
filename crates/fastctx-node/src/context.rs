@@ -1,8 +1,12 @@
 //! Named context shared by both hosts. Setting a block never starts a turn.
 
+mod archived;
+pub(crate) mod blocking;
 pub(crate) mod input;
 pub(crate) mod memory;
-mod records;
+#[cfg(feature = "storage-drill")]
+pub(crate) mod migration_drill;
+pub(crate) mod records;
 pub(crate) mod sources;
 mod storage;
 pub(crate) mod turn;
@@ -104,12 +108,20 @@ pub(crate) fn migrate(node: &Node) {
     }
 }
 
-pub(crate) fn instructed(node: &Node, id: &ResidentId, heard: &crate::residents::Heard) -> io::Result<()> {
-    if let Some(receipt) = &heard.context {
-        storage::instructed(&node.world, id, receipt)?;
-        sources::observed(node, id, receipt)?;
-    }
-    Ok(())
+pub(crate) async fn instructed(
+    node: &std::sync::Arc<Node>,
+    id: &ResidentId,
+    heard: &crate::residents::Heard,
+) -> io::Result<()> {
+    let heard = heard.clone();
+    blocking::with(node, id, move |node, id| {
+        if let Some(receipt) = &heard.context {
+            storage::instructed(&node.world, id, receipt)?;
+            sources::observed(node, id, receipt)?;
+        }
+        Ok(())
+    })
+    .await
 }
 
 pub(crate) fn compacted(node: &Node, id: &ResidentId, marker: &str) -> io::Result<()> {
@@ -239,7 +251,7 @@ pub(crate) fn native_observed(
         &node.world,
         id,
         2048,
-        || {
+        |_| {
             if changed {
                 node.residents.restore_opening_heard(id);
             }

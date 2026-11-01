@@ -23,7 +23,7 @@ pub(crate) enum Outcome {
 }
 
 #[derive(Serialize, Deserialize)]
-struct Finished {
+pub(crate) struct Finished {
     at: Timestamp,
     digest: String,
     outcome: Outcome,
@@ -289,7 +289,7 @@ pub(crate) fn impossible(node: &Node, acting: &Acting, destination: &Written) ->
 pub(crate) fn collect(node: &Node) -> io::Result<()> {
     let now = Timestamp::now().as_millisecond();
     loop {
-        let count=node.database.write_now_at(fastctx_storage::Priority::Background,4096,move |db|Ok(db.execute("DELETE FROM conversation_records WHERE position IN (SELECT position FROM conversation_records WHERE expires<=?1 ORDER BY expires LIMIT 64)",[now])?)).map_err(io::Error::other)?;
+        let count=node.database.write_now_at(fastctx_storage::Priority::Background,4096,move |db|Ok(db.execute("DELETE FROM conversation_records WHERE (conversation,position) IN (SELECT conversation,position FROM conversation_records r WHERE expires<=?1 AND NOT EXISTS(SELECT 1 FROM node_conversation_transfers t WHERE t.name=r.conversation AND t.rejected=0) ORDER BY expires LIMIT 64)",[now])?)).map_err(io::Error::other)?;
         if count == 0 {
             break;
         }

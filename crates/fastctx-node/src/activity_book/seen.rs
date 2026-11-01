@@ -26,14 +26,15 @@ static ONE_AT_A_TIME: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new
 
 pub(super) fn look(node: &Arc<Node>, record: &JobRecord) {
     let Some(ended) = record.end.as_ref().map(|end| end.at) else { return };
-    let Ok(home) = fastctx_platform::user_home() else { return };
-    let places = places(&record.script, &home);
-    if places.is_empty() {
-        return;
-    }
+    let script = record.script.clone();
     let (node, deed, began) = (node.clone(), super::deed(record), record.started_at);
-    tokio::spawn(async move {
+    fastctx_platform::task::spawn(async move {
         let Ok(_one) = ONE_AT_A_TIME.acquire().await else { return };
+        let places = fastctx_platform::task::spawn_blocking(move || {
+            fastctx_platform::user_home().map(|home| places(&script, &home))
+        })
+        .await;
+        let Ok(Ok(places)) = places else { return };
         let mut tops = Vec::new();
         for place in places {
             if let Some(top) = git(&place, &["rev-parse", "--show-toplevel"]).await
@@ -49,6 +50,23 @@ pub(super) fn look(node: &Arc<Node>, record: &JobRecord) {
         }
         if noted.is_empty() {
             return;
+        }
+        loop {
+            let (preparing, key) = (node.clone(), deed.clone());
+            match fastctx_platform::task::spawn_blocking(move || super::migrate::deed(&preparing, &key))
+                .await
+                .map_err(std::io::Error::other)
+                .and_then(|result| result)
+            {
+                Ok(()) => break,
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                    tokio::time::sleep(Duration::from_secs(1)).await;
+                }
+                Err(error) => {
+                    node.log.line(format_args!("preparing activity before Git observations: {error}"));
+                    return;
+                }
+            }
         }
         let size = noted.iter().map(|(path, ..)| path.len() + 48).sum();
         let result = node
@@ -132,6 +150,16 @@ async fn changed(
     began: Timestamp,
     ended: Timestamp,
 ) -> Vec<(String, &'static str, Option<u32>, Option<u32>)> {
+    let (top, runtime) = (top.to_path_buf(), tokio::runtime::Handle::current());
+    fastctx_platform::task::spawn_blocking(move || runtime.block_on(changed_inner(&top, began, ended)))
+        .await
+        .unwrap_or_default()
+}
+async fn changed_inner(
+    top: &Path,
+    began: Timestamp,
+    ended: Timestamp,
+) -> Vec<(String, &'static str, Option<u32>, Option<u32>)> {
     let Some(status) = git(top, &["status", "--porcelain=v1", "-z", "--untracked-files=normal"]).await else {
         return Vec::new();
     };
@@ -151,7 +179,7 @@ async fn changed(
             continue;
         }
         let full = top.join(&path);
-        let Ok(modified) = std::fs::metadata(&full).and_then(|meta| meta.modified()) else { continue };
+        let Ok(modified) = fastctx_platform::disk::metadata(&full).and_then(|meta| meta.modified()) else { continue };
         let Ok(modified) = Timestamp::try_from(modified) else { continue };
         if modified < from || modified > until {
             continue;

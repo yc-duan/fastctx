@@ -53,7 +53,7 @@ fn local_current(node: &Node, id: &ResidentId, town: Option<&TownName>, acting: 
         &text,
         Change { by: author.as_ref(), version: &version, fact: &words::changed("project", &by), full: true },
     )?;
-    let focus = match std::fs::read_to_string(node.world.conversation(id).focus()) {
+    let focus = match fastctx_platform::disk::read_to_string(node.world.conversation(id).focus()) {
         Ok(text) => text,
         Err(error) if error.kind() == io::ErrorKind::NotFound => String::new(),
         Err(error) => return Err(error),
@@ -75,14 +75,20 @@ pub(crate) async fn prepare(
     acting: &Acting,
 ) -> Result<(String, Receipt), Failure> {
     let directory = node.world.conversation(id);
-    fastctx_platform::ensure_private_dir(directory.path()).map_err(|error| Failure::new(error.to_string()))?;
+    fastctx_platform::task::spawn_blocking(move || fastctx_platform::ensure_private_dir(directory.path()))
+        .await
+        .map_err(|error| Failure::new(error.to_string()))?
+        .map_err(crate::record_migration::failure)?;
     if let Some(town) = town {
         crate::town::access::ready(node, acting, town).await?;
     }
     if node.residents.about(id).is_some() {
         crate::focus::refresh(node, id).await?;
     }
-    local(node, id, town, acting).map_err(|error| Failure::new(error.to_string()))?;
+    let (local_town, local_acting) = (town.cloned(), acting.clone());
+    super::blocking::with(node, id, move |node, id| local(node, id, local_town.as_ref(), &local_acting))
+        .await
+        .map_err(crate::record_migration::failure)?;
     // Skills are the account's; one whose hub cannot be asked now keeps what
     // it was told, and the conversation goes on without waiting for it.
     if let Err(failure) = skills(node, id, acting).await {
@@ -94,15 +100,25 @@ pub(crate) async fn prepare(
     plan_guide(node, id, origin, acting).await.map_err(|error| Failure::new(error.to_string()))?;
     crate::plan::context(node, id, acting).await?;
     map(node, id, town, origin, acting).await?;
-    storage::opening(&node.world, id, &node.context_bodies).map_err(|error| Failure::new(error.to_string()))
+    super::blocking::with(node, id, |node, id| storage::opening(&node.world, id, &node.context_bodies))
+        .await
+        .map_err(crate::record_migration::failure)
 }
 
 /// The names and sentences of the skills of the account the conversation
 /// works for, as the "skills" block (`crate::skills`); kept as it was where
 /// the hub cannot be asked now.
-pub(crate) async fn skills(node: &Node, id: &ResidentId, acting: &Acting) -> Result<(), Failure> {
+pub(crate) async fn skills(node: &Arc<Node>, id: &ResidentId, acting: &Acting) -> Result<(), Failure> {
     let Some((text, version)) = crate::skills::context(node, acting).await else { return Ok(()) };
-    set_skills(node, id, &text, &version)
+    super::blocking::set_account(
+        node,
+        id,
+        "skills",
+        &text,
+        Change { by: None, version: &version, fact: &words::changed("skills", words::USER), full: true },
+    )
+    .await
+    .map_err(crate::record_migration::failure)
 }
 
 /// The skills block, as `version` of the account's index has it.
@@ -150,12 +166,15 @@ pub(crate) async fn plan_guide(node: &Arc<Node>, id: &ResidentId, origin: &Origi
             }
         }
     };
-    let change = Change { by: None, version: "", fact: &fact, full: false };
-    if node.residents.about(id).is_some() {
-        super::set(node, id, "plan-guide", &text, change)
-    } else {
-        storage::set(&node.world, id, "plan-guide", &text, change)
-    }
+    super::blocking::with(node, id, move |node, id| {
+        let change = Change { by: None, version: "", fact: &fact, full: false };
+        if node.residents.about(id).is_some() {
+            super::set(node, id, "plan-guide", &text, change)
+        } else {
+            storage::set(&node.world, id, "plan-guide", &text, change)
+        }
+    })
+    .await
 }
 
 /// Refreshes the history block through the shared context delivery path.
@@ -177,27 +196,36 @@ pub(super) fn observed(node: &Node, id: &ResidentId, receipt: &Receipt) -> io::R
     Ok(())
 }
 
-pub(crate) fn plan(node: &Node, id: &ResidentId, page: &fastctx_types::plan::Page, version: &str) -> io::Result<()> {
+pub(crate) async fn plan(
+    node: &Arc<Node>,
+    id: &ResidentId,
+    page: &fastctx_types::plan::Page,
+    version: &str,
+) -> io::Result<()> {
     let by: Option<&Address> = page.body.as_ref().and_then(|body| match &body.author {
         fastctx_types::plan::Author::Resident { address } => Some(address),
         fastctx_types::plan::Author::User | fastctx_types::plan::Author::Elsewhere => None,
     });
     let who = by.map(|by| by.resident.to_string()).unwrap_or_else(|| words::USER.into());
-    super::set_account(
+    super::blocking::set_account(
         node,
         id,
         "plan",
         page.body.as_ref().map(|body| body.markdown.as_str()).unwrap_or_default(),
         Change { by, version, fact: &words::changed("plan", &who), full: true },
     )
+    .await
 }
 
-pub(crate) fn plan_unavailable(node: &Node, id: &ResidentId) -> io::Result<()> {
-    storage::set(
-        &node.world,
-        id,
-        "plan",
-        "",
-        Change { by: None, version: "", fact: words::PLAN_UNAVAILABLE, full: true },
-    )
+pub(crate) async fn plan_unavailable(node: &Arc<Node>, id: &ResidentId) -> io::Result<()> {
+    super::blocking::with(node, id, |node, id| {
+        storage::set(
+            &node.world,
+            id,
+            "plan",
+            "",
+            Change { by: None, version: "", fact: words::PLAN_UNAVAILABLE, full: true },
+        )
+    })
+    .await
 }

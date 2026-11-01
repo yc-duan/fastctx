@@ -1,174 +1,196 @@
-//! Legacy events are staged and sorted in SQLite, never materialized as one
-//! conversation-sized vector. A restart safely repeats the uncommitted phase.
-
-use super::{Recorded, sql};
+//! Legacy sequence numbers never change. Unnumbered events precede them when
+//! enough positive numbers are free; otherwise their old relative order follows
+//! the reserved high-water mark. No caller executes the migration itself.
+use super::{legacy, sql};
+use crate::record_migration::{archive, scheduler};
+use fastctx_platform::disk;
 use fastctx_storage::{
-    Database, Priority,
+    Database,
     rusqlite::{OptionalExtension, params},
 };
 use fastctx_types::layout::ConversationDir;
-use std::{io, sync::LazyLock};
-
-static GATES: LazyLock<crate::record_gates::Gates> = LazyLock::new(|| {
-    crate::record_gates::Gates::new(fastctx_platform::doing::Rank::RECORDS, "migrating session events")
-});
-const BATCH: usize = 16;
-
-type Legacy = (String, bool, Vec<u8>, i64, i32, Vec<u8>);
+use std::io;
 
 pub(super) fn ensure(directory: &ConversationDir, database: &Database, conversation: &str) -> io::Result<()> {
-    if database.read_now(|db| Ok(sql::head(db, conversation)?.2)).map_err(io::Error::other)? {
+    let world = crate::record_migration::world(directory)?;
+    if fastctx_platform::roles::current().may_block()
+        && database
+            .read_background_now(|db| {
+                Ok(crate::conversation_store::deleted(db, conversation)? || sql::head(db, conversation)?.2)
+            })
+            .map_err(io::Error::other)?
+    {
+        scheduler::ready(&world, conversation, "session-events")?;
         return Ok(());
     }
-    let gate = GATES.get(directory.path());
-    let _gate = gate.lock();
-    if database.read_now(|db| Ok(sql::head(db, conversation)?.2)).map_err(io::Error::other)? {
-        return Ok(());
-    }
-    let mut batch = Vec::new();
-    let entries = match std::fs::read_dir(directory.session_events()) {
-        Ok(entries) => Some(entries),
-        Err(error) if error.kind() == io::ErrorKind::NotFound => None,
-        Err(error) => return Err(error),
-    };
-    if let Some(entries) = entries {
-        for entry in entries {
-            let path = entry?.path();
-            if path.extension().is_none_or(|extension| extension != "json")
-                || path.file_name().is_some_and(|name| name.to_string_lossy().starts_with('.'))
-            {
-                continue;
-            }
-            let record: Recorded = serde_json::from_slice(&std::fs::read(&path)?)?;
-            let key = path
-                .file_stem()
-                .and_then(|name| name.to_str())
-                .ok_or_else(|| io::Error::other("invalid legacy event identity"))?
-                .to_string();
-            batch.push((
-                key,
-                record.sequence.is_some(),
-                record.sequence.unwrap_or(0).to_be_bytes().to_vec(),
-                record.event.at.as_second(),
-                record.event.at.subsec_nanosecond(),
-                serde_json::to_vec(&record.event)?,
-            ));
-            if batch.len() == BATCH {
-                stage(database, conversation, std::mem::take(&mut batch))?;
-            }
-        }
-    }
-    stage(database, conversation, batch)?;
-    let reserved: u64 = match std::fs::read(directory.session_sequence()) {
-        Ok(bytes) => serde_json::from_slice(&bytes)?,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => 0,
-        Err(error) => return Err(error),
-    };
-    let mut cursor: Option<Legacy> = None;
-    let mut sequence = 0u64;
-    loop {
-        let rows = database
-            .read_now(|db| {
-                let mut query = db.prepare_cached(
-                    "SELECT identity,sequenced,sequence,seconds,nanos,body FROM session_legacy
-                WHERE conversation=?1 AND (sequenced,sequence,seconds,nanos,identity)>(?3,?4,?5,?6,?2)
-                ORDER BY sequenced,sequence,seconds,nanos,identity LIMIT 16",
-                )?;
-                Ok(query
-                    .query_map(
-                        params![
-                            conversation,
-                            cursor.as_ref().map_or("", |row| row.0.as_str()),
-                            cursor.as_ref().is_some_and(|row| row.1),
-                            cursor.as_ref().map_or(&[0u8; 8][..], |row| row.2.as_slice()),
-                            cursor.as_ref().map_or(i64::MIN, |row| row.3),
-                            cursor.as_ref().map_or(i32::MIN, |row| row.4)
-                        ],
-                        |row| {
-                            Ok((
-                                row.get::<_, String>(0)?,
-                                row.get::<_, bool>(1)?,
-                                row.get::<_, Vec<u8>>(2)?,
-                                row.get::<_, i64>(3)?,
-                                row.get::<_, i32>(4)?,
-                                row.get::<_, Vec<u8>>(5)?,
-                            ))
-                        },
-                    )?
-                    .collect::<std::result::Result<Vec<_>, _>>()?)
-            })
-            .map_err(io::Error::other)?;
-        if rows.is_empty() {
-            break;
-        }
-        cursor = rows.last().cloned();
-        let tags = rows
-            .iter()
-            .map(|row| {
-                serde_json::from_slice::<fastctx_types::session::SessionEvent>(&row.5)
-                    .map(|event| super::search::Tags::of(&event))
-                    .map_err(io::Error::other)
-            })
-            .collect::<io::Result<Vec<_>>>()?;
-        let bytes = rows.iter().map(|row| row.5.len() + 128).sum();
-        let scope = conversation.to_string();
-        sequence = database
-            .write_now_at(Priority::Background, bytes, move |db| {
-                for ((key, sequenced, old, _, _, body), tags) in rows.into_iter().zip(tags) {
-                    let next = sequence
-                        .checked_add(1)
-                        .ok_or_else(|| fastctx_storage::Error::new("session event sequence exhausted"))?;
-                    sequence = if sequenced { next.max(sql::number(old)?) } else { next };
-                    let existing: Option<Vec<u8>> = db
-                        .query_row(
-                            "SELECT body FROM session_events WHERE conversation=?1 AND identity=?2",
-                            (&scope, &key),
-                            |row| row.get(0),
-                        )
-                        .optional()?;
-                    if let Some(existing) = existing {
-                        if existing != body {
-                            return Err(fastctx_storage::Error::new("a migrated session event changed"));
-                        }
-                    } else {
-                        db.execute(
-                            "INSERT INTO session_events(conversation,sequence,identity,body) VALUES(?1,?2,?3,?4)",
-                            params![scope, sequence.to_be_bytes().as_slice(), key, body],
-                        )?;
-                    }
-                    tags.insert(db, &scope, sequence)?;
-                }
-                Ok(sequence)
-            })
-            .map_err(io::Error::other)?;
-    }
-    database.read_now(|db| {
-        let mismatch:i64=db.query_row("SELECT count(*) FROM session_legacy AS old LEFT JOIN session_events AS new ON old.conversation=new.conversation AND old.identity=new.identity
-            WHERE old.conversation=?1 AND (new.body IS NULL OR new.body!=old.body)",[conversation],|row|row.get(0))?;
-        if mismatch!=0 {return Err(fastctx_storage::Error::new("session event migration did not verify"))}
-        Ok(())
-    }).map_err(io::Error::other)?;
-    let scope = conversation.to_string();
-    database
-        .write_now_at(Priority::Background, 128, move |db| {
-            super::search::advance(db, &scope, sequence)?;
-            sql::set_head(db, &scope, reserved.max(sequence), sequence, true)
+    let (directory, database, scope) = (directory.clone(), database.clone(), conversation.to_string());
+    scheduler::request(&world, conversation, "session-events", move || import(&directory, &database, &scope))
+}
+fn import(directory: &ConversationDir, database: &Database, conversation: &str) -> io::Result<()> {
+    let (deleted, imported) = database
+        .read_background_now(|db| {
+            Ok((crate::conversation_store::deleted(db, conversation)?, sql::head(db, conversation)?.2))
         })
         .map_err(io::Error::other)?;
-    Ok(())
-}
-
-fn stage(database: &Database, conversation: &str, rows: Vec<Legacy>) -> io::Result<()> {
-    if rows.is_empty() {
+    if deleted {
         return Ok(());
     }
-    let bytes = rows.iter().map(|row| row.5.len() + 128).sum();
+    if imported {
+        return legacy::cleanup(database, conversation);
+    }
+    legacy::scan(directory, database, conversation)?;
+    legacy::assign(directory, database, conversation)?;
+    let world = crate::record_migration::world(directory)?;
+    loop {
+        scheduler::checkpoint()?;
+        let batch = legacy::batch(database, conversation)?;
+        if batch.is_empty() {
+            break;
+        }
+        let mut rows = Vec::new();
+        let mut finished = Vec::new();
+        for (source, sequence) in batch {
+            let path = match disk::metadata(&source.path) {
+                Ok(_) => source.path.clone(),
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                    archive::verified_path(&world, conversation, &source.path, &source.signature)?
+                }
+                Err(error) => return Err(error),
+            };
+            match legacy::read(&path) {
+                Ok((record, signature))
+                    if signature == source.signature && record.sequence == source.sequence && sequence != 0 =>
+                {
+                    let body = serde_json::to_vec(&record.event)?;
+                    let tags = super::search::Tags::of(&record.event);
+                    rows.push((source, sequence, body, tags));
+                }
+                Ok(_) => {
+                    archive::damaged(
+                        &world,
+                        conversation,
+                        "session-events",
+                        &source.path,
+                        "source or sequence differs from its staged metadata",
+                    )?;
+                    finished.push(source.identity);
+                }
+                Err(error) if crate::record_migration::errors::damaged(&error) => {
+                    archive::damaged(&world, conversation, "session-events", &source.path, &error.to_string())?;
+                    finished.push(source.identity);
+                }
+                Err(error) => return Err(crate::record_migration::errors::retry(error)),
+            }
+        }
+        let scope = conversation.to_string();
+        let bytes = rows.iter().map(|(_, _, body, _)| body.len() + 128).sum();
+        let results = database.write_now_at(scheduler::priority(), bytes, move |db| {
+            let mut results = Vec::new();
+            let mut lookup = db.prepare_cached("SELECT sequence,identity,body FROM session_events WHERE conversation=?1 AND identity=?2
+                UNION ALL SELECT sequence,identity,body FROM session_events WHERE conversation=?1 AND sequence=?3 LIMIT 1")?;
+            for (source, sequence, body, tags) in rows {
+                let existing: Option<(Vec<u8>, String, Vec<u8>)> = lookup.query_row(
+                    params![scope, source.identity, sequence.to_be_bytes().as_slice()], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?))).optional()?;
+                let conflict = existing.as_ref().is_some_and(|(old,identity,stored)| old.as_slice() != sequence.to_be_bytes() || identity != &source.identity || stored != &body);
+                if !conflict {
+                    if existing.is_none() { db.execute("INSERT INTO session_events(conversation,sequence,identity,body) VALUES(?1,?2,?3,?4)", params![scope, sequence.to_be_bytes().as_slice(), source.identity, body])?; }
+                    tags.insert(db, &scope, sequence)?;
+                }
+                results.push((source, sequence, conflict));
+            }
+            Ok(results)
+        }).map_err(io::Error::other)?;
+        let mut verified = Vec::new();
+        for (source, sequence, conflict) in results {
+            if conflict {
+                archive::damaged(
+                    &world,
+                    conversation,
+                    "session-events",
+                    &source.path,
+                    "event identity or original sequence conflicts with a different stored event",
+                )?;
+                finished.push(source.identity);
+                continue;
+            }
+            let original = match legacy::read(&source.path) {
+                Ok(value) => value,
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                    legacy::read(&archive::verified_path(&world, conversation, &source.path, &source.signature)?)?
+                }
+                Err(error) => return Err(error),
+            };
+            if original.1 != source.signature {
+                archive::damaged(
+                    &world,
+                    conversation,
+                    "session-events",
+                    &source.path,
+                    "session source changed before verification",
+                )?;
+                finished.push(source.identity);
+                continue;
+            }
+            verified.push((source, sequence, serde_json::to_vec(&original.0.event)?));
+        }
+        if !verified.is_empty() {
+            let matches = database
+                .read_background_now(|db| {
+                    let transaction = db.unchecked_transaction()?;
+                    let mut query = transaction.prepare_cached(
+                        "SELECT sequence=?3 AND body=?4 FROM session_events WHERE conversation=?1 AND identity=?2",
+                    )?;
+                    for (source, sequence, body) in &verified {
+                        if !query.query_row(
+                            params![conversation, source.identity, sequence.to_be_bytes().as_slice(), body],
+                            |row| row.get::<_, bool>(0),
+                        )? {
+                            return Ok(false);
+                        }
+                    }
+                    drop(query);
+                    transaction.commit()?;
+                    Ok(true)
+                })
+                .map_err(io::Error::other)?;
+            if !matches {
+                return Err(io::Error::other("session event differs from the reread original"));
+            }
+            crate::conversation_store::with_live_files(directory, || {
+                for (source, _, _) in &verified {
+                    archive::verified(&world, conversation, &source.path, &source.signature)?;
+                }
+                Ok(())
+            })?;
+            finished.extend(verified.into_iter().map(|(source, _, _)| source.identity));
+        }
+        legacy::finish(database, conversation, finished)?;
+    }
+    let sequence = directory.session_sequence();
+    match archive::fingerprint(&sequence) {
+        Ok(signature) => crate::conversation_store::with_live_files(directory, || {
+            archive::verified(&world, conversation, &sequence, &signature)
+        })?,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error),
+    }
     let scope = conversation.to_string();
-    database.write_now_at(Priority::Background,bytes,move |db| {
-        let mut insert=db.prepare_cached("INSERT INTO session_legacy(conversation,identity,sequenced,sequence,seconds,nanos,body) VALUES(?1,?2,?3,?4,?5,?6,?7)
-            ON CONFLICT(conversation,identity) DO UPDATE SET sequenced=excluded.sequenced,sequence=excluded.sequence,seconds=excluded.seconds,nanos=excluded.nanos,body=excluded.body
-            WHERE body!=excluded.body OR sequence!=excluded.sequence")?;
-        for (key,sequenced,sequence,seconds,nanos,body) in rows {insert.execute(params![scope,key,sequenced,sequence,seconds,nanos,body])?;}
-        Ok(())
-    }).map_err(io::Error::other)
+    database
+        .write_now_at(scheduler::priority(), 128, move |db| {
+            let latest: Option<Vec<u8>> =
+                db.query_row("SELECT max(sequence) FROM session_events WHERE conversation=?1", [&scope], |row| {
+                    row.get(0)
+                })?;
+            let latest = latest.map(sql::number).transpose()?.unwrap_or(0);
+            let reserved = sql::number(db.query_row(
+                "SELECT reserved FROM session_migration_state WHERE conversation=?1",
+                [&scope],
+                |row| row.get(0),
+            )?)?;
+            let prior = sql::head(db, &scope)?;
+            super::search::advance(db, &scope, latest)?;
+            sql::set_head(db, &scope, reserved.max(latest).max(prior.0), latest, true)
+        })
+        .map_err(io::Error::other)?;
+    legacy::cleanup(database, conversation)
 }

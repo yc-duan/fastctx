@@ -136,7 +136,7 @@ fn set_mode(
     let source = crate::profile::session::hash(text);
     let text = bounded(text, BLOCK_KEPT_BYTES);
     let fact = bounded(change.fact, FACT_BYTES);
-    let mut incoming = Block {
+    let incoming = Block {
         revision: 0,
         written_epoch: 0,
         source: source.clone(),
@@ -148,36 +148,49 @@ fn set_mode(
         full: change.full,
     };
     let key = name.to_string();
+    let withdraw = bodies.is_some() || (text.is_empty() && matches!(name, "project" | "map" | "history"));
     let empty = text.is_empty() && change.version.is_empty();
     super::records::commit(
         world,
         id,
         text.len() + fact.len() + 1024,
-        || {
+        |_| {
             if let Some(bodies) = bodies {
                 bodies.put(id, name, &source, &text);
                 bodies.put(id, &format!("{name}-fact"), &source, &fact);
             }
         },
         move |rows| {
-            let state: State = rows.get(super::records::STATE, "current")?.unwrap_or_default();
-            let old = rows.get::<Block>(super::records::BLOCKS, &key)?;
-            if old.as_ref().is_some_and(|old| {
-                old.source == incoming.source && old.version == incoming.version && old.transient == incoming.transient
-            }) || (old.is_none() && empty)
-            {
-                return Ok(());
+            if withdraw {
+                super::archived::mark(rows, &key)?;
             }
-            if old.is_none() && super::records::blocks(rows)?.len() >= BLOCK_COUNT {
-                return Err(fastctx_storage::Error::new(words::TOO_MANY));
-            }
-            incoming.revision = old.map_or(Ok(1), |old| {
-                old.revision.checked_add(1).ok_or_else(|| fastctx_storage::Error::new(words::REVISION_EXHAUSTED))
-            })?;
-            incoming.written_epoch = state.epoch;
-            rows.put(super::records::BLOCKS, &key, &incoming)
+            set_block(rows, &key, incoming, empty)
         },
     )
+}
+
+fn set_block(
+    rows: &crate::records::Rows<'_>,
+    key: &str,
+    mut incoming: Block,
+    empty: bool,
+) -> fastctx_storage::Result<()> {
+    let state: State = rows.get(super::records::STATE, "current")?.unwrap_or_default();
+    let old = rows.get::<Block>(super::records::BLOCKS, key)?;
+    if old.as_ref().is_some_and(|old| {
+        old.source == incoming.source && old.version == incoming.version && old.transient == incoming.transient
+    }) || (old.is_none() && empty)
+    {
+        return Ok(());
+    }
+    if old.is_none() && super::records::blocks(rows)?.len() >= BLOCK_COUNT {
+        return Err(fastctx_storage::Error::new(words::TOO_MANY));
+    }
+    incoming.revision = old.map_or(Ok(1), |old| {
+        old.revision.checked_add(1).ok_or_else(|| fastctx_storage::Error::new(words::REVISION_EXHAUSTED))
+    })?;
+    incoming.written_epoch = state.epoch;
+    rows.put(super::records::BLOCKS, key, &incoming)
 }
 
 pub(super) fn opening(
@@ -326,21 +339,34 @@ pub(super) fn acknowledge(world: &WorldDir, id: &ResidentId, receipt: &Receipt) 
     })
 }
 pub(super) fn migrate(node: &crate::Node, id: &ResidentId) -> io::Result<()> {
-    let blocks = super::records::read(&node.world, id, |_, blocks| Ok(blocks))?;
-    for name in ["plan", "skills"] {
-        let Some(block) = blocks.get(name) else { continue };
-        if block.transient {
-            continue;
-        }
-        set_memory(
-            node,
-            id,
-            name,
-            &block.text,
-            Change { by: block.by.as_ref(), version: &block.version, fact: &block.fact, full: block.full },
-        )?;
-    }
-    Ok(())
+    super::records::commit(
+        &node.world,
+        id,
+        4096,
+        |bodies: &Vec<(String, Block)>| {
+            for (name, block) in bodies {
+                node.context_bodies.put(id, name, &block.source, &block.text);
+                node.context_bodies.put(id, &format!("{name}-fact"), &block.source, &block.fact);
+            }
+        },
+        |rows| {
+            let mut bodies = Vec::new();
+            for name in ["plan", "skills"] {
+                super::archived::mark(rows, name)?;
+                if let Some(mut block) = rows.get::<Block>(super::records::BLOCKS, name)?
+                    && !block.transient
+                {
+                    bodies.push((name.to_string(), block.clone()));
+                    block.text.clear();
+                    block.fact.clear();
+                    block.transient = true;
+                    set_block(rows, name, block, false)?;
+                }
+            }
+            Ok(bodies)
+        },
+    )
+    .map(|_| ())
 }
 pub(super) fn initialize(world: &WorldDir, id: &ResidentId) -> io::Result<()> {
     exists(world, id)?;

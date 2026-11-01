@@ -31,7 +31,7 @@ struct Worker {
 }
 
 #[derive(Clone, Serialize, Deserialize)]
-struct Entry {
+pub(crate) struct Entry {
     scope: HubAccount,
     command: ControlLetter,
     order: u64,

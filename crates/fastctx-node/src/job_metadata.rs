@@ -1,6 +1,8 @@
 //! Node-owned job metadata is scoped to the full job incarnation. Supervisor
 //! records and byte streams remain files; a reused short job ID inherits nothing.
 
+mod legacy;
+
 use crate::records::{self, Rows, Source};
 use fastctx_storage::{Priority, Result};
 use fastctx_types::{layout::ConversationDir, run::JobRecord};
@@ -46,18 +48,24 @@ impl Job {
     pub(crate) fn prepare(
         &self,
         kind: &str,
-        source: impl FnOnce(&mut dyn FnMut(Source) -> io::Result<()>) -> io::Result<()>,
+        source: impl FnOnce(&mut dyn FnMut(Source) -> io::Result<()>) -> io::Result<()> + Send + 'static,
     ) -> io::Result<()> {
         records::ensure_each(&self.directory, &self.family(kind), source)
     }
+    pub(crate) fn prepare_file(
+        &self,
+        kind: &str,
+        path: PathBuf,
+        source: impl FnMut(&Path, &mut dyn FnMut(Source) -> io::Result<()>) -> io::Result<()> + Send + 'static,
+    ) -> io::Result<()> {
+        records::ensure_file(&self.directory, &self.family(kind), path, source)
+    }
     pub(crate) fn scalar(&self, kind: &str) -> io::Result<()> {
-        self.prepare(kind, |push| {
-            let path = self.record.with_extension(kind);
-            match std::fs::read(&path) {
-                Ok(bytes) => push(Source::new("value".into(), path, bytes)?),
-                Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
-                Err(error) => Err(error),
-            }
+        let path = self.record.with_extension(kind);
+        records::ensure_file(&self.directory, &self.family(kind), path, |path, push| {
+            let bytes = fastctx_platform::disk::read(path)?;
+            legacy::validate(path.extension().and_then(|kind| kind.to_str()).unwrap_or(""), &bytes)?;
+            push(Source::new("value".into(), path.to_path_buf(), bytes)?)
         })
     }
     pub(crate) fn read<T>(&self, kind: &str, action: impl FnOnce(&Rows<'_>, &str) -> Result<T>) -> io::Result<T> {
@@ -142,7 +150,7 @@ impl Job {
         loop {
             let prefix = self.prefix.clone();
             let count = records::write_at(&self.directory, Priority::Background, 4096, move |rows| {
-                Ok(rows.connection().execute("DELETE FROM conversation_records WHERE position IN (SELECT position FROM conversation_records WHERE conversation=?1 AND family>=?2 AND family<?3 LIMIT 64)",(rows.conversation(),&prefix,format!("{prefix}\u{10ffff}")))?)
+                Ok(rows.connection().execute("DELETE FROM conversation_records WHERE conversation=?1 AND position IN (SELECT position FROM conversation_records WHERE conversation=?1 AND family>=?2 AND family<?3 LIMIT 64)",(rows.conversation(),&prefix,format!("{prefix}\u{10ffff}")))?)
             })?;
             if count == 0 {
                 break;

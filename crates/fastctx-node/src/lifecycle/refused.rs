@@ -17,7 +17,7 @@ struct Refused {
     at: jiff::Timestamp,
 }
 
-fn prepare(directory: &fastctx_types::layout::ConversationDir) -> io::Result<()> {
+pub(crate) fn prepare(directory: &fastctx_types::layout::ConversationDir) -> io::Result<()> {
     crate::records::legacy::directory::<Refused>(directory, "host-refusals", &directory.book("host-refusals"))
 }
 pub(crate) fn contains(directory: &fastctx_types::layout::ConversationDir, input: &NoticeId) -> io::Result<bool> {

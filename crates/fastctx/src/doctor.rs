@@ -2,6 +2,23 @@
 
 #[derive(clap::Subcommand)]
 pub enum Doctor {
+    /// Export one stopped node's conversation before moving its directory.
+    ExportConversation {
+        /// The conversation directory's name.
+        conversation: String,
+        /// The source Fastctx root, containing world/.
+        #[arg(long)]
+        dir: std::path::PathBuf,
+    },
+    /// Pending conversation imports and rejected offers, with their explanations.
+    ConversationImports {
+        /// The Fastctx root, containing world/.
+        #[arg(long)]
+        dir: std::path::PathBuf,
+        /// Print structured diagnostics.
+        #[arg(long)]
+        json: bool,
+    },
     /// Calls being answered, waiting for admission, or still finishing.
     Calls {
         /// Print structured diagnostics.
@@ -19,6 +36,32 @@ pub enum Doctor {
 
 pub fn run(command: Doctor) -> anyhow::Result<()> {
     let (call, json) = match command {
+        Doctor::ExportConversation { conversation, dir } => {
+            let path = fastctx_node::export_conversation(&dir, &conversation)?;
+            println!("{}", path.display());
+            return Ok(());
+        }
+        Doctor::ConversationImports { dir, json } => {
+            let imports = fastctx_node::conversation_imports(&dir)?;
+            if json {
+                println!("{}", serde_json::to_string(&imports)?);
+            } else if imports.is_empty() {
+                println!("No pending or rejected conversation imports.");
+            } else {
+                for import in imports {
+                    println!(
+                        "{}: {}{}",
+                        import.conversation,
+                        import.state,
+                        import.reason.map(|reason| format!(" — {reason}")).unwrap_or_default()
+                    );
+                    if let Some(archive) = import.archive {
+                        println!("  {}", archive.display());
+                    }
+                }
+            }
+            return Ok(());
+        }
         Doctor::Calls { json } => (fastctx_types::Call::DoctorCalls, json),
         Doctor::Readings { json } => (fastctx_types::Call::DoctorReadings, json),
     };

@@ -141,3 +141,10 @@ pub fn open_with(options: &OpenOptions, path: impl AsRef<Path>) -> io::Result<Fi
     blocks();
     options.open(path)
 }
+
+/// Creates another name for the same file, with the same role check as other IO.
+#[track_caller]
+pub fn hard_link(from: impl AsRef<Path>, to: impl AsRef<Path>) -> io::Result<()> {
+    blocks();
+    fs::hard_link(from, to)
+}

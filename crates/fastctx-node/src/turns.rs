@@ -40,7 +40,21 @@ fn deleted(id: &ResidentId) -> std::io::Error {
 
 /// Something a host reported about a resident's session.
 /// Applies a report before the source acknowledges or deletes it.
-pub async fn apply(node: &Arc<Node>, id: &ResidentId, mut event: SessionEvent) -> std::io::Result<()> {
+pub async fn apply(node: &Arc<Node>, id: &ResidentId, event: SessionEvent) -> std::io::Result<()> {
+    static WORKERS: std::sync::LazyLock<Arc<tokio::sync::Semaphore>> = std::sync::LazyLock::new(|| {
+        Arc::new(tokio::sync::Semaphore::new(std::thread::available_parallelism().map_or(2, usize::from).clamp(2, 8)))
+    });
+    let permit = WORKERS.clone().acquire_owned().await.map_err(std::io::Error::other)?;
+    let (node, id, runtime) = (node.clone(), id.clone(), tokio::runtime::Handle::current());
+    fastctx_platform::task::spawn_blocking(move || {
+        let _permit = permit;
+        runtime.block_on(apply_inner(&node, &id, event))
+    })
+    .await
+    .map_err(std::io::Error::other)?
+}
+
+async fn apply_inner(node: &Arc<Node>, id: &ResidentId, mut event: SessionEvent) -> std::io::Result<()> {
     let Some((about, _)) = node.residents.about(id) else { return Err(deleted(id)) };
     if let Happened::Heard { message: Some(message), .. } = &event.happened
         && (about.host.agent.as_str() == "codex" && about.world_managed() && message.detail["type"] == "userMessage"
@@ -221,7 +235,7 @@ pub async fn apply(node: &Arc<Node>, id: &ResidentId, mut event: SessionEvent) -
                     event = crate::turn_evidence::observe(node, id, event).await?;
                     // What waited to ride with the next turn goes into this one.
                     let (node, id) = (node.clone(), id.clone());
-                    tokio::spawn(async move { crate::speech::along(&node, &id).await });
+                    fastctx_platform::task::spawn(async move { crate::speech::along(&node, &id).await });
                     key
                 }
                 Happened::Finished { .. } if question_key.is_some() => question_key.expect("known question"),
@@ -355,7 +369,7 @@ async fn finish_at(
     }
     let (working, resident, identity, ending) = (node.clone(), id.clone(), about.clone(), end.clone());
     let accounting_turn = turn.to_string();
-    let usage = tokio::task::spawn_blocking(move || {
+    let usage = fastctx_platform::task::spawn_blocking(move || {
         crate::usage::terminal_record(
             &working,
             &resident,
@@ -434,7 +448,7 @@ async fn keep_answers(
         })
         .collect();
     let directory = directory.clone();
-    tokio::task::spawn_blocking(move || {
+    fastctx_platform::task::spawn_blocking(move || {
         for answer in &answers {
             crate::inbox::owe(&directory, answer)?;
         }
@@ -546,7 +560,7 @@ pub async fn unresolved(
         }
     })?;
     let (node, id, directory) = (node.clone(), id.clone(), directory.clone());
-    tokio::spawn(async move { pay(&node, &id, &directory).await });
+    fastctx_platform::task::spawn(async move { pay(&node, &id, &directory).await });
     Ok(())
 }
 
@@ -613,7 +627,7 @@ fn health_event(
         crate::inbox::owe(&directory, &Owing { to: reader, delivery: Delivery { id, at, notice } })?;
     }
     let (node, id) = (node.clone(), id.clone());
-    tokio::spawn(async move { pay(&node, &id, &directory).await });
+    fastctx_platform::task::spawn(async move { pay(&node, &id, &directory).await });
     Ok(())
 }
 
@@ -627,7 +641,7 @@ pub async fn recover(node: &Arc<Node>, unfinished: Vec<(ResidentId, String)>) {
         if let Err(error) = recover_one(node, &id, &turn).await {
             node.log.line(format_args!("recovering {id}'s turn {turn}; will retry: {error}"));
             let node = node.clone();
-            tokio::spawn(async move {
+            fastctx_platform::task::spawn(async move {
                 let (mut again, mut told) = (crate::again::Again::default(), error.to_string());
                 loop {
                     tokio::time::sleep(again.next().max(std::time::Duration::from_secs(1))).await;

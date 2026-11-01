@@ -53,6 +53,7 @@ mod devices;
 mod directory_changes;
 mod ending;
 pub use ending::flush_log;
+mod conversation_store;
 mod facts;
 mod features;
 mod file_events;
@@ -122,6 +123,7 @@ mod received;
 mod record_access;
 mod record_database;
 mod record_gates;
+mod record_migration;
 mod record_ownership;
 mod record_payloads;
 mod records;
@@ -198,6 +200,7 @@ pub(crate) struct Node {
     world: WorldDir,
     database: fastctx_storage::Database,
     book_database: fastctx_storage::Database,
+    record_migration: record_migration::Service,
     controls_due: std::sync::Mutex<std::collections::HashMap<fastctx_types::ResidentId, bool>>,
     /// This program's own copy under the World, which everything the node
     /// starts from itself runs from (`own.rs`).
@@ -683,55 +686,14 @@ pub async fn run_prepared(
     );
     let claude = claude::Claude::new(&world)?;
     let memory_room = memory_room::Room::new(&world);
-    let schema = composer::SCHEMA;
-    let database = fastctx_storage::Database::open_or_unavailable(&world.path().join("node.sqlite3"), schema, |db| {
-        fastctx_storage::versions::apply(
-            db,
-            "node.record-payloads",
-            &[fastctx_storage::versions::Migration { version: 1, sql: record_payloads::SCHEMA }],
-        )?;
-        fastctx_storage::versions::apply(
-            db,
-            "node.record-maps",
-            &[fastctx_storage::versions::Migration { version: 1, sql: records::maps::SCHEMA }],
-        )?;
-        fastctx_storage::versions::apply(
-            db,
-            "node.terminals",
-            &[fastctx_storage::versions::Migration { version: 1, sql: delivery::terminals::SCHEMA }],
-        )?;
-        fastctx_storage::versions::apply(
-            db,
-            "node.run-facts",
-            &[
-                fastctx_storage::versions::Migration { version: 1, sql: run_facts::SCHEMA },
-                fastctx_storage::versions::Migration { version: 2, sql: run_facts::SCHEMA },
-            ],
-        )?;
-        fastctx_storage::versions::apply(
-            db,
-            "node.session-events",
-            &[
-                fastctx_storage::versions::Migration { version: 1, sql: session_record::SCHEMA },
-                fastctx_storage::versions::Migration { version: 2, sql: session_record::SCHEMA },
-            ],
-        )?;
-        fastctx_storage::versions::apply(
-            db,
-            "node.records",
-            &[fastctx_storage::versions::Migration { version: 1, sql: records::SCHEMA }],
-        )?;
-        fastctx_storage::versions::apply(
-            db,
-            "node.input-membership",
-            &[fastctx_storage::versions::Migration { version: 1, sql: inbox::presence::SCHEMA }],
-        )?;
-        fastctx_storage::versions::apply(
-            db,
-            "node.goal-projection",
-            &[fastctx_storage::versions::Migration { version: 1, sql: goals::SCHEMA }],
-        )
-    });
+    let opening = world.clone();
+    let (database, record_migration) = fastctx_platform::task::spawn_blocking(move || {
+        let database = record_database::open(&opening);
+        let service = record_database::register(&opening, &database)?;
+        Ok::<_, std::io::Error>((database, service))
+    })
+    .await
+    .context("opening the node record database")??;
     if let Some(error) = database.fault() {
         log.line(format_args!("node record storage unavailable: {error}"));
     }
@@ -740,7 +702,6 @@ pub async fn run_prepared(
             "node record storage was damaged and set aside; what could be read was salvaged:\n{report}"
         ));
     }
-    record_database::register(&world, &database);
     let book_database = fastctx_storage::Database::open_or_unavailable(&world.path().join("book.sqlite3"), "", |db| {
         fastctx_storage::versions::apply(
             db,
@@ -763,6 +724,7 @@ pub async fn run_prepared(
         world,
         database,
         book_database,
+        record_migration,
         controls_due: Default::default(),
         fastctx,
         machine: RwLock::new(machine),
@@ -864,11 +826,6 @@ pub async fn run_prepared(
         lifetime,
         started: jiff::Timestamp::now(),
     });
-    if node.database.fault().is_none() {
-        activity_book::start(&node);
-        context::migrate(&node);
-        letters::migrate(&node);
-    }
     // The third version's projects are kept as this computer's own, to be
     // carried into its account at its hub.
     let (kept, problems) =
@@ -887,10 +844,6 @@ pub async fn run_prepared(
         node.log.line(format_args!("on the hub {} ({}) as {}", membership.hub_name, membership.id, membership.name));
         world::start(&node, membership).context("starting a link to a hub")?;
     }
-    if node.database.fault().is_none() {
-        on_stop::resume(&node).await;
-        run_stops::resume(&node);
-    }
     codex::listen(node.clone(), codex_heard.events);
     logins::limits::listen(node.clone(), codex_heard.limits);
     logins::heard::listen(node.clone(), codex_heard.said);
@@ -900,8 +853,9 @@ pub async fn run_prepared(
         retention::start(&node).context("starting command artifact retention")?;
     }
     let recovering = node.clone();
-    tokio::spawn(async move {
+    fastctx_platform::task::spawn(async move {
         let node = recovering;
+        node.record_migration.wait_started().await;
         startup::recover(&node).await;
         node.effects_ready.store(true, std::sync::atomic::Ordering::Release);
         node.effects_changed.notify_waiters();
@@ -915,7 +869,6 @@ pub async fn run_prepared(
         composer::keep(&node);
         lifecycle::start(&node);
         recovery::start(&node, jobs_reconciled);
-        timers::start(&node);
         // Goals and sentinels are not offered in a release yet: what of them is
         // kept stays as it is, driven by nothing.
         if fastctx_platform::preview() {
@@ -939,7 +892,8 @@ pub async fn run_prepared(
         forget::start(&node);
     });
     let jobs_node = node.clone();
-    tokio::spawn(async move {
+    fastctx_platform::task::spawn(async move {
+        jobs_node.record_migration.wait_started().await;
         if jobs_node.database.fault().is_some() {
             return;
         }
@@ -1009,7 +963,7 @@ pub async fn run_prepared(
                 }
                 continue;
             },
-            accepted = listener.accept() => accepted,
+            accepted = record_migration::after_open(&node, listener.accept()) => accepted,
         };
         match accepted {
             Ok(connection) => {
@@ -1036,6 +990,19 @@ pub async fn run_prepared(
 
 #[cfg(feature = "storage-drill")]
 #[doc(hidden)]
-pub use storage_drill::run as record_drill;
+pub use storage_drill::{migration as record_migration_drill, run as record_drill, transfer as record_transfer_drill};
 #[cfg(feature = "storage-drill")]
 mod storage_drill;
+
+pub use conversation_store::transfer::status::ConversationImport;
+
+/// Lists durable import progress and rejected offers without modifying the node.
+pub fn conversation_imports(root: &std::path::Path) -> std::io::Result<Vec<ConversationImport>> {
+    conversation_store::transfer::status::list(root)
+}
+
+/// Exports every conversation-owned table into its directory while the node is
+/// stopped. Copy that directory with its host records before starting the target.
+pub fn export_conversation(root: &std::path::Path, conversation: &str) -> std::io::Result<std::path::PathBuf> {
+    conversation_store::transfer::exporting::export(root, conversation)
+}

@@ -15,6 +15,17 @@ struct Requested {
     at: jiff::Timestamp,
 }
 
+/// Validates the released stop record before its source is archived.
+pub(crate) fn validate_legacy(path: &std::path::Path, bytes: &[u8]) -> io::Result<()> {
+    let requested: Requested = serde_json::from_slice(bytes)?;
+    if path.file_stem().and_then(|name| name.to_str())
+        != Some(fastctx_hands::files::content_hash(requested.turn.as_bytes()).as_str())
+    {
+        return Err(io::Error::new(io::ErrorKind::InvalidData, "stop record belongs to another turn"));
+    }
+    Ok(())
+}
+
 fn path(node: &Node, resident: &ResidentId, turn: &str) -> std::path::PathBuf {
     node.world
         .conversation(resident)

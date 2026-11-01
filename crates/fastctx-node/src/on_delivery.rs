@@ -124,7 +124,7 @@ fn release<K: Eq + std::hash::Hash>(counts: &mut HashMap<K, usize>, key: &K) {
 }
 
 #[derive(Serialize, Deserialize)]
-struct Parked {
+pub(crate) struct Parked {
     to: ResidentId,
     delivery: Delivery,
 }
@@ -287,6 +287,23 @@ fn local_owners(node: &Node, to: &ResidentId) -> Vec<Address> {
 
 /// Moves pre-upgrade held letters into the recoverable conversation queues.
 pub(crate) fn resume(node: &Arc<Node>) {
+    let node = node.clone();
+    fastctx_platform::task::spawn(async move {
+        let mut again = crate::again::Again::default();
+        loop {
+            let recovering = node.clone();
+            match fastctx_platform::task::spawn_blocking(move || resume_once(&recovering)).await {
+                Ok(true) => break,
+                Ok(false) => {}
+                Err(error) => node.log.line(format_args!("restoring held completions: {error}")),
+            }
+            tokio::time::sleep(again.next()).await;
+        }
+    });
+}
+
+fn resume_once(node: &Arc<Node>) -> bool {
+    let mut complete = true;
     let result = (|| -> io::Result<()> {
         for directory in node.world.book_directories("on-deliveries")? {
             for path in items::entries(&directory, Some("json"))? {
@@ -301,6 +318,7 @@ pub(crate) fn resume(node: &Arc<Node>) {
                     items::delete(&path)
                 })();
                 if let Err(error) = result {
+                    complete = false;
                     node.log.line(format_args!("migrating held completion {}: {error}", path.display()));
                 }
             }
@@ -308,8 +326,10 @@ pub(crate) fn resume(node: &Arc<Node>) {
         Ok(())
     })();
     if let Err(error) = result {
+        complete = false;
         node.log.line(format_args!("finding held completions: {error}"));
     }
+    complete
 }
 
 /// Both the original completion id and its authenticated delivery aliases

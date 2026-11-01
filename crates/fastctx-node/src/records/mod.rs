@@ -4,12 +4,16 @@
 
 #[cfg(feature = "storage-drill")]
 pub(crate) mod drill;
+mod item_legacy;
 pub(crate) mod items;
 pub(crate) mod legacy;
 pub(crate) mod maps;
 pub(crate) mod metadata;
+mod metadata_legacy;
 mod migration;
-pub(crate) use migration::{Source, ensure_each};
+pub(crate) mod positions;
+pub(crate) use migration::proofs::SCHEMA as MIGRATION_PROOF_SCHEMA;
+pub(crate) use migration::{Source, ensure_each, ensure_file, ensure_step};
 
 use fastctx_storage::{
     Database, Error, Priority, Result,
@@ -22,17 +26,24 @@ use std::io;
 pub(crate) const SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS context_projection_dirty(conversation TEXT PRIMARY KEY) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS conversation_records (
-    position INTEGER PRIMARY KEY AUTOINCREMENT,
+    position INTEGER NOT NULL,
     conversation TEXT NOT NULL, family TEXT NOT NULL, identity TEXT NOT NULL,
     body BLOB NOT NULL, modified TEXT NOT NULL, expires INTEGER, arrival BLOB, category TEXT,
-    UNIQUE(conversation,family,identity)
-);
+    PRIMARY KEY(conversation,position), UNIQUE(conversation,family,identity)
+) WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS conversation_record_positions (
+    conversation TEXT NOT NULL, stream TEXT NOT NULL, position INTEGER NOT NULL,
+    PRIMARY KEY(conversation,stream)
+) WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS conversation_records_queue ON conversation_records(conversation,family,category,arrival,identity);
 CREATE INDEX IF NOT EXISTS conversation_records_category ON conversation_records(conversation,family,category,identity);
 CREATE INDEX IF NOT EXISTS conversation_records_order ON conversation_records(conversation,family,position);
 CREATE INDEX IF NOT EXISTS conversation_records_arrival ON conversation_records(conversation,family,arrival,identity);
 CREATE INDEX IF NOT EXISTS conversation_records_action ON conversation_records(conversation,json_extract(body,'$.hand'),json_extract(body,'$.result'),position) WHERE family='actions';
 CREATE INDEX IF NOT EXISTS conversation_records_message ON conversation_records(conversation,json_extract(body,'$.kind'),json_extract(body,'$.turn')) WHERE family='messages';
+CREATE UNIQUE INDEX IF NOT EXISTS conversation_timer_id ON conversation_records(identity) WHERE family='timers';
+CREATE INDEX IF NOT EXISTS conversation_timers_due ON conversation_records(arrival,identity) WHERE family='timers';
+CREATE UNIQUE INDEX IF NOT EXISTS conversation_control_request_id ON conversation_records(identity) WHERE family='control-requests';
 CREATE INDEX IF NOT EXISTS conversation_records_expiry ON conversation_records(expires) WHERE expires IS NOT NULL;
 CREATE TABLE IF NOT EXISTS conversation_record_links (
     conversation TEXT NOT NULL,family TEXT NOT NULL,member TEXT NOT NULL,identity TEXT NOT NULL,
@@ -103,9 +114,6 @@ pub(crate) fn write_then_at<T: Send + 'static>(
     if let Some(error) = database.fault() {
         return Err(io::Error::other(error.clone()));
     }
-    if !directory.path().try_exists()? {
-        fastctx_platform::ensure_private_dir(directory.path())?;
-    }
 
     database
         .write_now_then_at(
@@ -117,7 +125,10 @@ pub(crate) fn write_then_at<T: Send + 'static>(
         .map_err(io::Error::other)
 }
 
-impl Rows<'_> {
+impl<'a> Rows<'a> {
+    pub(crate) fn scoped<'b>(&'b self, conversation: &'b str) -> Rows<'b> {
+        Rows { connection: self.connection, conversation }
+    }
     pub(crate) fn connection(&self) -> &Connection {
         self.connection
     }
@@ -146,8 +157,9 @@ impl Rows<'_> {
     }
     pub(crate) fn put_raw(&self, family: &str, key: &str, body: &[u8]) -> Result<()> {
         let category = std::path::Path::new(key).extension().and_then(|extension| extension.to_str()).unwrap_or("");
-        let changed=self.connection.execute("INSERT INTO conversation_records(conversation,family,identity,body,modified,category) VALUES(?1,?2,?3,?4,?5,?6)
-            ON CONFLICT(conversation,family,identity) DO UPDATE SET body=excluded.body,modified=excluded.modified,category=excluded.category WHERE conversation_records.body!=excluded.body",(self.conversation,family,key,body,jiff::Timestamp::now().to_string(),category))?;
+        let position = positions::next(self.connection, self.conversation, "records")?;
+        let changed=self.connection.execute("INSERT INTO conversation_records(conversation,family,identity,body,modified,category,position) VALUES(?1,?2,?3,?4,?5,?6,?7)
+            ON CONFLICT(conversation,family,identity) DO UPDATE SET body=excluded.body,modified=excluded.modified,category=excluded.category WHERE conversation_records.body!=excluded.body",(self.conversation,family,key,body,jiff::Timestamp::now().to_string(),category,position))?;
         if changed != 0 {
             self.changed(family)?;
         }
@@ -192,10 +204,11 @@ impl Rows<'_> {
         expires: Option<jiff::Timestamp>,
     ) -> Result<()> {
         let bytes = encode(value)?;
-        let changed=self.connection.execute("INSERT INTO conversation_records(conversation,family,identity,body,modified,expires) VALUES(?1,?2,?3,?4,?5,?6)
+        let position = positions::next(self.connection, self.conversation, "records")?;
+        let changed=self.connection.execute("INSERT INTO conversation_records(conversation,family,identity,body,modified,expires,position) VALUES(?1,?2,?3,?4,?5,?6,?7)
             ON CONFLICT(conversation,family,identity) DO UPDATE SET body=excluded.body,modified=excluded.modified,expires=excluded.expires
             WHERE conversation_records.body!=excluded.body OR conversation_records.expires IS NOT excluded.expires",
-            params![self.conversation,family,key,bytes,jiff::Timestamp::now().to_string(),expires.map(|at|at.as_millisecond())])?;
+            params![self.conversation,family,key,bytes,jiff::Timestamp::now().to_string(),expires.map(|at|at.as_millisecond()),position])?;
         if changed != 0 {
             self.changed(family)?;
         }

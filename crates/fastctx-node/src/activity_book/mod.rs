@@ -4,8 +4,11 @@
 //! kept a year. Its independent database keeps maintenance off the state writer.
 
 mod incremental;
+mod legacy;
 mod maintenance;
 mod migrate;
+#[cfg(feature = "storage-drill")]
+pub(crate) mod migration_drill;
 mod query;
 pub(crate) use incremental::{Cursor, observe, segment};
 pub(crate) use maintenance::fold;
@@ -67,6 +70,7 @@ CREATE TABLE IF NOT EXISTS book_hour (
     files INTEGER NOT NULL,
     PRIMARY KEY (at, session, agent, held, account)
 ) WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS book_migration_proofs(identity TEXT PRIMARY KEY,archive TEXT NOT NULL) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS book_imports(kind TEXT NOT NULL,identity TEXT NOT NULL,PRIMARY KEY(kind,identity)) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS book_visits(deed TEXT NOT NULL,machine TEXT NOT NULL,PRIMARY KEY(deed,machine)) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS book_cursors(deed TEXT PRIMARY KEY,body BLOB NOT NULL) WITHOUT ROWID;

@@ -32,9 +32,10 @@ pub(super) fn keep_in(rows: &crate::records::Rows<'_>, proposed: Frozen) -> fast
     Ok(proposed)
 }
 
-pub(super) fn prepare(conversation: &ConversationDir) -> io::Result<()> {
-    crate::records::ensure_each(conversation, "goal-reports", |push| {
-        let entries = match std::fs::read_dir(directory(conversation)) {
+pub(crate) fn prepare(conversation: &ConversationDir) -> io::Result<()> {
+    let folder = directory(conversation);
+    crate::records::ensure_each(conversation, "goal-reports", move |push| {
+        let entries = match fastctx_platform::disk::read_dir(&folder) {
             Ok(entries) => entries,
             Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
             Err(error) => return Err(error),
@@ -46,14 +47,19 @@ pub(super) fn prepare(conversation: &ConversationDir) -> io::Result<()> {
             {
                 continue;
             }
-            let bytes = std::fs::read(&path)?;
-            let frozen: Frozen = serde_json::from_slice(&bytes)?;
-            if path.file_stem().and_then(|stem| stem.to_str()) != Some(frozen.report.id.as_str()) {
-                return Err(io::Error::other("goal report identity differs from its filename"));
-            }
-            push(
-                crate::records::Source::new(frozen.report.id.to_string(), path, bytes)?.ordered(frozen.report.ended_at),
-            )?;
+            crate::record_migration::file(&path, push, |push| {
+                let bytes = fastctx_platform::disk::read(&path)?;
+                let frozen: Frozen = serde_json::from_slice(&bytes)?;
+                if path.file_stem().and_then(|stem| stem.to_str()) != Some(frozen.report.id.as_str()) {
+                    return Err(crate::record_migration::errors::invalid(
+                        "goal report identity differs from its filename",
+                    ));
+                }
+                push(
+                    crate::records::Source::new(frozen.report.id.to_string(), path.clone(), bytes)?
+                        .ordered(frozen.report.ended_at),
+                )
+            })?;
         }
         Ok(())
     })
@@ -76,14 +82,16 @@ pub(crate) fn recent(conversation: &ConversationDir) -> io::Result<Vec<ReportSum
         // The public summary promises a readable artifact. These files can be
         // regenerated from SQL and are never read as authoritative records.
         let path = exports.join(format!("{id}.json"));
-        let matches = match std::fs::read(&path) {
+        let matches = match fastctx_platform::disk::read(&path) {
             Ok(old) => old == bytes,
             Err(error) if error.kind() == io::ErrorKind::NotFound => false,
             Err(error) => return Err(error),
         };
         if !matches {
-            fastctx_platform::ensure_private_dir(&exports)?;
-            fastctx_platform::publish(&path, &bytes, fastctx_platform::Permissions::Private)?;
+            crate::conversation_store::with_live_files(conversation, || {
+                fastctx_platform::ensure_private_dir(&exports)?;
+                fastctx_platform::publish(&path, &bytes, fastctx_platform::Permissions::Private)
+            })?;
         }
         reports.push(ReportSummary {
             id: report.id,

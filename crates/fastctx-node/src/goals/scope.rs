@@ -28,7 +28,7 @@ fn pinned_at_now(directory: &fastctx_types::layout::ConversationDir) -> Result<O
     crate::records::read(directory, |rows| rows.get("goal-account", "current"))
         .map_err(|error| Failure::new(error.to_string()))
 }
-fn initialize(directory: &fastctx_types::layout::ConversationDir) -> std::io::Result<()> {
+pub(crate) fn initialize(directory: &fastctx_types::layout::ConversationDir) -> std::io::Result<()> {
     crate::records::legacy::single::<HubAccount>(
         directory,
         "goal-account",

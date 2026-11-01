@@ -29,6 +29,14 @@ struct Observed {
     revision: u64,
 }
 
+pub(crate) fn prepare(directory: &fastctx_types::layout::ConversationDir) -> io::Result<()> {
+    crate::records::legacy::single::<Observed>(
+        directory,
+        "native-context",
+        &directory.path().join("codex-context-observed.json"),
+    )
+}
+
 pub(crate) async fn observe(node: &Arc<Node>, id: &ResidentId) -> Result<(), Failure> {
     let Some((about, _)) = node.residents.about(id) else { return Ok(()) };
     // Only a native thread the user brought in is followed: the World reads
@@ -51,8 +59,7 @@ pub(crate) async fn observe(node: &Arc<Node>, id: &ResidentId) -> Result<(), Fai
     let (node_read, id_read) = (node.clone(), id.clone());
     let result = tokio::task::spawn_blocking(move || -> io::Result<Observer> {
         let directory = node_read.world.conversation(&id_read);
-        let observed_path = directory.path().join("codex-context-observed.json");
-        crate::records::legacy::single::<Observed>(&directory, "native-context", &observed_path)?;
+        prepare(&directory)?;
         let previous: Option<Observed> =
             crate::records::read(&directory, |rows| rows.get("native-context", "current"))?;
         let path_changed = observer.as_ref().is_some_and(|observer| observer.path != path);

@@ -2152,7 +2152,11 @@ async fn machines(
                 here.iter().cloned().chain(others.iter().cloned()).collect(),
             )
             .await;
-            crate::scratch::described(node, id, paths.clone()).map_err(|error| Failure::new(error.to_string()))?;
+            let (writing, recipient, observed) = (node.clone(), id.clone(), paths.clone());
+            fastctx_platform::task::spawn_blocking(move || crate::scratch::described(&writing, &recipient, observed))
+                .await
+                .map_err(|error| Failure::new(error.to_string()))?
+                .map_err(crate::record_migration::failure)?;
             paths
         }
         None => Default::default(),

@@ -4,9 +4,7 @@ use super::{HostEvent, Node};
 use crate::records::{self, Source};
 use fastctx_storage::{Priority, rusqlite::OptionalExtension};
 use fastctx_types::layout::ConversationDir;
-use sha2::{Digest, Sha256};
 use std::{
-    collections::HashSet,
     io::{self, BufRead},
     path::Path,
 };
@@ -21,66 +19,68 @@ fn scope(node: &Node, thread: &str) -> io::Result<ConversationDir> {
         .ok_or_else(|| io::Error::other("the host thread has no conversation"))?;
     Ok(node.world.conversation(&id))
 }
-fn prepare(node: &Node, thread: &str) -> io::Result<(ConversationDir, String)> {
+pub(crate) fn prepare(node: &Node, thread: &str) -> io::Result<(ConversationDir, String)> {
     let directory = scope(node, thread)?;
     let family = family(thread);
-    records::ensure_each(&directory, &family, |push| {
-        let current = directory.books().join("host-reports.json");
-        let legacy = node
-            .world
-            .path()
-            .join("codex-reports")
-            .join(format!("{}.json", crate::speech::fixed_id("thread", &[thread])));
-        let mut seen = HashSet::<[u8; 32]>::new();
-        let mut ordinal = 0u64;
-        let mut first = true;
-        for path in [legacy.clone(), current.clone()] {
-            if !path.try_exists()? {
-                continue;
-            }
-            if records::legacy::field::<String>(&path, "thread")?.as_deref() != Some(thread) {
-                return Err(io::Error::other(format!("{} belongs to another thread", path.display())));
-            }
-            records::legacy::array::<HostEvent>(&path, Some("events"), &mut |event| {
-                let body = serde_json::to_vec(&event)?;
-                let hash = Sha256::digest(&body).into();
-                let new = seen.insert(hash);
-                if first || new {
-                    push(Source::new(format!("legacy-{ordinal:020}"), path.clone(), body)?)?;
+    let current = directory.books().join("host-reports.json");
+    let legacy =
+        node.world.path().join("codex-reports").join(format!("{}.json", crate::speech::fixed_id("thread", &[thread])));
+    let (thread, log) = (thread.to_string(), node.log.clone());
+    records::ensure_each(&directory, &family, move |push| {
+        let first = if fastctx_platform::disk::exists(&legacy)? || crate::record_migration::files::was_seen(&legacy)? {
+            0
+        } else {
+            1
+        };
+        for (index, path) in [legacy.clone(), current.clone()].into_iter().enumerate() {
+            crate::record_migration::file(&path, push, |push| {
+                if records::legacy::field::<String>(&path, "thread")?.as_deref() != Some(&thread) {
+                    return Err(io::Error::new(io::ErrorKind::InvalidData, "legacy reports belong to another thread"));
+                }
+                let mut ordinal = 0u64;
+                records::legacy::array::<Box<serde_json::value::RawValue>>(&path, Some("events"), &mut |event| {
+                    records::legacy::raw::validate::<HostEvent>(&event)?;
                     ordinal += 1;
+                    push(
+                        Source::new(
+                            format!("legacy-{index}-{ordinal:020}"),
+                            path.clone(),
+                            event.get().as_bytes().to_vec(),
+                        )?
+                        .content_key(index != first)?,
+                    )
+                })
+            })?;
+        }
+        for (index, path) in [current.with_extension("jsonl"), legacy.with_extension("jsonl")].into_iter().enumerate() {
+            crate::record_migration::file(&path, push, |push| {
+                let mut reader = io::BufReader::new(fastctx_platform::disk::open(&path)?);
+                let mut line = Vec::new();
+                let mut ordinal = 0u64;
+                loop {
+                    line.clear();
+                    if reader.read_until(b'\n', &mut line)? == 0 {
+                        break;
+                    }
+                    let _event: HostEvent = match serde_json::from_slice(&line) {
+                        Ok(event) => event,
+                        Err(_) if line.last() != Some(&b'\n') => {
+                            log.line(format_args!(
+                                "an interrupted host report remains preserved at {}",
+                                path.display()
+                            ));
+                            break;
+                        }
+                        Err(error) => return Err(io::Error::new(io::ErrorKind::InvalidData, error)),
+                    };
+                    ordinal += 1;
+                    push(
+                        Source::new(format!("legacy-journal-{index}-{ordinal:020}"), path.clone(), line.clone())?
+                            .content_key(true)?,
+                    )?;
                 }
                 Ok(())
             })?;
-            first = false;
-        }
-        for path in [current.with_extension("jsonl"), legacy.with_extension("jsonl")] {
-            let file = match std::fs::File::open(&path) {
-                Ok(file) => file,
-                Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
-                Err(error) => return Err(error),
-            };
-            let mut reader = io::BufReader::new(file);
-            let mut line = Vec::new();
-            loop {
-                line.clear();
-                if reader.read_until(b'\n', &mut line)? == 0 {
-                    break;
-                }
-                let event: HostEvent = match serde_json::from_slice(&line) {
-                    Ok(event) => event,
-                    Err(_) if line.last() != Some(&b'\n') => {
-                        node.log
-                            .line(format_args!("an interrupted host report remains preserved at {}", path.display()));
-                        break;
-                    }
-                    Err(error) => return Err(io::Error::other(format!("{}: {error}", path.display()))),
-                };
-                let body = serde_json::to_vec(&event)?;
-                if seen.insert(Sha256::digest(&body).into()) {
-                    push(Source::new(format!("legacy-{ordinal:020}"), path.clone(), body)?)?;
-                    ordinal += 1;
-                }
-            }
         }
         Ok(())
     })?;
@@ -143,20 +143,23 @@ pub(crate) fn pending(directory: &ConversationDir) -> io::Result<bool> {
 pub(super) fn discard_legacy(node: &Node) -> io::Result<()> {
     let root = node.world.path().join("codex-reports");
     for path in crate::retention::entries(&root)? {
-        if path.extension().is_some_and(|ext| ext == "json") {
-            let thread = records::legacy::field::<String>(&path, "thread")?
-                .ok_or_else(|| io::Error::other("legacy reports have no thread"))?;
-            if node.residents.resident_of_thread(&thread).is_some() {
-                continue;
-            }
-        } else if path.extension().is_some_and(|ext| ext == "jsonl") && claimed_legacy(node, &path) {
+        if !path.extension().is_some_and(|ext| ext == "json" || ext == "jsonl") {
             continue;
         }
-        std::fs::remove_file(path)?;
+        if claimed_legacy(node, &path) {
+            continue;
+        }
+        crate::record_migration::archive::damaged(
+            node.world.path(),
+            "@node",
+            "host-reports",
+            &path,
+            "no conversation owns these legacy reports; they were not imported",
+        )?;
     }
     Ok(())
 }
-fn claimed_legacy(node: &Node, path: &Path) -> bool {
+pub(crate) fn claimed_legacy(node: &Node, path: &Path) -> bool {
     node.residents.everyone().filter_map(|resident| resident.about.session).any(|thread| {
         path.file_stem().and_then(|s| s.to_str()) == Some(crate::speech::fixed_id("thread", &[&thread]).as_str())
     })
@@ -170,7 +173,7 @@ pub(super) fn delete(directory: &ConversationDir, thread: &str) -> io::Result<()
     loop {
         let family = family.clone();
         let count = records::write_at(directory, Priority::Background, 4096, move |rows| {
-            Ok(rows.connection().execute("DELETE FROM conversation_records WHERE position IN (SELECT position FROM conversation_records WHERE conversation=?1 AND family=?2 LIMIT 64)",(rows.conversation(),family))?)
+            Ok(rows.connection().execute("DELETE FROM conversation_records WHERE conversation=?1 AND position IN (SELECT position FROM conversation_records WHERE conversation=?1 AND family=?2 LIMIT 64)",(rows.conversation(),family))?)
         })?;
         if count == 0 {
             return Ok(());

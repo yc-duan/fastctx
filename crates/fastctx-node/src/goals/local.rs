@@ -58,10 +58,13 @@ pub(super) struct PreparedBridge {
 }
 impl PreparedBridge {
     fn prepare(directory: &ConversationDir, bridge: HostBridge) -> io::Result<Self> {
+        Self::prepare_at(directory, bridge, Priority::Interactive)
+    }
+    fn prepare_at(directory: &ConversationDir, bridge: HostBridge, priority: Priority) -> io::Result<Self> {
         let (db, scope) = records::locate(directory)?;
         let payload = bridge
             .held
-            .map(|held| payloads::stage(&db, &scope, records::encode(&held)?, Priority::Interactive))
+            .map(|held| payloads::stage(&db, &scope, records::encode(&held)?, priority))
             .transpose()
             .map_err(io::Error::other)?;
         Ok(Self {
@@ -86,29 +89,47 @@ impl PreparedBridge {
         Ok(())
     }
 }
-pub(super) fn prepare(directory: &ConversationDir) -> io::Result<()> {
+pub(crate) fn prepare(directory: &ConversationDir) -> io::Result<()> {
     prepare_hold(directory)?;
-    records::ensure_each(directory, LOCAL, |push| {
-        let path = directory.books().join("goal-local.json");
-        let bytes = match std::fs::read(&path) {
+    let source = directory.clone();
+    records::ensure_file(directory, LOCAL, directory.books().join("goal-local.json"), move |path, push| {
+        let directory = &source;
+        let bytes = match fastctx_platform::disk::read(path) {
             Ok(bytes) => bytes,
             Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(()),
             Err(e) => return Err(e),
         };
         let old: Legacy = serde_json::from_slice(&bytes)?;
-        let prepared = old.bridge.map(|bridge| PreparedBridge::prepare(directory, bridge)).transpose()?;
-        let bridge = prepared.as_ref().map(|prepared| prepared.bridge.clone());
-        if let Some(prepared) = prepared {
-            records::write_at(directory, Priority::Background, 256, move |rows| {
-                prepared.install(rows)?;
-                prepared.finish(rows)
+        let expected =
+            old.bridge.as_ref().and_then(|bridge| bridge.held.as_ref()).map(serde_json::to_vec).transpose()?;
+        let bridge = old.bridge.as_ref().map(|bridge| Bridge {
+            active: bridge.active,
+            paused: bridge.paused,
+            held: bridge.held.as_ref().map(|_| Held::Legacy),
+        });
+        if let Some(legacy) = old.bridge {
+            if !crate::record_migration::files::verifying() {
+                let prepared =
+                    PreparedBridge::prepare_at(directory, legacy, crate::record_migration::scheduler::priority())?;
+                records::write_at(directory, Priority::Background, 256, move |rows| {
+                    if !rows.exists(LOCAL, "current")? {
+                        prepared.install(rows)?;
+                    }
+                    prepared.finish(rows)
+                })?;
+            }
+            let stored = records::read(directory, |rows| {
+                payloads::read_root(rows.connection(), rows.conversation(), HELD, "current")
             })?;
-            // Verify the immutable set before the family can be marked ready.
-            records::read(directory, |rows| {
-                payloads::read_root(rows.connection(), rows.conversation(), HELD, "current").map(|_| ())
-            })?;
+            if stored != expected {
+                return Err(io::Error::new(io::ErrorKind::InvalidData, "legacy frozen goal inputs did not verify"));
+            }
         }
-        push(records::Source::new("current".into(), path, serde_json::to_vec(&Local { view: old.view, bridge })?)?)
+        push(records::Source::new(
+            "current".into(),
+            path.to_path_buf(),
+            records::legacy::raw::merge(&bytes, &Local { view: old.view, bridge })?,
+        )?)
     })
 }
 pub(super) fn prepare_hold(directory: &ConversationDir) -> io::Result<()> {

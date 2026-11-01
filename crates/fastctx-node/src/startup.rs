@@ -90,6 +90,16 @@ pub(crate) async fn recover(node: &Arc<Node>) {
             let id = resident.id.clone();
             let finished = Finished { node: &node, id: id.clone() };
             let began = std::time::Instant::now();
+            let mut again = crate::again::Again::default();
+            while let Err(error) = crate::conversation_store::transfer::wait(&node, &id).await {
+                node.log.line(format_args!("waiting for conversation import {id}: {}", error.message));
+                tokio::time::sleep(again.next()).await;
+            }
+            if let Some(reason) = crate::conversation_store::transfer::rejection(node.world.path(), id.as_str()) {
+                node.log
+                    .line(format_args!("conversation import {id} was rejected: {reason}; startup recovery skipped"));
+                return;
+            }
             crate::codex::adopt(&node, std::slice::from_ref(&resident)).await;
             if let Some(session) = &resident.about.session {
                 match resident.about.host.agent.as_str() {

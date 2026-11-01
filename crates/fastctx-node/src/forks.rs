@@ -12,7 +12,7 @@ use crate::Node;
 pub(crate) const RETAINED_HOST: &str = "retained-host.json";
 
 pub(crate) fn retained(directory: &ConversationDir) -> io::Result<Option<About>> {
-    match std::fs::read(directory.path().join(RETAINED_HOST)) {
+    match fastctx_platform::disk::read(directory.path().join(RETAINED_HOST)) {
         Ok(bytes) => serde_json::from_slice(&bytes).map(Some).map_err(io::Error::other),
         Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
         Err(error) => Err(error),
@@ -22,6 +22,22 @@ pub(crate) fn retained(directory: &ConversationDir) -> io::Result<Option<About>>
 fn source(directory: &ConversationDir, about: &About) -> io::Result<Option<Address>> {
     if let Some(source) = &about.forked_from {
         return Ok(Some(source.clone()));
+    }
+    let (database, conversation) = crate::record_database::get(directory)?;
+    let stored = database
+        .read_now(|db| {
+            use fastctx_storage::rusqlite::OptionalExtension;
+            Ok(db
+                .query_row(
+                    "SELECT fork_source FROM node_conversation_deletions WHERE name=?1",
+                    [&conversation],
+                    |row| row.get::<_, Option<Vec<u8>>>(0),
+                )
+                .optional()?)
+        })
+        .map_err(io::Error::other)?;
+    if let Some(stored) = stored {
+        return stored.map(|bytes| serde_json::from_slice(&bytes).map_err(io::Error::other)).transpose();
     }
     // Older forks recorded their origin in the durable event stream only.
     Ok(crate::delivery::history(directory)?.into_iter().rev().find_map(|event| match event.happened {
@@ -77,4 +93,9 @@ pub(crate) fn parent(node: &Node, id: &ResidentId) -> io::Result<Option<Address>
     } else {
         Ok(None)
     }
+}
+
+pub(crate) fn origin(directory: &ConversationDir) -> io::Result<Option<Address>> {
+    let Some(about) = about(directory)? else { return Ok(None) };
+    source(directory, &about)
 }

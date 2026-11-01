@@ -113,6 +113,8 @@ impl Rank {
     pub const RECORDS: Rank = Rank(820);
     /// A command's write facts.
     pub const WRITE_FACTS: Rank = Rank(830);
+    /// One legacy source moving into its verified or damaged archive.
+    pub const ARCHIVING: Rank = Rank(840);
 
     // The hub's shared state: each lock guards memory only and is held for
     // microseconds (`MemoryMutex`). The hub is a process of its own, so these

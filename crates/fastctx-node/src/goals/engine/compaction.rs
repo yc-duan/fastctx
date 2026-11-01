@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 #[derive(Clone, Serialize, Deserialize)]
-struct Attempt {
+pub(crate) struct Attempt {
     #[serde(default)]
     retained: bool,
     #[serde(default)]

@@ -31,7 +31,7 @@ pub(crate) struct Progress {
     pub after_activation: Option<String>,
 }
 
-fn directory(node: &Node, id: &ResidentId) -> io::Result<fastctx_types::layout::ConversationDir> {
+pub(crate) fn directory(node: &Node, id: &ResidentId) -> io::Result<fastctx_types::layout::ConversationDir> {
     let directory = node.world.conversation(id);
     crate::records::legacy::directory::<Progress>(&directory, "host-progress", &directory.book("host-progress"))?;
     Ok(directory)

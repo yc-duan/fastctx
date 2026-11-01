@@ -340,11 +340,20 @@ async fn fork(
     })?;
     let inherited =
         codex.history(&fork, &Address { machine: node.machine(), resident: id.clone() }).await.map_err(Failure::new)?;
-    crate::attachments::inherit(node, parent, &id, &inherited)?;
-    crate::context::input::inherit(&node.world.conversation(parent), &node.world.conversation(&id), &inherited)
-        .map_err(|error| Failure::new(error.to_string()))?;
+    let (inheriting, parent_id, child) = (node.clone(), parent.clone(), id.clone());
+    fastctx_platform::task::spawn_blocking(move || {
+        crate::attachments::inherit(&inheriting, &parent_id, &child, &inherited)?;
+        crate::context::input::inherit(
+            &inheriting.world.conversation(&parent_id),
+            &inheriting.world.conversation(&child),
+            &inherited,
+        )
+        .map_err(|error| Failure::new(error.to_string()))
+    })
+    .await
+    .map_err(|error| Failure::new(error.to_string()))??;
     drop(source_guard);
-    crate::context::instructed(node, &id, &heard).map_err(|error| Failure::new(error.to_string()))?;
+    crate::context::instructed(node, &id, &heard).await.map_err(|error| Failure::new(error.to_string()))?;
     node.residents.set_instructed(&id, heard);
     let event = SessionEvent {
         at,

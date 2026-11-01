@@ -9,8 +9,8 @@ use std::{collections::BTreeMap, io};
 const CLOSED: &str = "claude-turn-facts-closed";
 #[derive(Default, Deserialize)]
 struct Legacy {
-    efforts: BTreeMap<u64, Value>,
-    responses: BTreeMap<u64, RequestUsage>,
+    efforts: BTreeMap<u64, Box<serde_json::value::RawValue>>,
+    responses: BTreeMap<u64, Box<serde_json::value::RawValue>>,
 }
 #[derive(Serialize, Deserialize)]
 struct Closed {
@@ -25,22 +25,40 @@ fn family(turn: &str) -> String {
 
 fn prepare(directory: &ConversationDir, turn: &str) -> io::Result<String> {
     let family = family(turn);
-    records::ensure_each(directory, &family, |push| {
-        let path = directory.turn_facts().join(format!("{}.json", key(turn)));
-        let legacy: Legacy = match std::fs::read(&path) {
+    prepare_path(directory, &family, directory.turn_facts().join(format!("{}.json", key(turn))))?;
+    Ok(family)
+}
+fn prepare_path(directory: &ConversationDir, family: &str, path: std::path::PathBuf) -> io::Result<()> {
+    records::ensure_file(directory, family, path, |path, push| {
+        let legacy: Legacy = match fastctx_platform::disk::read(path) {
             Ok(bytes) => serde_json::from_slice(&bytes)?,
             Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
             Err(error) => return Err(error),
         };
         for (step, value) in legacy.efforts {
-            push(Source::new(format!("effort-{step:020}"), path.clone(), serde_json::to_vec(&value)?)?)?;
+            records::legacy::raw::validate::<Value>(&value)?;
+            push(Source::new(format!("effort-{step:020}"), path.to_path_buf(), value.get().as_bytes().to_vec())?)?;
         }
         for (step, value) in legacy.responses {
-            push(Source::new(format!("response-{step:020}"), path.clone(), serde_json::to_vec(&value)?)?)?;
+            records::legacy::raw::validate::<RequestUsage>(&value)?;
+            push(Source::new(format!("response-{step:020}"), path.to_path_buf(), value.get().as_bytes().to_vec())?)?;
         }
         Ok(())
-    })?;
-    Ok(family)
+    })
+}
+
+pub(crate) fn migrate(directory: &ConversationDir) -> io::Result<()> {
+    for path in crate::retention::entries(&directory.turn_facts())? {
+        if path.extension().is_none_or(|extension| extension != "json") {
+            continue;
+        }
+        let name = path
+            .file_stem()
+            .and_then(|name| name.to_str())
+            .ok_or_else(|| io::Error::other("invalid turn facts filename"))?;
+        prepare_path(directory, &format!("claude-turn-facts/{name}"), path.clone())?;
+    }
+    Ok(())
 }
 
 pub(super) fn put(directory: &ConversationDir, turn: &str, kind: &str, step: u64, bytes: Vec<u8>) -> io::Result<()> {

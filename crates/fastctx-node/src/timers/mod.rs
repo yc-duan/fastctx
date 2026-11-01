@@ -21,7 +21,9 @@ const HEARTBEAT: Duration = Duration::from_secs(30);
 const CONCURRENT: usize = 32;
 
 pub(crate) fn table(node: &Node) -> Result<&Arc<Store>, Failure> {
-    node.timers.get().ok_or_else(|| Failure::new("the timer table is still recovering"))
+    node.timers.get().ok_or_else(|| {
+        Failure::not_run("the timer table is still recovering").capacity(fastctx_types::ipc::CapacityReason::Pending)
+    })
 }
 
 pub(crate) async fn call(node: &Arc<Node>, call: TimerCall) -> Result<Reply, Failure> {
@@ -84,12 +86,12 @@ pub(crate) async fn call(node: &Arc<Node>, call: TimerCall) -> Result<Reply, Fai
 
 pub(crate) fn start(node: &Arc<Node>) {
     let node = node.clone();
-    tokio::spawn(async move {
+    fastctx_platform::task::spawn(async move {
         let mut again = crate::again::Again::default();
         let mut last_error = None;
         let store = loop {
             let path = node.world.path().join("timers");
-            match tokio::task::spawn_blocking(move || Store::open(&path)).await {
+            match fastctx_platform::task::spawn_blocking(move || Store::open(&path)).await {
                 Ok(Ok(store)) => break Arc::new(store),
                 result => {
                     let error = match result {
@@ -207,12 +209,8 @@ async fn execute(node: &Arc<Node>, store: &Arc<Store>, timer: &Timer) -> Result<
     }
 }
 
-pub(crate) fn delete_conversation(node: &Node, resident: &fastctx_types::ResidentId) -> io::Result<()> {
-    table(node).map_err(|error| io::Error::other(error.message))?.delete_conversation(resident)
-}
-
 fn failure(error: io::Error) -> Failure {
-    Failure::new(format!("recording timers: {error}"))
+    crate::record_migration::failure(error)
 }
 
 struct Claimed(Arc<Store>, Timer);

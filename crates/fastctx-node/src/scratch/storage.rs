@@ -28,7 +28,7 @@ static GATES: LazyLock<crate::record_gates::Gates> = LazyLock::new(|| {
     crate::record_gates::Gates::new(fastctx_platform::doing::Rank::RECORDS, "scratch catalog observation")
 });
 
-fn prepare(world: &WorldDir, id: &ResidentId) -> io::Result<ConversationDir> {
+pub(crate) fn prepare(world: &WorldDir, id: &ResidentId) -> io::Result<ConversationDir> {
     let directory = world.conversation(id);
     if world.deleted().join(format!("{id}.json")).try_exists()?
         || directory.path().join("deleting").try_exists()?
@@ -39,13 +39,15 @@ fn prepare(world: &WorldDir, id: &ResidentId) -> io::Result<ConversationDir> {
     let path = directory.path().join("scratch-locations.json");
     records::legacy::map_field::<Entry>(&directory, "scratch-known", &path, "known")?;
     records::legacy::map_field::<u64>(&directory, "scratch-seen", &path, "seen")?;
-    records::ensure_each(&directory, "scratch-state", |push| {
-        if let Some(described) = records::legacy::field::<bool>(&path, "described")? {
-            push(records::Source::new("described".into(), path.clone(), serde_json::to_vec(&described)?)?)?;
+    records::ensure_file(&directory, "scratch-state", path, |path, push| {
+        if let Some(described) = records::legacy::field::<bool>(path, "described")? {
+            push(records::Source::new("described".into(), path.to_path_buf(), serde_json::to_vec(&described)?)?)?;
         }
         Ok(())
     })?;
-    records::ensure_each(&directory, "scratch-unseen", |push| {
+    let source = directory.clone();
+    records::ensure_step(&directory, "scratch-unseen", move || {
+        let directory = source;
         let mut after = String::new();
         loop {
             let page = records::read(&directory, |rows| rows.key_page::<Entry>("scratch-known", &after, 16))?;
@@ -54,7 +56,13 @@ fn prepare(world: &WorldDir, id: &ResidentId) -> io::Result<ConversationDir> {
             for (machine, entry) in page {
                 let seen = records::read(&directory, |rows| rows.get::<u64>("scratch-seen", &machine))?.unwrap_or(0);
                 if seen < entry.revision {
-                    push(records::Source::new(machine, path.clone(), serde_json::to_vec(&entry)?)?)?;
+                    let bytes = serde_json::to_vec(&entry)?.len();
+                    records::write_at(
+                        &directory,
+                        crate::record_migration::scheduler::priority(),
+                        bytes,
+                        move |rows| rows.put("scratch-unseen", &machine, &entry),
+                    )?;
                 }
             }
         }

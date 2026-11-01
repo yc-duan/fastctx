@@ -16,22 +16,26 @@ struct Receipt {
 fn key(machine: &MachineName, job: &JobId) -> String {
     crate::speech::fixed_id("run", &[machine.key(), job.as_str()]).to_string()
 }
-fn prepare(node: &Node, resident: &ResidentId) -> io::Result<fastctx_types::layout::ConversationDir> {
+pub(crate) fn prepare(node: &Node, resident: &ResidentId) -> io::Result<fastctx_types::layout::ConversationDir> {
     let directory = node.world.conversation(resident);
-    records::ensure_each(&directory, "run-receipts", |push| {
-        for path in crate::retention::entries(&directory.book("run-receipts"))? {
+    let folder = directory.book("run-receipts");
+    records::ensure_each(&directory, "run-receipts", move |push| {
+        for path in crate::retention::entries(&folder)? {
             if path.extension().is_none_or(|extension| extension != "json")
                 || path.file_name().is_some_and(|name| name.to_string_lossy().starts_with('.'))
             {
                 continue;
             }
-            let row: Receipt = serde_json::from_slice(&std::fs::read(&path)?)?;
-            let key = path
-                .file_stem()
-                .and_then(|name| name.to_str())
-                .ok_or_else(|| io::Error::other("invalid run receipt"))?
-                .to_string();
-            push(records::Source::new(key, path, serde_json::to_vec(&row)?)?)?;
+            crate::record_migration::file(&path, push, |push| {
+                let bytes = fastctx_platform::disk::read(&path)?;
+                let _: Receipt = serde_json::from_slice(&bytes)?;
+                let key = path
+                    .file_stem()
+                    .and_then(|name| name.to_str())
+                    .ok_or_else(|| crate::record_migration::errors::invalid("invalid run receipt"))?
+                    .to_string();
+                push(records::Source::new(key, path.clone(), bytes)?)
+            })?;
         }
         Ok(())
     })?;

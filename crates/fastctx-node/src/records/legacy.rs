@@ -1,8 +1,10 @@
 //! Streaming adapters for legacy collections. A growing JSON map is never
 //! decoded into one in-memory object just to migrate its independent entries.
 
+pub(crate) mod raw;
 use super::*;
 use serde::de::{self, Deserializer as _, MapAccess, Visitor};
+use serde_json::value::RawValue;
 use std::{marker::PhantomData, path::Path};
 
 pub(crate) fn map<T: DeserializeOwned + Serialize>(
@@ -10,8 +12,8 @@ pub(crate) fn map<T: DeserializeOwned + Serialize>(
     family: &'static str,
     path: &Path,
 ) -> io::Result<()> {
-    ensure_each(directory, family, |push| {
-        let file = match std::fs::File::open(path) {
+    ensure_file(directory, family, path.to_path_buf(), move |path, push| {
+        let file = match fastctx_platform::disk::open(path) {
             Ok(file) => file,
             Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
             Err(error) => return Err(error),
@@ -27,21 +29,18 @@ pub(crate) fn map<T: DeserializeOwned + Serialize>(
                 f.write_str("an object of independent records")
             }
             fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> std::result::Result<(), A::Error> {
-                while let Some((key, value)) = map.next_entry::<String, T>()? {
-                    let row = Source::new(
-                        key,
-                        self.path.to_path_buf(),
-                        serde_json::to_vec(&value).map_err(de::Error::custom)?,
-                    )
-                    .map_err(de::Error::custom)?;
+                while let Some((key, value)) = map.next_entry::<String, Box<RawValue>>()? {
+                    raw::validate::<T>(&value).map_err(de::Error::custom)?;
+                    let row = Source::new(key, self.path.to_path_buf(), value.get().as_bytes().to_vec())
+                        .map_err(de::Error::custom)?;
                     (self.push)(row).map_err(de::Error::custom)?;
                 }
                 Ok(())
             }
         }
-        serde_json::Deserializer::from_reader(io::BufReader::new(file))
-            .deserialize_map(Entries::<T> { path, push, value: PhantomData })
-            .map_err(io::Error::other)
+        let mut decoder = serde_json::Deserializer::from_reader(io::BufReader::new(file));
+        decoder.deserialize_map(Entries::<T> { path, push, value: PhantomData }).map_err(io::Error::other)?;
+        decoder.end().map_err(io::Error::other)
     })
 }
 
@@ -52,8 +51,9 @@ pub(crate) fn map_field<T: DeserializeOwned + Serialize>(
     field: &str,
 ) -> io::Result<()> {
     use serde::de::DeserializeSeed;
-    ensure_each(directory, family, |push| {
-        let file = match std::fs::File::open(path) {
+    let field = field.to_string();
+    ensure_file(directory, family, path.to_path_buf(), move |path, push| {
+        let file = match fastctx_platform::disk::open(path) {
             Ok(file) => file,
             Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
             Err(error) => return Err(error),
@@ -75,13 +75,10 @@ pub(crate) fn map_field<T: DeserializeOwned + Serialize>(
                 f.write_str("independent map entries")
             }
             fn visit_map<A: MapAccess<'de>>(self, mut rows: A) -> std::result::Result<(), A::Error> {
-                while let Some((key, value)) = rows.next_entry::<String, T>()? {
-                    let row = Source::new(
-                        key,
-                        self.path.to_path_buf(),
-                        serde_json::to_vec(&value).map_err(de::Error::custom)?,
-                    )
-                    .map_err(de::Error::custom)?;
+                while let Some((key, value)) = rows.next_entry::<String, Box<RawValue>>()? {
+                    raw::validate::<T>(&value).map_err(de::Error::custom)?;
+                    let row = Source::new(key, self.path.to_path_buf(), value.get().as_bytes().to_vec())
+                        .map_err(de::Error::custom)?;
                     (self.push)(row).map_err(de::Error::custom)?;
                 }
                 Ok(())
@@ -110,14 +107,16 @@ pub(crate) fn map_field<T: DeserializeOwned + Serialize>(
                 Ok(())
             }
         }
-        serde_json::Deserializer::from_reader(io::BufReader::new(file))
-            .deserialize_map(Field { field, entries: Entries::<T> { path, push, marker: PhantomData } })
-            .map_err(io::Error::other)
+        let mut decoder = serde_json::Deserializer::from_reader(io::BufReader::new(file));
+        decoder
+            .deserialize_map(Field { field: &field, entries: Entries::<T> { path, push, marker: PhantomData } })
+            .map_err(io::Error::other)?;
+        decoder.end().map_err(io::Error::other)
     })
 }
 
 pub(crate) fn field<T: DeserializeOwned>(path: &Path, field: &str) -> io::Result<Option<T>> {
-    let file = match std::fs::File::open(path) {
+    let file = match fastctx_platform::disk::open(path) {
         Ok(file) => file,
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
         Err(error) => return Err(error),
@@ -146,9 +145,10 @@ pub(crate) fn field<T: DeserializeOwned>(path: &Path, field: &str) -> io::Result
             Ok(value)
         }
     }
-    serde_json::Deserializer::from_reader(io::BufReader::new(file))
-        .deserialize_map(Field::<T> { field, marker: PhantomData })
-        .map_err(io::Error::other)
+    let mut decoder = serde_json::Deserializer::from_reader(io::BufReader::new(file));
+    let value = decoder.deserialize_map(Field::<T> { field, marker: PhantomData }).map_err(io::Error::other)?;
+    decoder.end().map_err(io::Error::other)?;
+    Ok(value)
 }
 
 pub(crate) fn directory<T: DeserializeOwned + Serialize>(
@@ -156,8 +156,9 @@ pub(crate) fn directory<T: DeserializeOwned + Serialize>(
     family: &'static str,
     folder: &Path,
 ) -> io::Result<()> {
-    ensure_each(directory, family, |push| {
-        let entries = match std::fs::read_dir(folder) {
+    let folder = folder.to_path_buf();
+    ensure_each(directory, family, move |push| {
+        let entries = match fastctx_platform::disk::read_dir(&folder) {
             Ok(entries) => entries,
             Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
             Err(error) => return Err(error),
@@ -169,13 +170,16 @@ pub(crate) fn directory<T: DeserializeOwned + Serialize>(
             {
                 continue;
             }
-            let key = path
-                .file_stem()
-                .and_then(|name| name.to_str())
-                .ok_or_else(|| io::Error::other("invalid legacy record name"))?
-                .to_string();
-            let value: T = serde_json::from_slice(&std::fs::read(&path)?)?;
-            push(Source::new(key, path, serde_json::to_vec(&value)?)?)?;
+            crate::record_migration::file(&path, push, |push| {
+                let key = path
+                    .file_stem()
+                    .and_then(|name| name.to_str())
+                    .ok_or_else(|| crate::record_migration::errors::invalid("invalid legacy record name"))?
+                    .to_string();
+                let bytes = fastctx_platform::disk::read(&path)?;
+                let _: T = serde_json::from_slice(&bytes)?;
+                push(Source::new(key, path.clone(), bytes)?)
+            })?;
         }
         Ok(())
     })
@@ -185,13 +189,25 @@ pub(crate) fn single<T: DeserializeOwned + Serialize>(
     family: &'static str,
     path: &Path,
 ) -> io::Result<()> {
-    ensure_each(directory, family, |push| match std::fs::read(path) {
+    ensure_file(directory, family, path.to_path_buf(), |path, push| match fastctx_platform::disk::read(path) {
         Ok(bytes) => {
-            let value: T = serde_json::from_slice(&bytes)?;
-            push(Source::new("current".into(), path.to_path_buf(), serde_json::to_vec(&value)?)?)
+            let _: T = serde_json::from_slice(&bytes)?;
+            push(Source::new("current".into(), path.to_path_buf(), bytes)?)
         }
         Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
         Err(error) => Err(error),
+    })
+}
+
+/// Validates each array element while keeping its undeclared fields and tokens.
+pub(crate) fn raw_array<T: DeserializeOwned>(
+    path: &Path,
+    field: Option<&str>,
+    push: &mut dyn FnMut(T, Vec<u8>) -> io::Result<()>,
+) -> io::Result<()> {
+    array::<Box<RawValue>>(path, field, &mut |raw| {
+        let value = serde_json::from_str(raw.get())?;
+        push(value, raw.get().as_bytes().to_vec())
     })
 }
 
@@ -203,7 +219,7 @@ pub(crate) fn array<T: DeserializeOwned>(
     push: &mut dyn FnMut(T) -> io::Result<()>,
 ) -> io::Result<()> {
     use serde::de::{DeserializeSeed, SeqAccess};
-    let file = match std::fs::File::open(path) {
+    let file = match fastctx_platform::disk::open(path) {
         Ok(file) => file,
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
         Err(error) => return Err(error),

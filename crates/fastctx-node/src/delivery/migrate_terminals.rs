@@ -7,7 +7,9 @@ use fastctx_types::layout::ConversationDir;
 use std::io;
 
 pub(super) fn run(directory: &ConversationDir) -> io::Result<()> {
-    records::ensure_each(directory, "terminal-format-2", |_| {
+    let source = directory.clone();
+    records::ensure_step(directory, "terminal-format-2", move || {
+        let directory = &source;
         let mut after = 0;
         loop {
             let page = records::read_background(directory, |rows| rows.page::<Finished>("terminals", after, 1))?;

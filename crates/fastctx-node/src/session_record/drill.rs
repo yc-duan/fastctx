@@ -20,8 +20,13 @@ fn event(index: u64) -> SessionEvent {
 
 pub(crate) fn run(root: &Path) -> Result<(), Box<dyn std::error::Error>> {
     let world = WorldDir::under(root);
-    let database = Database::open(&world.path().join("node.sqlite3"), SCHEMA)?;
-    crate::record_database::register(&world, &database);
+    let database = Database::open_initialized(
+        &world.path().join("node.sqlite3"),
+        SCHEMA,
+        crate::conversation_store::schema::initialize,
+    )?;
+    let _migration = crate::record_database::register(&world, &database)?;
+    _migration.start()?;
     let id: ResidentId = "codex-a1b2c3".parse()?;
     let directory = world.conversation(&id);
     assert!(append(&directory, "first", &event(1))?);
@@ -86,6 +91,31 @@ pub(crate) fn run(root: &Path) -> Result<(), Box<dyn std::error::Error>> {
         serde_json::to_vec(&actual)?,
         serde_json::to_vec(&expected.into_iter().map(|row| row.3).collect::<Vec<_>>())?
     );
+    let original_sequence = database.read_now(|db| {
+        sql::number(db.query_row(
+            "SELECT sequence FROM session_events WHERE conversation=?1 AND identity='legacy-100'",
+            [legacy_id.as_str()],
+            |row| row.get(0),
+        )?)
+    })?;
+    assert_eq!(original_sequence, 1000);
+    assert_eq!(fastctx_platform::disk::read_dir(legacy.session_events())?.count(), 0);
+    let crowded_id: ResidentId = "codex-aabb11".parse()?;
+    let crowded = world.conversation(&crowded_id);
+    fastctx_platform::disk::create_dir_all(crowded.session_events())?;
+    for (key, sequence, index) in [("first", Some(1), 1), ("second", None, 2), ("third", None, 3)] {
+        fastctx_platform::disk::write(
+            crowded.session_events().join(format!("{key}.json")),
+            serde_json::to_vec(&Recorded { sequence, event: event(index) })?,
+        )?;
+    }
+    fastctx_platform::disk::write(crowded.session_events().join("broken.json"), b"{")?;
+    let crowded_page = super::page(&crowded, 0, None, 100)?;
+    assert_eq!(crowded_page.events.iter().map(|(sequence, _)| *sequence).collect::<Vec<_>>(), [1, 2, 3]);
+    assert_eq!(crate::record_migration::archive::damaged_count(world.path())?, 1);
+    assert!(append(&crowded, "after-damage", &event(4))?);
+    assert_eq!(crate::record_migration::archive::collect(world.path(), Duration::ZERO)?, 261);
+    assert_eq!(crate::record_migration::archive::damaged_count(world.path())?, 1);
     assert!(append(&legacy, "after-migration", &event(999))?);
     assert_eq!(latest(&legacy)?, 5001);
     let broken = legacy_id.to_string();

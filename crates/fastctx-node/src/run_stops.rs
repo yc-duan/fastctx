@@ -19,7 +19,7 @@ use crate::obligations::Outcome;
 use crate::records::items;
 
 #[derive(Serialize, Deserialize)]
-struct Pending {
+pub(crate) struct Pending {
     owner: Address,
     acting: Acting,
     destination: Written,
@@ -28,7 +28,7 @@ struct Pending {
 }
 
 #[derive(Serialize, Deserialize)]
-struct Incoming {
+pub(crate) struct Incoming {
     job: JobId,
     scope: HubAccount,
 }
@@ -118,28 +118,36 @@ pub(crate) fn answered(node: &Node, owner: &Address, dispatch: &NoticeId, answer
 
 pub(crate) fn resume(node: &Arc<Node>) {
     let node = node.clone();
-    tokio::spawn(async move {
+    fastctx_platform::task::spawn(async move {
         let mut again = crate::again::Again::default();
         loop {
-            let result = (|| -> io::Result<()> {
-                for directory in node.world.book_directories("run-stops")? {
-                    for path in items::entries(&directory, None)? {
-                        if path.extension().is_some_and(|ext| ext == "json") {
-                            start(&node, path, true);
+            let recovering = node.clone();
+            let result = fastctx_platform::task::spawn_blocking(move || {
+                let result = (|| -> io::Result<()> {
+                    for directory in recovering.world.book_directories("run-stops")? {
+                        for path in items::entries(&directory, None)? {
+                            if path.extension().is_some_and(|ext| ext == "json") {
+                                start(&recovering, path, true);
+                            }
                         }
                     }
-                }
-                Ok(())
-            })();
-            match result {
-                Ok(()) => return,
-                Err(error) => {
+                    Ok(())
+                })();
+                if let Err(error) = &result {
                     let _ = crate::obligations::retry(
-                        &node,
-                        &node.world.path().join("run-stop-recovery"),
+                        &recovering,
+                        &recovering.world.path().join("run-stop-recovery"),
                         &error.to_string(),
                     );
                 }
+                result
+            })
+            .await;
+            if matches!(result, Ok(Ok(()))) {
+                return;
+            }
+            if let Err(error) = result {
+                node.log.line(format_args!("restoring addressed stops: {error}"));
             }
             tokio::time::sleep(again.next()).await;
         }

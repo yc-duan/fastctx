@@ -1,5 +1,5 @@
 //! Request observations survive a node restart until their turn end is durable.
-mod storage;
+pub(crate) mod storage;
 pub(crate) use storage::collect;
 
 use fastctx_types::layout::ConversationDir;

@@ -26,6 +26,14 @@ struct PendingStop {
     origin: OnOrigin,
 }
 
+pub(crate) fn validate_legacy_pending(bytes: &[u8]) -> std::io::Result<()> {
+    let pending: PendingStop = serde_json::from_slice(bytes)?;
+    if pending.job.is_none() && pending.origin.request.is_none() {
+        return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "on stop has neither a job nor a request"));
+    }
+    Ok(())
+}
+
 impl PendingStop {
     fn written(&self) -> crate::reach::Written {
         crate::reach::Written { name: self.machine.clone(), hub: self.hub.clone() }
