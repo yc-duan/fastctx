@@ -459,8 +459,10 @@ async fn serve(
         let (conn, pinged, pulse) = (conn.clone(), pinged.clone(), pulse.clone());
         fastctx_platform::task::spawn(async move {
             let mut n = 0;
+            let mut beats = crate::beats::Beats::from_now("direct.heartbeat", "direct.heartbeat.late");
             loop {
                 tokio::time::sleep(HEARTBEAT).await;
+                beats.beat();
                 n += 1;
                 pinged.lock().expect("never poisoned").insert(n, Instant::now());
                 if conn.send_first(Frame::Ping { n, took: Some(pulse.taken()) }).is_err() {

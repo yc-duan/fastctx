@@ -55,6 +55,10 @@ pub const SILENCE: std::time::Duration = std::time::Duration::from_secs(30);
 /// How often a machine sends a heartbeat.
 pub const HEARTBEAT: std::time::Duration = std::time::Duration::from_secs(10);
 
+/// Two heartbeats further apart than this are late: the foundation's bound
+/// under any load (`specs/world-foundation.md`, 地基的数字).
+pub const HEARTBEAT_LATE: std::time::Duration = std::time::Duration::from_secs(12);
+
 /// The label of the TLS exporter a machine signs to prove which connection
 /// it is on (RFC 9266), and which a login binds itself to.
 pub const EXPORTER_LABEL: &[u8] = b"EXPORTER-Channel-Binding";

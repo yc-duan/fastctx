@@ -96,10 +96,15 @@ pub(super) fn run(
 ) {
     fastctx_platform::roles::set(fastctx_platform::roles::Role::Blocking);
     WRITER.with(|writer| writer.set(true));
+    // The writer waits on the disk: one pass the disk keeps longer than a
+    // caller waits for its answer is stuck work of this process, told with
+    // the rest (`fastctx_platform::doing`).
+    let disk = format!("the disk, writing {}", path.file_name().unwrap_or_default().to_string_lossy());
     let mut dirty = true;
     loop {
         let Some(first) = queue.pop(Duration::from_secs(1)) else {
             if dirty {
+                let _disk = fastctx_platform::doing::waiting_outside(disk.clone(), super::ANSWER);
                 // A busy reader may retain a WAL snapshot. Do not wait for it:
                 // another idle pass retries the truncation.
                 let _ = connection.busy_timeout(Duration::ZERO);
@@ -118,7 +123,9 @@ pub(super) fn run(
             continue;
         };
         let mut batch = vec![first];
+        let waiting = fastctx_platform::doing::waiting_outside(disk.clone(), super::ANSWER);
         let result = commit(&mut connection, &queue, &metrics, &damage, &mut batch);
+        drop(waiting);
         dirty = true;
         if let Err(error) = &result {
             damage.notice(error);

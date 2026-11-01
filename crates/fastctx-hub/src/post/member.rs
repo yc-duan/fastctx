@@ -1,19 +1,17 @@
 //! One member's ordered mail state. No shared guard survives a disk await.
 
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, OnceLock, Weak};
 
 use arc_swap::ArcSwapOption;
 use fastctx_net::sign::PublicKey;
+use fastctx_net::window::Sending as Window;
 use fastctx_types::MachineName;
 use tokio::sync::mpsc;
 
 use super::{Command, Result};
 use crate::store::{Letters, Taken, shelf::Shelf};
-
-const WINDOW: usize = 256;
-const WINDOW_BYTES: u64 = 8 * 1024 * 1024;
 
 #[derive(Default)]
 pub(crate) struct Backlog {
@@ -27,10 +25,7 @@ struct Sending {
     generation: u64,
     out: crate::outq::Outq,
     viewed: bool,
-    sent: u64,
-    taken: u64,
-    on_way: VecDeque<(u64, u64)>,
-    bytes: u64,
+    window: Window,
 }
 
 pub(super) struct State {
@@ -194,19 +189,21 @@ impl State {
 
     async fn pump(&mut self) -> Result<()> {
         let Some(to) = &self.to else { return Ok(()) };
-        if !to.viewed || to.on_way.len() >= WINDOW || to.bytes >= WINDOW_BYTES {
+        if !to.viewed || !to.window.room() {
             return Ok(());
         }
         self.load().await?;
         let to = self.to.as_ref().expect("session");
-        let mut size = to.bytes;
+        // The letters that fit, as they would go: chosen first, then read
+        // off the lines' way.
+        let mut fitting = to.window.clone();
         let mut numbers = Vec::new();
-        for (&seq, &bytes) in self.files.range(to.sent + 1..self.persisted_next.max(to.sent + 1)) {
-            if numbers.len() + to.on_way.len() >= WINDOW || (!numbers.is_empty() && size + bytes > WINDOW_BYTES) {
+        for (&seq, &bytes) in self.files.range(to.window.sent() + 1..self.persisted_next.max(to.window.sent() + 1)) {
+            if !fitting.room() {
                 break;
             }
+            fitting.went(seq, Some(bytes));
             numbers.push((seq, bytes));
-            size += bytes;
         }
         if numbers.is_empty() {
             return Ok(());
@@ -230,15 +227,12 @@ impl State {
         .await?;
         let to = self.to.as_mut().expect("session");
         for (seq, size, present) in loaded {
-            if present {
-                to.on_way.push_back((seq, size));
-                to.bytes += size;
-            } else {
+            to.window.went(seq, present.then_some(size));
+            if !present {
                 self.files.remove(&seq);
             }
-            to.sent = seq;
         }
-        self.backlog.on_way.store(to.on_way.len(), Ordering::Relaxed);
+        self.backlog.on_way.store(to.window.on_way(), Ordering::Relaxed);
         Ok(())
     }
 
@@ -333,7 +327,7 @@ impl State {
                 record.conversation_deletions = caps.conversation_deletions;
                 record.profiles = caps.profiles;
                 record.connected_at = Some(jiff::Timestamp::now());
-                let taken = letters.taken.filter(|(epoch, _)| *epoch == record.out_epoch).map_or(0, |(_, taken)| taken);
+                let taken = fastctx_net::window::standing(letters.taken, record.out_epoch);
                 let result = async {
                     if renumbered {
                         self.count().await?;
@@ -342,15 +336,7 @@ impl State {
                     self.load().await?;
                     self.erase_through(taken).await?;
                     self.generation.store(generation, Ordering::Release);
-                    self.to = Some(Sending {
-                        generation,
-                        out,
-                        viewed: false,
-                        sent: taken,
-                        taken,
-                        on_way: VecDeque::new(),
-                        bytes: 0,
-                    });
+                    self.to = Some(Sending { generation, out, viewed: false, window: Window::from(taken) });
                     let record = self.record().clone();
                     fastctx_platform::task::spawn_blocking(move || register(&record))
                         .await
@@ -381,15 +367,8 @@ impl State {
             }
             Command::Taken { generation, through } => {
                 if let Some(to) = self.to.as_mut().filter(|to| to.generation == generation) {
-                    let through = through.min(to.sent);
-                    to.taken = to.taken.max(through);
-                    while let Some((seq, size)) = to.on_way.front().copied()
-                        && seq <= through
-                    {
-                        to.on_way.pop_front();
-                        to.bytes -= size;
-                    }
-                    self.backlog.on_way.store(to.on_way.len(), Ordering::Relaxed);
+                    let through = to.window.held(through);
+                    self.backlog.on_way.store(to.window.on_way(), Ordering::Relaxed);
                     self.erase_through(through).await?;
                 }
             }

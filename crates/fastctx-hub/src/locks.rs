@@ -20,7 +20,7 @@ impl<T> Mutex<T> {
     pub(crate) fn new(name: &'static str, rank: Rank, value: T) -> Self {
         Self {
             name,
-            inner: MemoryMutex::new(rank, name, name, value),
+            inner: MemoryMutex::shared(rank, name, value),
             waiting: Default::default(),
             holding: Default::default(),
             holding_cpu: Default::default(),

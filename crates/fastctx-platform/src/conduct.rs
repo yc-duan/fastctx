@@ -1,7 +1,7 @@
 //! What this process did against its own rules (`specs/world-foundation.md`,
 //! 规矩由机器守): work that blocked a thread that must not block, a task that
 //! kept its thread too long at once, a runtime whose tasks waited too long
-//! for a thread.
+//! for a thread, a lock over many units held too long.
 //!
 //! Each kind at each place is counted, with its latest occurrence. A
 //! released build only counts: on someone's machine, stopping is worse than
@@ -23,6 +23,7 @@ enum Kind {
     Blocking,
     SlowPoll,
     HeldUp,
+    HeldLong,
 }
 
 impl Kind {
@@ -31,6 +32,7 @@ impl Kind {
             Kind::Blocking => "blocking",
             Kind::SlowPoll => "slow-poll",
             Kind::HeldUp => "held-up",
+            Kind::HeldLong => "held-long",
         }
     }
 }
@@ -93,6 +95,12 @@ pub fn slow_poll(doing: &str, took: Duration) {
 /// The tasks of `runtime` waited `by` for a thread.
 pub fn held_up(runtime: &str, by: Duration) {
     note(Kind::HeldUp, runtime.to_string(), String::new(), by);
+}
+
+/// The lock `lock`, which is over many units, was held for `took` at once
+/// by a task or thread doing `doing`.
+pub(crate) fn held_long(lock: &str, doing: &str, took: Duration) {
+    note(Kind::HeldLong, lock.to_string(), doing.to_string(), took);
 }
 
 /// Every violation since the process started.

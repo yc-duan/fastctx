@@ -7,21 +7,33 @@ use std::time::Duration;
 
 use super::Rank;
 use super::registry::{self, Hold, Wait};
+use crate::readings::Timing;
 
+/// A tokio lock is held across awaits: it keeps one kind of work to one
+/// task at a time, so it is never one over many units held briefly
+/// (`super::sync`); how long it is held is timed all the same.
 struct Identity {
     id: u64,
     rank: Rank,
     name: &'static str,
     subject: Arc<str>,
+    held: &'static Timing,
 }
 
 impl Identity {
     fn new(rank: Rank, name: &'static str, subject: Arc<str>) -> Self {
-        Self { id: registry::next(), rank, name, subject }
+        Self { id: registry::next(), rank, name, subject, held: registry::holds(name) }
     }
 
     fn lock(&self) -> registry::Lock<'_> {
-        registry::Lock { id: self.id, rank: self.rank, name: self.name, subject: &self.subject }
+        registry::Lock {
+            id: self.id,
+            rank: self.rank,
+            name: self.name,
+            subject: &self.subject,
+            held: self.held,
+            shared: false,
+        }
     }
 }
 
