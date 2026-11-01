@@ -57,10 +57,30 @@ pub(crate) fn set_aside(
 
 pub(crate) fn failure(error: std::io::Error) -> fastctx_types::ipc::Failure {
     use fastctx_types::ipc::{CapacityReason, Failure};
-    if error.kind() == std::io::ErrorKind::WouldBlock {
+    if busy(&error) {
         Failure::not_run(error.to_string()).capacity(CapacityReason::Pending)
     } else {
         Failure::new(error.to_string())
+    }
+}
+
+/// Whether `error` says to try again later: records still moving in, or a
+/// database too busy to take the work now, as it is or wrapped as it came.
+pub(crate) fn busy(error: &std::io::Error) -> bool {
+    error.kind() == std::io::ErrorKind::WouldBlock
+        || error
+            .get_ref()
+            .and_then(|inner| inner.downcast_ref::<fastctx_storage::Error>())
+            .is_some_and(|inner| inner.kind() == fastctx_storage::ErrorKind::Busy)
+}
+
+/// A database's error as a caller is answered: busy is tried again later.
+pub(crate) fn storage_failure(doing: &str, error: fastctx_storage::Error) -> fastctx_types::ipc::Failure {
+    use fastctx_types::ipc::{CapacityReason, Failure};
+    if error.kind() == fastctx_storage::ErrorKind::Busy {
+        Failure::not_run(format!("{doing}: {error}")).capacity(CapacityReason::Pending)
+    } else {
+        Failure::new(format!("{doing}: {error}"))
     }
 }
 

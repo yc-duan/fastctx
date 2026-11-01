@@ -29,7 +29,7 @@ pub(crate) async fn answer(
     match node
         .call(acting, &target, Purpose::Hands, RemoteCall::Book { query })
         .await
-        .map_err(|failure| Failure::new(failure.to_string()))??
+        .map_err(crate::authorization::call_failure)??
     {
         RemoteReply::Book(answer) => Ok(*answer),
         _ => Err(Failure::new(format!("{target} answered something other than its activity"))),
@@ -64,7 +64,7 @@ pub(crate) async fn answer_here(
             }
         })
         .await
-        .map_err(|error| Failure::new(format!("reading the activity book: {error}")))?;
+        .map_err(|error| crate::record_migration::storage_failure("reading the activity book", error))?;
     Ok(answer)
 }
 
