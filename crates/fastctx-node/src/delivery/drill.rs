@@ -121,9 +121,18 @@ pub(crate) fn run(root: &Path) -> Result<(), Box<dyn std::error::Error>> {
     let path = legacy_directory.handovers().join("legacy-handover.json");
     fastctx_platform::disk::write(&path, serde_json::to_vec(&old)?)?;
     fastctx_platform::disk::write(path.with_extension("accepted"), b"\"legacy-turn\"")?;
+    // One its host never accepted has no receipt beside it.
+    let unaccepted = Handover { id: "legacy-unaccepted".parse()?, inputs: vec![input(5)], ..old.clone() };
+    fastctx_platform::disk::write(
+        legacy_directory.handovers().join("legacy-unaccepted.json"),
+        serde_json::to_vec(&unaccepted)?,
+    )?;
     let restored = super::handover(&legacy_directory, &old.id)?.unwrap();
     assert_eq!(restored.inputs, old.inputs);
     assert_eq!(restored.turn.as_deref(), Some("legacy-turn"));
+    let restored = super::handover(&legacy_directory, &unaccepted.id)?.unwrap();
+    assert_eq!(restored.inputs, unaccepted.inputs);
+    assert_eq!(restored.turn, None);
 
     let short = measure(&directory, &pending)?;
     // Seed settled history in bounded setup transactions; timing below measures

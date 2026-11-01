@@ -67,7 +67,12 @@ pub(crate) fn file(
     mut read: impl FnMut(&mut dyn FnMut(Source) -> io::Result<()>) -> io::Result<()>,
 ) -> io::Result<()> {
     scheduler::checkpoint()?;
+    // Read again within another source's check, as a receipt beside its
+    // record is: one its import found absent is left out again.
     if VERIFYING.get() {
+        if !disk::exists(path)? {
+            return Ok(());
+        }
         return read(push);
     }
     let context = CONTEXT
