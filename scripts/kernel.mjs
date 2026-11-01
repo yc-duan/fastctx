@@ -16,10 +16,10 @@ export const toolchain = "+1.92.0";
 // The release tests, by the package each belongs to.
 const tests = {
   offline: "fastctx-ripgrep", own_lifetime: "fastctx-node", job_lifecycle: "fastctx-hands", network_drill: "fastctx-hub",
-  placement_drill: "fastctx-hub",
+  placement_drill: "fastctx-hub", letter_drill: "fastctx-net",
 };
-// The hub's scale drill limits its hub with systemd, on Linux alone.
-const linuxTests = { hub_scale: "fastctx-hub" };
+// The hub's scale drill and the soak hold what they run with systemd, on Linux alone.
+const linuxTests = { hub_scale: "fastctx-hub", soak_drill: "fastctx-hub" };
 
 /** How a release kernel for `target` is compiled: its environment and its cargo. */
 function release(target, environment) {

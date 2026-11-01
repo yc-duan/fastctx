@@ -413,6 +413,11 @@ jobs:
             earlier=(--earlier "$RUNNER_TEMP/earlier/usr/bin/fastctx")
           fi
           tests/network_drill --root "$RUNNER_TEMP" "${earlier[@]}"
+      # The letter window between machines and their hub, by seed, through every fault of a line
+      # and a process: nothing lost, each letter's effect once and in order, no window overrun.
+      - if: env.DRILLS == 'true'
+        name: Letter window simulation
+        run: tests/letter_drill --seeds 5000
 
   # A real hub limited to two CPUs and 2 GiB under a systemd unit, a thousand members and then ten
   # thousand over real TLS and WebSocket: no false alarms, every member back after a storm, and the
@@ -437,6 +442,50 @@ jobs:
         run: |
           root="$RUNNER_TEMP/scale"
           sudo bash -c "ulimit -n 1048576 && tests/hub_scale --root '$root' --members 1000 --seconds 20 --cgroup && tests/hub_scale --root '$root' --members 10000 --seconds 20 --cgroup --baseline '$root/result-1000.json'"
+
+  # The worst case, for half an hour: a real node held to a small server's two cores, two gigabytes
+  # and slow disk, under a hundred and more conversations, its own interfaces and two dozen phones,
+  # while its line is cut, dropped and frozen, its disk hung, a job runs away and calls storm in, and
+  # a job on another machine steps back onto it every second. Its readings, its owner's alerts and
+  # what its users saw are held to the foundation's numbers (`world-engine.md`, 验证的设施). As
+  # root, for its disk, its slice and the system's PATH it sees; the model is a mock on the runner.
+  # The four hours before a release are `soak.yml`, on the same run's kernel and drill.
+  soak-linux:
+    needs: kernel-linux
+    name: soak
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: kernel-x86_64-unknown-linux-gnu
+          path: kernel
+      - uses: actions/download-artifact@v4
+        with:
+          name: tests-x86_64-unknown-linux-gnu
+          path: tests
+      - name: Restore executable permissions
+        run: chmod +x kernel/fastctx tests/*
+      - if: env.DRILLS == 'true'
+        name: Soak drill
+        run: |
+          curl -fsSL "https://github.com/openai/codex/releases/download/rust-v0.160.0/codex-x86_64-unknown-linux-musl.tar.gz" | tar -xz -C "$RUNNER_TEMP"
+          sudo install -m 0755 "$RUNNER_TEMP/codex-x86_64-unknown-linux-musl" /usr/local/bin/codex
+          sudo python3 scripts/soak.py --kernel kernel/fastctx --drill tests/soak_drill --codex /usr/local/bin/codex --minutes 30 --scale ci --root "$RUNNER_TEMP/soak"
+      - if: always() && env.DRILLS == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: soak-result
+          path: |
+            ${{ runner.temp }}/soak/soak-result.json
+            ${{ runner.temp }}/soak/node.log
+            ${{ runner.temp }}/soak/drill.err
+            ${{ runner.temp }}/soak/drill/hub/hub.log
+          if-no-files-found: ignore
 
   # The node's storage held to the constitution's numbers where its engine and its records are: a
   # hundred thousand events paged, a write's transaction within two milliseconds, a writer killed

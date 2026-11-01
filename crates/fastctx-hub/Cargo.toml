@@ -23,6 +23,11 @@ name = "hub_scale"
 path = "tests/hub_scale/main.rs"
 harness = false
 
+[[test]]
+name = "soak_drill"
+path = "tests/soak_drill/main.rs"
+harness = false
+
 [dependencies]
 arc-swap = "1"
 anyhow.workspace = true
