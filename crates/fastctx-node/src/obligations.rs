@@ -336,15 +336,24 @@ pub(crate) fn collect(node: &Node) -> io::Result<()> {
 pub(crate) fn start(node: &std::sync::Arc<Node>) {
     let node = node.clone();
     let mut ways = node.ways.subscribe();
-    tokio::spawn(async move {
+    fastctx_platform::task::spawn(async move {
         let mut again = crate::again::Again::default();
         loop {
             ways.borrow_and_update();
-            let result = retire_elsewhere(&node);
-            if let Err(error) = &result {
-                let _ = retry(&node, &node.world.path().join("remote-obligations"), &error.to_string());
-            }
-            let pending = result.unwrap_or(true);
+            let working = node.clone();
+            let result = fastctx_platform::task::spawn_blocking(move || {
+                retire_elsewhere(&working).inspect_err(|error| {
+                    let _ = retry(&working, &working.world.path().join("remote-obligations"), &error.to_string());
+                })
+            })
+            .await;
+            let pending = match result {
+                Ok(result) => result.unwrap_or(true),
+                Err(error) => {
+                    node.log.line(format_args!("retiring remote obligations: {error}"));
+                    true
+                }
+            };
             if !pending {
                 again.reset();
             }

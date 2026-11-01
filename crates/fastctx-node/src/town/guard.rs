@@ -101,7 +101,7 @@ pub fn start(node: &Arc<Node>) -> io::Result<()> {
         })
         .map_err(io::Error::other)?;
     let node = node.clone();
-    tokio::spawn(async move {
+    fastctx_platform::task::spawn(async move {
         let _watcher = watcher;
         let mut kept = HashMap::new();
         check_all(&node, &mut kept).await;
@@ -138,7 +138,10 @@ pub fn start(node: &Arc<Node>) -> io::Result<()> {
 }
 
 async fn check_all(node: &Arc<Node>, kept: &mut HashMap<TownName, Expected>) {
-    match node.world.towns() {
+    let world = node.world.clone();
+    let towns =
+        fastctx_platform::task::spawn_blocking(move || world.towns()).await.map_err(io::Error::other).and_then(|r| r);
+    match towns {
         Ok(towns) => {
             kept.retain(|town, _| towns.contains(town));
             for town in towns {
@@ -160,7 +163,7 @@ async fn check(
 ) {
     if set_town_right(node, kept, town, paths).await {
         let (handing, name) = (node.clone(), town.clone());
-        let _ = tokio::task::spawn_blocking(move || super::instructions::refresh(&handing, &name)).await;
+        let _ = fastctx_platform::task::spawn_blocking(move || super::instructions::refresh(&handing, &name)).await;
     }
 }
 
@@ -176,7 +179,7 @@ async fn set_town_right(
     let (world, name) = (node.world.clone(), town.clone());
     let mut expected = kept.remove(town).unwrap_or_default();
     let whole = paths.is_none();
-    let checked = tokio::task::spawn_blocking(move || {
+    let checked = fastctx_platform::task::spawn_blocking(move || {
         let found = set_right(&world, &name, &mut expected, paths.as_ref());
         (expected, found)
     })

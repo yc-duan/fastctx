@@ -324,7 +324,7 @@ pub async fn tell_if_ended(node: &Arc<Node>, record_path: &Path, record: &JobRec
     };
     let _delivery = node.job_ends.lock(record_path).await;
     let (checking, path, ended) = (node.clone(), record_path.to_path_buf(), record.clone());
-    let Some(notice) = tokio::task::spawn_blocking(move || prepare_job_end(&checking, &path, &ended))
+    let Some(notice) = fastctx_platform::task::spawn_blocking(move || prepare_job_end(&checking, &path, &ended))
         .await
         .map_err(io::Error::other)??
     else {
@@ -345,7 +345,7 @@ pub async fn tell_if_ended(node: &Arc<Node>, record_path: &Path, record: &JobRec
             .map_err(|failure| io::Error::other(failure.message))?;
     } else {
         let (posting, path, owner) = (node.clone(), record_path.to_path_buf(), owner.clone());
-        let posted = tokio::task::spawn_blocking(move || -> io::Result<bool> {
+        let posted = fastctx_platform::task::spawn_blocking(move || -> io::Result<bool> {
             if let Err(reason) = crate::completion_debt::post(&posting, &path, &owner, &acting, id, notice)? {
                 let owed = path.with_extension("owed");
                 let bytes = crate::job_metadata::read(&owed)?;
@@ -367,7 +367,9 @@ pub async fn tell_if_ended(node: &Arc<Node>, record_path: &Path, record: &JobRec
         }
     }
     let path = record_path.to_path_buf();
-    tokio::task::spawn_blocking(move || crate::completion_debt::paid(&path)).await.map_err(io::Error::other)?
+    fastctx_platform::task::spawn_blocking(move || crate::completion_debt::paid(&path))
+        .await
+        .map_err(io::Error::other)?
 }
 
 fn prepare_job_end(node: &Arc<Node>, record_path: &Path, record: &JobRecord) -> io::Result<Option<Notice>> {
@@ -502,38 +504,48 @@ pub(crate) fn end_id(
 
 /// Finishes telling the ends of jobs a node that stopped left owed.
 pub async fn settle_jobs(node: &Arc<Node>) -> io::Result<Vec<(std::path::PathBuf, io::Error)>> {
-    let mut problems = Vec::new();
-    let mut owed = Vec::new();
-    for parent in node.world.job_parents()? {
-        let residents = match entries(&parent) {
-            Ok(entries) => entries,
-            Err(error) => {
-                problems.push((parent, error));
-                continue;
-            }
-        };
-        for resident in residents {
-            let jobs = resident.join("jobs");
-            let records = match entries(&jobs) {
+    let working = node.clone();
+    let (mut problems, owed) = fastctx_platform::task::spawn_blocking(move || {
+        let node = working;
+        let mut problems = Vec::new();
+        let mut owed = Vec::new();
+        for parent in node.world.job_parents()? {
+            let residents = match entries(&parent) {
                 Ok(entries) => entries,
                 Err(error) => {
-                    problems.push((jobs, error));
+                    problems.push((parent, error));
                     continue;
                 }
             };
-            for path in records {
-                if path.extension().is_some_and(|extension| extension == "json") {
-                    match crate::job_metadata::exists(&path.with_extension("owed")) {
-                        Ok(true) => owed.push(path),
-                        Ok(false) => {}
-                        Err(error) => problems.push((path, error)),
+            for resident in residents {
+                let jobs = resident.join("jobs");
+                let records = match entries(&jobs) {
+                    Ok(entries) => entries,
+                    Err(error) => {
+                        problems.push((jobs, error));
+                        continue;
+                    }
+                };
+                for path in records {
+                    if path.extension().is_some_and(|extension| extension == "json") {
+                        match crate::job_metadata::exists(&path.with_extension("owed")) {
+                            Ok(true) => owed.push(path),
+                            Ok(false) => {}
+                            Err(error) => problems.push((path, error)),
+                        }
                     }
                 }
             }
         }
-    }
+        Ok::<_, io::Error>((problems, owed))
+    })
+    .await
+    .map_err(io::Error::other)??;
     for path in owed {
-        let told = match record::read(&path.with_extension("json")) {
+        let reading = path.with_extension("json");
+        let read =
+            fastctx_platform::task::spawn_blocking(move || record::read(&reading)).await.map_err(io::Error::other)?;
+        let told = match read {
             Ok(job) => tell_if_ended(node, &path.with_extension("json"), &job).await,
             Err(error) => Err(error),
         };
@@ -554,7 +566,7 @@ pub(crate) fn retry_job(node: &Arc<Node>, path: &Path) {
         return;
     }
     let (node, path) = (node.clone(), path.to_path_buf());
-    tokio::spawn(async move {
+    fastctx_platform::task::spawn(async move {
         let mut again = crate::again::Again::default();
         let mut ways = node.ways.subscribe();
         loop {

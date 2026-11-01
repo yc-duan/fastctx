@@ -84,7 +84,7 @@ pub(crate) async fn keep(
         // later turn; the job named in the run's answer completes the stop.
         let (node, acting, destination) = (node.clone(), acting.clone(), destination.clone());
         let stop = RemoteCall::TurnInterrupted { resident: owner.resident.clone(), dispatch: None };
-        tokio::spawn(async move {
+        fastctx_platform::task::spawn(async move {
             if let Err(failure) = node.call(&acting, &destination, Purpose::Hands, stop).await {
                 node.log.line(format_args!("telling {} that the turn was interrupted: {failure}", destination.name));
             }
@@ -118,28 +118,36 @@ pub(crate) fn answered(node: &Node, owner: &Address, dispatch: &NoticeId, answer
 
 pub(crate) fn resume(node: &Arc<Node>) {
     let node = node.clone();
-    tokio::spawn(async move {
+    fastctx_platform::task::spawn(async move {
         let mut again = crate::again::Again::default();
         loop {
-            let result = (|| -> io::Result<()> {
-                for directory in node.world.book_directories("run-stops")? {
-                    for path in items::entries(&directory, None)? {
-                        if path.extension().is_some_and(|ext| ext == "json") {
-                            start(&node, path, true);
+            let working = node.clone();
+            let result = fastctx_platform::task::spawn_blocking(move || {
+                let node = working;
+                let result = (|| -> io::Result<()> {
+                    for directory in node.world.book_directories("run-stops")? {
+                        for path in items::entries(&directory, None)? {
+                            if path.extension().is_some_and(|ext| ext == "json") {
+                                start(&node, path, true);
+                            }
                         }
                     }
-                }
-                Ok(())
-            })();
-            match result {
-                Ok(()) => return,
-                Err(error) => {
+                    Ok(())
+                })();
+                if let Err(error) = &result {
                     let _ = crate::obligations::retry(
                         &node,
                         &node.world.path().join("run-stop-recovery"),
                         &error.to_string(),
                     );
                 }
+                result
+            })
+            .await;
+            match result {
+                Ok(Ok(())) => return,
+                Ok(Err(_)) => {}
+                Err(error) => node.log.line(format_args!("recovering turn stops: {error}")),
             }
             tokio::time::sleep(again.next()).await;
         }
@@ -151,7 +159,7 @@ fn start(node: &Arc<Node>, path: PathBuf, recovered: bool) {
         return;
     }
     let node = node.clone();
-    tokio::spawn(async move {
+    fastctx_platform::task::spawn(async move {
         let _doing = fastctx_platform::doing::doing("delivering a turn's addressed stop");
         let mut again = crate::again::Again::default();
         loop {
