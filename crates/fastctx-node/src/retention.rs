@@ -55,7 +55,13 @@ pub(crate) fn set_days(world: &fastctx_types::layout::WorldDir, days: u32) -> io
 pub(crate) fn start(node: &Arc<Node>) -> io::Result<()> {
     crate::claude::claim_cleanup::start(node);
     let settings = node.world.retention();
-    create(&settings, &Settings::default())?;
+    // The settings are the world's own file, not a job's: an existing one is
+    // the user's and stays.
+    let defaults = serde_json::to_vec(&Settings::default()).map_err(io::Error::other)?;
+    match fastctx_platform::publish_new(&settings, &defaults, Permissions::Private) {
+        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
+        result => result?,
+    }
     let weak = Arc::downgrade(node);
     let settings_changed = Arc::new(tokio::sync::Notify::new());
     let changed = settings_changed.clone();
@@ -449,6 +455,7 @@ fn collect_out(path: &Path, delivered: Timestamp) -> io::Result<()> {
     Ok(())
 }
 
+/// Writes a job's marker `path` unless it is there already.
 fn create(path: &Path, value: &impl Serialize) -> io::Result<()> {
     match crate::job_metadata::create(path, &serde_json::to_vec(value).map_err(io::Error::other)?) {
         Err(error) if error.kind() == io::ErrorKind::AlreadyExists => Ok(()),
