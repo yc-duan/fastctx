@@ -136,6 +136,15 @@ pub(crate) fn layout_metadata(
     })
 }
 
+/// Sets aside a file found where a finished import's bundle was. The import
+/// holding the conversation runs this itself, so it takes only the file gate.
+pub(crate) fn leftover(world: &Path, conversation: &str, source: &Path, reason: &str) -> io::Result<()> {
+    let directory = fastctx_types::layout::ConversationDir::at(&world.join("conversations").join(conversation));
+    crate::conversation_store::with_file_gate(&directory, || {
+        damaged_file(world, conversation, "conversation-bundle", source, reason)
+    })
+}
+
 fn damaged_file(world: &Path, conversation: &str, family: &str, source: &Path, reason: &str) -> io::Result<()> {
     let relative = relative(world, conversation, source)?;
     let original = root(world).join("damaged").join(conversation).join(relative);

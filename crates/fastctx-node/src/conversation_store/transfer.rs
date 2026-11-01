@@ -65,8 +65,14 @@ pub(super) fn initialize(db: &Connection) -> Result<()> {
 pub(crate) fn prepare(db: &Connection, world: &WorldDir) -> Result<()> {
     db.execute("DELETE FROM node_record_state WHERE name='legacy-discovery-complete'", [])?;
     for kept in world.kept().map_err(|error| Error::new(error.to_string()))? {
-        if disk::exists(kept.directory.path().join(bundle::FILE)).map_err(|error| Error::new(error.to_string()))? {
-            db.execute("INSERT OR IGNORE INTO node_conversation_transfers(name) VALUES(?1)", [&kept.name])?;
+        // A room that cannot be looked into now is looked at on the next open;
+        // it never makes the whole database unavailable.
+        match disk::exists(kept.directory.path().join(bundle::FILE)) {
+            Ok(true) => {
+                db.execute("INSERT OR IGNORE INTO node_conversation_transfers(name) VALUES(?1)", [&kept.name])?;
+            }
+            Ok(false) => {}
+            Err(_) => fastctx_platform::readings::counter("migration.unreadable_rooms").add(1),
         }
     }
     let entries = db
@@ -77,7 +83,7 @@ pub(crate) fn prepare(db: &Connection, world: &WorldDir) -> Result<()> {
     let mut rejected = HashMap::new();
     for (name, failed, reason) in entries {
         if failed {
-            if disk::exists(path(world.path(), &name)?).map_err(Error::from)? {
+            if disk::exists(path(world.path(), &name)?).unwrap_or(false) {
                 db.execute("UPDATE node_conversation_transfers SET fingerprint=NULL,finished=0,failure=NULL,rejected=0,archive=NULL WHERE name=?1", [&name])?;
                 db.execute("DELETE FROM node_conversation_transfer_progress WHERE name=?1", [&name])?;
             } else {

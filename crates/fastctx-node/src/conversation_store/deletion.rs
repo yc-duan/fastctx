@@ -113,6 +113,9 @@ pub(crate) fn purge(database: &Database, conversation: &str) -> Result<u64> {
     let conversation = conversation.to_string();
     database.write_now_at(Priority::Background, conversation.len(), move |db| {
         db.execute("UPDATE node_conversation_deletions SET purged=1 WHERE name=?1", [&conversation])?;
+        // An offer rejected while the deletion went on has nothing left to wait for.
+        db.execute("DELETE FROM node_conversation_transfer_progress WHERE name=?1", [&conversation])?;
+        db.execute("DELETE FROM node_conversation_transfers WHERE name=?1", [&conversation])?;
         Ok(db.query_row("SELECT bytes FROM node_conversation_deletions WHERE name=?1", [&conversation], |row| {
             row.get::<_, i64>(0)
         })? as u64)

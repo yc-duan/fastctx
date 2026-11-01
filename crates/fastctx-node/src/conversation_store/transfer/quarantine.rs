@@ -7,6 +7,16 @@ use std::{
     path::{Path, PathBuf},
 };
 
+/// A destination is this conversation's folder among the damaged files of any
+/// version's archive, so one recorded before an upgrade stays valid after it.
+fn destined(world: &Path, conversation: &str, path: &Path) -> bool {
+    let Some(folder) = path.parent() else { return false };
+    let Some(damaged) = folder.parent() else { return false };
+    folder.file_name().is_some_and(|name| name == conversation)
+        && damaged.file_name().is_some_and(|name| name == "damaged")
+        && damaged.parent().and_then(Path::parent) == Some(world.join("archive").as_path())
+}
+
 pub(super) fn keep(world: &Path, database: &Database, conversation: &str, reason: &str) -> io::Result<()> {
     let directory = super::directory(world, conversation).map_err(io::Error::other)?;
     let source = super::path(world, conversation).map_err(io::Error::other)?;
@@ -28,7 +38,7 @@ pub(super) fn keep(world: &Path, database: &Database, conversation: &str, reason
         let parent = crate::record_migration::archive::root(world).join("damaged").join(conversation);
         let mut target = kept.map(PathBuf::from);
         if let Some(path) = &target {
-            if path.parent() != Some(parent.as_path()) {
+            if !destined(world, conversation, path) {
                 return Err(io::Error::new(io::ErrorKind::InvalidData, "invalid import quarantine destination"));
             }
             if disk::exists(path)? {
@@ -57,7 +67,7 @@ pub(super) fn keep(world: &Path, database: &Database, conversation: &str, reason
                 target
             }
         };
-        fastctx_platform::ensure_private_dir(&parent)?;
+        fastctx_platform::ensure_private_dir(target.parent().expect("quarantine folder"))?;
         let note = target
             .with_file_name(format!("{}.why.json", target.file_name().expect("quarantine filename").to_string_lossy()));
         let missing = !disk::exists(&source)?;
