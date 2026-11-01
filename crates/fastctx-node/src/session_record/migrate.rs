@@ -20,7 +20,7 @@ pub(super) fn ensure(directory: &ConversationDir, database: &Database, conversat
             })
             .map_err(io::Error::other)?
     {
-        scheduler::ready(&world, conversation, "session-events")?;
+        scheduler::ready(&world, conversation, "session-events");
         return Ok(());
     }
     let (directory, database, scope) = (directory.clone(), database.clone(), conversation.to_string());

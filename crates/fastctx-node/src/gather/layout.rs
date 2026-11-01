@@ -222,11 +222,10 @@ impl Layout {
                 return Ok(());
             }
             match load_room(&directory, conversation) {
+                // Each remaining file is whole once a damaged one is set aside.
                 Ok(maps) => {
-                    let damaged = self.pending.lock().expect("pending layout").remove(conversation).unwrap_or(false);
-                    if !damaged {
-                        self.mappings.write().expect("record layout").extend(maps);
-                    }
+                    self.pending.lock().expect("pending layout").remove(conversation);
+                    self.mappings.write().expect("record layout").extend(maps);
                     return Ok(());
                 }
                 Err(fault) if fault.damaged => {
@@ -238,6 +237,17 @@ impl Layout {
                         &fault.path,
                         &fault.error.to_string(),
                     )?;
+                    // Whether the room was gathered under the lost generation is
+                    // unknown, so a new one gathers it again.
+                    if fault.path.file_name().is_some_and(|name| name == GENERATION) {
+                        crate::conversation_store::with_file_gate(&directory, || {
+                            publish(
+                                &fault.path,
+                                crate::speech::new_id("gather").as_str().as_bytes(),
+                                Permissions::Private,
+                            )
+                        })?;
+                    }
                 }
                 Err(fault) => {
                     fastctx_platform::readings::counter("migration.source_read_retries").add(1);

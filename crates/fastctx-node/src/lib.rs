@@ -705,6 +705,7 @@ pub async fn run_prepared(
             }
             let record_migration =
                 record_database::register(&world, &database).context("opening the node record database")?;
+            record_migration.report_to(log.clone());
             let book_database =
                 fastctx_storage::Database::open_or_unavailable(&world.path().join("book.sqlite3"), "", |db| {
                     fastctx_storage::versions::apply(

@@ -26,7 +26,7 @@ fn imported(database: &Database, conversation: &str) -> io::Result<bool> {
 pub(super) fn ensure(directory: &ConversationDir, database: &Database, conversation: &str) -> io::Result<()> {
     let world = migration::world(directory)?;
     if fastctx_platform::roles::current().may_block() && imported(database, conversation)? {
-        scheduler::ready(&world, conversation, "run-facts")?;
+        scheduler::ready(&world, conversation, "run-facts");
         return Ok(());
     }
     let context = Context {

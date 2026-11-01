@@ -101,8 +101,14 @@ pub(super) fn verify(context: &Context, rows: Vec<LegacyRow>) -> io::Result<()> 
                 return Ok(Some(format!("legacy source row {} differs when reread",file.ordinal)));
             }
             if let Some(identity)=identity {
-                let body:Vec<u8>=snapshot.query_row("SELECT body FROM conversation_records WHERE conversation=?1 AND family=?2 AND identity=?3",(owner,&context.family,identity),|row|row.get(0))?;
-                if Some(Sha256::digest(body).as_slice())!=body_digest.as_deref() {
+                let body:Vec<u8>=snapshot.query_row("SELECT body FROM conversation_records WHERE conversation=?1 AND family=?2 AND identity=?3",(owner,&context.family,&identity),|row|row.get(0))?;
+                let current=Sha256::digest(body).to_vec();
+                // A replacing row may have been superseded by a later legacy row
+                // of the same identity, whose own proof then accounts for the body.
+                let superseded=row.replace && current.as_slice()!=body_digest.as_deref().unwrap_or_default()
+                    && snapshot.query_row("SELECT EXISTS(SELECT 1 FROM migration_row_proofs WHERE family=?1 AND conversation=?2 AND identity=?3 AND body_digest=?4 AND NOT (path=?5 AND ordinal=?6))",
+                        (&context.family,owner,&identity,&current,&file.path,file.ordinal),|row|row.get::<_,bool>(0))?;
+                if !superseded && Some(current.as_slice())!=body_digest.as_deref() {
                     return Err(Error::new("a committed legacy row differs from its reread proof"));
                 }
             }

@@ -28,6 +28,9 @@ pub(crate) fn prepare(directory: &ConversationDir, family: &'static str) -> io::
         "seen" => directory.seen(),
         _ => return Err(io::Error::other("unknown resident activity family")),
     };
+    // The import and its check read the file twice; both see the same
+    // canonical paths even when the files they name change in between.
+    let mut canonical = std::collections::HashMap::<String, Option<String>>::new();
     records::ensure_file(directory, family, path, move |path, push| {
         let file = match fastctx_platform::disk::open(path) {
             Ok(file) => file,
@@ -39,7 +42,12 @@ pub(crate) fn prepare(directory: &ConversationDir, family: &'static str) -> io::
         loop {
             bytes.clear();
             let count = reader.read_until(b'\n', &mut bytes)?;
-            if count == 0 || bytes.last() != Some(&b'\n') {
+            if count == 0 {
+                break;
+            }
+            // A last line cut short by a stop mid-append was never written whole;
+            // one that is whole but lacks its line end still counts.
+            if bytes.last() != Some(&b'\n') && serde_json::from_slice::<serde::de::IgnoredAny>(&bytes).is_err() {
                 break;
             }
             if bytes.iter().all(u8::is_ascii_whitespace) {
@@ -63,14 +71,19 @@ pub(crate) fn prepare(directory: &ConversationDir, family: &'static str) -> io::
                 }
                 "seen" => {
                     let mut row: Seen = serde_json::from_slice(&bytes)?;
-                    let canonical = match fastctx_hands::files::canonical_path(Path::new(&row.path)) {
-                        Ok(path) => path,
-                        Err(_) => {
-                            push(Source::skip(path.to_path_buf())?)?;
-                            continue;
-                        }
+                    let named = canonical
+                        .entry(row.path.clone())
+                        .or_insert_with(|| {
+                            fastctx_hands::files::canonical_path(Path::new(&row.path))
+                                .ok()
+                                .map(|path| path.to_string_lossy().into_owned())
+                        })
+                        .clone();
+                    let Some(named) = named else {
+                        push(Source::skip(path.to_path_buf())?)?;
+                        continue;
                     };
-                    row.path = canonical.to_string_lossy().into_owned();
+                    row.path = named;
                     Source::new(row.path.clone(), path.to_path_buf(), records::legacy::raw::merge(&bytes, &row)?)?
                         .ordered(row.at)
                         .replacing()

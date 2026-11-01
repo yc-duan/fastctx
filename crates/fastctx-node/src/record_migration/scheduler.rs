@@ -26,6 +26,7 @@ static DEPTH: LazyLock<&'static readings::Gauge> = LazyLock::new(|| readings::ga
 static ACTIVE: LazyLock<&'static readings::Gauge> = LazyLock::new(|| readings::gauge("migration.active"));
 static BUSY: LazyLock<&'static readings::Counter> = LazyLock::new(|| readings::counter("migration.busy"));
 static ELAPSED: LazyLock<&'static readings::Timing> = LazyLock::new(|| readings::timing("migration.family"));
+static FAILED: LazyLock<&'static readings::Gauge> = LazyLock::new(|| readings::gauge("migration.failed_families"));
 thread_local! {
     static CURRENT: RefCell<Option<(Weak<Engine>, Arc<Cell>)>> = const { RefCell::new(None) };
     static DISCOVERING: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
@@ -47,6 +48,15 @@ struct Queue {
     jobs: VecDeque<Job>,
     pending: HashMap<Key, Weak<Cell>>,
     ready: ready::Ready,
+    failed: HashMap<Key, Failed>,
+}
+/// A family that failed for a reason other than being busy or stopped waits
+/// before it runs again, so a lasting fault neither spins a worker nor fills
+/// the log; its reason is told once, and again only when it changes.
+struct Failed {
+    attempts: u32,
+    retry_at: Instant,
+    reason: String,
 }
 struct Engine {
     database: WeakDatabase,
@@ -56,6 +66,7 @@ struct Engine {
     opened: tokio::sync::Notify,
     progress: tokio::sync::Notify,
     closed: AtomicBool,
+    log: std::sync::OnceLock<Arc<crate::log::Log>>,
 }
 
 /// Owned by the node, independently of the jobs that its workers are draining.
@@ -77,11 +88,17 @@ impl Service {
             progress: tokio::sync::Notify::new(),
             started: AtomicBool::new(false),
             closed: AtomicBool::new(false),
+            log: std::sync::OnceLock::new(),
         });
         let mut engines = ENGINES.lock().expect("migration registry");
         engines.retain(|_, engine| engine.strong_count() > 0);
         engines.insert(world.to_path_buf(), Arc::downgrade(&engine));
         Self { engine }
+    }
+
+    /// Where a family's failure is told; without it, failures only wait to retry.
+    pub(crate) fn report_to(&self, log: Arc<crate::log::Log>) {
+        let _ = self.engine.log.set(log);
     }
 
     /// Called only after the listener has been polled, never during startup IO.
@@ -158,11 +175,10 @@ pub(crate) fn checkpoint() -> io::Result<()> {
 }
 
 /// A blocking reader has already checked the durable completion marker.
-pub(crate) fn ready(world: &Path, conversation: &str, family: &str) -> io::Result<()> {
+pub(crate) fn ready(world: &Path, conversation: &str, family: &str) {
     if let Some(engine) = ENGINES.lock().expect("migration registry").get(world).and_then(Weak::upgrade) {
-        engine.remember((conversation.to_string(), family.to_string()))?;
+        engine.remember((conversation.to_string(), family.to_string()));
     }
-    Ok(())
 }
 
 /// Loads completed families while registration is still on a blocking thread.
@@ -174,7 +190,7 @@ pub(crate) fn hydrate(
 ) -> io::Result<()> {
     let ready = database.read_background_now(|db| ready::load(db, excluded, scope)).map_err(io::Error::other)?;
     if let Some(engine) = ENGINES.lock().expect("migration registry").get(world).and_then(Weak::upgrade) {
-        engine.queue.lock().expect("migration queue").ready.extend(ready)?;
+        engine.queue.lock().expect("migration queue").ready.extend(ready);
     }
     Ok(())
 }
@@ -187,6 +203,8 @@ pub(crate) fn invalidate(world: &Path, conversation: &str) {
     };
     let mut queue = engine.queue.lock().expect("migration queue");
     queue.ready.delete(conversation);
+    queue.failed.retain(|key, _| key.0 != conversation);
+    FAILED.set(queue.failed.len() as i64);
     let current = CURRENT.with_borrow(|current| current.as_ref().map(|(_, cell)| Arc::downgrade(cell)));
     queue.pending.retain(|key, cell| {
         if key.0 != conversation || current.as_ref().is_some_and(|current| current.ptr_eq(cell)) {
@@ -254,6 +272,14 @@ pub(crate) fn request(
             }
             cell
         } else {
+            if let Some(failed) = queue.failed.get(&key)
+                && failed.retry_at > Instant::now()
+            {
+                return Err(io::Error::new(
+                    io::ErrorKind::WouldBlock,
+                    format!("migrating {} failed and is tried again later: {}", key.1, failed.reason),
+                ));
+            }
             if nested {
                 let cell = Arc::new(Cell {
                     urgent: AtomicBool::new(urgent),
@@ -303,8 +329,29 @@ pub(crate) fn request(
 }
 
 impl Engine {
-    fn remember(&self, key: Key) -> io::Result<()> {
-        self.queue.lock().expect("migration queue").ready.insert(key)
+    fn remember(&self, key: Key) {
+        self.queue.lock().expect("migration queue").ready.insert(key);
+    }
+    fn failed(&self, queue: &mut Queue, key: &Key, reason: String) {
+        let failed = queue.failed.entry(key.clone()).or_insert(Failed {
+            attempts: 0,
+            retry_at: Instant::now(),
+            reason: String::new(),
+        });
+        failed.attempts = failed.attempts.saturating_add(1);
+        let wait = Duration::from_secs(1u64 << failed.attempts.min(12)).min(Duration::from_secs(60 * 60));
+        failed.retry_at = Instant::now() + wait;
+        if failed.reason != reason {
+            if let Some(log) = self.log.get() {
+                log.line(format_args!(
+                    "migrating {} of {} failed; trying again in {}s: {reason}",
+                    key.1,
+                    key.0,
+                    wait.as_secs()
+                ));
+            }
+            failed.reason = reason;
+        }
     }
     fn close(&self) {
         self.closed.store(true, Ordering::Release);
@@ -369,9 +416,16 @@ impl Engine {
                 if job.cell.cancelled.load(Ordering::Acquire) {
                     result = Err(io::Error::new(io::ErrorKind::Interrupted, "migration generation changed"));
                 } else {
-                    result = queue.ready.insert(job.key.clone());
+                    queue.ready.insert(job.key.clone());
+                    queue.failed.remove(&job.key);
                 }
             }
+            if let Err(error) = &result
+                && !matches!(error.kind(), io::ErrorKind::WouldBlock | io::ErrorKind::Interrupted)
+            {
+                self.failed(&mut queue, &job.key, error.to_string());
+            }
+            FAILED.set(queue.failed.len() as i64);
             if queue.pending.get(&job.key).is_some_and(|cell| cell.ptr_eq(&Arc::downgrade(&job.cell))) {
                 queue.pending.remove(&job.key);
             }
