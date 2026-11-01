@@ -1022,9 +1022,9 @@ async fn flush(inner: Arc<Inner>, up: Outgoing, sent: u64, failed: oneshot::Send
 /// the hub they are taken, once for each run of them that came together.
 ///
 /// None is taken before this connection's view is current: admitting a
-/// letter needs it, and a letter refused for want of it would end the
-/// connection, the next one delivering it again before its view. Letters
-/// wait meanwhile in `delivered`, which holds more than the hub sends ahead.
+/// letter needs it, and a letter refused for want of it would be set aside.
+/// Letters wait meanwhile in `delivered`, which holds more than the hub
+/// sends ahead.
 async fn take_letters(
     inner: Arc<Inner>,
     up: Outgoing,
@@ -1044,13 +1044,31 @@ async fn take_letters(
                 Err(_) => break,
             }
         }
-        let seq = match letters::take(inner.clone(), hub_letters, run).await {
-            Ok(seq) => seq,
-            Err(error) => {
-                let _ = failed.send(format!("taking letters: {error}"));
-                return;
+        // What came is kept unacknowledged and tried again on this
+        // connection when keeping it fails: the hub holds what follows
+        // meanwhile, and calls and heartbeats go on. Ending the connection
+        // instead would end it again with each delivery while, say, the
+        // conversation a letter is for still moves into its database.
+        let run: Arc<[(u64, Envelope)]> = run.into();
+        let mut failures = 0;
+        let mut said = String::new();
+        let seq = loop {
+            match letters::take(inner.clone(), hub_letters, run.clone()).await {
+                Ok(seq) => break seq,
+                Err(error) => {
+                    failures += 1;
+                    let error = error.to_string();
+                    if error != said {
+                        inner.node.log(format!("taking letters failed, trying again: {error}"));
+                        said = error;
+                    }
+                    tokio::time::sleep(backoff(failures + 1)).await;
+                }
             }
         };
+        if failures > 0 {
+            inner.node.log(format!("letters were taken after {failures} failed tries"));
+        }
         if up.write_first(Up::Ack { seq }).await.is_err() {
             return;
         }

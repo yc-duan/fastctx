@@ -13,7 +13,7 @@ use std::collections::HashMap;
 use std::io;
 use std::sync::Arc;
 
-pub(in crate::link) async fn take(inner: Arc<Inner>, epoch: u64, run: Vec<(u64, Envelope)>) -> io::Result<u64> {
+pub(in crate::link) async fn take(inner: Arc<Inner>, epoch: u64, run: Arc<[(u64, Envelope)]>) -> io::Result<u64> {
     let held = inner.taking.lock_owned().await;
     fastctx_platform::task::spawn(async move {
         let _doing = fastctx_platform::doing::doing(format!("persisting letters from {}", inner.hub));
@@ -23,10 +23,10 @@ pub(in crate::link) async fn take(inner: Arc<Inner>, epoch: u64, run: Vec<(u64, 
         let mut pending = Vec::new();
         let mut recent = HashMap::new();
         let mut last = None;
-        for (sequence, message) in run {
+        for &(sequence, ref message) in run.iter() {
             if crate::window::unheld(taken, epoch, sequence) {
                 let reference = Reference { authority: inner.hub.as_str().to_owned(), epoch, sequence };
-                match one(&inner, &message, &mut recent, &reference).await {
+                match one(&inner, message, &mut recent, &reference).await {
                     Ok(Some((from, id, receipt))) => pending.push((from, id, receipt, reference)),
                     Ok(None) => {}
                     Err(error) => {
