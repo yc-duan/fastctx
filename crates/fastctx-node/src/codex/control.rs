@@ -284,7 +284,8 @@ async fn fork(
     let id = node.residents.new_id(&source.host.agent)?;
     let _birth = crate::here::born(node, &id, source.acting.clone(), &Origin::User);
     crate::assists::host::inherit(node, codex.assisted_cwd().is_some(), &id)?;
-    crate::session_options::keep(node, &id, &crate::session_options::read(node, parent)?)?;
+    let options = crate::session_options::load(node, parent).await?;
+    crate::session_options::keep(node, &id, &options).await?;
     crate::focus::open(node, &node.world.conversation(&id), &source.acting, &source.focus).await?;
     let (spec, heard) =
         crate::colleagues::thread_spec(node, &id, &Origin::User, town.as_ref(), &source.acting, source.home.as_deref())

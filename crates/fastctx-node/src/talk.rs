@@ -929,7 +929,7 @@ pub async fn open_here(
     crate::placement::location::speaking(node, &id, typed_on)?;
     let origin = Origin::User;
     let _birth = crate::here::born(node, &id, opened.acting.clone(), &origin);
-    crate::session_options::keep(node, &id, &options)?;
+    crate::session_options::keep(node, &id, &options).await?;
     // What it is told of its machines and folders goes into the instructions
     // its thread starts with.
     crate::focus::open(node, &node.world.conversation(&id), &opened.acting, &opened.focus).await?;

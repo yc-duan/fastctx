@@ -370,7 +370,7 @@ async fn hand_over_locked(
     {
         return crate::lifecycle::refused::reject(node, to, &pending.delivery.id, error).await;
     }
-    if let Err(error) = crate::lifecycle::wake::check(node, to, about) {
+    if let Err(error) = crate::lifecycle::wake::check(node, to, about).await {
         return crate::lifecycle::retry::unavailable(node, to, &pending.delivery.id, error).await;
     }
     if pending.delivery.notice.along().is_none() {
@@ -640,7 +640,7 @@ async fn submit_thread(
     }
     let (current, _) = node.residents.about(id).ok_or_else(crate::authorization::no_subject)?;
     crate::homes::available(node, &current)?;
-    crate::assists::may_turn(node, id, &current)?;
+    crate::assists::may_turn(node, id, &current).await?;
     let along_only = batch.iter().all(|input| input.delivery.notice.along().is_some());
     let opening = !along_only
         && node.residents.now(id).is_none_or(|now| now.turn.is_none())

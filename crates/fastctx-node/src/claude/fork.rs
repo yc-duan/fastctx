@@ -121,13 +121,14 @@ pub async fn fork(
                 reasoning_effort: effort.clone(),
                 mcp_off: source.mcp_off.clone(),
             },
-        )?;
+        )
+        .await?;
         let settings = directory.claude_settings();
         let instructions = directory.claude_instructions();
         std::fs::write(&settings, super::settings_json(&id))
             .and_then(|()| std::fs::write(&instructions, words))
             .map_err(failure)?;
-        let mcp = crate::profile::session::claude(node, &id, true)?;
+        let mcp = crate::profile::session::load_claude(node, &id, true).await?;
         let plugin = claude::plugin_dir(node.world.path());
         let world = node.world.path().to_path_buf();
         let snapshot = checkpoint

@@ -12,7 +12,7 @@ use std::collections::BTreeSet;
 use std::sync::Arc;
 
 fn write_session_file(path: &std::path::Path, bytes: &[u8]) -> std::io::Result<()> {
-    match std::fs::read(path) {
+    match fastctx_platform::disk::read(path) {
         Ok(held) if held == bytes => return Ok(()),
         Ok(_) => {}
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
@@ -128,6 +128,17 @@ pub(crate) fn codex(
     Ok(names)
 }
 
+pub(crate) async fn load_claude(
+    node: &Arc<Node>,
+    id: &ResidentId,
+    creating: bool,
+) -> Result<std::path::PathBuf, Failure> {
+    let (node, id) = (node.clone(), id.clone());
+    fastctx_platform::task::spawn_blocking(move || claude(&node, &id, creating))
+        .await
+        .map_err(|error| Failure::new(error.to_string()))?
+}
+
 pub(crate) fn claude(node: &Node, id: &ResidentId, creating: bool) -> Result<std::path::PathBuf, Failure> {
     let (about, _) = node.residents.about(id).ok_or_else(|| Failure::new("unknown conversation"))?;
     let directory = node.world.conversation(id);
@@ -211,11 +222,14 @@ const AGAIN: std::time::Duration = std::time::Duration::from_secs(15);
 /// Brings the sessions' configuration of `only`'s conversations, or of every
 /// conversation, in line with the accounts' profiles. Returns those busy at
 /// the time, to be tried again.
-async fn refresh(node: &Arc<Node>, only: Option<&BTreeSet<ResidentId>>) -> BTreeSet<ResidentId> {
-    let residents: Vec<_> = match only {
-        None => node.residents.everyone().collect(),
-        Some(ids) => ids.iter().filter_map(|id| node.residents.on_record(id)).collect(),
-    };
+async fn refresh(node: &Arc<Node>, only: Option<&BTreeSet<ResidentId>>) -> Result<BTreeSet<ResidentId>, Failure> {
+    let (reading, only) = (node.clone(), only.cloned());
+    let residents: Vec<_> = fastctx_platform::task::spawn_blocking(move || match only {
+        None => reading.residents.everyone().collect(),
+        Some(ids) => ids.iter().filter_map(|id| reading.residents.on_record(id)).collect(),
+    })
+    .await
+    .map_err(|error| Failure::new(error.to_string()))?;
     let mut busy = BTreeSet::new();
     for resident in residents {
         if resident.removed.is_some() || !resident.about.world_started {
@@ -232,14 +246,14 @@ async fn refresh(node: &Arc<Node>, only: Option<&BTreeSet<ResidentId>>) -> BTree
             continue;
         }
         if resident.about.host.agent.as_str() == "claude" {
-            if let Err(e) = claude(node, &resident.id, false) {
+            if let Err(e) = load_claude(node, &resident.id, false).await {
                 node.log.line(format_args!("updating {}'s user configuration: {e}", resident.id));
             }
         } else if resident.about.host.agent.as_str() == "codex" {
             crate::codex::moved(node, &resident.id).await;
         }
     }
-    busy
+    Ok(busy)
 }
 
 /// Collects the MCP commands each hub's profiles gave up; whether all of
@@ -265,19 +279,35 @@ fn sweep(node: &Node) -> bool {
 /// left uncollected, a while later.
 pub(crate) fn start(node: &Arc<Node>) {
     let node = node.clone();
-    tokio::spawn(async move {
+    fastctx_platform::task::spawn(async move {
         let mut views = node.views.subscribe();
         let mut ways = node.ways.subscribe();
         let (mut busy, mut swept, mut all) = (BTreeSet::new(), true, true);
         loop {
-            busy = refresh(&node, (!all).then_some(&busy)).await;
+            let failed = match refresh(&node, (!all).then_some(&busy)).await {
+                Ok(updated) => {
+                    busy = updated;
+                    false
+                }
+                Err(error) => {
+                    node.log.line(format_args!("refreshing session configurations: {error}"));
+                    true
+                }
+            };
             if all || !swept {
-                swept = sweep(&node);
+                let collecting = node.clone();
+                swept = match fastctx_platform::task::spawn_blocking(move || sweep(&collecting)).await {
+                    Ok(swept) => swept,
+                    Err(error) => {
+                        node.log.line(format_args!("collecting session configurations: {error}"));
+                        false
+                    }
+                };
             }
             all = tokio::select! {
                 _ = views.changed() => true,
                 _ = ways.changed() => true,
-                () = tokio::time::sleep(AGAIN), if !busy.is_empty() || !swept => false,
+                () = tokio::time::sleep(AGAIN), if failed || !busy.is_empty() || !swept => failed,
             };
         }
     });

@@ -30,8 +30,10 @@ pub async fn manage(
         here(node, &resident, action).await?
     } else {
         if matches!(action, Management::Mcp { .. }) {
-            let (link, account) =
-                node.speaking(&Acting::Here, &machine, Purpose::Agents).await.map_err(|e| Failure::new(e.to_string()))?;
+            let (link, account) = node
+                .speaking(&Acting::Here, &machine, Purpose::Agents)
+                .await
+                .map_err(|e| Failure::new(e.to_string()))?;
             crate::mcp::supports(node, &link, &account, &machine.name).await?;
         }
         let call = RemoteCall::Manage { resident: resident.clone(), action };
@@ -377,22 +379,9 @@ pub async fn here(node: &Arc<Node>, id: &ResidentId, action: Management) -> Resu
             for name in &off {
                 fastctx_types::profile::name_of(name).map_err(Failure::not_run)?;
             }
-            let mut options = crate::session_options::read(node, id)?;
-            options.mcp_off = off.clone();
-            // About is authoritative once the conversation exists. A restart
-            // reads it even if writing the secondary options file was interrupted.
-            node.residents.set_mcp_off(&node.world, id, off).map_err(|e| Failure::new(e.to_string()))?;
-            let options_path = node.world.conversation(id).session_options();
-            fastctx_platform::ensure_private_dir(options_path.parent().expect("options directory"))
-                .map_err(|e| Failure::new(e.to_string()))?;
-            fastctx_platform::publish(
-                &options_path,
-                &serde_json::to_vec(&options).unwrap(),
-                fastctx_platform::Permissions::Private,
-            )
-            .map_err(|e| Failure::new(e.to_string()))?;
+            crate::session_options::set_mcp(node, id, off).await?;
             if about.host.agent.as_str() == "claude" {
-                crate::profile::session::claude(node, id, false)?;
+                crate::profile::session::load_claude(node, id, false).await?;
             } else {
                 crate::codex::moved(node, id).await;
             }

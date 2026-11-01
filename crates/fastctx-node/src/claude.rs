@@ -1339,7 +1339,7 @@ pub async fn deliver(
         Some((about, _)) => about,
         None => return Some(Err(crate::authorization::no_subject())),
     };
-    if let Err(error) = crate::lifecycle::wake::check(node, to, &current) {
+    if let Err(error) = crate::lifecycle::wake::check(node, to, &current).await {
         return Some(crate::lifecycle::retry::unavailable(node, to, &pending.delivery.id, error).await);
     }
     let alive = match isolation::prepare(node, to, alive).await {
@@ -1651,7 +1651,7 @@ pub(crate) async fn wake(
 
     let Command { program, cwd, env } = launching;
     if let Some(resident) = node.residents.resident_of_thread(session) {
-        crate::profile::session::claude(node, &resident, false)?;
+        crate::profile::session::load_claude(node, &resident, false).await?;
     }
     let args = background::wake_args(session, &words);
     let (launch_node, launch_resident, launch_id) = (node.clone(), resident.clone(), id.clone());
@@ -1870,7 +1870,7 @@ pub async fn open_here(
         .map_err(|error| Failure::new(format!("recording the session: {error}")))?;
     crate::context::instructed(node, &id, &heard).map_err(|error| Failure::new(error.to_string()))?;
     node.residents.set_instructed(&id, heard);
-    crate::session_options::keep(node, &id, &options)?;
+    crate::session_options::keep(node, &id, &options).await?;
     let directory = node.world.conversation(&id);
     let settings = directory.claude_settings();
     let instructions = directory.claude_instructions();
@@ -1906,7 +1906,7 @@ pub async fn open_here(
 /// its first turn having its login's turn: at once, or once one is free
 /// (`queued`).
 async fn launch(node: &Arc<Node>, id: &ResidentId) -> Result<Landed, Failure> {
-    let prepared = prepare_launch(node, id)?;
+    let prepared = prepare_launch(node, id).await?;
     begin_launch(node, id, prepared).await
 }
 
@@ -1925,7 +1925,14 @@ pub(super) struct Prepared {
     text: String,
 }
 
-pub(super) fn prepare_launch(node: &Arc<Node>, id: &ResidentId) -> Result<Prepared, Failure> {
+pub(super) async fn prepare_launch(node: &Arc<Node>, id: &ResidentId) -> Result<Prepared, Failure> {
+    let (node, id) = (node.clone(), id.clone());
+    fastctx_platform::task::spawn_blocking(move || prepare_launch_now(&node, &id))
+        .await
+        .map_err(|error| Failure::new(error.to_string()))?
+}
+
+fn prepare_launch_now(node: &Arc<Node>, id: &ResidentId) -> Result<Prepared, Failure> {
     let (about, town) = node.residents.about(id).ok_or_else(|| Failure::new(format!("{id} was deleted")))?;
     let Command { program, env, .. } = command(node, about.home.as_deref())?;
     let assisting = crate::assists::host::starting(node, id, &about.acting)?;
