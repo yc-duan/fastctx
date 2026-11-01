@@ -71,7 +71,13 @@ pub async fn fork(
         }
         None => None,
     };
-    let inherited = super::fork_history::retained(node, resident, &session, through.as_deref())?;
+    let (reading, parent, history_session, retained_through) =
+        (node.clone(), resident.clone(), session.clone(), through.clone());
+    let inherited = fastctx_platform::task::spawn_blocking(move || {
+        super::fork_history::retained(&reading, &parent, &history_session, retained_through.as_deref())
+    })
+    .await
+    .map_err(|error| Failure::new(error.to_string()))??;
     let id = node.residents.new_id(&source.host.agent)?;
     let launching = super::command(node, source.home.as_deref())?;
     super::oldest::check(node, &launching).await?;
@@ -111,7 +117,7 @@ pub async fn fork(
     node.residents.create(&node.world, about, town.clone(), now).map_err(failure)?;
 
     let completion = async {
-        crate::context::instructed(node, &id, &heard).map_err(|error| Failure::new(error.to_string()))?;
+        crate::context::instructed(node, &id, &heard).await.map_err(|error| Failure::new(error.to_string()))?;
         node.residents.set_instructed(&id, heard);
         crate::session_options::keep(
             node,
@@ -151,7 +157,7 @@ pub async fn fork(
         if let Some(town) = &town {
             crate::town::access::check(node, &source.acting, town)?;
         }
-        let printed = tokio::task::spawn_blocking(fastctx_platform::doing::carried(move || {
+        let printed = fastctx_platform::task::spawn_blocking(fastctx_platform::doing::carried(move || {
             let start = background::Start {
                 plugin: &plugin,
                 settings: &settings,
@@ -181,7 +187,10 @@ pub async fn fork(
             super::fork_ready::wait(node, &id, false).await?;
             super::control::invoke(node, &id, json!({"do":"fork_prepare"})).await?;
             super::fork_ready::wait(node, &id, true).await?;
-            super::fork_history::seed(node, &id, &inherited)?;
+            let (seeding, child) = (node.clone(), id.clone());
+            fastctx_platform::task::spawn_blocking(move || super::fork_history::seed(&seeding, &child, &inherited))
+                .await
+                .map_err(|error| Failure::new(error.to_string()))??;
             crate::turns::apply(
                 node,
                 &id,

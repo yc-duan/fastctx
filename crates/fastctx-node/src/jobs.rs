@@ -23,6 +23,7 @@ use tokio::sync::{broadcast, watch};
 use tokio::time::Instant;
 
 use crate::Node;
+mod reply;
 
 /// How long a wait for a job's change goes before its record is read
 /// anyway: a supervisor tells the node of a change once, and a word lost
@@ -355,15 +356,21 @@ impl Jobs {
         // Why it answered says something only of a job that still runs.
         let answered = answered.filter(|_| state == RunState::Running);
         let (receipt_node, receipt_path) = (node.clone(), launched.record.clone());
-        let consumed = tokio::task::spawn_blocking(move || crate::job_receipts::snapshot(&receipt_node, &receipt_path))
-            .await
-            .map_err(|error| Failure::new(format!("reading completion receipts: {error}")))?
-            .map_err(|error| failure("reading completion receipts", error))?;
-        if let Some(owner) = record.owner.resident().filter(|owner| node.is_me(&owner.machine)) {
-            let directory = node.world.conversation(&owner.resident);
-            crate::job_receipts::apply_consumed(&directory, &consumed)
-                .map_err(|error| failure("reading completion receipts", error))?;
-        }
+        let receipt_directory = record
+            .owner
+            .resident()
+            .filter(|owner| node.is_me(&owner.machine))
+            .map(|owner| node.world.conversation(&owner.resident));
+        let consumed = fastctx_platform::task::spawn_blocking(move || -> std::io::Result<_> {
+            let consumed = crate::job_receipts::snapshot(&receipt_node, &receipt_path)?;
+            if let Some(directory) = receipt_directory {
+                crate::job_receipts::apply_consumed(&directory, &consumed)?;
+            }
+            Ok(consumed)
+        })
+        .await
+        .map_err(|error| Failure::new(format!("reading completion receipts: {error}")))?
+        .map_err(|error| failure("reading completion receipts", error))?;
         let consumed = (!consumed.is_empty()).then(|| Box::new(consumed));
         // What it ran was refused something: on a Mac, the node looks
         // whether macOS keeps its user's private places from it, which the
@@ -373,10 +380,8 @@ impl Jobs {
         } else {
             Vec::new()
         };
-        let scratch = crate::scratch::jobs::locations(&launched.record, machine)
-            .map_err(|error| failure("reading scratch locations", error))?;
-        let mut reply = RunReply {
-            scratch,
+        let reply = RunReply {
+            scratch: Default::default(),
             run: None,
             machine: machine.clone(),
             job: launched.job,
@@ -388,20 +393,7 @@ impl Jobs {
             privacy,
             missing,
         };
-        if record.call_id.is_some() {
-            let mut facts = crate::run_facts::assemble(&reply, &launched.record)
-                .map_err(|error| failure("recording run facts", error))?;
-            if matches!(reply.state, RunState::Ended { .. }) && !facts.output.as_ref().is_some_and(|output| output.cut)
-            {
-                facts.output = None;
-            }
-            reply.run = Some(Box::new(facts));
-        }
-        if let Some(owner) = record.owner.resident() {
-            crate::run_receipts::remember(node, owner, &reply)
-                .map_err(|error| failure("remembering the run answer", error))?;
-        }
-        Ok((reply, record))
+        reply::finish(node, launched.record, record, reply).await
     }
 }
 

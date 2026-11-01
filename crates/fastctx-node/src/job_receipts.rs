@@ -643,6 +643,13 @@ pub(crate) fn start(node: &std::sync::Arc<Node>) {
 }
 
 async fn forward(node: &std::sync::Arc<Node>) -> io::Result<bool> {
+    let (node, runtime) = (node.clone(), tokio::runtime::Handle::current());
+    fastctx_platform::task::spawn_blocking(move || runtime.block_on(forward_inner(&node)))
+        .await
+        .map_err(io::Error::other)?
+}
+
+async fn forward_inner(node: &std::sync::Arc<Node>) -> io::Result<bool> {
     let mut pending = false;
     for directory in node.world.book_directories("job-deliveries")? {
         let paths = match items::entries(&directory, Some("json")) {

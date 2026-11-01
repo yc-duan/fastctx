@@ -33,16 +33,24 @@ pub(crate) async fn refresh(
     acting: &Acting,
 ) -> Result<(), Failure> {
     let me = Address { machine: node.machine(), resident: id.clone() };
-    crate::context::set_account(node, id, "map", "", Change { by: Some(&me), version: "", fact: "", full: false })
-        .map_err(failure)?;
+    crate::context::blocking::set_account(
+        node,
+        id,
+        "map",
+        "",
+        Change { by: Some(&me), version: "", fact: "", full: false },
+    )
+    .await
+    .map_err(failure)?;
     if !fastctx_platform::preview() {
-        return crate::context::set_account(
+        return crate::context::blocking::set_account(
             node,
             id,
             "history",
             "",
             Change { by: Some(&me), version: "", fact: "", full: false },
         )
+        .await
         .map_err(failure);
     }
     let owner = match origin {
@@ -57,7 +65,8 @@ pub(crate) async fn refresh(
     let (mut catalog, location) = if let Some(account) = &account {
         let Some(link) = node.link_of(&account.hub) else { return Ok(()) };
         if !link.view().shared_records {
-            return unavailable(node, id, &me, "HISTORY\nUpdate the hub to use history and copies on every computer.");
+            return unavailable(node, id, &me, "HISTORY\nUpdate the hub to use history and copies on every computer.")
+                .await;
         }
         let catalog = match &scope {
             Scope::Project { project } => {
@@ -82,7 +91,8 @@ pub(crate) async fn refresh(
                     id,
                     &me,
                     "HISTORY\nThe history is unavailable while its account access cannot be confirmed.",
-                )?;
+                )
+                .await?;
                 return Err(failure(error));
             }
         };
@@ -182,24 +192,26 @@ pub(crate) async fn refresh(
         .unwrap_or_else(|| "The history available to this conversation changed.".into());
     let own = changed.as_ref().is_some_and(Vec::is_empty);
     let version = serde_json::to_string(&cursor).map_err(failure)?;
-    crate::context::set_account(
+    crate::context::blocking::set_account(
         node,
         id,
         "history",
         &text,
         Change { by: own.then_some(&me), version: &version, fact: &fact, full: changed.is_none() },
     )
+    .await
     .map_err(failure)
 }
 
-fn unavailable(node: &Node, id: &ResidentId, me: &Address, text: &str) -> Result<(), Failure> {
-    crate::context::set_account(
+async fn unavailable(node: &Arc<Node>, id: &ResidentId, me: &Address, text: &str) -> Result<(), Failure> {
+    crate::context::blocking::set_account(
         node,
         id,
         "history",
         text,
         Change { by: Some(me), version: "", fact: "The history is unavailable.", full: true },
     )
+    .await
     .map_err(failure)
 }
 

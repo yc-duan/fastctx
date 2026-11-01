@@ -1866,7 +1866,7 @@ pub async fn open_here(
     node.residents
         .create(&node.world, about, town.clone(), now)
         .map_err(|error| Failure::new(format!("recording the session: {error}")))?;
-    crate::context::instructed(node, &id, &heard).map_err(|error| Failure::new(error.to_string()))?;
+    crate::context::instructed(node, &id, &heard).await.map_err(|error| Failure::new(error.to_string()))?;
     node.residents.set_instructed(&id, heard);
     crate::session_options::keep(node, &id, &options)?;
     let directory = node.world.conversation(&id);
@@ -1889,7 +1889,10 @@ pub async fn open_here(
         // The session it starts is the first to have them.
         since: Some(Timestamp::now()),
     };
-    crate::inbox::keep(&directory, &first)
+    let (keeping_directory, first_input) = (directory.clone(), first.clone());
+    fastctx_platform::task::spawn_blocking(move || crate::inbox::keep(&keeping_directory, &first_input))
+        .await
+        .map_err(|error| Failure::new(error.to_string()))?
         .map_err(|error| Failure::new(format!("keeping the first words: {error}")))?;
     if let Err(queued) = admitted {
         queued::mark(&directory).map_err(|error| Failure::new(format!("keeping the first turn in line: {error}")))?;

@@ -295,7 +295,7 @@ pub async fn ask_here(
     node.residents
         .create(&node.world, about.clone(), town.clone(), now)
         .map_err(|error| Failure::new(format!("recording the colleague: {error}")))?;
-    crate::context::instructed(node, &id, &heard).map_err(|error| Failure::new(error.to_string()))?;
+    crate::context::instructed(node, &id, &heard).await.map_err(|error| Failure::new(error.to_string()))?;
     if let Err(failure) = crate::goals::colleagues::open(node, &id, &asker, &prompt).await {
         node.residents
             .change_now(&node.world, &id, |now| {

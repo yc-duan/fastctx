@@ -398,9 +398,21 @@ async fn hand_over_locked(
                 && row.delivery.notice.along().is_none()
                 && ready_for_delivery(node, about, row)
         }) {
-            let delayed = crate::lifecycle::retry::progress(node, to, &first.delivery.id)
-                .map_err(|error| Failure::new(error.to_string()))?
-                .is_some_and(|progress| progress.next > jiff::Timestamp::now());
+            let (reading, recipient, input) = (node.clone(), to.clone(), first.delivery.id.clone());
+            let progress = fastctx_platform::task::spawn_blocking(move || {
+                crate::lifecycle::retry::progress(&reading, &recipient, &input)
+            })
+            .await
+            .map_err(|error| Failure::new(error.to_string()))?;
+            let progress = match progress {
+                Ok(progress) => progress,
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                    crate::lifecycle::retry::kick(node, to);
+                    return Ok(Landed::Waiting { why: Some(error.to_string()), answered: answered(node, to, about) });
+                }
+                Err(error) => return Err(Failure::new(error.to_string())),
+            };
+            let delayed = progress.is_some_and(|progress| progress.next > jiff::Timestamp::now());
             if first.delivery.id != pending.delivery.id || delayed {
                 crate::lifecycle::retry::kick(node, to);
                 return Ok(Landed::Waiting { why: None, answered: answered(node, to, about) });
@@ -593,8 +605,12 @@ async fn submit_thread(
     if single && crate::inbox::keep(directory, &pending).map_err(|error| Failure::new(error.to_string()))? {
         crate::goals::engine::input_changed(node, id);
     }
-    let accepted: std::collections::HashSet<_> = crate::delivery::handovers(directory)
+    let reading = directory.clone();
+    let handovers = fastctx_platform::task::spawn_blocking(move || crate::delivery::handovers(&reading))
+        .await
         .map_err(|error| Failure::new(error.to_string()))?
+        .map_err(|error| Failure::new(error.to_string()))?;
+    let accepted: std::collections::HashSet<_> = handovers
         .into_iter()
         .filter(|handover| handover.turn.is_some() || handover.unresolved.is_some())
         .flat_map(|handover| handover.inputs.into_iter().map(|input| input.delivery.id))
