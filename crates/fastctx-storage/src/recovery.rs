@@ -88,7 +88,8 @@ pub(super) fn prepare(path: &Path) -> Result<Option<String>> {
 /// its schema: what is wrong, if anything. The whole file is checked in the
 /// background once it is open (`crate::integrity`). The file is read without
 /// a writable connection, so a broken header cannot make SQLite discard its
-/// write-ahead log.
+/// write-ahead log. Only the database's keeper runs it (`crate::keeper`), so
+/// no other connection writes the file while it is read.
 fn inspect(path: &Path) -> Result<Option<String>> {
     use std::io::Read;
     let mut file = match std::fs::File::open(path) {
@@ -97,14 +98,14 @@ fn inspect(path: &Path) -> Result<Option<String>> {
         Err(error) => return Err(error.into()),
     };
     let length = file.metadata()?.len();
+    let log = match std::fs::metadata(side(path, "-wal")) {
+        Ok(metadata) => metadata.len(),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => 0,
+        Err(error) => return Err(error.into()),
+    };
     if length == 0 {
         // Nothing was ever committed to an empty file without a log: a start
         // cut short as it created it. One with a log may hold commits.
-        let log = match std::fs::metadata(side(path, "-wal")) {
-            Ok(metadata) => metadata.len(),
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => 0,
-            Err(error) => return Err(error.into()),
-        };
         return Ok((log > 0).then(|| "the database file is empty but its write-ahead log is not".to_string()));
     }
     let mut header = [0u8; 100];
@@ -124,9 +125,11 @@ fn inspect(path: &Path) -> Result<Option<String>> {
         size => u64::from(size),
     };
     // The page count in the header counts only while its "valid for" number
-    // matches the change counter.
+    // matches the change counter. A file shorter than it lost pages, unless
+    // the log holds frames: a checkpoint cut short leaves the header ahead of
+    // the file, and SQLite puts those pages back from the log.
     let pages = u64::from(word(28));
-    if word(92) == word(24) && pages > 0 && length < page.saturating_mul(pages) {
+    if log == 0 && word(92) == word(24) && pages > 0 && length < page.saturating_mul(pages) {
         return Ok(Some(format!(
             "the database file is shorter ({length} bytes) than its {pages} pages of {page} bytes"
         )));

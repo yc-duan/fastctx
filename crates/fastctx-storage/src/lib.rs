@@ -6,6 +6,7 @@ mod blocking;
 pub mod documents;
 mod error;
 mod integrity;
+mod keeper;
 mod metrics;
 pub mod migration;
 mod queue;
@@ -53,6 +54,8 @@ struct Inner {
     path: PathBuf,
     fault: Option<Error>,
     salvaged: Option<String>,
+    /// Shared with the writer thread, which lets it go after its connection.
+    _keeper: Option<Arc<keeper::Keeper>>,
 }
 impl Drop for Inner {
     fn drop(&mut self) {
@@ -120,28 +123,37 @@ impl Database {
         initialize: impl Fn(&rusqlite::Connection) -> Result<()>,
     ) -> Result<Self> {
         fastctx_platform::roles::blocking("opening a database");
-        match Self::open_once(path, schema, &initialize) {
-            // Damage the cheap checks did not see is set aside and salvaged
-            // as theirs is, and the salvage opened instead.
-            Err(error) if error.is_database_damage() => {
-                recovery::mark_damaged(path, &error.to_string())?;
-                Self::open_once(path, schema, &initialize)
-            }
-            opened => opened,
-        }
-    }
-
-    fn open_once(path: &Path, schema: &str, initialize: &impl Fn(&rusqlite::Connection) -> Result<()>) -> Result<Self> {
-        let readings = readings::Readings::of(path);
-        let salvaged = recovery::prepare(path)?;
-        if salvaged.is_some() {
-            fastctx_platform::health::damaged(readings.name);
-        }
         let parent = path.parent().ok_or_else(|| Error::new("the database has no parent directory"))?;
         // Existing directories keep their owner's ACL: a system service must
         // not take away that owner's access to an existing database.
         if !parent.try_exists()? {
             fastctx_platform::ensure_private_dir(parent)?;
+        }
+        let kept = keeper::keep(path)?;
+        match Self::open_once(path, schema, &initialize, &kept) {
+            // Damage the cheap checks did not see is set aside and salvaged
+            // as theirs is, and the salvage opened instead; only when no
+            // other connection to it is open.
+            Err(error) if error.is_database_damage() && kept.sole => {
+                recovery::mark_damaged(path, &error.to_string())?;
+                Self::open_once(path, schema, &initialize, &kept)
+            }
+            opened => opened,
+        }
+    }
+
+    fn open_once(
+        path: &Path,
+        schema: &str,
+        initialize: &impl Fn(&rusqlite::Connection) -> Result<()>,
+        kept: &keeper::Kept,
+    ) -> Result<Self> {
+        let readings = readings::Readings::of(path);
+        // Another handle of this process has it open, or is closing it: its
+        // file is not looked at under it.
+        let salvaged = if kept.sole { recovery::prepare(path)? } else { None };
+        if salvaged.is_some() {
+            fastctx_platform::health::damaged(readings.name);
         }
         let mut connection = rusqlite::Connection::open(path)?;
         connection.busy_timeout(ADMISSION)?;
@@ -172,11 +184,13 @@ impl Database {
         let writes = Arc::new(queue::Queue::new());
         let damage = Arc::new(integrity::Damage::new(path.to_path_buf(), &readings));
         let metrics = Arc::new(metrics::Metrics::new(readings));
-        let (queue, measurements, noticed, file) =
-            (writes.clone(), metrics.clone(), damage.clone(), path.to_path_buf());
-        std::thread::Builder::new()
-            .name("sqlite-writer".into())
-            .spawn(move || writer::run(connection, queue, measurements, noticed, file))?;
+        let (queue, measurements, noticed, file, held) =
+            (writes.clone(), metrics.clone(), damage.clone(), path.to_path_buf(), kept.keeper.clone());
+        std::thread::Builder::new().name("sqlite-writer".into()).spawn(move || {
+            writer::run(connection, queue, measurements, noticed, file);
+            // The connection, and with it the last checkpoint, is done.
+            drop(held);
+        })?;
         integrity::watch(Arc::downgrade(&damage), path.to_path_buf())?;
         Ok(Self(Arc::new(Inner {
             writes,
@@ -189,6 +203,7 @@ impl Database {
             path: path.to_path_buf(),
             fault: None,
             salvaged,
+            _keeper: Some(kept.keeper.clone()),
         })))
     }
 
@@ -223,6 +238,7 @@ impl Database {
                     path: path.to_path_buf(),
                     fault: Some(fault),
                     salvaged: None,
+                    _keeper: None,
                 }))
             }
         }
