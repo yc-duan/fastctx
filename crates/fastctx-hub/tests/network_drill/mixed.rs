@@ -29,6 +29,7 @@ use crate::world::{Said, World, earlier, until, with_password};
 /// are kept where this release keeps them, those after numbered on past
 /// them, and every one comes once.
 pub async fn earlier_hub(world: &World, report: &mut Report) -> anyhow::Result<()> {
+    let program = world.hub.earlier_program().ok_or_else(|| anyhow::anyhow!("the earlier release serves no hub"))?;
     let (alpha, beta) = (world.machine("alpha"), world.machine("beta"));
     // An earlier hub says nothing of taking health: this release's machines
     // send none with their heartbeats.
@@ -115,6 +116,16 @@ pub async fn earlier_hub(world: &World, report: &mut Report) -> anyhow::Result<(
         format!("{} in {}", came.first_missing(), seconds(came.took)),
     );
     report.check(came.twice == 0, "none came twice", format!("{} twice", came.twice));
+    // The update kept the database as the earlier release left it, and that
+    // release now refuses the upgraded one instead of misreading it.
+    let kept = world.hub.dir.join("hub.sqlite3.format-1").exists();
+    report.check(kept, "the update kept the earlier hub's database beside the upgraded one", "");
+    let tried = world.hub.tried_by(&program)?;
+    report.check(
+        !tried.status.success() && tried.text().contains("format 2 is not supported"),
+        "the earlier release refused the upgraded hub database",
+        tried.text(),
+    );
     Ok(())
 }
 

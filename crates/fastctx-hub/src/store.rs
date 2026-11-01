@@ -40,6 +40,7 @@ use jiff::Timestamp;
 mod book_rows;
 mod conflicts;
 mod counts;
+mod format;
 mod hub_rows;
 mod legacy;
 pub(crate) mod letter_rows;

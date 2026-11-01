@@ -164,6 +164,25 @@ impl Hub {
         self.start()
     }
 
+    /// The earlier release serving it, while one does.
+    pub fn earlier_program(&self) -> Option<PathBuf> {
+        match &*self.program.lock().expect("never poisoned") {
+            Program::Earlier(program) => Some(program.clone()),
+            Program::This => None,
+        }
+    }
+
+    /// Stops it, lets the earlier release `program` try to serve its
+    /// directory, and serves it again as before; says how that try ended.
+    pub fn tried_by(&self, program: &Path) -> anyhow::Result<Said> {
+        self.kill()?;
+        let mut command = earlier(program, &self.home);
+        command.args(["hub", "serve", "--dir"]).arg(&self.dir);
+        let said = crate::process::run(command, None, Duration::from_secs(30));
+        self.start()?;
+        said
+    }
+
     /// Whether this release's hub serves it now.
     pub fn serves_this(&self) -> bool {
         matches!(*self.program.lock().expect("never poisoned"), Program::This)

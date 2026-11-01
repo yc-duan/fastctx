@@ -55,6 +55,7 @@ impl Shelf {
                 }
             }
         }
+        super::format::prepare(dir)?;
         let database =
             Database::open_initialized(&dir.join(FILE), SCHEMA, |connection| super::migrate::import(connection, dir))
                 .map_err(other)?;

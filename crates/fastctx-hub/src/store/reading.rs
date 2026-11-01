@@ -11,7 +11,7 @@ fn open(dir: &Path) -> io::Result<Option<Connection>> {
     }
     let c = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY).map_err(io::Error::other)?;
     c.busy_timeout(std::time::Duration::from_secs(5)).map_err(io::Error::other)?;
-    if shelf::meta::<u64>(&c, "format").map_err(shelf::other)? != Some(1) {
+    if !matches!(shelf::meta::<u64>(&c, "format").map_err(shelf::other)?, Some(1..=super::format::CURRENT)) {
         return Err(io::Error::other("the hub database import has not committed"));
     }
     Ok(Some(c))
