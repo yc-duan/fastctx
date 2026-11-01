@@ -720,7 +720,10 @@ pub async fn run_prepared(
                     fastctx_storage::versions::apply(
                         db,
                         "node.activity-book",
-                        &[fastctx_storage::versions::Migration { version: 1, sql: activity_book::SCHEMA }],
+                        &[
+                            fastctx_storage::versions::Migration { version: 1, sql: activity_book::SCHEMA },
+                            fastctx_storage::versions::Migration { version: 2, sql: activity_book::SEALS },
+                        ],
                     )
                 });
             if let Some(error) = book_database.fault() {

@@ -344,6 +344,12 @@ async fn elsewhere(node: &Arc<Node>, hub: &HubId, account: &AccountName, convers
     .await
     .map_err(|error| error.to_string())?
     .map_err(|error| format!("finding its rooms here: {error}"))?;
+    // What its commands did here goes too, whether or not a room of it is left.
+    let (sealing, resident, names) = (node.clone(), conversation.resident.clone(), machines.clone());
+    tokio::task::spawn_blocking(move || crate::activity_book::seal_elsewhere(&sealing, &resident, &names))
+        .await
+        .map_err(|error| error.to_string())?
+        .map_err(|error| format!("sealing its activity here: {error}"))?;
     for (name, owner) in rooms {
         stop_jobs(node, &owner).await?;
         crate::attachments::lifetime::remember(node.world.owner(&node.names(), &owner).path(), hub, account)

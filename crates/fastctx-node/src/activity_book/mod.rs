@@ -12,7 +12,8 @@ pub(crate) mod migration_drill;
 mod query;
 pub(crate) use incremental::{Cursor, consumed, observe, segment};
 pub(crate) use maintenance::fold;
-pub(crate) use migrate::start;
+mod sealing;
+pub(crate) use sealing::{SCHEMA as SEALS, seal, seal_elsewhere};
 mod seen;
 
 pub(crate) use query::{answer, answer_here};
@@ -306,6 +307,8 @@ fn keep(connection: &rusqlite::Connection, row: &Row) -> fastctx_storage::Result
     Ok(())
 }
 
+/// Whether nothing more is taken of a deed: it is being folded or was, or
+/// its conversation was deleted here (`sealing`).
 fn frozen(db: &rusqlite::Connection, deed: &str) -> fastctx_storage::Result<bool> {
     use fastctx_storage::rusqlite::OptionalExtension;
     Ok(db
@@ -315,5 +318,30 @@ fn frozen(db: &rusqlite::Connection, deed: &str) -> fastctx_storage::Result<bool
             |row| row.get::<_, i32>(0),
         )
         .optional()?
-        .is_some())
+        .is_some()
+        || sealing::sealed(db, deed)?)
+}
+
+/// Starts moving the book's earlier rows in, and seals the conversations
+/// deleted while it could not be told (`sealing::reconcile`).
+pub(crate) fn start(node: &std::sync::Arc<Node>) {
+    migrate::start(node);
+    let sealing = node.clone();
+    fastctx_platform::task::spawn(async move {
+        let reconciling = sealing.clone();
+        match fastctx_platform::task::spawn_blocking(move || sealing::reconcile(&reconciling)).await {
+            Ok(Ok(())) => {}
+            Ok(Err(error)) => sealing.log.line(format_args!("sealing the activity of deleted conversations: {error}")),
+            Err(error) => sealing.log.line(format_args!("sealing the activity of deleted conversations: {error}")),
+        }
+    });
+}
+
+/// Lets go of the rows of conversations deleted here (`sealing`), once the
+/// book's earlier rows are in.
+pub(crate) fn purge(node: &Node) -> std::io::Result<()> {
+    if node.book_database.fault().is_some() || !migrate::ready(&node.book_database)? {
+        return Ok(());
+    }
+    sealing::purge(&node.book_database)
 }

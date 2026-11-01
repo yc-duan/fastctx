@@ -157,6 +157,7 @@ pub(crate) fn start(node: &Arc<Node>) -> io::Result<()> {
                         crate::claude::garbage::untrust_departed(&retiring),
                     ),
                     ("collecting usage records", crate::usage::collect(&retiring)),
+                    ("letting go of deleted conversations' activity", crate::activity_book::purge(&retiring)),
                     ("folding the activity book", crate::activity_book::fold(&retiring)),
                     ("sweeping earlier conversation directories", crate::gather::sweep(&retiring.world)),
                 ]

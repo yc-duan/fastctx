@@ -150,6 +150,8 @@ async fn delete_inner(node: &Arc<Node>, name: &str) -> Result<u64, Stop> {
         )));
     }
     let bytes = measured.records.bytes + measured.output.bytes + measured.host.bytes;
+    // Its activity here goes with it, and nothing told of it later is taken.
+    crate::activity_book::seal(node, name).map_err(|error| Stop::Failed(format!("sealing its activity: {error}")))?;
     let Kind::Home(id) = &kind else {
         let (retained, database_bytes) = remove_places(node, &measured).await?;
         return Ok(bytes.saturating_sub(retained).saturating_add(database_bytes));
