@@ -113,12 +113,21 @@ pub(crate) fn migrate(node: &Node) {
     }
 }
 
-pub(crate) fn instructed(node: &Node, id: &ResidentId, heard: &crate::residents::Heard) -> io::Result<()> {
-    if let Some(receipt) = &heard.context {
-        storage::instructed(&node.world, id, receipt)?;
-        sources::observed(node, id, receipt)?;
-    }
-    Ok(())
+pub(crate) async fn instructed(
+    node: &std::sync::Arc<Node>,
+    id: &ResidentId,
+    heard: &crate::residents::Heard,
+) -> io::Result<()> {
+    let (node, id, receipt) = (node.clone(), id.clone(), heard.context.clone());
+    fastctx_platform::task::spawn_blocking(move || {
+        if let Some(receipt) = receipt {
+            storage::instructed(&node.world, &id, &receipt)?;
+            sources::observed(&node, &id, &receipt)?;
+        }
+        Ok(())
+    })
+    .await
+    .map_err(io::Error::other)?
 }
 
 pub(crate) fn compacted(node: &Node, id: &ResidentId, marker: &str) -> io::Result<()> {

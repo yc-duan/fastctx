@@ -765,7 +765,8 @@ async fn collect(
     if let Err(failure) = crate::codex::native_context::observe(node, &resident).await {
         node.log.line(format_args!("{resident}: reading its host's context: {}", failure.message));
     }
-    crate::context::plugin_heard(node, &resident).map_err(|error| Failure::new(error.to_string()))?;
+    let (working, id) = (node.clone(), resident.clone());
+    blocking("reading the host's context receipt", move || crate::context::plugin_heard(&working, &id)).await?;
     if let Err(failure) = crate::context::refresh(node, &resident).await {
         node.log.line(format_args!("{resident}: refreshing its context: {}", failure.message));
     }
@@ -943,9 +944,20 @@ async fn taken(
         node.taking.lock().expect("never poisoned").remove(&(resident.clone(), id));
     }
     for (owner, heard) in collected_notes.iter_mut().filter(|(owner, _)| *owner == resident) {
-        crate::context::acknowledge(node, owner, heard).map_err(|error| Failure::new(error.to_string()))?;
-        crate::scratch::acknowledge(node, owner, heard).map_err(|error| Failure::new(error.to_string()))?;
-        node.residents.acknowledge_heard(owner, heard.clone());
+        let (working, owner, mut receipt) = (node.clone(), owner.clone(), heard.clone());
+        let (result, updated) = fastctx_platform::task::spawn_blocking(move || {
+            let result = (|| -> std::io::Result<()> {
+                crate::context::acknowledge(&working, &owner, &mut receipt)?;
+                crate::scratch::acknowledge(&working, &owner, &mut receipt)?;
+                working.residents.acknowledge_heard(&owner, receipt.clone());
+                Ok(())
+            })();
+            (result, receipt)
+        })
+        .await
+        .map_err(|error| Failure::new(error.to_string()))?;
+        *heard = updated;
+        result.map_err(|error| Failure::new(error.to_string()))?;
     }
     collected_notes.retain(|(owner, _)| *owner != resident);
     if let Some(completed) = completed {
@@ -2270,7 +2282,7 @@ async fn blocking<T: Send + 'static>(
     what: &str,
     work: impl FnOnce() -> std::io::Result<T> + Send + 'static,
 ) -> Result<T, Failure> {
-    tokio::task::spawn_blocking(work)
+    fastctx_platform::task::spawn_blocking(work)
         .await
         .map_err(|error| Failure::new(format!("{what}: {error}")))?
         .map_err(|error| Failure::new(format!("{what}: {error}")))
