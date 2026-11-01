@@ -6,7 +6,7 @@ use super::*;
 /// protected even when its caller cancelled while the writer still owns it.
 pub(crate) fn collect(database: &Database, scope: &str) -> Result<()> {
     let fenced = database.read_background_now(|db| Ok(db.query_row(
-        "SELECT EXISTS(SELECT 1 FROM node_conversation_transfers WHERE name=?1) OR EXISTS(SELECT 1 FROM node_conversation_deletions WHERE name=?1)",
+        "SELECT EXISTS(SELECT 1 FROM node_conversation_transfers WHERE name=?1 AND rejected=0) OR EXISTS(SELECT 1 FROM node_conversation_deletions WHERE name=?1)",
         [scope], |row| row.get::<_, bool>(0))?))?;
     if fenced {
         return Ok(());

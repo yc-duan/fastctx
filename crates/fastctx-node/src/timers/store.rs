@@ -121,7 +121,7 @@ impl Store {
     fn list_now(&self, owner: Option<&Owner>) -> io::Result<Vec<Timer>> {
         let category = owner.map(serde_json::to_string).transpose()?;
         records::read(&self.directory, |rows| {
-            let mut query=rows.connection().prepare_cached("SELECT body FROM conversation_records r WHERE family='timers' AND NOT EXISTS(SELECT 1 FROM node_conversation_transfers t WHERE t.name=r.conversation) AND (?1 IS NULL OR category=?1) ORDER BY identity")?;
+            let mut query=rows.connection().prepare_cached("SELECT body FROM conversation_records r WHERE family='timers' AND NOT EXISTS(SELECT 1 FROM node_conversation_transfers t WHERE t.name=r.conversation AND t.rejected=0) AND (?1 IS NULL OR category=?1) ORDER BY identity")?;
             query.query_map([category], |row| row.get::<_, Vec<u8>>(0))?.map(|row| records::decode(&row?)).collect()
         })
     }
@@ -132,7 +132,7 @@ impl Store {
         let limit = claims.active.len() + claims.delayed.len() + 1;
         let rows = records::read(&self.directory, |rows| {
             let mut query = rows.connection().prepare_cached(
-                "SELECT body FROM conversation_records r WHERE family='timers' AND NOT EXISTS(SELECT 1 FROM node_conversation_transfers t WHERE t.name=r.conversation) ORDER BY arrival,identity LIMIT ?1",
+                "SELECT body FROM conversation_records r WHERE family='timers' AND NOT EXISTS(SELECT 1 FROM node_conversation_transfers t WHERE t.name=r.conversation AND t.rejected=0) ORDER BY arrival,identity LIMIT ?1",
             )?;
             query
                 .query_map([limit as i64], |row| row.get::<_, Vec<u8>>(0))?
@@ -286,7 +286,7 @@ fn get_timer(rows: &records::Rows<'_>, id: &str) -> Result<Option<Timer>> {
     use fastctx_storage::rusqlite::OptionalExtension;
     let bytes: Option<Vec<u8>> = rows
         .connection()
-        .query_row("SELECT body FROM conversation_records r WHERE family='timers' AND identity=?1 AND NOT EXISTS(SELECT 1 FROM node_conversation_transfers t WHERE t.name=r.conversation)", [id], |row| {
+        .query_row("SELECT body FROM conversation_records r WHERE family='timers' AND identity=?1 AND NOT EXISTS(SELECT 1 FROM node_conversation_transfers t WHERE t.name=r.conversation AND t.rejected=0)", [id], |row| {
             row.get(0)
         })
         .optional()?;
