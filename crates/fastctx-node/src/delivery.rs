@@ -2,7 +2,11 @@
 //! to the inbox, `now`, and outbox so each of those views can be repaired.
 
 use std::io;
+mod migrate_terminals;
+pub(crate) mod recover_outgoing;
 mod storage;
+pub(crate) mod terminals;
+pub(crate) mod work;
 use storage::{change, read_rows};
 
 use fastctx_types::layout::ConversationDir;
@@ -144,17 +148,8 @@ pub fn input_uncertainty(directory: &ConversationDir, id: &NoticeId) -> io::Resu
     })
 }
 
-/// The first terminal outcome is authoritative. Later readers can be added
-/// when acceptance was reported after completion, without changing the end.
-pub fn finish(
-    directory: &ConversationDir,
-    turn: &str,
-    end: TurnEnd,
-    readers: &[Address],
-) -> io::Result<(Finished, bool)> {
-    finish_at(directory, turn, end, readers, None, false)
-}
-
+/// Compatibility projection used by the record-family drill.
+#[cfg(feature = "storage-drill")]
 pub fn finish_at(
     directory: &ConversationDir,
     turn: &str,
@@ -163,40 +158,34 @@ pub fn finish_at(
     ended_at: Option<Timestamp>,
     settles_queue: bool,
 ) -> io::Result<(Finished, bool)> {
-    let (turn, readers) = (turn.to_string(), readers.to_vec());
-    change(directory, 512 + readers.len() * 128, move |rows| {
-        let prior = rows.get::<Finished>("terminals", &turn)?;
-        let first = prior.is_none();
-        let mut finished = match prior {
-            Some(row) => row,
-            None => {
-                let order = rows
-                    .get::<u64>("terminal-counter", "order")?
-                    .unwrap_or(0)
-                    .checked_add(1)
-                    .ok_or_else(|| fastctx_storage::Error::new("terminal order exhausted"))?;
-                rows.put("terminal-counter", "order", &order)?;
-                Finished {
-                    turn: turn.clone(),
-                    at: Timestamp::now(),
-                    ended_at,
-                    end,
-                    readers: Vec::new(),
-                    settles_queue,
-                    queue_order: order,
-                }
-            }
-        };
-        finished.readers.extend(readers);
-        finished.readers.sort();
-        finished.readers.dedup();
-        rows.put("terminals", &turn, &finished)?;
-        Ok((finished, first))
-    })
+    storage::initialize(directory)?;
+    let result = terminals::publish_blocking(
+        directory,
+        turn,
+        terminals::Initial { end, ended_at, settles_queue, imported: None, usage: None },
+        readers.to_vec(),
+    )?;
+    let finished =
+        terminal(directory, &result.header.turn)?.ok_or_else(|| io::Error::other("published terminal is missing"))?;
+    Ok((finished, result.first))
 }
 pub fn terminals(directory: &ConversationDir) -> io::Result<Vec<Finished>> {
-    read_rows(directory, |rows| rows.all("terminals"))
+    storage::initialize(directory)?;
+    let mut after = 0;
+    let mut result = Vec::new();
+    loop {
+        let page = crate::records::read_background(directory, |rows| {
+            rows.page::<terminals::Header>(terminals::FAMILY, after, 32)
+        })?;
+        let Some(last) = page.last() else { break };
+        after = last.0;
+        for (_, header) in page {
+            result.push(terminal(directory, &header.turn)?.ok_or_else(|| io::Error::other("terminal disappeared"))?);
+        }
+    }
+    Ok(result)
 }
+
 pub fn remember_session(directory: &ConversationDir, turn: &str, session: &str) -> io::Result<()> {
     let (key, session) = (crate::speech::fixed_id("turn", &[turn]), session.to_string());
     change(directory, session.len(), move |rows| {
@@ -244,10 +233,46 @@ pub fn handovers(directory: &ConversationDir) -> io::Result<Vec<Handover>> {
     read_rows(directory, |rows| rows.all("handovers"))
 }
 pub fn terminal(directory: &ConversationDir, turn: &str) -> io::Result<Option<Finished>> {
-    read_rows(directory, |rows| rows.get("terminals", turn))
+    storage::initialize(directory)?;
+    Ok(terminals::read(directory, turn)?.map(|(header, end, readers)| Finished {
+        turn: header.turn,
+        ended_at: header.ended_at,
+        at: header.at,
+        end,
+        readers,
+        settles_queue: header.settles_queue,
+        queue_order: header.queue_order,
+    }))
 }
 
 /// Prepare legacy delivery families before another record joins their transaction.
 pub(crate) fn prepare(directory: &ConversationDir) -> io::Result<()> {
     storage::initialize(directory)
+}
+
+/// A small terminal presence check for transactions that close observations.
+pub(crate) fn has_terminal_in(rows: &crate::records::Rows<'_>, turn: &str) -> fastctx_storage::Result<bool> {
+    Ok(rows.exists(terminals::FAMILY, turn)? || rows.exists("terminals", turn)?)
+}
+
+/// Read immutable contents without walking the reader membership.
+pub(crate) fn outcome(directory: &ConversationDir, turn: &str) -> io::Result<Option<(terminals::Header, TurnEnd)>> {
+    storage::initialize(directory)?;
+    crate::records::read(directory, |rows| {
+        terminals::header(rows, turn)?
+            .map(|header| {
+                let end = terminals::end(rows, &header)?;
+                Ok((header, end))
+            })
+            .transpose()
+    })
+}
+pub(crate) async fn terminal_header(directory: &ConversationDir, turn: &str) -> io::Result<Option<terminals::Header>> {
+    let (directory, turn) = (directory.clone(), turn.to_string());
+    tokio::task::spawn_blocking(move || {
+        storage::initialize(&directory)?;
+        crate::records::read(&directory, |rows| terminals::header(rows, &turn))
+    })
+    .await
+    .map_err(io::Error::other)?
 }

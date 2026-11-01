@@ -42,6 +42,7 @@ pub fn retire(node: &Node) -> io::Result<()> {
                 continue 'conversation;
             }
         }
+        crate::delivery::prepare(directory)?;
         let _transaction = crate::resident_storage::lock();
         if owes(node, &owner, directory)? {
             continue;
@@ -62,6 +63,15 @@ pub fn retire(node: &Node) -> io::Result<()> {
 /// do not have yet, a job of its that runs here or whose end it is still
 /// owed, or a job it left running on another machine.
 fn owes(node: &Node, owner: &Address, directory: &ConversationDir) -> io::Result<bool> {
+    if crate::records::read(directory, |rows| {
+        Ok(rows.connection().query_row(
+            "SELECT EXISTS(SELECT 1 FROM terminal_work WHERE conversation=?1)",
+            [rows.conversation()],
+            |row| row.get::<_, bool>(0),
+        )?)
+    })? {
+        return Ok(true);
+    }
     // Goal bindings still identify records that deletion must collect (2026-10-23).
     if crate::goals::lifecycle::unfinished(directory)?
         || crate::goals::lifecycle::keeps_books(node, &owner.resident)
@@ -81,7 +91,7 @@ fn owes(node: &Node, owner: &Address, directory: &ConversationDir) -> io::Result
     if crate::codex::pending(node, directory, thread.as_deref())? {
         return Ok(true);
     }
-    if !crate::inbox::owing(directory)?.is_empty() {
+    if crate::inbox::answers::has_pending(directory)? {
         return Ok(true);
     }
     for jobs in node.world.job_directories(&owner.machine, owner)? {

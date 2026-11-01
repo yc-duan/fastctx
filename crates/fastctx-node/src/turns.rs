@@ -14,13 +14,14 @@
 //! goes into the resident's `now` and to everyone watching; what must be
 //! heard at once also goes to everyone owed the running turn's end.
 
+mod settlement;
+pub(crate) use settlement::settle_terminal_locked;
+
 use std::sync::Arc;
 
 use fastctx_types::layout::ConversationDir;
-use fastctx_types::residents::{
-    Delivery, LAST_SAID_CHARS, MessageKind, MessageLine, Notice, Origin, Owing, Pending, TellStatus, Trouble,
-};
-use fastctx_types::session::{Happened, Health, SessionChange, SessionEvent, Speaker, TurnEnd, TurnHow};
+use fastctx_types::residents::{Delivery, LAST_SAID_CHARS, Notice, Origin, Owing, Pending, TellStatus, Trouble};
+use fastctx_types::session::{Happened, Health, SessionChange, SessionEvent, TurnEnd, TurnHow};
 use fastctx_types::{Address, ResidentId};
 use jiff::Timestamp;
 
@@ -293,6 +294,9 @@ async fn finish_at(
 ) -> std::io::Result<()> {
     let Some((about, _)) = node.residents.about(id) else { return Ok(()) };
     let directory = node.world.conversation(id);
+    if crate::delivery::terminal_header(&directory, turn).await?.is_some() {
+        return add_readers_locked(node, id, turn, additional.to_vec()).await;
+    }
     // Claude's host says what the turn cost; its plugin's observations of
     // each request say the rest.
     if about.host.agent.as_str() == "claude" && end.facts.as_ref().is_none_or(|facts| facts.tokens.is_none()) {
@@ -349,92 +353,49 @@ async fn finish_at(
     {
         crate::goals::holding::stop(node, id, Some(turn.to_string())).await.map_err(std::io::Error::other)?;
     }
-    let (finished, first) = crate::delivery::finish_at(&directory, turn, end, &readers, ended_at, settles_queue)?;
-    if first {
-        crate::usage::turn_ended(node, id, &about, &finished.end, ended_at.unwrap_or_else(Timestamp::now));
-        // What its run calls wait for stops with an interrupted turn, here
-        // and on the machines it works on.
-        if current && matches!(finished.end.how, TurnHow::Interrupted) {
-            node.interrupts.raise(&fastctx_types::Address { machine: node.machine(), resident: id.clone() });
-        }
-    }
-    if !first && directory.path().join("books-retired").try_exists()? {
-        return Ok(());
-    }
-    if about.host.agent.as_str() == "claude" {
-        crate::claude::turn_facts::settled(&directory, turn).await?;
-    }
-    keep_answers(node, id, &about.origin, &directory, turn, turn, &finished.end, &finished.readers).await?;
-    let (pay_node, pay_id, pay_directory) = (node.clone(), id.clone(), directory.clone());
-    tokio::spawn(async move { pay(&pay_node, &pay_id, &pay_directory).await });
+    let (working, resident, identity, ending) = (node.clone(), id.clone(), about.clone(), end.clone());
+    let accounting_turn = turn.to_string();
+    let usage = tokio::task::spawn_blocking(move || {
+        crate::usage::terminal_record(
+            &working,
+            &resident,
+            &identity,
+            &accounting_turn,
+            &ending,
+            ended_at.unwrap_or_else(Timestamp::now),
+        )
+    })
+    .await
+    .map_err(std::io::Error::other)?;
+    let published = crate::delivery::terminals::publish(
+        directory.clone(),
+        turn.to_string(),
+        Some(crate::delivery::terminals::Initial { end, ended_at, settles_queue, imported: None, usage }),
+        readers,
+        crate::delivery::work::notification(node, id)?,
+    )
+    .await?;
+    settle_terminal_locked(node, id, &published.header.turn, published.first).await
+}
 
-    let trouble = match (&finished.end.how, &finished.end.reason) {
-        (TurnHow::Completed, _) => None,
-        (TurnHow::Interrupted, _) if crate::stops::requested_turn(node, id, turn)? => None,
-        (how, Some(reason)) => Some(Trouble { at: finished.at, text: format!("turn {how}: {reason}") }),
-        (how, None) => Some(Trouble { at: finished.at, text: format!("turn {how}") }),
-    };
-    // Words the user sent that this turn took, at its start or beside a
-    // tool's result.
-    let heard_user = accepted.iter().flat_map(|handover| &handover.inputs).any(|input| {
-        matches!(input.delivery.notice, Notice::Words { from: Speaker::User { .. }, .. } | Notice::Attached { .. })
-    });
-    node.residents.take_owed(&node.world, id, turn, &node.machine(), trouble, heard_user)?;
-    // Its login has room for one more, and the vendor's answer may move
-    // how many it runs at once.
-    if first && current {
-        crate::turn_slots::ended(node, id, &about, &finished.end);
-    }
-    crate::turn_evidence::ended(node, id, turn);
-    node.idle_probes.touched(id);
-    node.watchers.changed.notify_one();
-    for handover in &accepted {
-        for input in &handover.inputs {
-            crate::speech::heard(node, id, &input.delivery, turn);
-        }
-    }
-    let event = SessionEvent {
-        at: finished.ended_at.unwrap_or(finished.at),
-        happened: Happened::TurnEnded { turn: turn.to_string(), end: finished.end.clone() },
-    };
-    let recorded = crate::delivery::event(&directory, &format!("ended:{turn}"), &event)?;
-    if first {
-        // Once a Codex conversation has its first words in, its login may
-        // name it (`codex_title`); it is tried at most once.
-        crate::codex_title::maybe(node, id, &about);
-    }
-    if first || recorded {
-        if current || !turn.is_empty() {
-            crate::desk::turn_ended(node, id, turn);
-        }
-        node.watchers.publish(id, &event);
-    }
-    // The composer learns of the end first: what it holds back and what it
-    // lets go decides whether a waiting control goes before its words.
-    let settled =
-        crate::composer::turn_ended(node, id, turn, &finished.end.how, finished.settles_queue, finished.queue_order)
-            .await;
-    crate::control_queue::schedule(node, id);
-    settled.map_err(std::io::Error::other)?;
-    for handover in &accepted {
-        for input in &handover.inputs {
-            crate::inbox::settle(node, &directory, &input.delivery.id)?;
-        }
-    }
-    if matches!(about.origin, Origin::Colleague { .. }) {
-        crate::residents::append_message(
-            &directory,
-            &MessageLine {
-                at: finished.at,
-                what: MessageKind::Ended {
-                    turn: turn.to_string(),
-                    end: finished.end.clone(),
-                    owed: finished.readers.clone(),
-                },
-            },
-        )?;
-    }
-    Ok(())
+/// Late acceptance repairs this handover and adds only its readers. The first
+/// outcome's facts and completed turn-wide effects remain unchanged.
+pub(crate) async fn add_readers_locked(
+    node: &Arc<Node>,
+    id: &ResidentId,
+    turn: &str,
+    readers: Vec<Address>,
+) -> std::io::Result<()> {
+    let directory = node.world.conversation(id);
+    crate::delivery::terminals::publish(
+        directory,
+        turn.to_string(),
+        None,
+        readers,
+        crate::delivery::work::notification(node, id)?,
+    )
+    .await?;
+    settle_terminal_locked(node, id, turn, false).await
 }
 
 /// Keeps a turn's end in the outbox, an answer for each reader. `key`

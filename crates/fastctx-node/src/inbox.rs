@@ -32,6 +32,7 @@ use fastctx_types::{JobId, MachineName, NoticeId};
 use crate::Node;
 use crate::speech::{Owed, tell};
 
+pub(crate) mod answers;
 pub(crate) mod outgoing;
 pub(crate) mod presence;
 pub(crate) mod storage;
@@ -240,13 +241,13 @@ pub fn owe(directory: &ConversationDir, owing: &Owing) -> io::Result<()> {
 /// Commit an outgoing answer with another record that creates its obligation.
 pub(crate) fn owe_in(rows: &crate::records::Rows<'_>, owing: &Owing) -> fastctx_storage::Result<()> {
     let key = owing.delivery.id.as_str();
-    if !storage::paid(rows, key)? && rows.get::<Owing>("outgoing-answers", key)?.is_none() {
+    if !storage::paid(rows, key)? && !rows.exists("outgoing-answers", key)? {
         rows.put_ordered("outgoing-answers", key, owing, owing.delivery.at)?;
     }
     Ok(())
 }
 pub fn owing(directory: &ConversationDir) -> io::Result<Vec<Owing>> {
-    read_rows(directory, |rows| rows.unsettled("outgoing-answers", "paid-answers", "undeliverable-answers"))
+    answers::all(directory)
 }
 pub fn paid(directory: &ConversationDir, id: &NoticeId) -> io::Result<()> {
     let key = id.to_string();

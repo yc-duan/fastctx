@@ -48,7 +48,7 @@ pub(super) fn put(directory: &ConversationDir, turn: &str, kind: &str, step: u64
     crate::delivery::prepare(directory)?;
     let (turn, id, member) = (turn.to_string(), key(turn), format!("{kind}-{step:020}"));
     records::write_at(directory, Priority::Normal, bytes.len() + member.len() + 256, move |rows| {
-        if rows.exists("terminals", &turn)? || rows.exists(CLOSED, &id)? {
+        if crate::delivery::has_terminal_in(rows, &turn)? || rows.exists(CLOSED, &id)? {
             return Ok(());
         }
         rows.put_raw(&family, &member, &bytes)
@@ -71,7 +71,7 @@ pub(super) fn close(directory: &ConversationDir, turn: &str) -> io::Result<()> {
     crate::delivery::prepare(directory)?;
     let (turn, id) = (turn.to_string(), key(turn));
     records::write_at(directory, Priority::Normal, turn.len() + 256, move |rows| {
-        if !rows.exists("terminals", &turn)? {
+        if !crate::delivery::has_terminal_in(rows, &turn)? {
             return Err(Error::with_kind(
                 ErrorKind::Invalid,
                 "request observations cannot retire before their terminal",

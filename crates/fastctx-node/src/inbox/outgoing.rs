@@ -72,12 +72,20 @@ pub(crate) async fn abandon(
     tokio::task::spawn_blocking(move || {
         prepare(&directory)?;
         let key = owing.delivery.id.to_string();
-        let bytes = serde_json::to_vec(&owing)?.len() + reason.len();
+        let expected = records::read(&directory, |rows| {
+            if let Some(current) = super::answers::get(rows, &key)?
+                && current != owing
+            {
+                return Err(fastctx_storage::Error::new("outgoing answer identity changed"));
+            }
+            rows.get_raw("outgoing-answers", &key)
+        })?;
+        let bytes = expected.as_ref().map_or(0, Vec::len) + reason.len();
         records::write_at(&directory, fastctx_storage::Priority::Normal, bytes, {
             let reason = reason.clone();
             move |rows| {
-                if let Some(current) = rows.get::<Owing>("outgoing-answers", &key)?
-                    && current != owing
+                if let Some(current) = rows.get_raw("outgoing-answers", &key)?
+                    && Some(&current) != expected.as_ref()
                 {
                     return Err(fastctx_storage::Error::new("outgoing answer identity changed"));
                 }

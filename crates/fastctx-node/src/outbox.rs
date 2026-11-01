@@ -80,59 +80,43 @@ fn pay_once<'a>(
     Box::pin(async move {
         node.ready_for(id).await;
         let Some(paying) = node.residents.paying(id) else { return false };
-        // The lock is held only to take what is owed: telling another
-        // conversation takes its locks, never while this one's is held
-        // (`specs/world-concurrency.md`, 锁只管落账). What is being told
-        // is not taken again by a payment that comes meanwhile.
-        let owing = {
-            let _paying = paying.lock().await;
-            let reading = directory.clone();
-            let owing = tokio::task::spawn_blocking(move || crate::inbox::owing(&reading)).await;
-            match owing {
-                Ok(Ok(owing)) => {
-                    let mut telling = TELLING.lock().expect("never poisoned");
-                    owing.into_iter().filter(|answer| telling.insert(answer.delivery.id.clone())).collect::<Vec<_>>()
-                }
-                Ok(Err(error)) => {
-                    let _ = crate::inbox::outgoing::retry(
-                        node,
-                        directory,
-                        &directory.outbox().join("reading"),
-                        &error.to_string(),
-                    )
-                    .await;
-                    return true;
-                }
-                Err(error) => {
-                    let _ = crate::inbox::outgoing::retry(
-                        node,
-                        directory,
-                        &directory.outbox().join("reading"),
-                        &error.to_string(),
-                    )
-                    .await;
-                    return true;
-                }
-            }
-        };
-        if owing.is_empty() {
-            return false;
-        }
-        let _told = Told(owing.iter().map(|answer| answer.delivery.id.clone()).collect());
-        let Some((about, _)) = node.residents.about(id) else {
-            let _ = crate::inbox::outgoing::retry(
-                node,
-                directory,
-                &directory.outbox().join("identity"),
-                "the answer's account identity is no longer known",
-            )
-            .await;
-            return true;
-        };
+        let Some((about, _)) = node.residents.about(id) else { return true };
         let colleague = matches!(about.origin, Origin::Colleague { .. });
         let acting = about.acting;
         let mut pending = false;
-        for answer in owing {
+        let mut after = crate::inbox::answers::Cursor::default();
+        loop {
+            // Claim one answer under the local payment gate. Delivery can call
+            // back into this conversation, so no gate crosses the network.
+            let answer = {
+                let _paying = paying.lock().await;
+                let (reading, cursor) = (directory.clone(), after.clone());
+                let next = tokio::task::spawn_blocking(move || crate::inbox::answers::next(&reading, &cursor))
+                    .await
+                    .map_err(std::io::Error::other)
+                    .and_then(|result| result);
+                match next {
+                    Ok(Some((cursor, answer))) => {
+                        after = cursor;
+                        if !TELLING.lock().expect("never poisoned").insert(answer.delivery.id.clone()) {
+                            continue;
+                        }
+                        answer
+                    }
+                    Ok(None) => break,
+                    Err(error) => {
+                        let _ = crate::inbox::outgoing::retry(
+                            node,
+                            directory,
+                            &directory.outbox().join("reading"),
+                            &error.to_string(),
+                        )
+                        .await;
+                        return true;
+                    }
+                }
+            };
+            let _told = Told(vec![answer.delivery.id.clone()]);
             let turn = match &answer.delivery.notice {
                 Notice::Answer { turn, .. } => Some(turn.clone()).filter(|turn| !turn.is_empty()),
                 _ => None,

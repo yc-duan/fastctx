@@ -327,6 +327,7 @@ pub(crate) struct Node {
     control_letters: control_letters::Receiving,
     receipts_changed: tokio::sync::Notify,
     outbox: outbox::Outbox,
+    delivery_work: delivery::work::Work,
     on_stopping: std::sync::Mutex<std::collections::HashSet<PathBuf>>,
     on_delivering: std::sync::Mutex<std::collections::HashSet<PathBuf>>,
     notifying_jobs: std::sync::Mutex<std::collections::HashSet<PathBuf>>,
@@ -669,6 +670,11 @@ pub async fn run_prepared(
         )?;
         fastctx_storage::versions::apply(
             db,
+            "node.terminals",
+            &[fastctx_storage::versions::Migration { version: 1, sql: delivery::terminals::SCHEMA }],
+        )?;
+        fastctx_storage::versions::apply(
+            db,
             "node.run-facts",
             &[
                 fastctx_storage::versions::Migration { version: 1, sql: run_facts::SCHEMA },
@@ -798,6 +804,7 @@ pub async fn run_prepared(
         control_letters: Default::default(),
         receipts_changed: Default::default(),
         outbox: Default::default(),
+        delivery_work: Default::default(),
         on_stopping: Default::default(),
         on_delivering: Default::default(),
         notifying_jobs: Default::default(),
@@ -862,6 +869,7 @@ pub async fn run_prepared(
             return;
         }
         stops::recover(&node);
+        delivery::work::recover(&node);
         composer::resume(&node);
         composer::keep(&node);
         lifecycle::start(&node);

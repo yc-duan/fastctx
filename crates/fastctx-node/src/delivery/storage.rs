@@ -60,7 +60,8 @@ pub(super) fn initialize(directory: &ConversationDir) -> io::Result<()> {
             }
         }
         Ok(())
-    })
+    })?;
+    super::migrate_terminals::run(directory)
 }
 
 fn files(directory: &Path, mut apply: impl FnMut(&Path) -> io::Result<()>) -> io::Result<()> {

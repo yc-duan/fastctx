@@ -21,6 +21,7 @@ pub(crate) mod cache;
 mod departures;
 mod records;
 mod removal;
+pub(crate) mod speaking;
 mod tombstones;
 pub use removal::removal;
 pub use tombstones::Tombstone;
@@ -50,7 +51,7 @@ pub struct Residents {
     /// This machine's name now, which every resident living here is told as
     /// living on, whatever the machine was called when it was born.
     here: std::sync::RwLock<Option<fastctx_types::MachineName>>,
-    speaking: crate::leases::Registry<ResidentId, fastctx_platform::doing::Mutex<()>>,
+    speaking: crate::leases::Registry<ResidentId, speaking::Speaking>,
     paying: crate::leases::Registry<ResidentId, fastctx_platform::doing::Mutex<()>>,
     management: crate::leases::Registry<ResidentId, fastctx_platform::doing::RwLock<()>>,
 }
@@ -739,11 +740,16 @@ impl Residents {
         self.lock().current_sessions.get(session).unwrap_or(0)
     }
 
-    pub fn speaking(
-        &self,
-        id: &ResidentId,
-    ) -> Option<crate::leases::Lease<ResidentId, fastctx_platform::doing::Mutex<()>>> {
-        self.lock().live.contains_key(id).then(|| self.speaking.get_or_insert_with(id, || crate::ranked::speaking(id)))
+    pub fn speaking(&self, id: &ResidentId) -> Option<speaking::Lease> {
+        self.lock()
+            .live
+            .contains_key(id)
+            .then(|| speaking::Lease::new(self.speaking.get_or_insert_with(id, || speaking::Speaking::new(id))))
+    }
+
+    /// Retain the caller's speech order for a worker that may outlive its future.
+    pub(crate) fn keep_speaking(&self, id: &ResidentId) -> io::Result<std::sync::Arc<speaking::Held>> {
+        speaking::Held::new(self.speaking.get(id).ok_or_else(|| io::Error::other("speech permit is unavailable"))?)
     }
 
     pub fn paying(
