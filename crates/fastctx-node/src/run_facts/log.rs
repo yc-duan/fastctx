@@ -7,7 +7,7 @@ use std::path::Path;
 /// Replays complete rows, removing only an unfinished final row. The caller must
 /// hold the same record lock as the writer, including while applying each row.
 pub(super) fn read(path: &Path, mut apply: impl FnMut(&[u8]) -> io::Result<()>) -> io::Result<()> {
-    let mut file = match OpenOptions::new().read(true).write(true).open(path) {
+    let mut file = match fastctx_platform::disk::open_with(OpenOptions::new().read(true).write(true), path) {
         Ok(file) => file,
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
         Err(error) => return Err(error),
@@ -30,12 +30,12 @@ pub(super) fn read(path: &Path, mut apply: impl FnMut(&[u8]) -> io::Result<()>) 
 }
 
 pub(super) fn append(path: &Path, bytes: &[u8]) -> io::Result<()> {
-    let mut file = match OpenOptions::new().read(true).write(true).open(path) {
+    let mut file = match fastctx_platform::disk::open_with(OpenOptions::new().read(true).write(true), path) {
         Ok(file) => file,
         Err(error) if error.kind() == io::ErrorKind::NotFound => {
             // Publish the empty log before acknowledging any rows in a new file.
             fastctx_platform::publish_new(path, &[], fastctx_platform::Permissions::Private)?;
-            OpenOptions::new().read(true).write(true).open(path)?
+            fastctx_platform::disk::open_with(OpenOptions::new().read(true).write(true), path)?
         }
         Err(error) => return Err(error),
     };
@@ -74,7 +74,7 @@ fn recover(file: &mut File) -> io::Result<u64> {
 }
 
 pub(super) fn repair(path: &Path) -> io::Result<()> {
-    match OpenOptions::new().read(true).write(true).open(path) {
+    match fastctx_platform::disk::open_with(OpenOptions::new().read(true).write(true), path) {
         Ok(mut file) => recover(&mut file).map(|_| ()),
         Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
         Err(error) => Err(error),

@@ -18,7 +18,7 @@ struct Index {
 }
 
 fn index(record: &Path) -> io::Result<Index> {
-    match std::fs::read(record.with_extension("steps-index")) {
+    match fastctx_platform::disk::read(record.with_extension("steps-index")) {
         Ok(bytes) => serde_json::from_slice(&bytes).map_err(io::Error::other),
         Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(Index::default()),
         Err(error) => Err(error),
@@ -38,8 +38,11 @@ fn save(record: &Path, index: &Index) -> io::Result<()> {
 }
 
 pub(super) fn append(record: &Path, row: &[u8], sent: u64) -> io::Result<()> {
+    if row.len() as u64 > SEGMENT {
+        return Err(io::Error::new(io::ErrorKind::InvalidData, "one step exceeds the journal's 8 MiB segment budget"));
+    }
     let mut index = index(record)?;
-    let length = match std::fs::metadata(path(record, index.current)) {
+    let length = match fastctx_platform::disk::metadata(path(record, index.current)) {
         Ok(metadata) => metadata.len(),
         Err(error) if error.kind() == io::ErrorKind::NotFound => 0,
         Err(error) => return Err(error),
@@ -70,7 +73,7 @@ fn prune(record: &Path, index: &mut Index, next: Option<u64>, sent: u64) -> io::
     let old = index.first;
     while index.first < index.current && index.first < sent {
         let crowded = next.is_some_and(|next| next - index.first >= SEGMENTS);
-        let expired = match std::fs::metadata(path(record, index.first)) {
+        let expired = match fastctx_platform::disk::metadata(path(record, index.first)) {
             Ok(metadata) => SystemTime::now().duration_since(metadata.modified()?).is_ok_and(|age| age >= KEEP),
             Err(error) if error.kind() == io::ErrorKind::NotFound => true,
             Err(error) => return Err(error),
@@ -83,7 +86,7 @@ fn prune(record: &Path, index: &mut Index, next: Option<u64>, sent: u64) -> io::
     if index.first != old {
         save(record, index)?;
         for segment in old..index.first {
-            match std::fs::remove_file(path(record, segment)) {
+            match fastctx_platform::disk::remove_file(path(record, segment)) {
                 Ok(()) => {}
                 Err(error) if error.kind() == io::ErrorKind::NotFound => {}
                 Err(error) => return Err(error),
@@ -91,7 +94,7 @@ fn prune(record: &Path, index: &mut Index, next: Option<u64>, sent: u64) -> io::
         }
     }
     if index.first > 0 {
-        match std::fs::remove_file(path(record, 0)) {
+        match fastctx_platform::disk::remove_file(path(record, 0)) {
             Ok(()) => {}
             Err(error) if error.kind() == io::ErrorKind::NotFound => {}
             Err(error) => return Err(error),
@@ -99,12 +102,12 @@ fn prune(record: &Path, index: &mut Index, next: Option<u64>, sent: u64) -> io::
     }
     let directory = record.with_extension("steps");
     if directory.try_exists()? {
-        for entry in std::fs::read_dir(directory)? {
+        for entry in fastctx_platform::disk::read_dir(directory)? {
             let file = entry?.path();
             let number =
                 file.file_stem().and_then(|name| name.to_str()).and_then(|name| u64::from_str_radix(name, 16).ok());
             if number.is_some_and(|number| number < index.first) {
-                std::fs::remove_file(file)?;
+                fastctx_platform::disk::remove_file(file)?;
             }
         }
     }
@@ -135,10 +138,8 @@ pub(super) fn read_since(
     }
 }
 
-pub(super) fn read(record: &Path, mut apply: impl FnMut(&[u8]) -> io::Result<()>) -> io::Result<()> {
-    let index = index(record)?;
-    for segment in index.first..=index.current {
-        log::read(&path(record, segment), &mut apply)?;
-    }
-    Ok(())
+/// The first retained segment is the only recoverable starting point when
+/// upgrading an executor whose earlier detail has already expired.
+pub(super) fn first(record: &Path) -> io::Result<u64> {
+    Ok(index(record)?.first)
 }

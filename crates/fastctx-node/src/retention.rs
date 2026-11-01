@@ -5,7 +5,7 @@
 //! conversations that owe nothing, and removes the directories of the
 //! earlier layout their jobs have left.
 
-use std::fs;
+use fastctx_platform::disk as fs;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -90,7 +90,7 @@ pub(crate) fn start(node: &Arc<Node>) -> io::Result<()> {
     });
     watcher.watch(node.world.path(), notify::RecursiveMode::NonRecursive).map_err(io::Error::other)?;
     let node = node.clone();
-    tokio::spawn(async move {
+    fastctx_platform::task::spawn(async move {
         let _watcher = watcher;
         // Re-read settings and retry idle program collection once per hour:
         // 24 observations per retention day, without a deadline for work.
@@ -102,7 +102,8 @@ pub(crate) fn start(node: &Arc<Node>) -> io::Result<()> {
                 () = node.disk_changed.notified() => false,
             };
             let collecting = node.clone();
-            match tokio::task::spawn_blocking(move || {
+            match fastctx_platform::task::spawn_blocking(move || {
+                recover_book(&collecting);
                 let immediate = collect_immediate(&collecting);
                 let retained = if maintenance {
                     let obligations = crate::obligations::collect(&collecting);
@@ -123,7 +124,7 @@ pub(crate) fn start(node: &Arc<Node>) -> io::Result<()> {
                 continue;
             }
             let retiring = node.clone();
-            match tokio::task::spawn_blocking(move || {
+            match fastctx_platform::task::spawn_blocking(move || {
                 let payloads = crate::record_payloads::maintain(&retiring.database, |scope, error| {
                     retiring.log.line(format_args!("collecting conversation {scope} projections: {error}"))
                 })
@@ -172,7 +173,8 @@ pub(crate) fn start(node: &Arc<Node>) -> io::Result<()> {
                 Err(error) => node.log.line(format_args!("retiring bookkeeping: {error}")),
             }
             let collecting = node.clone();
-            match tokio::task::spawn_blocking(move || crate::program_collection::collect(&collecting)).await {
+            match fastctx_platform::task::spawn_blocking(move || crate::program_collection::collect(&collecting)).await
+            {
                 Ok(Ok(())) => {}
                 Ok(Err(error)) => node.log.line(format_args!("collecting unused programs: {error:#}")),
                 Err(error) => node.log.line(format_args!("collecting unused programs: {error}")),
@@ -180,6 +182,36 @@ pub(crate) fn start(node: &Arc<Node>) -> io::Result<()> {
         }
     });
     Ok(())
+}
+
+/// Recovery holds a job lease, never the global disk gate while replaying journals.
+/// Failed jobs stay eligible for the next maintenance round; one does not stop others.
+fn recover_book(node: &Arc<Node>) {
+    let paths: Vec<_> = node.disk_due.lock().expect("never poisoned").iter().cloned().collect();
+    for path in paths {
+        let reading = {
+            let _gate = node.disk.lock();
+            match record::read(&path) {
+                Ok(record) if record.end.is_some() => {
+                    node.disk_due.lock().expect("never poisoned").remove(&path);
+                    Some((record, crate::job_reader::hold(node, &path)))
+                }
+                _ => None,
+            }
+        };
+        let Some((record, lease)) = reading else { continue };
+        match crate::activity_book::consumed(node, &record) {
+            Ok(true) => {}
+            Ok(false) => {
+                if let Err(error) = crate::activity_book::observe(node, &path, &record) {
+                    node.log.line(format_args!("recovering activity for job {}: {error}", record.id));
+                }
+            }
+            Err(error) => node.log.line(format_args!("checking activity for job {}: {error}", record.id)),
+        }
+        drop(lease);
+        node.disk_due.lock().expect("never poisoned").insert(path);
+    }
 }
 
 fn collect_immediate(node: &Arc<Node>) -> io::Result<()> {

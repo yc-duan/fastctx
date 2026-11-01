@@ -1,51 +1,46 @@
-//! What an `on` did, as a step of the run whose script gave it
-//! (`fastctx_types::run_facts::RunStep`): told by the node that carries it,
-//! once when the job there started or could not, and once when it ended,
-//! with the last lines it sent back.
-
-use std::collections::VecDeque;
-use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
-
-use base64::Engine as _;
-use base64::engine::general_purpose::STANDARD;
-use fastctx_types::JobId;
-use fastctx_types::ipc::Failure;
-use fastctx_types::on::{OnEnd, OnRequest};
-use fastctx_types::run_facts::{RunStep, StepDid, StepEnd, clipped, tail_of};
-
+//! An on's step is acknowledged only after it is recorded. The short memory
+//! lock protects its bounded tail; recording never holds that lock over IO.
 use crate::Node;
+use base64::{Engine as _, engine::general_purpose::STANDARD};
+use fastctx_platform::doing::{MemoryMutex, Rank};
+use fastctx_types::{
+    JobId,
+    ipc::Failure,
+    on::{OnEnd, OnRequest},
+    run_facts::{RunStep, StepDid, StepEnd, clipped, tail_of},
+};
+use std::{collections::VecDeque, io, path::PathBuf, sync::Arc};
 
-/// The lines of its output a step keeps.
 const TAIL_LINES: usize = 20;
-/// The most of its output, as base64, kept to find them in.
 const TAIL_KEPT: usize = 16 * 1024;
-
-pub(crate) type Steps = Arc<Mutex<Telling>>;
-
+pub(crate) type Steps = Arc<Telling>;
 pub(crate) struct Telling {
     node: Arc<Node>,
-    /// The record of the job whose script gave the `on`.
     record: PathBuf,
+    state: MemoryMutex<State>,
+}
+struct State {
     step: RunStep,
-    /// The last of what came back, as it came, base64.
     tail: VecDeque<String>,
     kept: usize,
     ended: bool,
 }
 
-/// The telling of `request`, an `on` given in the job whose record is
-/// `parent`; none for an `on` no run gave.
-pub(crate) async fn begin(node: &Arc<Node>, parent: Option<&PathBuf>, request: &OnRequest) -> Option<Steps> {
-    let record = parent?.clone();
-    let job = request.job.clone()?;
-    let command = tokio::fs::read_to_string(&request.package.script).await.unwrap_or_default();
+pub(crate) async fn begin(
+    node: &Arc<Node>,
+    parent: Option<&PathBuf>,
+    request: &OnRequest,
+) -> io::Result<Option<Steps>> {
+    let Some(record) = parent.cloned() else { return Ok(None) };
+    let Some(job) = request.job.clone() else { return Ok(None) };
+    let script = request.package.script.clone();
+    let command = fastctx_platform::task::spawn_blocking(move || fastctx_platform::disk::read_to_string(script))
+        .await
+        .map_err(io::Error::other)??;
     let id = crate::speech::new_id("on").to_string();
-    Some(Arc::new(Mutex::new(Telling {
-        node: node.clone(),
-        record,
+    let state = State {
         step: RunStep {
-            id,
+            id: id.clone(),
             job,
             machine: node.machine(),
             began: jiff::Timestamp::now(),
@@ -63,11 +58,13 @@ pub(crate) async fn begin(node: &Arc<Node>, parent: Option<&PathBuf>, request: &
         tail: VecDeque::new(),
         kept: 0,
         ended: false,
+    };
+    Ok(Some(Arc::new(Telling {
+        node: node.clone(),
+        record,
+        state: MemoryMutex::new(Rank::WRITE_FACTS, "on step tail", id, state),
     })))
 }
-
-/// The command line as it reads: bash's quoting leaves a space after the
-/// last word, kept only where it is the word's own.
 fn said(command: &str) -> &str {
     let mut text = command.trim_end_matches(['\n', '\r']);
     while text.ends_with(' ') && !text.ends_with("\\ ") {
@@ -75,70 +72,72 @@ fn said(command: &str) -> &str {
     }
     text
 }
-
 impl Telling {
-    /// The job there started as `sent`.
-    pub(crate) fn started(&mut self, sent: &JobId) {
-        if let StepDid::On { sent: known, .. } = &mut self.step.did {
-            *known = Some(sent.clone());
-        }
-        self.tell();
+    pub(crate) fn started(&self, sent: &JobId) -> io::Result<()> {
+        let step = {
+            let mut state = self.state.lock();
+            if let StepDid::On { sent: known, .. } = &mut state.step.did {
+                *known = Some(sent.clone());
+            }
+            state.step.clone()
+        };
+        crate::run_facts::tell_step(&self.node, &self.record, step)
     }
-
-    /// Output it sent back, base64 as it came.
-    pub(crate) fn output(&mut self, base64: &str) {
-        self.kept += base64.len();
-        self.tail.push_back(base64.to_string());
-        while self.kept > TAIL_KEPT && self.tail.len() > 1 {
-            self.kept -= self.tail.pop_front().map_or(0, |piece| piece.len());
+    pub(crate) fn output(&self, base64: &str) {
+        if base64.is_empty() {
+            return;
+        }
+        let from = base64.len().saturating_sub(TAIL_KEPT).div_ceil(4) * 4;
+        let piece = &base64[from.min(base64.len())..];
+        let mut state = self.state.lock();
+        state.kept += piece.len();
+        state.tail.push_back(piece.to_string());
+        while state.kept > TAIL_KEPT {
+            state.kept -= state.tail.pop_front().map_or(0, |piece| piece.len());
         }
     }
-
-    pub(crate) fn ended(&mut self, end: &OnEnd) {
+    pub(crate) fn ended(&self, end: &OnEnd) -> io::Result<()> {
         let end = match end {
             OnEnd::Exited { status, .. } => StepEnd::of(&fastctx_types::run::EndedHow::Finished, Some(*status)),
             OnEnd::Otherwise { how, status } => StepEnd::of(how, *status),
         };
-        self.end(end);
+        self.end(end)
     }
-
-    pub(crate) fn failed(&mut self, failure: &Failure) {
+    pub(crate) fn failed(&self, failure: &Failure) -> io::Result<()> {
         let why = clipped(&failure.message);
-        self.end(if failure.not_run { StepEnd::NotRun { why } } else { StepEnd::Lost { why } });
+        self.end(if failure.not_run { StepEnd::NotRun { why } } else { StepEnd::Lost { why } })
     }
-
-    fn end(&mut self, end: StepEnd) {
-        if self.ended {
-            return;
-        }
-        self.ended = true;
-        let tail = self.tail_text();
-        if let StepDid::On { end: known, tail: lines, .. } = &mut self.step.did {
-            *known = Some(end);
-            *lines = tail;
-        }
-        self.step.ended = Some(jiff::Timestamp::now());
-        self.tell();
+    fn end(&self, end: StepEnd) -> io::Result<()> {
+        let step = {
+            let mut state = self.state.lock();
+            if state.ended {
+                return Ok(());
+            }
+            // A failed write retries the same outcome and timestamp.
+            if state.step.ended.is_none() {
+                let tail = state.tail_text();
+                if let StepDid::On { end: known, tail: lines, .. } = &mut state.step.did {
+                    *known = Some(end);
+                    *lines = tail;
+                }
+                state.step.ended = Some(jiff::Timestamp::now());
+            }
+            state.step.clone()
+        };
+        crate::run_facts::tell_step(&self.node, &self.record, step)?;
+        self.state.lock().ended = true;
+        Ok(())
     }
-
-    /// Its last lines, from the end of what was kept.
+}
+impl State {
     fn tail_text(&self) -> Option<String> {
         let mut bytes = Vec::new();
         for piece in &self.tail {
-            // A suffix at a multiple of four characters is the encoding of
-            // a suffix of the bytes.
-            let from = piece.len().saturating_sub(TAIL_KEPT) / 4 * 4;
-            if let Ok(decoded) = STANDARD.decode(&piece[from..]) {
+            if let Ok(decoded) = STANDARD.decode(piece) {
                 bytes.extend(decoded);
             }
         }
         let text = tail_of(&String::from_utf8_lossy(&bytes), TAIL_LINES);
         (!text.trim().is_empty()).then_some(text)
-    }
-
-    fn tell(&self) {
-        if let Err(error) = crate::run_facts::tell_step(&self.node, &self.record, self.step.clone()) {
-            self.node.log.line(format_args!("telling the step of an on to {}: {error}", self.record.display()));
-        }
     }
 }

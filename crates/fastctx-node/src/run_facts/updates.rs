@@ -10,8 +10,8 @@ static EMITTING: LazyLock<crate::record_gates::Gates> =
     LazyLock::new(|| crate::record_gates::Gates::new(fastctx_platform::doing::Rank::EMITTING, "call facts"));
 
 #[derive(Clone, Default, Serialize, Deserialize)]
-struct Emitted {
-    sequence: u64,
+pub(super) struct Emitted {
+    pub(super) sequence: u64,
     #[serde(default)]
     journal_version: u8,
     state: Option<RunState>,
@@ -49,7 +49,12 @@ enum Recovery {
 /// can replay the same sequence without skipping any committed row.
 pub(crate) fn job(node: &Node, record_path: &Path) -> io::Result<()> {
     let before = fastctx_hands::run::record::read(record_path)?;
-    crate::activity_book::observe(node, record_path, &before)?;
+    super::step_view::refresh(record_path)?;
+    if let Err(error) = crate::activity_book::observe(node, record_path, &before) {
+        // The journal remains pinned by the book cursor; its separate database
+        // must not prevent the job's owner from hearing progress or completion.
+        node.log.line(format_args!("recording activity for job {}: {error}", before.id));
+    }
     if before.call_id.is_none() || before.owner.resident().is_none() {
         return Ok(());
     }
@@ -58,25 +63,21 @@ pub(crate) fn job(node: &Node, record_path: &Path) -> io::Result<()> {
     let record = fastctx_hands::run::record::read(record_path)?;
     let call_id = record.call_id.clone().expect("a call was recorded");
     let metadata = crate::job_metadata::Job::of(record_path, &record)?;
+    super::frame_queue::drain(&metadata, |update| deliver(node, &record, update))?;
     if let Some(bytes) = metadata.raw("facts-pending")? {
-        let update = match serde_json::from_slice::<Recovery>(&bytes)? {
-            Recovery::Current(pending) => {
-                metadata.put("facts-state", &pending.emitted)?;
-                pending.update
-            }
+        let (update, mut emitted) = match serde_json::from_slice::<Recovery>(&bytes)? {
+            Recovery::Current(pending) => (pending.update, pending.emitted),
             Recovery::Legacy(update) => {
                 let mut emitted = metadata.get::<Emitted>("facts-state")?.unwrap_or_default();
-                if emitted.sequence < update.sequence {
-                    emitted.sequence = update.sequence;
-                    emitted.state = update.state.clone();
-                    emitted.output_ended = update.output.is_some();
-                    metadata.put("facts-state", &emitted)?;
-                }
-                *update
+                emitted.sequence = emitted.sequence.max(update.sequence);
+                emitted.state = update.state.clone();
+                emitted.output_ended = update.output.is_some();
+                (*update, emitted)
             }
         };
-        deliver(node, &record, &update)?;
-        metadata.delete("facts-pending")?;
+        super::frame_queue::publish(&metadata, update, &mut emitted)?;
+
+        super::frame_queue::drain(&metadata, |update| deliver(node, &record, update))?;
     }
     let mut emitted = metadata.get::<Emitted>("facts-state")?.unwrap_or_default();
     super::writing::recover(record_path, emitted.journal_version == 0)?;
@@ -112,7 +113,6 @@ pub(crate) fn job(node: &Node, record_path: &Path) -> io::Result<()> {
         } else {
             (None, None)
         };
-        emitted.sequence = metadata.next_sequence(emitted.sequence)?;
         emitted.metadata_sent = true;
         emitted.state = Some(state.clone());
         emitted.output_ended = output_ended;
@@ -134,11 +134,8 @@ pub(crate) fn job(node: &Node, record_path: &Path) -> io::Result<()> {
             writes,
             steps,
         };
-        let pending_record = Pending { update: update.clone(), emitted: emitted.clone() };
-        metadata.put("facts-pending", &pending_record)?;
-        metadata.put("facts-state", &emitted)?;
-        deliver(node, &record, &update)?;
-        metadata.delete("facts-pending")?;
+        super::frame_queue::publish(&metadata, update, &mut emitted)?;
+        super::frame_queue::drain(&metadata, |update| deliver(node, &record, update))?;
     }
 }
 

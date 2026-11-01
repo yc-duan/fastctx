@@ -27,7 +27,7 @@ struct Watched {
 pub(crate) async fn restore(node: &Arc<Node>, path: &Path, record: &JobRecord) -> std::io::Result<()> {
     if record.call_id.is_some() {
         let (node, path) = (node.clone(), path.to_path_buf());
-        tokio::task::spawn_blocking(move || crate::run_facts::update_job(&node, &path))
+        fastctx_platform::task::spawn_blocking(move || crate::run_facts::update_job(&node, &path))
             .await
             .map_err(std::io::Error::other)??;
     }
@@ -68,6 +68,21 @@ pub(crate) fn collect(node: &Node, path: &Path) -> std::io::Result<()> {
         return Ok(());
     }
     drop(watched);
+    match fastctx_hands::run::record::read(path) {
+        Ok(record) => match crate::activity_book::consumed(node, &record) {
+            Ok(true) => {}
+            result => {
+                node.disk_due.lock().expect("never poisoned").insert(path.to_path_buf());
+                result?;
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::WouldBlock,
+                    "the activity book still needs this job",
+                ));
+            }
+        },
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error),
+    }
     crate::jobs::remove(path)
 }
 
@@ -93,7 +108,7 @@ pub(crate) fn start(node: &Arc<Node>, path: &Path, identity: Option<ProcessIdent
         return;
     }
     let (node, path) = (node.clone(), path.to_path_buf());
-    tokio::spawn(async move {
+    fastctx_platform::task::spawn(async move {
         let mut identity = identity;
         let mut again = crate::again::Again::default();
         let mut lock_wait = crate::on::LOOK_AGAIN;

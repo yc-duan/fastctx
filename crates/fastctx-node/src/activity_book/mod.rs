@@ -7,7 +7,7 @@ mod incremental;
 mod maintenance;
 mod migrate;
 mod query;
-pub(crate) use incremental::{Cursor, observe, segment};
+pub(crate) use incremental::{Cursor, consumed, observe, segment};
 pub(crate) use maintenance::fold;
 pub(crate) use migrate::start;
 mod seen;
@@ -161,7 +161,7 @@ fn row(node: &Node, record: &JobRecord, writes: &[WriteFact], steps: &[fastctx_t
     let output = [Some(&record.output), record.stderr.as_ref()]
         .into_iter()
         .flatten()
-        .filter_map(|path| std::fs::metadata(path).ok())
+        .filter_map(|path| fastctx_platform::disk::metadata(path).ok())
         .map(|meta| meta.len() as i64)
         .sum();
     let mut went = Vec::new();
