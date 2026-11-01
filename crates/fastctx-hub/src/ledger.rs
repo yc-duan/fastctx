@@ -417,11 +417,14 @@ pub(crate) async fn write_as(
     };
     hub.log.line(format_args!("{from} wrote entry {seq} of {town}"));
     for machine in tell {
+        // A machine of a release before history reads only that the ledger
+        // changed, and takes the history append as any entry.
+        let reads_history = hub.sessions().get(&machine).is_some_and(|session| session.replicated_records);
         let changed = match &history {
-            Some(revision) => {
+            Some(revision) if reads_history => {
                 Down::HistoryChanged { town: town.clone(), name: revision.name.clone(), version: revision.version }
             }
-            None => Down::LedgerChanged { town: town.clone() },
+            _ => Down::LedgerChanged { town: town.clone() },
         };
         hub.tell(&machine, changed);
     }

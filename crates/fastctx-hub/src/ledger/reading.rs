@@ -135,10 +135,10 @@ impl Page {
                 return Err("the ledger reader ended".into());
             }
             let seq = previous + 1;
-            if self.history.contains(&seq) {
-                if !projection {
-                    return Err("update this computer to synchronize a project that contains history".into());
-                }
+            // A projection reads history on demand. A reader of a release before
+            // history takes a history append as any entry: it keeps its two files
+            // and reads on, where refusing the page would stop the whole project.
+            if self.history.contains(&seq) && projection {
                 through = seq;
                 continue;
             }
