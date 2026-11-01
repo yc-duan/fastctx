@@ -5,9 +5,11 @@
 mod blocking;
 pub mod documents;
 mod error;
+mod integrity;
 mod metrics;
 pub mod migration;
 mod queue;
+mod readings;
 pub mod receipts;
 mod recovery;
 pub mod versions;
@@ -45,8 +47,10 @@ struct Inner {
     background_reading: Arc<Semaphore>,
     reads: Arc<Semaphore>,
     metrics: Arc<metrics::Metrics>,
+    damage: Arc<integrity::Damage>,
     path: PathBuf,
     fault: Option<Error>,
+    salvaged: Option<String>,
 }
 impl Drop for Inner {
     fn drop(&mut self) {
@@ -88,10 +92,25 @@ impl Database {
     pub fn open_initialized(
         path: &Path,
         schema: &str,
-        initialize: impl FnOnce(&rusqlite::Connection) -> Result<()>,
+        initialize: impl Fn(&rusqlite::Connection) -> Result<()>,
     ) -> Result<Self> {
-        recovery::check(path)?;
-        recovery::verify(path)?;
+        match Self::open_once(path, schema, &initialize) {
+            // Damage the cheap checks did not see is set aside and salvaged
+            // as theirs is, and the salvage opened instead.
+            Err(error) if error.is_database_damage() => {
+                recovery::mark_damaged(path, &error.to_string())?;
+                Self::open_once(path, schema, &initialize)
+            }
+            opened => opened,
+        }
+    }
+
+    fn open_once(path: &Path, schema: &str, initialize: &impl Fn(&rusqlite::Connection) -> Result<()>) -> Result<Self> {
+        let readings = readings::Readings::of(path);
+        let salvaged = recovery::prepare(path)?;
+        if salvaged.is_some() {
+            fastctx_platform::health::damaged(readings.name);
+        }
         let parent = path.parent().ok_or_else(|| Error::new("the database has no parent directory"))?;
         // Existing directories keep their owner's ACL: a system service must
         // not take away that owner's access to an existing database.
@@ -125,11 +144,14 @@ impl Database {
             readers.push(reader);
         }
         let writes = Arc::new(queue::Queue::new());
-        let metrics = Arc::new(metrics::Metrics::default());
-        let (queue, measurements, file) = (writes.clone(), metrics.clone(), path.to_path_buf());
+        let damage = Arc::new(integrity::Damage::new(path.to_path_buf(), &readings));
+        let metrics = Arc::new(metrics::Metrics::new(readings));
+        let (queue, measurements, noticed, file) =
+            (writes.clone(), metrics.clone(), damage.clone(), path.to_path_buf());
         std::thread::Builder::new()
             .name("sqlite-writer".into())
-            .spawn(move || writer::run(connection, queue, measurements, file))?;
+            .spawn(move || writer::run(connection, queue, measurements, noticed, file))?;
+        integrity::watch(Arc::downgrade(&damage), path.to_path_buf())?;
         Ok(Self(Arc::new(Inner {
             writes,
             readers: Mutex::new(readers),
@@ -137,53 +159,52 @@ impl Database {
             background_reading: Arc::new(Semaphore::new(count - 1)),
             reads: Arc::new(Semaphore::new(1024)),
             metrics,
+            damage,
             path: path.to_path_buf(),
             fault: None,
+            salvaged,
         })))
     }
 
-    /// Opens without making a service's diagnostic endpoint depend on storage.
-    /// A failed handle rejects every operation with its recorded cause. Only
-    /// native SQLite damage is quarantined; no acknowledged state is rebuilt.
+    /// Opens without making a service's diagnostic endpoint depend on storage:
+    /// a database that does not open is a handle that rejects every operation
+    /// with its cause. A damaged one has been set aside and salvaged by then
+    /// (`open_initialized`); its files are kept, never rebuilt empty unsaid.
     /// The caller must exclusively own the service database during startup.
     pub fn open_or_unavailable(
         path: &Path,
         schema: &str,
-        initialize: impl FnOnce(&rusqlite::Connection) -> Result<()>,
+        initialize: impl Fn(&rusqlite::Connection) -> Result<()>,
     ) -> Self {
         match Self::open_initialized(path, schema, initialize) {
             Ok(database) => database,
-            Err(error) => {
-                let fault = if error.is_database_damage() {
-                    match recovery::quarantine(path, &error) {
-                        Ok(target) => Error::damaged(format!(
-                            "the database is unavailable; preserved in {}: {error}",
-                            target.display()
-                        )),
-                        Err(failure) => Error::damaged(format!(
-                            "the database is unavailable ({error}); preserving its files also failed: {failure}"
-                        )),
-                    }
-                } else {
-                    error
-                };
+            Err(fault) => {
                 let writes = Arc::new(queue::Queue::new());
                 writes.close();
+                let readings = readings::Readings::of(path);
+                let damage = Arc::new(integrity::Damage::new(path.to_path_buf(), &readings));
+                let metrics = metrics::Metrics::new(readings);
+                metrics.failures.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 Self(Arc::new(Inner {
                     writes,
                     readers: Mutex::new(Vec::new()),
                     reading: Arc::new(Semaphore::new(0)),
                     background_reading: Arc::new(Semaphore::new(0)),
                     reads: Arc::new(Semaphore::new(0)),
-                    metrics: Arc::new(metrics::Metrics {
-                        failures: std::sync::atomic::AtomicU64::new(1),
-                        ..Default::default()
-                    }),
+                    metrics: Arc::new(metrics),
+                    damage,
                     path: path.to_path_buf(),
                     fault: Some(fault),
+                    salvaged: None,
                 }))
             }
         }
+    }
+
+    /// What was salvaged when this open found the database damaged and set it
+    /// aside: each table's rows that came over and why the rest did not.
+    pub fn salvaged(&self) -> Option<&str> {
+        self.0.salvaged.as_deref()
     }
 
     /// A startup failure remains explicit until storage is repaired and reopened.
@@ -261,7 +282,10 @@ impl Database {
         let reader = Reader { inner: &self.0, connection: Some(connection), _permit: permit };
         let start = Instant::now();
         let result = read(reader.connection.as_ref().expect("leased connection"));
-        self.0.metrics.read_micros.record(start.elapsed());
+        self.0.metrics.read(start.elapsed());
+        if let Err(error) = &result {
+            self.0.damage.notice(error);
+        }
         result
     }
 
@@ -306,6 +330,7 @@ impl Database {
         let permit = tokio::time::timeout(QUEUE_WAIT, self.0.writes.admit(priority, bytes))
             .await
             .map_err(|_| busy("write admission"))??;
+        self.admitted(priority);
         let (send, receive) = oneshot::channel();
         self.submit(
             priority,
@@ -345,8 +370,15 @@ impl Database {
         committed: impl FnOnce(&T) + Send + 'static,
     ) -> Result<T> {
         self.available()?;
+        if writer::on_writer() {
+            // A writer waiting for a write waits for itself, or for another
+            // database's writer while every write of its own waits for it.
+            debug_assert!(false, "a database writer waited for a write");
+            return Err(Error::with_kind(ErrorKind::Invalid, "a database's writer cannot wait for a write"));
+        }
         let permit = blocking::wait(self.0.writes.admit(priority, bytes), QUEUE_WAIT)
             .ok_or_else(|| busy("write admission"))??;
+        self.admitted(priority);
         let (send, receive) = oneshot::channel();
         self.submit(
             priority,
@@ -358,13 +390,17 @@ impl Database {
     }
 
     fn submit(&self, priority: Priority, job: writer::Job) -> Result<()> {
-        use std::sync::atomic::Ordering;
-        self.0.metrics.queued.fetch_add(1, Ordering::Relaxed);
+        self.0.metrics.queue(1);
         let result = self.0.writes.push(priority, job);
         if result.is_err() {
-            self.0.metrics.queued.fetch_sub(1, Ordering::Relaxed);
+            self.0.metrics.queue(-1);
         }
         result
+    }
+
+    /// Notes how much of its priority's admission a write found in use.
+    fn admitted(&self, priority: Priority) {
+        self.0.metrics.readings.writes.note(self.0.writes.used(priority), queue::SLOTS);
     }
 }
 

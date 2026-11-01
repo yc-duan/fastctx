@@ -735,6 +735,11 @@ pub async fn run_prepared(
     if let Some(error) = database.fault() {
         log.line(format_args!("node record storage unavailable: {error}"));
     }
+    if let Some(report) = database.salvaged() {
+        log.line(format_args!(
+            "node record storage was damaged and set aside; what could be read was salvaged:\n{report}"
+        ));
+    }
     record_database::register(&world, &database);
     let book_database = fastctx_storage::Database::open_or_unavailable(&world.path().join("book.sqlite3"), "", |db| {
         fastctx_storage::versions::apply(
@@ -745,6 +750,11 @@ pub async fn run_prepared(
     });
     if let Some(error) = book_database.fault() {
         log.line(format_args!("activity book storage unavailable: {error}"));
+    }
+    if let Some(report) = book_database.salvaged() {
+        log.line(format_args!(
+            "activity book storage was damaged and set aside; what could be read was salvaged:\n{report}"
+        ));
     }
     // Built cyclically so the goal services can hold a weak handle back to the
     // node they reach account records and context through.

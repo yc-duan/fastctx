@@ -17,7 +17,7 @@ pub enum Priority {
 }
 
 // Admission is reserved, so background payloads cannot occupy interactive slots.
-const SLOTS: usize = 256;
+pub(super) const SLOTS: usize = 256;
 const BYTES: [usize; 4] = [16 << 20, 16 << 20, 64 << 20, 16 << 20];
 const SCHEDULE: [usize; 15] = [0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 3];
 
@@ -61,6 +61,11 @@ impl Queue {
         let slot = self.slots[at].clone().acquire_owned().await.map_err(|_| stopped())?;
         let bytes = self.bytes[at].clone().acquire_many_owned(amount).await.map_err(|_| stopped())?;
         Ok(Admission { _slot: slot, _bytes: bytes })
+    }
+
+    /// How many of `priority`'s admission slots are taken.
+    pub fn used(&self, priority: Priority) -> usize {
+        SLOTS.saturating_sub(self.slots[priority as usize].available_permits())
     }
 
     pub fn push(&self, priority: Priority, job: Job) -> crate::Result<()> {

@@ -1,8 +1,9 @@
 //! A machine's health in a few numbers, carried by its heartbeat
 //! (`specs/world-engine.md`, 量与告警): whether it is busy, how long its work
-//! waited lately, what is stuck, how often a rule was broken, and the bound
-//! nearest its limit. The hub shows a machine as busy or stuck beside online
-//! from it, and gathers the network's health.
+//! waited lately, what is stuck, how often a rule was broken, the bound
+//! nearest its limit, and a store of its records found damaged. The hub shows
+//! a machine as busy or stuck beside online from it, and gathers the
+//! network's health.
 
 use serde::{Deserialize, Serialize};
 
@@ -35,6 +36,10 @@ pub struct Health {
     /// The bound used the most within the window, once it reached `NEAR`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub near: Option<Near>,
+    /// A store of its records found damaged since it started, by name
+    /// (`storage.node`): some of what it kept may be lost.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub damaged: Option<String>,
 }
 
 impl Health {

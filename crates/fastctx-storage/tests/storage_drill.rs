@@ -235,6 +235,8 @@ fn crashes(root: &Path) -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn corruption(root: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    // Unreadable files are set aside whole and an empty database opens in
+    // their place, saying so: the files stay as they were.
     let path = root.join("broken.sqlite3");
     for (suffix, bytes) in [
         ("", b"broken acknowledged database".as_slice()),
@@ -243,40 +245,133 @@ fn corruption(root: &Path) -> Result<(), Box<dyn std::error::Error>> {
     ] {
         std::fs::write(format!("{}{suffix}", path.display()), bytes)?;
     }
-    let broken = Database::open_or_unavailable(&path, SCHEMA, |_| panic!("a broken database was initialized"));
-    assert_eq!(broken.fault().map(Error::kind), Some(ErrorKind::Corrupt));
-    assert!(broken.statistics().unavailable.is_some());
-    assert!(broken.read_now(|_| Ok(())).is_err());
-    assert!(broken.write_now(0, |_| Ok(())).is_err());
-    assert!(!path.exists());
+    let salvaged = Database::open_or_unavailable(&path, SCHEMA, |_| Ok(()));
+    assert!(salvaged.fault().is_none(), "a damaged database left no database: {:?}", salvaged.fault());
+    assert!(salvaged.salvaged().is_some_and(|report| report.contains("nothing could be read")));
+    salvaged.write_now(0, |db| {
+        db.execute("INSERT INTO events(id,body) VALUES(1,'after salvage')", [])?;
+        Ok(())
+    })?;
     let directory =
         std::fs::read_dir(format!("{}.quarantine", path.display()))?.next().ok_or("no quarantine directory")??.path();
-    assert_eq!(std::fs::read(directory.join("broken.sqlite3-wal"))?, b"uncheckpointed committed bytes");
-    // Stop after moving the database but before moving its WAL, then resume.
-    std::fs::rename(directory.join("broken.sqlite3-wal"), format!("{}-wal", path.display()))?;
-    let reopened = Database::open_or_unavailable(&path, SCHEMA, |_| panic!("quarantine became an empty database"));
-    assert!(reopened.fault().is_some());
-    assert!(Database::open(&path, SCHEMA).is_err());
-    assert!(!path.exists());
     assert_eq!(std::fs::read(directory.join("broken.sqlite3"))?, b"broken acknowledged database");
     assert_eq!(std::fs::read(directory.join("broken.sqlite3-wal"))?, b"uncheckpointed committed bytes");
+    assert!(!Path::new(&format!("{}.unavailable", path.display())).exists());
+    assert!(fastctx_platform::health::summary().damaged.is_some(), "the health does not tell of the damage");
+    drop(salvaged);
+
+    // A start cut short after moving the database but before its log: the
+    // next one moves the log too, so it never meets the new database.
+    let cut = root.join("cut.sqlite3");
+    std::fs::write(&cut, b"broken database")?;
+    std::fs::write(format!("{}-wal", cut.display()), b"stale log")?;
+    let set_aside = root.join("cut.sqlite3.quarantine").join("0a-1-1");
+    std::fs::create_dir_all(&set_aside)?;
+    std::fs::rename(&cut, set_aside.join("cut.sqlite3"))?;
+    std::fs::write(format!("{}.unavailable", cut.display()), "fastctx-sqlite-quarantine-v1\n0a-1-1\ninjected")?;
+    let resumed = Database::open_or_unavailable(&cut, SCHEMA, |_| Ok(()));
+    assert!(resumed.fault().is_none(), "the interrupted salvage did not finish: {:?}", resumed.fault());
+    assert_eq!(std::fs::read(set_aside.join("cut.sqlite3-wal"))?, b"stale log");
+    assert!(
+        resumed.read_now(|db| Ok(db.query_row("SELECT count(*) FROM events", [], |row| row.get::<_, i64>(0))?))? == 0
+    );
+    drop(resumed);
+
+    // An empty file without a log never held a commit: it opens as new.
     let empty = root.join("empty.sqlite3");
     std::fs::write(&empty, [])?;
-    let empty = Database::open_or_unavailable(&empty, SCHEMA, |_| panic!("an empty existing database was rebuilt"));
-    assert_eq!(empty.fault().map(Error::kind), Some(ErrorKind::Corrupt));
+    let opened = Database::open_or_unavailable(&empty, SCHEMA, |_| Ok(()));
+    assert!(opened.fault().is_none() && opened.salvaged().is_none());
+    drop(opened);
+
+    // A page broken in the middle of a table: the cheap checks let the
+    // database open, the first read through it marks it damaged, and the
+    // next open salvages every row before that page.
+    let paged = root.join("paged.sqlite3");
+    {
+        let database = Database::open(&paged, SCHEMA)?;
+        for start in (0..20_000i64).step_by(500) {
+            database.write_now(500 * 64, move |db| {
+                let mut insert = db.prepare_cached("INSERT INTO events(id,body) VALUES(?1,?2)")?;
+                for id in start..start + 500 {
+                    insert.execute((id, format!("row {id:08}")))?;
+                }
+                Ok(())
+            })?;
+        }
+    }
+    closed(&paged)?;
+    let length = std::fs::metadata(&paged)?.len();
+    let page = 4096u64;
+    let broken = (length / page).saturating_sub(3) * page + 512;
+    {
+        use std::io::{Seek, SeekFrom};
+        let mut file = std::fs::OpenOptions::new().write(true).open(&paged)?;
+        file.seek(SeekFrom::Start(broken))?;
+        file.write_all(&[0xA5; 2048])?;
+        file.sync_all()?;
+    }
+    {
+        let database = Database::open_or_unavailable(&paged, SCHEMA, |_| Ok(()));
+        assert!(database.fault().is_none() && database.salvaged().is_none());
+        let read = database.read_now(|db| {
+            Ok(db.query_row("SELECT count(*), sum(length(body)) FROM events", [], |row| row.get::<_, i64>(0))?)
+        });
+        let error = read.expect_err("a broken page read without error");
+        assert!(error.is_database_damage(), "not taken for damage: {error}");
+        assert!(Path::new(&format!("{}.damaged", paged.display())).exists());
+    }
+    closed(&paged)?;
+    let database = Database::open_or_unavailable(&paged, SCHEMA, |_| Ok(()));
+    let report = database.salvaged().ok_or("the damaged database was not salvaged")?.to_string();
+    let (rows, intact): (i64, i64) = database.read_now(|db| {
+        Ok(db.query_row("SELECT count(*), coalesce(sum(body = printf('row %08d', id)), 0) FROM events", [], |row| {
+            Ok((row.get(0)?, row.get(1)?))
+        })?)
+    })?;
+    assert!(rows > 0 && rows < 20_000, "salvaged {rows} of 20000 rows");
+    assert_eq!(rows, intact, "a salvaged row came over changed");
+    assert!(!Path::new(&format!("{}.damaged", paged.display())).exists());
+    drop(database);
+
+    // A record a service cannot read is the service's, not the database's.
     let logical = root.join("logical.sqlite3");
     let database = Database::open(&logical, SCHEMA)?;
     let error = database
         .read_now(|_| Err::<(), _>(Error::with_kind(ErrorKind::Corrupt, "one record is malformed")))
         .unwrap_err();
     assert!(!error.is_database_damage());
-    assert!(logical.exists());
+    assert!(!Path::new(&format!("{}.damaged", logical.display())).exists());
     database.write_now(0, |db| {
         db.execute("INSERT INTO events(id,body) VALUES(1,'healthy')", [])?;
         Ok(())
     })?;
+
+    // A writer that waits for a write would wait for itself: refused at
+    // once, not after the time an answer may take.
+    let inner = database.clone();
+    let started = Instant::now();
+    let nested = database.write_now(0, move |_| inner.write_now(0, |_| Ok(())));
+    assert!(nested.is_err() && started.elapsed() < Duration::from_secs(5));
     println!(
-        "corruption: physical files and WAL retained, interrupted quarantine resumed without empty rebuild; logical record error left healthy storage usable"
+        "corruption: unreadable files kept and an empty database opened in their place; an interrupted salvage finished without its stale log; an empty file opened as new; a broken page salvaged {rows} of 20000 rows unchanged ({}); a record error left storage healthy; a writer refused to wait for itself",
+        report.lines().filter(|line| line.contains("could not be read")).count()
     );
+    Ok(())
+}
+
+/// Waits until the database at `path` was closed: its writer emptied its log
+/// into the file when it fell idle (and took it away as it closed, where the
+/// system let it), and stopped within the second it waits for more work.
+fn closed(path: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    let log = format!("{}-wal", path.display());
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while std::fs::metadata(&log).is_ok_and(|log| log.len() > 0) {
+        if Instant::now() > deadline {
+            return Err("the database did not empty its log".into());
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    std::thread::sleep(Duration::from_secs(2));
     Ok(())
 }

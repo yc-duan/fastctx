@@ -1,20 +1,32 @@
 //! A single writer batches ready operations without delaying an idle caller.
 
-use super::{Error, Result};
+use super::{Error, ErrorKind, Result};
 use crate::{
+    integrity::Damage,
     metrics::Metrics,
     queue::{Admission, Queue},
 };
 use rusqlite::{Connection, TransactionBehavior};
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::PathBuf;
-use std::sync::{Arc, atomic::Ordering};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 pub(super) type Job = Box<dyn Work>;
 pub(super) trait Work: Send {
     fn apply(&mut self, connection: &Connection) -> bool;
+    /// Why the operation failed, once applied.
+    fn failure(&self) -> Option<&Error>;
     fn finish(self: Box<Self>, commit_error: Option<Error>);
+}
+
+thread_local! {
+    static WRITER: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Whether this thread is a database's writer.
+pub(super) fn on_writer() -> bool {
+    WRITER.with(std::cell::Cell::get)
 }
 
 struct Operation<T, F, C, R> {
@@ -52,6 +64,9 @@ where
         self.result = Some(result);
         success
     }
+    fn failure(&self) -> Option<&Error> {
+        self.result.as_ref().and_then(|result| result.as_ref().err())
+    }
     fn finish(self: Box<Self>, commit_error: Option<Error>) {
         let Self { result, committed, reply, _permit, .. } = *self;
         let result = match result {
@@ -72,7 +87,15 @@ where
     }
 }
 
-pub(super) fn run(mut connection: Connection, queue: Arc<Queue>, metrics: Arc<Metrics>, path: PathBuf) {
+pub(super) fn run(
+    mut connection: Connection,
+    queue: Arc<Queue>,
+    metrics: Arc<Metrics>,
+    damage: Arc<Damage>,
+    path: PathBuf,
+) {
+    fastctx_platform::roles::set(fastctx_platform::roles::Role::Blocking);
+    WRITER.with(|writer| writer.set(true));
     let mut dirty = true;
     loop {
         let Some(first) = queue.pop(Duration::from_secs(1)) else {
@@ -85,26 +108,35 @@ pub(super) fn run(mut connection: Connection, queue: Arc<Queue>, metrics: Arc<Me
                 dirty = !matches!(checkpoint, Ok(0));
                 let _ = connection.busy_timeout(super::ADMISSION);
             }
-            metrics.database_bytes.store(std::fs::metadata(&path).map_or(0, |m| m.len()), Ordering::Relaxed);
-            metrics
-                .wal_bytes
-                .store(std::fs::metadata(format!("{}-wal", path.display())).map_or(0, |m| m.len()), Ordering::Relaxed);
+            metrics.sizes(
+                std::fs::metadata(&path).map_or(0, |m| m.len()),
+                std::fs::metadata(format!("{}-wal", path.display())).map_or(0, |m| m.len()),
+            );
             if queue.finished() {
                 return;
             }
             continue;
         };
         let mut batch = vec![first];
-        let result = commit(&mut connection, &queue, &metrics, &mut batch);
+        let result = commit(&mut connection, &queue, &metrics, &damage, &mut batch);
         dirty = true;
+        if let Err(error) = &result {
+            damage.notice(error);
+        }
         for job in batch {
-            metrics.queued.fetch_sub(1, Ordering::Relaxed);
+            metrics.queue(-1);
             job.finish(result.as_ref().err().cloned());
         }
     }
 }
 
-fn commit(connection: &mut Connection, queue: &Queue, metrics: &Metrics, batch: &mut Vec<Job>) -> Result<()> {
+fn commit(
+    connection: &mut Connection,
+    queue: &Queue,
+    metrics: &Metrics,
+    damage: &Damage,
+    batch: &mut Vec<Job>,
+) -> Result<()> {
     let mut transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
     let started = Instant::now();
     loop {
@@ -115,18 +147,12 @@ fn commit(connection: &mut Connection, queue: &Queue, metrics: &Metrics, batch: 
         if success {
             savepoint.commit()?;
         } else {
-            metrics.failures.fetch_add(1, Ordering::Relaxed);
+            if let Some(error) = job.failure() {
+                damage.notice(error);
+            }
             savepoint.rollback()?;
         }
-        let elapsed = operation.elapsed();
-        metrics.write_micros.record(elapsed);
-        metrics.operations.fetch_add(1, Ordering::Relaxed);
-        if elapsed > Duration::from_millis(2) {
-            metrics.writes_over_budget.fetch_add(1, Ordering::Relaxed);
-        }
-        if elapsed > Duration::from_millis(20) {
-            metrics.slow_operations.fetch_add(1, Ordering::Relaxed);
-        }
+        metrics.operation(operation.elapsed(), !success);
         if batch.len() >= 32 || started.elapsed() >= Duration::from_millis(2) {
             break;
         }
@@ -137,7 +163,20 @@ fn commit(connection: &mut Connection, queue: &Queue, metrics: &Metrics, batch: 
     }
     let flush = Instant::now();
     let result = transaction.commit();
-    metrics.commit_micros.record(flush.elapsed());
-    metrics.commits.fetch_add(1, Ordering::Relaxed);
-    result.map_err(Into::into)
+    metrics.commit(flush.elapsed());
+    result.map_err(|error| {
+        // A commit that failed busy or for want of space left nothing behind;
+        // any other may have reached the disk before it failed.
+        let error = Error::from(error);
+        match error.kind() {
+            ErrorKind::Busy | ErrorKind::Full => error,
+            _ => {
+                damage.notice(&error);
+                Error::with_kind(
+                    ErrorKind::OutcomeUnknown,
+                    format!("the database could not confirm its commit, which may or may not stand: {error}"),
+                )
+            }
+        }
+    })
 }

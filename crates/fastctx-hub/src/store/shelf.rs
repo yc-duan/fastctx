@@ -58,6 +58,9 @@ impl Shelf {
         let database =
             Database::open_initialized(&dir.join(FILE), SCHEMA, |connection| super::migrate::import(connection, dir))
                 .map_err(other)?;
+        if let Some(report) = database.salvaged() {
+            eprintln!("the hub's database was damaged and set aside; what could be read was salvaged:\n{report}");
+        }
         let shelf = Self(database);
         super::migrate::back_up(&shelf, dir)?;
         Ok(shelf)

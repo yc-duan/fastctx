@@ -4493,6 +4493,12 @@
                 "at": "2026-10-09T08:30:00Z",
                 "kind": "rollout",
                 "version": "1.0.2"
+              },
+              {
+                "id": 11,
+                "at": "2026-10-09T08:30:00Z",
+                "machine": "server",
+                "kind": "damaged"
               }
             ],
             "health": true,
