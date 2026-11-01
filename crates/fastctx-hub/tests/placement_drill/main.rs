@@ -7,6 +7,7 @@
 mod attachments;
 mod colleagues;
 mod controls;
+mod earlier;
 mod goals;
 mod history;
 mod lifecycle;
@@ -92,12 +93,11 @@ async fn device(
     anyhow::bail!("device {label} not logged in")
 }
 fn start(root: &Path) -> Result<Child> {
+    start_with(root, KERNEL.get().expect("kernel path"))
+}
+fn start_with(root: &Path, program: &Path) -> Result<Child> {
     let output = std::fs::OpenOptions::new().create(true).append(true).open(root.join("stdout.log"))?;
-    Ok(command(root, KERNEL.get().expect("kernel path"))
-        .arg("node")
-        .stdout(output.try_clone()?)
-        .stderr(output)
-        .spawn()?)
+    Ok(command(root, program).arg("node").stdout(output.try_clone()?).stderr(output).spawn()?)
 }
 async fn online(root: &Path) -> bool {
     for _ in 0..240 {
@@ -111,6 +111,19 @@ async fn online(root: &Path) -> bool {
     false
 }
 async fn node(base: &Path, label: &str, account: &str, listen: SocketAddr) -> Result<(PathBuf, Child)> {
+    node_with(base, label, account, listen, None).await
+}
+/// A machine logged in to `account`, its node this build's or, given
+/// `earlier`, an earlier release's, run from where its World runs it from:
+/// started from anywhere else, a release places itself there and hands the
+/// World to a successor of its own, which the drill would not hold.
+async fn node_with(
+    base: &Path,
+    label: &str,
+    account: &str,
+    listen: SocketAddr,
+    earlier: Option<&Path>,
+) -> Result<(PathBuf, Child)> {
     let root = base.join(label);
     let dir = WorldDir::under(&root);
     std::fs::create_dir_all(dir.path())?;
@@ -139,10 +152,11 @@ async fn node(base: &Path, label: &str, account: &str, listen: SocketAddr) -> Re
     fastctx_net::link::state::write(&net.membership(), &m)?;
     std::fs::create_dir_all(root.join("bin"))?;
     let installed = root.join("bin/fastctx");
-    if std::fs::hard_link(KERNEL.get().expect("kernel"), &installed).is_err() {
-        std::fs::copy(KERNEL.get().expect("kernel"), &installed)?;
+    let program = earlier.unwrap_or(KERNEL.get().expect("kernel"));
+    if std::fs::hard_link(program, &installed).is_err() {
+        std::fs::copy(program, &installed)?;
     }
-    let child = start(&root)?;
+    let child = if earlier.is_some() { start_with(&root, &installed)? } else { start(&root)? };
     anyhow::ensure!(online(&root).await, "node {label} not ready");
     Ok((root, child))
 }
@@ -626,6 +640,19 @@ async fn main() -> Result<()> {
     controls::exercise(&wa, &host, &alice_two, &sa.to.resident, &moved).await?;
     let colleague = colleagues::exercise(&wa, &host, &alice_two, &sa.to.resident, &home).await?;
     std::fs::write(base.join("colleague.json"), serde_json::to_vec(&colleague)?)?;
+    if let Some(earlier_kernel) = std::env::var_os("FASTCTX_DRILL_EARLIER") {
+        earlier::exercise(
+            &base,
+            &wa,
+            listen,
+            &host,
+            &sa.to.resident,
+            &agent,
+            &mock_configuration,
+            Path::new(&earlier_kernel),
+        )
+        .await?;
+    }
     let endpoint = std::env::args().nth(3).context("goal mock endpoint")?;
     goals::exercise(&wa, &host, &moved, &sa.to.resident, &endpoint).await?;
     history::exercise(&wa, &host, &alice_two, &sa.to.resident, &writer.to).await?;
