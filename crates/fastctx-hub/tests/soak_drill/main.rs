@@ -355,7 +355,9 @@ async fn run_cycle(
     }
     if until(began, minutes(12), end).await {
         mark(lab, marks, &format!("hang-{cycle}")).await;
-        told(faults::disk(lab, faults, "hang", 1, Duration::from_secs(160)).await);
+        // Two operations a second: systemd takes a limit of one for none and
+        // leaves the last one set.
+        told(faults::disk(lab, faults, "hang", 2, Duration::from_secs(160)).await);
         tokio::time::sleep(Duration::from_secs(20)).await;
         mark(lab, marks, &format!("hung-{cycle}")).await;
     }

@@ -425,6 +425,9 @@ pub(crate) struct Lab {
     pub _owner_device: Arc<Device>,
     /// The phones, by directory and account, logged in once.
     pub phones: Vec<(PathBuf, AccountName)>,
+    /// Alice's phones the storm alone opens: a phone's identity is open in
+    /// one place at a time, and the clients hold theirs.
+    pub storm_phones: Vec<PathBuf>,
     pub agent: AgentName,
 }
 
@@ -572,6 +575,13 @@ pub(crate) async fn build(config: Config) -> Result<Lab> {
         device.disconnect();
         phones.push((directory, account(owner)));
     }
+    let mut storm_phones = Vec::new();
+    for index in 0..4 {
+        let directory = config.base.join("phones").join(format!("storm-{index}"));
+        let (device, _) = phone(&directory, "alice", device_line.address).await?;
+        device.disconnect();
+        storm_phones.push(directory);
+    }
     Ok(Lab {
         config,
         hub,
@@ -584,6 +594,7 @@ pub(crate) async fn build(config: Config) -> Result<Lab> {
         owner,
         _owner_device: owner_device,
         phones,
+        storm_phones,
         agent,
     })
 }

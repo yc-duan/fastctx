@@ -16,6 +16,9 @@ use std::{
 };
 
 const QUEUED: usize = 128;
+/// The places in the queue that families no one waits for may take; the
+/// rest are kept for families a request waits for.
+const BACKGROUND: usize = QUEUED - 32;
 const WAIT: Duration = Duration::from_secs(10);
 type Key = (String, String);
 type Outcome = std::result::Result<(), (io::ErrorKind, String)>;
@@ -178,6 +181,32 @@ pub(crate) fn checkpoint() -> io::Result<()> {
             Ok(())
         }
     })
+}
+
+/// Whether discovery may ask for more families now: the queue has room
+/// for those no one waits for.
+pub(crate) fn admits(world: &Path) -> bool {
+    engine(world).is_some_and(|engine| engine.queue.lock().expect("migration queue").jobs.len() < BACKGROUND)
+}
+
+/// How few families wait in the queue before discovery asks for more.
+pub(crate) const DRAINED: usize = BACKGROUND / 2;
+
+/// How many families wait in the queue now.
+pub(crate) fn queued(world: &Path) -> usize {
+    engine(world).map_or(0, |engine| engine.queue.lock().expect("migration queue").jobs.len())
+}
+
+/// Whether a family of `conversation` is still queued or moving.
+pub(crate) fn moving(world: &Path, conversation: &str) -> bool {
+    engine(world).is_some_and(|engine| {
+        let queue = engine.queue.lock().expect("migration queue");
+        queue.pending.iter().any(|(key, cell)| key.0 == conversation && cell.strong_count() > 0)
+    })
+}
+
+fn engine(world: &Path) -> Option<Arc<Engine>> {
+    ENGINES.lock().expect("migration registry").get(world).and_then(Weak::upgrade)
 }
 
 /// A conversation this release creates has no earlier records, so none of
@@ -385,7 +414,7 @@ pub(crate) fn request(
             if !engine.started.load(Ordering::Acquire) {
                 return Err(busy("the listener is still opening"));
             }
-            if queue.jobs.len() >= if urgent { QUEUED } else { QUEUED - 32 } {
+            if queue.jobs.len() >= if urgent { QUEUED } else { BACKGROUND } {
                 return Err(busy("the migration queue is full"));
             }
             let cell = Arc::new(Cell {

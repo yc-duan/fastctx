@@ -169,8 +169,14 @@ pub(crate) async fn storm(lab: &Lab, conversations: &Conversations, seen: Arc<Se
     }
     let mut dice = Dice::new(crate::clients::seed() ^ 0x5707);
     let mut devices = Vec::new();
-    for (directory, _) in lab.phones.iter().filter(|(_, owner)| owner.as_str() == "alice").take(4) {
-        let Ok((device, world)) = reopen(directory) else { continue };
+    for directory in &lab.storm_phones {
+        let (device, world) = match reopen(directory) {
+            Ok(opened) => opened,
+            Err(error) => {
+                say(&format!("soak: the storm's phone {} did not open: {error:#}", directory.display()));
+                continue;
+            }
+        };
         for _ in 0..100 {
             let Some(resident) = conversations.any(&mut dice) else { break };
             let (world, seen) = (world.clone(), seen.clone());

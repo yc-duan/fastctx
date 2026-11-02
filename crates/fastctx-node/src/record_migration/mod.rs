@@ -140,11 +140,20 @@ fn start(node: &std::sync::Arc<crate::Node>) {
                 Ok(Ok(true)) => break,
                 Ok(Ok(false)) => {
                     again.reset();
-                    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-                    tokio::select! {
-                        () = node.record_migration.wait_progress() => {},
-                        () = tokio::time::sleep(std::time::Duration::from_secs(1)) => {},
+                    // The next pass waits for some family to move, and for
+                    // the queue to drain to half, so each pass asks for a
+                    // batch rather than for one place at a time.
+                    let world = node.world.path();
+                    loop {
+                        tokio::select! {
+                            () = node.record_migration.wait_progress() => {},
+                            () = tokio::time::sleep(std::time::Duration::from_secs(1)) => {},
+                        }
+                        if scheduler::queued(world) <= scheduler::DRAINED {
+                            break;
+                        }
                     }
+                    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
                     continue;
                 }
                 Ok(Err(error)) => node.log.line(format_args!("discovering legacy records: {error}")),

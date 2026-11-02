@@ -46,8 +46,19 @@ impl Catalog {
             self.rooms = Some(node.world.kept()?.into());
         }
         let rooms = self.rooms.as_mut().expect("discovered rooms");
+        let world = node.world.path();
+        // A pass stops where the queue has no room for what it would ask,
+        // and passes over a conversation whose families still move: asking
+        // again would only be refused, each refusal costing its reads.
         for _ in 0..rooms.len().min(128) {
+            if !super::scheduler::admits(world) {
+                break;
+            }
             let kept = rooms.pop_front().expect("pending room");
+            if super::scheduler::moving(world, &kept.name) {
+                rooms.push_back(kept);
+                continue;
+            }
             fastctx_platform::readings::counter("migration.discovery_rooms").add(1);
             if !completed(node, room(node, &kept)) {
                 rooms.push_back(kept);
@@ -67,6 +78,9 @@ impl Catalog {
         }
         let jobs = self.jobs.as_mut().expect("discovered jobs");
         for _ in 0..jobs.len().min(128) {
+            if !super::scheduler::admits(world) {
+                break;
+            }
             let path = jobs.pop_front().expect("pending job");
             fastctx_platform::readings::counter("migration.discovery_jobs").add(1);
             if !completed(node, job(node, &path)) {
