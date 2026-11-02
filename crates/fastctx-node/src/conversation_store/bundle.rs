@@ -110,6 +110,12 @@ pub(super) fn write(source: &Connection, directory: &Path, conversation: &str, m
     Ok(manifest)
 }
 
+/// The name an export goes by between machines: the digest of its manifest,
+/// which proves every row it holds.
+pub(super) fn fingerprint(manifest: &Manifest) -> Result<String> {
+    Ok(format!("{:x}", Sha256::digest(serde_json::to_vec(manifest).map_err(|error| Error::new(error.to_string()))?)))
+}
+
 pub(super) fn manifest(source: &Connection, conversation: &str, target: &[Table]) -> Result<Manifest> {
     let bodies = source
         .prepare("SELECT body FROM transfer_manifest LIMIT 2")?

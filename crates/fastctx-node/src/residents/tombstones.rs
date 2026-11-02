@@ -39,6 +39,9 @@ pub(super) struct Tombstones {
     /// Every conversation the node's database keeps as deleted, by a hash
     /// of its id: one that meets another id only keeps that one unused.
     sealed: HashSet<u64>,
+    /// Every conversation let go whole to another machine, which may come
+    /// back, hashed alike.
+    released: HashSet<u64>,
 }
 
 impl Tombstones {
@@ -108,9 +111,17 @@ impl Tombstones {
         self.by_id.get(id)
     }
 
-    /// Learns conversations deleted for good, by `sealed_key`.
-    pub(super) fn seal(&mut self, keys: HashSet<u64>) {
-        self.sealed.extend(keys);
+    /// Learns conversations deleted for good, and those let go whole, by
+    /// `sealed_key`.
+    pub(super) fn seal(&mut self, deleted: HashSet<u64>, released: HashSet<u64>) {
+        self.sealed.extend(deleted);
+        self.released.extend(released);
+    }
+
+    /// Whether `id` may go to a new conversation: it was never deleted
+    /// here, nor let go to come back.
+    pub(super) fn free(&self, id: &ResidentId) -> bool {
+        !self.ever(id) && !self.released.contains(&sealed_key(id.as_str()))
     }
 
     /// Whether `id` was ever deleted here: within the month its tombstone
@@ -129,16 +140,23 @@ impl Tombstones {
     }
 }
 
-/// The conversations the node's database keeps as deleted, by `sealed_key`.
-pub(crate) fn sealed(database: &fastctx_storage::Database) -> fastctx_storage::Result<HashSet<u64>> {
+/// The conversations the node's database keeps as deleted, and those it let
+/// go whole, by `sealed_key`.
+pub(crate) fn sealed(database: &fastctx_storage::Database) -> fastctx_storage::Result<(HashSet<u64>, HashSet<u64>)> {
     database.read_background_now(|db| {
-        let mut statement = db.prepare("SELECT name FROM node_conversation_deletions")?;
-        let mut rows = statement.query([])?;
-        let mut keys = HashSet::new();
-        while let Some(row) = rows.next()? {
-            keys.insert(sealed_key(&row.get::<_, String>(0)?));
-        }
-        Ok(keys)
+        let keys = |sql: &str| -> fastctx_storage::Result<HashSet<u64>> {
+            let mut statement = db.prepare(sql)?;
+            let mut rows = statement.query([])?;
+            let mut keys = HashSet::new();
+            while let Some(row) = rows.next()? {
+                keys.insert(sealed_key(&row.get::<_, String>(0)?));
+            }
+            Ok(keys)
+        };
+        Ok((
+            keys("SELECT name FROM node_conversation_deletions")?,
+            keys("SELECT DISTINCT name FROM node_conversation_releases")?,
+        ))
     })
 }
 

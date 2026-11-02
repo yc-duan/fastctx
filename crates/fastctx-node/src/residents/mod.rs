@@ -716,10 +716,11 @@ impl Residents {
     }
 
     /// Learns the conversations the node's database keeps as deleted, whose
-    /// tombstones here may be gone: their ids go to no new conversation.
+    /// tombstones here may be gone, and those let go whole to another
+    /// machine, which may come back: their ids go to no new conversation.
     pub(crate) fn seal(&self, database: &fastctx_storage::Database) -> fastctx_storage::Result<()> {
-        let keys = tombstones::sealed(database)?;
-        self.lock().tombstones.seal(keys);
+        let (deleted, released) = tombstones::sealed(database)?;
+        self.lock().tombstones.seal(deleted, released);
         Ok(())
     }
 
@@ -1136,7 +1137,7 @@ fn new_id(agent: &AgentName, state: &State) -> Result<ResidentId, Failure> {
         getrandom::fill(&mut bytes).map_err(|error| Failure::new(format!("choosing a resident id: {error}")))?;
         let digits: String = bytes.iter().map(|byte| format!("{byte:02x}")).collect();
         let id = ResidentId::try_from(format!("{agent}-{digits}")).expect("an agent name and eight hex digits");
-        if !state.live.contains_key(&id) && !state.tombstones.ever(&id) {
+        if !state.live.contains_key(&id) && state.tombstones.free(&id) {
             return Ok(id);
         }
     }

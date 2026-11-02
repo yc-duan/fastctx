@@ -10,7 +10,20 @@ pub enum Doctor {
         #[arg(long)]
         dir: std::path::PathBuf,
     },
-    /// Pending conversation imports and rejected offers, with their explanations.
+    /// Let a conversation go from a stopped node once another machine
+    /// imported its export, setting its directory aside.
+    ReleaseConversation {
+        /// The conversation directory's name.
+        conversation: String,
+        /// The fingerprint the other machine lists the import under.
+        #[arg(long)]
+        fingerprint: String,
+        /// The source Fastctx root, containing world/.
+        #[arg(long)]
+        dir: std::path::PathBuf,
+    },
+    /// Conversation imports, pending, rejected or done, and conversations
+    /// released, with their fingerprints and explanations.
     ConversationImports {
         /// The Fastctx root, containing world/.
         #[arg(long)]
@@ -37,8 +50,14 @@ pub enum Doctor {
 pub fn run(command: Doctor) -> anyhow::Result<()> {
     let (call, json) = match command {
         Doctor::ExportConversation { conversation, dir } => {
-            let path = fastctx_node::export_conversation(&dir, &conversation)?;
-            println!("{}", path.display());
+            let exported = fastctx_node::export_conversation(&dir, &conversation)?;
+            println!("{}", exported.bundle.display());
+            println!("fingerprint {}", exported.fingerprint);
+            return Ok(());
+        }
+        Doctor::ReleaseConversation { conversation, fingerprint, dir } => {
+            let kept = fastctx_node::release_conversation(&dir, &conversation, &fingerprint)?;
+            println!("{}", kept.display());
             return Ok(());
         }
         Doctor::ConversationImports { dir, json } => {
@@ -46,15 +65,19 @@ pub fn run(command: Doctor) -> anyhow::Result<()> {
             if json {
                 println!("{}", serde_json::to_string(&imports)?);
             } else if imports.is_empty() {
-                println!("No pending or rejected conversation imports.");
+                println!("No conversation imports.");
             } else {
                 for import in imports {
                     println!(
-                        "{}: {}{}",
+                        "{}: {}{}{}",
                         import.conversation,
                         import.state,
+                        import.from.map(|from| format!(" from {from}")).unwrap_or_default(),
                         import.reason.map(|reason| format!(" — {reason}")).unwrap_or_default()
                     );
+                    if let Some(fingerprint) = import.fingerprint {
+                        println!("  fingerprint {fingerprint}");
+                    }
                     if let Some(archive) = import.archive {
                         println!("  {}", archive.display());
                     }

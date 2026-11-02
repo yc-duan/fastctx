@@ -8,7 +8,9 @@ use std::{
     path::{Path, PathBuf},
 };
 
-pub(crate) fn export(root: &Path, conversation: &str) -> io::Result<PathBuf> {
+/// Writes the conversation's records into its directory as a bundle; says
+/// where, and the fingerprint the machine that takes it names it by.
+pub(crate) fn export(root: &Path, conversation: &str) -> io::Result<(PathBuf, String)> {
     let root = std::path::absolute(root)?;
     let world = WorldDir::under(&root);
     let _owner = fastctx_platform::FileLock::try_acquire(&world.node_lock())?.ok_or_else(|| {
@@ -17,7 +19,7 @@ pub(crate) fn export(root: &Path, conversation: &str) -> io::Result<PathBuf> {
     if !world.kept()?.iter().any(|kept| kept.name == conversation) {
         return Err(io::Error::new(io::ErrorKind::NotFound, "the conversation is not kept on this node"));
     }
-    let export = || -> fastctx_storage::Result<PathBuf> {
+    let export = || -> fastctx_storage::Result<(PathBuf, String)> {
         let source = Connection::open_with_flags(world.path().join("node.sqlite3"), OpenFlags::SQLITE_OPEN_READ_ONLY)?;
         super::super::check(&source, conversation)?;
         let complete = source
@@ -59,8 +61,8 @@ pub(crate) fn export(root: &Path, conversation: &str) -> io::Result<PathBuf> {
         }
         let directory = directory(world.path(), conversation)?;
         let machine = crate::machine::names(&world).map_err(|error| fastctx_storage::Error::new(error.to_string()))?;
-        bundle::write(&source, directory.path(), conversation, machine.name.as_str())?;
-        Ok(directory.path().join(bundle::FILE))
+        let manifest = bundle::write(&source, directory.path(), conversation, machine.name.as_str())?;
+        Ok((directory.path().join(bundle::FILE), bundle::fingerprint(&manifest)?))
     };
     export().map_err(io::Error::other)
 }

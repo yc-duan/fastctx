@@ -4,6 +4,8 @@ mod bundle;
 mod deletion;
 #[cfg(feature = "storage-drill")]
 pub(crate) mod drill;
+#[cfg(feature = "storage-drill")]
+mod move_drill;
 pub(crate) mod schema;
 pub(crate) mod transfer;
 #[cfg(feature = "storage-drill")]

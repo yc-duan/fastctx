@@ -45,7 +45,7 @@ pub(crate) fn run(root: &Path) -> Result<(), Box<dyn std::error::Error>> {
         rows.connection().execute("INSERT INTO node_record_state VALUES('legacy-discovery-complete',1)", [])?;
         Ok(())
     })?;
-    let bundle_path = crate::export_conversation(root.join("source").as_path(), id.as_str())?;
+    let bundle_path = crate::export_conversation(root.join("source").as_path(), id.as_str())?.bundle;
     let manifest = {
         let exported = Connection::open_with_flags(&bundle_path, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
         let tables = source.read_now(schema::tables)?;
@@ -134,6 +134,8 @@ pub(crate) fn run(root: &Path) -> Result<(), Box<dyn std::error::Error>> {
     super::begin(&target_directory)?;
     super::purge(&target, id.as_str())?;
     assert!(!transfer::pending(target_world.path(), id.as_str()));
+    drop(service);
+    super::move_drill::run(&root.join("moves"))?;
     println!(
         "conversation transfer: {} table proofs and 100000 events preserved; input revisions unchanged on replay; overlapping node cursors isolated; deleted tail not reused; conflicts quarantined without fencing existing rows; {:?}",
         manifest.tables.len(),
@@ -142,7 +144,7 @@ pub(crate) fn run(root: &Path) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-fn wait(world: &WorldDir, database: &fastctx_storage::Database, conversation: &str) -> std::io::Result<()> {
+pub(super) fn wait(world: &WorldDir, database: &fastctx_storage::Database, conversation: &str) -> std::io::Result<()> {
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(120);
     loop {
         let began = std::time::Instant::now();

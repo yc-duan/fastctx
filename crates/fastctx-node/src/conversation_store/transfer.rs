@@ -18,6 +18,7 @@ mod importing;
 mod quarantine;
 mod rejection;
 pub(super) use rejection::discard_journal;
+pub(crate) mod release;
 pub(crate) mod status;
 mod triggers;
 static REJECTED: LazyLock<Mutex<HashMap<std::path::PathBuf, HashMap<String, String>>>> =
@@ -42,11 +43,27 @@ CREATE TABLE IF NOT EXISTS node_record_state (
 ) WITHOUT ROWID;
 ";
 
+/// What a move by hand leaves on each end (`release`): the export this machine
+/// last took of a conversation, and each time one left it, by the fingerprint
+/// of the export taken elsewhere and where its directory was set aside.
+const MOVES: &str = "
+CREATE TABLE IF NOT EXISTS node_conversation_arrivals (
+    name TEXT PRIMARY KEY, fingerprint TEXT NOT NULL, source_machine TEXT NOT NULL, at INTEGER NOT NULL
+) WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS node_conversation_releases (
+    name TEXT NOT NULL, fingerprint TEXT NOT NULL, at INTEGER NOT NULL, kept TEXT NOT NULL,
+    PRIMARY KEY (name, at)
+) WITHOUT ROWID;
+";
+
 pub(super) fn initialize(db: &Connection) -> Result<()> {
     fastctx_storage::versions::apply(
         db,
         "node.conversation-imports",
-        &[fastctx_storage::versions::Migration { version: 1, sql: SCHEMA }],
+        &[
+            fastctx_storage::versions::Migration { version: 1, sql: SCHEMA },
+            fastctx_storage::versions::Migration { version: 2, sql: MOVES },
+        ],
     )?;
     for (name, definition) in [("failure", "TEXT"), ("rejected", "INTEGER NOT NULL DEFAULT 0"), ("archive", "TEXT")] {
         let exists: bool = db.query_row(

@@ -1043,9 +1043,30 @@ pub fn conversation_imports(root: &std::path::Path) -> std::io::Result<Vec<Conve
     conversation_store::transfer::status::list(root)
 }
 
+/// A conversation's records written beside it for another machine to take.
+pub struct ExportedConversation {
+    pub bundle: std::path::PathBuf,
+    /// The export's name between machines: the one taking it keeps it, and
+    /// this machine lets the conversation go by it.
+    pub fingerprint: String,
+}
+
 /// Exports every conversation-owned table into its directory while the node is
 /// stopped. Copy that directory with its host records before starting the target.
-pub fn export_conversation(root: &std::path::Path, conversation: &str) -> std::io::Result<std::path::PathBuf> {
+pub fn export_conversation(root: &std::path::Path, conversation: &str) -> std::io::Result<ExportedConversation> {
     world_format::check(&WorldDir::under(root))?;
-    conversation_store::transfer::exporting::export(root, conversation)
+    let (bundle, fingerprint) = conversation_store::transfer::exporting::export(root, conversation)?;
+    Ok(ExportedConversation { bundle, fingerprint })
+}
+
+/// Lets a conversation go from this stopped node once another machine took
+/// its export whole, named by that export's fingerprint; says where its
+/// directory was set aside.
+pub fn release_conversation(
+    root: &std::path::Path,
+    conversation: &str,
+    fingerprint: &str,
+) -> std::io::Result<std::path::PathBuf> {
+    world_format::check(&WorldDir::under(root))?;
+    conversation_store::transfer::release::release(root, conversation, fingerprint)
 }

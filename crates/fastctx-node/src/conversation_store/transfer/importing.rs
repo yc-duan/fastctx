@@ -10,7 +10,6 @@ use fastctx_storage::{
     Database, Error, ErrorKind, Priority, Result,
     rusqlite::{Connection, OpenFlags, OptionalExtension},
 };
-use sha2::{Digest, Sha256};
 use std::{io, path::Path};
 
 pub(super) fn run(world: &Path, database: &Database, conversation: &str) -> io::Result<()> {
@@ -57,8 +56,7 @@ fn offer(path: &Path, conversation: &str, tables: &[schema::Table]) -> Result<(C
     let source = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY).map_err(source_error)?;
     source.execute_batch("PRAGMA trusted_schema=OFF; BEGIN").map_err(source_error)?;
     let manifest = bundle::manifest(&source, conversation, tables).map_err(source_error)?;
-    let digest =
-        format!("{:x}", Sha256::digest(serde_json::to_vec(&manifest).map_err(|error| Error::new(error.to_string()))?));
+    let digest = bundle::fingerprint(&manifest)?;
     Ok((source, manifest, digest))
 }
 
@@ -171,6 +169,7 @@ fn import(world: &Path, database: &Database, conversation: &str) -> Result<()> {
         database.read_background_now(|db| bundle::verify(db, conversation, proof))?;
     }
     drop(source);
+    let from = manifest.source_machine.clone();
     let directory = super::directory(world, conversation)?;
     super::super::with_file_gate(&directory, || {
         let current = match crate::record_migration::archive::fingerprint(&path) {
@@ -188,9 +187,17 @@ fn import(world: &Path, database: &Database, conversation: &str) -> Result<()> {
         }
         let scope = conversation.to_string();
         database
-            .write_now_at(Priority::Background, 128, move |db| {
+            .write_now_at(Priority::Background, 256, move |db| {
                 super::super::check(db, &scope)?;
                 db.execute("UPDATE node_conversation_transfers SET finished=1 WHERE name=?1", [&scope])?;
+                // The receipt the machine it came from lets it go by.
+                db.execute(
+                    "INSERT INTO node_conversation_arrivals(name,fingerprint,source_machine,at)
+                     SELECT name,fingerprint,?2,?3 FROM node_conversation_transfers WHERE name=?1
+                     ON CONFLICT(name) DO UPDATE SET fingerprint=excluded.fingerprint,
+                         source_machine=excluded.source_machine, at=excluded.at",
+                    (&scope, from, jiff::Timestamp::now().as_millisecond()),
+                )?;
                 Ok(())
             })
             .map_err(io::Error::other)?;
