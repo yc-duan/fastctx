@@ -13,6 +13,7 @@ mod copilot;
 mod cursor;
 mod gemini;
 pub(crate) mod json;
+mod kiro;
 mod opencode;
 mod plan;
 mod qwen;
@@ -31,6 +32,7 @@ static AGENTS: &[&Agent] = &[
     &cursor::AGENT,
     &cline::AGENT,
     &zed::AGENT,
+    &kiro::AGENT,
     &gemini::AGENT,
 ];
 
