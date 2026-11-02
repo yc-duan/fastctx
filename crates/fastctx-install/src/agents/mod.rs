@@ -22,6 +22,7 @@ mod plan;
 mod qwen;
 mod roo;
 mod spec;
+mod vscode_copilot;
 mod zed;
 
 pub use plan::{Files, Planned, Receipt, connect, disconnect};
@@ -41,6 +42,7 @@ static AGENTS: &[&Agent] = &[
     &devin::AGENT,
     &roo::AGENT,
     &claude_desktop::AGENT,
+    &vscode_copilot::AGENT,
     &gemini::AGENT,
 ];
 
