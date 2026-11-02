@@ -1,0 +1,24 @@
+{
+  "context_servers": {
+    "lab-existing": {
+      "command": "node",
+      "args": [
+        "--version"
+      ],
+      "env": {}
+    }
+  },
+  "agent": {
+    "tool_permissions": {
+      "tools": {
+        "terminal": {
+          "always_deny": [
+            {
+              "pattern": ".*"
+            }
+          ]
+        }
+      }
+    }
+  }
+}

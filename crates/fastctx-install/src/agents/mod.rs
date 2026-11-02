@@ -17,6 +17,7 @@ mod opencode;
 mod plan;
 mod qwen;
 mod spec;
+mod zed;
 
 pub use plan::{Files, Planned, Receipt, connect, disconnect};
 pub use spec::{Agent, Edit, Format, Home, Mcp, Program, Server};
@@ -29,6 +30,7 @@ static AGENTS: &[&Agent] = &[
     &copilot::AGENT,
     &cursor::AGENT,
     &cline::AGENT,
+    &zed::AGENT,
     &gemini::AGENT,
 ];
 
