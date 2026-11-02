@@ -14,6 +14,9 @@ use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 use std::{io, sync::LazyLock};
 
+/// A head for each handover of a conversation, kept as long as the
+/// conversation is, and the inputs of its current revision only: older ones
+/// are swept as it moves on (`collect_inputs`).
 pub(crate) const SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS handover_heads(
  conversation TEXT NOT NULL,identity TEXT NOT NULL,revision TEXT NOT NULL,

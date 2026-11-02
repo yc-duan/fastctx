@@ -17,6 +17,8 @@ use std::{
 pub(crate) const FAMILY: &str = "terminal-heads";
 const CONTENTS: &str = "terminal-end";
 const INLINE: usize = 4096;
+/// A few rows for each turn of a conversation, its end and who reads it,
+/// kept as long as the conversation is.
 pub(crate) const SCHEMA:&str="
 CREATE TABLE IF NOT EXISTS terminal_reader_heads(conversation TEXT NOT NULL,turn TEXT NOT NULL,allocated INTEGER NOT NULL,PRIMARY KEY(conversation,turn)) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS terminal_reader_revisions(conversation TEXT NOT NULL,turn TEXT NOT NULL,revision INTEGER NOT NULL,token TEXT NOT NULL,expected INTEGER NOT NULL,written INTEGER NOT NULL,ready INTEGER NOT NULL,PRIMARY KEY(conversation,turn,revision)) WITHOUT ROWID;

@@ -1,5 +1,7 @@
 //! SQL owns timer generations and their due index. Only active claims and a
 //! disk-failure backoff live in memory; no registry lock covers storage work.
+//! A timer stays until it fires or is cancelled, or its conversation is
+//! deleted; a sentinel's until the sentinel acknowledges it.
 
 use crate::records::{self, Source};
 use fastctx_storage::{Priority, Result};

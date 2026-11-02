@@ -45,7 +45,9 @@ CREATE TABLE IF NOT EXISTS node_record_state (
 
 /// What a move by hand leaves on each end (`release`): the export this machine
 /// last took of a conversation, and each time one left it, by the fingerprint
-/// of the export taken elsewhere and where its directory was set aside.
+/// of the export taken elsewhere and where its directory was set aside. A move
+/// is a person's act: an arrival stays until the conversation leaves again,
+/// and a departure is kept for good, to know the conversation if it returns.
 const MOVES: &str = "
 CREATE TABLE IF NOT EXISTS node_conversation_arrivals (
     name TEXT PRIMARY KEY, fingerprint TEXT NOT NULL, source_machine TEXT NOT NULL, at INTEGER NOT NULL

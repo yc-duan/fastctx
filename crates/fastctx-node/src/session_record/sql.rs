@@ -1,4 +1,5 @@
-//! A conversation's event order and idempotency keys commit together.
+//! A conversation's event order and idempotency keys commit together. The
+//! events are its history, kept as long as the conversation is.
 
 use fastctx_storage::{
     Error, Result,

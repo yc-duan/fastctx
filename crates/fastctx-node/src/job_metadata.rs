@@ -1,5 +1,7 @@
 //! Node-owned job metadata is scoped to the full job incarnation. Supervisor
 //! records and byte streams remain files; a reused short job ID inherits nothing.
+//! The count of a job's frames is kept by its record's path, one row for each
+//! job, as long as its conversation is.
 
 mod legacy;
 

@@ -1,5 +1,6 @@
 //! Attachment receipts are indexed by delivery identity. The files stay beside
 //! the conversation; recording concurrent deliveries never replaces its book.
+//! There is one row for each delivery, kept as long as the conversation is.
 
 use crate::{Node, records};
 use fastctx_types::attachments::Attachment;

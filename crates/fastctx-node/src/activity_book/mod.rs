@@ -29,6 +29,8 @@ use crate::Node;
 
 /// Detail lasts 90 days; hourly counts last a year. Journal identities and
 /// cursors live until their deed is folded, so replay never counts twice.
+/// What was taken from the book's files before it was a database is marked
+/// once, a row for each deed it held.
 pub(crate) const SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS book_deeds (
     deed TEXT PRIMARY KEY,

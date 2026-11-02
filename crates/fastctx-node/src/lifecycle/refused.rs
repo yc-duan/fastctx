@@ -1,4 +1,6 @@
 //! A permanent preflight refusal is durable without claiming host acceptance.
+//! There is one for each input a host refused for good, kept as long as the
+//! conversation is.
 
 use crate::Node;
 use fastctx_types::{

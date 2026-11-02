@@ -1,4 +1,6 @@
 //! Outgoing request lookup is global; its durable row belongs to its conversation.
+//! A row stays while its request is pending, and goes thirty days after
+//! (`control_posts::collect`) or with the conversation.
 use super::Request;
 use crate::{Node, records};
 use fastctx_storage::{Priority, rusqlite::OptionalExtension};

@@ -24,6 +24,9 @@ use fastctx_types::{MachineName, ResidentId};
 
 use crate::Node;
 
+/// A seal is kept for good, so that a report that comes late is never taken
+/// again: one row, a name and a flag, for each place of each conversation
+/// deleted here.
 pub(crate) const SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS book_sealed (
     resident TEXT NOT NULL,
@@ -34,6 +37,8 @@ CREATE TABLE IF NOT EXISTS book_sealed (
 CREATE INDEX IF NOT EXISTS book_hour_session ON book_hour(session);
 ";
 
+/// Kept for good like a conversation's seal: one row for each account the
+/// hub deleted.
 pub(crate) const ACCOUNTS: &str = "
 CREATE TABLE IF NOT EXISTS book_sealed_accounts (
     account TEXT PRIMARY KEY,
