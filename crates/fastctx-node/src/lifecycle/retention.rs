@@ -47,12 +47,12 @@ pub(crate) async fn held(node: &Node, id: &ResidentId) -> Result<bool, Failure> 
     // Context that rides with the next turn does not itself require a runtime.
     // Untaken plugin envelopes return to Waiting when that activation ends.
     let directory = node.world.conversation(id);
-    Ok(fastctx_platform::task::spawn_blocking(move || crate::inbox::pending(&directory))
-        .await
-        .map_err(|error| Failure::new(error.to_string()))?
-        .map_err(|error| Failure::new(error.to_string()))?
-        .iter()
-        .any(|row| row.delivery.notice.along().is_none()))
+    fastctx_platform::task::spawn_blocking(move || {
+        crate::inbox::any(&directory, |row| row.delivery.notice.along().is_none())
+    })
+    .await
+    .map_err(|error| Failure::new(error.to_string()))?
+    .map_err(|error| Failure::new(error.to_string()))
 }
 
 async fn consider(node: &Arc<Node>, id: &ResidentId) -> Result<(), Failure> {

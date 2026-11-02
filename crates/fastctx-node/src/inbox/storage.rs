@@ -166,6 +166,10 @@ pub(crate) fn paid(rows: &records::Rows<'_>, key: &str) -> fastctx_storage::Resu
     Ok(rows.get::<bool>("paid-answers", key)?.is_some()
         || rows.get::<fastctx_types::Address>("undeliverable-answers", key)?.is_some())
 }
-pub(super) fn pending(rows: &records::Rows<'_>) -> fastctx_storage::Result<Vec<Pending>> {
-    rows.unsettled("pending-inputs", "delivery-receipts", "uncertain-inputs")
+/// A page of what waits, in the order it came, after `after`.
+pub(super) fn pending_page(
+    rows: &records::Rows<'_>,
+    after: Option<&records::Arrival>,
+) -> fastctx_storage::Result<(Vec<Pending>, Option<records::Arrival>)> {
+    rows.unsettled_page("pending-inputs", "delivery-receipts", "uncertain-inputs", after)
 }

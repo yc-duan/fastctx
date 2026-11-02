@@ -8,6 +8,9 @@ use std::io;
 
 const FAMILY: &str = "controls";
 const RESULTS: &str = "control-results";
+/// How many controls may wait in one conversation: a guard against a client
+/// gone wrong, far past what anyone queues. What waits is read no further.
+const WAITING: usize = 1024;
 
 pub(crate) fn initialize(directory: &ConversationDir) -> io::Result<()> {
     records::ensure_file(directory, FAMILY, directory.path().join("control-queue.json"), |path, push| {
@@ -63,12 +66,13 @@ pub(crate) async fn pending(node: &Node, id: &ResidentId) -> Result<Vec<PendingC
         records::read(directory, |rows| {
             let mut result = Vec::new();
             let mut cursor = 0;
-            loop {
+            while result.len() < WAITING {
                 let page = rows.page::<PendingControl>(FAMILY, cursor, 128)?;
                 let Some(last) = page.last() else { break };
                 cursor = last.0;
                 result.extend(page.into_iter().map(|(_, row)| row));
             }
+            result.truncate(WAITING);
             Ok(result)
         })
     })
@@ -81,6 +85,11 @@ pub(super) async fn put(node: &Node, id: &ResidentId, row: PendingControl) -> Re
         transaction(directory, bytes, move |rows| {
             if rows.get::<PendingControl>(RESULTS, &row.id)?.is_some() {
                 return Err(fastctx_storage::Error::new("the control has already ended"));
+            }
+            if !rows.exists(FAMILY, &row.id)? && rows.count_upto(FAMILY, WAITING)? >= WAITING {
+                return Err(fastctx_storage::Error::new(format!(
+                    "{WAITING} controls already wait in this conversation"
+                )));
             }
             rows.put(FAMILY, &row.id, &row)
         })

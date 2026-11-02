@@ -19,10 +19,23 @@ struct Kept {
     parent: Option<String>,
     observed: Option<Timestamp>,
 }
+/// How many of the latest calls a followed conversation keeps the start of:
+/// an agent's start is told with the call that started it, so only a recent
+/// call is still looked for once the history has been read.
+const RECENT_CALLS: usize = 256;
+
+type Call = (Option<String>, String);
+
 #[derive(Default)]
 pub(super) struct Fold {
     agents: BTreeMap<String, Kept>,
-    calls: BTreeMap<(Option<String>, String), Timestamp>,
+    /// When each call began, by the agent whose loop made it.
+    calls: BTreeMap<Call, Timestamp>,
+    /// The calls in the order they were first seen.
+    seen: VecDeque<Call>,
+    /// Whether only the recent calls are kept, as when the conversation is
+    /// followed after its history was read.
+    recent: bool,
 }
 impl Fold {
     fn entry(&mut self, id: &str) -> &mut Kept {
@@ -67,7 +80,7 @@ impl Fold {
         match event {
             Happened::Began { item, .. } | Happened::Finished { item, .. } | Happened::Updated { item, .. } => {
                 if let Some(started) = item.started_at {
-                    self.calls.insert((parent.map(str::to_string), item.id.clone()), started);
+                    self.call((parent.map(str::to_string), item.id.clone()), started);
                 }
             }
             Happened::TurnStarted { .. } if live && parent.is_some() => {
@@ -129,9 +142,28 @@ impl Fold {
             _ => {}
         }
     }
+    fn call(&mut self, call: Call, started: Timestamp) {
+        if self.calls.insert(call.clone(), started).is_none() {
+            self.seen.push_back(call);
+        }
+        if self.recent {
+            self.forget_calls();
+        }
+    }
+    fn forget_calls(&mut self) {
+        while self.calls.len() > RECENT_CALLS {
+            let Some(oldest) = self.seen.pop_front() else { break };
+            self.calls.remove(&oldest);
+        }
+    }
+    /// Keeps only the recent calls from now on.
+    pub(super) fn recent_only(&mut self) {
+        self.recent = true;
+        self.forget_calls();
+    }
     /// The agents as they stand, the fold left to take more.
     pub(super) fn agents(&self) -> Vec<NativeAgent> {
-        Fold { agents: self.agents.clone(), calls: BTreeMap::new() }.finish()
+        Fold { agents: self.agents.clone(), ..Default::default() }.finish()
     }
     pub(super) fn finish(mut self) -> Vec<NativeAgent> {
         fn take(id: String, agents: &mut BTreeMap<String, Kept>) -> NativeAgent {
@@ -249,5 +281,8 @@ pub(super) async fn open(node: &Arc<Node>, id: &ResidentId, deadline: Instant) -
             }
         }
     }
+    // Every agent the history tells of has found its call; what follows
+    // tells a new agent with its call.
+    fold.recent_only();
     Read { fold, unavailable, events }
 }

@@ -801,6 +801,10 @@ impl Told {
     }
 }
 
+/// How many of the words kept for a resident a view is told of: past this
+/// guard, the rest are told as the first go in.
+const KEPT_SHOWN: usize = 4096;
+
 /// While a resident works or words are kept for it, how often a watch that
 /// tells it looks again.
 const LOOK_AGAIN: std::time::Duration = std::time::Duration::from_secs(5);
@@ -812,7 +816,20 @@ fn kept(node: &Node, resident: &ResidentId) -> Vec<fastctx_types::session::KeptW
     use fastctx_types::session::{KeptWords, WordsState};
     let directory = node.world.conversation(resident);
     let managed = node.residents.about(resident).is_some_and(|(about, _)| about.world_started);
-    let Ok(pending) = crate::inbox::pending(&directory) else { return Vec::new() };
+    // The first of what waits, as many as a view shows.
+    let mut pending = Vec::new();
+    let read = crate::inbox::pages(&directory, |page| {
+        pending.extend(page);
+        Ok(if pending.len() >= KEPT_SHOWN {
+            pending.truncate(KEPT_SHOWN);
+            std::ops::ControlFlow::Break(())
+        } else {
+            std::ops::ControlFlow::Continue(())
+        })
+    });
+    if read.is_err() {
+        return Vec::new();
+    }
     // The words that would start its next turn, while that waits for room
     // in its machine's memory or in its login.
     let mut queued = crate::memory_room::ahead(node, resident)
@@ -1132,15 +1149,21 @@ pub(crate) async fn stop_here_as(
     // keeps no stop for the turn someone starts later.
     let directory = node.world.conversation(resident);
     let reading = directory.clone();
-    let coming = fastctx_platform::task::spawn_blocking(move || crate::inbox::pending(&reading))
-        .await
-        .map_err(|error| Failure::new(error.to_string()))?
-        .map_err(|error| Failure::new(format!("reading what is on its way: {error}")))?;
-    let coming: Vec<_> = coming
-        .into_iter()
-        .filter(|pending| pending.delivery.notice.along().is_none())
-        .map(|pending| pending.delivery.id)
-        .collect();
+    let coming = fastctx_platform::task::spawn_blocking(move || {
+        let mut coming = Vec::new();
+        crate::inbox::pages(&reading, |page| {
+            coming.extend(
+                page.into_iter()
+                    .filter(|pending| pending.delivery.notice.along().is_none())
+                    .map(|pending| pending.delivery.id),
+            );
+            Ok(std::ops::ControlFlow::Continue(()))
+        })?;
+        Ok::<_, std::io::Error>(coming)
+    })
+    .await
+    .map_err(|error| Failure::new(error.to_string()))?
+    .map_err(|error| Failure::new(format!("reading what is on its way: {error}")))?;
     if targeted.is_none()
         && node
             .stops

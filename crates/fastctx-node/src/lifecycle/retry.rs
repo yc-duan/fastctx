@@ -351,12 +351,10 @@ fn run(
 async fn first_ready(node: &Arc<Node>, about: &About, directory: &ConversationDir) -> io::Result<Option<Pending>> {
     let (node, about, directory) = (node.clone(), about.clone(), directory.clone());
     fastctx_platform::task::blocking(move || {
-        crate::inbox::pending(&directory).map(|rows| {
-            rows.into_iter().find(|row| {
-                row.state == PendingState::Waiting
-                    && row.delivery.notice.along().is_none()
-                    && crate::speech::ready_for_delivery(&node, &about, row)
-            })
+        crate::inbox::first(&directory, |row| {
+            row.state == PendingState::Waiting
+                && row.delivery.notice.along().is_none()
+                && crate::speech::ready_for_delivery(&node, &about, row)
         })
     })
     .await

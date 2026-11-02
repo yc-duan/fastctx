@@ -72,6 +72,9 @@ impl Rank {
     /// Its management gate: what changes its life holds it alone, what
     /// uses it shares it.
     pub const LIFECYCLE: Rank = Rank(100);
+    /// Reading its history for viewers that open it: once for those that
+    /// open it together.
+    pub const OPENING: Rank = Rank(150);
     /// The reports of one of its Claude sessions.
     pub const SESSION: Rank = Rank(200);
     /// The reports of its Codex thread.

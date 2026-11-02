@@ -25,9 +25,8 @@ pub(super) async fn quiet(node: &Arc<Node>, id: &ResidentId) -> Result<bool, Fai
     }
     let directory = node.world.conversation(id);
     let clear = fastctx_platform::task::spawn_blocking(move || -> std::io::Result<bool> {
-        let (pending, _) = crate::inbox::input_states(&directory)?;
         // Facts that ride along cannot start a turn or block autonomous work.
-        Ok(pending.iter().all(|input| input.delivery.notice.along().is_some())
+        Ok(!crate::inbox::any(&directory, |input| input.delivery.notice.along().is_none())?
             && !crate::inbox::uncertain_lately(&directory, UNSETTLED)?)
     })
     .await

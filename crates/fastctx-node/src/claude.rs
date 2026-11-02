@@ -168,12 +168,11 @@ impl Claude {
                 return true;
             }
         }
-        crate::inbox::pending(directory).is_ok_and(|pending| {
-            pending.iter().any(|pending| {
-                matches!(pending.state, PendingState::Handed | PendingState::Waking)
-                    && matches!(words(&pending.delivery.notice, None), (words, true) if words == text)
-            })
+        crate::inbox::any(directory, |pending| {
+            matches!(pending.state, PendingState::Handed | PendingState::Waking)
+                && matches!(words(&pending.delivery.notice, None), (words, true) if words == text)
         })
+        .unwrap_or(false)
     }
 }
 
@@ -892,12 +891,16 @@ async fn taken(
     let _speaking = speaking.lock().await;
     crate::delivery::remember_session(&directory, turn, session)?;
     let mut kept = Vec::new();
-    for pending in crate::inbox::pending(&directory)? {
-        if pending.session.as_deref().is_none_or(|bound| crate::inbox::same_session(bound, session)) && which(&pending)?
-        {
-            kept.push(pending);
+    crate::inbox::pages(&directory, |page| {
+        for pending in page {
+            if pending.session.as_deref().is_none_or(|bound| crate::inbox::same_session(bound, session))
+                && which(&pending)?
+            {
+                kept.push(pending);
+            }
         }
-    }
+        Ok(std::ops::ControlFlow::Continue(()))
+    })?;
     if kept.is_empty() {
         return Ok(());
     }
@@ -940,22 +943,25 @@ async fn uncertain_inputs(
         return Ok(());
     }
     let directory = node.world.conversation(resident);
-    let (pending, known) = crate::delivery::local(&directory, |directory| {
-        let pending = crate::inbox::pending(directory)?;
-        let known = crate::delivery::handovers::accepted_inputs(directory, &pending, false)?;
-        Ok((pending, known))
-    })
-    .await?;
-    let pending = pending
-        .into_iter()
-        .filter(|pending| {
-            pending.session.as_deref().is_some_and(|bound| crate::inbox::same_session(bound, session))
-                || (pending.session.is_none() && ids.is_some())
+    let pending = {
+        let (session, ids) = (session.to_string(), ids.map(<[String]>::to_vec));
+        crate::delivery::local(&directory, move |directory| {
+            let mut found = Vec::new();
+            crate::inbox::pages(directory, |page| {
+                let known = crate::delivery::handovers::accepted_inputs(directory, &page, false)?;
+                found.extend(page.into_iter().filter(|pending| {
+                    (pending.session.as_deref().is_some_and(|bound| crate::inbox::same_session(bound, &session))
+                        || (pending.session.is_none() && ids.is_some()))
+                        && !known.contains(&pending.delivery.id)
+                        && ids.as_ref().is_none_or(|ids| ids.iter().any(|id| id == pending.delivery.id.as_str()))
+                        && had(pending, ended)
+                }));
+                Ok(std::ops::ControlFlow::Continue(()))
+            })?;
+            Ok(found)
         })
-        .filter(|pending| !known.contains(&pending.delivery.id))
-        .filter(|pending| ids.is_none_or(|ids| ids.iter().any(|id| id == pending.delivery.id.as_str())))
-        .filter(|pending| had(pending, ended))
-        .collect::<Vec<_>>();
+        .await?
+    };
     let mut unresolved = Vec::new();
     for input in pending {
         if matches!(input.state, PendingState::Waking | PendingState::Handed)
@@ -1265,18 +1271,33 @@ async fn pair(node: &Arc<Node>, session: &str) {
         return;
     }
     let directory = node.world.conversation(&resident);
+    // Only whether words wait, and whether some ride with a turn, are read
+    // of what waits beside the words that wake the session.
     let waiting = {
         let directory = directory.clone();
-        fastctx_platform::task::spawn_blocking(move || crate::inbox::pending(&directory)).await
+        fastctx_platform::task::spawn_blocking(move || {
+            let (mut waking, mut waiting, mut riding) = (Vec::new(), false, false);
+            crate::inbox::pages(&directory, |page| {
+                for pending in page {
+                    match pending.state {
+                        PendingState::Waking if pending.session.is_none() => waking.push(pending.delivery.id),
+                        PendingState::Waiting => {
+                            waiting = true;
+                            riding |= pending.delivery.notice.along().is_some();
+                        }
+                        _ => {}
+                    }
+                }
+                Ok(std::ops::ControlFlow::Continue(()))
+            })?;
+            Ok::<_, std::io::Error>((waking, waiting, riding))
+        })
+        .await
     };
     match waiting {
-        Ok(Ok(kept)) => {
-            for pending in &kept {
-                if pending.state == PendingState::Waking
-                    && pending.session.is_none()
-                    && newer
-                    && let Err(error) = crate::inbox::target(&directory, &pending.delivery.id, session)
-                {
+        Ok(Ok((waking, waiting, riding))) => {
+            for id in &waking {
+                if newer && let Err(error) = crate::inbox::target(&directory, id, session) {
                     node.log.line(format_args!("binding the session's first words: {error}"));
                     return;
                 }
@@ -1284,17 +1305,10 @@ async fn pair(node: &Arc<Node>, session: &str) {
             // Registration records identity, not a second delivery path.
             // A fresh admission checks the activation after taking the action
             // gate, so a final report cannot feed a process that just exited.
-            if kept.iter().any(|pending| pending.state == PendingState::Waiting)
-                && (present || node.residents.about(&resident).is_some_and(|(about, _)| about.world_started))
-            {
+            if waiting && (present || node.residents.about(&resident).is_some_and(|(about, _)| about.world_started)) {
                 crate::lifecycle::retry::kick(node, &resident);
             }
-            if present
-                && newer
-                && kept
-                    .iter()
-                    .any(|pending| pending.state == PendingState::Waiting && pending.delivery.notice.along().is_some())
-            {
+            if present && newer && riding {
                 let (node, resident) = (node.clone(), resident.clone());
                 fastctx_platform::task::spawn(async move { crate::speech::along(&node, &resident).await });
             }
@@ -1394,12 +1408,10 @@ pub async fn deliver(
         // Its supervisor stopped it: the words wake it, as they are, and its
         // next turn takes them.
         false => {
-            match crate::inbox::pending(directory) {
-                Ok(rows)
-                    if rows
-                        .iter()
-                        .any(|row| row.state == PendingState::Waking && row.delivery.id != pending.delivery.id) =>
-                {
+            match crate::inbox::any(directory, |row| {
+                row.state == PendingState::Waking && row.delivery.id != pending.delivery.id
+            }) {
+                Ok(true) => {
                     crate::lifecycle::retry::kick(node, to);
                     return Some(Ok(Landed::Waiting { why: None, answered: true }));
                 }
@@ -1551,17 +1563,16 @@ async fn into_inbox(
     // more: the mod drops what it still holds of it.
     let along = pending.delivery.notice.along();
     let replaces: Vec<String> = match along {
-        Some(kind) => crate::inbox::pending(directory)
-            .map_err(|error| Failure::new(error.to_string()))?
-            .into_iter()
-            .filter(|kept| {
-                kept.delivery.id != pending.delivery.id
-                    && kept.state == PendingState::Handed
-                    && kept.delivery.notice.along() == Some(kind)
-                    && kept.delivery.at <= pending.delivery.at
-            })
-            .map(|kept| kept.delivery.id.as_str().to_string())
-            .collect(),
+        Some(kind) => crate::inbox::those(directory, |kept| {
+            kept.delivery.id != pending.delivery.id
+                && kept.state == PendingState::Handed
+                && kept.delivery.notice.along() == Some(kind)
+                && kept.delivery.at <= pending.delivery.at
+        })
+        .map_err(|error| Failure::new(error.to_string()))?
+        .into_iter()
+        .map(|kept| kept.delivery.id.as_str().to_string())
+        .collect(),
         None => Vec::new(),
     };
     let how = exchange::Delivering { at: Some(pending.delivery.at), as_user, along, replaces: &replaces };
@@ -1965,10 +1976,8 @@ fn prepare_launch_now(node: &Arc<Node>, id: &ResidentId) -> Result<Prepared, Fai
     let directory = node.world.conversation(id);
     let mcp = crate::profile::session::claude(node, id, true)?;
     let cwd = crate::colleagues::standing(node, town.as_ref())?;
-    let first = crate::inbox::pending(&directory)
+    let first = crate::inbox::first(&directory, |pending| pending.state == PendingState::Waking)
         .map_err(|error| Failure::new(format!("reading {id}'s first words: {error}")))?
-        .into_iter()
-        .find(|pending| pending.state == PendingState::Waking)
         .ok_or_else(|| Failure::new(format!("{id}'s first words are no longer kept")))?;
     let text = self::words(&first.delivery.notice, Some(&node.machine())).0;
     Ok(Prepared { program, env, assisting, options, directory, mcp, cwd, first, text })

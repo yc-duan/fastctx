@@ -64,6 +64,14 @@ pub(crate) struct Rows<'a> {
     conversation: &'a str,
 }
 
+/// Where a reading in the order rows came goes on from: the arrival and the
+/// identity of the last row read.
+#[derive(Clone)]
+pub(crate) struct Arrival {
+    at: Option<Vec<u8>>,
+    identity: String,
+}
+
 pub(crate) fn locate(directory: &ConversationDir) -> io::Result<(Database, String)> {
     crate::record_database::get(directory)
 }
@@ -147,6 +155,17 @@ impl Rows<'_> {
     }
     pub(crate) fn conversation(&self) -> &str {
         self.conversation
+    }
+
+    /// How many rows `family` has, counted no further than `upto`.
+    pub(crate) fn count_upto(&self, family: &str, upto: usize) -> Result<usize> {
+        let upto = i64::try_from(upto).unwrap_or(i64::MAX);
+        let count: i64 = self.connection.query_row(
+            "SELECT COUNT(*) FROM (SELECT 1 FROM conversation_records WHERE conversation=?1 AND family=?2 LIMIT ?3)",
+            (self.conversation, family, upto),
+            |row| row.get(0),
+        )?;
+        Ok(usize::try_from(count).unwrap_or(0))
     }
 
     pub(crate) fn exists(&self, family: &str, key: &str) -> Result<bool> {
@@ -295,15 +314,37 @@ impl Rows<'_> {
         Ok(result)
     }
 
-    pub(crate) fn unsettled<T: DeserializeOwned>(&self, family: &str, receipt: &str, other: &str) -> Result<Vec<T>> {
-        let mut query=self.connection.prepare_cached("SELECT r.body FROM conversation_records r WHERE r.conversation=?1 AND r.family=?2
-            AND NOT EXISTS(SELECT 1 FROM conversation_records d WHERE d.conversation=r.conversation AND d.family=?3 AND d.identity=r.identity)
-            AND NOT EXISTS(SELECT 1 FROM conversation_records d WHERE d.conversation=r.conversation AND d.family=?4 AND d.identity=r.identity)
-            ORDER BY r.arrival,r.identity")?;
-        query
-            .query_map((self.conversation, family, receipt, other), |row| row.get::<_, Vec<u8>>(0))?
-            .map(|row| decode(&row?))
-            .collect()
+    /// The rows of `family` with no row of the same identity in `receipt` or
+    /// `other`, in the order they came after `after`: a page of at most 128
+    /// rows or 2 MiB, and where the next one goes on from.
+    pub(crate) fn unsettled_page<T: DeserializeOwned>(
+        &self,
+        family: &str,
+        receipt: &str,
+        other: &str,
+        after: Option<&Arrival>,
+    ) -> Result<(Vec<T>, Option<Arrival>)> {
+        let mut query=self.connection.prepare_cached("SELECT r.arrival,r.identity,r.body FROM conversation_records r WHERE r.conversation=?1 AND r.family=?2
+            AND (?5=0 OR (?3 IS NULL AND (r.arrival IS NOT NULL OR r.identity>?4)) OR r.arrival>?3 OR (r.arrival=?3 AND r.identity>?4))
+            AND NOT EXISTS(SELECT 1 FROM conversation_records d WHERE d.conversation=r.conversation AND d.family=?6 AND d.identity=r.identity)
+            AND NOT EXISTS(SELECT 1 FROM conversation_records d WHERE d.conversation=r.conversation AND d.family=?7 AND d.identity=r.identity)
+            ORDER BY r.arrival,r.identity LIMIT 128")?;
+        let (at, identity) = after.map_or((None, ""), |after| (after.at.as_deref(), after.identity.as_str()));
+        let rows = query
+            .query_map((self.conversation, family, at, identity, after.is_some(), receipt, other), |row| {
+                Ok((row.get::<_, Option<Vec<u8>>>(0)?, row.get::<_, String>(1)?, row.get::<_, Vec<u8>>(2)?))
+            })?;
+        let (mut page, mut next, mut bytes) = (Vec::new(), None, 0usize);
+        for row in rows {
+            let (at, identity, body) = row?;
+            if !page.is_empty() && bytes + body.len() > 2 * 1024 * 1024 {
+                break;
+            }
+            bytes += body.len();
+            page.push(decode(&body)?);
+            next = Some(Arrival { at, identity });
+        }
+        Ok((page, next))
     }
     pub(crate) fn recent(&self, family: &str, since: jiff::Timestamp, through: jiff::Timestamp) -> Result<bool> {
         Ok(self.connection.query_row("SELECT 1 FROM conversation_records WHERE conversation=?1 AND family=?2 AND julianday(modified)>julianday(?3) AND julianday(modified)<=julianday(?4) LIMIT 1",(self.conversation,family,since.to_string(),through.to_string()),|row|row.get::<_,i32>(0)).optional()?.is_some())

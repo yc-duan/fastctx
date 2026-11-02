@@ -20,6 +20,7 @@
 //! when it starts and finishes the telling.
 
 use std::io::{self, BufRead as _};
+use std::ops::ControlFlow;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -161,11 +162,78 @@ pub fn rebind(directory: &ConversationDir, id: &NoticeId, session: &str) -> io::
         Ok(())
     })
 }
-pub fn pending(directory: &ConversationDir) -> io::Result<Vec<Pending>> {
-    read_rows(directory, storage::pending)
+/// What waits, in the order it came, a page at a time. Each page is read on
+/// its own, so `visit` may read and write records in between; it says when
+/// it has seen enough. A long wait costs only as many pages as are looked at.
+pub(crate) fn pages(
+    directory: &ConversationDir,
+    mut visit: impl FnMut(Vec<Pending>) -> io::Result<ControlFlow<()>>,
+) -> io::Result<()> {
+    storage::initialize(directory)?;
+    let mut after = None;
+    loop {
+        let from = after.take();
+        let (page, next) = crate::records::read(directory, move |rows| storage::pending_page(rows, from.as_ref()))?;
+        if page.is_empty() || visit(page)?.is_break() {
+            return Ok(());
+        }
+        match next {
+            Some(next) => after = Some(next),
+            None => return Ok(()),
+        }
+    }
 }
-pub(crate) fn input_states(directory: &ConversationDir) -> io::Result<(Vec<Pending>, Vec<Pending>)> {
-    read_rows(directory, |rows| Ok((storage::pending(rows)?, rows.all("uncertain-inputs")?)))
+/// The first of what waits that `matches`.
+pub(crate) fn first(
+    directory: &ConversationDir,
+    mut matches: impl FnMut(&Pending) -> bool,
+) -> io::Result<Option<Pending>> {
+    let mut found = None;
+    pages(directory, |page| {
+        found = page.into_iter().find(|pending| matches(pending));
+        Ok(if found.is_some() { ControlFlow::Break(()) } else { ControlFlow::Continue(()) })
+    })?;
+    Ok(found)
+}
+/// Whether anything waiting `matches`.
+pub(crate) fn any(directory: &ConversationDir, matches: impl FnMut(&Pending) -> bool) -> io::Result<bool> {
+    first(directory, matches).map(|found| found.is_some())
+}
+/// What waits that `matches`, for what only a few ever match: inputs in the
+/// host's hands, being sent, or of one kind.
+pub(crate) fn those(
+    directory: &ConversationDir,
+    mut matches: impl FnMut(&Pending) -> bool,
+) -> io::Result<Vec<Pending>> {
+    let mut found = Vec::new();
+    pages(directory, |page| {
+        found.extend(page.into_iter().filter(|pending| matches(pending)));
+        Ok(ControlFlow::Continue(()))
+    })?;
+    Ok(found)
+}
+/// The inputs whose turn was not known to have taken them, in the order they
+/// came, a page at a time like `pages`.
+pub(crate) fn uncertain_pages(
+    directory: &ConversationDir,
+    mut visit: impl FnMut(Vec<Pending>) -> io::Result<ControlFlow<()>>,
+) -> io::Result<()> {
+    storage::initialize(directory)?;
+    let mut after = 0;
+    loop {
+        let (page, next) = crate::records::read(directory, move |rows| {
+            let page = rows.page::<Pending>("uncertain-inputs", after, 128)?;
+            let next = page.last().map(|(position, _)| *position);
+            Ok((page.into_iter().map(|(_, row)| row).collect::<Vec<_>>(), next))
+        })?;
+        if page.is_empty() || visit(page)?.is_break() {
+            return Ok(());
+        }
+        match next {
+            Some(next) => after = next,
+            None => return Ok(()),
+        }
+    }
 }
 pub(crate) fn uncertain_lately(directory: &ConversationDir, within: std::time::Duration) -> io::Result<bool> {
     let now = jiff::Timestamp::now();
@@ -246,8 +314,14 @@ pub(crate) fn owe_in(rows: &crate::records::Rows<'_>, owing: &Owing) -> fastctx_
     }
     Ok(())
 }
-pub fn owing(directory: &ConversationDir) -> io::Result<Vec<Owing>> {
-    answers::all(directory)
+/// Each answer owed and not yet paid, one at a time in the order they came.
+pub(crate) fn each_owing(directory: &ConversationDir, mut visit: impl FnMut(Owing)) -> io::Result<()> {
+    let mut after = answers::Cursor::default();
+    while let Some((next, owing)) = answers::next(directory, &after)? {
+        visit(owing);
+        after = next;
+    }
+    Ok(())
 }
 pub fn paid(directory: &ConversationDir, id: &NoticeId) -> io::Result<()> {
     let key = id.to_string();
@@ -625,4 +699,14 @@ fn json(value: &impl serde::Serialize) -> io::Result<Vec<u8>> {
 
 pub fn read(directory: &ConversationDir, id: &NoticeId) -> io::Result<Option<Pending>> {
     read_rows(directory, |rows| rows.get("pending-inputs", id.as_str()))
+}
+/// `id`'s input while it waits unsettled: no turn is known to have heard it,
+/// and it is not among the uncertain.
+pub(crate) fn unsettled(directory: &ConversationDir, id: &NoticeId) -> io::Result<Option<Pending>> {
+    read_rows(directory, |rows| {
+        if storage::delivered(rows, id.as_str())? || rows.get::<Pending>("uncertain-inputs", id.as_str())?.is_some() {
+            return Ok(None);
+        }
+        rows.get("pending-inputs", id.as_str())
+    })
 }

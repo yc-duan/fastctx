@@ -70,14 +70,6 @@ pub(crate) fn owe(rows: &records::Rows<'_>, reference: Reference) -> Result<()> 
 pub(crate) fn get(rows: &records::Rows<'_>, key: &str) -> Result<Option<Owing>> {
     rows.get::<Stored>("outgoing-answers", key)?.map(|stored| stored.resolve(rows)).transpose()
 }
-pub(crate) fn all(directory: &ConversationDir) -> io::Result<Vec<Owing>> {
-    storage::read_rows(directory, |rows| {
-        rows.unsettled::<Stored>("outgoing-answers", "paid-answers", "undeliverable-answers")?
-            .into_iter()
-            .map(|stored| stored.resolve(rows))
-            .collect()
-    })
-}
 
 #[derive(Clone, Default)]
 pub(crate) struct Cursor {

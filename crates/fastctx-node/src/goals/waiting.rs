@@ -84,7 +84,11 @@ fn pending_reports_now(node: &Node, resident: &ResidentId) -> Result<BTreeMap<No
     let directory = node.world.conversation(resident);
     let mut received = BTreeMap::<_, Vec<_>>::new();
     // Read custody in its forward order: pending input is published into history before it is removed.
-    for pending in crate::inbox::pending(&directory).map_err(fail)? {
+    let reports = crate::inbox::those(&directory, |pending| {
+        matches!(pending.delivery.notice, Notice::Words { goal_report: Some(_), .. })
+    })
+    .map_err(fail)?;
+    for pending in reports {
         if let Notice::Words { goal_report: Some(report), .. } = pending.delivery.notice {
             received.entry(report.id.clone()).or_default().push(*report);
         }

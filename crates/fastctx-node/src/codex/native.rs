@@ -71,10 +71,11 @@ pub(crate) fn left(node: &Arc<Node>, id: &ResidentId) {
         }
         let directory = node.world.conversation(&id);
         let result = async {
-            let pending = crate::inbox::pending(&directory)
-                .map_err(|e| Failure::new(e.to_string()))?
-                .into_iter()
-                .find(|p| p.state == PendingState::Waiting && p.delivery.notice.wakes_closed());
+            let pending = crate::delivery::local(&directory, |directory| {
+                crate::inbox::first(directory, |p| p.state == PendingState::Waiting && p.delivery.notice.wakes_closed())
+            })
+            .await
+            .map_err(|e| Failure::new(e.to_string()))?;
             if let Some(pending) = pending {
                 crate::speech::hand_over(&node, &id, &about, &directory, pending).await?;
             }
@@ -119,10 +120,14 @@ fn observe(node: &Arc<Node>, id: &ResidentId) {
                     result=&mut wait=>break result,
                     ()=tokio::time::sleep(std::time::Duration::from_secs(60))=>{
                         if node.residents.active(&id).is_err() {break Ok(());}
-                        match crate::inbox::pending(&node.world.conversation(&id)) {
-                            Ok(pending) if !pending.iter().any(|p|p.state==PendingState::Waiting && p.delivery.notice.wakes_closed())=>break Ok(()),
-                            Ok(_)=>{},
-                            Err(error)=>break Err(error.to_string()),
+                        let conversation = node.world.conversation(&id);
+                        let waking = crate::delivery::local(&conversation, |directory| {
+                            crate::inbox::any(directory, |p| p.state == PendingState::Waiting && p.delivery.notice.wakes_closed())
+                        });
+                        match waking.await {
+                            Ok(false) => break Ok(()),
+                            Ok(true) => {}
+                            Err(error) => break Err(error.to_string()),
                         }
                     }
                 }

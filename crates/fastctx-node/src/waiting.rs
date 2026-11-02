@@ -69,15 +69,19 @@ pub async fn wait(
                 let gate = node.residents.management(&owner.resident)?;
                 let _claiming = gate.write().await;
                 let directory = node.world.conversation(&owner.resident);
-                for pending in crate::inbox::pending(&directory).map_err(|error| Failure::new(error.to_string()))? {
-                    if pending.delivery.id == crate::inbox::job_notice_id(&record)
+                let (parking, owner, notice) =
+                    (node.clone(), owner.resident.clone(), crate::inbox::job_notice_id(&record));
+                fastctx_platform::task::blocking(move || -> std::io::Result<()> {
+                    if let Some(pending) = crate::inbox::unsettled(&directory, &notice)?
                         && pending.state == fastctx_types::residents::PendingState::Waiting
                     {
-                        crate::on_delivery::park(node, &owner.resident, &pending.delivery)
-                            .and_then(|_| crate::inbox::withdraw(&directory, &pending.delivery.id))
-                            .map_err(|error| Failure::new(error.to_string()))?;
+                        crate::on_delivery::park(&parking, &owner, &pending.delivery)?;
+                        crate::inbox::withdraw(&directory, &pending.delivery.id)?;
                     }
-                }
+                    Ok(())
+                })
+                .await
+                .map_err(|error| Failure::new(error.to_string()))?;
             }
         }
     }

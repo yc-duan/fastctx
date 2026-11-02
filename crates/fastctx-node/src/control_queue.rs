@@ -508,16 +508,25 @@ pub(crate) fn schedule(node: &Arc<Node>, id: &ResidentId) {
 async fn words_ahead(node: &Node, id: &ResidentId, before: Option<jiff::Timestamp>) -> Result<bool, Failure> {
     let directory = node.world.conversation(id);
     fastctx_platform::task::spawn_blocking(move || {
-        for words in crate::inbox::pending(&directory).map_err(failure)? {
-            if words.delivery.notice.along().is_none()
-                && before.is_none_or(|before| words.delivery.at < before)
-                && crate::delivery::input_turn(&directory, &words.delivery.id).map_err(failure)?.is_none()
-                && crate::delivery::input_uncertainty(&directory, &words.delivery.id).map_err(failure)?.is_none()
-            {
-                return Ok(true);
+        let mut ahead = false;
+        crate::inbox::pages(&directory, |page| {
+            for words in page {
+                // What waits came in the order it came: none after `before` is ahead.
+                if before.is_some_and(|before| words.delivery.at >= before) {
+                    return Ok(std::ops::ControlFlow::Break(()));
+                }
+                if words.delivery.notice.along().is_none()
+                    && crate::delivery::input_turn(&directory, &words.delivery.id)?.is_none()
+                    && crate::delivery::input_uncertainty(&directory, &words.delivery.id)?.is_none()
+                {
+                    ahead = true;
+                    return Ok(std::ops::ControlFlow::Break(()));
+                }
             }
-        }
-        Ok(false)
+            Ok(std::ops::ControlFlow::Continue(()))
+        })
+        .map_err(failure)?;
+        Ok(ahead)
     })
     .await
     .map_err(|error| Failure::new(error.to_string()))?

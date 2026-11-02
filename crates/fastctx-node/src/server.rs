@@ -802,42 +802,63 @@ async fn collect(
     }
     present(node, &resident)?;
     let directory = node.world.conversation(&resident);
-    let kept = blocking("reading what waits", move || crate::inbox::pending(&directory)).await?;
+    // What waits, as much as one handover holds: the rest goes with a later
+    // answer. The turn it joins is found where finding its host may block.
+    let (reading, whose) = (node.clone(), resident.clone());
+    let (kept, turn) = blocking("reading what waits", move || {
+        let kept = waiting_batch(&directory)?;
+        let turn = if kept.is_empty() { None } else { collecting_turn(&reading, &whose) };
+        Ok((kept, turn))
+    })
+    .await?;
+    present(node, &resident)?;
     let mut notices = Vec::new();
     {
         let mut taking = node.taking.lock().expect("never poisoned");
-        for pending in kept.into_iter().filter(|pending| pending.state == PendingState::Waiting) {
-            present(node, &resident)?;
-            let directory = node.world.conversation(&resident);
-            if crate::inbox::read(&directory, &pending.delivery.id)
-                .map_err(|error| Failure::new(error.to_string()))?
-                .is_none_or(|current| current.state != PendingState::Waiting)
-            {
-                continue;
-            }
+        for pending in kept {
             let key = (resident.clone(), pending.delivery.id.clone());
             if taking.insert(key.clone()) {
-                let turn = node
-                    .residents
-                    .now(&resident)
-                    .filter(|now| now.activity == Activity::Busy)
-                    .and_then(|now| now.turn)
-                    .or_else(|| {
-                        node.residents.about(&resident).and_then(|(about, _)| {
-                            if about.world_managed() && about.host.agent.as_str() == "codex" {
-                                let codex = node.codex.of(node, &about).ok()?;
-                                about.session.and_then(|thread| codex.running_turn(&thread))
-                            } else {
-                                None
-                            }
-                        })
-                    });
-                collected.push((key.0, key.1, turn));
+                collected.push((key.0, key.1, turn.clone()));
                 notices.push(pending.delivery);
             }
         }
     }
     collect_notes(node, resident, answering, notices, Some(collected_notes)).await
+}
+
+/// What waits to be collected, in the order it came, as much as one
+/// handover holds.
+fn waiting_batch(
+    directory: &fastctx_types::layout::ConversationDir,
+) -> std::io::Result<Vec<fastctx_types::residents::Pending>> {
+    use crate::delivery::handovers::{BYTES, INPUTS};
+    let (mut kept, mut bytes) = (Vec::new(), 0);
+    crate::inbox::pages(directory, |page| {
+        for pending in page.into_iter().filter(|pending| pending.state == PendingState::Waiting) {
+            let size = serde_json::to_vec(&pending).map_or(0, |encoded| encoded.len());
+            if !kept.is_empty() && (kept.len() == INPUTS || bytes + size > BYTES / 10 * 9) {
+                return Ok(std::ops::ControlFlow::Break(()));
+            }
+            bytes += size;
+            kept.push(pending);
+        }
+        Ok(std::ops::ControlFlow::Continue(()))
+    })?;
+    Ok(kept)
+}
+
+/// The turn what is collected for `resident` goes into: the one running.
+fn collecting_turn(node: &Node, resident: &ResidentId) -> Option<String> {
+    node.residents.now(resident).filter(|now| now.activity == Activity::Busy).and_then(|now| now.turn).or_else(|| {
+        node.residents.about(resident).and_then(|(about, _)| {
+            if about.world_managed() && about.host.agent.as_str() == "codex" {
+                let codex = node.codex.of(node, &about).ok()?;
+                about.session.and_then(|thread| codex.running_turn(&thread))
+            } else {
+                None
+            }
+        })
+    })
 }
 
 fn native_delivery(node: &Node, resident: &ResidentId) -> bool {

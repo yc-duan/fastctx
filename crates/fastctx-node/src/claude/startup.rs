@@ -138,7 +138,10 @@ pub(super) fn recover(node: &Arc<Node>, records: &[crate::residents::OnRecord]) 
             continue;
         }
         let directory = node.world.conversation(&about.id);
-        let kept = match crate::inbox::pending(&directory) {
+        // What the mod holds, and the words that wake the session.
+        let kept = match crate::inbox::those(&directory, |input| {
+            matches!(input.state, PendingState::Handed | PendingState::Waking)
+        }) {
             Ok(pending) => pending,
             Err(error) => {
                 node.log.line(format_args!("recovering Claude startup observation: {error}"));

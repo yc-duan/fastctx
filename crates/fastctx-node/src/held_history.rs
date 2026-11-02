@@ -40,26 +40,14 @@ pub(crate) async fn opening(node: &Arc<Node>, resident: &ResidentId, held: &Held
     }
     // A viewer that holds anything may hold some of the events told after
     // the cut, which would come to it twice.
-    if held.marks
-        && held.version.is_none()
-        && held.segments.is_empty()
-        && let Some(kept) = node.cut_histories.get(resident)
-    {
-        let followed = node.watchers.follow(resident, Some(kept.at));
-        if let Some(replay) = followed.replay.filter(|_| !followed.reset) {
-            let (events, pending) = crate::talk::requested(node, resident, followed.events)?;
-            let (cutting, held_now) = (kept.clone(), held.clone());
-            let mut pieces = fastctx_platform::task::spawn_blocking(move || {
-                history::pieces(&cutting.cut, &held_now, cutting.version.clone())
-            })
-            .await
-            .map_err(|error| Failure::new(format!("sending the segments kept: {error}")))?;
-            pieces.extend(live(pending, &owner));
-            pieces.extend(told(kept.snapshots.clone(), &owner));
-            pieces.extend(told(replay, &owner));
-            return Ok(Opening { pieces, events, slim: Some(owner) });
-        }
-        node.cut_histories.forget(resident, &kept);
+    let empty = held.marks && held.version.is_none() && held.segments.is_empty();
+    if empty && let Some(opening) = from_cut(node, resident, held, &owner).await? {
+        return Ok(opening);
+    }
+    let reading = node.cut_histories.reading(resident);
+    let _reading = reading.lock().await;
+    if empty && let Some(opening) = from_cut(node, resident, held, &owner).await? {
+        return Ok(opening);
     }
     // Subscribe before checking a held version: a rewrite between the check
     // and subscription must still reach the viewer that gets "unchanged".
@@ -109,6 +97,33 @@ pub(crate) async fn opening(node: &Arc<Node>, resident: &ResidentId, held: &Held
     pieces.extend(live(read.pending, &owner));
     pieces.extend(told(read.snapshots, &owner));
     Ok(Opening { pieces, events: read.events, slim: Some(owner) })
+}
+
+/// The opening of a viewer that holds nothing, from the cut kept of the
+/// history and the events told since, while they are all kept.
+async fn from_cut(
+    node: &Arc<Node>,
+    resident: &ResidentId,
+    held: &Held,
+    owner: &Address,
+) -> Result<Option<Opening>, Failure> {
+    let Some(kept) = node.cut_histories.get(resident) else { return Ok(None) };
+    let followed = node.watchers.follow(resident, Some(kept.at));
+    let Some(replay) = followed.replay.filter(|_| !followed.reset) else {
+        node.cut_histories.forget(resident, &kept);
+        return Ok(None);
+    };
+    let (events, pending) = crate::talk::requested(node, resident, followed.events)?;
+    let (cutting, held_now) = (kept.clone(), held.clone());
+    let mut pieces = fastctx_platform::task::spawn_blocking(move || {
+        history::pieces(&cutting.cut, &held_now, cutting.version.clone())
+    })
+    .await
+    .map_err(|error| Failure::new(format!("sending the segments kept: {error}")))?;
+    pieces.extend(live(pending, owner));
+    pieces.extend(told(kept.snapshots.clone(), owner));
+    pieces.extend(told(replay, owner));
+    Ok(Some(Opening { pieces, events, slim: Some(owner.clone()) }))
 }
 
 /// Events as the watchers told them, each with its mark, slimmed.

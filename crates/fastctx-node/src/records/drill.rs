@@ -56,13 +56,14 @@ pub(crate) fn run(root: &Path) -> std::result::Result<(), Box<dyn std::error::Er
     later.delivery.at = "2026-01-01T00:00:00.000000001Z".parse()?;
     assert!(crate::inbox::keep(&directory, &later)?);
     assert!(crate::inbox::keep(&directory, &first)?);
-    let rows = crate::inbox::pending(&directory)?;
+    let waiting = |directory| crate::inbox::those(directory, |_| true);
+    let rows = waiting(&directory)?;
     assert_eq!(rows[0].delivery.id, first.delivery.id, "nanosecond arrival order changed");
     assert!(!crate::inbox::keep(&directory, &first)?);
     crate::inbox::retain_uncertain(&directory, &first)?;
-    assert_eq!(crate::inbox::pending(&directory)?.len(), 1);
+    assert_eq!(waiting(&directory)?.len(), 1);
     crate::inbox::reclaim(&directory, &[first.delivery.id.to_string()])?;
-    assert_eq!(crate::inbox::pending(&directory)?.len(), 2);
+    assert_eq!(waiting(&directory)?.len(), 2);
     crate::inbox::consume(&directory, &first.delivery.id)?;
     assert!(!crate::inbox::keep(&directory, &first)?);
     assert!(crate::inbox::heard_at(&directory, &first.delivery.id)?.is_none());

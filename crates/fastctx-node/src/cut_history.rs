@@ -40,7 +40,7 @@ impl CutHistory {
 }
 
 #[derive(Default)]
-pub(crate) struct CutHistories(Mutex<Kept>);
+pub(crate) struct CutHistories(Mutex<Kept>, crate::leases::Registry<ResidentId, fastctx_platform::doing::Mutex<()>>);
 
 #[derive(Default)]
 struct Kept {
@@ -50,6 +50,15 @@ struct Kept {
 }
 
 impl CutHistories {
+    /// Held while `id`'s history is read and cut for a viewer: viewers that
+    /// open it together read it once, the rest take the cut it leaves, and
+    /// no more than one whole history of it is in memory at a time.
+    pub fn reading(&self, id: &ResidentId) -> crate::leases::Lease<ResidentId, fastctx_platform::doing::Mutex<()>> {
+        self.1.get_or_insert_with(id, || {
+            fastctx_platform::doing::Mutex::new(fastctx_platform::doing::Rank::OPENING, "opening", id.to_string(), ())
+        })
+    }
+
     /// The cut kept of `id`'s history, now sent once more.
     pub fn get(&self, id: &ResidentId) -> Option<Arc<CutHistory>> {
         let mut kept = self.0.lock().expect("never poisoned");
