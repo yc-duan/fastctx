@@ -25,7 +25,7 @@ const EVERY: Duration = Duration::from_secs(60 * 60);
 /// Watches the logins the World's tools are in from now on.
 pub(crate) fn start(node: &Arc<Node>) {
     let node = Arc::downgrade(node);
-    tokio::spawn(async move {
+    fastctx_platform::task::spawn(async move {
         loop {
             // Held here as well as by the watch, so that where nothing can
             // be watched the hourly look still waits its hour.

@@ -37,7 +37,7 @@ pub(crate) async fn preview(
     take_back: bool,
 ) -> Result<ChangePreview, Failure> {
     let node = node.clone();
-    tokio::task::spawn_blocking(move || {
+    fastctx_platform::task::spawn_blocking(move || {
         super::known(&node, &agent, &dir)?;
         let (places, host) = places(&node, &agent, &dir)?;
         let mut preview =
@@ -63,7 +63,7 @@ pub(crate) async fn change(
     {
         let node = node.clone();
         let (agent, dir) = (agent.clone(), dir.clone());
-        tokio::task::spawn_blocking(move || super::known(&node, &agent, &dir))
+        fastctx_platform::task::spawn_blocking(move || super::known(&node, &agent, &dir))
             .await
             .map_err(|error| Failure::new(error.to_string()))??;
     }
@@ -75,7 +75,7 @@ pub(crate) async fn change(
     };
     let ran = {
         let (node, agent, dir) = (node.clone(), agent.clone(), dir.clone());
-        tokio::task::spawn_blocking(move || {
+        fastctx_platform::task::spawn_blocking(move || {
             let (places, host) = places(&node, &agent, &dir)?;
             let approval = if raise_output_limit { Approval::RaiseOutputLimit } else { Approval::Require };
             let done = if into {

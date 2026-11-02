@@ -26,7 +26,7 @@ fn look() -> Firewall {
     // ufw says whether it is on in a file anyone may read; firewalld and
     // nftables are services whose state anyone may ask. Rules loaded
     // without either only root can list.
-    let ufw = std::fs::read_to_string("/etc/ufw/ufw.conf")
+    let ufw = fastctx_platform::disk::read_to_string("/etc/ufw/ufw.conf")
         .is_ok_and(|conf| conf.lines().any(|line| line.trim().eq_ignore_ascii_case("ENABLED=yes")));
     if ufw {
         return Firewall::Other { name: "ufw".to_string() };

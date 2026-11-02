@@ -55,3 +55,6 @@ windows-sys = { version = "0.61", features = [
 [[example]]
 name = "scenes"
 required-features = ["preview"]
+
+[lints]
+workspace = true

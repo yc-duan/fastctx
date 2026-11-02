@@ -40,7 +40,7 @@ pub(crate) fn long(node: &Node, id: &ResidentId, control: &Control) -> bool {
 pub(crate) fn start(node: &Arc<Node>, id: &ResidentId, row: PendingControl) -> Controlled {
     node.long_controls.0.lock().expect("never poisoned").insert(id.clone());
     let (node, id) = (node.clone(), id.clone());
-    tokio::spawn(async move {
+    fastctx_platform::task::spawn(async move {
         let result = crate::control::execute(&node, &id, row.control.clone()).await;
         if let Err(error) = crate::control_queue::end(&node, &id, row, result).await
             && error.code != Some(fastctx_types::ipc::FailureCode::Told)

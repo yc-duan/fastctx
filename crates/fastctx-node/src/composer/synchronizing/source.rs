@@ -61,7 +61,7 @@ impl Sources {
         entries.insert(id.clone(), Arc::downgrade(&shared));
         drop(entries);
         drop(previous);
-        tokio::spawn(async move {
+        fastctx_platform::task::spawn(async move {
             loop {
                 match incoming.recv().await {
                     Ok(Some(packet)) => {

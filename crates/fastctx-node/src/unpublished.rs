@@ -4,7 +4,7 @@ use std::io;
 use std::path::Path;
 
 pub(crate) fn collect(directory: &Path) -> io::Result<()> {
-    let entries = match std::fs::read_dir(directory) {
+    let entries = match fastctx_platform::disk::read_dir(directory) {
         Ok(entries) => entries,
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
         Err(error) => return Err(error),
@@ -38,7 +38,7 @@ pub(crate) fn collect(directory: &Path) -> io::Result<()> {
             && pid != 0
             && fastctx_platform::identity_of(pid)?.is_none()
         {
-            std::fs::remove_file(path)?;
+            fastctx_platform::disk::remove_file(path)?;
         }
     }
     Ok(())
@@ -46,20 +46,20 @@ pub(crate) fn collect(directory: &Path) -> io::Result<()> {
 
 fn uploads(directory: &Path) -> io::Result<()> {
     for slot in crate::retention::entries(directory)? {
-        let metadata = std::fs::symlink_metadata(&slot)?;
+        let metadata = fastctx_platform::disk::symlink_metadata(&slot)?;
         if !metadata.is_dir() || fastctx_platform::owned_directory::is_link(&metadata) {
             continue;
         }
         fastctx_platform::owned_directory::delete(&slot.join("upload.part"))?;
-        if !slot.join("receipt.json").try_exists()?
+        if !fastctx_platform::disk::exists(slot.join("receipt.json"))?
             && slot.file_name().and_then(|name| name.to_str()).is_some_and(|name| name.starts_with("attachment-"))
         {
             for name in ["content", "content.png", "content.jpg", "content.webp", "content.gif"] {
                 fastctx_platform::owned_directory::delete(&slot.join(name))?;
             }
         }
-        if std::fs::read_dir(&slot)?.next().transpose()?.is_none() {
-            std::fs::remove_dir(slot)?;
+        if fastctx_platform::disk::read_dir(&slot)?.next().transpose()?.is_none() {
+            fastctx_platform::disk::remove_dir(slot)?;
         }
     }
     Ok(())

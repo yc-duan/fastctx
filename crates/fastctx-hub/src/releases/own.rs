@@ -42,7 +42,7 @@ pub(super) fn name() -> Option<&'static str> {
 impl Own {
     pub fn new() -> io::Result<Self> {
         // /proc/self/exe retains the running inode even after an upgrade replaces its path.
-        Ok(Self { executable: File::open("/proc/self/exe")?, archive: Mutex::new(Packed::Not) })
+        Ok(Self { executable: fastctx_platform::disk::open("/proc/self/exe")?, archive: Mutex::new(Packed::Not) })
     }
 
     pub fn digest(&self, directory: &Path) -> Result<String, String> {
@@ -108,7 +108,7 @@ fn append<W: Write>(
 
 fn reopen(file: &File) -> io::Result<File> {
     // dup shares an offset; reopening gives simultaneous downloads independent cursors.
-    File::open(format!("/proc/self/fd/{}", file.as_raw_fd()))
+    fastctx_platform::disk::open(format!("/proc/self/fd/{}", file.as_raw_fd()))
 }
 
 struct Hashed {

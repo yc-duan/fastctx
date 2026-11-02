@@ -6,7 +6,7 @@ use std::path::PathBuf;
 
 pub(crate) fn paths(node: &crate::Node, resident: &ResidentId) -> Result<Vec<PathBuf>, Failure> {
     let root = exchange::sessions(node.world.path());
-    let entries = match std::fs::read_dir(&root) {
+    let entries = match fastctx_platform::disk::read_dir(&root) {
         Ok(entries) => entries,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
         Err(error) => return Err(Failure::new(error.to_string())),
@@ -14,10 +14,10 @@ pub(crate) fn paths(node: &crate::Node, resident: &ResidentId) -> Result<Vec<Pat
     let mut paths = Vec::new();
     for entry in entries {
         let directory = entry.map_err(|error| Failure::new(error.to_string()))?.path();
-        if !directory.is_dir() {
+        if !fastctx_platform::disk::is_dir(&directory) {
             continue;
         }
-        let bytes = match std::fs::read(directory.join("resident.json")) {
+        let bytes = match fastctx_platform::disk::read(directory.join("resident.json")) {
             Ok(bytes) => bytes,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
             Err(error) => return Err(Failure::new(error.to_string())),

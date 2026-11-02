@@ -214,6 +214,7 @@ async fn execute(node: &Arc<Node>, source: PageSource, action: PageInvocation) -
                     text,
                     goal_report: None,
                     goal_question: None,
+                    told: None,
                 },
             };
             let landed = crate::speech::tell_here(node, &to.resident, delivery, Owed::Nobody).await?;

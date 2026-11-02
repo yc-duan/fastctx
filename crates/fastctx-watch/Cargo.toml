@@ -13,3 +13,6 @@ notify = "8"
 
 [target.'cfg(any(target_os = "linux", target_os = "android"))'.dependencies]
 inotify = { version = "0.11", default-features = false }
+
+[lints]
+workspace = true

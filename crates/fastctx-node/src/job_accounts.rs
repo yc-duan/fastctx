@@ -153,7 +153,7 @@ pub(crate) fn recover(node: &Node) -> std::io::Result<()> {
 }
 
 fn entries(path: &Path) -> std::io::Result<Vec<PathBuf>> {
-    match std::fs::read_dir(path) {
+    match fastctx_platform::disk::read_dir(path) {
         Ok(entries) => entries.map(|entry| entry.map(|entry| entry.path())).collect(),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(Vec::new()),
         Err(error) => Err(error),

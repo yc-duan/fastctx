@@ -18,10 +18,10 @@ use crate::Node;
 
 /// Keeps every report as it comes.
 pub(crate) fn listen(node: Arc<Node>, mut reports: mpsc::UnboundedReceiver<SaidReport>) {
-    tokio::spawn(async move {
+    fastctx_platform::task::spawn(async move {
         while let Some(report) = reports.recv().await {
             let keeping = node.clone();
-            match tokio::task::spawn_blocking(move || keep(&keeping, report)).await {
+            match fastctx_platform::task::spawn_blocking(move || keep(&keeping, report)).await {
                 Ok(Ok(())) => {}
                 Ok(Err(error)) => node.log.line(format_args!("keeping what a Codex login said: {error}")),
                 Err(error) => node.log.line(format_args!("keeping what a Codex login said: {error}")),

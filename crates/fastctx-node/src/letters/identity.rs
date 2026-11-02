@@ -10,7 +10,7 @@ use std::io;
 fn piece(path: &std::path::Path, limit: usize) -> io::Result<Vec<u8>> {
     use std::io::Read as _;
     let mut bytes = Vec::new();
-    std::fs::File::open(path)?.take(limit as u64 + 1).read_to_end(&mut bytes)?;
+    fastctx_platform::disk::open(path)?.take(limit as u64 + 1).read_to_end(&mut bytes)?;
     if bytes.len() > limit {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
@@ -107,7 +107,7 @@ impl Identity {
     pub fn delivery(&self, directory: &ConversationDir) -> io::Result<NoticeId> {
         for id in self.ids() {
             if crate::inbox::knows(directory, id)?
-                || directory.book("received").join(format!("{id}.json")).try_exists()?
+                || fastctx_platform::disk::exists(directory.book("received").join(format!("{id}.json")))?
             {
                 return Ok(id.clone());
             }
@@ -120,15 +120,15 @@ impl Identity {
         let target = root.join(self.id.as_str());
         for id in self.previous() {
             let old = root.join(id.as_str());
-            if !old.try_exists()? {
+            if !fastctx_platform::disk::exists(&old)? {
                 continue;
             }
             fastctx_platform::ensure_private_dir(root)?;
-            if !target.try_exists()? {
-                std::fs::rename(&old, &target)?;
+            if !fastctx_platform::disk::exists(&target)? {
+                fastctx_platform::disk::rename(&old, &target)?;
                 continue;
             }
-            for entry in std::fs::read_dir(&old)? {
+            for entry in fastctx_platform::disk::read_dir(&old)? {
                 let entry = entry?;
                 let name = entry.file_name();
                 let name = name
@@ -161,9 +161,9 @@ impl Identity {
                     Err(error) => return Err(error),
                 }
                 fastctx_platform::publish(&to, &bytes, fastctx_platform::Permissions::Private)?;
-                std::fs::remove_file(entry.path())?;
+                fastctx_platform::disk::remove_file(entry.path())?;
             }
-            match std::fs::remove_dir(&old) {
+            match fastctx_platform::disk::remove_dir(&old) {
                 Err(error) if error.kind() != io::ErrorKind::DirectoryNotEmpty => return Err(error),
                 _ => {}
             }

@@ -31,6 +31,7 @@ async fn here(
         .get(&key)
         .cloned()
         .ok_or_else(|| failed("line source is closed or belongs to another caller"))?;
+    crate::replicas::sync::repair_paths(node, std::slice::from_ref(&source.path)).await.map_err(failed)?;
     refresh(source.clone(), None).await?;
     let cancelled = Cancel::default();
     let cancel = cancelled.0.clone();
@@ -43,7 +44,7 @@ async fn here(
         }
     }
     let sender = sender.clone();
-    let read_count = tokio::task::spawn_blocking(move || {
+    let read_count = fastctx_platform::task::spawn_blocking(move || {
         let mut state = source.state.lock().expect("line source");
         let super::State { index, projection, .. } = &mut *state;
         let index = index.as_mut().ok_or_else(|| "line source closed".to_string())?;
@@ -85,7 +86,7 @@ fn start(
     only_notes: bool,
 ) -> mpsc::Receiver<Result<Received, Failure>> {
     let (sender, receiver) = mpsc::channel(1);
-    tokio::spawn(async move {
+    fastctx_platform::task::spawn(async move {
         tokio::select! {
             () = sender.closed() => {},
             result = async {

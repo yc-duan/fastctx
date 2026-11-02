@@ -62,7 +62,16 @@ pub(crate) async fn reserve(
 
             let digest = format!("{:x}", Sha256::digest(format!("{}\0{operation}", from.key())));
             let resident: ResidentId = format!("{agent}-{}", &digest[..32]).parse().map_err(failure)?;
+            // An upload retried after its conversation was deleted makes
+            // none again, nor its directory.
+            if node.residents.ever_deleted(&resident) {
+                return Err(crate::forget::gone(node, &resident));
+            }
             let room = node.world.conversation(&resident);
+            // A retried upload finds its draft again; only a new one is born here.
+            if !fastctx_platform::disk::exists(room.path()).map_err(failure)? {
+                crate::record_migration::born(node, &resident);
+            }
             fastctx_platform::ensure_private_dir(room.path()).map_err(failure)?;
             let draft = Draft {
                 agent: agent.clone(),
@@ -73,7 +82,7 @@ pub(crate) async fn reserve(
             match read_json::<Draft>(&room.draft()) {
                 Ok(kept) if kept == draft => {}
                 Ok(_) => return Err(failure("that upload operation belongs to a different draft")),
-                Err(_) if !room.draft().exists() => write_new(&room.draft(), &draft)?,
+                Err(_) if !fastctx_platform::disk::is_there(room.draft()) => write_new(&room.draft(), &draft)?,
                 Err(error) => return Err(error),
             }
             (resident, town.clone())
@@ -108,7 +117,7 @@ pub(crate) async fn reserve(
     let reservation =
         Reservation { from: from.clone(), acting: Some(acting.clone()), target, operation, composer, attachment };
     let path = directory.join("reservation.json");
-    if path.exists() {
+    if fastctx_platform::disk::is_there(&path) {
         let kept: Reservation = read_json(&path)?;
         if kept != reservation {
             return Err(failure("the upload operation was reused for different content"));
@@ -130,8 +139,8 @@ pub(crate) async fn commit(
     attachment: Attachment,
     preview: Option<Thumbnail>,
 ) -> Result<Uploaded, Failure> {
-    let _place = node.places.using(attachment.conversation().resident.as_str()).await;
-    commit_held(node, from, acting, attachment, preview).await
+    let place = Arc::new(node.places.using(attachment.conversation().resident.as_str()).await);
+    commit_held(node, from, acting, attachment, preview, place).await
 }
 
 async fn commit_held(
@@ -140,6 +149,7 @@ async fn commit_held(
     acting: &Acting,
     attachment: Attachment,
     preview: Option<Thumbnail>,
+    place: Arc<crate::data::places::Using>,
 ) -> Result<Uploaded, Failure> {
     let home = attachment.conversation();
     if !node.is_me(&home.machine) {
@@ -149,30 +159,40 @@ async fn commit_held(
     if node.residents.deleted(&resident).is_some() {
         return Err(crate::forget::gone(node, &resident));
     }
-    let directory = node.world.conversation(&resident).attachments().join(attachment.id.as_str());
-    let reservation: Reservation = read_json(&directory.join("reservation.json"))?;
-    let expected = &reservation.attachment;
-    // 2026-10-20: only the authenticated uploader may complete its own reservation.
-    if reservation.from != *from
-        || reservation.acting.as_ref() != Some(acting)
-        || expected.id != attachment.id
-        || expected.owner != attachment.owner
-        || expected.conversation != attachment.conversation
-        || expected.town != attachment.town
-        || expected.file != attachment.file
-        || attachment.path.is_empty()
-    {
-        return Err(failure("the uploaded receipt differs from its reservation"));
-    }
-    // A remote image comes with its small picture for history, unless it is
-    // of a kind the thumbnails cannot read, and history has none of it.
-    if let Some(preview) = &preview {
-        validate_preview(preview, &attachment)?;
-        put(&directory.join("preview.json"), preview)?;
-    }
-    if !node.is_me(&attachment.owner.machine) {
-        put(&directory.join("reference.json"), &attachment)?;
-    }
+    let (working, from, acting) = (node.clone(), from.clone(), acting.clone());
+    let (attachment, reservation, _place) = fastctx_platform::task::spawn_blocking(move || {
+        let node = working;
+        let from = &from;
+        let acting = &acting;
+        let resident = attachment.conversation().resident.clone();
+        let directory = node.world.conversation(&resident).attachments().join(attachment.id.as_str());
+        let reservation: Reservation = read_json(&directory.join("reservation.json"))?;
+        let expected = &reservation.attachment;
+        // Only the authenticated uploader may complete its own reservation.
+        if reservation.from != *from
+            || reservation.acting.as_ref() != Some(acting)
+            || expected.id != attachment.id
+            || expected.owner != attachment.owner
+            || expected.conversation != attachment.conversation
+            || expected.town != attachment.town
+            || expected.file != attachment.file
+            || attachment.path.is_empty()
+        {
+            return Err(failure("the uploaded receipt differs from its reservation"));
+        }
+        // A remote image comes with its small picture for history, unless it is
+        // of a kind the thumbnails cannot read, and history has none of it.
+        if let Some(preview) = &preview {
+            validate_preview(preview, &attachment)?;
+            put(&directory.join("preview.json"), preview)?;
+        }
+        if !node.is_me(&attachment.owner.machine) {
+            super::index::put(&node.world.conversation(&resident), &attachment, true).map_err(failure)?;
+        }
+        Ok::<_, Failure>((attachment, reservation, place))
+    })
+    .await
+    .map_err(failure)??;
     let composer = match &reservation.composer {
         Some(scope) => Some(crate::composer::uploads::complete(node, &resident, scope, &attachment).await),
         None => None,
@@ -203,7 +223,7 @@ struct Prepared {
     attachment: Attachment,
     arriving: Option<Arriving>,
     _lock: FileLock,
-    _place: crate::data::places::Using,
+    _place: Arc<crate::data::places::Using>,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -236,36 +256,49 @@ async fn prepare_sent(
     };
     let owner = attachment.conversation();
     let room = node.world.owner(&node.names(), owner);
-    let place = node.places.using(room.path().file_name().expect("room").to_str().expect("room name")).await;
-    let directory = room.attachments().join(attachment.id.as_str());
-    fastctx_platform::ensure_private_dir(&directory).map_err(failure)?;
-    let lock = FileLock::try_acquire(&directory.join("upload.lock"))
-        .map_err(failure)?
-        .ok_or_else(|| Failure::unanswered("this upload is still arriving; retry the same operation"))?;
-    let receipt = directory.join("receipt.json");
-    let (attachment, arriving) = if receipt.exists() {
-        let kept: Attachment = read_json(&receipt)?;
-        if kept.owner != attachment.owner
-            || kept.conversation != attachment.conversation
-            || kept.file != attachment.file
-        {
-            return Err(failure("the stored original differs from the reservation"));
-        }
-        verified_original(node, &kept, &Default::default())?;
-        (kept, None)
-    } else {
-        let mut arriving = arriving_in(&directory, attachment, true)?;
-        arriving.keep = true;
-        (arriving.attachment.clone(), Some(arriving))
-    };
-    Ok(Prepared { acting: acting.clone(), home: machine.clone(), attachment, arriving, _lock: lock, _place: place })
+    let place = Arc::new(node.places.using(room.path().file_name().expect("room").to_str().expect("room name")).await);
+    let (working, acting, home) = (node.clone(), acting.clone(), machine.clone());
+    fastctx_platform::task::spawn_blocking(move || {
+        let node = &working;
+        let directory = room.attachments().join(attachment.id.as_str());
+        fastctx_platform::ensure_private_dir(&directory).map_err(failure)?;
+        let lock = FileLock::try_acquire(&directory.join("upload.lock"))
+            .map_err(failure)?
+            .ok_or_else(|| Failure::unanswered("this upload is still arriving; retry the same operation"))?;
+        let receipt = directory.join("receipt.json");
+        let (attachment, arriving) = if fastctx_platform::disk::is_there(&receipt) {
+            let kept: Attachment = read_json(&receipt)?;
+            if kept.owner != attachment.owner
+                || kept.conversation != attachment.conversation
+                || kept.file != attachment.file
+            {
+                return Err(failure("the stored original differs from the reservation"));
+            }
+            verified_original(node, &kept, &Default::default())?;
+            super::index::put(&room, &kept, false).map_err(failure)?;
+            (kept, None)
+        } else {
+            let mut arriving = arriving_in(&directory, attachment, true)?;
+            arriving.keep = true;
+            (arriving.attachment.clone(), Some(arriving))
+        };
+        Ok(Prepared { acting, home, attachment, arriving, _lock: lock, _place: place })
+    })
+    .await
+    .map_err(failure)?
 }
 
 async fn complete_sent(node: &Arc<Node>, from: &MachineName, prepared: Prepared) -> Result<Uploaded, Failure> {
-    let attachment = match prepared.arriving {
-        Some(arriving) => arriving.finish()?,
-        None => prepared.attachment,
-    };
+    let (attachment, prepared) = fastctx_platform::task::spawn_blocking(move || {
+        let mut prepared = prepared;
+        let attachment = match prepared.arriving.take() {
+            Some(arriving) => arriving.finish()?,
+            None => prepared.attachment.clone(),
+        };
+        Ok::<_, Failure>((attachment, prepared))
+    })
+    .await
+    .map_err(failure)??;
     let home = &prepared.home;
     // A picture of a kind the thumbnails cannot read still goes, without one.
     let preview = if attachment.is_image() && !node.is_here(home) {
@@ -280,7 +313,7 @@ async fn complete_sent(node: &Arc<Node>, from: &MachineName, prepared: Prepared)
         None
     };
     if node.is_here(home) {
-        return commit_held(node, from, &prepared.acting, attachment, preview).await;
+        return commit_held(node, from, &prepared.acting, attachment, preview, prepared._place).await;
     }
     let call = RemoteCall::CommitAttachment { attachment: attachment.clone(), preview };
     match node.call(&prepared.acting, home, Purpose::Agents, call).await.map_err(broke)?? {

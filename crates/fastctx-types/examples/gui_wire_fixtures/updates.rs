@@ -20,9 +20,12 @@ pub fn fixtures() -> Fixtures {
         FailureReason::Signature,
         FailureReason::Disk,
         FailureReason::NotNewer,
+        FailureReason::Withdrawn,
         FailureReason::Other,
         FailureReason::Installer { code: Some(23) },
-        FailureReason::Sources { sources: vec![SourceFailure { via: Via::Github, why: "connection refused".into() }] },
+        FailureReason::Sources {
+            sources: vec![SourceFailure { via: Via::Github, why: "connection refused".into(), unconnected: false }],
+        },
     ];
     let problem = Problem::new(FailureReason::Signature, "the package does not match its signature");
     let stages = vec![
@@ -146,11 +149,16 @@ pub fn fixtures() -> Fixtures {
             ViewCall::Schedule { machines: vec!["server".parse().unwrap()], version: Some(version) },
             ViewCall::Schedule { machines: vec!["server".parse().unwrap()], version: None },
             ViewCall::Policy { minimum: None, managed_auto: true },
+            ViewCall::Rollout { version: Some("1.0.2".into()), first: vec!["server".parse().unwrap()], share: 25 },
+            ViewCall::Rollout { version: None, first: Vec::new(), share: 0 },
+            ViewCall::Pause { paused: true },
+            ViewCall::Withdraw { version: "1.0.3".into(), withdrawn: true },
         ],
         replies: vec![
             ViewReply::View {
                 view: Box::new(View {
                     repair_supported: true,
+                    rollouts: true,
                     hub: "1.0.1".into(),
                     stable: Some(manifest.clone()),
                     beta: None,
@@ -171,9 +179,24 @@ pub fn fixtures() -> Fixtures {
                         },
                     ],
                     releases: vec![manifest],
-                    policy: Some(Policy::default()),
+                    policy: Some(Policy {
+                        rollout: Some(Rollout {
+                            version: "1.0.2".into(),
+                            first: ["ed25519:server".to_string()].into(),
+                            share: 25,
+                            paused: true,
+                            stopped: Some(Stop {
+                                at: "2026-10-31T08:00:00Z".parse().unwrap(),
+                                machine: "server".parse().unwrap(),
+                                kind: fastctx_types::trouble::TroubleKind::Stuck,
+                            }),
+                        }),
+                        withdrawn: ["1.0.3".to_string()].into(),
+                        ..Policy::default()
+                    }),
                     machines: vec![machine],
                     available: 1,
+                    rollout_first: vec!["server".parse().unwrap()],
                 }),
             },
             ViewReply::Scheduled {

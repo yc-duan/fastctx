@@ -55,6 +55,7 @@ pub fn admit(
                 from: Speaker::Resident { address },
                 goal_report: Some(report),
                 goal_question: None,
+                told: None,
                 ..
             } if *address == report.colleague
                 && sender(&address.machine)
@@ -122,10 +123,10 @@ fn expect(declared: Purpose, carries: Purpose) -> Result<(), String> {
 /// for, or for one of the others the speaker works for: each of those this
 /// machine checks itself, as the hub checked the one it was sent for.
 fn serves(node: &Node, hub: &HubId, caller: &Caller, also: &[AccountName], to: &ResidentId) -> Result<(), String> {
-    let Some((about, _)) = node.residents.about(to) else {
+    let Some(_) = node.residents.about(to) else {
         return Err(format!("no resident {to} lives on {}", node.machine()));
     };
-    if node.serves(&about.acting, hub, &caller.account) {
+    if crate::record_ownership::resident(node, to, hub, &caller.account) {
         return Ok(());
     }
     let here = node.machine();
@@ -133,7 +134,7 @@ fn serves(node: &Node, hub: &HubId, caller: &Caller, also: &[AccountName], to: &
     let speaks_for = |account: &&AccountName| {
         view.as_ref().is_some_and(|view| view.admits(&caller.machine, account, &here, Purpose::Words).is_ok())
     };
-    if also.iter().filter(speaks_for).any(|account| node.serves(&about.acting, hub, account)) {
+    if also.iter().filter(speaks_for).any(|account| crate::record_ownership::resident(node, to, hub, account)) {
         return Ok(());
     }
     Err(format!("{to} on {here} works for none of the accounts the words came for"))

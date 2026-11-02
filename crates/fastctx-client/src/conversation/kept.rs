@@ -149,7 +149,9 @@ impl Keeping {
 
     /// What to tell the conversation's machine this device holds.
     pub fn held(&self) -> Held {
-        let Some(index) = &self.index else { return Held { version: None, segments: Vec::new(), latest_first: true } };
+        let Some(index) = &self.index else {
+            return Held { version: None, segments: Vec::new(), latest_first: true, since: None, marks: true };
+        };
         let mut bytes = 0;
         let mut first = index.layout.len();
         // Each name goes as a quoted string and a comma.
@@ -157,7 +159,18 @@ impl Keeping {
             first -= 1;
             bytes += index.layout[first].as_str().len() + 3;
         }
-        Held { version: index.version.clone(), segments: index.layout[first..].to_vec(), latest_first: false }
+        Held {
+            version: index.version.clone(),
+            segments: index.layout[first..].to_vec(),
+            latest_first: false,
+            since: None,
+            marks: true,
+        }
+    }
+
+    /// Whether it holds a history that the events after a mark go on from.
+    pub fn has_history(&self) -> bool {
+        self.index.as_ref().is_some_and(|index| !index.stale)
     }
 
     /// Whether the rest of what is kept is still to be given.
@@ -200,6 +213,11 @@ impl Keeping {
         self.current = !matches!(watched, Watched::Segments { complete: false, .. });
         match watched {
             Watched::Documents { .. } => Err(Error::Unexpected("document packets are not conversation history".into())),
+            // What is held stands; the events it missed follow as live ones.
+            Watched::Resumed => Ok(None),
+            Watched::Collaboration { .. } => {
+                Err(Error::Unexpected("a collaboration is not conversation history".into()))
+            }
             // Nothing held and nothing changed: the history is empty.
             Watched::Unchanged { version } if self.index.is_none() => {
                 self.keep(Some(version), Vec::new(), HashMap::new()).await

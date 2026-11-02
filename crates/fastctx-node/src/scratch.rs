@@ -2,7 +2,7 @@
 //! same layout lookup used by run preserves guest rooms across host renames.
 
 pub(crate) mod jobs;
-mod storage;
+pub(crate) mod storage;
 pub(crate) use storage::Receipt;
 
 use crate::Node;

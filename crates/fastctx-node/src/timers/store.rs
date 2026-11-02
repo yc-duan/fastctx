@@ -1,71 +1,88 @@
-//! A deadline index in memory; one atomic record per timer on disk.
+//! SQL owns timer generations and their due index. Only active claims and a
+//! disk-failure backoff live in memory; no registry lock covers storage work.
+//! A timer stays until it fires or is cancelled, or its conversation is
+//! deleted; a sentinel's until the sentinel acknowledges it.
 
-use std::collections::{BTreeMap, BTreeSet};
-use std::io;
-use std::path::{Path, PathBuf};
-use std::time::Duration;
-
-use fastctx_platform::doing::{Rank, SyncMutex};
-use fastctx_platform::{Permissions, publish};
-use fastctx_types::timers::{Action, Owner, Timer};
-use fastctx_types::{NoticeId, ResidentId};
+use crate::records::{self, Source};
+use fastctx_storage::{Priority, Result};
+use fastctx_types::{
+    NoticeId,
+    layout::ConversationDir,
+    timers::{Action, Owner, Timer},
+};
 use jiff::Timestamp;
 use sha2::{Digest, Sha256};
+use std::{
+    collections::HashMap,
+    io,
+    path::Path,
+    sync::{Arc, Mutex},
+    time::Duration,
+};
 use tokio::sync::Notify;
 
-#[derive(Default)]
-struct Index {
-    rows: BTreeMap<String, Timer>,
-    due: BTreeSet<(Timestamp, String)>,
+const FAMILY: &str = "timers";
+#[derive(Default, Clone)]
+struct Claims {
+    active: HashMap<String, NoticeId>,
+    /// Firings put off after their persistence failed, until when: only
+    /// while that is still ahead, and only for a timer's current firing.
+    delayed: HashMap<(String, NoticeId), Timestamp>,
 }
 
-/// Disk changes finish before their in-memory counterpart becomes visible.
-/// The mutex covers only local records and is never held across an await.
-/// Every row has exactly one due entry, at its `next_attempt`, unless claimed.
+impl Claims {
+    /// Forgets the timer `id`'s firings put off: it fires anew, or no more.
+    fn settled(&mut self, id: &str) {
+        self.delayed.retain(|(timer, _), _| timer != id);
+    }
+}
 pub struct Store {
-    directory: PathBuf,
-    index: SyncMutex<Index>,
+    directory: ConversationDir,
+    claims: Mutex<Claims>,
     pub changed: Notify,
 }
-
 impl Store {
-    /// Reads the table once. An unreadable record is an error, never an absent timer.
-    pub fn open(directory: &Path) -> io::Result<Self> {
-        fastctx_platform::ensure_private_dir(directory)?;
-        let store = Self {
-            directory: directory.into(),
-            index: SyncMutex::new(Rank::RECORDS, "timer records", directory.display().to_string(), Index::default()),
-            changed: Notify::new(),
-        };
-        let mut index = store.index.lock();
-        for entry in std::fs::read_dir(directory)? {
-            let path = entry?.path();
-            if path.extension().is_none_or(|extension| extension != "json") {
-                continue;
+    pub fn open(path: &Path) -> io::Result<Self> {
+        let (directory, _, _, _) = crate::record_database::item(&path.join(".timers"))?;
+        let folder = path.to_path_buf();
+        records::ensure_each(&directory, FAMILY, move |push| {
+            let entries = match fastctx_platform::disk::read_dir(&folder) {
+                Ok(entries) => entries,
+                Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
+                Err(error) => return Err(error),
+            };
+            for entry in entries {
+                let source = entry?.path();
+                if source.extension().is_none_or(|ext| ext != "json") {
+                    continue;
+                }
+                crate::record_migration::file(&source, push, |push| {
+                    let bytes = fastctx_platform::disk::read(&source)?;
+                    let timer: Timer = serde_json::from_slice(&bytes)?;
+                    if source != folder.join(format!("{:x}.json", Sha256::digest(timer.id.as_bytes()))) {
+                        return Err(crate::record_migration::errors::invalid("timer id does not match its file"));
+                    }
+                    push(
+                        Source::new(timer.id.clone(), source.clone(), bytes)?
+                            .scoped(scope(&timer.owner).to_string())
+                            .ordered(timer.next_attempt)
+                            .categorized(serde_json::to_string(&timer.owner)?),
+                    )
+                })?;
             }
-            let timer: Timer = serde_json::from_slice(&std::fs::read(&path)?)
-                .map_err(|error| io::Error::other(format!("{}: {error}", path.display())))?;
-            if store.path(&timer.id) != path {
-                return Err(io::Error::other(format!("{}: timer id does not match its file", path.display())));
-            }
-            index.due.insert((timer.next_attempt, timer.id.clone()));
-            index.rows.insert(timer.id.clone(), timer);
-        }
-        drop(index);
-        Ok(store)
+            Ok(())
+        })?;
+        Ok(Self { directory, claims: Mutex::new(Claims::default()), changed: Notify::new() })
     }
-
-    fn path(&self, id: &str) -> PathBuf {
-        self.directory.join(format!("{:x}.json", Sha256::digest(id.as_bytes())))
+    async fn work<T: Send + 'static>(
+        self: &Arc<Self>,
+        action: impl FnOnce(&Self) -> io::Result<T> + Send + 'static,
+    ) -> io::Result<T> {
+        let store = self.clone();
+        fastctx_platform::task::spawn_blocking(move || action(&store)).await.map_err(io::Error::other)?
     }
-
-    fn save(&self, timer: &Timer) -> io::Result<()> {
-        publish(&self.path(&timer.id), &serde_json::to_vec(timer).map_err(io::Error::other)?, Permissions::Private)
-    }
-
-    /// Replaces the same id. Callers serialize this with effects for the owner.
-    pub fn set(
-        &self,
+    pub async fn set(
+        self: &Arc<Self>,
         id: String,
         owner: Owner,
         due: Timestamp,
@@ -87,142 +104,213 @@ impl Store {
             fired_at: None,
             error: None,
         };
-        let mut index = self.index.lock();
-        self.save(&timer)?;
-        if let Some(old) = index.rows.insert(timer.id.clone(), timer.clone()) {
-            index.due.remove(&(old.next_attempt, old.id));
-        }
-        index.due.insert((due, timer.id.clone()));
-        drop(index);
-        self.changed.notify_one();
-        Ok(timer)
+        self.work(move |store| {
+            let result = records::write_at(
+                &store.directory,
+                Priority::Interactive,
+                serde_json::to_vec(&timer)?.len(),
+                move |rows| {
+                    if get_timer(rows, &timer.id)?.is_some_and(|old| old.owner != timer.owner) {
+                        return Err(fastctx_storage::Error::new("cancel a timer before changing its owner"));
+                    }
+                    save(rows, &timer)?;
+                    Ok(timer)
+                },
+            )?;
+            store.claims.lock().expect("timer claims").settled(&result.id);
+            store.changed.notify_one();
+            Ok(result)
+        })
+        .await
     }
-
-    pub fn get(&self, id: &str) -> Option<Timer> {
-        self.index.lock().rows.get(id).cloned()
+    pub async fn get(self: &Arc<Self>, id: &str) -> io::Result<Option<Timer>> {
+        let id = id.to_string();
+        self.work(move |store| records::read(&store.directory, |rows| get_timer(rows, &id))).await
     }
-
-    pub fn list(&self, owner: Option<&Owner>) -> Vec<Timer> {
-        self.index.lock().rows.values().filter(|row| owner.is_none_or(|owner| owner == &row.owner)).cloned().collect()
+    pub async fn list(self: &Arc<Self>, owner: Option<&Owner>) -> io::Result<Vec<Timer>> {
+        let owner = owner.cloned();
+        self.work(move |store| store.list_now(owner.as_ref())).await
     }
-
-    pub fn next(&self) -> Option<Timestamp> {
-        self.index.lock().due.first().map(|(at, _)| *at)
+    fn list_now(&self, owner: Option<&Owner>) -> io::Result<Vec<Timer>> {
+        let category = owner.map(serde_json::to_string).transpose()?;
+        records::read(&self.directory, |rows| {
+            let mut query=rows.connection().prepare_cached("SELECT body FROM conversation_records r WHERE family='timers' AND NOT EXISTS(SELECT 1 FROM node_conversation_transfers t WHERE t.name=r.conversation AND t.rejected=0) AND (?1 IS NULL OR category=?1) ORDER BY identity")?;
+            query.query_map([category], |row| row.get::<_, Vec<u8>>(0))?.map(|row| records::decode(&row?)).collect()
+        })
     }
-
-    /// Reserves one due row in memory. The effect must call `begin` after taking its owner's gate.
-    pub fn claim(&self, now: Timestamp) -> Option<Timer> {
-        let mut index = self.index.lock();
-        loop {
-            let (at, id) = index.due.first()?.clone();
-            if at > now {
-                return None;
+    fn candidate(&self) -> io::Result<Option<(Timestamp, Timer)>> {
+        let claims = self.claims.lock().expect("timer claims").clone();
+        // Only entries excluded by the small live claim/backoff set need to be
+        // skipped. The next unexcluded row bounds every later candidate.
+        let limit = claims.active.len() + claims.delayed.len() + 1;
+        let rows = records::read(&self.directory, |rows| {
+            let mut query = rows.connection().prepare_cached(
+                "SELECT body FROM conversation_records r WHERE family='timers' AND NOT EXISTS(SELECT 1 FROM node_conversation_transfers t WHERE t.name=r.conversation AND t.rejected=0) ORDER BY arrival,identity LIMIT ?1",
+            )?;
+            query
+                .query_map([limit as i64], |row| row.get::<_, Vec<u8>>(0))?
+                .map(|row| records::decode::<Timer>(&row?))
+                .collect::<Result<Vec<_>>>()
+        })?;
+        Ok(rows
+            .into_iter()
+            .filter(|row| !claims.active.contains_key(&row.id))
+            .map(|row| {
+                let due = claims
+                    .delayed
+                    .get(&(row.id.clone(), row.delivery.clone()))
+                    .copied()
+                    .unwrap_or(row.next_attempt)
+                    .max(row.next_attempt);
+                (due, row)
+            })
+            .min_by(|a, b| (&a.0, &a.1.id).cmp(&(&b.0, &b.1.id))))
+    }
+    pub async fn next(self: &Arc<Self>) -> io::Result<Option<Timestamp>> {
+        self.work(|store| Ok(store.candidate()?.map(|(at, _)| at))).await
+    }
+    pub async fn claim(self: &Arc<Self>, now: Timestamp) -> io::Result<Option<Timer>> {
+        self.work(move |store| {
+            loop {
+                let Some((at, timer)) = store.candidate()? else { return Ok(None) };
+                if at > now {
+                    return Ok(None);
+                }
+                let mut claims = store.claims.lock().expect("timer claims");
+                claims.delayed.retain(|_, until| *until > now);
+                if claims.active.contains_key(&timer.id) {
+                    continue;
+                }
+                claims.active.insert(timer.id.clone(), timer.delivery.clone());
+                claims.delayed.remove(&(timer.id.clone(), timer.delivery.clone()));
+                return Ok(Some(timer));
             }
-            index.due.remove(&(at, id.clone()));
-            // An entry of a row replaced since is not that row's turn.
-            if let Some(timer) = index.rows.get(&id).filter(|row| row.next_attempt == at) {
-                return Some(timer.clone());
-            }
+        })
+        .await
+    }
+    pub fn unclaim(&self, timer: &Timer) {
+        let mut claims = self.claims.lock().expect("timer claims");
+        if claims.active.get(&timer.id) == Some(&timer.delivery) {
+            claims.active.remove(&timer.id);
         }
-    }
-
-    /// Freezes the first firing and records this attempt before any external effect.
-    pub fn begin(&self, timer: &Timer, now: Timestamp) -> io::Result<Option<Timer>> {
-        let mut index = self.index.lock();
-        let Some(row) = index.rows.get(&timer.id).filter(|row| row.delivery == timer.delivery) else { return Ok(None) };
-        let mut row = row.clone();
-        row.fired_at.get_or_insert(now);
-        row.attempts = row.attempts.saturating_add(1);
-        self.save(&row)?;
-        index.rows.insert(row.id.clone(), row.clone());
-        Ok(Some(row))
-    }
-
-    /// Keeps a failed effect for the common local backoff. A newer setting is untouched.
-    pub fn retry(&self, timer: &Timer, now: Timestamp, error: String) -> io::Result<()> {
-        let mut index = self.index.lock();
-        let Some(row) = index.rows.get(&timer.id).filter(|row| row.delivery == timer.delivery) else { return Ok(()) };
-        let mut row = row.clone();
-        row.next_attempt =
-            now.checked_add(fastctx_net::again::backoff(row.attempts.max(1))).map_err(io::Error::other)?;
-        row.error = Some(error);
-        self.save(&row)?;
-        index.due.insert((row.next_attempt, row.id.clone()));
-        index.rows.insert(row.id.clone(), row);
-        drop(index);
         self.changed.notify_one();
-        Ok(())
     }
-
-    /// Fires this delivery again at `until` unless its taker completes it first.
-    pub fn hold(&self, timer: &Timer, until: Timestamp) -> io::Result<()> {
-        let mut index = self.index.lock();
-        let Some(row) = index.rows.get(&timer.id).filter(|row| row.delivery == timer.delivery) else { return Ok(()) };
-        let mut row = row.clone();
-        row.next_attempt = until;
-        row.error = None;
-        self.save(&row)?;
-        index.due.insert((row.next_attempt, row.id.clone()));
-        index.rows.insert(row.id.clone(), row);
-        drop(index);
-        self.changed.notify_one();
-        Ok(())
+    async fn update(
+        self: &Arc<Self>,
+        timer: &Timer,
+        action: impl FnOnce(&mut Timer) -> Result<()> + Send + 'static,
+    ) -> io::Result<Option<Timer>> {
+        let (id, delivery) = (timer.id.clone(), timer.delivery.clone());
+        self.work(move |store| {
+            let result = records::write_at(&store.directory, Priority::Interactive, 512, move |rows| {
+                let Some(mut timer) = get_timer(rows, &id)?.filter(|row| row.delivery == delivery) else {
+                    return Ok(None);
+                };
+                action(&mut timer)?;
+                save(rows, &timer)?;
+                Ok(Some(timer))
+            })?;
+            store.changed.notify_one();
+            Ok(result)
+        })
+        .await
     }
-
-    /// A disk failure must not strand a claimed timer in memory until the next restart.
+    pub async fn begin(self: &Arc<Self>, timer: &Timer, now: Timestamp) -> io::Result<Option<Timer>> {
+        self.update(timer, move |row| {
+            row.fired_at.get_or_insert(now);
+            row.attempts = row.attempts.saturating_add(1);
+            Ok(())
+        })
+        .await
+    }
+    pub async fn retry(self: &Arc<Self>, timer: &Timer, now: Timestamp, error: String) -> io::Result<()> {
+        self.update(timer, move |row| {
+            row.next_attempt = now
+                .checked_add(fastctx_net::again::backoff(row.attempts.max(1)))
+                .map_err(|e| fastctx_storage::Error::new(e.to_string()))?;
+            row.error = Some(error);
+            Ok(())
+        })
+        .await
+        .map(|_| ())
+    }
+    pub async fn hold(self: &Arc<Self>, timer: &Timer, until: Timestamp) -> io::Result<()> {
+        self.update(timer, move |row| {
+            row.next_attempt = until;
+            row.error = None;
+            Ok(())
+        })
+        .await
+        .map(|_| ())
+    }
+    /// Failed persistence changes only scheduling, never the durable first firing.
     pub fn release(&self, timer: &Timer, now: Timestamp) {
-        let mut index = self.index.lock();
-        if let Some(row) = index.rows.get_mut(&timer.id).filter(|row| row.delivery == timer.delivery) {
-            // In memory only, as the disk refused it; the record on disk stays due earlier.
-            row.next_attempt = now.checked_add(Duration::from_secs(60)).unwrap_or(now);
-            let entry = (row.next_attempt, row.id.clone());
-            index.due.insert(entry);
-        }
-        drop(index);
-        self.changed.notify_one();
+        self.claims.lock().expect("timer claims").delayed.insert(
+            (timer.id.clone(), timer.delivery.clone()),
+            now.checked_add(Duration::from_secs(60)).unwrap_or(now),
+        );
+        self.unclaim(timer);
     }
-
-    /// Removes only this generation after its effect was durably accepted.
-    pub fn complete(&self, timer: &Timer) -> io::Result<bool> {
-        let mut index = self.index.lock();
-        if index.rows.get(&timer.id).is_none_or(|row| row.delivery != timer.delivery) {
-            return Ok(false);
-        }
-        self.remove(&mut index, &timer.id)?;
-        drop(index);
-        self.changed.notify_one();
-        Ok(true)
-    }
-
-    pub fn cancel(&self, id: &str) -> io::Result<bool> {
-        let mut index = self.index.lock();
-        let removed = self.remove(&mut index, id)?;
-        drop(index);
-        self.changed.notify_one();
-        Ok(removed)
-    }
-
-    /// Called inside the conversation's durable deletion, before deleting its record.
-    pub fn delete_conversation(&self, resident: &ResidentId) -> io::Result<()> {
-        let rows = self.list(None);
-        for timer in rows {
-            if timer.owner.conversation() == Some(resident) {
-                self.complete(&timer)?;
+    pub async fn complete(self: &Arc<Self>, timer: &Timer) -> io::Result<bool> {
+        let (id, delivery, timer_id) = (timer.id.clone(), timer.delivery.clone(), timer.id.clone());
+        self.work(move |store| {
+            let removed = records::write_at(&store.directory, Priority::Interactive, 128, move |rows| {
+                if get_timer(rows, &id)?.is_none_or(|row| row.delivery != delivery) {
+                    return Ok(false);
+                }
+                delete_timer(rows, &id)
+            })?;
+            if removed {
+                store.claims.lock().expect("timer claims").settled(&timer_id);
             }
-        }
-        Ok(())
+            store.changed.notify_one();
+            Ok(removed)
+        })
+        .await
     }
+    pub async fn cancel(self: &Arc<Self>, id: &str) -> io::Result<bool> {
+        let id = id.to_string();
+        self.work(move |store| {
+            let cancelled = id.clone();
+            let removed =
+                records::write_at(&store.directory, Priority::Control, 128, move |rows| delete_timer(rows, &id))?;
+            store.claims.lock().expect("timer claims").settled(&cancelled);
+            store.changed.notify_one();
+            Ok(removed)
+        })
+        .await
+    }
+}
+fn save(rows: &records::Rows<'_>, timer: &Timer) -> Result<()> {
+    let rows = rows.scoped(scope(&timer.owner));
+    rows.put_ordered(FAMILY, &timer.id, timer, timer.next_attempt)?;
+    rows.connection().execute(
+        "UPDATE conversation_records SET category=?3 WHERE conversation=?1 AND family='timers' AND identity=?2",
+        (
+            rows.conversation(),
+            &timer.id,
+            serde_json::to_string(&timer.owner).map_err(|e| fastctx_storage::Error::new(e.to_string()))?,
+        ),
+    )?;
+    Ok(())
+}
 
-    fn remove(&self, index: &mut Index, id: &str) -> io::Result<bool> {
-        if !index.rows.contains_key(id) {
-            return Ok(false);
-        }
-        match std::fs::remove_file(self.path(id)) {
-            Err(error) if error.kind() != io::ErrorKind::NotFound => return Err(error),
-            _ => {}
-        }
-        index.rows.remove(id);
-        index.due.retain(|(_, key)| key != id);
-        Ok(true)
+fn scope(owner: &Owner) -> &str {
+    match owner {
+        Owner::Conversation { resident } | Owner::Goal { resident } => resident.as_str(),
+        _ => "@node",
     }
+}
+fn get_timer(rows: &records::Rows<'_>, id: &str) -> Result<Option<Timer>> {
+    use fastctx_storage::rusqlite::OptionalExtension;
+    let bytes: Option<Vec<u8>> = rows
+        .connection()
+        .query_row("SELECT body FROM conversation_records r WHERE family='timers' AND identity=?1 AND NOT EXISTS(SELECT 1 FROM node_conversation_transfers t WHERE t.name=r.conversation AND t.rejected=0)", [id], |row| {
+            row.get(0)
+        })
+        .optional()?;
+    bytes.map(|bytes| records::decode(&bytes)).transpose()
+}
+fn delete_timer(rows: &records::Rows<'_>, id: &str) -> Result<bool> {
+    Ok(rows.connection().execute("DELETE FROM conversation_records WHERE family='timers' AND identity=?1", [id])? > 0)
 }

@@ -5,7 +5,8 @@ use std::path::{Path, PathBuf};
 pub(crate) fn prepare(root: &Path) -> anyhow::Result<PathBuf> {
     let program = fastctx_install::executable::installed_path(root);
     anyhow::ensure!(
-        std::fs::canonicalize(std::env::current_exe()?)? == std::fs::canonicalize(&program)?,
+        fastctx_platform::disk::canonicalize(std::env::current_exe()?)?
+            == fastctx_platform::disk::canonicalize(&program)?,
         "a node must run from the stable World program"
     );
     let directory = program.parent().expect("installed program has a bin directory");
@@ -13,7 +14,7 @@ pub(crate) fn prepare(root: &Path) -> anyhow::Result<PathBuf> {
     if cfg!(windows) {
         let shim = "#!/bin/sh\nMSYS_NO_PATHCONV=1 MSYS2_ARG_CONV_EXCL='*' exec \"${0%/*}/fastctx.exe\" \"$@\"\n";
         let path = directory.join("fastctx");
-        if !std::fs::read(&path).is_ok_and(|bytes| bytes == shim.as_bytes()) {
+        if !fastctx_platform::disk::read(&path).is_ok_and(|bytes| bytes == shim.as_bytes()) {
             fastctx_platform::publish(&path, shim.as_bytes(), fastctx_platform::Permissions::Private)?;
         }
     }

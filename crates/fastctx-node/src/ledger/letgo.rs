@@ -85,6 +85,9 @@ pub async fn let_go(node: &Arc<Node>, link: &Arc<Link>) {
         if (used || stuck) && !holds_copy(node, &town) {
             continue;
         }
+        if !used {
+            super::metadata::forget(&node.world, &town);
+        }
         let removed = if used || stuck { remove_copy(node, &town).await } else { remove(node, &town).await };
         match removed {
             Ok(()) => {
@@ -109,21 +112,24 @@ pub(crate) async fn leave_kept(
     node.residents
         .relocate_kept(&node.world, id, None)
         .map_err(|error| fastctx_types::ipc::Failure::new(error.to_string()))?;
-    crate::town::instructions::hand_to_current(node, id)
+    let (working, resident) = (node.clone(), id.clone());
+    fastctx_platform::task::spawn_blocking(move || crate::town::instructions::hand_to_current(&working, &resident))
+        .await
+        .map_err(|error| fastctx_types::ipc::Failure::new(error.to_string()))?
         .map_err(|error| fastctx_types::ipc::Failure::new(error.to_string()))?;
     crate::codex::moved(node, id).await;
     Ok(())
 }
 
 /// What `remove_copy` takes of a project kept here, beside its signed entries.
-const COPY: [&str; 6] = ["ledger", "attachments", "journals", "specs", "pages", "tampering"];
+const COPY: [&str; 7] = ["ledger", "attachments", "journals", "specs", "pages", "tampering", "history"];
 
 /// Whether this computer still keeps any of what `remove_copy` takes of `town`.
 fn holds_copy(node: &Node, town: &TownName) -> bool {
     let directory = node.world.town(town);
-    directory.signed().exists()
-        || directory.path().join("refused.json").exists()
-        || COPY.iter().any(|folder| directory.path().join(folder).exists())
+    fastctx_platform::disk::is_there(directory.signed())
+        || fastctx_platform::disk::is_there(directory.path().join("refused.json"))
+        || COPY.iter().any(|folder| fastctx_platform::disk::is_there(directory.path().join(folder)))
 }
 
 /// Removes what this computer kept of `town`: its ledger, its signed
@@ -132,12 +138,12 @@ fn holds_copy(node: &Node, town: &TownName) -> bool {
 pub(super) async fn remove_copy(node: &Arc<Node>, town: &TownName) -> io::Result<()> {
     let _syncing = node.syncing.lock().await;
     let directory = node.world.town(town);
-    tokio::task::spawn_blocking(move || {
+    fastctx_platform::task::spawn_blocking(move || {
         super::remove(&directory.signed())?;
         for folder in COPY {
             super::remove(&directory.path().join(folder))?;
         }
-        match std::fs::remove_file(directory.path().join("refused.json")) {
+        match fastctx_platform::disk::remove_file(directory.path().join("refused.json")) {
             Err(error) if error.kind() != io::ErrorKind::NotFound => return Err(error),
             _ => {}
         }
@@ -150,22 +156,22 @@ pub(super) async fn remove_copy(node: &Arc<Node>, town: &TownName) -> io::Result
 pub(super) async fn remove(node: &Arc<Node>, town: &TownName) -> io::Result<()> {
     let _syncing = node.syncing.lock().await;
     let directory = node.world.town(town);
-    tokio::task::spawn_blocking(move || {
+    fastctx_platform::task::spawn_blocking(move || {
         // The signed entries go first: without them the folder is no
         // project any more, and the guard puts nothing back.
         super::remove(&directory.signed())?;
         super::remove(&directory.ledger())?;
         super::remove(&directory.attachments())?;
-        for folder in ["journals", "specs", "pages", "tampering"] {
+        for folder in ["journals", "specs", "pages", "tampering", "history"] {
             super::remove(&directory.path().join(folder))?;
         }
-        for file in ["project.json", "refused.json", "index.json"] {
-            match std::fs::remove_file(directory.path().join(file)) {
+        for file in ["project.json", "refused.json", "index.json", "projection-through.json"] {
+            match fastctx_platform::disk::remove_file(directory.path().join(file)) {
                 Err(error) if error.kind() != io::ErrorKind::NotFound => return Err(error),
                 _ => {}
             }
         }
-        let _ = std::fs::remove_dir(directory.path());
+        let _ = fastctx_platform::disk::remove_dir(directory.path());
         Ok(())
     })
     .await

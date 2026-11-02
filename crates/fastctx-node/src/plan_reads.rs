@@ -6,7 +6,6 @@ use fastctx_types::{
     Address, ResidentId,
     access::{HubAccount, HubId},
     account_records::Changed,
-    residents::Origin,
 };
 use std::{
     collections::HashMap,
@@ -47,11 +46,7 @@ pub(crate) fn changed(node: &Arc<Node>, hub: &HubId, change: &Changed) {
         return;
     }
     for resident in node.residents.everyone().filter(|resident| resident.removed.is_none()) {
-        let owner = match &resident.about.origin {
-            Origin::User => &resident.id,
-            Origin::Colleague { asked_by, .. } => &asked_by.resident,
-        };
-        if owner.as_str() == change.metadata.key && node.serves(&resident.about.acting, hub, &change.account) {
+        if resident.id.as_str() == change.metadata.key && node.serves(&resident.about.acting, hub, &change.account) {
             node.plan_reads.invalidate(&resident.id);
             if change.metadata.kind == fastctx_types::placement::KIND {
                 node.locations.invalidate(&resident.id);

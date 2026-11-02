@@ -34,7 +34,7 @@ pub(crate) async fn scan(node: &Arc<Node>, stop: bool) -> Result<MachineLogins, 
         return super::here(node).await;
     }
     let scanning = node.clone();
-    let scanned = tokio::spawn(async move {
+    let scanned = fastctx_platform::task::spawn(async move {
         let node = scanning;
         let scanned = scan_once(&node).await;
         // What the scan finds is listed as this fastctx writes it.
@@ -76,7 +76,9 @@ async fn blocking<T: Send + 'static>(
     work: impl FnOnce(&Node) -> Result<T, Failure> + Send + 'static,
 ) -> Result<T, Failure> {
     let node = node.clone();
-    tokio::task::spawn_blocking(move || work(&node)).await.map_err(|error| Failure::new(error.to_string()))?
+    fastctx_platform::task::spawn_blocking(move || work(&node))
+        .await
+        .map_err(|error| Failure::new(error.to_string()))?
 }
 
 /// The usual places: each agent's default login, the directories directly
@@ -122,12 +124,15 @@ async fn usual(node: &Arc<Node>, started_at: Timestamp) -> Result<(), Failure> {
             let claude_programs = programs.claude.clone();
             let default = crate::homes::same_dir(&dir, context.default_of(agent));
             let signed = super::sign_in::now(&context, agent, &dir);
-            asking.push(tokio::spawn(async move {
+            asking.push(fastctx_platform::task::spawn(async move {
                 let asked = if agent == "codex" {
                     identify::codex(&node, &dir, false).await
                 } else {
                     let path = dir.clone();
-                    match tokio::task::spawn_blocking(move || identify::claude(&path, default, &claude_programs)).await
+                    match fastctx_platform::task::spawn_blocking(move || {
+                        identify::claude(&path, default, &claude_programs)
+                    })
+                    .await
                     {
                         Ok(Ok(asked)) => asked,
                         Ok(Err(failure)) => failed(failure.message),
@@ -175,7 +180,7 @@ fn failed(reason: String) -> identify::Asked {
 /// Whether `dir`, found in the user's home before, may be there still: it
 /// is a directory, or it cannot be looked at now, which `unreadable` is told.
 fn still_there(dir: &Path, unreadable: &mut Vec<String>) -> bool {
-    match std::fs::metadata(dir) {
+    match fastctx_platform::disk::metadata(dir) {
         Ok(metadata) => metadata.is_dir(),
         Err(error) if matches!(error.kind(), std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory) => false,
         Err(error) => {
@@ -189,7 +194,7 @@ fn still_there(dir: &Path, unreadable: &mut Vec<String>) -> bool {
 /// by the usual rule, by the names of their entries.
 fn in_home(home: &Path, agent: &str, unreadable: &mut Vec<String>) -> Vec<PathBuf> {
     let mut found = Vec::new();
-    let entries = match std::fs::read_dir(home) {
+    let entries = match fastctx_platform::disk::read_dir(home) {
         Ok(entries) => entries,
         Err(error) => {
             unreadable.push(format!("{}: {error}", home.display()));
@@ -201,7 +206,7 @@ fn in_home(home: &Path, agent: &str, unreadable: &mut Vec<String>) -> Vec<PathBu
         if !entry.file_type().is_ok_and(|kind| kind.is_dir()) {
             continue;
         }
-        let names = match std::fs::read_dir(entry.path()) {
+        let names = match fastctx_platform::disk::read_dir(entry.path()) {
             Ok(names) => names
                 .flatten()
                 .map(|inner| {

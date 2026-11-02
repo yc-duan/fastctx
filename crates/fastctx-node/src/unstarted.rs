@@ -11,7 +11,7 @@ pub(crate) fn collect(world: &WorldDir) -> io::Result<()> {
     let mut directories = Vec::new();
     for parent in world.job_parents()? {
         for directory in crate::retention::entries(&parent)? {
-            if fastctx_platform::owned_directory::is_link(&std::fs::symlink_metadata(&directory)?) {
+            if fastctx_platform::owned_directory::is_link(&fastctx_platform::disk::symlink_metadata(&directory)?) {
                 continue;
             }
             directories.push(directory);
@@ -26,7 +26,7 @@ pub(crate) fn collect(world: &WorldDir) -> io::Result<()> {
             let record = fastctx_hands::run::record::read(&path)?;
             for path in [record.stdin.as_deref(), record.on.as_ref().map(|on| on.state.as_str())].into_iter().flatten()
             {
-                match std::fs::canonicalize(path) {
+                match fastctx_platform::disk::canonicalize(path) {
                     Ok(path) => {
                         referenced.insert(path);
                     }
@@ -43,7 +43,7 @@ pub(crate) fn collect(world: &WorldDir) -> io::Result<()> {
             else {
                 continue;
             };
-            if jobs.join(format!("{job}.json")).try_exists()? {
+            if fastctx_platform::disk::exists(jobs.join(format!("{job}.json")))? {
                 continue;
             }
             if path.extension().is_some_and(|extension| {
@@ -56,7 +56,9 @@ pub(crate) fn collect(world: &WorldDir) -> io::Result<()> {
         }
         for path in crate::retention::entries(&directory.join("out"))? {
             let Some(name) = path.file_name().and_then(|name| name.to_str()) else { continue };
-            if path.is_dir() || fastctx_platform::owned_directory::is_link(&std::fs::symlink_metadata(&path)?) {
+            if fastctx_platform::disk::is_dir(&path)
+                || fastctx_platform::owned_directory::is_link(&fastctx_platform::disk::symlink_metadata(&path)?)
+            {
                 continue;
             }
             let job = name
@@ -65,7 +67,11 @@ pub(crate) fn collect(world: &WorldDir) -> io::Result<()> {
                 .and_then(|stem| stem.parse::<JobId>().ok());
             let package = name.starts_with("on-")
                 && ["state", "in"].iter().any(|extension| path.extension().is_some_and(|found| found == *extension));
-            if job.as_ref().map(|job| jobs.join(format!("{job}.json")).try_exists()).transpose()?.unwrap_or(false)
+            if job
+                .as_ref()
+                .map(|job| fastctx_platform::disk::exists(jobs.join(format!("{job}.json"))))
+                .transpose()?
+                .unwrap_or(false)
                 || protected(&referenced, &path)?
             {
                 continue;
@@ -79,5 +85,5 @@ pub(crate) fn collect(world: &WorldDir) -> io::Result<()> {
 }
 
 fn protected(referenced: &HashSet<PathBuf>, path: &Path) -> io::Result<bool> {
-    Ok(referenced.contains(&std::fs::canonicalize(path)?))
+    Ok(referenced.contains(&fastctx_platform::disk::canonicalize(path)?))
 }

@@ -26,7 +26,7 @@ pub(super) async fn start(node: &Arc<Node>, resident: &ResidentId, directory: &P
     let folder = path.parent().ok_or_else(|| std::io::Error::other("Claude transcript has no parent"))?;
     // Claude Code makes the transcript's folder with the first prompt's line: until then there is
     // nothing to watch, and the session's next report starts this again.
-    if !folder.try_exists()? {
+    if !fastctx_platform::disk::exists(folder)? {
         return Ok(());
     }
     let (changed, mut changes) = tokio::sync::mpsc::channel(1);
@@ -47,7 +47,7 @@ pub(super) async fn start(node: &Arc<Node>, resident: &ResidentId, directory: &P
     }
     let node = Arc::downgrade(node);
     let resident = resident.clone();
-    tokio::spawn(async move {
+    fastctx_platform::task::spawn(async move {
         let _watcher = watcher;
         let mut tail = Tail::default();
         let mut titles = Titles::default();

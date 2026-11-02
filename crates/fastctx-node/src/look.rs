@@ -8,7 +8,7 @@ use fastctx_types::access::{Acting, Purpose};
 use fastctx_types::ipc::Failure;
 use fastctx_types::layout::WorldDir;
 use fastctx_types::remote::RemoteCall;
-use fastctx_types::residents::{Action, MessageKind, MessageLine};
+use fastctx_types::residents::{MessageKind, MessageLine};
 use fastctx_types::town::{CurrentTool, Looked, LookedUp, ResidentDetail, ResidentNow};
 use fastctx_types::{Address, JobId, ResidentId};
 
@@ -70,7 +70,7 @@ pub async fn look_here(
         .and_then(|parsed| node.residents.on_record(&parsed));
     let tools = record.as_ref().map(|r| node.watchers.tools(&r.id)).unwrap_or_default();
     let (world, id) = (node.world.clone(), id.to_string());
-    tokio::task::spawn_blocking(move || {
+    fastctx_platform::task::spawn_blocking(move || {
         Ok::<_, io::Error>((read_here(&world, &id, record.as_ref(), tools)?, jobs_for(&world, &id)?))
     })
     .await
@@ -90,7 +90,7 @@ pub(crate) fn read_here(
         for parent in world.job_parents()? {
             for resident in entries(&parent)? {
                 let path = resident.join("jobs").join(format!("{job}.json"));
-                if path.exists() {
+                if fastctx_platform::disk::is_there(&path) {
                     return Ok(Some(Looked::Job { source: None, record: Box::new(record::read(&path)?) }));
                 }
             }
@@ -99,10 +99,8 @@ pub(crate) fn read_here(
     if ResidentId::try_from(id).is_ok() {
         let Some(record) = record else { return Ok(None) };
         let directory = world.conversation(&record.id);
-        let mut actions: Vec<Action> = lines(&directory.actions())?;
-        let actions_total = actions.len();
-        actions.drain(..actions_total.saturating_sub(ACTIONS));
-        let messages: Vec<MessageLine> = lines(&directory.messages())?;
+        let (actions, actions_total) = crate::residents::activity::recent_actions(&directory, ACTIONS)?;
+        let messages: Vec<MessageLine> = crate::residents::activity::lines(&directory.messages())?;
         let asked = messages.iter().find_map(|line| match &line.what {
             MessageKind::Asked { text, .. } => Some(text.clone()),
             _ => None,
@@ -119,6 +117,7 @@ pub(crate) fn read_here(
         jobs.sort_by_key(|job| job.started_at);
         Ok(Some(Looked::Resident(Box::new(ResidentDetail {
             resident: ResidentNow {
+                opened_by: None,
                 source: None,
                 last_action: actions.last().cloned(),
                 about: record.about.clone(),
@@ -140,22 +139,6 @@ pub(crate) fn read_here(
     } else {
         Ok(None)
     }
-}
-
-fn lines<T: serde::de::DeserializeOwned>(path: &std::path::Path) -> io::Result<Vec<T>> {
-    let text = match std::fs::read_to_string(path) {
-        Ok(text) => text,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
-        Err(error) => return Err(error),
-    };
-    text.lines()
-        .enumerate()
-        .map(|(number, line)| {
-            serde_json::from_str(line).map_err(|error| {
-                io::Error::new(io::ErrorKind::InvalidData, format!("{} line {}: {error}", path.display(), number + 1))
-            })
-        })
-        .collect()
 }
 
 pub(crate) fn jobs_for(world: &WorldDir, id: &str) -> io::Result<Vec<fastctx_types::town::RunningJob>> {

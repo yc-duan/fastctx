@@ -118,7 +118,7 @@ fn keep(
     // Which pieces are kept, by their numbers. Old versions kept the same
     // numbered tuples with no manifest, so they are taken where they are.
     let (mut kept, mut current) = (0_usize, false);
-    for entry in std::fs::read_dir(&directory)? {
+    for entry in fastctx_platform::disk::read_dir(&directory)? {
         let name = entry?.file_name();
         let Some(name) = name.to_str() else { continue };
         let Ok(part) = name.parse::<usize>() else { continue };
@@ -192,7 +192,7 @@ fn stored(directory: &Path, part: usize, total: usize) -> io::Result<Result<Stri
 /// The file at `path` if there is one, or why it is too large to be what it
 /// should: a refusal, not a failure of the disk to retry for ever.
 fn read_bounded(path: &Path, limit: usize) -> io::Result<Option<Result<Vec<u8>, String>>> {
-    let file = match std::fs::File::open(path) {
+    let file = match fastctx_platform::disk::open(path) {
         Ok(file) => file,
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
         Err(error) => return Err(error),
@@ -207,7 +207,7 @@ fn read_bounded(path: &Path, limit: usize) -> io::Result<Option<Result<Vec<u8>, 
 
 fn delete_parts(directory: &Path, total: usize) -> io::Result<()> {
     for part in 0..total {
-        match std::fs::remove_file(directory.join(part.to_string())) {
+        match fastctx_platform::disk::remove_file(directory.join(part.to_string())) {
             Ok(()) => {}
             Err(error) if error.kind() == io::ErrorKind::NotFound => {}
             Err(error) => return Err(error),

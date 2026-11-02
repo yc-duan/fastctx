@@ -135,6 +135,9 @@ export interface ResidentNow {
   moved: Moved | null;
   /** Which computer of which hub answered for it, as `fastctx_types::observation::MachineSource`. */
   source?: MachineSource | null;
+  /** Another account opened it, on a machine shared whole with this one
+   *  (`world-network.md`, 共享机器与智能体协助); absent for one's own. */
+  openedBy?: { account: string } | null;
 }
 
 /** A machine in one network, and how this computer writes it: `name.hub`
@@ -296,6 +299,11 @@ export interface HubNodes {
   machines: Node[];
 }
 
+/** A machine whose own work waited for a thread past a second lately, or
+ *  some of whose work has not gone on for a while
+ *  (`specs/world-engine.md`, 量与告警). */
+export type Strain = "busy" | "stuck";
+
 export interface Node {
   name: MachineName;
   /** How it is written: `name.hub` where another hub has a different
@@ -305,6 +313,9 @@ export interface Node {
   since: Timestamp | null;
   /** The machine it reaches the hub through, when its own line is down. */
   through?: string | null;
+  /** How its own work goes while online, as its hub tells: absent while
+   *  it goes as it should, or the hub does not tell. */
+  strain?: Strain;
   /** Whether the network's administrator allowed direct connections to it. */
   allows_direct?: boolean;
   /** How this computer's calls to it go now. */

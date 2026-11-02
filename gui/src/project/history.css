@@ -1,0 +1,117 @@
+/* A history document read (`history-page.ts`): a document in a column of its
+   own that scrolls, its name in the display face over a ruled stroke, its
+   Markdown in the reading type. Its versions are the page sheet's
+   (`../pages/pages.css`). */
+
+.hd-page {
+  container-type: inline-size;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.hd-head-title {
+  font-size: var(--size-text);
+}
+
+.hd-doc {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: var(--space-6) var(--gutter) var(--space-12);
+  overflow-wrap: anywhere;
+}
+
+.hd-doc > * {
+  max-width: var(--column);
+  margin-left: auto;
+  margin-right: auto;
+}
+
+.hd-title {
+  margin-top: 0;
+  margin-bottom: 0;
+  font-family: var(--font-display);
+  font-weight: 400;
+  font-size: var(--size-title);
+  line-height: var(--leading-heading);
+  color: var(--text-strong);
+}
+
+.hd-rule {
+  height: 8px;
+  margin-top: var(--space-2);
+  margin-bottom: var(--space-6);
+}
+
+.hd-rule-svg {
+  display: block;
+  height: 8px;
+  overflow: visible;
+}
+
+/* An earlier version read, or a document taken down: said on a field's
+   shade above it, with what can be done about it. */
+.hd-note {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1) var(--space-2);
+  margin-top: 0;
+  margin-bottom: var(--space-6);
+  padding: var(--space-1) var(--space-1) var(--space-1) var(--space-4);
+  border-radius: var(--radius-m);
+  background: var(--fill);
+}
+
+.hd-note > span {
+  flex: 1;
+}
+
+/* Edited: solid fields of the reading type that keep their shade whether
+   pointed at, pressed or typed in. */
+.hd-field {
+  display: block;
+  box-sizing: border-box;
+  width: 100%;
+  margin-top: 0;
+  margin-bottom: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border: 0;
+  border-radius: var(--radius-m);
+  outline: none;
+  background: var(--field);
+  color: var(--text);
+  font-family: var(--font-reading);
+  font-size: var(--size-text);
+  line-height: var(--leading-prose);
+}
+
+.hd-source {
+  min-height: 16em;
+  overflow: hidden;
+  resize: none;
+}
+
+.hd-acts {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
+}
+
+.hd-said {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: 0;
+  margin-bottom: var(--space-3);
+  color: var(--text);
+}
+
+.hd-said[hidden] {
+  display: none;
+}
+
+.hd-wrong {
+  color: var(--caution);
+}

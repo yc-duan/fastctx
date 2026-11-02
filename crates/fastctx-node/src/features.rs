@@ -25,7 +25,7 @@ impl Switches {
 /// The switches as this computer keeps them; all off until one is set.
 pub(crate) fn read(world: &WorldDir) -> Result<Features, Failure> {
     let path = world.features();
-    match std::fs::read(&path) {
+    match fastctx_platform::disk::read(&path) {
         Ok(bytes) => {
             serde_json::from_slice(&bytes).map_err(|error| Failure::new(format!("reading {}: {error}", path.display())))
         }

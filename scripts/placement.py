@@ -21,6 +21,8 @@ def arguments():
     for name in ("kernel", "drill", "codex"):
         parser.add_argument("--" + name, type=Path, required=True)
     parser.add_argument("--root", type=Path)
+    parser.add_argument("--earlier", type=Path, help="the earlier release's kernel, to mix job progress between versions")
+    parser.add_argument("--scale", action="store_true", help="measure 300 conversations replicated to 20 real nodes")
     parser.add_argument("--inside", action="store_true", help=argparse.SUPPRESS)
     return parser.parse_args()
 
@@ -61,16 +63,34 @@ def verify(requests, expectations):
     outputs = json.dumps(outputs, ensure_ascii=False)
     check("ALICE_SKILL_EXECUTED" in outputs and "ALICE_REFERENCE" in outputs,
           "a real model tool call read auxiliary files and executed the skill script on the working computer")
+    released = expectations.get("release_colleague")
+    if released:
+        colleague = released["colleague"]
+        asked = [body for body in serialized if "RELEASE_COLLEAGUE" in body]
+        check(bool(asked) and all("THE GOAL" not in body for body in asked),
+              "in a release, the colleague's model input carries no goal")
+        check(any(f"=== from colleague {colleague} ===" in body and "RELEASE_TOLD" in body for body in serialized),
+              "what the colleague told with message_user reached the model of the conversation that asked it")
+        check(any(f"=== colleague {colleague} (turn completed" in body for body in serialized),
+              "the end of the colleague's turn reached the model of the conversation that asked it")
     colleagues = [body for body in serialized if "COLLEAGUE_CASE" in body]
     check(bool(colleagues), "a real delegated conversation reached the model")
-    check(any("OFFLINE_EDIT" in body for body in colleagues), "the colleague received its requester's current plan from the hub")
+    check(any("YOUR PLAN" in body and "the conversation that asked you" in body for body in colleagues),
+          "the colleague's model input tells it of a plan of its own, which its requester reads")
+    check(all("OFFLINE_EDIT" not in body for body in colleagues),
+          "the colleague's context carries its own plan, not its requester's")
     check(all("BOB_SKILL_DESCRIPTION" not in body and "OWNER_SKILL_DESCRIPTION" not in body for body in colleagues),
           "the delegated conversation retained its account isolation")
-    memory = [body for body in serialized if "ALICE_MEMORY_CASE" in body]
-    check(bool(memory) and "Specs (" in memory[0] and "on alice-two)" in memory[0] and "placement-contract: Placement fixture" in memory[0],
-          "the assisted model received its working-computer project-memory map")
-    check("ALICE_JOURNAL_CANARY" in outputs and "ALICE_SPEC_CANARY" in outputs,
-          "a real model tool read both project-memory documents on the working computer")
+    memory = [body for body in serialized if "ALICE_HISTORY_CASE" in body]
+    check(bool(memory) and "HISTORY" in memory[0] and "on alice-two:" in memory[0] and "placement-contract: Placement fixture" in memory[0],
+          "the assisted model received its current history catalog")
+    check("ALICE_OBSERVATION_CANARY" in outputs and "ALICE_CONTRACT_CANARY" in outputs,
+          "a real model tool read both history documents on the working computer")
+    from model_mock import last_user_text
+    after_compact = [last_user_text(request["body"].get("input", [])) for request in requests
+                     if "HISTORY_AFTER_COMPACT" in (last_user_text(request["body"].get("input", [])) or "")]
+    check(bool(after_compact) and any("HISTORY" in text and "concurrent-history: Concurrent history fixture" in text for text in after_compact),
+          "the first user input after actual host compaction carries the current history catalog again")
     print(f"MODEL INPUT: {checked} checks passed", flush=True)
 
 
@@ -102,8 +122,15 @@ def inside(args):
         'request_max_retries=0\nstream_max_retries=0\n')
     passed = False
     try:
-        subprocess.run([str(args.drill), str(base), str(args.kernel), goal.endpoint], check=True, timeout=900,
-                       env={"PATH": path, "HOME": str(base / "user"), "LANG": "C.UTF-8", "TMPDIR": str(base)})
+        environment = {"PATH": path, "HOME": str(base / "user"), "LANG": "C.UTF-8", "TMPDIR": str(base),
+                       "FASTCTX_HOME": str(base / "driver-world"), "FASTCTX_PREVIEW": "1"}
+        if args.earlier:
+            environment["FASTCTX_DRILL_EARLIER"] = str(args.earlier)
+        subprocess.run([str(args.drill), str(base), str(args.kernel), goal.endpoint] + (["--scale"] if args.scale else []), check=True, timeout=1800 if args.scale else 900,
+                       env=environment)
+        if args.scale:
+            passed = True
+            return
         verify(mock.requests, json.loads((base / "expectations.json").read_text()))
         if goal.errors:
             raise AssertionError(goal.errors)
@@ -132,7 +159,9 @@ def inside(args):
 
 def main():
     args = arguments()
-    for name in ("kernel", "drill", "codex"):
+    for name in ("kernel", "drill", "codex", "earlier"):
+        if getattr(args, name) is None:
+            continue
         path = getattr(args, name).resolve(strict=True)
         if not path.is_file():
             raise ValueError(f"{name} is not a file")
@@ -146,8 +175,11 @@ def main():
     args.root.mkdir(parents=True, exist_ok=True)
     command = ["unshare", "--net", "--mount", "--pid", "--fork", "--kill-child", "--mount-proc", sys.executable,
                str(Path(__file__).resolve()), "--inside", "--root", str(args.root)]
-    for name in ("kernel", "drill", "codex"):
-        command.extend(["--" + name, str(getattr(args, name))])
+    for name in ("kernel", "drill", "codex", "earlier"):
+        if getattr(args, name) is not None:
+            command.extend(["--" + name, str(getattr(args, name))])
+    if args.scale:
+        command.append("--scale")
     subprocess.run(([] if os.geteuid() == 0 else ["sudo"]) + command, check=True)
 
 

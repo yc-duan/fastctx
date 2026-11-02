@@ -14,17 +14,28 @@ fn path(node: &Node, resident: &ResidentId, turn: &str) -> std::path::PathBuf {
         .join(format!("{}.json", fastctx_hands::files::content_hash(turn.as_bytes())))
 }
 
-pub(super) fn observe(node: &Node, resident: &ResidentId, event: &SessionEvent) -> io::Result<()> {
+pub(super) async fn observe(node: &Node, resident: &ResidentId, event: SessionEvent) -> io::Result<SessionEvent> {
     let Happened::Changed { turn: Some(turn), change: SessionChange::Metadata { metadata } } = &event.happened else {
-        return Ok(());
+        return Ok(event);
     };
-    let Some(failure) = metadata.get("fastctx_turn_failure") else { return Ok(()) };
+    let Some(failure) = metadata.get("fastctx_turn_failure") else { return Ok(event) };
     if failure["turn"].as_str() != Some(turn) {
         return Err(io::Error::other("failure report belongs to another turn"));
     }
     let path = path(node, resident, turn);
-    fastctx_platform::ensure_private_dir(path.parent().expect("failure records have a directory"))?;
-    fastctx_platform::publish(&path, &serde_json::to_vec(failure)?, fastctx_platform::Permissions::Private)
+    fastctx_platform::task::spawn_blocking(move || {
+        let Happened::Changed { change: SessionChange::Metadata { metadata }, .. } = &event.happened else {
+            unreachable!()
+        };
+        let entry = crate::records::metadata::prepare(&path)?;
+        let bytes = serde_json::to_vec(&metadata["fastctx_turn_failure"])?;
+        crate::records::write_at(&entry.directory, fastctx_storage::Priority::Normal, bytes.len(), move |rows| {
+            rows.put_raw(&entry.family, "value", &bytes)
+        })?;
+        Ok(event)
+    })
+    .await
+    .map_err(io::Error::other)?
 }
 
 /// Host diagnostics supplement a World-observed exit; they cannot replace its stop provenance.
@@ -40,15 +51,13 @@ pub(super) fn augment(end: &mut TurnEnd, error: Value) {
 }
 
 pub(super) fn get(node: &Node, resident: &ResidentId, turn: &str) -> io::Result<Option<Value>> {
-    match std::fs::read(path(node, resident, turn)) {
-        Ok(bytes) => {
-            let failure: Value = serde_json::from_slice(&bytes)?;
+    crate::records::metadata::get::<Value>(&path(node, resident, turn))?
+        .map(|failure| {
             if failure["turn"].as_str() != Some(turn) {
                 return Err(io::Error::other("failure report belongs to another turn"));
             }
             Ok(failure.get("error").cloned())
-        }
-        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
-        Err(error) => Err(error),
-    }
+        })
+        .transpose()
+        .map(Option::flatten)
 }

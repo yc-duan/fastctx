@@ -1,17 +1,22 @@
 //! A version notice retains its snapshot and materializes one bounded frame
 //! at a time. Replacing it restarts at zero, superseding any incomplete view.
 use fastctx_net::wire::{self, Down};
-use fastctx_types::{MachineName, update::Network};
+use fastctx_types::{
+    MachineName,
+    update::{Network, Rolled},
+};
 use serde::Serialize;
 use std::{collections::BTreeMap, io, ops::Bound, sync::Arc};
 
-/// A shared visible network and the full arrangements needed by its executor.
+/// A shared visible network, the full arrangements needed by its executor,
+/// and whether the machine told takes a version going out now.
 #[derive(Clone)]
 pub(crate) struct Snapshot {
     network: Arc<Network>,
     name: Option<MachineName>,
     update: Option<Arc<crate::store::DueFor>>,
     repair: Option<Arc<crate::store::RepairFor>>,
+    rolled: Option<Rolled>,
 }
 impl Snapshot {
     pub(crate) fn new(
@@ -19,14 +24,16 @@ impl Snapshot {
         name: Option<MachineName>,
         update: Option<Arc<crate::store::DueFor>>,
         repair: Option<Arc<crate::store::RepairFor>>,
+        rolled: Option<Rolled>,
     ) -> Self {
-        Self { network, name, update, repair }
+        Self { network, name, update, repair, rolled }
     }
     pub(crate) fn network(&self) -> &Arc<Network> {
         &self.network
     }
     pub(crate) fn materialize(&self) -> Network {
         let mut network = (*self.network).clone();
+        network.rolled.clone_from(&self.rolled);
         if let Some(name) = &self.name {
             if let Some(update) = &self.update {
                 network.due.insert(name.clone(), update.due.clone());
@@ -41,6 +48,7 @@ impl Snapshot {
 impl PartialEq for Snapshot {
     fn eq(&self, other: &Self) -> bool {
         self.name == other.name
+            && self.rolled == other.rolled
             && (Arc::ptr_eq(&self.network, &other.network) || self.network == other.network)
             && match (&self.update, &other.update) {
                 (Some(a), Some(b)) => Arc::ptr_eq(a, b) || a.due == b.due,
@@ -92,6 +100,7 @@ impl Pending {
                 hub: self.snapshot.network.hub.clone(),
                 updates_view: self.snapshot.network.updates_view,
                 repair_supported: self.snapshot.network.repair_supported,
+                rolled: self.snapshot.rolled.clone(),
                 ..Network::default()
             }
         } else {

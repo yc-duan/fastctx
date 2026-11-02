@@ -64,16 +64,16 @@ struct ThirdAdmitted {
 /// Makes the hub kept in `from`, of the third version, a hub of the fourth
 /// in `to`, which must hold none. `from` is read, never changed.
 pub fn migrate(from: &Path, to: &Path, new: Migrated) -> anyhow::Result<Report> {
-    if Store::hub_file(to).exists() {
+    if fastctx_platform::disk::is_there(Store::hub_file(to)) {
         anyhow::bail!("{} already holds a hub", to.display());
     }
     let third: ThirdHub = read(&from.join("hub.json"))?;
     let id = HubId::try_from(third.world.clone()).map_err(anyhow::Error::msg)?;
     let certificate = HubCertificate {
-        certificate: std::fs::read(from.join("tls").join("certificate.der"))?,
-        key: std::fs::read(from.join("tls").join("key.der"))?,
+        certificate: fastctx_platform::disk::read(from.join("tls").join("certificate.der"))?,
+        key: fastctx_platform::disk::read(from.join("tls").join("key.der"))?,
     };
-    let members: ThirdMembers = match std::fs::read(from.join("members.json")) {
+    let members: ThirdMembers = match fastctx_platform::disk::read(from.join("members.json")) {
         Ok(bytes) => serde_json::from_slice(&bytes)?,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => ThirdMembers::default(),
         Err(error) => return Err(error.into()),
@@ -133,6 +133,7 @@ pub fn migrate(from: &Path, to: &Path, new: Migrated) -> anyhow::Result<Report> 
             through: None,
             reach: None,
             paths: None,
+            strain: None,
             settled: None,
         }));
         if machine { report.machines.push(name) } else { report.devices.push(name) }
@@ -173,13 +174,14 @@ fn standing(record: &Signed) -> Result<(PublicKey, bool), String> {
 }
 
 fn read<T: serde::de::DeserializeOwned>(path: &Path) -> anyhow::Result<T> {
-    let bytes = std::fs::read(path).map_err(|error| anyhow::anyhow!("reading {}: {error}", path.display()))?;
+    let bytes =
+        fastctx_platform::disk::read(path).map_err(|error| anyhow::anyhow!("reading {}: {error}", path.display()))?;
     serde_json::from_slice(&bytes).map_err(|error| anyhow::anyhow!("reading {}: {error}", path.display()))
 }
 
 fn count_files(directory: &Path) -> std::io::Result<usize> {
     let mut count = 0;
-    let entries = match std::fs::read_dir(directory) {
+    let entries = match fastctx_platform::disk::read_dir(directory) {
         Ok(entries) => entries,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(0),
         Err(error) => return Err(error),

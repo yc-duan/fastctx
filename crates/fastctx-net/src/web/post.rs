@@ -58,7 +58,7 @@ where
 {
     let (mut sender, connection) =
         hyper::client::conn::http1::handshake(TokioIo::new(io)).await.map_err(|e| e.to_string())?;
-    tokio::spawn(async move {
+    fastctx_platform::task::spawn(async move {
         let _ = connection.await;
     });
     let mut request = Request::post(path)

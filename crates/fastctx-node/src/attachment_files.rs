@@ -38,9 +38,11 @@ pub(crate) async fn resolve(
     if let AttachmentSource::Upload(attachment) = &source {
         let is_image = attachment.is_image();
         let (node, attachment, cancelled) = (node.clone(), attachment.clone(), cancel.clone());
-        match tokio::task::spawn_blocking(move || crate::attachments::verified_original(&node, &attachment, &cancelled))
-            .await
-            .map_err(failed)?
+        match fastctx_platform::task::spawn_blocking(move || {
+            crate::attachments::verified_original(&node, &attachment, &cancelled)
+        })
+        .await
+        .map_err(failed)?
         {
             Ok((path, snapshot)) => {
                 return Ok(File {
@@ -89,7 +91,7 @@ pub(crate) async fn resolve(
             .map_err(failed)?
             .ok_or_else(Failure::original_gone)?;
         let temporary = node.world.path().join("image-reading");
-        return tokio::task::spawn_blocking(move || decoded(&temporary, &mime, &base64).map_err(failed))
+        return fastctx_platform::task::spawn_blocking(move || decoded(&temporary, &mime, &base64).map_err(failed))
             .await
             .map_err(failed)?;
     }
@@ -101,7 +103,7 @@ pub(crate) async fn resolve(
             let picture = picture.ok_or_else(Failure::original_gone)?;
             let temporary = node.world.path().join("image-reading");
             let cancel = cancel.clone();
-            let resolved = tokio::task::spawn_blocking(move || match picture {
+            let resolved = fastctx_platform::task::spawn_blocking(move || match picture {
                 fastctx_hosts::codex::UserPicture::Local(path) => match local_image(path, &cancel) {
                     Ok(file) => Ok(Some(file)),
                     Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
@@ -131,7 +133,7 @@ pub(crate) async fn resolve(
     let temporary = node.world.image_reading();
     let agent = about.host.agent.clone();
     let serial = READING.lock_owned().await;
-    tokio::task::spawn_blocking(move || {
+    fastctx_platform::task::spawn_blocking(move || {
         let _serial = serial;
         fastctx_platform::ensure_private_dir(&temporary).map_err(failed)?;
         for path in paths {
@@ -505,7 +507,7 @@ fn decoded(temporary: &std::path::Path, mime: &str, base64: &str) -> io::Result<
     fastctx_platform::ensure_private_dir(temporary)?;
     let scope = tempfile::tempdir_in(temporary)?;
     let path = scope.path().join("decoded-image").with_extension(extension);
-    std::fs::write(&path, &bytes)?;
+    fastctx_platform::disk::write(&path, &bytes)?;
     let file = fastctx_platform::file_read::open(&path)?;
     let snapshot = fastctx_platform::file_read::snapshot(&file, &file.metadata()?)?;
     Ok(File {

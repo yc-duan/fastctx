@@ -1,8 +1,9 @@
 // A thing a stretch did as its row (`world-gui.md`, 对话): as every row of a
 // stretch is, its glyph in the rail, a quiet verb, what it was done to, its
 // figures beside it and where it happened; opened, a card that draws it
-// (`deeds/draw.ts`). Things gathered (`bunch.ts`) are one row that opens on
-// theirs.
+// (`deeds/draw.ts`). A file's name on the row opens the file itself, apart
+// from the row (`file-kind.ts`). Things gathered (`bunch.ts`) are one row
+// that opens on theirs.
 
 import "./lines.css";
 import { escape } from "../prose";
@@ -64,7 +65,7 @@ function cardSaid(card: Card, words: Words): Said {
   const plainSaid = (glyphName: GlyphName, verb: string, object: string, extra: Partial<Said> = {}): Said => ({ glyph: glyphName, verb, object, stats: "", outcome: "", where, ...extra });
   switch (card.kind) {
     case "read":
-      return plainSaid("read", verbs.read, leaf(card.path));
+      return plainSaid("read", verbs.read, leaf(card.path), card.path ? { objectHtml: fileName(card.path, card.machine) } : {});
     case "search":
       return plainSaid("search", verbs.search, card.pattern);
     case "tree":
@@ -106,6 +107,8 @@ function cardSaid(card: Card, words: Words): Said {
       if (look) return plainSaid(look.glyph, deeds.world.look, look.object, { outcome: ended, lead });
       return plainSaid("command", verb, shortCommand(card.command), { outcome: ended, lead });
     }
+    case "folded":
+      return plainSaid("steps", deeds.folded(card.count), "");
     case "fan": {
       const bad = card.deed.steps.filter((step) => troubled(step.end)).length;
       const many = `<span class="row-machine">${glyph("group", 12)}${escape(deeds.machines(card.deed.steps.length))}</span>`;
@@ -129,8 +132,13 @@ function cardSaid(card: Card, words: Words): Said {
       return plainSaid("folder", deeds.world.enter, card.deed.town);
     case "picture": {
       const first = card.deeds[0]!;
-      const object = first.page !== null ? `${leaf(first.path)} ${card.deeds.map((deed) => deeds.page(deed.page ?? 0)).join(words.listSeparator)}` : card.deeds.map((deed) => leaf(deed.path)).join(words.listSeparator);
-      return plainSaid("image", deeds.world.look, object);
+      const pages = card.deeds.map((deed) => deeds.page(deed.page ?? 0)).join(words.listSeparator);
+      const object = first.page !== null ? `${leaf(first.path)} ${pages}` : card.deeds.map((deed) => leaf(deed.path)).join(words.listSeparator);
+      const objectHtml =
+        first.page !== null
+          ? `${fileName(first.path, first.machine ?? card.machine)} ${escape(pages)}`
+          : card.deeds.map((deed) => fileName(deed.path, deed.machine ?? card.machine)).join(escape(words.listSeparator));
+      return plainSaid("image", deeds.world.look, object, { objectHtml });
     }
     case "world": {
       const act = card.deed.act;
@@ -141,14 +149,15 @@ function cardSaid(card: Card, words: Words): Said {
     }
     case "change": {
       const act = card.how === "added" ? "create" : card.how === "deleted" ? "delete" : card.how === "moved" ? "move" : "edit";
-      return plainSaid("edit", words.act(act, "done"), leaf(card.path), { stats: stats(card.added, card.removed), outcome: failed });
+      // A file deleted has nothing left to open.
+      return plainSaid("edit", words.act(act, "done"), leaf(card.path), { stats: stats(card.added, card.removed), outcome: failed, ...(act === "delete" ? {} : { objectHtml: fileName(card.path, card.machine) }) });
     }
     case "web":
       return plainSaid("web", words.act(card.fetched ? "fetch" : "websearch", "done"), card.label, { outcome: failed });
     case "tool":
       return plainSaid("tool", card.name, "", { outcome: failed });
     case "image":
-      return plainSaid("image", words.act("image", "done"), card.path ? leaf(card.path) : "", { outcome: failed });
+      return plainSaid("image", words.act("image", "done"), card.path ? leaf(card.path) : "", { outcome: failed, ...(card.path ? { objectHtml: fileName(card.path, card.machine) } : {}) });
     case "tasks":
       return plainSaid("tasks", words.act("tasks", "done"), "");
   }
@@ -222,6 +231,11 @@ function lookOf(command: string, deeds: Words["deeds"]): { glyph: GlyphName; obj
   if (first === "goal" && !second) return { glyph: "goal", object: deeds.looks.goal };
   if (first === "accounts" && !second) return { glyph: "person", object: deeds.looks.accounts };
   return null;
+}
+
+/** A file's name on a row, which opens the file when pressed. */
+function fileName(path: string, machine: string | null): string {
+  return `<span class="row-name" data-name-path="${escape(path)}"${machine ? ` data-name-machine="${escape(machine)}"` : ""}>${escape(leaf(path))}</span>`;
 }
 
 function place(machine: string | null, words: Words): string {

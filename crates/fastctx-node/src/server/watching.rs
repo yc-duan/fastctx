@@ -45,7 +45,7 @@ impl Drop for Task {
 
 pub(super) async fn serve(node: Arc<Node>, peer: Peer, mut reader: FrameReader, writer: FrameWriter) -> io::Result<()> {
     let (commands, mut incoming) = mpsc::channel(1);
-    let _reader = Task(tokio::spawn(async move {
+    let _reader = Task(fastctx_platform::task::spawn(async move {
         loop {
             let command = watch_ipc::command(&mut reader).await;
             let end = !matches!(command, Ok(Some(_)));
@@ -55,7 +55,7 @@ pub(super) async fn serve(node: Arc<Node>, peer: Peer, mut reader: FrameReader, 
         }
     }));
     let (output, queue) = mpsc::channel(watch_ipc::SUBSCRIPTIONS + 1);
-    let mut writer = Task(tokio::spawn(watch_ipc::write(writer, queue)));
+    let mut writer = Task(fastctx_platform::task::spawn(watch_ipc::write(writer, queue)));
     let (done, mut ended) = mpsc::channel(watch_ipc::SUBSCRIPTIONS);
     let context = Context { node, peer, output, done };
     let mut workers = Workers::default();
@@ -131,7 +131,7 @@ impl Context {
         let (consumed, acknowledgements) = watch::channel(None);
         let (node, peer, output, done, sequence) =
             (self.node.clone(), self.peer.clone(), self.output.clone(), self.done.clone(), next.clone());
-        let task = tokio::spawn(async move {
+        let task = fastctx_platform::task::spawn(async move {
             let result =
                 crate::gate_waits::asked(run(&node, &peer, id, request, memory, &sequence, &output, acknowledgements))
                     .await;
@@ -171,12 +171,25 @@ async fn run(
     super::users_voice(node, peer)?;
     let held = request.held.take();
     crate::admission::local::admit(node, peer, &request.call())?;
-    let mut watching = tokio::time::timeout(
-        watch_ipc::TIMEOUT,
-        crate::talk::watch(node, request.resident, request.machine, request.composer, held, request.now, request.goal),
-    )
-    .await
-    .map_err(|_| Failure::new("opening the local watch did not finish within 30 s"))??;
+    let opening = async {
+        if request.collaboration {
+            crate::colleagues::live::watch(node, request.resident, request.machine).await
+        } else {
+            crate::talk::watch(
+                node,
+                request.resident,
+                request.machine,
+                request.composer,
+                held,
+                request.now,
+                request.goal,
+            )
+            .await
+        }
+    };
+    let mut watching = tokio::time::timeout(watch_ipc::TIMEOUT, opening)
+        .await
+        .map_err(|_| Failure::new("opening the local watch did not finish within 30 s"))??;
     drop(memory);
     let mut flow = Flow::default();
     loop {

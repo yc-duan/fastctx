@@ -20,34 +20,34 @@ fn matches(view: &View, goal: &str, work: &Work) -> bool {
         })
 }
 
-pub(crate) async fn fire(node: &Arc<Node>, store: &Store, timer: &Timer) -> Result<(), Failure> {
+pub(crate) async fn fire(node: &Arc<Node>, store: &Arc<Store>, timer: &Timer) -> Result<(), Failure> {
     let Action::Goal { resident: id, goal: identity, work: work_id } = &timer.action else { unreachable!() };
     let gate = crate::control_queue::gate(node, id);
     let action = gate.lock().await;
     let place = node.places.using(id.as_str()).await;
     if node.residents.deleted(id).is_some() || node.residents.removed(id).is_some() {
-        store.complete(timer).map_err(failure)?;
+        store.complete(timer).await.map_err(failure)?;
         return Ok(());
     }
-    let Some(timer) = store.begin(timer, clock(node).now).map_err(failure)? else {
+    let Some(timer) = store.begin(timer, clock(node).now).await.map_err(failure)? else {
         return Ok(());
     };
     let Some(view) = driver::current(node, id).await? else {
-        store.complete(&timer).map_err(failure)?;
+        store.complete(&timer).await.map_err(failure)?;
         return Ok(());
     };
     let Some(work) =
         view.goal.as_ref().and_then(|goal| goal.runtime.pending.as_ref()).filter(|work| work.id == *work_id).cloned()
     else {
-        store.complete(&timer).map_err(failure)?;
+        store.complete(&timer).await.map_err(failure)?;
         return Ok(());
     };
     if !matches(&view, identity, &work) {
-        store.complete(&timer).map_err(failure)?;
+        store.complete(&timer).await.map_err(failure)?;
         return Ok(());
     }
     let mut goal = view.goal.clone().expect("matched goal");
-    let restarted = checkpoint::restore(node, &mut goal)?;
+    let restarted = checkpoint::restore(node, &mut goal).await?;
     if matches!(work.task, Task::Tell { .. } | Task::Retry { .. })
         && crate::inbox::knows(&node.world.conversation(id), &work.id).map_err(failure)?
     {
@@ -58,7 +58,7 @@ pub(crate) async fn fire(node: &Arc<Node>, store: &Store, timer: &Timer) -> Resu
         if let Some(decision) = decision {
             commit(node, &view, decision).await?;
         }
-        store.complete(&timer).map_err(failure)?;
+        store.complete(&timer).await.map_err(failure)?;
         return Ok(());
     }
     let quiet = driver::quiet(node, id).await?;
@@ -70,7 +70,7 @@ pub(crate) async fn fire(node: &Arc<Node>, store: &Store, timer: &Timer) -> Resu
         if restarted || exhausted {
             let stopped = goal.runtime.retry.as_ref().expect("retry checkpoint").last.clone();
             commit(node, &view, policy::failed(goal, stopped, &clock(node), new_work())).await?;
-            store.complete(&timer).map_err(failure)?;
+            store.complete(&timer).await.map_err(failure)?;
             return Ok(());
         }
     }
@@ -91,7 +91,7 @@ pub(crate) async fn fire(node: &Arc<Node>, store: &Store, timer: &Timer) -> Resu
                         },
                     )
                     .await?;
-                    store.complete(&timer).map_err(failure)?;
+                    store.complete(&timer).await.map_err(failure)?;
                     return Ok(());
                 }
             } else if !quiet {
@@ -134,7 +134,7 @@ pub(crate) async fn fire(node: &Arc<Node>, store: &Store, timer: &Timer) -> Resu
             if let Some(decision) = policy::quota_ready(
                 &goal,
                 &work.id,
-                driver::assistance(node, &goal)?,
+                driver::assistance(node, &goal).await?,
                 Some(&reading),
                 codex,
                 &clock(node),
@@ -151,7 +151,7 @@ pub(crate) async fn fire(node: &Arc<Node>, store: &Store, timer: &Timer) -> Resu
             let _action = gate.lock().await;
             let _place = node.places.using(id.as_str()).await;
             let Some(current) = driver::current(node, id).await? else {
-                store.complete(&timer).map_err(failure)?;
+                store.complete(&timer).await.map_err(failure)?;
                 return Ok(());
             };
             if matches(&current, identity, &work) {
@@ -188,7 +188,7 @@ pub(crate) async fn fire(node: &Arc<Node>, store: &Store, timer: &Timer) -> Resu
             }
         }
         Task::Compact => {
-            if !quiet && !super::compaction::started(node, id, &work)? {
+            if !quiet && !super::compaction::started(node, id, &work).await? {
                 return Err(Failure::new("goal compaction waits for queued input"));
             }
             drop(place);
@@ -197,7 +197,7 @@ pub(crate) async fn fire(node: &Arc<Node>, store: &Store, timer: &Timer) -> Resu
             let _action = gate.lock().await;
             let _place = node.places.using(id.as_str()).await;
             let Some(current) = driver::current(node, id).await? else {
-                store.complete(&timer).map_err(failure)?;
+                store.complete(&timer).await.map_err(failure)?;
                 return Ok(());
             };
             if let fastctx_types::turn_evidence::Compacted::Failed { reason }
@@ -220,7 +220,7 @@ pub(crate) async fn fire(node: &Arc<Node>, store: &Store, timer: &Timer) -> Resu
             }
         }
     }
-    store.complete(&timer).map_err(failure)?;
+    store.complete(&timer).await.map_err(failure)?;
     Ok(())
 }
 
@@ -232,7 +232,13 @@ async fn tell(node: &Arc<Node>, view: &View, work: &Work, timer: &Timer, text: &
     let delivery = Delivery {
         id: work.id.clone(),
         at: timer.fired_at.expect("begun timer"),
-        notice: Notice::Words { from: Speaker::World, text: text.into(), goal_report: None, goal_question: None },
+        notice: Notice::Words {
+            from: Speaker::World,
+            text: text.into(),
+            goal_report: None,
+            goal_question: None,
+            told: None,
+        },
     };
     let result = crate::speech::tell_here_locked(node, id, delivery, crate::speech::Owed::Nobody).await;
     drop(_reading);

@@ -80,7 +80,7 @@ pub(super) async fn settle(node: &Arc<Node>, id: &ResidentId, cell: &mut Option<
     if !state.queue.iter().any(|entry| entry.command) {
         return Ok(false);
     }
-    let waiting: Vec<String> = crate::control_queue::pending(node, id)?.into_iter().map(|row| row.id).collect();
+    let waiting: Vec<String> = crate::control_queue::pending(node, id).await?.into_iter().map(|row| row.id).collect();
     let kept = |entry: &Entry| !entry.command || waiting.iter().any(|command| command == entry.id.as_str());
     if !state.queue.iter().all(kept) {
         let mut next = cell.take().expect("loaded");

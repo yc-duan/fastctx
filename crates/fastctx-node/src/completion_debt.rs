@@ -16,13 +16,13 @@ use serde::{Deserialize, Serialize};
 use crate::Node;
 
 #[derive(Default, Serialize, Deserialize)]
-struct Waiting {
+pub(crate) struct Waiting {
     failures: u32,
     due: Option<Timestamp>,
 }
 
 pub(crate) fn ready(node: &Node, path: &Path, owner: &Address) -> io::Result<bool> {
-    match std::fs::read(path.with_extension("owed"))?.as_slice() {
+    match crate::job_metadata::read(&path.with_extension("owed"))?.as_slice() {
         b"" => return Ok(true),
         b"answer" => {}
         _ => return Err(io::Error::other("the job's completion debt has an unknown form")),
@@ -35,7 +35,7 @@ pub(crate) fn ready(node: &Node, path: &Path, owner: &Address) -> io::Result<boo
         return Ok(true);
     }
     let marker = path.with_extension("answer-wait");
-    let mut waiting = fastctx_install::renewal::read_json::<Waiting>(&marker)?.unwrap_or_default();
+    let mut waiting = crate::job_metadata::get::<Waiting>(&marker)?.unwrap_or_default();
     if waiting.due.is_some_and(|due| due > Timestamp::now()) {
         return Ok(false);
     }
@@ -45,12 +45,12 @@ pub(crate) fn ready(node: &Node, path: &Path, owner: &Address) -> io::Result<boo
     waiting.failures = waiting.failures.saturating_add(1);
     waiting.due =
         Some(Timestamp::now().checked_add(fastctx_net::again::backoff(waiting.failures)).map_err(io::Error::other)?);
-    fastctx_install::renewal::write_json(&marker, &waiting)?;
+    crate::job_metadata::put(&marker, &waiting)?;
     Ok(false)
 }
 
 pub(crate) fn pause(path: &Path) -> io::Result<Option<Duration>> {
-    let Some(waiting) = fastctx_install::renewal::read_json::<Waiting>(&path.with_extension("answer-wait"))? else {
+    let Some(waiting) = crate::job_metadata::get::<Waiting>(&path.with_extension("answer-wait"))? else {
         return Ok(None);
     };
     Ok(waiting
@@ -76,7 +76,7 @@ pub(crate) fn post(
     notice: Notice,
 ) -> io::Result<Result<(), String>> {
     let marker = path.with_extension("posted");
-    let posted = match fastctx_install::renewal::read_json::<crate::letters::Posted>(&marker)? {
+    let posted = match crate::job_metadata::get::<crate::letters::Posted>(&marker)? {
         Some(posted) => posted,
         None => {
             let posted = crate::letters::post(
@@ -86,7 +86,7 @@ pub(crate) fn post(
                 id,
                 Letter::Notice { to: owner.resident.clone(), notice: Box::new(notice) },
             )?;
-            fastctx_install::renewal::write_json(&marker, &posted)?;
+            crate::job_metadata::put(&marker, &posted)?;
             posted
         }
     };
@@ -95,14 +95,14 @@ pub(crate) fn post(
         Posting::Pending => Err(pending("the hub has not yet acknowledged the completion letter")),
         Posting::Refused(reason) => Ok(Err(reason)),
         Posting::Replaced => {
-            std::fs::remove_file(marker)?;
+            crate::job_metadata::delete(&marker)?;
             Err(pending("the membership's outbox changed; the completion will be posted again"))
         }
     }
 }
 
 pub(crate) fn paid(path: &Path) -> io::Result<()> {
-    match std::fs::remove_file(path.with_extension("owed")) {
+    match crate::job_metadata::delete(&path.with_extension("owed")) {
         Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
         result => result,
     }

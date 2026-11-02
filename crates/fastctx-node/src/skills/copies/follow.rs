@@ -30,7 +30,7 @@ fn request(node: &Arc<Node>, held: Arc<Held>) {
         return;
     }
     let weak = Arc::downgrade(node);
-    tokio::spawn(async move {
+    fastctx_platform::task::spawn(async move {
         let mut retry = crate::again::Again::default();
         let mut previous = String::new();
         loop {
@@ -111,21 +111,22 @@ pub(crate) fn refresh(node: &Arc<Node>, hub: &fastctx_types::access::HubId) {
 }
 pub(crate) fn start(node: &Arc<Node>) {
     let result = (|| -> Result<(), Failure> {
-        let directories = match std::fs::read_dir(node.world.path().join("skill-copies")) {
+        let directories = match fastctx_platform::disk::read_dir(node.world.path().join("skill-copies")) {
             Ok(directories) => directories,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
             Err(error) => return Err(failure(error)),
         };
         for directory in directories {
             let directory = directory.map_err(failure)?.path();
-            if !directory.is_dir() {
+            if !fastctx_platform::disk::is_dir(&directory) {
                 continue;
             }
             // One account's folders that cannot be restored leave the others theirs.
             let restored = (|| -> Result<(Identity, Kept), Failure> {
-                let identity: Identity =
-                    serde_json::from_slice(&std::fs::read(directory.join("account.json")).map_err(failure)?)
-                        .map_err(failure)?;
+                let identity: Identity = serde_json::from_slice(
+                    &fastctx_platform::disk::read(directory.join("account.json")).map_err(failure)?,
+                )
+                .map_err(failure)?;
                 if root(node, &identity.account, identity.opened)? != directory {
                     return Err(failure("skill-copy identity differs from its directory"));
                 }
@@ -137,7 +138,9 @@ pub(crate) fn start(node: &Arc<Node>) {
                         request(node, register(node, &identity.account, &generation.name));
                     }
                 }
-                Err(error) => node.log.line(format_args!("restoring skill folders in {}: {}", directory.display(), error.message)),
+                Err(error) => {
+                    node.log.line(format_args!("restoring skill folders in {}: {}", directory.display(), error.message))
+                }
             }
         }
         Ok(())

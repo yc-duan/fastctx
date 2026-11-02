@@ -50,7 +50,7 @@ pub(super) fn engine(node: &Arc<Node>) -> Result<Arc<Host>, String> {
 }
 pub(crate) fn start(node: &Arc<Node>) {
     let node = node.clone();
-    tokio::spawn(async move {
+    fastctx_platform::task::spawn(async move {
         let mut watchers = HashMap::new();
         let mut timers_started = false;
         let mut ways = node.ways.subscribe();
@@ -77,7 +77,10 @@ pub(crate) fn start(node: &Arc<Node>) {
                 for scope in scopes {
                     if watchers.get(&scope).is_none_or(|task: &tokio::task::JoinHandle<()>| task.is_finished()) {
                         let (node, scope_copy) = (node.clone(), scope.clone());
-                        watchers.insert(scope, tokio::spawn(async move { watch_scope(node, scope_copy).await }));
+                        watchers.insert(
+                            scope,
+                            fastctx_platform::task::spawn(async move { watch_scope(node, scope_copy).await }),
+                        );
                     }
                 }
             }
@@ -138,7 +141,7 @@ async fn watch_scope(node: Arc<Node>, scope: HubAccount) {
 }
 fn start_timers(node: &Arc<Node>) {
     let node = node.clone();
-    tokio::spawn(async move {
+    fastctx_platform::task::spawn(async move {
         let timers = node.sentinels.timers.get().expect("engine has timer service");
         let mut retry = crate::again::Again::default();
         loop {
@@ -177,7 +180,7 @@ async fn enqueue(node: &Arc<Node>, scope: HubAccount, id: SentinelId, fired: Opt
         return;
     }
     let node = node.clone();
-    tokio::spawn(async move {
+    fastctx_platform::task::spawn(async move {
         let _slot = slot;
         let result = async {
             let host = engine(&node)?;
@@ -233,9 +236,14 @@ pub(crate) fn report(node: &Node, key: &str, error: Option<String>) {
                 errors.insert(key.into(), error.clone());
                 Some(error)
             }
-            None => { errors.remove(key); None }
+            None => {
+                errors.remove(key);
+                None
+            }
             _ => None,
         }
     };
-    if let Some(error) = changed { node.log.line(format_args!("sentinel {key}: {error}")); }
+    if let Some(error) = changed {
+        node.log.line(format_args!("sentinel {key}: {error}"));
+    }
 }

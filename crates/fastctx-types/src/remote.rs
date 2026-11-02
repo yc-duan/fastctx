@@ -37,6 +37,9 @@ pub enum RemoteCall {
     Plan {
         resident: ResidentId,
         operation: crate::plan::Operation,
+        /// Another conversation's plan to read; the resident's own when absent.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        of: Option<crate::plan::Of>,
     },
     Collaboration {
         resident: ResidentId,
@@ -451,6 +454,11 @@ pub enum RemoteCall {
         /// it reads past this and sends none.
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         now: bool,
+        /// Follows the conversation's collaboration instead of its history
+        /// (`session::Watched::Collaboration`); said only to a machine whose
+        /// facts say `collaboration_watch`.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        collaboration: Option<crate::collaboration::Follow>,
     },
     /// Open a session there for the user, as `Call::Open`.
     Open {
@@ -598,6 +606,13 @@ impl RemoteCall {
             Self::EnterProject { .. } | Self::Plan { .. } => Purpose::Echo,
             Self::SentinelSettings { .. } | Self::SentinelControl { .. } | Self::SentinelKeys => Purpose::Look,
             Self::SentinelKey { .. } => Purpose::Hands,
+            Self::SentinelHome { request: crate::sentinel_control::HomeRequest::Conversation { request, .. } } => {
+                if matches!(request.as_ref(), crate::sentinel_control::HomeRequest::Withdraw { .. }) {
+                    Purpose::Hands
+                } else {
+                    Purpose::Look
+                }
+            }
             Self::SentinelHome {
                 request:
                     crate::sentinel_control::HomeRequest::Inspect { .. }
@@ -770,6 +785,9 @@ pub enum RemoteReply {
     },
     Asked {
         colleague: ResidentId,
+        /// How many colleagues wait ahead of its first turn, when it waits.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        waiting: Option<u32>,
     },
     Found {
         lives_here: bool,

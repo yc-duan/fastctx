@@ -4,7 +4,8 @@
 // update to, not only the newest; an older one is listed greyed and never
 // taken, as versions only go forward. Filtered by line, the machine's own
 // first. The same window picks for this device, for another machine, for
-// several, and the network's lowest version.
+// several, the network's lowest version, and the release the network rolls
+// out a batch at a time, where a release is also withdrawn or taken back.
 
 import { Sheet } from "./confirm";
 import { escape } from "../conversation/prose";
@@ -16,7 +17,19 @@ export type VersionPurpose =
   /** Updating the machine the state is of, or several like it. */
   | { kind: "update"; pick(version: string): Promise<void> }
   /** The network's lowest version, or none. */
-  | { kind: "minimum"; current: string | null; pick(version: string | null): Promise<void> };
+  | { kind: "minimum"; current: string | null; pick(version: string | null): Promise<void> }
+  /** The release to roll out a batch at a time; withdrawing one, or taking
+   *  it back, is asked of `withdraw`, which says when it is done. */
+  | {
+      kind: "rollout";
+      rolling: string | null;
+      withdrawn(): ReadonlySet<string>;
+      pick(version: string): Promise<void>;
+      withdraw(version: string, withdrawn: boolean, done: () => void): void;
+    };
+
+/** Picking the release to roll out. */
+export type RolloutPurpose = Extract<VersionPurpose, { kind: "rollout" }>;
 
 /** The machine whose versions are shown. */
 export interface VersionSubject {
@@ -120,7 +133,7 @@ export class VersionWindow {
   open(subject: VersionSubject, purpose: VersionPurpose, look = false): void {
     this.subject = subject;
     this.purpose = purpose;
-    this.filter = purpose.kind === "minimum" || subject.state.channel === "beta" ? "all" : "stable";
+    this.filter = purpose.kind !== "update" || subject.state.channel === "beta" ? "all" : "stable";
     this.said = "";
     this.picking = null;
     this.drawn = "";
@@ -135,6 +148,12 @@ export class VersionWindow {
     if (!this.subject || !this.sheet?.dialog.open) return;
     this.subject = { ...this.subject, state };
     this.draw();
+  }
+
+  /** What the purpose knows changed while the window is open: a release
+   *  withdrawn or taken back. */
+  redraw(): void {
+    if (this.sheet?.dialog.open) this.draw();
   }
 
   close(): void {
@@ -157,7 +176,15 @@ export class VersionWindow {
         return;
       }
       const pick = target.closest<HTMLElement>("[data-vw-pick]");
-      if (pick) this.pick(pick.dataset.vwPick === "" ? null : pick.dataset.vwPick!);
+      if (pick) {
+        this.pick(pick.dataset.vwPick === "" ? null : pick.dataset.vwPick!);
+        return;
+      }
+      const withdraw = target.closest<HTMLElement>("[data-vw-withdraw]");
+      if (withdraw && this.purpose?.kind === "rollout") {
+        const version = withdraw.dataset.vwWithdraw!;
+        this.purpose.withdraw(version, !this.purpose.withdrawn().has(version), () => this.redraw());
+      }
     });
     return sheet;
   }
@@ -209,6 +236,7 @@ export class VersionWindow {
     const { state } = subject;
     const rows = rowsOf(subject).filter((row) => this.filter === "all" || (this.filter === "test") === row.test);
     const minimum = purpose.kind === "minimum" ? purpose.current : null;
+    const withdrawn = purpose.kind === "rollout" ? purpose.withdrawn() : new Set<string>();
     // The one to press is what an automatic update there would take: the
     // newest on its own line that does not pass the hubs' major version.
     const first = rows.find((row) => row.takes && !row.pastHub && (state.channel === "beta" || !row.test))?.version;
@@ -222,6 +250,17 @@ export class VersionWindow {
     const facts = (row: Row) =>
       [row.day ? words.day(row.day) : "", row.size ? words.size(row.size) : ""].filter(Boolean).join(" ");
     const act = (row: Row): string => {
+      if (purpose.kind === "rollout") {
+        // Withdrawing is the row's second, quiet act, shown as the pointer
+        // rests on it; a withdrawn release is only taken back.
+        const busy = this.picking !== null ? " disabled" : "";
+        if (withdrawn.has(row.version)) {
+          return `<span class="vw-now">${escape(words.withdrawn)}</span><button class="text-button quiet-button vw-second" type="button" data-vw-withdraw="${escape(row.version)}"${busy}>${escape(words.restore)}</button>`;
+        }
+        const second = `<button class="text-button quiet-button vw-second" type="button" data-vw-withdraw="${escape(row.version)}"${busy}>${escape(words.withdraw)}</button>`;
+        if (row.version === purpose.rolling) return `<span class="vw-now">${escape(words.rolling)}</span>${second}`;
+        return `${second}<button class="vw-go" type="button" data-vw-pick="${escape(row.version)}"${busy}>${escape(words.rolloutPick)}</button>`;
+      }
       if (purpose.kind === "minimum") {
         if (row.version === minimum) return `<span class="vw-now">${escape(words.asked)}</span>`;
         return `<button class="vw-go" type="button" data-vw-pick="${escape(row.version)}"${this.picking !== null ? " disabled" : ""}>${escape(words.ask)}</button>`;
@@ -236,7 +275,13 @@ export class VersionWindow {
       ? rows
           .map((row) => {
             const kind =
-              purpose.kind === "minimum"
+              purpose.kind === "rollout"
+                ? withdrawn.has(row.version)
+                  ? " older"
+                  : row.version === purpose.rolling
+                    ? " now"
+                    : ""
+                : purpose.kind === "minimum"
                 ? row.version === minimum
                   ? " now"
                   : ""
@@ -266,8 +311,11 @@ export class VersionWindow {
       purpose.kind === "minimum" && minimum
         ? `<button class="text-button quiet-button" type="button" data-vw-pick=""${this.picking !== null ? " disabled" : ""}>${escape(words.askNone)}</button>`
         : "";
-    const html = `${sheet.head(purpose.kind === "minimum" ? words.minimumTitle : words.title, words.close)}
-      <p class="vw-running">${escape(purpose.kind === "minimum" ? words.minimumNow(minimum) : (subject.said ?? words.runs(subject.who, subject.running)))}</p>
+    const title = purpose.kind === "minimum" ? words.minimumTitle : purpose.kind === "rollout" ? words.rolloutTitle : words.title;
+    const running =
+      purpose.kind === "minimum" ? words.minimumNow(minimum) : purpose.kind === "rollout" ? words.rolloutNow(purpose.rolling) : (subject.said ?? words.runs(subject.who, subject.running));
+    const html = `${sheet.head(title, words.close)}
+      <p class="vw-running">${escape(running)}</p>
       <div class="vw-tools">
         <div class="choice-options" role="radiogroup" aria-label="${escape(words.filterLabel)}">${filters}</div>
         <span class="vw-looked"><span>${escape(looked)}</span>${subject.look ? `<button class="text-button quiet-button" type="button" data-vw-look${this.looking ? " disabled" : ""}>${escape(words.lookAgain)}</button>` : ""}</span>

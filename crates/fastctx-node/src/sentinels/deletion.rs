@@ -38,7 +38,7 @@ pub(crate) fn note_deleted(node: &Node, id: &ResidentId) -> Result<(), String> {
 pub(crate) async fn recover(node: &Arc<Node>) -> Vec<String> {
     let mut errors = Vec::new();
     let directory = node.world.path().join("sentinel-owner-removals");
-    let entries = match std::fs::read_dir(directory) {
+    let entries = match fastctx_platform::disk::read_dir(directory) {
         Ok(entries) => entries,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return errors,
         Err(e) => {
@@ -68,7 +68,7 @@ pub(crate) async fn recover(node: &Arc<Node>) -> Vec<String> {
                 removal.pending.remove(&scope);
                 fastctx_agent::state::save(&path, &removal)?;
             }
-            std::fs::remove_file(path).map_err(|e| e.to_string())
+            fastctx_platform::disk::remove_file(path).map_err(|e| e.to_string())
         }
         .await;
         if let Err(error) = result {

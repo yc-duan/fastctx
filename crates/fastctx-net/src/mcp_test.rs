@@ -226,7 +226,7 @@ async fn send<T: AsyncRead + AsyncWrite + Unpin + Send + 'static>(
 ) -> Result<hyper::Response<Incoming>, String> {
     let (mut sender, connection) =
         hyper::client::conn::http1::handshake(TokioIo::new(stream)).await.map_err(|e| e.to_string())?;
-    tokio::spawn(async move {
+    fastctx_platform::task::spawn(async move {
         let _ = connection.await;
     });
     sender.send_request(request).await.map_err(|e| e.to_string())

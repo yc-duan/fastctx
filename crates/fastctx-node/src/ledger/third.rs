@@ -58,7 +58,7 @@ fn migrate_town(world: &WorldDir, here: &MachineName, town: &TownName) -> io::Re
     let signed = directory.signed();
     let mut entries = Vec::new();
     for (_, path) in super::numbered(&signed)? {
-        let wrapped: Signed = serde_json::from_slice(&std::fs::read(&path)?)
+        let wrapped: Signed = serde_json::from_slice(&fastctx_platform::disk::read(&path)?)
             .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, format!("{}: {error}", path.display())))?;
         match wrapped.claim::<ThirdEntry>() {
             Ok(entry) if entry.town == *town => entries.push(entry),
@@ -80,7 +80,7 @@ fn migrate_town(world: &WorldDir, here: &MachineName, town: &TownName) -> io::Re
     // computer's, so carrying it into a hub leaves its author as it is.
     let theirs = PublicKey::from_bytes([0; 32]);
     let aside = directory.path().join("signed-third");
-    std::fs::rename(&signed, &aside)?;
+    fastctx_platform::disk::rename(&signed, &aside)?;
     for (index, entry) in entries.into_iter().enumerate() {
         let entry = Entry {
             hub: place.hub.clone(),
@@ -95,8 +95,8 @@ fn migrate_town(world: &WorldDir, here: &MachineName, town: &TownName) -> io::Re
         super::apply(world, town, index as u64 + 1, &entry, &signed)?;
     }
     let refused = directory.path().join("refused.json");
-    if refused.exists() {
-        std::fs::rename(&refused, directory.path().join("refused-third.json"))?;
+    if fastctx_platform::disk::is_there(&refused) {
+        fastctx_platform::disk::rename(&refused, directory.path().join("refused-third.json"))?;
     }
     names::set_place(world, town, &place)?;
     Ok(true)

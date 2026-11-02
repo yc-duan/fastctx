@@ -84,7 +84,10 @@ export class SideFrame implements PartsFrame {
     },
   ) {
     this.pane = new SidePane(words, {
-      changed: () => this.drawSwitch(),
+      changed: () => {
+        this.drawSwitch();
+        this.parts?.seen(this.pane.visible);
+      },
       dock: (dock) => this.setDock(dock),
     });
     this.split = document.createElement("div");
@@ -131,12 +134,16 @@ export class SideFrame implements PartsFrame {
   /** Turns the side to the parts of the conversation now in focus. */
   use(parts: SideParts | null): void {
     if (parts === this.parts) return;
-    if (this.parts) this.parts.frame = null;
+    if (this.parts) {
+      this.parts.frame = null;
+      this.parts.seen(null);
+    }
     this.parts = parts;
     if (parts) parts.frame = this;
     this.opener.hidden = !parts;
     this.pane.use(parts);
     this.drawSwitch();
+    parts?.seen(this.pane.visible);
     if (parts && !this.reopened) {
       this.reopened = true;
       // Open as it was left, once the desk is laid out on the screen: no

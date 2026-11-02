@@ -19,7 +19,7 @@ pub(crate) async fn answer(node: &Arc<Node>, call: DataCall) -> Result<DataReply
     match call {
         DataCall::List => {
             let node = node.clone();
-            let space = tokio::task::spawn_blocking(move || space::measure(&node))
+            let space = fastctx_platform::task::spawn_blocking(move || space::measure(&node))
                 .await
                 .map_err(|error| Failure::new(error.to_string()))?
                 .map_err(|error| Failure::new(format!("measuring what is kept here: {error}")))?;
@@ -28,7 +28,7 @@ pub(crate) async fn answer(node: &Arc<Node>, call: DataCall) -> Result<DataReply
         DataCall::Delete { names } => Ok(DataReply::Deleted { deletions: delete::delete(node, names).await }),
         DataCall::ClearCache => {
             let root = node.root.join("cache");
-            let bytes = tokio::task::spawn_blocking(move || -> std::io::Result<u64> {
+            let bytes = fastctx_platform::task::spawn_blocking(move || -> std::io::Result<u64> {
                 let viewed = root.join("viewed");
                 let mut turn = fastctx_platform::viewed_cache::Turn::acquire(&viewed)?;
                 let before = space::tally(&root)?.bytes;

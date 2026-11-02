@@ -44,7 +44,7 @@ fn versions<T: serde::de::DeserializeOwned>(directory: &Path) -> io::Result<Vec<
 }
 
 fn read_dir(path: &Path) -> io::Result<Vec<PathBuf>> {
-    match std::fs::read_dir(path) {
+    match fastctx_platform::disk::read_dir(path) {
         Ok(entries) => entries.map(|entry| entry.map(|entry| entry.path())).collect(),
         Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(Vec::new()),
         Err(error) => Err(error),
@@ -52,6 +52,6 @@ fn read_dir(path: &Path) -> io::Result<Vec<PathBuf>> {
 }
 
 fn read_json<T: serde::de::DeserializeOwned>(path: &Path) -> io::Result<T> {
-    serde_json::from_slice(&std::fs::read(path)?)
+    serde_json::from_slice(&fastctx_platform::disk::read(path)?)
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, format!("{}: {error}", path.display())))
 }

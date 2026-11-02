@@ -19,14 +19,14 @@ pub async fn here(node: &Node, since: Timestamp, town: Option<TownName>) -> Resu
     // The conversations' records are each published whole, and there may be
     // many: they are read without holding up what syncs the ledgers.
     let (reading, named) = (world.clone(), machine.clone());
-    let mut partial = tokio::task::spawn_blocking(move || records::conversations(&reading, &named, since))
+    let mut partial = fastctx_platform::task::spawn_blocking(move || records::conversations(&reading, &named, since))
         .await
         .map_err(|error| failure(&error))?
         .map_err(|error| failure(&error))?;
     // Intake publishes the signed ledger before its readable files. Reading
     // signed records under the same lock also excludes carrying a town in.
     let _syncing = node.syncing.lock().await;
-    tokio::task::spawn_blocking(move || {
+    fastctx_platform::task::spawn_blocking(move || {
         records::ledgers(&mut partial, &world, &machine, town.as_ref())?;
         Ok(records::reply(partial, &machine, since, town.as_ref()))
     })
@@ -136,9 +136,10 @@ async fn ledger_events(
 ) -> Result<Vec<SinceEvent>, Failure> {
     let (world, machine, town) = (node.world.clone(), node.machine(), town.clone());
     let _syncing = node.syncing.lock().await;
-    let (events, found) = tokio::task::spawn_blocking(move || records::ledger(&world, &machine, since, &town))
-        .await
-        .map_err(|error| Failure::new(format!("reading the queried ledger: {error}")))?;
+    let (events, found) =
+        fastctx_platform::task::spawn_blocking(move || records::ledger(&world, &machine, since, &town))
+            .await
+            .map_err(|error| Failure::new(format!("reading the queried ledger: {error}")))?;
     issues.extend(found);
     Ok(events)
 }

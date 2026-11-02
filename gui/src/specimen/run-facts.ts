@@ -10,6 +10,11 @@ const RECORDS = "/home/me/.fastctx/world/towns/mark50/residents/claude-2b1c";
 /** Lines the specimen machines hold, by path: changes' rows, outputs. */
 const held = new Map<string, () => string[]>();
 
+/** A file the specimen machines hold at `path`, read as any file is. */
+export function keepFile(path: string, lines: () => string[]): void {
+  held.set(path, lines);
+}
+
 /** The lines at `path` on a specimen machine; an output still being written
  *  grows a line a second. */
 export function specimenLines(path: string): MemoryLines & { close(): Promise<void> } {

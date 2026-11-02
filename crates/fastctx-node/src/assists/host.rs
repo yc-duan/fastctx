@@ -1,28 +1,59 @@
 //! Host isolation is a property of a conversation's birth, not a live
 //! directory view: a hub may not have sent that view when a node restarts.
 
+use std::collections::HashMap;
+use std::path::PathBuf;
+use std::sync::{LazyLock, Mutex};
+use std::time::{Duration, Instant};
+
 use fastctx_types::{ResidentId, access::Acting, ipc::Failure};
 
 use crate::Node;
 
-fn path(node: &Node, resident: &ResidentId) -> std::path::PathBuf {
+/// How long a conversation found with no record of its host mode is taken
+/// to have none before its directory is looked at again.
+const ABSENT_FOR: Duration = Duration::from_secs(10);
+
+/// A conversation's host mode as read, and when.
+type Read = (Option<bool>, Instant);
+
+/// Each conversation's host mode as last read or recorded, by its record's
+/// path: fixed at its birth and asked for whenever its host is found, it is
+/// read from its disk once.
+static KEPT: LazyLock<Mutex<HashMap<PathBuf, Read>>> = LazyLock::new(Default::default);
+
+fn path(node: &Node, resident: &ResidentId) -> PathBuf {
     node.world.conversation(resident).path().join("host-isolation.json")
 }
 
 pub(crate) fn kept(node: &Node, resident: &ResidentId) -> Result<Option<bool>, Failure> {
-    match std::fs::read(path(node, resident)) {
-        Ok(bytes) => serde_json::from_slice(&bytes)
-            .map(Some)
-            .map_err(|_| Failure::new("invalid conversation host-isolation record")),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
-        Err(error) => Err(Failure::new(format!("reading conversation host isolation: {error}"))),
+    let path = path(node, resident);
+    if let Some((kept, at)) = KEPT.lock().expect("never poisoned").get(&path).copied()
+        && (kept.is_some() || at.elapsed() < ABSENT_FOR)
+    {
+        return Ok(kept);
     }
+    let kept = match fastctx_platform::disk::read(&path) {
+        Ok(bytes) => Some(
+            serde_json::from_slice(&bytes).map_err(|_| Failure::new("invalid conversation host-isolation record"))?,
+        ),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+        Err(error) => return Err(Failure::new(format!("reading conversation host isolation: {error}"))),
+    };
+    KEPT.lock().expect("never poisoned").insert(path, (kept, Instant::now()));
+    Ok(kept)
 }
 
 fn record(node: &Node, resident: &ResidentId, assisted: bool) -> std::io::Result<()> {
     let path = path(node, resident);
     fastctx_platform::ensure_private_dir(path.parent().expect("conversation directory"))?;
-    fastctx_platform::publish(&path, if assisted { b"true" } else { b"false" }, fastctx_platform::Permissions::Private)
+    fastctx_platform::publish(
+        &path,
+        if assisted { b"true" } else { b"false" },
+        fastctx_platform::Permissions::Private,
+    )?;
+    KEPT.lock().expect("never poisoned").insert(path, (Some(assisted), Instant::now()));
+    Ok(())
 }
 
 /// Records a new conversation's host mode; an older stored session remains

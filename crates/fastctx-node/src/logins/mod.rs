@@ -128,7 +128,7 @@ pub(crate) fn identities(node: &Node, agent: &AgentName) -> Result<Vec<(PathBuf,
 pub(crate) async fn here(node: &Arc<Node>) -> Result<MachineLogins, Failure> {
     sign_in::ask_changed(node).await;
     let node = node.clone();
-    tokio::task::spawn_blocking(move || assemble(&node))
+    fastctx_platform::task::spawn_blocking(move || assemble(&node))
         .await
         .map_err(|error| Failure::new(format!("reading the agents' logins: {error}")))?
 }
@@ -339,7 +339,7 @@ pub(crate) fn known(node: &Node, agent: &AgentName, dir: &Path) -> Result<(), Fa
             node.machine()
         )));
     }
-    if !dir.is_dir() {
+    if !fastctx_platform::disk::is_dir(dir) {
         return Err(Failure::not_run(format!("{} is not a directory on {}", dir.display(), node.machine())));
     }
     Ok(())
@@ -362,7 +362,7 @@ pub(crate) fn listed(node: &Node, agent: &str, dir: Option<&Path>) -> Result<Opt
             node.machine()
         )));
     }
-    if !dir.is_dir() {
+    if !fastctx_platform::disk::is_dir(&dir) {
         return Err(Failure::not_run(format!("{} is no longer a directory on {}", dir.display(), node.machine())));
     }
     Ok((!crate::homes::same_dir(&dir, &default)).then_some(dir))
@@ -389,8 +389,8 @@ pub(crate) async fn take_up(node: &Arc<Node>, agent: AgentName, dir: PathBuf) ->
     }
     let (found, default, programs, signed) = {
         let (node, agent, dir) = (node.clone(), agent.clone(), dir.clone());
-        tokio::task::spawn_blocking(move || {
-            if !dir.is_dir() {
+        fastctx_platform::task::spawn_blocking(move || {
+            if !fastctx_platform::disk::is_dir(&dir) {
                 return Err(Failure::not_run(format!("{} is not a directory on {}", dir.display(), node.machine())));
             }
             let context = Context::of(&node)?;
@@ -418,13 +418,13 @@ pub(crate) async fn take_up(node: &Arc<Node>, agent: AgentName, dir: PathBuf) ->
         identify::codex(node, &dir, false).await
     } else {
         let path = dir.clone();
-        tokio::task::spawn_blocking(move || identify::claude(&path, default, &programs))
+        fastctx_platform::task::spawn_blocking(move || identify::claude(&path, default, &programs))
             .await
             .map_err(|error| Failure::new(error.to_string()))??
     };
     {
         let (node, agent, dir) = (node.clone(), agent.clone(), dir.clone());
-        tokio::task::spawn_blocking(move || {
+        fastctx_platform::task::spawn_blocking(move || {
             kept::change(&node, |kept| {
                 let logins = &mut kept.of_mut(agent.as_str()).logins;
                 logins.retain(|known| !crate::homes::same_dir(&known.dir, &dir));

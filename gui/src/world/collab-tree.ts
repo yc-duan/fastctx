@@ -4,6 +4,7 @@
 // colleagues' machines report; parts it could not reach are named, not faked.
 
 import { invoke } from "@tauri-apps/api/core";
+import { observe } from "./delivery";
 import type { Address, ResidentId, Timestamp } from "./wire";
 
 export type GoalStateWire = "active" | "complete" | "blocked" | "paused";
@@ -50,4 +51,18 @@ export interface Tree {
 
 export function collaborationTree(resident: ResidentId, machine?: string): Promise<Tree> {
   return invoke<Tree>("collaboration_tree", { resident, machine });
+}
+
+export type CollaborationPiece =
+  | { kind: "tree"; tree: Tree }
+  | { kind: "interrupted"; error: string; since: number };
+
+/** Follows the collaboration: the tree now (resolved here), then after each
+ *  change, until `unwatch`. */
+export function watchCollaboration(
+  resident: ResidentId,
+  machine: string | undefined,
+  onPiece: (piece: CollaborationPiece) => void,
+): Promise<{ id: number; tree: Tree }> {
+  return observe<CollaborationPiece, { id: number; tree: Tree }>("collaboration_watch", { resident, machine }, onPiece);
 }

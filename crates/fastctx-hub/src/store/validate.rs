@@ -21,6 +21,7 @@ pub(super) fn row(kind: &str, value: &Value) -> Result<()> {
         "removed" => decode::<super::Removed>(value),
         "project_deletions" => decode::<crate::project_deletions::Pending>(value),
         "forgetting" => decode::<crate::forget::Pending>(value),
+        "account_forgetting" => decode::<crate::forget::accounts::AccountPending>(value),
         "letters" => decode::<super::Letters>(value),
         "due" => decode::<super::DueFor>(value),
         "repairs" => decode::<super::RepairFor>(value),

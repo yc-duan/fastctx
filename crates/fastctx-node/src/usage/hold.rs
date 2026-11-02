@@ -21,7 +21,7 @@ fn publish(
     }
     let Some(session) = &about.session else { return Ok(()) };
     let directory = fastctx_hosts::claude::exchange::sessions(node.world.path()).join(session);
-    if !directory.is_dir() {
+    if !fastctx_platform::disk::is_dir(&directory) {
         return Ok(());
     }
     let path = directory.join("hold.json");
@@ -29,11 +29,11 @@ fn publish(
     match desired {
         Some(value) => {
             let bytes = serde_json::to_vec(&value).map_err(std::io::Error::other)?;
-            if std::fs::read(&path).ok().as_ref() != Some(&bytes) {
+            if fastctx_platform::disk::read(&path).ok().as_ref() != Some(&bytes) {
                 fastctx_platform::publish(&path, &bytes, fastctx_platform::Permissions::Private)?;
             }
         }
-        None => match std::fs::remove_file(path) {
+        None => match fastctx_platform::disk::remove_file(path) {
             Ok(()) => {}
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
             Err(e) => return Err(e),
@@ -98,11 +98,13 @@ fn refresh_login(node: &Arc<Node>, records: Vec<(ResidentId, About)>) -> Option<
             continue;
         }
         let node = node.clone();
-        tokio::spawn(async move {
-            // 2026-10-20: a report holds its session gate; stopping another session must
+        fastctx_platform::task::spawn(async move {
+            // A report holds its session gate; stopping another session must
             // never wait beneath that gate (world-concurrency.md).
             if node.residents.now(&id).is_some_and(|now| now.turn.as_ref() == Some(&turn)) {
-                if let Err(failure) = crate::talk::stop_here_as(&node, &id, fastctx_types::turn_evidence::StopSource::Allowance).await {
+                if let Err(failure) =
+                    crate::talk::stop_here_as(&node, &id, fastctx_types::turn_evidence::StopSource::Allowance).await
+                {
                     node.log.line(format_args!("stopping {id} at its allowance: {}", failure.message));
                 }
                 let health = Health { kind: HealthKind::Warning, text: used.said(&account) };
@@ -121,7 +123,7 @@ fn refresh_login(node: &Arc<Node>, records: Vec<(ResidentId, About)>) -> Option<
 pub(crate) fn watch(node: &Arc<Node>) {
     let mut views = node.views.subscribe();
     let weak = Arc::downgrade(node);
-    tokio::spawn(async move {
+    fastctx_platform::task::spawn(async move {
         loop {
             let delay = {
                 let Some(node) = weak.upgrade() else { return };

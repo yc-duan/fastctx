@@ -62,7 +62,7 @@ pub(super) fn committed(
         }
     }
     let (node, id) = (node.clone(), id.clone());
-    runtime.spawn(async move {
+    fastctx_platform::task::spawn_on(runtime, async move {
         loop {
             let next = {
                 let mut pending = node.composers.publications.0.lock().expect("composer publications");

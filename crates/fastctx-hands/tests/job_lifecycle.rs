@@ -73,7 +73,6 @@ fn exercise() -> Result {
     };
     let names = Names { me: machine.clone(), was: Vec::new(), renamed: Vec::new() };
     let launch = run::Launch {
-        answer_receipts: false,
         world: &world,
         names: &names,
         owner: &owner,
@@ -266,6 +265,7 @@ async fn node(mut listener: Listener, world: WorldDir, machine: MachineName, not
                     account_records: false,
                     conversation_plans: false,
                     scratch_locations: false,
+                    collaboration_watch: false,
                     machine: machine.clone(),
                     version: "test".into(),
                     node_lifetime: None,

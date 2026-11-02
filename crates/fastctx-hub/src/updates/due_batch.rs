@@ -15,12 +15,15 @@ use std::{collections::BTreeMap, sync::Arc};
 /// and each has its own audit record, with the last arrangement taking effect.
 pub(super) fn apply(
     hub: &Hub,
-    asker: &MachineName,
+    asker: &crate::origin::Origin,
     account: &AccountName,
     machines: &[MachineName],
     version: Option<&str>,
 ) -> Vec<Result<(), String>> {
-    let mut store = hub.store();
+    let mut store = hub.edit_store();
+    if let Err(error) = asker.check(&store.book.directory) {
+        return vec![Err(error); machines.len()];
+    }
     let expired = match crate::assists::end_due(&mut store, Timestamp::now()) {
         Ok(expired) => expired,
         Err(error) => {
@@ -37,7 +40,7 @@ pub(super) fn apply(
     let actor = Actor {
         account: Some(account.clone()),
         authenticated: directory.logged_in(asker, account),
-        member: Some(asker.clone()),
+        member: Some(asker.name.clone()),
         peer: None,
     };
     let manifest = version.and_then(|version| hub.updates.lock().expect("never poisoned").manifest(version));

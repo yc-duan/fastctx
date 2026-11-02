@@ -75,32 +75,15 @@ impl Handoff {
         {
             return Ok(true);
         }
-        match std::fs::read(&self.path) {
-            Ok(bytes) if bytes == b"accepted" => {
-                let key = self.key.clone();
-                self.database
-                    .write(key.bytes() + 8, move |connection| {
-                        receipts::import(connection, &key, b"accepted", KEEP, jiff::Timestamp::now().as_millisecond())
-                    })
-                    .await
-                    .map_err(io::Error::other)?;
-                Ok(true)
-            }
-            Ok(_) => Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!("invalid letter receipt: {}", self.path.display()),
-            )),
-            Err(error) if error.kind() == io::ErrorKind::NotFound => {
-                // Migration may have committed and removed the file between
-                // the first indexed read and the fallback file read.
-                let key = self.key.clone();
-                self.database
-                    .read(move |connection| receipts::get(connection, &key).map(|value| value.is_some()))
-                    .await
-                    .map_err(io::Error::other)
-            }
-            Err(error) => Err(error),
-        }
+        let (database, path) = (self.database.clone(), self.path.clone());
+        fastctx_platform::task::spawn_blocking(move || super::migrate::prepare(&database, &path))
+            .await
+            .map_err(io::Error::other)??;
+        let key = self.key.clone();
+        self.database
+            .read(move |connection| receipts::get(connection, &key).map(|value| value.is_some()))
+            .await
+            .map_err(io::Error::other)
     }
 
     /// Keeps that the letter was handed over; `received`, where it came as

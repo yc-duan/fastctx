@@ -130,7 +130,13 @@ pub fn authorize<L: Lookup + ?Sized>(lookup: &L, account: &AccountName, action: 
             let project = lookup
                 .find_project(town)
                 .ok_or_else(|| Denial::new(Why::ProjectMissing, format!("there is no project {town}")))?;
-            if project.owner == *account || project.granted.contains(account) {
+            if project.owner == *account
+                || project.granted.contains(account)
+                || project
+                    .shared_on
+                    .as_ref()
+                    .is_some_and(|machine| authorize(lookup, account, Action::Hold(machine)).is_ok())
+            {
                 Ok(())
             } else {
                 Err(Denial::new(

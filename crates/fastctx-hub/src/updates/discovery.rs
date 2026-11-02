@@ -9,7 +9,7 @@ use crate::Hub;
 
 pub(super) fn read(root: &Path) -> Result<Looked, String> {
     let path = root.join("looked.json");
-    match std::fs::read(&path) {
+    match fastctx_platform::disk::read(&path) {
         Ok(bytes) => serde_json::from_slice(&bytes).map_err(|error| format!("{}: {error}", path.display())),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(Looked::default()),
         Err(error) => Err(format!("{}: {error}", path.display())),
@@ -33,15 +33,20 @@ pub(super) async fn check(hub: &Arc<Hub>, force: bool) -> Looked {
     if let Some(why) = &looked.why {
         hub.log.line(format_args!("looking for new versions on GitHub: {why}"));
     }
-    let saved = serde_json::to_vec(&looked).map_err(|error| error.to_string()).and_then(|bytes| {
-        fastctx_platform::publish(&root.join("looked.json"), &bytes, fastctx_platform::Permissions::Private)
-            .map_err(|error| error.to_string())
-    });
+    let saved = match serde_json::to_vec(&looked) {
+        Ok(bytes) => fastctx_platform::task::spawn_blocking(move || {
+            fastctx_platform::publish(&root.join("looked.json"), &bytes, fastctx_platform::Permissions::Private)
+                .map_err(|error| error.to_string())
+        })
+        .await
+        .unwrap_or_else(|error| Err(error.to_string())),
+        Err(error) => Err(error.to_string()),
+    };
     if let Err(why) = saved {
         hub.log.line(format_args!("keeping discovered releases: {why}"));
     }
     hub.updates.lock().expect("never poisoned").looked = looked.clone();
-    super::prefetch(hub);
+    hub.blocking(|hub| super::prefetch(&hub)).await;
     super::tell(hub, None);
     looked
 }

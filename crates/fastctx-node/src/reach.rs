@@ -218,6 +218,38 @@ impl Node {
         settle(&links, Settled::Every).await;
     }
 
+    /// `judge`, for `acting`, by the views its hubs gave this computer; when
+    /// it refuses, judged again once each hub was asked for its view anew. A
+    /// grant a hub made just now may not be in the view yet: a share given a
+    /// moment ago lets a script run on the machine at once, as a call that
+    /// comes in is let in (`fastctx_net::link::answering`). Asking costs a
+    /// round trip only when something was refused.
+    pub(crate) async fn judged_afresh<T>(
+        &self,
+        acting: &Acting,
+        judge: impl Fn() -> Result<T, Failure>,
+    ) -> Result<T, Failure> {
+        match judge() {
+            Err(failure) if !crate::authorization::view_pending(&failure) => {
+                let Acting::Accounts { accounts } = acting else { return Err(failure) };
+                let mut asked = std::collections::BTreeSet::new();
+                for account in accounts {
+                    if !asked.insert(account.hub.clone()) {
+                        continue;
+                    }
+                    if let Some(link) = self.link_of(&account.hub)
+                        && let Err(error) = link.refresh().await
+                    {
+                        self.log.line(format_args!("asking the hub for the view again: {error}"));
+                        return Err(failure);
+                    }
+                }
+                judge()
+            }
+            judged => judged,
+        }
+    }
+
     /// Whether `acting` may work on this computer, as its hubs now say; an
     /// error while one has not given this connection its view yet, when a
     /// judgement would be a guess (`authorization::current_view`).

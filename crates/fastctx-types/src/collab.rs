@@ -30,10 +30,37 @@ pub struct Callee {
     pub effort: Option<String>,
     #[serde(default = "screen_default")]
     pub screen: bool,
+    /// How many of its colleagues may be at work at once; none says the
+    /// default, as settings from before it was set do.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub at_once: Option<AtOnce>,
 }
 
 fn screen_default() -> bool {
     true
+}
+
+/// How many colleagues of one callee may be at work at once: past that a
+/// colleague's turn waits for one to end (`world-colleagues.md`, 同事从哪里
+/// 来、能去哪里).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AtOnce {
+    Most(std::num::NonZeroU32),
+    Any,
+}
+
+impl AtOnce {
+    /// What a callee whose settings say nothing works with.
+    pub const DEFAULT: AtOnce = AtOnce::Most(std::num::NonZeroU32::new(4).expect("four"));
+
+    /// The most at once, or none for no limit.
+    pub fn most(this: Option<AtOnce>) -> Option<u32> {
+        match this.unwrap_or(Self::DEFAULT) {
+            AtOnce::Most(most) => Some(most.get()),
+            AtOnce::Any => None,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -47,6 +74,15 @@ pub struct Collab {
 }
 
 impl Collab {
+    /// Keeps of `current` what these settings leave unsaid: a client from
+    /// before a callee's limit knows no such field and would write it away.
+    pub fn keep_unsaid(&mut self, current: Option<&Collab>) {
+        let Some(current) = current else { return };
+        for callee in self.callees.iter_mut().filter(|callee| callee.at_once.is_none()) {
+            callee.at_once = current.callees.iter().find(|kept| kept.name == callee.name).and_then(|kept| kept.at_once);
+        }
+    }
+
     pub fn validate(&self) -> Result<(), String> {
         let mut names = std::collections::HashSet::new();
         for callee in &self.callees {
@@ -93,6 +129,10 @@ pub struct Offer {
     pub account: Option<String>,
     pub use_when: String,
     pub lives_on: Option<String>,
+    /// How many of its colleagues may be at work at once; none for no
+    /// limit, as a machine from before the limit says.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub at_once: Option<u32>,
 }
 
 /// The goal runtime's summary for a colleague shown in the collaboration tree.

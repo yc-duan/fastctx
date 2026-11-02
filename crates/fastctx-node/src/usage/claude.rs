@@ -75,7 +75,7 @@ pub(super) fn measured(
     let legacy = if counted.is_none() {
         let mut legacy = node.usage.legacy.lock().expect("never poisoned");
         if legacy.is_none() {
-            *legacy = Some(match std::fs::read(super::root(node).join("claude-costs.json")) {
+            *legacy = Some(match fastctx_platform::disk::read(super::root(node).join("claude-costs.json")) {
                 Ok(bytes) => serde_json::from_slice(&bytes).map_err(io::Error::other)?,
                 Err(e) if e.kind() == io::ErrorKind::NotFound => Default::default(),
                 Err(e) => return Err(e),

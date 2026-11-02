@@ -33,6 +33,20 @@ pub(crate) fn internal<F: Future>(work: F) -> impl Future<Output = F::Output> {
     DEADLINE.scope(None, Box::pin(work))
 }
 
+/// The admission budget this task runs under, if it runs under one, for
+/// work it hands to another task (`carry`).
+pub(crate) fn carried() -> Option<Option<Instant>> {
+    DEADLINE.try_with(|deadline| *deadline).ok()
+}
+
+/// Runs `work` under the budget `carried` took, if it took one.
+pub(crate) async fn carry<F: Future>(carried: Option<Option<Instant>>, work: F) -> F::Output {
+    match carried {
+        Some(deadline) => DEADLINE.scope(deadline, work).await,
+        None => work.await,
+    }
+}
+
 pub(crate) fn remaining() -> Option<Duration> {
     DEADLINE.try_with(|deadline| deadline.map(|until| until.saturating_duration_since(Instant::now()))).ok().flatten()
 }
@@ -61,6 +75,21 @@ pub(crate) async fn shared<'a>(
     }
 }
 
+/// Keeps a shared gate owned by work that must survive cancellation of its waiter.
+pub(crate) async fn shared_owned(
+    node: &Node,
+    id: &ResidentId,
+    gate: &RwLock<()>,
+) -> Result<fastctx_platform::doing::OwnedRwLockReadGuard<()>, Failure> {
+    match remaining() {
+        Some(within) if within.is_zero() => Err(told(node, id, Busy { doing: None })),
+        Some(within) => {
+            tokio::time::timeout(within, gate.read_owned()).await.map_err(|_| told(node, id, Busy { doing: None }))
+        }
+        None => Ok(gate.read_owned().await),
+    }
+}
+
 pub(crate) async fn alone<'a>(
     node: &Node,
     id: &ResidentId,
@@ -70,6 +99,21 @@ pub(crate) async fn alone<'a>(
         Some(within) if within.is_zero() => Err(told(node, id, Busy { doing: None })),
         Some(within) => gate.write_within(within).await.map_err(|busy| told(node, id, busy)),
         None => Ok(gate.write().await),
+    }
+}
+
+/// Keeps exclusive lifecycle ownership with work after its waiter is cancelled.
+pub(crate) async fn alone_owned(
+    node: &Node,
+    id: &ResidentId,
+    gate: &RwLock<()>,
+) -> Result<fastctx_platform::doing::OwnedRwLockWriteGuard<()>, Failure> {
+    match remaining() {
+        Some(within) if within.is_zero() => Err(told(node, id, Busy { doing: None })),
+        Some(within) => {
+            tokio::time::timeout(within, gate.write_owned()).await.map_err(|_| told(node, id, Busy { doing: None }))
+        }
+        None => Ok(gate.write_owned().await),
     }
 }
 

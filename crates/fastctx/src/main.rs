@@ -777,9 +777,17 @@ fn node(
         None => None,
     };
     let runtime = tokio::runtime::Builder::new_multi_thread()
+        .thread_name("fastctx-work")
         .thread_stack_size(fastctx_node::THREAD_STACK)
+        // A runtime's threads may block until they first wake to run tasks,
+        // which only the scheduler's threads do; its blocking pool never does
+        // (`specs/world-engine.md`).
+        .on_thread_start(|| fastctx_platform::roles::set(fastctx_platform::roles::Role::Blocking))
+        .on_thread_unpark(|| fastctx_platform::roles::set(fastctx_platform::roles::Role::Work))
         .enable_all()
         .build()?;
+    // The node's main thread runs its accepting loop, as a task does.
+    fastctx_platform::roles::set(fastctx_platform::roles::Role::Work);
     let ran = runtime.block_on(fastctx_node::run_prepared(
         &root,
         supervision,
@@ -787,6 +795,9 @@ fn node(
         coordinator.as_ref(),
         startup_gate,
     ));
+    // The log is written by a thread of its own: what the node said last
+    // reaches the file before the process ends.
+    fastctx_node::flush_log(std::time::Duration::from_millis(500));
     // A service manager starts the node again at once, and the World may be
     // held a while yet, by a renewal's bridge among others: a moment's pause,
     // once every lock is let go, keeps that from spinning.

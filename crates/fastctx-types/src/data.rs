@@ -197,10 +197,17 @@ pub struct Deletion {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "outcome")]
 pub enum DeletionOutcome {
-    /// Everything of it here is gone: `bytes` freed in all.
-    Deleted { bytes: u64 },
+    /// It is deleted: `bytes` go in all. When `finishing` says why, some of
+    /// it is still being cleared, which the node goes on with by itself;
+    /// nothing of it is listed or takes anything new meanwhile.
+    Deleted {
+        bytes: u64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        finishing: Option<String>,
+    },
     /// Nothing was deleted, for this reason.
     Refused { why: String },
-    /// Deleting began and stopped here; what is left is still listed.
+    /// Deleting began and stopped before anything that cannot be undone;
+    /// what is left is still listed and can be deleted again.
     Failed { why: String },
 }

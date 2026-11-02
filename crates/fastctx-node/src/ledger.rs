@@ -30,11 +30,11 @@ use fastctx_types::access::{HubAccount, TownId};
 use fastctx_types::ipc::Failure;
 use fastctx_types::layout::{TownDir, WorldDir};
 use fastctx_types::{MachineName, TownName};
-use jiff::Timestamp;
 
 use crate::Node;
 use names::Place;
 
+pub(crate) mod alone;
 pub(crate) mod deletion;
 pub(crate) mod letgo;
 pub(crate) mod metadata;
@@ -47,7 +47,12 @@ pub use query::query;
 
 /// Opens the project `town`: at the hub, in `owner`'s account, or kept here
 /// when this computer is on no hub.
-pub async fn open(node: &Arc<Node>, town: &TownName, owner: Option<HubAccount>) -> Result<(), Failure> {
+pub async fn open(
+    node: &Arc<Node>,
+    town: &TownName,
+    owner: Option<HubAccount>,
+    shared_on: Option<MachineName>,
+) -> Result<(), Failure> {
     if names::place(&node.world, town).map_err(|error| Failure::new(error.to_string()))?.is_some() {
         return Err(Failure::new(format!("the project {town} exists already")));
     }
@@ -57,7 +62,10 @@ pub async fn open(node: &Arc<Node>, town: &TownName, owner: Option<HubAccount>) 
             let link = node
                 .link_of(&owner.hub)
                 .ok_or_else(|| Failure::new(format!("this computer is not on the hub {}", owner.hub)))?;
-            let change = fastctx_net::wire::Change::OpenProject { town: id.clone(), name: town.clone() };
+            if shared_on.is_some() && !link.view().shared_records {
+                return Err(Failure::not_run("update the hub to create projects with whole-machine record ownership"));
+            }
+            let change = fastctx_net::wire::Change::OpenProject { town: id.clone(), name: town.clone(), shared_on };
             link.manage(&owner.account, change).await.map_err(Failure::new)?;
             Place { hub: owner.hub, town: id }
         }
@@ -124,6 +132,9 @@ async fn write_for(
             check_size(&entry).map_err(Failure::new)?;
             let signed = link.sign_entry(&entry);
             let accepted = match account {
+                Some(account) if fastctx_net::topic_history::has_history(&entry.files) => {
+                    link.history_write(&account, &place.town, signed).await
+                }
                 Some(account) => link.memory_write(&account, &place.town, signed).await,
                 None => link.ledger_write(&place.town, signed).await,
             }
@@ -142,71 +153,22 @@ async fn write_for(
                     "the project's ledger moved while the write was being prepared; read it again",
                 ));
             }
-            tokio::task::spawn_blocking(move || write_alone(&world, &here, &town, &place, files, machines))
-                .await
-                .map_err(|error| Failure::new(format!("writing the ledger: {error}")))?
-                .map_err(Failure::new)
+            let writer = node.clone();
+            fastctx_platform::task::spawn_blocking(move || {
+                alone::write(&writer.alone_ledgers, &world, &here, &town, &place, files, machines)
+            })
+            .await
+            .map_err(|error| Failure::new(format!("writing the ledger: {error}")))?
+            .map_err(Failure::new)?;
+            // The projects as the interfaces show them may have changed.
+            node.shown_changed();
+            Ok(())
         }
         None => Err(Failure::new(format!(
             "the project {town} is kept on the hub {}, which this computer is not logged in to",
             place.hub
         ))),
     }
-}
-
-/// A computer on no hub: the entry is checked as the hub would check it,
-/// numbered, and taken here.
-fn write_alone(
-    world: &WorldDir,
-    here: &MachineName,
-    town: &TownName,
-    place: &Place,
-    files: Vec<File>,
-    machines: Option<Vec<MachineName>>,
-) -> Result<(), String> {
-    let directory = world.town(town);
-    let entries = read_all(world, &directory).map_err(|error| format!("reading {town}'s ledger: {error}"))?;
-    if entries.is_empty() && machines.is_none() {
-        return Err(format!("the project {town} has no record yet; its first version says which machines it spans"));
-    }
-    if let Some(machines) = &machines
-        && let Some(stranger) = machines.iter().find(|machine| *machine != here)
-    {
-        return Err(format!(
-            "there is no machine named {stranger}; this computer, {here}, is in no network, so a project spans only it"
-        ));
-    }
-    let known: Vec<&str> =
-        entries.iter().flat_map(|(_, entry, _)| entry.files.iter().map(|file| file.path.as_str())).collect();
-    for (index, file) in files.iter().enumerate() {
-        if files[..index].iter().any(|other| ledger::conflicts(&other.path, &file.path)) {
-            return Err(format!("the entry names {} twice", file.path));
-        }
-        if let Some(taken) = known.iter().find(|path| ledger::conflicts(path, &file.path)) {
-            return Err(format!("{town} has {taken} already; nothing in a ledger is written twice"));
-        }
-    }
-    let key = own_key(world).map_err(|error| format!("this machine's key: {error}"))?;
-    let entry = Entry {
-        hub: place.hub.clone(),
-        town: place.town.clone(),
-        author: here.clone(),
-        key: key.public(),
-        at: Timestamp::now(),
-        machines,
-        files,
-    };
-    let mut memory = fastctx_net::memory::Index::default();
-    for (_, previous, _) in &entries {
-        memory.take(previous)?;
-    }
-    memory.check(&entry.files)?;
-    check_size(&entry)?;
-    let signed = ledger::sign(&key, &entry);
-    let seq = entries.last().map(|(seq, _, _)| *seq).unwrap_or(0) + 1;
-    apply(world, town, seq, &entry, &signed).map_err(|error| format!("keeping the entry: {error}"))?;
-    crate::memory::projection::restore(world, town).map_err(|error| format!("restoring memory copies: {error}"))?;
-    Ok(())
 }
 
 /// Checks the encoded multipart limit before any files are kept.
@@ -301,8 +263,8 @@ pub(crate) async fn take(
     };
     let mut last_page = None;
     while after < latest {
-        let (items, more) = link.ledger_read(town, after).await?;
-        if items.is_empty() {
+        let (items, more, through) = link.ledger_projection(town, after).await?;
+        if items.is_empty() && through <= after {
             return Err(format!("the hub promised {latest} entries of {name}, but stopped after {after}"));
         }
         let _syncing = node.syncing.lock().await;
@@ -315,7 +277,7 @@ pub(crate) async fn take(
             if seq <= after {
                 continue;
             }
-            if seq != after + 1 {
+            if !link.view().shared_records && seq != after + 1 {
                 return Err(format!("the hub gave entry {seq} of {name} after {after}"));
             }
             match (taken.entry, taken.refused) {
@@ -330,6 +292,10 @@ pub(crate) async fn take(
             }
             after = seq;
         }
+        after = after.max(through);
+        ensure_private_dir(directory.path()).map_err(|error| error.to_string())?;
+        fastctx_net::link::state::write(&directory.path().join("projection-through.json"), &after)
+            .map_err(|error| error.to_string())?;
         if !more && after < latest {
             return Err(format!("the hub ended {name}'s ledger at {after}, before its promised {latest}"));
         }
@@ -343,11 +309,6 @@ pub(crate) async fn take(
         None => node.syncing.lock().await,
     };
     check_place(node, link, name, town)?;
-    let (world, town) = (node.world.clone(), name.clone());
-    tokio::task::spawn_blocking(move || crate::memory::projection::restore(&world, &town))
-        .await
-        .map_err(|error| error.to_string())?
-        .map_err(|error| error.to_string())?;
     node.memory_changed();
     Ok(())
 }
@@ -470,7 +431,11 @@ async fn carry_town(
     own: &fastctx_net::sign::PublicKey,
 ) -> Result<(), String> {
     let here = node.machine();
-    let open = fastctx_net::wire::Change::OpenProject { town: id.clone(), name: town.clone() };
+    let open = fastctx_net::wire::Change::OpenProject {
+        town: id.clone(),
+        name: town.clone(),
+        shared_on: link.view().shared_records.then(|| here.clone()),
+    };
     if let Err(error) = link.manage(home, open).await
         && link.view().project(id).is_none_or(|project| project.name != *town)
     {
@@ -526,9 +491,9 @@ async fn carry_town(
 /// Removes a directory of ledger files, read-only as they are.
 fn remove(directory: &Path) -> io::Result<()> {
     fn writable(path: &Path) -> io::Result<()> {
-        let metadata = std::fs::symlink_metadata(path)?;
+        let metadata = fastctx_platform::disk::symlink_metadata(path)?;
         if metadata.is_dir() {
-            for entry in std::fs::read_dir(path)? {
+            for entry in fastctx_platform::disk::read_dir(path)? {
                 writable(&entry?.path())?;
             }
         } else if metadata.permissions().readonly() {
@@ -543,7 +508,7 @@ fn remove(directory: &Path) -> io::Result<()> {
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
         other => other?,
     }
-    std::fs::remove_dir_all(directory)
+    fastctx_platform::disk::remove_dir_all(directory)
 }
 
 /// Takes entry `seq` of `town`: its signed form, then its files.
@@ -582,9 +547,6 @@ pub fn finish(world: &WorldDir) -> io::Result<Vec<String>> {
                 problems.push(format!("entry {seq} of {town}: {error}"));
             }
         }
-        if let Err(error) = crate::memory::projection::restore(world, &town) {
-            problems.push(format!("memory copies of {town}: {error}"));
-        }
     }
     Ok(problems)
 }
@@ -592,12 +554,26 @@ pub fn finish(world: &WorldDir) -> io::Result<Vec<String>> {
 /// The number of the latest entry this machine has of `town`; 0 when none.
 pub fn seq(world: &WorldDir, town: &TownName) -> io::Result<u64> {
     let directory = world.town(town);
-    if !directory.signed().is_dir()
+    if !fastctx_platform::disk::is_dir(directory.signed())
         && let Some(index) = metadata::read(world, town)?
     {
         return Ok(index.seq);
     }
     replica_seq(world, town)
+}
+
+/// The entry of `town` numbered `seq`, when this machine has it.
+pub(crate) fn entry(world: &WorldDir, town: &TownName, seq: u64) -> io::Result<Option<Entry>> {
+    let directory = world.town(town).signed();
+    let path = directory.join(format!("{seq:020}.json"));
+    let path = match fastctx_platform::disk::exists(&path)? {
+        true => path,
+        false => match numbered(&directory)?.into_iter().find(|(number, _)| *number == seq) {
+            Some((_, path)) => path,
+            None => return Ok(None),
+        },
+    };
+    Ok(Some(read_entry(world, &path)?.0))
 }
 
 /// The full copy's cursor; an index-only cache is never a replicated entry.
@@ -621,7 +597,8 @@ pub fn entries_after(world: &WorldDir, town: &TownName, after: u64) -> io::Resul
 /// The last entry taken or refused.
 fn cursor(directory: &TownDir, refused: &BTreeMap<u64, String>) -> io::Result<u64> {
     let taken = numbered(&directory.signed())?.last().map(|(seq, _)| *seq).unwrap_or(0);
-    Ok(taken.max(refused.keys().next_back().copied().unwrap_or(0)))
+    let through: u64 = fastctx_net::link::state::read_or(&directory.path().join("projection-through.json"), 0)?;
+    Ok(taken.max(refused.keys().next_back().copied().unwrap_or(0)).max(through))
 }
 
 fn refused(directory: &TownDir) -> io::Result<BTreeMap<u64, String>> {
@@ -646,7 +623,8 @@ fn read_all(world: &WorldDir, directory: &TownDir) -> io::Result<Vec<(u64, Entry
 
 fn read_entry(world: &WorldDir, path: &Path) -> io::Result<(Entry, Signed)> {
     let invalid = |error: String| io::Error::new(io::ErrorKind::InvalidData, format!("{}: {error}", path.display()));
-    let signed: Signed = serde_json::from_slice(&std::fs::read(path)?).map_err(|error| invalid(error.to_string()))?;
+    let signed: Signed =
+        serde_json::from_slice(&fastctx_platform::disk::read(path)?).map_err(|error| invalid(error.to_string()))?;
     let claimed: Entry = signed.claim().map_err(|error| invalid(error.to_string()))?;
     let town = path
         .parent()
@@ -659,7 +637,7 @@ fn read_entry(world: &WorldDir, path: &Path) -> io::Result<(Entry, Signed)> {
     if claimed.hub != place.hub || claimed.town != place.town {
         return Err(invalid("the signed entry belongs to another project or hub".into()));
     }
-    // Network-v3 imports used a zero author key but were signed by this device (2026-10-23).
+    // Network-v3 imports used a zero author key but were signed by this device.
     let entry = if claimed.key == fastctx_net::sign::PublicKey::from_bytes([0; 32])
         && !fastctx_net::memory::has_memory(&claimed.files)
     {
@@ -682,7 +660,7 @@ fn read_entry(world: &WorldDir, path: &Path) -> io::Result<(Entry, Signed)> {
 fn same_or_new(path: &Path, bytes: &[u8]) -> io::Result<()> {
     match publish_new(path, bytes, Permissions::Private) {
         Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
-            if std::fs::read(path)? == bytes {
+            if fastctx_platform::disk::read(path)? == bytes {
                 Ok(())
             } else {
                 Err(io::Error::new(
@@ -698,7 +676,7 @@ fn same_or_new(path: &Path, bytes: &[u8]) -> io::Result<()> {
 /// A ledger's files are copies to read; they are changed only by taking
 /// another entry, which never touches them.
 fn read_only(path: &Path) -> io::Result<()> {
-    let mut permissions = std::fs::metadata(path)?.permissions();
+    let mut permissions = fastctx_platform::disk::metadata(path)?.permissions();
     if !permissions.readonly() {
         permissions.set_readonly(true);
         std::fs::set_permissions(path, permissions)?;
@@ -721,7 +699,7 @@ pub fn own_key(world: &WorldDir) -> io::Result<SecretKey> {
 /// The id a computer on no hub keeps its own projects under, chosen once.
 pub(crate) fn alone(world: &WorldDir) -> io::Result<HubId> {
     let path = world.path().join("alone.json");
-    match std::fs::read(&path) {
+    match fastctx_platform::disk::read(&path) {
         Ok(bytes) => serde_json::from_slice(&bytes).map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error)),
         Err(error) if error.kind() == io::ErrorKind::NotFound => {
             let id = fastctx_net::ids::new_hub_id()?;
@@ -734,7 +712,7 @@ pub(crate) fn alone(world: &WorldDir) -> io::Result<HubId> {
 
 fn numbered(directory: &Path) -> io::Result<Vec<(u64, PathBuf)>> {
     let mut found = Vec::new();
-    let entries = match std::fs::read_dir(directory) {
+    let entries = match fastctx_platform::disk::read_dir(directory) {
         Ok(entries) => entries,
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(found),
         Err(error) => return Err(error),

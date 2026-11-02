@@ -1,5 +1,5 @@
 import type { RunState } from "./pages";
-import type { MachineName } from "./wire";
+import type { MachineName, Timestamp } from "./wire";
 
 export interface OutputRef {
   policy?: string;
@@ -177,11 +177,24 @@ export interface RunFacts {
   output: OutputRef | null;
   visited: [MachineName, string][];
   writes: WriteFact[];
-  /** What it did through the World, step by step. */
+  /** What it did through the World, step by step: the latest in full. */
   steps?: RunStep[];
+  /** The steps before those, counted by machine and kind; the machine that
+   *  ran them keeps them in full. */
+  folded_steps?: StepSummary[];
   spans: OutputSpan[];
   /** Raw byte offsets, end exclusive; these are not decoded viewer coordinates. */
   notes?: OutputNoteMatch[];
+}
+
+/** Earlier steps of one kind given on one machine: how many, and from when
+ *  to when. */
+export interface StepSummary {
+  machine: MachineName;
+  kind: string;
+  count: number;
+  first: Timestamp;
+  last: Timestamp;
 }
 
 export interface JobFacts {

@@ -11,3 +11,6 @@ publish = false
 [dependencies]
 # Upstream 0.26.0 with the pending-delete range correction from 0.28.0.
 yrs = { path = "../../vendor/yrs", features = ["sync"] }
+
+[lints]
+workspace = true

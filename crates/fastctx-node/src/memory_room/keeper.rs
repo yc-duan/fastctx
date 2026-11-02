@@ -11,7 +11,7 @@ pub(crate) fn start(node: &Arc<Node>) {
     #[cfg(target_os = "linux")]
     {
         let node = node.clone();
-        tokio::spawn(async move { keep(node).await });
+        fastctx_platform::task::spawn(async move { keep(node).await });
     }
     #[cfg(not(target_os = "linux"))]
     let _ = node;
@@ -20,7 +20,9 @@ pub(crate) fn start(node: &Arc<Node>) {
 #[cfg(target_os = "linux")]
 async fn keep(node: Arc<Node>) {
     use std::time::Duration;
-    let mut keeper = match linux::Keeper::new() {
+    // Asking the kernel to reclaim nothing, it may still wait on it.
+    let opened = fastctx_platform::task::spawn_blocking(linux::Keeper::new).await.map_err(std::io::Error::other);
+    let mut keeper = match opened.and_then(|opened| opened) {
         Ok(keeper) => keeper,
         Err(error) => {
             node.log.line(format_args!("agent memory reclaim unavailable: {error}; turn admission remains active"));
@@ -31,7 +33,7 @@ async fn keep(node: Arc<Node>) {
     let mut previous = String::new();
     loop {
         let room = node.memory_room.bytes();
-        let round = tokio::task::spawn_blocking(move || {
+        let round = fastctx_platform::task::spawn_blocking(move || {
             let result = keeper.tick(room);
             (keeper, result)
         })

@@ -46,17 +46,19 @@ fn prepare(node: &Arc<Node>, link: &Arc<Link>, id: &str) {
         return;
     }
     let (node, link, id) = (node.clone(), link.clone(), id.to_string());
-    tokio::spawn(async move {
+    fastctx_platform::task::spawn(async move {
         let dir = fastctx_hub::default_dir(&node.root);
         let made = async {
             let identity = link.hub_identity(&id).await?;
             let me = link.membership().name.clone();
             let place = dir.clone();
             let made_id = id.clone();
-            tokio::task::spawn_blocking(move || fastctx_hub::prepare_arrival(&place, &made_id, &me, &identity))
-                .await
-                .map_err(|error| error.to_string())?
-                .map_err(|error| format!("making the new hub's directory {}: {error}", dir.display()))
+            fastctx_platform::task::spawn_blocking(move || {
+                fastctx_hub::prepare_arrival(&place, &made_id, &me, &identity)
+            })
+            .await
+            .map_err(|error| error.to_string())?
+            .map_err(|error| format!("making the new hub's directory {}: {error}", dir.display()))
         };
         let report = match made.await {
             Ok(()) => {
@@ -95,7 +97,7 @@ fn called_off(node: &Arc<Node>, link: &Arc<Link>, id: &str) {
                     "the move {id} was called off; the hub's service here gives it up when the old hub tells it"
                 ));
             }
-            Ok(_) => match std::fs::remove_dir_all(&dir) {
+            Ok(_) => match fastctx_platform::disk::remove_dir_all(&dir) {
                 Ok(()) => node.log.line(format_args!("the move {id} was called off; {} is deleted", dir.display())),
                 Err(error) => {
                     node.log.line(format_args!("the move {id} was called off; deleting {}: {error}", dir.display()))
@@ -116,7 +118,7 @@ fn called_off(node: &Arc<Node>, link: &Arc<Link>, id: &str) {
         return;
     }
     let (node, link, id) = (node.clone(), link.clone(), id.to_string());
-    tokio::spawn(async move {
+    fastctx_platform::task::spawn(async move {
         if let Err(error) = link.hub_arrival(&id, ArrivalReport::Gone).await {
             node.log.line(format_args!("telling the hub nothing of the move {id} is here: {error}"));
             GONE.lock().expect("never poisoned").remove(&id);

@@ -18,7 +18,7 @@ use std::collections::{HashSet, VecDeque};
 
 use fastctx_net::watch_queue;
 use fastctx_types::residents::Landed;
-use fastctx_types::session::{Happened, SessionChange, SessionEvent, Watched};
+use fastctx_types::session::{Happened, Mark, SessionChange, SessionEvent, Watched};
 use fastctx_types::{Address, ResidentId};
 
 use crate::Watching;
@@ -35,6 +35,9 @@ pub struct Conversation {
     pieces: watch_queue::Receiver<Result<Option<Watched>, Error>>,
     following: Option<Following>,
     queued: VecDeque<SessionEvent>,
+    /// The mark of the last live event taken, which a watch opened again
+    /// goes on from; an event sent again from it is passed over.
+    mark: Option<Mark>,
     seen: HashSet<String>,
     finished_voice: HashSet<String>,
     finished: HashSet<(String, String)>,
@@ -146,13 +149,16 @@ impl Conversation {
                 Some(Watched::Documents { .. }) => {
                     return Err(Error::Unexpected("document packets are not conversation history".into()));
                 }
+                Some(Watched::Collaboration { .. }) => {
+                    return Err(Error::Unexpected("a collaboration is not conversation history".into()));
+                }
                 Some(Watched::History { events }) => events,
-                Some(Watched::Live { event }) => vec![event],
+                Some(Watched::Live { event, .. }) => vec![event],
                 Some(Watched::Now { busy, turn, kept }) => {
                     now = Some(Now { busy, turn, kept });
                     continue;
                 }
-                Some(Watched::Unchanged { .. } | Watched::Segments { .. }) => {
+                Some(Watched::Unchanged { .. } | Watched::Segments { .. } | Watched::Resumed) => {
                     return Err(Error::Unexpected("segments of a history no one asked for".into()));
                 }
                 None => Vec::new(),
@@ -224,7 +230,9 @@ impl Conversation {
         let mut conversation = Self::reading_after(watching, source);
         let history = loop {
             match conversation.piece().await {
-                Some(Ok(Some(Watched::Live { event }))) => conversation.queued.push_back(event),
+                Some(Ok(Some(Watched::Live { event, mark }))) => {
+                    conversation.take_live(event, mark);
+                }
                 Some(Ok(Some(Watched::Now { busy, turn, kept }))) => {
                     conversation.now_due = Some(Now { busy, turn, kept })
                 }
@@ -257,7 +265,7 @@ impl Conversation {
         if std::mem::take(&mut self.refresh_due)
             && let Some(keeping) = self.keeping.as_ref()
         {
-            self.pieces = Self::read(self.source.held(keeping.held()));
+            self.pieces = Self::read(self.source.held(self.held(keeping)));
         }
         if self.working.is_none()
             && self.keeping.as_ref().is_some_and(|keeping| keeping.rest_due())
@@ -314,7 +322,7 @@ impl Conversation {
                     Err(error) if keeping.lost(&error) => {
                         keeping.discard_damage(&error)?;
                         keeping.renew_generation()?;
-                        let held = keeping.held();
+                        let held = self.held(&keeping);
                         self.keeping = Some(keeping);
                         self.pieces = Self::read(self.source.held(held));
                     }
@@ -360,9 +368,9 @@ impl Conversation {
                 return Ok(Update::Now { busy, turn, kept });
             }
             let watched = match self.piece().await {
-                Some(Ok(Some(Watched::Live { event }))) => {
+                Some(Ok(Some(Watched::Live { event, mark }))) => {
                     self.current_due |= self.again.came();
-                    self.queued.push_back(event);
+                    self.take_live(event, mark);
                     continue;
                 }
                 // Told after what came before it: handed over once that is.
@@ -405,7 +413,7 @@ impl Conversation {
         let interruption = self.again.broke(why);
         let pause = self.again.pause(&self.source.world, self.source.machine.as_ref());
         let opening = match &self.keeping {
-            Some(keeping) => self.source.held(keeping.held()),
+            Some(keeping) => self.source.held(self.held(keeping)),
             None => self.source.whole(),
         };
         self.pieces = Self::read(async move {
@@ -413,6 +421,31 @@ impl Conversation {
             opening.await
         });
         interruption
+    }
+
+    /// What to tell the conversation's machine this device holds, with the
+    /// last live event it took.
+    fn held(&self, keeping: &kept::Keeping) -> fastctx_types::session::held::Held {
+        let mut held = keeping.held();
+        if keeping.has_history() {
+            held.since = self.mark;
+        }
+        held
+    }
+
+    /// Takes a live event in, unless it is one taken already: one its machine
+    /// sends again from the mark this side gave it.
+    fn take_live(&mut self, event: SessionEvent, mark: Option<Mark>) {
+        if let (Some(mark), Some(last)) = (mark, self.mark)
+            && mark.epoch == last.epoch
+            && mark.sequence <= last.sequence
+        {
+            return;
+        }
+        if mark.is_some() {
+            self.mark = mark;
+        }
+        self.queued.push_back(event);
     }
 
     fn pending_from(&mut self, mut watched: Watched) -> Watched {
@@ -479,6 +512,7 @@ impl Conversation {
             pieces,
             following: None,
             queued: VecDeque::new(),
+            mark: None,
             seen: HashSet::new(),
             finished: HashSet::new(),
             ended: HashSet::new(),
@@ -560,20 +594,23 @@ impl Conversation {
                 return Ok(Next::Moment(moment));
             }
             match self.piece().await {
-                Some(Ok(Some(Watched::Live { event }))) => {
+                Some(Ok(Some(Watched::Live { event, mark }))) => {
                     self.current_due |= self.again.came();
-                    self.queued.push_back(event);
+                    self.take_live(event, mark);
                 }
                 Some(Ok(Some(Watched::History { events }))) => {
                     self.current_due |= self.again.came();
                     self.queued.extend(events);
                 }
-                Some(Ok(Some(Watched::Unchanged { .. } | Watched::Segments { .. }))) => {
+                Some(Ok(Some(Watched::Unchanged { .. } | Watched::Segments { .. } | Watched::Resumed))) => {
                     return Err(Error::Unexpected("segments of a history no one asked for".into()));
                 }
                 Some(Ok(Some(Watched::Now { .. }))) => {}
                 Some(Ok(Some(Watched::Documents { .. }))) => {
                     return Err(Error::Unexpected("document packets are not conversation history".into()));
+                }
+                Some(Ok(Some(Watched::Collaboration { .. }))) => {
+                    return Err(Error::Unexpected("a collaboration is not conversation history".into()));
                 }
                 Some(Ok(None)) | None => return Ok(Next::Interrupted(self.broke("the watch ended".into()))),
                 Some(Err(error)) if error.is_deleted() || error.is_refused() => return Err(error),

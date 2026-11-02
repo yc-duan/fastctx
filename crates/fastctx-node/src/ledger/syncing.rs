@@ -35,7 +35,7 @@ pub(crate) fn changed(node: &Arc<Node>, hub: &HubId, town: Option<TownId>) {
         pending.wake.clone()
     };
     let (node, hub) = (node.clone(), hub.clone());
-    tokio::spawn(async move { run(node, hub, wake).await });
+    fastctx_platform::task::spawn(async move { run(node, hub, wake).await });
 }
 
 async fn run(node: Arc<Node>, hub: HubId, wake: Arc<Notify>) {

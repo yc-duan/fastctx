@@ -24,7 +24,6 @@ use std::path::Path;
 use std::sync::Arc;
 
 use fastctx_hands::run::record;
-use fastctx_platform::{Permissions, ensure_private_dir, publish, publish_new};
 use fastctx_types::layout::ConversationDir;
 use fastctx_types::residents::{Notice, Owing, Pending, PendingState};
 use fastctx_types::run::JobRecord;
@@ -33,239 +32,156 @@ use fastctx_types::{JobId, MachineName, NoticeId};
 use crate::Node;
 use crate::speech::{Owed, tell};
 
-/// Keeps something on its way into the resident's session. Returns `false`
-/// when it is not new: it is kept already, or went in before.
+pub(crate) mod answers;
+pub(crate) mod outgoing;
+pub(crate) mod presence;
+pub(crate) mod storage;
+use storage::{Receipt, change, read_rows};
+
+/// Keep an input once, before the host can observe it.
 pub fn keep(directory: &ConversationDir, pending: &Pending) -> io::Result<bool> {
-    let _transaction = crate::resident_storage::lock();
-    if delivered_here(directory, &pending.delivery.id)?
-        || directory.uncertain().join(format!("{}.json", pending.delivery.id)).exists()
-    {
-        return Ok(false);
-    }
-    // However they reach the host, its record names the files by id alone.
-    crate::attachments::delivered::record(directory, std::slice::from_ref(pending))?;
-    ensure_private_dir(&directory.inbox())?;
-    match publish_new(&path(directory, &pending.delivery.id), &json(pending)?, Permissions::Private) {
-        Ok(()) => Ok(true),
-        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => Ok(false),
-        Err(error) => Err(error),
-    }
+    crate::attachments::delivered::prepare(directory)?;
+    let (pending, bytes) = (pending.clone(), serde_json::to_vec(pending)?.len());
+    change(directory, bytes, move |rows| {
+        let key = pending.delivery.id.as_str();
+        if storage::delivered(rows, key)?
+            || rows.get::<Pending>("uncertain-inputs", key)?.is_some()
+            || rows.get::<Pending>("pending-inputs", key)?.is_some()
+        {
+            return Ok(false);
+        }
+        crate::attachments::delivered::record_in(rows, std::slice::from_ref(&pending))?;
+        rows.put_ordered("pending-inputs", key, &pending, pending.delivery.at)?;
+        Ok(true)
+    })
 }
-
-/// Whether durable business custody already exists under this delivery id.
 pub(crate) fn knows(directory: &ConversationDir, id: &NoticeId) -> io::Result<bool> {
-    let _transaction = crate::resident_storage::lock();
-    Ok(delivered_here(directory, id)?
-        || directory.book("host-refusals").join(format!("{id}.json")).try_exists()?
-        || path(directory, id).try_exists()?
-        || directory.uncertain().join(format!("{id}.json")).try_exists()?)
+    if crate::lifecycle::refused::contains(directory, id)? {
+        return Ok(true);
+    }
+    read_rows(directory, |rows| {
+        Ok(storage::delivered(rows, id.as_str())?
+            || rows.get::<Pending>("pending-inputs", id.as_str())?.is_some()
+            || rows.get::<Pending>("uncertain-inputs", id.as_str())?.is_some())
+    })
 }
-
-/// Retains words whose host acceptance cannot be established.
 pub fn retain_uncertain(directory: &ConversationDir, pending: &Pending) -> io::Result<()> {
-    let _transaction = crate::resident_storage::lock();
-    let uncertain = directory.uncertain();
-    ensure_private_dir(&uncertain)?;
-    let path = uncertain.join(format!("{}.json", pending.delivery.id));
-    match publish_new(&path, &json(pending)?, Permissions::Private) {
-        Err(error) if error.kind() != io::ErrorKind::AlreadyExists => return Err(error),
-        _ => {}
-    }
-    match std::fs::remove_file(directory.inbox().join(format!("{}.json", pending.delivery.id))) {
-        Err(error) if error.kind() != io::ErrorKind::NotFound => Err(error),
-        _ => Ok(()),
-    }
+    let (pending, bytes) = (pending.clone(), serde_json::to_vec(pending)?.len());
+    change(directory, bytes, move |rows| {
+        let key = pending.delivery.id.as_str();
+        if rows.get::<Pending>("uncertain-inputs", key)?.is_none() {
+            rows.put("uncertain-inputs", key, &pending)?;
+        }
+        rows.delete("pending-inputs", key)?;
+        Ok(())
+    })
 }
-
-/// Words judged not known to have gone in that their host now says it took:
-/// they are kept again, on their way, for the turn that took them to settle
-/// as any words do (`specs/world-concurrency.md`, 「不知是否送到」是暂时的判断).
 pub fn reclaim(directory: &ConversationDir, ids: &[String]) -> io::Result<()> {
-    let _transaction = crate::resident_storage::lock();
-    for id in ids {
-        let Ok(id) = NoticeId::try_from(id.as_str()) else { continue };
-        let uncertain = directory.uncertain().join(format!("{id}.json"));
-        let bytes = match std::fs::read(&uncertain) {
-            Ok(bytes) => bytes,
-            Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
-            Err(error) => return Err(error),
-        };
-        if delivered_here(directory, &id)? {
-            continue;
-        }
-        ensure_private_dir(&directory.inbox())?;
-        let kept = path(directory, &id);
-        if !kept.exists() {
-            publish(&kept, &bytes, Permissions::Private)?;
-        }
-        std::fs::remove_file(&uncertain)?;
+    for group in ids.chunks(16) {
+        let ids = group.to_vec();
+        change(directory, ids.iter().map(String::len).sum(), move |rows| {
+            for id in ids {
+                if NoticeId::try_from(id.as_str()).is_err() || storage::delivered(rows, &id)? {
+                    continue;
+                }
+                if let Some(row) = rows.get::<Pending>("uncertain-inputs", &id)? {
+                    if rows.get::<Pending>("pending-inputs", &id)?.is_none() {
+                        rows.put_ordered("pending-inputs", &id, &row, row.delivery.at)?;
+                    }
+                    rows.delete("uncertain-inputs", &id)?;
+                }
+            }
+            Ok(())
+        })?;
     }
     Ok(())
 }
-
-/// Returns a definitely refused composer input to its own queue, before any host accepted it.
 pub fn withdraw(directory: &ConversationDir, id: &NoticeId) -> io::Result<()> {
-    let _transaction = crate::resident_storage::lock();
-    let Some(pending) = read_here(directory, id)? else { return Ok(()) };
-    if pending.state != PendingState::Waiting {
-        return Err(io::Error::other("cannot withdraw an input crossing the host boundary"));
-    }
-    std::fs::remove_file(path(directory, id))
+    let key = id.to_string();
+    change(directory, key.len(), move |rows| {
+        if let Some(row) = rows.get::<Pending>("pending-inputs", &key)? {
+            if row.state != PendingState::Waiting {
+                return Err(fastctx_storage::Error::new("cannot withdraw an input crossing the host boundary"));
+            }
+            rows.delete("pending-inputs", &key)?;
+        }
+        Ok(())
+    })
 }
-
-/// Records how far something kept has come.
+fn update(
+    directory: &ConversationDir,
+    id: &NoticeId,
+    apply: impl FnOnce(&mut Pending) -> fastctx_storage::Result<()> + Send + 'static,
+) -> io::Result<()> {
+    let key = id.to_string();
+    change(directory, 512, move |rows| {
+        if let Some(mut row) = rows.get::<Pending>("pending-inputs", &key)? {
+            apply(&mut row)?;
+            rows.put_ordered("pending-inputs", &key, &row, row.delivery.at)?;
+        }
+        Ok(())
+    })
+}
 pub fn set_state(directory: &ConversationDir, id: &NoticeId, state: PendingState) -> io::Result<()> {
-    let _transaction = crate::resident_storage::lock();
-    let Some(mut pending) = read_here(directory, id)? else { return Ok(()) };
-    pending.state = state;
-    // Which host activation has them is told by when they went to it.
-    if matches!(state, PendingState::Handed | PendingState::Waking) {
-        pending.since = Some(jiff::Timestamp::now());
-    }
-    publish(&path(directory, id), &json(&pending)?, Permissions::Private)
+    update(directory, id, move |row| {
+        row.state = state;
+        if matches!(state, PendingState::Handed | PendingState::Waking) {
+            row.since = Some(jiff::Timestamp::now());
+        }
+        Ok(())
+    })
 }
-
 pub fn target(directory: &ConversationDir, id: &NoticeId, session: &str) -> io::Result<()> {
-    let _transaction = crate::resident_storage::lock();
-    let Some(mut pending) = read_here(directory, id)? else { return Ok(()) };
-    if pending.session.as_deref().is_some_and(|prior| !same_session(prior, session)) {
-        return Err(io::Error::other("these words belong to the prior conversation"));
-    }
-    // The whole id, once known, rather than the start of it.
-    if pending.session.as_deref().is_none_or(|prior| prior.len() < session.len()) {
-        pending.session = Some(session.to_string());
-    }
-    publish(&path(directory, id), &json(&pending)?, Permissions::Private)
+    let session = session.to_string();
+    update(directory, id, move |row| {
+        if row.session.as_deref().is_some_and(|prior| !same_session(prior, &session)) {
+            return Err(fastctx_storage::Error::new("these words belong to the prior conversation"));
+        }
+        if row.session.as_deref().is_none_or(|prior| prior.len() < session.len()) {
+            row.session = Some(session);
+        }
+        Ok(())
+    })
 }
-
-/// Whether the session words are bound to is `session`: a Claude session is
-/// known by the start of its id until its mod reports the whole of it.
+/// Claude's short session id is extended when its complete identity arrives.
 pub(crate) fn same_session(bound: &str, session: &str) -> bool {
     let (short, long) = if bound.len() <= session.len() { (bound, session) } else { (session, bound) };
     bound == session || (short.len() == 8 && long.starts_with(short))
 }
-
-/// Frees words being woken with from the session they were bound to, while
-/// the conversation goes on in another (`claude::continuing`); `rebind`
-/// gives them to that one once it is known.
 pub fn unbind(directory: &ConversationDir, id: &NoticeId) -> io::Result<()> {
-    let _transaction = crate::resident_storage::lock();
-    let Some(mut pending) = read_here(directory, id)? else { return Ok(()) };
-    pending.session = None;
-    publish(&path(directory, id), &json(&pending)?, Permissions::Private)
+    update(directory, id, |row| {
+        row.session = None;
+        Ok(())
+    })
 }
-
-/// Gives words to the session the conversation went on in, whatever
-/// session took them meanwhile: one the conversation left may still report
-/// once before it is gone.
 pub fn rebind(directory: &ConversationDir, id: &NoticeId, session: &str) -> io::Result<()> {
-    let _transaction = crate::resident_storage::lock();
-    let Some(mut pending) = read_here(directory, id)? else { return Ok(()) };
-    pending.session = Some(session.to_string());
-    publish(&path(directory, id), &json(&pending)?, Permissions::Private)
+    let session = session.to_string();
+    update(directory, id, move |row| {
+        row.session = Some(session);
+        Ok(())
+    })
 }
-
-/// Everything on its way into the resident's session, oldest first.
 pub fn pending(directory: &ConversationDir) -> io::Result<Vec<Pending>> {
-    let _transaction = crate::resident_storage::lock();
-    pending_here(directory)
+    read_rows(directory, storage::pending)
 }
-
-/// Reads both input states atomically: reconciliation can move uncertain words back to pending.
 pub(crate) fn input_states(directory: &ConversationDir) -> io::Result<(Vec<Pending>, Vec<Pending>)> {
-    let _transaction = crate::resident_storage::lock();
-    let pending = pending_here(directory)?;
-    let mut uncertain = Vec::new();
-    for path in entries(&directory.uncertain())? {
-        if path.file_name().is_some_and(|name| name.to_string_lossy().starts_with('.'))
-            || path.extension().is_none_or(|extension| extension != "json")
-        {
-            continue;
-        }
-        uncertain.push(serde_json::from_slice(&std::fs::read(path)?)?);
-    }
-    Ok((pending, uncertain))
+    read_rows(directory, |rows| Ok((storage::pending(rows)?, rows.all("uncertain-inputs")?)))
 }
-
-/// Whether words were judged not known to have gone in within `within`:
-/// their host may yet say it took them (`reclaim`). Older ones stay so,
-/// kept for the user to see and say again, and hold nothing back.
 pub(crate) fn uncertain_lately(directory: &ConversationDir, within: std::time::Duration) -> io::Result<bool> {
-    let _transaction = crate::resident_storage::lock();
-    for path in entries(&directory.uncertain())? {
-        if path.file_name().is_some_and(|name| name.to_string_lossy().starts_with('.'))
-            || path.extension().is_none_or(|extension| extension != "json")
-        {
-            continue;
-        }
-        if std::fs::metadata(&path)?.modified()?.elapsed().is_ok_and(|age| age < within) {
-            return Ok(true);
-        }
-    }
-    Ok(false)
+    let now = jiff::Timestamp::now();
+    let since = now.checked_sub(within).map_err(io::Error::other)?;
+    read_rows(directory, |rows| rows.recent("uncertain-inputs", since, now))
 }
 
-/// The caller holds the resident-storage transaction.
-pub(crate) fn pending_here(directory: &ConversationDir) -> io::Result<Vec<Pending>> {
-    let mut all = Vec::new();
-    for path in entries(&directory.inbox())? {
-        // A file being written sits under a hidden temporary name until it
-        // is whole.
-        let hidden = path.file_name().is_some_and(|name| name.to_string_lossy().starts_with('.'));
-        if hidden || path.extension().is_none_or(|extension| extension != "json") {
-            continue;
-        }
-        let pending = parse_pending(directory, &path, &std::fs::read(&path)?)?;
-        if !delivered_here(directory, &pending.delivery.id)?
-            && !directory.uncertain().join(format!("{}.json", pending.delivery.id)).exists()
-        {
-            all.push(pending);
-        }
-    }
-    all.sort_by(|a: &Pending, b| a.delivery.at.cmp(&b.delivery.at).then(a.delivery.id.cmp(&b.delivery.id)));
-    Ok(all)
-}
-
-/// Something kept that went in: it leaves the inbox and goes on the
-/// `delivered` list. Returns it, or `None` when it was settled already.
+/// Confirm an external job artifact first; receipt and inbox state commit together.
 pub fn settle(node: &Node, directory: &ConversationDir, id: &NoticeId) -> io::Result<Option<Pending>> {
-    // A command's end is confirmed to its job as it leaves the inbox, under
-    // the disk's lock, which comes before the records': found to be one, the
-    // records are let go and taken again after it.
-    let mut gate = None;
-    loop {
-        let transaction = crate::resident_storage::lock();
-        let Some(pending) = read_here(directory, id)? else { return Ok(None) };
-        if gate.is_none() && matches!(pending.delivery.notice, Notice::JobEnded { .. }) {
-            drop(transaction);
-            gate = Some(node.disk.lock());
-            continue;
-        }
-        return settle_read(node, directory, id, pending, gate.as_ref());
-    }
-}
-
-/// `settle` of `pending`, read under the records' lock its caller holds,
-/// with the disk's lock held too when it is a command's end.
-fn settle_read(
-    node: &Node,
-    directory: &ConversationDir,
-    id: &NoticeId,
-    pending: Pending,
-    gate: Option<&fastctx_platform::doing::SyncMutexGuard<'_, ()>>,
-) -> io::Result<Option<Pending>> {
-    if delivered_here(directory, id)? {
-        if crate::residents::read_removed(directory)?.is_none() {
-            std::fs::remove_file(path(directory, id))?;
-        }
-        return Ok(None);
-    }
-    let removed = crate::residents::read_removed(directory)?.is_some();
-    if let Notice::JobEnded { job, machine, output, .. } = &pending.delivery.notice {
-        let gate = gate.ok_or_else(|| io::Error::other("a command's end settled without the disk's lock"))?;
-        let about: fastctx_types::residents::About = parse(&directory.about(), &std::fs::read(directory.about())?)?;
+    let Some(pending) = read(directory, id)? else { return Ok(None) };
+    let _gate = matches!(pending.delivery.notice, Notice::JobEnded { .. }).then(|| node.disk.lock());
+    let previously = delivered_here(directory, id)?;
+    if !previously && let Notice::JobEnded { job, machine, output, .. } = &pending.delivery.notice {
+        let about = crate::residents::read_about(directory)?;
         crate::retention::confirmed_under(
-            gate,
+            _gate.as_ref().expect("job end owns disk gate"),
             node,
             fastctx_types::Address { machine: node.machine(), resident: about.id },
             machine.clone(),
@@ -278,129 +194,78 @@ fn settle_read(
             Some(&about.acting),
         )?;
     }
-    let receipts = directory.delivery_receipts();
-    ensure_private_dir(&receipts)?;
-    publish(&receipts.join(id.as_str()), b"", Permissions::Private)?;
-    // What went into a removed conversation stays in its inbox: its records
-    // are what is left of it.
-    if removed {
-        return Ok(Some(pending));
-    }
-    match std::fs::remove_file(path(directory, id)) {
-        Err(error) if error.kind() != io::ErrorKind::NotFound => return Err(error),
-        _ => {}
-    }
-    Ok(Some(pending))
+    let removed = crate::residents::read_removed(directory)?.is_some();
+    let key = id.to_string();
+    change(directory, 512, move |rows| {
+        let current = rows.get::<Pending>("pending-inputs", &key)?;
+        let already = previously
+            || rows.get::<Receipt>("delivery-receipts", &key)?.is_some_and(|receipt| receipt != Receipt::Answered);
+        if !already && current.is_some() {
+            rows.put("delivery-receipts", &key, &Receipt::Heard)?;
+        }
+        if !removed {
+            rows.delete("pending-inputs", &key)?;
+        }
+        Ok(if already { None } else { current })
+    })
 }
-
-/// Whether something with this id went into the resident's session.
 pub(crate) fn delivered_here(directory: &ConversationDir, id: &NoticeId) -> io::Result<bool> {
-    if directory.delivery_receipts().join(id.as_str()).try_exists()? {
-        return Ok(true);
-    }
-    let file = match std::fs::File::open(directory.delivered()) {
-        Ok(file) => file,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(false),
-        Err(error) => return Err(error),
-    };
-    for line in io::BufReader::new(file).lines() {
-        if line? == id.as_str() {
-            return Ok(true);
-        }
-    }
-    Ok(false)
+    read_rows(directory, |rows| storage::delivered(rows, id.as_str()))
 }
-
-/// A wait took this completion, including a copy already queued in the inbox.
 pub(crate) fn consume(directory: &ConversationDir, id: &NoticeId) -> io::Result<()> {
-    let _transaction = crate::resident_storage::lock();
-    let receipts = directory.delivery_receipts();
-    ensure_private_dir(&receipts)?;
-    match publish_new(&receipts.join(id.as_str()), b"consumed", Permissions::Private) {
-        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
-        result => result?,
-    }
-    if crate::residents::read_removed(directory)?.is_some() {
-        return Ok(());
-    }
-    match std::fs::remove_file(path(directory, id)) {
-        Err(error) if error.kind() != io::ErrorKind::NotFound => Err(error),
-        _ => Ok(()),
-    }
+    let removed = crate::residents::read_removed(directory)?.is_some();
+    let key = id.to_string();
+    change(directory, key.len(), move |rows| {
+        if !storage::delivered(rows, &key)? {
+            rows.put("delivery-receipts", &key, &Receipt::Consumed)?;
+        }
+        if !removed {
+            rows.delete("pending-inputs", &key)?;
+        }
+        Ok(())
+    })
 }
-
-fn read_here(directory: &ConversationDir, id: &NoticeId) -> io::Result<Option<Pending>> {
-    let path = path(directory, id);
-    match std::fs::read(&path) {
-        Ok(bytes) => parse_pending(directory, &path, &bytes).map(Some),
-        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
-        Err(error) => Err(error),
-    }
+pub(crate) fn heard_at(directory: &ConversationDir, id: &NoticeId) -> io::Result<Option<jiff::Timestamp>> {
+    read_rows(directory, |rows| {
+        if rows.get::<Receipt>("delivery-receipts", id.as_str())? == Some(Receipt::Heard) {
+            rows.modified("delivery-receipts", id.as_str())
+        } else {
+            Ok(None)
+        }
+    })
 }
-
-fn path(directory: &ConversationDir, id: &NoticeId) -> std::path::PathBuf {
-    directory.inbox().join(format!("{id}.json"))
-}
-
-/// Keeps a turn's end for one reader until the reader's machine has it.
 pub fn owe(directory: &ConversationDir, owing: &Owing) -> io::Result<()> {
-    let _transaction = crate::resident_storage::lock();
-    ensure_private_dir(&directory.outbox())?;
-    if paid_here(directory, &owing.delivery.id)? {
-        return Ok(());
-    }
-    let path = directory.outbox().join(format!("{}.json", owing.delivery.id));
-    match publish_new(&path, &json(owing)?, Permissions::Private) {
-        Err(error) if error.kind() != io::ErrorKind::AlreadyExists => Err(error),
-        _ => Ok(()),
-    }
+    let (owing, bytes) = (owing.clone(), serde_json::to_vec(owing)?.len());
+    change(directory, bytes, move |rows| owe_in(rows, &owing))
 }
-
-/// The turns' ends still on their way, oldest first.
+/// Commit an outgoing answer with another record that creates its obligation.
+pub(crate) fn owe_in(rows: &crate::records::Rows<'_>, owing: &Owing) -> fastctx_storage::Result<()> {
+    let key = owing.delivery.id.as_str();
+    if !storage::paid(rows, key)? && !rows.exists("outgoing-answers", key)? {
+        rows.put_ordered("outgoing-answers", key, owing, owing.delivery.at)?;
+    }
+    Ok(())
+}
 pub fn owing(directory: &ConversationDir) -> io::Result<Vec<Owing>> {
-    let _transaction = crate::resident_storage::lock();
-    let mut all = Vec::new();
-    for path in entries(&directory.outbox())? {
-        let hidden = path.file_name().is_some_and(|name| name.to_string_lossy().starts_with('.'));
-        if hidden || path.extension().is_none_or(|extension| extension != "json") {
-            continue;
-        }
-        let owing: Owing = parse(&path, &std::fs::read(&path)?)?;
-        if !paid_here(directory, &owing.delivery.id)? {
-            all.push(owing);
-        }
-    }
-    all.sort_by(|a: &Owing, b| a.delivery.at.cmp(&b.delivery.at).then(a.delivery.id.cmp(&b.delivery.id)));
-    Ok(all)
+    answers::all(directory)
 }
-
-/// A turn's end reached its reader's machine.
 pub fn paid(directory: &ConversationDir, id: &NoticeId) -> io::Result<()> {
-    let _transaction = crate::resident_storage::lock();
-    ensure_private_dir(&directory.paid())?;
-    publish(&directory.paid().join(id.as_str()), b"", Permissions::Private)?;
-    match std::fs::remove_file(directory.outbox().join(format!("{id}.json"))) {
-        Err(error) if error.kind() != io::ErrorKind::NotFound => Err(error),
-        _ => Ok(()),
-    }
+    let key = id.to_string();
+    change(directory, key.len(), move |rows| {
+        outgoing::settled(rows, &key)?;
+        rows.put("paid-answers", &key, &true)?;
+        rows.delete("outgoing-answers", &key)?;
+        Ok(())
+    })
 }
-
-/// Whether a turn's end reached its reader's machine; older nodes marked it
-/// beside the answer.
-fn paid_here(directory: &ConversationDir, id: &NoticeId) -> io::Result<bool> {
-    Ok(directory.paid().join(id.as_str()).try_exists()?
-        || directory.book("undeliverable").join(id.as_str()).try_exists()?
-        || directory.outbox().join(format!("{id}.paid")).try_exists()?)
-}
-
-/// A local recipient whose home is gone can never consume this answer.
-/// Preserve that disposition separately from successful delivery receipts.
 pub(crate) fn without_reader(directory: &ConversationDir, owing: &Owing) -> io::Result<()> {
-    let _transaction = crate::resident_storage::lock();
-    let path = directory.book("undeliverable").join(owing.delivery.id.as_str());
-    ensure_private_dir(path.parent().expect("receipt directory"))?;
-    publish(&path, &json(&owing.to)?, Permissions::Private)?;
-    fastctx_platform::owned_directory::delete(&directory.outbox().join(format!("{}.json", owing.delivery.id)))
+    let (key, to) = (owing.delivery.id.to_string(), owing.to.clone());
+    change(directory, key.len() + 128, move |rows| {
+        outgoing::settled(rows, &key)?;
+        rows.put("undeliverable-answers", &key, &to)?;
+        rows.delete("outgoing-answers", &key)?;
+        Ok(())
+    })
 }
 
 fn parse_pending(directory: &ConversationDir, path: &Path, bytes: &[u8]) -> io::Result<Pending> {
@@ -422,7 +287,8 @@ fn parse_pending(directory: &ConversationDir, path: &Path, bytes: &[u8]) -> io::
         }
         _ => (Vec::new(), true),
     };
-    let about: fastctx_types::residents::About = parse(&directory.about(), &std::fs::read(directory.about())?)?;
+    let about: fastctx_types::residents::About =
+        parse(&directory.about(), &fastctx_platform::disk::read(directory.about())?)?;
     // Old Codex inbox entries were written after any send error, including
     // an unanswered accepted request. They cannot safely be sent again.
     let state = if about.world_started && about.host.agent.as_str() == "codex" {
@@ -431,7 +297,6 @@ fn parse_pending(directory: &ConversationDir, path: &Path, bytes: &[u8]) -> io::
         PendingState::Waiting
     };
     let pending = Pending { delivery, readers, state, working, session: None, since: None };
-    publish(&self::path(directory, &pending.delivery.id), &json(&pending)?, Permissions::Private)?;
     Ok(pending)
 }
 
@@ -439,15 +304,7 @@ fn parse_pending(directory: &ConversationDir, path: &Path, bytes: &[u8]) -> io::
 /// Returns the job's record as it stands after the marker is there: if it
 /// has ended by then, nobody else will tell, and the caller does.
 pub fn owe_job(record_path: &Path) -> io::Result<JobRecord> {
-    match publish_new(&record_path.with_extension("owed"), b"", Permissions::Private) {
-        Ok(()) => {}
-        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
-            if std::fs::read(record_path.with_extension("owed"))? == b"answer" {
-                publish(&record_path.with_extension("owed"), b"", Permissions::Private)?;
-            }
-        }
-        Err(error) => return Err(error),
-    }
+    crate::job_metadata::put_raw(&record_path.with_extension("owed"), b"")?;
     record::read(record_path)
 }
 
@@ -457,70 +314,124 @@ pub async fn tell_if_ended(node: &Arc<Node>, record_path: &Path, record: &JobRec
     crate::job_accounts::seen(node, record_path, record);
     if record.is_sentinel() {
         if record.end.is_none() {
-            crate::job_watch::restore(node, record_path, record)?;
+            crate::job_watch::restore(node, record_path, record).await?;
         }
         return Ok(());
     }
     let Some(owner) = record.owner.resident() else { return Ok(()) };
-    let Some(end) = &record.end else {
-        crate::job_watch::restore(node, record_path, record)?;
+    if record.end.is_none() {
+        crate::job_watch::restore(node, record_path, record).await?;
         return Ok(());
     };
-    let owed = record_path.with_extension("owed");
     let _delivery = node.job_ends.lock(record_path).await;
-    if record_path.with_extension("wait-taken").try_exists()? {
-        match std::fs::remove_file(&owed) {
+    let (checking, path, ended) = (node.clone(), record_path.to_path_buf(), record.clone());
+    let Some(notice) = fastctx_platform::task::spawn_blocking(move || prepare_job_end(&checking, &path, &ended))
+        .await
+        .map_err(io::Error::other)??
+    else {
+        return Ok(());
+    };
+    let id = job_notice_id(record);
+    // The end is news for the account the job was sent for, or run for.
+    let acting = record
+        .on
+        .as_ref()
+        .and_then(|on| on.account.clone())
+        .or_else(|| record.account.clone())
+        .map(|account| fastctx_types::access::Acting::one(account.hub, account.account))
+        .unwrap_or_default();
+    if node.is_me(&owner.machine) {
+        tell(node, &acting, owner, id, notice, Owed::Working)
+            .await
+            .map_err(|failure| io::Error::other(failure.message))?;
+    } else {
+        let (posting, path, owner) = (node.clone(), record_path.to_path_buf(), owner.clone());
+        let posted = fastctx_platform::task::spawn_blocking(move || -> io::Result<bool> {
+            if let Err(reason) = crate::completion_debt::post(&posting, &path, &owner, &acting, id, notice)? {
+                let owed = path.with_extension("owed");
+                let bytes = crate::job_metadata::read(&owed)?;
+                crate::obligations::finish_job(
+                    &posting,
+                    &owed,
+                    &bytes,
+                    crate::obligations::Outcome::Impossible,
+                    &reason,
+                )?;
+                return Ok(false);
+            }
+            Ok(true)
+        })
+        .await
+        .map_err(io::Error::other)??;
+        if !posted {
+            return Ok(());
+        }
+    }
+    let path = record_path.to_path_buf();
+    fastctx_platform::task::spawn_blocking(move || crate::completion_debt::paid(&path))
+        .await
+        .map_err(io::Error::other)?
+}
+
+fn prepare_job_end(node: &Arc<Node>, record_path: &Path, record: &JobRecord) -> io::Result<Option<Notice>> {
+    let owner = record.owner.resident().expect("resident completion");
+    let end = record.end.as_ref().expect("ended record");
+    let owed = record_path.with_extension("owed");
+    if crate::job_metadata::exists(&record_path.with_extension("wait-taken"))? {
+        match crate::job_metadata::delete(&owed) {
             Err(error) if error.kind() != io::ErrorKind::NotFound => return Err(error),
-            _ => return Ok(()),
+            _ => return Ok(None),
         }
     }
     // An `on` job's follower takes its end; a letter goes only when nobody
     // follows it then (`on`).
-    if !owed.try_exists()? || !crate::on::unfollowed(node, record_path) {
-        return Ok(());
+    if !crate::job_metadata::exists(&owed)? || !crate::on::unfollowed(node, record_path) {
+        return Ok(None);
     }
     let cancelled = record
         .on
         .as_ref()
         .and_then(|on| on.request.as_ref())
         .map(|request| {
-            record_path.parent().expect("jobs directory").join(format!("request-{request}.stopped")).try_exists()
+            fastctx_platform::disk::exists(
+                record_path.parent().expect("jobs directory").join(format!("request-{request}.stopped")),
+            )
         })
         .transpose()?
         .unwrap_or(false);
-    let taken = record_path.with_extension("on-taken").try_exists()?;
-    if taken || record_path.with_extension("on-stopped").try_exists()? || cancelled {
-        match std::fs::remove_file(&owed) {
-            Err(error) if error.kind() != io::ErrorKind::NotFound => return Err(error),
-            _ => {}
-        }
+    let taken = crate::job_metadata::exists(&record_path.with_extension("on-taken"))?;
+    if taken || crate::job_metadata::exists(&record_path.with_extension("on-stopped"))? || cancelled {
         // Whoever followed it took every byte and its end, so they are
         // part of the hop that followed it now: one copy of an output stays,
         // there (`world-run.md`, 输出).
         // Output that went straight on goes once it got there too.
         let piped = record.on.as_ref().is_some_and(|on| on.piped);
-        if taken && (!piped || record_path.with_extension("on-piped").try_exists()?) {
-            crate::job_watch::copied(node, record_path);
+        if taken && (!piped || crate::job_metadata::exists(&record_path.with_extension("on-piped"))?) {
+            crate::job_watch::copied(node, record_path)?;
         }
-        return Ok(());
+        match crate::job_metadata::delete(&owed) {
+            Err(error) if error.kind() != io::ErrorKind::NotFound => return Err(error),
+            _ => {}
+        }
+        return Ok(None);
     }
-    if record_path.with_extension("delivered").try_exists()? {
-        return crate::completion_debt::paid(record_path);
+    if crate::job_metadata::exists(&record_path.with_extension("delivered"))? {
+        return crate::completion_debt::paid(record_path).map(|_| None);
     }
     let account = record.on.as_ref().and_then(|on| on.account.clone()).or_else(|| record.account.clone());
     let acting =
         account.map(|account| fastctx_types::access::Acting::one(account.hub, account.account)).unwrap_or_default();
     if let Some(reason) = crate::obligations::impossible(node, &acting, &(&owner.machine).into())? {
-        let bytes = std::fs::read(&owed)?;
-        crate::obligations::finish(node, &owed, &bytes, crate::obligations::Outcome::Impossible, &reason)?;
-        return Ok(());
+        let bytes = crate::job_metadata::read(&owed)?;
+        crate::obligations::finish_job(node, &owed, &bytes, crate::obligations::Outcome::Impossible, &reason)?;
+        return Ok(None);
     }
     if !crate::completion_debt::ready(node, record_path, owner)? {
         return Err(crate::completion_debt::pending("the host has not yet acknowledged the run answer"));
     }
     let notice_path = record_path.with_extension("notice");
-    let notice = if notice_path.try_exists()? {
-        parse(&notice_path, &std::fs::read(&notice_path)?)?
+    let notice = if crate::job_metadata::exists(&notice_path)? {
+        parse(&notice_path, &crate::job_metadata::read(&notice_path)?)?
     } else {
         let loss = record
             .output_lost
@@ -556,33 +467,15 @@ pub async fn tell_if_ended(node: &Arc<Node>, record_path: &Path, record: &JobRec
             stop: record.stop.as_ref().map(|stop| Box::new(stop.request.clone())),
             scratch: crate::scratch::jobs::locations(record_path, &record.machine)?,
         };
-        match publish_new(&notice_path, &json(&notice)?, Permissions::Private) {
+        match crate::job_metadata::create(&notice_path, &json(&notice)?) {
             Err(error) if error.kind() != io::ErrorKind::AlreadyExists => return Err(error),
             _ => {}
         }
         // Concurrent notification attempts always send the same frozen
         // content, including its tail, under the stable letter id.
-        parse(&notice_path, &std::fs::read(&notice_path)?)?
+        parse(&notice_path, &crate::job_metadata::read(&notice_path)?)?
     };
-    let id = job_notice_id(record);
-    // The end is news for the account the job was sent for, or run for.
-    let acting = record
-        .on
-        .as_ref()
-        .and_then(|on| on.account.clone())
-        .or_else(|| record.account.clone())
-        .map(|account| fastctx_types::access::Acting::one(account.hub, account.account))
-        .unwrap_or_default();
-    if node.is_me(&owner.machine) {
-        tell(node, &acting, owner, id, notice, Owed::Working)
-            .await
-            .map_err(|failure| io::Error::other(failure.message))?;
-    } else if let Err(reason) = crate::completion_debt::post(node, record_path, owner, &acting, id, notice)? {
-        let bytes = std::fs::read(&owed)?;
-        crate::obligations::finish(node, &owed, &bytes, crate::obligations::Outcome::Impossible, &reason)?;
-        return Ok(());
-    }
-    crate::completion_debt::paid(record_path)
+    Ok(Some(notice))
 }
 
 pub(crate) fn job_notice_id(record: &JobRecord) -> NoticeId {
@@ -614,34 +507,48 @@ pub(crate) fn end_id(
 
 /// Finishes telling the ends of jobs a node that stopped left owed.
 pub async fn settle_jobs(node: &Arc<Node>) -> io::Result<Vec<(std::path::PathBuf, io::Error)>> {
-    let mut problems = Vec::new();
-    let mut owed = Vec::new();
-    for parent in node.world.job_parents()? {
-        let residents = match entries(&parent) {
-            Ok(entries) => entries,
-            Err(error) => {
-                problems.push((parent, error));
-                continue;
-            }
-        };
-        for resident in residents {
-            let jobs = resident.join("jobs");
-            let records = match entries(&jobs) {
+    let working = node.clone();
+    let (mut problems, owed) = fastctx_platform::task::spawn_blocking(move || {
+        let node = working;
+        let mut problems = Vec::new();
+        let mut owed = Vec::new();
+        for parent in node.world.job_parents()? {
+            let residents = match entries(&parent) {
                 Ok(entries) => entries,
                 Err(error) => {
-                    problems.push((jobs, error));
+                    problems.push((parent, error));
                     continue;
                 }
             };
-            for path in records {
-                if path.extension().is_some_and(|extension| extension == "owed") {
-                    owed.push(path);
+            for resident in residents {
+                let jobs = resident.join("jobs");
+                let records = match entries(&jobs) {
+                    Ok(entries) => entries,
+                    Err(error) => {
+                        problems.push((jobs, error));
+                        continue;
+                    }
+                };
+                for path in records {
+                    if path.extension().is_some_and(|extension| extension == "json") {
+                        match crate::job_metadata::exists(&path.with_extension("owed")) {
+                            Ok(true) => owed.push(path),
+                            Ok(false) => {}
+                            Err(error) => problems.push((path, error)),
+                        }
+                    }
                 }
             }
         }
-    }
+        Ok::<_, io::Error>((problems, owed))
+    })
+    .await
+    .map_err(io::Error::other)??;
     for path in owed {
-        let told = match record::read(&path.with_extension("json")) {
+        let reading = path.with_extension("json");
+        let read =
+            fastctx_platform::task::spawn_blocking(move || record::read(&reading)).await.map_err(io::Error::other)?;
+        let told = match read {
             Ok(job) => tell_if_ended(node, &path.with_extension("json"), &job).await,
             Err(error) => Err(error),
         };
@@ -662,7 +569,7 @@ pub(crate) fn retry_job(node: &Arc<Node>, path: &Path) {
         return;
     }
     let (node, path) = (node.clone(), path.to_path_buf());
-    tokio::spawn(async move {
+    fastctx_platform::task::spawn(async move {
         let mut again = crate::again::Again::default();
         let mut ways = node.ways.subscribe();
         loop {
@@ -677,7 +584,7 @@ pub(crate) fn retry_job(node: &Arc<Node>, path: &Path) {
                 Err(error) if error.kind() == io::ErrorKind::WouldBlock => {}
                 Err(error) => {
                     if let Err(recording) =
-                        crate::obligations::retry(&node, &path.with_extension("owed"), &error.to_string())
+                        crate::obligations::retry_job(&node, &path.with_extension("owed"), &error.to_string())
                     {
                         node.log.line(format_args!("recording the completion retry reason: {recording}"));
                     }
@@ -694,7 +601,7 @@ pub(crate) fn retry_job(node: &Arc<Node>, path: &Path) {
 }
 
 fn entries(directory: &Path) -> io::Result<Vec<std::path::PathBuf>> {
-    match std::fs::read_dir(directory) {
+    match fastctx_platform::disk::read_dir(directory) {
         Ok(entries) => entries.map(|entry| entry.map(|entry| entry.path())).collect(),
         Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(Vec::new()),
         Err(error) => Err(error),
@@ -713,6 +620,5 @@ fn json(value: &impl serde::Serialize) -> io::Result<Vec<u8>> {
 }
 
 pub fn read(directory: &ConversationDir, id: &NoticeId) -> io::Result<Option<Pending>> {
-    let _transaction = crate::resident_storage::lock();
-    read_here(directory, id)
+    read_rows(directory, |rows| rows.get("pending-inputs", id.as_str()))
 }

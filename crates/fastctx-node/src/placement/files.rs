@@ -4,15 +4,19 @@ use fastctx_types::skill_files::File;
 use std::{collections::BTreeMap, io, path::Path};
 
 pub(crate) fn erase(path: &Path) -> io::Result<()> {
-    let metadata = match std::fs::symlink_metadata(path) {
+    let metadata = match fastctx_platform::disk::symlink_metadata(path) {
         Ok(metadata) => metadata,
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
         Err(error) => return Err(error),
     };
     if metadata.file_type().is_symlink() {
-        return if path.is_dir() { std::fs::remove_dir(path) } else { std::fs::remove_file(path) };
+        return if fastctx_platform::disk::is_dir(path) {
+            fastctx_platform::disk::remove_dir(path)
+        } else {
+            fastctx_platform::disk::remove_file(path)
+        };
     }
-    for entry in std::fs::read_dir(path)? {
+    for entry in fastctx_platform::disk::read_dir(path)? {
         let entry = entry?;
         if entry.file_type()?.is_dir() {
             erase(&entry.path())?;
@@ -27,16 +31,16 @@ pub(crate) fn erase(path: &Path) -> io::Result<()> {
                 permissions.set_readonly(false);
                 std::fs::set_permissions(entry.path(), permissions)?;
             }
-            std::fs::remove_file(entry.path())?;
+            fastctx_platform::disk::remove_file(entry.path())?;
         }
     }
-    std::fs::remove_dir(path)
+    fastctx_platform::disk::remove_dir(path)
 }
 
 pub(crate) fn unpack(directory: &Path, files: &[File]) -> io::Result<()> {
     fastctx_types::skill_files::validate_files(files).map_err(io::Error::other)?;
     fastctx_platform::ensure_private_dir(directory)?;
-    let directory = std::fs::canonicalize(directory)?;
+    let directory = fastctx_platform::disk::canonicalize(directory)?;
     for file in files {
         let path = directory.join(&file.path);
         let Some(bytes) = file.bytes().map_err(io::Error::other)? else {
@@ -45,7 +49,7 @@ pub(crate) fn unpack(directory: &Path, files: &[File]) -> io::Result<()> {
         };
         fastctx_platform::ensure_private_dir(path.parent().expect("file parent"))?;
         fastctx_platform::publish(&path, &bytes, fastctx_platform::Permissions::Private)?;
-        let mut permissions = std::fs::metadata(&path)?.permissions();
+        let mut permissions = fastctx_platform::disk::metadata(&path)?.permissions();
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt as _;
@@ -69,7 +73,7 @@ pub(crate) fn complete(directory: &Path, files: &[File]) -> io::Result<bool> {
         }
     }
     fn walk(root: &Path, path: &Path, actual: &mut BTreeMap<String, bool>) -> io::Result<bool> {
-        let metadata = match std::fs::symlink_metadata(path) {
+        let metadata = match fastctx_platform::disk::symlink_metadata(path) {
             Ok(metadata) => metadata,
             Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(false),
             Err(error) => return Err(error),
@@ -77,7 +81,7 @@ pub(crate) fn complete(directory: &Path, files: &[File]) -> io::Result<bool> {
         if metadata.file_type().is_symlink() || !metadata.is_dir() {
             return Ok(false);
         }
-        for entry in std::fs::read_dir(path)? {
+        for entry in fastctx_platform::disk::read_dir(path)? {
             let entry = entry?;
             let path = entry.path();
             let kind = entry.file_type()?;
@@ -105,13 +109,13 @@ pub(crate) fn complete(directory: &Path, files: &[File]) -> io::Result<bool> {
     for file in files {
         if let Some(bytes) = file.bytes().map_err(io::Error::other)? {
             let path = directory.join(&file.path);
-            if std::fs::read(&path)? != bytes {
+            if fastctx_platform::disk::read(&path)? != bytes {
                 return Ok(false);
             }
             #[cfg(unix)]
             {
                 use std::os::unix::fs::PermissionsExt as _;
-                if (std::fs::metadata(path)?.permissions().mode() & 0o111 != 0) != file.executable {
+                if (fastctx_platform::disk::metadata(path)?.permissions().mode() & 0o111 != 0) != file.executable {
                     return Ok(false);
                 }
             }

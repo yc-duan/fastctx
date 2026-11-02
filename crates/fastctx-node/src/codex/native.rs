@@ -62,7 +62,7 @@ pub(crate) fn requested(node: &Arc<Node>, about: &About) -> Result<bool, Failure
 /// A native frontend may close after its requested observation entered the inbox.
 pub(crate) fn left(node: &Arc<Node>, id: &ResidentId) {
     let (node, id) = (node.clone(), id.clone());
-    tokio::spawn(async move {
+    fastctx_platform::task::spawn(async move {
         let Some((about, _)) = node.residents.about(&id) else {
             return;
         };
@@ -92,7 +92,7 @@ fn observe(node: &Arc<Node>, id: &ResidentId) {
         return;
     }
     let (node, id) = (node.clone(), id.clone());
-    tokio::spawn(async move {
+    fastctx_platform::task::spawn(async move {
         let mut again = crate::again::Again::default();
         loop {
             if node.residents.active(&id).is_err() {

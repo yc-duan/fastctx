@@ -72,7 +72,8 @@ pub(crate) async fn run(
             return result(prior, receipt);
         }
         let directory = files::directory(node.world.path(), &prior.host.session);
-        published = directory.join("inbox").join(format!("{key}.json")).try_exists().map_err(failure)?;
+        published =
+            fastctx_platform::disk::exists(directory.join("inbox").join(format!("{key}.json"))).map_err(failure)?;
     }
     if !published {
         if !crate::goals::engine::requests(node, resident, key) {
@@ -144,7 +145,9 @@ pub(crate) async fn run(
         {
             let gate = super::reading(node, &ticket.host.session);
             let _reading = gate.lock().await;
-            if directory.join("replies").join(format!("{key}.done")).try_exists().map_err(uncertain)? {
+            if fastctx_platform::disk::exists(directory.join("replies").join(format!("{key}.done")))
+                .map_err(uncertain)?
+            {
                 capture(node, resident, &directory, key).map_err(uncertain)?;
                 super::control::collect_invocation(&directory, key).map_err(uncertain)?;
             }

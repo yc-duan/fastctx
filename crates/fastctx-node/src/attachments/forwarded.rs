@@ -182,17 +182,19 @@ pub(super) async fn upload(
     let mut shown = expected;
     shown.path = original.path.clone();
     let kept = Forwarded { shown: shown.clone(), original: original.clone(), acting: acting.clone() };
-    fastctx_platform::publish(
-        &mapping(node, &shown),
-        &serde_json::to_vec(&kept).map_err(failure)?,
-        fastctx_platform::Permissions::Private,
-    )
-    .map_err(failure)?;
-    fastctx_platform::publish(
-        &directory.join("reference.json"),
-        &serde_json::to_vec(&original).map_err(failure)?,
-        fastctx_platform::Permissions::Private,
-    )
-    .map_err(failure)?;
+    let working = node.clone();
+    let shown = fastctx_platform::task::spawn_blocking(move || {
+        fastctx_platform::publish(
+            &mapping(&working, &shown),
+            &serde_json::to_vec(&kept).map_err(failure)?,
+            fastctx_platform::Permissions::Private,
+        )
+        .map_err(failure)?;
+        super::index::put(&working.world.conversation(&shown.conversation().resident), &original, true)
+            .map_err(failure)?;
+        Ok::<_, Failure>(shown)
+    })
+    .await
+    .map_err(failure)??;
     sent::commit(node, from, &acting, shown, None).await
 }
