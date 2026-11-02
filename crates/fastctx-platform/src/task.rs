@@ -96,6 +96,12 @@ where
     F: Future + Send + 'static,
     F::Output: Send + 'static,
 {
+    // Its state is kept on the heap. Held where it runs, as `block_on` holds
+    // what it is given on its thread's stack, or inside the work awaiting
+    // it, a deep chain of calls grows with every such step it nests, until
+    // it takes a thread's whole stack, and each thread that ran one keeps
+    // the pages it touched.
+    let work = Box::pin(work);
     if roles::current().may_block() {
         return work.await;
     }

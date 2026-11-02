@@ -49,7 +49,7 @@ pub async fn apply(node: &Arc<Node>, id: &ResidentId, event: SessionEvent) -> st
     let (node, id, runtime) = (node.clone(), id.clone(), tokio::runtime::Handle::current());
     fastctx_platform::task::spawn_blocking(move || {
         let _permit = permit;
-        runtime.block_on(apply_inner(&node, &id, event))
+        runtime.block_on(Box::pin(apply_inner(&node, &id, event)))
     })
     .await
     .map_err(std::io::Error::other)?

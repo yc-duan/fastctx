@@ -96,7 +96,7 @@ pub(crate) async fn delete_one(node: &Arc<Node>, name: &str) -> Result<Gone, Sto
     let (node, name, runtime) = (node.clone(), name.to_string(), tokio::runtime::Handle::current());
     fastctx_platform::task::spawn_blocking(move || {
         let _permit = permit;
-        runtime.block_on(delete_on_worker(&node, &name))
+        runtime.block_on(Box::pin(delete_on_worker(&node, &name)))
     })
     .await
     .map_err(|error| Stop::Failed(error.to_string()))?
@@ -395,7 +395,9 @@ async fn records(
 /// many could not be finished now, including scans whose outcome is unknown.
 pub(crate) async fn finish_interrupted(node: &Arc<Node>) -> usize {
     let (node, runtime) = (node.clone(), tokio::runtime::Handle::current());
-    fastctx_platform::task::spawn_blocking(move || runtime.block_on(finish_on_worker(&node))).await.unwrap_or(1)
+    fastctx_platform::task::spawn_blocking(move || runtime.block_on(Box::pin(finish_on_worker(&node))))
+        .await
+        .unwrap_or(1)
 }
 
 async fn finish_on_worker(node: &Arc<Node>) -> usize {

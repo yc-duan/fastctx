@@ -1402,7 +1402,9 @@ impl fastctx_net::link::Node for Handler {
         // only a blocking thread may wait for; its asynchronous parts run there too.
         Box::pin(async move {
             let runtime = tokio::runtime::Handle::current();
-            fastctx_platform::task::spawn_blocking(move || runtime.block_on(taking)).await.map_err(io::Error::other)?
+            fastctx_platform::task::spawn_blocking(move || runtime.block_on(Box::pin(taking)))
+                .await
+                .map_err(io::Error::other)?
         })
     }
 

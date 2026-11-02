@@ -151,7 +151,7 @@ async fn changed(
     ended: Timestamp,
 ) -> Vec<(String, &'static str, Option<u32>, Option<u32>)> {
     let (top, runtime) = (top.to_path_buf(), tokio::runtime::Handle::current());
-    fastctx_platform::task::spawn_blocking(move || runtime.block_on(changed_inner(&top, began, ended)))
+    fastctx_platform::task::spawn_blocking(move || runtime.block_on(Box::pin(changed_inner(&top, began, ended))))
         .await
         .unwrap_or_default()
 }
