@@ -6,12 +6,18 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::Duration;
 
 use fastctx_net::link::Link;
 use fastctx_types::ResidentId;
 use fastctx_types::town::{Afoot, AfootJob, AfootResident, WhoReply};
 
 use crate::Node;
+
+/// How long after a change what is afoot is worked out again, gathering the
+/// changes that come with it: a job's output changes it many times a second,
+/// and turns start and end in bursts. Each time reads every resident here.
+const SETTLE: Duration = Duration::from_secs(1);
 
 /// Tells the hubs what is afoot here from now on, each time a resident or a
 /// job changes, or a hub's view does, until the node stops.
@@ -40,6 +46,16 @@ pub(crate) fn start(node: &Arc<Node>) {
                     Ok(_) | Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}
                     Err(tokio::sync::broadcast::error::RecvError::Closed) => return,
                 },
+            }
+            tokio::time::sleep(SETTLE).await;
+            residents.borrow_and_update();
+            views.borrow_and_update();
+            loop {
+                match jobs.try_recv() {
+                    Ok(_) | Err(tokio::sync::broadcast::error::TryRecvError::Lagged(_)) => {}
+                    Err(tokio::sync::broadcast::error::TryRecvError::Empty) => break,
+                    Err(tokio::sync::broadcast::error::TryRecvError::Closed) => return,
+                }
             }
         }
     });

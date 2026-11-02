@@ -142,24 +142,33 @@ pub(crate) fn start(node: &Arc<Node>) -> io::Result<()> {
                 })
                 .map_err(io::Error::other);
                 let books = crate::books::retire(&retiring);
-                let _collecting = retiring.disk.lock();
+                // None of these touch a job's records but the sweep, which
+                // removes empty directories where jobs once were: only it
+                // holds the jobs' gate.
+                let presence = crate::inbox::presence::collect(&retiring.database);
+                let claude = crate::claude::garbage::collect(&retiring.world);
+                let trust = crate::claude::garbage::untrust_departed(&retiring);
+                let usage = crate::usage::collect(&retiring);
+                let purged = crate::activity_book::purge(&retiring);
+                let folded = crate::activity_book::fold(&retiring);
+                let swept = {
+                    let _collecting = retiring.disk.lock();
+                    crate::gather::sweep(&retiring.world)
+                };
                 // Each step is told on its own when it fails.
                 [
                     ("collecting conversation projections", payloads),
                     ("collecting conversation maps", maps),
                     ("collecting staged terminal readers", terminals),
                     ("collecting settled request observations", requests),
-                    ("collecting closed input memberships", crate::inbox::presence::collect(&retiring.database)),
+                    ("collecting closed input memberships", presence),
                     ("retiring the bookkeeping of removed conversations", books),
-                    ("collecting what Claude sessions left", crate::claude::garbage::collect(&retiring.world)),
-                    (
-                        "taking back Claude Code's trust of deleted conversations",
-                        crate::claude::garbage::untrust_departed(&retiring),
-                    ),
-                    ("collecting usage records", crate::usage::collect(&retiring)),
-                    ("letting go of deleted conversations' activity", crate::activity_book::purge(&retiring)),
-                    ("folding the activity book", crate::activity_book::fold(&retiring)),
-                    ("sweeping earlier conversation directories", crate::gather::sweep(&retiring.world)),
+                    ("collecting what Claude sessions left", claude),
+                    ("taking back Claude Code's trust of deleted conversations", trust),
+                    ("collecting usage records", usage),
+                    ("letting go of deleted conversations' activity", purged),
+                    ("folding the activity book", folded),
+                    ("sweeping earlier conversation directories", swept),
                 ]
                 .into_iter()
                 .filter_map(|(step, result)| result.err().map(|error| format!("{step}: {error}")))
@@ -217,10 +226,12 @@ fn recover_book(node: &Arc<Node>) {
 }
 
 fn collect_immediate(node: &Arc<Node>) -> io::Result<()> {
-    let _gate = node.disk.lock();
     let paths: Vec<_> = node.disk_due.lock().expect("never poisoned").drain().collect();
     let mut failures = Vec::new();
     for path in paths {
+        // The gate is held for one job at a time: on a slow disk, as long as
+        // one job's files take, not every due job's.
+        let _gate = node.disk.lock();
         match record::read(&path) {
             Ok(job) if program::in_use(&job)? => {
                 node.disk_due.lock().expect("never poisoned").insert(path);
@@ -257,11 +268,11 @@ fn collect_immediate(node: &Arc<Node>) -> io::Result<()> {
 fn collect(node: &Arc<Node>, now: Timestamp) -> io::Result<()> {
     let settings: Settings = serde_json::from_slice(&fs::read(node.world.retention())?).map_err(io::Error::other)?;
     let lifetime = i64::from(settings.command_artifact_days) * DAY as i64;
-    let _collecting = node.disk.lock();
     collect_records(
         &node.world,
         now,
         lifetime,
+        || node.disk.lock(),
         |path| {
             crate::on::unfollowed(node, path) && !node.job_readers.lock().expect("never poisoned").contains_key(path)
         },
@@ -276,10 +287,14 @@ fn collect(node: &Arc<Node>, now: Timestamp) -> io::Result<()> {
     )
 }
 
-fn collect_records(
+/// Each job's record, and each scratch and output directory, is looked at
+/// and let go under `hold`, the jobs' gate, taken for that one alone: a
+/// pass costs as much as history holds, a hold as much as one job.
+fn collect_records<G>(
     world: &fastctx_types::layout::WorldDir,
     now: Timestamp,
     lifetime: i64,
+    hold: impl Fn() -> G,
     unfollowed: impl Fn(&Path) -> bool,
     forget: impl Fn(&Path) -> io::Result<()>,
     idle: impl Fn(&Path) -> bool,
@@ -300,6 +315,7 @@ fn collect_records(
                 if path.extension().is_none_or(|extension| extension != "json") {
                     continue;
                 }
+                let _held = hold();
                 let job = record::read(&path)?;
                 if job.is_sentinel()
                     && let Some(end) = &job.end
@@ -374,6 +390,7 @@ fn collect_records(
                 else {
                     continue;
                 };
+                let _held = hold();
                 if !fastctx_platform::disk::is_dir(&scratch)
                     || fastctx_platform::owned_directory::is_link(&fs::symlink_metadata(&scratch)?)
                     || fastctx_platform::disk::exists(directory.join("jobs").join(format!("{job}.json")))?
@@ -392,6 +409,7 @@ fn collect_records(
                 && retired_owner(world, &directory)?
                 && let Some(delivered) = latest
             {
+                let _held = hold();
                 collect_out(&directory.join("out"), delivered)?;
             }
         }

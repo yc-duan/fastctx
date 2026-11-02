@@ -218,6 +218,9 @@ pub(crate) fn hand_to_session(node: &Node, id: &ResidentId, session: &std::path:
 /// How long after a refresh that found conversations busy, or could not
 /// collect the MCP commands given up, those are tried again.
 const AGAIN: std::time::Duration = std::time::Duration::from_secs(15);
+/// How long after the views or the ways changed every session is brought in
+/// line again, gathering the changes that come with them.
+const SETTLE: std::time::Duration = std::time::Duration::from_secs(3);
 
 /// Brings the sessions' configuration of `only`'s conversations, or of every
 /// conversation, in line with the accounts' profiles. Returns those busy at
@@ -304,11 +307,17 @@ pub(crate) fn start(node: &Arc<Node>) {
                     }
                 };
             }
-            all = tokio::select! {
+            let changed = tokio::select! {
                 _ = views.changed() => true,
                 _ = ways.changed() => true,
-                () = tokio::time::sleep(AGAIN), if failed || !busy.is_empty() || !swept => failed,
+                () = tokio::time::sleep(AGAIN), if failed || !busy.is_empty() || !swept => false,
             };
+            if changed {
+                tokio::time::sleep(SETTLE).await;
+                views.mark_unchanged();
+                ways.mark_unchanged();
+            }
+            all = changed || failed;
         }
     });
 }

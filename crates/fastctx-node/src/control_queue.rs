@@ -98,7 +98,7 @@ async fn settled(
     settle(node, id, row.clone(), result).await?;
     crate::composer::forget_command(node, id, &row.id).await?;
     crate::lifecycle::retry::clear(node, id, &control_key(row)?).await.map_err(failure)?;
-    node.watchers.changed.notify_one();
+    node.watchers.changed.tell(id);
     Ok(())
 }
 

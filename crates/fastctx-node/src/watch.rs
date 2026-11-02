@@ -9,7 +9,7 @@
 use fastctx_net::watch_queue::{self, Sender};
 use fastctx_types::ResidentId;
 use fastctx_types::session::{Mark, SessionEvent};
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::hash::{Hash, Hasher};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, LazyLock, Mutex, RwLock};
@@ -60,7 +60,7 @@ const KEPT_FOR: Duration = Duration::from_secs(120);
 
 pub struct Watchers {
     watching: Arc<[RwLock<Sessions>; SHARDS]>,
-    pub(crate) changed: Arc<tokio::sync::Notify>,
+    pub(crate) changed: Arc<Changed>,
     /// The bytes of the events every conversation keeps.
     kept: Arc<AtomicUsize>,
 }
@@ -73,6 +73,31 @@ impl Default for Watchers {
         }
     }
 }
+/// The conversations whose watching, or turns, changed since the lifecycle
+/// last looked (`lifecycle/retention.rs`): between its rounds of everyone it
+/// looks at those alone.
+#[derive(Default)]
+pub(crate) struct Changed {
+    ids: Mutex<HashSet<ResidentId>>,
+    notify: tokio::sync::Notify,
+}
+
+impl Changed {
+    pub(crate) fn tell(&self, id: &ResidentId) {
+        self.ids.lock().expect("never poisoned").insert(id.clone());
+        self.notify.notify_one();
+    }
+
+    pub(crate) async fn told(&self) {
+        self.notify.notified().await;
+    }
+
+    /// Those told of since the last time, let go.
+    pub(crate) fn take(&self) -> HashSet<ResidentId> {
+        std::mem::take(&mut *self.ids.lock().expect("never poisoned"))
+    }
+}
+
 #[derive(Default)]
 struct Watching {
     senders: Vec<Sender<Arc<Marked>>>,
@@ -310,12 +335,12 @@ impl Watchers {
         }
         let at = Mark { epoch: session.told.epoch, sequence: session.told.sequence };
         drop(session);
-        self.changed.notify_one();
+        self.changed.tell(id);
         let changed = self.changed.clone();
         let (registry, id, kept) = (Arc::downgrade(&self.watching), id.clone(), self.kept.clone());
         fastctx_platform::task::spawn(async move {
             sender.closed().await;
-            changed.notify_one();
+            changed.tell(&id);
             let left = {
                 let mut session = cell.lock().expect("never poisoned");
                 session.quiet.retain(|held| !held.same_channel(&sender));

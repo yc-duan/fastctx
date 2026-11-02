@@ -27,6 +27,12 @@ struct Pending {
 
 pub async fn send(output: &mpsc::Sender<Output>, packet: Packet) -> io::Result<()> {
     let size = crate::watch_queue::size(&packet);
+    send_sized(output, packet, size).await
+}
+
+/// `send`, for a packet whose encoded size its sender already counted
+/// (`watch_queue::size`): a large one is not walked again to count it.
+pub async fn send_sized(output: &mpsc::Sender<Output>, packet: Packet, size: usize) -> io::Result<()> {
     if size > MAX_PACKET {
         return Err(io::Error::other("the local watch packet exceeds 64 MiB"));
     }

@@ -381,7 +381,7 @@ async fn drain(node: &Arc<Node>, thread: &str) {
                 ..
             } | HostEvent::Gone { .. }
         ) {
-            node.watchers.changed.notify_one();
+            node.watchers.changed.tell(&id);
         }
         node.handoff.changed();
     }

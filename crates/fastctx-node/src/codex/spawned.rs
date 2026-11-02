@@ -251,8 +251,10 @@ fn tell(
         HostEvent::Desk { .. } | HostEvent::Unloaded { .. } | HostEvent::Synchronized { .. } => Vec::new(),
     };
     node.codex.acknowledge(&event);
-    if told.iter().any(|event| matches!(event.happened, Happened::TurnEnded { .. })) {
-        node.watchers.changed.notify_one();
+    if told.iter().any(|event| matches!(event.happened, Happened::TurnEnded { .. }))
+        && let Some(id) = node.residents.resident_of_thread(root)
+    {
+        node.watchers.changed.tell(&id);
     }
     for mut event in told {
         if let Happened::Changed { change: SessionChange::Usage { usage }, .. } = &mut event.happened

@@ -24,8 +24,8 @@ use crate::Node;
 /// How long after a change the World is worked out again for those who
 /// watch it, gathering the changes that come with it: a job's output
 /// changes it many times a second, and a network's machines come and go in
-/// bursts.
-const SETTLE: Duration = Duration::from_millis(250);
+/// bursts. Each time reads every resident here.
+const SETTLE: Duration = Duration::from_secs(1);
 
 /// The World as the interfaces watching it are told it, worked out once for
 /// them all and only while one watches; none until it is worked out anew.

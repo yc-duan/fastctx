@@ -364,11 +364,16 @@ pub(crate) fn start(node: &std::sync::Arc<Node>) {
             }
             tokio::select! {
                 () = tokio::time::sleep(again.next()), if pending => {}
-                _ = ways.changed() => {}
+                // Ways change in bursts, as lines come and go: each pass
+                // reads every conversation here, so it waits for them.
+                _ = ways.changed() => tokio::time::sleep(WAYS_SETTLE).await,
             }
         }
     });
 }
+
+/// How long after the ways changed obligations are looked at again.
+const WAYS_SETTLE: Duration = Duration::from_secs(5);
 
 fn retire_elsewhere(node: &std::sync::Arc<Node>) -> io::Result<bool> {
     let mut pending = false;

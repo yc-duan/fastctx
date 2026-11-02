@@ -95,7 +95,7 @@ pub(crate) async fn settle_terminal_locked(
     }
     crate::turn_evidence::ended(node, id, turn);
     node.idle_probes.touched(id);
-    node.watchers.changed.notify_one();
+    node.watchers.changed.tell(id);
     if recorded {
         if current || !turn.is_empty() {
             crate::desk::turn_ended(node, id, turn);

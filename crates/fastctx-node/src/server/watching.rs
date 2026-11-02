@@ -202,7 +202,7 @@ async fn run(
         let bytes = fastctx_net::watch_queue::size(&packet);
         flow.ready(bytes, &mut consumed).await?;
         let number = packet.number;
-        watch_ipc::send(output, packet).await.map_err(|e| Failure::new(e.to_string()))?;
+        watch_ipc::send_sized(output, packet, bytes).await.map_err(|e| Failure::new(e.to_string()))?;
         flow.sent(number, bytes);
     }
 }

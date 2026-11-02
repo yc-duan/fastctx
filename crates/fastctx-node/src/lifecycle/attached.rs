@@ -19,7 +19,7 @@ impl Attached {
 pub(crate) struct Lease {
     held: Arc<Mutex<HashMap<ResidentId, usize>>>,
     id: ResidentId,
-    changed: Arc<tokio::sync::Notify>,
+    changed: Arc<crate::watch::Changed>,
 }
 
 pub(crate) async fn hold(node: &Arc<Node>, id: &ResidentId) -> Result<Lease, Failure> {
@@ -29,7 +29,7 @@ pub(crate) async fn hold(node: &Arc<Node>, id: &ResidentId) -> Result<Lease, Fai
     let held = node.attached.0.clone();
     *held.lock().expect("never poisoned").entry(id.clone()).or_default() += 1;
     node.log.line(format_args!("lifecycle {id}: official interface attached"));
-    node.watchers.changed.notify_one();
+    node.watchers.changed.tell(id);
     Ok(Lease { held, id: id.clone(), changed: node.watchers.changed.clone() })
 }
 
@@ -42,6 +42,6 @@ impl Drop for Lease {
                 held.remove(&self.id);
             }
         }
-        self.changed.notify_one();
+        self.changed.tell(&self.id);
     }
 }
