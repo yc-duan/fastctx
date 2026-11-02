@@ -263,6 +263,62 @@ pub(crate) fn invalidate(world: &Path, conversation: &str) {
     engine.progress.notify_one();
 }
 
+/// Asks for `family` of `conversation` to move, as `request` does from a
+/// request, without waiting: whether it has moved. One that has not moves
+/// on a worker meanwhile; a task asks again as the migration progresses
+/// (`Service::wait_progress`), holding no thread while it waits.
+pub(crate) fn ask(
+    world: &Path,
+    conversation: &str,
+    family: &str,
+    work: impl FnOnce() -> io::Result<()> + Send + 'static,
+) -> io::Result<bool> {
+    let engine = ENGINES
+        .lock()
+        .expect("migration registry")
+        .get(world)
+        .and_then(Weak::upgrade)
+        .ok_or_else(|| busy("the node has not opened migration yet"))?;
+    let key = (conversation.to_string(), family.to_string());
+    let mut queue = engine.queue.lock().expect("migration queue");
+    if queue.ready.contains(&key) || queue.born.contains(&key.0) {
+        return Ok(true);
+    }
+    if engine.closed.load(Ordering::Acquire) {
+        return Err(busy("the node is stopping"));
+    }
+    if let Some(cell) = queue.pending.get(&key).and_then(Weak::upgrade) {
+        cell.urgent.store(true, Ordering::Release);
+        engine.changed.notify_all();
+        return Ok(false);
+    }
+    if let Some(failed) = queue.failed.get(&key)
+        && failed.retry_at > Instant::now()
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::WouldBlock,
+            format!("migrating {} failed and is tried again later: {}", key.1, failed.reason),
+        ));
+    }
+    if !engine.started.load(Ordering::Acquire) {
+        return Err(busy("the listener is still opening"));
+    }
+    if queue.jobs.len() >= QUEUED {
+        return Err(busy("the migration queue is full"));
+    }
+    let cell = Arc::new(Cell {
+        urgent: AtomicBool::new(true),
+        cancelled: AtomicBool::new(false),
+        result: Mutex::new(None),
+        changed: Condvar::new(),
+    });
+    queue.pending.insert(key.clone(), Arc::downgrade(&cell));
+    queue.jobs.push_back(Job { key, cell, work: Box::new(work) });
+    DEPTH.add(1);
+    engine.changed.notify_all();
+    Ok(false)
+}
+
 pub(crate) fn request(
     world: &Path,
     conversation: &str,
@@ -468,6 +524,9 @@ impl Engine {
                 queue.pending.remove(&job.key);
             }
         }
+        // Every task waiting for progress asks again, and the next to wait
+        // finds it too.
+        self.progress.notify_waiters();
         self.progress.notify_one();
         *job.cell.result.lock().expect("migration result") =
             Some(result.as_ref().map(|_| ()).map_err(|error| (error.kind(), error.to_string())));

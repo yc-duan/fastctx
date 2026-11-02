@@ -137,14 +137,35 @@ pub(crate) async fn wait(
     node: &crate::Node,
     id: &fastctx_types::ResidentId,
 ) -> std::result::Result<(), fastctx_types::ipc::Failure> {
-    let (world, database, conversation) = (node.world.path().to_path_buf(), node.database.clone(), id.to_string());
-    if !pending(&world, &conversation) {
-        return Ok(());
+    let (world, conversation) = (node.world.path().to_path_buf(), id.to_string());
+    // Asked again as the migration progresses, at least each second, with
+    // no thread held meanwhile; ten seconds at most, as a request waits.
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(10);
+    loop {
+        if !pending(&world, &conversation) {
+            return Ok(());
+        }
+        let progressed = node.record_migration.wait_progress();
+        let (root, scope, database) = (world.clone(), conversation.clone(), node.database.clone());
+        let moved = scheduler::ask(&world, &conversation, "conversation-bundle", move || {
+            importing::run(&root, &database, &scope)
+        })
+        .map_err(crate::record_migration::failure)?;
+        if moved {
+            return Ok(());
+        }
+        if tokio::time::Instant::now() >= deadline {
+            return Err(crate::record_migration::failure(io::Error::new(
+                io::ErrorKind::WouldBlock,
+                "record migration is busy: the ten-second wait expired; retry with backoff",
+            )));
+        }
+        let _ = tokio::time::timeout_at(
+            deadline.min(tokio::time::Instant::now() + std::time::Duration::from_secs(1)),
+            progressed,
+        )
+        .await;
     }
-    fastctx_platform::task::spawn_blocking(move || ensure(&world, &database, &conversation))
-        .await
-        .map_err(|error| fastctx_types::ipc::Failure::new(error.to_string()))?
-        .map_err(crate::record_migration::failure)
 }
 
 pub(crate) fn scan(node: &crate::Node) -> io::Result<bool> {
