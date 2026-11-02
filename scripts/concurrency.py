@@ -29,6 +29,7 @@ import os
 import random
 import re
 import shutil
+import socket
 import stat
 import subprocess
 import sys
@@ -155,11 +156,26 @@ class Lab:
         with open(self.root / "node.out", "ab") as log:
             self.node = subprocess.Popen(command, env=self.env(), stdout=log,
                                          stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL)
-        until("a node listens", lambda: self.listened() > listened or self.node.poll() is not None, limit=60)
+        until("a node listens", lambda: self.listened() > listened or self.answering() or self.node.poll() is not None,
+              limit=60)
         if self.node.poll() is not None:
             return False
         until("the node answers", lambda: self.run("w", timeout=20)[0] == 0, limit=60)
         return self.node.poll() is None
+
+    def answering(self):
+        """Whether a node of this lab takes connections now: a node that began to listen while its
+        disk was full could not log so."""
+        path = self.home / "world" / "node.sock"
+        if os.name == "nt" or not path.exists():
+            return False
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as probe:
+            probe.settimeout(1)
+            try:
+                probe.connect(str(path))
+            except OSError:
+                return False
+        return True
 
     def listened(self):
         """How many times a node of this lab began to listen."""
