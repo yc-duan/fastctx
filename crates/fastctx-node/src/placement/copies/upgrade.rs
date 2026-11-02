@@ -34,7 +34,11 @@ pub(crate) async fn take(
         }
         journal::settle(node, &slot, &mut state, link).await?;
         let page = link.plan_read(&state.account.account, state.owner.resident.clone()).await.map_err(failure)?;
-        if let Some(text) = read(&slot.path)? {
+        let text = {
+            let path = slot.path.clone();
+            fastctx_platform::task::blocking(move || read(&path)).await?
+        };
+        if let Some(text) = text {
             let dirty = if state.initial { !had(link, &state, &page, &text).await? } else { text != state.text };
             if dirty {
                 state.submission = Some(journal::Submission {

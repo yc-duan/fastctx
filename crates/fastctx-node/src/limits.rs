@@ -30,7 +30,8 @@ fn file(node: &Node) -> std::path::PathBuf {
 pub(crate) fn start(node: &Arc<Node>) {
     let node = node.clone();
     fastctx_platform::task::spawn(async move {
-        if let Ok(bytes) = fastctx_platform::disk::read(file(&node))
+        let kept = file(&node);
+        if let Ok(bytes) = fastctx_platform::task::blocking(move || fastctx_platform::disk::read(kept)).await
             && let Ok(kept) = serde_json::from_slice::<Vec<LimitReading>>(&bytes)
         {
             let since = Timestamp::now() - KEEP;

@@ -49,17 +49,22 @@ pub(crate) async fn refresh(node: &Arc<Node>, link: &Arc<Link>, wanted: Option<&
         if view.member_keeps_project(&view.me, &id) {
             continue;
         }
-        let town = super::local_name(node, link, &id)?;
-        match fastctx_platform::disk::remove_file(node.world.town(&town).path().join("index.json")) {
-            Ok(()) => {}
-            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-            Err(error) => return Err(error.to_string()),
-        }
-        if read(&node.world, &town)
-            .map_err(|error| error.to_string())?
-            .as_ref()
-            .is_some_and(|kept| kept.seq >= index.seq)
-        {
+        // The project's files are named, cleared and read on the blocking pool.
+        let (town, kept) = {
+            let (naming, link, id) = (node.clone(), link.clone(), id.clone());
+            fastctx_platform::task::blocking(move || -> Result<_, String> {
+                let town = super::local_name(&naming, &link, &id)?;
+                match fastctx_platform::disk::remove_file(naming.world.town(&town).path().join("index.json")) {
+                    Ok(()) => {}
+                    Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+                    Err(error) => return Err(error.to_string()),
+                }
+                let kept = read(&naming.world, &town).map_err(|error| error.to_string())?;
+                Ok((town, kept))
+            })
+            .await?
+        };
+        if kept.as_ref().is_some_and(|kept| kept.seq >= index.seq) {
             continue;
         }
         let (node, world) = (node.clone(), node.world.clone());

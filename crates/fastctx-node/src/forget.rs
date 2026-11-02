@@ -352,8 +352,13 @@ async fn elsewhere(node: &Arc<Node>, hub: &HubId, account: &AccountName, convers
         .map_err(|error| format!("sealing its activity here: {error}"))?;
     for (name, owner) in rooms {
         stop_jobs(node, &owner).await?;
-        crate::attachments::lifetime::remember(node.world.owner(&node.names(), &owner).path(), hub, account)
-            .map_err(|error| error.message)?;
+        {
+            let (room, hub, account) =
+                (node.world.owner(&node.names(), &owner).path().to_path_buf(), hub.clone(), account.clone());
+            fastctx_platform::task::blocking(move || crate::attachments::lifetime::remember(&room, &hub, &account))
+                .await
+                .map_err(|error| error.message)?;
+        }
         match crate::data::delete::delete_one(node, &name).await {
             Ok(_) | Err(Stop::Nothing(_)) => {}
             Err(stop) => return Err(stop.why()),

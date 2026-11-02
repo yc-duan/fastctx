@@ -52,7 +52,7 @@ struct Told {
 
 /// Registration contains coordinates and birth mode only, never document text.
 pub(crate) async fn register(
-    node: &Node,
+    node: &std::sync::Arc<Node>,
     resident: &ResidentId,
     acting: &Acting,
 ) -> Result<(), fastctx_types::ipc::Failure> {
@@ -61,7 +61,11 @@ pub(crate) async fn register(
     if !link.view().shared_records {
         return Ok(());
     }
-    let shared = match crate::assists::host::kept(node, resident)? {
+    let kept = {
+        let (reading, whose) = (node.clone(), resident.clone());
+        fastctx_platform::task::blocking(move || crate::assists::host::kept(&reading, &whose)).await?
+    };
+    let shared = match kept {
         Some(assisted) => !assisted,
         None => matches!(acting, Acting::Here),
     };

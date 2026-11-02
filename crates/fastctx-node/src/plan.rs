@@ -189,7 +189,9 @@ pub(crate) async fn context(node: &Arc<Node>, id: &ResidentId, acting: &Acting) 
     if link.plan_of_another(&page, &whose).is_some() {
         page = Page { owner: page.owner, metadata: None, body: None };
     } else {
-        crate::plan_file::pulled(node, id, &page);
+        // Whether its file takes the plan is read from its records.
+        let (pulling, whose, pulled) = (node.clone(), id.clone(), page.clone());
+        fastctx_platform::task::blocking(move || crate::plan_file::pulled(&pulling, &whose, &pulled)).await;
     }
     let version = serde_json::to_string(&Seen { account: scope, owner: page.owner.clone(), version: page.version() })
         .map_err(|error| Failure::new(error.to_string()))?;

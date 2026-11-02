@@ -478,7 +478,10 @@ async fn there(
     let piped = request.pipe_to.as_ref().is_some_and(|to| straight(node, &link, &account, &machine, to));
     // A sentinel's look is no script of the conversation.
     let attachments = match origin.sentinel {
-        None => crate::attachments::follow::known(node, &origin.resident),
+        None => {
+            let (reading, whose) = (node.clone(), origin.resident.clone());
+            fastctx_platform::task::blocking(move || crate::attachments::follow::known(&reading, &whose)).await
+        }
         Some(_) => Vec::new(),
     };
     // A machine from before attachments went with a script runs it and

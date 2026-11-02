@@ -22,7 +22,8 @@ use crate::Node;
 /// candidates, as the node keeps them.
 pub async fn here(node: &Arc<Node>) -> Result<AgentsReply, Failure> {
     let logins = crate::logins::here(node).await?;
-    Ok(reply(logins))
+    // Whether each login's program is there is looked at on the disk.
+    Ok(fastctx_platform::task::blocking(move || reply(logins)).await)
 }
 
 /// The record in the shape of an older reply: a login a scan has not asked

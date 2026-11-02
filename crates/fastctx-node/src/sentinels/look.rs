@@ -47,11 +47,17 @@ impl Look for MachineLook {
             let name = crate::speech::new_id("observation");
             let state = self.directory.join(format!("{name}.state"));
             let script = self.directory.join(format!("{name}.bash"));
-            fastctx_platform::disk::create_dir_all(&self.directory).map_err(|e| e.to_string())?;
-            fastctx_platform::publish(&state, b"", fastctx_platform::Permissions::Private)
+            {
+                let (directory, state, script, command) =
+                    (self.directory.clone(), state.clone(), script.clone(), command.to_string());
+                fastctx_platform::task::blocking(move || -> std::io::Result<()> {
+                    fastctx_platform::disk::create_dir_all(&directory)?;
+                    fastctx_platform::publish(&state, b"", fastctx_platform::Permissions::Private)?;
+                    fastctx_platform::publish(&script, command.as_bytes(), fastctx_platform::Permissions::Private)
+                })
+                .await
                 .map_err(|e| e.to_string())?;
-            fastctx_platform::publish(&script, command.as_bytes(), fastctx_platform::Permissions::Private)
-                .map_err(|e| e.to_string())?;
+            }
             let request = OnRequest {
                 machine: machine.clone(),
                 hub: written.hub,
@@ -87,8 +93,14 @@ impl Look for MachineLook {
                                 return Err(format!("sentinel observation did not finish: {end:?}"));
                             }
                             let path = self.directory.join(format!("{name}.txt"));
-                            fastctx_platform::publish(&path, &bytes, fastctx_platform::Permissions::Private)
+                            {
+                                let (path, bytes) = (path.clone(), bytes.clone());
+                                fastctx_platform::task::blocking(move || {
+                                    fastctx_platform::publish(&path, &bytes, fastctx_platform::Permissions::Private)
+                                })
+                                .await
                                 .map_err(|e| e.to_string())?;
+                            }
                             let _ = taken.send(());
                             return Ok(ReadResult {
                                 text: String::from_utf8_lossy(&bytes).into_owned(),

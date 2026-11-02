@@ -561,8 +561,12 @@ pub(crate) async fn instructions(
     acting: &Acting,
     record: bool,
 ) -> Result<(String, Heard), Failure> {
-    let mut heard =
-        heard_now(node, town).map_err(|error| Failure::new(format!("reading the town's ledger: {error}")))?;
+    let mut heard = {
+        let (reading, town) = (node.clone(), town.cloned());
+        fastctx_platform::task::blocking(move || heard_now(&reading, town.as_ref()))
+            .await
+            .map_err(|error| Failure::new(format!("reading the town's ledger: {error}")))?
+    };
     let words = words(id, town, origin, record);
     let (context, receipt) = crate::context::prepare(node, id, town, origin, acting).await?;
     heard.context = record.then_some(receipt);

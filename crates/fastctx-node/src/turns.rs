@@ -370,8 +370,15 @@ async fn finish_at(
     let settles_queue = current || crate::composer::awaits_turn(node, id, turn).await.map_err(std::io::Error::other)?;
     if end.how == TurnHow::Interrupted
         && settles_queue
-        && crate::delivery::terminal(&directory, turn)?.is_none()
-        && crate::turn_evidence::source(node, id, turn)?.is_none()
+        && {
+            // Its end and its stop are read from its records.
+            let (reading, whose, directory, turn) = (node.clone(), id.clone(), directory.clone(), turn.to_string());
+            fastctx_platform::task::blocking(move || -> std::io::Result<bool> {
+                Ok(crate::delivery::terminal(&directory, &turn)?.is_none()
+                    && crate::turn_evidence::source(&reading, &whose, &turn)?.is_none())
+            })
+            .await?
+        }
         && crate::turn_evidence::classify(&end, None, about.host.agent.as_str()).kind
             == fastctx_types::turn_evidence::StopKind::UserStopped
     {

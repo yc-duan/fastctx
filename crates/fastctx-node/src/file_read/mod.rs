@@ -82,7 +82,7 @@ pub(crate) fn attachment_for(
             result = async {
                 let (attachment, acting) = match &attachment {
                     fastctx_types::attachments::AttachmentSource::Upload(receipt) =>
-                        match crate::attachments::forwarded::original(&node, receipt)? {
+                        match { let (finding, receipt) = (node.clone(), receipt.clone()); fastctx_platform::task::blocking(move || crate::attachments::forwarded::original(&finding, &receipt)).await }? {
                             Some((original, acting)) => (original.into(), acting),
                             None => (attachment, acting.clone().unwrap_or(Acting::Here)),
                         },

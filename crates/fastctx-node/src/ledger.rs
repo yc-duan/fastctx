@@ -204,7 +204,8 @@ pub async fn sync(node: &Arc<Node>, hub: &HubId, town: Option<TownId>) -> Result
         }
         let name = {
             let _syncing = node.syncing.lock().await;
-            local_name(node, &link, &id)
+            let (naming, link, id) = (node.clone(), link.clone(), id.clone());
+            fastctx_platform::task::blocking(move || local_name(&naming, &link, &id)).await
         };
         match name {
             Ok(name) => {
@@ -257,9 +258,14 @@ pub(crate) async fn take(
     let directory = node.world.town(name);
     let mut after = {
         let _syncing = node.syncing.lock().await;
-        check_place(node, link, name, town)?;
-        cursor(&directory, &refused(&directory).map_err(|error| error.to_string())?)
-            .map_err(|error| format!("reading {name}'s ledger: {error}"))?
+        let (checking, link, name, town, directory) =
+            (node.clone(), link.clone(), name.clone(), town.clone(), directory.clone());
+        fastctx_platform::task::blocking(move || -> Result<u64, String> {
+            check_place(&checking, &link, &name, &town)?;
+            cursor(&directory, &refused(&directory).map_err(|error| error.to_string())?)
+                .map_err(|error| format!("reading {name}'s ledger: {error}"))
+        })
+        .await?
     };
     let mut last_page = None;
     while after < latest {
@@ -268,34 +274,44 @@ pub(crate) async fn take(
             return Err(format!("the hub promised {latest} entries of {name}, but stopped after {after}"));
         }
         let _syncing = node.syncing.lock().await;
-        check_place(node, link, name, town)?;
-        let mut refused = refused(&directory).map_err(|error| error.to_string())?;
-        after = cursor(&directory, &refused).map_err(|error| error.to_string())?;
-        for taken in items {
-            let seq = taken.seq;
-            // Another reader may have committed this prefix while we fetched it.
-            if seq <= after {
-                continue;
-            }
-            if !link.view().shared_records && seq != after + 1 {
-                return Err(format!("the hub gave entry {seq} of {name} after {after}"));
-            }
-            match (taken.entry, taken.refused) {
-                (Some(entry), None) => apply(&node.world, name, seq, &entry, &taken.signed)
-                    .map_err(|error| format!("keeping entry {seq} of {name}: {error}"))?,
-                (_, reason) => {
-                    let reason = reason.unwrap_or_else(|| "it cannot be read".to_string());
-                    node.log.line(format_args!("refused from the ledger: entry {seq} of {name}: {reason}"));
-                    refused.insert(seq, reason);
-                    set_refused(&directory, &refused).map_err(|error| format!("keeping {name}'s ledger: {error}"))?;
+        // The page goes into the project's files on the blocking pool.
+        after = {
+            let (keeping, link, name, town, directory) =
+                (node.clone(), link.clone(), name.clone(), town.clone(), directory.clone());
+            fastctx_platform::task::blocking(move || -> Result<u64, String> {
+                check_place(&keeping, &link, &name, &town)?;
+                let mut refused = refused(&directory).map_err(|error| error.to_string())?;
+                let mut after = cursor(&directory, &refused).map_err(|error| error.to_string())?;
+                for taken in items {
+                    let seq = taken.seq;
+                    // Another reader may have committed this prefix while we fetched it.
+                    if seq <= after {
+                        continue;
+                    }
+                    if !link.view().shared_records && seq != after + 1 {
+                        return Err(format!("the hub gave entry {seq} of {name} after {after}"));
+                    }
+                    match (taken.entry, taken.refused) {
+                        (Some(entry), None) => apply(&keeping.world, &name, seq, &entry, &taken.signed)
+                            .map_err(|error| format!("keeping entry {seq} of {name}: {error}"))?,
+                        (_, reason) => {
+                            let reason = reason.unwrap_or_else(|| "it cannot be read".to_string());
+                            keeping.log.line(format_args!("refused from the ledger: entry {seq} of {name}: {reason}"));
+                            refused.insert(seq, reason);
+                            set_refused(&directory, &refused)
+                                .map_err(|error| format!("keeping {name}'s ledger: {error}"))?;
+                        }
+                    }
+                    after = seq;
                 }
-            }
-            after = seq;
-        }
-        after = after.max(through);
-        ensure_private_dir(directory.path()).map_err(|error| error.to_string())?;
-        fastctx_net::link::state::write(&directory.path().join("projection-through.json"), &after)
-            .map_err(|error| error.to_string())?;
+                let after = after.max(through);
+                ensure_private_dir(directory.path()).map_err(|error| error.to_string())?;
+                fastctx_net::link::state::write(&directory.path().join("projection-through.json"), &after)
+                    .map_err(|error| error.to_string())?;
+                Ok(after)
+            })
+            .await?
+        };
         if !more && after < latest {
             return Err(format!("the hub ended {name}'s ledger at {after}, before its promised {latest}"));
         }
@@ -342,34 +358,41 @@ pub(crate) async fn carry(node: &Arc<Node>, hub: &HubId) -> Vec<String> {
         return vec![format!("asking the hub: {error}")];
     }
     let Some(home) = link.view().me().and_then(|me| me.home.clone()) else { return Vec::new() };
-    let alone = match alone(&node.world) {
-        Ok(alone) => alone,
-        Err(error) => return vec![format!("reading this computer's own id: {error}")],
-    };
-    let towns = match node.world.towns() {
-        Ok(towns) => towns,
-        Err(error) => return vec![format!("reading the projects: {error}")],
-    };
-    let key = match own_key(&node.world) {
-        Ok(key) => key,
-        Err(error) => return vec![format!("this computer's key: {error}")],
+    let world = node.world.clone();
+    let read = fastctx_platform::task::blocking(move || -> Result<_, String> {
+        let alone = alone(&world).map_err(|error| format!("reading this computer's own id: {error}"))?;
+        let towns = world.towns().map_err(|error| format!("reading the projects: {error}"))?;
+        let key = own_key(&world).map_err(|error| format!("this computer's key: {error}"))?;
+        Ok((alone, towns, key))
+    })
+    .await;
+    let (alone, towns, key) = match read {
+        Ok(read) => read,
+        Err(problem) => return vec![problem],
     };
     let mut problems = Vec::new();
     for town in towns {
         let snapshot = node.syncing.lock().await;
-        let place = match names::place(&node.world, &town) {
-            Ok(Some(place)) if place.hub == alone => place,
-            Ok(_) => continue,
-            Err(error) => {
-                problems.push(format!("reading {town}: {error}"));
-                continue;
-            }
-        };
         let directory = node.world.town(&town);
-        let entries = match read_all(&node.world, &directory) {
-            Ok(entries) => entries,
-            Err(error) => {
-                problems.push(format!("reading {town}'s ledger: {error}"));
+        let read = {
+            let (world, town, directory, alone) = (node.world.clone(), town.clone(), directory.clone(), alone.clone());
+            fastctx_platform::task::blocking(move || -> Result<Option<_>, String> {
+                let place = match names::place(&world, &town) {
+                    Ok(Some(place)) if place.hub == alone => place,
+                    Ok(_) => return Ok(None),
+                    Err(error) => return Err(format!("reading {town}: {error}")),
+                };
+                let entries =
+                    read_all(&world, &directory).map_err(|error| format!("reading {town}'s ledger: {error}"))?;
+                Ok(Some((place, entries)))
+            })
+            .await
+        };
+        let (place, entries) = match read {
+            Ok(Some(read)) => read,
+            Ok(None) => continue,
+            Err(problem) => {
+                problems.push(problem);
                 continue;
             }
         };
@@ -379,16 +402,23 @@ pub(crate) async fn carry(node: &Arc<Node>, hub: &HubId) -> Vec<String> {
             continue;
         }
         let _syncing = node.syncing.lock().await;
-        let unchanged = (|| -> io::Result<bool> {
-            if names::place(&node.world, &town)?.as_ref() != Some(&place)
-                || link.view().me().and_then(|me| me.home.as_ref()) != Some(&home)
-            {
-                return Ok(false);
-            }
-            let current = read_all(&node.world, &directory)?;
-            Ok(current.len() == entries.len()
-                && current.iter().zip(&entries).all(|(a, b)| a.0 == b.0 && a.2.data == b.2.data && a.2.sig == b.2.sig))
-        })();
+        let unchanged = {
+            let home_now = link.view().me().and_then(|me| me.home.clone());
+            let (world, checking, place, directory, home, entries) =
+                (node.world.clone(), town.clone(), place.clone(), directory.clone(), home.clone(), entries.clone());
+            fastctx_platform::task::blocking(move || -> io::Result<bool> {
+                if names::place(&world, &checking)?.as_ref() != Some(&place) || home_now.as_ref() != Some(&home) {
+                    return Ok(false);
+                }
+                let current = read_all(&world, &directory)?;
+                Ok(current.len() == entries.len()
+                    && current
+                        .iter()
+                        .zip(&entries)
+                        .all(|(a, b)| a.0 == b.0 && a.2.data == b.2.data && a.2.sig == b.2.sig))
+            })
+            .await
+        };
         match unchanged {
             Ok(true) => {}
             Ok(false) => {
@@ -404,9 +434,20 @@ pub(crate) async fn carry(node: &Arc<Node>, hub: &HubId) -> Vec<String> {
         }
         // The hub's copy is taken afresh: it may call this machine by
         // another name than the files here do.
-        let moved = names::set_place(&node.world, &town, &Place { hub: hub.clone(), town: place.town.clone() })
-            .and_then(|()| remove(&directory.signed()))
-            .and_then(|()| remove(&directory.ledger()));
+        let moved = {
+            let (world, town, place, directory) = (
+                node.world.clone(),
+                town.clone(),
+                Place { hub: hub.clone(), town: place.town.clone() },
+                directory.clone(),
+            );
+            fastctx_platform::task::blocking(move || {
+                names::set_place(&world, &town, &place)
+                    .and_then(|()| remove(&directory.signed()))
+                    .and_then(|()| remove(&directory.ledger()))
+            })
+            .await
+        };
         if let Err(error) = moved {
             problems.push(format!("letting go of {town}'s own ledger: {error}"));
             continue;

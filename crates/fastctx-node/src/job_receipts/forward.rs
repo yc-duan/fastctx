@@ -149,7 +149,11 @@ async fn forward_one(node: &Arc<Node>, path: &Path) -> io::Result<bool> {
         Prepared::Done(done) => return Ok(done),
         Prepared::Send(bytes, sending, destination) => (bytes, *sending, destination),
     };
-    if !crate::facts::completion_receipts(node, &destination) {
+    let receipts = {
+        let (asking, destination) = (node.clone(), destination.clone());
+        task::blocking(move || crate::facts::completion_receipts(&asking, &destination)).await
+    };
+    if !receipts {
         let whole = sending
             .delivery
             .as_ref()

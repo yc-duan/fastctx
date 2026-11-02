@@ -84,24 +84,35 @@ pub(crate) async fn bring(
         return Vec::new();
     }
     let room = node.world.owner(&node.names(), owner);
-    if !node.is_me(&owner.machine)
-        && let Err(error) = keep_list(&room, &files)
-    {
-        node.log.line(format_args!("keeping the files {owner} was given: {error}"));
-    }
     let base = room.scratch().join("attachments");
+    // Which are in place already, and the list kept of those given, are on disk.
+    let present: std::collections::HashSet<std::path::PathBuf> = {
+        let (keeping, listing, files, base) = (!node.is_me(&owner.machine), room.clone(), files.clone(), base.clone());
+        let (present, kept) = fastctx_platform::task::blocking(move || {
+            let kept = if keeping { keep_list(&listing, &files) } else { Ok(()) };
+            let present = files
+                .iter()
+                .map(|attachment| base.join(attachment.id.as_str()))
+                .filter(|directory| fastctx_platform::disk::is_there(directory))
+                .collect();
+            (present, kept)
+        })
+        .await;
+        if let Err(error) = kept {
+            node.log.line(format_args!("keeping the files {owner} was given: {error}"));
+        }
+        present
+    };
     let mut waiting = Vec::new();
     for attachment in files {
         let directory = base.join(attachment.id.as_str());
-        if fastctx_platform::disk::is_there(&directory) {
+        if present.contains(&directory) {
             continue;
         }
         let bringing = {
             let mut bringing = BRINGING.lock().expect("never poisoned");
-            // One brought since: it is put in place before it is let go of.
-            if fastctx_platform::disk::is_there(&directory) {
-                continue;
-            }
+            // One brought since was put in place before it was let go of:
+            // bringing it again finds it there (`fetch`).
             match bringing.get(&directory) {
                 Some(already) => already.clone(),
                 None => {
@@ -179,20 +190,25 @@ async fn fetch(
     let part = base.join(format!(".{}.part", attachment.id));
     let name = file_name(&attachment.file.name);
     let file = {
-        let (base, part, name) = (base.to_path_buf(), part.clone(), name.clone());
-        fastctx_platform::task::spawn_blocking(move || -> std::io::Result<std::fs::File> {
+        let (base, part, name, id) = (base.to_path_buf(), part.clone(), name.clone(), attachment.id.clone());
+        fastctx_platform::task::spawn_blocking(move || -> std::io::Result<Option<std::fs::File>> {
+            if fastctx_platform::disk::is_there(base.join(id.as_str())) {
+                return Ok(None);
+            }
             match fastctx_platform::disk::remove_dir_all(&part) {
                 Err(error) if error.kind() != std::io::ErrorKind::NotFound => return Err(error),
                 _ => {}
             }
             fastctx_platform::ensure_private_dir(&base)?;
             fastctx_platform::ensure_private_dir(&part)?;
-            std::fs::File::create_new(part.join(name))
+            std::fs::File::create_new(part.join(name)).map(Some)
         })
         .await
         .map_err(|error| unplaced(error.to_string()))?
         .map_err(|error| unplaced(format!("making its place: {error}")))?
     };
+    // Brought by another meanwhile.
+    let Some(file) = file else { return Ok(()) };
     let mut writing = Writing { file, hash: Sha256::new(), size: 0 };
     let source = AttachmentSource::Upload(attachment.clone());
     let mut parts = crate::file_read::attachment_for(node.clone(), Some(acting.clone()), source, FileRange::All);

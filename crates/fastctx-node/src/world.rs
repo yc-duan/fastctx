@@ -1180,9 +1180,15 @@ impl fastctx_net::link::Node for Handler {
                 }
                 RemoteCall::SentinelKeys => {
                     let scope = fastctx_types::access::HubAccount { hub: hub.clone(), account: caller.account.clone() };
-                    crate::sentinels::keys::status_here(&node, &scope).map(RemoteReply::SentinelKeys)
+                    let reading = node.clone();
+                    fastctx_platform::task::blocking(move || crate::sentinels::keys::status_here(&reading, &scope))
+                        .await
+                        .map(RemoteReply::SentinelKeys)
                 }
-                RemoteCall::Facts => Ok(RemoteReply::Facts(facts(&node))),
+                RemoteCall::Facts => {
+                    let telling = node.clone();
+                    Ok(RemoteReply::Facts(fastctx_platform::task::blocking(move || facts(&telling)).await))
+                }
                 RemoteCall::Collaboration { resident, colleagues } => {
                     let acting = Acting::one(asker.hub.clone(), asker.account.clone());
                     crate::colleagues::tree::here(&node, &resident, &acting, colleagues)

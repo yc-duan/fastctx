@@ -171,7 +171,11 @@ pub(crate) async fn carry(node: &Arc<Node>, hub: &HubId) {
     }
     let _carrying = node.own_collab.carrying.lock().await;
     let path = node.world.own_collab();
-    let own = match read_at(&path) {
+    let read = {
+        let path = path.clone();
+        fastctx_platform::task::blocking(move || read_at(&path)).await
+    };
+    let own = match read {
         Ok(Some(own)) => own,
         Ok(None) => return,
         Err(error) => {

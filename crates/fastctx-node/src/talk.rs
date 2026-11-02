@@ -974,7 +974,12 @@ pub async fn open_here(
     crate::layers::may_start(node, &acting)?;
     let mut options = options;
     options.mcp_off = choices.mcp_off;
-    let home = crate::homes::listed(node, agent.as_str(), choices.home.as_deref())?;
+    let home = {
+        // The logins on this machine are read from disk.
+        let (listing, agent, chosen) = (node.clone(), agent.clone(), choices.home.clone());
+        fastctx_platform::task::blocking(move || crate::homes::listed(&listing, agent.as_str(), chosen.as_deref()))
+            .await?
+    };
     let opened = Opened { acting, focus: choices.focus, home, files_on: choices.files_on };
     match agent.as_str() {
         "codex" => {}
@@ -989,7 +994,13 @@ pub async fn open_here(
         crate::town::access::ready(node, &opened.acting, town).await?;
     }
     let (id, _opening) = crate::attachments::opening(node, &agent, &opened.acting, town.as_ref(), &attachments).await?;
-    crate::placement::location::speaking(node, &id, typed_on)?;
+    {
+        let (placing, conversation, typed_on) = (node.clone(), id.clone(), typed_on.clone());
+        fastctx_platform::task::blocking(move || {
+            crate::placement::location::speaking(&placing, &conversation, &typed_on)
+        })
+        .await?;
+    }
     let origin = Origin::User;
     let _birth = crate::here::born(node, &id, opened.acting.clone());
     crate::session_options::keep(node, &id, &options).await?;

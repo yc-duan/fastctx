@@ -590,7 +590,11 @@ pub(crate) fn retry_job(node: &Arc<Node>, path: &Path) {
                     }
                 }
             }
-            let pause = crate::completion_debt::pause(&path).ok().flatten().unwrap_or_else(|| again.next());
+            let paused = {
+                let path = path.clone();
+                fastctx_platform::task::blocking(move || crate::completion_debt::pause(&path)).await
+            };
+            let pause = paused.ok().flatten().unwrap_or_else(|| again.next());
             tokio::select! {
                 () = tokio::time::sleep(pause.min(fastctx_net::again::LONGEST)) => {}
                 _ = ways.changed() => {}

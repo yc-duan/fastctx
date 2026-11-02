@@ -35,6 +35,50 @@ pub(crate) async fn reserve(
     operation: String,
     composer: Option<UploadScope>,
 ) -> Result<Attachment, Failure> {
+    // Who it is for, its draft and its reservation are read and written on disk.
+    let (resident, town) = {
+        let (resolving, from, storage, acting, target, file, operation) = (
+            node.clone(),
+            from.clone(),
+            storage.clone(),
+            acting.clone(),
+            target.clone(),
+            file.clone(),
+            operation.clone(),
+        );
+        fastctx_platform::task::blocking(move || {
+            resolve(&resolving, &from, &storage, &acting, &target, &file, &operation)
+        })
+        .await?
+    };
+    let _place = node.places.using(resident.as_str()).await;
+    let (_lock, reservation) = {
+        let (reserving, from, storage, acting, whose) =
+            (node.clone(), from.clone(), storage.clone(), acting.clone(), resident.clone());
+        fastctx_platform::task::blocking(move || {
+            reserve_now(&reserving, &from, &storage, &acting, target, file, operation, composer, whose, town)
+        })
+        .await?
+    };
+    if let Some(scope) = &reservation.composer {
+        let mut guard = crate::composer::uploads::begin(node, &resident, from, scope, &reservation.attachment).await?;
+        guard.release();
+    }
+    Ok(reservation.attachment)
+}
+
+/// The conversation an upload goes to, and its project: its draft made or
+/// found for a new one.
+fn resolve(
+    node: &Arc<Node>,
+    from: &MachineName,
+    storage: &MachineName,
+    acting: &Acting,
+    target: &UploadTarget,
+    file: &UploadFile,
+    operation: &str,
+) -> Result<(ResidentId, Option<TownName>), Failure> {
+    let (target, file, operation) = (target.clone(), file.clone(), operation.to_string());
     validate_file(&file)?;
     let actor = destinations::acting(node, &target, acting)?;
     if !file.media_type.starts_with("image/") && !node.is_me(storage) && destinations::assisted(node, &target, &actor)?
@@ -96,14 +140,31 @@ pub(crate) async fn reserve(
         }
         UploadTarget::Sent { .. } => unreachable!(),
     };
-    let _place = node.places.using(resident.as_str()).await;
+    Ok((resident, town))
+}
+
+/// Keeps the reservation of an upload to `resident`, held by the lock it
+/// returns: the same operation finds the same one again.
+#[allow(clippy::too_many_arguments)]
+fn reserve_now(
+    node: &Arc<Node>,
+    from: &MachineName,
+    storage: &MachineName,
+    acting: &Acting,
+    target: UploadTarget,
+    file: UploadFile,
+    operation: String,
+    composer: Option<UploadScope>,
+    resident: ResidentId,
+    town: Option<TownName>,
+) -> Result<(FileLock, Reservation), Failure> {
     if node.residents.deleted(&resident).is_some() {
         return Err(crate::forget::gone(node, &resident));
     }
     let id = crate::speech::fixed_id("attachment", &[from.as_str(), &operation]);
     let directory = node.world.conversation(&resident).attachments().join(id.as_str());
     fastctx_platform::ensure_private_dir(&directory).map_err(failure)?;
-    let _lock = FileLock::try_acquire(&directory.join("reservation.lock"))
+    let lock = FileLock::try_acquire(&directory.join("reservation.lock"))
         .map_err(failure)?
         .ok_or_else(|| Failure::unanswered("this upload is being reserved; retry the same operation"))?;
     let attachment = Attachment {
@@ -125,11 +186,7 @@ pub(crate) async fn reserve(
     } else {
         write_new(&path, &reservation)?;
     }
-    if let Some(scope) = &reservation.composer {
-        let mut guard = crate::composer::uploads::begin(node, &resident, from, scope, &reservation.attachment).await?;
-        guard.release();
-    }
-    Ok(reservation.attachment)
+    Ok((lock, reservation))
 }
 
 pub(crate) async fn commit(

@@ -468,7 +468,11 @@ fn prepare_policy(node: &Node, resident: &ResidentId, directory: &Path) -> std::
 }
 
 async fn look_all(node: &Arc<Node>, sessions: &Path) {
-    for directory in session_directories(node, sessions) {
+    let directories = {
+        let (looking, sessions) = (node.clone(), sessions.to_path_buf());
+        fastctx_platform::task::blocking(move || session_directories(&looking, &sessions)).await
+    };
+    for directory in directories {
         look_alone(node, directory).await;
     }
 }

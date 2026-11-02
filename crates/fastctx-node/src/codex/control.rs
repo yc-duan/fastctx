@@ -292,7 +292,11 @@ async fn fork(
     let source_guard = crate::gate_waits::shared_owned(node, parent, &gate).await?;
     node.residents.active(parent)?;
     let _birth = crate::here::born(node, &id, source.acting.clone());
-    crate::assists::host::inherit(node, codex.assisted_cwd().is_some(), &id)?;
+    {
+        // Its host mode is recorded on its disk.
+        let (recording, assisted, child) = (node.clone(), codex.assisted_cwd().is_some(), id.clone());
+        fastctx_platform::task::blocking(move || crate::assists::host::inherit(&recording, assisted, &child)).await?;
+    }
     let options = crate::session_options::load(node, parent).await?;
     crate::session_options::keep(node, &id, &options).await?;
     crate::focus::open(node, &node.world.conversation(&id), &source.acting, &source.focus).await?;
@@ -345,7 +349,11 @@ async fn fork(
     if let Some(town) = &town {
         crate::town::access::check(node, &about.acting, town)?;
     }
-    node.residents.create(&node.world, about, town, now).map_err(|error| {
+    let created = {
+        let creating = node.clone();
+        fastctx_platform::task::blocking(move || creating.residents.create(&creating.world, about, town, now)).await
+    };
+    created.map_err(|error| {
         Failure::new(format!("Codex created thread {fork}, but recording its resident {id} failed: {error}"))
     })?;
     let inherited =

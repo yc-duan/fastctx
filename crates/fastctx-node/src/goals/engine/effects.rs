@@ -48,10 +48,21 @@ pub(crate) async fn fire(node: &Arc<Node>, store: &Arc<Store>, timer: &Timer) ->
     }
     let mut goal = view.goal.clone().expect("matched goal");
     let restarted = checkpoint::restore(node, &mut goal).await?;
-    if matches!(work.task, Task::Tell { .. } | Task::Retry { .. })
-        && crate::inbox::knows(&node.world.conversation(id), &work.id).map_err(failure)?
-    {
-        let decision = match crate::lifecycle::refused::get(node, id, &work.id).map_err(failure)? {
+    // What waits for it and what its host refused are kept on disk.
+    let known = if matches!(work.task, Task::Tell { .. } | Task::Retry { .. }) {
+        let (reading, whose, input) = (node.clone(), id.clone(), work.id.clone());
+        fastctx_platform::task::blocking(move || -> Result<_, Failure> {
+            if !crate::inbox::knows(&reading.world.conversation(&whose), &input).map_err(failure)? {
+                return Ok(None);
+            }
+            Ok(Some(crate::lifecycle::refused::get(&reading, &whose, &input).map_err(failure)?))
+        })
+        .await?
+    } else {
+        None
+    };
+    if let Some(refused) = known {
+        let decision = match refused {
             Some(error) => Some(policy::host_refused(goal.clone(), error.message)),
             None => policy::delivered(&goal, &work.id),
         };

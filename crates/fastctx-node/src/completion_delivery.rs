@@ -39,20 +39,41 @@ pub(crate) async fn decide(
         return Err(io::Error::other("completion decision requested for another kind of letter"));
     };
     let directory = node.world.conversation(to);
-    let ids = crate::on_delivery::completion_ids(node, to, delivery)?;
-    for id in &ids {
-        if crate::inbox::delivered_here(&directory, id)? {
-            return Ok(Decision::Consumed);
-        }
-    }
     let owner = Address { machine: node.machine(), resident: to.clone() };
-    let (taken, following) = crate::on_delivery::status(node, &owner, machine, job, request.as_ref())?;
-    if taken || crate::on_delivery::stopped(node, to, machine, request.as_ref())? {
-        for id in &ids {
-            crate::inbox::consume(&directory, id)?;
+    // What is known of it here is kept on disk.
+    let (ids, following) = {
+        let (deciding, to, delivery, directory, owner, machine, job, request) = (
+            node.clone(),
+            to.clone(),
+            delivery.clone(),
+            directory.clone(),
+            owner.clone(),
+            machine.clone(),
+            job.clone(),
+            request.clone(),
+        );
+        let decided = fastctx_platform::task::blocking(move || -> io::Result<Result<_, Decision>> {
+            let ids = crate::on_delivery::completion_ids(&deciding, &to, &delivery)?;
+            for id in &ids {
+                if crate::inbox::delivered_here(&directory, id)? {
+                    return Ok(Err(Decision::Consumed));
+                }
+            }
+            let (taken, following) = crate::on_delivery::status(&deciding, &owner, &machine, &job, request.as_ref())?;
+            if taken || crate::on_delivery::stopped(&deciding, &to, &machine, request.as_ref())? {
+                for id in &ids {
+                    crate::inbox::consume(&directory, id)?;
+                }
+                return Ok(Err(Decision::Consumed));
+            }
+            Ok(Ok((ids, following)))
+        })
+        .await?;
+        match decided {
+            Ok(known) => known,
+            Err(decision) => return Ok(decision),
         }
-        return Ok(Decision::Consumed);
-    }
+    };
     let Some(follower) = follower.as_ref().filter(|follower| !node.is_me(follower)) else {
         progress.due = None;
         return Ok(if following { Decision::Held } else { Decision::Deliver { unconfirmed: false } });
@@ -72,9 +93,10 @@ pub(crate) async fn decide(
         tokio::time::timeout(Duration::from_secs(10), node.call(&acting, &follower.into(), Purpose::Hands, call)).await;
     let reason = match result {
         Ok(Ok(Ok(RemoteReply::OnReceipt { taken: true, .. }))) => {
-            for id in &ids {
-                crate::inbox::consume(&directory, id)?;
-            }
+            fastctx_platform::task::blocking(move || {
+                ids.iter().try_for_each(|id| crate::inbox::consume(&directory, id))
+            })
+            .await?;
             return Ok(Decision::Consumed);
         }
         Ok(Ok(Ok(RemoteReply::OnReceipt { taken: false, following: false }))) => {

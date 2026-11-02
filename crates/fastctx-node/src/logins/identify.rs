@@ -32,14 +32,20 @@ pub(super) async fn codex(node: &Arc<Node>, dir: &Path, limits: bool) -> Asked {
     let at = Timestamp::now();
     // A running app-server can retain the previous directory login. Identification
     // uses a short-lived official process so a rescan cannot restore that owner.
-    let launch = match node.codex.launch(dir) {
+    // The program and the directory to ask it in are found on disk.
+    let found = {
+        let (finding, dir) = (node.clone(), dir.to_path_buf());
+        fastctx_platform::task::blocking(move || (finding.codex.launch(&dir), finding.codex.asking_dir(&dir))).await
+    };
+    let (launch, asking) = found;
+    let launch = match launch {
         Ok(Some(launch)) => launch,
         Ok(None) => {
             return failed(at, "neither the ChatGPT desktop app nor a codex command was found to ask it".into());
         }
         Err(error) => return failed(at, error),
     };
-    let cwd = match node.codex.asking_dir(dir) {
+    let cwd = match asking {
         Ok(cwd) => cwd,
         Err(failure) => return failed(at, failure.message),
     };

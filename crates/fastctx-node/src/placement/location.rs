@@ -139,11 +139,19 @@ pub(crate) async fn prepare(
     let room = node.world.conversation(id);
     let receipt = room.path().join("working-place.json");
     if node.residents.now(id).is_some_and(|now| now.turn.is_some()) {
-        return Ok(read(&receipt)?.flatten());
+        let receipt = receipt.clone();
+        return Ok(fastctx_platform::task::blocking(move || read(&receipt)).await?.flatten());
     }
+    // Where this machine keeps it, written as the World writes paths.
+    let here = || {
+        let (machine, room) = (node.machine(), room.path().to_path_buf());
+        async move {
+            Location { machine, path: fastctx_platform::task::blocking(move || crate::world::native(&room)).await }
+        }
+    };
     let Some(scope) = crate::plan::load_account(node, id, acting).await? else {
         if node.links().is_empty() && matches!(acting, Acting::Here) {
-            return Ok(Some(Location { machine: node.machine(), path: crate::world::native(room.path()) }));
+            return Ok(Some(here().await));
         }
         return Ok(None);
     };
@@ -158,18 +166,18 @@ pub(crate) async fn prepare(
             fastctx_types::placement::Resource::Plan,
         )
         .await?;
-        fastctx_platform::publish(
-            &receipt,
-            &serde_json::to_vec(&location).map_err(failure)?,
-            fastctx_platform::Permissions::Private,
-        )
+        let bytes = serde_json::to_vec(&location).map_err(failure)?;
+        fastctx_platform::task::blocking(move || {
+            fastctx_platform::publish(&receipt, &bytes, fastctx_platform::Permissions::Private)
+        })
+        .await
         .map_err(failure)?;
         return Ok(location);
     }
     if !link.view().plan_copies {
         if crate::plan_file::allowed(node, id)? {
             crate::plan_file::request(node, id);
-            return Ok(Some(Location { machine: node.machine(), path: crate::world::native(room.path()) }));
+            return Ok(Some(here().await));
         }
         return Err(failure(OLD_HUB));
     }

@@ -463,9 +463,13 @@ async fn converse(node: &Arc<Node>, connection: Connection) -> std::io::Result<(
                 Peer::Command { resident: Some(speaker), .. } if *speaker == resident => {
                     // A script another machine sent here goes on for the
                     // account it was sent for.
-                    let account = (!node.is_me(&resident.machine))
-                        .then(|| crate::on::sent_for(node, request.job.as_ref()))
-                        .flatten();
+                    let account = if node.is_me(&resident.machine) {
+                        None
+                    } else {
+                        // The job it came from is found on disk.
+                        let (finding, job) = (node.clone(), request.job.clone());
+                        fastctx_platform::task::blocking(move || crate::on::sent_for(&finding, job.as_ref())).await
+                    };
                     let origin = fastctx_types::on::OnOrigin {
                         turn: None,
                         sentinel: None,
@@ -1065,7 +1069,13 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
     if uninstalling(node) && !matches!(call, Call::UninstallPrepare | Call::HandOver) {
         return Err(Failure::not_run("this World is being uninstalled"));
     }
-    active_caller(node, peer)?;
+    if matches!(peer, Peer::Command { resident: Some(address), .. } if !node.is_me(&address.machine)) {
+        // A command of another machine's job is found among the jobs kept on disk.
+        let (asking, peer) = (node.clone(), peer.clone());
+        fastctx_platform::task::blocking(move || active_caller(&asking, &peer)).await?;
+    } else {
+        active_caller(node, peer)?;
+    }
     match call {
         Call::Goal { resident, machine, account, request } => {
             users_voice(node, peer)?;
@@ -1955,8 +1965,10 @@ async fn run(
     request.call_id = call_id.map(str::to_owned);
     request.turn = node.residents.now(&resident).and_then(|now| now.turn);
     // Whichever machine runs it brings the files the user attached first.
-    request.attachments =
-        crate::attachments::follow::known(node, &Address { machine: node.machine(), resident: resident.clone() });
+    request.attachments = {
+        let (reading, owner) = (node.clone(), Address { machine: node.machine(), resident: resident.clone() });
+        fastctx_platform::task::blocking(move || crate::attachments::follow::known(&reading, &owner)).await
+    };
     let (goes_to, request) = crate::here::start(node, request).map_err(|why| unnamed(node, &resident, &why))?;
     let machine = goes_to.as_ref().map(|place| place.name.clone()).unwrap_or_else(|| node.machine());
     if let Some(id) = call_id {
@@ -2014,8 +2026,13 @@ async fn run_started(
         };
         kept.map_err(|error| Failure::new(format!("recording tool call facts: {error}")))?;
     }
-    crate::scratch::observed(node, &resident, &source, &reply.scratch)
-        .map_err(|error| Failure::new(format!("recording scratch locations: {error}")))?;
+    {
+        let (observing, whose, source, scratch) =
+            (node.clone(), resident.clone(), source.clone(), reply.scratch.clone());
+        fastctx_platform::task::blocking(move || crate::scratch::observed(&observing, &whose, &source, &scratch))
+            .await
+            .map_err(|error| Failure::new(format!("recording scratch locations: {error}")))?;
+    }
     let mut action = crate::jobs::action(&reply, &script, started_at);
     action.turn = turn;
     let world = node.world.clone();
@@ -2333,7 +2350,12 @@ async fn nodes(
         }
     })
     .await;
-    let facts = works_here.then(|| crate::world::facts(node));
+    let facts = if works_here {
+        let telling = node.clone();
+        Some(fastctx_platform::task::blocking(move || crate::world::facts(&telling)).await)
+    } else {
+        None
+    };
     Ok(NodesReply { machine: here, facts, hubs })
 }
 
