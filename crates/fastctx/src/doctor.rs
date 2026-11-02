@@ -127,10 +127,11 @@ fn calls_out(calls: Vec<fastctx_types::stats::CallWork>, json: bool) -> anyhow::
 }
 
 /// What work cost since the node started, the costliest first: the time its
-/// tasks held a thread, the time it blocked, and the bytes it read.
+/// tasks held a thread, the time it blocked, the bytes it read from files and
+/// its reads of the database.
 fn costs_out(readings: &fastctx_types::readings::Readings) {
     const SHOWN: usize = 20;
-    let mut costs: std::collections::BTreeMap<&str, [u64; 3]> = std::collections::BTreeMap::new();
+    let mut costs: std::collections::BTreeMap<&str, [u64; 4]> = std::collections::BTreeMap::new();
     for count in &readings.counts {
         let Some(named) = count.name.strip_prefix("cost.") else { continue };
         let Some((what, measure)) = named.rsplit_once('.') else { continue };
@@ -138,6 +139,7 @@ fn costs_out(readings: &fastctx_types::readings::Readings) {
             "task_us" => 0,
             "blocking_us" => 1,
             "read_bytes" => 2,
+            "database_reads" => 3,
             _ => continue,
         };
         costs.entry(what).or_default()[slot] = count.value;
@@ -146,11 +148,11 @@ fn costs_out(readings: &fastctx_types::readings::Readings) {
         return;
     }
     let mut costs: Vec<_> = costs.into_iter().collect();
-    costs.sort_by_key(|(_, [task, blocking, _])| std::cmp::Reverse(task + blocking));
-    println!("What work cost, the costliest first (on task threads, blocking, read):");
-    for (what, [task, blocking, read]) in costs.iter().take(SHOWN) {
+    costs.sort_by_key(|(_, [task, blocking, _, _])| std::cmp::Reverse(task + blocking));
+    println!("What work cost, the costliest first (on task threads, blocking, read from files, database reads):");
+    for (what, [task, blocking, read, reads]) in costs.iter().take(SHOWN) {
         println!(
-            "  {what}: {:.1} s, {:.1} s, {:.1} MiB",
+            "  {what}: {:.1} s, {:.1} s, {:.1} MiB, {reads}",
             *task as f64 / 1e6,
             *blocking as f64 / 1e6,
             *read as f64 / (1024.0 * 1024.0)

@@ -36,7 +36,7 @@ where
     F: Future + Send + 'static,
     F::Output: Send + 'static,
 {
-    tokio::spawn(Timed { future: Box::pin(future), started_at: Location::caller(), account: crate::cost::current() })
+    tokio::spawn(Timed { future: Box::pin(future), started_at: Location::caller(), account: crate::cost::passed_on() })
 }
 
 /// Starts `future` on the runtime `handle` names, timed as `spawn` times it.
@@ -46,14 +46,14 @@ where
     F: Future + Send + 'static,
     F::Output: Send + 'static,
 {
-    handle.spawn(Timed { future: Box::pin(future), started_at: Location::caller(), account: crate::cost::current() })
+    handle.spawn(Timed { future: Box::pin(future), started_at: Location::caller(), account: crate::cost::passed_on() })
 }
 
 /// `future`, timed as `spawn` times a task, for a set of tasks to start
 /// (`tokio::task::JoinSet::spawn`).
 #[track_caller]
 pub fn timed<F: Future>(future: F) -> impl Future<Output = F::Output> {
-    Timed { future: Box::pin(future), started_at: Location::caller(), account: crate::cost::current() }
+    Timed { future: Box::pin(future), started_at: Location::caller(), account: crate::cost::passed_on() }
 }
 
 /// Runs `work` on the runtime's blocking pool, as doing what the current

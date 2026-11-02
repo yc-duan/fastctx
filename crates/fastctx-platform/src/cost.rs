@@ -1,11 +1,12 @@
 //! What work costs, by what it was done for (`specs/world-engine.md`, 量与告警):
 //! how long its tasks held a task thread, how long it blocked (in place, or
-//! on the blocking pool), and how many bytes it read from files. Work begun
-//! for a call is charged to the call's kind and who asked, and so is every
-//! task it starts and every blocking closure it hands over; a task started
-//! for nothing in particular is charged to where it was started. The sums
-//! are counters, `cost.<what>.task_us`, `cost.<what>.blocking_us` and
-//! `cost.<what>.read_bytes`: what costs most is read off a node's readings.
+//! on the blocking pool), how many bytes it read from files, and how many
+//! times it read the database. Work begun for a call is charged to the call's
+//! kind and who asked, and so is every task it starts and every blocking
+//! closure it hands over; a task started for nothing in particular is charged
+//! to where it was started, and each task it starts to where that one was.
+//! The sums are counters, `cost.<what>.task_us`, `.blocking_us`, `.read_bytes`
+//! and `.database_reads`: what costs most is read off a node's readings.
 
 use std::cell::Cell;
 use std::collections::HashMap;
@@ -26,6 +27,10 @@ pub struct Account {
     task: &'static Counter,
     blocking: &'static Counter,
     read: &'static Counter,
+    reads: &'static Counter,
+    /// Whether the tasks started under it are charged to it too: a call's
+    /// are; a long-lived worker's own tasks are charged where they start.
+    passed_on: bool,
 }
 
 thread_local! {
@@ -35,8 +40,13 @@ thread_local! {
     static ELSEWHERE: Cell<Duration> = const { Cell::new(Duration::ZERO) };
 }
 
-/// The account named `what`, kept for the process.
+/// The account named `what`, kept for the process, passed on to the tasks
+/// started under it.
 pub fn account(what: &str) -> &'static Account {
+    named(what, true)
+}
+
+fn named(what: &str, passed_on: bool) -> &'static Account {
     static KEPT: LazyLock<Mutex<HashMap<String, &'static Account>>> = LazyLock::new(Default::default);
     let mut kept = KEPT.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
     if let Some(account) = kept.get(what) {
@@ -46,11 +56,13 @@ pub fn account(what: &str) -> &'static Account {
     if let Some(account) = kept.get(what) {
         return account;
     }
-    let named = |measure: &str| readings::counter(Box::leak(format!("cost.{what}.{measure}").into_boxed_str()));
+    let counter = |measure: &str| readings::counter(Box::leak(format!("cost.{what}.{measure}").into_boxed_str()));
     let made: &'static Account = Box::leak(Box::new(Account {
-        task: named("task_us"),
-        blocking: named("blocking_us"),
-        read: named("read_bytes"),
+        task: counter("task_us"),
+        blocking: counter("blocking_us"),
+        read: counter("read_bytes"),
+        reads: counter("database_reads"),
+        passed_on,
     }));
     kept.insert(what.to_string(), made);
     made
@@ -63,7 +75,7 @@ pub(crate) fn started_at(at: &'static Location<'static>) -> &'static Account {
     if let Some(account) = AT.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).get(&key) {
         return account;
     }
-    let made = account(&format!("task at {}:{}", at.file(), at.line()));
+    let made = named(&format!("task at {}:{}", at.file(), at.line()), false);
     AT.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).insert(key, made);
     made
 }
@@ -71,6 +83,12 @@ pub(crate) fn started_at(at: &'static Location<'static>) -> &'static Account {
 /// The account work on this thread is charged to now.
 pub fn current() -> Option<&'static Account> {
     CHARGED.with(Cell::get)
+}
+
+/// The account a task started now is charged to: the call's under way, if
+/// any.
+pub(crate) fn passed_on() -> Option<&'static Account> {
+    current().filter(|account| account.passed_on)
 }
 
 /// Charges what this thread does to `account` until the result is dropped.
@@ -102,6 +120,13 @@ pub(crate) fn slice(account: &Account, took: Duration) {
 pub(crate) fn blocked(took: Duration) {
     if let Some(account) = current() {
         account.blocking.add(micros(took));
+    }
+}
+
+/// A read of a database, charged to the current account.
+pub fn database_read() {
+    if let Some(account) = current() {
+        account.reads.add(1);
     }
 }
 

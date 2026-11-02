@@ -375,6 +375,7 @@ impl Database {
         permit: OwnedSemaphorePermit,
         read: impl FnOnce(&rusqlite::Connection) -> Result<T>,
     ) -> Result<T> {
+        fastctx_platform::cost::database_read();
         let connection = self.0.readers.lock().expect("reader pool").pop().expect("a permit reserves a connection");
         let reader = Reader { inner: &self.0, connection: Some(connection), _permit: permit };
         let _holding = Holding::begin();
