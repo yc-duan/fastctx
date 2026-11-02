@@ -35,8 +35,8 @@ export interface AgentChangeWords {
   putInWhat: string;
   putInTags: string[];
   turnOff: string;
-  turnOffWhat(agent: "codex" | "claude"): string;
-  turnOffTags(agent: "codex" | "claude"): string[];
+  turnOffWhat(agent: string): string;
+  turnOffTags(agent: string): string[];
   leave: string;
   leaveWhat: string;
   leaveTags: string[];
@@ -44,7 +44,7 @@ export interface AgentChangeWords {
   restoreWhat: string;
   kept: string;
   keepsWhat: string;
-  openSessions(agent: "codex" | "claude", into: boolean): string;
+  openSessions(agent: string, into: boolean): string;
   permission: string;
   programs: string;
   programsWhat: string;
@@ -173,7 +173,10 @@ export const enAgentChange: AgentChangeWords = {
 };
 
 export interface AgentChangeTarget {
-  agent: "codex" | "claude";
+  agent: string;
+  /** How the window names the agent; Codex's and Claude Code's own names
+   *  where absent. */
+  title?: string;
   machine: string;
   dir: string;
   /** How the slip names the login. */
@@ -219,7 +222,7 @@ type State = Asking | Running | Ended;
 
 const asking = (moved = false): Asking => ({ at: "asking", preview: null, problem: null, open: false, raise: false, files: new Set(), moved });
 
-const agentName = (agent: "codex" | "claude") => (agent === "codex" ? "Codex" : "Claude Code");
+const agentName = (target: AgentChangeTarget) => target.title ?? (target.agent === "codex" ? "Codex" : "Claude Code");
 
 /** How long between reads of a running change's steps: the node records
  *  each step as it is done, and a step usually takes a fraction of a
@@ -346,7 +349,7 @@ export class AgentChangeSheet {
     const cards = this.carded();
     const said = words.disclose;
     const title = cards
-      ? (target.into ? said.connect : said.remove)(agentName(target.agent))
+      ? (target.into ? said.connect : said.remove)(agentName(target))
       : target.into
         ? words.applyTitle(target.who, target.machine)
         : words.removeTitle(target.who, target.machine);
@@ -378,7 +381,7 @@ export class AgentChangeSheet {
 
   /** What connecting is, under the window's head while asked for. */
   private aboutPanel(target: AgentChangeTarget, opening: boolean): string {
-    return `<div class="dc-about${opening ? " opening" : ""}"><div class="dc-about-inner">${connectDrawing()}<p>${escape(this.words.disclose.about(agentName(target.agent)))}</p></div></div>`;
+    return `<div class="dc-about${opening ? " opening" : ""}"><div class="dc-about-inner">${connectDrawing()}<p>${escape(this.words.disclose.about(agentName(target)))}</p></div></div>`;
   }
 
   /** What connecting is shown or put away, the cards left as they are. */
@@ -399,7 +402,7 @@ export class AgentChangeSheet {
     const limit = target.into ? preview.output_limit : undefined;
     const also: Partial<Record<Change, string>> = {};
     if (limit) also.limits = said.raised(limit.current, limit.requested);
-    const notes = [...(target.takeBack ? [said.takeBack] : []), said.sessions(target.agent, target.into)];
+    const notes = [...(target.takeBack ? [said.takeBack] : []), said.sessions(target.agent, agentName(target), target.into)];
     return `${discloseCards(preview, said, this.unfolded, also)}<ul class="dc-notes">${notes.map((line) => `<li>${escape(line)}</li>`).join("")}</ul>`;
   }
 
@@ -574,7 +577,7 @@ export class AgentChangeSheet {
       return at < 0 ? null : left.splice(at, 1)[0]!;
     };
     const ones = [...planned.map((step) => take(step.step) ?? { step, state: null }), ...left];
-    const agent = this.target?.agent === "codex" ? "Codex" : "Claude Code";
+    const agent = this.target ? agentName(this.target) : "";
     return ones.map((one) => {
       const { step } = one;
       const label =

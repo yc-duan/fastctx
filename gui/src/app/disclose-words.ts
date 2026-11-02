@@ -30,7 +30,7 @@ export interface DiscloseWords {
   same: string;
   /** Under the cards: sessions already open, and the World's lines the
    *  user changed, put back. */
-  sessions(agent: "codex" | "claude", into: boolean): string;
+  sessions(agent: string, name: string, into: boolean): string;
   takeBack: string;
   /** Beside the button: how it is undone. */
   undo: string;
@@ -73,11 +73,11 @@ export const zhDisclose: DiscloseWords = {
   raised: (current, requested) => `你设定的上限 ${current.toLocaleString("zh-CN")} 将调至 ${requested.toLocaleString("zh-CN")}；此上限由所有工具共用。`,
   never: { title: "边界", line: "Fastctx 不唤醒它，不代它向厂商发出请求，也不读取它的对话。" },
   same: "无需改动。",
-  sessions: (agent, into) =>
+  sessions: (agent, name, into) =>
     into
       ? agent === "claude"
         ? "已开启的 Claude Code 会话即刻停用自带的 Bash，重新打开后方可使用 run。"
-        : "已开启的 Codex 会话需重新打开，方可使用 run。"
+        : `已开启的 ${name} 会话需重新打开，方可使用 run。`
       : "已开启的会话需重新打开，方可恢复自带的工具。",
   takeBack: "你改动过的 Fastctx 配置将恢复为当前版本的写法，文件其余部分不变。",
   undo: "可随时撤回，届时仅移除上述改动。",
@@ -116,11 +116,11 @@ export const enDisclose: DiscloseWords = {
   raised: (current, requested) => `Your limit of ${current.toLocaleString("en")} is raised to ${requested.toLocaleString("en")}; every tool shares this limit.`,
   never: { title: "Boundaries", line: "Fastctx does not wake it, sends no request to its vendor on its behalf, and does not read its conversations." },
   same: "No changes needed.",
-  sessions: (agent, into) =>
+  sessions: (agent, name, into) =>
     into
       ? agent === "claude"
         ? "Claude Code sessions already open lose their own Bash at once; reopen them to use run."
-        : "Codex sessions already open must be reopened to use run."
+        : `${name} sessions already open must be reopened to use run.`
       : "Sessions already open must be reopened to restore their own tools.",
   takeBack: "Fastctx settings you changed return to how this version writes them; the rest of each file stays unchanged.",
   undo: "This can be undone at any time; only the changes above are removed.",

@@ -9,7 +9,7 @@
 
 import { Popover } from "../conversation/popover";
 import { escape } from "../conversation/prose";
-import { glyph } from "../conversation/glyphs";
+import { agentGlyph, glyph } from "../conversation/glyphs";
 import type { WorldNow } from "../world/bridge";
 import type { AgentLogins, ChangePreview, Login, LoginChange, MachineLogins, WorldLogins } from "../world/logins";
 import { AgentChangeSheet, type AgentChangeTarget, type AgentChangeWords } from "./agent-change";
@@ -27,10 +27,25 @@ import { effect, type Signal } from "./signals";
 import type { Store } from "./store";
 import { keepRecord, keptRecord, readerNow } from "./usage/kept";
 
-type Agent = "codex" | "claude";
+/** An agent, by the word the node names it by. */
+type Agent = string;
 
-/** The agents a card is drawn for, in the order they stand. */
-const AGENTS: Agent[] = ["claude", "codex"];
+/** The two agents with a workbench and a page of their own, first; the
+ *  others the node found follow (`MachineLogins.others`). */
+const HOSTS = ["claude", "codex"] as const;
+type Host = (typeof HOSTS)[number];
+
+const isHost = (agent: Agent): agent is Host => (HOSTS as readonly string[]).includes(agent);
+
+/** Every agent a machine's record names, hosts first. */
+function agentsOf(record: MachineLogins): Agent[] {
+  return [...HOSTS, ...Object.keys(record.others ?? {}).sort()];
+}
+
+/** An agent's logins in a machine's record. */
+function sideOf(record: MachineLogins, agent: Agent): AgentLogins | undefined {
+  return isHost(agent) ? record[agent] : record.others?.[agent];
+}
 
 /** While a scan or a change runs there, the machine's record is read again
  *  this often. */
@@ -93,8 +108,8 @@ export class AgentsOverview implements Page {
         const record = await options.read(target.machine);
         const machine = record.machines.find((one) => one.kind === "answered" && one.logins.machine === target.machine);
         if (machine?.kind !== "answered") return null;
-        const agent = machine.logins[target.agent];
-        return [...agent.listed, ...agent.candidates].find((login) => login.dir === target.dir)?.change ?? null;
+        const agent = sideOf(machine.logins, target.agent);
+        return agent ? ([...agent.listed, ...agent.candidates].find((login) => login.dir === target.dir)?.change ?? null) : null;
       },
       ended: () => void this.read(),
     });
@@ -188,7 +203,13 @@ export class AgentsOverview implements Page {
   private running(): boolean {
     const record = this.record;
     if (!record) return false;
-    return record.scan?.usual.state === "running" || AGENTS.some((agent) => [...record[agent].listed, ...record[agent].candidates].some((login) => login.change && !login.change.end));
+    return (
+      record.scan?.usual.state === "running" ||
+      agentsOf(record).some((agent) => {
+        const side = sideOf(record, agent);
+        return !!side && [...side.listed, ...side.candidates].some((login) => login.change && !login.change.end);
+      })
+    );
   }
 
   private draw(): void {
@@ -236,8 +257,11 @@ export class AgentsOverview implements Page {
         ${this.mine(machine) ? `<button class="sheet-go" type="button" data-ao="scan" data-machine="${escape(machine.name)}">${escape(machine.here ? logins.scanHere : logins.scanThere)}</button>` : ""}
       </div>`;
     }
-    const found = AGENTS.filter((agent) => record[agent].programs.length || record[agent].listed.length || record[agent].candidates.length);
-    const missing = AGENTS.filter((agent) => !found.includes(agent)).map((agent) => logins[agent]);
+    const found = agentsOf(record).filter((agent) => {
+      const side = sideOf(record, agent);
+      return !!side && (side.programs.length || side.listed.length || side.candidates.length);
+    });
+    const missing = HOSTS.filter((agent) => !found.includes(agent)).map((agent) => logins[agent]);
     return `${this.reach(machine, record, found)}<div class="ao-cards">${found.map((agent) => this.card(machine, record, agent)).join("")}</div>
       ${missing.length ? `<p class="ao-missing">${escape(words.missing(missing, machine.here))}</p>` : ""}`;
   }
@@ -249,7 +273,7 @@ export class AgentsOverview implements Page {
       .filter((one) => one.name !== machine.name && (one.hold === "mine" || one.hold === "shared"))
       .sort((a, b) => Number(b.online !== false) - Number(a.online !== false));
     if (!others.length || !found.length) return "";
-    const reach: Reach = { machine, agents: found.map((agent) => ({ agent, connected: record[agent].listed.length > 0 })), others };
+    const reach: Reach = { machine, agents: found.map((agent) => ({ agent, connected: (sideOf(record, agent)?.listed.length ?? 0) > 0 })), others };
     const more = this.options.words.more;
     return `<div class="ao-reach">${reachDrawing(reach, 680, more)}${reachDrawing(reach, 340, more)}</div>`;
   }
@@ -258,14 +282,19 @@ export class AgentsOverview implements Page {
    *  line for each login, connected ones first. */
   private card(machine: Pickable, record: MachineLogins, agent: Agent): string {
     const { logins, words } = this.options;
-    const side = record[agent];
+    const side = sideOf(record, agent) ?? { programs: [], listed: [], candidates: [], elsewhere: [] };
     const programs = side.programs.map((program) => programLine(program, logins)).join("\n\n");
     const lines = [...side.listed, ...(this.mine(machine) ? side.candidates : [])].map((login) => this.line(machine, side, agent, login)).join("");
-    return `<section class="ao-card" data-agent="${agent}">
+    // Only Codex and Claude Code have a page of their own, for their
+    // folders, scans and each login's menu.
+    const manage = isHost(agent)
+      ? `<a class="text-button ao-manage" href="${link({ kind: "agents", machine: machine.written, section: agent })}" title="${escape(words.manageSaid)}">${escape(words.manage)}</a>`
+      : "";
+    return `<section class="ao-card" data-agent="${escape(agent)}">
       <header class="ao-head">
-        <span class="ao-mark" aria-hidden="true">${glyph(agent, 22)}</span>
-        <h2 class="ao-name"${programs ? ` title="${escape(programs)}"` : ""}>${escape(logins[agent])}</h2>
-        <a class="text-button ao-manage" href="${link({ kind: "agents", machine: machine.written, section: agent })}" title="${escape(words.manageSaid)}">${escape(words.manage)}</a>
+        <span class="ao-mark" aria-hidden="true">${agentGlyph(agent, 22)}</span>
+        <h2 class="ao-name"${programs ? ` title="${escape(programs)}"` : ""}>${escape(this.nameOf(agent))}</h2>
+        ${manage}
       </header>
       ${lines ? `<ul class="ao-logins">${lines}</ul>` : `<p class="ao-none">${escape(words.noLogin)}</p>`}
     </section>`;
@@ -280,14 +309,14 @@ export class AgentsOverview implements Page {
     const standing: Standing = busy ? "busy" : !listed ? "found" : login.drift || login.integration === "old" ? "renew" : "in";
     const identity = login.identity?.who.kind === "known" ? login.identity.who.value : null;
     const who = identity?.email ?? dirName(login.dir);
-    const old = claudeTooOld(agent, side.programs, login);
+    const old = agent === "claude" ? claudeTooOld(agent, side.programs, login) : null;
     const tags = [
       identity?.plan ? `<span class="ao-tag">${escape(planName(identity.plan))}</span>` : "",
       identity?.method === "oauth_token" ? `<span class="ao-tag" title="${escape(logins.tokenSaid)}">${escape(logins.token)}</span>` : "",
       identity && !identity.logged_in ? `<span class="ao-tag">${escape(logins.loggedOut)}</span>` : "",
       old ? `<span class="ao-tag ao-warn" title="${escape(logins.tooOldSaid(old, CLAUDE_OLDEST))}">${escape(logins.tooOld)}</span>` : "",
     ].join("");
-    const at = `data-machine="${escape(machine.name)}" data-agent="${agent}" data-dir="${escape(login.dir)}"`;
+    const at = `data-machine="${escape(machine.name)}" data-agent="${escape(agent)}" data-dir="${escape(login.dir)}"`;
     const act =
       standing === "busy"
         ? `<span class="ao-busy">${escape(login.change?.into === false ? logins.removing : logins.applying)}</span>`
@@ -297,7 +326,9 @@ export class AgentsOverview implements Page {
             ? `<button class="text-button ao-go" type="button" data-ao="connect" ${at}>${escape(logins.apply)}</button>`
             : standing === "renew"
               ? `<button class="text-button ao-go" type="button" data-ao="renew" ${at} title="${escape(login.drift?.kind === "changed" ? login.drift.reason : logins.driftAsks)}">${escape(words.renew)}</button>`
-              : `<button class="text-button ao-bench" type="button" data-ao="workbench" ${at} title="${escape(words.workbenchSaid)}">${escape(words.workbench)}</button>`;
+              : isHost(agent)
+                ? `<button class="text-button ao-bench" type="button" data-ao="workbench" ${at} title="${escape(words.workbenchSaid)}">${escape(words.workbench)}</button>`
+                : "";
     return `<li class="ao-login" data-standing="${standing}">
       <span class="ao-plug" aria-hidden="true">${glyph("plug", 16)}</span>
       <span class="ao-who" title="${escape(login.dir)}">${escape(who)}</span>
@@ -347,16 +378,23 @@ export class AgentsOverview implements Page {
     element.querySelector<HTMLElement>(".agents-pick-item.current")?.focus({ preventScroll: true });
   }
 
+  /** How the page names an agent: Codex and Claude Code by their own
+   *  names, the others as the words name them, else by the node's word. */
+  private nameOf(agent: Agent): string {
+    return isHost(agent) ? this.options.logins[agent] : (this.options.words.names[agent] ?? agent);
+  }
+
   /** What connecting or renewing a login changes is told by the window
    *  that makes the change. */
   private target(machine: Pickable, agent: Agent, dir: string, into: boolean): AgentChangeTarget | null {
     const record = this.record?.machine === machine.name ? this.record : null;
-    const side = record?.[agent];
+    const side = record ? sideOf(record, agent) : undefined;
     const login = side ? ([...side.listed, ...side.candidates].find((one) => one.dir === dir) ?? null) : null;
     if (!side || !login) return null;
     const identity = login.identity?.who.kind === "known" ? login.identity.who.value : null;
     return {
       agent,
+      title: this.nameOf(agent),
       machine: machine.name,
       dir,
       who: identity?.email ?? dirName(dir),

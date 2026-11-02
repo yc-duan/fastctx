@@ -10,6 +10,7 @@
 //! into (`fastctx apply`); putting them in lists a candidate, taking them
 //! out (removing it) returns it to the candidates.
 
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use jiff::Timestamp;
@@ -56,6 +57,10 @@ pub struct MachineLogins {
     pub scan: Option<Scan>,
     pub codex: AgentLogins,
     pub claude: AgentLogins,
+    /// The other agents found here, connected through their configuration
+    /// alone (`world-layers.md`, 支持尽可能多的智能体), by name.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub others: BTreeMap<AgentName, AgentLogins>,
     /// The folders the user chose on this machine for logins kept below
     /// them, each searched by the names in it.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -67,7 +72,7 @@ impl MachineLogins {
         match agent {
             "codex" => Some(&self.codex),
             "claude" => Some(&self.claude),
-            _ => None,
+            other => self.others.iter().find(|(name, _)| name.as_str() == other).map(|(_, logins)| logins),
         }
     }
 
@@ -75,7 +80,7 @@ impl MachineLogins {
         match agent {
             "codex" => Some(&mut self.codex),
             "claude" => Some(&mut self.claude),
-            _ => None,
+            other => self.others.iter_mut().find(|(name, _)| name.as_str() == other).map(|(_, logins)| logins),
         }
     }
 }

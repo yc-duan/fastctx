@@ -18,6 +18,8 @@ export interface AgentsOverviewWords {
   missing(names: string[], here: boolean): string;
   /** The machines reached past those drawn. */
   more(n: number): string;
+  /** The other agents' names, by the word the node names them by. */
+  names: Record<string, string>;
 }
 
 export const zhAgentsOverview: AgentsOverviewWords = {
@@ -30,6 +32,7 @@ export const zhAgentsOverview: AgentsOverviewWords = {
   noLogin: "已安装，尚无登录",
   missing: (names, here) => `${here ? "这台电脑" : "这台机器"}上未找到 ${names.join("、")}`,
   more: (n) => `另有 ${n} 台`,
+  names: { gemini: "Gemini CLI" },
 };
 
 export const enAgentsOverview: AgentsOverviewWords = {
@@ -42,4 +45,5 @@ export const enAgentsOverview: AgentsOverviewWords = {
   noLogin: "Installed, no login yet",
   missing: (names, here) => `${names.join(", ")} not found on this ${here ? "computer" : "machine"}`,
   more: (n) => `${n} more`,
+  names: { gemini: "Gemini CLI" },
 };

@@ -86,8 +86,13 @@ async fn blocking<T: Send + 'static>(
 /// up and those the World's tools are in, each asked who it is; and the
 /// agents' programs.
 async fn usual(node: &Arc<Node>, started_at: Timestamp) -> Result<(), Failure> {
-    let (context, programs, candidates) = blocking(node, move |node| {
+    let (context, programs, candidates, others) = blocking(node, move |node| {
         let context = Context::of(node)?;
+        // The other agents' homes, and who their files say is logged in.
+        let others: Vec<(&'static str, Vec<KeptLogin>)> = fastctx_install::agents::all()
+            .iter()
+            .map(|agent| (agent.name, super::others::scanned(&context, agent)))
+            .collect();
         kept::change(node, |kept| {
             kept.scan = Some(Scan { started_at, usual: Stage::Running, unreadable: Vec::new() });
         })
@@ -113,7 +118,7 @@ async fn usual(node: &Arc<Node>, started_at: Timestamp) -> Result<(), Failure> {
             }
             candidates.push((agent, dirs));
         }
-        Ok((context, programs, candidates))
+        Ok((context, programs, candidates, others))
     })
     .await?;
     // Each login is asked at once: a slow one does not hold the others.
@@ -155,6 +160,9 @@ async fn usual(node: &Arc<Node>, started_at: Timestamp) -> Result<(), Failure> {
             kept.claude.logins.clear();
             for (agent, dir, found, asked, signed) in answers {
                 kept.of_mut(agent).logins.push(KeptLogin::asked(dir, found, asked, signed));
+            }
+            for (agent, logins) in others {
+                kept.of_mut(agent).logins = logins;
             }
             if let Some(scan) = &mut kept.scan
                 && scan.started_at == started_at

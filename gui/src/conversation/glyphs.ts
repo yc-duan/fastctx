@@ -32,7 +32,7 @@ type Frame =
  *  where a folder walk starts; what a window is about, asked. None is a maker's mark: the agents are told
  *  apart by shapes of our own. */
 type Marks =
-  | "claude" | "codex" | "desktop" | "laptop" | "server" | "group" | "features" | "agents" | "folder" | "folder-open" | "fork" | "info" | "help" | "regenerate"
+  | "claude" | "codex" | "gemini" | "desktop" | "laptop" | "server" | "group" | "features" | "agents" | "folder" | "folder-open" | "fork" | "info" | "help" | "regenerate"
   | "terminal" | "cross" | "fit" | "ask" | "fed" | "home" | "disk"
   | Deeds;
 
@@ -48,6 +48,8 @@ const paths: Record<Named, string> = {
   claude: '<path class="pen-1" pathLength="1" d="M10 3.75v12.5"/><path class="pen-2" pathLength="1" d="M3.75 10h12.5"/><path class="pen-3" pathLength="1" d="M5.6 5.6l8.8 8.8"/><path class="pen-4" pathLength="1" d="M14.4 5.6l-8.8 8.8"/>',
   // The ring in one stroke, then each point inside it.
   codex: '<path class="pen-ring" pathLength="1" d="M10 3.6l5.6 3.2v6.4L10 16.4l-5.6-3.2V6.8z"/><path class="pen-5" pathLength="1" d="M8.2 8.4L6.6 10l1.6 1.6"/><path class="pen-6" pathLength="1" d="M11.8 8.4l1.6 1.6-1.6 1.6"/>',
+  // The sign of the twins: the arc above, the two of them, the arc below.
+  gemini: '<path class="pen-1" pathLength="1" d="M4.5 4.25Q10 6.25 15.5 4.25"/><path class="pen-2" pathLength="1" d="M7.75 5.1v9.8"/><path class="pen-3" pathLength="1" d="M12.25 5.1v9.8"/><path class="pen-4" pathLength="1" d="M4.5 15.75Q10 13.75 15.5 15.75"/>',
   desktop: '<rect x="3.75" y="4.25" width="12.5" height="8.75" rx="1.25"/><path d="M7.5 15.75h5M10 13v2.75"/>',
   laptop: '<path d="M5.25 5.75a1 1 0 0 1 1-1h7.5a1 1 0 0 1 1 1v6.25h-9.5z"/><path d="M3.25 14.75h13.5l-1.1-2.75H4.35z"/>',
   server: '<rect x="4.25" y="3.75" width="11.5" height="5.25" rx="1"/><rect x="4.25" y="11" width="11.5" height="5.25" rx="1"/><circle cx="7" cy="6.4" r="0.6" fill="currentColor"/><circle cx="7" cy="13.6" r="0.6" fill="currentColor"/>',
@@ -175,6 +177,15 @@ const paths: Record<Named, string> = {
 /** A glyph at its nominal `size`; the interface draws every glyph at that
  *  size times one scale (`--icon-scale` in the design tokens), so the set
  *  grows together and keeps its proportions. */
+/** The agents with a mark of their own. */
+const AGENT_MARKS: readonly string[] = ["claude", "codex", "gemini"];
+
+/** An agent's mark, by the word the node names it by: its own where it has
+ *  one, else the agents' mark. */
+export function agentGlyph(agent: string, size = 20): string {
+  return glyph(AGENT_MARKS.includes(agent) ? (agent as Named) : "agents", size);
+}
+
 export function glyph(name: keyof typeof paths, size = 20): string {
   return `<svg class="glyph" width="${size}" height="${size}" style="--glyph:${size}" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${paths[name]}</svg>`;
 }

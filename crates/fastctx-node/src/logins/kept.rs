@@ -30,6 +30,9 @@ pub(super) struct Kept {
     pub codex: KeptAgent,
     #[serde(default)]
     pub claude: KeptAgent,
+    /// The other agents' logins (`super::others`), by name.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub others: BTreeMap<String, KeptAgent>,
     /// Each chosen folder's search, running or the last one.
     #[serde(default)]
     pub folders: Vec<KeptSearch>,
@@ -43,11 +46,20 @@ pub(super) struct KeptSearch {
 
 impl Kept {
     pub fn of(&self, agent: &str) -> &KeptAgent {
-        if agent == "codex" { &self.codex } else { &self.claude }
+        static NONE: std::sync::LazyLock<KeptAgent> = std::sync::LazyLock::new(KeptAgent::default);
+        match agent {
+            "codex" => &self.codex,
+            "claude" => &self.claude,
+            other => self.others.get(other).unwrap_or(&NONE),
+        }
     }
 
     pub fn of_mut(&mut self, agent: &str) -> &mut KeptAgent {
-        if agent == "codex" { &mut self.codex } else { &mut self.claude }
+        match agent {
+            "codex" => &mut self.codex,
+            "claude" => &mut self.claude,
+            other => self.others.entry(other.to_owned()).or_default(),
+        }
     }
 }
 

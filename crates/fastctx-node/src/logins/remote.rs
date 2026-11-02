@@ -75,6 +75,8 @@ pub(crate) fn seen(view: &fastctx_net::directory::View, asker: &Asker, mut login
     let here = view.me.clone();
     logins.scan = None;
     logins.folders.clear();
+    // No login of the other agents assists anyone.
+    logins.others.clear();
     for agent in super::AGENTS {
         let side = logins.of_mut(agent).expect("an agent that keeps logins");
         side.programs.clear();
@@ -103,6 +105,7 @@ pub(crate) fn seen(view: &fastctx_net::directory::View, asker: &Asker, mut login
 pub(crate) fn seen_by_none(mut logins: MachineLogins) -> MachineLogins {
     logins.scan = None;
     logins.folders.clear();
+    logins.others.clear();
     for agent in super::AGENTS {
         let side = logins.of_mut(agent).expect("an agent that keeps logins");
         side.programs.clear();

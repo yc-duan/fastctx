@@ -39,9 +39,19 @@ pub(crate) async fn preview(
     let node = node.clone();
     fastctx_platform::task::spawn_blocking(move || {
         super::known(&node, &agent, &dir)?;
-        let (places, host) = places(&node, &agent, &dir)?;
-        let mut preview =
-            apply::preview(&places, host, into, edits(take_back)).map_err(|error| Failure::new(error.to_string()))?;
+        let mut preview = match fastctx_install::agents::find(agent.as_str()) {
+            // The other agents are connected through their configuration
+            // alone (`super::others`).
+            Some(other) => {
+                let context = super::Context::of(&node)?;
+                apply::agent_preview(&context.places, other, &dir, into, take_back)
+            }
+            None => {
+                let (places, host) = places(&node, &agent, &dir)?;
+                apply::preview(&places, host, into, edits(take_back))
+            }
+        }
+        .map_err(|error| Failure::new(error.to_string()))?;
         preview.dir = dir;
         Ok(preview)
     })
@@ -79,6 +89,16 @@ pub(crate) async fn change(
     let ran = {
         let (node, agent, dir) = (node.clone(), agent.clone(), dir.clone());
         fastctx_platform::task::spawn_blocking(move || {
+            if let Some(other) = fastctx_install::agents::find(agent.as_str()) {
+                let context = super::Context::of(&node)?;
+                let progress = Some(progress);
+                let done = if into {
+                    apply::agent_apply_expecting(&context.places, other, &dir, take_back, progress, expected.as_deref())
+                } else {
+                    apply::agent_unapply_expecting(&context.places, other, &dir, progress, expected.as_deref())
+                };
+                return Ok::<_, Failure>(done);
+            }
             let (places, host) = places(&node, &agent, &dir)?;
             let approval = if raise_output_limit { Approval::RaiseOutputLimit } else { Approval::Require };
             let progress = Some(progress);

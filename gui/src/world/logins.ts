@@ -26,6 +26,9 @@ export interface MachineLogins {
   scan?: Scan;
   codex: AgentLogins;
   claude: AgentLogins;
+  /** The other agents found there, connected through their configuration
+   *  alone (`world-layers.md`, 支持尽可能多的智能体), by name. */
+  others?: Record<string, AgentLogins>;
   /** The folders the user chose there for logins kept below them. */
   folders?: Folder[];
 }

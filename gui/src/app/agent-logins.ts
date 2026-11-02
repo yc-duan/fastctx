@@ -208,13 +208,13 @@ export class AgentLoginsPage implements Page {
     });
     this.assistSheet = new AssistSheet(options.access);
     this.sheet = new AgentChangeSheet(options.changeWords, {
-      preview: (target) => this.calls.preview(target.machine, target.agent, target.dir, target.into, !!target.takeBack),
-      change: (target, raise, expected) => this.calls.change(target.machine, target.agent, target.dir, target.into, raise, !!target.takeBack, expected),
+      preview: (target) => this.calls.preview(target.machine, this.agent, target.dir, target.into, !!target.takeBack),
+      change: (target, raise, expected) => this.calls.change(target.machine, this.agent, target.dir, target.into, raise, !!target.takeBack, expected),
       progress: async (target) => {
         const record = await this.calls.read(target.machine);
         const machine = record.machines.find((one) => one.kind === "answered" && one.logins.machine === target.machine);
         if (machine?.kind !== "answered") return null;
-        const agent = machine.logins[target.agent];
+        const agent = machine.logins[this.agent];
         return [...agent.listed, ...agent.candidates].find((login) => login.dir === target.dir)?.change ?? null;
       },
       ended: () => void this.read(),

@@ -20902,6 +20902,37 @@
                 ],
                 "elsewhere": []
               },
+              "others": {
+                "gemini": {
+                  "programs": [],
+                  "listed": [
+                    {
+                      "dir": "/home/me/.gemini",
+                      "default": true,
+                      "found": "default",
+                      "identity": {
+                        "at": "2026-10-11T12:00:00Z",
+                        "who": {
+                          "kind": "known",
+                          "value": {
+                            "logged_in": true,
+                            "method": "oauth-personal",
+                            "email": "me@example.com"
+                          }
+                        }
+                      },
+                      "limits": {
+                        "kind": "unavailable",
+                        "reason": "only the workbench reads limits"
+                      },
+                      "programs": [],
+                      "integration": "in"
+                    }
+                  ],
+                  "candidates": [],
+                  "elsewhere": []
+                }
+              },
               "folders": [
                 {
                   "dir": "C:/Users/me/CodexHomes",
@@ -21241,6 +21272,37 @@
             }
           ],
           "elsewhere": []
+        },
+        "others": {
+          "gemini": {
+            "programs": [],
+            "listed": [
+              {
+                "dir": "/home/me/.gemini",
+                "default": true,
+                "found": "default",
+                "identity": {
+                  "at": "2026-10-11T12:00:00Z",
+                  "who": {
+                    "kind": "known",
+                    "value": {
+                      "logged_in": true,
+                      "method": "oauth-personal",
+                      "email": "me@example.com"
+                    }
+                  }
+                },
+                "limits": {
+                  "kind": "unavailable",
+                  "reason": "only the workbench reads limits"
+                },
+                "programs": [],
+                "integration": "in"
+              }
+            ],
+            "candidates": [],
+            "elsewhere": []
+          }
         },
         "folders": [
           {
@@ -21704,6 +21766,37 @@
             }
           ],
           "elsewhere": []
+        },
+        "others": {
+          "gemini": {
+            "programs": [],
+            "listed": [
+              {
+                "dir": "/home/me/.gemini",
+                "default": true,
+                "found": "default",
+                "identity": {
+                  "at": "2026-10-11T12:00:00Z",
+                  "who": {
+                    "kind": "known",
+                    "value": {
+                      "logged_in": true,
+                      "method": "oauth-personal",
+                      "email": "me@example.com"
+                    }
+                  }
+                },
+                "limits": {
+                  "kind": "unavailable",
+                  "reason": "only the workbench reads limits"
+                },
+                "programs": [],
+                "integration": "in"
+              }
+            ],
+            "candidates": [],
+            "elsewhere": []
+          }
         },
         "folders": [
           {

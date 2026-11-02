@@ -6,7 +6,7 @@
 // connected nothing is reached yet. Drawn only where there is another
 // machine to reach: on a computer of its own, the cards say it all.
 
-import { glyph } from "../conversation/glyphs";
+import { agentGlyph } from "../conversation/glyphs";
 import { escape } from "../conversation/prose";
 import { Sketch } from "../pen/sketch";
 import type { Pickable } from "./agent-machines";
@@ -14,7 +14,7 @@ import type { Pickable } from "./agent-machines";
 export interface Reach {
   machine: Pickable;
   /** Each agent found there, and whether a login of it is connected. */
-  agents: { agent: "claude" | "codex"; connected: boolean }[];
+  agents: { agent: string; connected: boolean }[];
   /** The other machines its agents may reach, online first. */
   others: Pickable[];
 }
@@ -40,7 +40,7 @@ export function reachDrawing(reach: Reach, width: number, more: (n: number) => s
   reach.agents.forEach(({ agent, connected }, index) => {
     const x = screen.x + (screen.w - row) / 2 + index * (size + gap);
     const y = screen.y + (screen.h - size) / 2;
-    extra.push(`<g class="ao-reach-mark${connected ? "" : " faint"}" transform="translate(${x} ${y})">${glyph(agent, size)}</g>`);
+    extra.push(`<g class="ao-reach-mark${connected ? "" : " faint"}" transform="translate(${x} ${y})">${agentGlyph(agent, size)}</g>`);
   });
   extra.push(`<text class="ao-reach-name here" x="${screen.x + screen.w / 2}" y="${HEIGHT - 6}" text-anchor="middle">${escape(reach.machine.written)}</text>`);
 

@@ -19,6 +19,7 @@ pub(crate) mod heard;
 pub(crate) mod identify;
 pub(crate) mod kept;
 pub(crate) mod limits;
+mod others;
 mod program;
 pub(crate) mod refresh;
 pub(crate) mod remote;
@@ -198,6 +199,7 @@ fn assemble(node: &Node) -> Result<MachineLogins, Failure> {
         scan,
         codex: AgentLogins::default(),
         claude: AgentLogins::default(),
+        others: std::collections::BTreeMap::new(),
         folders: Vec::new(),
     };
     let mut known = HashSet::new();
@@ -265,6 +267,15 @@ fn assemble(node: &Node) -> Result<MachineLogins, Failure> {
         }
         known.extend(dirs.iter().map(|(dir, _)| walk::key(dir)));
     }
+    for agent in fastctx_install::agents::all() {
+        let Ok(name) = AgentName::try_from(agent.name) else { continue };
+        let side = others::side(&context, &kept, agent, &changes)?;
+        if side.listed.is_empty() && side.candidates.is_empty() {
+            continue;
+        }
+        known.extend(side.listed.iter().chain(&side.candidates).map(|login| walk::key(&login.dir)));
+        logins.others.insert(name, side);
+    }
     let chosen = kept::folders(node).map_err(|error| Failure::new(format!("reading the chosen folders: {error}")))?;
     logins.folders = folders::shown(node, &kept, &chosen, &known);
     Ok(logins)
@@ -328,10 +339,16 @@ pub(crate) fn codex_auto_title(node: &Node, dir: Option<&Path>) -> bool {
 /// The login `dir` of `agent` is one the World knows here, listed or a
 /// candidate; it must still be a directory.
 pub(crate) fn known(node: &Node, agent: &AgentName, dir: &Path) -> Result<(), Failure> {
-    host(agent.as_str())?;
+    let other = fastctx_install::agents::find(agent.as_str());
+    if other.is_none() {
+        host(agent.as_str())?;
+    }
     let context = Context::of(node)?;
     let kept = kept::read(node).map_err(|error| Failure::new(format!("reading the agents' logins: {error}")))?;
-    let dirs = dirs(node, &context, &kept, agent.as_str())?;
+    let dirs = match other {
+        Some(other) => others::dirs(&context, &kept, other)?,
+        None => dirs(node, &context, &kept, agent.as_str())?,
+    };
     if !dirs.iter().any(|(known, _)| crate::homes::same_dir(known, dir)) {
         return Err(Failure::not_run(format!(
             "{} is not a {agent} login known on {}; add it first",

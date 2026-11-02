@@ -3,6 +3,7 @@ use fastctx_types::logins::*;
 use fastctx_types::remote::{RemoteCall, RemoteReply};
 use fastctx_types::{Call, Reply};
 use serde::Serialize;
+use std::collections::BTreeMap;
 
 #[derive(Serialize)]
 pub struct Fixtures {
@@ -188,6 +189,37 @@ pub fn fixtures() -> Fixtures {
             candidates: vec![candidate],
             elsewhere: vec![],
         },
+        others: BTreeMap::from([(
+            "gemini".parse().unwrap(),
+            AgentLogins {
+                programs: vec![],
+                listed: vec![Login {
+                    dir: "/home/me/.gemini".into(),
+                    default: true,
+                    found: Found::Default,
+                    identity: Some(Identified {
+                        at,
+                        who: Fact::known(Identity {
+                            logged_in: true,
+                            method: Some("oauth-personal".into()),
+                            email: Some("me@example.com".into()),
+                            ..Identity::default()
+                        }),
+                    }),
+                    limits: Fact::unavailable("only the workbench reads limits"),
+                    programs: vec![],
+                    integration: Integration::In,
+                    unattended: None,
+                    auto_title: false,
+                    launcher: None,
+                    models: vec![],
+                    change: None,
+                    drift: None,
+                }],
+                candidates: vec![],
+                elsewhere: vec![],
+            },
+        )]),
         folders: vec![
             Folder {
                 dir: "C:/Users/me/CodexHomes".into(),
@@ -231,6 +263,7 @@ pub fn fixtures() -> Fixtures {
         }),
         codex: AgentLogins::default(),
         claude: AgentLogins::default(),
+        others: BTreeMap::new(),
         folders: vec![],
     };
     let preview = ChangePreview {
