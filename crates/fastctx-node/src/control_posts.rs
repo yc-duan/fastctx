@@ -148,6 +148,10 @@ pub(crate) fn receive(
         node.control_letters.changed.notify_waiters();
         node.disk_changed.notify_one();
         node.receipts_changed.notify_one();
+    } else {
+        // Another request has taken its place, which asks and is answered
+        // under its own id: this reply is to one no longer asked.
+        node.log.line(format_args!("a control reply to {id}, a request since replaced, is let go"));
     }
     Ok(Ok(()))
 }

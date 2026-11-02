@@ -361,11 +361,15 @@ fn drain_now<'a>(
                 return Ok(());
             }
             if let Err(error) = ready(node, id, first).await {
-                if error.code == Some(FailureCode::HostUnavailable) {
-                    defer_host(node, id, first, &error.message).await?;
-                    return Ok(());
+                // One that cannot be done ends with why, and the queue goes
+                // on; one that may be done later keeps its place and is
+                // asked again.
+                if crate::obligations::permanent(&error) {
+                    let _ = end(node, id, first.clone(), Err(error)).await;
+                    continue;
                 }
-                return Err(error);
+                defer_host(node, id, first, &error.message).await?;
+                return Ok(());
             }
             let mut row = first.clone();
             row.state = ControlState::Running;
@@ -379,7 +383,12 @@ fn drain_now<'a>(
             }
             let result = Box::pin(crate::control::execute(node, id, row.control.clone())).await;
             let deferred = result.as_ref().err().is_some_and(|error| error.code == Some(FailureCode::HostUnavailable));
-            let _ = end(node, id, row, result).await?;
+            // How it ended is told in its conversation; the queue goes on.
+            if let Err(error) = end(node, id, row, result).await
+                && error.code != Some(FailureCode::Told)
+            {
+                return Err(error);
+            }
             if deferred {
                 return Ok(());
             }
@@ -418,15 +427,25 @@ pub(crate) fn schedule(node: &Arc<Node>, id: &ResidentId) {
     tokio::spawn(async move {
         let mut scheduled = Scheduled { node: node.clone(), id: id.clone(), released: false };
         node.ready_for(&id).await;
+        let (mut again, mut said) = (crate::again::Again::default(), String::new());
         loop {
-            {
+            let failed = {
                 let gate = gate(&node, &id);
                 let _action = gate.lock().await;
-                if node.residents.active(&id).is_ok()
-                    && let Err(error) = drain(&node, &id).await
-                {
-                    node.log.line(format_args!("executing {id}'s queued controls: {error}"));
+                match node.residents.active(&id) {
+                    Ok(()) => drain(&node, &id).await.err(),
+                    Err(_) => None,
                 }
+            };
+            // A pass that failed, as to keep how a control ended, is made
+            // again later rather than left until something else asks.
+            if let Some(error) = failed {
+                if error.message != said {
+                    node.log.line(format_args!("executing {id}'s queued controls; trying again: {error}"));
+                    said = error.message;
+                }
+                tokio::time::sleep(again.next()).await;
+                continue;
             }
             let mut due = node.controls_due.lock().expect("control scheduling");
             if due.get(&id) == Some(&true) {

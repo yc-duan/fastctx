@@ -22,8 +22,13 @@ use crate::obligations::Outcome;
 #[derive(Default)]
 pub(crate) struct Receiving {
     workers: Mutex<HashMap<Address, Worker>>,
+    /// The controls being applied, by the path their mail is kept at.
+    applying: Mutex<HashMap<PathBuf, Applied>>,
     pub(crate) changed: Notify,
 }
+
+/// What became of a control's application, once it ended.
+type Applied = tokio::sync::watch::Receiver<Option<Result<(), Failure>>>;
 
 struct Worker {
     wake: Arc<Notify>,
@@ -151,6 +156,9 @@ async fn finish(node: &Arc<Node>, path: &Path, outcome: Outcome, reason: String)
     .await
 }
 async fn drain(node: Arc<Node>, owner: Address, wake: Arc<Notify>) {
+    // Mail is kept as it comes; what it asks is done once the node has
+    // recovered what it was doing, which a control may meet.
+    node.ready().await;
     let mut again = crate::again::Again::default();
     let (mut after, mut key) = (Vec::new(), String::new());
     let mut through = Vec::new();
@@ -235,15 +243,30 @@ async fn drain(node: Arc<Node>, owner: Address, wake: Arc<Notify>) {
 
 async fn process(node: &Arc<Node>, path: &Path, mut entry: Entry) -> io::Result<()> {
     if entry.result.is_none() {
-        match tokio::time::timeout(Duration::from_secs(120), apply(node, &entry)).await {
-            Ok(Ok(())) => entry.result = Some(Ok(())),
-            Ok(Err(error)) if crate::obligations::permanent(&error) => entry.result = Some(Err(error)),
-            Ok(Err(error)) => {
-                retry(node, path, &error.message).await?;
-                return Ok(());
-            }
+        // A control is applied once at a time, to its end: a pass that stops
+        // waiting for it leaves it going, and the next waits for that one.
+        // It is applied again only after a stop between its application and
+        // its result being kept, which each command bears: a cancellation is
+        // kept again, a stopped job is stopped again, a receipt is recorded
+        // once.
+        let mut applied = applying(node, path, &entry);
+        let waited = tokio::time::timeout(Duration::from_secs(120), applied.wait_for(Option::is_some))
+            .await
+            .map(|ended| ended.map(|result| result.clone().expect("an application that ended")));
+        let result = match waited {
+            Ok(Ok(result)) => result,
+            Ok(Err(_)) => Err(Failure::new("the control's application ended without a result")),
             Err(_) => {
                 retry(node, path, "the local control has not completed within 120 seconds").await?;
+                return Ok(());
+            }
+        };
+        node.control_letters.applying.lock().expect("never poisoned").remove(path);
+        match result {
+            Ok(()) => entry.result = Some(Ok(())),
+            Err(error) if crate::obligations::permanent(&error) => entry.result = Some(Err(error)),
+            Err(error) => {
+                retry(node, path, &error.message).await?;
                 return Ok(());
             }
         }
@@ -302,6 +325,22 @@ async fn process(node: &Arc<Node>, path: &Path, mut entry: Entry) -> io::Result<
         fastctx_net::link::Posting::Refused(reason) => (Outcome::Impossible, reason),
     };
     finish(node, path, outcome, reason).await
+}
+
+/// The application of the control kept at `path`: the one under way, or a
+/// new one in a task of its own.
+fn applying(node: &Arc<Node>, path: &Path, entry: &Entry) -> Applied {
+    let mut applying = node.control_letters.applying.lock().expect("never poisoned");
+    if let Some(applied) = applying.get(path) {
+        return applied.clone();
+    }
+    let (done, applied) = tokio::sync::watch::channel(None);
+    applying.insert(path.to_path_buf(), applied.clone());
+    let (node, entry) = (node.clone(), entry.clone());
+    fastctx_platform::task::spawn(async move {
+        let _ = done.send(Some(apply(&node, &entry).await));
+    });
+    applied
 }
 
 async fn apply(node: &Arc<Node>, entry: &Entry) -> Result<(), Failure> {
