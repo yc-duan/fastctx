@@ -1130,6 +1130,16 @@ pub fn removed(node: &Node, resident: &ResidentId) {
 /// Resolves this call's own evidence, including before the watcher has seen
 /// its registration. No connection-wide or process-wide identity is reused.
 pub async fn identify(node: &Arc<Node>, tool_use_id: &str) -> Result<fastctx_types::residents::Whereabouts, Failure> {
+    // The call's evidence, the session's registration and its reports are
+    // files and records, reached where that may block.
+    let (node, tool_use_id) = (node.clone(), tool_use_id.to_string());
+    crate::blocking::on(async move { identify_now(&node, &tool_use_id).await }).await
+}
+
+async fn identify_now(
+    node: &Arc<Node>,
+    tool_use_id: &str,
+) -> Result<fastctx_types::residents::Whereabouts, Failure> {
     let world = node.world.path().to_path_buf();
     let id = tool_use_id.to_string();
     let sessions: Vec<_> = node
@@ -1151,8 +1161,7 @@ pub async fn identify(node: &Arc<Node>, tool_use_id: &str) -> Result<fastctx_typ
     let session = registration.session.clone();
     hear(node, registration).await;
     // The reports preceding the call may establish its turn and deliveries.
-    let (looking, path) = (node.clone(), exchange::sessions(node.world.path()).join(&session));
-    crate::blocking::on(async move { look(&looking, &path).await }).await;
+    look(node, &exchange::sessions(node.world.path()).join(&session)).await;
     let alias = exchange::sessions(node.world.path()).join(&session).join("resident.json");
     let resident: ResidentId =
         serde_json::from_slice(&fastctx_platform::disk::read(alias).map_err(|error| Failure::new(error.to_string()))?)
