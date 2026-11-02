@@ -520,15 +520,16 @@ for (const session of sessions) {
       if (session.startsWith("connect-")) {
         // The window before connecting an agent: Claude Code's candidate on
         // this computer connected, a Codex login removed from its menu, or
-        // Gemini CLI connected from the overview; `-open` unfolds the first
-        // card's file, `-about` asks what connecting is.
+        // (`connect-other`) the first other agent the overview lists
+        // connected from there; `-open` unfolds the first card's file,
+        // `-about` asks what connecting is.
         const codex = session.includes("codex");
-        const gemini = session.includes("gemini");
+        const other = session.includes("other");
         const open = codex
           ? "document.querySelector('.logins-more')?.click(); return new Promise(r => setTimeout(r, 300)).then(() => [...document.querySelectorAll('[role=menuitem]')].find((b) => /移除|Remove/.test(b.textContent))?.click());"
-          : gemini
-            ? "document.querySelector('.ao-go[data-agent=gemini]')?.click();"
-            : "document.querySelector('.logins-apply')?.click();";
+          : other
+            ? "document.querySelector('.ll-go:not([data-agent=claude]):not([data-agent=codex])')?.click();"
+            : "document.querySelector('.ll-go[data-act=apply]')?.click();";
         const then = session.endsWith("-open")
           ? ".then(() => { document.querySelector('.dc-file-line')?.click(); return new Promise(r => setTimeout(r, 500)); })"
           : session.endsWith("-about")
@@ -538,7 +539,7 @@ for (const session of sessions) {
               : "";
         await send("Runtime.evaluate", {
           awaitPromise: true,
-          expression: `new Promise(r => { location.hash = '#/agents${gemini ? "" : codex ? "/codex" : "/claude"}'; setTimeout(r, 900); }).then(() => { ${open} }).then(() => new Promise(r => setTimeout(r, 700)))${then}`,
+          expression: `new Promise(r => { location.hash = '#/agents${other ? "" : codex ? "/codex" : "/claude"}'; setTimeout(r, 900); }).then(() => { ${open} }).then(() => new Promise(r => setTimeout(r, 700)))${then}`,
         });
       }
       if (session === "create" || session === "created") {

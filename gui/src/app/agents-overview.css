@@ -131,70 +131,6 @@
   line-height: 32px;
 }
 
-.ao-login {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  min-height: 36px;
-  font-size: var(--size-text);
-}
-
-/* Connected, the plug and the name are ink; found and not yet connected,
-   faint; asking to be renewed, the plug is clay. */
-.ao-plug {
-  flex: none;
-  display: inline-flex;
-  color: var(--text);
-}
-
-.ao-who {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: var(--text);
-}
-
-.ao-login[data-standing="found"] .ao-plug,
-.ao-login[data-standing="busy"] .ao-plug {
-  color: var(--text-3);
-}
-
-.ao-login[data-standing="found"] .ao-who {
-  color: var(--text-2);
-}
-
-.ao-login[data-standing="renew"] .ao-plug {
-  color: var(--accent);
-}
-
-.ao-tag {
-  flex: none;
-  color: var(--text-3);
-  font-size: var(--size-fine);
-  white-space: nowrap;
-}
-
-.ao-tag.ao-warn {
-  color: var(--accent);
-}
-
-.ao-act {
-  flex: none;
-  margin-left: auto;
-  display: inline-flex;
-}
-
-/* Connecting is the page's one main deed: its word stands in clay. */
-.ao-go {
-  color: var(--accent);
-}
-
-.ao-bench {
-  color: var(--text-2);
-}
-
-.ao-busy,
 .ao-scanning {
   color: var(--text-3);
   font-size: var(--size-text);
@@ -220,12 +156,6 @@
   display: inline-flex;
   gap: var(--space-4);
   color: var(--text-3);
-}
-
-@media (pointer: coarse) {
-  .ao-login {
-    min-height: 44px;
-  }
 }
 
 @media (max-width: 760px) {

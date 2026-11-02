@@ -83,7 +83,7 @@ pub(super) fn side(
     agent: &Agent,
     changes: &[(AgentName, PathBuf, LoginChange)],
 ) -> Result<AgentLogins, Failure> {
-    let mut side = AgentLogins::default();
+    let mut side = AgentLogins { title: Some(agent.title.to_owned()), ..AgentLogins::default() };
     let default = default_home(context, agent);
     for (dir, found) in dirs(context, kept, agent)? {
         let connected = apply::agent_connected(&context.places, agent, &dir)

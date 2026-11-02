@@ -18,6 +18,7 @@ import type { AgentLoginsWords } from "./agent-logins-words";
 import { chosen, keepMachine, keptMachine, pickButton, pickMenu, pickables, type Pickable } from "./agent-machines";
 import type { AgentsOverviewWords } from "./agents-overview-words";
 import "./agents-overview.css";
+import { loginLine, type LineTag, type Standing } from "./login-line";
 import { reachDrawing, type Reach } from "./agents-reach";
 import { redrawKeepingFocus } from "./focus";
 import { link } from "./places";
@@ -69,10 +70,6 @@ export interface AgentsOverviewOptions {
   /** Opens the workbench on a connected login. */
   workbenchOn(machine: string, agent: Agent, dir: string): void;
 }
-
-/** A login as its line stands: connected, found and not yet connected,
- *  connected and asking to be renewed, or changing now. */
-type Standing = "in" | "found" | "renew" | "busy";
 
 export class AgentsOverview implements Page {
   readonly element = document.createElement("section");
@@ -293,7 +290,7 @@ export class AgentsOverview implements Page {
     return `<section class="ao-card" data-agent="${escape(agent)}">
       <header class="ao-head">
         <span class="ao-mark" aria-hidden="true">${agentGlyph(agent, 22)}</span>
-        <h2 class="ao-name"${programs ? ` title="${escape(programs)}"` : ""}>${escape(this.nameOf(agent))}</h2>
+        <h2 class="ao-name"${programs ? ` title="${escape(programs)}"` : ""}>${escape(this.nameOf(agent, side))}</h2>
         ${manage}
       </header>
       ${lines ? `<ul class="ao-logins">${lines}</ul>` : `<p class="ao-none">${escape(words.noLogin)}</p>`}
@@ -308,33 +305,28 @@ export class AgentsOverview implements Page {
     const busy = !!login.change && !login.change.end;
     const standing: Standing = busy ? "busy" : !listed ? "found" : login.drift || login.integration === "old" ? "renew" : "in";
     const identity = login.identity?.who.kind === "known" ? login.identity.who.value : null;
-    const who = identity?.email ?? dirName(login.dir);
     const old = agent === "claude" ? claudeTooOld(agent, side.programs, login) : null;
-    const tags = [
-      identity?.plan ? `<span class="ao-tag">${escape(planName(identity.plan))}</span>` : "",
-      identity?.method === "oauth_token" ? `<span class="ao-tag" title="${escape(logins.tokenSaid)}">${escape(logins.token)}</span>` : "",
-      identity && !identity.logged_in ? `<span class="ao-tag">${escape(logins.loggedOut)}</span>` : "",
-      old ? `<span class="ao-tag ao-warn" title="${escape(logins.tooOldSaid(old, CLAUDE_OLDEST))}">${escape(logins.tooOld)}</span>` : "",
-    ].join("");
+    const tags: LineTag[] = [
+      login.default ? { text: logins.defaultLogin } : null,
+      identity?.plan ? { text: planName(identity.plan) } : null,
+      identity?.method === "oauth_token" ? { text: logins.token, said: logins.tokenSaid } : null,
+      identity && !identity.logged_in ? { text: logins.loggedOut } : null,
+      old ? { text: logins.tooOld, said: logins.tooOldSaid(old, CLAUDE_OLDEST), warn: true } : null,
+    ].filter((tag): tag is LineTag => !!tag);
     const at = `data-machine="${escape(machine.name)}" data-agent="${escape(agent)}" data-dir="${escape(login.dir)}"`;
     const act =
       standing === "busy"
-        ? `<span class="ao-busy">${escape(login.change?.into === false ? logins.removing : logins.applying)}</span>`
+        ? `<span class="ll-busy">${escape(login.change?.into === false ? logins.removing : logins.applying)}</span>`
         : !this.mine(machine)
           ? ""
           : standing === "found"
-            ? `<button class="text-button ao-go" type="button" data-ao="connect" ${at}>${escape(logins.apply)}</button>`
+            ? `<button class="text-button ll-go" type="button" data-ao="connect" ${at}>${escape(logins.apply)}</button>`
             : standing === "renew"
-              ? `<button class="text-button ao-go" type="button" data-ao="renew" ${at} title="${escape(login.drift?.kind === "changed" ? login.drift.reason : logins.driftAsks)}">${escape(words.renew)}</button>`
+              ? `<button class="text-button ll-go" type="button" data-ao="renew" ${at} title="${escape(login.drift?.kind === "changed" ? login.drift.reason : logins.driftAsks)}">${escape(words.renew)}</button>`
               : isHost(agent)
-                ? `<button class="text-button ao-bench" type="button" data-ao="workbench" ${at} title="${escape(words.workbenchSaid)}">${escape(words.workbench)}</button>`
+                ? `<button class="text-button ll-quiet" type="button" data-ao="workbench" ${at} title="${escape(words.workbenchSaid)}">${escape(words.workbench)}</button>`
                 : "";
-    return `<li class="ao-login" data-standing="${standing}">
-      <span class="ao-plug" aria-hidden="true">${glyph("plug", 16)}</span>
-      <span class="ao-who" title="${escape(login.dir)}">${escape(who)}</span>
-      ${login.default ? `<span class="ao-tag">${escape(logins.defaultLogin)}</span>` : ""}${tags}
-      <span class="ao-act">${act}</span>
-    </li>`;
+    return loginLine({ standing, who: identity?.email ?? dirName(login.dir), whoSaid: login.dir, tags, act });
   }
 
   /** The head's machine and, while it is open, its menu. */
@@ -379,9 +371,9 @@ export class AgentsOverview implements Page {
   }
 
   /** How the page names an agent: Codex and Claude Code by their own
-   *  names, the others as the words name them, else by the node's word. */
-  private nameOf(agent: Agent): string {
-    return isHost(agent) ? this.options.logins[agent] : (this.options.words.names[agent] ?? agent);
+   *  names, the others as their descriptions name them. */
+  private nameOf(agent: Agent, side: AgentLogins | undefined): string {
+    return isHost(agent) ? this.options.logins[agent] : (side?.title ?? agent);
   }
 
   /** What connecting or renewing a login changes is told by the window
@@ -394,7 +386,7 @@ export class AgentsOverview implements Page {
     const identity = login.identity?.who.kind === "known" ? login.identity.who.value : null;
     return {
       agent,
-      title: this.nameOf(agent),
+      title: this.nameOf(agent, side),
       machine: machine.name,
       dir,
       who: identity?.email ?? dirName(dir),

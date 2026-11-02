@@ -20903,11 +20903,12 @@
                 "elsewhere": []
               },
               "others": {
-                "gemini": {
+                "antigravity": {
+                  "title": "Antigravity",
                   "programs": [],
                   "listed": [
                     {
-                      "dir": "/home/me/.gemini",
+                      "dir": "/home/me/.antigravity",
                       "default": true,
                       "found": "default",
                       "identity": {
@@ -20916,7 +20917,6 @@
                           "kind": "known",
                           "value": {
                             "logged_in": true,
-                            "method": "oauth-personal",
                             "email": "me@example.com"
                           }
                         }
@@ -21274,11 +21274,12 @@
           "elsewhere": []
         },
         "others": {
-          "gemini": {
+          "antigravity": {
+            "title": "Antigravity",
             "programs": [],
             "listed": [
               {
-                "dir": "/home/me/.gemini",
+                "dir": "/home/me/.antigravity",
                 "default": true,
                 "found": "default",
                 "identity": {
@@ -21287,7 +21288,6 @@
                     "kind": "known",
                     "value": {
                       "logged_in": true,
-                      "method": "oauth-personal",
                       "email": "me@example.com"
                     }
                   }
@@ -21768,11 +21768,12 @@
           "elsewhere": []
         },
         "others": {
-          "gemini": {
+          "antigravity": {
+            "title": "Antigravity",
             "programs": [],
             "listed": [
               {
-                "dir": "/home/me/.gemini",
+                "dir": "/home/me/.antigravity",
                 "default": true,
                 "found": "default",
                 "identity": {
@@ -21781,7 +21782,6 @@
                     "kind": "known",
                     "value": {
                       "logged_in": true,
-                      "method": "oauth-personal",
                       "email": "me@example.com"
                     }
                   }

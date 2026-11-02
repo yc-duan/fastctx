@@ -1,4 +1,5 @@
-// A listed login on the agents page (`world-gui.md`, 智能体页): a row with
+// A listed login on the agents page with the workbench on (`world-gui.md`,
+// 智能体页; without it a login is a line, `login-line.ts`): a row with
 // who it is and its plan, and who lets it assist the reader, and with the
 // workbench on, a bar for each usage window, what it used this week and its
 // last seventeen weeks as a small calendar; the row opens the login's own
@@ -63,7 +64,6 @@ export interface RowFacts {
   assistsMe: { assist: AssistSeen; owner: string | null } | null;
   /** Its usage as last read; none before the first read. */
   usage: Usage | null;
-  workbench: boolean;
   fresh: string;
   note: { text: string; detail: string } | undefined;
   now: Date;
@@ -77,7 +77,7 @@ export interface RowWords {
 }
 
 export function loginRow(facts: RowFacts, { words, access, usage: usageWords, when }: RowWords): string {
-  const { machine, agent, login, workbench, now } = facts;
+  const { machine, agent, login, now } = facts;
   const identity = login.identity?.who.kind === "known" ? login.identity.who.value : null;
   const token = identity?.method === "oauth_token";
   const who = identity?.email ?? dirName(login.dir);
@@ -94,13 +94,10 @@ export function loginRow(facts: RowFacts, { words, access, usage: usageWords, wh
   const stamp = changing ? `<span class="logins-stamp busy">${escape(login.change!.into ? words.applying : words.removing)}</span>` : "";
   const sub = stamp || mine ? `<div class="logins-row-sub">${stamp}${mine}</div>` : "";
   const href = link({ kind: "usage", machine, agent, dir: login.dir });
-  const name = workbench
-    ? `<a class="logins-row-who-name" href="${href}" title="${escape(`${words.openUsage}\n${login.dir}`)}">${escape(who)}</a>`
-    : `<span class="logins-row-who-name" title="${escape(login.dir)}">${escape(who)}</span>`;
+  const name = `<a class="logins-row-who-name" href="${href}" title="${escape(`${words.openUsage}\n${login.dir}`)}">${escape(who)}</a>`;
   const more = `<button class="icon-button logins-more" type="button" data-act="menu" ${at} data-menu-key="${escape(JSON.stringify([machine, login.dir]))}" aria-haspopup="menu" aria-label="${escape(words.more)}" title="${escape(words.more)}">${glyph("more", 16)}</button>`;
   const head = `<div class="logins-row-who"><div class="logins-row-name"><span class="logins-slip-mark" title="${escape(facts.versions)}">${glyph(agent, 18)}</span>${name}${tags}</div>${sub}</div>`;
   const note = facts.note ? `<p class="feature-note logins-row-note" title="${escape(facts.note.detail)}">${escape(facts.note.text)}</p>` : "";
-  if (!workbench) return `<li class="logins-row plain${changing ? " changing" : ""}${facts.fresh}>${head}${more}${note}</li>`;
   return `<li class="logins-row${changing ? " changing" : ""}${facts.fresh} data-open="${href}">
     ${head}
     ${facts.assistsMe ? allowanceBars(facts, usageWords, words) : bars(agent, login.limits, now, words, when)}

@@ -147,6 +147,7 @@ pub fn fixtures() -> Fixtures {
             unreadable: vec!["C:/Program Files/WindowsApps: access denied".into()],
         }),
         codex: AgentLogins {
+            title: None,
             programs: vec![
                 FoundProgram {
                     path: Some("C:/app/codex.exe".into()),
@@ -173,6 +174,7 @@ pub fn fixtures() -> Fixtures {
             elsewhere: vec![],
         },
         claude: AgentLogins {
+            title: None,
             programs: vec![FoundProgram {
                 path: None,
                 how: Installed::DesktopApp,
@@ -190,18 +192,18 @@ pub fn fixtures() -> Fixtures {
             elsewhere: vec![],
         },
         others: BTreeMap::from([(
-            "gemini".parse().unwrap(),
+            "antigravity".parse().unwrap(),
             AgentLogins {
+                title: Some("Antigravity".into()),
                 programs: vec![],
                 listed: vec![Login {
-                    dir: "/home/me/.gemini".into(),
+                    dir: "/home/me/.antigravity".into(),
                     default: true,
                     found: Found::Default,
                     identity: Some(Identified {
                         at,
                         who: Fact::known(Identity {
                             logged_in: true,
-                            method: Some("oauth-personal".into()),
                             email: Some("me@example.com".into()),
                             ..Identity::default()
                         }),

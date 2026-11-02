@@ -35,6 +35,9 @@ export interface MachineLogins {
 
 /** One agent on a machine: its programs, and its logins in three groups. */
 export interface AgentLogins {
+  /** How an agent of `MachineLogins.others` is named, as its description
+   *  names it; Codex and Claude Code are named by the interface. */
+  title?: string;
   /** Its programs found here without running any; empty before a scan. */
   programs: FoundProgram[];
   /** The logins the World lists and uses: those its tools are put into. */

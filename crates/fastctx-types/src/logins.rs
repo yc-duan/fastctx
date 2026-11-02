@@ -88,6 +88,10 @@ impl MachineLogins {
 /// One agent on a machine: its programs, and its logins in three groups.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AgentLogins {
+    /// How an agent of `MachineLogins::others` is named, as its description
+    /// names it; interfaces name Codex and Claude Code themselves.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
     /// Its programs installed here, as their manifests and version
     /// information say, none of them run; empty before the first scan.
     pub programs: Vec<FoundProgram>,

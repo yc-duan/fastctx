@@ -36,6 +36,7 @@ import { CLAUDE_OLDEST, claudeTooOld, dirName, loginRow, planName, programLine }
 import type { AgentLoginsWords } from "./agent-logins-words";
 import { chosen, keepMachine, keptMachine, pickButton, pickMenu, pickables, type Pickable } from "./agent-machines";
 import { keepTab } from "./agent-sections";
+import { loginLine, type LineTag, type Standing } from "./login-line";
 import { AssistSheet, assistChange, assistancesIn, fiveHourWindow, namesOn, type Assistance } from "./assist-sheet";
 import type { Confirm } from "./confirm";
 import { FolderPicker } from "./folder-picker";
@@ -509,19 +510,11 @@ export class AgentLoginsPage implements Page {
         </div>`;
     }
     const scanning = scan?.usual.state === "running";
-    const listed = agent.listed.map((login) => this.row(machine, login, agent, world, now)).join("");
-    const candidates = machine.mine
-      ? agent.candidates
-          .map((login) => {
-            const who = login.identity?.who.kind === "known" ? (login.identity.who.value.email ?? null) : null;
-            const changing = login.change && !login.change.end;
-            const fresh = freshness(this.fresh, `d:${machine.name}:${login.dir}`);
-            const old = claudeTooOld(this.agent, agent.programs, login);
-            return `<li class="logins-candidate${fresh}>${glyph(this.agent, 16)}<span class="logins-candidate-name" title="${escape(login.dir)}">${escape(who ?? dirName(login.dir))}</span>${login.default ? `<span class="tag">${escape(words.defaultLogin)}</span>` : ""}${who ? `<span class="logins-dir">${escape(dirName(login.dir))}</span>` : ""}${old ? `<span class="tag tag-warn" title="${escape(words.tooOldSaid(old, CLAUDE_OLDEST))}">${escape(words.tooOld)}</span>` : ""}
-          <button class="text-button logins-apply" type="button" data-act="apply" data-machine="${escape(machine.name)}" data-dir="${escape(login.dir)}"${changing ? " disabled" : ""}>${escape(changing ? words.applying : words.apply)}</button></li>`;
-          })
-          .join("")
-      : "";
+    // On the workbench a listed login is a row of its own with its usage;
+    // otherwise every login is a line on one paper, as on the overview.
+    const workbench = this.options.workbench.peek();
+    const listed = agent.listed.map((login) => (workbench ? this.row(machine, login, agent, world, now) : this.line(machine, login, agent, world, true))).join("");
+    const candidates = machine.mine ? agent.candidates.map((login) => this.line(machine, login, agent, world, false)).join("") : "";
     const folders = record.folders ?? [];
     const searched = machine.mine
       ? foldersSection({
@@ -541,10 +534,12 @@ export class AgentLoginsPage implements Page {
       : "";
     const none = machine.hold === "assist" ? words.noneForYou(this.agent) : words.noneFound;
     const empty = !agent.listed.length && !candidates && !(machine.mine && foundOf(folders, this.agent)) && !scanning ? `<p class="feature-quiet logins-none">${escape(none)}</p>` : "";
-    return `${note ? `<p class="feature-note" title="${escape(note.detail)}">${escape(note.text)}</p>` : ""}
-      ${listed ? `<ul class="logins-rows${this.options.workbench.peek() ? "" : " plain"}" aria-label="${escape(words.listed)}">${listed}</ul>` : ""}
-      ${candidates ? `<h3 class="logins-group">${escape(words.candidates)}</h3><ul class="logins-candidates">${candidates}</ul>` : ""}
-      ${empty}${searched}`;
+    const lines = workbench
+      ? `${listed ? `<ul class="logins-rows" aria-label="${escape(words.listed)}">${listed}</ul>` : ""}${candidates ? `<section class="logins-card"><h2 class="logins-card-title">${escape(words.candidates)}</h2><ul class="logins-lines ruled">${candidates}</ul></section>` : ""}`
+      : listed || candidates
+        ? `<section class="logins-card"><ul class="logins-lines" aria-label="${escape(words.listed)}">${listed}${candidates}</ul></section>`
+        : "";
+    return `<div class="logins-paper${workbench ? " wide" : ""}">${note ? `<p class="feature-note" title="${escape(note.detail)}">${escape(note.text)}</p>` : ""}${lines}${empty}${searched}</div>`;
   }
 
   /** The agent's programs on the machine, as one quiet chip with the list
@@ -554,6 +549,48 @@ export class AgentLoginsPage implements Page {
     if (!agent.programs.length) return `<span class="logins-programs quiet">${escape(words.noProgram)}</span>`;
     const lines = agent.programs.map((program) => programLine(program, words)).join("\n");
     return `<span class="logins-programs" title="${escape(lines)}" tabindex="0">${escape(words.programs(agent.programs.length))}</span>`;
+  }
+
+  /** A login as a line (`login-line.ts`): one the World lists with its
+   *  menu, and the way to update it where it asks; one found with the way to
+   *  connect it. */
+  private line(machine: Shown, login: Login, agent: AgentLogins, world: WorldNow | null, listed: boolean): string {
+    const { words } = this.options;
+    const identity = login.identity?.who.kind === "known" ? login.identity.who.value : null;
+    const changing = !!login.change && !login.change.end;
+    const old = claudeTooOld(this.agent, agent.programs, login);
+    const plan = identity?.method === "oauth_token" ? this.planOf(machine, login, world) : (identity?.plan ?? null);
+    const mine = listed && machine.hold === "assist" ? assistingMe(world, machine.name, this.agent, login.dir, login.default) : null;
+    const tags: LineTag[] = [
+      login.default ? { text: words.defaultLogin } : null,
+      // Which of the user's directories it is, where an email names it and
+      // it is not the agent's default.
+      identity?.email && !login.default ? { text: dirName(login.dir), said: login.dir } : null,
+      plan ? { text: planName(plan) } : null,
+      identity?.method === "oauth_token" ? { text: words.token, said: words.tokenSaid } : null,
+      identity && !identity.logged_in ? { text: words.loggedOut, warn: true } : null,
+      old ? { text: words.tooOld, said: words.tooOldSaid(old, CLAUDE_OLDEST), warn: true } : null,
+      mine ? { text: words.assistedFrom(mine.owner ?? "–") } : null,
+    ].filter((tag): tag is LineTag => !!tag);
+    const at = `data-machine="${escape(machine.name)}" data-dir="${escape(login.dir)}"`;
+    const renew = listed && !changing && (!!login.drift || login.integration === "old");
+    const standing: Standing = changing ? "busy" : !listed ? "found" : renew ? "renew" : "in";
+    const menu = `<button class="icon-button logins-more" type="button" data-act="menu" ${at} data-menu-key="${escape(JSON.stringify([machine.name, login.dir]))}" aria-haspopup="menu" aria-label="${escape(words.more)}" title="${escape(words.more)}">${glyph("more", 16)}</button>`;
+    const act = changing
+      ? `<span class="ll-busy">${escape(login.change!.into ? words.applying : words.removing)}</span>`
+      : listed
+        ? `${renew && login.drift ? `<button class="text-button ll-go" type="button" data-act="drift" ${at} title="${escape(login.drift.kind === "changed" ? `${login.drift.location}\n${login.drift.reason}` : words.driftAsks)}">${escape(words.renew)}</button>` : ""}${menu}`
+        : `<button class="text-button ll-go" type="button" data-act="apply" ${at}>${escape(words.apply)}</button>`;
+    const note = listed ? this.notes.get(`s:${machine.name}:${login.dir}`) : undefined;
+    return loginLine({
+      standing,
+      who: identity?.email ?? dirName(login.dir),
+      whoSaid: login.dir,
+      tags,
+      act,
+      fresh: freshness(this.fresh, `d:${machine.name}:${login.dir}`),
+      ...(note ? { below: `<p class="feature-note" title="${escape(note.detail)}">${escape(note.text)}</p>` } : {}),
+    });
   }
 
   private row(machine: Shown, login: Login, agent: AgentLogins, world: WorldNow | null, now: Date): string {
@@ -572,7 +609,6 @@ export class AgentLoginsPage implements Page {
         plan: login.identity?.who.kind === "known" && login.identity.who.value.method === "oauth_token" ? this.planOf(machine, login, world) : login.identity?.who.kind === "known" ? (login.identity.who.value.plan ?? null) : null,
         assistsMe: machine.hold === "assist" ? assistingMe(world, machine.name, this.agent, login.dir, login.default) : null,
         usage: report ? usageOf(report, namer(world, machine.name, options.usage)) : null,
-        workbench: options.workbench.peek(),
         fresh: freshness(this.fresh, `d:${machine.name}:${login.dir}`),
         note: this.notes.get(`s:${machine.name}:${login.dir}`),
         now,

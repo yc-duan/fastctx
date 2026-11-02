@@ -50,6 +50,8 @@ export interface AgentLoginsWords extends MachinePickWords {
    *  themselves; an older Fastctx's that waits for the output limit. */
   driftChanged: string;
   driftAsks: string;
+  /** Putting the tools in again as this version writes them. */
+  renew: string;
   searchFailed: string;
   noneBelow: string;
   notSearched: string;
@@ -160,6 +162,7 @@ export const zhAgentLogins: AgentLoginsWords = {
   stopped: "已停止",
   driftChanged: "接入已被改动",
   driftAsks: "接入待更新",
+  renew: "更新接入",
   searchFailed: "没找完",
   noneBelow: "没找到",
   notSearched: "还没找过",
@@ -256,6 +259,7 @@ export const enAgentLogins: AgentLoginsWords = {
   stopped: "Stopped",
   driftChanged: "Not up to date",
   driftAsks: "Needs update",
+  renew: "Update connection",
   searchFailed: "Not finished",
   noneBelow: "None found",
   notSearched: "Not searched yet",

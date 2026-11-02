@@ -133,18 +133,6 @@ function desktop(now: number): MachineLogins {
       ],
       elsewhere: [],
     },
-    // An agent connected through its configuration alone, found and not
-    // yet connected.
-    others: {
-      gemini: {
-        programs: [],
-        listed: [],
-        candidates: [
-          { dir: "C:\\Users\\me\\.gemini", default: true, found: "default", identity: { at: ago(52), who: { kind: "known", value: { logged_in: true, method: "oauth-personal", email: "me@gmail.com" } } }, limits: { kind: "unavailable", reason: "only the workbench reads limits" }, programs: [], integration: "absent" },
-        ],
-        elsewhere: [],
-      },
-    },
     folders: chosen.map((one) => search(one, now)),
   };
 }
@@ -374,45 +362,6 @@ function disclosed(agent: string, dir: string, into: boolean): Pick<ChangePrevie
         ),
         card("guidance", `${dir}\\AGENTS.md`, told(1, 1, passage(true).map(add)), "created"),
         card("shell", config, told(17, 17, [ctx("[mcp_servers.fastctx.tools.run]"), ctx("output_token_limit = 41708"), add(""), add("[features]"), add("shell_tool = false")])),
-      ],
-    };
-  }
-  if (agent === "gemini") {
-    return {
-      fingerprint,
-      cards: [
-        card(
-          "tools",
-          `${dir}\\settings.json`,
-          told(9, 9, [
-            ctx('  "mcpServers": {'),
-            add('    "fastctx": {'),
-            add('      "args": ['),
-            add('        "serve"'),
-            add("      ],"),
-            add('      "command": "C:\\\\Users\\\\me\\\\.fastctx\\\\bin\\\\fastctx.exe",'),
-            add('      "env": {'),
-            add('        "FASTCTX_AGENT_HOME": "C:\\\\Users\\\\me\\\\.gemini",'),
-            add('        "FASTCTX_HOME": "C:\\\\Users\\\\me\\\\.fastctx"'),
-            add("      }"),
-            add("    },"),
-            ctx('    "github": {'),
-            ctx('      "command": "npx",'),
-          ]),
-        ),
-        card(
-          "shell",
-          `${dir}\\policies\\fastctx.toml`,
-          told(1, 1, [
-            add("# Fastctx's: commands go through its run tool. Taking Fastctx out deletes this file."),
-            add("[[rule]]"),
-            add('toolName = "run_shell_command"'),
-            add('decision = "deny"'),
-            add("priority = 100"),
-          ]),
-          "created",
-        ),
-        card("guidance", `${dir}\\GEMINI.md`, told(1, 1, [ctx("# My habits"), ctx(""), ctx("- Answer in Chinese."), add(""), ...passage(false).map(add)])),
       ],
     };
   }
