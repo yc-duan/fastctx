@@ -62,6 +62,11 @@ export interface FeaturesWords {
   saved: string;
   openCodex: string;
   noAccount: string;
+  /** On a computer in no network, where the switch would be: it asks
+   *  colleagues only in one (`world-colleagues.md`). */
+  alone: string;
+  newNetwork: string;
+  joinNetwork: string;
   unavailable: string;
   failed(why: string): string;
   noLogins: string;
@@ -192,6 +197,9 @@ export const zhFeatures: FeaturesWords = {
   saved: "已保存",
   openCodex: "已开着的 Codex 对话要重新连上才看到改动",
   noAccount: "登录账号后可用",
+  alone: "加入网络后可用",
+  newNetwork: "新建网络",
+  joinNetwork: "加入网络",
   unavailable: "读不到模型协作的设置",
   failed: () => "保存失败",
   noLogins: "暂无可用的智能体",
@@ -294,6 +302,9 @@ export const enFeatures: FeaturesWords = {
   saved: "Saved",
   openCodex: "Codex conversations already open see changes once reconnected",
   noAccount: "Log in to an account to use it",
+  alone: "Join a network to use it",
+  newNetwork: "New network",
+  joinNetwork: "Join a network",
   unavailable: "Couldn't read the collaboration settings",
   failed: () => "Couldn't save",
   noLogins: "No agents available",

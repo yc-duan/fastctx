@@ -707,6 +707,38 @@
   margin-top: 0;
 }
 
+/* In no network, where the switch would be: that it needs one, and the
+   ways into one under it. */
+.feature-ways {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.feature-way-links {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+}
+
+.feature-way-links a {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  text-decoration: none;
+}
+
+/* Under a finger each way is 44 pixels high to press; it looks the same. */
+@media (pointer: coarse) {
+  .feature-way-links a::before {
+    content: "";
+    position: absolute;
+    inset: calc(50% - 22px) 0;
+  }
+}
+
 /* A feature's film: as large as the page allows, with room under it for
    its words and the button that turns the feature on, all on one screen. */
 .features-body.features-film {

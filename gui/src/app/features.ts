@@ -29,6 +29,7 @@ import { ActsMenu } from "./acts-menu";
 import type { Confirm } from "./confirm";
 import { link, type Feature } from "./places";
 import { detailOf } from "./problem";
+import { inNoNetwork } from "./reach";
 import type { Page } from "./shell";
 import { effect } from "./signals";
 import { residentsOf, type Store } from "./store";
@@ -80,6 +81,12 @@ export class FeaturesPage implements Page {
   private readonly body: HTMLElement;
   private stop: () => void = () => {};
   private account: Login | null = null;
+  /** Whether this computer is in no network: it asks no colleagues, and
+   *  its page offers the ways into one instead of settings. */
+  private alone = false;
+  /** Whether the World was seen once, so that where the settings are kept
+   *  is known. */
+  private placed = false;
   private view: CollabView | null = null;
   private draft: Collab | null = null;
   private problem: { text: string; detail: string } | null = null;
@@ -304,13 +311,12 @@ export class FeaturesPage implements Page {
       this.film(this.body.querySelector(".feature-film"), make, words.collaboration.name);
       return;
     }
-    const logins = loginsOf(store.world.peek()?.accounts);
-    this.account = logins[0] ?? null;
+    this.place();
     this.draw();
-    void this.load();
     void this.ask();
     this.stop = effect(() => {
       store.world.get();
+      if (this.place()) this.draw();
       this.drawNow();
     });
     this.body.addEventListener("click", (event) => this.click(event));
@@ -318,18 +324,41 @@ export class FeaturesPage implements Page {
     this.body.addEventListener("change", (event) => this.input(event));
   }
 
-  /** The account's settings, or in no network this computer's own. */
+  /** Where the settings are kept, as the World now says: the first
+   *  account's, read again when that changes; none in no network. Whether
+   *  it changed. */
+  private place(): boolean {
+    const world = this.options.store.world.peek();
+    if (!world) return false;
+    const alone = inNoNetwork(world);
+    const account = alone ? null : (loginsOf(world.accounts)[0] ?? null);
+    if (this.placed && alone === this.alone && account?.hub === this.account?.hub && account?.account === this.account?.account) return false;
+    this.placed = true;
+    this.alone = alone;
+    this.account = account;
+    this.view = null;
+    this.draft = null;
+    this.problem = null;
+    this.saved = false;
+    if (!alone && account) void this.load();
+    return true;
+  }
+
+  /** The account's settings. */
   private async load(): Promise<void> {
     const account = this.account;
+    let view: CollabView | null = null;
+    let problem: { text: string; detail: string } | null = null;
     try {
-      this.view = await readCollab(account?.hubName ?? null, account?.account ?? null);
-      this.draft = structuredClone(this.view.collab);
-      this.problem = null;
+      view = await readCollab(account?.hubName ?? null, account?.account ?? null);
     } catch (error) {
-      this.view = null;
-      this.draft = null;
-      this.problem = { text: this.options.words.unavailable, detail: detailOf(error) };
+      problem = { text: this.options.words.unavailable, detail: detailOf(error) };
     }
+    // Read for an account no longer the one shown: the newer read draws.
+    if (account !== this.account) return;
+    this.view = view;
+    this.draft = view ? structuredClone(view.collab) : null;
+    this.problem = problem;
     this.draw();
   }
 
@@ -543,6 +572,13 @@ export class FeaturesPage implements Page {
     this.replayFilm?.();
   }
 
+  /** In no network, where the switch would be: that it needs one, and the
+   *  ways into one, as the machines' page offers them. */
+  private ways(): string {
+    const { words } = this.options;
+    return `<div class="feature-ways"><p class="feature-note">${escape(words.alone)}</p><div class="feature-way-links"><a class="sheet-go" href="${link({ kind: "login", way: "new" })}">${escape(words.newNetwork)}</a><a class="text-button quiet-button" href="${link({ kind: "login", way: "join" })}">${escape(words.joinNetwork)}</a></div></div>`;
+  }
+
   /** What model collaboration gives the user: a ready text that teaches
    *  the calling model how to ask for what it wants, and nothing to
    *  operate by hand. */
@@ -557,14 +593,18 @@ export class FeaturesPage implements Page {
     const collab = this.draft;
     const on = !!collab?.on;
     const gives = this.gives();
-    const turn = !collab
-        ? this.problem
-          ? `<p class="feature-note feature-trouble" title="${escape(this.problem.detail)}">${escape(this.problem.text)}<button class="text-button quiet-button" type="button" data-act="retry">${glyph("regenerate", 14)}<span>${escape(words.retry)}</span></button></p>`
-          : `<p class="feature-note">${escape(words.reading)}</p>`
-        : on
-          ? ""
-          : `<button class="sheet-go feature-turn" type="button" data-act="turn" data-on="1">${escape(words.turnOn)}</button>${
-              this.problem ? `<p class="feature-note feature-trouble" title="${escape(this.problem.detail)}">${escape(this.problem.text)}</p>` : ""}`;
+    const turn = this.alone
+      ? this.ways()
+      : this.placed && !this.account
+        ? `<p class="feature-note">${escape(words.noAccount)}</p>`
+        : !collab
+          ? this.problem
+            ? `<p class="feature-note feature-trouble" title="${escape(this.problem.detail)}">${escape(this.problem.text)}<button class="text-button quiet-button" type="button" data-act="retry">${glyph("regenerate", 14)}<span>${escape(words.retry)}</span></button></p>`
+            : `<p class="feature-note">${escape(words.reading)}</p>`
+          : on
+            ? ""
+            : `<button class="sheet-go feature-turn" type="button" data-act="turn" data-on="1">${escape(words.turnOn)}</button>${
+                this.problem ? `<p class="feature-note feature-trouble" title="${escape(this.problem.detail)}">${escape(this.problem.text)}</p>` : ""}`;
     const top = on ? this.onTop(words.collaboration.after) : `<div class="feature-intro with-gives"><div class="feature-film"></div>${gives}${turn}</div>`;
     // The film keeps playing while the page around it is drawn again.
     const playing = !on ? this.body.querySelector(".feature-intro .film") : null;
