@@ -17,7 +17,6 @@ use std::{
 
 const QUEUED: usize = 128;
 const WAIT: Duration = Duration::from_secs(10);
-const WORKERS: usize = 2;
 type Key = (String, String);
 type Outcome = std::result::Result<(), (io::ErrorKind, String)>;
 type Work = Box<dyn FnOnce() -> io::Result<()> + Send>;
@@ -108,11 +107,16 @@ impl Service {
         if self.engine.started.swap(true, Ordering::AcqRel) {
             return Ok(false);
         }
-        for index in 0..WORKERS {
+        // Families no one waits for move on as many workers as the machine
+        // has cores, up to two: a single one waits on the database writer and
+        // on small files most of the time. One more worker takes only the
+        // families asked for now, so a request never waits behind them.
+        let background = std::thread::available_parallelism().map_or(1, |cores| cores.get().clamp(1, 2));
+        for index in 0..=background {
             let engine = self.engine.clone();
             if let Err(error) = std::thread::Builder::new()
                 .name(format!("record-migration-{index}"))
-                .spawn(move || engine.run(index == 0))
+                .spawn(move || engine.run(index < background))
             {
                 self.engine.close();
                 return Err(error);

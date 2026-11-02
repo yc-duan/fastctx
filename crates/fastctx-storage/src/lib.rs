@@ -34,6 +34,14 @@ use tokio::sync::{OwnedSemaphorePermit, Semaphore, oneshot};
 const ADMISSION: Duration = Duration::from_secs(5);
 const ANSWER: Duration = Duration::from_secs(30);
 const QUEUE_WAIT: Duration = Duration::from_secs(30);
+/// Read connections of a database. Readers wait on the disk and on each
+/// other's short queries more than on a core, and a pool as small as the
+/// cores held whole machines' work behind one long read; this many cost a
+/// little memory each, and keep a migration, a startup's recoveries and
+/// the reads asked meanwhile from waiting for each other.
+const READERS: usize = 16;
+/// Those of them background reads leave to the reads someone waits for.
+const INTERACTIVE_READERS: usize = 2;
 
 #[derive(Clone)]
 pub struct Database(Arc<Inner>);
@@ -175,7 +183,7 @@ impl Database {
         transaction.execute_batch(schema)?;
         initialize(&transaction)?;
         transaction.commit()?;
-        let count = std::thread::available_parallelism().map_or(2, |n| n.get().clamp(2, 4));
+        let count = READERS;
         let mut readers = Vec::with_capacity(count);
         for _ in 0..count {
             let reader = rusqlite::Connection::open_with_flags(
@@ -208,7 +216,7 @@ impl Database {
             writes,
             readers: Mutex::new(readers),
             reading: Arc::new(Semaphore::new(count)),
-            background_reading: Arc::new(Semaphore::new(count - 1)),
+            background_reading: Arc::new(Semaphore::new(count - INTERACTIVE_READERS)),
             reads: Arc::new(Semaphore::new(1024)),
             metrics,
             damage,
