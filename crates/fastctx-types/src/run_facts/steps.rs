@@ -108,6 +108,24 @@ pub enum StepDid {
     },
 }
 
+impl StepDid {
+    /// The name of its kind, as it is serialized.
+    pub fn kind(&self) -> &'static str {
+        match self {
+            Self::On { .. } => "on",
+            Self::Copy { .. } => "copy",
+            Self::View { .. } => "view",
+            Self::Wait { .. } => "wait",
+            Self::Stop { .. } => "stop",
+            Self::Page { .. } => "page",
+            Self::Project { .. } => "project",
+            Self::Plan { .. } => "plan",
+            Self::Goal { .. } => "goal",
+            Self::Sense { .. } => "sense",
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct StepPlace {
     pub machine: MachineName,

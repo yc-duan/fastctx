@@ -1,6 +1,8 @@
 //! Large legacy frames are independent idempotent members followed by their
 //! terminal metadata. The durable transport retains the frame until all commits
 //! succeed; a restart replays missing members before advancing the job state.
+//! So the members commit without waiting for the disk, and the metadata's
+//! durable commit carries them there.
 
 use super::{snapshot, sql};
 use fastctx_storage::Database;
@@ -57,7 +59,7 @@ pub(super) fn receive_at(
         let scope = conversation.to_string();
         let bytes = sql::encode(&part).map_err(io::Error::other)?.len();
         let changed = database
-            .write_now_at(priority, bytes, move |db| {
+            .write_relaxed_now_at(priority, bytes, move |db| {
                 crate::conversation_store::check(db, &scope)?;
                 let Some(mut head) = sql::head(db, &scope, &saved.call_id)? else { return Ok(None) };
                 snapshot::validate(&head, &saved)?;
@@ -123,6 +125,10 @@ pub(super) fn receive_at(
             Ok(changed)
         })
         .map_err(io::Error::other)?;
+    if any && !changed {
+        // The metadata wrote nothing, so its commit carried no member.
+        database.settle_now(priority).map_err(io::Error::other)?;
+    }
     any |= changed;
     if any {
         // Member pages carry the previously committed metadata sequence, never

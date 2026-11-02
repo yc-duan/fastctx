@@ -86,7 +86,7 @@ pub(super) fn read(record: &Path) -> io::Result<(Vec<RunStep>, Vec<StepSummary>)
         if !rows.exists(&cursor_family, "value")? {
             return Err(fastctx_storage::Error::with_kind(fastctx_storage::ErrorKind::Busy, "the executor's step view is still being prepared"));
         }
-        let mut query = rows.connection().prepare_cached("SELECT body FROM run_steps WHERE conversation=?1 AND call=?2 AND body IS NOT NULL ORDER BY position")?;
+        let mut query = rows.connection().prepare_cached("SELECT body FROM run_steps INDEXED BY run_steps_hot WHERE conversation=?1 AND call=?2 AND body IS NOT NULL ORDER BY position")?;
         let steps = query.query_map((rows.conversation(), family), |row| row.get::<_, Vec<u8>>(0))?
             .map(|row| crate::records::decode(&row?)).collect::<Result<Vec<RunStep>>>()?;
         let mut query = rows.connection().prepare_cached("SELECT machine,kind,count,first,last FROM run_folded WHERE conversation=?1 AND call=?2 ORDER BY machine,kind")?;
