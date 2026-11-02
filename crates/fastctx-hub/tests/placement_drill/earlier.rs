@@ -249,7 +249,7 @@ async fn upgrade(
     let again = if served { history_again(world, resident, "old-pc").await? } else { Vec::new() };
     record(
         "and this release served it again as before",
-        served && again == after,
+        served && lost(&recorded(&after), &recorded(&again)).is_null(),
         if served {
             json!({"lost": lost(&recorded(&after), &recorded(&again)), "added": added(&recorded(&after), &recorded(&again))})
         } else {
@@ -286,12 +286,19 @@ async fn serving(old: &Path, peer: &Path) -> (bool, Value) {
     (false, last)
 }
 
-/// A history as it is kept: the host's thread object a Codex conversation's
-/// history carries is what its app-server says as it is read, live state
-/// such as whether it takes input now, kept by neither release.
+/// A history as it is kept: what a Codex conversation's app-server says of
+/// its thread whenever the thread is taken up, its thread object, its status
+/// and its tool servers, is live state such as whether it takes input now,
+/// kept by neither release.
 fn recorded(events: &[Value]) -> Vec<Value> {
     events
         .iter()
+        .filter(|event| {
+            !matches!(
+                event.get("change").and_then(|change| change.get("kind")).and_then(Value::as_str),
+                Some("status" | "tool_server")
+            )
+        })
         .cloned()
         .map(|mut event| {
             if let Some(change) = event.get_mut("change").and_then(Value::as_object_mut) {
