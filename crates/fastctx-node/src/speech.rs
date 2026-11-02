@@ -98,6 +98,13 @@ pub(crate) async fn tell_at(
 /// Tells a resident of this machine something: kept first, then handed over
 /// the way its host lets the World in.
 pub async fn tell_here(node: &Arc<Node>, to: &ResidentId, delivery: Delivery, owed: Owed) -> Result<Landed, Failure> {
+    // Keeping and handing over reach records that may still be moving in,
+    // which only a thread that may block waits for; so does the rest.
+    let (node, to) = (node.clone(), to.clone());
+    crate::blocking::on(async move { tell_here_now(&node, &to, delivery, owed).await }).await
+}
+
+async fn tell_here_now(node: &Arc<Node>, to: &ResidentId, delivery: Delivery, owed: Owed) -> Result<Landed, Failure> {
     let actions = crate::control_queue::gate(node, to);
     let _action = if delivery.notice.along().is_none() {
         Some(crate::gate_waits::action(node, to, &actions).await?)
@@ -131,6 +138,16 @@ pub(crate) async fn tell_here_locked(
     delivery: Delivery,
     owed: Owed,
 ) -> Result<Landed, Failure> {
+    let (node, to) = (node.clone(), to.clone());
+    crate::blocking::on(async move { tell_here_locked_now(&node, &to, delivery, owed).await }).await
+}
+
+async fn tell_here_locked_now(
+    node: &Arc<Node>,
+    to: &ResidentId,
+    delivery: Delivery,
+    owed: Owed,
+) -> Result<Landed, Failure> {
     if crate::on_delivery::park(node, to, &delivery)
         .map_err(|error| Failure::new(format!("keeping the completion: {error}")))?
     {
@@ -142,6 +159,11 @@ pub(crate) async fn tell_here_locked(
 /// Delivers a completion whose follower decision is already settled. The
 /// caller retains its durable copy until this handover has taken custody.
 pub(crate) async fn tell_completion(node: &Arc<Node>, to: &ResidentId, delivery: Delivery) -> Result<Landed, Failure> {
+    let (node, to) = (node.clone(), to.clone());
+    crate::blocking::on(async move { tell_completion_now(&node, &to, delivery).await }).await
+}
+
+async fn tell_completion_now(node: &Arc<Node>, to: &ResidentId, delivery: Delivery) -> Result<Landed, Failure> {
     let actions = crate::control_queue::gate(node, to);
     let _action = actions.lock().await;
     if node.residents.active(to).is_ok() {
@@ -298,6 +320,17 @@ pub async fn along(node: &Arc<Node>, id: &ResidentId) {
 /// Puts something kept into the resident's session, if its host lets the
 /// World in now; otherwise it waits.
 pub async fn hand_over(
+    node: &Arc<Node>,
+    to: &ResidentId,
+    about: &About,
+    directory: &ConversationDir,
+    pending: Pending,
+) -> Result<Landed, Failure> {
+    let (node, to, about, directory) = (node.clone(), to.clone(), about.clone(), directory.clone());
+    crate::blocking::on(async move { hand_over_now(&node, &to, &about, &directory, pending).await }).await
+}
+
+async fn hand_over_now(
     node: &Arc<Node>,
     to: &ResidentId,
     about: &About,

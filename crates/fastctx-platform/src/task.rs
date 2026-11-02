@@ -69,6 +69,40 @@ where
     }))
 }
 
+/// What `work` returns, done on the blocking pool as `spawn_blocking` does
+/// it: for a task that must reach storage or files. A panic in it goes on in
+/// the task that waits, as it would have there.
+pub async fn blocking<F, R>(work: F) -> R
+where
+    F: FnOnce() -> R + Send + 'static,
+    R: Send + 'static,
+{
+    match spawn_blocking(work).await {
+        Ok(value) => value,
+        Err(error) => match error.try_into_panic() {
+            Ok(panic) => std::panic::resume_unwind(panic),
+            Err(_) => panic!("the runtime stopped before the blocking work ran"),
+        },
+    }
+}
+
+/// Runs `work` to its end on a thread that may block, with what it awaits:
+/// for asynchronous work that reaches storage throughout and waits only
+/// briefly. Work that may wait long keeps its thread meanwhile; it reaches
+/// storage through `blocking` instead. On such a thread already, it runs
+/// where it is.
+pub async fn on_blocking<F>(work: F) -> F::Output
+where
+    F: Future + Send + 'static,
+    F::Output: Send + 'static,
+{
+    if roles::current().may_block() {
+        return work.await;
+    }
+    let runtime = tokio::runtime::Handle::current();
+    blocking(move || runtime.block_on(work)).await
+}
+
 /// Runs `work` on the blocking pool of the runtime `handle` names, as
 /// `spawn_blocking` runs it on the current one's.
 pub fn spawn_blocking_on<F, R>(handle: &tokio::runtime::Handle, work: F) -> JoinHandle<R>

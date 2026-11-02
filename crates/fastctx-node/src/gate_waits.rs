@@ -33,6 +33,20 @@ pub(crate) fn internal<F: Future>(work: F) -> impl Future<Output = F::Output> {
     DEADLINE.scope(None, Box::pin(work))
 }
 
+/// The admission budget this task runs under, if it runs under one, for
+/// work it hands to another task (`carry`).
+pub(crate) fn carried() -> Option<Option<Instant>> {
+    DEADLINE.try_with(|deadline| *deadline).ok()
+}
+
+/// Runs `work` under the budget `carried` took, if it took one.
+pub(crate) async fn carry<F: Future>(carried: Option<Option<Instant>>, work: F) -> F::Output {
+    match carried {
+        Some(deadline) => DEADLINE.scope(deadline, work).await,
+        None => work.await,
+    }
+}
+
 pub(crate) fn remaining() -> Option<Duration> {
     DEADLINE.try_with(|deadline| deadline.map(|until| until.saturating_duration_since(Instant::now()))).ok().flatten()
 }

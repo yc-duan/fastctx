@@ -750,10 +750,14 @@ fn short(command: &str) -> String {
 
 pub(crate) async fn read(path: &Path) -> Result<JobRecord, Failure> {
     let path = path.to_path_buf();
-    fastctx_platform::task::spawn_blocking(move || record::read(&path))
+    fastctx_platform::task::spawn_blocking(move || read_now(&path))
         .await
         .map_err(|error| Failure::new(format!("reading the job's record: {error}")))?
-        .map_err(|error| failure("reading the job's record", error))
+}
+
+/// `read`, on a thread that may block.
+pub(crate) fn read_now(path: &Path) -> Result<JobRecord, Failure> {
+    record::read(path).map_err(|error| failure("reading the job's record", error))
 }
 
 /// Records that a job ended without its supervisor, if the supervisor is

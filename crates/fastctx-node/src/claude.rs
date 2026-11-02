@@ -340,7 +340,10 @@ fn look_soon(node: &Arc<Node>, directory: PathBuf) {
 /// it took everything the session left.
 async fn look_alone(node: &Arc<Node>, directory: PathBuf) -> bool {
     let (looking, path) = (node.clone(), directory.clone());
-    match tokio::spawn(async move { look(&looking, &path).await }).await {
+    // Reading and applying what it reported reaches records and files
+    // throughout, which only a thread that may block waits for.
+    let runtime = tokio::runtime::Handle::current();
+    match fastctx_platform::task::spawn_blocking(move || runtime.block_on(look(&looking, &path))).await {
         Ok(settled) => settled,
         Err(error) => {
             node.log.line(format_args!("looking at the Claude session {}: {error}", directory.display()));
@@ -356,18 +359,21 @@ pub(crate) fn reading(node: &Node, session: &str) -> crate::leases::Lease<String
 
 pub async fn replay(node: &Arc<Node>) {
     let directory = exchange::sessions(node.world.path());
-    if let Ok(entries) = std::fs::read_dir(&directory) {
+    let (recovering, sessions) = (node.clone(), directory.clone());
+    fastctx_platform::task::blocking(move || {
+        let Ok(entries) = fastctx_platform::disk::read_dir(&sessions) else { return };
         for entry in entries {
             let result = entry.and_then(|entry| exchange::recover_readable(&entry.path()));
             match result {
                 Ok(0) => {}
                 Ok(count) => {
-                    node.log.line(format_args!("recovered {count} Claude reports the current decoder can read"))
+                    recovering.log.line(format_args!("recovered {count} Claude reports the current decoder can read"))
                 }
-                Err(error) => node.log.line(format_args!("reconsidering retained Claude reports: {error}")),
+                Err(error) => recovering.log.line(format_args!("reconsidering retained Claude reports: {error}")),
             }
         }
-    }
+    })
+    .await;
     look_all(node, &directory).await;
 }
 
@@ -1145,7 +1151,8 @@ pub async fn identify(node: &Arc<Node>, tool_use_id: &str) -> Result<fastctx_typ
     let session = registration.session.clone();
     hear(node, registration).await;
     // The reports preceding the call may establish its turn and deliveries.
-    look(node, &exchange::sessions(node.world.path()).join(&session)).await;
+    let (looking, path) = (node.clone(), exchange::sessions(node.world.path()).join(&session));
+    crate::blocking::on(async move { look(&looking, &path).await }).await;
     let alias = exchange::sessions(node.world.path()).join(&session).join("resident.json");
     let resident: ResidentId =
         serde_json::from_slice(&std::fs::read(alias).map_err(|error| Failure::new(error.to_string()))?)

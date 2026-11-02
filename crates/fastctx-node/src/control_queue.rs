@@ -58,6 +58,17 @@ pub(crate) async fn end(
     row: PendingControl,
     result: Result<Controlled, Failure>,
 ) -> Result<Controlled, Failure> {
+    // Its row and the retries it settles are records, reached where that may block.
+    let (node, id) = (node.clone(), id.clone());
+    crate::blocking::on(async move { end_now(&node, &id, row, result).await }).await
+}
+
+async fn end_now(
+    node: &Arc<Node>,
+    id: &ResidentId,
+    row: PendingControl,
+    result: Result<Controlled, Failure>,
+) -> Result<Controlled, Failure> {
     if let Err(error) = &result
         && error.code == Some(FailureCode::HostUnavailable)
     {
@@ -300,6 +311,15 @@ async fn finish(node: &Arc<Node>, id: &ResidentId, row: &PendingControl) -> Resu
 
 /// Runs older waiting controls before a newly admitted action, while holding its action gate.
 pub(crate) fn drain<'a>(
+    node: &'a Arc<Node>,
+    id: &'a ResidentId,
+) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), Failure>> + Send + 'a>> {
+    // The queue and the retries it reads are records, reached where that may block.
+    let (node, id) = (node.clone(), id.clone());
+    Box::pin(crate::blocking::on(async move { drain_now(&node, &id).await }))
+}
+
+fn drain_now<'a>(
     node: &'a Arc<Node>,
     id: &'a ResidentId,
 ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), Failure>> + Send + 'a>> {

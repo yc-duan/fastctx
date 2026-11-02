@@ -488,6 +488,20 @@ pub async fn unsettled(
     how: TurnHow,
     why: String,
 ) {
+    // Settling them writes their records, which only a thread that may
+    // block waits for.
+    let (node, id, directory) = (node.clone(), id.clone(), directory.clone());
+    crate::blocking::on(async move { unsettled_now(&node, &id, &directory, pending, how, why).await }).await
+}
+
+async fn unsettled_now(
+    node: &Arc<Node>,
+    id: &ResidentId,
+    directory: &ConversationDir,
+    pending: Pending,
+    how: TurnHow,
+    why: String,
+) {
     let result = async {
         let speaking = node.residents.speaking(id).ok_or_else(|| deleted(id))?;
         let _speaking = speaking.lock().await;

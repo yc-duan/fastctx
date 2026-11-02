@@ -26,6 +26,7 @@ mod attach;
 mod attachment_files;
 mod attachments;
 mod authorization;
+mod blocking;
 mod books;
 mod claude;
 pub mod claude_control_claim;
