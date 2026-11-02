@@ -181,18 +181,26 @@ pub(crate) async fn refresh(node: &Arc<Node>, link: &Link, copy: &mut Copy) -> R
 }
 
 pub(crate) async fn repair(node: &Arc<Node>) -> Result<(), String> {
+    node.replicas.repairs.run(|| repair_now(node.clone())).await
+}
+
+async fn repair_now(node: Arc<Node>) -> Result<(), String> {
     if node.links().is_empty() {
-        crate::history::local_copy::repair(node).await.map_err(|error| error.message)?;
+        crate::history::local_copy::repair(&node).await.map_err(|error| error.message)?;
     }
-    super::publication::prune(node)?;
-    for slot in node.replicas.state.slots() {
-        // A writer repairs its own projection before returning; other documents never wait for it.
-        let Ok(copy) = slot.try_lock() else { continue };
-        if permitted(node, &copy).is_ok() {
-            super::publication::repair(node, &copy)?;
+    fastctx_platform::task::spawn_blocking(move || {
+        super::publication::prune(&node)?;
+        for slot in node.replicas.state.slots() {
+            // A writer repairs its own projection before returning; other documents never wait for it.
+            let Ok(copy) = slot.try_lock() else { continue };
+            if permitted(&node, &copy).is_ok() {
+                super::publication::repair(&node, &copy)?;
+            }
         }
-    }
-    Ok(())
+        Ok(())
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 pub(crate) async fn project(
