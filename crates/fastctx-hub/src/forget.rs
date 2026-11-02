@@ -395,6 +395,9 @@ fn told_now(pending: &Pending) -> Vec<(MachineName, Forgetting)> {
 
 /// Tells each member connected now whose session says it forgets.
 fn send(hub: &Hub, tell: Vec<(MachineName, Forgetting)>) {
+    if tell.is_empty() {
+        return;
+    }
     let sessions = hub.sessions();
     for (member, forgetting) in tell {
         if let Some(session) = sessions.get(&member).filter(|session| session.forgets) {

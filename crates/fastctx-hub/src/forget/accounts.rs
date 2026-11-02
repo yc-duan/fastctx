@@ -86,6 +86,9 @@ pub(crate) fn tell(hub: &Hub, member: Option<&MachineName>) {
             })
             .collect()
     };
+    if tell.is_empty() {
+        return;
+    }
     let sessions = hub.sessions();
     for (member, forgetting) in tell {
         if let Some(session) = sessions.get(&member).filter(|session| session.forgets_accounts) {

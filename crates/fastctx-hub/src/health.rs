@@ -106,8 +106,11 @@ pub(crate) async fn keep(hub: Weak<Hub>) {
 
 /// How the hub is doing now.
 fn now(hub: &Hub) -> serde_json::Value {
-    let queues: Vec<(String, crate::outq::Sizes)> =
-        hub.sessions().iter().map(|(name, session)| (name.to_string(), session.out.sizes())).collect();
+    // Each queue is measured after the sessions are let go: measuring takes
+    // each queue's own lock, and every connection waits on the sessions'.
+    let outs: Vec<(String, crate::outq::Outq)> =
+        hub.sessions().iter().map(|(name, session)| (name.to_string(), session.out.clone())).collect();
+    let queues: Vec<(String, crate::outq::Sizes)> = outs.into_iter().map(|(name, out)| (name, out.sizes())).collect();
     let oldest = hub.calls.lock().expect("never poisoned").values().map(|pending| pending.at).min();
     let (waiting, live, registered) = crate::data::counts(hub);
     let letters = crate::mailbox::backlog(hub);
