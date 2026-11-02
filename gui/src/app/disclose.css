@@ -1,0 +1,312 @@
+/* The window before a change to an agent (`disclose.ts`): paper cards, a
+   kind of change each, scrolling in their own place while the window's head
+   and its one button stay put. */
+
+.dc {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+/* In the sheet it takes the room left under the head; only the cards
+   scroll. */
+.agent-change > .dc {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.dc > * {
+  flex: none;
+}
+
+/* Which machine, which login: a quiet line close under the title. */
+.dc-where {
+  margin: calc(-1 * var(--space-3)) 0 0;
+  color: var(--text-3);
+  font-size: var(--size-text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The question mark beside the close button, in the chosen wash while
+   what connecting is shows. */
+.dc-what[aria-pressed="true"] {
+  background: var(--accent-wash);
+  color: var(--text-strong);
+}
+
+/* What connecting is: the drawing and its line, while it is asked for.
+   Asked, it unfolds; the height is carried by the grid. */
+.dc-about {
+  display: grid;
+  grid-template-rows: 1fr;
+}
+
+.dc-about.opening {
+  opacity: var(--shown);
+  animation: dc-about-open var(--expand) var(--expand-easing) both;
+}
+
+@keyframes dc-about-open {
+  from {
+    grid-template-rows: 0fr;
+    --shown: 0;
+  }
+}
+
+.dc-about-inner {
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  color: var(--text-2);
+  font-size: var(--size-text);
+}
+
+.dc-about svg {
+  flex: none;
+  width: 180px;
+  height: auto;
+}
+
+.dc-about p {
+  margin: 0;
+  line-height: 1.7;
+}
+
+.dc-cards {
+  flex: 0 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.dc-card {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-l);
+  background: var(--fill);
+}
+
+/* A change that finds nothing to change. */
+.dc-same {
+  padding: var(--space-3) var(--space-1);
+  color: var(--text-3);
+  font-size: var(--size-text);
+}
+
+/* What connecting never does: the same card, without its paper. */
+.dc-card.dc-never {
+  background: none;
+  padding-top: var(--space-2);
+}
+
+.dc-mark {
+  display: inline-flex;
+  padding-top: 3px;
+  color: var(--text-3);
+}
+
+.dc-title {
+  margin: 0;
+  font-family: var(--font-emphasis);
+  font-weight: 400;
+  font-size: var(--size-text);
+  color: var(--text-strong);
+}
+
+.dc-line {
+  margin: 2px 0 0;
+  font-size: var(--size-text);
+  line-height: 1.65;
+  color: var(--text-2);
+}
+
+.dc-never .dc-title {
+  color: var(--text-2);
+}
+
+/* The lines under a card's words, set off by a ruled line. */
+.dc-folds {
+  position: relative;
+  margin-top: var(--space-2);
+  padding-top: var(--space-1);
+}
+
+.dc-folds::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: -4px;
+  height: 8px;
+  background: var(--pen-rule);
+  opacity: 0.7;
+  -webkit-mask: var(--pen-rule-1) 0 50% / 100% 100% no-repeat;
+  mask: var(--pen-rule-1) 0 50% / 100% 100% no-repeat;
+}
+
+.dc-file-line {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  min-height: 30px;
+  margin-left: calc(-1 * var(--space-2));
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-s);
+  color: var(--text-2);
+  font-size: var(--size-text);
+  text-align: left;
+  transition: background-color var(--hover) var(--ease);
+}
+
+.dc-file-line:hover {
+  background: var(--fill-strong);
+}
+
+/* Short of room, the folder gives way and the file's name stays whole; a
+   row too narrow even for the name clips it rather than run into the
+   counts. */
+.dc-path {
+  display: flex;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.dc-dir {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text-2);
+}
+
+.dc-name {
+  flex: none;
+  color: var(--text);
+}
+
+.dc-chevron {
+  flex: none;
+  margin-left: auto;
+  display: inline-flex;
+  color: var(--text-3);
+  --turn: -90deg;
+  rotate: var(--turn);
+  transition: --turn var(--hover) var(--ease);
+}
+
+.dc-file.open .dc-chevron {
+  --turn: 0deg;
+}
+
+.dc-diff:not(:empty) {
+  margin: var(--space-1) 0 var(--space-2);
+}
+
+.dc-more {
+  margin: var(--space-1) 0 0;
+  color: var(--text-3);
+  font-size: var(--size-fine);
+}
+
+.dc-commands {
+  margin: var(--space-1) 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.dc-commands code {
+  font-family: var(--font-code);
+  font-size: var(--size-fine);
+  color: var(--text-2);
+  overflow-wrap: anywhere;
+}
+
+/* A sentence under the cards: sessions already open, the World's lines the
+   user changed put back. */
+.dc-notes {
+  margin: 0;
+  padding: 0 var(--space-1);
+  list-style: none;
+  color: var(--text-3);
+  font-size: var(--size-text);
+  line-height: 1.7;
+}
+
+/* Worked out again, the files having moved on since it was shown. */
+.dc-moved {
+  margin: 0;
+  color: var(--text);
+  font-size: var(--size-text);
+}
+
+/* The way back, and the one button. */
+.dc-foot {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-height: 40px;
+  padding-top: var(--space-1);
+}
+
+.dc-undo {
+  flex: 1;
+  min-width: 0;
+  color: var(--text-3);
+  font-size: var(--size-text);
+}
+
+/* Pressed: its steps along the foot, ticked off as they are taken, then
+   the stamp beside the button. */
+.dc-foot .dc-steps {
+  flex: 1;
+  flex-direction: row;
+  flex-wrap: wrap;
+  column-gap: var(--space-4);
+  width: auto;
+  min-width: 0;
+}
+
+.dc-foot .dc-stamp {
+  margin: 0;
+  font-size: var(--size-text);
+}
+
+.dc-stamp .agent-change-stampmark {
+  width: 22px;
+  height: 22px;
+}
+
+@media (pointer: coarse) {
+  .dc-file-line {
+    min-height: 44px;
+  }
+}
+
+@media (max-width: 760px) {
+  .dc-foot {
+    flex-wrap: wrap;
+    justify-content: flex-end;
+  }
+
+  .dc-undo,
+  .dc-foot .dc-steps {
+    flex-basis: 100%;
+  }
+
+  .dc-about svg {
+    width: 130px;
+  }
+}

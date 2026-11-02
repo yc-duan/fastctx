@@ -5,6 +5,7 @@
 // the logins its tools are put into.
 
 import type { AgentLimits, AgentModel, Fact, Integration } from "./agents";
+import type { DiffLine } from "./run-facts";
 import type { AgentName, MachineName, Timestamp } from "./wire";
 
 /** Every machine asked: this one, or each the user may look at. */
@@ -246,6 +247,31 @@ export interface ChangePreview {
   output_limit?: OutputLimit;
   /** What it leaves as the user has it. */
   kept?: Kept[];
+  /** The same change, one card each kind in the order it is made, with
+   *  the lines it adds and takes out; empty from an older node. */
+  cards?: ChangeCard[];
+  /** What it was worked out from: the change is refused when the files
+   *  moved on since. */
+  fingerprint?: string;
+}
+
+/** One kind of change connecting a login makes (`world-layers.md`). */
+export type Change = "tools" | "limits" | "shell" | "guidance" | "plugin" | "consent" | "legacy";
+
+export interface ChangeCard {
+  change: Change;
+  files: FileDiff[];
+  commands?: string[];
+}
+
+/** The lines of one file a kind of change touches; a value that might be a
+ *  secret, on a line the World does not write, comes masked. */
+export interface FileDiff {
+  path: string;
+  how: FileHow;
+  lines: DiffLine[];
+  /** How many more lines there were than one card holds. */
+  more?: number;
 }
 
 export interface FilePreview {

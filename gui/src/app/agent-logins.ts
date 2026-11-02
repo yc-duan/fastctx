@@ -89,7 +89,8 @@ export interface AgentLoginsOptions {
    *  reach. */
   folders(machine: string, path: string | null): Promise<Folders>;
   preview(machine: string, agent: Agent, dir: string, into: boolean, takeBack: boolean): Promise<ChangePreview>;
-  change(machine: string, agent: Agent, dir: string, into: boolean, raise: boolean, takeBack: boolean): Promise<LoginChange>;
+  /** `expected`: the fingerprint of the change the user was shown. */
+  change(machine: string, agent: Agent, dir: string, into: boolean, raise: boolean, takeBack: boolean, expected?: string): Promise<LoginChange>;
   limits(machine: string, agent: Agent, dir: string): Promise<MachineLogins>;
   /** Codex only: turns naming new conversations in a login on or off. */
   setTitle(machine: string, agent: Agent, dir: string, on: boolean): Promise<MachineLogins>;
@@ -178,7 +179,7 @@ export class AgentLoginsPage implements Page {
       folder: (machine, dir, change) => options.folder(as(machine), dir, change),
       folders: (machine, path) => options.folders(as(machine), path),
       preview: (machine, agent, dir, into, takeBack) => options.preview(as(machine), agent, dir, into, takeBack),
-      change: (machine, agent, dir, into, raise, takeBack) => options.change(as(machine), agent, dir, into, raise, takeBack),
+      change: (machine, agent, dir, into, raise, takeBack, expected) => options.change(as(machine), agent, dir, into, raise, takeBack, expected),
       limits: (machine, agent, dir) => options.limits(as(machine), agent, dir),
       setTitle: (machine, agent, dir, on) => options.setTitle(as(machine), agent, dir, on),
       usageOf: (machine, agent, dir) => options.usageOf(as(machine), agent, dir),
@@ -209,7 +210,7 @@ export class AgentLoginsPage implements Page {
     this.assistSheet = new AssistSheet(options.access);
     this.sheet = new AgentChangeSheet(options.changeWords, {
       preview: (target) => this.calls.preview(target.machine, target.agent, target.dir, target.into, !!target.takeBack),
-      change: (target, raise) => this.calls.change(target.machine, target.agent, target.dir, target.into, raise, !!target.takeBack),
+      change: (target, raise, expected) => this.calls.change(target.machine, target.agent, target.dir, target.into, raise, !!target.takeBack, expected),
       progress: async (target) => {
         const record = await this.calls.read(target.machine);
         const machine = record.machines.find((one) => one.kind === "answered" && one.logins.machine === target.machine);

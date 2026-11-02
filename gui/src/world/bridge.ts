@@ -368,8 +368,9 @@ export function changeAgentLogin(
   into: boolean,
   raiseOutputLimit = false,
   takeBack = false,
+  expected?: string,
 ): Promise<LoginChange> {
-  return invoke("change_agent_login", { machineName: machine, agentName: agent, dir, into, raiseOutputLimit, takeBack });
+  return invoke("change_agent_login", { machineName: machine, agentName: agent, dir, into, raiseOutputLimit, takeBack, expected });
 }
 
 /** Reads a login's limits afresh on its machine. */

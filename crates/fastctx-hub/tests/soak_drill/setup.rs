@@ -542,7 +542,7 @@ pub(crate) async fn build(config: Config) -> Result<Lab> {
         .await
         .context("adding the mock Codex login")?;
     local
-        .change_agent_login(machine(SOAK).into(), agent.clone(), config.codex_home.clone(), true, true, true)
+        .change_agent_login(machine(SOAK).into(), agent.clone(), config.codex_home.clone(), true, true, true, None)
         .await
         .context("enabling the mock Codex login")?;
     owner

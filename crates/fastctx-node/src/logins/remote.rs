@@ -198,6 +198,7 @@ pub(crate) async fn preview(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn change(
     node: &Arc<Node>,
     machine: Written,
@@ -206,11 +207,12 @@ pub(crate) async fn change(
     into: bool,
     raise_output_limit: bool,
     take_back: bool,
+    expected: Option<String>,
 ) -> Result<LoginChange, Failure> {
     if node.is_here(&machine) {
-        return super::change::change(node, agent, dir, into, raise_output_limit, take_back).await;
+        return super::change::change(node, agent, dir, into, raise_output_limit, take_back, expected).await;
     }
-    let call = RemoteCall::ChangeAgentLogin { agent, dir, into, raise_output_limit, take_back };
+    let call = RemoteCall::ChangeAgentLogin { agent, dir, into, raise_output_limit, take_back, expected };
     match ask(node, &machine, Purpose::Hands, call).await? {
         RemoteReply::AgentLoginChanged(change) => Ok(*change),
         _ => Err(other(&machine)),
@@ -348,8 +350,8 @@ pub(crate) async fn answer(
                 .await
                 .map(|preview| RemoteReply::AgentChangePreview(Box::new(preview)))
         }
-        RemoteCall::ChangeAgentLogin { agent, dir, into, raise_output_limit, take_back } => {
-            super::change::change(node, agent, dir, into, raise_output_limit, take_back)
+        RemoteCall::ChangeAgentLogin { agent, dir, into, raise_output_limit, take_back, expected } => {
+            super::change::change(node, agent, dir, into, raise_output_limit, take_back, expected)
                 .await
                 .map(|change| RemoteReply::AgentLoginChanged(Box::new(change)))
         }

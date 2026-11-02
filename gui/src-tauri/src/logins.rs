@@ -88,8 +88,10 @@ pub(crate) async fn preview_agent_change(
 }
 
 /// Puts the World's tools into a login, or takes them out, by its machine's
-/// node; answered when the change has ended.
+/// node; answered when the change has ended. With `expected`, the change is
+/// made only while its files are as they were when it was shown.
 #[fastctx_gui_command::command]
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn change_agent_login(
     shell: tauri::State<'_, Shell>,
     machine_name: String,
@@ -98,6 +100,7 @@ pub(crate) async fn change_agent_login(
     into: bool,
     raise_output_limit: bool,
     take_back: Option<bool>,
+    expected: Option<String>,
 ) -> Result<LoginChange, String> {
     shell
         .world()
@@ -108,6 +111,7 @@ pub(crate) async fn change_agent_login(
             into,
             raise_output_limit,
             take_back.unwrap_or(false),
+            expected,
         )
         .await
         .map_err(|error| error.to_string())

@@ -513,6 +513,27 @@ for (const session of sessions) {
           expression: "new Promise(r => { location.hash = '#/agents/claude'; setTimeout(r, 900); }).then(() => { document.querySelector('.logins-more')?.click(); return new Promise(r => setTimeout(r, 300)); }).then(() => { document.querySelector('[data-act=\"assist\"]')?.click(); return new Promise(r => setTimeout(r, 700)); }).then(() => { const w = document.querySelector('.assist-new [name=weekly]'); if (w) { w.value = '100'; w.dispatchEvent(new Event('input', { bubbles: true })); } return new Promise(r => setTimeout(r, 200)); })",
         });
       }
+      if (session.startsWith("connect-")) {
+        // The window before connecting an agent: Claude Code's candidate on
+        // this computer connected, or a Codex login removed from its menu;
+        // `-open` unfolds the first card's file, `-about` asks what
+        // connecting is.
+        const codex = session.includes("codex");
+        const open = codex
+          ? "document.querySelector('.logins-more')?.click(); return new Promise(r => setTimeout(r, 300)).then(() => [...document.querySelectorAll('[role=menuitem]')].find((b) => /移除|Remove/.test(b.textContent))?.click());"
+          : "document.querySelector('.logins-apply')?.click();";
+        const then = session.endsWith("-open")
+          ? ".then(() => { document.querySelector('.dc-file-line')?.click(); return new Promise(r => setTimeout(r, 500)); })"
+          : session.endsWith("-about")
+            ? ".then(() => { document.querySelector('.dc-what')?.click(); return new Promise(r => setTimeout(r, 900)); })"
+            : session.endsWith("-done")
+              ? ".then(() => { document.querySelector('.dc-foot [data-change=go]')?.click(); return new Promise(r => setTimeout(r, 2600)); })"
+              : "";
+        await send("Runtime.evaluate", {
+          awaitPromise: true,
+          expression: `new Promise(r => { location.hash = '#/agents/${codex ? "codex" : "claude"}'; setTimeout(r, 900); }).then(() => { ${open} }).then(() => new Promise(r => setTimeout(r, 700)))${then}`,
+        });
+      }
       if (session === "create" || session === "created") {
         await send("Runtime.evaluate", { awaitPromise: true, expression: "new Promise(r => setTimeout(r, 300)).then(() => document.querySelector('[data-way=create]')?.click())" });
       }

@@ -462,6 +462,16 @@ pub struct ChangePreview {
     /// user changed since the tools were put in.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub kept: Vec<Kept>,
+    /// The same change told as the window before it shows it: one card each
+    /// kind of change, in the order it is made, each with the lines it adds
+    /// and takes out (`world-layers.md`, 接入之前讲清楚做了什么). Empty from
+    /// a node that does not tell it.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub cards: Vec<ChangeCard>,
+    /// What the change was worked out from, for the change to be refused
+    /// when the files moved on since: what was shown is what is done.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fingerprint: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -495,4 +505,49 @@ pub struct ItemChange {
     pub after: Option<String>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub withheld: bool,
+}
+
+/// One kind of change connecting a login makes, as the window before it tells
+/// it in plain words.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Change {
+    /// The World's MCP server, which gives the agent `run`.
+    Tools,
+    /// The agent's limits on what one tool answer or description holds,
+    /// raised so that `run`'s reach the model whole.
+    Limits,
+    /// The agent's own shell, turned off: its commands go through `run`.
+    Shell,
+    /// The passage in its instructions that teaches it when to use `run`.
+    Guidance,
+    /// The World's plugin, put in through the agent's own commands.
+    Plugin,
+    /// Leave for the conversations Fastctx opens to run without asking.
+    Consent,
+    /// What an earlier fastctx left, taken over or put away.
+    Legacy,
+}
+
+/// The lines of one file a kind of change touches.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FileDiff {
+    pub path: PathBuf,
+    pub how: FileHow,
+    /// The changed lines with a little around them. A value that might be a
+    /// secret, on a line the World does not write, is masked.
+    pub lines: Vec<crate::run_facts::DiffLine>,
+    /// Set when there were more lines than one card holds; how many more.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub more: Option<u64>,
+}
+
+/// One kind of change, with what it does to each file and the agent's own
+/// commands it runs.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ChangeCard {
+    pub change: Change,
+    pub files: Vec<FileDiff>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub commands: Vec<String>,
 }

@@ -22,6 +22,7 @@ fastctx-platform = { path = "../fastctx-platform" }
 fastctx-types = { path = "../fastctx-types" }
 fastctx-update = { path = "../fastctx-update" }
 getrandom = { version = "0.3", features = ["std"] }
+imara-diff = { version = "0.2", default-features = false }
 jiff.workspace = true
 jsonc-parser = { version = "0.33.1", features = ["serde"] }
 regex-lite = "0.1"

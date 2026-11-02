@@ -361,7 +361,9 @@ impl World {
     }
 
     /// Puts the World's tools into a login, or takes them out, by its
-    /// machine's node.
+    /// machine's node; with `expected`, only while its files are as they
+    /// were when the change was shown.
+    #[allow(clippy::too_many_arguments)]
     pub async fn change_agent_login(
         &self,
         machine: Written,
@@ -370,8 +372,12 @@ impl World {
         into: bool,
         raise_output_limit: bool,
         take_back: bool,
+        expected: Option<String>,
     ) -> Result<fastctx_types::logins::LoginChange, Error> {
-        match self.ask(Call::ChangeAgentLogin { machine, agent, dir, into, raise_output_limit, take_back }).await? {
+        match self
+            .ask(Call::ChangeAgentLogin { machine, agent, dir, into, raise_output_limit, take_back, expected })
+            .await?
+        {
             Reply::AgentLoginChanged(change) => Ok(*change),
             other => Err(unexpected(other)),
         }

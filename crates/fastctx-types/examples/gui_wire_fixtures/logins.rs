@@ -280,6 +280,43 @@ pub fn fixtures() -> Fixtures {
         commands: vec!["claude plugin marketplace add /home/me/.fastctx/world/claude-marketplace --scope user".into()],
         output_limit: None,
         kept: vec![],
+        cards: vec![ChangeCard {
+            change: Change::Shell,
+            files: vec![FileDiff {
+                path: "/home/me/.claude-work/settings.json".into(),
+                how: FileHow::Changed,
+                lines: vec![
+                    fastctx_types::run_facts::DiffLine {
+                        kind: fastctx_types::run_facts::DiffLineKind::Hunk,
+                        before: Some(3),
+                        after: Some(3),
+                        text: String::new(),
+                        ending: String::new(),
+                    },
+                    fastctx_types::run_facts::DiffLine {
+                        kind: fastctx_types::run_facts::DiffLineKind::Context,
+                        before: Some(3),
+                        after: Some(3),
+                        text: "  \"permissions\": {".into(),
+                        ending: "
+"
+                        .into(),
+                    },
+                    fastctx_types::run_facts::DiffLine {
+                        kind: fastctx_types::run_facts::DiffLineKind::Added,
+                        before: None,
+                        after: Some(4),
+                        text: "    \"deny\": [\"Bash\"]".into(),
+                        ending: "
+"
+                        .into(),
+                    },
+                ],
+                more: Some(12),
+            }],
+            commands: vec![],
+        }],
+        fingerprint: Some("0f3c9a1b2d4e5f60718293a4b5c6d7e8".into()),
     };
     let codex_preview = ChangePreview {
         agent: codex.clone(),
@@ -296,6 +333,8 @@ pub fn fixtures() -> Fixtures {
             location: "config.toml: features.shell_tool".into(),
             reason: "changed since apply; left untouched".into(),
         }],
+        cards: vec![],
+        fingerprint: None,
     };
     let change = LoginChange {
         into: false,
@@ -333,6 +372,7 @@ pub fn fixtures() -> Fixtures {
                 into: true,
                 raise_output_limit: true,
                 take_back: true,
+                expected: Some("5f0c2a9e41d7b3c86e1f0a2b9c4d7e13".into()),
             },
             Call::ReadAgentLimits {
                 machine: machine.clone().into(),
@@ -376,6 +416,7 @@ pub fn fixtures() -> Fixtures {
                 into: false,
                 raise_output_limit: false,
                 take_back: false,
+                expected: None,
             },
             RemoteCall::ReadAgentLimits { agent: codex, dir: "C:/Users/me/.codex".into() },
         ],

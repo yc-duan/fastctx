@@ -1467,6 +1467,7 @@ dependencies = [
  "fastctx-types",
  "fastctx-update",
  "getrandom 0.3.4",
+ "imara-diff",
  "jiff",
  "jsonc-parser",
  "libc",

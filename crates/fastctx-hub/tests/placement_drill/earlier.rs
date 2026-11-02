@@ -56,7 +56,8 @@ pub(super) async fn exercise(
     std::fs::create_dir_all(&login)?;
     std::fs::write(login.join("config.toml"), mock_configuration)?;
     world.add_agent_login("old-pc".parse()?, agent.clone(), login.clone()).await?;
-    let installed = world.change_agent_login("old-pc".parse()?, agent.clone(), login.clone(), true, true, true).await?;
+    let installed =
+        world.change_agent_login("old-pc".parse()?, agent.clone(), login.clone(), true, true, true, None).await?;
     anyhow::ensure!(
         matches!(installed.end, Some(fastctx_types::logins::ChangeEnd::Done { .. })),
         "installing the earlier machine's mock tools failed: {installed:?}"

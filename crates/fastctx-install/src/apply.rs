@@ -45,7 +45,7 @@ mod tools;
 mod withdrawn;
 pub use homes::Host;
 pub use identity::forward_login_identity;
-pub use preview::preview;
+pub use preview::{fingerprint, preview};
 pub use progress::Progress;
 use progress::tell;
 pub use refresh::{Refresh, refresh};
@@ -309,6 +309,10 @@ pub enum Error {
     Files(String),
     #[error("the claude command is not on PATH")]
     NoClaude,
+    /// The files a change is worked out from moved on since it was shown:
+    /// nothing was changed, and the change is to be looked at again.
+    #[error("the files changed since this change was shown; look at it again")]
+    Moved,
 }
 
 impl From<FileError> for Error {
@@ -421,6 +425,41 @@ pub fn apply_reporting(
     edits: Edits,
     progress: Option<Progress>,
 ) -> Result<Report, Error> {
+    apply_made(places, hosts, approval, edits, progress, None)
+}
+
+/// `apply_reporting` for `host` alone, made only while the files it is worked
+/// out from are as they were when the user was shown it (`expected`, from
+/// `fingerprint`): the change made is the one shown. A change handed to an
+/// installed fastctx of another build is checked just before it is handed.
+pub fn apply_expecting(
+    places: &Places,
+    host: Host,
+    approval: Approval,
+    edits: Edits,
+    progress: Option<Progress>,
+    expected: &str,
+) -> Result<Report, Error> {
+    unmoved(places, host, expected)?;
+    apply_made(places, host.only(), approval, edits, progress, Some((host, expected)))
+}
+
+/// Refuses a change whose files moved on since `expected` was taken.
+fn unmoved(places: &Places, host: Host, expected: &str) -> Result<(), Error> {
+    if fingerprint(places, host)? != expected {
+        return Err(Error::Moved);
+    }
+    Ok(())
+}
+
+fn apply_made(
+    places: &Places,
+    hosts: Hosts,
+    approval: Approval,
+    edits: Edits,
+    progress: Option<Progress>,
+    expected: Option<(Host, &str)>,
+) -> Result<Report, Error> {
     if places.root.join("uninstalled.json").try_exists().map_err(io("checking uninstall state"))? {
         return Err(Error::Io("this World was uninstalled; reinstall it before reconnecting hosts".into()));
     }
@@ -436,6 +475,9 @@ pub fn apply_reporting(
         return Err(Error::Io("this World is being uninstalled".into()));
     }
     let mut report = recovery::before(places)?;
+    if let Some((host, expected)) = expected {
+        unmoved(places, host, expected)?;
+    }
     let operation = recovery::id()?;
     let record_file = Snapshot::read(places.record())?;
     let mut records = homes::Records::read(&record_file, places)?;
@@ -642,6 +684,27 @@ pub fn unapply(places: &Places, hosts: Hosts) -> Result<Report, Error> {
 
 /// `unapply`, telling `progress` each step as it goes.
 pub fn unapply_reporting(places: &Places, hosts: Hosts, progress: Option<Progress>) -> Result<Report, Error> {
+    unapply_made(places, hosts, progress, None)
+}
+
+/// `unapply_reporting` for `host` alone, made only while its files are as
+/// they were when the user was shown it (`apply_expecting`).
+pub fn unapply_expecting(
+    places: &Places,
+    host: Host,
+    progress: Option<Progress>,
+    expected: &str,
+) -> Result<Report, Error> {
+    unmoved(places, host, expected)?;
+    unapply_made(places, host.only(), progress, Some((host, expected)))
+}
+
+fn unapply_made(
+    places: &Places,
+    hosts: Hosts,
+    progress: Option<Progress>,
+    expected: Option<(Host, &str)>,
+) -> Result<Report, Error> {
     if let Some(report) =
         progress::delegated(&progress, || kernel::delegate(places, hosts, Approval::Require, Edits::Keep, false))?
     {
@@ -650,6 +713,9 @@ pub fn unapply_reporting(places: &Places, hosts: Hosts, progress: Option<Progres
     crate::disk::ensure_private_dir(&places.root).map_err(io("making fastctx's directory"))?;
     let _lock = FileLock::acquire(&places.lock()).map_err(io("taking the apply lock"))?;
     let mut report = recovery::before(places)?;
+    if let Some((host, expected)) = expected {
+        unmoved(places, host, expected)?;
+    }
     let operation = recovery::id()?;
     let record_file = Snapshot::read(places.record())?;
     let mut records = homes::Records::read(&record_file, places)?;

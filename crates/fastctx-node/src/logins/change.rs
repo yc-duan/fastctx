@@ -50,7 +50,9 @@ pub(crate) async fn preview(
 }
 
 /// Puts the World's tools into the login, or takes them out, telling the
-/// record each step; answered with the change once it ended.
+/// record each step; answered with the change once it ended. With
+/// `expected`, the fingerprint of the change the user was shown, nothing is
+/// changed when the files moved on since.
 pub(crate) async fn change(
     node: &Arc<Node>,
     agent: AgentName,
@@ -58,6 +60,7 @@ pub(crate) async fn change(
     into: bool,
     raise_output_limit: bool,
     take_back: bool,
+    expected: Option<String>,
 ) -> Result<LoginChange, Failure> {
     let _changing = node.logins.changing.lock().await;
     {
@@ -78,10 +81,14 @@ pub(crate) async fn change(
         fastctx_platform::task::spawn_blocking(move || {
             let (places, host) = places(&node, &agent, &dir)?;
             let approval = if raise_output_limit { Approval::RaiseOutputLimit } else { Approval::Require };
-            let done = if into {
-                apply::apply_reporting(&places, host.only(), approval, edits(take_back), Some(progress))
-            } else {
-                apply::unapply_reporting(&places, host.only(), Some(progress))
+            let progress = Some(progress);
+            let done = match (into, expected.as_deref()) {
+                (true, Some(expected)) => {
+                    apply::apply_expecting(&places, host, approval, edits(take_back), progress, expected)
+                }
+                (true, None) => apply::apply_reporting(&places, host.only(), approval, edits(take_back), progress),
+                (false, Some(expected)) => apply::unapply_expecting(&places, host, progress, expected),
+                (false, None) => apply::unapply_reporting(&places, host.only(), progress),
             };
             Ok::<_, Failure>(done)
         })

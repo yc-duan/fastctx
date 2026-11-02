@@ -332,6 +332,11 @@ pub enum RemoteCall {
         raise_output_limit: bool,
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         take_back: bool,
+        /// The fingerprint of the change the user was shown
+        /// (`ChangePreview::fingerprint`): it is refused when the files it
+        /// is worked out from moved on since.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        expected: Option<String>,
     },
     /// Read a login's limits there afresh.
     ReadAgentLimits {
