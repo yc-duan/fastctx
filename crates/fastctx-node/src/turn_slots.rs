@@ -152,8 +152,9 @@ pub(crate) fn admit(node: &Arc<Node>, id: &ResidentId, about: &About) -> Result<
     // callee wait.
     let mut others = Vec::new();
     if let Some((most, line_key)) = &callee {
-        let running = running_where(node, Some(id), |about| callee_line(about).as_ref() == Some(line_key));
+        let mut running = running_where(node, Some(id), |about| callee_line(about).as_ref() == Some(line_key));
         let line = slots.entry(line_key.clone()).or_default();
+        line.unqueued(&mut running);
         line.prune(now, &running);
         match most {
             Some(most) if !line.starting.iter().any(|(starting, _)| starting == id) => {
@@ -176,8 +177,9 @@ pub(crate) fn admit(node: &Arc<Node>, id: &ResidentId, about: &About) -> Result<
     // Who runs is read under this lock: a turn let through counts as
     // starting until its host says it began, and as running from then, so
     // read before it, a turn could pass from one to the other unseen by both.
-    let running = running(node, &key, &defaults, Some(id));
+    let mut running = running(node, &key, &defaults, Some(id));
     let login = slots.entry(key).or_default();
+    login.unqueued(&mut running);
     login.prune(now, &running);
     if login.starting.iter().any(|(starting, _)| starting == id) {
         went(&mut slots, callee.as_ref().map(|(_, line)| line), id, now);
@@ -295,7 +297,8 @@ pub(crate) fn ended(node: &Arc<Node>, id: &ResidentId, about: &About, end: &Turn
     if let Some((most, line_key)) = &callee
         && let Some(line) = slots.get_mut(line_key)
     {
-        let running = running_where(node, None, |about| callee_line(about).as_ref() == Some(line_key));
+        let mut running = running_where(node, None, |about| callee_line(about).as_ref() == Some(line_key));
+        line.unqueued(&mut running);
         line.starting.retain(|(starting, _)| starting != id);
         line.prune(now, &running);
         let room = most.map_or(usize::MAX, |most| (most as usize).saturating_sub(running.len() + line.starting.len()));
@@ -309,8 +312,9 @@ pub(crate) fn ended(node: &Arc<Node>, id: &ResidentId, about: &About, end: &Turn
         wake(node, next);
         return;
     }
-    let running = running(node, &key, &defaults, None);
+    let mut running = running(node, &key, &defaults, None);
     let login = slots.entry(key.clone()).or_default();
+    login.unqueued(&mut running);
     login.starting.retain(|(starting, _)| starting != id);
     if refused {
         if login.halved.is_none_or(|at| now.duration_since(at) >= HALVING_AT_MOST) {
@@ -382,6 +386,12 @@ impl Login {
 
     /// Lets go of turns that stopped asking, and of turns let through that
     /// run now or never began.
+    /// Leaves out of `running` the conversations that wait in this line: a
+    /// colleague is busy from its birth, before its first turn is let go.
+    fn unqueued(&self, running: &mut Vec<ResidentId>) {
+        running.retain(|other| !self.waiting.iter().any(|waiting| waiting.id == *other));
+    }
+
     fn prune(&mut self, now: Instant, running: &[ResidentId]) {
         self.waiting.retain(|waiting| now.duration_since(waiting.asked) < ASKING);
         self.starting.retain(|(id, at)| !running.contains(id) && now.duration_since(*at) < STARTING);
