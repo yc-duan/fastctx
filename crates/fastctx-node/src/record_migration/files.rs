@@ -276,14 +276,19 @@ pub(crate) fn complete(context: &Context, file: FileComplete) -> io::Result<()> 
 
 /// Files shared by old fields stay readable until every decoder has finished.
 /// What their records became reaches the disk before the first original
-/// moves: a relaxed commit lost after that would leave neither.
+/// moves: a relaxed commit lost after that would leave neither. Only the
+/// context's own conversation's originals move: another conversation's
+/// migration of the same family may still be reading its own again, a
+/// receipt beside its record with it, to check what it kept. Rows a
+/// migration placed in other conversations move with the hourly
+/// maintenance, once it is done (`super::maintenance`).
 pub(crate) fn archive_ready(context: &Context) -> io::Result<()> {
     let mut after = String::new();
     let mut settled = false;
     loop {
         let files = context.database.read_background_now(|db| {
-            Ok(db.prepare("SELECT path,signature,conversation,damage FROM migration_files WHERE family=?1 AND path>?2 AND verified=1 AND archived=0 ORDER BY path LIMIT 32")?
-                .query_map((&context.family, &after), |row| Ok((row.get::<_, String>(0)?, row.get::<_, Vec<u8>>(1)?, row.get::<_, String>(2)?, row.get::<_, Option<String>>(3)?)))?
+            Ok(db.prepare("SELECT path,signature,conversation,damage FROM migration_files WHERE family=?1 AND conversation=?3 AND path>?2 AND verified=1 AND archived=0 ORDER BY path LIMIT 32")?
+                .query_map((&context.family, &after, &context.conversation), |row| Ok((row.get::<_, String>(0)?, row.get::<_, Vec<u8>>(1)?, row.get::<_, String>(2)?, row.get::<_, Option<String>>(3)?)))?
                 .collect::<std::result::Result<Vec<_>, _>>()?)
         }).map_err(io::Error::other)?;
         let Some(last) = files.last() else { break };
