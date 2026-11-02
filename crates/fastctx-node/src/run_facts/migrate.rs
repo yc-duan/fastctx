@@ -64,6 +64,8 @@ fn import(directory: &ConversationDir, context: &Context) -> io::Result<()> {
             }
         }
     }
+    migration::files::archive_ready(context)?;
+    // A durable commit takes every relaxed one before it to the disk.
     let scope = context.conversation.clone();
     context.database.write_now_at(scheduler::priority(), 64, move |db| { db.execute("INSERT INTO run_imported(conversation,checked) VALUES(?1,1) ON CONFLICT(conversation) DO UPDATE SET checked=1", [scope])?; Ok(()) }).map_err(io::Error::other)
 }
@@ -98,7 +100,7 @@ fn snapshot(context: &Context, path: &Path) -> io::Result<()> {
     let scope = context.conversation.clone();
     context
         .database
-        .write_now_at(scheduler::priority(), bytes.len(), move |db| {
+        .write_relaxed_now_at(scheduler::priority(), bytes.len(), move |db| {
             if sql::head(db, &scope, &stored.call_id)?.is_none() {
                 sql::save(db, &scope, &stored)?;
                 projections.install(db, &scope, &stored.call_id, false)?;
@@ -117,7 +119,7 @@ fn snapshot(context: &Context, path: &Path) -> io::Result<()> {
         let bytes = serde_json::to_vec(&(&writes, &steps, &visits))?.len();
         context
             .database
-            .write_now_at(scheduler::priority(), bytes, move |db| {
+            .write_relaxed_now_at(scheduler::priority(), bytes, move |db| {
                 sql::writes(db, &scope, &call, &writes)?;
                 sql::steps(db, &scope, &call, &steps)?;
                 sql::visits(db, &scope, &call, &visits)
@@ -241,7 +243,7 @@ fn journal(context: &Context, path: &Path) -> io::Result<()> {
         offset += line.len() as u64;
         let (scope, family, path, proof) =
             (context.conversation.clone(), context.family.clone(), key.clone(), serde_json::to_vec(&signature)?);
-        context.database.write_now_at(scheduler::priority(), 256, move |db| {
+        context.database.write_relaxed_now_at(scheduler::priority(), 256, move |db| {
             db.execute("INSERT INTO migration_files(conversation,family,path,signature,through) VALUES(?1,?2,?3,?4,?5) ON CONFLICT(family,path) DO UPDATE SET through=excluded.through", (scope, family, path, proof, offset as i64))?;
             Ok(())
         }).map_err(io::Error::other)?;
@@ -315,7 +317,7 @@ fn job_snapshot(context: &Context, path: &Path) -> io::Result<()> {
         let bytes = serde_json::to_vec(&(&writes, &steps, &visits))?.len();
         context
             .database
-            .write_now_at(scheduler::priority(), bytes, move |db| {
+            .write_relaxed_now_at(scheduler::priority(), bytes, move |db| {
                 sql::writes(db, &scope, &call, &writes)?;
                 sql::steps(db, &scope, &call, &steps)?;
                 sql::visits(db, &scope, &call, &visits)
@@ -338,7 +340,7 @@ fn job_snapshot(context: &Context, path: &Path) -> io::Result<()> {
     let scope = context.conversation.clone();
     context
         .database
-        .write_now_at(scheduler::priority(), bytes.len(), move |db| {
+        .write_relaxed_now_at(scheduler::priority(), bytes.len(), move |db| {
             if sql::job(db, &scope, &update)?.is_none() {
                 sql::save_job(db, &scope, &update, notes.as_ref().map(|notes| &notes.reference))?;
             }

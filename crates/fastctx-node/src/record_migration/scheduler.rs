@@ -326,7 +326,7 @@ pub(crate) fn request(
         return Err(io::Error::new(io::ErrorKind::WouldBlock, "legacy migration is queued"));
     }
     if !roles::current().may_block() {
-        return Err(busy("this conversation is being imported"));
+        return Err(busy("its records are waiting to move"));
     }
     let mut result = cell.result.lock().expect("migration result");
     loop {

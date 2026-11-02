@@ -265,7 +265,8 @@ pub(crate) fn complete(context: &Context, file: FileComplete) -> io::Result<()> 
     }
     let family = context.family.clone();
     let signature = serde_json::to_vec(&file.row.signature)?;
-    context.database.write_now_at(scheduler::priority(), signature.len() + file.row.path.len(), move |db| {
+    // Relaxed: settled before the original is archived (`archive_ready`).
+    context.database.write_relaxed_now_at(scheduler::priority(), signature.len() + file.row.path.len(), move |db| {
         db.execute("INSERT INTO migration_files(conversation,family,path,signature,through,verified,damage,incarnation) VALUES(?1,?2,?3,?4,?5,1,?6,?7)
             ON CONFLICT(family,path) DO UPDATE SET conversation=excluded.conversation,signature=excluded.signature,through=excluded.through,verified=1,damage=excluded.damage,incarnation=excluded.incarnation",
             (&file.owner, family, file.row.path, signature, file.row.ordinal, file.damage, file.row.incarnation))?;
@@ -274,8 +275,11 @@ pub(crate) fn complete(context: &Context, file: FileComplete) -> io::Result<()> 
 }
 
 /// Files shared by old fields stay readable until every decoder has finished.
+/// What their records became reaches the disk before the first original
+/// moves: a relaxed commit lost after that would leave neither.
 pub(crate) fn archive_ready(context: &Context) -> io::Result<()> {
     let mut after = String::new();
+    let mut settled = false;
     loop {
         let files = context.database.read_background_now(|db| {
             Ok(db.prepare("SELECT path,signature,conversation,damage FROM migration_files WHERE family=?1 AND path>?2 AND verified=1 AND archived=0 ORDER BY path LIMIT 32")?
@@ -284,8 +288,9 @@ pub(crate) fn archive_ready(context: &Context) -> io::Result<()> {
         }).map_err(io::Error::other)?;
         let Some(last) = files.last() else { break };
         after = last.0.clone();
-        for (path, signature, owner, damage) in files {
-            let signature: archive::Signature = serde_json::from_slice(&signature)?;
+        let mut moved = Vec::new();
+        for (path, stored, owner, damage) in files {
+            let signature: archive::Signature = serde_json::from_slice(&stored)?;
             let dependencies = dependencies(&path, &context.family);
             let ready = context
                 .database
@@ -306,42 +311,56 @@ pub(crate) fn archive_ready(context: &Context) -> io::Result<()> {
             if !ready && damage.is_none() {
                 continue;
             }
+            if !settled {
+                context.database.settle_now(scheduler::priority()).map_err(io::Error::other)?;
+                settled = true;
+            }
             let directory =
                 fastctx_types::layout::ConversationDir::at(&context.world.join("conversations").join(&owner));
-            let moved = if let Some(reason) = &damage {
+            let moved_now = if let Some(reason) = &damage {
                 archive::damaged(&context.world, &owner, &context.family, Path::new(&path), reason)
             } else {
                 crate::conversation_store::with_live_files(&directory, || {
                     archive::verified(&context.world, &owner, Path::new(&path), &signature)
                 })
             };
-            match moved {
-                Ok(()) => {}
+            match moved_now {
+                Ok(()) => moved.push((path, stored)),
                 // Left where it is for the hourly maintenance to move once
                 // let go (`super::maintenance`): its family does not wait.
                 Err(error) if super::errors::held(&error) => {
                     fastctx_platform::readings::counter("migration.sources_held").add(1);
-                    continue;
                 }
-                Err(error) => return Err(super::errors::retry(error)),
+                Err(error) => {
+                    archived(context, moved)?;
+                    return Err(super::errors::retry(error));
+                }
             }
-            context
-                .database
-                .write_now_at(scheduler::priority(), path.len(), move |db| {
-                    db.execute(
-                        "UPDATE migration_files SET archived=1 WHERE path=?1 AND signature=?2 AND verified=1",
-                        (
-                            path,
-                            serde_json::to_vec(&signature)
-                                .map_err(|error| fastctx_storage::Error::new(error.to_string()))?,
-                        ),
-                    )?;
-                    Ok(())
-                })
-                .map_err(io::Error::other)?;
         }
+        archived(context, moved)?;
     }
     Ok(())
+}
+
+/// Marks the originals `moved` archived. A mark lost with its relaxed
+/// commit is made again: the original is found in the archive already.
+fn archived(context: &Context, moved: Vec<(String, Vec<u8>)>) -> io::Result<()> {
+    if moved.is_empty() {
+        return Ok(());
+    }
+    let bytes = moved.iter().map(|(path, signature)| path.len() + signature.len()).sum();
+    context
+        .database
+        .write_relaxed_now_at(scheduler::priority(), bytes, move |db| {
+            let mut mark = db.prepare_cached(
+                "UPDATE migration_files SET archived=1 WHERE path=?1 AND signature=?2 AND verified=1",
+            )?;
+            for (path, signature) in moved {
+                mark.execute((path, signature))?;
+            }
+            Ok(())
+        })
+        .map_err(io::Error::other)
 }
 fn dependencies(path: &str, family: &str) -> Vec<String> {
     let name = Path::new(path).file_name().and_then(|name| name.to_str()).unwrap_or("");

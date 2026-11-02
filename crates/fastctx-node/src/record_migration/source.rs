@@ -29,8 +29,9 @@ pub(crate) fn process(
                 .unwrap_or(false))
         })
         .map_err(io::Error::other)?;
+    // Its family archives what it verified once all its sources are read.
     if verified {
-        return files::archive_ready(context);
+        return Ok(());
     }
     let signature = match archive::fingerprint(path) {
         Ok(signature) => signature,
@@ -52,6 +53,5 @@ pub(crate) fn process(
             owner: context.conversation.clone(),
             damage,
         },
-    )?;
-    files::archive_ready(context)
+    )
 }

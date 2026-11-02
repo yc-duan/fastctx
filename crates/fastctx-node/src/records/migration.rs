@@ -66,6 +66,10 @@ fn import(
     let mut pending = Vec::new();
     let mut checking = Vec::new();
     let mut bytes = 0;
+    // What it brings over is committed relaxed, and reaches the disk before
+    // an original is archived (`archive_ready`) and before the family is
+    // marked done.
+    let mut wrote = false;
     source(&mut |source| {
         scheduler::checkpoint()?;
         match source {
@@ -75,6 +79,7 @@ fn import(
                 }
                 bytes += proofs::bytes(&row);
                 pending.push(row);
+                wrote = true;
                 if pending.len() >= 16 || bytes >= 128 * 1024 {
                     commit(context, std::mem::take(&mut pending))?;
                     bytes = 0;
@@ -111,6 +116,7 @@ fn import(
                     }
                     return Ok(());
                 }
+                wrote = true;
                 migration::files::complete(context, file)
             }
         }
@@ -119,16 +125,21 @@ fn import(
     proofs::verify(context, checking)?;
     migration::files::archive_ready(context)?;
     let (conversation, family) = (context.conversation.clone(), context.family.clone());
-    context
-        .database
-        .write_now_at(scheduler::priority(), 128, move |db| {
-            db.execute(
-                "INSERT OR IGNORE INTO conversation_record_imports(conversation,family) VALUES(?1,?2)",
-                (conversation, family),
-            )?;
-            Ok(())
-        })
-        .map_err(io::Error::other)
+    let done = move |db: &Connection| {
+        db.execute(
+            "INSERT OR IGNORE INTO conversation_record_imports(conversation,family) VALUES(?1,?2)",
+            (conversation, family),
+        )?;
+        Ok(())
+    };
+    // A durable commit takes every relaxed one before it to the disk; a
+    // family that brought nothing over is found done again if this is lost.
+    if wrote {
+        context.database.write_now_at(scheduler::priority(), 128, done)
+    } else {
+        context.database.write_relaxed_now_at(scheduler::priority(), 128, done)
+    }
+    .map_err(io::Error::other)
 }
 
 fn commit(context: &Context, sources: Vec<LegacyRow>) -> io::Result<()> {
@@ -137,7 +148,7 @@ fn commit(context: &Context, sources: Vec<LegacyRow>) -> io::Result<()> {
     }
     let bytes = sources.iter().map(proofs::bytes).sum();
     let (conversation, family) = (context.conversation.clone(), context.family.clone());
-    let conflict = context.database.write_now_at(scheduler::priority(), bytes, move |db| {
+    let conflict = context.database.write_relaxed_now_at(scheduler::priority(), bytes, move |db| {
         db.execute_batch("SAVEPOINT legacy_record_batch")?;
         let mut insert = db.prepare_cached("INSERT INTO conversation_records(conversation,family,identity,body,modified,arrival,category,expires,position) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?10)
             ON CONFLICT(conversation,family,identity) DO UPDATE SET body=excluded.body,modified=excluded.modified,arrival=excluded.arrival,category=excluded.category,expires=excluded.expires WHERE ?9 AND conversation_records.position>COALESCE((SELECT boundary FROM conversation_record_gathering WHERE conversation=?1),-1)")?;

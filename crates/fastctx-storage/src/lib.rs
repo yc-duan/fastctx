@@ -26,6 +26,7 @@ pub type Result<T> = std::result::Result<T, Error>;
 use std::cell::Cell;
 use std::panic::Location;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tokio::sync::{OwnedSemaphorePermit, Semaphore, oneshot};
@@ -55,6 +56,9 @@ struct Inner {
     path: PathBuf,
     fault: Option<Error>,
     salvaged: Option<String>,
+    /// Whether a relaxed commit may not have reached the disk yet; set by
+    /// the writer, cleared once a settle commits (`settle_now`).
+    unsettled: Arc<AtomicBool>,
     /// Shared with the writer thread, which lets it go after its connection.
     _keeper: Option<Arc<keeper::Keeper>>,
 }
@@ -185,10 +189,17 @@ impl Database {
         let writes = Arc::new(queue::Queue::new());
         let damage = Arc::new(integrity::Damage::new(path.to_path_buf(), &readings));
         let metrics = Arc::new(metrics::Metrics::new(readings));
-        let (queue, measurements, noticed, file, held) =
-            (writes.clone(), metrics.clone(), damage.clone(), path.to_path_buf(), kept.keeper.clone());
+        let unsettled = Arc::new(AtomicBool::new(false));
+        let (queue, measurements, noticed, file, held, relaxed) = (
+            writes.clone(),
+            metrics.clone(),
+            damage.clone(),
+            path.to_path_buf(),
+            kept.keeper.clone(),
+            unsettled.clone(),
+        );
         std::thread::Builder::new().name("sqlite-writer".into()).spawn(move || {
-            writer::run(connection, queue, measurements, noticed, file);
+            writer::run(connection, queue, measurements, noticed, file, relaxed);
             // The connection, and with it the last checkpoint, is done.
             drop(held);
         })?;
@@ -204,6 +215,7 @@ impl Database {
             path: path.to_path_buf(),
             fault: None,
             salvaged,
+            unsettled,
             _keeper: Some(kept.keeper.clone()),
         })))
     }
@@ -239,6 +251,7 @@ impl Database {
                     path: path.to_path_buf(),
                     fault: Some(fault),
                     salvaged: None,
+                    unsettled: Arc::new(AtomicBool::new(false)),
                     _keeper: None,
                 }))
             }
@@ -408,7 +421,7 @@ impl Database {
         let (send, receive) = oneshot::channel();
         self.submit(
             priority,
-            writer::job(permit, write, committed, move |result| {
+            writer::job(permit, true, write, committed, move |result| {
                 let _ = send.send(result);
             }),
         )?;
@@ -446,6 +459,58 @@ impl Database {
         write: impl FnOnce(&rusqlite::Connection) -> Result<T> + Send + 'static,
         committed: impl FnOnce(&T) + Send + 'static,
     ) -> Result<T> {
+        self.commit_now(priority, bytes, true, write, committed)
+    }
+
+    /// Commits as `write_now_at` does without waiting for the disk: the
+    /// change is committed and seen at once, and kept when the process
+    /// stops, but a machine that loses its power may lose it until a later
+    /// durable commit or `settle_now`. For work done again, unharmed, when
+    /// its result is lost, such as bringing records over from older files.
+    #[track_caller]
+    pub fn write_relaxed_now_at<T: Send + 'static>(
+        &self,
+        priority: Priority,
+        bytes: usize,
+        write: impl FnOnce(&rusqlite::Connection) -> Result<T> + Send + 'static,
+    ) -> Result<T> {
+        self.commit_now(priority, bytes, false, write, |_| {})
+    }
+
+    /// Makes every relaxed write committed so far as durable as any other,
+    /// before something is done that only they would undo; at once when
+    /// none is waiting for the disk.
+    #[track_caller]
+    pub fn settle_now(&self, priority: Priority) -> Result<()> {
+        if !self.0.unsettled.load(Ordering::Acquire) {
+            return Ok(());
+        }
+        let unsettled = self.0.unsettled.clone();
+        // A durable commit syncs the log, and every relaxed commit before
+        // it with it; the engine's version, written again as it is, gives it
+        // a page to write.
+        self.commit_now(
+            priority,
+            64,
+            true,
+            |db| {
+                let version: u32 = db.pragma_query_value(None, "user_version", |row| row.get(0))?;
+                db.pragma_update(None, "user_version", version)?;
+                Ok(())
+            },
+            move |()| unsettled.store(false, Ordering::Release),
+        )
+    }
+
+    #[track_caller]
+    fn commit_now<T: Send + 'static>(
+        &self,
+        priority: Priority,
+        bytes: usize,
+        durable: bool,
+        write: impl FnOnce(&rusqlite::Connection) -> Result<T> + Send + 'static,
+        committed: impl FnOnce(&T) + Send + 'static,
+    ) -> Result<T> {
         fastctx_platform::roles::blocking("a database write");
         self.available()?;
         if writer::on_writer() {
@@ -460,7 +525,7 @@ impl Database {
         let (send, receive) = oneshot::channel();
         self.submit(
             priority,
-            writer::job(permit, write, committed, move |result| {
+            writer::job(permit, durable, write, committed, move |result| {
                 let _ = send.send(result);
             }),
         )?;

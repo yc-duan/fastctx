@@ -29,6 +29,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     std::fs::create_dir_all(root)?;
     performance(root)?;
     tokio::runtime::Builder::new_current_thread().enable_all().build()?.block_on(concurrency(root))?;
+    relaxed(root)?;
     crashes(root)?;
     corruption(root)?;
     println!("storage drill passed");
@@ -192,14 +193,81 @@ async fn concurrency(root: &Path) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+/// Each commit goes as far as it asked, however relaxed and durable ones
+/// interleave: a durable one is never answered before the disk has it. A
+/// settle commits only while a relaxed commit waits for the disk.
+fn relaxed(root: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    let database = Database::open(&root.join("relaxed.sqlite3"), SCHEMA)?;
+    let unsynced = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let threads: Vec<_> = (0..4i64)
+        .map(|thread| {
+            let (database, unsynced) = (database.clone(), unsynced.clone());
+            std::thread::spawn(move || -> Result<(), Error> {
+                for n in 0..200i64 {
+                    let (id, durable, unsynced) = (thread * 1000 + n, n % 3 == 0, unsynced.clone());
+                    let write = move |db: &fastctx_storage::rusqlite::Connection| {
+                        let level: i64 = db.query_row("PRAGMA synchronous", [], |row| row.get(0))?;
+                        if durable && level != 2 {
+                            return Err(Error::new(format!("durable write {id} committed at level {level}")));
+                        }
+                        if level == 1 {
+                            unsynced.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        }
+                        db.execute("INSERT INTO events(id,body) VALUES(?1,'relaxed')", [id])?;
+                        Ok(())
+                    };
+                    if durable {
+                        database.write_now_at(Priority::Normal, 64, write)?;
+                    } else {
+                        database.write_relaxed_now_at(Priority::Normal, 64, write)?;
+                    }
+                }
+                Ok(())
+            })
+        })
+        .collect();
+    for thread in threads {
+        thread.join().expect("writing thread")?;
+    }
+    let unsynced = unsynced.load(std::sync::atomic::Ordering::Relaxed);
+    assert!(unsynced > 0, "no relaxed write committed relaxed");
+    let seen = |database: &Database| -> fastctx_storage::Result<i64> {
+        database.read_now(|db| {
+            Ok(db.query_row("SELECT count(*) FROM events WHERE body='relaxed'", [], |row| row.get::<_, i64>(0))?)
+        })
+    };
+    assert_eq!(seen(&database)?, 800);
+    database.write_relaxed_now_at(Priority::Normal, 64, |db| {
+        db.execute("INSERT INTO events(id,body) VALUES(9999,'relaxed')", [])?;
+        Ok(())
+    })?;
+    let commits = database.statistics().commits;
+    database.settle_now(Priority::Normal)?;
+    assert_eq!(database.statistics().commits, commits + 1, "a settle with a relaxed commit waiting wrote nothing");
+    database.settle_now(Priority::Normal)?;
+    assert_eq!(database.statistics().commits, commits + 1, "a settle with nothing waiting wrote");
+    drop(database);
+    assert_eq!(seen(&Database::open(&root.join("relaxed.sqlite3"), SCHEMA)?)?, 801);
+    println!(
+        "relaxed commits: {unsynced} of 532 relaxed writes committed without the disk, every durable one with it; settled once"
+    );
+    Ok(())
+}
+
 fn worker(path: &Path) -> Result<(), Box<dyn std::error::Error>> {
     let database = Database::open(path, SCHEMA)?;
     let mut out = std::io::stdout().lock();
     for id in 0..1_000_000i64 {
-        database.write_now(64, move |db| {
+        let write = move |db: &fastctx_storage::rusqlite::Connection| {
             db.execute("INSERT OR IGNORE INTO events(id,body) VALUES(?1,?2)", (id, format!("durable {id}")))?;
             Ok(())
-        })?;
+        };
+        // A killed process keeps its relaxed commits as well.
+        if id % 2 == 0 {
+            database.write_now(64, write)?;
+        } else {
+            database.write_relaxed_now_at(Priority::Normal, 64, write)?;
+        }
         writeln!(out, "{id}")?;
         out.flush()?;
     }
@@ -230,7 +298,7 @@ fn crashes(root: &Path) -> Result<(), Box<dyn std::error::Error>> {
         })?;
         assert_eq!(count, acknowledged, "lost acknowledged rows in kill round {round}");
     }
-    println!("process death: 16 observed forced terminations, zero acknowledged rows lost");
+    println!("process death: 16 observed forced terminations, zero acknowledged rows lost, relaxed ones included");
     Ok(())
 }
 

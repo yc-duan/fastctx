@@ -23,6 +23,7 @@ impl Database {
             priority,
             writer::job(
                 permit,
+                true,
                 write,
                 |_| {},
                 move |result| {

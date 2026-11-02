@@ -62,7 +62,9 @@ pub(crate) fn purge(database: &Database, conversation: &str) -> Result<u64> {
             let conversation = conversation.to_string();
             let (quoted, key, size) = (quoted.clone(), key.clone(), size.clone());
             let began = std::time::Instant::now();
-            let count = database.write_now_at(Priority::Background, 1024, move |db| {
+            // Relaxed: the tombstone is on the disk, a batch lost to a power
+            // cut is deleted again, and the purge ends with a durable commit.
+            let count = database.write_relaxed_now_at(Priority::Background, 1024, move |db| {
                 let pending: bool = db.query_row(
                     "SELECT EXISTS(SELECT 1 FROM node_conversation_deletions WHERE name=?1)",
                     [&conversation],

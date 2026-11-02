@@ -10,6 +10,7 @@ use rusqlite::{Connection, TransactionBehavior};
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 pub(super) type Job = Box<dyn Work>;
@@ -17,6 +18,10 @@ pub(super) trait Work: Send {
     fn apply(&mut self, connection: &Connection) -> bool;
     /// Why the operation failed, once applied.
     fn failure(&self) -> Option<&Error>;
+    /// Whether its commit reaches the disk before it is answered. A relaxed
+    /// one is committed and seen at once, and reaches the disk with the next
+    /// durable commit (`Database::settle_now`).
+    fn durable(&self) -> bool;
     fn finish(self: Box<Self>, commit_error: Option<Error>);
 }
 
@@ -31,20 +36,21 @@ pub(super) fn on_writer() -> bool {
 
 struct Operation<T, F, C, R> {
     _permit: Admission,
+    durable: bool,
     write: Option<F>,
     committed: C,
     reply: R,
     result: Option<Result<T>>,
 }
 
-pub(super) fn job<T, F, C, R>(permit: Admission, write: F, committed: C, reply: R) -> Job
+pub(super) fn job<T, F, C, R>(permit: Admission, durable: bool, write: F, committed: C, reply: R) -> Job
 where
     T: Send + 'static,
     F: FnOnce(&Connection) -> Result<T> + Send + 'static,
     C: FnOnce(&T) + Send + 'static,
     R: FnOnce(Result<T>) + Send + 'static,
 {
-    Box::new(Operation { _permit: permit, write: Some(write), committed, reply, result: None })
+    Box::new(Operation { _permit: permit, durable, write: Some(write), committed, reply, result: None })
 }
 
 impl<T, F, C, R> Work for Operation<T, F, C, R>
@@ -66,6 +72,9 @@ where
     }
     fn failure(&self) -> Option<&Error> {
         self.result.as_ref().and_then(|result| result.as_ref().err())
+    }
+    fn durable(&self) -> bool {
+        self.durable
     }
     fn finish(self: Box<Self>, commit_error: Option<Error>) {
         let Self { result, committed, reply, _permit, .. } = *self;
@@ -93,6 +102,7 @@ pub(super) fn run(
     metrics: Arc<Metrics>,
     damage: Arc<Damage>,
     path: PathBuf,
+    unsettled: Arc<AtomicBool>,
 ) {
     fastctx_platform::roles::set(fastctx_platform::roles::Role::Blocking);
     WRITER.with(|writer| writer.set(true));
@@ -101,8 +111,11 @@ pub(super) fn run(
     // the rest (`fastctx_platform::doing`).
     let disk = format!("the disk, writing {}", path.file_name().unwrap_or_default().to_string_lossy());
     let mut dirty = true;
+    // As the connection was opened; changed only between transactions.
+    let mut full = true;
+    let mut carried = None;
     loop {
-        let Some(first) = queue.pop(Duration::from_secs(1)) else {
+        let Some(first) = carried.take().or_else(|| queue.pop(Duration::from_secs(1))) else {
             if dirty {
                 let _disk = fastctx_platform::doing::waiting_outside(disk.clone(), super::ANSWER);
                 // A busy reader may retain a WAL snapshot. Do not wait for it:
@@ -122,18 +135,39 @@ pub(super) fn run(
             }
             continue;
         };
+        let durable = first.durable();
         let mut batch = vec![first];
         let waiting = fastctx_platform::doing::waiting_outside(disk.clone(), super::ANSWER);
-        let result = commit(&mut connection, &queue, &metrics, &damage, &mut batch);
+        let result = synchronous(&connection, &mut full, durable)
+            .and_then(|()| commit(&mut connection, &queue, &metrics, &damage, &mut batch, full, &mut carried));
         drop(waiting);
         dirty = true;
-        if let Err(error) = &result {
-            damage.notice(error);
+        match &result {
+            Err(error) => damage.notice(error),
+            Ok(()) if !full => unsettled.store(true, Ordering::Release),
+            Ok(()) => {}
         }
         for job in batch {
             metrics.queue(-1);
             job.finish(result.as_ref().err().cloned());
         }
+    }
+}
+
+/// Sets how far the next commit goes before it is answered: to the disk for
+/// a durable batch, to the log alone for a relaxed one.
+fn synchronous(connection: &Connection, full: &mut bool, durable: bool) -> Result<()> {
+    if *full == durable {
+        return Ok(());
+    }
+    match connection.pragma_update(None, "synchronous", if durable { "FULL" } else { "NORMAL" }) {
+        Ok(()) => {
+            *full = durable;
+            Ok(())
+        }
+        // A relaxed batch committed in full loses nothing.
+        Err(_) if !durable => Ok(()),
+        Err(error) => Err(error.into()),
     }
 }
 
@@ -143,6 +177,8 @@ fn commit(
     metrics: &Metrics,
     damage: &Damage,
     batch: &mut Vec<Job>,
+    full: bool,
+    carried: &mut Option<Job>,
 ) -> Result<()> {
     let mut transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
     let started = Instant::now();
@@ -164,6 +200,12 @@ fn commit(
             break;
         }
         match queue.pop(Duration::ZERO) {
+            // A durable operation is not committed relaxed: it begins the
+            // next batch.
+            Some(next) if !full && next.durable() => {
+                *carried = Some(next);
+                break;
+            }
             Some(next) => batch.push(next),
             None => break,
         }
