@@ -9,6 +9,7 @@
 
 mod antigravity;
 mod copilot;
+mod cursor;
 mod gemini;
 pub(crate) mod json;
 mod opencode;
@@ -20,7 +21,8 @@ pub use plan::{Files, Planned, Receipt, connect, disconnect};
 pub use spec::{Agent, Edit, Format, Home, Mcp, Program, Server};
 
 /// Every agent connected this way, in the order the interface lists them.
-static AGENTS: &[&Agent] = &[&antigravity::AGENT, &opencode::AGENT, &qwen::AGENT, &copilot::AGENT, &gemini::AGENT];
+static AGENTS: &[&Agent] =
+    &[&antigravity::AGENT, &opencode::AGENT, &qwen::AGENT, &copilot::AGENT, &cursor::AGENT, &gemini::AGENT];
 
 pub fn all() -> &'static [&'static Agent] {
     AGENTS
