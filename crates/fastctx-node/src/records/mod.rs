@@ -324,16 +324,35 @@ impl Rows<'_> {
         other: &str,
         after: Option<&Arrival>,
     ) -> Result<(Vec<T>, Option<Arrival>)> {
-        let mut query=self.connection.prepare_cached("SELECT r.arrival,r.identity,r.body FROM conversation_records r WHERE r.conversation=?1 AND r.family=?2
-            AND (?5=0 OR (?3 IS NULL AND (r.arrival IS NOT NULL OR r.identity>?4)) OR r.arrival>?3 OR (r.arrival=?3 AND r.identity>?4))
-            AND NOT EXISTS(SELECT 1 FROM conversation_records d WHERE d.conversation=r.conversation AND d.family=?6 AND d.identity=r.identity)
-            AND NOT EXISTS(SELECT 1 FROM conversation_records d WHERE d.conversation=r.conversation AND d.family=?7 AND d.identity=r.identity)
-            ORDER BY r.arrival,r.identity LIMIT 128")?;
-        let (at, identity) = after.map_or((None, ""), |after| (after.at.as_deref(), after.identity.as_str()));
-        let rows = query
-            .query_map((self.conversation, family, at, identity, after.is_some(), receipt, other), |row| {
-                Ok((row.get::<_, Option<Vec<u8>>>(0)?, row.get::<_, String>(1)?, row.get::<_, Vec<u8>>(2)?))
-            })?;
+        const ROWS: &str =
+            "SELECT r.arrival,r.identity,r.body FROM conversation_records r WHERE r.conversation=?1 AND r.family=?2";
+        const UNSETTLED: &str = " AND NOT EXISTS(SELECT 1 FROM conversation_records d WHERE d.conversation=r.conversation AND d.family=?3 AND d.identity=r.identity)
+            AND NOT EXISTS(SELECT 1 FROM conversation_records d WHERE d.conversation=r.conversation AND d.family=?4 AND d.identity=r.identity)
+            ORDER BY r.arrival,r.identity LIMIT 128";
+        let read = |row: &fastctx_storage::rusqlite::Row<'_>| {
+            Ok((row.get::<_, Option<Vec<u8>>>(0)?, row.get::<_, String>(1)?, row.get::<_, Vec<u8>>(2)?))
+        };
+        // Each page seeks to where the last one ended: a row value is a
+        // range of the arrival index, where an OR of conditions would walk
+        // every row before it again. Rows without an arrival come first.
+        let mut query;
+        let rows = match after {
+            None => {
+                query = self.connection.prepare_cached(&format!("{ROWS}{UNSETTLED}"))?;
+                query.query_map((self.conversation, family, receipt, other), read)?
+            }
+            Some(Arrival { at: Some(at), identity }) => {
+                query =
+                    self.connection.prepare_cached(&format!("{ROWS} AND (r.arrival,r.identity)>(?5,?6){UNSETTLED}"))?;
+                query.query_map((self.conversation, family, receipt, other, at, identity), read)?
+            }
+            Some(Arrival { at: None, identity }) => {
+                query = self
+                    .connection
+                    .prepare_cached(&format!("{ROWS} AND (r.arrival IS NOT NULL OR r.identity>?5){UNSETTLED}"))?;
+                query.query_map((self.conversation, family, receipt, other, identity), read)?
+            }
+        };
         let (mut page, mut next, mut bytes) = (Vec::new(), None, 0usize);
         for row in rows {
             let (at, identity, body) = row?;
