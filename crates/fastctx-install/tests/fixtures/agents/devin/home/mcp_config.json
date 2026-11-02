@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "probe-generated": {
+      "command": "node",
+      "args": ["echo-probe.js"],
+      "env": {
+        "LAB_MODE": "1"
+      },
+      "transport": "stdio"
+    }
+  }
+}

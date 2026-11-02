@@ -12,6 +12,7 @@ mod auggie;
 mod cline;
 mod copilot;
 mod cursor;
+mod devin;
 mod gemini;
 pub(crate) mod json;
 mod kiro;
@@ -35,6 +36,7 @@ static AGENTS: &[&Agent] = &[
     &zed::AGENT,
     &kiro::AGENT,
     &auggie::AGENT,
+    &devin::AGENT,
     &gemini::AGENT,
 ];
 
