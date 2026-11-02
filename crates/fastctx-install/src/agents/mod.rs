@@ -19,6 +19,7 @@ mod kiro;
 mod opencode;
 mod plan;
 mod qwen;
+mod roo;
 mod spec;
 mod zed;
 
@@ -37,6 +38,7 @@ static AGENTS: &[&Agent] = &[
     &kiro::AGENT,
     &auggie::AGENT,
     &devin::AGENT,
+    &roo::AGENT,
     &gemini::AGENT,
 ];
 
