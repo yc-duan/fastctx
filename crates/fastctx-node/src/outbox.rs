@@ -182,6 +182,12 @@ fn pay_once<'a>(
                     node.log.line(format_args!("recording that {} was told: {error}", answer.to));
                 }
             }
+            // Words whose arrival is not known stay owed, and are told again
+            // under the same id, which their reader takes once.
+            if let Ok(fastctx_types::residents::Landed::Uncertain { why }) = &landed {
+                pending = true;
+                let _ = crate::inbox::outgoing::retry(node, directory, &path, why).await;
+            }
             if landed.is_err() || matches!(landed, Ok(fastctx_types::residents::Landed::Uncertain { .. })) {
                 if landed.is_err() && node.is_me(&answer.to.machine) && !node.residents.knows(&answer.to.resident) {
                     match node.world.conversation(&answer.to.resident).about().try_exists() {

@@ -1065,17 +1065,22 @@ pub(crate) async fn stop_here_as(
     // soon as it is. What only rides with the next turn starts none, and
     // keeps no stop for the turn someone starts later.
     let directory = node.world.conversation(resident);
-    let coming = tokio::task::spawn_blocking(move || crate::inbox::pending(&directory))
+    let reading = directory.clone();
+    let coming = tokio::task::spawn_blocking(move || crate::inbox::pending(&reading))
         .await
         .map_err(|error| Failure::new(error.to_string()))?
         .map_err(|error| Failure::new(format!("reading what is on its way: {error}")))?;
-    let coming = coming
+    let coming: Vec<_> = coming
         .into_iter()
         .filter(|pending| pending.delivery.notice.along().is_none())
         .map(|pending| pending.delivery.id)
         .collect();
     if targeted.is_none()
-        && node.stops.coming(node, resident, coming, source).await.map_err(|error| Failure::new(error.to_string()))?
+        && node
+            .stops
+            .coming(node, resident, coming.clone(), source)
+            .await
+            .map_err(|error| Failure::new(error.to_string()))?
     {
         return Ok(true);
     }
@@ -1083,7 +1088,32 @@ pub(crate) async fn stop_here_as(
     if targeted.is_some() && targeted != current {
         return Ok(false);
     }
-    let targeted = targeted.or(current);
+    let targeted = match (targeted, current) {
+        (Some(turn), _) => turn,
+        // Nothing ran when the stop was asked: a turn begun since is its
+        // only when it took words that were on their way then. One of
+        // words that came later is not stopped by it.
+        (None, Some(turn)) => {
+            let (looking, taken) = (turn.clone(), coming);
+            let took = tokio::task::spawn_blocking(move || -> std::io::Result<bool> {
+                for id in &taken {
+                    if crate::delivery::input_turn(&directory, id)?.as_deref() == Some(looking.as_str()) {
+                        return Ok(true);
+                    }
+                }
+                Ok(false)
+            })
+            .await
+            .map_err(|error| Failure::new(error.to_string()))?
+            .map_err(|error| Failure::new(format!("reading which words the turn took: {error}")))?;
+            if !took {
+                return Ok(false);
+            }
+            turn
+        }
+        (None, None) => return Ok(false),
+    };
+    let targeted = Some(targeted);
     if let Some(turn) = &targeted {
         crate::turn_evidence::remember(node, resident, turn, source)
             .await
@@ -1092,7 +1122,7 @@ pub(crate) async fn stop_here_as(
     match (about.host.agent.as_str(), about.world_managed(), &about.session) {
         ("codex", true, Some(thread)) => match targeted {
             Some(turn) => node.codex.of(node, &about)?.interrupt_turn(thread, &turn).await.map_err(Failure::new),
-            None => node.codex.of(node, &about)?.interrupt(thread).await.map_err(Failure::new),
+            None => Ok(false),
         },
         ("claude", _, _) => match targeted {
             Some(turn) => crate::claude::stop(node, resident, &turn),
