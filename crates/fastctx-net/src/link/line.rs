@@ -7,6 +7,8 @@
 //! running.
 
 use std::collections::VecDeque;
+use std::sync::PoisonError;
+use std::sync::atomic::Ordering;
 
 use fastctx_types::stats::{LineChange, LineKept, Trip};
 use jiff::{SignedDuration, Timestamp};
@@ -53,18 +55,31 @@ impl Inner {
         self.line_changed(LineChange::Started { at: Timestamp::now() });
     }
 
-    /// Keeps `change`, and what of the kept changes is recent enough.
+    /// Keeps `change`, and what of the kept changes is recent enough. The
+    /// file is written on a thread meant to block, never on the lines'
+    /// thread; a write that a later change outdated is left to the later one.
     pub(super) fn line_changed(&self, change: LineChange) {
-        let mut line = self.line.lock().expect("never poisoned");
-        line.changes.push(change);
-        line.kept.changes += 1;
-        let since = Timestamp::now() - SignedDuration::from_hours(24 * DAYS);
-        line.changes.retain(|change| change.at() >= since);
-        let over = line.changes.len().saturating_sub(KEPT);
-        line.changes.drain(..over);
-        if let Err(error) = state::write(&self.dir.path().join("line.json"), &line.changes) {
-            self.node.log(format!("keeping how the line to the hub held: {error}"));
+        {
+            let mut line = self.line.lock().expect("never poisoned");
+            line.changes.push(change);
+            line.kept.changes += 1;
+            let since = Timestamp::now() - SignedDuration::from_hours(24 * DAYS);
+            line.changes.retain(|change| change.at() >= since);
+            let over = line.changes.len().saturating_sub(KEPT);
+            line.changes.drain(..over);
         }
+        let change = self.line_changes.fetch_add(1, Ordering::AcqRel) + 1;
+        let Some(inner) = self.this.upgrade() else { return };
+        self.blocking(move || {
+            let _writing = inner.line_writing.lock().unwrap_or_else(PoisonError::into_inner);
+            if inner.line_changes.load(Ordering::Acquire) != change {
+                return;
+            }
+            let changes = inner.line.lock().expect("never poisoned").changes.clone();
+            if let Err(error) = state::write(&inner.dir.path().join("line.json"), &changes) {
+                inner.node.log(format!("keeping how the line to the hub held: {error}"));
+            }
+        });
     }
 
     /// How long an answer to a check may take before the line is taken for
@@ -116,8 +131,14 @@ impl super::Link {
             let first = kept - len as u64;
             seen.map_or(0, |seen| seen.saturating_sub(first).min(len as u64) as usize)
         };
-        let trips = line.trips.iter().skip(after(line.kept.trips, line.trips.len(), seen.map(|seen| seen.trips))).copied().collect();
-        let changes = line.changes[after(line.kept.changes, line.changes.len(), seen.map(|seen| seen.changes))..].to_vec();
+        let trips = line
+            .trips
+            .iter()
+            .skip(after(line.kept.trips, line.trips.len(), seen.map(|seen| seen.trips)))
+            .copied()
+            .collect();
+        let changes =
+            line.changes[after(line.kept.changes, line.changes.len(), seen.map(|seen| seen.changes))..].to_vec();
         (trips, changes, line.kept)
     }
 }

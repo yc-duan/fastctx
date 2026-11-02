@@ -49,10 +49,16 @@ async fn index(link: &Link, account: &AccountName) -> Result<(Index, String), St
 /// when its hub cannot be asked now, and it keeps what it was told.
 pub(crate) async fn context(node: &Node, acting: &Acting) -> Option<(String, String)> {
     let Some((link, account)) = account_of(node, acting) else { return Some((String::new(), String::new())) };
+    // An account its hub no longer has keeps no skills; its hub is not asked.
+    if crate::authorization::current_view(&link).is_ok_and(|view| view.account(&account).is_none()) {
+        return Some((String::new(), String::new()));
+    }
     match cache::get(node, &link, &account).await {
         Ok(body) => Some(body),
-        Err(error) => {
-            node.log.line(format_args!("reading the skills of {account}: {error}"));
+        Err(failed) => {
+            if failed.news {
+                node.log.line(format_args!("reading the skills of {account}: {}", failed.error));
+            }
             None
         }
     }

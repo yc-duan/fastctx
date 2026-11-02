@@ -58,7 +58,7 @@ pub(crate) async fn found(
     crate::speech::bind(node, &resident.id, directory, handover, &turn)
         .await
         .map_err(|failure| std::io::Error::other(failure.message))?;
-    if crate::delivery::terminal(directory, &turn)?.is_none() {
+    if crate::delivery::terminal_header(directory, &turn).await?.is_none() {
         // Nothing runs it now: its app-server went with the node before.
         let restarted = format!("the node on {} restarted while it ran", node.machine());
         let end = match submitted.end {

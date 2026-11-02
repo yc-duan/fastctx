@@ -24,7 +24,7 @@ pub(super) fn admit(directory: &Path, total: usize) -> io::Result<Result<(), Str
         Some(kept) => kept,
         None => {
             let mut legacy = None;
-            for entry in std::fs::read_dir(directory)? {
+            for entry in fastctx_platform::disk::read_dir(directory)? {
                 let entry = entry?;
                 let name = entry.file_name();
                 let Some(name) = name.to_str() else { continue };

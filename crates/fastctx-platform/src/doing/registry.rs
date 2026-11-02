@@ -7,6 +7,7 @@ use std::sync::{Arc, LazyLock, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use super::Rank;
+use crate::readings::Timing;
 
 static NEXT: AtomicU64 = AtomicU64::new(1);
 static STATE: LazyLock<Mutex<State>> = LazyLock::new(Mutex::default);
@@ -88,12 +89,35 @@ pub(super) struct Lock<'a> {
     pub rank: Rank,
     pub name: &'static str,
     pub subject: &'a Arc<str>,
+    /// How long it is held each time, under its name.
+    pub held: &'static Timing,
+    /// Over many units at once (`SyncMutex::shared`).
+    pub shared: bool,
+}
+
+/// How long a lock over many units may be held at once before that is a
+/// violation. The foundation asks for 10 milliseconds at most; the mark is
+/// the slow poll's, as a small server's neighbours can take the CPU from a
+/// holder for longer than 10 (`crate::task`).
+const SHARED_HOLD: Duration = Duration::from_millis(50);
+
+/// The holds of every lock over many units, together.
+fn shared_holds() -> &'static Timing {
+    static SHARED: LazyLock<&'static Timing> = LazyLock::new(|| crate::readings::timing("locks.shared"));
+    &SHARED
+}
+
+/// The timing of the holds of the locks named `name`.
+pub(super) fn holds(name: &str) -> &'static Timing {
+    crate::readings::timing_of("lock", name)
 }
 
 /// A task waiting for a lock; it holds the lock once `held` is called, and
 /// stops waiting when dropped first, as when its future is dropped.
 pub(super) struct Wait {
     token: u64,
+    held: &'static Timing,
+    shared: bool,
 }
 
 impl Wait {
@@ -114,6 +138,7 @@ impl Wait {
     fn start(lock: Lock<'_>, alone: bool, who: Option<Who>) -> Self {
         let label = super::label();
         let token = next();
+        let (held, shared) = (lock.held, lock.shared);
         let mut state = state();
         if let Some(who) = who {
             // Locks of one place are taken in the order of their subjects,
@@ -154,21 +179,22 @@ impl Wait {
                 progress: Instant::now(),
             },
         );
-        Self { token }
+        Self { token, held, shared }
     }
 
     /// The lock is taken: what was a wait is now held, until the returned
     /// hold is dropped.
     pub fn held(self) -> Hold {
+        let since = Instant::now();
         let mut state = state();
-        let token = self.token;
+        let (token, held, shared) = (self.token, self.held, self.shared);
         std::mem::forget(self);
         if let Some(mut entry) = state.waiting.remove(&token) {
-            entry.since = Instant::now();
-            entry.progress = entry.since;
+            entry.since = since;
+            entry.progress = since;
             state.held.insert(token, entry);
         }
-        Hold { token }
+        Hold { token, since, held, shared }
     }
 }
 
@@ -182,6 +208,8 @@ impl Drop for Wait {
 /// as taking it cannot wait on anyone.
 pub(super) fn taken(lock: Lock<'_>, alone: bool) -> Hold {
     let token = next();
+    let since = Instant::now();
+    let (held, shared) = (lock.held, lock.shared);
     state().held.insert(
         token,
         Entry {
@@ -192,11 +220,11 @@ pub(super) fn taken(lock: Lock<'_>, alone: bool) -> Hold {
             subject: lock.subject.clone(),
             alone,
             label: super::label(),
-            since: Instant::now(),
-            progress: Instant::now(),
+            since,
+            progress: since,
         },
     );
-    Hold { token }
+    Hold { token, since, held, shared }
 }
 
 /// What the task keeping others from `lock` is doing: one holding it alone,
@@ -214,9 +242,13 @@ pub(super) fn keeping(lock: u64) -> Option<Arc<str>> {
     of(&state.held, true).or_else(|| of(&state.waiting, true)).or_else(|| of(&state.held, false))
 }
 
-/// A ranked lock held; dropping it lets the registry forget it.
+/// A ranked lock held; dropping it lets the registry forget it, and times
+/// how long it was held.
 pub(super) struct Hold {
     token: u64,
+    since: Instant,
+    held: &'static Timing,
+    shared: bool,
 }
 
 impl Hold {
@@ -231,7 +263,17 @@ impl Hold {
 
 impl Drop for Hold {
     fn drop(&mut self) {
-        state().held.remove(&self.token);
+        let took = self.since.elapsed();
+        self.held.record(took);
+        let entry = state().held.remove(&self.token);
+        if self.shared {
+            shared_holds().record(took);
+            if took > SHARED_HOLD
+                && let Some(entry) = entry
+            {
+                crate::conduct::held_long(entry.name, &entry.label, took);
+            }
+        }
     }
 }
 

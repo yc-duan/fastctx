@@ -49,7 +49,7 @@ impl Residents {
     /// command, a call of its session. What it refuses was not done.
     pub fn active(&self, id: &ResidentId) -> Result<(), Failure> {
         self.stoppable(id)?;
-        if self.lock().deleting.contains_key(id) {
+        if self.is_deleting(id) {
             return Err(Failure::not_run(format!("{id} is being deleted")));
         }
         Ok(())
@@ -75,7 +75,14 @@ impl Residents {
     }
 
     pub fn is_deleting(&self, id: &ResidentId) -> bool {
-        self.lock().deleting.contains_key(id)
+        let state = self.lock();
+        state.deleting.contains_key(id) || state.condemned.contains(id)
+    }
+
+    /// Marks `id` as deleted for good: its deletion went past what can be
+    /// undone, and it takes nothing new until the node has finished it.
+    pub(crate) fn condemn(&self, id: &ResidentId) {
+        self.lock().condemned.insert(id.clone());
     }
 
     /// When the conversation of `id` was deleted from this machine, if it
@@ -92,6 +99,10 @@ impl Residents {
     /// Every conversation deleted from this machine lately.
     pub fn tombstones(&self) -> Vec<(ResidentId, super::Tombstone)> {
         self.lock().tombstones.all().map(|(id, tombstone)| (id.clone(), tombstone.clone())).collect()
+    }
+
+    pub(crate) fn archived_revision(&self, id: &ResidentId) -> Option<u64> {
+        self.lock().live.get(id).filter(|live| live.removed.is_some()).map(|live| live.availability_revision)
     }
 
     pub fn removed(&self, id: &ResidentId) -> Option<Timestamp> {
@@ -113,7 +124,6 @@ impl Residents {
     /// back into an arrival. Returns its directory, where its records stay.
     pub fn remove(&self, world: &WorldDir, id: &ResidentId) -> io::Result<String> {
         let mut state = self.lock();
-        let _transaction = crate::resident_storage::lock();
         let live = state.live.get_mut(id).ok_or_else(|| io::Error::other("unknown resident"))?;
         let directory = world.conversation(id);
         if live.removed.is_none() {
@@ -130,6 +140,8 @@ impl Residents {
                 }
                 Err(error) => return Err(error),
             }
+            live.availability_revision =
+                live.availability_revision.checked_add(1).expect("resident availability revision exhausted");
         }
         Ok(crate::world::native(directory.path()))
     }
@@ -137,14 +149,20 @@ impl Residents {
     /// Brings back a resident the user archived: it is listed again, its
     /// session may use World tools and be woken again.
     pub fn restore(&self, world: &WorldDir, id: &ResidentId) -> io::Result<()> {
+        if !self.knows(id) {
+            return Err(io::Error::other("unknown resident"));
+        }
+        crate::books::resume(&world.conversation(id))?;
         let mut state = self.lock();
-        let _transaction = crate::resident_storage::lock();
         let live = state.live.get_mut(id).ok_or_else(|| io::Error::other("unknown resident"))?;
-        match std::fs::remove_file(world.conversation(id).removed()) {
+        match fastctx_platform::disk::remove_file(world.conversation(id).removed()) {
             Err(error) if error.kind() != io::ErrorKind::NotFound => return Err(error),
             _ => {}
         }
-        live.removed = None;
+        if live.removed.take().is_some() {
+            live.availability_revision =
+                live.availability_revision.checked_add(1).expect("resident availability revision exhausted");
+        }
         Ok(())
     }
 
@@ -166,6 +184,7 @@ impl Residents {
             sessions.push(session.clone());
         }
         state.tombstones.bury(world, id, super::Tombstone { at: Timestamp::now(), sessions })?;
+        state.condemned.remove(id);
         if let Some(session) = &session {
             if state.threads.get::<ResidentId>(session).as_ref() == Some(id) {
                 state.threads.remove(session);

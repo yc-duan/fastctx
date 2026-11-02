@@ -24,7 +24,7 @@ mod lifetime;
 
 pub(crate) use lifetime::expire;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -53,6 +53,7 @@ const LIVE: usize = 8192;
 #[derive(Default)]
 pub(crate) struct Pairing {
     registered: HashMap<u64, Registration>,
+    by_session: HashMap<(MachineName, u64), HashSet<u64>>,
     waiting: HashMap<u64, WaitingEnd>,
     live: HashMap<u64, Live>,
 }
@@ -104,7 +105,7 @@ pub(crate) fn register(hub: &Hub, ticket: &Ticket, standing: &Standing, by: &Mac
     // it are.
     let (source, sink) = {
         let store = hub.store();
-        let directory = &store.book.directory;
+        let directory = store.indexed();
         (directory.canonical(&ticket.source).clone(), directory.canonical(&ticket.sink).clone())
     };
     let mut pairing = hub.data.lock().expect("never poisoned");
@@ -128,7 +129,8 @@ pub(crate) fn register(hub: &Hub, ticket: &Ticket, standing: &Standing, by: &Mac
     }
     let owner = (by.clone(), generation);
     if !registration.by.contains(&owner) {
-        registration.by.push(owner);
+        registration.by.push(owner.clone());
+        pairing.by_session.entry(owner).or_default().insert(ticket.stream);
     }
 }
 
@@ -141,11 +143,23 @@ pub(crate) fn forget(hub: &Hub, stream: u64, why: &str) {
 }
 
 impl Pairing {
+    fn delete_registration(&mut self, stream: u64) {
+        if let Some(registration) = self.registered.remove(&stream) {
+            for owner in registration.by {
+                if let Some(streams) = self.by_session.get_mut(&owner) {
+                    streams.remove(&stream);
+                    if streams.is_empty() {
+                        self.by_session.remove(&owner);
+                    }
+                }
+            }
+        }
+    }
     fn forget(&mut self, stream: u64, why: &str) {
         if self.live.contains_key(&stream) {
             return;
         }
-        self.registered.remove(&stream);
+        self.delete_registration(stream);
         if let Some(waiting) = self.waiting.remove(&stream) {
             let _ = waiting.called_off.send(why.to_string());
         }
@@ -165,15 +179,19 @@ impl Pairing {
 /// paired yet; an end waiting for the other end of one is told so.
 pub(crate) fn member_left(hub: &Hub, name: &MachineName, generation: u64) {
     let mut pairing = hub.data.lock().expect("never poisoned");
-    let Pairing { registered, live, waiting } = &mut *pairing;
-    registered.retain(|stream, registration| {
-        registration.by.retain(|by| *by != (name.clone(), generation));
-        let kept = live.contains_key(stream) || !registration.by.is_empty();
-        if !kept && let Some(waiting) = waiting.remove(stream) {
-            let _ = waiting.called_off.send(format!("{name}, whose call it goes with, left the hub"));
+    let owner = (name.clone(), generation);
+    let streams = pairing.by_session.remove(&owner).unwrap_or_default();
+    for stream in streams {
+        let empty = if let Some(registration) = pairing.registered.get_mut(&stream) {
+            registration.by.retain(|by| *by != owner);
+            registration.by.is_empty()
+        } else {
+            false
+        };
+        if empty && !pairing.live.contains_key(&stream) {
+            pairing.forget(stream, &format!("{name}, whose call it goes with, left the hub"));
         }
-        kept
-    });
+    }
 }
 
 /// Cuts every pair whose standing lapsed, and calls off the ends waiting
@@ -190,14 +208,26 @@ pub(crate) fn cut_streams(hub: &Hub) {
     };
     let lapsed: Vec<(u64, String)> = {
         let store = hub.store();
-        let directory = &store.book.directory;
+        let directory = store.indexed();
         standings
             .into_iter()
             .filter_map(|(stream, standings)| {
                 standings
                     .iter()
                     .find_map(|standing| {
-                        directory.admits(&standing.from, &standing.account, &standing.to, standing.purpose).err()
+                        standing.identity_changed(&store).or_else(|| {
+                            directory
+                                .authorize(
+                                    &standing.account,
+                                    fastctx_net::authorization::Action::Call {
+                                        from: &standing.from,
+                                        to: &standing.to,
+                                        purpose: standing.purpose,
+                                    },
+                                )
+                                .err()
+                                .map(|error| error.message)
+                        })
                     })
                     .map(|why| (stream, why))
             })
@@ -208,7 +238,7 @@ pub(crate) fn cut_streams(hub: &Hub) {
         if let Some(cut) = pairing.live.get_mut(&stream).and_then(|live| live.cut.take()) {
             let _ = cut.send(why);
         } else if !pairing.live.contains_key(&stream) {
-            pairing.registered.remove(&stream);
+            pairing.delete_registration(stream);
             if let Some(waiting) = pairing.waiting.remove(&stream) {
                 let _ = waiting.called_off.send(format!("the right its call was made under was taken back: {why}"));
             }
@@ -296,7 +326,7 @@ pub(crate) async fn end(
                         pairing.live.insert(stream, Live { serial: waiting.serial, standings, cut: Some(cut) });
                         first.hand_over.send((socket, cutting)).map_err(|(socket, _)| {
                             pairing.live.remove(&stream);
-                            pairing.registered.remove(&stream);
+                            pairing.delete_registration(stream);
                             (socket, "the other end left".to_string())
                         })
                     }

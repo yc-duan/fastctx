@@ -31,7 +31,7 @@ impl Guard {
     /// Cancelling the waiter leaves the place with the queued or running closure.
     pub(crate) async fn run<T: Send + 'static>(&self, work: impl FnOnce() -> T + Send + 'static) -> Result<T, Failure> {
         let place = self.0.clone();
-        tokio::task::spawn_blocking(move || {
+        fastctx_platform::task::spawn_blocking(move || {
             let _place = place;
             work()
         })

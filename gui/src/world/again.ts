@@ -64,25 +64,101 @@ export function whyOf(error: unknown): string {
   return String(error);
 }
 
+/** How long an answer is waited for before what was asked stands as not
+ *  known to be done (`specs/world-foundation.md`, 宪法第十一条). A specimen
+ *  of a development build asks for less with `?late=<milliseconds>`, to
+ *  show what comes after. */
+export const ANSWER_WITHIN =
+  (import.meta.env.DEV && Number(new URLSearchParams(location.search).get("late"))) || 2 * 60_000;
+
+/** What an answer that did not come within `ANSWER_WITHIN` says: what was
+ *  asked may or may not be done (`app/problem.ts` says it plainly). */
+export class Unanswered extends Error {
+  constructor() {
+    super("no answer came within two minutes; it may or may not have been done");
+  }
+}
+
+/** `asked`, or `Unanswered` once `ANSWER_WITHIN` passes without its answer:
+ *  for what is asked once, so that waiting for it ends. */
+export function within<T>(asked: Promise<T>): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const due = window.setTimeout(() => reject(new Unanswered()), ANSWER_WITHIN);
+    asked.then(
+      (value) => {
+        clearTimeout(due);
+        resolve(value);
+      },
+      (error: unknown) => {
+        clearTimeout(due);
+        reject(error);
+      },
+    );
+  });
+}
+
+/** A call made until it is answered (`untilAnswered`). */
+export interface Asked<T> {
+  answered: Promise<T>;
+  /** Calls it off: no try is made after, and an answer that comes is not
+   *  heard. */
+  stop(): void;
+}
+
 /** Makes `call` until an answer comes: a call that got none is made again,
  *  as the same call, and `waiting` hears why each time. An answer that
  *  refuses ends it. It goes on while the page that made it is gone: words
  *  the user said still go in once the way is open. `machine` is where the
- *  call goes. */
-export function untilAnswered<T>(call: () => Promise<T>, waiting: (why: string) => void, machine: MachineName | null = null): Promise<T> {
-  return new Promise((resolve, reject) => {
+ *  call goes. With no answer within `ANSWER_WITHIN`, `late` hears why once:
+ *  what was asked may or may not be done. The same call is still made when
+ *  the way opens, and `waiting` hears no more. */
+export function untilAnswered<T>(
+  call: () => Promise<T>,
+  waiting: (why: string) => void,
+  machine: MachineName | null = null,
+  late?: (why: string) => void,
+): Asked<T> {
+  let stopped = false;
+  let off: (() => void) | null = null;
+  let deadline: number | undefined;
+  const answered = new Promise<T>((resolve, reject) => {
     let tries = 0;
+    let why = "";
+    let past = false;
+    deadline = window.setTimeout(() => {
+      past = true;
+      if (!stopped) late?.(why);
+    }, ANSWER_WITHIN);
     const attempt = () => {
+      if (stopped) return;
       tries += 1;
-      call().then(resolve, (error: unknown) => {
-        if (!unanswered(error)) {
-          reject(error);
-          return;
-        }
-        waiting(whyOf(error));
-        after(tries + 1, attempt, machine);
-      });
+      call().then(
+        (value) => {
+          if (stopped) return;
+          clearTimeout(deadline);
+          resolve(value);
+        },
+        (error: unknown) => {
+          if (stopped) return;
+          if (!unanswered(error)) {
+            clearTimeout(deadline);
+            reject(error);
+            return;
+          }
+          why = whyOf(error);
+          if (!past) waiting(why);
+          off = after(tries + 1, attempt, machine);
+        },
+      );
     };
     attempt();
   });
+  return {
+    answered,
+    stop: () => {
+      stopped = true;
+      clearTimeout(deadline);
+      off?.();
+    },
+  };
 }

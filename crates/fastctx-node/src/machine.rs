@@ -33,7 +33,7 @@ impl MachineFile {
 /// use.
 pub fn names(world: &WorldDir) -> io::Result<MachineFile> {
     let path = world.machine_file();
-    match std::fs::read(&path) {
+    match fastctx_platform::disk::read(&path) {
         Ok(bytes) => serde_json::from_slice(&bytes)
             .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, format!("{}: {error}", path.display()))),
         Err(error) if error.kind() == io::ErrorKind::NotFound => {

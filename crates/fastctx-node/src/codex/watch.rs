@@ -36,7 +36,7 @@ pub fn recorded(recorded: Vec<SessionEvent>, hosted: &[SessionEvent]) -> Vec<Ses
 
 pub fn requests(host: Arc<CodexHost>, thread: String, mut events: Events) -> Events {
     let (sender, receiver) = watch_queue::events();
-    tokio::spawn(async move {
+    fastctx_platform::task::spawn(async move {
         loop {
             tokio::select! {
                 event = events.recv() => {

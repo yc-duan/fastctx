@@ -53,7 +53,7 @@ pub fn send(node: &Node, acting: &Acting, to: &Written, id: NoticeId, letter: Le
     post(node, acting, to, id, letter).map(|_| ())
 }
 
-#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub(crate) struct Posted {
     hub: fastctx_types::access::HubId,
     parts: Vec<fastctx_net::link::Posted>,

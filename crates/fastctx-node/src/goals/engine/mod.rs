@@ -1,11 +1,12 @@
 //! Drives durable goal decisions without holding shared locks across outside work.
 
-mod checkpoint;
-mod compaction;
+pub(crate) mod checkpoint;
+pub(crate) mod compaction;
 mod driver;
 mod effects;
 mod judging;
 mod material_size;
+mod material_store;
 mod materials;
 mod policy;
 mod returned;
@@ -106,11 +107,11 @@ fn generation(node: &Node, id: &ResidentId) -> String {
     format!("{}:{}:{revision}", node.goals.engine.epoch, reading.generation)
 }
 
-pub(crate) fn timing(node: &Node, id: &ResidentId, view: &View) -> Result<(), Failure> {
+pub(crate) async fn timing(node: &Node, id: &ResidentId, view: &View) -> Result<(), Failure> {
     let table = crate::timers::table(node)?;
     let key = format!("goal:{id}");
     let owner = Owner::Goal { resident: id.clone() };
-    let current = table.get(&key);
+    let current = table.get(&key).await.map_err(failure)?;
     if current.as_ref().is_some_and(|timer| timer.owner != owner) {
         return Err(Failure::new("the goal's timer ID belongs to another owner"));
     }
@@ -125,17 +126,17 @@ pub(crate) fn timing(node: &Node, id: &ResidentId, view: &View) -> Result<(), Fa
             .as_ref()
             .is_none_or(|timer| timer.delivery != work.id || timer.due != work.due || timer.action != action)
         {
-            table.set(key, owner, work.due, action, work.id.clone()).map_err(failure)?;
+            table.set(key, owner, work.due, action, work.id.clone()).await.map_err(failure)?;
         }
     } else if current.is_some() {
-        table.cancel(&key).map_err(failure)?;
+        table.cancel(&key).await.map_err(failure)?;
     }
     Ok(())
 }
 
 pub(crate) fn start(node: &Arc<Node>) {
     let node = node.clone();
-    tokio::spawn(async move {
+    fastctx_platform::task::spawn(async move {
         let mut changed = node.goals.changed.subscribe();
         let mut residents = node.residents.changes();
         let mut tick = tokio::time::interval(Duration::from_secs(30));
@@ -178,7 +179,7 @@ fn schedule(node: &Arc<Node>, id: ResidentId) {
         workers.insert(id.clone(), false);
     }
     let node = node.clone();
-    tokio::spawn(async move {
+    fastctx_platform::task::spawn(async move {
         loop {
             let result = driver::reconcile(&node, &id).await;
             {
@@ -219,6 +220,7 @@ async fn commit(node: &Arc<Node>, view: &View, mut decision: policy::Decision) -
     let resident = decision.goal.resident.clone();
     let directory = node.world.owner(&node.names(), &resident);
     let mut intent = intents::Intent {
+        access: None,
         operation: operation.clone(),
         input_hash: operation,
         resident: resident.clone(),
@@ -228,7 +230,7 @@ async fn commit(node: &Arc<Node>, view: &View, mut decision: policy::Decision) -
         at,
         phase: intents::Phase::Prepared,
     };
-    intents::keep(&directory, &intent).map_err(failure)?;
+    intents::keep(node, &directory, &intent).await.map_err(failure)?;
     super::recovery::schedule(node, resident);
     match operations::finish(node, &mut intent).await? {
         Updated::Goal { .. } => Ok(()),

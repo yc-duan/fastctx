@@ -56,7 +56,7 @@ pub(crate) fn normalize(path: &Path, incoming: Skill) -> Result<Skill, String> {
         return fastctx_types::skill_files::from_files(files);
     }
     incoming.validate()?;
-    let old = match std::fs::read(path) {
+    let old = match fastctx_platform::disk::read(path) {
         Ok(bytes) => {
             let record: Record = serde_json::from_slice(&bytes).map_err(|error| error.to_string())?;
             if record.metadata.deleted {
@@ -84,7 +84,7 @@ pub(crate) fn intent(slot: &Slot) -> PathBuf {
 
 pub(crate) fn recover(slot: &Slot, account: &mut Account) -> Result<Vec<Metadata>, String> {
     let path = intent(slot);
-    let bytes = match std::fs::read(&path) {
+    let bytes = match fastctx_platform::disk::read(&path) {
         Ok(bytes) => bytes,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
         Err(error) => return Err(error.to_string()),
@@ -104,9 +104,12 @@ pub(crate) fn recover(slot: &Slot, account: &mut Account) -> Result<Vec<Metadata
         let identity = (record.metadata.kind.clone(), record.metadata.key.clone());
         let before = account.entries.get(&identity).map_or(0, |entry| entry.size);
         account.bytes = account.bytes - before + bytes.len();
-        account.entries.insert(identity, Entry { metadata: record.metadata.clone(), size: bytes.len() });
+        account.entries.insert(
+            identity,
+            Entry { metadata: record.metadata.clone(), size: bytes.len(), history: None, conversation: None },
+        );
     }
-    std::fs::remove_file(path).map_err(|error| error.to_string())?;
+    fastctx_platform::disk::remove_file(path).map_err(|error| error.to_string())?;
     slot.count.store(account.entries.len(), std::sync::atomic::Ordering::Relaxed);
     slot.bytes.store(account.bytes, std::sync::atomic::Ordering::Relaxed);
     Ok(records.into_iter().map(|record| record.metadata).collect())

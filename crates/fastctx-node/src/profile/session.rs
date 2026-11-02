@@ -12,7 +12,7 @@ use std::collections::BTreeSet;
 use std::sync::Arc;
 
 fn write_session_file(path: &std::path::Path, bytes: &[u8]) -> std::io::Result<()> {
-    match std::fs::read(path) {
+    match fastctx_platform::disk::read(path) {
         Ok(held) if held == bytes => return Ok(()),
         Ok(_) => {}
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
@@ -128,6 +128,17 @@ pub(crate) fn codex(
     Ok(names)
 }
 
+pub(crate) async fn load_claude(
+    node: &Arc<Node>,
+    id: &ResidentId,
+    creating: bool,
+) -> Result<std::path::PathBuf, Failure> {
+    let (node, id) = (node.clone(), id.clone());
+    fastctx_platform::task::spawn_blocking(move || claude(&node, &id, creating))
+        .await
+        .map_err(|error| Failure::new(error.to_string()))?
+}
+
 pub(crate) fn claude(node: &Node, id: &ResidentId, creating: bool) -> Result<std::path::PathBuf, Failure> {
     let (about, _) = node.residents.about(id).ok_or_else(|| Failure::new("unknown conversation"))?;
     let directory = node.world.conversation(id);
@@ -167,7 +178,7 @@ pub(crate) fn claude(node: &Node, id: &ResidentId, creating: bool) -> Result<std
     }
     write_session_file(&directory.claude_settings(), &serde_json::to_vec_pretty(&settings).unwrap())
         .map_err(|e| Failure::new(e.to_string()))?;
-    if creating || mcp.is_file() {
+    if creating || fastctx_platform::disk::is_file(&mcp) {
         let mut servers = servers(node, id, &about.acting, &options.mcp_off, false);
         if assisting {
             // Strict mode excludes login and plugin servers; include the
@@ -189,7 +200,7 @@ pub(crate) fn claude(node: &Node, id: &ResidentId, creating: bool) -> Result<std
     // A session Claude Code never paired has no directory to bring up to date.
     if let Some(session) = &about.session {
         let directory = fastctx_hosts::claude::exchange::sessions(node.world.path()).join(session);
-        if directory.is_dir() {
+        if fastctx_platform::disk::is_dir(&directory) {
             hand_to_session(node, id, &directory).map_err(|e| Failure::new(e.to_string()))?;
         }
     }
@@ -200,12 +211,27 @@ pub(crate) fn claude(node: &Node, id: &ResidentId, creating: bool) -> Result<std
 /// already: once its records are gathered into the conversation, that path
 /// is the room's alias, which is made private as the room is.
 pub(crate) fn hand_to_session(node: &Node, id: &ResidentId, session: &std::path::Path) -> std::io::Result<()> {
-    crate::context::refresh_local(node, id)?;
+    crate::context::refresh_local_now(node, id)?;
     crate::context::hand_to_session(node, id, session)
 }
 
-pub(crate) async fn refresh(node: &Arc<Node>) {
-    for resident in node.residents.everyone() {
+/// How long after a refresh that found conversations busy, or could not
+/// collect the MCP commands given up, those are tried again.
+const AGAIN: std::time::Duration = std::time::Duration::from_secs(15);
+
+/// Brings the sessions' configuration of `only`'s conversations, or of every
+/// conversation, in line with the accounts' profiles. Returns those busy at
+/// the time, to be tried again.
+async fn refresh(node: &Arc<Node>, only: Option<&BTreeSet<ResidentId>>) -> Result<BTreeSet<ResidentId>, Failure> {
+    let (reading, only) = (node.clone(), only.cloned());
+    let residents: Vec<_> = fastctx_platform::task::spawn_blocking(move || match only {
+        None => reading.residents.everyone().collect(),
+        Some(ids) => ids.iter().filter_map(|id| reading.residents.on_record(id)).collect(),
+    })
+    .await
+    .map_err(|error| Failure::new(error.to_string()))?;
+    let mut busy = BTreeSet::new();
+    for resident in residents {
         if resident.removed.is_some() || !resident.about.world_started {
             continue;
         }
@@ -213,42 +239,76 @@ pub(crate) async fn refresh(node: &Arc<Node>) {
             continue;
         };
         let Ok(_held) = tokio::time::timeout(std::time::Duration::from_millis(1), gate.read()).await else {
+            busy.insert(resident.id.clone());
             continue;
         };
         if node.residents.active(&resident.id).is_err() {
             continue;
         }
         if resident.about.host.agent.as_str() == "claude" {
-            if let Err(e) = claude(node, &resident.id, false) {
+            if let Err(e) = load_claude(node, &resident.id, false).await {
                 node.log.line(format_args!("updating {}'s user configuration: {e}", resident.id));
             }
         } else if resident.about.host.agent.as_str() == "codex" {
             crate::codex::moved(node, &resident.id).await;
         }
     }
+    Ok(busy)
 }
 
+/// Collects the MCP commands each hub's profiles gave up; whether all of
+/// them were.
+fn sweep(node: &Node) -> bool {
+    let mut swept = true;
+    for link in node.links() {
+        let result = if matches!(link.status(), fastctx_net::link::Status::Stopped { .. }) {
+            crate::mcp::store::leave(node, &link.membership().id)
+        } else {
+            crate::mcp::store::sweep(node, &link.membership().id)
+        };
+        if let Err(error) = result {
+            node.log.line(format_args!("collecting MCP commands: {error}"));
+            swept = false;
+        }
+    }
+    swept
+}
+
+/// Follows the accounts' profiles as the views and ways change: every
+/// conversation when they do, and only those found busy, or the commands
+/// left uncollected, a while later.
 pub(crate) fn start(node: &Arc<Node>) {
     let node = node.clone();
-    tokio::spawn(async move {
+    fastctx_platform::task::spawn(async move {
         let mut views = node.views.subscribe();
         let mut ways = node.ways.subscribe();
+        let (mut busy, mut swept, mut all) = (BTreeSet::new(), true, true);
         loop {
-            refresh(&node).await;
-            for link in node.links() {
-                let result = if matches!(link.status(), fastctx_net::link::Status::Stopped { .. }) {
-                    crate::mcp::store::leave(&node, &link.membership().id)
-                } else {
-                    crate::mcp::store::sweep(&node, &link.membership().id)
-                };
-                if let Err(error) = result {
-                    node.log.line(format_args!("collecting MCP commands: {error}"));
+            let failed = match refresh(&node, (!all).then_some(&busy)).await {
+                Ok(updated) => {
+                    busy = updated;
+                    false
                 }
+                Err(error) => {
+                    node.log.line(format_args!("refreshing session configurations: {error}"));
+                    true
+                }
+            };
+            if all || !swept {
+                let collecting = node.clone();
+                swept = match fastctx_platform::task::spawn_blocking(move || sweep(&collecting)).await {
+                    Ok(swept) => swept,
+                    Err(error) => {
+                        node.log.line(format_args!("collecting session configurations: {error}"));
+                        false
+                    }
+                };
             }
-            tokio::select! {
-                _=views.changed()=>{}, _=ways.changed()=>{},
-                _=tokio::time::sleep(std::time::Duration::from_secs(60))=>{},
-            }
+            all = tokio::select! {
+                _ = views.changed() => true,
+                _ = ways.changed() => true,
+                () = tokio::time::sleep(AGAIN), if failed || !busy.is_empty() || !swept => failed,
+            };
         }
     });
 }

@@ -86,7 +86,7 @@ fn ask(
     before: Option<Result<MachineFacts, String>>,
 ) {
     let (node, link) = (node.clone(), link.clone());
-    tokio::spawn(async move {
+    fastctx_platform::task::spawn(async move {
         let answer = match link.call(&name, &account, Purpose::Look, RemoteCall::Facts).await {
             Ok(Ok(RemoteReply::Facts(facts))) => Ok(facts),
             Ok(Ok(_)) => Err("it answered something else".to_string()),
@@ -113,7 +113,7 @@ fn ask(
 
 fn read(node: &Node, hub: &HubId) -> BTreeMap<MachineName, Kept> {
     let path = crate::world::hub_dir(&node.world, hub).join(FILE);
-    match std::fs::read(&path) {
+    match fastctx_platform::disk::read(&path) {
         Ok(bytes) => serde_json::from_slice(&bytes).unwrap_or_else(|error| {
             node.log.line(format_args!("reading {}: {error}; the machines are asked again", path.display()));
             BTreeMap::new()

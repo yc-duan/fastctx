@@ -30,6 +30,9 @@ pub struct RunFacts {
     /// What it did through the World's own commands, in the order told.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub steps: Vec<RunStep>,
+    /// Older step details folded into counts; complete journals remain on the executor.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub folded_steps: Vec<StepSummary>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

@@ -71,7 +71,7 @@ fn read_files(files: Vec<(Source, PathBuf)>) -> Result<Vec<(Found, Server)>, Str
         if !seen.insert(path.clone()) {
             continue;
         }
-        let text = match std::fs::read_to_string(&path) {
+        let text = match fastctx_platform::disk::read_to_string(&path) {
             Ok(text) => text,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
             Err(e) => return Err(format!("reading {}: {e}", path.display())),

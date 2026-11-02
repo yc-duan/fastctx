@@ -14,15 +14,17 @@ import { loginsOf } from "../world/accounts";
 import type { WorldNow } from "../world/bridge";
 import { compareVersions, type MachineUpdate, type UpdateCall, type UpdatesView, type UpdatesViewCall, type UpdatesViewReply, type UpdateState } from "../world/updates";
 import type { AccessWords } from "./account-words";
+import type { Confirm } from "./confirm";
 import type { UpdatesNow } from "./machine-list";
-import { detailOf } from "./problem";
+import { detailOf, known } from "./problem";
 import { machinesOf } from "./reach";
 import type { Signal } from "./signals";
+import { RolloutWindow, type RolloutHost, type RolloutNow } from "./rollout-window";
 import { rulerOf } from "./update-ruler";
 import { lineOf } from "./update-marks";
 import type { UpdateViewWords } from "./update-view-words";
 import type { UpdateWords } from "./update-words";
-import type { VersionWindow } from "./version-window";
+import type { RolloutPurpose, VersionWindow } from "./version-window";
 
 /** The network's update policy, as this device last heard it, and the words
  *  of setting it; what this device knows of releases and of the network's
@@ -35,6 +37,9 @@ export interface UpdatesAccess {
   ask(hub: string, account: string, call: UpdatesViewCall): Promise<UpdatesViewReply>;
   /** The window of versions, picking the network's lowest one, or none. */
   minimum(current: string | null, pick: (version: string | null) => void): void;
+  /** The window of versions, picking the release to roll out a batch at a
+   *  time, where releases are withdrawn and taken back. */
+  rollout(purpose: RolloutPurpose): void;
   state: Signal<UpdateState | null>;
   remote(machine: string, call: UpdateCall): Promise<UpdateState>;
   /** Has a machine of an earlier release update to the newest on its line. */
@@ -58,6 +63,8 @@ export interface UpdatesHost {
   failed(text: string | null): void;
   /** How wide the list the view is drawn in is. */
   width(): number;
+  /** Asks before what cannot be taken lightly: withdrawing a release. */
+  confirm: Confirm;
 }
 
 /** The first release that sets a machine's choices one by one
@@ -99,8 +106,13 @@ export class MachineUpdates {
   private readonly said = new Map<string, string>();
   /** Whether the network's policy is unfolded on a phone. */
   private policyOpen = false;
+  /** The sheet of a release going out, and the login whose hub it is. */
+  private readonly rollouts: RolloutWindow;
+  private rolloutKey: string | null = null;
 
-  constructor(private readonly host: UpdatesHost) {}
+  constructor(private readonly host: UpdatesHost) {
+    this.rollouts = new RolloutWindow(host.updates.view, host.updates.words.versions.close);
+  }
 
   /** What the hub says of a machine, as it is written here. */
   of(written: string): MachineUpdate | undefined {
@@ -186,6 +198,8 @@ export class MachineUpdates {
     this.bare = bare;
     this.old = !views.size && old;
     this.failure = views.size || old ? null : failed;
+    const rolling = this.rolloutKey === null ? null : this.rolloutOf(this.rolloutKey);
+    if (rolling) this.rollouts.update(rolling);
     // Drawn again as any change is: what is the same as it was is left as
     // it is, every few seconds while the view is open.
     this.host.draw();
@@ -195,11 +209,7 @@ export class MachineUpdates {
    *  updated, the ruler and the network's policy over them. */
   now(narrow: boolean): UpdatesNow {
     const words = this.host.updates.view;
-    const views = [...this.views.values()];
-    const newest = views.flatMap((view) => [view.stable?.version, view.beta?.version].filter((version): version is string => !!version));
-    const hub = views[0]?.hub ?? null;
-    const top = [...newest].sort(compareVersions).pop() ?? hub;
-    const line = lineOf(top);
+    const { newest, hub, line } = this.versionsNow();
     const policies = [...this.views.entries()].filter(([, view]) => view.policy);
     const policy = policies[0]?.[1].policy ?? null;
     const machines = [...this.byName.values()];
@@ -211,7 +221,21 @@ export class MachineUpdates {
     if (failure) head = `<p class="uv-old">${escape(failure)}</p>${head}`;
     else if (machines.length) {
       const width = Math.max(0, this.host.width() - (narrow ? 32 : 48));
-      head = rulerOf({ machines, newest, hub, minimum: policy?.minimum ?? null, line, width: width || 900, phone: narrow }, words);
+      const rollout = policy?.rollout ?? null;
+      head = rulerOf(
+        {
+          machines,
+          newest,
+          hub,
+          minimum: policy?.minimum ?? null,
+          rollout: rollout ? { version: rollout.version, share: rollout.share, paused: !!rollout.paused, stopped: !!rollout.stopped } : null,
+          withdrawn: new Set(policy?.withdrawn ?? []),
+          line,
+          width: width || 900,
+          phone: narrow,
+        },
+        words,
+      );
       if (policies.length) {
         // Each hub's own, its name first where there are several.
         const logins = loginsOf(this.host.world()?.accounts);
@@ -221,7 +245,13 @@ export class MachineUpdates {
             const minimum = one.minimum ?? null;
             const managed = one.managed_auto !== false;
             const hubName = policies.length > 1 ? (logins.find((login) => `${login.hub}\n${login.account}` === key)?.hubName ?? "") : "";
-            return `<div class="uv-policy">${hubName ? `<span class="uv-policy-hub">${escape(hubName)}</span>` : ""}<span class="uv-policy-item"><span>${escape(words.minimum)}</span><button class="uv-chip" type="button" data-uv-minimum="${escape(key)}"><span class="ml-num">${escape(minimum ?? words.noMinimum)}</span>${glyph("chevron", 12)}</button></span><span class="uv-policy-item"><span>${escape(words.managedAuto)}</span><span class="uv-auto${managed ? " on" : ""}" role="switch" aria-checked="${managed}" aria-label="${escape(words.managedAuto)}" data-uv-managed="${escape(key)}"><span class="switch-track"><span class="switch-knob"></span></span></span></span></div>`;
+            // The release going out a batch at a time, and how it stands.
+            const going = one.rollout;
+            const goingSaid = !going ? words.noRollout : going.stopped ? `${going.version} ${words.rolloutStopped}` : going.paused ? `${going.version} ${words.rolloutPaused}` : going.version;
+            const rolling = view.rollouts
+              ? `<span class="uv-policy-item"><span>${escape(words.rollout)}</span><button class="uv-chip${going?.stopped ? " caution" : ""}" type="button" data-uv-rollout="${escape(key)}"><span class="ml-num">${escape(goingSaid)}</span>${glyph("chevron", 12)}</button></span>`
+              : "";
+            return `<div class="uv-policy">${hubName ? `<span class="uv-policy-hub">${escape(hubName)}</span>` : ""}<span class="uv-policy-item"><span>${escape(words.minimum)}</span><button class="uv-chip" type="button" data-uv-minimum="${escape(key)}"><span class="ml-num">${escape(minimum ?? words.noMinimum)}</span>${glyph("chevron", 12)}</button></span>${rolling}<span class="uv-policy-item"><span>${escape(words.managedAuto)}</span><span class="uv-auto${managed ? " on" : ""}" role="switch" aria-checked="${managed}" aria-label="${escape(words.managedAuto)}" data-uv-managed="${escape(key)}"><span class="switch-track"><span class="switch-knob"></span></span></span></span></div>`;
           })
           .join("");
         // On a phone the policy is folded into one line until it is opened.
@@ -248,6 +278,11 @@ export class MachineUpdates {
     if (auto) {
       const machine = this.byName.get(auto);
       if (machine) void this.setWays([machine], !machine.auto, null);
+      return true;
+    }
+    const rolloutOf = target.closest<HTMLElement>("[data-uv-rollout]")?.dataset.uvRollout;
+    if (rolloutOf !== undefined) {
+      this.openRollout(rolloutOf);
       return true;
     }
     const minimumOf = target.closest<HTMLElement>("[data-uv-minimum]")?.dataset.uvMinimum;
@@ -278,7 +313,7 @@ export class MachineUpdates {
         try {
           await updates.remote(machine.machine, { do: "kernel", version });
         } catch (error) {
-          this.sayOnRow(machine.machine, words.notScheduled(error instanceof Error ? error.message : String(error)));
+          this.sayOnRow(machine.machine, plainly(error, words, words.notScheduled));
         }
       });
     }
@@ -319,7 +354,7 @@ export class MachineUpdates {
           else this.sayOnRow(written(result.machine), words.notScheduled(result.reason ? words.reasons[result.reason] : (result.why ?? words.reasons.other)));
         }
       } catch (error) {
-        for (const name of names) this.sayOnRow(written(name), words.notScheduled(error instanceof Error ? error.message : String(error)));
+        for (const name of names) this.sayOnRow(written(name), plainly(error, words, words.notScheduled));
       }
     }
   }
@@ -339,7 +374,7 @@ export class MachineUpdates {
         await updates.remote(machine.machine, call);
         this.said.delete(machine.machine);
       } catch (error) {
-        this.sayOnRow(machine.machine, error instanceof Error ? error.message : String(error));
+        this.sayOnRow(machine.machine, plainly(error, updates.view, (why) => why));
       }
     });
     await this.ask();
@@ -360,6 +395,104 @@ export class MachineUpdates {
     await this.ask();
   }
 
+  /** The newest releases the views tell of, the hub's own, and the line
+   *  they share. */
+  private versionsNow(): { newest: string[]; hub: string | null; line: string | null } {
+    const views = [...this.views.values()];
+    const newest = views.flatMap((view) => [view.stable?.version, view.beta?.version].filter((version): version is string => !!version));
+    const hub = views[0]?.hub ?? null;
+    const top = [...newest].sort(compareVersions).pop() ?? hub;
+    return { newest, hub, line: lineOf(top) };
+  }
+
+  /** What the rollout's sheet shows of the hub of the login `key`: its
+   *  policy, the machines it names first, and the computers it updates; a
+   *  phone takes its application's releases by itself. */
+  private rolloutOf(key: string): RolloutNow | null {
+    const view = this.views.get(key);
+    if (!view?.policy || !view.rollouts) return null;
+    const world = this.host.world();
+    const forms = new Map(world ? machinesOf(world).map((machine) => [machine.name, "Ok" in machine.facts ? machine.facts.Ok?.form : undefined]) : []);
+    return {
+      policy: view.policy,
+      first: view.rollout_first ?? [],
+      machines: view.machines.filter((machine) => machine.kind !== "phone"),
+      form: (name) => {
+        const form = forms.get(name);
+        return form === "laptop" ? "laptop" : form === "server" ? "server" : "desktop";
+      },
+      line: this.versionsNow().line,
+    };
+  }
+
+  /** Opens the sheet of the release going out, or first the window of
+   *  versions to pick one to roll out. */
+  private openRollout(key: string): void {
+    const now = this.rolloutOf(key);
+    if (!now) return;
+    this.rolloutKey = key;
+    if (now.policy.rollout) {
+      this.rollouts.open(now, this.rolloutHost(key));
+      return;
+    }
+    this.pickRollout(key, (version) => {
+      const fresh = this.rolloutOf(key);
+      if (fresh) this.rollouts.open(fresh, this.rolloutHost(key), version);
+    });
+  }
+
+  /** The window of versions on the release to roll out, where releases are
+   *  withdrawn and taken back too. */
+  private pickRollout(key: string, pick: (version: string) => void): void {
+    this.host.updates.rollout({
+      kind: "rollout",
+      rolling: this.views.get(key)?.policy?.rollout?.version ?? null,
+      withdrawn: () => new Set(this.views.get(key)?.policy?.withdrawn ?? []),
+      pick: async (version) => pick(version),
+      withdraw: (version, withdrawn, done) => this.withdraw(key, version, withdrawn, done),
+    });
+  }
+
+  private rolloutHost(key: string): RolloutHost {
+    return {
+      set: (version, first, share) => this.call(key, { do: "rollout", version, first, share }),
+      pause: (paused) => this.call(key, { do: "pause", paused }),
+      another: (_current, pick) => this.pickRollout(key, pick),
+      failed: (error) => {
+        const detail = detailOf(error);
+        return { said: this.host.access.failed(detail), why: detail };
+      },
+    };
+  }
+
+  /** Asks the hub of the login `key` to change how releases go out, then
+   *  reads the view again. */
+  private async call(key: string, call: UpdatesViewCall): Promise<void> {
+    const login = loginsOf(this.host.world()?.accounts).find((one) => `${one.hub}\n${one.account}` === key);
+    if (!login) throw new Error("the login is no longer on this device");
+    await this.host.updates.ask(login.hubName, login.account, call);
+    await this.ask();
+  }
+
+  /** Withdraws `version`, asked first, or takes it back at once. */
+  private withdraw(key: string, version: string, withdrawn: boolean, done: () => void): void {
+    const words = this.host.updates.words.versions;
+    if (!withdrawn) {
+      this.call(key, { do: "withdraw", version, withdrawn: false }).then(done, (error: unknown) => {
+        this.host.failed(this.host.access.failed(detailOf(error)));
+        this.host.draw();
+      });
+      return;
+    }
+    this.host.confirm.ask({
+      title: words.withdrawAsk(version),
+      what: words.withdrawWhat,
+      go: words.withdraw,
+      act: () => this.call(key, { do: "withdraw", version, withdrawn: true }),
+      done,
+    });
+  }
+
   /** Says `text` on a machine's row in the update view for a while. */
   private sayOnRow(name: string, text: string): void {
     this.said.set(name, text);
@@ -369,6 +502,13 @@ export class MachineUpdates {
       this.host.draw();
     }, SAID_MS);
   }
+}
+
+/** `error` as a machine's row says it: in plain words, the kernel's own on
+ *  a line of their own, for the pointer to rest on. */
+function plainly(error: unknown, words: UpdateViewWords, say: (why: string) => string): string {
+  const detail = detailOf(error);
+  return `${say(known(detail, words.problems) ?? words.reasons.other)}\n${detail}`;
 }
 
 /** Runs `each` over `items`, at most `width` at a time. */

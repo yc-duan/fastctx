@@ -75,6 +75,13 @@ pub async fn offers(
 /// Does `control` to a resident of this machine, through its host. Sessions
 /// the World does not hold (the user's own Codex in an app) take nothing.
 pub async fn control_here(node: &Arc<Node>, resident: &ResidentId, control: Control) -> Result<Controlled, Failure> {
+    // Its queue, its retries and what it tells are records, reached where
+    // that may block; a long control goes on in a task of its own.
+    let (node, resident) = (node.clone(), resident.clone());
+    crate::blocking::on(async move { control_here_now(&node, &resident, control).await }).await
+}
+
+async fn control_here_now(node: &Arc<Node>, resident: &ResidentId, control: Control) -> Result<Controlled, Failure> {
     node.ready_for(resident).await;
     let host = host_of(node, resident)?;
     let (about, _) = node.residents.about(resident).ok_or_else(|| Failure::new("unknown conversation"))?;
@@ -86,7 +93,7 @@ pub async fn control_here(node: &Arc<Node>, resident: &ResidentId, control: Cont
         if !told {
             return Err(failure);
         }
-        let row = crate::control_queue::begin(node, resident, &control)?;
+        let row = crate::control_queue::begin(node, resident, &control).await?;
         return crate::control_queue::end(node, resident, row, Err(failure)).await;
     }
     if let Control::CancelControl { id } = &control {
@@ -110,7 +117,7 @@ pub async fn control_here(node: &Arc<Node>, resident: &ResidentId, control: Cont
         }
         return execute(node, resident, control).await;
     }
-    let row = crate::control_queue::begin(node, resident, &control)?;
+    let row = crate::control_queue::begin(node, resident, &control).await?;
     if let Err(error) = crate::control_queue::prepare(node, resident, &row).await {
         return crate::control_queue::end(node, resident, row, Err(error)).await;
     }
@@ -174,7 +181,7 @@ pub async fn offers_here(node: &Arc<Node>, resident: &ResidentId) -> Result<Offe
         "Claude" => crate::claude::control::offers(node, resident).await?,
         _ => Offers::default(),
     };
-    offers.pending_controls = crate::control_queue::pending(node, resident)?;
+    offers.pending_controls = crate::control_queue::pending(node, resident).await?;
     offers.control_queue = true;
     offers.controls_told = true;
     offers.control_reply_envelope = true;

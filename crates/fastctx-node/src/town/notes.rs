@@ -6,7 +6,7 @@ use std::io;
 
 pub fn notes(node: &Node, id: &ResidentId) -> io::Result<(Vec<String>, Option<Heard>)> {
     let Some((_, town)) = node.residents.about(id) else { return Ok((Vec::new(), None)) };
-    crate::context::refresh_local(node, id)?;
+    crate::context::refresh_local_now(node, id)?;
     let (mut notes, mut receipt) = crate::context::collect(node, id)?;
     if node.residents.heard(id).is_none() {
         receipt.preceded_by_identity();

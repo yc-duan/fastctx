@@ -20,7 +20,8 @@ impl AccountRecords {
         node.link_of(&scope.hub).ok_or_else(|| Error::Unavailable("the account's network is not connected".into()))
     }
     async fn ask(&self, scope: &HubAccount, request: Request) -> Result<Response, Error> {
-        self.link(scope)?.account_records(&scope.account, request).await.map_err(Error::Unavailable)
+        let link = self.link(scope)?;
+        crate::record_access::ask(&link, scope, request).await.map_err(|failure| Error::Unavailable(failure.message))
     }
 }
 impl Records for AccountRecords {
@@ -84,11 +85,13 @@ impl Records for AccountRecords {
     }
     fn watch<'a>(&'a self, scope: &'a HubAccount, kind: &'a str) -> ResultFuture<'a, broadcast::Receiver<Change>> {
         Box::pin(async move {
-            let mut watch =
-                self.link(scope)?.watch_account_records(scope.account.clone(), kind.into()).map_err(Error::Unavailable)?;
+            let mut watch = self
+                .link(scope)?
+                .watch_account_records(scope.account.clone(), kind.into())
+                .map_err(Error::Unavailable)?;
             let (sender, receiver) = broadcast::channel(64);
             // Ending closes the receiver, and the sentinel subscribes and lists again.
-            tokio::spawn(async move {
+            fastctx_platform::task::spawn(async move {
                 loop {
                     let next = tokio::select! {
                         next = watch.next() => next,
@@ -99,10 +102,9 @@ impl Records for AccountRecords {
                             .into_iter()
                             .map(|entry| Change { key: entry.key, version: Some(entry.version) })
                             .collect(),
-                        Ok(Watched::Changed { metadata }) => vec![Change {
-                            key: metadata.key,
-                            version: (!metadata.deleted).then_some(metadata.version),
-                        }],
+                        Ok(Watched::Changed { metadata }) => {
+                            vec![Change { key: metadata.key, version: (!metadata.deleted).then_some(metadata.version) }]
+                        }
                         Err(_) => return,
                     };
                     for change in changes {

@@ -36,10 +36,8 @@ impl Records for AccountRecords {
     fn read<'a>(&'a self, account: &'a HubAccount, kind: &'a str, key: &'a str) -> Reply<'a, Option<Record>> {
         Box::pin(async move {
             let link = self.link(account)?;
-            match link
-                .account_records(&account.account, Request::Read { kind: kind.into(), key: key.into() })
-                .await
-                .map_err(Failure::new)?
+            match crate::record_access::ask(&link, account, Request::Read { kind: kind.into(), key: key.into() })
+                .await?
             {
                 Response::Read { record: Some(record) } => Ok(Some(Record {
                     version: record.metadata.version,
@@ -54,11 +52,7 @@ impl Records for AccountRecords {
     fn list<'a>(&'a self, account: &'a HubAccount, kind: &'a str) -> Reply<'a, Vec<Changed>> {
         Box::pin(async move {
             let link = self.link(account)?;
-            match link
-                .account_records(&account.account, Request::List { kind: kind.into() })
-                .await
-                .map_err(Failure::new)?
-            {
+            match crate::record_access::ask(&link, account, Request::List { kind: kind.into() }).await? {
                 Response::Listed { entries } => {
                     Ok(entries.into_iter().map(|m| Changed { key: m.key, version: m.version }).collect())
                 }
@@ -81,7 +75,7 @@ impl Records for AccountRecords {
                 Some(body) => Request::Write { kind: kind.into(), key: key.into(), expected, body },
                 None => Request::Delete { kind: kind.into(), key: key.into(), expected },
             };
-            match link.account_records(&account.account, request).await.map_err(Failure::new)? {
+            match crate::record_access::ask(&link, account, request).await? {
                 Response::Written { metadata } => Ok(Exchanged::Written { version: metadata.version }),
                 Response::Conflict { current } => Ok(Exchanged::Conflict { current: current.map(|m| m.version) }),
                 _ => Err(Failure::new("the hub answered another account-records reply")),
@@ -130,14 +124,19 @@ impl Context for NamedContext {
     fn set<'a>(&'a self, resident: &'a ResidentId, name: &'a str, text: &'a str, fact: &'a str) -> Reply<'a, ()> {
         Box::pin(async move {
             let node = self.node.upgrade().ok_or_else(|| Failure::new("the node has gone"))?;
-            let change = crate::context::Change { by: None, version: "", fact, full: true };
-            // An archived conversation still has its goal block taken down.
-            let result = if text.is_empty() {
-                crate::context::clear(&node, resident, name, change)
-            } else {
-                crate::context::set(&node, resident, name, text, change)
-            };
-            result.map_err(|error| Failure::new(error.to_string()))
+            let (resident, name, text, fact) = (resident.clone(), name.to_string(), text.to_string(), fact.to_string());
+            fastctx_platform::task::spawn_blocking(move || {
+                let change = crate::context::Change { by: None, version: "", fact: &fact, full: true };
+                // An archived conversation still has its goal block taken down.
+                if text.is_empty() {
+                    crate::context::clear(&node, &resident, &name, change)
+                } else {
+                    crate::context::set(&node, &resident, &name, &text, change)
+                }
+            })
+            .await
+            .map_err(|error| Failure::new(error.to_string()))?
+            .map_err(|error| Failure::new(error.to_string()))
         })
     }
 }

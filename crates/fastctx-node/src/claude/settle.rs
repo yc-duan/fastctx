@@ -63,21 +63,21 @@ pub(super) fn consider(node: &Arc<Node>, resident: &ResidentId, session: &str, d
     let Ok(Some(record)) = exchange::transcript(directory) else { return };
     // A record still growing is a turn still going, or one whose report may
     // yet come.
-    let quiet = std::fs::metadata(&record)
+    let quiet = fastctx_platform::disk::metadata(&record)
         .and_then(|metadata| metadata.modified())
         .is_ok_and(|modified| SystemTime::now().duration_since(modified).is_ok_and(|age| age >= REPORTED_FIRST));
     if !quiet || !node.claude.settling.lock().expect("never poisoned").insert(session.to_string()) {
         return;
     }
     let (node, resident, session) = (node.clone(), resident.clone(), session.to_string());
-    tokio::spawn(async move {
+    fastctx_platform::task::spawn(async move {
         settle(&node, &resident, &session, &turn, now.since, record).await;
         node.claude.settling.lock().expect("never poisoned").remove(&session);
     });
 }
 
 async fn settle(node: &Arc<Node>, resident: &ResidentId, session: &str, turn: &str, began: Timestamp, record: PathBuf) {
-    let answered = match tokio::task::spawn_blocking(move || ending::answered(&record)).await {
+    let answered = match fastctx_platform::task::spawn_blocking(move || ending::answered(&record)).await {
         Ok(Ok(Some(answered))) => answered,
         Ok(Ok(None)) | Err(_) => return,
         Ok(Err(error)) => {

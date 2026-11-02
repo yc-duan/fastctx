@@ -48,7 +48,7 @@ pub(crate) async fn opening(node: &Arc<Node>, resident: &ResidentId, held: &Held
         _ => format!("unstamped {:x}", u128::from_le_bytes(random()?)),
     };
     let (history, held_now, slimmed_for) = (read.history, held.clone(), owner.clone());
-    let mut history = tokio::task::spawn_blocking(move || {
+    let mut history = fastctx_platform::task::spawn_blocking(move || {
         let pictures = Pictures::Referenced { owner: &slimmed_for };
         let mut history = history;
         history.retain_mut(|event| history::slim(event, &pictures));
@@ -57,9 +57,10 @@ pub(crate) async fn opening(node: &Arc<Node>, resident: &ResidentId, held: &Held
     .await
     .map_err(|error| Failure::new(format!("cutting the history into segments: {error}")))?;
     picture_fingerprints(node, &mut history).await?;
-    let mut pieces = tokio::task::spawn_blocking(move || history::pieces(history::cut(history), &held_now, version))
-        .await
-        .map_err(|error| Failure::new(format!("cutting the history into segments: {error}")))?;
+    let mut pieces =
+        fastctx_platform::task::spawn_blocking(move || history::pieces(history::cut(history), &held_now, version))
+            .await
+            .map_err(|error| Failure::new(format!("cutting the history into segments: {error}")))?;
     pieces.extend(live(read.pending, &owner));
     Ok(Opening { pieces, events: read.events, slim: Some(owner) })
 }
@@ -85,7 +86,7 @@ pub(crate) async fn picture_fingerprints(node: &Arc<Node>, events: &mut [Session
                 Err(error) => return Err(error),
             };
             image.content = Some(
-                tokio::task::spawn_blocking(move || fastctx_hands::files::content_fingerprint(&file.path))
+                fastctx_platform::task::spawn_blocking(move || fastctx_hands::files::content_fingerprint(&file.path))
                     .await
                     .map_err(|error| Failure::new(error.to_string()))?
                     .map_err(|error| Failure::new(error.to_string()))?,
@@ -121,11 +122,19 @@ async fn stamp(node: &Arc<Node>, resident: &ResidentId) -> Result<Option<String>
     take(env!("CARGO_PKG_VERSION").as_bytes());
     take(&serde_json::to_vec(&about).map_err(|error| Failure::new(error.to_string()))?);
     let failed = |error: std::io::Error| Failure::new(format!("reading {resident}'s records: {error}"));
-    {
-        let directory = node.world.conversation(resident);
-        let _transaction = crate::resident_storage::lock();
-        crate::session_record::stamp(directory.path(), &mut take).map_err(failed)?;
-        crate::run_facts::stamp(&directory, &mut take).map_err(failed)?;
+    let directory = node.world.conversation(resident);
+    let records = fastctx_platform::task::spawn_blocking(move || {
+        let mut records = Vec::new();
+        let mut collect = |bytes: &[u8]| records.push(bytes.to_vec());
+        crate::session_record::stamp(directory.path(), &mut collect)?;
+        crate::run_facts::stamp(&directory, &mut collect)?;
+        Ok::<_, std::io::Error>(records)
+    })
+    .await
+    .map_err(|error| Failure::new(error.to_string()))?
+    .map_err(failed)?;
+    for record in records {
+        take(&record);
     }
     match (about.host.agent.as_str(), &about.session) {
         // A thread the user opened in the Codex command line runs turns the

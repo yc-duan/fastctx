@@ -40,7 +40,7 @@ pub(crate) async fn relay(
             .clone()
             .filter(|_| held.app.as_ref().is_some_and(|app| app.version == fetch.version))
             .map(|dir| dir.join(format!("{}.tar.gz", fetch.target)))
-            .filter(|path| path.is_file());
+            .filter(|path| fastctx_platform::disk::is_file(path));
         // Its owner's choice is known only once its settings are read.
         (held.settings.relays && held.started, carried)
     };

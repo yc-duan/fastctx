@@ -3,10 +3,8 @@
 
 use fastctx_types::{AccountName, Address, MachineName, ResidentId, TownName};
 
-use crate::store::Store;
-
 pub(crate) fn check(
-    store: &Store,
+    store: &crate::store::Snapshot,
     from: &MachineName,
     account: &AccountName,
     to: &MachineName,

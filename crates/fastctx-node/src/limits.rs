@@ -29,8 +29,8 @@ fn file(node: &Node) -> std::path::PathBuf {
 
 pub(crate) fn start(node: &Arc<Node>) {
     let node = node.clone();
-    tokio::spawn(async move {
-        if let Ok(bytes) = std::fs::read(file(&node))
+    fastctx_platform::task::spawn(async move {
+        if let Ok(bytes) = fastctx_platform::disk::read(file(&node))
             && let Ok(kept) = serde_json::from_slice::<Vec<LimitReading>>(&bytes)
         {
             let since = Timestamp::now() - KEEP;
@@ -41,7 +41,9 @@ pub(crate) fn start(node: &Arc<Node>) {
         let mut unkept = 0;
         loop {
             interval.tick().await;
-            let Ok(uses) = tokio::task::spawn_blocking(fastctx_platform::limits::read).await else { continue };
+            let Ok(uses) = fastctx_platform::task::spawn_blocking(fastctx_platform::limits::read).await else {
+                continue;
+            };
             // A system that bounds none of these has nothing to show.
             if uses.is_empty() {
                 continue;

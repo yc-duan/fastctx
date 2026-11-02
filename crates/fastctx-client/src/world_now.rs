@@ -29,7 +29,7 @@ impl World {
             }
             None => {
                 let (client, id) = self.connect().await?.watch_world().await?;
-                Watching::Local { client, id }
+                Watching::Local { client, id, held: None }
             }
         };
         Ok(WorldWatch { watching })
@@ -41,10 +41,19 @@ pub struct WorldWatch {
     watching: Watching,
 }
 
+/// A piece of a World watch: the World whole, or what changed in it since
+/// the last piece (`fastctx_types::world_delta`).
+pub enum Seen {
+    World(Box<WorldNow>),
+    Changed(serde_json::Value),
+}
+
 enum Watching {
     Local {
         client: Client,
         id: u64,
+        /// The World as the node told it so far, to put what changed into.
+        held: Option<serde_json::Value>,
     },
     Device {
         device: Arc<crate::device::Device>,
@@ -57,9 +66,32 @@ enum Watching {
 impl WorldWatch {
     /// The World, as it is at first, then after each change.
     pub async fn next(&mut self) -> Result<WorldNow, Error> {
+        match self.next_seen().await? {
+            Seen::World(world) => Ok(*world),
+            Seen::Changed(_) => match &self.watching {
+                Watching::Local { held: Some(held), .. } => serde_json::from_value(held.clone())
+                    .map_err(|error| CallError::Broken(std::io::Error::other(error)).into()),
+                _ => Err(CallError::Broken(std::io::Error::other("a change came before the World")).into()),
+            },
+        }
+    }
+
+    /// The World at first, then each change as the node told it: what
+    /// changed, when it says only that, so it can be passed on as it is.
+    pub async fn next_seen(&mut self) -> Result<Seen, Error> {
         let now = match &mut self.watching {
-            Watching::Local { client, id } => match client.frame().await? {
-                NodeFrame::World { id: told, world } if told == *id => *world,
+            Watching::Local { client, id, held } => match client.frame().await? {
+                NodeFrame::World { id: told, world } if told == *id => {
+                    *held = serde_json::to_value(&world).ok();
+                    *world
+                }
+                NodeFrame::WorldChanged { id: told, change } if told == *id => {
+                    let Some(held) = held.as_mut() else {
+                        return Err(CallError::Broken(std::io::Error::other("a change came before the World")).into());
+                    };
+                    fastctx_types::world_delta::apply(held, &change);
+                    return Ok(Seen::Changed(change));
+                }
                 NodeFrame::Reply { id: told, reply } if told == *id => {
                     return Err(match reply {
                         Ok(_) => CallError::Broken(std::io::Error::other("the World watch ended")),
@@ -94,6 +126,6 @@ impl WorldWatch {
                 }
             },
         };
-        Ok(now)
+        Ok(Seen::World(Box::new(now)))
     }
 }

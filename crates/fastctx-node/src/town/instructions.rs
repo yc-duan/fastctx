@@ -36,7 +36,7 @@ pub(crate) fn current(
 /// Refreshes named project context and gives the plugin its canonical location.
 /// Leaving a project clears the block through the same replacement path.
 pub(crate) fn hand_to_session(node: &Node, id: &ResidentId, session: &Path) -> io::Result<()> {
-    crate::context::refresh_local(node, id)?;
+    crate::context::refresh_local_now(node, id)?;
     crate::context::hand_to_session(node, id, session)
 }
 
@@ -49,10 +49,10 @@ pub(crate) fn acting(node: &Node, id: &ResidentId) -> Acting {
 /// after it moved. A failed write is returned to the operation that moved it.
 pub(crate) fn hand_to_current(node: &Node, id: &ResidentId) -> io::Result<()> {
     let Some((about, _)) = node.residents.about(id) else { return Ok(()) };
-    crate::context::refresh_local(node, id)?;
+    crate::context::refresh_local_now(node, id)?;
     let Some(session) = about.session.filter(|_| about.host.agent.as_str() == "claude") else { return Ok(()) };
     let directory = fastctx_hosts::claude::exchange::sessions(node.world.path()).join(session);
-    if directory.is_dir() {
+    if fastctx_platform::disk::is_dir(&directory) {
         hand_to_session(node, id, &directory)?;
     }
     Ok(())

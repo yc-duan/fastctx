@@ -18,10 +18,10 @@ use crate::Node;
 /// Keeps every report as it comes; one that changed the login's windows
 /// can stop a turn on it at an assistance's allowance.
 pub(crate) fn listen(node: Arc<Node>, mut reports: mpsc::UnboundedReceiver<LimitsReport>) {
-    tokio::spawn(async move {
+    fastctx_platform::task::spawn(async move {
         while let Some(report) = reports.recv().await {
             let (keeping, home) = (node.clone(), report.home.clone());
-            let kept = tokio::task::spawn_blocking(move || keep(&keeping, report)).await;
+            let kept = fastctx_platform::task::spawn_blocking(move || keep(&keeping, report)).await;
             match kept {
                 Ok(Ok(true)) => crate::usage::after_reading(&node, "codex", &home).await,
                 Ok(Ok(false)) => {}
@@ -80,7 +80,7 @@ pub(super) fn keep(node: &Node, report: LimitsReport) -> std::io::Result<bool> {
             }
         }
     }
-    // 2026-10-20: publish credits only after the matching windows are committed,
+    // Publish credits only after the matching windows are committed,
     // so a reader of the new snapshot cannot see the previous quota period.
     let changed = match raw_for(&kept, &home, &account) {
         Fact::Known { value } => crate::usage::codex_reading(node, &home, value.windows, at, account)?,
@@ -133,7 +133,7 @@ fn raw_for(kept: &kept::Kept, dir: &Path, account: &Option<String>) -> Fact<Agen
 pub(crate) async fn read(node: &Arc<Node>, agent: &AgentName, dir: &Path) -> Result<(), Failure> {
     {
         let (node, agent, dir) = (node.clone(), agent.clone(), dir.to_path_buf());
-        tokio::task::spawn_blocking(move || super::known(&node, &agent, &dir))
+        fastctx_platform::task::spawn_blocking(move || super::known(&node, &agent, &dir))
             .await
             .map_err(|error| Failure::new(error.to_string()))??;
     }
@@ -151,7 +151,7 @@ pub(crate) async fn read(node: &Arc<Node>, agent: &AgentName, dir: &Path) -> Res
         }));
     };
     let (keeping, home) = (node.clone(), dir.to_path_buf());
-    let changed = tokio::task::spawn_blocking(move || {
+    let changed = fastctx_platform::task::spawn_blocking(move || {
         let context = super::Context::of(&keeping).map_err(|error| std::io::Error::other(error.message))?;
         kept::change(&keeping, |record| {
             if let Some(login) = record.codex.logins.iter_mut().find(|login| crate::homes::same_dir(&login.dir, &home))

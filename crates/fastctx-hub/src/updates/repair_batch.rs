@@ -11,11 +11,14 @@ pub(super) type Prepared = (usize, MachineName, Option<Arc<Manifest>>);
 
 pub(super) fn apply(
     hub: &Hub,
-    asker: &MachineName,
+    asker: &crate::origin::Origin,
     account: &AccountName,
     items: &[Prepared],
 ) -> Vec<Result<(), String>> {
-    let mut store = hub.store();
+    let mut store = hub.edit_store();
+    if let Err(error) = asker.check(&store.book.directory) {
+        return vec![Err(error); items.len()];
+    }
     let index = hub.index_of(&store);
     let before = store.hub.repairs.clone();
     let mut results = Vec::with_capacity(items.len());

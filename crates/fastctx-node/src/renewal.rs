@@ -24,7 +24,7 @@ impl Startup {
     pub async fn prepare(root: &Path, successor: Option<&str>, coordinated: bool) -> anyhow::Result<Self> {
         let root = root.to_owned();
         let successor = successor.map(str::to_owned);
-        tokio::task::spawn_blocking(move || {
+        fastctx_platform::task::spawn_blocking(move || {
             let build = store::build()?;
             let directory = store::directory(&root);
             fastctx_platform::ensure_private_dir(&directory)?;
@@ -37,7 +37,7 @@ impl Startup {
                     )?;
                 }
             }
-            let kept = WorldDir::under(&root).node_service().exists();
+            let kept = fastctx_platform::disk::is_there(WorldDir::under(&root).node_service());
             let service_gate = if kept && !coordinated {
                 Some(FileLock::acquire(&directory.join("service-gate.lock"))?)
             } else {
@@ -94,14 +94,14 @@ pub(crate) fn answer(node: &Arc<Node>, request: Request) -> io::Result<Response>
 /// that waited for one.
 pub(crate) fn resume(node: &Arc<Node>) {
     let weak = Arc::downgrade(node);
-    tokio::spawn(async move {
+    fastctx_platform::task::spawn(async move {
         let mut first = true;
         loop {
             let Some(node) = weak.upgrade() else { return };
             let root = node.root.clone();
             let build = node.renewal.build.clone();
             // Whether no replacement is under way or failed.
-            let result = tokio::task::spawn_blocking(move || -> anyhow::Result<bool> {
+            let result = fastctx_platform::task::spawn_blocking(move || -> anyhow::Result<bool> {
                 let plan = store::read(&root)?;
                 if let Some(plan) = &plan {
                     let failed = plan.phase == fastctx_types::renewal::Phase::Failed;

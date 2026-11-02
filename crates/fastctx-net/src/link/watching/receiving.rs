@@ -64,7 +64,7 @@ pub(super) async fn run(
         return Ok(());
     }
     let acknowledgements = pool.clone();
-    let mut writing = Writer(tokio::spawn(async move {
+    let mut writing = Writer(fastctx_platform::task::spawn(async move {
         loop {
             tokio::select! {
                 command = commands.recv() => match command {

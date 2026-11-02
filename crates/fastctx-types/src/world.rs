@@ -68,6 +68,9 @@ pub struct MachineFacts {
     /// Stops only the dispatch named by a durable StopRun control.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub run_stops: bool,
+    /// Retains immutable job metadata when subsequent facts omit it.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub job_fact_deltas: bool,
     /// Understands sentinel account settings and lifecycle calls.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub sentinels: bool,
@@ -107,6 +110,8 @@ pub struct MachineFacts {
     /// Receives account-owned plan working copies.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub plan_copies: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub replicated_records: bool,
     /// Reads collaboration trees, including native child-agent histories.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub collaboration_tree: bool,
@@ -239,6 +244,10 @@ pub struct Node {
     /// The machine it reaches the hub through, when its own line is down.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub through: Option<String>,
+    /// How its own work goes while online, as its hub tells: busy or stuck,
+    /// or none while it goes as it should, or the hub does not tell.
+    #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "crate::tolerant::read_option")]
+    pub strain: Option<crate::health::Strain>,
     /// Whether the network's administrator allowed direct connections to
     /// it.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]

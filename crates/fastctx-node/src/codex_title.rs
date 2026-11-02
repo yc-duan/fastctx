@@ -50,7 +50,7 @@ pub(crate) fn maybe(node: &Arc<Node>, id: &ResidentId, about: &About) {
         }
     };
     let (node, id) = (node.clone(), id.clone());
-    tokio::spawn(async move {
+    fastctx_platform::task::spawn(async move {
         match codex.make_title(&thread, &words).await {
             // Named by the user, or by its host, while the title was being
             // made: that name stays.

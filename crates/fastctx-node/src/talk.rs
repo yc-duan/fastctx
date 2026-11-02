@@ -121,8 +121,9 @@ pub async fn watch(
         };
         let Opening { pieces, mut events, slim } = opened;
         let node = node.clone();
-        tokio::spawn(async move {
+        fastctx_platform::task::spawn(async move {
             let _lease = lease;
+            let mut views = node.views.subscribe();
             for piece in pieces.into_iter().chain(told.first()) {
                 if sender.send_wait(Ok(piece), std::time::Duration::from_secs(30)).await.is_err() {
                     return;
@@ -130,10 +131,18 @@ pub async fn watch(
             }
             loop {
                 tokio::select! {
+                    changed = views.changed() => {
+                        if changed.is_err() { return; }
+                        views.borrow_and_update();
+                        if !crate::admission::seen::resident(&node, crate::admission::seen::Looker::Here(&Acting::Here), &resident) {
+                            let _ = sender.send(Err(Failure::refused("access to this conversation was withdrawn")));
+                            return;
+                        }
+                    },
                     event = events.recv() => match event {
                         Ok(Some(event)) => {
                             if goal.is_some() && !crate::goals::watch::is_goal(&event) { continue; }
-                            if !crate::goals::visible(&node, crate::admission::seen::Looker::Here(&Acting::Here), &event) { continue; }
+                            if !crate::goals::visible(&node, crate::admission::seen::Looker::Here(&Acting::Here), &resident, &event) { continue; }
                             let Some(event) = live(Arc::unwrap_or_clone(event), slim.as_ref()) else { continue };
                             if sender.send(Ok(Watched::Live { event })).is_err() { return }
                         }
@@ -173,7 +182,7 @@ pub async fn watch(
     let Some(mut watching) = watching else {
         return Err(refused.expect("a speaker was tried"));
     };
-    tokio::spawn(async move {
+    fastctx_platform::task::spawn(async move {
         loop {
             let piece = tokio::select! { piece = watching.next() => piece, () = sender.closed() => return };
             match piece {
@@ -310,9 +319,18 @@ async fn read_here(node: &Arc<Node>, resident: &ResidentId) -> Result<HistoryRea
     }
     let mut events = node.watchers.watch(resident);
     let directory = node.world.conversation(resident);
-    let recorded = |directory: &ConversationDir| {
-        crate::delivery::history(directory).map_err(|error| Failure::new(error.to_string()))
-    };
+    let preparing = directory.clone();
+    fastctx_platform::task::spawn_blocking(move || crate::session_record::prepare(&preparing))
+        .await
+        .map_err(|error| Failure::new(error.to_string()))?
+        .map_err(crate::record_migration::failure)?;
+    async fn recorded(directory: &ConversationDir) -> Result<Vec<SessionEvent>, Failure> {
+        let directory = directory.clone();
+        fastctx_platform::task::spawn_blocking(move || crate::delivery::history(&directory))
+            .await
+            .map_err(|error| Failure::new(error.to_string()))?
+            .map_err(crate::record_migration::failure)
+    }
     let owner = Address { machine: node.machine(), resident: resident.clone() };
     let mut unread = false;
     let (recorded, hosted) = match &about.session {
@@ -326,7 +344,7 @@ async fn read_here(node: &Arc<Node>, resident: &ResidentId) -> Result<HistoryRea
             codex.flush_events(thread).await.map_err(Failure::new)?;
             // Reverted turns remain in the World's audit record, but no
             // longer belong to the host's current conversation.
-            let recorded = crate::codex::watch::recorded(recorded(&directory)?, &history);
+            let recorded = crate::codex::watch::recorded(recorded(&directory).await?, &history);
             // A request can arrive and resolve while history is loading.
             // Only currently unanswered requests may enter a new view; the
             // subscription already covers changes after this snapshot.
@@ -336,7 +354,7 @@ async fn read_here(node: &Arc<Node>, resident: &ResidentId) -> Result<HistoryRea
         // Claude Code's own record of the session, placed in the turns the
         // World saw, which the World's record says.
         _ if about.host.agent.as_str() == "claude" => {
-            let mut recorded = recorded(&directory)?;
+            let mut recorded = recorded(&directory).await?;
             let removed: std::collections::HashSet<_> = recorded
                 .iter()
                 .flat_map(|event| match &event.happened {
@@ -352,34 +370,40 @@ async fn read_here(node: &Arc<Node>, resident: &ResidentId) -> Result<HistoryRea
             unread = missing;
             (recorded, Some(hosted))
         }
-        _ => (recorded(&directory)?, None),
+        _ => (recorded(&directory).await?, None),
     };
-    let mut hosted = hosted;
-    if let Some(events) = &mut hosted {
-        let projection = crate::context::input::Projection::open(&directory)
-            .map_err(|error| Failure::new(error.to_string()))?;
-        for event in events {
-            projection.restore(event).map_err(|error| Failure::new(error.to_string()))?;
-        }
-    }
-    let receipts = crate::attachments::delivered::of(node, resident);
-    let mut history = history(recorded, hosted, about.host.agent.as_str(), &receipts);
-    // A change of history tells a view already open to read again; the
-    // history read here is already what follows it. Kept in a view, an
-    // interface that reads it as news would read again on every event.
-    history.retain(|event| {
-        !matches!(
-            &event.happened,
-            fastctx_types::session::Happened::Changed {
-                change: fastctx_types::session::SessionChange::HistoryChanged
-                    | fastctx_types::session::SessionChange::HistoryCut { .. },
-                ..
+    let (working, resident, agent) = (node.clone(), resident.clone(), about.host.agent.to_string());
+    let history = fastctx_platform::task::spawn_blocking(move || -> Result<_, Failure> {
+        let mut hosted = hosted;
+        if let Some(events) = &mut hosted {
+            let projection =
+                crate::context::input::Projection::open(&directory).map_err(crate::record_migration::failure)?;
+            for event in events {
+                projection.restore(event).map_err(crate::record_migration::failure)?;
             }
-        )
-    });
-    for event in &mut history {
-        crate::run_facts::attach(&directory, event).map_err(|error| Failure::new(error.to_string()))?;
-    }
+        }
+        let receipts = crate::attachments::delivered::of(&working, &resident);
+        let mut history = history(recorded, hosted, agent.as_str(), &receipts);
+        // A change of history tells a view already open to read again; the
+        // history read here is already what follows it. Kept in a view, an
+        // interface that reads it as news would read again on every event.
+        history.retain(|event| {
+            !matches!(
+                &event.happened,
+                fastctx_types::session::Happened::Changed {
+                    change: fastctx_types::session::SessionChange::HistoryChanged
+                        | fastctx_types::session::SessionChange::HistoryCut { .. },
+                    ..
+                }
+            )
+        });
+        for event in &mut history {
+            crate::run_facts::attach(&directory, event).map_err(crate::record_migration::failure)?;
+        }
+        Ok(history)
+    })
+    .await
+    .map_err(|error| Failure::new(error.to_string()))??;
     let pending = match &about.session {
         Some(thread) if about.world_managed() && about.host.agent.as_str() == "codex" => {
             node.codex.of(node, &about)?.requests(thread)
@@ -614,11 +638,17 @@ pub async fn serve_watch(
     };
     node.log.line(format_args!("{what} opened"));
     let Opening { pieces, mut events, slim } = opened;
+    let mut views = node.views.subscribe();
+    let allowed = || crate::admission::seen::resident(node, crate::admission::seen::Looker::Asker(asker), &resident);
     let mut n = 0;
     let mut next: std::collections::VecDeque<Watched> = pieces.into();
     next.extend(told.first());
     loop {
         while let Some(watched) = next.pop_front() {
+            if !allowed() {
+                stream.close().await;
+                return Err(Failure::refused("access to this conversation was withdrawn"));
+            }
             let piece = Piece { watch, n, watched };
             let sent = if packed {
                 // A history's segments take a while to pack (0.4 s for a
@@ -626,10 +656,14 @@ pub async fn serve_watch(
                 // runtime's threads, which serve everything else here.
                 let bytes = match piece.watched {
                     Watched::Live { .. } => fastctx_net::history::pack(&piece),
-                    _ => tokio::task::spawn_blocking(move || fastctx_net::history::pack(&piece))
+                    _ => fastctx_platform::task::spawn_blocking(move || fastctx_net::history::pack(&piece))
                         .await
                         .map_err(|error| Failure::new(format!("packing the history: {error}")))?,
                 };
+                if !allowed() {
+                    stream.close().await;
+                    return Err(Failure::refused("access to this conversation was withdrawn"));
+                }
                 let signed = link.sign_bytes(Domain::Event, bytes);
                 fastctx_net::watch_stream::send_bytes(&mut stream, &signed).await
             } else {
@@ -641,9 +675,14 @@ pub async fn serve_watch(
             n += 1;
         }
         tokio::select! {
+            changed = views.changed() => {
+                if changed.is_err() { return ended("the node stopped"); }
+                views.borrow_and_update();
+                if !allowed() { stream.close().await; return Err(Failure::refused("access to this conversation was withdrawn")); }
+            },
             event = events.recv() => match event {
                 Ok(Some(event)) => {
-                    if (!goal || crate::goals::watch::is_goal(&event)) && crate::goals::visible(node, crate::admission::seen::Looker::Asker(asker), &event) {
+                    if (!goal || crate::goals::watch::is_goal(&event)) && crate::goals::visible(node, crate::admission::seen::Looker::Asker(asker), &resident, &event) {
                         next.extend(live(Arc::unwrap_or_clone(event), slim.as_ref()).map(|event| Watched::Live { event }));
                     }
                 },
@@ -723,8 +762,8 @@ fn kept(node: &Node, resident: &ResidentId) -> Vec<fastctx_types::session::KeptW
     // The words that would start its next turn, while that waits for room
     // in its machine's memory or in its login.
     let mut queued = crate::memory_room::ahead(node, resident)
-        .map(|ahead| (ahead, true))
-        .or_else(|| crate::turn_slots::ahead(node, resident).map(|ahead| (ahead, false)));
+        .map(|ahead| (ahead, true, false))
+        .or_else(|| crate::turn_slots::ahead(node, resident).map(|(ahead, callee)| (ahead, false, callee)));
     // A new conversation's first words wait for memory, or for its login's
     // turn, as they wake it.
     let waits = queued.is_some();
@@ -740,9 +779,9 @@ fn kept(node: &Node, resident: &ResidentId) -> Vec<fastctx_types::session::KeptW
                 .and_then(|progress| {
                     progress.reason.map(|reason| fastctx_types::session::HostRetry { since: progress.began, reason })
                 });
-            let (queued, for_memory) = match first.then(|| queued.take()).flatten() {
-                Some((ahead, memory)) => (Some(ahead), memory),
-                None => (None, false),
+            let (queued, for_memory, for_callee) = match first.then(|| queued.take()).flatten() {
+                Some((ahead, memory, callee)) => (Some(ahead), memory, callee),
+                None => (None, false, false),
             };
             KeptWords {
                 id: pending.delivery.id,
@@ -753,6 +792,7 @@ fn kept(node: &Node, resident: &ResidentId) -> Vec<fastctx_types::session::KeptW
                 host_retry,
                 queued,
                 for_memory,
+                for_callee,
             }
         })
         .collect()
@@ -897,8 +937,8 @@ pub async fn open_here(
     let (id, _opening) = crate::attachments::opening(node, &agent, &opened.acting, town.as_ref(), &attachments).await?;
     crate::placement::location::speaking(node, &id, typed_on)?;
     let origin = Origin::User;
-    let _birth = crate::here::born(node, &id, opened.acting.clone(), &origin);
-    crate::session_options::keep(node, &id, &options)?;
+    let _birth = crate::here::born(node, &id, opened.acting.clone());
+    crate::session_options::keep(node, &id, &options).await?;
     // What it is told of its machines and folders goes into the instructions
     // its thread starts with.
     crate::focus::open(node, &node.world.conversation(&id), &opened.acting, &opened.focus).await?;
@@ -959,7 +999,7 @@ pub async fn open_here(
     node.residents
         .create(&node.world, about, town, now)
         .map_err(|error| Failure::new(format!("recording the session: {error}")))?;
-    crate::context::instructed(node, &id, &heard).map_err(|error| Failure::new(error.to_string()))?;
+    crate::context::instructed(node, &id, &heard).await.map_err(|error| Failure::new(error.to_string()))?;
     node.residents.set_instructed(&id, heard);
     crate::codex::claim(node, &thread, &id).await;
     let landed = talk_here(node, typed_on, &id, text, attachments, opened.files_on.as_ref(), None).await?;
@@ -1008,14 +1048,12 @@ pub(crate) async fn stop_here_as(
     node.residents.stoppable(resident)?;
     let targeted = node.residents.now(resident).and_then(|now| now.turn);
     if source == fastctx_types::turn_evidence::StopSource::User {
-        crate::goals::holding::stop(node, resident, targeted.clone())?;
+        crate::goals::holding::stop(node, resident, targeted.clone()).await?;
     }
     if let Some(turn) = &targeted {
         crate::turn_evidence::remember(node, resident, turn, source)
+            .await
             .map_err(|error| Failure::new(format!("recording why the turn is stopped: {error}")))?;
-        if source == fastctx_types::turn_evidence::StopSource::User {
-            crate::stops::mark_turn(node, resident, turn).map_err(|error| Failure::new(error.to_string()))?;
-        }
     }
     let (about, _) = node
         .residents
@@ -1028,17 +1066,22 @@ pub(crate) async fn stop_here_as(
     // soon as it is. What only rides with the next turn starts none, and
     // keeps no stop for the turn someone starts later.
     let directory = node.world.conversation(resident);
-    let coming = tokio::task::spawn_blocking(move || crate::inbox::pending(&directory))
+    let reading = directory.clone();
+    let coming = fastctx_platform::task::spawn_blocking(move || crate::inbox::pending(&reading))
         .await
         .map_err(|error| Failure::new(error.to_string()))?
         .map_err(|error| Failure::new(format!("reading what is on its way: {error}")))?;
-    let coming = coming
+    let coming: Vec<_> = coming
         .into_iter()
         .filter(|pending| pending.delivery.notice.along().is_none())
         .map(|pending| pending.delivery.id)
         .collect();
     if targeted.is_none()
-        && node.stops.coming(node, resident, coming, source).map_err(|error| Failure::new(error.to_string()))?
+        && node
+            .stops
+            .coming(node, resident, coming.clone(), source)
+            .await
+            .map_err(|error| Failure::new(error.to_string()))?
     {
         return Ok(true);
     }
@@ -1046,18 +1089,41 @@ pub(crate) async fn stop_here_as(
     if targeted.is_some() && targeted != current {
         return Ok(false);
     }
-    let targeted = targeted.or(current);
+    let targeted = match (targeted, current) {
+        (Some(turn), _) => turn,
+        // Nothing ran when the stop was asked: a turn begun since is its
+        // only when it took words that were on their way then. One of
+        // words that came later is not stopped by it.
+        (None, Some(turn)) => {
+            let (looking, taken) = (turn.clone(), coming);
+            let took = fastctx_platform::task::spawn_blocking(move || -> std::io::Result<bool> {
+                for id in &taken {
+                    if crate::delivery::input_turn(&directory, id)?.as_deref() == Some(looking.as_str()) {
+                        return Ok(true);
+                    }
+                }
+                Ok(false)
+            })
+            .await
+            .map_err(|error| Failure::new(error.to_string()))?
+            .map_err(|error| Failure::new(format!("reading which words the turn took: {error}")))?;
+            if !took {
+                return Ok(false);
+            }
+            turn
+        }
+        (None, None) => return Ok(false),
+    };
+    let targeted = Some(targeted);
     if let Some(turn) = &targeted {
         crate::turn_evidence::remember(node, resident, turn, source)
+            .await
             .map_err(|error| Failure::new(format!("recording why the turn is stopped: {error}")))?;
-        if source == fastctx_types::turn_evidence::StopSource::User {
-            crate::stops::mark_turn(node, resident, turn).map_err(|error| Failure::new(error.to_string()))?;
-        }
     }
     match (about.host.agent.as_str(), about.world_managed(), &about.session) {
         ("codex", true, Some(thread)) => match targeted {
             Some(turn) => node.codex.of(node, &about)?.interrupt_turn(thread, &turn).await.map_err(Failure::new),
-            None => node.codex.of(node, &about)?.interrupt(thread).await.map_err(Failure::new),
+            None => Ok(false),
         },
         ("claude", _, _) => match targeted {
             Some(turn) => crate::claude::stop(node, resident, &turn),

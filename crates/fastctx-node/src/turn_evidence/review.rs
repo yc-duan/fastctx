@@ -122,12 +122,12 @@ pub(crate) fn collect(node: &Node, resident: &ResidentId, previous: &Seen) -> io
             jobs.push(job);
         }
     }
-    for update in crate::run_facts::job_updates(&directory)? {
+    for update in crate::run_facts::job_updates(&directory, None)? {
         if comparing.changed("job_update", &(&update.machine, &update.job, &update.call_id), &update)? {
             row(&mut turns, resident, update.turn.clone()).job_updates.push(update);
         }
     }
-    for event in crate::delivery::history(&directory)? {
+    for (_, event) in crate::session_record::search::all(&directory, "world", "")? {
         let Happened::Heard { turn, from: Some(Speaker::World), .. } = &event.happened else { continue };
         if comparing.changed("notice", &event, &event)? {
             row(&mut turns, resident, turn.clone()).notices.push(event);

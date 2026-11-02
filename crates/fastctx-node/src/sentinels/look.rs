@@ -47,7 +47,7 @@ impl Look for MachineLook {
             let name = crate::speech::new_id("observation");
             let state = self.directory.join(format!("{name}.state"));
             let script = self.directory.join(format!("{name}.bash"));
-            std::fs::create_dir_all(&self.directory).map_err(|e| e.to_string())?;
+            fastctx_platform::disk::create_dir_all(&self.directory).map_err(|e| e.to_string())?;
             fastctx_platform::publish(&state, b"", fastctx_platform::Permissions::Private)
                 .map_err(|e| e.to_string())?;
             fastctx_platform::publish(&script, command.as_bytes(), fastctx_platform::Permissions::Private)

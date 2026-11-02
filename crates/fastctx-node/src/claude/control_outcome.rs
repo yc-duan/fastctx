@@ -1,6 +1,5 @@
 //! Evidence for a submitted control belongs to the operation, not the mod's lifetime.
 
-use std::fs::File;
 use std::io::{self, BufRead, BufReader, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 
@@ -46,7 +45,7 @@ impl Evidence {
         let transcript = if compact || rename(control).is_some() {
             exchange::transcript(session)?
                 .map(|path| -> io::Result<_> {
-                    let mut reader = BufReader::new(File::open(&path)?);
+                    let mut reader = BufReader::new(fastctx_platform::disk::open(&path)?);
                     let mut parent = None;
                     let mut offset = 0;
                     let mut line = String::new();
@@ -89,7 +88,7 @@ impl Evidence {
     pub(super) fn completed(&self) -> io::Result<bool> {
         let Some(boundary) = &self.transcript else { return Ok(false) };
         let Some(parent) = &boundary.parent else { return Ok(false) };
-        let mut file = File::open(&boundary.path)?;
+        let mut file = fastctx_platform::disk::open(&boundary.path)?;
         if file.metadata()?.len() < boundary.offset {
             return Err(io::Error::other("Claude's transcript was replaced during the control"));
         }
@@ -143,7 +142,7 @@ impl Evidence {
             return Ok(Some(json!({"kind":"selected", "model":selection["model"], "effort":selection["effort"]})));
         }
         let path = directory.join("started").join(format!("{key}.json"));
-        if path.with_extension("done").try_exists()?
+        if fastctx_platform::disk::exists(path.with_extension("done"))?
             && let Some(started) = files::read_mod::<Value>(&path)?.filter(|value| value["instance"] == host.instance)
         {
             if started["action"] == "reload-plugins"
@@ -153,7 +152,7 @@ impl Evidence {
                 return Ok(Some(done()));
             }
             if matches!(started["action"].as_str(), Some("exit" | "quit"))
-                && directory.join("closed").join(format!("{}.json", host.instance)).try_exists()?
+                && fastctx_platform::disk::exists(directory.join("closed").join(format!("{}.json", host.instance)))?
             {
                 return Ok(Some(done()));
             }
@@ -163,7 +162,7 @@ impl Evidence {
 
     fn renamed(&self, name: &str) -> io::Result<bool> {
         let Some(boundary) = &self.transcript else { return Ok(false) };
-        let mut file = File::open(&boundary.path)?;
+        let mut file = fastctx_platform::disk::open(&boundary.path)?;
         if file.metadata()?.len() < boundary.offset {
             return Ok(false);
         }
@@ -193,7 +192,7 @@ impl Evidence {
     }
 
     pub(super) fn may_finish(&self) -> io::Result<bool> {
-        if self.ended.as_ref().map(|path| path.try_exists()).transpose()?.unwrap_or(false) {
+        if self.ended.as_ref().map(|path| fastctx_platform::disk::exists(path)).transpose()?.unwrap_or(false) {
             return Ok(false);
         }
         let reconcilable = (self.compact && self.transcript.is_some())

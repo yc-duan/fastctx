@@ -32,6 +32,9 @@ pub(super) struct Cache {
     /// A resident was put in, taken out or handed out to be changed since
     /// this was last asked (`take_touched`).
     touched: bool,
+    /// Why the last residents that could not be put aside stayed in
+    /// memory, told once until it changes.
+    unwritten: Option<String>,
 }
 
 /// How many residents put aside are kept read in memory, so the node's
@@ -56,7 +59,7 @@ fn put(path: &Path, bytes: &[u8]) -> io::Result<()> {
     options.write(true).create(true).truncate(true);
     #[cfg(unix)]
     std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
-    options.open(path)?.write_all(bytes)
+    fastctx_platform::disk::open_with(&options, path)?.write_all(bytes)
 }
 
 impl Cache {
@@ -69,7 +72,7 @@ impl Cache {
     pub fn new(root: PathBuf) -> io::Result<Self> {
         fastctx_platform::ensure_private_dir(&root)?;
         let mut on_disk = HashSet::new();
-        for entry in std::fs::read_dir(&root)? {
+        for entry in fastctx_platform::disk::read_dir(&root)? {
             let path = entry?.path();
             if path.extension().is_some_and(|extension| extension == "json")
                 && let Some(id) = path.file_stem().and_then(|id| id.to_str()).and_then(|id| id.parse().ok())
@@ -77,7 +80,15 @@ impl Cache {
                 on_disk.insert(id);
             }
         }
-        Ok(Self { root, entries: HashMap::new(), on_disk, dirty: HashSet::new(), cold: HashSet::new(), touched: false })
+        Ok(Self {
+            root,
+            entries: HashMap::new(),
+            on_disk,
+            dirty: HashSet::new(),
+            cold: HashSet::new(),
+            touched: false,
+            unwritten: None,
+        })
     }
 
     fn path(&self, id: &ResidentId) -> PathBuf {
@@ -117,7 +128,7 @@ impl Cache {
         if !self.on_disk.contains(id) {
             return false;
         }
-        let bytes = match std::fs::read(self.path(id)) {
+        let bytes = match fastctx_platform::disk::read(self.path(id)) {
             Ok(bytes) => bytes,
             Err(error) if error.kind() == io::ErrorKind::NotFound => {
                 self.on_disk.remove(id);
@@ -143,7 +154,7 @@ impl Cache {
         self.dirty.remove(id);
         self.cold.remove(id);
         if self.on_disk.remove(id) {
-            match std::fs::remove_file(self.path(id)) {
+            match fastctx_platform::disk::remove_file(self.path(id)) {
                 Ok(()) => {}
                 Err(error) if error.kind() == io::ErrorKind::NotFound => {}
                 Err(error) => failed(&format!("removing resident cache for {id}"), error),
@@ -159,15 +170,23 @@ impl Cache {
 
     /// Writes down those changed since the last release that are no longer
     /// at work, and keeps them read; those still at work stay in memory
-    /// alone. Past `KEPT`, the oldest kept copies are let go.
-    pub fn release(&mut self) -> io::Result<()> {
+    /// alone. Past `KEPT`, the oldest kept copies are let go. One that cannot
+    /// be written, as on a full disk, stays in memory and is written again
+    /// as it changes: the copy is only a projection, never worth the node.
+    /// Says why, the first time it is so.
+    pub fn release(&mut self) -> Option<String> {
+        let mut unwritten = None;
         for id in std::mem::take(&mut self.dirty) {
             let Some(live) = self.entries.get(&id) else { continue };
             if !ended(live) {
                 continue;
             }
-            let bytes = serde_json::to_vec(live).map_err(io::Error::other)?;
-            put(&self.path(&id), &bytes)?;
+            if let Err(error) =
+                serde_json::to_vec(live).map_err(io::Error::other).and_then(|bytes| put(&self.path(&id), &bytes))
+            {
+                unwritten.get_or_insert_with(|| format!("putting resident state aside for {id}: {error}"));
+                continue;
+            }
             self.on_disk.insert(id.clone());
             self.cold.insert(id);
         }
@@ -178,7 +197,9 @@ impl Cache {
                 self.entries.remove(&id);
             }
         }
-        Ok(())
+        let told = unwritten.is_some() && unwritten != self.unwritten;
+        self.unwritten = unwritten;
+        if told { self.unwritten.clone() } else { None }
     }
 }
 
@@ -205,7 +226,7 @@ impl Index {
     }
 
     pub fn get<V: DeserializeOwned>(&self, key: &(impl Serialize + ?Sized)) -> Option<V> {
-        match std::fs::read(self.path(key)) {
+        match fastctx_platform::disk::read(self.path(key)) {
             Ok(bytes) => Some(required(serde_json::from_slice(&bytes), "decoding resident index")),
             Err(error) if error.kind() == io::ErrorKind::NotFound => None,
             Err(error) => failed("reading resident index", error),
@@ -213,11 +234,11 @@ impl Index {
     }
 
     pub fn contains(&self, key: &(impl Serialize + ?Sized)) -> bool {
-        required(self.path(key).try_exists(), "reading resident index")
+        required(fastctx_platform::disk::exists(self.path(key)), "reading resident index")
     }
 
     pub fn remove(&self, key: &impl Serialize) {
-        match std::fs::remove_file(self.path(key)) {
+        match fastctx_platform::disk::remove_file(self.path(key)) {
             Ok(()) => {}
             Err(error) if error.kind() == io::ErrorKind::NotFound => {}
             Err(error) => failed("removing resident index", error),
@@ -227,7 +248,7 @@ impl Index {
 
 pub(super) fn prepare(world: &Path) -> io::Result<PathBuf> {
     let root = world.join("resident-cache");
-    match std::fs::remove_dir_all(&root) {
+    match fastctx_platform::disk::remove_dir_all(&root) {
         Ok(()) => {}
         Err(error) if error.kind() == io::ErrorKind::NotFound => {}
         Err(error) => return Err(error),

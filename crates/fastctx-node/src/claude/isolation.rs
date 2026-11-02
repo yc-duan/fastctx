@@ -36,7 +36,7 @@ pub(super) fn source(node: &Node, id: &ResidentId) -> Result<Option<String>, Fai
     let host = control::host(&control::directory(node.world.path(), &session))
         .map_err(|error| Failure::new(error.to_string()))?;
     // A host that does not say it was started isolated was not: those
-    // registered before the flag was reported (2026-10-21) say nothing.
+    // registered before hosts reported the flag say nothing.
     if host.is_some_and(|host| host.assisted != Some(true)) {
         begin(node, id, &session)?;
         return Ok(Some(session));
@@ -45,7 +45,7 @@ pub(super) fn source(node: &Node, id: &ResidentId) -> Result<Option<String>, Fai
 }
 
 fn finished(node: &Node, id: &ResidentId) -> Result<(), Failure> {
-    match std::fs::remove_file(path(node, id)) {
+    match fastctx_platform::disk::remove_file(path(node, id)) {
         Ok(()) => Ok(()),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
         Err(error) => Err(Failure::new(format!("finishing host isolation: {error}"))),

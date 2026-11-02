@@ -257,7 +257,7 @@ impl Pool {
         let pool = self.clone();
         let feed_link = link.clone();
         let feed: super::Feed = Box::new(move |stream| Box::pin(receiving::run(pool, feed_link, commands, stream)));
-        tokio::spawn(async move {
+        fastctx_platform::task::spawn(async move {
             let stopping = self.stopped.notified();
             tokio::pin!(stopping);
             stopping.as_mut().enable();

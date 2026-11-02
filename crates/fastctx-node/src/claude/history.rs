@@ -78,11 +78,13 @@ pub fn stamp(node: &Node, resident: &ResidentId, digest: &mut impl FnMut(&[u8]))
     for Session { id, began, kept, .. } in sessions {
         let directory = root.join(&id);
         digest(format!("{id}|{began}|{kept:?}").as_bytes());
-        let cuts =
-            std::fs::metadata(directory.join("history-cuts.json")).map(|meta| (meta.len(), meta.modified().ok()));
+        let cuts = fastctx_platform::disk::metadata(directory.join("history-cuts.json"))
+            .map(|meta| (meta.len(), meta.modified().ok()));
         digest(format!("{cuts:?}").as_bytes());
         let record = exchange::transcript(&directory).map(|path| {
-            path.map(|path| (std::fs::metadata(&path).map(|meta| (meta.len(), meta.modified().ok())), path))
+            path.map(|path| {
+                (fastctx_platform::disk::metadata(&path).map(|meta| (meta.len(), meta.modified().ok())), path)
+            })
         });
         digest(format!("{record:?}").as_bytes());
     }
@@ -96,7 +98,7 @@ pub(crate) fn agent_record(node: &Node, resident: &ResidentId, agent: &str) -> O
     let (sessions, _) = sessions(node, resident);
     sessions.into_iter().rev().find_map(|session| {
         let path = exchange::transcript(&root.join(&session.id)).ok().flatten()?;
-        claude::subagents::record(&path, agent).filter(|record| record.is_file())
+        claude::subagents::record(&path, agent).filter(|record| fastctx_platform::disk::is_file(record))
     })
 }
 
@@ -134,7 +136,7 @@ fn sessions(node: &Node, resident: &ResidentId) -> (Vec<Session>, Vec<String>) {
     let mut sessions = Vec::new();
     let mut problems = Vec::new();
     let scanned = (|| -> std::io::Result<()> {
-        for entry in std::fs::read_dir(exchange::sessions(node.world.path()))? {
+        for entry in fastctx_platform::disk::read_dir(exchange::sessions(node.world.path()))? {
             let directory = match entry {
                 Ok(entry) => entry.path(),
                 Err(error) => {
@@ -143,7 +145,7 @@ fn sessions(node: &Node, resident: &ResidentId) -> (Vec<Session>, Vec<String>) {
                 }
             };
             let read = (|| -> std::io::Result<Option<Session>> {
-                let alias = match std::fs::read(directory.join("resident.json")) {
+                let alias = match fastctx_platform::disk::read(directory.join("resident.json")) {
                     Ok(bytes) => serde_json::from_slice::<ResidentId>(&bytes).map_err(std::io::Error::other)?,
                     Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
                     Err(error) => return Err(error),
@@ -238,9 +240,10 @@ async fn read_now(
         let reading = path.clone();
         let cuts = cuts.clone();
         let earlier = earlier.clone();
-        let read = tokio::task::spawn_blocking(move || transcript::read_continuing(&reading, &cuts, &earlier))
-            .await
-            .map_err(|error| format!("reading it: {error}"))?;
+        let read =
+            fastctx_platform::task::spawn_blocking(move || transcript::read_continuing(&reading, &cuts, &earlier))
+                .await
+                .map_err(|error| format!("reading it: {error}"))?;
         match read {
             Ok(read) => return Ok(read),
             Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,

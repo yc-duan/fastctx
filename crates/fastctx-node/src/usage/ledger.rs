@@ -260,11 +260,11 @@ impl Book {
                     self.seen.extend(reports.iter().map(|at| (identity.clone(), *at)));
                 }
             }
-            Entry::Tokens { at, key: Some(key), .. } if *at >= month => {
+            Entry::Tokens { at, key: Some(key), .. } if *at >= month || key.starts_with("terminal:") => {
                 self.keys.insert(key.clone());
             }
-            Entry::Receipts { at, keys } if *at >= month => {
-                self.keys.extend(keys.iter().cloned());
+            Entry::Receipts { at, keys } => {
+                self.keys.extend(keys.iter().filter(|key| *at >= month || key.starts_with("terminal:")).cloned());
             }
             Entry::Account { at, account } => {
                 if self.accounts.is_empty() {
@@ -321,7 +321,7 @@ impl Book {
         {
             return Ok(());
         }
-        // 2026-10-20: reload ambiguous writes from disk, not a half-updated index.
+        // Reload ambiguous writes from disk, not a half-updated index.
         self.valid = false;
         append(path, &row)?;
         self.apply(&row);
@@ -340,12 +340,10 @@ pub(super) fn day_file(path: &Path, at: Timestamp) -> PathBuf {
 
 fn append(path: &Path, row: &Entry) -> io::Result<()> {
     fastctx_platform::ensure_private_dir(path)?;
-    let mut file = std::fs::OpenOptions::new()
-        .create(true)
-        .truncate(false)
-        .read(true)
-        .write(true)
-        .open(day_file(path, row.usage_at()))?;
+    let mut file = fastctx_platform::disk::open_with(
+        std::fs::OpenOptions::new().create(true).truncate(false).read(true).write(true),
+        day_file(path, row.usage_at()),
+    )?;
     let len = file.metadata()?.len();
     if len > 0 {
         let mut end = len;
@@ -376,7 +374,7 @@ fn append(path: &Path, row: &Entry) -> io::Result<()> {
 
 pub(super) fn days(path: &Path, since: Timestamp) -> io::Result<Vec<PathBuf>> {
     let first = since.strftime("%Y-%m-%d").to_string();
-    let read = match std::fs::read_dir(path) {
+    let read = match fastctx_platform::disk::read_dir(path) {
         Ok(read) => read,
         Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
         Err(e) => return Err(e),

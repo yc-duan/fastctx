@@ -11,6 +11,7 @@
 
 import { loginsOf, type HubAccounts, type LinkSeen, type Login, type MemberSeen } from "../world/accounts";
 import type { WorldNow } from "../world/bridge";
+import type { Strain } from "../world/world";
 import { deviceKey, type MapHub, type MapLink, type MapNode, type MapPerson } from "./map-nodes";
 import { osName } from "../world/names";
 import { assistantsOf, isComputer, isSuper, machineActsFor, machinesOf, ownerOf, owns } from "./reach";
@@ -30,6 +31,8 @@ export interface MapWords {
   reachingWhat: string;
   /** The names a machine had, each still naming it. */
   formerly(names: string[]): string;
+  /** Its Fastctx held up or stuck, said whole for a pointer's rest. */
+  strainWhy: Record<Strain, string>;
   visitorMachine: string;
   visitorWhat: string;
   /** Under a managed machine's name. */
@@ -103,7 +106,8 @@ function mapMade(world: WorldNow, words: MapWords): MapNow {
       hold: mine ? "mine" : "others",
       reaching,
       busy: busy.get(machine.name) ?? 0,
-      title: [machine.written, owner ? words.ownedBy(owner) : "", reaching ? words.reachingWhat : "", direct.length ? words.takesDirect : "", was.length ? words.formerly(was) : ""].filter(Boolean).join("\n"),
+      ...(machine.strain ? { strain: machine.strain } : {}),
+      title: [machine.written, machine.strain ? words.strainWhy[machine.strain] : "", owner ? words.ownedBy(owner) : "", reaching ? words.reachingWhat : "", direct.length ? words.takesDirect : "", was.length ? words.formerly(was) : ""].filter(Boolean).join("\n"),
       ...(was.length ? { was: was.map((name) => `m:${name}${suffix}`) } : {}),
       directAt: direct,
       through: machine.through ?? null,

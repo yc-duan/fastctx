@@ -41,7 +41,7 @@ async fn write(writer: &mut FrameWriter, id: u64, bytes: &[u8]) -> Result<(), St
     writer.send(bytes).await.map_err(|e| e.to_string())
 }
 
-fn prepare(
+fn prepare_now(
     node: &Node,
     peer: &Peer,
     name: &str,
@@ -82,6 +82,17 @@ fn prepare(
     Ok((link, account, machine.clone()))
 }
 
+async fn prepare(
+    node: &Arc<Node>,
+    peer: &Peer,
+    name: &str,
+) -> Result<(Arc<fastctx_net::link::Link>, fastctx_types::AccountName, fastctx_types::MachineName), Failure> {
+    let (node, peer, name) = (node.clone(), peer.clone(), name.to_string());
+    fastctx_platform::task::spawn_blocking(move || prepare_now(&node, &peer, &name))
+        .await
+        .map_err(|error| Failure::new(error.to_string()))?
+}
+
 pub(crate) async fn serve(
     node: &Arc<Node>,
     peer: &Peer,
@@ -92,7 +103,7 @@ pub(crate) async fn serve(
 ) -> std::io::Result<()> {
     let mut changes = node.views.subscribe();
     let mut ways = node.ways.subscribe();
-    let prepared = prepare(node, peer, &name);
+    let prepared = prepare(node, peer, &name).await;
     let (link, account, machine) = match prepared {
         Ok(prepared) => prepared,
         Err(failure) => {
@@ -109,7 +120,8 @@ pub(crate) async fn serve(
         if local { Some(super::store::get(node, &link.membership().id, &account, &name).map_err(io)?) } else { None };
     let revoked = async {
         loop {
-            let (now_link, now_account, now_machine) = prepare(node, peer, &name).map_err(|failure| failure.message)?;
+            let (now_link, now_account, now_machine) =
+                prepare(node, peer, &name).await.map_err(|failure| failure.message)?;
             if now_link.membership().id != link.membership().id || now_account != account || now_machine != machine {
                 return Err::<(), String>("the MCP's account or destination changed".into());
             }
@@ -124,7 +136,7 @@ pub(crate) async fn serve(
             }
         }
     };
-    prepare(node, peer, &name).map_err(io)?;
+    prepare(node, peer, &name).await.map_err(io)?;
     writer.send(&serde_json::to_vec(&NodeFrame::McpOpened { id }).unwrap()).await?;
     if let Some(server) = &server {
         let mut process = super::process::start(server, &node.fastctx, &node.root).map_err(io)?;

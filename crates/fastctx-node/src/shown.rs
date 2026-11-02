@@ -9,6 +9,8 @@
 
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::Duration;
 
 use fastctx_net::link::{Elsewhere, Status};
 use fastctx_types::access::{Acting, HubId, Purpose};
@@ -18,6 +20,121 @@ use fastctx_types::world::{Node as NodeView, NodesReply, WorldNow};
 use fastctx_types::{MachineName, ResidentId};
 
 use crate::Node;
+
+/// How long after a change the World is worked out again for those who
+/// watch it, gathering the changes that come with it: a job's output
+/// changes it many times a second, and a network's machines come and go in
+/// bursts.
+const SETTLE: Duration = Duration::from_millis(250);
+
+/// The World as the interfaces watching it are told it, worked out once for
+/// them all and only while one watches; none until it is worked out anew.
+pub(crate) struct Shown {
+    told: tokio::sync::watch::Sender<Option<Arc<WorldNow>>>,
+    started: AtomicBool,
+    /// Rung when an interface starts watching.
+    watched: tokio::sync::Notify,
+}
+
+impl Default for Shown {
+    fn default() -> Self {
+        Self {
+            told: tokio::sync::watch::channel(None).0,
+            started: AtomicBool::new(false),
+            watched: tokio::sync::Notify::new(),
+        }
+    }
+}
+
+/// Follows the World as `Shown` tells it.
+pub(crate) fn watch(node: &Arc<Node>) -> tokio::sync::watch::Receiver<Option<Arc<WorldNow>>> {
+    let watching = node.world_shown.told.subscribe();
+    if !node.world_shown.started.swap(true, Ordering::AcqRel) {
+        let node = node.clone();
+        fastctx_platform::task::spawn(async move { publish(node).await });
+    }
+    node.world_shown.watched.notify_one();
+    watching
+}
+
+/// Works the World out after each change while an interface watches it.
+async fn publish(node: Arc<Node>) {
+    let mut residents = node.residents.changes();
+    let mut shown = node.shown.subscribe();
+    let mut jobs = node.jobs.subscribe();
+    let told = &node.world_shown.told;
+    // What could not be read is read again in a moment: the interfaces go
+    // on showing what they were told, and the log says why, once a reason.
+    let mut failing: Option<String> = None;
+    let mut stale = true;
+    loop {
+        if told.receiver_count() == 0 {
+            // Nobody watches: nothing is worked out, and what was told is
+            // let go once it is out of date, so whoever watches next waits
+            // for the World as it is then.
+            tokio::select! {
+                () = node.world_shown.watched.notified() => {}
+                changed = residents.changed() => if changed.is_err() { return },
+                changed = shown.changed() => if changed.is_err() { return },
+                job = jobs.recv() => {
+                    if matches!(job, Err(tokio::sync::broadcast::error::RecvError::Closed)) {
+                        return;
+                    }
+                }
+            }
+            if told.receiver_count() == 0 {
+                told.send_replace(None);
+            }
+            stale = true;
+            continue;
+        }
+        if stale {
+            if told.borrow().is_some() {
+                tokio::time::sleep(SETTLE).await;
+            }
+            residents.borrow_and_update();
+            shown.borrow_and_update();
+            while jobs.try_recv().is_ok() {}
+            if ready(&node) {
+                match now(&node).await {
+                    Ok(world) => {
+                        failing = None;
+                        told.send_if_modified(|current| {
+                            if current.as_deref() == Some(&world) {
+                                return false;
+                            }
+                            *current = Some(Arc::new(world));
+                            true
+                        });
+                    }
+                    Err(failure) => {
+                        if failing.as_deref() != Some(failure.message.as_str()) {
+                            node.log.line(format_args!(
+                                "reading the World for an interface: {}; reading it again in a moment",
+                                failure.message
+                            ));
+                            failing = Some(failure.message);
+                        }
+                        tokio::time::sleep(Duration::from_secs(1)).await;
+                        continue;
+                    }
+                }
+            }
+            stale = false;
+        }
+        tokio::select! {
+            () = node.world_shown.watched.notified() => {}
+            changed = residents.changed() => if changed.is_err() { return } else { stale = true },
+            changed = shown.changed() => if changed.is_err() { return } else { stale = true },
+            job = jobs.recv() => {
+                if matches!(job, Err(tokio::sync::broadcast::error::RecvError::Closed)) {
+                    return;
+                }
+                stale = true;
+            }
+        }
+    }
+}
 
 pub(crate) async fn now(node: &Arc<Node>) -> Result<WorldNow, Failure> {
     let here = node.machine();
@@ -181,6 +298,7 @@ fn nodes(node: &Arc<Node>) -> NodesReply {
                 online: current.then_some(machine.online),
                 since: machine.since,
                 through: machine.through.clone(),
+                strain: machine.strain.filter(|_| current && machine.online),
                 allows_direct: !machine.direct.is_empty(),
                 path: Some(link.path_to(&machine.name)),
                 facts,
@@ -192,7 +310,8 @@ fn nodes(node: &Arc<Node>) -> NodesReply {
         // This computer is decided as any machine is: a locked account
         // logged in here may not work on it either. The user at this
         // computer's own screen is another matter, and is not this.
-        let here = logins.iter().map(|account| (account.clone(), view.call_rights(&view.me, account, &view.me))).collect();
+        let here =
+            logins.iter().map(|account| (account.clone(), view.call_rights(&view.me, account, &view.me))).collect();
         hubs.push(fastctx_types::world::HubNodes {
             hub: link.membership().id.clone(),
             name: view.hub_name.clone(),

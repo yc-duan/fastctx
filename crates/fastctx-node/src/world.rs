@@ -55,7 +55,7 @@ pub(crate) fn hub_dir(world: &WorldDir, hub: &HubId) -> std::path::PathBuf {
 pub fn load(world: &WorldDir) -> io::Result<Vec<Membership>> {
     migrate(world)?;
     let mut memberships = Vec::new();
-    let entries = match std::fs::read_dir(hubs(world)) {
+    let entries = match fastctx_platform::disk::read_dir(hubs(world)) {
         Ok(entries) => entries,
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(memberships),
         Err(error) => return Err(error),
@@ -70,9 +70,9 @@ pub fn load(world: &WorldDir) -> io::Result<Vec<Membership>> {
         // A computer that began to leave this network and stopped before
         // it was done leaves it now: what it told the hub was the last word
         // (`specs/world-concurrency.md`, 多步的事).
-        if path.join(LEAVING).exists() {
+        if fastctx_platform::disk::is_there(path.join(LEAVING)) {
             let aside = world.path().join(format!("net-left-{}-{}", id, Timestamp::now().strftime("%Y%m%dT%H%M%SZ")));
-            std::fs::rename(&path, &aside)?;
+            fastctx_platform::disk::rename(&path, &aside)?;
             continue;
         }
         match fastctx_net::link::state::read::<Membership>(&path.join("membership.json")) {
@@ -112,8 +112,8 @@ fn migrate(world: &WorldDir) -> io::Result<()> {
     fastctx_platform::ensure_private_dir(&target)?;
     for name in ["counter.json", "letters.json", "outbox", "received", "failures"] {
         let from = net.join(name);
-        if from.exists() {
-            std::fs::rename(&from, target.join(name))?;
+        if fastctx_platform::disk::is_there(&from) {
+            fastctx_platform::disk::rename(&from, target.join(name))?;
         }
     }
     // What the third version kept of the members, its calls taken and its
@@ -122,8 +122,8 @@ fn migrate(world: &WorldDir) -> io::Result<()> {
     fastctx_platform::ensure_private_dir(&aside)?;
     for name in ["members.json", "calls.json"] {
         let from = net.join(name);
-        if from.exists() {
-            std::fs::rename(&from, aside.join(name))?;
+        if fastctx_platform::disk::is_there(&from) {
+            fastctx_platform::disk::rename(&from, aside.join(name))?;
         }
     }
     let fourth = Membership {
@@ -137,7 +137,7 @@ fn migrate(world: &WorldDir) -> io::Result<()> {
         relays: Vec::new(),
     };
     fastctx_net::link::state::write(&target.join("membership.json"), &fourth)?;
-    std::fs::rename(&old, aside.join("membership.json"))
+    fastctx_platform::disk::rename(&old, aside.join("membership.json"))
 }
 
 /// This computer's key, made now if it has none.
@@ -167,7 +167,7 @@ pub fn start(node: &Arc<Node>, membership: Membership) -> io::Result<Arc<Link>> 
     crate::updates::report(node);
     if dissolved {
         let node = node.clone();
-        tokio::spawn(async move {
+        fastctx_platform::task::spawn(async move {
             if let Err(failure) = left_dissolved(&node, &hub).await {
                 node.log.line(format_args!("leaving the dissolved network: {failure}"));
             }
@@ -246,7 +246,7 @@ pub async fn open_account(
 
 async fn own_key(node: &Node) -> Result<SecretKey, Failure> {
     let world = node.world.clone();
-    tokio::task::spawn_blocking(move || key(&world))
+    fastctx_platform::task::spawn_blocking(move || key(&world))
         .await
         .map_err(|error| Failure::new(format!("making this computer's key: {error}")))?
         .map_err(|error| Failure::new(format!("making this computer's key: {error}")))
@@ -312,7 +312,7 @@ async fn logged_in(node: &Arc<Node>, joined: Joined) -> Result<Reply, Failure> {
             start(node, membership).map_err(|error| Failure::new(format!("starting the link to the hub: {error}")))?;
             crate::ledger::joined(node, &hub);
             let (carrying, at) = (node.clone(), hub.clone());
-            tokio::spawn(async move { crate::own_collab::carry(&carrying, &at).await });
+            fastctx_platform::task::spawn(async move { crate::own_collab::carry(&carrying, &at).await });
         }
     }
     node.log.line(format_args!("logged in to {account} on {hub_name} as {name}"));
@@ -337,7 +337,7 @@ pub(crate) fn follow_rename(node: &Arc<Node>, hub: &HubId, from: &MachineName, t
     node.ways_changed();
     for link in node.links().into_iter().filter(|link| link.hub() != hub) {
         let node = node.clone();
-        tokio::spawn(async move { same_name(&node, &link).await });
+        fastctx_platform::task::spawn(async move { same_name(&node, &link).await });
     }
 }
 
@@ -476,7 +476,7 @@ async fn log_out(node: &Arc<Node>, link: &Arc<Link>, account: &AccountName) -> R
     // that cannot be reached is not told, and the computer leaves it all
     // the same: there it stays a machine away until it is removed.
     if answer.is_err() && matches!(link.status(), Status::Online { .. }) {
-        let _ = std::fs::remove_file(hub_dir(&node.world, &link.membership().id).join(LEAVING));
+        let _ = fastctx_platform::disk::remove_file(hub_dir(&node.world, &link.membership().id).join(LEAVING));
         answer.map_err(Failure::new)?;
     }
     let aside = put_aside(node, link).await?;
@@ -507,7 +507,7 @@ async fn left_dissolved(node: &Arc<Node>, hub: &fastctx_types::access::HubId) ->
 
 /// The networks said dissolved were seen: no interface says so again.
 pub fn seen_dissolved(node: &Node) -> Result<(), Failure> {
-    match std::fs::remove_file(node.world.dissolved()) {
+    match fastctx_platform::disk::remove_file(node.world.dissolved()) {
         Err(error) if error.kind() != std::io::ErrorKind::NotFound => return Err(Failure::new(error.to_string())),
         _ => {}
     }
@@ -536,14 +536,14 @@ async fn put_aside(node: &Arc<Node>, link: &Arc<Link>) -> Result<std::path::Path
     // What the firewall let in for direct connections on that hub goes with
     // the membership.
     let closing = hub.clone();
-    match tokio::task::spawn_blocking(move || crate::firewall::open(&closing, &Default::default())).await {
+    match fastctx_platform::task::spawn_blocking(move || crate::firewall::open(&closing, &Default::default())).await {
         Ok(Ok(_)) => {}
         Ok(Err(why)) => node.log.line(format_args!("closing the firewall for direct connections: {why}")),
         Err(error) => node.log.line(format_args!("closing the firewall for direct connections: {error}")),
     }
     let net = net_dir(&node.world, &hub);
     let aside = node.world.path().join(format!("net-left-{}-{}", hub, Timestamp::now().strftime("%Y%m%dT%H%M%SZ")));
-    std::fs::rename(net.path(), &aside)
+    fastctx_platform::disk::rename(net.path(), &aside)
         .map_err(|error| Failure::new(format!("putting {} aside: {error}", net.path().display())))?;
     Ok(aside)
 }
@@ -591,6 +591,7 @@ pub fn facts(node: &Node) -> MachineFacts {
         completion_receipts: true,
         control_letters: true,
         run_stops: true,
+        job_fact_deltas: true,
         upload_resumes: true,
         attachment_references: true,
         stats: true,
@@ -599,8 +600,9 @@ pub fn facts(node: &Node) -> MachineFacts {
         page_accounts: true,
         attachment_places: true,
         attachment_runs: true,
-        memory_folders: true,
+        memory_folders: false,
         plan_copies: true,
+        replicated_records: true,
         collaboration_tree: true,
         shell: shell(),
         form: Some(form()),
@@ -647,7 +649,7 @@ fn shell() -> String {
 /// Windows with forward slashes. Windows hands out some paths, such as the
 /// temporary directory, in their short 8.3 form, which resolving undoes.
 pub(crate) fn native(path: &std::path::Path) -> String {
-    let resolved = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    let resolved = fastctx_platform::disk::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
     let mut text = resolved.to_string_lossy().into_owned();
     if cfg!(windows) {
         if let Some(rest) = text.strip_prefix(r"\\?\UNC\") {
@@ -725,7 +727,14 @@ impl fastctx_net::link::Node for Handler {
             {
                 link.refresh().await.map_err(Failure::not_run)?;
             }
-            let asker = match crate::admission::admit(&node, &link, &caller, &call) {
+            let (working, connection, authenticated) = (node.clone(), link.clone(), caller.clone());
+            let (call, admission) = fastctx_platform::task::spawn_blocking(move || {
+                let admission = crate::admission::admit(&working, &connection, &authenticated, &call);
+                (call, admission)
+            })
+            .await
+            .map_err(|error| Failure::not_run(error.to_string()))?;
+            let asker = match admission {
                 Ok(asker) => asker,
                 Err(refused) => {
                     // Its data connection is closed, not dropped: the other
@@ -880,7 +889,7 @@ impl fastctx_net::link::Node for Handler {
                 RemoteCall::Ask { asker: resident, requester_turn, town, label, prompt, started } => {
                     let acting = Acting::one(hub.clone(), caller.account.clone());
                     let asker = Address { machine: from, resident };
-                    let colleague = crate::colleagues::ask_here(
+                    let (colleague, waiting) = crate::colleagues::ask_here(
                         &node,
                         crate::colleagues::Requester { address: asker, turn: requester_turn },
                         acting,
@@ -890,7 +899,7 @@ impl fastctx_net::link::Node for Handler {
                         started,
                     )
                     .await?;
-                    Ok(RemoteReply::Asked { colleague })
+                    Ok(RemoteReply::Asked { colleague, waiting })
                 }
                 RemoteCall::Talk { to, text, attachments, files_on, id } => {
                     crate::talk::talk_here(&node, &from, &to, text, attachments, files_on.as_ref(), id.as_deref())
@@ -1085,13 +1094,13 @@ impl fastctx_net::link::Node for Handler {
                         .await
                         .map(|location| RemoteReply::WorkingCopy { location })
                 }
-                RemoteCall::MemoryFolders { town } => {
-                    crate::memory::folders::here_for(&node, &asker, &town).map(RemoteReply::MemoryFolders)
+                RemoteCall::MemoryFolders { .. } => {
+                    Err(Failure::not_run("project memory was replaced by history; update the requesting computer"))
                 }
-                RemoteCall::Plan { resident, operation } => {
+                RemoteCall::Plan { resident, operation, of } => {
                     let account =
                         fastctx_types::access::HubAccount { hub: hub.clone(), account: caller.account.clone() };
-                    crate::plan::here(&node, &resident, None, None, Some(&account), operation)
+                    crate::plan::here(&node, &resident, None, None, Some(&account), operation, of)
                         .await
                         .map(|result| RemoteReply::Plan { result })
                 }
@@ -1133,7 +1142,7 @@ impl fastctx_net::link::Node for Handler {
                 }
                 RemoteCall::SentinelHome { request } => {
                     let scope = fastctx_types::access::HubAccount { hub: hub.clone(), account: caller.account.clone() };
-                    crate::sentinels::home_call(&node, &scope, &request)
+                    crate::sentinels::home_call_for(&node, &scope, &from, &request)
                         .await
                         .map(|reply| RemoteReply::SentinelHome(Box::new(reply)))
                         .map_err(Failure::new)
@@ -1164,10 +1173,12 @@ impl fastctx_net::link::Node for Handler {
                     {
                         return Err(Failure::not_run("the attachments name another conversation home"));
                     }
-                    tokio::task::spawn_blocking(move || crate::attachments::lifetime::referenced(&node, &attachments))
-                        .await
-                        .map_err(|error| Failure::new(error.to_string()))?
-                        .map(|used| RemoteReply::AttachmentReferences { used })
+                    fastctx_platform::task::spawn_blocking(move || {
+                        crate::attachments::lifetime::referenced(&node, &attachments)
+                    })
+                    .await
+                    .map_err(|error| Failure::new(error.to_string()))?
+                    .map(|used| RemoteReply::AttachmentReferences { used })
                 }
                 RemoteCall::UpdateWorld | RemoteCall::Updates { .. } => {
                     let update = match call {
@@ -1256,7 +1267,7 @@ impl fastctx_net::link::Node for Handler {
         let received = caller.received.clone();
         let node = self.node.upgrade();
         let hub = self.hub.clone();
-        Box::pin(async move {
+        let taking = async move {
             let Some(node) = node else {
                 return Err(io::Error::other("the node is stopping"));
             };
@@ -1318,29 +1329,35 @@ impl fastctx_net::link::Node for Handler {
                     }
                     Letter::Fragment { .. } => unreachable!("nested fragments are rejected"),
                     Letter::JobFacts { to, update } => {
-                        crate::run_facts::receive(&node, &to, &update)?;
+                        crate::run_facts::receive(&node, to, *update).await?;
                         Ok(Ok(()))
                     }
                     Letter::Notice { to, notice } => {
-                        let notice = *notice;
-                        if let Notice::JobEnded { job, machine, scratch, .. } = &notice {
-                            if !scratch.is_empty() {
-                                let link = node
-                                    .link_of(&hub)
-                                    .ok_or_else(|| io::Error::other("the sending hub is no longer connected"))?;
-                                crate::scratch::observed(&node, &to, &node.written(&link, &from), scratch)?;
-                            }
-                            crate::here::ended_elsewhere(&node, &to, machine, job);
+                        let mut notice = *notice;
+                        if matches!(notice, Notice::JobEnded { .. }) {
+                            let (working, resident, hub, from) = (node.clone(), to.clone(), hub.clone(), from.clone());
+                            let computer = identity.with_id(&node, "").id;
+                            notice = fastctx_platform::task::spawn_blocking(move || -> io::Result<_> {
+                                if let Notice::JobEnded { job, machine, scratch, .. } = &notice {
+                                    if !scratch.is_empty() {
+                                        let link = working.link_of(&hub).ok_or_else(|| {
+                                            io::Error::other("the sending hub is no longer connected")
+                                        })?;
+                                        crate::scratch::observed(
+                                            &working,
+                                            &resident,
+                                            &working.written(&link, &from),
+                                            scratch,
+                                        )?;
+                                    }
+                                    crate::here::ended_elsewhere(&working, &resident, machine, job, &computer)?;
+                                }
+                                Ok(notice)
+                            })
+                            .await
+                            .map_err(io::Error::other)??;
                         }
-                        // A colleague's question, a sentinel's finding and a goal's
-                        // report are owed no answer.
-                        let owed = if notice.is_question()
-                            || matches!(&notice, Notice::Sentinel { .. } | Notice::Words { goal_report: Some(_), .. })
-                        {
-                            Owed::Nobody
-                        } else {
-                            Owed::Working
-                        };
+                        let owed = if notice.owes_no_answer() { Owed::Nobody } else { Owed::Working };
                         let delivery = Delivery { id: delivery_id, at: Timestamp::now(), notice };
                         if crate::on_delivery::park_from(&node, &to, &delivery, Some(&identity))? {
                             return Ok(Ok(()));
@@ -1356,6 +1373,7 @@ impl fastctx_net::link::Node for Handler {
                             text,
                             goal_report: None,
                             goal_question: None,
+                            told: None,
                         };
                         let delivery = Delivery { id: delivery_id, at: Timestamp::now(), notice };
                         crate::received::keep(&node, &to, delivery, Owed::Speaker(address))?;
@@ -1379,12 +1397,42 @@ impl fastctx_net::link::Node for Handler {
                 }
             }
             result
+        };
+        // Taking a letter reaches records that may still be moving in, which
+        // only a blocking thread may wait for; its asynchronous parts run there too.
+        Box::pin(async move {
+            let runtime = tokio::runtime::Handle::current();
+            fastctx_platform::task::spawn_blocking(move || runtime.block_on(Box::pin(taking)))
+                .await
+                .map_err(io::Error::other)?
         })
+    }
+
+    fn history_changed(&self, town: fastctx_types::access::TownId, name: String, version: u64) {
+        if let Some(node) = self.node.upgrade() {
+            crate::replicas::updates::schedule(
+                &node,
+                &self.hub,
+                crate::replicas::updates::Change::History { town, name, version },
+            );
+            node.memory_changed();
+        }
+    }
+    fn replicas_changed(&self) {
+        if let Some(node) = self.node.upgrade() {
+            crate::replicas::updates::schedule(&node, &self.hub, crate::replicas::updates::Change::All);
+            node.memory_changed();
+        }
     }
 
     fn ledger_changed(&self, town: Option<fastctx_types::access::TownId>) {
         let Some(node) = self.node.upgrade() else { return };
-        crate::ledger::syncing::changed(&node, &self.hub, town);
+        crate::ledger::syncing::changed(&node, &self.hub, town.clone());
+        crate::replicas::updates::schedule(
+            &node,
+            &self.hub,
+            town.map_or(crate::replicas::updates::Change::All, crate::replicas::updates::Change::Project),
+        );
     }
 
     fn renamed(&self, from: &MachineName, to: &MachineName) {
@@ -1403,7 +1451,7 @@ impl fastctx_net::link::Node for Handler {
         }
         node.views_changed();
         if dissolved {
-            tokio::spawn(async move {
+            fastctx_platform::task::spawn(async move {
                 if let Err(failure) = left_dissolved(&node, &hub).await {
                     node.log.line(format_args!("leaving the dissolved network: {failure}"));
                 }
@@ -1412,7 +1460,7 @@ impl fastctx_net::link::Node for Handler {
         }
         let Some(then) = then else { return };
         let Some(membership) = node.link_of(&hub).map(|link| link.dir().to_path_buf()) else { return };
-        tokio::spawn(async move { crate::removed::uninstall(&node, &membership, then).await });
+        fastctx_platform::task::spawn(async move { crate::removed::uninstall(&node, &membership, then).await });
     }
 
     /// Connected again: a hub that calls this computer otherwise than the
@@ -1427,13 +1475,31 @@ impl fastctx_net::link::Node for Handler {
         let Some(link) = node.link_of(&self.hub) else { return };
         // A previous cleanup may have failed after consuming this same view.
         crate::directory_changes::cleanup(&node, &link);
-        tokio::spawn(async move { same_name(&node, &link).await });
+        fastctx_platform::task::spawn(async move { same_name(&node, &link).await });
     }
 
     /// Someone may have logged in to an account this computer is logged in
     /// to: its user is told who, from the views before and after.
     fn account_record_changed(&self, change: &fastctx_types::account_records::Changed) {
         if let Some(node) = self.node.upgrade() {
+            match change.metadata.kind.as_str() {
+                fastctx_types::owned_records::KIND => {
+                    crate::replicas::updates::schedule(&node, &self.hub, crate::replicas::updates::Change::All)
+                }
+                fastctx_types::history::RECORD_KIND | fastctx_types::plan::KIND => crate::replicas::updates::schedule(
+                    &node,
+                    &self.hub,
+                    crate::replicas::updates::Change::Record(change.clone()),
+                ),
+                _ => {}
+            }
+
+            if matches!(
+                change.metadata.kind.as_str(),
+                fastctx_types::history::RECORD_KIND | fastctx_types::owned_records::KIND
+            ) {
+                node.memory_changed();
+            }
             crate::placement::copies::changed(&node, &self.hub, change);
         }
         if let Some(node) = self.node.upgrade() {
@@ -1463,7 +1529,7 @@ impl fastctx_net::link::Node for Handler {
         crate::hub_arrival::check(&node, &self.hub);
         node.views_changed();
         let contexts = node.clone();
-        tokio::spawn(async move { crate::focus::refresh_all(&contexts).await });
+        fastctx_platform::task::spawn(async move { crate::focus::refresh_all(&contexts).await });
         self.changes.reconcile(&node, link);
     }
 
@@ -1516,6 +1582,28 @@ impl fastctx_net::link::Node for Handler {
             match node {
                 Some(node) => crate::forget::told(&node, &hub, forgetting).await,
                 None => fastctx_net::wire::Forgot::Failed { reason: "the node is stopping".to_string() },
+            }
+        })
+    }
+
+    fn forget_account(
+        &self,
+        forgetting: fastctx_net::wire::AccountForgetting,
+    ) -> fastctx_net::link::BoxFuture<fastctx_net::wire::Forgot> {
+        let (node, hub) = (self.node.upgrade(), self.hub.clone());
+        Box::pin(async move {
+            let Some(node) = node else {
+                return fastctx_net::wire::Forgot::Failed { reason: "the node is stopping".to_string() };
+            };
+            let sealing = node.clone();
+            let sealed = fastctx_platform::task::spawn_blocking(move || {
+                crate::activity_book::seal_account(&sealing, &hub, &forgetting.account, forgetting.at)
+            })
+            .await;
+            match sealed {
+                Ok(Ok(())) => fastctx_net::wire::Forgot::Done,
+                Ok(Err(error)) => fastctx_net::wire::Forgot::Failed { reason: error.to_string() },
+                Err(error) => fastctx_net::wire::Forgot::Failed { reason: error.to_string() },
             }
         })
     }

@@ -23,7 +23,7 @@ pub(crate) fn same_dir(a: &Path, b: &Path) -> bool {
     if normal(a) == normal(b) {
         return true;
     }
-    match (std::fs::canonicalize(a), std::fs::canonicalize(b)) {
+    match (fastctx_platform::disk::canonicalize(a), fastctx_platform::disk::canonicalize(b)) {
         (Ok(a), Ok(b)) => normal(&a) == normal(&b),
         _ => false,
     }
@@ -49,7 +49,7 @@ fn normal(dir: &Path) -> String {
 }
 
 fn location(path: &Path) -> String {
-    match std::fs::canonicalize(path) {
+    match fastctx_platform::disk::canonicalize(path) {
         Ok(path) => normal(&path),
         // Missing transcripts and removed homes retain their recorded path;
         // they never acquire another login's identity.

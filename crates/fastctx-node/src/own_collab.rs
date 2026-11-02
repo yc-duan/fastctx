@@ -44,7 +44,7 @@ pub(crate) fn read(world: &WorldDir) -> Result<Collab, Failure> {
 }
 
 fn read_at(path: &Path) -> std::io::Result<Option<Collab>> {
-    match std::fs::read(path) {
+    match fastctx_platform::disk::read(path) {
         Ok(bytes) => serde_json::from_slice(&bytes).map(Some).map_err(std::io::Error::other),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
         Err(error) => Err(error),
@@ -75,6 +75,7 @@ pub(crate) fn write(node: &Node, mut collab: Collab) -> Result<u64, Failure> {
     }
     let _writing = node.own_collab.writing.lock().expect("never poisoned");
     let current = read(&node.world)?;
+    collab.keep_unsaid(Some(&current));
     if collab.version != current.version {
         return Err(Failure::not_run(format!(
             "model collaboration changed: version {} was read, current version is {}",
@@ -199,7 +200,7 @@ pub(crate) async fn carry(node: &Arc<Node>, hub: &HubId) {
         node.log.line(format_args!("carrying this computer's model collaboration into {home}: {error}"));
         return;
     }
-    if let Err(error) = std::fs::rename(&path, carried_path(&node.world)) {
+    if let Err(error) = fastctx_platform::disk::rename(&path, carried_path(&node.world)) {
         node.log.line(format_args!(
             "this computer's model collaboration is in {home}, but putting {} aside failed: {error}",
             path.display()
@@ -218,7 +219,7 @@ pub(crate) async fn carry(node: &Arc<Node>, hub: &HubId) {
 /// logins, become its own, unless it still keeps some it never carried.
 pub(crate) fn take_back(node: &Node, link: &Link) {
     let path = node.world.own_collab();
-    match path.try_exists() {
+    match fastctx_platform::disk::exists(&path) {
         Ok(false) => {}
         Ok(true) => return,
         Err(error) => {

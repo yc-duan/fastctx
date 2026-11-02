@@ -1,0 +1,45 @@
+# This crate keeps to its threads' roles (`specs/world-engine.md`, 线程的三种角色):
+# it reaches files through `fastctx_platform::disk` and starts tasks through
+# `fastctx_platform::task`, so that blocking a thread that must not block, and
+# a task's slow slice, are noted where they happen. The same list is in
+# `fastctx-hub/clippy.toml` and `fastctx-net/clippy.toml`.
+
+disallowed-methods = [
+  { path = "std::fs::read", reason = "use fastctx_platform::disk::read, which notes a thread that must not block" },
+  { path = "std::fs::read_to_string", reason = "use fastctx_platform::disk::read_to_string" },
+  { path = "std::fs::write", reason = "use fastctx_platform::disk::write" },
+  { path = "std::fs::read_dir", reason = "use fastctx_platform::disk::read_dir" },
+  { path = "std::fs::create_dir", reason = "use fastctx_platform::disk::create_dir_all" },
+  { path = "std::fs::create_dir_all", reason = "use fastctx_platform::disk::create_dir_all" },
+  { path = "std::fs::remove_file", reason = "use fastctx_platform::disk::remove_file" },
+  { path = "std::fs::remove_dir", reason = "use fastctx_platform::disk::remove_dir" },
+  { path = "std::fs::remove_dir_all", reason = "use fastctx_platform::disk::remove_dir_all" },
+  { path = "std::fs::rename", reason = "use fastctx_platform::disk::rename" },
+  { path = "std::fs::copy", reason = "use fastctx_platform::disk::copy" },
+  { path = "std::fs::metadata", reason = "use fastctx_platform::disk::metadata" },
+  { path = "std::fs::symlink_metadata", reason = "use fastctx_platform::disk::symlink_metadata" },
+  { path = "std::fs::canonicalize", reason = "use fastctx_platform::disk::canonicalize" },
+  { path = "std::fs::exists", reason = "use fastctx_platform::disk::exists" },
+  { path = "std::fs::File::open", reason = "use fastctx_platform::disk::open" },
+  { path = "std::fs::File::create", reason = "use fastctx_platform::disk::create" },
+  { path = "std::fs::OpenOptions::open", reason = "use fastctx_platform::disk::open_with" },
+  { path = "std::path::Path::exists", reason = "use fastctx_platform::disk::is_there" },
+  { path = "std::path::Path::try_exists", reason = "use fastctx_platform::disk::exists" },
+  { path = "std::path::Path::is_file", reason = "use fastctx_platform::disk::is_file" },
+  { path = "std::path::Path::is_dir", reason = "use fastctx_platform::disk::is_dir" },
+  { path = "std::path::Path::metadata", reason = "use fastctx_platform::disk::metadata" },
+  { path = "std::path::Path::symlink_metadata", reason = "use fastctx_platform::disk::symlink_metadata" },
+  { path = "std::path::Path::read_dir", reason = "use fastctx_platform::disk::read_dir" },
+  { path = "std::path::Path::canonicalize", reason = "use fastctx_platform::disk::canonicalize" },
+  { path = "tokio::spawn", reason = "use fastctx_platform::task::spawn, which times each slice of the task" },
+  { path = "tokio::task::spawn", reason = "use fastctx_platform::task::spawn, which times each slice of the task" },
+  { path = "tokio::task::spawn_blocking", reason = "use fastctx_platform::task::spawn_blocking, which carries what the task does to a thread marked as one that may block" },
+  { path = "tokio::runtime::Handle::spawn", reason = "use fastctx_platform::task::spawn_on, which times each slice of the task" },
+  { path = "tokio::runtime::Handle::spawn_blocking", reason = "use fastctx_platform::task::spawn_blocking" },
+  { path = "tokio::runtime::Runtime::spawn", reason = "use fastctx_platform::task::spawn_on, which times each slice of the task" },
+]
+
+# Held across an await, these hold up every task that waits for them.
+await-holding-invalid-types = [
+  "fastctx_platform::doing::sync::RankedGuard",
+]

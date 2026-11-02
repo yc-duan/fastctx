@@ -76,8 +76,23 @@ pub(crate) fn permitted(
 }
 
 /// Whether the session may start a turn under current account authority and usage allowances.
-pub(crate) fn may_turn(node: &Node, id: &fastctx_types::ResidentId, about: &About) -> Result<(), Failure> {
-    check_turn(node, id, about).map_err(|error| error.failure)
+pub(crate) async fn may_turn(
+    node: &std::sync::Arc<Node>,
+    id: &fastctx_types::ResidentId,
+    about: &About,
+) -> Result<(), Failure> {
+    admit_turn(node, id, about).await.map_err(|error| error.failure)
+}
+
+pub(crate) async fn admit_turn(
+    node: &std::sync::Arc<Node>,
+    id: &fastctx_types::ResidentId,
+    about: &About,
+) -> Result<(), TurnRefusal> {
+    let (node, id, about) = (node.clone(), id.clone(), about.clone());
+    fastctx_platform::task::spawn_blocking(move || check_turn(&node, &id, &about))
+        .await
+        .map_err(|error| TurnRefusal::from(Failure::new(error.to_string())))?
 }
 
 pub(crate) struct TurnRefusal {

@@ -32,7 +32,7 @@ impl Signals {
         let (sender, receiver) = watch::channel(0);
         entries.insert(resident.clone(), sender.clone());
         let (registry, resident) = (Arc::downgrade(&self.came), resident.clone());
-        tokio::spawn(async move {
+        fastctx_platform::task::spawn(async move {
             loop {
                 sender.closed().await;
                 let Some(registry) = registry.upgrade() else { return };

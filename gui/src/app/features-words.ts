@@ -3,7 +3,6 @@
 
 import type { GlyphName } from "../conversation/glyphs";
 import type { CollaborationWords } from "../film/collaboration";
-import type { MemoryFilmWords } from "../film/memory";
 import type { SentinelFilmWords } from "../film/sentinel";
 import type { WorkbenchWords } from "../film/workbench";
 
@@ -32,7 +31,6 @@ export interface FeaturesWords {
   /** While the settings are being read. */
   reading: string;
   retry: string;
-  memory: { name: string; line: string; film: MemoryFilmWords; after: string; offWhat: string };
   sentinels: SentinelWords;
   callers: string;
   callersSaid: string;
@@ -47,6 +45,10 @@ export interface FeaturesWords {
   effort: string;
   screen: string;
   screenSaid: string;
+  atOnce: string;
+  /** Under the pointer on the limit's name. */
+  atOnceSaid: string;
+  noLimit: string;
   removeCallee: string;
   prompt: string;
   promptReset: string;
@@ -127,11 +129,11 @@ export const zhFeatures: FeaturesWords = {
   },
   collaboration: {
     name: "模型协作",
-    line: "智能体把一处要做透的局部交给 GPT",
-    film: { captions: ["你和智能体一起做一样东西", "一处要做透的局部，它交给 GPT", "GPT 在自己那台机器上把这一处做透", "做完交回，接进你们手里的整体"] },
+    line: "智能体把想要的交给 GPT 做出来",
+    film: { captions: ["你和智能体一起做一样东西", "它想要的那一样，交给 GPT", "GPT 在自己那台机器上把它做出来", "交回来，接进你们手里的整体"] },
     gives: [
-      ["page", "附一份现成的协作说明，教智能体怎样用自然的话把局部交出去，你可以改"],
-      ["colleague", "交出去、交回来都在对话里，不用你操心步骤"],
+      ["page", "附一份现成的协作说明，教智能体怎样向\u00a0GPT\u00a0许愿，你可以改"],
+      ["colleague", "交出去、途中的话、交回来都在对话里，不用你操心步骤"],
     ],
     after: "选中的调用方，对话里有了请 GPT 的工具",
     offWhat: "智能体的对话里不再有请 GPT 的工具；这里的设置留着，再开时照旧。",
@@ -162,13 +164,6 @@ export const zhFeatures: FeaturesWords = {
     notSaved: "未能保存",
     changedElsewhere: "已在别处修改，现已载入最新版本",
   },
-  memory: {
-    name: "项目记忆",
-    line: "项目里一路写下的手记与定下的定论",
-    film: { captions: ["对话里要紧的，写成一篇手记", "过些天，另一段对话一开头就读到它", "定下的规矩是定论，每改一次多一版"] },
-    after: "项目页里有了手记与定论，项目里的对话一开头就读到它们",
-    offWhat: "项目页里收起手记与定论，对话不再拿到它们；已经写下的都留着，再开时照旧。",
-  },
   callers: "调用方",
   callersSaid: "这些智能体的对话里会有请 GPT 的工具",
   callees: "被调用方",
@@ -182,6 +177,9 @@ export const zhFeatures: FeaturesWords = {
   effort: "推理强度",
   screen: "操作屏幕",
   screenSaid: "能操作那台电脑的屏幕与浏览器",
+  atOnce: "同时最多",
+  atOnceSaid: "超过这个数，新请的同事等前面有一个干完再开工",
+  noLimit: "不限",
   removeCallee: "移除",
   prompt: "协作说明",
   promptReset: "恢复默认",
@@ -233,11 +231,11 @@ export const enFeatures: FeaturesWords = {
   },
   collaboration: {
     name: "Model collaboration",
-    line: "An agent hands a part to be done thoroughly to a GPT",
-    film: { captions: ["You and an agent build something together", "A part that must be done thoroughly, it hands to a GPT", "The GPT does that part thoroughly on its own machine", "It hands back, and the part joins the whole"] },
+    line: "An agent asks a GPT for what it wants, and the GPT makes it",
+    film: { captions: ["You and an agent build something together", "What it wants, it asks a GPT for", "The GPT makes it on its own machine", "It comes back and joins the whole"] },
     gives: [
-      ["page", "A ready collaboration text teaches the agent to hand a part over in plain words; you can edit it"],
-      ["colleague", "Handing over and handing back happen in the conversation, with no steps for you"],
+      ["page", "A ready collaboration text teaches the agent how to wish for what it wants; you can edit it"],
+      ["colleague", "Asking, what it says on the way and what comes back all happen in the conversation, with no steps for you"],
     ],
     after: "The callers you choose get the tools to ask a GPT in their conversations",
     offWhat: "Conversations no longer get the tools to ask a GPT; these settings stay for when you turn it on again.",
@@ -268,13 +266,6 @@ export const enFeatures: FeaturesWords = {
     notSaved: "Not saved",
     changedElsewhere: "Changed elsewhere; that version is loaded",
   },
-  memory: {
-    name: "Project memory",
-    line: "A project's journal and its decisions",
-    film: { captions: ["What mattered in a conversation is written as a journal", "Days later, another conversation reads it from its first line", "What was settled is a decision, one more version each change"] },
-    after: "Projects show their journal and decisions, and conversations in them start with both",
-    offWhat: "Projects fold their journal and decisions away and conversations no longer get them; all that was written stays, as it was, for next time.",
-  },
   callers: "Callers",
   callersSaid: "Conversations with these agents get the tools to ask a GPT",
   callees: "Callees",
@@ -288,6 +279,9 @@ export const enFeatures: FeaturesWords = {
   effort: "Reasoning",
   screen: "Use the screen",
   screenSaid: "May operate that computer's screen and browser",
+  atOnce: "At once",
+  atOnceSaid: "Past this, a new colleague waits until one at work is done",
+  noLimit: "No limit",
   removeCallee: "Remove",
   prompt: "Collaboration text",
   promptReset: "Restore default",

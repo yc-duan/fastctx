@@ -64,3 +64,13 @@ windows-sys = { version = "0.61", features = [
     "Win32_System_Power",
     "Win32_UI_WindowsAndMessaging",
 ] }
+
+# The letter window between machines and their hub, run by seed with every
+# fault of a line and a process (`specs/world-engine.md`, 验证的设施).
+[[test]]
+name = "letter_drill"
+path = "tests/letter_drill/main.rs"
+harness = false
+
+[lints]
+workspace = true

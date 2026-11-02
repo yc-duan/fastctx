@@ -23,3 +23,6 @@ serde_yaml_ng = "0.10"
 # The tag a guest room is named by, in place of its home's name.
 sha2 = "0.10"
 thiserror.workspace = true
+
+[lints]
+workspace = true

@@ -16,8 +16,10 @@ pub fn frames(id: u64, question: Question, supported: bool) -> Result<Vec<Up>, S
         question,
         Question::LedgerWrite { .. }
             | Question::MemoryWrite { .. }
+            | Question::HistoryWrite { .. }
             | Question::SkillFiles { .. }
             | Question::AccountRecords { .. }
+            | Question::OwnedRecords { .. }
     ) {
         return Err("this question is larger than one control message".into());
     }

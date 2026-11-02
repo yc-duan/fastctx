@@ -10,7 +10,7 @@ fn path(node: &Node, resident: &ResidentId) -> std::path::PathBuf {
 }
 
 pub(crate) fn kept(node: &Node, resident: &ResidentId) -> Result<Option<bool>, Failure> {
-    match std::fs::read(path(node, resident)) {
+    match fastctx_platform::disk::read(path(node, resident)) {
         Ok(bytes) => serde_json::from_slice(&bytes)
             .map(Some)
             .map_err(|_| Failure::new("invalid conversation host-isolation record")),

@@ -24,12 +24,25 @@ fn edits<'a>(base: &[&str], changed: &[&'a str]) -> Vec<Edit<'a>> {
         .collect()
 }
 
+/// Legacy and disconnected submissions preserve a conflicting incoming file as
+/// the next revision; the previous hub revision remains in the archive.
 pub fn merge(base: &str, hub: &str, file: &str) -> String {
+    try_merge(base, hub, file).unwrap_or_else(|| file.into())
+}
+
+/// Merges independent line changes. An overlap is a conflict, not permission
+/// to overwrite the hub. Concurrent appends retain the hub's arrival first.
+pub fn try_merge(base: &str, hub: &str, file: &str) -> Option<String> {
     if hub == base || hub == file {
-        return file.into();
+        return Some(file.into());
     }
     if file == base {
-        return hub.into();
+        return Some(hub.into());
+    }
+    if let (Some(hub_tail), Some(file_tail)) = (hub.strip_prefix(base), file.strip_prefix(base))
+        && (base.is_empty() || base.ends_with('\n'))
+    {
+        return Some(format!("{base}{hub_tail}{file_tail}"));
     }
     let original: Vec<_> = base.split_inclusive('\n').collect();
     let hub_lines: Vec<_> = hub.split_inclusive('\n').collect();
@@ -45,7 +58,7 @@ pub fn merge(base: &str, hub: &str, file: &str) -> String {
                 || edit.range.is_empty() && other.range.start < edit.range.start && edit.range.start < other.range.end
                 || other.range.is_empty() && edit.range.start < other.range.start && other.range.start < edit.range.end
         }) {
-            return file.into();
+            return None;
         }
         merged.push(edit);
     }
@@ -64,7 +77,7 @@ pub fn merge(base: &str, hub: &str, file: &str) -> String {
     for line in &original[position..] {
         result.push_str(line);
     }
-    result
+    Some(result)
 }
 
 /// The submission identity is determined by the original edit, not by a

@@ -25,6 +25,7 @@ use crate::ids::HubId;
 use crate::sign::PublicKey;
 
 pub use fastctx_types::accounts::{Level, MemberKind as Kind, Paths, Reach};
+pub use fastctx_types::health::Strain;
 
 /// A computer, phone or web AI on the hub, under a name no other member
 /// on the hub has, nor had.
@@ -91,6 +92,14 @@ pub struct Member {
     /// How its lines go, as it last told the hub, while online.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub paths: Option<Paths>,
+    /// How its own work goes, as it last told the hub, while online: busy
+    /// or stuck, or none while its work goes as it should.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "fastctx_types::tolerant::read_option"
+    )]
+    pub strain: Option<Strain>,
     /// When the hub last set aside what waited for it, it having been away
     /// more than 30 days: a letter to it from before then that was not
     /// answered never will be, nor one from it to a machine away as long.
@@ -112,6 +121,12 @@ pub struct Presence {
     pub reach: Option<Reach>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub paths: Option<Paths>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "fastctx_types::tolerant::read_option"
+    )]
+    pub strain: Option<Strain>,
 }
 
 impl Presence {
@@ -123,6 +138,7 @@ impl Presence {
             through: member.through.clone(),
             reach: member.reach.clone(),
             paths: member.paths.clone(),
+            strain: member.strain,
         }
     }
 
@@ -133,6 +149,7 @@ impl Presence {
         member.through = self.through.clone();
         member.reach = self.reach.clone();
         member.paths = self.paths.clone();
+        member.strain = self.strain;
     }
 }
 
@@ -244,6 +261,9 @@ pub struct Project {
     pub owner: AccountName,
     #[serde(default)]
     pub granted: BTreeSet<AccountName>,
+    /// A non-assisted origin whose current whole-machine holders share the records.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shared_on: Option<MachineName>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -350,6 +370,11 @@ impl Directory {
         for acting in &mut self.acting {
             if acting.machine == old {
                 Arc::make_mut(acting).machine = to.clone();
+            }
+        }
+        for project in &mut self.projects {
+            if project.shared_on.as_ref() == Some(&old) {
+                Arc::make_mut(project).shared_on = Some(to.clone());
             }
         }
         Some(old)
@@ -576,10 +601,16 @@ impl Directory {
     pub fn member_keeps_project(&self, member: &MachineName, town: &TownId) -> bool {
         self.member(member).is_some_and(|member| {
             !member.managed
+                && member.is_machine()
                 && member
-                    .logins
+                    .home
+                    .as_ref()
+                    .is_some_and(|account| member.logins.contains(account) && self.in_project(account, town))
+                && self
+                    .shares
                     .iter()
-                    .any(|account| self.may_act_for(account, &member.name) && self.in_project(account, town))
+                    .filter(|share| share.machine == member.name && self.holds(&share.account, &member.name))
+                    .all(|share| self.in_project(&share.account, town))
         })
     }
 }
@@ -587,6 +618,9 @@ impl Directory {
 /// One member's view of its hub's directory.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct View {
+    /// Account-owned conversation records and dynamic whole-machine sharing.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub shared_records: bool,
     /// The hub takes ledger questions in parts and serves large ledger entries.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub ledger_parts: bool,
@@ -613,6 +647,10 @@ pub struct View {
     /// Committed changes delivered to accounts logged in on this device.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub machine_notices: Vec<fastctx_types::sharing::Notice>,
+    /// What went wrong lately with machines an account logged in on this
+    /// device holds, and with the network for its super administrator.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub troubles: Vec<fastctx_types::trouble::Trouble>,
     /// The member this view is for.
     pub me: MachineName,
     /// Whether accounts may be opened by anyone who reaches the hub.
@@ -623,6 +661,10 @@ pub struct View {
     /// Older hubs omit it.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub direct_links: bool,
+    /// Whether this hub reads the health its members' heartbeats carry
+    /// (`fastctx_types::health`). Older hubs omit it, and are told none.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub health: bool,
     /// While the hub checks whether it reaches this member at these
     /// addresses, before direct connections to it count: the member
     /// listens at their ports meanwhile.
@@ -785,6 +827,7 @@ impl View {
     /// An empty view, before the hub has given one.
     pub fn empty(hub: HubId, hub_name: HubName, me: MachineName) -> Self {
         Self {
+            shared_records: false,
             ledger_parts: false,
             project_memory: false,
             collaboration_tree: false,
@@ -795,9 +838,11 @@ impl View {
             hub_name,
             hub_machine: None,
             machine_notices: Vec::new(),
+            troubles: Vec::new(),
             me,
             self_registration: false,
             direct_links: false,
+            health: false,
             trial: Vec::new(),
             forwarders: Vec::new(),
             moving: false,

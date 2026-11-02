@@ -365,7 +365,9 @@ pre code {
   padding: 7px 14px;
   text-align: left;
   vertical-align: top;
-  overflow-wrap: anywhere;
+  /* A word breaks only where it cannot fit a line by itself, so a column is
+     never narrower than its longest word and a word is not split to fit. */
+  overflow-wrap: break-word;
   min-width: 4em;
 }
 
@@ -380,6 +382,7 @@ pre code {
   font-weight: 400;
   color: var(--text-strong);
   padding-bottom: 6px;
+  white-space: nowrap;
 }
 
 .prose tbody tr:last-child td {

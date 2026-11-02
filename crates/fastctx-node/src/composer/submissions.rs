@@ -214,7 +214,7 @@ pub(super) fn schedule(node: &Arc<Node>, id: &ResidentId) {
         releases.insert(id.clone(), false);
     }
     let (node, id) = (node.clone(), id.clone());
-    tokio::spawn(async move {
+    fastctx_platform::task::spawn(async move {
         loop {
             if let Err(error) = release(&node, &id).await {
                 node.log.line(format_args!("{id}'s deferred queue: {error}"));
@@ -249,7 +249,7 @@ pub(super) fn after_commit(
                 node.log.line(format_args!("{id}'s committed input: {error}"));
             }
         });
-        runtime.spawn(work);
+        fastctx_platform::task::spawn_on(&runtime, work);
     }
 }
 

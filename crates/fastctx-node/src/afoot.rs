@@ -20,7 +20,7 @@ pub(crate) fn start(node: &Arc<Node>) {
     let mut jobs = node.jobs.subscribe();
     let mut views = node.views.subscribe();
     let node = Arc::downgrade(node);
-    tokio::spawn(async move {
+    fastctx_platform::task::spawn(async move {
         loop {
             {
                 let Some(node) = node.upgrade() else { return };
@@ -56,7 +56,13 @@ fn of(node: &Node, link: &Link, reply: &WhoReply) -> Afoot {
         if !accounts.is_empty() {
             afoot.residents.insert(
                 resident.about.id.clone(),
-                AfootResident { resident: resident.clone().at_turn_grain(), accounts },
+                AfootResident {
+                    resident: resident.clone().at_turn_grain(),
+                    accounts,
+                    shared_on: crate::record_ownership::origin(node, &resident.about),
+                    // The hub seals the birth itself.
+                    born_seal: None,
+                },
             );
         }
     }

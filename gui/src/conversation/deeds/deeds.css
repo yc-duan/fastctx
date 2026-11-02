@@ -16,6 +16,18 @@
   overflow: hidden;
 }
 
+/* Each kind of a run's folded steps keeps its figures whole, and on a
+   narrow screen sends them to the next line whole. */
+.dd-folded > .dd-head {
+  flex-wrap: wrap;
+  row-gap: 0;
+  padding-block: var(--space-1);
+}
+
+.dd-folded > .dd-head > * {
+  white-space: nowrap;
+}
+
 .dd-head {
   display: flex;
   align-items: center;

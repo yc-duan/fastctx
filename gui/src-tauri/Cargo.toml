@@ -14,6 +14,12 @@ publish = false
 [patch.crates-io]
 pdf_oxide = { path = "../../vendor/pdf_oxide" }
 
+# Held across an await, a lock holds up every task that waits for it.
+[lints.clippy]
+await_holding_lock = "deny"
+await_holding_refcell_ref = "deny"
+await_holding_invalid_type = "deny"
+
 [features]
 page-sandbox-probe = ["tauri-plugin-world-pages/probe"]
 

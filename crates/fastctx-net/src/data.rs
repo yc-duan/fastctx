@@ -21,9 +21,11 @@ use serde::de::DeserializeOwned;
 use tokio::sync::watch;
 use tokio_tungstenite::tungstenite::Message as WsMessage;
 
+use std::sync::Arc;
+
 use crate::dial::{self, HubSocket, Upstream};
 use crate::ids::{CertPin, HubId};
-use crate::sign::{Digest, Domain, SecretKey, sha256};
+use crate::sign::{Digest, Domain, PublicKey, SecretKey, Signature, sha256};
 use crate::wire::{self, Carried, Down, End, Intent, Up};
 
 use line::{Line, Received as Message};
@@ -98,6 +100,7 @@ impl Pace {
 }
 
 /// Where a data connection goes.
+#[derive(Clone)]
 pub enum Endpoint {
     /// To the hub, which pairs it with the other end: by the ways this
     /// machine reaches the hub, the one its control connection is on first.
@@ -125,26 +128,46 @@ impl Stream {
 
     /// Opens this machine's end of the transfer `stream` and waits for the
     /// other end. The hub ends the wait if the other end's machine leaves;
-    /// over a direct link, the link's end does.
-    pub async fn open(endpoint: &Endpoint, key: &SecretKey, stream: u64, end: End) -> Result<Self, String> {
-        let (upstreams, hub, cert) = match endpoint {
-            Endpoint::Hub { upstreams, hub, cert } => (upstreams, hub, *cert),
-            Endpoint::Peer(way) => {
-                let socket = way.open(stream, end).await?;
-                return Ok(Self::over(socket, way.cut()));
-            }
-        };
-        Self::to_hub(upstreams, hub, cert, key, |key, proof| Intent::Data { key, proof, stream, end }).await
+    /// over a direct link, the link's end does. The connection is made and
+    /// kept on the data connections' thread (`crate::threads`).
+    pub async fn open(endpoint: &Endpoint, key: &Arc<SecretKey>, stream: u64, end: End) -> Result<Self, String> {
+        let (endpoint, key) = (endpoint.clone(), key.clone());
+        crate::threads::run_on(&crate::threads::data(), async move {
+            let (upstreams, hub, cert) = match &endpoint {
+                Endpoint::Hub { upstreams, hub, cert } => (upstreams, hub, *cert),
+                Endpoint::Peer(way) => {
+                    let socket = way.open(stream, end).await?;
+                    return Ok(Self::over(socket, way.cut()));
+                }
+            };
+            Self::dial_hub(upstreams, hub, cert, &key, |key, proof| Intent::Data { key, proof, stream, end }).await
+        })
+        .await?
     }
 
     /// Opens a data connection the hub itself is the other end of, as
-    /// `intent` says: by the first of `upstreams` that reaches it.
+    /// `intent` says: by the first of `upstreams` that reaches it, on the
+    /// data connections' thread.
     pub(crate) async fn to_hub(
         upstreams: &[Upstream],
         hub: &HubId,
         cert: CertPin,
+        key: &Arc<SecretKey>,
+        intent: impl FnOnce(PublicKey, Signature) -> Intent + Send + 'static,
+    ) -> Result<Self, String> {
+        let (upstreams, hub, key) = (upstreams.to_vec(), hub.clone(), key.clone());
+        crate::threads::run_on(&crate::threads::data(), async move {
+            Self::dial_hub(&upstreams, &hub, cert, &key, intent).await
+        })
+        .await?
+    }
+
+    async fn dial_hub(
+        upstreams: &[Upstream],
+        hub: &HubId,
+        cert: CertPin,
         key: &SecretKey,
-        intent: impl FnOnce(crate::sign::PublicKey, crate::sign::Signature) -> Intent,
+        intent: impl FnOnce(PublicKey, Signature) -> Intent,
     ) -> Result<Self, String> {
         let limit = wire::MAX_DATA_MESSAGE + wire::MAX_CONTROL_FRAME;
         let mut failures = Vec::new();
@@ -387,7 +410,7 @@ impl Stream {
 }
 
 /// Sends `bytes` as the source of the transfer `stream`.
-pub async fn source(endpoint: &Endpoint, key: &SecretKey, stream: u64, bytes: &[u8]) -> Result<(), String> {
+pub async fn source(endpoint: &Endpoint, key: &Arc<SecretKey>, stream: u64, bytes: &[u8]) -> Result<(), String> {
     let mut stream = Stream::open(endpoint, key, stream, End::Source).await?;
     stream.send(bytes).await?;
     stream.finish().await
@@ -401,7 +424,7 @@ pub const MAX_BODY: usize = 64 * 1024 * 1024;
 /// The returned buffer keeps the process reservation until decoding finishes.
 pub async fn sink(
     endpoint: &Endpoint,
-    key: &SecretKey,
+    key: &Arc<SecretKey>,
     carried: &Carried,
 ) -> Result<crate::reassembly::Buffer, String> {
     sink_until(endpoint, key, carried, tokio::time::Instant::now() + PAIRED_WITHIN).await
@@ -410,7 +433,7 @@ pub async fn sink(
 /// Bounds opening separately; the body is governed by actual byte progress.
 pub(crate) async fn sink_until(
     endpoint: &Endpoint,
-    key: &SecretKey,
+    key: &Arc<SecretKey>,
     carried: &Carried,
     opening_deadline: tokio::time::Instant,
 ) -> Result<crate::reassembly::Buffer, String> {

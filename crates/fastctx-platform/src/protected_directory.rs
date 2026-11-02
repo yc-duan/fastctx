@@ -6,7 +6,7 @@
 
 use std::io;
 use std::mem::size_of;
-use std::os::windows::ffi::{OsStrExt as _, OsStringExt as _};
+use std::os::windows::ffi::OsStringExt as _;
 use std::os::windows::fs::MetadataExt as _;
 use std::path::{Path, PathBuf};
 use std::ptr;
@@ -44,7 +44,7 @@ pub fn program_data() -> io::Result<PathBuf> {
 /// that the directory there has exactly those and is no link.
 pub fn ensure(path: &Path, sddl: &str) -> io::Result<()> {
     let descriptor = Descriptor::new(sddl)?;
-    let wide: Vec<u16> = path.as_os_str().encode_wide().chain([0]).collect();
+    let wide = crate::win32_path::wide(path)?;
     let attributes = SECURITY_ATTRIBUTES {
         nLength: size_of::<SECURITY_ATTRIBUTES>() as u32,
         lpSecurityDescriptor: descriptor.0,

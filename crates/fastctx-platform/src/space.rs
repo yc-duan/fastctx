@@ -29,8 +29,7 @@ fn measure(path: &Path) -> io::Result<u64> {
 
 #[cfg(windows)]
 fn measure(path: &Path) -> io::Result<u64> {
-    use std::os::windows::ffi::OsStrExt as _;
-    let path: Vec<u16> = path.as_os_str().encode_wide().chain(Some(0)).collect();
+    let path = crate::win32_path::wide(path)?;
     let mut free = 0;
     // SAFETY: path is terminated; free is writable and optional outputs are null.
     if unsafe {

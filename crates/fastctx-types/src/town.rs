@@ -239,6 +239,15 @@ pub type AfootSeen = AfootState<ResidentNow, RunningJob>;
 pub struct AfootResident {
     pub resident: ResidentNow,
     pub accounts: Vec<crate::AccountName>,
+    /// An ordinary birth belongs to the current holders of this machine.
+    /// Older nodes omit this; their conversations remain account-private.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shared_on: Option<MachineName>,
+    /// That machine as it was when the conversation was born, as the hub
+    /// knows it (`owned_records::Conversation::born_seal`); whatever a
+    /// machine says of it is replaced.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub born_seal: Option<String>,
 }
 
 /// A job running on a machine as the machine tells it, with the accounts of
@@ -271,6 +280,9 @@ impl ResidentNow {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ResidentNow {
+    /// Present only when the recipient did not open this shared conversation.
+    #[serde(default, rename = "openedBy", skip_serializing_if = "Option::is_none")]
+    pub opened_by: Option<OpenedBy>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source: Option<crate::observation::MachineSource>,
     pub about: About,
@@ -290,6 +302,11 @@ pub struct ResidentNow {
     /// Removed from the World, with records preserved in its archive.
     #[serde(default)]
     pub removed: Option<Timestamp>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OpenedBy {
+    pub account: crate::AccountName,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

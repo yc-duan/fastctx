@@ -28,7 +28,7 @@ fn read(net: &NetDir, key: &Key, path: &Path) -> io::Result<Option<Receipt>> {
     let stored = || net.database().read_now(|connection| receipts::get(connection, key)).map_err(io::Error::other);
     let bytes = match stored()? {
         Some(bytes) => Some(bytes),
-        None => match std::fs::read(path) {
+        None => match fastctx_platform::disk::read(path) {
             Ok(bytes) => Some(bytes),
             Err(error) if error.kind() == io::ErrorKind::NotFound => stored()?,
             Err(error) => return Err(error),
@@ -49,7 +49,7 @@ pub async fn receipt(
     let sender = sender_key(from);
     let names = names.to_vec();
     let id = id.clone();
-    tokio::task::spawn_blocking(move || {
+    fastctx_platform::task::spawn_blocking(move || {
         let path = net.path().join("received-by-key").join(&sender).join(id.as_str());
         if let Some(receipt) = read(&net, &key(&net, "transport-key", &sender, id.as_str()), &path)? {
             return Ok(Some(receipt));
@@ -117,7 +117,7 @@ pub async fn acknowledge(net: &NetDir, epoch: u64, sequence: u64) -> io::Result<
 
 pub(in crate::link) fn start(inner: &std::sync::Arc<super::super::Inner>) {
     let weak = std::sync::Arc::downgrade(inner);
-    tokio::spawn(async move {
+    fastctx_platform::task::spawn(async move {
         let mut migrated = false;
         let mut previous = String::new();
         loop {
@@ -127,7 +127,7 @@ pub(in crate::link) fn start(inner: &std::sync::Arc<super::super::Inner>) {
             }
             if !migrated {
                 let net = inner.dir.clone();
-                match tokio::task::spawn_blocking(move || migrate::run(&net)).await {
+                match fastctx_platform::task::spawn_blocking(move || migrate::run(&net)).await {
                     Ok(Ok(count)) => {
                         if count != 0 {
                             inner.node.log(format!("moved {count} letter receipts into the database"));

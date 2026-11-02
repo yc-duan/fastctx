@@ -25,6 +25,16 @@ pub fn merge(networks: impl IntoIterator<Item = Network>) -> Option<Network> {
             kept.policy.minimum = network.policy.minimum;
         }
         kept.policy.managed_auto &= network.policy.managed_auto;
+        kept.policy.withdrawn.extend(network.policy.withdrawn);
+        // A machine takes a version going out by itself only where every
+        // network that rolls one out rolls out the same and lets it.
+        kept.rolled = match (kept.rolled.take(), network.rolled) {
+            (Some(a), Some(b)) if a.version == b.version => {
+                Some(fastctx_types::update::Rolled { takes: a.takes && b.takes, ..a })
+            }
+            (Some(a), Some(_)) => Some(fastctx_types::update::Rolled { takes: false, ..a }),
+            (a, b) => a.or(b),
+        };
         kept.hub = match (kept.hub.take(), network.hub) {
             (Some(a), Some(b)) => Some(if release(&a) < release(&b) { a } else { b }),
             (a, b) => a.or(b),
@@ -54,11 +64,15 @@ pub fn calculate(mut state: State, context: Context) -> State {
     };
     state.network = merge(context.networks);
     state.auto = state.settings.auto_for(context.kind, state.network.as_ref().map(|n| &n.policy));
-    state.chosen = state.chosen.filter(|m| m.newer_than(running));
+    // A version its network withdrew is taken by no machine, offered to none.
+    let withdrawn = state.network.as_ref().map(|n| n.policy.withdrawn.clone()).unwrap_or_default();
+    let kept = |m: &Manifest| !withdrawn.contains(&m.version);
+    state.chosen = state.chosen.filter(|m| m.newer_than(running) && kept(m));
     state.offer = state.chosen.clone().or_else(|| {
         [state.looked.on(state.channel), state.network.as_ref().and_then(|n| n.on(state.channel))]
             .into_iter()
             .chain(context.cached.iter().filter(|m| state.channel.takes(&m.version)).map(Some))
+            .filter(|m| m.is_none_or(kept))
             .fold(None, newest)
             .cloned()
     });
@@ -71,6 +85,7 @@ pub fn calculate(mut state: State, context: Context) -> State {
         .chain(state.looked.stable.iter())
         .chain(state.looked.beta.iter())
         .chain(state.network.iter().flat_map(|n| n.stable.iter().chain(n.beta.iter())))
+        .filter(|m| kept(m))
         .collect();
     state.available = state
         .chosen
@@ -78,8 +93,12 @@ pub fn calculate(mut state: State, context: Context) -> State {
         .filter(|m| m.package(target).is_some())
         .cloned()
         .or_else(|| latest_for(candidates.iter().copied(), running, target, None).cloned());
+    // A version going out a batch at a time is the one a machine takes by
+    // itself, once it is in the batch (`fastctx_types::update::Rollout`).
+    let rolled = state.network.as_ref().and_then(|n| n.rolled.as_ref());
+    let taken = |m: &&Manifest| rolled.is_none_or(|rolled| rolled.takes && m.version == rolled.version);
     state.automatic = latest_for(state.chosen.iter(), running, target, state.hub_major)
-        .or_else(|| latest_for(candidates.iter().copied(), running, target, state.hub_major))
+        .or_else(|| latest_for(candidates.iter().copied().filter(taken), running, target, state.hub_major))
         .map(|m| m.version.clone());
     state.above_hub = state
         .available

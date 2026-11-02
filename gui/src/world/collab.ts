@@ -24,7 +24,16 @@ export interface Callee {
   effort: string | null;
   /** Whether it may operate that machine's screen. */
   screen: boolean;
+  /** How many of its colleagues may be at work at once; absent, the
+   *  default of four. */
+  at_once?: AtOnce;
 }
+
+/** A callee's limit: at most so many at once, or none. */
+export type AtOnce = { most: number } | "any";
+
+/** What a callee whose settings say nothing works with. */
+export const AT_ONCE_DEFAULT = 4;
 
 export interface Collab {
   version: number;

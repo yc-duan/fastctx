@@ -225,7 +225,7 @@ export class MachineMap {
   private regionScale = 1;
   /** The pens' colours as the theme names them, the paper's and the
    *  words', and how round a box's corners are, and a group's. */
-  private inks = { graphite: "", clay: "", paper: "", text: "", box: 10, group: 6 };
+  private inks = { graphite: "", clay: "", caution: "", wrong: "", paper: "", text: "", box: 10, group: 6 };
   /** The machines' dots seen from afar, gathered by how they are inked, and
    *  their rings seen nearer; what they were gathered for; whether the
    *  canvas is bare. */
@@ -574,6 +574,13 @@ export class MachineMap {
     return width < 480 ? NARROW_PAD : Math.max(24, Math.min(76, Math.min(width, height) * 0.1));
   }
 
+  /** The ink of an online machine's ring: graphite, or the colour of a
+   *  warning while its Fastctx is held up and of a fault while stuck. */
+  private ringInk(node: MapNode): string {
+    const { graphite, caution, wrong } = this.inks;
+    return node.strain === "stuck" ? wrong : node.strain === "busy" ? caution : graphite;
+  }
+
   /** How wide a box's name is written on its strip, at its own size. */
   private labelWidth(text: string): number {
     return this.measured("--font-emphasis", this.textSize("--size-text"), text);
@@ -859,7 +866,7 @@ export class MachineMap {
       [...scene.hubLabels],
       scene.adds,
       [...scene.waiting],
-      scene.nodes.map((node) => [node.key, node.name, node.sub, node.online, node.hold, node.reaching, node.here, node.busy, node.directAt, node.through]),
+      scene.nodes.map((node) => [node.key, node.name, node.sub, node.online, node.hold, node.reaching, node.here, node.busy, node.strain ?? null, node.directAt, node.through]),
       [...scene.opening],
       [...placement.machines],
       placement.groups.map((group) => [group.key, group.label, group.box, group.count, group.online, group.busy, group.person?.locked, group.person?.visitor, group.person?.promotion, this.moreOf(group)?.key]),
@@ -873,6 +880,8 @@ export class MachineMap {
     this.inks = {
       graphite,
       clay,
+      caution: css.getPropertyValue("--caution").trim() || clay,
+      wrong: css.getPropertyValue("--wrong").trim() || clay,
       paper: css.getPropertyValue("--bg").trim() || "transparent",
       text: css.getPropertyValue("--text").trim() || graphite,
       box: Number.parseFloat(css.getPropertyValue("--radius-m")) || 10,
@@ -949,8 +958,10 @@ export class MachineMap {
           // A visitor's: a faint ring, only seen.
           add(circle(point, RING, 1.8, random), around(point, RING + 4), "dry", graphite, online ? 0.38 : 0.22);
         } else if (online) {
-          add(circle(point, RING, 2, random), around(point, RING + 4), "marker", graphite, 0.9);
-          add(circle(point, RING + 1.2, 1, random), around(point, RING + 4), "marker", graphite, 0.45);
+          // Held up or stuck, in the colour of a warning or of a fault.
+          const ink = this.ringInk(node);
+          add(circle(point, RING, 2, random), around(point, RING + 4), "marker", ink, 0.9);
+          add(circle(point, RING + 1.2, 1, random), around(point, RING + 4), "marker", ink, 0.45);
         } else {
           add(circle(point, RING, 2.1, random), around(point, RING + 4), "dry", graphite, 0.5);
         }
@@ -1541,7 +1552,7 @@ export class MachineMap {
       const ink = (alpha: number) => Math.round(alpha * dim * 100) / 100;
       // The ring as the paper inks it.
       const ringAlpha = node.hold === "visitor" ? (online ? 0.38 : 0.22) : assist ? (online ? 1 : 0.5) : online ? 0.9 : 0.42;
-      rings.push({ key: node.key, point, colour: assist && online ? clay : graphite, alpha: ink(ringAlpha), broken: assist, here: node.here && !node.device, device: !!node.device, halo: !!node.directAt?.length || scene.opening.has(node.key), busy: online ? node.busy : 0, found: !!found?.has(node.key) });
+      rings.push({ key: node.key, point, colour: assist && online ? clay : online && node.hold !== "visitor" ? this.ringInk(node) : graphite, alpha: ink(ringAlpha), broken: assist, here: node.here && !node.device, device: !!node.device, halo: !!node.directAt?.length || scene.opening.has(node.key), busy: online ? node.busy : 0, found: !!found?.has(node.key) });
       if (found?.has(node.key)) {
         put(clay, 1, true, point);
         continue;

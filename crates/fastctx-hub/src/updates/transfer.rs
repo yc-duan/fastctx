@@ -80,14 +80,17 @@ pub(crate) async fn serve(
         let updates = hub.updates.lock().expect("never poisoned");
         (updates.cache.clone(), updates.handing.clone())
     };
-    let kept = cache.path(&version, &target).ok().filter(|path| path.is_file());
     let held = Held { version: version.clone(), target: target.clone() };
-    let placed = match &kept {
-        Some(_) => None,
-        None => {
-            let hub = hub.clone();
-            tokio::task::spawn_blocking(move || super::placed(&hub, &held)).await.ok().flatten()
-        }
+    let (kept, placed) = {
+        let (hub, cache) = (hub.clone(), cache.clone());
+        fastctx_platform::task::spawn_blocking(move || {
+            match cache.path(&held.version, &held.target).ok().filter(|path| fastctx_platform::disk::is_file(path)) {
+                Some(path) => (Some(path), None),
+                None => (None, super::placed(&hub, &held)),
+            }
+        })
+        .await
+        .unwrap_or((None, None))
     };
     if kept.is_none() && placed.is_none() {
         let reason = format!("the hub does not hold {target} of {version}");
@@ -248,7 +251,12 @@ async fn take(hub: &Arc<Hub>, mut socket: Socket, held: &Held, attempt: &Arc<Att
         (updates.manifest(&held.version), updates.cache.clone(), updates.intake.clone())
     };
     let manifest = manifest.ok_or_else(|| format!("the hub no longer knows the release {}", held.version))?;
-    let incoming = cache.attempt(&held.version, &held.target, attempt.id)?;
+    let incoming = {
+        let (cache, version, target, id) = (cache.clone(), held.version.clone(), held.target.clone(), attempt.id);
+        fastctx_platform::task::spawn_blocking(move || cache.attempt(&version, &target, id))
+            .await
+            .map_err(|error| error.to_string())??
+    };
     tokio::time::timeout(SILENCE, send(&mut socket, &Down::Paired))
         .await
         .map_err(|_| format!("the member took nothing for {} s", SILENCE.as_secs()))??;
@@ -333,11 +341,14 @@ pub(super) async fn take_in(
 ) -> Result<u64, String> {
     let package = manifest.package(target).ok_or("the release has no such package")?;
     let (path, signature, version) = (incoming.to_path_buf(), package.signature.clone(), manifest.version.clone());
-    let checked = tokio::task::spawn_blocking(move || fastctx_update::verify::file(&path, &signature, &version)).await;
+    let checked =
+        fastctx_platform::task::spawn_blocking(move || fastctx_update::verify::file(&path, &signature, &version)).await;
     match checked {
         Ok(Ok(())) => {}
         Ok(Err(why)) => {
-            let _ = std::fs::remove_file(incoming);
+            let incoming = incoming.to_path_buf();
+            let _ =
+                fastctx_platform::task::spawn_blocking(move || fastctx_platform::disk::remove_file(&incoming)).await;
             return Err(why);
         }
         Err(error) => return Err(error.to_string()),
@@ -347,8 +358,8 @@ pub(super) async fn take_in(
     };
     let (publishing, kept_manifest, kept_target, received) =
         (cache.clone(), manifest.clone(), target.to_string(), incoming.to_path_buf());
-    let size = tokio::task::spawn_blocking(move || {
-        let size = std::fs::metadata(&received).map_err(|error| error.to_string())?.len();
+    let size = fastctx_platform::task::spawn_blocking(move || {
+        let size = fastctx_platform::disk::metadata(&received).map_err(|error| error.to_string())?.len();
         publishing.keep_manifest(&kept_manifest)?;
         publishing.keep(&kept_manifest.version, &kept_target, &received)?;
         *won = true;
@@ -360,7 +371,7 @@ pub(super) async fn take_in(
     attempt.race.finished.notify_waiters();
     super::obtain::cancel_helpers(hub, &attempt.race, attempt.id);
     hub.log.line(format_args!("holds {target} of {} now, {size} bytes", manifest.version));
-    super::prune(hub);
+    hub.blocking(|hub| super::prune(&hub)).await;
     super::tell(hub, None);
     Ok(size)
 }

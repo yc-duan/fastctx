@@ -1,14 +1,22 @@
 //! This machine's activity book (`world-layers.md`, 活动账本): one deed for
 //! each script `run` ran here, written as its job changes, with the files
 //! it touched. Deeds are kept 90 days, then folded into counts by the hour,
-//! kept a year. It lives in the node's database, beside the composer's.
+//! kept a year. Its independent database keeps maintenance off the state writer.
 
+mod incremental;
+mod legacy;
+mod maintenance;
+mod migrate;
+#[cfg(feature = "storage-drill")]
+pub(crate) mod migration_drill;
 mod query;
+pub(crate) use incremental::{Cursor, consumed, observe, segment};
+pub(crate) use maintenance::fold;
+mod sealing;
+pub(crate) use sealing::{ACCOUNTS as SEALED_ACCOUNTS, SCHEMA as SEALS, seal, seal_account, seal_elsewhere};
 mod seen;
 
 pub(crate) use query::{answer, answer_here};
-
-use std::sync::Arc;
 
 use fastctx_storage::rusqlite::{self, params};
 use fastctx_types::access::Acting;
@@ -19,10 +27,9 @@ use fastctx_types::write::ChangeKind;
 
 use crate::Node;
 
-/// The book's tables; idempotent, installed with the node's database.
+/// Detail lasts 90 days; hourly counts last a year. Journal identities and
+/// cursors live until their deed is folded, so replay never counts twice.
 pub(crate) const SCHEMA: &str = "
-DROP TABLE IF EXISTS book_touched;
-DROP TABLE IF EXISTS book_deed;
 CREATE TABLE IF NOT EXISTS book_deeds (
     deed TEXT PRIMARY KEY,
     job TEXT NOT NULL,
@@ -64,6 +71,15 @@ CREATE TABLE IF NOT EXISTS book_hour (
     files INTEGER NOT NULL,
     PRIMARY KEY (at, session, agent, held, account)
 ) WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS book_migration_proofs(identity TEXT PRIMARY KEY,archive TEXT NOT NULL) WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS book_imports(kind TEXT NOT NULL,identity TEXT NOT NULL,PRIMARY KEY(kind,identity)) WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS book_visits(deed TEXT NOT NULL,machine TEXT NOT NULL,PRIMARY KEY(deed,machine)) WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS book_cursors(deed TEXT PRIMARY KEY,body BLOB NOT NULL) WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS book_steps(deed TEXT NOT NULL,identity TEXT NOT NULL,looked INTEGER NOT NULL,copied INTEGER NOT NULL,finished INTEGER NOT NULL,PRIMARY KEY(deed,identity)) WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS book_writes(deed TEXT NOT NULL,identity TEXT NOT NULL,PRIMARY KEY(deed,identity)) WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS book_complete(deed TEXT PRIMARY KEY) WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS book_retired(deed TEXT PRIMARY KEY,at INTEGER NOT NULL) WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS book_folding(deed TEXT PRIMARY KEY,applied INTEGER NOT NULL DEFAULT 0) WITHOUT ROWID;
 ";
 
 /// How long deeds are kept whole, and how long their hourly counts.
@@ -102,29 +118,8 @@ struct Touch {
     removed: Option<u32>,
 }
 
-/// Writes the deed of the job `record` as it now stands, with what its
-/// steps and writes say it did. Called on every change of a job; it never
-/// holds the caller up, and a failure is only logged.
-pub(crate) fn note(
-    node: &Arc<Node>,
-    record: &JobRecord,
-    writes: &[WriteFact],
-    steps: &[fastctx_types::run_facts::RunStep],
-) {
-    if record.is_sentinel() {
-        return;
-    }
-    let row = row(node, record, writes, steps);
-    let ended = row.ended.is_some();
-    let size = row.script.len() + row.touched.iter().map(|touch| touch.path.len() + 32).sum::<usize>() + 512;
-    let database = node.database.clone();
-    let log = node.log.clone();
-    tokio::spawn(async move {
-        if let Err(error) = database.write(size, move |connection| keep(connection, &row)).await {
-            log.line(format_args!("keeping the activity book: {error}"));
-        }
-    });
-    if ended {
+pub(crate) fn ended(node: &std::sync::Arc<Node>, record: &JobRecord) {
+    if record.end.is_some() && !record.is_sentinel() {
         seen::look(node, record);
     }
 }
@@ -171,7 +166,7 @@ fn row(node: &Node, record: &JobRecord, writes: &[WriteFact], steps: &[fastctx_t
     let output = [Some(&record.output), record.stderr.as_ref()]
         .into_iter()
         .flatten()
-        .filter_map(|path| std::fs::metadata(path).ok())
+        .filter_map(|path| fastctx_platform::disk::metadata(path).ok())
         .map(|meta| meta.len() as i64)
         .sum();
     let mut went = Vec::new();
@@ -268,6 +263,9 @@ pub(super) fn how_word(how: TouchHow) -> &'static str {
 /// Changes of one job may be told in any order: what is known of its end
 /// is never taken back by an earlier telling.
 fn keep(connection: &rusqlite::Connection, row: &Row) -> fastctx_storage::Result<()> {
+    if frozen(connection, &row.deed)? || sealing::account_sealed(connection, &row.account, row.began)? {
+        return Ok(());
+    }
     connection.execute(
         "INSERT INTO book_deeds (deed, job, began, ended, from_machine, session, agent, held, project, account,
              script, outcome, code, output, went, looked, copied)
@@ -309,38 +307,48 @@ fn keep(connection: &rusqlite::Connection, row: &Row) -> fastctx_storage::Result
     Ok(())
 }
 
-/// Folds deeds older than 90 days into their hours, and lets hours older
-/// than a year go. Part of the node's hourly maintenance.
-pub(crate) fn fold(node: &Node) -> std::io::Result<()> {
-    let now = jiff::Timestamp::now();
-    let deeds_before = now.checked_sub(DEEDS_KEPT).map_err(std::io::Error::other)?.as_millisecond();
-    let hours_before = now.checked_sub(HOURS_KEPT).map_err(std::io::Error::other)?.as_millisecond();
-    node.database
-        .write_now(512, move |connection| {
-            connection.execute(
-                "INSERT INTO book_hour (at, session, agent, held, account, runs, failed, busy, files)
-                 SELECT (began / 3600000) * 3600000, COALESCE(session, ''), COALESCE(agent, ''), held, account,
-                        COUNT(*),
-                        SUM(CASE WHEN outcome IN ('failed', 'lost') THEN 1 ELSE 0 END),
-                        SUM(MAX(COALESCE(ended, began) - began, 0)),
-                        SUM((SELECT COUNT(*) FROM book_touches WHERE book_touches.deed = book_deeds.deed))
-                 FROM book_deeds WHERE began < ?1 AND ended IS NOT NULL
-                 GROUP BY 1, 2, 3, 4, 5
-                 ON CONFLICT(at, session, agent, held, account) DO UPDATE SET
-                     runs = book_hour.runs + excluded.runs,
-                     failed = book_hour.failed + excluded.failed,
-                     busy = book_hour.busy + excluded.busy,
-                     files = book_hour.files + excluded.files",
-                params![deeds_before],
-            )?;
-            connection.execute(
-                "DELETE FROM book_touches WHERE deed IN (SELECT deed FROM book_deeds WHERE began < ?1 AND ended IS NOT NULL)",
-                params![deeds_before],
-            )?;
-            connection
-                .execute("DELETE FROM book_deeds WHERE began < ?1 AND ended IS NOT NULL", params![deeds_before])?;
-            connection.execute("DELETE FROM book_hour WHERE at < ?1", params![hours_before])?;
-            Ok(())
-        })
-        .map_err(std::io::Error::other)
+/// Whether nothing more is taken of a deed: it is being folded or was, or
+/// its conversation was deleted here (`sealing`).
+fn frozen(db: &rusqlite::Connection, deed: &str) -> fastctx_storage::Result<bool> {
+    use fastctx_storage::rusqlite::OptionalExtension;
+    Ok(db
+        .query_row(
+            "SELECT 1 FROM book_folding WHERE deed=?1 UNION ALL SELECT 1 FROM book_retired WHERE deed=?1 LIMIT 1",
+            [deed],
+            |row| row.get::<_, i32>(0),
+        )
+        .optional()?
+        .is_some()
+        || sealing::sealed(db, deed)?
+        || sealing::deed_account_sealed(db, deed)?)
+}
+
+/// Whether the deed keyed `deed` is in the book, what is told of it after
+/// its start having a place: one refused or let go of takes nothing more.
+fn kept(db: &rusqlite::Connection, deed: &str) -> fastctx_storage::Result<bool> {
+    Ok(db.query_row("SELECT EXISTS(SELECT 1 FROM book_deeds WHERE deed=?1)", [deed], |row| row.get(0))?)
+}
+
+/// Starts moving the book's earlier rows in, and seals the conversations
+/// deleted while it could not be told (`sealing::reconcile`).
+pub(crate) fn start(node: &std::sync::Arc<Node>) {
+    migrate::start(node);
+    let sealing = node.clone();
+    fastctx_platform::task::spawn(async move {
+        let reconciling = sealing.clone();
+        match fastctx_platform::task::spawn_blocking(move || sealing::reconcile(&reconciling)).await {
+            Ok(Ok(())) => {}
+            Ok(Err(error)) => sealing.log.line(format_args!("sealing the activity of deleted conversations: {error}")),
+            Err(error) => sealing.log.line(format_args!("sealing the activity of deleted conversations: {error}")),
+        }
+    });
+}
+
+/// Lets go of the rows of conversations deleted here (`sealing`), once the
+/// book's earlier rows are in.
+pub(crate) fn purge(node: &Node) -> std::io::Result<()> {
+    if node.book_database.fault().is_some() || !migrate::ready(&node.book_database)? {
+        return Ok(());
+    }
+    sealing::purge(&node.book_database)
 }

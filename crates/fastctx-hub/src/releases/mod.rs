@@ -61,7 +61,7 @@ impl Releases {
     /// Listing them does not change the verification at the update entrance.
     pub fn held(&self) -> Vec<fastctx_types::update::Held> {
         let mut held = Vec::new();
-        let Ok(versions) = std::fs::read_dir(self.files.root.join("releases")) else { return held };
+        let Ok(versions) = fastctx_platform::disk::read_dir(self.files.root.join("releases")) else { return held };
         for entry in versions.flatten() {
             let name = entry.file_name().to_string_lossy().into_owned();
             let Some(version) = name.strip_prefix('v').filter(|version| release_version(version)) else { continue };

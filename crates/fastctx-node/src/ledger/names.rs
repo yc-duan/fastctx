@@ -29,7 +29,7 @@ fn path(world: &WorldDir, town: &TownName) -> std::path::PathBuf {
 
 /// Where `town`'s ledger is kept, if this machine has it.
 pub fn place(world: &WorldDir, town: &TownName) -> io::Result<Option<Place>> {
-    match std::fs::read(path(world, town)) {
+    match fastctx_platform::disk::read(path(world, town)) {
         Ok(bytes) => {
             serde_json::from_slice(&bytes).map(Some).map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))
         }

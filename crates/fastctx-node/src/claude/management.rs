@@ -11,7 +11,7 @@ pub(super) async fn run(node: &Arc<Node>, home: Option<&Path>, args: Vec<OsStrin
     let command = super::command(node, home)?;
     if args.first().is_some_and(|arg| arg == "stop" || arg == "rm") {
         let node = node.clone();
-        return tokio::task::spawn_blocking(fastctx_platform::doing::carried(move || {
+        return fastctx_platform::task::spawn_blocking(fastctx_platform::doing::carried(move || {
             super::retire_command::run(&node, &command, &args, std::time::Duration::from_secs(60))
         }))
         .await
@@ -24,7 +24,7 @@ pub(super) async fn run(node: &Arc<Node>, home: Option<&Path>, args: Vec<OsStrin
 /// `run_command`, keeping what Claude Code told on its error stream.
 async fn run_telling(command: super::Command, args: Vec<OsString>) -> Result<background::Printed, Failure> {
     let super::Command { program, cwd, env } = command;
-    tokio::task::spawn_blocking(fastctx_platform::doing::carried(move || {
+    fastctx_platform::task::spawn_blocking(fastctx_platform::doing::carried(move || {
         background::claude_telling(&program, &args, &cwd, &env)
     }))
     .await
@@ -34,7 +34,7 @@ async fn run_telling(command: super::Command, args: Vec<OsString>) -> Result<bac
 
 async fn run_command(command: super::Command, args: Vec<OsString>) -> Result<String, Failure> {
     let super::Command { program, cwd, env } = command;
-    tokio::task::spawn_blocking(fastctx_platform::doing::carried(move || {
+    fastctx_platform::task::spawn_blocking(fastctx_platform::doing::carried(move || {
         background::claude(&program, &args, &cwd, &env)
     }))
     .await
@@ -132,17 +132,23 @@ async fn settle_stopped(node: &Arc<Node>, resident: &ResidentId, session: &str) 
 /// it if it runs, idle only, and removes Claude Code's record of it
 /// (`claude rm`), which keeps the session's own record; that goes with the
 /// conversation.
-pub async fn retire(
-    node: &Arc<Node>,
-    home: Option<&Path>,
-    resident: &ResidentId,
-    session: &str,
-) -> Result<(), Failure> {
+pub async fn retire(node: &Arc<Node>, home: Option<&Path>, session: &str) -> Result<(), Failure> {
     let Some(agent) = background_session(node, home, session).await? else { return Ok(()) };
-    if agent["pid"].as_u64().is_some() {
-        stop(node, home, resident, session, true).await?;
-    }
     let id = agent["id"].as_str().ok_or_else(|| Failure::new("Claude Code returned no background id"))?;
+    if let Some(pid) = agent["pid"].as_u64() {
+        if pid == 0 {
+            return Err(Failure::new("Claude Code returned an invalid zero process ID"));
+        }
+        if agent["status"].as_str() != Some("idle") {
+            return Err(Failure::new("only an idle background session can be deleted"));
+        }
+        run(node, home, vec!["stop".into(), id.into()]).await?;
+        if super::running(node, home, session).await? {
+            return Err(Failure::new("Claude Code accepted stop, but still reports a running background process"));
+        }
+    }
+    // Deletion has already fenced this conversation. Final host reports go
+    // with its records instead of being applied as a new turn after the fence.
     run(node, home, vec!["rm".into(), id.into()]).await?;
     Ok(())
 }
@@ -170,7 +176,7 @@ pub async fn wake(node: &Arc<Node>, home: Option<&Path>, session: &str) -> Resul
     // other way a session starts.
     super::oldest::check(node, &super::command(node, home)?).await?;
     if let Some(resident) = node.residents.resident_of_thread(session) {
-        crate::profile::session::claude(node, &resident, false)?;
+        crate::profile::session::load_claude(node, &resident, false).await?;
     }
     let mut command = super::command(node, home)?;
     // A foreground history has no saved supervisor cwd: it is resumed where

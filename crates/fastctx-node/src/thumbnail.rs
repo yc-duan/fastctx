@@ -124,7 +124,7 @@ async fn here(
         request.path = crate::world::native(&uploaded.path);
     }
     let expected = uploaded.as_ref().map(|uploaded| uploaded.snapshot.clone());
-    let (path, before, budget) = tokio::task::spawn_blocking(move || {
+    let (path, before, budget) = fastctx_platform::task::spawn_blocking(move || {
         let path = fastctx_platform::local_path(&request.path).map_err(|error| error.to_string())?;
         if !path.is_absolute() {
             return Err("the image path must be absolute".to_string());
@@ -156,7 +156,7 @@ async fn here(
     let content = if uploaded.is_some() {
         let source = path.clone();
         Some(
-            tokio::task::spawn_blocking(move || fastctx_hands::files::content_fingerprint(&source))
+            fastctx_platform::task::spawn_blocking(move || fastctx_hands::files::content_fingerprint(&source))
                 .await
                 .map_err(|error| Failure::new(error.to_string()))?
                 .map_err(|error| Failure::new(error.to_string()))?,
@@ -178,15 +178,15 @@ async fn here(
     // This guard ends the owned job/process group when an IPC or network
     // caller leaves, even while blocking readers still await the worker.
     let _worker = Worker(child.clone());
-    let reading = tokio::task::spawn_blocking(move || {
+    let reading = fastctx_platform::task::spawn_blocking(move || {
         let mut bytes = Vec::new();
         stdout.read_to_end(&mut bytes).map(|_| bytes)
     });
-    let errors = tokio::task::spawn_blocking(move || {
+    let errors = fastctx_platform::task::spawn_blocking(move || {
         let mut bytes = Vec::new();
         stderr.read_to_end(&mut bytes).map(|_| bytes)
     });
-    let waiting = tokio::task::spawn_blocking(move || child.wait());
+    let waiting = fastctx_platform::task::spawn_blocking(move || child.wait());
     // Past this, the worker guard ends the decoder as this returns.
     let joined = fastctx_platform::doing::outside("the image decoder", DECODER, async {
         tokio::try_join!(reading, errors, waiting)

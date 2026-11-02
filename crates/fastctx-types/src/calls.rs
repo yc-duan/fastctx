@@ -31,10 +31,16 @@ pub enum Call {
     },
     /// Local operational diagnostics. Never relayed through another machine.
     DoctorCalls,
+    /// The node's measures of itself, its health and the scenes it left.
+    /// Never relayed through another machine.
+    DoctorReadings,
     Plan {
         hub: Option<crate::HubName>,
         account: Option<crate::AccountName>,
         operation: crate::plan::Operation,
+        /// Another conversation's plan to read; the caller's own when absent.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        of: Option<crate::plan::Of>,
     },
     /// A skill of the account the caller works for, read whole by its name
     /// (`crate::skills`).
@@ -70,10 +76,19 @@ pub enum Call {
         hub: Option<crate::HubName>,
         account: Option<crate::AccountName>,
         kind: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        owner: Option<ResidentId>,
     },
     Collaboration {
         resident: ResidentId,
         machine: Option<crate::access::Written>,
+    },
+    PrepareCopies {
+        paths: Vec<std::path::PathBuf>,
+    },
+    History(crate::history::HistoryCall),
+    WatchHistory {
+        scope: crate::history::Scope,
     },
     Memory(crate::memory::MemoryCall),
     WatchMemory {
@@ -904,6 +919,12 @@ pub enum Reply {
     DoctorCalls {
         calls: Vec<crate::stats::CallWork>,
     },
+    DoctorReadings {
+        readings: Box<crate::readings::Readings>,
+        health: crate::health::Health,
+        /// The scenes kept, oldest first, as paths.
+        scenes: Vec<String>,
+    },
     Plan {
         result: crate::plan::Result,
     },
@@ -916,6 +937,7 @@ pub enum Reply {
         response: crate::account_records::Response,
     },
     Collaboration(Box<crate::collaboration::Tree>),
+    History(crate::history::HistoryReply),
     Memory(crate::memory::MemoryReply),
     MemorySettings(crate::memory::Settings),
     Layer(crate::layers::Chosen),
@@ -1006,6 +1028,10 @@ pub enum Reply {
     Lines(crate::lines::Reply),
     Asked {
         colleague: Address,
+        /// How many colleagues wait ahead of its first turn, when it waits
+        /// for its callee to have room.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        waiting: Option<u32>,
     },
     Spoken {
         to: Address,

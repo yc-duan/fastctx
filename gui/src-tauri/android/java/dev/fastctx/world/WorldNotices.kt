@@ -19,6 +19,7 @@ class WorldNotices(private val context: Context) {
         const val CONNECTION_ID = 1
         const val CONNECTION = "world_connection"
         const val ALERTS = "world_conversations"
+        const val MACHINES = "world_machines"
         const val NOTICE = "world_notice"
     }
     private val manager = context.getSystemService(NotificationManager::class.java)
@@ -28,6 +29,7 @@ class WorldNotices(private val context: Context) {
         if (Build.VERSION.SDK_INT >= 26) {
             manager.createNotificationChannel(NotificationChannel(CONNECTION, "World connection", NotificationManager.IMPORTANCE_LOW))
             manager.createNotificationChannel(NotificationChannel(ALERTS, "World conversations", NotificationManager.IMPORTANCE_HIGH))
+            manager.createNotificationChannel(NotificationChannel(MACHINES, "World machines", NotificationManager.IMPORTANCE_DEFAULT))
         }
     }
 
@@ -56,20 +58,28 @@ class WorldNotices(private val context: Context) {
 
     @Synchronized fun show(notice: JSONObject): String {
         check(NotificationManagerCompat.from(context).areNotificationsEnabled()) { "Android notifications are disabled for World" }
-        if (Build.VERSION.SDK_INT >= 26) check(manager.getNotificationChannel(ALERTS).importance != NotificationManager.IMPORTANCE_NONE) { "The World conversations notification channel is disabled" }
         val route = notice.getString("route")
-        require(route.startsWith("#/talk/")) { "A conversation notification requires a #/talk/ route" }
+        // A conversation's call goes on its own channel; what went wrong with
+        // a machine or the network on the machines', which can be quieted
+        // apart.
+        val channel = when {
+            route.startsWith("#/talk/") -> ALERTS
+            route.startsWith("#/machine/") || route == "#/alerts" -> MACHINES
+            else -> throw IllegalArgumentException("A notification requires a conversation's, a machine's or the alerts' route")
+        }
+        if (Build.VERSION.SDK_INT >= 26) check(manager.getNotificationChannel(channel).importance != NotificationManager.IMPORTANCE_NONE) { "The World notification channel $channel is disabled" }
         val tag = notice.getString("id")
         val previous = saved.getString("notice:$tag", null)?.let(::JSONObject)
         val activation = previous?.getString("activation") ?: UUID.randomUUID().toString()
         notice.put("activation", activation)
         check(saved.edit().putString("notice:$tag", notice.toString()).putString("activation:$activation", tag).commit()) { "Could not save notification destination" }
-        val builder = NotificationCompat.Builder(context, ALERTS).setSmallIcon(R.drawable.world_notification)
+        val builder = NotificationCompat.Builder(context, channel).setSmallIcon(R.drawable.world_notification)
             .setContentTitle(notice.getString("title")).setContentText(notice.getString("body"))
             .setStyle(NotificationCompat.BigTextStyle().bigText(notice.getString("body")))
             .setContentIntent(launch(activation)).setAutoCancel(true)
             .setOnlyAlertOnce(previous != null && previous.optString("version") == notice.optString("version"))
-            .setPriority(NotificationCompat.PRIORITY_HIGH).setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
+            .setPriority(if (channel == ALERTS) NotificationCompat.PRIORITY_HIGH else NotificationCompat.PRIORITY_DEFAULT)
+            .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
         manager.notify(tag, 0, builder.build())
         return tag
     }

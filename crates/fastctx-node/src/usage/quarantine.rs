@@ -5,7 +5,7 @@ use std::io;
 use std::path::Path;
 
 pub(super) fn read(path: &Path) -> io::Result<Vec<Entry>> {
-    let bytes = std::fs::read(path)?;
+    let bytes = fastctx_platform::disk::read(path)?;
     let end = bytes.iter().rposition(|b| *b == b'\n').map_or(0, |i| i + 1);
     let mut rows = Vec::new();
     let mut kept = Vec::new();
@@ -31,7 +31,7 @@ pub(super) fn read(path: &Path) -> io::Result<Vec<Entry>> {
                         "error": error.to_string(), "bytes": raw,
                     });
                     let destination = directory.join(key);
-                    if !destination.try_exists()? {
+                    if !fastctx_platform::disk::exists(&destination)? {
                         fastctx_platform::publish(
                             &destination,
                             &serde_json::to_vec(&record)?,
@@ -53,7 +53,7 @@ pub(super) fn read(path: &Path) -> io::Result<Vec<Entry>> {
 }
 
 pub(super) fn count(path: &Path) -> io::Result<usize> {
-    match std::fs::read_dir(path.join("quarantine")) {
+    match fastctx_platform::disk::read_dir(path.join("quarantine")) {
         Ok(mut entries) => entries.try_fold(0, |count, entry| {
             Ok(count + usize::from(entry?.path().extension().is_some_and(|s| s == "json")))
         }),

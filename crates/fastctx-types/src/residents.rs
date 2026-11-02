@@ -188,6 +188,10 @@ pub enum Notice {
         /// A nonblocking question retains its sender and full text for older readers.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         goal_question: Option<Box<crate::goals::QuestionDelivery>>,
+        /// What a colleague told its asker; older readers take it as the
+        /// colleague's words.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        told: Option<Box<crate::voice::ColleagueTold>>,
     },
     /// The user's words and files; the accompanying facts are the World's.
     Attached { message: crate::session::attachments::AttachedMessage, text: String },
@@ -217,8 +221,20 @@ impl Notice {
                 self,
                 Self::Words { from: Speaker::World, .. }
                     | Self::Words { goal_report: Some(_), .. }
+                    | Self::Words { told: Some(_), .. }
                     | Self::Answer { .. }
                     | Self::Sentinel { .. }
+            )
+    }
+
+    /// Whether the turn that reads it owes its sender no answer: a
+    /// colleague's question, report or what it told on its way, and a
+    /// sentinel's finding.
+    pub fn owes_no_answer(&self) -> bool {
+        self.is_question()
+            || matches!(
+                self,
+                Self::Sentinel { .. } | Self::Words { goal_report: Some(_), .. } | Self::Words { told: Some(_), .. }
             )
     }
 

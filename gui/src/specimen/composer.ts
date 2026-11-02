@@ -24,6 +24,8 @@ export type SpecimenComposer = ComposerTransport & { place(id: string): void; fo
 export interface SpecimenSlowness {
   taken: number;
   heard: number;
+  /** How long a send takes to be taken, where it differs from an edit. */
+  sent?: number;
 }
 
 /** `retrying`, where given, is told the id of words sent while the agent is
@@ -171,6 +173,6 @@ export function specimenComposer(who: Address, busy: () => boolean, queued: stri
     },
     attachFile: (scope, file) => Promise.resolve(attachment(scope.target, file.name, file.type, file.size)),
     attachPath: (scope, path) => Promise.resolve(attachment(scope.target, path.split(/[\\/]/).pop() ?? path, "", 0)),
-    update: (mutation) => (slow ? later(slow.taken, () => apply(mutation)) : apply(mutation)),
+    update: (mutation) => (slow ? later(mutation.do === "send" ? (slow.sent ?? slow.taken) : slow.taken, () => apply(mutation)) : apply(mutation)),
   };
 }
