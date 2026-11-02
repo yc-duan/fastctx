@@ -937,7 +937,7 @@ pub async fn open_here(
     let (id, _opening) = crate::attachments::opening(node, &agent, &opened.acting, town.as_ref(), &attachments).await?;
     crate::placement::location::speaking(node, &id, typed_on)?;
     let origin = Origin::User;
-    let _birth = crate::here::born(node, &id, opened.acting.clone(), &origin);
+    let _birth = crate::here::born(node, &id, opened.acting.clone());
     crate::session_options::keep(node, &id, &options).await?;
     // What it is told of its machines and folders goes into the instructions
     // its thread starts with.

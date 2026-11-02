@@ -1830,7 +1830,7 @@ pub async fn open_here(
     let (id, _opening) = crate::attachments::opening(node, &agent, &opened.acting, town.as_ref(), &attachments).await?;
     crate::placement::location::speaking(node, &id, typed_on)?;
     crate::focus::open(node, &node.world.conversation(&id), &opened.acting, &opened.focus).await?;
-    let _birth = crate::here::born(node, &id, opened.acting.clone(), &Origin::User);
+    let _birth = crate::here::born(node, &id, opened.acting.clone());
     // A login assisting another account starts without the browser of this
     // machine (`background::Start::assisting`), as kept now.
     crate::profile::session::ready(node, &opened.acting).await?;

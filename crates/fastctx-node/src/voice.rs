@@ -16,12 +16,13 @@ use jiff::Timestamp;
 use crate::Node;
 
 /// Whether `id` speaks through `message_user`: a conversation the World
-/// started, for the user or as a colleague. A session the user opened in a
-/// host's own window is read there.
+/// started, for the user or as a colleague, and one it is starting, whose
+/// host lists its tools before its record is written. A session the user
+/// opened in a host's own window is read there.
 pub(crate) fn speaks(node: &Node, id: &ResidentId) -> bool {
     node.residents.removed(id).is_none()
         && node.residents.about(id).map_or_else(
-            || crate::here::born_for_user(node, id),
+            || crate::here::being_born(node, id),
             |(about, _)| about.world_started && matches!(about.origin, Origin::User | Origin::Colleague { .. }),
         )
 }

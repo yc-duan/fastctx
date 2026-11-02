@@ -53,7 +53,6 @@ pub struct Births(Mutex<HashMap<ResidentId, Born>>);
 
 struct Born {
     acting: Acting,
-    user_started: bool,
 }
 
 /// A resident whose initial setup is in progress; dropping it ends the birth,
@@ -71,25 +70,14 @@ impl Drop for Birth {
 }
 
 /// `id` is being born here, working for `acting`.
-pub(crate) fn born(
-    node: &Arc<Node>,
-    id: &ResidentId,
-    acting: Acting,
-    origin: &fastctx_types::residents::Origin,
-) -> Birth {
-    let user_started = matches!(origin, fastctx_types::residents::Origin::User);
-    node.births.0.lock().expect("never poisoned").insert(id.clone(), Born { acting, user_started });
+pub(crate) fn born(node: &Arc<Node>, id: &ResidentId, acting: Acting) -> Birth {
+    node.births.0.lock().expect("never poisoned").insert(id.clone(), Born { acting });
     Birth { node: node.clone(), id: id.clone() }
 }
 
 /// Initial setup may still be publishing the first input after the resident record exists.
 pub(crate) fn being_born(node: &Node, id: &ResidentId) -> bool {
     node.births.0.lock().expect("never poisoned").contains_key(id)
-}
-
-/// Whether the World is starting this conversation for the user, before its host identifies it.
-pub(crate) fn born_for_user(node: &Node, id: &ResidentId) -> bool {
-    node.births.0.lock().expect("never poisoned").get(id).is_some_and(|born| born.user_started)
 }
 
 /// Whom `id` works for, as its record says, or as its birth does until the
