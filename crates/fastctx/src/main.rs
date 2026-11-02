@@ -6,7 +6,7 @@ use std::process::ExitCode;
 
 use clap::{Parser, Subcommand};
 
-#[cfg(all(target_os = "linux", target_env = "musl"))]
+#[cfg(target_os = "linux")]
 mod allocator;
 mod apply;
 mod ask;
