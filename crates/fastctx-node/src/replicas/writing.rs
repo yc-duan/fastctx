@@ -9,9 +9,14 @@ use fastctx_types::{
     Address, JobId, TownName, history,
     ipc::Failure,
     replicas::{Document, Head, Scope},
-    write::{ChangeKind, FileChange, WriteError, WriteOp, WriteOutcome, WriteResult},
+    write::{ChangeKind, FileChange, WriteError, WriteOp, WriteOutcome, WriteRequest, WriteResult},
 };
 use std::{path::Path, sync::Arc};
+
+/// How many edits of one document wait for its hub at most: past it, one
+/// made offline joins the last waiting, whoever made either. A guard against
+/// a document edited in turn by many for long offline.
+const WAITING_EDITS: usize = 16;
 
 fn failure(error: impl std::fmt::Display) -> Failure {
     Failure::new(error.to_string())
@@ -202,7 +207,12 @@ pub(crate) async fn intercept(
         })));
     }
     let id = fastctx_net::sign::random::<32>().map_err(failure)?.iter().map(|byte| format!("{byte:02x}")).collect();
-    copy.pending.push(Pending { id, base, before, text, operation: operation.clone(), author, offline });
+    let replica = copy.path.clone();
+    keep(
+        &mut copy.pending,
+        Pending { id, base, before, text, operation: operation.clone(), author, offline },
+        &replica,
+    );
     super::publication::save(node, &copy, false, None).await.map_err(failure)?;
     let mut submitted = if offline { Ok(()) } else { flush(node, &link, &mut copy).await };
     if submitted.is_err() {
@@ -360,6 +370,35 @@ pub(crate) async fn flush(node: &Arc<Node>, link: &fastctx_net::link::Link, copy
         }
     }
     Ok(())
+}
+
+/// Keeps an edit until its hub has it. One made offline after another made
+/// offline by the same writer joins it: the two go as one write from the
+/// earlier one's base, so a long time offline keeps one candidate, not every
+/// step. Only the last of two or more joins, never the first, which the hub
+/// may have taken already.
+fn keep(waiting: &mut Vec<Pending>, edit: Pending, path: &Path) {
+    let crowded = waiting.len() >= WAITING_EDITS;
+    if edit.offline
+        && waiting.len() >= 2
+        && let Some(last) = waiting.last_mut()
+        && last.offline
+        && (crowded || same_writer(&last.author, &edit.author))
+    {
+        last.operation =
+            WriteOp::Write(WriteRequest { file_path: path.to_path_buf(), content: edit.text.clone(), encoding: None });
+        last.text = edit.text;
+        last.author = edit.author;
+        return;
+    }
+    waiting.push(edit);
+}
+
+fn same_writer(one: &history::Author, other: &history::Author) -> bool {
+    one.stamp.by == other.stamp.by
+        && one.stamp.on == other.stamp.on
+        && one.host == other.host
+        && one.model == other.model
 }
 
 async fn reject(node: &Arc<Node>, copy: &mut Copy, reason: &str) -> Result<(), String> {
