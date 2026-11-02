@@ -130,10 +130,9 @@ impl Special {
     }
 
     pub fn create(&self, source: &Path, destination: &Path) -> io::Result<()> {
-        use std::os::windows::ffi::OsStrExt;
         use windows_sys::Win32::Storage::FileSystem::*;
-        let from: Vec<u16> = source.as_os_str().encode_wide().chain([0]).collect();
-        let to: Vec<u16> = destination.as_os_str().encode_wide().chain([0]).collect();
+        let from = fastctx_platform::win32_path::wide(source)?;
+        let to = fastctx_platform::win32_path::wide(destination)?;
         let tag = self.reparse.get(..4).map(|bytes| u32::from_le_bytes(bytes.try_into().expect("four bytes")));
         // File symlinks require COPY_SYMLINK. OPEN_AND_COPY_REPARSE_POINT by
         // itself follows file symlinks on Windows 11 (verified 2026-10-04).

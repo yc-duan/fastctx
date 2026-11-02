@@ -18,7 +18,7 @@ pub(crate) async fn world_now(shell: tauri::State<'_, Shell>) -> Result<WorldNow
 }
 
 /// What a World watch sends: the World at first, then what changed in it
-/// (`crate::world_delta`), or the whole again when that is no smaller than
+/// (`fastctx_types::world_delta`), or the whole again when that is no smaller than
 /// half of it; or why the watch broke while it is opened again.
 #[derive(Clone, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
@@ -28,24 +28,27 @@ pub enum Piece {
     Interrupted { error: String, since: u64 },
 }
 
-/// The piece that tells `now` to a page that holds `last`: what changed,
-/// or the whole; none when nothing did. `last` becomes `now`.
-fn told(last: &mut Option<serde_json::Value>, now: WorldNow) -> Option<Piece> {
-    let value = serde_json::to_value(&now).ok();
-    let piece = match (last.as_ref(), value.as_ref()) {
-        (Some(before), Some(after)) => match crate::world_delta::between(before, after) {
-            None => None,
-            Some(change) if length(&change) < length(after) / 2 => Some(Piece::Changed { change }),
-            Some(_) => Some(Piece::World { world: Box::new(now) }),
-        },
-        _ => Some(Piece::World { world: Box::new(now) }),
-    };
-    *last = value;
-    piece
-}
-
-fn length(value: &serde_json::Value) -> usize {
-    serde_json::to_string(value).map_or(usize::MAX, |text| text.len())
+/// The piece that tells what the watch saw to a page that holds `last`:
+/// what changed, or the whole; none when nothing did. A change the node
+/// told is passed on as it is; a whole World, measured against `last`.
+/// `last` becomes what the page holds then.
+fn told(last: &mut Option<serde_json::Value>, seen: fastctx_client::world_now::Seen) -> Option<Piece> {
+    use fastctx_types::world_delta::{Told, apply, tell};
+    match seen {
+        fastctx_client::world_now::Seen::Changed(change) => {
+            if let Some(held) = last.as_mut() {
+                apply(held, &change);
+            }
+            Some(Piece::Changed { change })
+        }
+        fastctx_client::world_now::Seen::World(now) => {
+            let value = serde_json::to_value(&now).ok()?;
+            match tell(last, value)? {
+                Told::Changed(change) => Some(Piece::Changed { change }),
+                Told::Whole(_) => Some(Piece::World { world: now }),
+            }
+        }
+    }
 }
 
 /// Follows the World until the page closes or `unwatch` is called with the
@@ -76,10 +79,10 @@ pub(crate) async fn world_watch(
                             // A watch opened again starts from the whole.
                             let mut last = None;
                             loop {
-                                match watch.next().await {
-                                    Ok(now) => {
+                                match watch.next_seen().await {
+                                    Ok(seen) => {
                                         again.came();
-                                        if let Some(piece) = told(&mut last, now)
+                                        if let Some(piece) = told(&mut last, seen)
                                             && pieces.send(piece).is_err()
                                         {
                                             return;

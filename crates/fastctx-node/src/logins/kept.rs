@@ -62,7 +62,7 @@ pub(super) struct KeptAgent {
     #[serde(default)]
     pub limits: Vec<KeptLimits>,
     /// Codex login directories the World does not name new conversations
-    /// in: naming is on unless turned off there (2026-10-30). Kept apart from
+    /// in: naming is on unless turned off there. Kept apart from
     /// the login list, which a rescan rebuilds.
     #[serde(default)]
     pub untitled: Vec<PathBuf>,

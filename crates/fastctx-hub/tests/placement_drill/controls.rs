@@ -39,16 +39,28 @@ pub(super) async fn exercise(
         }),
         json!(null),
     );
+    let before = last_turn(host, child.resident.as_str());
     let said = world.talk(child.resident.clone(), Some("host".parse()?), "ALICE_FORK_CASE".into()).await?;
-    anyhow::ensure!(idle(host, child.resident.as_str()).await, "the fork did not settle");
+    anyhow::ensure!(idle_after(host, child.resident.as_str(), before).await, "the fork did not settle");
     let child_plan = plan_file(host, child.resident.as_str())?;
     record(
         "a fork keeps the account's working computer and gets its own plan path",
         child_plan.starts_with(working) && child_plan != parent_plan,
         json!(child_plan),
     );
-    std::fs::write(&child_plan, "FORK_FILES_STAY")?;
-    anyhow::ensure!(plan_is(world, &child.resident, "FORK_FILES_STAY").await, "the fork's file did not sync");
+    let before = last_turn(host, child.resident.as_str());
+    world
+        .talk(
+            child.resident.clone(),
+            Some("host".parse()?),
+            format!(
+                "ALICE_FORK_WRITE [[run: on alice-two write '{}' <<'PLAN'\nFORK_FILES_STAY\nPLAN]]",
+                child_plan.display()
+            ),
+        )
+        .await?;
+    anyhow::ensure!(idle_after(host, child.resident.as_str(), before).await, "the fork write did not settle");
+    anyhow::ensure!(plan_is(world, &child.resident, "FORK_FILES_STAY\n").await, "the fork's file did not sync");
     let turn = match said.landed {
         Landed::NewTurn { turn } | Landed::JoinedTurn { turn } => turn,
         other => anyhow::bail!("the fork's input was not accepted: {other:?}"),
@@ -58,7 +70,7 @@ pub(super) async fn exercise(
     record(
         "native rewind leaves the account's working files unchanged",
         matches!(result, Controlled::Done { .. } | Controlled::Rewound { .. })
-            && std::fs::read_to_string(&child_plan)? == "FORK_FILES_STAY",
+            && std::fs::read_to_string(&child_plan)? == "FORK_FILES_STAY\n",
         json!(null),
     );
     record(

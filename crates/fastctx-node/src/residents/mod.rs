@@ -16,10 +16,12 @@
 //! A resident has one directory, its conversation's home; which project it
 //! is in is one record there (`town`), so changing projects moves nothing.
 
+pub(crate) mod activity;
 pub(crate) mod cache;
 mod departures;
 mod records;
 mod removal;
+pub(crate) mod speaking;
 mod tombstones;
 pub use removal::removal;
 pub use tombstones::Tombstone;
@@ -49,9 +51,12 @@ pub struct Residents {
     /// This machine's name now, which every resident living here is told as
     /// living on, whatever the machine was called when it was born.
     here: std::sync::RwLock<Option<fastctx_types::MachineName>>,
-    speaking: crate::leases::Registry<ResidentId, fastctx_platform::doing::Mutex<()>>,
+    speaking: crate::leases::Registry<ResidentId, speaking::Speaking>,
     paying: crate::leases::Registry<ResidentId, fastctx_platform::doing::Mutex<()>>,
     management: crate::leases::Registry<ResidentId, fastctx_platform::doing::RwLock<()>>,
+    /// Whether some conversation's records could not be read when the node
+    /// started: what looks like nobody's may be its.
+    unread: bool,
 }
 
 struct State {
@@ -70,6 +75,9 @@ struct State {
     /// Residents being deleted, with how many deletions of each are under
     /// way: they take nothing new while their turn and commands stop.
     deleting: HashMap<ResidentId, usize>,
+    /// Residents whose deletion went past what can be undone and is being
+    /// finished: they take nothing new until it is.
+    condemned: std::collections::HashSet<ResidentId>,
     tombstones: tombstones::Tombstones,
 }
 
@@ -131,9 +139,9 @@ impl std::ops::DerefMut for StateGuard<'_> {
 impl Drop for StateGuard<'_> {
     fn drop(&mut self) {
         if !std::thread::panicking()
-            && let Err(error) = self.0.live.release()
+            && let Some(problem) = self.0.live.release()
         {
-            cache::failed("spilling inactive resident state", error);
+            eprintln!("fastctx node: {problem}; it stays in memory");
         }
         if self.0.live.take_touched() {
             self.1.send_modify(|changes| *changes = changes.wrapping_add(1));
@@ -164,9 +172,20 @@ pub struct Heard {
     pub ledger: u64,
 }
 
+impl Heard {
+    /// Full context and scratch receipts have already been acknowledged by their
+    /// durable stores. Runtime presence and compaction retain only town position.
+    fn position(self) -> Self {
+        Self { scratch: None, context: None, user_prompt: None, town: self.town, ledger: self.ledger }
+    }
+}
+
 #[derive(serde::Serialize, serde::Deserialize)]
 struct Live {
     removed: Option<Timestamp>,
+    /// Invalidates background eligibility after an archive or restore in this process.
+    #[serde(default)]
+    availability_revision: u64,
     about: About,
     places: Places,
     /// A Claude session's inbox address, for commands from its native shell.
@@ -203,6 +222,7 @@ impl Live {
             .collect();
         Self {
             removed: None,
+            availability_revision: 0,
             about,
             places,
             inbox: None,
@@ -249,6 +269,7 @@ impl Residents {
             inboxes: cache::Index::new(root.join("inboxes"))?,
             colleagues: HashMap::new(),
             deleting: HashMap::new(),
+            condemned: std::collections::HashSet::new(),
             tombstones: tombstones::Tombstones::load(world, &mut problems)?,
         };
         for kept in world.kept()? {
@@ -263,6 +284,11 @@ impl Residents {
             // and no resident.
             if !directory.about().try_exists()? {
                 continue;
+            }
+            // A deletion that began before the node stopped is finished,
+            // and it takes nothing new until then.
+            if directory.path().join(crate::data::delete::INTENT).try_exists()? {
+                state.condemned.insert(id.clone());
             }
             let about = match records::read_about(directory) {
                 Ok(about) if about.id == *id => about,
@@ -321,9 +347,13 @@ impl Residents {
             let mut live = Live::new(about, places, now);
             live.removed = removed;
             state.admit(live);
-            state.live.release()?;
+            if let Some(problem) = state.live.release() {
+                problems.push((root.clone(), io::Error::other(problem)));
+            }
         }
-        state.live.release()?;
+        if let Some(problem) = state.live.release() {
+            problems.push((root.clone(), io::Error::other(problem)));
+        }
         Ok((
             Self {
                 state: Mutex::new(state),
@@ -332,9 +362,15 @@ impl Residents {
                 speaking: Default::default(),
                 paying: Default::default(),
                 management: Default::default(),
+                unread: !problems.is_empty(),
             },
             problems,
         ))
+    }
+
+    /// Whether every conversation's records were read when the node started.
+    pub(crate) fn all_read(&self) -> bool {
+        !self.unread
     }
 
     /// The resident `id` lives in `town` from now on. Returns whether it
@@ -394,13 +430,14 @@ impl Residents {
 
     pub fn set_heard(&self, id: &ResidentId, heard: Heard) {
         if let Some(live) = self.lock().live.get_mut(id) {
-            live.heard = Some(heard);
+            live.heard = Some(heard.position());
         }
     }
 
     /// The session of `id` starts with instructions that tell it `heard` of
     /// its town: it has heard that, and is back there when it compacts.
     pub fn set_instructed(&self, id: &ResidentId, heard: Heard) {
+        let heard = heard.position();
         if let Some(live) = self.lock().live.get_mut(id) {
             live.heard = Some(heard.clone());
             live.instructed = Some(heard);
@@ -434,7 +471,7 @@ impl Residents {
             && live.town() == heard.town
             && live.heard.as_ref().is_none_or(|prior| prior.town != heard.town || prior.ledger <= heard.ledger)
         {
-            live.heard = Some(heard);
+            live.heard = Some(heard.position());
         }
     }
 
@@ -642,13 +679,15 @@ impl Residents {
 
     /// Persists the restoration contract before the first native resumption.
     pub(crate) fn set_native_resumed(&self, world: &WorldDir, id: &ResidentId) -> io::Result<()> {
-        let mut state=self.lock();
-        let live=state.live.get_mut(id).ok_or_else(||io::Error::other("unknown conversation"))?;
-        if live.about.native_resumed {return Ok(());}
-        let mut about=live.about.clone();
-        about.native_resumed=true;
-        records::write_about(&world.conversation(id),&about)?;
-        live.about=about;
+        let mut state = self.lock();
+        let live = state.live.get_mut(id).ok_or_else(|| io::Error::other("unknown conversation"))?;
+        if live.about.native_resumed {
+            return Ok(());
+        }
+        let mut about = live.about.clone();
+        about.native_resumed = true;
+        records::write_about(&world.conversation(id), &about)?;
+        live.about = about;
         Ok(())
     }
 
@@ -689,6 +728,20 @@ impl Residents {
         new_id(agent, &self.lock())
     }
 
+    /// Learns the conversations the node's database keeps as deleted, whose
+    /// tombstones here may be gone, and those let go whole to another
+    /// machine, which may come back: their ids go to no new conversation.
+    pub(crate) fn seal(&self, database: &fastctx_storage::Database) -> fastctx_storage::Result<()> {
+        let (deleted, released) = tombstones::sealed(database)?;
+        self.lock().tombstones.seal(deleted, released);
+        Ok(())
+    }
+
+    /// Whether `id` was ever deleted from this machine.
+    pub(crate) fn ever_deleted(&self, id: &ResidentId) -> bool {
+        self.lock().tombstones.ever(id)
+    }
+
     /// Whether the resident `id` lives on this machine, removed or not.
     pub fn knows(&self, id: &ResidentId) -> bool {
         self.lock().live.contains_key(id)
@@ -698,6 +751,11 @@ impl Residents {
     /// such resident lives here.
     pub fn town_of(&self, id: &ResidentId) -> Option<Option<TownName>> {
         self.lock().live.get(id).map(Live::town)
+    }
+
+    /// The original recorded machine, retained when a conversation directory is moved.
+    pub(crate) fn birth_machine(&self, id: &ResidentId) -> Option<MachineName> {
+        self.lock().live.get(id).map(|live| live.about.machine.clone())
     }
 
     pub fn about(&self, id: &ResidentId) -> Option<(About, Option<TownName>)> {
@@ -731,11 +789,16 @@ impl Residents {
         self.lock().current_sessions.get(session).unwrap_or(0)
     }
 
-    pub fn speaking(
-        &self,
-        id: &ResidentId,
-    ) -> Option<crate::leases::Lease<ResidentId, fastctx_platform::doing::Mutex<()>>> {
-        self.lock().live.contains_key(id).then(|| self.speaking.get_or_insert_with(id, || crate::ranked::speaking(id)))
+    pub fn speaking(&self, id: &ResidentId) -> Option<speaking::Lease> {
+        self.lock()
+            .live
+            .contains_key(id)
+            .then(|| speaking::Lease::new(self.speaking.get_or_insert_with(id, || speaking::Speaking::new(id))))
+    }
+
+    /// Retain the caller's speech order for a worker that may outlive its future.
+    pub(crate) fn keep_speaking(&self, id: &ResidentId) -> io::Result<std::sync::Arc<speaking::Held>> {
+        speaking::Held::new(self.speaking.get(id).ok_or_else(|| io::Error::other("speech permit is unavailable"))?)
     }
 
     pub fn paying(
@@ -1026,7 +1089,8 @@ fn here(live: &Live) -> bool {
         return false;
     }
     if live.about.world_managed() {
-        (live.about.native_resumed && live.connections > 0) || live.now.as_ref().is_none_or(|now| now.activity != Activity::Asleep)
+        (live.about.native_resumed && live.connections > 0)
+            || live.now.as_ref().is_none_or(|now| now.activity != Activity::Asleep)
     } else {
         live.host_present || live.connections > 0
     }
@@ -1076,7 +1140,7 @@ pub fn idle(since: Timestamp) -> Now {
 }
 
 /// A fresh id for a resident of `agent`: its name and eight hex digits,
-/// unused on this machine, and by no conversation deleted from it lately.
+/// unused on this machine, and by no conversation ever deleted from it.
 /// Ids are unique on their machine alone; eight digits keep two machines'
 /// from meeting where a record names a conversation by its id only, as
 /// four did one time in fifteen among a hundred conversations.
@@ -1086,7 +1150,7 @@ fn new_id(agent: &AgentName, state: &State) -> Result<ResidentId, Failure> {
         getrandom::fill(&mut bytes).map_err(|error| Failure::new(format!("choosing a resident id: {error}")))?;
         let digits: String = bytes.iter().map(|byte| format!("{byte:02x}")).collect();
         let id = ResidentId::try_from(format!("{agent}-{digits}")).expect("an agent name and eight hex digits");
-        if !state.live.contains_key(&id) && state.tombstones.of(&id).is_none() {
+        if !state.live.contains_key(&id) && state.tombstones.free(&id) {
             return Ok(id);
         }
     }

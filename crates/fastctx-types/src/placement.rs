@@ -22,6 +22,7 @@ pub struct Location {
 pub enum Resource {
     Directory,
     Plan,
+    History { scope: crate::history::Scope },
     Skill { name: String, version: u64 },
     Files { key: String, files: Vec<crate::skill_files::File> },
 }

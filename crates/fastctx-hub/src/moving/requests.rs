@@ -99,7 +99,7 @@ pub(crate) fn moves(hub: &Hub) -> HubMoveReply {
     HubMoveReply::Moves { moves: listed(hub, &store) }
 }
 
-pub(crate) fn listed(hub: &Hub, store: &Store) -> Vec<HubMove> {
+pub(crate) fn listed(hub: &Hub, store: &crate::store::Snapshot) -> Vec<HubMove> {
     let mut moves: Vec<HubMove> = store.outgoing.iter().map(Outgoing::view).collect();
     let current = store.outgoing.as_ref().map(|outgoing| outgoing.id.as_str());
     moves
@@ -124,7 +124,7 @@ fn start(
         return Err("give the address the hub is to be reached at there".to_string());
     }
     {
-        let mut store = hub.store();
+        let mut store = hub.edit_store();
         if let Some(outgoing) = store.outgoing.as_ref().filter(|outgoing| outgoing.pending()) {
             return Err(format!("the hub is moving to {} already", outgoing.to));
         }
@@ -195,7 +195,7 @@ fn start(
 
 fn retry(hub: &Arc<Hub>) -> Result<HubMoveReply, String> {
     {
-        let mut store = hub.store();
+        let mut store = hub.edit_store();
         let outgoing = store.outgoing.as_mut().filter(|outgoing| outgoing.pending()).ok_or("no move is under way")?;
         outgoing.error = None;
         store.save_outgoing().map_err(|error| format!("recording the move: {error}"))?;
@@ -207,7 +207,7 @@ fn retry(hub: &Arc<Hub>) -> Result<HubMoveReply, String> {
 
 fn cancel(hub: &Arc<Hub>) -> Result<HubMoveReply, String> {
     {
-        let mut store = hub.store();
+        let mut store = hub.edit_store();
         let outgoing = store.outgoing.as_mut().filter(|outgoing| outgoing.pending()).ok_or("no move is under way")?;
         if outgoing.stage >= MoveStage::Switching || hub.moving.frozen() {
             return Err("the hub is handing over to the new place now; the move can no longer be called off".into());
@@ -235,7 +235,7 @@ pub(crate) fn arrival(hub: &Arc<Hub>, asker: &MachineName, request: ArrivalReque
     let id = match &request {
         ArrivalRequest::Take { id } | ArrivalRequest::Report { id, .. } => id.clone(),
     };
-    let mut store = hub.store();
+    let mut store = hub.edit_store();
     if let ArrivalRequest::Report { report: ArrivalReport::Gone, .. } = &request {
         let before = store.called_off.len();
         store.called_off.retain(|untold| !(untold.id == id && untold.to == *asker));
@@ -257,7 +257,9 @@ pub(crate) fn arrival(hub: &Arc<Hub>, asker: &MachineName, request: ArrivalReque
         ArrivalRequest::Take { .. } => {
             let dir = store.dir().to_path_buf();
             let read = |path: std::path::PathBuf| {
-                std::fs::read(&path).map(Bytes).map_err(|error| format!("reading {}: {error}", path.display()))
+                fastctx_platform::disk::read(&path)
+                    .map(Bytes)
+                    .map_err(|error| format!("reading {}: {error}", path.display()))
             };
             let identity = Identity {
                 id: store.hub.id.clone(),
@@ -310,7 +312,7 @@ pub(crate) fn arrival(hub: &Arc<Hub>, asker: &MachineName, request: ArrivalReque
 /// The moves `me` is told of in its view: every one when it is a device of
 /// the super administrator, which sees the whole directory, and the move
 /// to it when it is where the hub moves.
-pub(crate) fn told(hub: &Hub, store: &Store, me: &MachineName, whole: bool) -> Vec<HubMove> {
+pub(crate) fn told(hub: &Hub, store: &crate::store::Snapshot, me: &MachineName, whole: bool) -> Vec<HubMove> {
     if whole {
         return listed(hub, store);
     }
@@ -325,7 +327,7 @@ pub(crate) fn told(hub: &Hub, store: &Store, me: &MachineName, whole: bool) -> V
 }
 
 /// What the old place of `incoming` does now, as the new hub has it.
-pub(crate) fn old_of(store: &Store, id: &str) -> Option<OldPlace> {
+pub(crate) fn old_of(store: &crate::store::Snapshot, id: &str) -> Option<OldPlace> {
     store.moves.iter().find(|incoming| incoming.id == id).map(|incoming| incoming.old.clone())
 }
 

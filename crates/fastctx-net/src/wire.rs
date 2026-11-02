@@ -55,6 +55,10 @@ pub const SILENCE: std::time::Duration = std::time::Duration::from_secs(30);
 /// How often a machine sends a heartbeat.
 pub const HEARTBEAT: std::time::Duration = std::time::Duration::from_secs(10);
 
+/// Two heartbeats further apart than this are late: the foundation's bound
+/// under any load (`specs/world-foundation.md`, 地基的数字).
+pub const HEARTBEAT_LATE: std::time::Duration = std::time::Duration::from_secs(12);
+
 /// The label of the TLS exporter a machine signs to prove which connection
 /// it is on (RFC 9266), and which a login binds itself to.
 pub const EXPORTER_LABEL: &[u8] = b"EXPORTER-Channel-Binding";
@@ -80,6 +84,9 @@ pub enum Up {
         /// earlier release says none.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         held: Option<u64>,
+        /// This machine's health, to a hub that reads it (`View::health`).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        health: Option<fastctx_types::health::Health>,
     },
     /// The second half of a password login (`Intent::Login`): the last
     /// OPAQUE message, and the computer or phone that logs in.
@@ -112,6 +119,9 @@ pub enum Up {
     /// What this member did with the deletion the hub numbered `id`
     /// (`Down::Forget`).
     Forgot { id: u64, outcome: Forgot },
+    /// What this member did with the account deletion the hub numbered `id`
+    /// (`Down::ForgetAccount`).
+    ForgotAccount { id: u64, outcome: Forgot },
     /// The versions this machine runs and knows of; sent only to a hub
     /// whose view says it takes them, when the session opens and whenever
     /// they change.
@@ -133,6 +143,8 @@ pub enum Intent {
     /// `through` names the machine that forwards it to the hub, if any: the
     /// hub sees only that machine's address.
     Session {
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        replicated_records: bool,
         key: PublicKey,
         proof: Signature,
         letters: Letters,
@@ -200,6 +212,11 @@ pub enum Intent {
         /// Understands shared attachment lifetimes and account-scoped project deletion.
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         conversation_deletions: bool,
+        /// The member lets go of what it keeps of an account deleted when
+        /// told (`Down::ForgetAccount`). Earlier releases do not say so, and
+        /// would end the session on a frame they cannot read.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        forgets_accounts: bool,
         /// The member reads the records of profiles written. Earlier
         /// releases do not say so, and could read nothing of a machine log
         /// page with one.
@@ -443,6 +460,12 @@ pub enum Down {
     /// The hub takes sessions now (`Intent::Probe`).
     Ready,
     /// A project this member may use has new entries in its ledger.
+    ReplicasChanged,
+    HistoryChanged {
+        town: TownId,
+        name: String,
+        version: u64,
+    },
     LedgerChanged {
         town: TownId,
     },
@@ -463,6 +486,13 @@ pub enum Down {
     /// forgets: now, and at each session it opens until it says it is done.
     Forget {
         forgetting: Forgetting,
+    },
+    /// Let go of what this member keeps of an account deleted, and say how
+    /// that went (`Up::ForgotAccount`). Sent only to a member whose session
+    /// says it forgets accounts: now, and at each session it opens until it
+    /// says it is done.
+    ForgetAccount {
+        forgetting: AccountForgetting,
     },
     /// The versions of the network as the hub knows them, sent when the
     /// session opens and whenever they change, only to a member whose
@@ -542,6 +572,18 @@ pub struct Forgetting {
     pub conversation: fastctx_types::Address,
     /// The account it is deleted for: one it worked for.
     pub account: AccountName,
+}
+
+/// An account the hub deleted, which its members let go of what they keep
+/// of (`world-engine.md`, 对话作为一个整体): what was done for it before
+/// `at`, an account of the same name opened since being another.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AccountForgetting {
+    /// The hub's number of the deletion, which what a member says of it
+    /// names.
+    pub id: u64,
+    pub account: AccountName,
+    pub at: jiff::Timestamp,
 }
 
 /// What a member did with a deletion (`Down::Forget`).
@@ -648,6 +690,10 @@ pub enum Question {
         account: AccountName,
         request: fastctx_types::plan_copies::Request,
     },
+    OwnedRecords {
+        account: AccountName,
+        request: fastctx_types::owned_records::Request,
+    },
     AccountRecords {
         account: AccountName,
         request: fastctx_types::account_records::Request,
@@ -684,6 +730,29 @@ pub enum Question {
         change: Change,
     },
     /// Metadata only, including for an account whose agent this member hosts.
+    HistorySubmitted {
+        town: TownId,
+        account: AccountName,
+        name: String,
+        submission: String,
+    },
+    HistoryCatalog {
+        town: TownId,
+        account: AccountName,
+    },
+    HistoryRead {
+        town: TownId,
+        account: AccountName,
+        name: String,
+        version: Option<u64>,
+        #[serde(default)]
+        versions: bool,
+    },
+    HistoryWrite {
+        town: TownId,
+        account: AccountName,
+        entry: Signed,
+    },
     ProjectIndex {
         town: TownId,
         account: AccountName,
@@ -718,6 +787,10 @@ pub enum Question {
     },
     /// A project's entries after the one numbered `after`, as many as fit
     /// in one frame.
+    LedgerProjection {
+        town: TownId,
+        after: u64,
+    },
     LedgerRead {
         town: TownId,
         after: u64,
@@ -990,6 +1063,14 @@ pub enum Change {
     Updates {
         policy: fastctx_types::update::Policy,
     },
+    /// How a version goes out a batch at a time, and the versions withdrawn
+    /// (`fastctx_types::update::Rollout`). Made by the hub from its
+    /// administrator's network-updates calls; no release sends it.
+    Rollout {
+        rollout: Option<fastctx_types::update::Rollout>,
+        #[serde(default)]
+        withdrawn: std::collections::BTreeSet<String>,
+    },
     /// How fast the hub takes packages in at most, in bytes a second; none,
     /// its default (`fastctx_types::update::INTAKE`). The super
     /// administrator's; sent only to a hub whose view says it paces intake.
@@ -1017,6 +1098,9 @@ pub enum Change {
     OpenProject {
         town: TownId,
         name: TownName,
+        /// Sent only to hubs advertising shared_records.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        shared_on: Option<MachineName>,
     },
     /// Lets the account `with` read and write the project's records, or no
     /// longer.
@@ -1054,8 +1138,20 @@ pub enum Told {
     PlanCopies {
         reply: fastctx_types::plan_copies::Reply,
     },
+    OwnedRecords {
+        response: fastctx_types::owned_records::Response,
+    },
     AccountRecords {
         response: fastctx_types::account_records::Response,
+    },
+    HistorySubmitted {
+        revision: Option<Box<fastctx_types::history::HistoryRevision>>,
+    },
+    HistoryCatalog {
+        catalog: fastctx_types::history::Catalog,
+    },
+    HistoryDocument {
+        document: Box<fastctx_types::history::Document>,
     },
     ProjectIndex {
         index: Box<fastctx_types::memory::ProjectIndex>,
@@ -1105,6 +1201,11 @@ pub enum Told {
         towns: Vec<(TownId, u64)>,
     },
     /// Entries in order, each with its number; `more` when others follow.
+    LedgerProjection {
+        entries: Vec<(u64, Signed)>,
+        through: u64,
+        more: bool,
+    },
     Entries {
         entries: Vec<(u64, Signed)>,
         more: bool,

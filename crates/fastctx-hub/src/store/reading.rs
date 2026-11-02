@@ -6,12 +6,12 @@ use std::{io, path::Path};
 
 fn open(dir: &Path) -> io::Result<Option<Connection>> {
     let path = dir.join(shelf::FILE);
-    if !path.try_exists()? {
+    if !fastctx_platform::disk::exists(&path)? {
         return Ok(None);
     }
     let c = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY).map_err(io::Error::other)?;
     c.busy_timeout(std::time::Duration::from_secs(5)).map_err(io::Error::other)?;
-    if shelf::meta::<u64>(&c, "format").map_err(shelf::other)? != Some(1) {
+    if !matches!(shelf::meta::<u64>(&c, "format").map_err(shelf::other)?, Some(1..=super::format::CURRENT)) {
         return Err(io::Error::other("the hub database import has not committed"));
     }
     Ok(Some(c))
@@ -28,7 +28,7 @@ fn list<T: DeserializeOwned>(c: &Connection, kind: &str) -> io::Result<Vec<T>> {
 }
 pub(super) fn hub(dir: &Path) -> io::Result<HubFile> {
     let file = Store::hub_file(dir);
-    let file = if file.try_exists()? { file } else { dir.join("hub.before-sqlite.json") };
+    let file = if fastctx_platform::disk::exists(&file)? { file } else { dir.join("hub.before-sqlite.json") };
     let mut hub: HubFile = super::read(&file)?;
     let Some(mut c) = open(dir)? else { return Ok(hub) };
     let tx = c.transaction().map_err(io::Error::other)?;

@@ -43,7 +43,7 @@ pub(super) fn render(history: &WorldSince, previous: bool, full: bool, now: Time
         }
         // Registration refreshes and delivery receipts are not new work.
         // A turn end already says who was answered; it is not repeated here.
-        // Journals are project memory, not wired in until it is finished.
+        // Retired journal events do not describe the current history documents.
         if matches!(
             event.what,
             SinceKind::ClaudeRegistered { .. } | SinceKind::JournalEntry { .. } | SinceKind::JournalDescription { .. }

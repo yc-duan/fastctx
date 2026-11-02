@@ -83,6 +83,22 @@ function nativeFrame(into: HTMLElement, html: string, title: string): PageFrame 
   let chain: Promise<unknown> = mounted;
   let last = "";
   let scheduled = 0;
+  // One move of the view at a time, and only the newest place waits for it:
+  // where moves are slow (a busy machine, a frame resized on every step of an
+  // animation), the view is not walked through every place it fell behind.
+  let moving = false;
+  let waiting: Bounds | null = null;
+  const move = () => {
+    if (moving || !waiting || closed) return;
+    const value = waiting;
+    waiting = null;
+    moving = true;
+    chain = chain.then(() => closed ? undefined : invoke("plugin:world-pages|place", { id, bounds: value }));
+    void chain.catch(report).finally(() => {
+      moving = false;
+      move();
+    });
+  };
   const place = () => {
     scheduled = 0;
     if (closed) return;
@@ -90,8 +106,8 @@ function nativeFrame(into: HTMLElement, html: string, title: string): PageFrame 
     const current = JSON.stringify(value);
     if (current === last) return;
     last = current;
-    chain = chain.then(() => closed ? undefined : invoke("plugin:world-pages|place", { id, bounds: value }));
-    void chain.catch(report);
+    waiting = value;
+    move();
   };
   const schedule = () => { if (!scheduled && !closed) scheduled = requestAnimationFrame(place); };
   const resize = new ResizeObserver(schedule);

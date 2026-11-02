@@ -30,10 +30,17 @@ pub(crate) async fn lease(
     let location = super::location::prepare(node, id, origin, acting)
         .await?
         .ok_or_else(|| Failure::not_run("there is no online working computer for the evidence files"))?;
-    let scope =
-        crate::plan::file_account(node, id, acting)?.ok_or_else(|| failure("the evidence needs one owning account"))?;
+    let scope = crate::plan::load_account(node, id, acting)
+        .await?
+        .ok_or_else(|| failure("the evidence needs one owning account"))?;
     let link = node.link_of(&scope.hub).ok_or_else(|| failure("the evidence hub is unavailable"))?;
     let owner = Address { machine: node.machine(), resident: id.clone() };
+    if link.view().shared_records {
+        let location = crate::replicas::location::prepare(node, id, &Origin::User, acting, &scope, Resource::Directory)
+            .await?
+            .ok_or_else(|| Failure::not_run("there is no eligible computer for the evidence files"))?;
+        return Ok(Lease { location, scope, owner, version: 0 });
+    }
     let (version, place) = super::location::read_place(&link, &scope, &owner).await?;
     if place.is_none_or(|place| place.machine.as_ref() != Some(&location.machine)) {
         return Err(Failure::not_run("the working location changed before evidence preparation"));

@@ -1,0 +1,145 @@
+/* A file read in the side (`file-page.ts`), set as the plan's page is: its
+   machine and folder quiet on the first line, its name in the semibold face
+   over a ruled stroke, then the file, which alone scrolls. */
+.sp-page.fv-page {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: auto auto auto minmax(0, 1fr);
+  overflow: hidden;
+  padding-bottom: var(--space-4);
+}
+
+.fv-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 36px;
+  margin: 0 0 var(--space-2);
+}
+
+/* Where it is: the machine, then its folders, which give way from the
+   front so the end of the path stays. */
+.fv-where {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+  color: var(--text-3);
+}
+
+.fv-where > .glyph,
+.fv-machine {
+  flex: none;
+}
+
+.fv-folder {
+  flex: 0 1 auto;
+  min-width: 0;
+  margin-left: var(--space-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  direction: rtl;
+}
+
+.fv-folder > bdi {
+  direction: ltr;
+}
+
+.fv-outside {
+  flex: none;
+  color: var(--text-3);
+}
+
+.fv-outside:hover {
+  color: var(--text);
+}
+
+.fv-name {
+  min-width: 0;
+  margin: 0 0 var(--space-1);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-emphasis);
+  font-weight: 400;
+  font-size: var(--size-text);
+  line-height: var(--leading-prose);
+  color: var(--text);
+}
+
+/* Drawn to the page's width, it never sets that width itself. */
+.fv-rule {
+  height: 6px;
+  margin: 0 0 var(--space-4);
+  overflow: hidden;
+}
+
+.fv-rule-svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.fv-body {
+  min-height: 0;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+}
+
+/* Reading, or why it could not be: one quiet line where the file would be. */
+.fv-note,
+.fv-status {
+  margin: 0;
+  color: var(--text-3);
+}
+
+.fv-status {
+  margin-bottom: var(--space-2);
+}
+
+.fv-status[hidden] {
+  display: none;
+}
+
+/* The prose scrolls in its own place, the head standing over it. */
+.fv-scroll {
+  grid-row: 2;
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+
+.fv-prose {
+  padding-bottom: var(--space-8);
+}
+
+.fv-prose img[data-file-path] {
+  cursor: zoom-in;
+}
+
+/* The lines fill what is left, on the code's own surface. */
+.fv-body > .fv-lines {
+  grid-row: 1 / -1;
+  height: 100%;
+  padding: var(--space-2) 0;
+  box-sizing: border-box;
+  border-radius: var(--radius-m);
+}
+
+.fv-lines .lv-line {
+  padding-left: var(--space-2);
+}
+
+.fv-lines .lv-number {
+  padding-right: 1.6ch;
+  opacity: 0.7;
+}
+
+@media (hover: none) {
+  .fv-outside {
+    width: 44px;
+    height: 44px;
+  }
+}

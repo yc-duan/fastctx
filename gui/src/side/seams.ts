@@ -3,10 +3,19 @@
 // does to them. Each `watch` returns how to stop following.
 
 import type { PageSeams, PlanShown } from "../plan/panel";
+import type { HistoryWords } from "../project/history-words";
+import type { HistoryCatalog } from "../world/history";
 import type { PlanWords } from "../plan/words";
 import type { Address } from "../world/wire";
 import type { CollabNode, GoalShown, PastGoal } from "./types";
 import type { SideWords } from "./words";
+
+/** The colleagues followed: stopped, or asked for more or less of them. */
+export interface Following {
+  stop(): void;
+  /** Whether a page shows the colleagues' goals and agents now. */
+  detail(shown: boolean): void;
+}
 
 export interface SideSeams {
   words: SideWords;
@@ -34,7 +43,16 @@ export interface SideSeams {
     resume(seen?: number): Promise<boolean>;
     clear(seen?: number): Promise<boolean>;
   };
-  /** The colleagues the conversation asked, each with the host's agents
-   *  it sent, as far as they are known. */
-  colleagues(show: (nodes: CollabNode[]) => void): () => void;
+  /** The colleagues the conversation asked: who each is and how it
+   *  stands, as the World is pushed; with `detail`, each one's goal and the
+   *  host's agents it sent too, read only while a page shows them. */
+  colleagues(show: (nodes: CollabNode[]) => void): Following;
+  /** Its own history, where it is in no project (`world-history.md`). */
+  history?: {
+    words: HistoryWords;
+    watch(show: (catalog: HistoryCatalog | null) => void): () => void;
+    /** Where a document is read. */
+    link(name: string): string;
+    write(): void;
+  };
 }

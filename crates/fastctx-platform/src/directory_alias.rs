@@ -64,7 +64,7 @@ fn windows(target: &Path, alias: &Path) -> io::Result<()> {
         }
     }
     std::fs::create_dir(&temporary)?;
-    let name: Vec<u16> = temporary.as_os_str().encode_wide().chain([0]).collect();
+    let name = crate::win32_path::wide(&temporary)?;
     // SAFETY: the names and buffer live through synchronous Win32 calls.
     let handle = unsafe {
         CreateFileW(

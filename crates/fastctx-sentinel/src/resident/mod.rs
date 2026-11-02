@@ -248,6 +248,9 @@ impl ResidentHost for Host {
     fn call<'a>(&'a self, scope: &'a HubAccount, request: &'a HomeRequest) -> FutureResult<'a, HomeReply> {
         Box::pin(async move {
             match request {
+                HomeRequest::Conversation { .. } => {
+                    Err("a shared sentinel request must pass resource authorization first".into())
+                }
                 HomeRequest::Judge { request } => Ok(HomeReply::Judged {
                     judgment: self.judge(scope, request).await.unwrap_or_else(|reason| Judgment::NotJudged { reason }),
                 }),

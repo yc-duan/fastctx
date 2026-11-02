@@ -1,6 +1,7 @@
 // The interface on an Android phone, beside the page: the phone calls the
 // user when an agent starts waiting for them or a conversation they opened
-// finishes, even with the app in the background; a tap on that call opens
+// finishes, and when something goes wrong with a machine or the network,
+// even with the app in the background; a tap on that call opens
 // the conversation; and the settings say what the phone lets the World do
 // in the background and where to change it. Watching who is waiting runs in
 // the app's own process, without the page (`src-tauri/src/android`); the
@@ -11,8 +12,10 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { inShell } from "../world/bridge";
 import { escape } from "../conversation/prose";
+import type { Trouble } from "../world/accounts";
 import type { Place } from "./places";
 import type { PresenceWords } from "./presence";
+import type { TroubleWords } from "./trouble-words";
 import type { SettingsWords } from "./words";
 
 export const onPhone = (): boolean => inShell() && /Android/i.test(navigator.userAgent);
@@ -45,7 +48,36 @@ export function configurePhone(words: PresenceWords, enabled: boolean): Promise<
     { when: "told", userStartedOnly: true, title: { reply: words.finished(who), urgent: words.urgent(who) } },
     { when: "finished", userStartedOnly: true, title: words.finished(who), compacted: words.compacted },
   ];
-  return call("configure", { configuration: { enabled, agentNames: { codex: "Codex", claude: "Claude" }, rules } });
+  return call("configure", { configuration: { enabled, agentNames: { codex: "Codex", claude: "Claude" }, rules, troubles: troubleTemplates(words.troubles) } });
+}
+
+/** The words of each kind of trouble as the phone fills them in: a title
+ *  and a detail, made from a trouble whose every fact is its place
+ *  (`{machine}`, `{count}`, `{seconds}`, `{bound}`, `{used}`, `{version}`),
+ *  and the bounds by their plain names. The hub's own near a limit is a
+ *  kind of its own. */
+function troubleTemplates(words: TroubleWords): { titles: Record<string, string>; details: Record<string, string>; bounds: Record<string, string> } {
+  const held = { count: "{count}", seconds: "{seconds}", version: "{version}" } as unknown as Pick<Trouble, "count" | "seconds" | "version">;
+  const near = { bound: "{bound}", used: "{used}" } as unknown as NonNullable<Trouble["near"]>;
+  const of = (kind: Trouble["kind"], machine: boolean, nearing = false): Trouble => ({ id: 0, at: "", kind, ...held, ...(machine ? { machine: "{machine}" } : {}), ...(nearing ? { near } : {}) });
+  const kinds: [string, Trouble][] = [
+    ["silent", of("silent", true)],
+    ["drops", of("drops", true)],
+    ["stuck", of("stuck", true)],
+    ["near", of("near", true, true)],
+    ["damaged", of("damaged", true)],
+    ["violations", of("violations", true)],
+    ["other", of("other", true)],
+    ["outage", of("outage", false)],
+    ["hub", of("hub", false)],
+    ["hub_near", of("hub", false, true)],
+    ["rollout", of("rollout", false)],
+  ];
+  return {
+    titles: Object.fromEntries(kinds.map(([key, trouble]) => [key, words.title(trouble)])),
+    details: Object.fromEntries(kinds.map(([key, trouble]) => [key, words.detail(trouble)])),
+    bounds: words.bounds,
+  };
 }
 
 /** Tells the phone which conversation the page shows, none on another

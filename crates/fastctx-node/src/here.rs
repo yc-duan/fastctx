@@ -7,7 +7,6 @@
 //! here, and a job the answer showed whole goes there once its host has it.
 
 use std::collections::HashMap;
-use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use fastctx_types::access::{Acting, HubAccount, Purpose, Written};
@@ -17,18 +16,33 @@ use fastctx_types::run::{RunReply, RunRequest, RunState};
 use fastctx_types::{Address, JobId, MachineName, ResidentId, TownName};
 
 use crate::Node;
+pub(crate) mod records;
+use fastctx_platform::task;
 
-/// The jobs a `run` from here handed to another machine and that answered
-/// whole, with the project they went under there, until its host
-/// has the answer: then they go there.
-#[derive(Default)]
-pub struct Dispatched {
-    jobs: Mutex<HashMap<(ResidentId, JobId), Went>>,
+#[derive(serde::Serialize, serde::Deserialize)]
+struct Dispatch {
+    machine: MachineName,
+    job: JobId,
+    output: String,
+    to: Written,
+    town: Option<TownName>,
 }
 
-/// Where a job a `run` handed over went: the machine, and the project it is
-/// under there.
-type Went = (Written, Option<TownName>);
+fn dispatch_prefix(machine: &MachineName, job: &JobId, output: &str) -> String {
+    let mut prefix = serde_json::to_string(&(machine.key(), job.as_str(), output)).expect("route serializes");
+    prefix.pop();
+    prefix.push(',');
+    prefix
+}
+
+fn keep_dispatched(node: &Node, resident: &ResidentId, dispatch: Dispatch) -> std::io::Result<()> {
+    let key = format!(
+        "{}{}]",
+        dispatch_prefix(&dispatch.machine, &dispatch.job, &dispatch.output),
+        serde_json::to_string(&dispatch.to.hub)?
+    );
+    records::put(&node.world.conversation(resident), records::DISPATCHED, key, &dispatch)
+}
 
 /// Residents being born here, with whom they work for: their host
 /// starts their tool server before their record is written, and the tools
@@ -97,41 +111,75 @@ pub(crate) struct Elsewhere {
     pub(crate) job: JobId,
     pub(crate) command: String,
     pub(crate) started_at: jiff::Timestamp,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) computer: Option<fastctx_types::NoticeId>,
 }
 
-fn elsewhere_path(node: &Node, resident: &ResidentId, machine: &MachineName, job: &JobId) -> PathBuf {
-    node.world.conversation(resident).elsewhere().join(format!("{}-{job}.json", machine.key()))
+fn elsewhere_key(machine: &MachineName, job: &JobId) -> String {
+    format!("{}-{job}.json", machine.key())
 }
 
-fn left_running(node: &Node, resident: &ResidentId, kept: &Elsewhere) {
-    let path = elsewhere_path(node, resident, &kept.machine.name, &kept.job);
-    let bytes = serde_json::to_vec(kept).expect("records serialize");
-    let written = fastctx_platform::ensure_private_dir(path.parent().expect("a resident's directory"))
-        .and_then(|()| fastctx_platform::publish(&path, &bytes, fastctx_platform::Permissions::Private));
-    if let Err(error) = written {
-        node.log.line(format_args!("keeping {} as still running: {error}", kept.job));
-    }
+fn running_key(kept: &Elsewhere) -> String {
+    kept.computer
+        .as_ref()
+        .map(|computer| format!("@{computer}/{}", kept.job))
+        .unwrap_or_else(|| elsewhere_key(&kept.machine.name, &kept.job))
 }
 
-/// Word of the end of `job` on `machine` came for `resident`.
-pub(crate) fn ended_elsewhere(node: &Node, resident: &ResidentId, machine: &MachineName, job: &JobId) {
-    match std::fs::remove_file(elsewhere_path(node, resident, machine, job)) {
-        Err(error) if error.kind() != std::io::ErrorKind::NotFound => {
-            node.log.line(format_args!("forgetting {job} on {machine} as still running: {error}"));
-        }
-        _ => {}
-    }
+fn left_running(node: &Node, resident: &ResidentId, kept: &Elsewhere) -> std::io::Result<()> {
+    records::put(&node.world.conversation(resident), records::RUNNING, running_key(kept), kept)
 }
 
-/// What runs of `resident` left running on other machines.
-pub(crate) fn running_elsewhere(node: &Node, resident: &ResidentId) -> Vec<Elsewhere> {
-    let Ok(entries) = std::fs::read_dir(node.world.conversation(resident).elsewhere()) else {
-        return Vec::new();
-    };
-    entries
-        .filter_map(|entry| std::fs::read(entry.ok()?.path()).ok())
-        .filter_map(|bytes| serde_json::from_slice(&bytes).ok())
-        .collect()
+/// An authenticated completion removes its matching remote-running record.
+pub(crate) fn ended_elsewhere(
+    node: &Node,
+    resident: &ResidentId,
+    machine: &MachineName,
+    job: &JobId,
+    computer: &fastctx_types::NoticeId,
+) -> std::io::Result<()> {
+    end_running(&node.world.conversation(resident), machine, job, computer)
+}
+
+fn end_running(
+    directory: &fastctx_types::layout::ConversationDir,
+    machine: &MachineName,
+    job: &JobId,
+    computer: &fastctx_types::NoticeId,
+) -> std::io::Result<()> {
+    records::delete(directory, records::RUNNING, &format!("@{computer}/{job}"), None)?;
+    records::delete(directory, records::RUNNING, &elsewhere_key(machine, job), None).map(|_| ())
+}
+
+pub(crate) fn running_elsewhere(node: &Node, resident: &ResidentId) -> std::io::Result<Vec<Elsewhere>> {
+    records::running(&node.world.conversation(resident))
+}
+
+pub(crate) fn has_pending(directory: &fastctx_types::layout::ConversationDir) -> std::io::Result<bool> {
+    records::has_pending(directory)
+}
+
+pub(crate) fn remote_page(
+    directory: &fastctx_types::layout::ConversationDir,
+    after: &str,
+) -> std::io::Result<Vec<(String, Elsewhere)>> {
+    records::page(directory, after)
+}
+
+pub(crate) fn finish_remote(
+    directory: &fastctx_types::layout::ConversationDir,
+    key: &str,
+    expected: &Elsewhere,
+) -> std::io::Result<bool> {
+    records::delete(directory, records::RUNNING, key, Some(&serde_json::to_vec(expected)?))
+}
+
+pub(crate) fn retry_remote(
+    directory: &fastctx_types::layout::ConversationDir,
+    key: &str,
+    reason: &str,
+) -> std::io::Result<bool> {
+    records::retry(directory, key, reason)
 }
 
 /// Every machine `script` names literally after `on` must be one this
@@ -190,7 +238,13 @@ pub(crate) async fn run(
     request: RunRequest,
     to: &Written,
 ) -> Result<RunReply, Failure> {
-    let acting = crate::authorization::resident(node, resident)?;
+    let (working, id) = (node.clone(), resident.clone());
+    let acting = task::spawn_blocking(move || {
+        records::available(&working.world.conversation(&id)).map_err(|error| Failure::not_run(error.to_string()))?;
+        crate::authorization::resident(&working, &id)
+    })
+    .await
+    .map_err(|error| Failure::not_run(error.to_string()))??;
     let here = Address { machine: node.machine(), resident: resident.clone() };
     let directory = node.world.conversation(resident);
     // Listening before the call goes, so words that come, or an interrupted
@@ -210,7 +264,11 @@ pub(crate) async fn run(
         answer_receipts: true,
         dispatch: Some(dispatch.clone()),
     };
-    let source = crate::letters::Identity::at(node, to, "");
+    let (identifying, target) = (node.clone(), to.clone());
+    let source = task::spawn_blocking(move || crate::letters::Identity::at(&identifying, &target, ""))
+        .await
+        .map_err(|error| Failure::not_run(error.to_string()))?
+        .map_err(|error| Failure::not_run(error.to_string()))?;
     let answer = node.call(&acting, to, Purpose::Hands, call);
     tokio::pin!(answer);
     let (mut told, mut stopping) = (false, false);
@@ -227,7 +285,7 @@ pub(crate) async fn run(
             _ = words.changed(), if !told => {
                 told = true;
                 let (node, acting, to, resident) = (node.clone(), acting.clone(), to.clone(), resident.clone());
-                tokio::spawn(async move {
+                task::spawn(async move {
                     // When it does not get there, the run answers when its
                     // wait is over, and the words are read then.
                     let nudge = RemoteCall::WordsCame { resident };
@@ -247,7 +305,10 @@ pub(crate) async fn run(
         };
         // The answer still goes to the model; only an older receiver's stop
         // is left without the job it names.
-        if let Err(error) = crate::run_stops::answered(node, &here, &dispatch, outcome) {
+        let (working, owner) = (node.clone(), here.clone());
+        let result =
+            task::spawn_blocking(move || crate::run_stops::answered(&working, &owner, &dispatch, outcome)).await;
+        if let Err(error) = result.map_err(std::io::Error::other).and_then(|result| result) {
             node.log.line(format_args!("keeping the stopped run's answer on {}: {error}", to.name));
         }
     }
@@ -264,35 +325,74 @@ pub(crate) async fn run(
             return Err(if never_started(&failure) { Failure::not_run(message) } else { Failure::unanswered(message) });
         }
     };
-    crate::run_receipts::remember(node, &here, &reply).map_err(|error| Failure::new(error.to_string()))?;
-    if let Some(consumed) = &reply.consumed {
-        crate::job_receipts::apply_consumed(&directory, consumed).map_err(|error| Failure::new(error.to_string()))?;
-        if consumed.iter().any(|id| !id.as_str().starts_with("letter-")) {
-            let source = source.map_err(|error| Failure::new(error.to_string()))?;
+    let (working, resident, to) = (node.clone(), resident.clone(), to.clone());
+    task::spawn_blocking(move || {
+        let node = &working;
+        crate::run_receipts::remember(node, &here, &reply).map_err(|error| Failure::new(error.to_string()))?;
+        if let Some(consumed) = &reply.consumed {
+            crate::job_receipts::apply_consumed(&directory, consumed)
+                .map_err(|error| Failure::new(error.to_string()))?;
+            if consumed.iter().any(|id| !id.as_str().starts_with("letter-")) {
+                let current =
+                    crate::letters::Identity::at(node, &to, "").map_err(|error| Failure::new(error.to_string()))?;
+                if !source.same_computer(&current) {
+                    return Err(Failure::new("the job computer's identity changed while its answer was in flight"));
+                }
+                for id in consumed.iter().filter(|id| !id.as_str().starts_with("letter-")) {
+                    source
+                        .with_id(node, id.as_str())
+                        .consume(&directory)
+                        .map_err(|error| Failure::new(error.to_string()))?;
+                }
+            }
+        }
+        if reply.state != RunState::Running {
+            keep_dispatched(
+                node,
+                &resident,
+                Dispatch {
+                    machine: reply.machine.clone(),
+                    job: reply.job.clone(),
+                    output: reply.output.log.clone(),
+                    to: to.clone(),
+                    town,
+                },
+            )
+            .map_err(|error| {
+                Failure::new(format!(
+                    "{} on {} answered, but saving its completion route failed: {error}",
+                    reply.job, reply.machine
+                ))
+            })?;
+        } else {
             let current =
-                crate::letters::Identity::at(node, to, "").map_err(|error| Failure::new(error.to_string()))?;
+                crate::letters::Identity::at(node, &to, "").map_err(|error| Failure::new(error.to_string()))?;
             if !source.same_computer(&current) {
                 return Err(Failure::new("the job computer's identity changed while its answer was in flight"));
             }
-            for id in consumed.iter().filter(|id| !id.as_str().starts_with("letter-")) {
-                source
-                    .with_id(node, id.as_str())
-                    .consume(&directory)
-                    .map_err(|error| Failure::new(error.to_string()))?;
-            }
+            let command = records::summarize(&crate::jobs::first_line(&script));
+            left_running(
+                node,
+                &resident,
+                &Elsewhere {
+                    machine: to.clone(),
+                    job: reply.job.clone(),
+                    command,
+                    started_at,
+                    computer: Some(source.id.clone()),
+                },
+            )
+            .map_err(|error| {
+                Failure::new(format!(
+                    "{} is running on {}, but saving its pending completion failed: {error}",
+                    reply.job, reply.machine
+                ))
+            })?;
         }
-    }
-    if reply.state != RunState::Running {
-        node.dispatched
-            .jobs
-            .lock()
-            .expect("never poisoned")
-            .insert((resident.clone(), reply.job.clone()), (to.clone(), town));
-    } else {
-        let command = crate::jobs::first_line(&script);
-        left_running(node, resident, &Elsewhere { machine: to.clone(), job: reply.job.clone(), command, started_at });
-    }
-    Ok(reply)
+        Ok(reply)
+    })
+    .await
+    .map_err(|error| Failure::new(error.to_string()))?
 }
 
 /// Whether a run's call failed before it could reach the machine it names.
@@ -308,48 +408,70 @@ fn never_started(failure: &fastctx_net::link::CallFailure) -> bool {
     )
 }
 
-/// The answer that showed `job` whole reached its host: where it ran, if
-/// it ran elsewhere, its files go.
-pub(crate) fn get_dispatched(node: &Node, resident: &ResidentId, job: &JobId) -> Option<Went> {
-    node.dispatched.jobs.lock().expect("never poisoned").get(&(resident.clone(), job.clone())).cloned()
+pub(crate) struct Route {
+    pub(crate) key: String,
+    pub(crate) destination: Written,
+    pub(crate) town: Option<TownName>,
 }
 
-pub(crate) fn take_dispatched(node: &Node, resident: &ResidentId, job: &JobId) -> Option<Went> {
-    node.dispatched.jobs.lock().expect("never poisoned").remove(&(resident.clone(), job.clone()))
+/// Resolve an exact completion without confusing equal short ids on other executors.
+pub(crate) fn get_dispatched(
+    node: &Node,
+    owner: &Address,
+    machine: &MachineName,
+    job: &JobId,
+    output: &str,
+) -> std::io::Result<Option<Route>> {
+    dispatch(&node.world.owner(&node.names(), owner), machine, job, output)
 }
 
-pub(crate) fn forget(node: &Arc<Node>, resident: &ResidentId, job: &JobId) -> bool {
-    let Some((to, town)) = take_dispatched(node, resident, job) else {
-        return false;
-    };
-    let acting = match crate::authorization::resident(node, resident) {
-        Ok(acting) => acting,
-        Err(failure) => {
-            node.log.line(format_args!("removing a completed job: {failure}"));
-            return true;
+fn dispatch(
+    directory: &fastctx_types::layout::ConversationDir,
+    machine: &MachineName,
+    job: &JobId,
+    output: &str,
+) -> std::io::Result<Option<Route>> {
+    let mut matches = records::dispatches(directory, &dispatch_prefix(machine, job, output))?;
+    if matches.len() > 1 {
+        return Err(std::io::Error::other("this completion identifies more than one hub destination"));
+    }
+    Ok(matches.pop().map(|(key, route)| Route { key, destination: route.to, town: route.town }))
+}
+
+pub(crate) fn delete_dispatched(node: &Node, owner: &Address, key: &str) -> std::io::Result<()> {
+    records::delete(&node.world.owner(&node.names(), owner), records::DISPATCHED, key, None).map(|_| ())
+}
+
+/// Legacy acknowledgements carry only a short id. Ambiguity retains both routes.
+pub(crate) async fn forget(node: &Arc<Node>, resident: &ResidentId, job: &JobId) -> Result<bool, Failure> {
+    let (node, resident, job) = (node.clone(), resident.clone(), job.clone());
+    task::spawn_blocking(move || {
+        let mut routes = records::dispatched_job(&node.world.conversation(&resident), &job)
+            .map_err(|error| Failure::new(error.to_string()))?;
+        if routes.len() > 1 {
+            return Err(Failure::new(
+                "this short job id names multiple executors; full completion coordinates are required",
+            ));
         }
-    };
-    let (node, call) = (
-        node.clone(),
-        RemoteCall::Forget {
-            resident: resident.clone(),
-            town,
-            job: job.clone(),
-            delivery: None,
-            origin: None,
-            through_exit: false,
-        },
-    );
-    tokio::spawn(async move {
-        match node.call(&acting, &to, Purpose::Hands, call).await {
-            Ok(Ok(_)) => {}
-            Ok(Err(failure)) => {
-                node.log.line(format_args!("removing a job shown whole on {}: {}", to.name, failure.message))
-            }
-            Err(failure) => node.log.line(format_args!("removing a job shown whole on {}: {failure}", to.name)),
-        }
-    });
-    true
+        let Some(route) = routes.pop() else { return Ok(false) };
+        let acting = crate::authorization::resident(&node, &resident)?;
+        crate::job_receipts::confirmed(
+            &node,
+            Address { machine: node.machine(), resident },
+            route.machine,
+            fastctx_types::run::JobDelivery {
+                job: route.job,
+                output: route.output,
+                at: jiff::Timestamp::now(),
+                shown_whole: true,
+            },
+            Some(&acting),
+        )
+        .map_err(|error| Failure::new(error.to_string()))?;
+        Ok(true)
+    })
+    .await
+    .map_err(|error| Failure::new(error.to_string()))?
 }
 
 /// A run here for `resident` of `from`, handed here whole, for `account`.

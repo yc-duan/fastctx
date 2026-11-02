@@ -10,6 +10,7 @@ publish = false
 
 [dependencies]
 fastctx-types = { path = "../fastctx-types" }
+jiff = { workspace = true }
 tokio = { workspace = true, features = ["fs", "io-util", "net", "rt", "sync", "time"] }
 
 [target.'cfg(unix)'.dependencies]

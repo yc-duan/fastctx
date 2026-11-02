@@ -35,10 +35,8 @@ async fn get<T: DeserializeOwned + Send + 'static>(
             let bytes = match query(connection)? {
                 Some(bytes) => Some(bytes),
                 None => {
-                    let legacy = {
-                        let _transition = crate::resident_storage::lock();
-                        std::fs::read(directory.composer_books(kind).join(format!("{name}.json")))
-                    };
+                    let legacy =
+                        fastctx_platform::disk::read(directory.composer_books(kind).join(format!("{name}.json")));
                     match legacy {
                         Ok(bytes) => Some(bytes),
                         Err(reason) if reason.kind() == std::io::ErrorKind::NotFound => query(connection)?,

@@ -28,8 +28,10 @@ fn sentinel_timer(row: &Row) -> Option<Timer> {
 
 /// The timer table's effect for a sentinel action: hand the firing over, and
 /// keep it due again in case the runtime never acknowledges it.
-pub(crate) fn fire(node: &Node, store: &Store, timer: &Row) -> Result<(), String> {
-    let Some(row) = store.begin(timer, Timestamp::now()).map_err(|error| error.to_string())? else { return Ok(()) };
+pub(crate) async fn fire(node: &Node, store: &Arc<Store>, timer: &Row) -> Result<(), String> {
+    let Some(row) = store.begin(timer, Timestamp::now()).await.map_err(|error| error.to_string())? else {
+        return Ok(());
+    };
     let fired = Fired {
         timer: sentinel_timer(&row).ok_or("the timer is not a sentinel's")?,
         scheduled_at: row.due.as_millisecond(),
@@ -37,7 +39,7 @@ pub(crate) fn fire(node: &Node, store: &Store, timer: &Row) -> Result<(), String
     };
     node.sentinels.firings.0.send(fired).map_err(|_| "no sentinel runtime is listening")?;
     let until = Timestamp::now().checked_add(UNACKNOWLEDGED).map_err(|error| error.to_string())?;
-    store.hold(&row, until).map_err(|error| error.to_string())
+    store.hold(&row, until).await.map_err(|error| error.to_string())
 }
 
 pub(crate) struct SentinelTimers(pub Weak<Node>);
@@ -57,11 +59,11 @@ impl Timers for SentinelTimers {
     fn acknowledge<'a>(&'a self, fired: &'a Fired) -> FutureResult<'a, ()> {
         Box::pin(async move {
             let store = self.store()?;
-            if let Some(row) = store.get(&fired.timer.id)
+            if let Some(row) = store.get(&fired.timer.id).await.map_err(|e| e.to_string())?
                 && sentinel_timer(&row).as_ref() == Some(&fired.timer)
                 && row.due.as_millisecond() == fired.scheduled_at
             {
-                store.complete(&row).map_err(|error| error.to_string())?;
+                store.complete(&row).await.map_err(|error| error.to_string())?;
             }
             Ok(())
         })
@@ -70,13 +72,14 @@ impl Timers for SentinelTimers {
         Box::pin(async move {
             let store = self.store()?;
             let owner = Owner::Sentinel { id: timer.owner.clone() };
-            if store.get(&timer.id).is_some_and(|row| row.owner != owner) {
+            if store.get(&timer.id).await.map_err(|e| e.to_string())?.is_some_and(|row| row.owner != owner) {
                 return Err(format!("timer {} belongs to another owner", timer.id));
             }
             let due = Timestamp::from_millisecond(timer.at).map_err(|error| error.to_string())?;
             let action = Action::Sentinel { action: timer.action.clone() };
             store
                 .set(timer.id.clone(), owner, due, action, crate::speech::new_id("timer"))
+                .await
                 .map_err(|error| error.to_string())?;
             Ok(())
         })
@@ -84,8 +87,13 @@ impl Timers for SentinelTimers {
     fn cancel<'a>(&'a self, id: &'a str) -> FutureResult<'a, ()> {
         Box::pin(async move {
             let store = self.store()?;
-            if store.get(id).is_some_and(|row| matches!(row.owner, Owner::Sentinel { .. })) {
-                store.cancel(id).map_err(|error| error.to_string())?;
+            if store
+                .get(id)
+                .await
+                .map_err(|e| e.to_string())?
+                .is_some_and(|row| matches!(row.owner, Owner::Sentinel { .. }))
+            {
+                store.cancel(id).await.map_err(|error| error.to_string())?;
             }
             Ok(())
         })
@@ -93,7 +101,14 @@ impl Timers for SentinelTimers {
     fn list<'a>(&'a self, owner: &'a str) -> FutureResult<'a, Vec<Timer>> {
         Box::pin(async move {
             let owner = Owner::Sentinel { id: owner.into() };
-            Ok(self.store()?.list(Some(&owner)).iter().filter_map(sentinel_timer).collect())
+            Ok(self
+                .store()?
+                .list(Some(&owner))
+                .await
+                .map_err(|e| e.to_string())?
+                .iter()
+                .filter_map(sentinel_timer)
+                .collect())
         })
     }
 }

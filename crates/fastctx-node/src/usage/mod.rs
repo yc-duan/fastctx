@@ -15,6 +15,7 @@ mod quarantine;
 mod readings;
 mod recent;
 mod report;
+pub(crate) mod terminal_record;
 
 use crate::Node;
 pub(crate) use allowance::{after_reading, used_up};
@@ -108,39 +109,103 @@ pub(crate) async fn measurement(
     Ok(())
 }
 
-/// Old plugins still report tokens only at the end of the main turn.
-pub(crate) fn turn_ended(node: &Node, id: &ResidentId, about: &About, end: &TurnEnd, at: Timestamp) {
+/// Capture the accounting identity before the terminal commits. A resumed
+/// conversation may use a different login by the time recovery runs.
+pub(crate) fn terminal_record(
+    node: &Node,
+    id: &ResidentId,
+    about: &About,
+    turn: &str,
+    end: &TurnEnd,
+    at: Timestamp,
+) -> Option<terminal_record::Record> {
     if about.host.agent.as_str() != "claude" {
-        return;
+        return None;
     }
-    let Some(facts) = end.facts.as_deref() else { return };
-    let Some(tokens) = &facts.tokens else { return };
-    let Some(dir) = login_of(node, id, about) else { return };
-    let path = ledger(node, "claude", &dir);
-    let result = with_book(node, &path, |book| {
-        if about.session.as_ref().is_some_and(|session| book.modern.contains(session)) {
-            return Ok(());
-        }
-        let tokens = tokens_of(tokens);
-        if tokens.total() == 0 {
-            return Ok(());
-        }
-        book.commit(
-            &path,
-            Entry::Tokens {
-                at,
-                who: who(about),
-                with: with(about),
-                model: facts.models.last().cloned().or_else(|| about.model.clone()).unwrap_or_default(),
-                tokens,
-                key: Some(format!("legacy:{}:{at}", id)),
-                call: None,
-            },
-        )
-    });
-    if let Err(error) = result {
-        node.log.line(format_args!("counting the tokens of a turn of {id}: {error}"));
+    let facts = end.facts.as_deref()?;
+    let tokens = tokens_of(facts.tokens.as_ref()?);
+    if tokens.total() == 0 {
+        return None;
     }
+    let dir = login_of(node, id, about)?;
+    Some(terminal_record::Record {
+        ledger: format!("claude-{}", crate::homes::key(&dir)),
+        session: about.session.clone(),
+        at,
+        who: who(about),
+        with: with(about),
+        model: facts.models.last().cloned().or_else(|| about.model.clone()).unwrap_or_default(),
+        tokens,
+        key: format!("terminal:{id}:{turn}"),
+    })
+}
+pub(crate) fn record_terminal(
+    node: &Node,
+    directory: &fastctx_types::layout::ConversationDir,
+    turn: &str,
+    record: terminal_record::Record,
+) -> io::Result<()> {
+    let completed = crate::records::read(directory, |rows| {
+        let kept: (String, String, bool) = rows.connection().query_row(
+            "SELECT ledger,identity,complete FROM terminal_usage WHERE conversation=?1 AND turn=?2",
+            (rows.conversation(), turn),
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )?;
+        if kept.0 != record.ledger || kept.1 != record.key {
+            return Err(fastctx_storage::Error::with_kind(
+                fastctx_storage::ErrorKind::Corrupt,
+                "terminal accounting identity changed",
+            ));
+        }
+        Ok(kept.2)
+    })?;
+    if completed {
+        return Ok(());
+    }
+    if !record.ledger.starts_with("claude-")
+        || record.ledger.contains('/')
+        || record.ledger.contains(char::from(92))
+        || Path::new(&record.ledger).components().count() != 1
+    {
+        return Err(io::Error::other("invalid terminal usage ledger"));
+    }
+    let path = root(node).join(&record.ledger);
+    with_book(node, &path, |book| {
+        let identity = record.key.clone();
+        apply_terminal(book, &path, &record)?;
+        let (turn, ledger) = (turn.to_string(), record.ledger);
+        crate::records::write_at(directory, fastctx_storage::Priority::Normal, 256, move |rows| {
+            if rows.connection().execute(
+                "UPDATE terminal_usage SET complete=1 WHERE conversation=?1 AND turn=?2 AND ledger=?3 AND identity=?4",
+                (rows.conversation(), turn, ledger, identity),
+            )? != 1
+            {
+                return Err(fastctx_storage::Error::new("terminal accounting receipt disappeared"));
+            }
+            Ok(())
+        })
+    })
+}
+
+fn apply_terminal(book: &mut Book, path: &Path, record: &terminal_record::Record) -> io::Result<()> {
+    if book.keys.contains(&record.key) {
+        return Ok(());
+    }
+    if record.session.as_ref().is_some_and(|session| book.modern.contains(session)) {
+        return book.commit(path, Entry::Receipts { at: record.at, keys: vec![record.key.clone()] });
+    }
+    book.commit(
+        path,
+        Entry::Tokens {
+            at: record.at,
+            who: record.who.clone(),
+            with: record.with.clone(),
+            model: record.model.clone(),
+            tokens: record.tokens,
+            key: Some(record.key.clone()),
+            call: None,
+        },
+    )
 }
 
 fn tokens_of(tokens: &TurnTokens) -> Tokens {

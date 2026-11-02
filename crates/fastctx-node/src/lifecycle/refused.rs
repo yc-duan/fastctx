@@ -10,20 +10,26 @@ use fastctx_types::{
 use serde::{Deserialize, Serialize};
 use std::{io, sync::Arc};
 
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 struct Refused {
     pending: Pending,
     failure: Failure,
     at: jiff::Timestamp,
 }
 
-fn path(node: &Node, id: &ResidentId, input: &NoticeId) -> std::path::PathBuf {
-    node.world.conversation(id).book("host-refusals").join(format!("{input}.json"))
+pub(crate) fn prepare(directory: &fastctx_types::layout::ConversationDir) -> io::Result<()> {
+    crate::records::legacy::directory::<Refused>(directory, "host-refusals", &directory.book("host-refusals"))
 }
-
+pub(crate) fn contains(directory: &fastctx_types::layout::ConversationDir, input: &NoticeId) -> io::Result<bool> {
+    prepare(directory)?;
+    crate::records::read(directory, |rows| Ok(rows.get::<Refused>("host-refusals", input.as_str())?.is_some()))
+}
 pub(crate) fn get(node: &Node, id: &ResidentId, input: &NoticeId) -> io::Result<Option<Failure>> {
-    fastctx_hosts::claude::control::read::<Refused>(&path(node, id, input))
-        .map(|row| row.map(|row| marked(row.failure)))
+    let directory = node.world.conversation(id);
+    prepare(&directory)?;
+    crate::records::read(&directory, |rows| {
+        Ok(rows.get::<Refused>("host-refusals", input.as_str())?.map(|row| marked(row.failure)))
+    })
 }
 
 /// The caller proves that no host command capable of consuming this input ran.
@@ -34,34 +40,55 @@ pub(crate) async fn reject(
     input: &NoticeId,
     error: Failure,
 ) -> Result<Landed, Failure> {
-    let directory = node.world.conversation(id);
-    let record = path(node, id, input);
-    let refused = match fastctx_hosts::claude::control::read::<Refused>(&record).map_err(failure)? {
-        Some(refused) => refused,
-        None => {
-            let Some(pending) = crate::inbox::read(&directory, input).map_err(failure)? else { return Err(error) };
-            let refused = Refused { pending, failure: error, at: jiff::Timestamp::now() };
-            fastctx_hosts::claude::control::write(&record, &refused).map_err(failure)?;
-            refused
+    let (saving, recipient, key, offered) = (node.clone(), id.clone(), input.clone(), error.clone());
+    let kept = tokio::task::spawn_blocking(move || -> io::Result<Option<Refused>> {
+        let directory = saving.world.conversation(&recipient);
+        prepare(&directory)?;
+        crate::inbox::storage::initialize(&directory)?;
+        crate::session_record::prepare(&directory)?;
+        let saved = crate::records::write_at(&directory, fastctx_storage::Priority::Interactive, 2048, move |rows| {
+            let refused = match rows.get::<Refused>("host-refusals", key.as_str())? {
+                Some(row) => row,
+                None => {
+                    let Some(pending) = rows.get::<Pending>("pending-inputs", key.as_str())? else { return Ok(None) };
+                    Refused { pending, failure: offered, at: jiff::Timestamp::now() }
+                }
+            };
+            let text = format!("{} {key}: {}", super::words::NOT_SENT, refused.failure.message);
+            let event = SessionEvent {
+                at: refused.at,
+                happened: Happened::Health { turn: None, health: Health { kind: HealthKind::Error, text } },
+            };
+            rows.put("host-refusals", key.as_str(), &refused)?;
+            let changed = rows.event(&format!("host-refused:{key}"), &event)?;
+            rows.delete("pending-inputs", key.as_str())?;
+            Ok(Some((refused, event, changed)))
+        })?;
+        if let Some((refused, event, changed)) = saved {
+            if changed {
+                saving.watchers.publish(&recipient, &event);
+            }
+            Ok(Some(refused))
+        } else {
+            Ok(None)
         }
-    };
-    let text = format!("{} {input}: {}", super::words::NOT_SENT, refused.failure.message);
-    let event = SessionEvent {
-        at: refused.at,
-        happened: Happened::Health { turn: None, health: Health { kind: HealthKind::Error, text: text.clone() } },
-    };
-    if crate::delivery::event(&directory, &format!("host-refused:{input}"), &event).map_err(failure)? {
-        node.watchers.publish(id, &event);
-    }
+    })
+    .await
+    .map_err(failure)?
+    .map_err(failure)?;
+    let Some(refused) = kept else { return Err(error) };
     crate::composer::rejected(node, id, input, &refused.failure.message).await?;
-    node.residents
-        .change_now(&node.world, id, |now| {
-            now.trouble = Some(fastctx_types::residents::Trouble { at: refused.at, text });
-        })
-        .map_err(failure)?;
-    crate::inbox::set_state(&directory, input, fastctx_types::residents::PendingState::Waiting).map_err(failure)?;
-    crate::inbox::withdraw(&directory, input).map_err(failure)?;
-    super::retry::clear(node, id, input).map_err(failure)?;
+    let (saving, recipient, key, result) = (node.clone(), id.clone(), input.clone(), refused.clone());
+    tokio::task::spawn_blocking(move || -> io::Result<()> {
+        let text = format!("{} {key}: {}", super::words::NOT_SENT, result.failure.message);
+        saving.residents.change_now(&saving.world, &recipient, |now| {
+            now.trouble = Some(fastctx_types::residents::Trouble { at: result.at, text });
+        })?;
+        super::retry::clear(&saving, &recipient, &key)
+    })
+    .await
+    .map_err(failure)?
+    .map_err(failure)?;
     Err(marked(refused.failure))
 }
 

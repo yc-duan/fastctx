@@ -15,19 +15,20 @@ pub(super) fn existing<'a>(node: &'a Node, id: &'a ResidentId) -> Future<'a, Opt
             return Ok(Some(node.composers.cell(id)));
         }
         let directory = node.world.conversation(id);
-        let exists = tokio::task::spawn_blocking(move || {
-            let _transition = crate::resident_storage::lock();
-            directory.composer().try_exists()
-        })
-        .await
-        .map_err(failure)?
-        .map_err(failure)?;
-        Ok(exists.then(|| node.composers.cell(id)))
+        let exists =
+            fastctx_platform::task::spawn_blocking(move || fastctx_platform::disk::exists(directory.composer()))
+                .await
+                .map_err(failure)?
+                .map_err(failure)?;
+        // Migration can commit and remove the legacy file between the first
+        // SQL read and the file probe. Recheck authority before saying absent.
+        Ok((exists || persistence::exists(node, id).await?).then(|| node.composers.cell(id)))
     })
 }
 
 pub(super) fn load<'a>(node: &'a Arc<Node>, id: &'a ResidentId, cell: &'a mut Option<Stored>) -> Future<'a, ()> {
     Box::pin(async move {
+        crate::conversation_store::transfer::wait(node, id).await?;
         let recover = super::recovery::pending(node, id);
         if cell.is_some() && !recover {
             return Ok(());
@@ -53,7 +54,7 @@ pub(super) fn load<'a>(node: &'a Arc<Node>, id: &'a ResidentId, cell: &'a mut Op
         }
         // The draft file an older node kept goes once the database holds
         // the draft; where removing it fails, the database is read first.
-        forget_file(node, id);
+        forget_file(node, id).await;
         if recover {
             super::recovery::finished(node, id);
         }
@@ -73,13 +74,17 @@ pub(super) fn load<'a>(node: &'a Arc<Node>, id: &'a ResidentId, cell: &'a mut Op
 
 /// Takes away the draft file an older node kept, the database now holding
 /// the draft.
-pub(super) fn forget_file(node: &Node, id: &ResidentId) {
+pub(super) async fn forget_file(node: &Node, id: &ResidentId) {
     let file = node.world.conversation(id).composer();
-    let _transition = crate::resident_storage::lock();
-    match std::fs::remove_file(&file) {
+    let log = node.log.clone();
+    let removed = fastctx_platform::task::spawn_blocking(move || match fastctx_platform::disk::remove_file(&file) {
         Ok(()) => {}
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-        Err(error) => node.log.line(format_args!("taking away {}: {error}", file.display())),
+        Err(error) => log.line(format_args!("taking away {}: {error}", file.display())),
+    })
+    .await;
+    if let Err(error) = removed {
+        node.log.line(format_args!("taking away an imported composer: {error}"));
     }
 }
 

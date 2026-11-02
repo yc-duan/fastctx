@@ -6,9 +6,12 @@
 //! deleted and dropped, never taken for a new conversation, and its id goes
 //! to no other one. The tombstone is written before the conversation's
 //! records go, so a node stopped halfway finishes the deletion when it
-//! starts again. It is kept for a month.
+//! starts again. It is kept for a month; the node's database keeps the
+//! deletion for good, and its ids are learned from there when the node
+//! starts, so no id is given again after the month either.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+use std::hash::{Hash, Hasher};
 use std::io;
 use std::path::PathBuf;
 
@@ -33,6 +36,12 @@ pub struct Tombstone {
 pub(super) struct Tombstones {
     by_id: HashMap<ResidentId, Tombstone>,
     by_session: HashMap<String, ResidentId>,
+    /// Every conversation the node's database keeps as deleted, by a hash
+    /// of its id: one that meets another id only keeps that one unused.
+    sealed: HashSet<u64>,
+    /// Every conversation let go whole to another machine, which may come
+    /// back, hashed alike.
+    released: HashSet<u64>,
 }
 
 impl Tombstones {
@@ -102,6 +111,25 @@ impl Tombstones {
         self.by_id.get(id)
     }
 
+    /// Learns conversations deleted for good, and those let go whole, by
+    /// `sealed_key`.
+    pub(super) fn seal(&mut self, deleted: HashSet<u64>, released: HashSet<u64>) {
+        self.sealed.extend(deleted);
+        self.released.extend(released);
+    }
+
+    /// Whether `id` may go to a new conversation: it was never deleted
+    /// here, nor let go to come back.
+    pub(super) fn free(&self, id: &ResidentId) -> bool {
+        !self.ever(id) && !self.released.contains(&sealed_key(id.as_str()))
+    }
+
+    /// Whether `id` was ever deleted here: within the month its tombstone
+    /// is kept, or before, as the database keeps it.
+    pub(super) fn ever(&self, id: &ResidentId) -> bool {
+        self.by_id.contains_key(id) || self.sealed.contains(&sealed_key(id.as_str()))
+    }
+
     /// The deleted conversation the host session `session` was, if any.
     pub(super) fn holding(&self, session: &str) -> Option<&ResidentId> {
         self.by_session.get(session)
@@ -110,6 +138,32 @@ impl Tombstones {
     pub(super) fn all(&self) -> impl Iterator<Item = (&ResidentId, &Tombstone)> {
         self.by_id.iter()
     }
+}
+
+/// The conversations the node's database keeps as deleted, and those it let
+/// go whole, by `sealed_key`.
+pub(crate) fn sealed(database: &fastctx_storage::Database) -> fastctx_storage::Result<(HashSet<u64>, HashSet<u64>)> {
+    database.read_background_now(|db| {
+        let keys = |sql: &str| -> fastctx_storage::Result<HashSet<u64>> {
+            let mut statement = db.prepare(sql)?;
+            let mut rows = statement.query([])?;
+            let mut keys = HashSet::new();
+            while let Some(row) = rows.next()? {
+                keys.insert(sealed_key(&row.get::<_, String>(0)?));
+            }
+            Ok(keys)
+        };
+        Ok((
+            keys("SELECT name FROM node_conversation_deletions")?,
+            keys("SELECT DISTINCT name FROM node_conversation_releases")?,
+        ))
+    })
+}
+
+fn sealed_key(id: &str) -> u64 {
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    id.hash(&mut hasher);
+    hasher.finish()
 }
 
 /// Expiry must not erase the only record of a deletion still to be finished.

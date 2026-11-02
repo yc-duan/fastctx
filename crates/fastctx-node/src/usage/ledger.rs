@@ -260,11 +260,11 @@ impl Book {
                     self.seen.extend(reports.iter().map(|at| (identity.clone(), *at)));
                 }
             }
-            Entry::Tokens { at, key: Some(key), .. } if *at >= month => {
+            Entry::Tokens { at, key: Some(key), .. } if *at >= month || key.starts_with("terminal:") => {
                 self.keys.insert(key.clone());
             }
-            Entry::Receipts { at, keys } if *at >= month => {
-                self.keys.extend(keys.iter().cloned());
+            Entry::Receipts { at, keys } => {
+                self.keys.extend(keys.iter().filter(|key| *at >= month || key.starts_with("terminal:")).cloned());
             }
             Entry::Account { at, account } => {
                 if self.accounts.is_empty() {
@@ -321,7 +321,7 @@ impl Book {
         {
             return Ok(());
         }
-        // 2026-10-20: reload ambiguous writes from disk, not a half-updated index.
+        // Reload ambiguous writes from disk, not a half-updated index.
         self.valid = false;
         append(path, &row)?;
         self.apply(&row);

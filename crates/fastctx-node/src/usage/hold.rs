@@ -99,10 +99,12 @@ fn refresh_login(node: &Arc<Node>, records: Vec<(ResidentId, About)>) -> Option<
         }
         let node = node.clone();
         tokio::spawn(async move {
-            // 2026-10-20: a report holds its session gate; stopping another session must
+            // A report holds its session gate; stopping another session must
             // never wait beneath that gate (world-concurrency.md).
             if node.residents.now(&id).is_some_and(|now| now.turn.as_ref() == Some(&turn)) {
-                if let Err(failure) = crate::talk::stop_here_as(&node, &id, fastctx_types::turn_evidence::StopSource::Allowance).await {
+                if let Err(failure) =
+                    crate::talk::stop_here_as(&node, &id, fastctx_types::turn_evidence::StopSource::Allowance).await
+                {
                     node.log.line(format_args!("stopping {id} at its allowance: {}", failure.message));
                 }
                 let health = Health { kind: HealthKind::Warning, text: used.said(&account) };

@@ -10,6 +10,10 @@
 //! and its judgments, the frames on the wire, and each machine's side of
 //! its connections.
 
+// Held across an await, a lock holds up every task that waits for it; the
+// platform's and this crate's own lock guards are named in `clippy.toml`.
+#![deny(clippy::await_holding_lock, clippy::await_holding_refcell_ref, clippy::await_holding_invalid_type)]
+
 pub mod afoot;
 pub mod again;
 #[cfg(target_os = "android")]
@@ -17,6 +21,7 @@ pub mod android;
 pub mod around;
 pub mod arrivals;
 pub mod authorization;
+mod beats;
 pub mod call_details;
 pub mod cancellable;
 pub mod data;
@@ -46,10 +51,13 @@ pub mod pulse;
 pub mod question_parts;
 mod queue;
 pub mod reassembly;
+pub mod record_ownership;
 pub mod route;
 pub mod sign;
+mod threads;
 pub mod tls;
 pub mod token;
+pub mod topic_history;
 pub mod transport;
 pub mod view_delta;
 pub mod watch_flow;
@@ -58,4 +66,5 @@ pub mod watch_mux;
 pub mod watch_queue;
 pub mod watch_stream;
 pub mod web;
+pub mod window;
 pub mod wire;

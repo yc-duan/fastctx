@@ -32,6 +32,7 @@ impl Changes {
 
     pub(crate) fn reconcile(self: &Arc<Self>, node: &Arc<Node>, link: Arc<Link>) {
         cleanup(node, &link);
+        crate::replicas::updates::schedule(node, link.hub(), crate::replicas::updates::Change::All);
         {
             let mut state = self.state.lock().expect("never poisoned");
             state.pending = true;
@@ -87,6 +88,9 @@ impl Changes {
 /// management gate. Ordinary ledger notifications retain their own worker too:
 /// a failed full reconciliation cannot suppress a healthy project's update.
 pub(crate) fn cleanup(node: &Arc<Node>, link: &Arc<Link>) {
+    if let Err(error) = crate::replicas::publication::prune(node) {
+        node.log.line(format_args!("withdrawing document replicas: {error}"));
+    }
     let (node, link) = (node.clone(), link.clone());
     tokio::spawn(async move {
         if node.link_of(link.hub()).is_some_and(|current| Arc::ptr_eq(&current, &link)) {

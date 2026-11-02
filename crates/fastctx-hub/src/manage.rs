@@ -30,7 +30,7 @@ use crate::{Hub, Out};
 /// removed itself hears that it did.
 pub(crate) fn change(
     hub: &Hub,
-    asker: &MachineName,
+    asker: &crate::origin::Origin,
     account: &AccountName,
     change: Change,
 ) -> (Result<Told, String>, Vec<(MachineName, Refusal)>) {
@@ -41,13 +41,14 @@ pub(crate) fn change(
         Change::DeleteProject { town } => Some(town.clone()),
         _ => None,
     };
+    let deleting_account = matches!(change, Change::DeleteAccount { .. });
     let told = match made(hub, asker, account, change, &mut ended, renaming) {
         Ok(told) => told,
         Err(reason) => return (Err(reason), Vec::new()),
     };
     if ended.iter().any(|(_, refusal)| matches!(refusal, Refusal::Removed { .. })) {
         let (dir, log) = (hub.store().dir().to_path_buf(), hub.log.clone());
-        tokio::task::spawn_blocking(move || {
+        fastctx_platform::task::spawn_blocking(move || {
             if let Err(error) = crate::store::Store::clear_trash(&dir) {
                 log.line(format_args!(
                     "deleting the letters of machines taken off: {error}; done when the hub opens next"
@@ -57,6 +58,9 @@ pub(crate) fn change(
     }
     if let Some(town) = deleting {
         crate::ledger::delete(hub, town);
+    }
+    if deleting_account {
+        crate::forget::accounts::tell(hub, None);
     }
     hub.changed();
     if dissolving {
@@ -76,14 +80,15 @@ pub(crate) fn end(hub: &Hub, ended: Vec<(MachineName, Refusal)>) {
 
 fn made(
     hub: &Hub,
-    asker: &MachineName,
+    asker: &crate::origin::Origin,
     account: &AccountName,
     change: Change,
     ended: &mut Vec<(MachineName, Refusal)>,
     renaming: bool,
 ) -> Result<Told, String> {
     {
-        let mut store = hub.store();
+        let mut store = hub.edit_store();
+        asker.check(&store.book.directory)?;
         // An assistance past its deadline is ended first, as the hub's own
         // doing, so no change is made over it: letting that login assist
         // again is a new assistance, which the account uses again before
@@ -93,7 +98,8 @@ fn made(
         let before = store.book.clone();
         let action = crate::machine_log::action(&change, &before, &store.hub.updates);
         let authenticated = may_change(&before.directory, &change, asker, account);
-        let actor = Actor { account: Some(account.clone()), authenticated, member: Some(asker.clone()), peer: None };
+        let actor =
+            Actor { account: Some(account.clone()), authenticated, member: Some(asker.name.clone()), peer: None };
         let before_hub = store.hub.clone();
         let result = (|| {
             let directory = &before.directory;
@@ -649,11 +655,32 @@ fn apply(
             {
                 return Err(format!("{minimum} is not a version a release can have"));
             }
-            // The ceiling on intake is its own change: an interface that
-            // sets the rest knows nothing of it.
+            // The ceiling on intake, the rollout and the versions withdrawn
+            // are their own changes: an interface that sets the rest, an
+            // earlier release's among them, knows nothing of them.
             let intake = store.hub.updates.intake;
             let channel = store.hub.updates.channel;
-            store.hub.updates = fastctx_types::update::Policy { intake, channel, ..policy };
+            let rollout = store.hub.updates.rollout.clone();
+            let withdrawn = store.hub.updates.withdrawn.clone();
+            store.hub.updates = fastctx_types::update::Policy { intake, channel, rollout, withdrawn, ..policy };
+            store.save_hub().map_err(|error| format!("the hub could not keep its settings: {error}"))?;
+            Ok(Told::Done)
+        }
+        Change::Rollout { rollout, withdrawn } => {
+            need_super()?;
+            if let Some(rollout) = &rollout {
+                if fastctx_types::update::release(&rollout.version).is_none() {
+                    return Err(format!("{} is not a version a release can have", rollout.version));
+                }
+                if rollout.share > 100 {
+                    return Err("the share is in hundredths, at most 100".into());
+                }
+            }
+            if let Some(version) = withdrawn.iter().find(|version| fastctx_types::update::release(version).is_none()) {
+                return Err(format!("{version} is not a version a release can have"));
+            }
+            store.hub.updates.rollout = rollout;
+            store.hub.updates.withdrawn = withdrawn;
             store.save_hub().map_err(|error| format!("the hub could not keep its settings: {error}"))?;
             Ok(Told::Done)
         }
@@ -693,6 +720,7 @@ fn apply(
                     "an update batch needs an identifier of at most 64 letters, digits, hyphens or underscores".into(),
                 );
             }
+            let directory = directory.clone();
             store.hub.due.retain(|kept| {
                 let replaces = kept.key == key && (version.is_some() || batch.is_none() || kept.batch == batch);
                 !replaces && directory.by_key(&kept.key).is_some()
@@ -737,8 +765,13 @@ fn apply(
                 .map_err(|error| format!("the hub could not keep that its network is dissolved: {error}"))?;
             Ok(Told::Done)
         }
-        Change::OpenProject { town, name } => {
+        Change::OpenProject { town, name, shared_on } => {
             let book = &mut store.book;
+            if let Some(machine) = &shared_on {
+                book.directory
+                    .authorize(account, fastctx_net::authorization::Action::Work(machine))
+                    .map_err(|error| error.to_string())?;
+            }
             if book.directory.project(&town).is_some() || book.archived.iter().any(|project| project.town == town) {
                 return Err(format!("the project {town} exists already"));
             }
@@ -750,6 +783,7 @@ fn apply(
                 name,
                 owner: account.clone(),
                 granted: Default::default(),
+                shared_on,
             }));
             Ok(Told::Done)
         }
@@ -987,7 +1021,7 @@ fn rename(
         return Err(reason);
     }
     let old = member.name.clone();
-    if !store.letters.get(&old).is_some_and(|letters| letters.renames) {
+    if !store.metadata().letters.get(&old).is_some_and(|letters| letters.renames) {
         return Err(format!(
             "{old} has not connected with a release of fastctx that takes a new name; update fastctx there and let it connect first"
         ));
@@ -1056,6 +1090,14 @@ fn forget_machine(directory: &mut fastctx_net::directory::Directory, name: &Mach
     directory.assists.retain(|assist| assist.machine != *name);
     directory.plans.retain(|plan| plan.machine != *name);
     directory.acting.retain(|acting| acting.machine != *name);
+    // A project opened there was its holders'; with the machine gone from
+    // them it is its owner's and those it is shared with, and no later
+    // holder of the name or the machine inherits it.
+    for project in &mut directory.projects {
+        if project.shared_on.as_ref() == Some(name) {
+            Arc::make_mut(project).shared_on = None;
+        }
+    }
 }
 
 /// Takes the member `name` off the hub: its logins, what was shared of it,
@@ -1104,7 +1146,7 @@ fn remove_member(
 /// uninstalls once it is off, nor the machine that runs this hub.
 fn may_uninstall(
     hub: &Hub,
-    store: &Store,
+    store: &crate::store::Snapshot,
     member: &fastctx_net::directory::Member,
     account: &AccountName,
     super_: bool,
@@ -1130,7 +1172,7 @@ fn may_uninstall(
 /// the uninstall it was asked: kept on its removal, and in the machine log
 /// once for each thing it says.
 pub(crate) fn left(hub: &Hub, key: &PublicKey, left: &str) {
-    let mut store = hub.store();
+    let mut store = hub.edit_store();
     let Some(removed) = store.book.removed.iter_mut().rev().find(|removed| removed.key == *key).map(Arc::make_mut)
     else {
         return;
@@ -1170,6 +1212,10 @@ fn delete_account(
             "{name} is the hub's super administrator and cannot be deleted; hand that to another account first"
         ));
     }
+    // Who may keep something done for it, read before its logins, shares
+    // and assistances go: they let go of it once it is gone.
+    let forgetting = crate::forget::accounts::audience(store, name);
+    let directory = &store.book.directory;
     let reason = format!("the account {name} was deleted");
     let machines: Vec<MachineName> = directory
         .members
@@ -1191,6 +1237,7 @@ fn delete_account(
     for member in logged {
         log_out(store, &member, name, Some(by), &reason, ended)?;
     }
+    crate::forget::accounts::keep(store, name.clone(), forgetting);
     let book = &mut store.book;
     book.directory.accounts.retain(|account| account.name != *name);
     book.directory.shares.retain(|share| share.account != *name);

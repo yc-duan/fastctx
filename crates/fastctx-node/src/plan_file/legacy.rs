@@ -34,7 +34,7 @@ pub(super) async fn retire(node: &Node, id: &ResidentId) -> Result<(), Failure> 
         return Err(Failure::new("legacy plan retained: its contents are not confirmed in the hub's versions"));
     }
     // Recheck after the network read; never remove a file changed while the
-    // hub was being consulted (2026-10-30, legacy assisted-plan migration).
+    // hub was being consulted.
     if std::fs::read(&path).map_err(|error| Failure::new(error.to_string()))? != bytes {
         return Err(Failure::new("legacy plan changed while checking its hub version; retained"));
     }

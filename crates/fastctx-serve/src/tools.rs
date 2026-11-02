@@ -276,7 +276,7 @@ More commands (`--help` on each gives all its options):
 const RUN_COMMANDS_HELD: &str = "
 - `fastctx project` lists the user's projects and shows their records. A fastctx project is not a folder or a repository but a named piece of work that can span several machines; its record says what it is for and where its code and data are on each. `fastctx project enter NAME` makes you work in one; enter one only when the user tells you which project to work on.
 - `fastctx page` publishes an HTML page the user opens in the World app.
-- `fastctx plan` shows this conversation's plan, which is a Markdown file your instructions name: change it as any file.";
+- `fastctx plan` shows this conversation's plan, which is a Markdown file your instructions name: change it as any file. `fastctx plan ID` shows another conversation's, such as a colleague's.";
 
 /// Sentinels, not offered in a release yet (`fastctx_platform::preview`).
 const RUN_COMMANDS_SENSE: &str = "

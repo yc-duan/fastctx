@@ -1,6 +1,6 @@
 // What the workbench brings that has settings of its own (`world-layers.md`):
-// model collaboration, reached from the kernels, and project memory and the
-// sentinels, reached from Settings. Each is a page: off, the film that tells
+// model collaboration, reached from the kernels, and the sentinels, reached
+// from Settings. Each is a page: off, the film that tells
 // what it does, playing on a loop, and the button that turns it on under
 // it; turned on, a page over the window says it is on and what the
 // interface gained. On, its page shows a still of the film, to be watched
@@ -12,9 +12,7 @@
 // GPT (callers), which GPTs they may hand it to (callees: a Codex login
 // each, its model and effort, the name and the line the calling model
 // chooses by, whether it may use the screen), the text the callers are given
-// and the rules every callee is given. Project memory: for the whole account, a
-// project's journal and decisions shown with it and given to its
-// conversations; it has no settings.
+// and the rules every callee is given.
 
 import { EffortSlider, effortLabel } from "../conversation/effort-slider";
 import { glyph } from "../conversation/glyphs";
@@ -36,7 +34,6 @@ import { effect } from "./signals";
 import { residentsOf, type Store } from "./store";
 import { leave } from "./leave";
 import { collaboration } from "../film/collaboration";
-import { memoryFilm } from "../film/memory";
 import { sentinelFilm } from "../film/sentinel";
 import { SentinelForm } from "./sentinel-form";
 import type { SentinelSeam, SentinelSettingsView } from "../world/sentinels";
@@ -62,9 +59,6 @@ export interface FeaturesOptions {
   agents(): Promise<WorldAgents>;
   /** Asks before a feature is turned off. */
   confirm: Confirm;
-  /** Project memory's switch, for the account. */
-  /** Project memory, on or off for a login's account; null lets the World pick. */
-  memory: { enabled(hub: string | null, account: string | null): Promise<boolean>; set(on: boolean, hub: string | null, account: string | null): Promise<void> };
   /** The sentinels' settings, and the machines they may live on. */
   sentinels: { seam: SentinelSeam; machines(hub: string, account: string): { name: string; form: "desktop" | "laptop" | "server" }[] };
 }
@@ -98,7 +92,7 @@ export class FeaturesPage implements Page {
 
   constructor(private readonly options: FeaturesOptions) {
     const { words, feature } = options;
-    this.title = feature === "memory" ? words.memory.name : feature === "sentinels" ? words.sentinels.name : words.collaboration.name;
+    this.title = feature === "sentinels" ? words.sentinels.name : words.collaboration.name;
     this.element = document.createElement("div");
     this.element.className = "features-page";
     this.element.innerHTML = `${options.head(`<h1 class="page-title">${escape(this.title)}</h1>`)}<div class="features-body scroller"></div>`;
@@ -106,8 +100,7 @@ export class FeaturesPage implements Page {
     this.body.addEventListener("click", (event) => {
       if ((event.target as HTMLElement).closest("[data-act='replay']")) this.replay();
     });
-    if (feature === "memory") this.memory();
-    else if (feature === "sentinels") this.sentinels();
+    if (feature === "sentinels") this.sentinels();
     else this.collaboration();
   }
 
@@ -219,51 +212,6 @@ export class FeaturesPage implements Page {
   private askOff(name: string, what: string, off: () => Promise<void>, done: () => void): void {
     const { words, confirm } = this.options;
     confirm.ask({ title: words.offTitle(name), what, go: words.turnOff, gentle: true, act: off, done });
-  }
-
-  /** Project memory: its film and its switch, for the account; on, a still
-   *  of the film waits at the top. */
-  private memory(): void {
-    const { words } = this.options;
-    const login = this.login();
-    const memory = this.options.memory;
-    const seam = {
-      enabled: () => memory.enabled(login?.hub ?? null, login?.account ?? null),
-      set: (on: boolean) => memory.set(on, login?.hub ?? null, login?.account ?? null),
-    };
-    const make = (shape: Shape) => memoryFilm(words.memory.film, shape);
-    const label = words.memory.name;
-    this.replayFilm = () => this.watch(make, label);
-    const draw = (on: boolean) => {
-      this.dropFilms();
-      this.body.classList.toggle("features-film", !on);
-      this.body.classList.toggle("features-on", on);
-      this.body.innerHTML = on
-        ? this.onTop(words.memory.after, true) + this.offWay(label)
-        : `<div class="feature-intro"><div class="feature-film"></div><button class="sheet-go feature-turn" type="button" data-turn="1">${escape(words.turnOn)}</button></div>`;
-      this.film(this.body.querySelector(on ? ".feature-still" : ".feature-film"), make, label, on);
-    };
-    seam.enabled().then(draw, () => draw(false));
-    this.body.addEventListener("click", (event) => {
-      const target = event.target as HTMLElement;
-      if (target.closest("[data-act='turn-off']")) {
-        this.askOff(label, words.memory.offWhat, () => seam.set(false), () => draw(false));
-        return;
-      }
-      const turn = target.closest<HTMLButtonElement>("[data-turn]");
-      if (!turn || turn.disabled) return;
-      turn.disabled = true;
-      void seam.set(true).then(
-        () => {
-          draw(true);
-          this.celebrate(label, words.memory.after, make);
-        },
-        (error: unknown) => {
-          turn.disabled = false;
-          turn.title = detailOf(error);
-        },
-      );
-    });
   }
 
   /** The login the account's settings are read and kept for. */

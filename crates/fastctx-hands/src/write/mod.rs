@@ -29,6 +29,16 @@ pub use fastctx_types::write::*;
 use std::io;
 use std::path::PathBuf;
 
+/// Every path a write may change, including both ends of patch renames.
+pub fn touched_paths(operation: &WriteOp) -> Result<Vec<PathBuf>, String> {
+    match operation {
+        WriteOp::Edit(request) => Ok(vec![request.file_path.clone()]),
+        WriteOp::EditBlocks(request) => Ok(vec![request.file_path.clone()]),
+        WriteOp::Write(request) => Ok(vec![request.file_path.clone()]),
+        WriteOp::ApplyPatch(request) => patch::paths(&request.input),
+    }
+}
+
 /// Captures an already committed ledger write in the same format as ordinary file writes.
 pub fn capture_change(
     directory: PathBuf,

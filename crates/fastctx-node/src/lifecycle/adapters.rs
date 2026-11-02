@@ -88,7 +88,7 @@ impl Adapter {
                 }
                 match reason {
                     ReleaseReason::Delete => {
-                        crate::claude::management::retire(node, about.home.as_deref(), &about.id, session).await?
+                        crate::claude::management::retire(node, about.home.as_deref(), session).await?
                     }
                     _ => {
                         crate::claude::management::stop(

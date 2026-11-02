@@ -1,5 +1,5 @@
 //! Compiled against unchanged type sources from pinned git revisions: one for each older protocol,
-//! and the readers of the releases that shipped since.
+//! and the readers of the releases that shipped since, whose arms are written in from `SHIPPED`.
 
 use serde_json::{Value, json};
 use std::io::{self, BufRead};
@@ -20,9 +20,7 @@ fn decode(reader: &str, value: Value, request: bool) -> Value {
         "v8" => read!(v8),
         "v9" => read!(v9),
         "v10" => read!(v10),
-        "v13_beta1" => read!(v13_beta1),
-        "v13_beta2" => read!(v13_beta2),
-        "v13_beta11" => read!(v13_beta11),
+        // SHIPPED_DECODE
         _ => panic!("no frozen reader {reader}"),
     }
 }
@@ -40,7 +38,7 @@ fn main() {
                 let wire = serde_json::to_value(current).unwrap();
                 macro_rules! welcome {
                     ($version:ident) => {
-                        $version::contract_welcome(wire)
+                        $version::contract_welcome(wire.clone())
                     };
                 }
                 let read = match reader {
@@ -50,12 +48,10 @@ fn main() {
                     "v8" => welcome!(v8),
                     "v9" => welcome!(v9),
                     "v10" => welcome!(v10),
-                    "v13_beta1" => welcome!(v13_beta1),
-                    "v13_beta2" => welcome!(v13_beta2),
-                    "v13_beta11" => welcome!(v13_beta11),
+                    // SHIPPED_WELCOME
                     _ => panic!("no frozen reader {reader}"),
                 };
-                json!({"read": read})
+                json!({"read": read, "wire": wire})
             }
             "request" => {
                 let old = decode(reader, value, true);
@@ -77,6 +73,12 @@ fn main() {
                 json!({"admitted": accepted && compat::peer(&peer) && compat::call(protocol as u32, &peer, &call)})
             }
             "decode" => json!({"read": decode(reader, value, false)}),
+            "world" => {
+                let mut now: fastctx_types::world::WorldNow = serde_json::from_value(value).unwrap();
+                compat::world(case["shapes"].as_u64().unwrap() as u32, &mut now);
+                let frame = fastctx_types::ipc::NodeFrame::World { id: 37, world: Box::new(now) };
+                json!({"read": decode(reader, serde_json::to_value(frame).unwrap(), false)})
+            }
             "reply" => {
                 let frame: fastctx_types::ipc::NodeFrame = serde_json::from_value(value).unwrap();
                 let current = serde_json::to_value(&frame).unwrap();

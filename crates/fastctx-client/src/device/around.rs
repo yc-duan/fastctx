@@ -285,6 +285,7 @@ impl Device {
                         online: online_known.then(|| seen.map(|seen| seen.online)).flatten(),
                         since: seen.and_then(|seen| seen.since),
                         through: seen.and_then(|seen| seen.through.clone()),
+                        strain: seen.and_then(|seen| seen.strain.filter(|_| online_known && seen.online)),
                         allows_direct: seen.is_some_and(|seen| !seen.direct.is_empty()),
                         path: Some(link.path_to(&name)),
                         facts: match heard {

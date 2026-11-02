@@ -15,6 +15,7 @@ import { drops } from "./marks";
 import { carried, grid, pennant, planned, published, seal, shield, terminal, town, watching } from "../cards/drawings";
 import { escape } from "../prose";
 import type { LongText } from "../long-text";
+import type { StepSummary } from "../../world/run-facts";
 import type { ChecksDeed, CommitDeed, CopyDeed, Deed, DeedWords, FileDeed, JobDeed, LogDeed, PageDeed, PictureDeed, PlainDeed, PushDeed, SearchDeed, StatusDeed, StopDeed, TestsDeed, WorldDeed, WritesDeed } from "./types";
 import { bytesSaid } from "../../bytes";
 import { fanCard, sentHtml, troubled } from "./fan";
@@ -38,11 +39,20 @@ const HITS = 24;
 
 /** `deeds` drawn; `raw` is called the first time the run's own words are
  *  opened, and gives them; `ending` is how the run ended where that is
- *  worth saying. */
-export function drawDeeds(deeds: readonly Deed[], tools: DeedTools, raw: () => HTMLElement, ending: string): DrawnDeeds {
+ *  worth saying. Steps `folded` before those the deeds were read from come
+ *  first, counted, of the run that ran on `own`. */
+export function drawDeeds(
+  deeds: readonly Deed[],
+  tools: DeedTools,
+  raw: () => HTMLElement,
+  ending: string,
+  folded: readonly StepSummary[] = [],
+  own: string | null = null,
+): DrawnDeeds {
   const element = document.createElement("div");
   element.className = "dd-deeds";
   const longs: LongText[] = [];
+  if (folded.length) element.append(foldedCard(folded, tools.words, own, true));
   deeds.forEach((deed, index) => {
     if (deed.kind === "writes") return;
     if (deed.kind === "file") {
@@ -119,6 +129,21 @@ export function goingOn(job: string, machine: string | null, words: DeedWords): 
 
 /** A command named and nothing more; one an `on` carried, with what it
  *  last printed there and how it ended where it did not end well. */
+/** The steps a run on `own` kept only as counts: each kind, the machine
+ *  that gave it where that is not `own`, how many and from when to when,
+ *  the most first; `labelled`, under how many they are in all. */
+export function foldedCard(folded: readonly StepSummary[], words: DeedWords, own: string | null, labelled = false): HTMLElement {
+  const count = folded.reduce((sum, summary) => sum + summary.count, 0);
+  const head = labelled ? `<div class="dd-head">${glyph("steps", 14)}<span>${escape(words.folded(count))}</span></div>` : "";
+  const rows = [...folded]
+    .sort((a, b) => b.count - a.count)
+    .map(
+      (summary) =>
+        `<div class="dd-head"><code class="dd-hash">${escape(summary.kind)}</code>${summary.machine === own ? "" : `<span>${escape(summary.machine)}</span>`}<span class="dd-quiet">${escape(words.foldedTimes(summary.count))}</span><span class="dd-quiet">${escape(words.foldedSpan(summary.first, summary.last))}</span></div>`,
+    );
+  return html(`<div class="dd-card dd-folded">${head}${rows.join("")}</div>`);
+}
+
 function plain(deed: PlainDeed, words: DeedWords): HTMLElement {
   if (deed.on && (deed.on.tail || troubled(deed.on.end))) return html(`<div class="dd-card">${sentHtml(deed.command, deed.on.tail, deed.on.end, words)}</div>`);
   return html(`<div class="dd-plain">${glyph("command", 14)}<span>${escape(deed.command)}</span></div>`);

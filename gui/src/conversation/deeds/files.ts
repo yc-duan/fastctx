@@ -117,3 +117,19 @@ export function printedFile(lines: OutputLines, printed: { path: string; first: 
   if (!rows.length) return null;
   return { at: 0, deed: { kind: "file", command: null, machine, path: printed.path, rows, of: null } };
 }
+
+/** The lines a host's own read gave back, each after its number as `cat -n`
+ *  sets them (Claude Code's Read: `     1→text`, or a tab for the arrow), up
+ *  to the first line that is not one of them; null where none is. */
+export function numberedFile(text: string, machine: string | null, path: string): FileDeed | null {
+  const rows: FileRow[] = [];
+  for (const line of text.split("\n")) {
+    const numbered = /^\s*(\d+)(?:\u2192|\t)(.*)$/.exec(line.replace(/\r$/, ""));
+    if (!numbered) {
+      if (rows.length) break;
+      continue;
+    }
+    rows.push({ line: Number(numbered[1]), text: numbered[2]! });
+  }
+  return rows.length ? { kind: "file", command: null, machine, path, rows, of: null } : null;
+}

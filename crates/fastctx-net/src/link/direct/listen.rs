@@ -31,7 +31,8 @@ use crate::wire::{EXPORTER_LABEL, SILENCE};
 
 /// Listens at the `wanted` ports, on every interface, and no longer at
 /// others; a port listened at already is left as it is. Whether it began
-/// listening anywhere.
+/// listening anywhere. What comes in is taken on the control lines' thread
+/// (`crate::threads`), the listener made there to be woken there.
 pub(super) fn follow(inner: &Arc<Inner>, listening: &mut Listening, wanted: &BTreeSet<(bool, u16)>) -> bool {
     listening.ports.retain(|port, task| {
         let keep = wanted.contains(port);
@@ -63,10 +64,15 @@ pub(super) fn follow(inner: &Arc<Inner>, listening: &mut Listening, wanted: &BTr
                 }
             },
         };
-        let task = match crate::listen::bind(address) {
+        let lines = crate::threads::lines();
+        let bound = {
+            let _here = lines.enter();
+            crate::listen::bind(address)
+        };
+        let task = match bound {
             Ok(listener) => {
                 inner.node.log(format!("direct connections: listening at {address}"));
-                Ok(tokio::spawn(accept(Arc::downgrade(inner), listener, tls)))
+                Ok(fastctx_platform::task::spawn_on(&lines, accept(Arc::downgrade(inner), listener, tls)))
             }
             Err(error) => {
                 let failed = format!("listening at {address}: {error}");
@@ -84,7 +90,7 @@ async fn accept(inner: Weak<Inner>, listener: TcpListener, tls: TlsAcceptor) {
         match listener.accept().await {
             Ok((tcp, from)) => {
                 crate::dial::configure(&tcp);
-                tokio::spawn(connected(inner.clone(), tcp, from, tls.clone()));
+                fastctx_platform::task::spawn(connected(inner.clone(), tcp, from, tls.clone()));
             }
             // Out of descriptors, for one: the next accept may succeed.
             Err(error) => {

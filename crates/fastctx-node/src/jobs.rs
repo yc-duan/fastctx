@@ -23,6 +23,27 @@ use tokio::sync::{broadcast, watch};
 use tokio::time::Instant;
 
 use crate::Node;
+mod reply;
+
+/// How long a wait for a job's change goes before its record is read
+/// anyway: a supervisor tells the node of a change once, and a word lost
+/// on the way is not said again.
+pub(crate) const BACKSTOP: Duration = Duration::from_secs(2);
+
+/// Resolves once `job` changed as `changes` tells, `changes` may have
+/// missed one, or `within` passed; the changes of other jobs pass by.
+pub(crate) async fn changed_or(changes: &mut broadcast::Receiver<JobId>, job: &JobId, within: Duration) {
+    let deadline = Instant::now() + within;
+    loop {
+        tokio::select! {
+            change = changes.recv() => match change {
+                Ok(changed) if changed != *job => continue,
+                _ => return,
+            },
+            () = tokio::time::sleep_until(deadline) => return,
+        }
+    }
+}
 
 pub struct Jobs {
     changes: broadcast::Sender<JobId>,
@@ -45,27 +66,24 @@ impl Jobs {
         owner: fastctx_types::run::JobOwner,
         town: Option<TownName>,
     ) -> Result<(), Failure> {
-        // With nobody waiting there is nobody to wake.
-        let _ = self.changes.send(job.clone());
         let path = node.world.job_record(&node.names(), town.as_ref(), &owner, &job);
         let record = read(&path).await.inspect_err(|_| {
             crate::inbox::retry_job(node, &path);
         })?;
-        let (writes, steps) = if record.end.is_some() && !record.is_sentinel() {
-            (
-                crate::run_facts::writes(&path).map_err(|error| failure("reading write facts", error))?,
-                crate::run_facts::steps(&path).map_err(|error| failure("reading step facts", error))?,
-            )
-        } else {
-            (Vec::new(), Vec::new())
-        };
+        if record.end.is_some()
+            && let Err(error) = crate::replicas::sync::repair(node).await
+        {
+            node.log.line(format_args!("restoring replicas after a job ended: {error}"));
+        }
+        let _ = self.changes.send(job.clone());
         // Noting it and measuring an ended output read whole files: they
         // run beside the runtime, which others share.
         let noting = node.clone();
         let (noted, at) = (record.clone(), path.clone());
-        tokio::task::spawn_blocking(move || {
-            crate::activity_book::note(&noting, &noted, &writes, &steps);
-            crate::run_facts::update_job_with(&noting, &at, writes, steps)
+        fastctx_platform::task::spawn_blocking(move || {
+            crate::run_facts::update_job(&noting, &at)?;
+            crate::activity_book::ended(&noting, &noted);
+            Ok::<_, std::io::Error>(())
         })
         .await
         .map_err(|error| failure("updating call facts", std::io::Error::other(error)))?
@@ -106,6 +124,7 @@ impl Jobs {
         answer_receipts: bool,
         dispatch: Option<fastctx_types::NoticeId>,
     ) -> Result<run::Launched, Failure> {
+        crate::replicas::sync::repair(node).await.map_err(Failure::new)?;
         let _place = match owner.resident().and_then(|address| crate::data::places::of_owner(node, address)) {
             Some(place) => Some(node.places.using(&place).await),
             None => None,
@@ -121,7 +140,7 @@ impl Jobs {
         let counted = crate::job_accounts::of(node, &owner, sent_for.as_ref());
         let share = crate::job_accounts::share_key(counted.as_ref());
         let registering = node.clone();
-        let launched = tokio::task::spawn_blocking(move || -> Result<run::Launched, Failure> {
+        let launched = fastctx_platform::task::spawn_blocking(move || -> Result<run::Launched, Failure> {
             let starting = crate::job_accounts::start(&registering, counted)?;
             let home = user_home().map_err(|error| before_start("finding the home directory", error))?;
             let mut environment =
@@ -145,7 +164,6 @@ impl Jobs {
                 None => (None, fastctx_types::run::OutputMode::Merged, None),
             };
             let launch = Launch {
-                answer_receipts,
                 world: &world,
                 names: &names,
                 owner: &owner,
@@ -162,11 +180,19 @@ impl Jobs {
             let checked = launch.check()?;
             let _collecting = registering.disk.lock();
             let launched = checked.launch_with_io_registered(mode, input.as_deref(), |path| {
+                if owner.resident().is_some()
+                    && on.as_ref().is_none_or(|on| on.sentinel.is_none())
+                    && (on.is_some() || answer_receipts)
+                {
+                    let debt: &[u8] = if on.is_none() && answer_receipts { b"answer" } else { b"" };
+                    crate::job_metadata::put_raw(&path.with_extension("owed"), debt)
+                        .map_err(|e| failure("keeping completion debt", e))?;
+                }
                 if let Some(dispatch) = &dispatch {
                     crate::run_stops::register(&registering, path, dispatch)?;
                 }
                 if let Some(registration) = registration {
-                    *registration.lock().expect("never poisoned") = Some(crate::on::Follower::reserved(
+                    *registration.lock() = Some(crate::on::Follower::reserved(
                         &registering,
                         path,
                         on.as_ref().is_some_and(|on| on.sentinel.is_some()),
@@ -176,7 +202,7 @@ impl Jobs {
             })?;
             starting.started(&launched.record);
             crate::job_watch::start(&registering, &launched.record, launched.supervisor.clone());
-            crate::run_facts::update_job(&registering, &launched.record, Vec::new())
+            crate::run_facts::update_job(&registering, &launched.record)
                 .map_err(|error| failure("updating call facts", error))?;
             Ok(launched)
         })
@@ -232,7 +258,7 @@ impl Jobs {
         };
         if let Some(acting) = &acting {
             node.settled_for(acting).await;
-            crate::here::check_named(node, acting, &request.script)?;
+            node.judged_afresh(acting, || crate::here::check_named(node, acting, &request.script)).await?;
         }
         // Words for a resident of another machine that works here come
         // from where it lives.
@@ -257,10 +283,7 @@ impl Jobs {
                 break;
             }
             tokio::select! {
-                change = changes.recv() => match change {
-                    Ok(_) | Err(broadcast::error::RecvError::Lagged(_)) => continue,
-                    Err(broadcast::error::RecvError::Closed) => unreachable!("the node holds the sender"),
-                },
+                () = changed_or(&mut changes, &launched.job, BACKSTOP) => continue,
                 () = came(&mut interrupted) => {
                     // Its end, as the stop records it, is what this call answers.
                     interrupted = None;
@@ -285,10 +308,13 @@ impl Jobs {
             // It ended without saying how; the record says so now.
             record = interrupt(&launched.record, "its supervisor ended without finishing the record").await?;
         }
+        if let Err(error) = crate::replicas::sync::repair(node).await {
+            node.log.line(format_args!("restoring replicas before returning a job: {error}"));
+        }
         let output = {
             let log = PathBuf::from(&record.output);
             let through = record.output_drained.filter(|_| record.end.is_none()).map(|drained| drained.stdout);
-            tokio::task::spawn_blocking(move || match through {
+            fastctx_platform::task::spawn_blocking(move || match through {
                 Some(bytes) => window::window_through(&log, bytes),
                 None => window::window(&log),
             })
@@ -301,7 +327,7 @@ impl Jobs {
             // resident who started it. It may have ended between the answer
             // and the marker, and then nobody else would tell.
             let path = launched.record.clone();
-            let now = tokio::task::spawn_blocking(move || crate::inbox::owe_job(&path))
+            let now = fastctx_platform::task::spawn_blocking(move || crate::inbox::owe_job(&path))
                 .await
                 .map_err(|error| Failure::new(format!("noting that the job's end is owed: {error}")))?
                 .map_err(|error| failure("noting that the job's end is owed", error))?;
@@ -312,34 +338,50 @@ impl Jobs {
                 }
             }
         }
-        // Beside its record, in whichever room the job went on (`run::launch`).
-        let visited = launched.record.parent().map(|jobs| visited(jobs, &launched.job)).unwrap_or_default();
+        // Where its `on`s went only adds to the answer, so the answer does
+        // not fail for want of it.
+        let path = launched.record.clone();
+        let visited = match fastctx_platform::task::spawn_blocking(move || crate::run_facts::visits(&path)).await {
+            Ok(Ok(visited)) => visited,
+            Ok(Err(error)) => {
+                node.log.line(format_args!("reading where job {} went: {error}", launched.job));
+                Vec::new()
+            }
+            Err(error) => {
+                node.log.line(format_args!("reading where job {} went: {error}", launched.job));
+                Vec::new()
+            }
+        };
         let state = state(&record);
         // Why it answered says something only of a job that still runs.
         let answered = answered.filter(|_| state == RunState::Running);
         let (receipt_node, receipt_path) = (node.clone(), launched.record.clone());
-        let consumed = tokio::task::spawn_blocking(move || crate::job_receipts::snapshot(&receipt_node, &receipt_path))
-            .await
-            .map_err(|error| Failure::new(format!("reading completion receipts: {error}")))?
-            .map_err(|error| failure("reading completion receipts", error))?;
-        if let Some(owner) = record.owner.resident().filter(|owner| node.is_me(&owner.machine)) {
-            let directory = node.world.conversation(&owner.resident);
-            crate::job_receipts::apply_consumed(&directory, &consumed)
-                .map_err(|error| failure("reading completion receipts", error))?;
-        }
+        let receipt_directory = record
+            .owner
+            .resident()
+            .filter(|owner| node.is_me(&owner.machine))
+            .map(|owner| node.world.conversation(&owner.resident));
+        let consumed = fastctx_platform::task::spawn_blocking(move || -> std::io::Result<_> {
+            let consumed = crate::job_receipts::snapshot(&receipt_node, &receipt_path)?;
+            if let Some(directory) = receipt_directory {
+                crate::job_receipts::apply_consumed(&directory, &consumed)?;
+            }
+            Ok(consumed)
+        })
+        .await
+        .map_err(|error| Failure::new(format!("reading completion receipts: {error}")))?
+        .map_err(|error| failure("reading completion receipts", error))?;
         let consumed = (!consumed.is_empty()).then(|| Box::new(consumed));
         // What it ran was refused something: on a Mac, the node looks
         // whether macOS keeps its user's private places from it, which the
         // command's own words cannot tell.
         let privacy = if cfg!(target_os = "macos") && refused_something(&output) {
-            tokio::task::spawn_blocking(fastctx_platform::privacy::refused_now).await.unwrap_or_default()
+            fastctx_platform::task::spawn_blocking(fastctx_platform::privacy::refused_now).await.unwrap_or_default()
         } else {
             Vec::new()
         };
-        let scratch = crate::scratch::jobs::locations(&launched.record, machine)
-            .map_err(|error| failure("reading scratch locations", error))?;
-        let mut reply = RunReply {
-            scratch,
+        let reply = RunReply {
+            scratch: Default::default(),
             run: None,
             machine: machine.clone(),
             job: launched.job,
@@ -351,20 +393,7 @@ impl Jobs {
             privacy,
             missing,
         };
-        if record.call_id.is_some() {
-            let mut facts = crate::run_facts::assemble(&reply, &launched.record)
-                .map_err(|error| failure("recording run facts", error))?;
-            if matches!(reply.state, RunState::Ended { .. }) && !facts.output.as_ref().is_some_and(|output| output.cut)
-            {
-                facts.output = None;
-            }
-            reply.run = Some(Box::new(facts));
-        }
-        if let Some(owner) = record.owner.resident() {
-            crate::run_receipts::remember(node, owner, &reply)
-                .map_err(|error| failure("remembering the run answer", error))?;
-        }
-        Ok((reply, record))
+        reply::finish(node, launched.record, record, reply).await
     }
 }
 
@@ -377,30 +406,37 @@ pub async fn forget(node: &Arc<Node>, town: Option<TownName>, owner: fastctx_typ
     let path = node.world.job_record(&node.names(), town.as_ref(), &owner.clone().into(), &job);
     let checked = {
         let path = path.clone();
-        tokio::task::spawn_blocking(move || -> std::io::Result<Option<JobRecord>> {
+        fastctx_platform::task::spawn_blocking(move || -> std::io::Result<Option<JobRecord>> {
             let record = record::read(&path)?;
             let finished = matches!(record.end, Some(Ended { how: EndedHow::Finished, .. }));
             Ok((record.owner == owner
                 && finished
                 && record.on.is_none()
-                && !path.with_extension("owed").try_exists()?)
+                && !crate::job_metadata::exists(&path.with_extension("owed"))?)
             .then_some(record))
         })
         .await
     };
     match checked {
         Ok(Ok(Some(record))) => {
-            let owner = record.owner.resident().expect("checked resident");
-            if let Err(error) = crate::retention::received(
-                node,
-                owner,
-                &fastctx_types::run::JobDelivery {
-                    job: record.id.clone(),
-                    output: record.output.clone(),
-                    at: Timestamp::now(),
-                    shown_whole: true,
-                },
-            ) {
+            let noting = node.clone();
+            let saved = fastctx_platform::task::spawn_blocking(move || {
+                let owner = record.owner.resident().expect("checked resident");
+                crate::retention::received(
+                    &noting,
+                    owner,
+                    &fastctx_types::run::JobDelivery {
+                        job: record.id.clone(),
+                        output: record.output.clone(),
+                        at: Timestamp::now(),
+                        shown_whole: true,
+                    },
+                )
+            })
+            .await
+            .map_err(|error| error.to_string())
+            .and_then(|result| result.map_err(|error| error.to_string()));
+            if let Err(error) = saved {
                 node.log.line(format_args!("recording job delivery: {error}"));
             }
         }
@@ -410,10 +446,9 @@ pub async fn forget(node: &Arc<Node>, town: Option<TownName>, owner: fastctx_typ
     }
 }
 
-/// How long collection, holding the disk's lock, waits for an ended job's
-/// supervisor to exit: it exits as soon as it has written the end, and one
-/// that has not by then is left for a later pass.
-const SUPERVISOR_EXIT: Duration = Duration::from_secs(5);
+/// Collection never waits for a supervisor while holding the shared disk gate.
+/// A process still exiting leaves its artifacts for the next maintenance round.
+const SUPERVISOR_EXIT: Duration = Duration::ZERO;
 
 /// Removes the files of the ended job whose record is at `path`; those of
 /// a job an `on` sent here include the package it came in and what was
@@ -435,14 +470,15 @@ pub(crate) fn remove(path: &Path) -> std::io::Result<()> {
     {
         return Err(std::io::Error::new(std::io::ErrorKind::WouldBlock, "its supervisor has not exited"));
     }
-    let delivered =
-        fastctx_install::renewal::read_json::<fastctx_types::run::JobDelivery>(&path.with_extension("delivered"))?
-            .map(|delivery| delivery.at)
-            .unwrap_or_else(Timestamp::now);
+    let delivered = crate::job_metadata::get::<fastctx_types::run::JobDelivery>(&path.with_extension("delivered"))?
+        .map(|delivery| delivery.at)
+        .unwrap_or_else(Timestamp::now);
     retain_scratch(path, delivered)?;
-    match std::fs::remove_dir_all(path.with_extension("writes")) {
-        Err(error) if error.kind() != std::io::ErrorKind::NotFound => return Err(error),
-        _ => {}
+    for extension in ["writes", "steps"] {
+        match fastctx_platform::disk::remove_dir_all(path.with_extension(extension)) {
+            Err(error) if error.kind() != std::io::ErrorKind::NotFound => return Err(error),
+            _ => {}
+        }
     }
     // The record goes last: a log without one would be found by nobody.
     let mut files = vec![
@@ -450,8 +486,12 @@ pub(crate) fn remove(path: &Path) -> std::io::Result<()> {
         path.with_extension("sh"),
         path.with_extension("wait-taken"),
         path.with_extension("facts-state"),
+        path.with_extension("facts-output"),
         path.with_extension("facts-pending"),
         path.with_extension("writes.jsonl"),
+        path.with_extension("writes-pending"),
+        path.with_extension("steps.jsonl"),
+        path.with_extension("steps-index"),
         record::lock_path(path),
         path.with_extension("on"),
         path.with_extension("scratch"),
@@ -468,9 +508,10 @@ pub(crate) fn remove(path: &Path) -> std::io::Result<()> {
             .map(|extension| path.with_extension(extension)),
     );
     files.extend(["copied", "wait-taken", "consumed", "exit-receipt"].map(|extension| path.with_extension(extension)));
+    crate::job_metadata::Job::of(path, &record)?.delete_all()?;
     files.push(path.to_path_buf());
     for file in files {
-        match std::fs::remove_file(&file) {
+        match fastctx_platform::disk::remove_file(&file) {
             Err(error) if error.kind() != std::io::ErrorKind::NotFound => return Err(error),
             _ => {}
         }
@@ -491,11 +532,11 @@ pub(crate) fn retain_scratch(path: &Path, delivered: Timestamp) -> std::io::Resu
     if !scratch.try_exists()? {
         return Ok(());
     }
-    if fastctx_platform::owned_directory::is_link(&std::fs::symlink_metadata(&scratch)?) {
+    if fastctx_platform::owned_directory::is_link(&fastctx_platform::disk::symlink_metadata(&scratch)?) {
         return Err(std::io::Error::other("job scratch is a filesystem link"));
     }
     if crate::retention::entries(&scratch)?.is_empty() {
-        return std::fs::remove_dir(scratch);
+        return fastctx_platform::disk::remove_dir(scratch);
     }
     match fastctx_platform::publish_new(
         &scratch.join(".delivered"),
@@ -609,7 +650,7 @@ async fn supervisor_gone(record: &JobRecord, launched: &run::Launched) -> bool {
     match identity {
         // A supervisor that cannot be checked is not taken for gone.
         Some(identity) => {
-            tokio::task::spawn_blocking(move || !is_alive(&identity).unwrap_or(true)).await.unwrap_or(false)
+            fastctx_platform::task::spawn_blocking(move || !is_alive(&identity).unwrap_or(true)).await.unwrap_or(false)
         }
         // The supervisor had already exited when it was started.
         None => true,
@@ -678,7 +719,7 @@ pub(crate) fn running_for(
     let owner = fastctx_types::run::JobOwner::Resident(owner.clone());
     let mut accounts = Vec::new();
     for jobs in directories {
-        let Ok(entries) = std::fs::read_dir(jobs) else { continue };
+        let Ok(entries) = fastctx_platform::disk::read_dir(jobs) else { continue };
         for path in entries.flatten().map(|entry| entry.path()) {
             if path.extension().is_none_or(|extension| extension != "json") {
                 continue;
@@ -707,30 +748,23 @@ fn short(command: &str) -> String {
     }
 }
 
-/// The machines a job's `on`s went to, as `on` noted them beside it.
-pub(crate) fn visited(jobs: &Path, job: &JobId) -> Vec<(fastctx_types::MachineName, JobId)> {
-    let Ok(text) = std::fs::read_to_string(jobs.join(format!("{job}.on"))) else { return Vec::new() };
-    text.lines()
-        .filter_map(|line| {
-            let (machine, job) = line.split_once(' ')?;
-            Some((fastctx_types::MachineName::try_from(machine).ok()?, JobId::try_from(job).ok()?))
-        })
-        .collect()
-}
-
 pub(crate) async fn read(path: &Path) -> Result<JobRecord, Failure> {
     let path = path.to_path_buf();
-    tokio::task::spawn_blocking(move || record::read(&path))
+    fastctx_platform::task::spawn_blocking(move || read_now(&path))
         .await
         .map_err(|error| Failure::new(format!("reading the job's record: {error}")))?
-        .map_err(|error| failure("reading the job's record", error))
+}
+
+/// `read`, on a thread that may block.
+pub(crate) fn read_now(path: &Path) -> Result<JobRecord, Failure> {
+    record::read(path).map_err(|error| failure("reading the job's record", error))
 }
 
 /// Records that a job ended without its supervisor, if the supervisor is
 /// indeed gone: its lock is free.
 pub(crate) async fn interrupt(path: &Path, reason: &str) -> Result<JobRecord, Failure> {
     let (path, reason) = (path.to_path_buf(), reason.to_string());
-    tokio::task::spawn_blocking(move || interrupt_now(&path, &reason))
+    fastctx_platform::task::spawn_blocking(move || interrupt_now(&path, &reason))
         .await
         .map_err(|error| Failure::new(format!("recording the interruption: {error}")))?
         .map_err(|error| failure("recording the interruption", error))
@@ -788,7 +822,7 @@ pub fn reconcile(world: &WorldDir) -> std::io::Result<Reconciled> {
 }
 
 fn read_dir(path: &Path) -> std::io::Result<Vec<PathBuf>> {
-    match std::fs::read_dir(path) {
+    match fastctx_platform::disk::read_dir(path) {
         Ok(entries) => entries.map(|entry| entry.map(|entry| entry.path())).collect(),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(Vec::new()),
         Err(error) => Err(error),

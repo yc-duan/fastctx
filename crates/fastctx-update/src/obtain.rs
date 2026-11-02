@@ -82,12 +82,20 @@ pub(crate) async fn run(
         *github_total.lock().expect("never poisoned") = total;
         shown.lock().expect("never poisoned").tell(Via::Github, received, total);
     };
-    // The network's source asks each hub that keeps versions in turn.
+    // The network's source asks each hub that keeps versions in turn. It
+    // failed for want of the line alone when every hub's line was down, or
+    // dropped while the package came (`SourceFailure::unconnected`).
     let hub = async {
         let mut failures = Vec::new();
+        let mut unconnected = true;
         for link in &request.links {
+            let line = || match link.status() {
+                fastctx_net::link::Status::Online { since, .. } => Some(since),
+                _ => None,
+            };
+            let before = line();
             let result = async {
-                if !matches!(link.status(), fastctx_net::link::Status::Online { .. }) {
+                if before.is_none() {
                     return Err(Problem::from("not connected to the hub"));
                 }
                 hub_heard(0, package.size);
@@ -98,16 +106,18 @@ pub(crate) async fn run(
             match result {
                 Ok(()) => return Ok(()),
                 Err(why) => {
+                    unconnected &= before.is_none() || line() != before;
                     log(format!("bringing {target} of {version} through {}: {why}", link.hub_name()));
                     failures.push(Problem::new(why.reason, format!("{}: {}", link.hub_name(), why.why)));
                     match tokio::fs::remove_file(hub_file).await {
                         Ok(()) => {}
                         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-                        Err(error) => return Err(Problem::new(FailureReason::Disk, error.to_string())),
+                        Err(error) => return Err((Problem::new(FailureReason::Disk, error.to_string()), false)),
                     }
                 }
             }
         }
+        let unconnected = unconnected && !failures.is_empty();
         let reason = if failures.iter().any(|problem| problem.reason == FailureReason::Signature) {
             FailureReason::Signature
         } else if failures.iter().any(|problem| problem.reason == FailureReason::Disk) {
@@ -115,7 +125,8 @@ pub(crate) async fn run(
         } else {
             FailureReason::Other
         };
-        Err(Problem::new(reason, failures.iter().map(|problem| problem.why.as_str()).collect::<Vec<_>>().join("; ")))
+        let why = failures.iter().map(|problem| problem.why.as_str()).collect::<Vec<_>>().join("; ");
+        Err((Problem::new(reason, why), unconnected))
     };
     let local_source = local.clone();
     let github = async {
@@ -160,12 +171,16 @@ pub(crate) async fn run(
         tokio::select! {
             result = &mut hub, if hub_going => {
                 hub_going = false;
-                match result.and_then(|()| cache.keep(version, target, hub_file).map_err(|e| Problem::new(FailureReason::Disk, e))) {
+                let (result, unconnected) = match result {
+                    Ok(()) => (cache.keep(version, target, hub_file).map_err(|e| Problem::new(FailureReason::Disk, e)), false),
+                    Err((why, unconnected)) => (Err(why), unconnected),
+                };
+                match result {
                     Ok(path) => return Ok(Brought { path, github_speed: None, github_at: None }),
                     Err(why) => {
                         log(format!("bringing {target} of {version} from the network: {why}"));
                         shown.lock().expect("never poisoned").failed(Via::Network, why.clone());
-                        failures.push((Via::Network, why));
+                        failures.push((Via::Network, why, unconnected));
                     }
                 }
             }
@@ -176,27 +191,36 @@ pub(crate) async fn run(
                     Err(why) => {
                         log(format!("bringing {target} of {version} from the local source: {why}"));
                         shown.lock().expect("never poisoned").failed(Via::Github, why.clone());
-                        failures.push((Via::Github, why));
+                        failures.push((Via::Github, why, false));
                     }
                 }
             }
             _ = tick.tick() => {}
-            () = &mut deadline => return Err(Problem::new(FailureReason::Sources { sources: failures.iter().map(|(via,p)| SourceFailure { via: *via, why: p.why.clone() }).collect() }, format!("bringing {target} of {version} took more than 45 minutes"))),
+            () = &mut deadline => return Err(Problem::new(FailureReason::Sources { sources: sources(&failures) }, format!("bringing {target} of {version} took more than 45 minutes"))),
         }
         if !hub_going && !github_going && (hub_tried || request.links.is_empty()) {
-            let reason = if failures.iter().any(|(_, p)| p.reason == FailureReason::Signature) {
+            let reason = if failures.iter().any(|(_, p, _)| p.reason == FailureReason::Signature) {
                 FailureReason::Signature
-            } else if failures.iter().any(|(_, p)| p.reason == FailureReason::Disk) {
+            } else if failures.iter().any(|(_, p, _)| p.reason == FailureReason::Disk) {
                 FailureReason::Disk
             } else {
-                FailureReason::Sources {
-                    sources: failures.iter().map(|(via, p)| SourceFailure { via: *via, why: p.why.clone() }).collect(),
-                }
+                FailureReason::Sources { sources: sources(&failures) }
             };
-            let why = failures.iter().map(|(via, p)| format!("{via:?}: {}", p.why)).collect::<Vec<_>>().join("; ");
+            let why = failures.iter().map(|(via, p, _)| format!("{via:?}: {}", p.why)).collect::<Vec<_>>().join("; ");
             return Err(Problem::new(reason, why));
         }
     }
+}
+
+fn sources(failures: &[(Via, Problem, bool)]) -> Vec<SourceFailure> {
+    failures
+        .iter()
+        .map(|(via, problem, unconnected)| SourceFailure {
+            via: *via,
+            why: problem.why.clone(),
+            unconnected: *unconnected,
+        })
+        .collect()
 }
 
 /// `verify::file` on a blocking thread: reading a whole package to check

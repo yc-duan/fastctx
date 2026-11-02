@@ -9,8 +9,8 @@ use fastctx_types::turn_evidence::Compacted;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
-#[derive(Serialize, Deserialize)]
-struct Attempt {
+#[derive(Clone, Serialize, Deserialize)]
+pub(crate) struct Attempt {
     #[serde(default)]
     retained: bool,
     #[serde(default)]
@@ -18,14 +18,18 @@ struct Attempt {
     outcome: Option<Compacted>,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct Boundary {
     session: String,
     turn: String,
 }
 
-pub(super) fn started(node: &Node, id: &ResidentId, work: &Work) -> Result<bool, Failure> {
-    path(node, id, work).try_exists().map_err(failure)
+pub(super) async fn started(node: &Node, id: &ResidentId, work: &Work) -> Result<bool, Failure> {
+    let path = path(node, id, work);
+    tokio::task::spawn_blocking(move || crate::records::metadata::exists(&path))
+        .await
+        .map_err(failure)?
+        .map_err(failure)
 }
 
 fn path(node: &Node, id: &ResidentId, work: &Work) -> std::path::PathBuf {
@@ -34,7 +38,11 @@ fn path(node: &Node, id: &ResidentId, work: &Work) -> std::path::PathBuf {
 
 pub(super) async fn run(node: &Arc<Node>, id: &ResidentId, work: &Work) -> Result<Compacted, Failure> {
     let path = path(node, id, work);
-    let prior = fastctx_hosts::claude::control::read::<Attempt>(&path).map_err(failure)?;
+    let reading = path.clone();
+    let prior = tokio::task::spawn_blocking(move || crate::records::metadata::get::<Attempt>(&reading))
+        .await
+        .map_err(failure)?
+        .map_err(failure)?;
     let fresh = prior.is_none();
     if fresh {
         let action = crate::control_queue::gate(node, id);
@@ -66,8 +74,7 @@ pub(super) async fn run(node: &Arc<Node>, id: &ResidentId, work: &Work) -> Resul
                 None
             };
             let attempt = Attempt { retained: about.host.agent.as_str() == "claude", codex, outcome };
-            fastctx_hosts::claude::control::write(&path, &attempt).map_err(failure)?;
-            attempt
+            save(&path, &attempt).await?
         }
     };
     if attempt.outcome.is_none() {
@@ -85,7 +92,7 @@ pub(super) async fn run(node: &Arc<Node>, id: &ResidentId, work: &Work) -> Resul
             Compacted::Failed { reason: "The interrupted compaction has no recoverable host evidence.".into() }
         };
         attempt.outcome = Some(outcome);
-        fastctx_hosts::claude::control::write(&path, &attempt).map_err(failure)?;
+        attempt = save(&path, &attempt).await?;
     }
     if attempt.retained {
         crate::claude::goal_compaction::release(node, id, work.id.as_str()).await?;
@@ -100,4 +107,25 @@ async fn completed(node: &Arc<Node>, id: &ResidentId, boundary: &Boundary) -> Re
     }
     let host = node.codex.of(node, &about)?;
     host.compacted_after(&boundary.session, &boundary.turn).await.map_err(Failure::new)
+}
+
+async fn save(path: &std::path::Path, attempt: &Attempt) -> Result<Attempt, Failure> {
+    let (path, mut attempt) = (path.to_path_buf(), attempt.clone());
+    let bytes = serde_json::to_vec(&attempt).map_err(failure)?.len();
+    tokio::task::spawn_blocking(move || {
+        crate::records::metadata::change(&path, bytes, move |rows, family| {
+            if let Some(prior) = rows.get::<Attempt>(family, "value")? {
+                if prior.codex != attempt.codex {
+                    return Err(fastctx_storage::Error::new("goal compaction boundary changed"));
+                }
+                attempt.retained |= prior.retained;
+                attempt.outcome = prior.outcome.or(attempt.outcome);
+            }
+            rows.put(family, "value", &attempt)?;
+            Ok(attempt)
+        })
+    })
+    .await
+    .map_err(failure)?
+    .map_err(failure)
 }

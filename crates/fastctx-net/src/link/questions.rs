@@ -79,9 +79,12 @@ impl Questions {
         let _ = question.answer.send(answer);
     }
 
-    pub(super) fn part(&self, generation: u64, id: u64, index: u32, total: u32, text: String) {
+    /// Keeps one part of an answer; the whole answer, once its last part
+    /// came, is handed back to be decoded where blocking is allowed: it can
+    /// be many megabytes, and the lines' thread only reads and routes.
+    pub(super) fn part(&self, generation: u64, id: u64, index: u32, total: u32, text: String) -> Option<Decode> {
         let mut pending = self.pending.lock().expect("never poisoned");
-        let Some(question) = pending.get(&id).filter(|question| question.generation == generation) else { return };
+        let question = pending.get(&id).filter(|question| question.generation == generation)?;
         let full = question.parts.is_none()
             && pending
                 .values()
@@ -95,18 +98,33 @@ impl Questions {
             question.push(index, total, &text)
         };
         if matches!(result, Ok(false)) {
-            return;
+            return None;
         }
         let question = pending.remove(&id).expect("present");
         drop(pending);
-        // Decode outside the register lock. The buffer keeps its reservation
+        // Decoded outside the register lock. The buffer keeps its reservation
         // until decoding ends, and no partial answer remains in the register.
-        let answer = result.and_then(|_| {
-            let parts = question.parts.expect("a completed answer has parts");
+        Some(Decode {
+            answer: question.answer,
+            parts: result.map(|_| question.parts.expect("a completed answer has parts")),
+        })
+    }
+}
+
+/// A whole answer that came in parts, to be decoded and handed to whoever
+/// asked.
+pub(super) struct Decode {
+    answer: oneshot::Sender<Answer>,
+    parts: Result<Parts, String>,
+}
+
+impl Decode {
+    pub(super) fn run(self) {
+        let answer = self.parts.and_then(|parts| {
             serde_json::from_slice::<Answer>(&parts.text)
                 .unwrap_or_else(|error| Err(format!("the hub's answer cannot be read: {error}")))
         });
-        let _ = question.answer.send(answer);
+        let _ = self.answer.send(answer);
     }
 }
 

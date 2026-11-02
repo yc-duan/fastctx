@@ -62,6 +62,7 @@ A colleague is not a subagent inside this conversation. It lives in the World, k
 - What you ask is its goal: it keeps going on its own until it is done or cannot go on. Then its report comes back to you by itself, and so does its reply each time you message it. If this session has ended by then, it is brought back to hear it. Do not wait or poll for it.
 - Its questions come to you while it goes on with the choice that holds up best; answer with message_colleague.
 - `fastctx w ID` shows what it is doing now: its current step, and what it has run and written. With its id in your plan, the plan shows it too.
+- It keeps a plan of its own, the map of its part: `fastctx plan ID` shows it.
 - message_colleague tells it more while it works, or gives it the next part when it is done. `fastctx stop ID` stops its turn."#;
 
 pub const MESSAGE_DESCRIPTION: &str = r#"Send a message to a colleague: one you started, or any other that `fastctx w` shows, including one that is idle or asleep.
@@ -70,7 +71,8 @@ pub const MESSAGE_DESCRIPTION: &str = r#"Send a message to a colleague: one you 
 - A colleague on a machine that is offline gets it when the machine is back."#;
 
 pub const COLLEAGUE_RULES: &str = r#"You work for the agent that asked you. What it asks is your goal, and the goal is on: keep going
-on your own until it is done or you truly cannot go on. `fastctx plan` shows its plan.
+on your own until it is done or you truly cannot go on. `fastctx plan` with its id shows its plan,
+and it reads yours the same way.
 - Questions for it go to it while you go on: take the choice that holds up best, say which and
   why, and keep working; its answer comes to you later.
 - If the shape you were given does not hold, say so with evidence: a counterexample, an experiment,
@@ -80,8 +82,7 @@ on your own until it is done or you truly cannot go on. `fastctx plan` shows its
   you did and what failed, why the part now holds (facts, paths, experiments), what you are unsure
   of, what else you touched and why, and what the whole should know.
 - If you cannot go on, mark it: `fastctx goal blocked --file <draft>`, saying what blocks you, what
-  you tried and what would clear it.
-- The project's journals and specs are for you to read, not to write."#;
+  you tried and what would clear it."#;
 
 /// What the asker is told of a colleague it started: where it lives, when
 /// that is not where the asker does.

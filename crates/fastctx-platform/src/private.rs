@@ -26,9 +26,13 @@ pub fn ensure_user_only_dir(path: &Path) -> io::Result<()> {
 pub fn ensure_administrator_handoff_dir(path: &Path) -> io::Result<()> {
     std::fs::create_dir_all(path)?;
     #[cfg(windows)]
-    { imp::make_administrator_handoff(path) }
+    {
+        imp::make_administrator_handoff(path)
+    }
     #[cfg(not(windows))]
-    { imp::make_private(path) }
+    {
+        imp::make_private(path)
+    }
 }
 
 #[cfg(unix)]
@@ -57,7 +61,6 @@ mod imp {
 #[cfg(windows)]
 mod imp {
     use std::io;
-    use std::os::windows::ffi::OsStrExt as _;
     use std::os::windows::fs::MetadataExt as _;
     use std::path::Path;
 
@@ -87,7 +90,7 @@ mod imp {
     }
 
     fn apply(path: &Path, access: &OwnerOnly, owner: bool) -> io::Result<()> {
-        let name: Vec<u16> = path.as_os_str().encode_wide().chain([0]).collect();
+        let name = crate::win32_path::wide(path)?;
         // SAFETY: a NUL-terminated path and a valid descriptor.
         let applied = unsafe {
             SetFileSecurityW(

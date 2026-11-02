@@ -27,5 +27,10 @@ tokio = "1"
 [profile.dev.package.sha2]
 opt-level = 3
 
+# Unoptimized SQLite is several times slower, so a debug build's storage would
+# miss the writer's two-millisecond budget that the record drill holds it to.
+[profile.dev.package.libsqlite3-sys]
+opt-level = 3
+
 [profile.release]
 debug = "line-tables-only"

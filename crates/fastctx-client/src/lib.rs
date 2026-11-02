@@ -30,6 +30,7 @@ mod file_search;
 mod frozen_lines;
 mod frozen_output;
 pub mod goals;
+pub mod history;
 pub mod host;
 mod layers;
 mod line_rows;
@@ -375,7 +376,8 @@ impl Client {
             | NodeFrame::On { .. }
             | NodeFrame::ToolsChanged { .. }
             | NodeFrame::Features { .. }
-            | NodeFrame::World { .. } => Err(broken("the node answered a call as a stream".to_string())),
+            | NodeFrame::World { .. }
+            | NodeFrame::WorldChanged { .. } => Err(broken("the node answered a call as a stream".to_string())),
             NodeFrame::FileRead { .. } => Err(broken("use read_file to consume a file byte stream".to_string())),
             NodeFrame::LinesRead { .. } => Err(broken("use World.lines to consume logical rows".to_string())),
         }
@@ -440,6 +442,19 @@ impl Client {
         let id = self.next;
         self.connection
             .send(&to_json(&ClientFrame::Call { id, call: Call::WatchWorld }))
+            .await
+            .map_err(CallError::Broken)?;
+        Ok((self, id))
+    }
+
+    pub(crate) async fn watch_history(
+        mut self,
+        scope: fastctx_types::history::Scope,
+    ) -> Result<(Client, u64), CallError> {
+        self.next += 1;
+        let id = self.next;
+        self.connection
+            .send(&to_json(&ClientFrame::Call { id, call: Call::WatchHistory { scope } }))
             .await
             .map_err(CallError::Broken)?;
         Ok((self, id))

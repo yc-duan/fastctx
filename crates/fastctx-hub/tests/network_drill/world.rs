@@ -25,6 +25,15 @@ use crate::proxy::Line;
 /// The administrator's password on every hub of the drill.
 pub const PASSWORD: &str = "Lab-Password-7-quiet-river";
 
+/// What each hub of this release last told of the threads' rules it broke
+/// before it was stopped, by its directory: a hub breaks none.
+static VIOLATED: Mutex<Vec<(PathBuf, serde_json::Value)>> = Mutex::new(Vec::new());
+
+/// The violations told since this was last asked.
+pub fn violated() -> Vec<(PathBuf, serde_json::Value)> {
+    std::mem::take(&mut *VIOLATED.lock().expect("never poisoned"))
+}
+
 /// Which program serves the hub.
 #[derive(Clone)]
 pub enum Program {
@@ -122,8 +131,19 @@ impl Hub {
         self.child.lock().expect("never poisoned").as_ref().map(Child::id)
     }
 
-    /// Kills it where it stands, as a power cut does.
+    /// Kills it where it stands, as a power cut does, keeping what it last
+    /// told of the threads' rules it broke.
     pub fn kill(&self) -> anyhow::Result<()> {
+        if self.serves_this()
+            && let Some(health) = self.health()
+            && health["violations"].as_u64().is_some_and(|count| count > 0)
+        {
+            let mut violated = VIOLATED.lock().expect("never poisoned");
+            let told = (self.dir.clone(), health["violated"].clone());
+            if !violated.contains(&told) {
+                violated.push(told);
+            }
+        }
         crate::process::stop(&mut self.child.lock().expect("never poisoned"))
     }
 
@@ -142,6 +162,25 @@ impl Hub {
         *self.program.lock().expect("never poisoned") = Program::This;
         self.restarts.fetch_add(1, Ordering::SeqCst);
         self.start()
+    }
+
+    /// The earlier release serving it, while one does.
+    pub fn earlier_program(&self) -> Option<PathBuf> {
+        match &*self.program.lock().expect("never poisoned") {
+            Program::Earlier(program) => Some(program.clone()),
+            Program::This => None,
+        }
+    }
+
+    /// Stops it, lets the earlier release `program` try to serve its
+    /// directory, and serves it again as before; says how that try ended.
+    pub fn tried_by(&self, program: &Path) -> anyhow::Result<Said> {
+        self.kill()?;
+        let mut command = earlier(program, &self.home);
+        command.args(["hub", "serve", "--dir"]).arg(&self.dir);
+        let said = crate::process::run(command, None, Duration::from_secs(30));
+        self.start()?;
+        said
     }
 
     /// Whether this release's hub serves it now.

@@ -42,12 +42,15 @@ pub(crate) async fn for_session(
         .resident_of_thread(session)
         .ok_or_else(|| Failure::new("the Claude session has not been paired"))?;
     node.residents.active(&id)?;
-    let (about, _) = node.residents.about(&id).ok_or_else(|| Failure::new("unknown conversation"))?;
+    let (about, town) = node.residents.about(&id).ok_or_else(|| Failure::new("unknown conversation"))?;
     if about.host.agent.as_str() != "claude" {
         return Err(Failure::refused("this is not a Claude session"));
     }
-    crate::plan::context(node, &id, &about.origin, &about.acting).await?;
+    crate::plan::context(node, &id, &about.acting).await?;
     crate::context::sources::skills(node, &id, &about.acting).await?;
+    if let Err(error) = crate::history::context::refresh(node, &id, town.as_ref(), &about.origin, &about.acting).await {
+        node.log.line(format_args!("refreshing the history context of {id}: {error}"));
+    }
     let bodies: BTreeMap<_, _> = node
         .context_bodies
         .0

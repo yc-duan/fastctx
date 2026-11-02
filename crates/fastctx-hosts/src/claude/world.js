@@ -1046,7 +1046,7 @@ async function contextBlocks($, context, fresh) {
   const pointer = JSON.parse(await $.fs.read(context.dir + '/context.json'))
   const state = JSON.parse(await $.fs.read(pointer.state))
   const entries = (await $.fs.list(pointer.directory)).filter((entry) => /^[a-z0-9-]{1,32}\.json$/.test(entry.name))
-  const order = ['user.json', 'project.json', 'focus.json', 'plan.json', 'goal.json', 'map.json']
+  const order = ['user.json', 'project.json', 'focus.json', 'plan.json', 'goal.json', 'history.json']
   const rank = (entry) => order.includes(entry.name) ? order.indexOf(entry.name) : order.length
   entries.sort((a, b) => rank(a) - rank(b) || a.name.localeCompare(b.name))
   const read = []
