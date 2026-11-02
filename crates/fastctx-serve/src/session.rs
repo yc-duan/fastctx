@@ -399,11 +399,12 @@ impl Session {
         }
         .await;
         let mut answer = match reply {
-            Ok(Reply::Asked { colleague }) => Answer {
+            Ok(Reply::Asked { colleague, waiting }) => Answer {
                 facts: None,
                 content: vec![Content::Text(fastctx_types::collab_prompt::started(
                     &colleague.resident,
                     (whereabouts.machine.as_ref() != Some(&colleague.machine)).then_some(&colleague.machine),
+                    waiting,
                 ))],
                 is_error: false,
                 receipt: None,

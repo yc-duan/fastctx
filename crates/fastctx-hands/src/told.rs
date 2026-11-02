@@ -95,6 +95,16 @@ pub fn told(notice: &Notice, here: Option<&MachineName>) -> String {
         Notice::Words { text, goal_report: Some(_), .. } | Notice::Words { text, goal_question: Some(_), .. } => {
             text.clone()
         }
+        Notice::Words { text, told: Some(told), .. } => {
+            let files: String =
+                told.attachments.iter().map(|file| format!("\n- {} on {}", file.path, file.machine)).collect();
+            let files = if files.is_empty() { files } else { format!("\nFiles with it:{files}") };
+            format!(
+                "=== from colleague {} ===\n{text}{files}\n=== what it is doing: fastctx w {} ===",
+                named(&told.colleague, here),
+                told.colleague.resident
+            )
+        }
         Notice::Words { from, text, .. } => words(from, text, here),
         Notice::Attached { message, text } => message.render(text),
         Notice::World { text, .. } => words(&Speaker::World, text, here),

@@ -55,6 +55,7 @@ pub fn admit(
                 from: Speaker::Resident { address },
                 goal_report: Some(report),
                 goal_question: None,
+                told: None,
                 ..
             } if *address == report.colleague
                 && sender(&address.machine)

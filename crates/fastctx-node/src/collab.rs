@@ -181,6 +181,7 @@ fn choices_now(
                 account: Some(item.label.clone()),
                 use_when: callee.use_when.clone(),
                 lives_on: hands.then(|| node.written(&item.link, &callee.login.machine).to_string()),
+                at_once: fastctx_types::collab::AtOnce::most(callee.at_once),
             });
             candidates.push(Candidate {
                 shown,
@@ -224,6 +225,7 @@ fn own(node: &Node, login: &Caller) -> Result<Option<Choices>, Failure> {
             account: None,
             use_when: callee.use_when.clone(),
             lives_on: Some(here.to_string()),
+            at_once: fastctx_types::collab::AtOnce::most(callee.at_once),
         });
         candidates.push(Candidate {
             shown: callee.name.clone(),

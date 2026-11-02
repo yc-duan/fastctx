@@ -289,11 +289,17 @@ fn ask_colleague_definition(collab: &fastctx_types::collab::Offered) -> Value {
             None => "It is another account's agent assisting the user: it runs its scripts on the user's machines, each one `on MACHINE`, as you do.".to_string(),
         };
         let account = callee.account.as_ref().map(|account| format!("It works for account {account}. ")).unwrap_or_default();
-        format!("{}: {}\n{account}{lives}", callee.name, callee.use_when)
+        let most = callee.at_once.map(|most| format!(" It works on at most {most} at once.")).unwrap_or_default();
+        format!("{}: {}\n{account}{lives}{most}", callee.name, callee.use_when)
     }).collect::<Vec<_>>().join("\n\n");
+    let limits = if collab.callees.iter().any(|callee| callee.at_once.is_some()) {
+        format!("\n{}", fastctx_types::collab_prompt::ASK_LIMITS)
+    } else {
+        String::new()
+    };
     let mut tool = json!({
         "name": "ask_colleague",
-        "description": format!("{}\n\n{lives}\n\n{}", fastctx_types::collab_prompt::ASK_DESCRIPTION, collab.prompt),
+        "description": format!("{}{limits}\n\n{lives}\n\n{}", fastctx_types::collab_prompt::ASK_DESCRIPTION, collab.prompt),
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -328,7 +334,8 @@ fn ask_colleague_definition(collab: &fastctx_types::collab::Offered) -> Value {
 fn message_colleague_definition() -> Value {
     json!({
         "name": "message_colleague",
-        "description": fastctx_types::collab_prompt::MESSAGE_DESCRIPTION,
+        // Goals are not offered in a release yet (`fastctx_platform::preview`).
+        "description": fastctx_types::collab_prompt::message_description(fastctx_platform::preview()),
         "inputSchema": {
             "type": "object",
             "properties": {

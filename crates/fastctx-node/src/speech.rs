@@ -83,9 +83,13 @@ pub(crate) async fn tell_at(
     let letter = match notice {
         // Words a resident said make it owed the turn they go into, which
         // the receiving machine knows from who sent them.
-        Notice::Words { from: Speaker::Resident { address }, text, goal_report: None, goal_question: None }
-            if node.is_me(&address.machine) && matches!(owed, Owed::Speaker(_)) =>
-        {
+        Notice::Words {
+            from: Speaker::Resident { address },
+            text,
+            goal_report: None,
+            goal_question: None,
+            told: None,
+        } if node.is_me(&address.machine) && matches!(owed, Owed::Speaker(_)) => {
             Letter::Speak { to: to.resident.clone(), from: address.resident, text, accounts: Vec::new() }
         }
         notice => Letter::Notice { to: to.resident.clone(), notice: Box::new(notice) },
@@ -120,7 +124,7 @@ async fn tell_here_now(node: &Arc<Node>, to: &ResidentId, delivery: Delivery, ow
     // anything else asked. What comes of work waits as long as it takes.
     let _reading = if matches!(
         delivery.notice,
-        Notice::Words { goal_report: None, goal_question: None, .. } | Notice::Attached { .. }
+        Notice::Words { goal_report: None, goal_question: None, told: None, .. } | Notice::Attached { .. }
     ) {
         if node.residents.is_deleting(to) {
             return Err(Failure::new(format!("{to} is being deleted")));
@@ -189,7 +193,7 @@ async fn receive_here_locked(
     if !removed
         || matches!(
             delivery.notice,
-            Notice::Words { goal_report: None, goal_question: None, .. } | Notice::Attached { .. }
+            Notice::Words { goal_report: None, goal_question: None, told: None, .. } | Notice::Attached { .. }
         )
     {
         node.residents.active(to)?;

@@ -193,6 +193,7 @@ async fn execute(node: &Arc<Node>, store: &Arc<Store>, timer: &Timer) -> Result<
                     text: words::firing(&timer, text),
                     goal_report: None,
                     goal_question: None,
+                    told: None,
                 },
             };
             if let Err(error) =

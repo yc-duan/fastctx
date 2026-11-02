@@ -7,6 +7,7 @@ What the "model" does is said in the latest user input, by markers:
     [[run: COMMAND]]   call the World's `run` tool with COMMAND, then answer once its output comes
     [[later: COMMAND]] the same, asking the World to wait only a second: the command goes on, and its
                        end comes back later as a notice of its own
+    [[tell: TEXT]]     call the World's `message_user` with TEXT, then answer
     [[slow: SECONDS]]  wait that long before answering
     [[hang]]           never answer: the stream opens and nothing comes on it
     [[fail]]           answer with an HTTP 500
@@ -26,7 +27,7 @@ import time
 import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-MARKER = re.compile(r"\[\[(run|later|slow|hang|fail)(?::\s*(.*?))?\]\]", re.S)
+MARKER = re.compile(r"\[\[(run|later|slow|hang|fail|tell)(?::\s*(.*?))?\]\]", re.S)
 
 
 class Quiet(ThreadingHTTPServer):
@@ -114,12 +115,15 @@ class Mock:
         if kind == "slow":
             time.sleep(float(argument or "5"))
             return stream(handler, [message("ok")])
-        tool = run_tool(request.get("tools") or [])
+        wanted = "message_user" if kind == "tell" else "run"
+        tool = world_tool(request.get("tools") or [], wanted)
         if tool is None:
-            return stream(handler, [message("no run tool was offered")])
+            return stream(handler, [message(f"no {wanted} tool was offered")])
         namespace, name = tool
+        arguments = ({"message": argument, "status": "info"} if kind == "tell"
+                     else {"command": argument, "wait": 1 if kind == "later" else 600})
         call = {"type": "function_call", "call_id": f"call_{uuid.uuid4().hex[:12]}", "name": name,
-                "arguments": json.dumps({"command": argument, "wait": 1 if kind == "later" else 600})}
+                "arguments": json.dumps(arguments)}
         if namespace:
             call["namespace"] = namespace
         return stream(handler, [call])
@@ -137,18 +141,18 @@ def last_user_text(items):
     return ""
 
 
-def run_tool(tools):
-    """The World's `run` tool as this request offers it: its namespace, when it is in one, and its name."""
+def world_tool(tools, wanted):
+    """The World's tool `wanted` as this request offers it: its namespace, when it is in one, and its name."""
     for tool in tools:
         if not isinstance(tool, dict):
             continue
         if tool.get("type") == "namespace":
             for inner in tool.get("tools") or []:
-                if isinstance(inner, dict) and inner.get("name") == "run":
-                    return tool.get("name"), "run"
+                if isinstance(inner, dict) and inner.get("name") == wanted:
+                    return tool.get("name"), wanted
             continue
         name = tool.get("name") or (tool.get("function") or {}).get("name") or ""
-        if name == "run" or name.endswith("__run"):
+        if name == wanted or name.endswith("__" + wanted):
             return None, name
     return None
 

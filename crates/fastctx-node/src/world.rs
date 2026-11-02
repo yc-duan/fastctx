@@ -889,7 +889,7 @@ impl fastctx_net::link::Node for Handler {
                 RemoteCall::Ask { asker: resident, requester_turn, town, label, prompt, started } => {
                     let acting = Acting::one(hub.clone(), caller.account.clone());
                     let asker = Address { machine: from, resident };
-                    let colleague = crate::colleagues::ask_here(
+                    let (colleague, waiting) = crate::colleagues::ask_here(
                         &node,
                         crate::colleagues::Requester { address: asker, turn: requester_turn },
                         acting,
@@ -899,7 +899,7 @@ impl fastctx_net::link::Node for Handler {
                         started,
                     )
                     .await?;
-                    Ok(RemoteReply::Asked { colleague })
+                    Ok(RemoteReply::Asked { colleague, waiting })
                 }
                 RemoteCall::Talk { to, text, attachments, files_on, id } => {
                     crate::talk::talk_here(&node, &from, &to, text, attachments, files_on.as_ref(), id.as_deref())
@@ -1357,15 +1357,7 @@ impl fastctx_net::link::Node for Handler {
                             .await
                             .map_err(io::Error::other)??;
                         }
-                        // A colleague's question, a sentinel's finding and a goal's
-                        // report are owed no answer.
-                        let owed = if notice.is_question()
-                            || matches!(&notice, Notice::Sentinel { .. } | Notice::Words { goal_report: Some(_), .. })
-                        {
-                            Owed::Nobody
-                        } else {
-                            Owed::Working
-                        };
+                        let owed = if notice.owes_no_answer() { Owed::Nobody } else { Owed::Working };
                         let delivery = Delivery { id: delivery_id, at: Timestamp::now(), notice };
                         if crate::on_delivery::park_from(&node, &to, &delivery, Some(&identity))? {
                             return Ok(Ok(()));
@@ -1381,6 +1373,7 @@ impl fastctx_net::link::Node for Handler {
                             text,
                             goal_report: None,
                             goal_question: None,
+                            told: None,
                         };
                         let delivery = Delivery { id: delivery_id, at: Timestamp::now(), notice };
                         crate::received::keep(&node, &to, delivery, Owed::Speaker(address))?;

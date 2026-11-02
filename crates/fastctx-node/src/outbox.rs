@@ -123,13 +123,7 @@ fn pay_once<'a>(
                 _ => None,
             };
             // Telling can lead back here, as a reader's turn ends at once.
-            let owed = if answer.delivery.notice.is_question()
-                || matches!(&answer.delivery.notice, Notice::Words { goal_report: Some(_), .. })
-            {
-                Owed::Nobody
-            } else {
-                Owed::Working
-            };
+            let owed = if answer.delivery.notice.owes_no_answer() { Owed::Nobody } else { Owed::Working };
             let account = answer
                 .delivery
                 .notice

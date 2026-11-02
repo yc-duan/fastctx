@@ -20,7 +20,7 @@ import { escape } from "../conversation/prose";
 import type { Login } from "../world/accounts";
 import { loginsOf } from "../world/accounts";
 import type { AgentFacts, AgentModel, WorldAgents } from "../world/agents";
-import { readCollab, sameAgentLogin, writeCollab, type AgentLogin, type Collab, type CollabView } from "../world/collab";
+import { AT_ONCE_DEFAULT, readCollab, sameAgentLogin, writeCollab, type AgentLogin, type Collab, type CollabView } from "../world/collab";
 import { agentName, titleOf } from "../world/names";
 import { accountOf, homeChoice, homeLabel, homesOf, listed, usableHome, type HomeWords } from "./agent-homes";
 import type { FeaturesWords } from "./features-words";
@@ -44,6 +44,9 @@ import type { Built, Shape } from "../film/reel";
  *  only as `collab.rs` lets it. */
 const COLLABORATION_READY = true;
 import { watchFilm } from "../film/theater";
+
+/** The limits a callee's slider steps through, before no limit. */
+const AT_ONCE_STEPS = [1, 2, 3, 4, 6, 8, 12, 16];
 
 /** The menu a callee's choices open in, one for every page. */
 let shared: ActsMenu | null = null;
@@ -541,7 +544,7 @@ export class FeaturesPage implements Page {
   }
 
   /** What model collaboration gives the user: a ready text that teaches
-   *  the calling model to hand a part over in plain words, and nothing to
+   *  the calling model how to ask for what it wants, and nothing to
    *  operate by hand. */
   private gives(): string {
     return `<ul class="feature-gives">${this.options.words.collaboration.gives
@@ -603,6 +606,7 @@ export class FeaturesPage implements Page {
           <div class="callee-field"><span>${escape(words.login)}</span>${pick("login", index, at ? at.known.label : `${callee.login.machine} ${callee.login.home ?? ""}`)}</div>
           <div class="callee-field"><span>${escape(words.model)}</span>${pick("model", index, models.find((model) => model.model === callee.model)?.display_name ?? (callee.model || words.modelDefault))}</div>
           <div class="callee-field"><span>${escape(words.effort)}</span><div class="callee-effort" data-index="${index}"></div></div>
+          <div class="callee-field"><span title="${escape(words.atOnceSaid)}">${escape(words.atOnce)}</span><div class="callee-at-once" data-index="${index}"></div></div>
           <button class="callee-switch" type="button" role="switch" aria-checked="${callee.screen}" data-act="screen" data-index="${index}" title="${escape(words.screenSaid)}"><span>${escape(words.screen)}</span><span class="switch-track" aria-hidden="true"><span class="switch-knob"></span></span></button>
         </li>`;
       })
@@ -635,6 +639,23 @@ export class FeaturesPage implements Page {
         this.drawSave();
       });
       slider.set((model?.reasoning_efforts ?? []).map((one) => ({ value: one.effort, label: effortLabel(one.effort, english) })), callee.effort ?? model?.default_reasoning_effort ?? null);
+      holder.append(slider.element);
+      this.sliders.push(slider);
+    }
+    // How many at once, from one up, and none at the end: a number set
+    // elsewhere that is no step here stands among them in its place.
+    for (const holder of this.body.querySelectorAll<HTMLElement>(".callee-at-once")) {
+      const callee = this.draft?.callees[Number(holder.dataset.index)];
+      if (!callee) continue;
+      const slider = new EffortSlider(words.atOnce, (value) => {
+        callee.at_once = value === words.noLimit ? "any" : { most: Number(value) };
+        this.saved = false;
+        this.drawSave();
+      });
+      const most = callee.at_once === "any" ? null : (callee.at_once?.most ?? AT_ONCE_DEFAULT);
+      const counts = [...new Set([...AT_ONCE_STEPS, ...(most === null ? [] : [most])])].sort((a, b) => a - b);
+      const steps = [...counts.map((count) => ({ value: String(count), label: String(count) })), { value: words.noLimit, label: words.noLimit }];
+      slider.set(steps, most === null ? words.noLimit : String(most));
       holder.append(slider.element);
       this.sliders.push(slider);
     }

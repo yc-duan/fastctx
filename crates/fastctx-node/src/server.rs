@@ -1485,7 +1485,7 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
             let town = town_of(node, &resident)?;
             crate::colleagues::ask(node, resident, town, label, prompt, callee, login.as_ref())
                 .await
-                .map(|colleague| Reply::Asked { colleague })
+                .map(|born| Reply::Asked { colleague: born.colleague, waiting: born.waiting })
         }
         Call::Message { resident, to, machine, text, login } => {
             present(node, &resident)?;
@@ -1495,7 +1495,7 @@ pub(crate) async fn handle(node: &Arc<Node>, peer: &Peer, call: Call) -> Result<
         }
         Call::Say { resident, message, status, attachments } => {
             present(node, &resident)?;
-            crate::voice::say(node, &resident, &message, status, &attachments).map(|()| Reply::Told)
+            crate::voice::say(node, &resident, &message, status, &attachments).await.map(|()| Reply::Told)
         }
         Call::MemorySettings { .. } => Err(Failure::not_run("history has no per-account switch; update the app")),
         Call::Layer { hub, account, layer } => {

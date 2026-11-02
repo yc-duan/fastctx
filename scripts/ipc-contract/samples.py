@@ -57,7 +57,13 @@ def replies(fixtures):
         "callees": [{"name": "quick", "use_when": "Check one file", "lives_on": "desktop"},
                     {"name": "deep", "account": "ada", "use_when": "Check a precise point", "lives_on": "laptop"}],
         "prompt": "This computer's collaboration text"}}
+    # A callee says how many it works on at once, and an ask that waits for
+    # room says how many wait ahead of it.
+    yield {"reply": "machines", "here": "desktop", "others": ["laptop"], "collab": {
+        "callees": [{"name": "deep", "account": "ada", "use_when": "Check a precise point", "lives_on": "laptop", "at_once": 4}],
+        "prompt": "The account's collaboration text"}}
     yield {"reply": "asked", "colleague": ADDRESS}
+    yield {"reply": "asked", "colleague": ADDRESS, "waiting": 2}
     for landed in [{"kind": "uncertain", "why": "interrupted"}, {"kind": "new_turn", "turn": "a"},
                    {"kind": "joined_turn", "turn": "b"}, {"kind": "waiting", "why": "offline", "answered": True},
                    {"kind": "sent"}, {"kind": "handed", "id": "notice-ab12"}]:
@@ -115,6 +121,9 @@ def replies(fixtures):
     for speaker in [{"kind": "user", "machine": "desktop"}, {"kind": "resident", "address": ADDRESS},
                     {"kind": "world"}, fixtures["pages"]["speaker"]]:
         notices.append({"kind": "words", "from": speaker, "text": "verbatim words"})
+    # What a colleague tells the agent that asked it, with message_user.
+    notices.append({"kind": "words", "from": {"kind": "resident", "address": ADDRESS}, "text": "verbatim words",
+                    "told": {"colleague": ADDRESS, "label": "task", "attachments": [{"machine": "laptop", "path": "C:/out/report.md"}]}})
     for fact in [{"fact": "desk_taken", "by": ADDRESS}, {"fact": "desk_outside"}, {"fact": "desk_free", "by": ADDRESS},
                  {"fact": "moved", "to": "project"}, {"fact": "delivery_failed", "id": "notice-ab12"},
                  {"fact": "woke", "why": {"kind": "due"}}]:

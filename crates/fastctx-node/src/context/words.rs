@@ -55,6 +55,17 @@ pub(super) fn plan_guide(path: &str, machine: &str, replicated: bool, asker: Opt
         Some(asker) => format!("{asker}, the conversation that asked you"),
         None => "the colleagues you ask".to_string(),
     };
+    let others = match asker {
+        Some(asker) => format!(
+            "{asker}, the conversation that asked you, keeps a plan that says where the whole work stands
+and what it asked of each colleague; each of them keeps one of its own. `fastctx plan ID`
+shows any of them. Read them when you start, and again before you change something another
+of them also uses."
+        ),
+        None => "If you ask colleagues, each keeps a plan of its own: `fastctx plan ID` shows it. Read
+theirs to see what each is doing."
+            .to_string(),
+    };
     format!(
         r#"YOUR PLAN
 
@@ -96,6 +107,9 @@ why, goes in the history, and a line here can point to it.
 - For the play-by-play: the commands you ran and what each printed stay in the
   conversation.
 {live}
+
+## Others' plans
+{others}
 
 ## What it can hold
 Markdown in the user's language, as long as someone needs to carry on from it and no

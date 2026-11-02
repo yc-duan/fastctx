@@ -197,7 +197,7 @@ async fn branch(node: &Arc<Node>, id: &ResidentId, acting: &Acting, deadline: In
         Origin::User => None,
     };
     let goal = async {
-        if label.is_none() {
+        if label.is_none() || !crate::goals::colleagues::offered() {
             return Ok(None);
         }
         match tokio::time::timeout_at(deadline, crate::goals::colleagues::summary(node, id)).await {

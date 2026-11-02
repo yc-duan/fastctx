@@ -31,7 +31,7 @@ pub(super) async fn exercise(
     mock_configuration: &[u8],
     earlier: &Path,
 ) -> Result<()> {
-    let (old, mut old_node) = node_with(base, "old-pc", "alice", listen, Some(earlier)).await?;
+    let (old, mut old_node) = node_with(base, "old-pc", "alice", listen, Some(earlier), true).await?;
 
     // The earlier machine runs the part, this release's conversation keeps
     // its facts.

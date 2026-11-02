@@ -11,6 +11,7 @@ mod earlier;
 mod goals;
 mod history;
 mod lifecycle;
+mod release_colleague;
 mod scale;
 mod shared_controls;
 mod sharing;
@@ -95,6 +96,14 @@ async fn device(
 fn start(root: &Path) -> Result<Child> {
     start_with(root, KERNEL.get().expect("kernel path"))
 }
+/// A node as a release runs it for its users: no preview of what is not
+/// offered yet.
+fn start_without_preview(root: &Path) -> Result<Child> {
+    let output = std::fs::OpenOptions::new().create(true).append(true).open(root.join("stdout.log"))?;
+    let mut command = command(root, KERNEL.get().expect("kernel path"));
+    command.env_remove("FASTCTX_PREVIEW");
+    Ok(command.arg("node").stdout(output.try_clone()?).stderr(output).spawn()?)
+}
 fn start_with(root: &Path, program: &Path) -> Result<Child> {
     let output = std::fs::OpenOptions::new().create(true).append(true).open(root.join("stdout.log"))?;
     Ok(command(root, program).arg("node").stdout(output.try_clone()?).stderr(output).spawn()?)
@@ -111,18 +120,20 @@ async fn online(root: &Path) -> bool {
     false
 }
 async fn node(base: &Path, label: &str, account: &str, listen: SocketAddr) -> Result<(PathBuf, Child)> {
-    node_with(base, label, account, listen, None).await
+    node_with(base, label, account, listen, None, true).await
 }
 /// A machine logged in to `account`, its node this build's or, given
 /// `earlier`, an earlier release's, run from where its World runs it from:
 /// started from anywhere else, a release places itself there and hands the
-/// World to a successor of its own, which the drill would not hold.
+/// World to a successor of its own, which the drill would not hold. Without
+/// `preview`, a release offers what it offers its users and no more.
 async fn node_with(
     base: &Path,
     label: &str,
     account: &str,
     listen: SocketAddr,
     earlier: Option<&Path>,
+    preview: bool,
 ) -> Result<(PathBuf, Child)> {
     let root = base.join(label);
     let dir = WorldDir::under(&root);
@@ -156,7 +167,11 @@ async fn node_with(
     if std::fs::hard_link(program, &installed).is_err() {
         std::fs::copy(program, &installed)?;
     }
-    let child = if earlier.is_some() { start_with(&root, &installed)? } else { start(&root)? };
+    let child = match earlier {
+        Some(_) => start_with(&root, &installed)?,
+        None if preview => start(&root)?,
+        None => start_without_preview(&root)?,
+    };
     anyhow::ensure!(online(&root).await, "node {label} not ready");
     Ok((root, child))
 }
@@ -678,6 +693,7 @@ async fn main() -> Result<()> {
     controls::exercise(&wa, &host, &alice_two, &sa.to.resident, &moved).await?;
     let colleague = colleagues::exercise(&wa, &host, &alice_two, &sa.to.resident, &home).await?;
     std::fs::write(base.join("colleague.json"), serde_json::to_vec(&colleague)?)?;
+    let release_colleague = release_colleague::exercise(&base, &wo, listen, &mock_configuration, &agent).await?;
     if let Some(earlier_kernel) = std::env::var_os("FASTCTX_DRILL_EARLIER") {
         earlier::exercise(
             &base,
@@ -724,7 +740,8 @@ async fn main() -> Result<()> {
     std::fs::write(
         base.join("expectations.json"),
         serde_json::to_vec(
-            &json!({"alice":a,"bob":b,"owner":o,"mobile":m,"old":pa,"new":moved,"host":host,"owner_plan":po,"bob_plan":pb}),
+            &json!({"alice":a,"bob":b,"owner":o,"mobile":m,"old":pa,"new":moved,"host":host,"owner_plan":po,"bob_plan":pb,
+                    "release_colleague":release_colleague}),
         )?,
     )?;
     alice_device.disconnect();

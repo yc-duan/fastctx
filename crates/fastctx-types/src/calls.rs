@@ -1028,6 +1028,10 @@ pub enum Reply {
     Lines(crate::lines::Reply),
     Asked {
         colleague: Address,
+        /// How many colleagues wait ahead of its first turn, when it waits
+        /// for its callee to have room.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        waiting: Option<u32>,
     },
     Spoken {
         to: Address,

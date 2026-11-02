@@ -26,6 +26,7 @@ export function specimenCollab(): CollabView {
           model: "gpt-6-luna",
           effort: "low",
           screen: true,
+          at_once: { most: 2 },
         },
       ],
       prompt: null,

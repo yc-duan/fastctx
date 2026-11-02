@@ -347,6 +347,8 @@ export interface Words {
   queuedTurn(ahead: number): string;
   /** Why they wait, for the pointer to rest on. */
   queuedTurnWhy: string;
+  /** Why a colleague's words wait in its callee's line. */
+  queuedCalleeWhy: string;
   /** Words waiting for room in their machine's memory, `ahead` turns before
    *  them; and why, for the pointer. */
   queuedMemory(ahead: number): string;
@@ -784,6 +786,7 @@ export const zh: Words = {
   hostRetryWhy: (reason) => known(reason, zhProblems) ?? reason,
   queuedTurn: (ahead) => (ahead ? `排队中，前面还有 ${ahead} 个` : "排队中，下一个就轮到它"),
   queuedTurnWhy: "这个智能体登录同时开着的轮已到上限；主人的先开，受协助的人按账号轮流",
+  queuedCalleeWhy: "它的被调用方同时干活的同事已到上限，前面有一个干完就轮到它",
   queuedMemory: (ahead) => (ahead ? `等内存，前面还有 ${ahead} 个` : "等内存"),
   queuedMemoryWhy: "这台机器的可用内存低于给智能体留出的余量；有一轮做完或内存腾出后开始",
   jobEnded: (_job, machine) => `后台命令在 ${machine} 上结束`,
@@ -1166,6 +1169,7 @@ export const en: Words = {
   hostRetryWhy: (reason) => known(reason, enProblems) ?? reason,
   queuedTurn: (ahead) => (ahead ? `Queued, ${ahead} ahead` : "Queued, next up"),
   queuedTurnWhy: "This agent login runs as many turns at once as it may; the owner's go first, then the assisted accounts' in turn",
+  queuedCalleeWhy: "Its callee has as many colleagues at work as it allows; it goes once one of them is done",
   queuedMemory: (ahead) => (ahead ? `Waiting for memory, ${ahead} ahead` : "Waiting for memory"),
   queuedMemoryWhy: "This machine has less memory available than it keeps free for its agents; it starts when a turn ends or memory frees up",
   jobEnded: (_job, machine) => `Background command on ${machine} ended`,

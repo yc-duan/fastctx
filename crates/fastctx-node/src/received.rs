@@ -276,7 +276,7 @@ async fn deliver(node: &Arc<Node>, entry: &mut Entry) -> io::Result<Handover> {
     } else {
         if matches!(
             entry.delivery.notice,
-            Notice::Words { goal_report: None, goal_question: None, .. } | Notice::Attached { .. }
+            Notice::Words { goal_report: None, goal_question: None, told: None, .. } | Notice::Attached { .. }
         ) && (node.residents.is_deleting(&entry.to) || node.residents.removed(&entry.to).is_some())
         {
             return Ok(Handover::Refused("the receiving conversation no longer accepts words".into()));

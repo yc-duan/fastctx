@@ -75,6 +75,7 @@ pub(crate) fn write(node: &Node, mut collab: Collab) -> Result<u64, Failure> {
     }
     let _writing = node.own_collab.writing.lock().expect("never poisoned");
     let current = read(&node.world)?;
+    collab.keep_unsaid(Some(&current));
     if collab.version != current.version {
         return Err(Failure::not_run(format!(
             "model collaboration changed: version {} was read, current version is {}",

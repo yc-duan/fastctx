@@ -60,6 +60,7 @@ pub(crate) async fn route(node: &Arc<Node>, id: &ResidentId, item: &Item, at: Ti
                     account,
                     questions,
                 })),
+                told: None,
             },
         },
     };

@@ -39,7 +39,7 @@ export type SendState =
   | { state: "landed"; how: string; machine: MachineName; why?: string | null }
   /** Kept for a turn their agent login, or their machine's memory, has no
    *  room for yet: `ahead` turns go before it. */
-  | { state: "queued"; ahead: number; memory?: boolean }
+  | { state: "queued"; ahead: number; memory?: boolean; callee?: boolean }
   /** Its machine keeps them no more and no turn runs: they went in, and
    *  stand as said until the session's own telling of them comes. */
   | { state: "settled" }
@@ -71,6 +71,9 @@ export interface KeptWords {
   /** Whether that room is in their machine's memory rather than in their
    *  login (`world-lifecycle.md`, 内存). */
   for_memory?: boolean;
+  /** Whether they wait for one of their callee's colleagues at work to
+   *  end (`world-colleagues.md`, 同事从哪里来、能去哪里). */
+  for_callee?: boolean;
 }
 
 /** Something the user attached to their words, as it is shown with them. */
@@ -1417,7 +1420,12 @@ export class Fold {
       if (!settling) continue;
       const words = entry.delivery === null ? undefined : keeping.get(entry.delivery);
       let next: SendState | null = null;
-      if (words?.queued !== undefined) next = words.for_memory ? { state: "queued", ahead: words.queued, memory: true } : { state: "queued", ahead: words.queued };
+      if (words?.queued !== undefined)
+        next = words.for_memory
+          ? { state: "queued", ahead: words.queued, memory: true }
+          : words.for_callee
+            ? { state: "queued", ahead: words.queued, callee: true }
+            : { state: "queued", ahead: words.queued };
       else if (words?.state === "waiting") next = { state: "landed", how: "kept", machine: entry.from?.kind === "user" ? entry.from.machine : "" };
       else if (words === undefined && !busy) next = { state: "settled" };
       else if (words !== undefined) next = words.host_retry ? { state: "going", retry: words.host_retry.reason } : { state: "going" };

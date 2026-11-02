@@ -155,7 +155,7 @@ async fn apply_inner(node: &Arc<Node>, id: &ResidentId, mut event: SessionEvent)
             if let Some(said) = crate::asked::asked_without_stopping(item)
                 && !crate::goals::questions::route(node, id, item, event.at).await?
                 && crate::voice::speaks(node, id)
-                && let Err(error) = crate::voice::say(node, id, &said, TellStatus::Info, &[])
+                && let Err(error) = crate::voice::say(node, id, &said, TellStatus::Info, &[]).await
             {
                 node.log.line(format_args!("keeping what {id} asked without stopping: {}", error.message));
             }

@@ -63,6 +63,16 @@ def verify(requests, expectations):
     outputs = json.dumps(outputs, ensure_ascii=False)
     check("ALICE_SKILL_EXECUTED" in outputs and "ALICE_REFERENCE" in outputs,
           "a real model tool call read auxiliary files and executed the skill script on the working computer")
+    released = expectations.get("release_colleague")
+    if released:
+        colleague = released["colleague"]
+        asked = [body for body in serialized if "RELEASE_COLLEAGUE" in body]
+        check(bool(asked) and all("THE GOAL" not in body for body in asked),
+              "in a release, the colleague's model input carries no goal")
+        check(any(f"=== from colleague {colleague} ===" in body and "RELEASE_TOLD" in body for body in serialized),
+              "what the colleague told with message_user reached the model of the conversation that asked it")
+        check(any(f"=== colleague {colleague} (turn completed" in body for body in serialized),
+              "the end of the colleague's turn reached the model of the conversation that asked it")
     colleagues = [body for body in serialized if "COLLEAGUE_CASE" in body]
     check(bool(colleagues), "a real delegated conversation reached the model")
     check(any("YOUR PLAN" in body and "the conversation that asked you" in body for body in colleagues),

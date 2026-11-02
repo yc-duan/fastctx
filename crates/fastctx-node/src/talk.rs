@@ -762,8 +762,8 @@ fn kept(node: &Node, resident: &ResidentId) -> Vec<fastctx_types::session::KeptW
     // The words that would start its next turn, while that waits for room
     // in its machine's memory or in its login.
     let mut queued = crate::memory_room::ahead(node, resident)
-        .map(|ahead| (ahead, true))
-        .or_else(|| crate::turn_slots::ahead(node, resident).map(|ahead| (ahead, false)));
+        .map(|ahead| (ahead, true, false))
+        .or_else(|| crate::turn_slots::ahead(node, resident).map(|(ahead, callee)| (ahead, false, callee)));
     // A new conversation's first words wait for memory, or for its login's
     // turn, as they wake it.
     let waits = queued.is_some();
@@ -779,9 +779,9 @@ fn kept(node: &Node, resident: &ResidentId) -> Vec<fastctx_types::session::KeptW
                 .and_then(|progress| {
                     progress.reason.map(|reason| fastctx_types::session::HostRetry { since: progress.began, reason })
                 });
-            let (queued, for_memory) = match first.then(|| queued.take()).flatten() {
-                Some((ahead, memory)) => (Some(ahead), memory),
-                None => (None, false),
+            let (queued, for_memory, for_callee) = match first.then(|| queued.take()).flatten() {
+                Some((ahead, memory, callee)) => (Some(ahead), memory, callee),
+                None => (None, false, false),
             };
             KeptWords {
                 id: pending.delivery.id,
@@ -792,6 +792,7 @@ fn kept(node: &Node, resident: &ResidentId) -> Vec<fastctx_types::session::KeptW
                 host_retry,
                 queued,
                 for_memory,
+                for_callee,
             }
         })
         .collect()

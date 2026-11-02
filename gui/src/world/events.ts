@@ -288,8 +288,8 @@ export type Notice =
   | { kind: "question"; colleague: Address; id: string; text: string }
   /** Words from another conversation. A colleague's goal report and its
    *  questions carry what an interface draws of them beside the words its
-   *  requester's model reads. */
-  | { kind: "words"; from: Speaker; text: string; goal_report?: GoalReport; goal_question?: GoalQuestion }
+   *  requester's model reads; what it told on its way, who it is. */
+  | { kind: "words"; from: Speaker; text: string; goal_report?: GoalReport; goal_question?: GoalQuestion; told?: ColleagueTold }
   | { kind: "attached"; message: JsonValue; text: string }
   | { kind: "world"; fact: WorldFact; text: string };
 
@@ -313,6 +313,13 @@ export interface GoalReport {
 }
 
 /** A question a colleague asked without stopping its work. */
+/** What a colleague told the conversation that asked it, with `message_user`. */
+export interface ColleagueTold {
+  colleague: Address;
+  label: string;
+  attachments?: { machine: string; path: string }[];
+}
+
 export interface GoalQuestion {
   id: string;
   colleague: Address;

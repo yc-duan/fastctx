@@ -684,6 +684,10 @@
   align-items: flex-start;
   gap: var(--space-2);
   max-width: 360px;
+  /* A Chinese line breaks between its phrases, at a punctuation mark or a
+     space, not inside a word; a phrase too long for the line still breaks. */
+  word-break: keep-all;
+  overflow-wrap: anywhere;
 }
 
 .feature-give-mark {

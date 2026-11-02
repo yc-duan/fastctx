@@ -125,6 +125,7 @@ pub(crate) fn reply(protocol: u32, reply: &mut Reply) {
                     text: text.clone(),
                     goal_report: None,
                     goal_question: None,
+                    told: None,
                 };
             }
         }
@@ -152,6 +153,7 @@ pub(crate) fn reply(protocol: u32, reply: &mut Reply) {
                     text,
                     goal_report: None,
                     goal_question: None,
+                    told: None,
                 };
             }
         }
@@ -180,6 +182,7 @@ pub(crate) fn notices(generation: u32, reply: &mut Reply) {
             text,
             goal_report: None,
             goal_question: None,
+            told: None,
         };
     }
 }

@@ -780,6 +780,9 @@ pub enum RemoteReply {
     },
     Asked {
         colleague: ResidentId,
+        /// How many colleagues wait ahead of its first turn, when it waits.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        waiting: Option<u32>,
     },
     Found {
         lives_here: bool,

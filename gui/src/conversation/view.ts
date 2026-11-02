@@ -1893,7 +1893,7 @@ export class ConversationView {
       }
       if (sending?.state === "queued") note = sending.memory
         ? `<div class="bubble-note" title="${escape(words.queuedMemoryWhy)}">${escape(words.queuedMemory(sending.ahead))}</div>`
-        : `<div class="bubble-note" title="${escape(words.queuedTurnWhy)}">${escape(words.queuedTurn(sending.ahead))}</div>`;
+        : `<div class="bubble-note" title="${escape(sending.callee ? words.queuedCalleeWhy : words.queuedTurnWhy)}">${escape(words.queuedTurn(sending.ahead))}</div>`;
       // Still on their way: their host has not started for a minute.
       if (sending?.state === "going" && sending.retry) {
         note = `<div class="bubble-note" title="${escape(words.hostRetryWhy(sending.retry))}">${escape(words.hostRetrying(this.context.agent))}</div>`;

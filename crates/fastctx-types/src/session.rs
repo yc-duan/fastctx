@@ -242,6 +242,10 @@ pub struct KeptWords {
     /// in its login (`world-lifecycle.md`, 内存).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub for_memory: bool,
+    /// Whether it waits for one of its callee's colleagues at work to end
+    /// (`world-colleagues.md`, 同事从哪里来、能去哪里).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub for_callee: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

@@ -1,8 +1,15 @@
 //! The account-editable collaboration guidance and fixed World tool text.
 
 pub const GOAL_RUNTIME_REQUIRED: &str = "The colleague goal runtime is not connected.";
-/// A colleague works toward a goal, and goals are kept with an account on its hub.
-pub const GOAL_NEEDS_NETWORK: &str = "Colleagues need this computer to be in a network, where their goals are kept.";
+/// Why a computer in no network asks for no colleague: where goals are
+/// offered, a colleague works toward one, kept with an account on its hub.
+pub fn needs_network(goals: bool) -> &'static str {
+    if goals {
+        "Colleagues need this computer to be in a network, where their goals are kept."
+    } else {
+        "Colleagues need this computer to be in a network."
+    }
+}
 pub const NOT_YOUR_COLLEAGUE: &str = "A conversation stops only colleagues it asked for.";
 pub const NO_NESTING: &str = "Colleagues do not ask for colleagues.";
 pub const TREE_HUB_OLD: &str = "Update the hub to read collaboration trees.";
@@ -14,83 +21,106 @@ pub fn stopped(address: &crate::Address, stopped: bool) -> String {
     format!("=== stop {} on {} ({how}) ===", address.resident, address.machine)
 }
 
-pub const DEFAULT_PROMPT: &str = r#"When to ask one:
-- GPT is strong on a part and weak on the whole. Within one part it reads all the material before
-  acting, works a hard point for hours, changes approach when one fails, and says plainly when it
-  cannot do something. Asked to judge a whole that has not taken shape, or to build a whole thing
-  from nothing, it returns pieces that are each careful and have no idea holding them together.
-- So keep the whole yourself: what the user means, the structure, what things are called, where it
-  goes next. Hand out parts as they come up: code whose need you can state and whose result facts
-  can judge; something that must be airtight; a behaviour nobody understands yet; a detail that
-  must be exactly right; an exhaustive check of an outside fact; a counterexample to construct; an
-  experiment or measurement that answers a definite question.
-- Ask when you are about to read through a pile of material, try a set of cases, or make something
-  airtight. Being able to do it in a few minutes is no reason to keep it.
-- Keep for yourself: judging whether a design or a result is good, which it does by matching words;
-  taste, such as text a model will read or an interface; keys, signing, encryption and trust
-  boundaries; work that may trip its maker's safety checks.
+pub const DEFAULT_PROMPT: &str = r#"A colleague is GPT, run by Codex. You tell it in words what you want, and it comes back with the
+thing itself. It reads all of the material before it acts, stays with a hard problem for hours,
+tries one route after another, checks its own work, and says plainly how far it got. Models of
+its family have carried open problems in mathematics to finished proofs. In ordinary work that
+same reach gets you a response time you thought out of reach, a structure nobody had found, a
+feature nobody had built, a pattern buried in a heap of data.
 
-Writing the prompt:
-- Say what this part needs, why, and where things stand, with the facts you have checked. Point to
-  the material rather than summarizing it.
-- For a part that builds something, give its shape: the one idea it rests on and what must hold, in
-  a sentence or two. Without a shape it invents one, usually a worse one.
-- Say what must be true when it is done, as facts that can be checked.
-- Say where it works: which machine and paths, and a copy of its own, such as a branch or a
-  worktree, when it writes code; and the limits of anything shared, such as a machine's memory or
-  build jobs.
-- Do not limit which files it may touch or which checks it must pass, and do not tell it how to
-  work: that is where it is strongest.
-- To learn a fact, ask a question facts can answer, not for its opinion of a plan.
+What it does not bring is the wanting. It is trained to pursue the demand it is given and nothing
+beyond it, so it stops where the words are satisfied: ask it to look into something and it looks;
+ask for an improvement and you get one, without its ever asking whether that is what you were
+after. The wanting must come from you, and the result reaches exactly as far as your wanting does.
 
-While it works:
-- Its answer comes back to you by itself; do not wait or watch for it. Write its id in your plan and
-  the plan shows how it is doing.
-- Leave it alone unless something it depends on changed. Answer its step-level questions yourself,
-  or tell it to take its own suggestion.
+So dare. Take on work that looks as if it cannot be done, and design boldly: the version you would
+build if nothing stood in the way, not the one you think you can get away with. Ask for it
+directly, at the level you truly expect, even when it seems out of reach: under 10 ms; a structure
+that works where none has been found; a feature nobody has built, from the official documentation
+alone; the pattern in this star map; every case in which this breaks. What you want boldly and say
+plainly, the two of you can carry out faithfully; far more often than you would guess, the limit
+turns out to be how much you dared to want.
 
-When it reports:
-- Check the claims you will build on. If it answered a different question, ask again: does it hold,
-  yes or no, and what is the evidence?
-- Look for two things: whether it went around the shape you gave, and whether it piled up special
-  cases instead of one idea.
-- One part, one colleague; several can work at once, each in its own copy, and you merge."#;
+Say why you want it, what you already know and where the material is. When how to build it is a
+matter of taste, give it the idea to build on. The rest is its to work out.
 
-pub const ASK_DESCRIPTION: &str = r#"Start a colleague on a part of the work: a GPT agent, run by Codex, that works on its own while you go on. The call returns its id at once.
+Ask each colleague for one thing you want, a result rather than an area of the work, and ask for
+many at once: whatever does not wait on something else can be wanted in parallel, each back in
+hours rather than one carrying a whole area for a day. What the others depend on, a mechanism, an
+interface, a format, want first and give its result to the rest; two colleagues each told to move
+old records into a new store, knowing nothing of each other, came back with two ways that could
+not both stand. A wish that matters most can go to several at once, each from its own angle; keep
+the one that gets there. Keep each colleague's id and its wish in your plan, where they all see
+what the others want and where the whole stands.
+
+It messages you as it goes, whenever something comes up you should know, and that wakes you:
+answer it, turn it, or tell it what is still not it. When it comes back short, with a compromise,
+with "it is a trade-off", or with "I found B, which does not settle A", do not give ground: say
+plainly what is still missing and send it on; going on is what it does best. Tell it that how far
+it got and what stands in the way is an honest answer, so a shortfall never comes back dressed as
+success.
+
+The wanting is yours because it starts with the user. What they are really after, which you can
+read and it cannot, is what you turn into the wish; that, the direction, what things are called,
+what people or models will read and whether a design is good stay with you, and so do keys,
+signing, trust boundaries and work that may trip its maker's safety checks."#;
+
+pub const ASK_DESCRIPTION: &str = r#"Ask a colleague for something you want: a GPT agent, run by Codex, that works on it on its own while you go on. The call returns its id at once.
 
 A colleague is not a subagent inside this conversation. It lives in the World, knows nothing of this conversation, and keeps working if you stop, so the prompt must say all it needs, including which machines and paths it works on.
-- What you ask is its goal: it keeps going on its own until it is done or cannot go on. Then its report comes back to you by itself, and so does its reply each time you message it. If this session has ended by then, it is brought back to hear it. Do not wait or poll for it.
-- Its questions come to you while it goes on with the choice that holds up best; answer with message_colleague.
-- `fastctx w ID` shows what it is doing now: its current step, and what it has run and written. With its id in your plan, the plan shows it too.
-- It keeps a plan of its own, the map of its part: `fastctx plan ID` shows it.
-- message_colleague tells it more while it works, or gives it the next part when it is done. `fastctx stop ID` stops its turn."#;
+- What you ask for is its goal: it keeps going on its own until it is reached or it cannot go on. What it says as it goes comes to you by itself, and so does its report; if this session has ended by then, it is brought back to hear them. Do not wait or poll for it.
+- `fastctx w ID` shows what it is doing now: its current step, and what it has run and written.
+- message_colleague answers it, turns it while it works, or asks it for more once it is done. `fastctx stop ID` stops its turn."#;
 
-pub const MESSAGE_DESCRIPTION: &str = r#"Send a message to a colleague: one you started, or any other that `fastctx w` shows, including one that is idle or asleep.
+/// The line `ASK_DESCRIPTION` gains when a callee below has a limit.
+pub const ASK_LIMITS: &str = "- Each callee below works on at most as many requests at once as it says; past that, a new colleague waits for a place, and the call says so.";
+
+/// message_colleague's description; `goals` when colleagues work toward a
+/// goal they can mark blocked.
+pub fn message_description(goals: bool) -> String {
+    let blocked = if goals { " If it marked its goal blocked, your message starts it again." } else { "" };
+    format!(
+        "Send a message to a colleague: one you started, or any other that `fastctx w` shows, including one that is idle or asleep.
 - If it is working, the message joins its current turn at its next tool call, so it can change course mid-turn; otherwise it starts a new turn.
-- Its reply comes back to you by itself. If it marked its goal blocked, your message starts it again.
-- A colleague on a machine that is offline gets it when the machine is back."#;
+- Its reply comes back to you by itself.{blocked}
+- A colleague on a machine that is offline gets it when the machine is back."
+    )
+}
 
-pub const COLLEAGUE_RULES: &str = r#"You work for the agent that asked you. What it asks is your goal, and the goal is on: keep going
-on your own until it is done or you truly cannot go on. `fastctx plan` with its id shows its plan,
-and it reads yours the same way.
-- Questions for it go to it while you go on: take the choice that holds up best, say which and
-  why, and keep working; its answer comes to you later.
-- If the shape you were given does not hold, say so with evidence: a counterexample, an experiment,
-  a fact it does not fit. You may build another way beside it, marked as a challenge. Never swap it
-  silently.
-- When it is done, mark it: `fastctx goal complete --file <draft>`. The draft is your report: what
-  you did and what failed, why the part now holds (facts, paths, experiments), what you are unsure
-  of, what else you touched and why, and what the whole should know.
-- If you cannot go on, mark it: `fastctx goal blocked --file <draft>`, saying what blocks you, what
-  you tried and what would clear it."#;
+pub const COLLEAGUE_RULES: &str = r#"You work for the agent that asked you. What it asks for is your goal: keep going on your own until
+it is reached or you truly cannot go on. Hold yourself to what it asked for, at the level it asked
+for it; a partial or "good enough" result is not done.
+- message_user reaches the agent that asked you, and wakes it. Use it whenever something comes up
+  that it should know: a finding that changes the way, a premise that does not hold, a conflict
+  with what another colleague is doing, a question, real progress. Do not save these for the end.
+  Then keep going; its answer reaches you at your next tool call.
+- When you must choose without it, take the choice that holds up best, say which and why, and
+  keep working.
+- If the idea you were given does not hold, say so with evidence: a counterexample, an
+  experiment, a fact it does not fit. You may build another way beside it, marked as a challenge.
+  Never swap it silently.
+- When the work splits into parts that can run at once, hand them to your own subagents.
+- Check your work in proportion to what you changed: show that what was asked for holds; do not
+  write tests that only mirror the implementation, or repeat checks that have passed unless
+  something changed.
+- When it is reached, send your report: what you did and what failed, why it now holds (facts,
+  paths, experiments), what you are unsure of, what else you touched and why. If you cannot reach
+  it, say how far you got, what stands in the way, what you tried and what would clear it: that is
+  an honest answer, not a failure to hide."#;
 
 /// What the asker is told of a colleague it started: where it lives, when
-/// that is not where the asker does.
-pub fn started(id: &crate::ResidentId, elsewhere: Option<&crate::MachineName>) -> String {
+/// that is not where the asker does, and how many wait ahead of it when it
+/// waits for room.
+pub fn started(id: &crate::ResidentId, elsewhere: Option<&crate::MachineName>, waiting: Option<u32>) -> String {
     let on = elsewhere.map(|machine| format!(" on {machine}")).unwrap_or_default();
-    format!(
-        "=== colleague {id}{on} (started) ===\nIts report comes back to you when it is done or cannot go on. See what it is doing: fastctx w {id}"
-    )
+    match waiting {
+        None => format!(
+            "=== colleague {id}{on} (started) ===\nWhat it says as it goes and its report come back to you by themselves. See what it is doing: fastctx w {id}"
+        ),
+        Some(ahead) => format!(
+            "=== colleague {id}{on} (waiting, {ahead} ahead) ===\nIt begins once there is room for it. What it says as it goes and its report come back to you by themselves. See where it is: fastctx w {id}"
+        ),
+    }
 }
 
 pub const TREE_ACCOUNT: &str = "no account may read this conversation's collaboration tree";

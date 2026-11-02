@@ -200,6 +200,7 @@ fn apply(
                 .find(|found| found.name == *account)
                 .map(Arc::make_mut)
                 .expect("checked");
+            collab.keep_unsaid(found.collab.as_ref());
             let version = found.collab.as_ref().map_or(0, |current| current.version);
             if collab.version != version {
                 return Err(format!(

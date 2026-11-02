@@ -30,6 +30,7 @@ pub(super) async fn exercise(
                     model: Some("mock-model".into()),
                     effort: None,
                     screen: false,
+                    at_once: None,
                 }],
                 prompt: None,
                 rules: String::new(),

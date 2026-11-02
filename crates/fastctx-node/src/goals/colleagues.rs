@@ -10,6 +10,14 @@ use fastctx_types::{Address, NoticeId, ResidentId};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
+/// Whether a colleague works toward a goal: where goals are offered
+/// (`fastctx_platform::preview`). Without them, each of its turns ends with
+/// its answer, and what it tells on its way reaches its asker by itself
+/// (`world-colleagues.md`, 两个工具).
+pub(crate) fn offered() -> bool {
+    fastctx_platform::preview()
+}
+
 pub(crate) fn ready(node: &Node) -> Result<(), Failure> {
     if !node.goals.records.available() {
         return Err(Failure::not_run(words::RECORDS_MISSING));
