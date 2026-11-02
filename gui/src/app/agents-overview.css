@@ -6,6 +6,46 @@
   padding: var(--space-2) var(--gutter) var(--space-8);
 }
 
+/* The agents' reach, drawn above their cards: wide on a computer's page,
+   narrow on a phone's, so its names keep the size of the interface's
+   fine print. */
+.ao-reach {
+  max-width: 680px;
+  margin: var(--space-3) auto 0;
+}
+
+.ao-reach > svg {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.ao-reach > .ao-reach-narrow {
+  display: none;
+}
+
+.ao-reach-mark {
+  color: var(--text);
+}
+
+.ao-reach-mark.faint {
+  color: var(--text-3);
+}
+
+.ao-reach-name {
+  fill: var(--text-2);
+  font-family: var(--font-reading);
+  font-size: var(--size-fine);
+}
+
+.ao-reach-name.here {
+  fill: var(--text);
+}
+
+.ao-reach-name.away {
+  fill: var(--text-3);
+}
+
 /* One column in the middle of the page, an agent's paper after another,
    read as a list rather than a board. */
 .ao-cards,
@@ -189,6 +229,14 @@
 }
 
 @media (max-width: 760px) {
+  .ao-reach > .ao-reach-wide {
+    display: none;
+  }
+
+  .ao-reach > .ao-reach-narrow {
+    display: block;
+  }
+
   .ao-card {
     padding: var(--space-3) var(--space-4) var(--space-2);
   }

@@ -16,6 +16,8 @@ export interface AgentsOverviewWords {
   noLogin: string;
   /** The agents not found on the machine shown. */
   missing(names: string[], here: boolean): string;
+  /** The machines reached past those drawn. */
+  more(n: number): string;
 }
 
 export const zhAgentsOverview: AgentsOverviewWords = {
@@ -27,6 +29,7 @@ export const zhAgentsOverview: AgentsOverviewWords = {
   renew: "更新接入",
   noLogin: "已安装，尚无登录",
   missing: (names, here) => `${here ? "这台电脑" : "这台机器"}上未找到 ${names.join("、")}`,
+  more: (n) => `另有 ${n} 台`,
 };
 
 export const enAgentsOverview: AgentsOverviewWords = {
@@ -38,4 +41,5 @@ export const enAgentsOverview: AgentsOverviewWords = {
   renew: "Update connection",
   noLogin: "Installed, no login yet",
   missing: (names, here) => `${names.join(", ")} not found on this ${here ? "computer" : "machine"}`,
+  more: (n) => `${n} more`,
 };

@@ -18,6 +18,7 @@ import type { AgentLoginsWords } from "./agent-logins-words";
 import { chosen, keepMachine, keptMachine, pickButton, pickMenu, pickables, type Pickable } from "./agent-machines";
 import type { AgentsOverviewWords } from "./agents-overview-words";
 import "./agents-overview.css";
+import { reachDrawing, type Reach } from "./agents-reach";
 import { redrawKeepingFocus } from "./focus";
 import { link } from "./places";
 import { detailOf } from "./problem";
@@ -237,8 +238,20 @@ export class AgentsOverview implements Page {
     }
     const found = AGENTS.filter((agent) => record[agent].programs.length || record[agent].listed.length || record[agent].candidates.length);
     const missing = AGENTS.filter((agent) => !found.includes(agent)).map((agent) => logins[agent]);
-    return `<div class="ao-cards">${found.map((agent) => this.card(machine, record, agent)).join("")}</div>
+    return `${this.reach(machine, record, found)}<div class="ao-cards">${found.map((agent) => this.card(machine, record, agent)).join("")}</div>
       ${missing.length ? `<p class="ao-missing">${escape(words.missing(missing, machine.here))}</p>` : ""}`;
+  }
+
+  /** Where the agents found reach, drawn wide and narrow, the page's own
+   *  width choosing: only where there is another machine of the user's. */
+  private reach(machine: Pickable, record: MachineLogins, found: Agent[]): string {
+    const others = pickables(this.options.store.world.peek())
+      .filter((one) => one.name !== machine.name && (one.hold === "mine" || one.hold === "shared"))
+      .sort((a, b) => Number(b.online !== false) - Number(a.online !== false));
+    if (!others.length || !found.length) return "";
+    const reach: Reach = { machine, agents: found.map((agent) => ({ agent, connected: record[agent].listed.length > 0 })), others };
+    const more = this.options.words.more;
+    return `<div class="ao-reach">${reachDrawing(reach, 680, more)}${reachDrawing(reach, 340, more)}</div>`;
   }
 
   /** An agent's card: its mark and name, the way to its own page, and a
