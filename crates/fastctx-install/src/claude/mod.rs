@@ -19,7 +19,6 @@
 
 pub mod consent;
 pub mod history;
-mod jsonc;
 mod limit;
 pub mod plugins;
 pub(crate) mod process;

@@ -1,4 +1,5 @@
-//! Ranged edits: untouched settings bytes never pass through a serializer.
+//! Ranged edits of an agent's JSON settings, comments allowed: the bytes
+//! not edited never pass through a serializer.
 
 use std::collections::BTreeSet;
 use std::ops::Range;
@@ -9,7 +10,7 @@ use jsonc_parser::tokens::{Token, TokenAndRange};
 use jsonc_parser::{CollectOptions, CommentCollectionStrategy, ParseOptions, parse_to_ast};
 use serde::{Deserialize, Serialize};
 
-pub(super) struct Document<'a> {
+pub(crate) struct Document<'a> {
     pub source: &'a str,
     bom: bool,
     pub root: Option<Object<'a>>,
@@ -18,7 +19,7 @@ pub(super) struct Document<'a> {
 
 impl<'a> Document<'a> {
     pub fn parse(bytes: &'a [u8]) -> Result<Self, String> {
-        let source = std::str::from_utf8(bytes).map_err(|e| format!("Claude settings are not UTF-8: {e}"))?;
+        let source = std::str::from_utf8(bytes).map_err(|e| format!("the settings are not UTF-8: {e}"))?;
         let bom = source.starts_with('\u{feff}');
         let source = source.strip_prefix('\u{feff}').unwrap_or(source);
         let parsed = parse_to_ast(
@@ -34,13 +35,13 @@ impl<'a> Document<'a> {
                 allow_unary_plus_numbers: false,
             },
         )
-        .map_err(|e| format!("Invalid Claude settings JSONC: {e}"))?;
+        .map_err(|e| format!("the settings are not valid JSON: {e}"))?;
         let root = match parsed.value {
             Some(Value::Object(object)) => {
                 validate(&object)?;
                 Some(object)
             }
-            Some(_) => return Err("Claude settings must be a JSON object".into()),
+            Some(_) => return Err("the settings must be a JSON object".into()),
             None => None,
         };
         Ok(Self { source, bom, root, tokens: parsed.tokens.unwrap_or_default() })
@@ -67,17 +68,9 @@ impl<'a> Document<'a> {
     }
 
     pub fn insert(&self, object: &Object<'_>, name: &str, raw: &str) -> Result<(Vec<u8>, Insertion), String> {
-        let multiline = self.source[object.range.start..object.range.end].contains('\n');
-        let prefix = if multiline {
-            let indent = object
-                .properties
-                .first()
-                .map(|p| self.indent(p.range.start))
-                .filter(|s| !s.is_empty())
-                .unwrap_or_else(|| format!("{}  ", self.indent(object.range.start)));
-            format!("{}{indent}", if self.source.contains("\r\n") { "\r\n" } else { "\n" })
-        } else {
-            String::new()
+        let prefix = match self.inner_indent(object) {
+            Some(indent) => format!("{}{indent}", self.newline()),
+            None => String::new(),
         };
         let suffix = if object.properties.is_empty() { "" } else { "," }.to_owned();
         let property = format!("{}: {raw}", serde_json::to_string(name).expect("a key serializes"));
@@ -87,9 +80,31 @@ impl<'a> Document<'a> {
         Ok((self.replace(position..position, &text)?, insertion))
     }
 
-    fn indent(&self, position: usize) -> String {
+    /// The indentation of the line `position` is on.
+    pub(crate) fn indent_at(&self, position: usize) -> String {
         let start = self.source[..position].rfind('\n').map_or(0, |i| i + 1);
         self.source[start..position].chars().take_while(|c| matches!(c, ' ' | '\t')).collect()
+    }
+
+    /// The indentation of a property of `object`, where it spans lines;
+    /// `None` where it is written on one.
+    pub(crate) fn inner_indent(&self, object: &Object<'_>) -> Option<String> {
+        if !self.source[object.range.start..object.range.end].contains('\n') {
+            return None;
+        }
+        Some(
+            object
+                .properties
+                .first()
+                .map(|p| self.indent_at(p.range.start))
+                .filter(|s| !s.is_empty())
+                .unwrap_or_else(|| format!("{}  ", self.indent_at(object.range.start))),
+        )
+    }
+
+    /// The file's own line ending.
+    pub(crate) fn newline(&self) -> &'static str {
+        if self.source.contains("\r\n") { "\r\n" } else { "\n" }
     }
 
     pub fn has_comments(&self, range: Range<usize>) -> bool {
@@ -136,7 +151,7 @@ impl<'a> Document<'a> {
         Ok(self.encode(next))
     }
 
-    pub(super) fn comments(&self) -> Vec<String> {
+    pub(crate) fn comments(&self) -> Vec<String> {
         self.tokens
             .iter()
             .filter(|token| is_comment(token))
@@ -201,7 +216,7 @@ impl<'a> Document<'a> {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub(super) struct Insertion {
+pub(crate) struct Insertion {
     prefix: String,
     suffix: String,
 }
@@ -214,7 +229,7 @@ fn validate(object: &Object<'_>) -> Result<(), String> {
     let mut names = BTreeSet::new();
     for property in &object.properties {
         if !names.insert(property.name.as_str()) {
-            return Err("Claude settings contain duplicate object keys".into());
+            return Err("the settings contain duplicate object keys".into());
         }
         validate_value(&property.value)?;
     }

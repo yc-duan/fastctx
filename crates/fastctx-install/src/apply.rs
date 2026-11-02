@@ -33,6 +33,7 @@ use crate::plan::{ClaudePlan, CodexPlan};
 use crate::transaction::{Created, FileChange, FileError, Snapshot, Transaction};
 use crate::{File, Notice, executable, guidance, legacy};
 
+mod agents;
 mod homes;
 mod identity;
 pub mod kernel;
@@ -43,6 +44,7 @@ mod refresh;
 mod settle;
 mod tools;
 mod withdrawn;
+pub use agents::{agent_apply_expecting, agent_connected, agent_fingerprint, agent_integrations, agent_preview, agent_unapply_expecting};
 pub use homes::Host;
 pub use identity::forward_login_identity;
 pub use preview::{fingerprint, preview};
