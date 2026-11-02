@@ -42,7 +42,7 @@ mod windows {
     pub struct Stream(Compat<Async<Socket>>);
 
     pub async fn connect(path: PathBuf) -> io::Result<Stream> {
-        let socket = tokio::task::spawn_blocking(move || uds_windows::UnixStream::connect(path))
+        let socket = crate::task::spawn_blocking(move || uds_windows::UnixStream::connect(path))
             .await
             .map_err(|error| io::Error::other(format!("connecting Unix socket: {error}")))??;
         Ok(Stream(Async::new(Socket(socket))?.compat()))

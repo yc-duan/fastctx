@@ -14,23 +14,24 @@ impl Database {
         bytes: usize,
         write: impl FnOnce(&rusqlite::Connection) -> Result<T> + Send + 'static,
     ) -> Result<T> {
-        fastctx_platform::roles::blocking("waiting for a durable mutation to finish");
-        self.available()?;
-        let permit = blocking::wait(self.0.writes.admit(priority, bytes), QUEUE_WAIT)
-            .ok_or_else(|| busy("write admission"))??;
-        let (send, receive) = std::sync::mpsc::sync_channel(1);
-        self.submit(
-            priority,
-            writer::job(
-                permit,
-                true,
-                write,
-                |_| {},
-                move |result| {
-                    let _ = send.send(result);
-                },
-            ),
-        )?;
-        receive.recv().map_err(|_| unknown())?
+        fastctx_platform::roles::in_place("waiting for a durable mutation to finish", || {
+            self.available()?;
+            let permit = blocking::wait(self.0.writes.admit(priority, bytes), QUEUE_WAIT)
+                .ok_or_else(|| busy("write admission"))??;
+            let (send, receive) = std::sync::mpsc::sync_channel(1);
+            self.submit(
+                priority,
+                writer::job(
+                    permit,
+                    true,
+                    write,
+                    |_| {},
+                    move |result| {
+                        let _ = send.send(result);
+                    },
+                ),
+            )?;
+            receive.recv().map_err(|_| unknown())?
+        })
     }
 }

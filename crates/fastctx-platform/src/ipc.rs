@@ -179,7 +179,7 @@ impl FrameWriter {
             use windows_sys::Win32::Storage::FileSystem::FlushFileBuffers;
 
             let pipe = pipe.clone();
-            tokio::task::spawn_blocking(move || {
+            crate::task::spawn_blocking(move || {
                 // SAFETY: the owned duplicate keeps this server pipe valid
                 // until the blocking flush completes or its client closes.
                 if unsafe { FlushFileBuffers(pipe.as_raw_handle()) } == 0 {

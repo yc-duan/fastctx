@@ -190,7 +190,14 @@ impl Job {
                 )?;
             }
             Ok(())
-        })
+        })?;
+        let (_, conversation) = records::locate(&self.directory)?;
+        crate::record_migration::scheduler::forget(
+            &crate::record_migration::world(&self.directory)?,
+            &conversation,
+            &self.prefix,
+        );
+        Ok(())
     }
 }
 

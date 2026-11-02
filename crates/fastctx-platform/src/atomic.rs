@@ -29,16 +29,16 @@ pub enum Permissions {
 /// Replaces `path` with `bytes`, or creates it.
 #[track_caller]
 pub fn publish(path: &Path, bytes: &[u8], permissions: Permissions) -> io::Result<()> {
-    crate::roles::blocking("publish");
-    put(path, bytes, permissions, true, || Ok(())).map_err(|failure| failure.error)
+    crate::roles::in_place("publish", || put(path, bytes, permissions, true, || Ok(())))
+        .map_err(|failure| failure.error)
 }
 
 /// Creates `path` with `bytes`, failing with `AlreadyExists` if something is
 /// there already: for records that are written once and never change.
 #[track_caller]
 pub fn publish_new(path: &Path, bytes: &[u8], permissions: Permissions) -> io::Result<()> {
-    crate::roles::blocking("publish");
-    put(path, bytes, permissions, false, || Ok(())).map_err(|failure| failure.error)
+    crate::roles::in_place("publish", || put(path, bytes, permissions, false, || Ok(())))
+        .map_err(|failure| failure.error)
 }
 
 /// A publication failure distinguishes a failed replacement from a failure to
@@ -61,8 +61,7 @@ pub fn publish_checked<G>(
     replace: bool,
     verify: impl FnOnce() -> io::Result<G>,
 ) -> Result<(), PublishFailure> {
-    crate::roles::blocking("publish");
-    put(path, bytes, permissions, replace, verify)
+    crate::roles::in_place("publish", || put(path, bytes, permissions, replace, verify))
 }
 
 /// Writes and flushes the file, then moves it into place (`publish_checked`):
@@ -91,8 +90,9 @@ impl Staged {
     /// `mode`, or what the platform gives new files.
     #[track_caller]
     pub fn create(target: &Path, mode: Option<u32>) -> io::Result<Self> {
-        crate::roles::blocking("staging a file");
-        Ok(Self { inner: imp::Staged::create(target, temporary_beside(target)?, mode)? })
+        crate::roles::in_place("staging a file", || {
+            Ok(Self { inner: imp::Staged::create(target, temporary_beside(target)?, mode)? })
+        })
     }
 
     pub fn write_all(&mut self, bytes: &[u8]) -> io::Result<()> {
@@ -106,16 +106,16 @@ impl Staged {
     /// how many bytes it held already.
     #[track_caller]
     pub fn resume(target: &Path, partial: PathBuf, mode: Option<u32>) -> io::Result<(Self, u64)> {
-        crate::roles::blocking("staging a file");
-        let (inner, held) = imp::Staged::resume(target, partial, mode)?;
-        Ok((Self { inner }, held))
+        crate::roles::in_place("staging a file", || {
+            let (inner, held) = imp::Staged::resume(target, partial, mode)?;
+            Ok((Self { inner }, held))
+        })
     }
 
     /// Flushes the contents to disk and moves them over the target.
     #[track_caller]
     pub fn commit(self) -> io::Result<()> {
-        crate::roles::blocking("staging a file");
-        self.inner.commit()
+        crate::roles::in_place("staging a file", || self.inner.commit())
     }
 
     /// Removes what was staged, kept for another try or not.

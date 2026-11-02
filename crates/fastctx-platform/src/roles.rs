@@ -12,6 +12,8 @@
 
 use std::cell::Cell;
 use std::panic::Location;
+use std::sync::LazyLock;
+use std::time::{Duration, Instant};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum Role {
@@ -48,7 +50,13 @@ impl Role {
 
 thread_local! {
     static ROLE: Cell<Role> = const { Cell::new(Role::Other) };
+    /// How long this thread has blocked in place, so that the slices of
+    /// tasks are timed without it (`crate::task`).
+    static IN_PLACE: Cell<Duration> = const { Cell::new(Duration::ZERO) };
 }
+
+static IN_PLACE_TOOK: LazyLock<&'static crate::readings::Timing> =
+    LazyLock::new(|| crate::readings::timing("tasks.in_place"));
 
 pub fn set(role: Role) {
     ROLE.with(|current| current.set(role));
@@ -82,6 +90,53 @@ pub fn blocking(what: &'static str) {
         return;
     }
     crate::conduct::blocked(role, what, Location::caller());
+}
+
+/// Runs `work`, which blocks its thread, on this thread. A task thread of a
+/// runtime with several first hands its other tasks to another thread, so
+/// only the task that waits waits (`tokio::task::block_in_place`); a thread
+/// that may block runs it as it is. On any other thread it is noted as
+/// `blocking` notes it, and run. The place noted is the caller's.
+#[track_caller]
+pub fn in_place<R>(what: &'static str, work: impl FnOnce() -> R) -> R {
+    let role = current();
+    if role.may_block() {
+        return work();
+    }
+    if role == Role::Work
+        && tokio::runtime::Handle::try_current()
+            .is_ok_and(|runtime| runtime.runtime_flavor() == tokio::runtime::RuntimeFlavor::MultiThread)
+    {
+        let began = Instant::now();
+        let done = tokio::task::block_in_place(|| {
+            let _role = scoped(Role::Blocking);
+            work()
+        });
+        let took = began.elapsed();
+        IN_PLACE.with(|so_far| so_far.set(so_far.get() + took));
+        IN_PLACE_TOOK.record(took);
+        return done;
+    }
+    crate::conduct::blocked(role, what, Location::caller());
+    work()
+}
+
+/// Marks this thread, about to run a slice of a task, a task thread when it
+/// runs the tasks of a runtime with several: a thread of the blocking pool
+/// can be handed a worker's tasks (`in_place`) and run them before it first
+/// waits for more, which is when a runtime marks its task threads.
+pub(crate) fn running_tasks() {
+    if current() == Role::Blocking
+        && tokio::runtime::Handle::try_current()
+            .is_ok_and(|runtime| runtime.runtime_flavor() == tokio::runtime::RuntimeFlavor::MultiThread)
+    {
+        set(Role::Work);
+    }
+}
+
+/// How long this thread has blocked in place so far.
+pub(crate) fn in_place_so_far() -> Duration {
+    IN_PLACE.with(Cell::get)
 }
 
 /// Notes `what`, a lock that guards only memory, about to be taken on this

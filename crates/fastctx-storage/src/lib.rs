@@ -135,24 +135,25 @@ impl Database {
         schema: &str,
         initialize: impl Fn(&rusqlite::Connection) -> Result<()>,
     ) -> Result<Self> {
-        fastctx_platform::roles::blocking("opening a database");
-        let parent = path.parent().ok_or_else(|| Error::new("the database has no parent directory"))?;
-        // Existing directories keep their owner's ACL: a system service must
-        // not take away that owner's access to an existing database.
-        if !parent.try_exists()? {
-            fastctx_platform::ensure_private_dir(parent)?;
-        }
-        let kept = keeper::keep(path)?;
-        match Self::open_once(path, schema, &initialize, &kept) {
-            // Damage the cheap checks did not see is set aside and salvaged
-            // as theirs is, and the salvage opened instead; only when no
-            // other connection to it is open.
-            Err(error) if error.is_database_damage() && kept.sole => {
-                recovery::mark_damaged(path, &error.to_string())?;
-                Self::open_once(path, schema, &initialize, &kept)
+        fastctx_platform::roles::in_place("opening a database", || {
+            let parent = path.parent().ok_or_else(|| Error::new("the database has no parent directory"))?;
+            // Existing directories keep their owner's ACL: a system service must
+            // not take away that owner's access to an existing database.
+            if !parent.try_exists()? {
+                fastctx_platform::ensure_private_dir(parent)?;
             }
-            opened => opened,
-        }
+            let kept = keeper::keep(path)?;
+            match Self::open_once(path, schema, &initialize, &kept) {
+                // Damage the cheap checks did not see is set aside and salvaged
+                // as theirs is, and the salvage opened instead; only when no
+                // other connection to it is open.
+                Err(error) if error.is_database_damage() && kept.sole => {
+                    recovery::mark_damaged(path, &error.to_string())?;
+                    Self::open_once(path, schema, &initialize, &kept)
+                }
+                opened => opened,
+            }
+        })
     }
 
     fn open_once(
@@ -315,7 +316,7 @@ impl Database {
         self.0.metrics.read_wait(asked.elapsed());
         let (queued, permit) = admitted?;
         let database = self.clone();
-        let work = tokio::task::spawn_blocking(move || {
+        let work = fastctx_platform::task::spawn_blocking(move || {
             let _queued = queued;
             database.with_reader(permit, read)
         });
@@ -325,12 +326,13 @@ impl Database {
             .map_err(|error| Error::new(format!("the database reader failed: {error}")))?
     }
 
-    /// Synchronous reads belong exclusively on blocking threads. The closure may
-    /// borrow its caller, and every caller shares the same connection admission.
+    /// A synchronous read blocks its thread: on a task thread it is done in
+    /// place (`fastctx_platform::roles::in_place`). The closure may borrow its
+    /// caller, and every caller shares the same connection admission.
     #[track_caller]
     pub fn read_now<T>(&self, read: impl FnOnce(&rusqlite::Connection) -> Result<T>) -> Result<T> {
         self.reading_here();
-        self.read_held(read)
+        fastctx_platform::roles::in_place("a database read", || self.read_held(read))
     }
 
     /// A blocking background scan leaves one connection available to ordinary
@@ -338,20 +340,21 @@ impl Database {
     #[track_caller]
     pub fn read_background_now<T>(&self, read: impl FnOnce(&rusqlite::Connection) -> Result<T>) -> Result<T> {
         self.reading_here();
-        self.available()?;
-        let _background = blocking::wait(self.0.background_reading.clone().acquire_owned(), QUEUE_WAIT)
-            .ok_or_else(|| busy("background read admission"))?
-            .map_err(|_| unavailable())?;
-        self.read_held(read)
+        fastctx_platform::roles::in_place("a database read", || {
+            self.available()?;
+            let _background = blocking::wait(self.0.background_reading.clone().acquire_owned(), QUEUE_WAIT)
+                .ok_or_else(|| busy("background read admission"))?
+                .map_err(|_| unavailable())?;
+            self.read_held(read)
+        })
     }
 
-    /// Notes a synchronous read asked where it must not be: on a thread that
-    /// must not block, or by one that holds a read connection of this pool
-    /// already, which with every connection so held waits on the others
-    /// until its wait runs out. The place noted is the caller's.
+    /// Notes a synchronous read asked by a thread that holds a read
+    /// connection of this pool already, which with every connection so held
+    /// waits on the others until its wait runs out. The place noted is the
+    /// caller's.
     #[track_caller]
     fn reading_here(&self) {
-        fastctx_platform::roles::blocking("a database read");
         if HOLDING.with(Cell::get) > 0 {
             let name = self.0.path.file_name().unwrap_or(self.0.path.as_os_str()).to_string_lossy();
             fastctx_platform::conduct::nested_read(&name, Location::caller());
@@ -519,25 +522,26 @@ impl Database {
         write: impl FnOnce(&rusqlite::Connection) -> Result<T> + Send + 'static,
         committed: impl FnOnce(&T) + Send + 'static,
     ) -> Result<T> {
-        fastctx_platform::roles::blocking("a database write");
-        self.available()?;
-        if writer::on_writer() {
-            // A writer waiting for a write waits for itself, or for another
-            // database's writer while every write of its own waits for it.
-            debug_assert!(false, "a database writer waited for a write");
-            return Err(Error::with_kind(ErrorKind::Invalid, "a database's writer cannot wait for a write"));
-        }
-        let permit = blocking::wait(self.0.writes.admit(priority, bytes), QUEUE_WAIT)
-            .ok_or_else(|| busy("write admission"))??;
-        self.admitted(priority);
-        let (send, receive) = oneshot::channel();
-        self.submit(
-            priority,
-            writer::job(permit, durable, write, committed, move |result| {
-                let _ = send.send(result);
-            }),
-        )?;
-        blocking::wait(receive, ANSWER).ok_or_else(unknown)?.map_err(|_| unknown())?
+        fastctx_platform::roles::in_place("a database write", || {
+            self.available()?;
+            if writer::on_writer() {
+                // A writer waiting for a write waits for itself, or for another
+                // database's writer while every write of its own waits for it.
+                debug_assert!(false, "a database writer waited for a write");
+                return Err(Error::with_kind(ErrorKind::Invalid, "a database's writer cannot wait for a write"));
+            }
+            let permit = blocking::wait(self.0.writes.admit(priority, bytes), QUEUE_WAIT)
+                .ok_or_else(|| busy("write admission"))??;
+            self.admitted(priority);
+            let (send, receive) = oneshot::channel();
+            self.submit(
+                priority,
+                writer::job(permit, durable, write, committed, move |result| {
+                    let _ = send.send(result);
+                }),
+            )?;
+            blocking::wait(receive, ANSWER).ok_or_else(unknown)?.map_err(|_| unknown())?
+        })
     }
 
     fn submit(&self, priority: Priority, job: writer::Job) -> Result<()> {

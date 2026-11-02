@@ -134,9 +134,12 @@ impl<F: Future> Future for Timed<F> {
     type Output = F::Output;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<F::Output> {
+        roles::running_tasks();
         let started = Instant::now();
+        let blocked = roles::in_place_so_far();
         let polled = self.future.as_mut().poll(cx);
-        let took = started.elapsed();
+        // What blocked in place held no other task up.
+        let took = started.elapsed().saturating_sub(roles::in_place_so_far().saturating_sub(blocked));
         POLLS.record(took);
         if took >= SLOW_POLL {
             let task = match crate::doing::said_label() {

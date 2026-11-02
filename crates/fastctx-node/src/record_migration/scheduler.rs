@@ -196,7 +196,16 @@ pub(crate) fn ready(world: &Path, conversation: &str, family: &str) {
     }
 }
 
-/// Loads completed families while registration is still on a blocking thread.
+/// Lets go of a conversation's families under `prefix`, retired with what
+/// they held.
+pub(crate) fn forget(world: &Path, conversation: &str, prefix: &str) {
+    if let Some(engine) = ENGINES.lock().expect("migration registry").get(world).and_then(Weak::upgrade) {
+        engine.queue.lock().expect("migration queue").ready.forget(conversation, prefix);
+    }
+}
+
+/// Loads the completed gathered layouts while registration is still on a
+/// blocking thread.
 pub(crate) fn hydrate(
     world: &Path,
     database: &fastctx_storage::Database,
@@ -329,19 +338,22 @@ pub(crate) fn request(
     if DISCOVERING.get() {
         return Err(io::Error::new(io::ErrorKind::WouldBlock, "legacy migration is queued"));
     }
-    if !roles::current().may_block() {
+    // A thread that keeps network lines alive never waits for records.
+    if matches!(roles::current(), roles::Role::Link | roles::Role::Data) {
         return Err(busy("its records are waiting to move"));
     }
-    let mut result = cell.result.lock().expect("migration result");
-    loop {
-        if let Some(result) = &*result {
-            return result.clone().map_err(|(kind, message)| io::Error::new(kind, message));
+    roles::in_place("waiting for records to move", || {
+        let mut result = cell.result.lock().expect("migration result");
+        loop {
+            if let Some(result) = &*result {
+                return result.clone().map_err(|(kind, message)| io::Error::new(kind, message));
+            }
+            let Some(remaining) = WAIT.checked_sub(began.elapsed()) else {
+                return Err(busy("the ten-second wait expired"));
+            };
+            result = cell.changed.wait_timeout(result, remaining).expect("migration result").0;
         }
-        let Some(remaining) = WAIT.checked_sub(began.elapsed()) else {
-            return Err(busy("the ten-second wait expired"));
-        };
-        result = cell.changed.wait_timeout(result, remaining).expect("migration result").0;
-    }
+    })
 }
 
 impl Engine {

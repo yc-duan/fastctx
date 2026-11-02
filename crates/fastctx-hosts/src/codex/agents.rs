@@ -16,7 +16,7 @@ impl CodexHost {
     /// app-server for its catalog. No credential files are read here.
     pub async fn agents(self: &Arc<Self>) -> AgentFacts {
         let host = self.clone();
-        let mut facts = match tokio::task::spawn_blocking(move || host.command_facts()).await {
+        let mut facts = match fastctx_platform::task::spawn_blocking(move || host.command_facts()).await {
             Ok(facts) => facts,
             Err(error) => return empty(Fact::failed(format!("probing Codex: {error}"))),
         };
